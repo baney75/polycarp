@@ -9,7 +9,7 @@
  */
 
 export const PRIVATE_MODE_KEY = "privacy.privateMode";
-/** Host names the user trusts as their own, such as tailnet machines (mac.tail1234.ts.net). */
+/** Host names the user trusts as their own, such as tailnet machines (mac.example.ts.net). */
 export const TRUSTED_HOSTS_KEY = "privacy.trustedHosts";
 
 /** Sent as OpenRouter's `provider` object; account-level ZDR settings still apply on top. */

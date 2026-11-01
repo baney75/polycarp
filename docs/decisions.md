@@ -654,7 +654,7 @@ Owner, 2026-11-01: get the MCP working for claude.ai, grok.com, Grok Bot and Cha
   manager in the browser Tabkyra drives won't fill it for an agent tab. Blocking agent tabs
   from the approval page in the extension is a follow-up.
 - Tailscale Funnel can't be the public route on Donovan's tailnet: Tailnet Lock rejects Funnel
-  ingress (field note `abbey1/tailscale-funnel-never-reachable-on-a-tailnet-lock-tailnet`).
+  ingress (field note `lab-a/tailscale-funnel-never-reachable-on-a-tailnet-lock-tailnet`).
   The free route is a Cloudflare named tunnel (every account includes 1,000 at no cost) on an
   always-on host, reaching the browser's computer over the tailnet. A quick tunnel won't do:
   its URL changes and it doesn't carry SSE.

@@ -91,7 +91,7 @@ npm run publish-hero     # copies all three to media/
 ```
 
 **Music.** `public/hero/music.m4a` is an instrumental made for this video on the maintainer's
-own machine (Parish1) with [ACE-Step 1.5](https://huggingface.co/ACE-Step/Ace-Step1.5) at revision
+own machine (gpu-a) with [ACE-Step 1.5](https://huggingface.co/ACE-Step/Ace-Step1.5) at revision
 `19671f406d603126926c1b7e2adc169acbcade22`, seed 302. Its components are MIT-licensed, except
 the bundled Qwen3-Embedding-0.6B text encoder, which is Apache-2.0; neither license restricts
 outputs, and the model card says "You can strictly use the generated

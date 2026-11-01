@@ -119,10 +119,10 @@ export class PrivacyTab extends SettingsTab {
 						agent; an outside agent using the Bridge follows its own settings.
 					</p>
 					<label class="flex flex-col gap-1 text-xs text-muted-foreground">
-						<span>Your own machines, comma-separated. Prefer names over IPs (for example mac.tail1234.ts.net): a listed IP is trusted on every network, including one where it belongs to someone else.</span>
+						<span>Your own machines, comma-separated. Prefer names over IPs (for example mac.example.ts.net): a listed IP is trusted on every network, including one where it belongs to someone else.</span>
 						<input
 							class="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							placeholder="mac.tail1234.ts.net, nas.local"
+							placeholder="mac.example.ts.net, nas.local"
 							.value=${this.trustedHosts}
 							@change=${(e: Event) => this.saveTrustedHosts((e.target as HTMLInputElement).value)}
 						/>

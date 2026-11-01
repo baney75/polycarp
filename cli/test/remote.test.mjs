@@ -163,13 +163,13 @@ test("tunnel tailscale serves the tailnet path; --public uses funnel; --off stop
 	const log = join(root, "tailscale.log");
 	writeFileSync(
 		join(bin, "tailscale"),
-		`#!/bin/sh\necho "$@" >> ${log}\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.tail1234.ts.net."}}'; fi\n`,
+		`#!/bin/sh\necho "$@" >> ${log}\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.example.ts.net."}}'; fi\n`,
 	);
 	chmodSync(join(bin, "tailscale"), 0o755);
 	const path = `${bin}:${dirname(process.execPath)}`;
 	const on = cliRun(["tunnel", "tailscale", "--port", "8787"], { PATH: path });
 	assert.equal(on.code, 0, on.out);
-	assert.match(on.out, /https:\/\/mac\.tail1234\.ts\.net\/tabkyra\/mcp/);
+	assert.match(on.out, /https:\/\/mac\.example\.ts\.net\/tabkyra\/mcp/);
 	const pub = cliRun(["tunnel", "tailscale", "--public"], { PATH: path });
 	assert.match(pub.out, /anyone on the internet/);
 	cliRun(["tunnel", "tailscale", "--off"], { PATH: path });
@@ -254,7 +254,7 @@ test("tunnel ports are validated, and Funnel is refused when other paths share p
 	mkdirSync(bin, { recursive: true });
 	writeFileSync(
 		join(bin, "tailscale"),
-		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.tail1234.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo '{"Web":{"mac.tail1234.ts.net:443":{"Handlers":{"/grafana":{}}}}}'; exit 0; fi\necho "$@" >> ${join(root, "funnel.log")}\n`,
+		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.example.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo '{"Web":{"mac.example.ts.net:443":{"Handlers":{"/grafana":{}}}}}'; exit 0; fi\necho "$@" >> ${join(root, "funnel.log")}\n`,
 	);
 	chmodSync(join(bin, "tailscale"), 0o755);
 	const r = cliRun(["tunnel", "tailscale", "--public"], { PATH: `${bin}:${dirname(process.execPath)}` });
@@ -298,7 +298,7 @@ test("tailscale serve is refused while Funnel is on for 443; the cloudflare URL 
 	mkdirSync(bin, { recursive: true });
 	writeFileSync(
 		join(bin, "tailscale"),
-		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.tail1234.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo '{"AllowFunnel":{"mac.tail1234.ts.net:443":true}}'; exit 0; fi\necho "$@" >> ${join(root, "serve-on.log")}\n`,
+		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.example.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo '{"AllowFunnel":{"mac.example.ts.net:443":true}}'; exit 0; fi\necho "$@" >> ${join(root, "serve-on.log")}\n`,
 	);
 	chmodSync(join(bin, "tailscale"), 0o755);
 	const r = cliRun(["tunnel", "tailscale"], { PATH: `${bin}:${dirname(process.execPath)}` });
@@ -327,7 +327,7 @@ test("tailscale changes nothing when serve status can't be read", () => {
 	mkdirSync(bin, { recursive: true });
 	writeFileSync(
 		join(bin, "tailscale"),
-		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.tail1234.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo 'warning: something' >&2; exit 1; fi\necho "$@" >> ${join(root, "status-fail.log")}\n`,
+		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.example.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo 'warning: something' >&2; exit 1; fi\necho "$@" >> ${join(root, "status-fail.log")}\n`,
 	);
 	chmodSync(join(bin, "tailscale"), 0o755);
 	const r = cliRun(["tunnel", "tailscale"], { PATH: `${bin}:${dirname(process.execPath)}` });
@@ -595,7 +595,7 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 
 // tabkyra remote setup|status|off: one command for Funnel (or a custom HTTPS front door), the
 // passcode and a user service. tailscale, launchctl and systemctl are stubs that log their args.
-const DNS = "mac.tail1234.ts.net";
+const DNS = "mac.example.ts.net";
 
 /** A scenario with its own HOME and stub tailscale, launchctl and systemctl on PATH. funnelFails: what `tailscale funnel --bg` prints before exiting 1. */
 function remoteScenario(name, { lock = "Tailnet lock is NOT enabled.", serveStatus = "{}", funnelFails = "", funnelOffFails = false } = {}) {
@@ -816,7 +816,7 @@ serviceTest("remote setup with a service that never answers exits 1, names the l
 	const port = 1; // nothing listens here
 	const r = s.run(["remote", "setup", "--port", String(port)]);
 	assert.equal(r.code, 1, r.out);
-	assert.match(r.out, /isn't answering on 127\.0\.0\.1:1 with https:\/\/mac\.tail1234\.ts\.net:8443\/mcp after 15 seconds, so Funnel was not opened/);
+	assert.match(r.out, /isn't answering on 127\.0\.0\.1:1 with https:\/\/mac\.example\.ts\.net:8443\/mcp after 15 seconds, so Funnel was not opened/);
 	assert.match(r.out, process.platform === "linux" ? /journalctl --user -u tabkyra-serve\.service/ : /tabkyra-serve\.log/);
 	assert.ok(!s.calls().some((x) => x.startsWith("tailscale funnel")), s.calls().join("\n"));
 	assert.ok(s.hasRemoteJson(), "remote.json is kept");
