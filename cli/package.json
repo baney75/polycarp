@@ -16,7 +16,7 @@
 		"build": "node scripts/build.mjs",
 		"typecheck": "tsc --noEmit",
 		"check": "npm run typecheck && npm run build",
-		"test": "npm run build && node --test test/install.test.mjs test/cli.test.mjs test/setup.test.mjs test/mcp.test.mjs test/bridge-retry.test.mjs test/bridge-hosts.test.mjs test/sessions.test.mjs test/threads.test.mjs test/update.test.mjs test/checkout-update.test.mjs test/skill.test.mjs test/skill-lint.test.mjs test/library.test.mjs test/remote.test.mjs test/skill-router.test.mjs test/skill-platform.test.mjs test/judge-label.test.mjs test/skill-content.test.mjs test/skill-content-html.test.mjs test/community.test.mjs test/doctor-userscripts.test.mjs",
+		"test": "npm run build && node --test test/install.test.mjs test/cli.test.mjs test/setup.test.mjs test/mcp.test.mjs test/bridge-retry.test.mjs test/bridge-hosts.test.mjs test/sessions.test.mjs test/threads.test.mjs test/update.test.mjs test/checkout-update.test.mjs test/skill.test.mjs test/skill-lint.test.mjs test/library.test.mjs test/remote.test.mjs test/skill-router.test.mjs test/skill-platform.test.mjs test/judge-label.test.mjs test/skill-content.test.mjs test/skill-content-html.test.mjs test/community.test.mjs test/doctor-userscripts.test.mjs test/hub.test.mjs && node --experimental-strip-types --test test/search-scrape.test.mjs",
 		"test:e2e": "npm run build && node --test --test-concurrency=1 test/e2e-bridge.test.mjs",
 		"prepublishOnly": "npm run build"
 	},

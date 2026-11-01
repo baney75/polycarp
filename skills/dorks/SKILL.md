@@ -4,6 +4,8 @@ description: Write precise search queries with advanced operators (site:, filety
 license: AGPL-3.0
 ---
 
+Prefer the `search` tool (self-hosted SearXNG via SEARXNG_URL) over navigating to Google in the browser. Google would use the user's cookies; `search` does not.
+
 # Dorks: search operators that find the page, not the noise
 
 A dork is a search query built from operators. Good dorks turn ten pages of results into

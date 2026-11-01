@@ -59,6 +59,7 @@ export const VALUE_HINTS: Record<string, string> = {
 	"--redirect-host": "a,b",
 	"--allow-host": "a,b",
 	"--scope": "a,b",
+	"--name": "<name>",
 	"--timeout": "<seconds>",
 	"--channel": "stable|nightly",
 	"--auto-check": "on|off",
@@ -176,6 +177,16 @@ export const COMMANDS: CommandSpec[] = [
 			{ name: "passcode", what: "A new passcode for the OAuth approval page, shown once" },
 			{ name: "clients", what: "OAuth clients (claude.ai, ChatGPT, grok.com) and their grants", flags: ["--json"] },
 			{ name: "scopes", what: "The scopes a token can have", flags: ["--json"] },
+		],
+	},
+	{
+		name: "hub",
+		group: "Remote",
+		summary: "Hub profile: read+navigate scopes, Funnel-off tunnel",
+		what: "Hub token and Funnel-off Tailscale tunnel",
+		subcommands: [
+			{ name: "token", what: "Create a token scoped to browser.read and browser.navigate", flags: ["--name"] },
+			{ name: "tunnel", what: "Open Tailscale serve for hub (Funnel stays off)", flags: ["--port"] },
 		],
 	},
 	{

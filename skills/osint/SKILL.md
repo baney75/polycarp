@@ -4,6 +4,8 @@ description: Research a person, company, domain or online account from public, l
 license: AGPL-3.0
 ---
 
+Prefer the `search` tool (self-hosted SearXNG via SEARXNG_URL) over navigating to Google in the browser. Google would use the user's cookies; `search` does not.
+
 # OSINT: public sources, careful links, honest confidence
 
 Open-source intelligence is research from public records. Its two failures are harm and

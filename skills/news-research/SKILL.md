@@ -4,6 +4,8 @@ description: Find what happened, when, and who says so, using primary sources, w
 license: AGPL-3.0
 ---
 
+Prefer the `search` tool (self-hosted SearXNG via SEARXNG_URL) over navigating to Google in the browser. Google would use the user's cookies; `search` does not.
+
 # News research: facts first, sources named, sides heard
 
 News is fast and often wrong at first. This skill gets to the primary source, checks the

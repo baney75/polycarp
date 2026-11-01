@@ -18,6 +18,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkSkill, listSkills, matchTask, readSkill, removeSkill, skillInfo, syncCommunity, writeSkill } from "./skill.ts";
 import { stageCases } from "./skill-submit.ts";
+import { firecrawlCrawl, firecrawlMap, pageMarkdown } from "./firecrawl.ts";
+import { searxSearch } from "./searx.ts";
 import { VERSION } from "./version.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -148,7 +150,7 @@ function harnessName(): string {
 }
 
 /** Tool names an instruction sentence mentions; used to drop sentences about tools a session lacks. */
-const INSTRUCTION_TOOLS = ["status", "tabs_context", "session_info", "session_end", "tabs_release", "wait", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read", "ask_user", "threads_list", "thread_read", "thread_search"];
+const INSTRUCTION_TOOLS = ["status", "tabs_context", "session_info", "session_end", "tabs_release", "wait", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read", "ask_user", "threads_list", "thread_read", "thread_search", "search", "page_markdown", "map", "crawl"];
 
 function mentionedTools(sentence: string): string[] {
 	return INSTRUCTION_TOOLS.filter((t) => new RegExp(`(^|[^a-z_])${t}([^a-z_]|$)`).test(sentence));
@@ -753,6 +755,63 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	// remote or scoped session gets the bundled skills only: local skills stay on the user's
 	// devices (D6), even if a caller forgets to say the session is remote.
 	const bundledOnly = Boolean(options.remote || allowedTools);
+	
+	// Web search and scrape: self-hosted SearXNG / Firecrawl only (no Google cookies, no api.firecrawl.dev).
+	async function webtool<T>(fn: () => Promise<T> | T): Promise<{ content: Content[]; isError?: boolean }> {
+		try {
+			return { content: text(await fn()) };
+		} catch (err) {
+			return { content: text(errorMessage(err)), isError: true };
+		}
+	}
+	server.registerTool(
+		"search",
+		{
+			title: "Search the web",
+			description: "Self-hosted SearXNG (SEARXNG_URL). Prefer over Google in the browser. Example: {\"query\":\"site:example.com report\"}",
+			inputSchema: {
+				query: z.string().describe("Query (site:, filetype: ok)"),
+				categories: z.string().optional().describe("general, news, science, ..."),
+				language: z.string().optional().describe("e.g. en"),
+				limit: z.number().int().optional().describe("Max results (default 10)"),
+			},
+		},
+		(args) => webtool(() => searxSearch(args.query, { categories: args.categories, language: args.language, limit: args.limit })),
+	);
+	server.registerTool(
+		"page_markdown",
+		{
+			title: "Page as markdown",
+			description: "URL to markdown via self-hosted Firecrawl (FIRECRAWL_API_URL); api.firecrawl.dev refused. Example: {\"url\":\"https://example.com\"}",
+			inputSchema: { url: z.string().describe("http(s) URL") },
+		},
+		(args) => webtool(() => pageMarkdown(args.url)),
+	);
+	server.registerTool(
+		"map",
+		{
+			title: "Map site URLs",
+			description: "List site URLs via self-hosted Firecrawl. Example: {\"url\":\"https://example.com\",\"limit\":50}",
+			inputSchema: {
+				url: z.string().describe("Site URL"),
+				limit: z.number().int().optional().describe("Max URLs"),
+			},
+		},
+		(args) => webtool(() => firecrawlMap(args.url, { limit: args.limit })),
+	);
+	server.registerTool(
+		"crawl",
+		{
+			title: "Crawl pages",
+			description: "Crawl via self-hosted Firecrawl. Example: {\"url\":\"https://example.com\",\"limit\":10}",
+			inputSchema: {
+				url: z.string().describe("Start URL"),
+				limit: z.number().int().optional().describe("Max pages"),
+			},
+		},
+		(args) => webtool(() => firecrawlCrawl(args.url, { limit: args.limit })),
+	);
+
 	server.registerTool(
 		"skill_match",
 		{

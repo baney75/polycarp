@@ -62,6 +62,11 @@ export const SCOPES: Record<string, { tools: string[]; what: string }> = {
 	},
 	"skills.read": { tools: ["skill_match", "skill_read"], what: "Find the skill for a task and read the bundled skills (never your local edits)" },
 	"user.ask": { tools: ["ask_user"], what: "Ask the user multiple-choice questions in the Tabkyra side panel and get their answers" },
+	"web.search": { tools: ["search"], what: "Search the web through the user's self-hosted SearXNG (SEARXNG_URL)" },
+	"web.scrape": {
+		tools: ["page_markdown", "map", "crawl"],
+		what: "Read pages as markdown (and optional map/crawl) through the user's self-hosted Firecrawl (FIRECRAWL_API_URL); hosted api.firecrawl.dev is refused",
+	},
 };
 
 export interface TokenRecord {

@@ -1,0 +1,4 @@
+{
+	"searxngUrl": "http://127.0.0.1:8888",
+	"firecrawlApiUrl": "http://127.0.0.1:3002"
+}

@@ -15,6 +15,7 @@ import { LIBRARY_USAGE, runLibrary } from "./library.ts";
 import { createToken, loadTokens, loadUsage, revokeToken, SCOPES, serve } from "./remote.ts";
 import { listClients, normalizePublicUrl, type OAuthConfig, passcodeSet, revokeClient, revokeGrantById, setPasscode } from "./oauth.ts";
 import { loadRemoteConfig, remoteFile, remoteOff, remoteSetup, remoteStatus } from "./remote-setup.ts";
+import { createHubToken, hubTunnel, HUB_SCOPES } from "./hub.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
 import { runSessions, runTabs, SessionsUsageError } from "./sessions.ts";
 import { runThreads, ThreadsUsageError } from "./threads.ts";
@@ -531,6 +532,30 @@ async function main(): Promise<void> {
 				return;
 			}
 			throw new UsageError("Usage: tabkyra remote setup [--public-url https://host] [--port N] [--no-service] | status [--json] | off");
+		}
+		case "hub": {
+			const sub = argv.slice(1).find((a) => !a.startsWith("-"));
+			if (sub === "token") {
+				checkArgs("hub", argv.slice(1));
+				const name = option("--name") ?? "hub";
+				const { token, id } = createHubToken(name);
+				console.log(`${sym.ok} Hub token ${name} (${id}) scopes: ${HUB_SCOPES.join(", ")}`);
+				console.log(token);
+				break;
+			}
+			if (sub === "tunnel") {
+				checkArgs("hub", argv.slice(1));
+				const port = Number(option("--port") ?? DEFAULT_PORT);
+				if (!Number.isInteger(port) || port < 1 || port > 65535) throw new UsageError("--port takes a port number from 1 to 65535.");
+				const result = hubTunnel(port);
+				console.log(`${result.ok ? sym.ok : sym.fail} ${result.message}`);
+				if (result.url) console.log(result.url);
+				process.exitCode = result.ok ? 0 : 1;
+				break;
+			}
+			throw new UsageError(
+				"Usage: tabkyra hub token [--name hub] | tabkyra hub tunnel [--port N]\nHub profile: scopes browser.read + browser.navigate; tunnel uses Tailscale serve (Funnel off).",
+			);
 		}
 		case "tunnel": {
 			const kind = argv.slice(1).find((a) => !a.startsWith("-") && a !== option("--port"));
