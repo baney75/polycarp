@@ -97,9 +97,9 @@ test("options are checked per subcommand, and a value option needs its value", (
 		assert.match(r.err, /takes no value/);
 	}
 	assert.match(run("pi-extension", "a", "b").err, /Usage: tabkyra pi-extension \[dir\]/);
-	assert.match(run("serve", "--port").err, /needs a value\. Usage: tabkyra serve \[--port N\]$/m);
+	assert.match(run("serve", "--port").err, /needs a value\. Usage: tabkyra serve \[--port N\] \[--public-url https:\/\/host\] \[--redirect-host a,b\] \[--allow-host a,b\]$/m);
 	assert.match(run("token", "create", "x", "--bogus").err, /Usage: tabkyra token create <name> \[--scope a,b\]$/m);
-	assert.match(run("token", "revoke", "--bogus").err, /Usage: tabkyra token revoke <id\|name>$/m);
+	assert.match(run("token", "revoke", "--bogus").err, /Usage: tabkyra token revoke <id\|name\|client id\|grant id>$/m);
 	// The value of a value option isn't counted as an extra argument.
 	assert.equal(run("token", "list", "--json").code, 0);
 });

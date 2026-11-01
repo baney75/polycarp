@@ -624,3 +624,37 @@ Owner, 2026-10-29: "add a stt using a strong model that runs on device based on 
   silence. Recording stops at 5 minutes and transcribes what was said.
 - **pi-web-ui gains `composerActions`** (`AgentInterface` to `MessageEditor` `actions`), a slot
   for buttons beside the attachment button, through `patches/pi-mono.patch`.
+
+## D30. OAuth for web connectors (Claude, 2026-11-01)
+
+Owner, 2026-11-01: get the MCP working for claude.ai, grok.com, Grok Bot and ChatGPT online,
+"maybe tailscale tunnels", and without paying for a tunnel.
+
+- claude.ai, ChatGPT and grok.com call a connector from their own servers and can't send a
+  static bearer header (ChatGPT supports only no auth or OAuth). So `tabkyra serve
+  --public-url` adds an OAuth 2.1 authorization server, ported from Waypost's (`src/oauth.ts`
+  in baney75/waypost), which already works with claude.ai. Static `tkr_` tokens stay for header
+  clients such as Grok Bot (`~/.grok/config.toml`, `url` plus a bearer header).
+- One owner, so approval is a passcode on the consent page, not an account. The owner picks the
+  grant's scopes there from the same SCOPES (D9); still no wildcard. Default ticks cover
+  reading, opening pages, clicking and typing, the library, skills and `ask_user`;
+  `browser.script` and `threads.read` must be ticked by hand.
+- Codes go back only to the documented callbacks (claude.ai's and claude.com's
+  `/api/mcp/auth_callback`, ChatGPT's `/connector_platform_oauth_redirect` and its
+  per-connector `/connector/oauth/<id>`), to any path on grok.com and x.ai, whose callback path
+  isn't documented, or to loopback. The consent page shows the full callback and how long ago
+  the client registered, and warns against approving a link someone sent.
+- The grant (a family of rotating tokens) is the session's owner, not the access token, so an
+  hourly refresh doesn't end the session or its tab group.
+- Rate limits count per client and per source, with high global caps that only bound scrypt
+  work (run off the event loop, four at a time). A flood with forged source headers can still
+  fill a global cap for up to 15 minutes; `tabkyra token passcode` clears every limit. The
+  passcode carries about 100 bits, so the caps don't guard against guessing.
+- The passcode field is a masked text field with `autocomplete="one-time-code"`, so a password
+  manager in the browser Tabkyra drives won't fill it for an agent tab. Blocking agent tabs
+  from the approval page in the extension is a follow-up.
+- Tailscale Funnel can't be the public route on Donovan's tailnet: Tailnet Lock rejects Funnel
+  ingress (field note `abbey1/tailscale-funnel-never-reachable-on-a-tailnet-lock-tailnet`).
+  The free route is a Cloudflare named tunnel (every account includes 1,000 at no cost) on an
+  always-on host, reaching the browser's computer over the tailnet. A quick tunnel won't do:
+  its URL changes and it doesn't carry SSE.
