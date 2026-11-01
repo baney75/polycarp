@@ -13,6 +13,7 @@ import { sdkInstalled } from "./subscriptions/copilot.ts";
 import { installCopilotSdk } from "./subscriptions/install-sdk.ts";
 import { LIBRARY_USAGE, runLibrary } from "./library.ts";
 import { createToken, loadTokens, loadUsage, revokeToken, SCOPES, serve } from "./remote.ts";
+import { listClients, normalizePublicUrl, type OAuthConfig, passcodeSet, revokeClient, setPasscode } from "./oauth.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
 import { runSessions, runTabs, SessionsUsageError } from "./sessions.ts";
 import { runThreads, ThreadsUsageError } from "./threads.ts";
@@ -402,9 +403,23 @@ async function main(): Promise<void> {
 		case "serve": {
 			const port = Number(option("--port") ?? DEFAULT_PORT);
 			if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError("--port takes a port number.");
-			if (loadTokens().every((t) => t.revokedAt)) console.log(`${sym.warn} No tokens yet; every request will be refused. Create one: tabkyra token create <name> --scope browser.read`);
-			const { url } = await serve({ port, host: "127.0.0.1" });
+			const list = (name: string) => (option(name) ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+			const rawPublic = option("--public-url");
+			let oauth: OAuthConfig | undefined;
+			if (rawPublic !== undefined) {
+				try {
+					oauth = { publicUrl: normalizePublicUrl(rawPublic), redirectHosts: list("--redirect-host"), scopes: SCOPES };
+				} catch (err) {
+					throw new UsageError(err instanceof Error ? err.message : String(err));
+				}
+			} else if (option("--redirect-host") !== undefined || option("--allow-host") !== undefined) {
+				throw new UsageError("--redirect-host and --allow-host need --public-url.");
+			}
+			if (oauth && !passcodeSet()) console.log(`${sym.warn} No OAuth passcode yet; nobody can approve a connection. Run: tabkyra token passcode`);
+			else if (!oauth && loadTokens().every((t) => t.revokedAt)) console.log(`${sym.warn} No tokens yet; every request will be refused. Create one: tabkyra token create <name> --scope browser.read`);
+			const { url } = await serve({ port, host: "127.0.0.1", oauth, allowedHosts: list("--allow-host") });
 			console.log(`${sym.ok} MCP over HTTP at ${url} (loopback only; every request needs a token). Ctrl-C stops it.`);
+			if (oauth) console.log(`${sym.ok} OAuth on for ${oauth.publicUrl}/mcp: add that URL as a custom connector, then approve it with your passcode.`);
 			await new Promise(() => {});
 			return;
 		}
@@ -436,8 +451,33 @@ async function main(): Promise<void> {
 				}
 				return;
 			}
+			if (sub === "passcode") {
+				const passcode = setPasscode();
+				console.log(`${sym.ok} OAuth passcode:\n\n  ${passcode}\n`);
+				console.log(c.dim("Shown once. Enter it on the approval page when claude.ai, ChatGPT or grok.com connects. Keep it in your password manager. Running this again replaces it; grants already approved keep working."));
+				return;
+			}
+			if (sub === "clients") {
+				const clients = listClients();
+				if (flag("--json")) {
+					console.log(JSON.stringify(clients, null, 2));
+					return;
+				}
+				if (!clients.length) console.log(`${sym.dot} No OAuth clients.`);
+				for (const cl of clients) {
+					console.log(`${cl.client_id}  ${cl.client_name}  ${c.dim(cl.redirect_hosts.join(","))}  ${c.dim(cl.last_used ? `last used ${cl.last_used}` : "never approved")}`);
+					for (const g of cl.grants) console.log(`    ${g.id}  ${g.scopes.join(",")}`);
+				}
+				return;
+			}
 			if (sub === "revoke") {
-				if (!name) throw new UsageError("Usage: tabkyra token revoke <id|name>");
+				if (!name) throw new UsageError("Usage: tabkyra token revoke <id|name|client id>");
+				if (name.startsWith("tkc_")) {
+					const gone = revokeClient(name);
+					console.log(gone ? `${sym.ok} Removed OAuth client ${name} and its grants.` : `${sym.dot} No OAuth client ${name}.`);
+					process.exitCode = gone ? 0 : 1;
+					return;
+				}
 				const n = revokeToken(name);
 				console.log(n ? `${sym.ok} Revoked ${n} token${n === 1 ? "" : "s"}.` : `${sym.dot} No active token matches ${name}.`);
 				process.exitCode = n ? 0 : 1;
@@ -451,7 +491,7 @@ async function main(): Promise<void> {
 				for (const [scope, { what, tools }] of Object.entries(SCOPES)) console.log(`${c.bold(scope.padEnd(18))} ${what}\n${"".padEnd(19)}${c.dim(tools.join(", "))}`);
 				return;
 			}
-			throw new UsageError("Usage: tabkyra token create <name> --scope a,b | list | revoke <id|name> | scopes");
+			throw new UsageError("Usage: tabkyra token create <name> --scope a,b | list | revoke <id|name|client id> | scopes | passcode | clients");
 		}
 		case "tunnel": {
 			const kind = argv.slice(1).find((a) => !a.startsWith("-") && a !== option("--port"));

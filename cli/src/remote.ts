@@ -18,6 +18,22 @@ import { join } from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createMcpServer } from "./mcp.ts";
+import {
+	approveAuthorize,
+	authorizationServerMetadata,
+	consentPage,
+	describeSigned,
+	exchangeToken,
+	liveGrantIds,
+	type OAuthConfig,
+	OAuthError,
+	protectedResourceMetadata,
+	registerClient,
+	resourceMetadataUrl,
+	revokeGrant,
+	validateAuthorize,
+	verifyAccessToken,
+} from "./oauth.ts";
 
 /** What each scope grants. Acting under the user's sign-in is its own scope, never implied. */
 export const SCOPES: Record<string, { tools: string[]; what: string }> = {
@@ -200,10 +216,21 @@ export function toolsFor(scopes: string[]): Set<string> {
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
 
+/** Who a request acts for: a static token, or an OAuth grant (id "o-<hex>"). */
+interface Caller {
+	id: string;
+	name: string;
+	scopes: string[];
+}
+
 export interface ServeOptions {
 	port: number;
 	host: string;
 	onListen?: (url: string) => void;
+	/** With --public-url: OAuth for web connectors, and only these Host headers are served. */
+	oauth?: OAuthConfig;
+	/** Extra Host values to accept besides the public URL's and loopback (with oauth only). */
+	allowedHosts?: string[];
 }
 
 /** Serve MCP over Streamable HTTP on loopback. Each session is bound to the token that opened it. */
@@ -223,6 +250,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 			/* unreadable: treat every token as revoked */
 		}
 		const live = new Set(tokens.filter((t) => !t.revokedAt).map((t) => t.id));
+		if (options.oauth) for (const id of liveGrantIds()) live.add(id);
 		for (const [id, s] of sessions) {
 			if (!live.has(s.tokenId) || Date.now() - s.lastSeen > IDLE_MS) {
 				sessions.delete(id);
@@ -232,10 +260,25 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 	}, 60_000);
 	sweep.unref();
 
+	const oauth = options.oauth;
+	// Clients find the authorization server from this header (RFC 9728).
+	const challenge = oauth ? `Bearer realm="tabkyra", resource_metadata="${resourceMetadataUrl(oauth)}"` : 'Bearer realm="tabkyra"';
 	const deny = (res: ServerResponse, status: number, message: string) => {
-		res.writeHead(status, { "content-type": "application/json", ...(status === 401 ? { "www-authenticate": 'Bearer realm="tabkyra"' } : {}) });
+		res.writeHead(status, { "content-type": "application/json", ...(status === 401 ? { "www-authenticate": challenge } : {}) });
 		res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message }, id: null }));
 	};
+	const sendJson = (res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) => {
+		res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...headers });
+		res.end(JSON.stringify(body));
+	};
+
+	/** A static token, or with OAuth on, a live OAuth access token. */
+	function caller(header: string | undefined): Caller | undefined {
+		const record = authenticate(header);
+		if (record) return record;
+		const m = /^Bearer (\S+)$/.exec(header ?? "");
+		return oauth && m ? verifyAccessToken(oauth, m[1]) : undefined;
+	}
 
 	const http = createServer((req: IncomingMessage, res: ServerResponse) => {
 		handle(req, res).catch((err) => {
@@ -245,21 +288,124 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		});
 	});
 
-	async function readJson(req: IncomingMessage): Promise<unknown> {
+	async function readBody(req: IncomingMessage, limit = 4_000_000): Promise<string> {
 		const chunks: Buffer[] = [];
 		let size = 0;
 		for await (const chunk of req) {
 			size += (chunk as Buffer).length;
-			if (size > 4_000_000) throw new Error("Request body too large.");
+			if (size > limit) throw new Error("Request body too large.");
 			chunks.push(chunk as Buffer);
 		}
-		return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+		return Buffer.concat(chunks).toString("utf8");
+	}
+
+	async function readJson(req: IncomingMessage): Promise<unknown> {
+		return JSON.parse(await readBody(req));
+	}
+
+	const port = () => {
+		const address = http.address();
+		return typeof address === "object" && address ? address.port : options.port;
+	};
+
+	/** The OAuth endpoints. Returns false when the path isn't one of them. */
+	async function handleOAuth(config: OAuthConfig, req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
+		const metadata = { "access-control-allow-origin": "*", "cache-control": "max-age=300" };
+		if (path === "/.well-known/oauth-protected-resource" || path === "/.well-known/oauth-protected-resource/mcp") {
+			sendJson(res, 200, protectedResourceMetadata(config), metadata);
+			return true;
+		}
+		if (path === "/.well-known/oauth-authorization-server" || path === "/.well-known/oauth-authorization-server/mcp") {
+			sendJson(res, 200, authorizationServerMetadata(config), metadata);
+			return true;
+		}
+		const oauthPaths = ["/register", "/authorize", "/token", "/revoke"];
+		if (!oauthPaths.includes(path)) return false;
+		const page = (status: number, html: { html: string; headers: Record<string, string> }) => {
+			res.writeHead(status, html.headers);
+			res.end(html.html);
+		};
+		const redirect = (to: string) => {
+			res.writeHead(302, { location: to, "cache-control": "no-store", "referrer-policy": "no-referrer" });
+			res.end();
+		};
+		const errorText = (status: number, message: string) => {
+			res.writeHead(status, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+			res.end(`${message}\n`);
+		};
+		try {
+			if (path === "/register" && req.method === "POST") {
+				let body: unknown;
+				try {
+					body = JSON.parse(await readBody(req, 64_000));
+				} catch {
+					throw new OAuthError(400, "invalid_client_metadata", "The registration body isn't valid JSON.");
+				}
+				sendJson(res, 201, registerClient(config, body));
+				return true;
+			}
+			if (path === "/authorize" && req.method === "GET") {
+				const result = validateAuthorize(config, new URL(req.url ?? "/", "http://x").searchParams);
+				if ("redirect" in result) redirect(result.redirect);
+				else page(200, consentPage(config, result));
+				return true;
+			}
+			if (path === "/authorize" && req.method === "POST") {
+				const form = new URLSearchParams(await readBody(req, 64_000));
+				try {
+					redirect(approveAuthorize(config, form).redirect);
+				} catch (err) {
+					// A wrong passcode or no permission ticked: show the form again.
+					if (err instanceof OAuthError && (err.status === 401 || err.error === "invalid_scope")) {
+						let again: ReturnType<typeof describeSigned> | undefined;
+						try {
+							again = describeSigned(form.get("request") ?? "");
+						} catch {
+							again = undefined;
+						}
+						if (again) {
+							page(err.status, consentPage(config, again, err.description));
+							return true;
+						}
+					}
+					throw err;
+				}
+				return true;
+			}
+			if (path === "/token" && req.method === "POST") {
+				const params = new URLSearchParams(await readBody(req, 64_000));
+				sendJson(res, 200, exchangeToken(params, req.headers.authorization));
+				return true;
+			}
+			if (path === "/revoke" && req.method === "POST") {
+				const params = new URLSearchParams(await readBody(req, 64_000));
+				revokeGrant(params, req.headers.authorization);
+				sendJson(res, 200, {});
+				return true;
+			}
+			errorText(405, "Method not allowed.");
+			return true;
+		} catch (err) {
+			if (!(err instanceof OAuthError)) throw err;
+			// The authorize page is a browser page; the rest are JSON APIs.
+			if (path === "/authorize") errorText(err.status, err.description);
+			else sendJson(res, err.status, { error: err.error, error_description: err.description });
+			return true;
+		}
 	}
 
 	async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-		if (new URL(req.url ?? "/", "http://x").pathname !== "/mcp") return deny(res, 404, "Not found. The MCP endpoint is /mcp.");
-		const token = authenticate(req.headers.authorization);
-		if (!token) return deny(res, 401, "A valid, unrevoked bearer token is required (tabkyra token create).");
+		const path = new URL(req.url ?? "/", "http://x").pathname;
+		if (oauth) {
+			// Behind a tunnel only the public name and loopback are ours; anything else is a misdirected or rebound request.
+			const host = String(req.headers.host ?? "").toLowerCase();
+			const allowed = new Set([new URL(oauth.publicUrl).host, `127.0.0.1:${port()}`, `localhost:${port()}`, `[::1]:${port()}`, ...(options.allowedHosts ?? []).map((h) => h.toLowerCase())]);
+			if (!allowed.has(host)) return deny(res, 421, "Misdirected request.");
+			if (await handleOAuth(oauth, req, res, path)) return;
+		}
+		if (path !== "/mcp") return deny(res, 404, "Not found. The MCP endpoint is /mcp.");
+		const token = caller(req.headers.authorization);
+		if (!token) return deny(res, 401, oauth ? "Connect with OAuth or a valid, unrevoked bearer token." : "A valid, unrevoked bearer token is required (tabkyra token create).");
 		const sessionId = req.headers["mcp-session-id"];
 		const existing = typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
 		if (existing) {
@@ -319,9 +465,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 	}
 
 	await new Promise<void>((resolve) => http.listen(options.port, options.host, resolve));
-	const address = http.address();
-	const port = typeof address === "object" && address ? address.port : options.port;
-	const url = `http://${options.host.includes(":") ? `[${options.host}]` : options.host}:${port}/mcp`;
+	const url = `http://${options.host.includes(":") ? `[${options.host}]` : options.host}:${port()}/mcp`;
 	options.onListen?.(url);
 	return {
 		url,

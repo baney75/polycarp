@@ -3,6 +3,9 @@
 // the tunnel commands call the user's own tailscale and cloudflared with the right args.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
+import { request as httpRequest } from "node:http";
+import { createServer as createNetServer } from "node:net";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -366,5 +369,141 @@ test("remote sessions read bundled skills only, never the user's local edits", a
 		assert.doesNotMatch(hidden.content[0].text, /supplier invoices/);
 	} finally {
 		await client.close();
+	}
+});
+
+// OAuth for web connectors (claude.ai, ChatGPT, grok.com): serve --public-url runs a single-owner
+// authorization server. A grant needs the owner's passcode, carries only the scopes ticked on the
+// consent page, rotates refresh tokens and ends the whole grant when an old one comes back.
+async function freePort() {
+	return await new Promise((resolve) => {
+		const s = createNetServer();
+		s.listen(0, "127.0.0.1", () => {
+			const { port } = s.address();
+			s.close(() => resolve(port));
+		});
+	});
+}
+
+function rawRequest(target, host) {
+	return new Promise((resolve, reject) => {
+		const u = new URL(target);
+		const req = httpRequest({ host: u.hostname, port: u.port, path: u.pathname, method: "GET", headers: { host } }, (res) => {
+			res.resume();
+			res.on("end", () => resolve(res.statusCode));
+		});
+		req.on("error", reject);
+		req.end();
+	});
+}
+
+test("serve --public-url: register, approve with the passcode, use only the ticked scopes, rotate and revoke", async () => {
+	const port = await freePort();
+	const base = `http://127.0.0.1:${port}`;
+	const home = join(root, "oauth-home");
+	mkdirSync(home, { recursive: true });
+	const oenv = { ...env, HOME: home };
+	const run = (args) => {
+		const r = spawnSync(process.execPath, [cli, ...args], { env: oenv, encoding: "utf8" });
+		return { code: r.status, out: `${r.stdout}${r.stderr}` };
+	};
+	assert.notEqual(run(["serve", "--public-url", "https://x.example/path"]).code, 0, "a public URL with a path is refused");
+	assert.notEqual(run(["serve", "--redirect-host", "a.example"]).code, 0, "--redirect-host needs --public-url");
+	const passcode = /([a-zA-Z0-9]{5}-){3}[a-zA-Z0-9]{5}/.exec(run(["token", "passcode"]).out)?.[0];
+	assert.ok(passcode, "token passcode prints a passcode");
+	const srv = spawn(process.execPath, [cli, "serve", "--port", String(port), "--public-url", base], { env: oenv });
+	try {
+		await new Promise((resolve, reject) => {
+			let out = "";
+			srv.stdout.on("data", (d) => {
+				out += d;
+				if (/OAuth on/.test(out)) resolve();
+			});
+			srv.on("exit", (code) => reject(new Error(`serve exited ${code}: ${out}`)));
+			setTimeout(() => reject(new Error(`serve didn't start: ${out}`)), 15_000);
+		});
+
+		const unauth = await fetch(`${base}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+		assert.equal(unauth.status, 401);
+		assert.match(unauth.headers.get("www-authenticate"), new RegExp(`resource_metadata="${base}/.well-known/oauth-protected-resource/mcp"`));
+		const prm = await (await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)).json();
+		assert.equal(prm.resource, `${base}/mcp`);
+		const asm = await (await fetch(`${base}/.well-known/oauth-authorization-server`)).json();
+		assert.equal(asm.authorization_response_iss_parameter_supported, true);
+		assert.deepEqual(asm.code_challenge_methods_supported, ["S256"]);
+		assert.equal(await rawRequest(`${base}/.well-known/oauth-authorization-server`, "evil.example"), 421, "a foreign Host header is refused");
+
+		const register = (uris) => fetch(`${base}/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "Claude", redirect_uris: uris }) });
+		assert.equal((await register(["https://evil.example/cb"])).status, 400, "only known connector hosts may receive codes");
+		assert.equal((await register(["https://claude.ai:8443/cb"])).status, 400, "no custom ports on a connector host");
+		const callback = "https://claude.ai/api/mcp/auth_callback";
+		const reg = await register([callback]);
+		assert.equal(reg.status, 201);
+		const { client_id } = await reg.json();
+
+		const verifier = randomBytes(32).toString("base64url");
+		const challenge = createHash("sha256").update(verifier).digest("base64url");
+		const q = new URLSearchParams({ response_type: "code", client_id, redirect_uri: callback, code_challenge: challenge, code_challenge_method: "S256", state: "s1", resource: `${base}/mcp` });
+		const noPkce = await fetch(`${base}/authorize?${new URLSearchParams({ response_type: "code", client_id, redirect_uri: callback })}`, { redirect: "manual" });
+		assert.equal(noPkce.status, 302);
+		assert.match(noPkce.headers.get("location"), /error=invalid_request/);
+		const consent = await fetch(`${base}/authorize?${q}`);
+		assert.equal(consent.status, 200);
+		const html = await consent.text();
+		assert.match(html, /Allow Claude to use your browser/);
+		assert.match(html, /value="browser\.act" checked/);
+		assert.doesNotMatch(html, /value="browser\.script" checked/, "running code as the user is never ticked by default");
+		const signed = /name="request" value="([^"]+)"/.exec(html)[1];
+
+		const approve = (fields) => fetch(`${base}/authorize`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(fields) });
+		const wrong = await approve([["request", signed], ["passcode", "nope"], ["scope", "browser.read"], ["decision", "allow"]]);
+		assert.equal(wrong.status, 401);
+		assert.match(await wrong.text(), /Wrong passcode/);
+		const forged = await approve([["request", `${signed.split(".")[0]}.AAAA`], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
+		assert.equal(forged.status, 400, "a tampered approval form is refused");
+		const ok = await approve([["request", signed], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
+		assert.equal(ok.status, 302);
+		const back = new URL(ok.headers.get("location"));
+		assert.equal(back.origin + back.pathname, callback);
+		assert.equal(back.searchParams.get("state"), "s1");
+		assert.equal(back.searchParams.get("iss"), base);
+		const code = back.searchParams.get("code");
+
+		const token = (fields) => fetch(`${base}/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(fields) });
+		const badVerifier = await token({ grant_type: "authorization_code", code, client_id, redirect_uri: callback, code_verifier: "x".repeat(43) });
+		assert.equal((await badVerifier.json()).error, "invalid_grant");
+		// The failed exchange used the code up; get a fresh one.
+		const consent2 = await (await fetch(`${base}/authorize?${q}`)).text();
+		const signed2 = /name="request" value="([^"]+)"/.exec(consent2)[1];
+		const ok2 = await approve([["request", signed2], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
+		const code2 = new URL(ok2.headers.get("location")).searchParams.get("code");
+		const grant = await (await token({ grant_type: "authorization_code", code: code2, client_id, redirect_uri: callback, code_verifier: verifier, resource: `${base}/mcp` })).json();
+		assert.equal(grant.scope, "browser.read");
+		assert.match(grant.access_token, /^tko_/);
+		assert.equal((await token({ grant_type: "authorization_code", code: code2, client_id, redirect_uri: callback, code_verifier: verifier })).status, 400, "a code works once");
+
+		const mcp = new Client({ name: "oauth-test", version: "0.0.0" });
+		await mcp.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { Authorization: `Bearer ${grant.access_token}` } } }));
+		const names = (await mcp.listTools()).tools.map((t) => t.name);
+		assert.ok(names.includes("read_page"));
+		assert.ok(!names.includes("click") && !names.includes("navigate") && !names.includes("run_js"), `only browser.read tools: ${names}`);
+		await mcp.close();
+
+		const rotated = await (await token({ grant_type: "refresh_token", refresh_token: grant.refresh_token, client_id })).json();
+		assert.match(rotated.access_token, /^tko_/);
+		const reuse = await token({ grant_type: "refresh_token", refresh_token: grant.refresh_token, client_id });
+		assert.equal((await reuse.json()).error, "invalid_grant", "an old refresh token is refused");
+		const afterReuse = await fetch(`${base}/mcp`, { method: "POST", headers: { authorization: `Bearer ${rotated.access_token}`, "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } }) });
+		assert.equal(afterReuse.status, 401, "reusing an old refresh token ends the whole grant");
+
+		const listed = JSON.parse(run(["token", "clients", "--json"]).out);
+		assert.equal(listed[0].client_id, client_id);
+		assert.equal(run(["token", "revoke", client_id]).code, 0);
+		assert.deepEqual(JSON.parse(run(["token", "clients", "--json"]).out), []);
+		const oauthFile = readFileSync(join(home, ".config", "tabkyra", "oauth.json"), "utf8");
+		assert.doesNotMatch(oauthFile, /tko_|tkf_|tks_/, "only hashes are stored");
+		assert.doesNotMatch(oauthFile, new RegExp(passcode), "the passcode is stored as a hash");
+	} finally {
+		srv.kill();
 	}
 });
