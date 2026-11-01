@@ -38,7 +38,8 @@ you serve on 443 stays private.
 
 - Tailscale isn't installed.
 - The tailnet has Tailnet Lock on. Funnel doesn't work on a Tailnet Lock tailnet.
-- Port 8443 on this computer already serves something else.
+- Port 8443 on this computer already serves something else, or forwards plain TCP.
+- A `remote.json` or a service from an earlier setup is in the way (`tabkyra remote off` clears it).
 
 The free way out is your own HTTPS front door. A Cloudflare named tunnel costs nothing (an
 account includes 1,000) and needs a domain on Cloudflare:
@@ -93,7 +94,7 @@ gave keep working.
 ```bash
 tabkyra token clients            # connectors and their grants
 tabkyra token revoke tkc_...     # remove one client and every grant it holds
-tabkyra remote off               # stop the service, close Funnel, delete remote.json
+tabkyra remote off               # close Funnel, stop the service, delete remote.json
 ```
 
 `remote off` leaves approvals in `oauth.json`. They can't be used while the URL is gone, but they

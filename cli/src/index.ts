@@ -527,7 +527,7 @@ async function main(): Promise<void> {
 				return;
 			}
 			if (sub === "off") {
-				process.exitCode = remoteOff();
+				process.exitCode = await remoteOff();
 				return;
 			}
 			throw new UsageError("Usage: tabkyra remote setup [--public-url https://host] [--port N] [--no-service] | status [--json] | off");
