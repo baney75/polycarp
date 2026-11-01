@@ -79,3 +79,15 @@ you once a fix is planned.
 - Publish details before a fix is out and we've agreed on a date.
 
 Good-faith research that follows these rules is welcome.
+
+## Local secret scan
+
+Husky's `.husky/pre-commit` runs `npm run check`, then `scripts/secret-scan.py` on
+staged lines. The scan flags token prefixes, PEM headers, basic-auth URLs and a short
+list of other shapes, and prints the file, line and pattern name (never the matched
+value). `npm install` runs `prepare` → Husky, so you do not need a separate
+`core.hooksPath`.
+
+When a test needs a fake credential, assemble it at runtime (`"gh" + "p_" + "x" * 36`)
+so this scan and GitGuardian never see a contiguous token. End a look-alike line with
+`secret-scan: allow` if you must keep one.
