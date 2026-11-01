@@ -151,10 +151,15 @@ test("the only OAuth client ids are Tabkyra's own: SIWC registers dynamically, C
 	assert.match(constants, /clientId: "Ov23li1qDiu9lRXbvcFh"/);
 	assert.match(constants, /agentName: "Tabkyra"/);
 	// No client secret for either: the SIWC open-source flow and GitHub's device flow need none.
+	// serve's authorization server (D30) issues and checks secrets for clients that register with
+	// it; it never sends one. It is exempt only while it makes no outbound request at all.
+	const authorizationServer = join(repo, "cli", "src", "oauth.ts");
+	assert.doesNotMatch(readFileSync(authorizationServer, "utf8"), /\bfetch\(|node:https?["']|\.request\(|XMLHttpRequest|WebSocket/, "cli/src/oauth.ts makes an outbound request");
 	for (const root of ROOTS) {
 		const dir = join(repo, root);
 		if (!existsSync(dir)) continue;
 		for (const file of files(dir)) {
+			if (file === authorizationServer) continue;
 			const text = readFileSync(file, "utf8");
 			assert.doesNotMatch(text, /client_secret["'\]]?\s*[:,=]/, `${relative(repo, file)} sends a client secret`);
 		}
