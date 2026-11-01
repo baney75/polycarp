@@ -22,11 +22,17 @@ const REFRESH_TTL = 30 * 86400;
 const CODE_TTL = 300;
 const REQUEST_TTL = 600;
 const MAX_CLIENTS = 100;
-const MAX_TOKENS = 2000;
+const MAX_TOKENS = 10_000;
+/** Spent refresh tokens kept per grant for replay detection: a month of hourly refreshes. */
+const MAX_SPENT_PER_GRANT = 800;
 const REUSE_GRACE = 60;
 
-/** Web clients get the code back only on these hosts (any path). Loopback http is for native clients (RFC 8252). */
-export const DEFAULT_REDIRECT_HOSTS = ["claude.ai", "claude.com", "chatgpt.com", "grok.com", "x.ai"];
+/** Web connectors' documented callbacks, matched exactly. Loopback http is for native clients (RFC 8252). */
+export const DEFAULT_REDIRECTS = ["https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback", "https://chatgpt.com/connector_platform_oauth_redirect"];
+/** ChatGPT's per-connector callbacks, used when a server doesn't send iss. */
+const CHATGPT_CALLBACK_PREFIX = "https://chatgpt.com/connector/oauth/";
+/** Hosts whose callback path isn't documented (grok.com): any path on them, like --redirect-host. */
+export const DEFAULT_REDIRECT_HOSTS = ["grok.com", "x.ai"];
 
 /** Checked on the consent page unless the owner unticks them. browser.script and threads.read must be ticked by hand. */
 export const DEFAULT_GRANT = ["browser.read", "browser.navigate", "browser.act", "library.read", "library.write", "skills.read", "user.ask"];
@@ -313,6 +319,8 @@ function redirectAllowed(config: OAuthConfig, uri: string): boolean {
 	if (url.hash || url.username || url.password || url.search || uri.length > 500) return false;
 	if (url.protocol === "http:" && LOOPBACK.has(url.hostname)) return true;
 	if (url.protocol !== "https:" || url.port) return false;
+	if (DEFAULT_REDIRECTS.includes(url.href)) return true;
+	if (url.href.startsWith(CHATGPT_CALLBACK_PREFIX) && /^[A-Za-z0-9_-]{1,128}$/.test(url.href.slice(CHATGPT_CALLBACK_PREFIX.length))) return true;
 	const hosts = new Set([...DEFAULT_REDIRECT_HOSTS, ...config.redirectHosts].map((h) => h.toLowerCase()));
 	return hosts.has(url.hostname.toLowerCase());
 }
@@ -350,7 +358,7 @@ export function registerClient(config: OAuthConfig, body: unknown, source = "unk
 	const redirectUris = uris as string[];
 	for (const uri of redirectUris) {
 		if (!redirectAllowed(config, uri)) {
-			throw new OAuthError(400, "invalid_redirect_uri", `Redirect URIs must be https on ${[...DEFAULT_REDIRECT_HOSTS, ...config.redirectHosts].join(", ")}, or http on localhost.`);
+			throw new OAuthError(400, "invalid_redirect_uri", `Redirect URIs must be a known connector callback (claude.ai, ChatGPT), https on ${[...DEFAULT_REDIRECT_HOSTS, ...config.redirectHosts].join(", ")}, or http on localhost.`);
 		}
 	}
 	const method = (request.token_endpoint_auth_method ?? "none") as AuthMethod;
@@ -369,11 +377,10 @@ export function registerClient(config: OAuthConfig, body: unknown, source = "unk
 	change((state) => {
 		const clients = Object.values(state.clients);
 		if (clients.length >= MAX_CLIENTS) {
-			// Evict only clients that never finished authorizing and are over an hour old, so a flood of registrations can't push out real ones.
+			// Evict the oldest client that never got a grant, at any age: a flood of registrations pushes
+			// out itself, never an approved connector, and never blocks a new registration.
 			const active = new Set(Object.values(state.tokens).map((t) => t.client_id));
-			const oldest = clients
-				.filter((c) => !active.has(c.client_id) && c.last_used === undefined && c.created_at < now() - 3600)
-				.sort((a, b) => a.created_at - b.created_at)[0];
+			const oldest = clients.filter((c) => !active.has(c.client_id) && c.last_used === undefined).sort((a, b) => a.created_at - b.created_at)[0];
 			if (!oldest) throw new OAuthError(400, "invalid_client_metadata", "Too many registered clients. Remove unused ones with tabkyra token revoke <client id>.");
 			delete state.clients[oldest.client_id];
 		}
@@ -414,6 +421,8 @@ export interface ConsentDetails {
 	clientName: string;
 	redirectHost: string;
 	redirectOrigin: string;
+	redirectUri: string;
+	registeredAgo: string;
 	passcodeSet: boolean;
 	/** The scopes to show ticked: the defaults, or what the owner ticked before an error. */
 	ticked?: string[];
@@ -452,7 +461,17 @@ function details(state: State, request: AuthorizeRequest): ConsentDetails {
 	const blob = Buffer.from(JSON.stringify(request)).toString("base64url");
 	const signature = createHmac("sha256", state.key).update(blob).digest("base64url");
 	const redirect = new URL(request.redirect_uri);
-	return { signed: `${blob}.${signature}`, clientName: state.clients[request.client_id].client_name, redirectHost: redirect.host, redirectOrigin: redirect.origin, passcodeSet: Boolean(state.passcode) };
+	const age = Math.max(0, now() - state.clients[request.client_id].created_at);
+	const registeredAgo = age < 120 ? `${age} seconds ago` : age < 7200 ? `${Math.round(age / 60)} minutes ago` : `${Math.round(age / 3600)} hours ago`;
+	return {
+		signed: `${blob}.${signature}`,
+		clientName: state.clients[request.client_id].client_name,
+		redirectHost: redirect.host,
+		redirectOrigin: redirect.origin,
+		redirectUri: request.redirect_uri,
+		registeredAgo,
+		passcodeSet: Boolean(state.passcode),
+	};
 }
 
 function signedRequest(state: State, signed: string): AuthorizeRequest {
@@ -578,21 +597,35 @@ export function exchangeToken(params: URLSearchParams, authorization: string | u
 			const saved = state.tokens[presented];
 			if (!saved || saved.kind !== "refresh" || saved.client_id !== registered.client_id || saved.expires < now()) throw new OAuthError(400, "invalid_grant", "The refresh token is invalid or expired.");
 			const same = (t: Token) => t.family === saved.family && t.client_id === saved.client_id;
+			/** Retire the grant's live tokens: access tokens go; a live refresh token becomes spent (a later use ends the grant). */
+			const retireLive = () => {
+				for (const [hash, t] of Object.entries(state.tokens)) {
+					if (!same(t) || t.revoked) continue;
+					if (t.kind === "access") delete state.tokens[hash];
+					else t.revoked = true;
+				}
+			};
 			if (saved.revoked) {
-				// A client that lost the response to its refresh may retry once in the grace window (RFC 9700 4.14.2).
+				// A client that lost the response to its refresh may retry once, within the grace window,
+				// the token it just rotated (RFC 9700 4.14.2). The pair it lost becomes spent.
 				if (saved.rotated_at !== undefined && now() - saved.rotated_at <= REUSE_GRACE) {
 					saved.rotated_at = undefined;
-					for (const [hash, t] of Object.entries(state.tokens)) if (same(t) && !t.revoked) delete state.tokens[hash];
+					retireLive();
 					return issue(state, registered.client_id, saved.resource, saved.scopes, saved.family);
 				}
-				// Otherwise someone holds a copy. End the whole grant (saved before refusing).
+				// Any other spent token coming back means someone holds a copy. End the whole grant (saved before refusing).
 				for (const [hash, t] of Object.entries(state.tokens)) if (same(t)) delete state.tokens[hash];
 				return null;
 			}
-			// Keep only the refresh token just rotated (for reuse detection); drop older dead ones and the old access tokens.
-			for (const [hash, t] of Object.entries(state.tokens)) if (same(t) && hash !== presented && (t.revoked || t.kind === "access")) delete state.tokens[hash];
-			saved.revoked = true;
+			retireLive();
+			// Only the token rotated last may be retried; every older spent token is a replay.
+			for (const t of Object.values(state.tokens)) if (same(t) && t.kind === "refresh") t.rotated_at = undefined;
 			saved.rotated_at = now();
+			// Spent refresh tokens stay until they expire, so any replay is caught; past the per-grant cap the oldest go.
+			const spent = Object.entries(state.tokens)
+				.filter(([, t]) => same(t) && t.kind === "refresh" && t.revoked)
+				.sort((a, b) => a[1].expires - b[1].expires);
+			for (const [hash] of spent.slice(0, Math.max(0, spent.length - MAX_SPENT_PER_GRANT))) delete state.tokens[hash];
 			return issue(state, registered.client_id, saved.resource, saved.scopes, saved.family);
 		});
 		if (!result) throw new OAuthError(400, "invalid_grant", "This refresh token was already used. The grant has been revoked; connect again.");
@@ -611,7 +644,7 @@ export function revokeGrant(params: URLSearchParams, authorization: string | und
 	});
 }
 
-/** A grant's id as sessions and listings show it: "o-" and 8 hex, never the shape of a static token id. */
+/** A grant's id as sessions and listings show it: "o-" and 32 hex, never the shape of a static token id. */
 const familyId = (family: string) => `o-${family}`;
 
 export interface OAuthCaller {
@@ -667,7 +700,8 @@ export function consentPage(config: OAuthConfig, d: ConsentDetails, error?: stri
 	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Approve Tabkyra access</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;margin:0;background:#f6f5f2;color:#1b1b1b}main{max-width:560px;margin:6vh auto;padding:28px;background:#fff;border-radius:14px;box-shadow:0 1px 3px #0002}h1{font-size:1.3rem;margin:0 0 .5rem}.scope{display:flex;gap:.6rem;align-items:flex-start;margin:.45rem 0;font-size:.93rem}.scope input{margin-top:.3rem}fieldset{border:1px solid #ddd;border-radius:10px;padding:.6rem .9rem;margin:1rem 0}legend{font-weight:600;padding:0 .3rem}label[for]{display:block;font-weight:600;margin-top:1rem}.secret{-webkit-text-security:disc}input.secret{width:100%;box-sizing:border-box;font:inherit;padding:.6rem;border:1px solid #bbb;border-radius:8px}.row{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.2rem}button{font:inherit;padding:.55rem 1.1rem;border-radius:8px;border:1px solid #bbb;background:#fff;cursor:pointer}.primary{background:#1b1b1b;color:#fff;border-color:#1b1b1b}.error{color:#a40000;font-weight:600}@media (prefers-color-scheme:dark){body{background:#151515;color:#eee}main{background:#222}fieldset{border-color:#444}button{background:#333;color:#eee;border-color:#555}.primary{background:#eee;color:#111}.error{color:#ff8a8a}}</style></head>
 <body><main><h1>Allow ${escape(d.clientName)} to use your browser through Tabkyra?</h1>
-<p>It will work in its own tab group in your signed-in browser, with the permissions you tick. After you approve, you go back to <strong>${escape(d.redirectHost)}</strong>. Only approve a connection you just started.</p>
+<p>It will work in its own tab group in your signed-in browser, with the permissions you tick. After you approve, you go back to <strong>${escape(d.redirectHost)}</strong>.</p>
+<p>Only approve a connection you started yourself, just now, in your own account. A link someone sent you could connect their account to your browser. This connection registered ${escape(d.registeredAgo)} and returns to <code>${escape(d.redirectUri)}</code>.</p>
 ${error ? `<p class="error">${escape(error)}</p>` : ""}${d.passcodeSet ? "" : '<p class="error">No passcode is set yet. Run tabkyra token passcode on the computer that runs serve.</p>'}
 <form method="post" action="/authorize"><input type="hidden" name="request" value="${escape(d.signed)}">
 <fieldset><legend>Permissions</legend>${boxes}</fieldset>

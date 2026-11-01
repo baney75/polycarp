@@ -639,10 +639,11 @@ Owner, 2026-11-01: get the MCP working for claude.ai, grok.com, Grok Bot and Cha
   grant's scopes there from the same SCOPES (D9); still no wildcard. Default ticks cover
   reading, opening pages, clicking and typing, the library, skills and `ask_user`;
   `browser.script` and `threads.read` must be ticked by hand.
-- Codes go back only to the connector hosts (claude.ai, claude.com, chatgpt.com, grok.com,
-  x.ai) on any path, or loopback. grok.com doesn't document its callback path, and ChatGPT
-  uses a per-connector path unless the server sends `iss`, so the check is by host; the consent
-  page names the host and the passcode gates it.
+- Codes go back only to the documented callbacks (claude.ai's and claude.com's
+  `/api/mcp/auth_callback`, ChatGPT's `/connector_platform_oauth_redirect` and its
+  per-connector `/connector/oauth/<id>`), to any path on grok.com and x.ai, whose callback path
+  isn't documented, or to loopback. The consent page shows the full callback and how long ago
+  the client registered, and warns against approving a link someone sent.
 - The grant (a family of rotating tokens) is the session's owner, not the access token, so an
   hourly refresh doesn't end the session or its tab group.
 - Rate limits count per client and per source, with high global caps that only bound scrypt

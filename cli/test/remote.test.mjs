@@ -438,6 +438,9 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 		const register = (uris) => fetch(`${base}/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "Claude", redirect_uris: uris }) });
 		assert.equal((await register(["https://evil.example/cb"])).status, 400, "only known connector hosts may receive codes");
 		assert.equal((await register(["https://claude.ai:8443/cb"])).status, 400, "no custom ports on a connector host");
+		assert.equal((await register(["https://claude.ai/some/other/path"])).status, 400, "claude.ai codes go only to its documented callback");
+		assert.equal((await register(["https://chatgpt.com/connector/oauth/abc_123"])).status, 201, "ChatGPT's per-connector callback");
+		assert.equal((await register(["https://grok.com/any/path"])).status, 201, "grok.com's path isn't documented, so any path on it");
 		const callback = "https://claude.ai/api/mcp/auth_callback";
 		const reg = await register([callback]);
 		assert.equal(reg.status, 201);
@@ -453,6 +456,7 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 		assert.equal(consent.status, 200);
 		const html = await consent.text();
 		assert.match(html, /Allow Claude to use your browser/);
+		assert.match(html, /registered \d+ seconds ago and returns to <code>https:\/\/claude\.ai\/api\/mcp\/auth_callback<\/code>/);
 		assert.match(html, /value="browser\.act" checked/);
 		assert.doesNotMatch(html, /value="browser\.script" checked/, "running code as the user is never ticked by default");
 		const signed = /name="request" value="([^"]+)"/.exec(html)[1];
@@ -500,27 +504,42 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 		// A retry inside the grace window (a lost response) gets a fresh pair and keeps the grant.
 		const retry = await (await token({ grant_type: "refresh_token", refresh_token: grant.refresh_token, client_id })).json();
 		assert.match(retry.access_token, /^tko_/);
-		const grants = JSON.parse(run(["token", "clients", "--json"]).out)[0].grants;
+		const grants = JSON.parse(run(["token", "clients", "--json"]).out).find((cl) => cl.client_id === client_id).grants;
 		assert.equal(grants.length, 1);
 		assert.match(grants[0].id, /^o-[0-9a-f]{32}$/, "grant ids carry 128 random bits");
+		// The pair the retry replaced is spent: using its refresh token now ends the grant.
+		const lostPair = await token({ grant_type: "refresh_token", refresh_token: rotated.refresh_token, client_id });
+		assert.equal((await lostPair.json()).error, "invalid_grant", "the pair replaced by a retry is spent");
+		assert.deepEqual(JSON.parse(run(["token", "clients", "--json"]).out).find((cl) => cl.client_id === client_id).grants, [], "and using it ended the grant");
 		// A second use of the same old token is a copy in someone else's hands: the grant ends.
 		const reuse = await token({ grant_type: "refresh_token", refresh_token: grant.refresh_token, client_id });
 		assert.equal((await reuse.json()).error, "invalid_grant", "an old refresh token is refused");
 		const afterReuse = await fetch(`${base}/mcp`, { method: "POST", headers: { authorization: `Bearer ${retry.access_token}`, "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } }) });
 		assert.equal(afterReuse.status, 401, "reusing an old refresh token ends the whole grant");
 
+		// A token spent several rotations back still ends the grant.
+		const consentR = await (await fetch(`${base}/authorize?${q}`)).text();
+		const okR = await approve([["request", /name="request" value="([^"]+)"/.exec(consentR)[1]], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
+		let chain = await (await token({ grant_type: "authorization_code", code: new URL(okR.headers.get("location")).searchParams.get("code"), client_id, redirect_uri: callback, code_verifier: verifier })).json();
+		const first = chain.refresh_token;
+		for (let i = 0; i < 3; i++) chain = await (await token({ grant_type: "refresh_token", refresh_token: chain.refresh_token, client_id })).json();
+		assert.match(chain.access_token, /^tko_/);
+		const old = await token({ grant_type: "refresh_token", refresh_token: first, client_id });
+		assert.equal((await old.json()).error, "invalid_grant");
+		const afterOld = await fetch(`${base}/mcp`, { method: "POST", headers: { authorization: `Bearer ${chain.access_token}`, "content-type": "application/json" }, body: "{}" });
+		assert.equal(afterOld.status, 401, "a replay from three rotations back ends the grant");
 		// One grant can be ended on its own.
 		const consent3 = await (await fetch(`${base}/authorize?${q}`)).text();
 		const ok3 = await approve([["request", /name="request" value="([^"]+)"/.exec(consent3)[1]], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
 		const grant3 = await (await token({ grant_type: "authorization_code", code: new URL(ok3.headers.get("location")).searchParams.get("code"), client_id, redirect_uri: callback, code_verifier: verifier })).json();
-		const id3 = JSON.parse(run(["token", "clients", "--json"]).out)[0].grants[0].id;
+		const id3 = JSON.parse(run(["token", "clients", "--json"]).out).find((cl) => cl.client_id === client_id).grants[0].id;
 		assert.equal(run(["token", "revoke", id3]).code, 0);
 		const afterGrantRevoke = await fetch(`${base}/mcp`, { method: "POST", headers: { authorization: `Bearer ${grant3.access_token}`, "content-type": "application/json" }, body: "{}" });
 		assert.equal(afterGrantRevoke.status, 401);
 		const listed = JSON.parse(run(["token", "clients", "--json"]).out);
-		assert.equal(listed[0].client_id, client_id);
+		assert.ok(listed.some((cl) => cl.client_id === client_id));
 		assert.equal(run(["token", "revoke", client_id]).code, 0);
-		assert.deepEqual(JSON.parse(run(["token", "clients", "--json"]).out), []);
+		assert.ok(!JSON.parse(run(["token", "clients", "--json"]).out).some((cl) => cl.client_id === client_id), "the revoked client is gone");
 		const oauthFile = readFileSync(join(home, ".config", "tabkyra", "oauth.json"), "utf8");
 		assert.doesNotMatch(oauthFile, /tko_|tkf_|tks_/, "only hashes are stored");
 		assert.doesNotMatch(oauthFile, new RegExp(passcode), "the passcode is stored as a hash");

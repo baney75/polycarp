@@ -473,17 +473,16 @@ async function main(): Promise<void> {
 			if (sub === "revoke") {
 				if (!name) throw new UsageError("Usage: tabkyra token revoke <id|name|client id|grant id>");
 				if (name.startsWith("o-")) {
-					const gone = revokeGrantById(name);
-					console.log(gone ? `${sym.ok} Ended grant ${name}.` : `${sym.dot} No live grant ${name}.`);
-					process.exitCode = gone ? 0 : 1;
+					if (revokeGrantById(name)) {
+						console.log(`${sym.ok} Ended grant ${name}.`);
+						return;
+					}
+				}
+				if (name.startsWith("tkc_") && revokeClient(name)) {
+					console.log(`${sym.ok} Removed OAuth client ${name} and its grants.`);
 					return;
 				}
-				if (name.startsWith("tkc_")) {
-					const gone = revokeClient(name);
-					console.log(gone ? `${sym.ok} Removed OAuth client ${name} and its grants.` : `${sym.dot} No OAuth client ${name}.`);
-					process.exitCode = gone ? 0 : 1;
-					return;
-				}
+				// Not a live grant or client: a static token named like one (made before such names were refused) still matches below.
 				const n = revokeToken(name);
 				console.log(n ? `${sym.ok} Revoked ${n} token${n === 1 ? "" : "s"}.` : `${sym.dot} No active token matches ${name}.`);
 				process.exitCode = n ? 0 : 1;
