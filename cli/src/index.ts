@@ -14,7 +14,7 @@ import { installCopilotSdk } from "./subscriptions/install-sdk.ts";
 import { LIBRARY_USAGE, runLibrary } from "./library.ts";
 import { createToken, loadTokens, loadUsage, revokeToken, SCOPES, serve } from "./remote.ts";
 import { listClients, normalizePublicUrl, type OAuthConfig, passcodeSet, revokeClient, revokeGrantById, setPasscode } from "./oauth.ts";
-import { loadRemoteConfig, remoteOff, remoteSetup, remoteStatus } from "./remote-setup.ts";
+import { loadRemoteConfig, remoteFile, remoteOff, remoteSetup, remoteStatus } from "./remote-setup.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
 import { runSessions, runTabs, SessionsUsageError } from "./sessions.ts";
 import { runThreads, ThreadsUsageError } from "./threads.ts";
@@ -405,6 +405,7 @@ async function main(): Promise<void> {
 			// remote.json (tabkyra remote setup) supplies what flags leave out; flags win.
 			const rawPublic = option("--public-url");
 			const saved = rawPublic === undefined ? loadRemoteConfig() : undefined;
+			if (saved) console.log(`Using ${remoteFile()} (tabkyra remote off removes it).`);
 			const port = Number(option("--port") ?? saved?.port ?? DEFAULT_PORT);
 			if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError("--port takes a port number.");
 			const list = (name: string) => (option(name) ?? "").split(",").map((x) => x.trim()).filter(Boolean);
@@ -518,7 +519,7 @@ async function main(): Promise<void> {
 						throw new UsageError(err instanceof Error ? err.message : String(err));
 					}
 				}
-				process.exitCode = remoteSetup({ publicUrl, port, service: !flag("--no-service") });
+				process.exitCode = await remoteSetup({ publicUrl, port, service: !flag("--no-service") });
 				return;
 			}
 			if (sub === "status") {

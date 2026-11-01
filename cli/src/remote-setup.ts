@@ -8,6 +8,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { get as httpGet } from "node:http";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { launcherValid, tabkyraBinary, which } from "./harness.ts";
@@ -69,16 +70,44 @@ export function saveRemoteConfig(config: RemoteConfig): void {
 
 function run(cmd: string, args: string[]): { code: number; out: string } {
 	const r = spawnSync(cmd, args, { encoding: "utf8", timeout: 60_000 });
-	if (r.error) return { code: 1, out: r.error.message };
-	return { code: r.status ?? 1, out: `${r.stdout ?? ""}${r.stderr ?? ""}`.trim() };
+	const output = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();
+	// A timeout or spawn error still keeps what the command printed: tailscale prints its sign-in URL before it waits.
+	if (r.error) return { code: 1, out: [output, r.error.message].filter(Boolean).join("\n") };
+	return { code: r.status ?? 1, out: output };
 }
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 // ---------- Tailscale Funnel ----------
 
+type ServeWeb = Record<string, { Handlers?: Record<string, { Proxy?: string }> }>;
+
+/** What `tailscale` says about this machine: not connected, unreadable serve status, or its DNS name and Web entries. */
+type TailscaleState = { kind: "disconnected" } | { kind: "unreadable" } | { kind: "ok"; dns: string; web: ServeWeb };
+
+function readTailscale(bin: string): TailscaleState {
+	let dns = "";
+	try {
+		dns = String((JSON.parse(run(bin, ["status", "--json"]).out) as { Self?: { DNSName?: string } }).Self?.DNSName ?? "").replace(/\.$/, "");
+	} catch {
+		/* not connected */
+	}
+	if (!dns) return { kind: "disconnected" };
+	const serveStatus = run(bin, ["serve", "status", "--json"]);
+	try {
+		if (serveStatus.code !== 0) throw new Error("serve status failed");
+		return { kind: "ok", dns, web: (JSON.parse(serveStatus.out || "{}") as { Web?: ServeWeb }).Web ?? {} };
+	} catch {
+		return { kind: "unreadable" };
+	}
+}
+
+const LOCAL_PROXY = /^http:\/\/(127\.0\.0\.1|localhost):/;
+
 type FunnelPlan = { ok: true; bin: string; dns: string } | { ok: false; message: string };
 
-/** Everything that can refuse Funnel, checked before anything changes. */
-function planFunnel(port: number): FunnelPlan {
+/** Everything that can refuse Funnel, checked before anything changes. `ports` are the local ports that count as ours on 8443. */
+function planFunnel(ports: number[]): FunnelPlan {
 	const bin = which("tailscale");
 	if (!bin) return { ok: false, message: "Tailscale isn't installed. Install it from tailscale.com, or use --public-url with your own tunnel (a free Cloudflare named tunnel works)." };
 	if (/tailnet lock is enabled/i.test(run(bin, ["lock", "status"]).out)) {
@@ -88,24 +117,12 @@ function planFunnel(port: number): FunnelPlan {
 				"This tailnet has Tailnet Lock on, and Tailscale Funnel doesn't work on a Tailnet Lock tailnet. Nothing was changed. Use --public-url with a Cloudflare named tunnel (free); docs/remote.md has the steps.",
 		};
 	}
-	let dns = "";
-	try {
-		dns = String((JSON.parse(run(bin, ["status", "--json"]).out) as { Self?: { DNSName?: string } }).Self?.DNSName ?? "").replace(/\.$/, "");
-	} catch {
-		/* reported below */
-	}
-	if (!dns) return { ok: false, message: "Tailscale isn't connected. Run tailscale up, then try again." };
-	const serveStatus = run(bin, ["serve", "status", "--json"]);
-	let web: Record<string, { Handlers?: Record<string, { Proxy?: string }> }>;
-	try {
-		if (serveStatus.code !== 0) throw new Error("serve status failed");
-		web = (JSON.parse(serveStatus.out || "{}") as { Web?: typeof web }).Web ?? {};
-	} catch {
-		return { ok: false, message: "Couldn't read tailscale serve status, so nothing was changed." };
-	}
-	const existing = web[`${dns}:${FUNNEL_PORT}`];
+	const state = readTailscale(bin);
+	if (state.kind === "disconnected") return { ok: false, message: "Tailscale isn't connected. Run tailscale up, then try again." };
+	if (state.kind === "unreadable") return { ok: false, message: "Couldn't read tailscale serve status, so nothing was changed." };
+	const existing = state.web[`${state.dns}:${FUNNEL_PORT}`];
 	if (existing) {
-		const ours = new Set([`http://127.0.0.1:${port}`, `http://127.0.0.1:${port}/`, `http://localhost:${port}`, `http://localhost:${port}/`]);
+		const ours = new Set(ports.flatMap((port) => [`http://127.0.0.1:${port}`, `http://127.0.0.1:${port}/`, `http://localhost:${port}`, `http://localhost:${port}/`]));
 		const others = Object.entries(existing.Handlers ?? {}).filter(([, h]) => !h.Proxy || !ours.has(h.Proxy));
 		if (others.length) {
 			return {
@@ -114,18 +131,35 @@ function planFunnel(port: number): FunnelPlan {
 			};
 		}
 	}
-	return { ok: true, bin, dns };
+	return { ok: true, bin, dns: state.dns };
+}
+
+/** Does port 8443 on this machine proxy to a local port? Used when remote.json can't say what we set up. */
+type StrayFunnel = { kind: "none" } | { kind: "found"; bin: string; paths: string[] } | { kind: "unknown"; message: string };
+
+function strayFunnel(): StrayFunnel {
+	const bin = which("tailscale");
+	if (!bin) return { kind: "none" };
+	const state = readTailscale(bin);
+	if (state.kind === "disconnected") return { kind: "none" };
+	if (state.kind === "unreadable") return { kind: "unknown", message: "Couldn't read tailscale serve status, so I can't tell whether Funnel is on." };
+	const handlers = Object.entries(state.web[`${state.dns}:${FUNNEL_PORT}`]?.Handlers ?? {}).filter(([, h]) => h.Proxy && LOCAL_PROXY.test(h.Proxy));
+	return handlers.length ? { kind: "found", bin, paths: handlers.map(([path]) => path) } : { kind: "none" };
 }
 
 // ---------- User service ----------
 
 const xml = (text: string) => text.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
-const systemdQuote = (text: string) => (/^[A-Za-z0-9_./:@%+=,-]+$/.test(text) ? text : `"${text.replace(/(["\\])/g, "\\$1")}"`);
+/** systemd expands % specifiers in unit files, so a literal % is written %%. */
+const systemdQuote = (text: string) => {
+	const escaped = text.replace(/%/g, "%%");
+	return /^[A-Za-z0-9_./:@+=,-]+$/.test(text) ? escaped : `"${escaped.replace(/(["\\])/g, "\\$1")}"`;
+};
 
-/** Environment the service needs when this shell moved Tabkyra's state somewhere other than the default. */
+/** The service reads remote.json and oauth.json from the same directory as this shell; the socket directory only when it was moved. */
 function serviceEnvironment(): Record<string, string> {
-	const out: Record<string, string> = {};
-	for (const name of ["TABKYRA_CONFIG_DIR", "TABKYRA_SOCKET_DIR"]) if (process.env[name]) out[name] = process.env[name] as string;
+	const out: Record<string, string> = { TABKYRA_CONFIG_DIR: configDir() };
+	if (process.env.TABKYRA_SOCKET_DIR) out.TABKYRA_SOCKET_DIR = process.env.TABKYRA_SOCKET_DIR;
 	return out;
 }
 
@@ -180,15 +214,26 @@ WantedBy=default.target
 `;
 }
 
+const serviceFile = (): string | undefined => (process.platform === "darwin" ? plistPath() : process.platform === "linux" ? unitPath() : undefined);
+const launchdLog = () => join(homedir(), "Library", "Logs", "tabkyra-serve.log");
+const serviceLogHint = () => (process.platform === "darwin" ? launchdLog() : `journalctl --user -u ${SYSTEMD_UNIT}`);
+
+/** After bootout, launchd can still list the service for a moment; bootstrap into that fails. */
+async function waitUntilUnloaded(): Promise<void> {
+	const deadline = Date.now() + 5000;
+	while (run("launchctl", ["print", launchdTarget()]).code === 0 && Date.now() < deadline) await sleep(250);
+}
+
 /** Install and (re)start the user service. Returns the step that failed, if any; the file is written either way. */
-function installService(): { ok: boolean; message: string; file?: string } {
+async function installService(): Promise<{ ok: boolean; message: string; file?: string }> {
 	const binary = tabkyraBinary();
 	const env = serviceEnvironment();
 	if (process.platform === "darwin") {
-		const log = join(homedir(), "Library", "Logs", "tabkyra-serve.log");
+		const log = launchdLog();
 		mkdirSync(dirname(log), { recursive: true });
 		writeAtomic(plistPath(), plistText(binary, env, log), 0o644);
 		run("launchctl", ["bootout", launchdTarget()]);
+		await waitUntilUnloaded();
 		const r = run("launchctl", ["bootstrap", `gui/${process.getuid?.() ?? 0}`, plistPath()]);
 		return { ok: r.code === 0, file: plistPath(), message: r.code === 0 ? `Service installed (${plistPath()}); logs in ${log}.` : `launchctl bootstrap failed: ${r.out}. Run: launchctl bootstrap gui/${process.getuid?.() ?? 0} ${plistPath()}` };
 	}
@@ -203,19 +248,74 @@ function installService(): { ok: boolean; message: string; file?: string } {
 	return { ok: false, message: `No service manager is set up for ${process.platform}. Keep it running yourself: ${binary} serve` };
 }
 
-function removeService(): string[] {
-	const notes: string[] = [];
+/** Stop and remove the user service. A failed stop keeps the service file so `remote off` can be run again. */
+function removeService(): { ok: boolean; notes: string[]; failure?: string } {
 	if (process.platform === "darwin" && existsSync(plistPath())) {
-		run("launchctl", ["bootout", launchdTarget()]);
+		const r = run("launchctl", ["bootout", launchdTarget()]);
+		// bootout also fails when the service was never loaded; that is already stopped.
+		if (r.code !== 0 && run("launchctl", ["print", launchdTarget()]).code === 0) {
+			return { ok: false, notes: [], failure: `launchctl bootout failed: ${r.out}. The service is still installed and remote.json is kept. Run: launchctl bootout ${launchdTarget()}, then tabkyra remote off again.` };
+		}
 		rmSync(plistPath(), { force: true });
-		notes.push(`Stopped and removed ${plistPath()}.`);
-	} else if (process.platform === "linux" && existsSync(unitPath())) {
-		run("systemctl", ["--user", "disable", "--now", SYSTEMD_UNIT]);
+		return { ok: true, notes: [`Stopped and removed ${plistPath()}.`] };
+	}
+	if (process.platform === "linux" && existsSync(unitPath())) {
+		const r = run("systemctl", ["--user", "disable", "--now", SYSTEMD_UNIT]);
+		if (r.code !== 0) {
+			return { ok: false, notes: [], failure: `systemctl --user disable --now ${SYSTEMD_UNIT} failed: ${r.out}. The service is still installed and remote.json is kept. Run that command yourself, then tabkyra remote off again.` };
+		}
 		rmSync(unitPath(), { force: true });
 		run("systemctl", ["--user", "daemon-reload"]);
-		notes.push(`Stopped and removed ${unitPath()}.`);
+		return { ok: true, notes: [`Stopped and removed ${unitPath()}.`] };
 	}
-	return notes;
+	return { ok: true, notes: [] };
+}
+
+// ---------- the local serve ----------
+
+type LocalServe = { state: "none" } | { state: "match" } | { state: "other"; detail: string };
+
+/** One GET to the loopback port. node:http, because fetch refuses a few ports (1, 6000, 6666) that a user could pick. */
+function getLocal(port: number, timeoutMs: number): Promise<{ status: number; body: string } | { error: string; refused: boolean }> {
+	return new Promise((resolve) => {
+		const req = httpGet({ host: "127.0.0.1", port, path: METADATA_PATH, timeout: timeoutMs }, (res) => {
+			let body = "";
+			res.setEncoding("utf8");
+			res.on("data", (chunk: string) => {
+				if (body.length < 65_536) body += chunk;
+			});
+			res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+			res.on("error", (err) => resolve({ error: err.message, refused: false }));
+		});
+		req.on("timeout", () => {
+			req.destroy();
+			resolve({ error: `it didn't answer in ${timeoutMs / 1000} seconds`, refused: false });
+		});
+		req.on("error", (err: NodeJS.ErrnoException) => resolve({ error: err.message, refused: err.code === "ECONNREFUSED" || err.code === "EADDRNOTAVAIL" }));
+	});
+}
+
+/** Does anything answer on the local port, and is it Tabkyra with OAuth for this publicUrl? */
+async function probeLocal(port: number, publicUrl: string, timeoutMs = 2000): Promise<LocalServe> {
+	const res = await getLocal(port, timeoutMs);
+	if ("error" in res) return res.refused ? { state: "none" } : { state: "other", detail: res.error };
+	if (res.status !== 200) return { state: "other", detail: `it answered ${res.status} for ${METADATA_PATH}` };
+	try {
+		const body = JSON.parse(res.body) as { resource?: unknown };
+		if (body.resource === `${publicUrl}/mcp`) return { state: "match" };
+		return { state: "other", detail: `it says resource ${String(body.resource)}, not ${publicUrl}/mcp` };
+	} catch {
+		return { state: "other", detail: `its answer for ${METADATA_PATH} isn't JSON` };
+	}
+}
+
+async function waitForServe(port: number, publicUrl: string, totalMs: number): Promise<boolean> {
+	const deadline = Date.now() + totalMs;
+	for (;;) {
+		if ((await probeLocal(port, publicUrl, 1500)).state === "match") return true;
+		if (Date.now() >= deadline) return false;
+		await sleep(500);
+	}
 }
 
 // ---------- remote setup ----------
@@ -227,7 +327,7 @@ export interface SetupOptions {
 	service: boolean;
 }
 
-export function remoteSetup(options: SetupOptions): number {
+export async function remoteSetup(options: SetupOptions): Promise<number> {
 	const port = options.port ?? DEFAULT_PORT;
 	let previous: RemoteConfig | undefined;
 	try {
@@ -235,26 +335,42 @@ export function remoteSetup(options: SetupOptions): number {
 	} catch {
 		previous = undefined;
 	}
+	// Plan: everything that can refuse, before anything changes.
 	let publicUrl: string;
 	let route: RemoteConfig["route"];
+	let funnelBin = "";
 	if (options.publicUrl) {
+		if (previous?.route === "funnel") {
+			console.error(`${sym.fail} Funnel from an earlier setup is on. Run tabkyra remote off first.`);
+			return 1;
+		}
 		publicUrl = options.publicUrl;
 		route = "custom";
-		if (previous?.route === "funnel") console.log(`${sym.warn} Funnel from an earlier setup is still on. ${c.bold("tabkyra remote off")} turns it off (then run setup again).`);
 	} else {
-		const plan = planFunnel(port);
+		const plan = planFunnel(previous?.route === "funnel" ? [port, previous.port] : [port]);
 		if (!plan.ok) {
 			console.error(`${sym.fail} ${plan.message}`);
 			return 1;
 		}
-		const r = run(plan.bin, ["funnel", "--bg", "--yes", `--https=${FUNNEL_PORT}`, `http://127.0.0.1:${port}`]);
-		if (r.code !== 0) {
-			console.error(`${sym.fail} tailscale funnel failed: ${r.out}`);
-			return 1;
-		}
+		funnelBin = plan.bin;
 		publicUrl = `https://${plan.dns}:${FUNNEL_PORT}`;
 		route = "funnel";
-		console.log(`${sym.ok} Tailscale Funnel on ${publicUrl} ${c.dim(`-> 127.0.0.1:${port}`)}`);
+	}
+	if (options.service && !launcherValid()) {
+		console.error(`${sym.fail} ${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run tabkyra install first, then tabkyra remote setup again.`);
+		return 1;
+	}
+	// Whatever listens on the port must be Tabkyra with OAuth for this URL, or Funnel would publish something else.
+	const probe = await probeLocal(port, publicUrl);
+	if (probe.state === "other") {
+		const file = serviceFile();
+		const restartsOurs = options.service && Boolean(file && existsSync(file)) && previous?.port === port;
+		if (!restartsOurs) {
+			console.error(
+				`${sym.fail} Something already listens on 127.0.0.1:${port} and isn't Tabkyra serve for ${publicUrl} (${probe.detail}). Nothing was changed. Stop it (a tabkyra serve you started by hand, or another program), or pick another port with --port, then run tabkyra remote setup again.`,
+			);
+			return 1;
+		}
 	}
 	if (!passcodeSet()) {
 		const passcode = setPasscode();
@@ -263,15 +379,38 @@ export function remoteSetup(options: SetupOptions): number {
 	}
 	saveRemoteConfig({ publicUrl, port, route, ...(previous?.redirectHosts ? { redirectHosts: previous.redirectHosts } : {}), ...(previous?.allowHosts ? { allowHosts: previous.allowHosts } : {}) });
 	console.log(`${sym.ok} Wrote ${c.dim(remoteFile())}`);
-	let code = 0;
+	let listening = probe.state === "match";
 	if (options.service) {
-		if (!launcherValid()) console.log(`${sym.warn} ${tabkyraBinary()} isn't a working launcher yet. Run ${c.bold("tabkyra install")} so the service has something to start.`);
-		const service = installService();
+		const service = await installService();
 		console.log(`${service.ok ? sym.ok : sym.fail} ${service.message}`);
-		if (!service.ok) code = 1;
-	} else {
-		console.log(`${sym.dot} No service installed. Start it yourself: ${c.bold("tabkyra serve")}`);
+		if (!service.ok) {
+			console.error(`${sym.fail} The service didn't start, so ${route === "funnel" ? "Funnel was not opened" : "setup isn't finished"}. remote.json is kept; fix the cause above and run tabkyra remote setup again.`);
+			return 1;
+		}
+		if (!(await waitForServe(port, publicUrl, 15_000))) {
+			console.error(
+				`${sym.fail} tabkyra serve isn't answering on 127.0.0.1:${port} with ${publicUrl}/mcp after 15 seconds, so ${route === "funnel" ? "Funnel was not opened" : "setup isn't finished"}. Look in ${serviceLogHint()}. remote.json is kept; fix the cause and run tabkyra remote setup again.`,
+			);
+			return 1;
+		}
+		listening = true;
 	}
+	if (route === "funnel") {
+		const r = run(funnelBin, ["funnel", "--bg", "--yes", `--https=${FUNNEL_PORT}`, `http://127.0.0.1:${port}`]);
+		if (r.code !== 0) {
+			const login = /https:\/\/login\.tailscale\.com\/[^\s"'<>]*/.exec(r.out);
+			if (login) {
+				console.error(`${sym.fail} Funnel isn't enabled for this tailnet or node yet. Open ${login[0]}, enable it, then run tabkyra remote setup again.`);
+			} else {
+				console.error(`${sym.fail} tailscale funnel failed: ${r.out}`);
+			}
+			console.error(`${sym.dot} remote.json is kept. Fix that, then run tabkyra remote setup again, or tabkyra remote off to undo setup.`);
+			return 1;
+		}
+		console.log(`${sym.ok} Tailscale Funnel on ${publicUrl} ${c.dim(`-> 127.0.0.1:${port}`)}`);
+		if (!listening) console.log(`${sym.warn} Funnel is open; start tabkyra serve now.`);
+	}
+	if (!options.service) console.log(`${sym.dot} No service installed. Start it yourself: ${c.bold("tabkyra serve")}`);
 	console.log(`
 Connector URL: ${c.bold(`${publicUrl}/mcp`)}
 
@@ -281,7 +420,7 @@ Connector URL: ${c.bold(`${publicUrl}/mcp`)}
 
 Approve with your Tabkyra passcode.
 Check it with: tabkyra remote status`);
-	return code;
+	return 0;
 }
 
 // ---------- remote status ----------
@@ -380,14 +519,36 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 
 export function remoteOff(): number {
 	let config: RemoteConfig | undefined;
+	let badFile: string | undefined;
 	try {
 		config = loadRemoteConfig();
 	} catch (err) {
-		console.error(`${sym.fail} ${err instanceof Error ? err.message : String(err)}`);
+		badFile = err instanceof Error ? err.message : String(err);
+	}
+	const service = removeService();
+	if (!service.ok) {
+		console.error(`${sym.fail} ${service.failure}`);
 		return 1;
 	}
-	for (const note of removeService()) console.log(`${sym.ok} ${note}`);
-	if (config?.route === "funnel") {
+	for (const note of service.notes) console.log(`${sym.ok} ${note}`);
+	if (badFile !== undefined) {
+		console.log(`${sym.warn} ${badFile}`);
+		const stray = strayFunnel();
+		if (stray.kind === "unknown") {
+			console.error(`${sym.fail} ${stray.message} ${remoteFile()} is kept. Start Tailscale and run tabkyra remote off again, or delete the file yourself.`);
+			return 1;
+		}
+		if (stray.kind === "found") {
+			const r = run(stray.bin, ["funnel", `--https=${FUNNEL_PORT}`, "off"]);
+			if (r.code !== 0) {
+				console.error(`${sym.fail} Couldn't turn Funnel off: ${r.out}. ${remoteFile()} is kept; run tailscale funnel --https=${FUNNEL_PORT} off, then tabkyra remote off again.`);
+				return 1;
+			}
+			console.log(`${sym.ok} Tailscale Funnel on port ${FUNNEL_PORT} is off.`);
+		}
+		rmSync(remoteFile(), { force: true });
+		console.log(`${sym.ok} Removed ${c.dim(remoteFile())}`);
+	} else if (config?.route === "funnel") {
 		const bin = which("tailscale");
 		const r = bin ? run(bin, ["funnel", `--https=${FUNNEL_PORT}`, "off"]) : { code: 1, out: "tailscale isn't on PATH" };
 		if (r.code !== 0) {
@@ -397,9 +558,21 @@ export function remoteOff(): number {
 		console.log(`${sym.ok} Tailscale Funnel on port ${FUNNEL_PORT} is off.`);
 	}
 	if (config) {
+		if (config.route === "custom") console.log(`${sym.warn} Your own front door for ${config.publicUrl} still forwards to this machine. Stop it there (for example, stop cloudflared); tabkyra remote off can't.`);
 		rmSync(remoteFile(), { force: true });
 		console.log(`${sym.ok} Removed ${c.dim(remoteFile())}`);
-	} else {
+	} else if (badFile === undefined) {
+		const stray = strayFunnel();
+		if (stray.kind === "found") {
+			console.error(
+				`${sym.fail} No remote.json, but Tailscale Funnel on port ${FUNNEL_PORT} forwards ${stray.paths.join(", ")} to a local port. Tabkyra didn't set it up from this config, so it was left on. If it is yours to close, run tailscale funnel --https=${FUNNEL_PORT} off.`,
+			);
+			return 1;
+		}
+		if (stray.kind === "unknown") {
+			console.error(`${sym.fail} No remote.json. ${stray.message} Start Tailscale and run tabkyra remote off again.`);
+			return 1;
+		}
 		console.log(`${sym.dot} No remote.json; nothing else to remove.`);
 	}
 	console.log(c.dim("Approved connectors keep their grants in oauth.json. tabkyra token clients lists them; tabkyra token revoke <client id> ends one."));

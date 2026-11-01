@@ -72,7 +72,8 @@ to `127.0.0.1:8787` works the same way. `--port N` changes the port; `--no-servi
 service, and you start `tabkyra serve` yourself. Quick tunnels (`trycloudflare.com`) won't do:
 the name changes on every start.
 
-If you switch from Funnel to your own front door, run `tabkyra remote off` first so Funnel closes.
+If you switch from Funnel to your own front door, run `tabkyra remote off` first so Funnel closes;
+setup refuses to switch while Funnel from an earlier setup is on.
 
 ## Add the connector
 
@@ -95,8 +96,12 @@ tabkyra token revoke tkc_...     # remove one client and every grant it holds
 tabkyra remote off               # stop the service, close Funnel, delete remote.json
 ```
 
-`remote off` leaves approvals in `oauth.json`. They can't be used once the URL is gone, but
-`token revoke` removes them for good.
+`remote off` leaves approvals in `oauth.json`. They can't be used while the URL is gone, but they
+become usable again if you set up later with the same URL. `tabkyra token clients` lists them and
+`tabkyra token revoke <client id>` ends them for good.
+
+On a custom route (`--public-url`), `remote off` can't close your front door: your own tunnel
+keeps forwarding to this computer. Stop it there, for example by stopping `cloudflared`.
 
 ## Security notes
 

@@ -597,8 +597,8 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 // passcode and a user service. tailscale, launchctl and systemctl are stubs that log their args.
 const DNS = "mac.tail1234.ts.net";
 
-/** A scenario with its own HOME and stub tailscale, launchctl and systemctl on PATH. */
-function remoteScenario(name, { lock = "Tailnet lock is NOT enabled.", serveStatus = "{}" } = {}) {
+/** A scenario with its own HOME and stub tailscale, launchctl and systemctl on PATH. funnelFails: what `tailscale funnel --bg` prints before exiting 1. */
+function remoteScenario(name, { lock = "Tailnet lock is NOT enabled.", serveStatus = "{}", funnelFails = "" } = {}) {
 	const dir = join(root, name);
 	const bin = join(dir, "bin");
 	const home = join(dir, "home");
@@ -609,11 +609,13 @@ function remoteScenario(name, { lock = "Tailnet lock is NOT enabled.", serveStat
 		writeFileSync(join(bin, file), `#!/bin/sh\n${body}`);
 		chmodSync(join(bin, file), 0o755);
 	};
+	const funnelCase = funnelFails ? `"funnel --bg") echo '${funnelFails}'; exit 1 ;;\n` : "";
 	script(
 		"tailscale",
-		`echo "tailscale $*" >> ${log}\ncase "$1 $2" in\n"lock status") echo '${lock}' ;;\n"status --json") echo '{"Self":{"DNSName":"${DNS}."}}' ;;\n"serve status") echo '${serveStatus}' ;;\nesac\n`,
+		`echo "tailscale $*" >> ${log}\ncase "$1 $2" in\n"lock status") echo '${lock}' ;;\n"status --json") echo '{"Self":{"DNSName":"${DNS}."}}' ;;\n"serve status") echo '${serveStatus}' ;;\n${funnelCase}esac\n`,
 	);
-	script("launchctl", `echo "launchctl $*" >> ${log}\n`);
+	// The stub service managers start nothing. launchctl print says "not loaded" (exit 1) unless failStop() ran.
+	script("launchctl", `echo "launchctl $*" >> ${log}\ncase "$1" in\nprint) exit 1 ;;\nesac\n`);
 	script("systemctl", `echo "systemctl $*" >> ${log}\n`);
 	const scenarioEnv = { HOME: home, TABKYRA_CONFIG_DIR: join(home, "cfg"), PATH: `${bin}:${dirname(process.execPath)}` };
 	return {
@@ -625,8 +627,41 @@ function remoteScenario(name, { lock = "Tailnet lock is NOT enabled.", serveStat
 		remoteJson: () => JSON.parse(readFileSync(join(scenarioEnv.TABKYRA_CONFIG_DIR, "remote.json"), "utf8")),
 		hasRemoteJson: () => existsSync(join(scenarioEnv.TABKYRA_CONFIG_DIR, "remote.json")),
 		serviceFile: () => (process.platform === "darwin" ? join(home, "Library", "LaunchAgents", "com.tabkyra.serve.plist") : join(home, ".config", "systemd", "user", "tabkyra-serve.service")),
+		/** The launcher `tabkyra install` writes: an executable script that runs an existing file. */
+		launcher: () => {
+			const path = join(home, ".config", "tabkyra", "tabkyra");
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, `#!/bin/sh\nexec "${process.execPath}" "$@"\n`);
+			chmodSync(path, 0o755);
+			return path;
+		},
+		/** Make stopping the service fail, as it would if the service manager refused. */
+		failStop: () => {
+			script("launchctl", `echo "launchctl $*" >> ${log}\ncase "$1" in\nbootout) echo 'boom' >&2; exit 1 ;;\nesac\n`);
+			script("systemctl", `echo "systemctl $*" >> ${log}\ncase "$2" in\ndisable) echo 'boom' >&2; exit 1 ;;\nesac\n`);
+		},
 	};
 }
+
+const METADATA_PATH = "/.well-known/oauth-protected-resource/mcp";
+
+/** A local HTTP server on a free port. resource: answer the protected-resource metadata with it; undefined: answer 404 to everything. */
+async function localServer(resource) {
+	const srv = createHttpServer((req, res) => {
+		if (resource === undefined || req.url !== METADATA_PATH) {
+			res.statusCode = 404;
+			res.end("not here");
+			return;
+		}
+		res.setHeader("content-type", "application/json");
+		res.end(JSON.stringify({ resource }));
+	});
+	await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve));
+	return { port: srv.address().port, close: () => new Promise((resolve) => srv.close(resolve)) };
+}
+
+const FUNNEL_URL = `https://${DNS}:8443`;
+const funnelCall = (port) => `tailscale funnel --bg --yes --https=8443 http://127.0.0.1:${port}`;
 
 const PASSCODE = /([a-zA-Z0-9]{5}-){3}[a-zA-Z0-9]{5}/;
 const managerCalls = (s) => s.calls().filter((x) => /^(systemctl|launchctl)/.test(x));
@@ -727,35 +762,138 @@ test("remote setup --no-service writes no service file", () => {
 	assert.equal(managerCalls(s).length, 0);
 });
 
-serviceTest("remote setup installs a service that runs serve, and twice converges to the same state", () => {
+serviceTest("remote setup installs a service that runs serve, opens Funnel only after serve answers, and twice converges to the same state", async () => {
 	const s = remoteScenario("service");
-	const binary = join(s.home, ".config", "tabkyra", "tabkyra");
-	const first = s.run(["remote", "setup"]);
-	assert.equal(first.code, 0, first.out);
-	const unit = readFileSync(s.serviceFile(), "utf8");
-	const firstJson = JSON.stringify(s.remoteJson());
-	if (process.platform === "linux") {
-		assert.ok(unit.split("\n").includes(`ExecStart=${binary} serve`), unit);
-		assert.ok(unit.split("\n").includes("Restart=always"), unit);
-		assert.ok(unit.split("\n").includes("RestartSec=10"), unit);
-		assert.ok(unit.split("\n").includes("WantedBy=default.target"), unit);
-		assert.ok(unit.split("\n").includes(`Environment=TABKYRA_CONFIG_DIR=${s.config}`), unit);
-		assert.deepEqual(managerCalls(s), ["systemctl --user daemon-reload", "systemctl --user enable tabkyra-serve.service", "systemctl --user restart tabkyra-serve.service"]);
-	} else {
-		assert.ok(unit.includes(`<string>${binary}</string>\n\t\t<string>serve</string>`), unit);
-		assert.match(unit, /<key>RunAtLoad<\/key>\s*<true\/>/);
-		assert.match(unit, /<key>KeepAlive<\/key>\s*<true\/>/);
-		assert.match(unit, /<key>ThrottleInterval<\/key>\s*<integer>10<\/integer>/);
-		assert.ok(unit.includes(join(s.home, "Library", "Logs", "tabkyra-serve.log")));
-		const uid = process.getuid();
-		assert.deepEqual(managerCalls(s), [`launchctl bootout gui/${uid}/com.tabkyra.serve`, `launchctl bootstrap gui/${uid} ${s.serviceFile()}`]);
+	const binary = s.launcher();
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	try {
+		const first = await runAsync(s, ["remote", "setup", "--port", String(local.port)]);
+		assert.equal(first.code, 0, first.out);
+		const unit = readFileSync(s.serviceFile(), "utf8");
+		const firstJson = JSON.stringify(s.remoteJson());
+		assert.deepEqual(s.remoteJson(), { publicUrl: FUNNEL_URL, port: local.port, route: "funnel" });
+		if (process.platform === "linux") {
+			assert.ok(unit.split("\n").includes(`ExecStart=${binary} serve`), unit);
+			assert.ok(unit.split("\n").includes("Restart=always"), unit);
+			assert.ok(unit.split("\n").includes("RestartSec=10"), unit);
+			assert.ok(unit.split("\n").includes("WantedBy=default.target"), unit);
+			assert.ok(unit.split("\n").includes(`Environment=TABKYRA_CONFIG_DIR=${s.config}`), unit);
+			assert.ok(unit.split("\n").includes(`Environment=TABKYRA_SOCKET_DIR=${env.TABKYRA_SOCKET_DIR}`), unit);
+			assert.deepEqual(managerCalls(s), ["systemctl --user daemon-reload", "systemctl --user enable tabkyra-serve.service", "systemctl --user restart tabkyra-serve.service"]);
+		} else {
+			assert.ok(unit.includes(`<string>${binary}</string>\n\t\t<string>serve</string>`), unit);
+			assert.ok(unit.includes(`<key>TABKYRA_CONFIG_DIR</key>\n\t\t<string>${s.config}</string>`), unit);
+			assert.match(unit, /<key>RunAtLoad<\/key>\s*<true\/>/);
+			assert.match(unit, /<key>KeepAlive<\/key>\s*<true\/>/);
+			assert.match(unit, /<key>ThrottleInterval<\/key>\s*<integer>10<\/integer>/);
+			assert.ok(unit.includes(join(s.home, "Library", "Logs", "tabkyra-serve.log")));
+			const uid = process.getuid();
+			assert.deepEqual(managerCalls(s), [`launchctl bootout gui/${uid}/com.tabkyra.serve`, `launchctl print gui/${uid}/com.tabkyra.serve`, `launchctl bootstrap gui/${uid} ${s.serviceFile()}`]);
+		}
+		const calls = s.calls();
+		assert.ok(calls.indexOf(funnelCall(local.port)) > calls.findIndex((x) => /^(systemctl --user restart|launchctl bootstrap)/.test(x)), `Funnel opens after the service starts:\n${calls.join("\n")}`);
+		const second = await runAsync(s, ["remote", "setup", "--port", String(local.port)]);
+		assert.equal(second.code, 0, second.out);
+		assert.equal(readFileSync(s.serviceFile(), "utf8"), unit, "the service file is the same after a second run");
+		assert.equal(JSON.stringify(s.remoteJson()), firstJson);
+		assert.equal(s.calls().filter((x) => x === funnelCall(local.port)).length, 2);
+		assert.equal(managerCalls(s).length, 6);
+	} finally {
+		await local.close();
 	}
-	const second = s.run(["remote", "setup"]);
-	assert.equal(second.code, 0, second.out);
-	assert.equal(readFileSync(s.serviceFile(), "utf8"), unit, "the service file is the same after a second run");
-	assert.equal(JSON.stringify(s.remoteJson()), firstJson);
-	assert.equal(s.calls().filter((x) => x === "tailscale funnel --bg --yes --https=8443 http://127.0.0.1:8787").length, 2);
-	assert.equal(managerCalls(s).length, process.platform === "linux" ? 6 : 4);
+});
+
+serviceTest("remote setup with a service that never answers exits 1, names the log and never opens Funnel", () => {
+	const s = remoteScenario("service-silent");
+	s.launcher();
+	const port = 1; // nothing listens here
+	const r = s.run(["remote", "setup", "--port", String(port)]);
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /isn't answering on 127\.0\.0\.1:1 with https:\/\/mac\.tail1234\.ts\.net:8443\/mcp after 15 seconds, so Funnel was not opened/);
+	assert.match(r.out, process.platform === "linux" ? /journalctl --user -u tabkyra-serve\.service/ : /tabkyra-serve\.log/);
+	assert.ok(!s.calls().some((x) => x.startsWith("tailscale funnel")), s.calls().join("\n"));
+	assert.ok(s.hasRemoteJson(), "remote.json is kept");
+});
+
+test("remote setup with a service requested and no working launcher exits 1 and installs nothing", () => {
+	const s = remoteScenario("no-launcher");
+	const r = s.run(["remote", "setup"]);
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /Run tabkyra install first, then tabkyra remote setup again\./);
+	assert.equal(existsSync(s.serviceFile()), false);
+	assert.equal(s.hasRemoteJson(), false);
+	assert.ok(!s.calls().some((x) => x.startsWith("tailscale funnel")), s.calls().join("\n"));
+	assert.equal(managerCalls(s).length, 0);
+});
+
+test("remote setup refuses when a foreign process answers on the port: nothing is changed and Funnel stays closed", async () => {
+	const s = remoteScenario("foreign");
+	const foreign = await localServer(undefined);
+	try {
+		const r = await runAsync(s, ["remote", "setup", "--no-service", "--port", String(foreign.port)]);
+		assert.equal(r.code, 1, r.out);
+		assert.match(r.out, new RegExp(`Something already listens on 127\\.0\\.0\\.1:${foreign.port} and isn't Tabkyra serve for ${FUNNEL_URL}`));
+		assert.match(r.out, /Nothing was changed\. Stop it/);
+		assert.ok(!s.calls().some((x) => x.startsWith("tailscale funnel")), s.calls().join("\n"));
+		assert.equal(s.hasRemoteJson(), false);
+		assert.doesNotMatch(r.out, PASSCODE);
+	} finally {
+		await foreign.close();
+	}
+});
+
+test("remote setup --no-service opens Funnel when serve already answers with this URL, and when nothing listens it says to start serve", async () => {
+	const ready = remoteScenario("ready");
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	try {
+		const r = await runAsync(ready, ["remote", "setup", "--no-service", "--port", String(local.port)]);
+		assert.equal(r.code, 0, r.out);
+		assert.ok(ready.calls().includes(funnelCall(local.port)), ready.calls().join("\n"));
+		assert.doesNotMatch(r.out, /start tabkyra serve now/);
+	} finally {
+		await local.close();
+	}
+	const idle = remoteScenario("idle");
+	const port = await freePort();
+	const r = idle.run(["remote", "setup", "--no-service", "--port", String(port)]);
+	assert.equal(r.code, 0, r.out);
+	assert.ok(idle.calls().includes(funnelCall(port)), idle.calls().join("\n"));
+	assert.match(r.out, /Funnel is open; start tabkyra serve now\./);
+});
+
+test("remote setup refuses a switch from Funnel to a custom URL and leaves remote.json as it was", () => {
+	const s = remoteScenario("switch");
+	const port = 9123;
+	assert.equal(s.run(["remote", "setup", "--no-service", "--port", String(port)]).code, 0);
+	const before = readFileSync(join(s.config, "remote.json"), "utf8");
+	const r = s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--no-service"]);
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /Funnel from an earlier setup is on\. Run tabkyra remote off first\./);
+	assert.equal(readFileSync(join(s.config, "remote.json"), "utf8"), before);
+	assert.deepEqual(s.remoteJson(), { publicUrl: FUNNEL_URL, port, route: "funnel" });
+});
+
+test("remote setup says so when Funnel isn't enabled for the tailnet, and keeps remote.json", () => {
+	const s = remoteScenario("funnel-disabled", { funnelFails: "Funnel not available; visit https://login.tailscale.com/f/funnel?node=n123 to enable it" });
+	const r = s.run(["remote", "setup", "--no-service"]);
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /Funnel isn't enabled for this tailnet or node yet\. Open https:\/\/login\.tailscale\.com\/f\/funnel\?node=n123, enable it, then run tabkyra remote setup again\./);
+	assert.ok(s.hasRemoteJson());
+});
+
+test("the systemd unit escapes % in environment values", { skip: process.platform !== "linux" }, async () => {
+	const s = remoteScenario("percent");
+	s.launcher();
+	const config = join(s.home, "100%", "cfg");
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	try {
+		const r = await runAsync(s, ["remote", "setup", "--port", String(local.port)], { TABKYRA_CONFIG_DIR: config });
+		assert.equal(r.code, 0, r.out);
+	} finally {
+		await local.close();
+	}
+	const lines = readFileSync(s.serviceFile(), "utf8").split("\n");
+	assert.ok(lines.includes(`Environment="TABKYRA_CONFIG_DIR=${join(s.home, "100%%", "cfg")}"`), lines.join("\n"));
 });
 
 test("remote setup accepts a port 8443 that is already ours", () => {
@@ -843,9 +981,15 @@ test("remote status without remote.json fails and says to run setup", () => {
 	assert.match(r.out, /not found\. Run tabkyra remote setup/);
 });
 
-serviceTest("remote off turns Funnel off, removes the service and remote.json, and keeps oauth.json", () => {
+serviceTest("remote off turns Funnel off, removes the service and remote.json, and keeps oauth.json", async () => {
 	const s = remoteScenario("off");
-	assert.equal(s.run(["remote", "setup"]).code, 0);
+	s.launcher();
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	try {
+		assert.equal((await runAsync(s, ["remote", "setup", "--port", String(local.port)])).code, 0);
+	} finally {
+		await local.close();
+	}
 	assert.ok(existsSync(s.serviceFile()));
 	const r = s.run(["remote", "off"]);
 	assert.equal(r.code, 0, r.out);
@@ -858,13 +1002,57 @@ serviceTest("remote off turns Funnel off, removes the service and remote.json, a
 	assert.match(r.out, /tabkyra token revoke/);
 });
 
-test("remote off on a custom route never calls tailscale", () => {
+serviceTest("remote off exits 1 and keeps the service file and remote.json when the service won't stop", async () => {
+	const s = remoteScenario("off-stuck");
+	s.launcher();
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	try {
+		assert.equal((await runAsync(s, ["remote", "setup", "--port", String(local.port)])).code, 0);
+	} finally {
+		await local.close();
+	}
+	s.failStop();
+	const r = s.run(["remote", "off"]);
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, process.platform === "linux" ? /systemctl --user disable --now tabkyra-serve\.service failed: boom/ : /launchctl bootout failed: boom/);
+	assert.match(r.out, /then tabkyra remote off again/);
+	assert.ok(existsSync(s.serviceFile()), "the service file is kept");
+	assert.deepEqual(s.remoteJson(), { publicUrl: FUNNEL_URL, port: local.port, route: "funnel" });
+	assert.ok(!s.calls().includes("tailscale funnel --https=8443 off"), "Funnel is not touched until the service is stopped");
+});
+
+test("remote off on a custom route never calls tailscale and says your own tunnel still forwards", () => {
 	const s = remoteScenario("off-custom");
 	assert.equal(s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--no-service"]).code, 0);
 	const r = s.run(["remote", "off"]);
 	assert.equal(r.code, 0, r.out);
 	assert.deepEqual(s.calls(), []);
 	assert.equal(s.hasRemoteJson(), false);
+	assert.match(r.out, /Your own front door for https:\/\/tabkyra\.example\.com still forwards to this machine\. Stop it there \(for example, stop cloudflared\)/);
+});
+
+test("remote off with an unreadable remote.json still turns off a Funnel that proxies to a local port, then deletes the file", () => {
+	const serveStatus = JSON.stringify({ Web: { [`${DNS}:8443`]: { Handlers: { "/": { Proxy: "http://localhost:8787" } } } } });
+	const s = remoteScenario("off-bad-file", { serveStatus });
+	mkdirSync(s.config, { recursive: true });
+	writeFileSync(join(s.config, "remote.json"), "{ not json");
+	const r = s.run(["remote", "off"]);
+	assert.equal(r.code, 0, r.out);
+	assert.ok(s.calls().includes("tailscale funnel --https=8443 off"), s.calls().join("\n"));
+	assert.equal(s.hasRemoteJson(), false);
+});
+
+test("remote off with no remote.json warns and exits 1 when Funnel on 8443 still proxies locally, and exits 0 when it doesn't", () => {
+	const serveStatus = JSON.stringify({ Web: { [`${DNS}:8443`]: { Handlers: { "/": { Proxy: "http://127.0.0.1:8787" } } } } });
+	const stray = remoteScenario("off-stray", { serveStatus });
+	const r = stray.run(["remote", "off"]);
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /No remote\.json, but Tailscale Funnel on port 8443 forwards \/ to a local port/);
+	assert.ok(!stray.calls().includes("tailscale funnel --https=8443 off"));
+	const clean = remoteScenario("off-clean");
+	const ok = clean.run(["remote", "off"]);
+	assert.equal(ok.code, 0, ok.out);
+	assert.match(ok.out, /No remote\.json; nothing else to remove\./);
 });
 
 test("remote lists its subcommands in help and rejects unknown flags", () => {
