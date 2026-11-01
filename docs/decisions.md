@@ -658,3 +658,23 @@ Owner, 2026-11-01: get the MCP working for claude.ai, grok.com, Grok Bot and Cha
   The free route is a Cloudflare named tunnel (every account includes 1,000 at no cost) on an
   always-on host, reaching the browser's computer over the tailnet. A quick tunnel won't do:
   its URL changes and it doesn't carry SSE.
+
+## D31. Each install is its own single-owner server; no central relay (Claude, 2026-11-01)
+
+Many users will connect claude.ai, ChatGPT and grok.com to their own Tabkyra. `tabkyra remote
+setup` (docs/remote.md) is the one command for it.
+
+- Each install is single-owner: its own OAuth server (D30), its own passcode, its own public
+  address. There is no relay run by the maintainer.
+- A relay would cost the maintainer money as users grow, and it would put one server in front of
+  every user's signed-in browser: a single breach, subpoena or bug would reach all of them.
+  Per-install servers keep the blast radius to one user and the cost at zero.
+- Default route: Tailscale Funnel on port 8443. It is free, needs no domain and keeps the OAuth
+  paths at the root of the URL; 443 stays private. Setup refuses without changing anything when
+  Tailscale is missing, the tailnet has Tailnet Lock on (Funnel doesn't work there), or 8443
+  already serves something else.
+- Otherwise: a Cloudflare named tunnel (free) or any HTTPS front door the user runs to
+  `127.0.0.1:<port>`, given as `--public-url`.
+- `remote.json` in the config dir (0600) holds the route; `tabkyra serve` reads it when
+  `--public-url` is absent, and flags win. A user service (launchd or systemd, user level) keeps
+  serve running.
