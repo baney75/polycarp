@@ -102,7 +102,7 @@ tabkyra remote off               # stop the service, close Funnel, delete remote
 
 - Anyone on the internet can reach the URL. Two things stand between them and your browser: the
   passcode on the approval page (five wrong tries per connection, then a 15-minute wait) and the
-  per-permission consent. Keep the passcode in a password manager and don't reuse it.
+  per-permission consent. Keep the passcode in a password manager the browser Tabkyra drives can't fill, and don't reuse it.
 - An approval carries only the permissions you ticked; there is no wildcard. `browser.script`
   (run code in a page as you) and `threads.read` (your past chats) start unticked. Leave them off
   unless you need them.

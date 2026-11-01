@@ -259,7 +259,7 @@ export function remoteSetup(options: SetupOptions): number {
 	if (!passcodeSet()) {
 		const passcode = setPasscode();
 		console.log(`${sym.ok} OAuth passcode:\n\n  ${passcode}\n`);
-		console.log(c.dim("Shown once. Enter it on the approval page when claude.ai, ChatGPT or grok.com connects. Keep it in your password manager. tabkyra token passcode replaces it; grants already approved keep working."));
+		console.log(c.dim("Shown once. Type it on the approval page when claude.ai, ChatGPT or grok.com connects. Keep it in a password manager, but not one the browser Tabkyra drives can fill. tabkyra token passcode replaces it; grants already approved keep working."));
 	}
 	saveRemoteConfig({ publicUrl, port, route, ...(previous?.redirectHosts ? { redirectHosts: previous.redirectHosts } : {}), ...(previous?.allowHosts ? { allowHosts: previous.allowHosts } : {}) });
 	console.log(`${sym.ok} Wrote ${c.dim(remoteFile())}`);
