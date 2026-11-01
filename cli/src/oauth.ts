@@ -23,8 +23,11 @@ const CODE_TTL = 300;
 const REQUEST_TTL = 600;
 const MAX_CLIENTS = 100;
 const MAX_TOKENS = 10_000;
-/** Spent refresh tokens kept per grant for replay detection: a month of hourly refreshes. */
-const MAX_SPENT_PER_GRANT = 800;
+/**
+ * Spent refresh tokens a grant may hold for replay detection: a month at two refreshes an hour.
+ * A grant past it ends (its evidence is never dropped while it lives).
+ */
+const MAX_SPENT_PER_GRANT = 1500;
 const REUSE_GRACE = 60;
 
 /** Web connectors' documented callbacks, matched exactly. Loopback http is for native clients (RFC 8252). */
@@ -159,9 +162,9 @@ function change<T>(update: (state: State) => T): T {
 		const result = update(state);
 		const time = now();
 		for (const [hash, item] of Object.entries(state.tokens)) if (item.expires < time) delete state.tokens[hash];
-		// Over the cap: drop dead tokens first, then whole grants, oldest first, never part of a live one.
+		// Over the cap: drop whole grants, oldest first, never part of one. A live grant keeps its spent
+		// refresh tokens, so a replay of one still ends it.
 		if (Object.keys(state.tokens).length > MAX_TOKENS) {
-			for (const [hash, item] of Object.entries(state.tokens)) if (item.revoked) delete state.tokens[hash];
 			const newest = new Map<string, number>();
 			for (const t of Object.values(state.tokens)) newest.set(t.family, Math.max(newest.get(t.family) ?? 0, t.expires));
 			for (const [family] of [...newest].sort((a, b) => a[1] - b[1])) {
@@ -621,14 +624,17 @@ export function exchangeToken(params: URLSearchParams, authorization: string | u
 			// Only the token rotated last may be retried; every older spent token is a replay.
 			for (const t of Object.values(state.tokens)) if (same(t) && t.kind === "refresh") t.rotated_at = undefined;
 			saved.rotated_at = now();
-			// Spent refresh tokens stay until they expire, so any replay is caught; past the per-grant cap the oldest go.
-			const spent = Object.entries(state.tokens)
-				.filter(([, t]) => same(t) && t.kind === "refresh" && t.revoked)
-				.sort((a, b) => a[1].expires - b[1].expires);
-			for (const [hash] of spent.slice(0, Math.max(0, spent.length - MAX_SPENT_PER_GRANT))) delete state.tokens[hash];
+			// Spent refresh tokens stay until they expire, so any replay is caught. A grant with more
+			// than the cap ends rather than forget one: a copy could otherwise rotate the evidence away.
+			const spent = Object.values(state.tokens).filter((t) => same(t) && t.kind === "refresh" && t.revoked).length;
+			if (spent > MAX_SPENT_PER_GRANT) {
+				for (const [hash, t] of Object.entries(state.tokens)) if (same(t)) delete state.tokens[hash];
+				return "cap" as const;
+			}
 			return issue(state, registered.client_id, saved.resource, saved.scopes, saved.family);
 		});
 		if (!result) throw new OAuthError(400, "invalid_grant", "This refresh token was already used. The grant has been revoked; connect again.");
+		if (result === "cap") throw new OAuthError(400, "invalid_grant", "This grant refreshed too often and has ended; connect again.");
 		return result;
 	}
 	throw new OAuthError(400, "unsupported_grant_type", "Use authorization_code or refresh_token.");
