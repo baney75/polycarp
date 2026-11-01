@@ -645,6 +645,13 @@ Owner, 2026-11-01: get the MCP working for claude.ai, grok.com, Grok Bot and Cha
   page names the host and the passcode gates it.
 - The grant (a family of rotating tokens) is the session's owner, not the access token, so an
   hourly refresh doesn't end the session or its tab group.
+- Rate limits count per client and per source, with high global caps that only bound scrypt
+  work (run off the event loop, four at a time). A flood with forged source headers can still
+  fill a global cap for up to 15 minutes; `tabkyra token passcode` clears every limit. The
+  passcode carries about 100 bits, so the caps don't guard against guessing.
+- The passcode field is a masked text field with `autocomplete="one-time-code"`, so a password
+  manager in the browser Tabkyra drives won't fill it for an agent tab. Blocking agent tabs
+  from the approval page in the extension is a follow-up.
 - Tailscale Funnel can't be the public route on Donovan's tailnet: Tailnet Lock rejects Funnel
   ingress (field note `abbey1/tailscale-funnel-never-reachable-on-a-tailnet-lock-tailnet`).
   The free route is a Cloudflare named tunnel (every account includes 1,000 at no cost) on an

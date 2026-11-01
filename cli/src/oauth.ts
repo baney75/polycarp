@@ -12,7 +12,7 @@
  * in oauth.json (0600) next to tokens.json. Codes live in memory for five minutes.
  */
 
-import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, scrypt, scryptSync, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +23,7 @@ const CODE_TTL = 300;
 const REQUEST_TTL = 600;
 const MAX_CLIENTS = 100;
 const MAX_TOKENS = 2000;
+const REUSE_GRACE = 60;
 
 /** Web clients get the code back only on these hosts (any path). Loopback http is for native clients (RFC 8252). */
 export const DEFAULT_REDIRECT_HOSTS = ["claude.ai", "claude.com", "chatgpt.com", "grok.com", "x.ai"];
@@ -50,6 +51,8 @@ interface Token {
 	resource: string;
 	scopes: string[];
 	revoked?: boolean;
+	/** When a refresh token was rotated (seconds); a retry within REUSE_GRACE gets a new pair instead of ending the grant. */
+	rotated_at?: number;
 }
 
 interface State {
@@ -150,9 +153,15 @@ function change<T>(update: (state: State) => T): T {
 		const result = update(state);
 		const time = now();
 		for (const [hash, item] of Object.entries(state.tokens)) if (item.expires < time) delete state.tokens[hash];
-		const entries = Object.entries(state.tokens);
-		if (entries.length > MAX_TOKENS) {
-			for (const [hash] of entries.sort((a, b) => a[1].expires - b[1].expires).slice(0, entries.length - MAX_TOKENS)) delete state.tokens[hash];
+		// Over the cap: drop dead tokens first, then whole grants, oldest first, never part of a live one.
+		if (Object.keys(state.tokens).length > MAX_TOKENS) {
+			for (const [hash, item] of Object.entries(state.tokens)) if (item.revoked) delete state.tokens[hash];
+			const newest = new Map<string, number>();
+			for (const t of Object.values(state.tokens)) newest.set(t.family, Math.max(newest.get(t.family) ?? 0, t.expires));
+			for (const [family] of [...newest].sort((a, b) => a[1] - b[1])) {
+				if (Object.keys(state.tokens).length <= MAX_TOKENS) break;
+				for (const [hash, t] of Object.entries(state.tokens)) if (t.family === family) delete state.tokens[hash];
+			}
 		}
 		save(state);
 		return result;
@@ -168,13 +177,24 @@ function hashPasscode(passcode: string, salt = randomBytes(16)): string {
 	return `scrypt$16384$8$1$${salt.toString("base64url")}$${derived.toString("base64url")}`;
 }
 
-function checkPasscode(stored: string | undefined, passcode: string): boolean {
+let scrypting = 0;
+
+/** Off the event loop, and at most four at once, so wrong-passcode traffic can't stall serve. */
+async function checkPasscode(stored: string | undefined, passcode: string): Promise<boolean> {
 	if (!stored || passcode.length < 1 || passcode.length > 200) return false;
 	const [scheme, n, r, p, salt, hash] = stored.split("$");
 	if (scheme !== "scrypt" || !salt || !hash) return false;
-	const expected = Buffer.from(hash, "base64url");
-	const derived = scryptSync(passcode, Buffer.from(salt, "base64url"), expected.length, { N: Number(n), r: Number(r), p: Number(p) });
-	return timingSafeEqual(derived, expected);
+	if (scrypting >= 4) throw new OAuthError(503, "temporarily_unavailable", "Busy. Try again in a moment.");
+	scrypting++;
+	try {
+		const expected = Buffer.from(hash, "base64url");
+		const derived = await new Promise<Buffer>((resolve, reject) =>
+			scrypt(passcode, Buffer.from(salt, "base64url"), expected.length, { N: Number(n), r: Number(r), p: Number(p) }, (err, key) => (err ? reject(err) : resolve(key))),
+		);
+		return timingSafeEqual(derived, expected);
+	} finally {
+		scrypting--;
+	}
 }
 
 /** A new owner passcode, returned once. Rotating it doesn't end grants already approved. */
@@ -232,6 +252,22 @@ export function revokeClient(clientId: string): boolean {
 	});
 }
 
+/** End one grant ("o-<hex>" from token clients). Returns false when no live grant has that id. */
+export function revokeGrantById(id: string): boolean {
+	const family = id.startsWith("o-") ? id.slice(2) : "";
+	if (!/^[0-9a-f]{32}$/.test(family)) return false;
+	return change((state) => {
+		let n = 0;
+		for (const [hash, t] of Object.entries(state.tokens)) {
+			if (t.family === family) {
+				delete state.tokens[hash];
+				n++;
+			}
+		}
+		return n > 0;
+	});
+}
+
 // ---------- Metadata ----------
 
 export function protectedResourceMetadata(config: OAuthConfig) {
@@ -281,13 +317,31 @@ function redirectAllowed(config: OAuthConfig, uri: string): boolean {
 	return hosts.has(url.hostname.toLowerCase());
 }
 
-const registrations: number[] = [];
+/**
+ * Rate limits, in memory. Counted per source (Cloudflare's CF-Connecting-IP, else the first
+ * X-Forwarded-For, else the socket address) with a high global cap that only bounds work. A
+ * header can be forged, so a determined flood can still fill the global cap for a while; the
+ * owner's way out is `tabkyra token passcode`, which clears every limit (serve notices the new
+ * passcode on the next request).
+ */
+const limits = { registrations: [] as { at: number; source: string }[], failures: [] as { at: number; client: string; source: string }[], passcode: "" };
 
-export function registerClient(config: OAuthConfig, body: unknown) {
+function resetLimitsOnNewPasscode(state: State): void {
+	const current = state.passcode ?? "";
+	if (current === limits.passcode) return;
+	limits.passcode = current;
+	limits.registrations.length = 0;
+	limits.failures.length = 0;
+}
+
+export function registerClient(config: OAuthConfig, body: unknown, source = "unknown") {
+	resetLimitsOnNewPasscode(load());
 	const time = Date.now();
-	while (registrations.length && registrations[0] < time - 10 * 60_000) registrations.shift();
-	if (registrations.length >= 30) throw new OAuthError(429, "temporarily_unavailable", "Too many client registrations. Try again in a few minutes.");
-	registrations.push(time);
+	while (limits.registrations.length && limits.registrations[0].at < time - 10 * 60_000) limits.registrations.shift();
+	if (limits.registrations.filter((r) => r.source === source).length >= 10 || limits.registrations.length >= 300) {
+		throw new OAuthError(429, "temporarily_unavailable", "Too many client registrations. Try again in a few minutes.");
+	}
+	limits.registrations.push({ at: time, source });
 	const request = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
 	const uris = request.redirect_uris;
 	if (!Array.isArray(uris) || uris.length < 1 || uris.length > 5 || !uris.every((u) => typeof u === "string")) {
@@ -361,10 +415,11 @@ export interface ConsentDetails {
 	redirectHost: string;
 	redirectOrigin: string;
 	passcodeSet: boolean;
+	/** The scopes to show ticked: the defaults, or what the owner ticked before an error. */
+	ticked?: string[];
 }
 
 const codes = new Map<string, AuthorizeRequest & { scopes: string[]; expires: number }>();
-const failures: { at: number; client: string }[] = [];
 
 /** Check an authorize request. Errors about the client or redirect URI throw (shown on the page); the rest redirect back. */
 export function validateAuthorize(config: OAuthConfig, params: URLSearchParams): ConsentDetails | { redirect: string } {
@@ -412,14 +467,15 @@ function signedRequest(state: State, signed: string): AuthorizeRequest {
 }
 
 /** The consent page again, after a wrong passcode, from the already signed request. */
-export function describeSigned(signed: string): ConsentDetails {
+export function describeSigned(signed: string, ticked?: string[]): ConsentDetails {
 	const state = load();
-	return details(state, signedRequest(state, signed));
+	return { ...details(state, signedRequest(state, signed)), ticked };
 }
 
 /** The consent POST: verify the signed request, the passcode and the scopes, then issue a single-use code. */
-export function approveAuthorize(config: OAuthConfig, form: URLSearchParams): { redirect: string } {
+export async function approveAuthorize(config: OAuthConfig, form: URLSearchParams, source = "unknown"): Promise<{ redirect: string }> {
 	const state = load();
+	resetLimitsOnNewPasscode(state);
 	const request = signedRequest(state, form.get("request") ?? "");
 	const back = (params: Record<string, string>) => {
 		const url = new URL(request.redirect_uri);
@@ -430,14 +486,15 @@ export function approveAuthorize(config: OAuthConfig, form: URLSearchParams): { 
 	};
 	if (form.get("decision") === "deny") return back({ error: "access_denied" });
 	const time = Date.now();
+	const failures = limits.failures;
 	while (failures.length && failures[0].at < time - 15 * 60_000) failures.shift();
-	// Limits count per client, so a stranger who registers a client can't lock the owner out.
-	// The passcode carries about 90 bits; the global cap only bounds scrypt work.
-	if (failures.filter((f) => f.client === request.client_id).length >= 5 || failures.length >= 200) {
-		throw new OAuthError(429, "temporarily_unavailable", "Too many wrong passcodes for this connection. Wait 15 minutes and try again.");
+	// The passcode carries about 100 bits, so these caps bound work, not guessing. Per client and
+	// per source first; the global cap is high, and a new passcode clears all of them.
+	if (failures.filter((f) => f.client === request.client_id).length >= 5 || failures.filter((f) => f.source === source).length >= 20 || failures.length >= 1000) {
+		throw new OAuthError(429, "temporarily_unavailable", "Too many wrong passcodes. Wait 15 minutes, or run tabkyra token passcode for a new one, which clears this limit.");
 	}
-	if (!checkPasscode(state.passcode, form.get("passcode") ?? "")) {
-		failures.push({ at: time, client: request.client_id });
+	if (!(await checkPasscode(state.passcode, form.get("passcode") ?? ""))) {
+		failures.push({ at: time, client: request.client_id, source });
 		throw new OAuthError(401, "access_denied", state.passcode ? "Wrong passcode." : "No passcode is set. Run tabkyra token passcode on the computer that runs serve.");
 	}
 	const scopes = [...new Set(form.getAll("scope"))];
@@ -458,8 +515,12 @@ function authenticateClient(state: State, params: URLSearchParams, authorization
 		const decoded = Buffer.from(authorization.slice(6), "base64").toString("utf8");
 		const split = decoded.indexOf(":");
 		if (split > 0) {
-			id = decodeURIComponent(decoded.slice(0, split));
-			secret = decodeURIComponent(decoded.slice(split + 1));
+			try {
+				id = decodeURIComponent(decoded.slice(0, split));
+				secret = decodeURIComponent(decoded.slice(split + 1));
+			} catch {
+				throw new OAuthError(401, "invalid_client", "Client authentication failed.");
+			}
 		}
 	}
 	const registered = state.clients[id];
@@ -472,7 +533,15 @@ function authenticateClient(state: State, params: URLSearchParams, authorization
 	return registered;
 }
 
-function issue(state: State, clientId: string, resource: string, scopes: string[], family = randomBytes(4).toString("hex")) {
+function newFamily(state: State): string {
+	const taken = new Set(Object.values(state.tokens).map((t) => t.family));
+	for (;;) {
+		const family = randomBytes(16).toString("hex");
+		if (!taken.has(family)) return family;
+	}
+}
+
+function issue(state: State, clientId: string, resource: string, scopes: string[], family = newFamily(state)) {
 	const access = `tko_${b64()}`;
 	const refresh = `tkf_${b64()}`;
 	const time = now();
@@ -508,13 +577,22 @@ export function exchangeToken(params: URLSearchParams, authorization: string | u
 			const registered = authenticateClient(state, params, authorization);
 			const saved = state.tokens[presented];
 			if (!saved || saved.kind !== "refresh" || saved.client_id !== registered.client_id || saved.expires < now()) throw new OAuthError(400, "invalid_grant", "The refresh token is invalid or expired.");
+			const same = (t: Token) => t.family === saved.family && t.client_id === saved.client_id;
 			if (saved.revoked) {
-				// A rotated refresh token came back: someone holds a copy. End the whole grant (saved before refusing).
-				for (const [hash, t] of Object.entries(state.tokens)) if (t.family === saved.family) delete state.tokens[hash];
+				// A client that lost the response to its refresh may retry once in the grace window (RFC 9700 4.14.2).
+				if (saved.rotated_at !== undefined && now() - saved.rotated_at <= REUSE_GRACE) {
+					saved.rotated_at = undefined;
+					for (const [hash, t] of Object.entries(state.tokens)) if (same(t) && !t.revoked) delete state.tokens[hash];
+					return issue(state, registered.client_id, saved.resource, saved.scopes, saved.family);
+				}
+				// Otherwise someone holds a copy. End the whole grant (saved before refusing).
+				for (const [hash, t] of Object.entries(state.tokens)) if (same(t)) delete state.tokens[hash];
 				return null;
 			}
+			// Keep only the refresh token just rotated (for reuse detection); drop older dead ones and the old access tokens.
+			for (const [hash, t] of Object.entries(state.tokens)) if (same(t) && hash !== presented && (t.revoked || t.kind === "access")) delete state.tokens[hash];
 			saved.revoked = true;
-			for (const t of Object.values(state.tokens)) if (t.family === saved.family && t.kind === "access") t.revoked = true;
+			saved.rotated_at = now();
 			return issue(state, registered.client_id, saved.resource, saved.scopes, saved.family);
 		});
 		if (!result) throw new OAuthError(400, "invalid_grant", "This refresh token was already used. The grant has been revoked; connect again.");
@@ -527,7 +605,9 @@ export function revokeGrant(params: URLSearchParams, authorization: string | und
 	change((state) => {
 		const registered = authenticateClient(state, params, authorization);
 		const saved = state.tokens[sha(params.get("token") ?? "")];
-		if (saved && saved.client_id === registered.client_id) for (const [hash, t] of Object.entries(state.tokens)) if (t.family === saved.family) delete state.tokens[hash];
+		if (saved && saved.client_id === registered.client_id) {
+			for (const [hash, t] of Object.entries(state.tokens)) if (t.family === saved.family && t.client_id === saved.client_id) delete state.tokens[hash];
+		}
 	});
 }
 
@@ -581,17 +661,17 @@ export function consentPage(config: OAuthConfig, d: ConsentDetails, error?: stri
 	const boxes = Object.entries(config.scopes)
 		.map(
 			([scope, { what }]) =>
-				`<label class="scope"><input type="checkbox" name="scope" value="${escape(scope)}"${DEFAULT_GRANT.includes(scope) ? " checked" : ""}><span><b>${escape(scope)}</b> ${escape(what)}</span></label>`,
+				`<label class="scope"><input type="checkbox" name="scope" value="${escape(scope)}"${(d.ticked ?? DEFAULT_GRANT).includes(scope) ? " checked" : ""}><span><b>${escape(scope)}</b> ${escape(what)}</span></label>`,
 		)
 		.join("");
 	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Approve Tabkyra access</title>
-<style>body{font:16px/1.5 system-ui,sans-serif;margin:0;background:#f6f5f2;color:#1b1b1b}main{max-width:560px;margin:6vh auto;padding:28px;background:#fff;border-radius:14px;box-shadow:0 1px 3px #0002}h1{font-size:1.3rem;margin:0 0 .5rem}.scope{display:flex;gap:.6rem;align-items:flex-start;margin:.45rem 0;font-size:.93rem}.scope input{margin-top:.3rem}fieldset{border:1px solid #ddd;border-radius:10px;padding:.6rem .9rem;margin:1rem 0}legend{font-weight:600;padding:0 .3rem}label[for]{display:block;font-weight:600;margin-top:1rem}input[type=password]{width:100%;box-sizing:border-box;font:inherit;padding:.6rem;border:1px solid #bbb;border-radius:8px}.row{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.2rem}button{font:inherit;padding:.55rem 1.1rem;border-radius:8px;border:1px solid #bbb;background:#fff;cursor:pointer}.primary{background:#1b1b1b;color:#fff;border-color:#1b1b1b}.error{color:#a40000;font-weight:600}@media (prefers-color-scheme:dark){body{background:#151515;color:#eee}main{background:#222}fieldset{border-color:#444}button{background:#333;color:#eee;border-color:#555}.primary{background:#eee;color:#111}.error{color:#ff8a8a}}</style></head>
+<style>body{font:16px/1.5 system-ui,sans-serif;margin:0;background:#f6f5f2;color:#1b1b1b}main{max-width:560px;margin:6vh auto;padding:28px;background:#fff;border-radius:14px;box-shadow:0 1px 3px #0002}h1{font-size:1.3rem;margin:0 0 .5rem}.scope{display:flex;gap:.6rem;align-items:flex-start;margin:.45rem 0;font-size:.93rem}.scope input{margin-top:.3rem}fieldset{border:1px solid #ddd;border-radius:10px;padding:.6rem .9rem;margin:1rem 0}legend{font-weight:600;padding:0 .3rem}label[for]{display:block;font-weight:600;margin-top:1rem}.secret{-webkit-text-security:disc}input.secret{width:100%;box-sizing:border-box;font:inherit;padding:.6rem;border:1px solid #bbb;border-radius:8px}.row{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.2rem}button{font:inherit;padding:.55rem 1.1rem;border-radius:8px;border:1px solid #bbb;background:#fff;cursor:pointer}.primary{background:#1b1b1b;color:#fff;border-color:#1b1b1b}.error{color:#a40000;font-weight:600}@media (prefers-color-scheme:dark){body{background:#151515;color:#eee}main{background:#222}fieldset{border-color:#444}button{background:#333;color:#eee;border-color:#555}.primary{background:#eee;color:#111}.error{color:#ff8a8a}}</style></head>
 <body><main><h1>Allow ${escape(d.clientName)} to use your browser through Tabkyra?</h1>
 <p>It will work in its own tab group in your signed-in browser, with the permissions you tick. After you approve, you go back to <strong>${escape(d.redirectHost)}</strong>. Only approve a connection you just started.</p>
 ${error ? `<p class="error">${escape(error)}</p>` : ""}${d.passcodeSet ? "" : '<p class="error">No passcode is set yet. Run tabkyra token passcode on the computer that runs serve.</p>'}
 <form method="post" action="/authorize"><input type="hidden" name="request" value="${escape(d.signed)}">
 <fieldset><legend>Permissions</legend>${boxes}</fieldset>
-<label for="passcode">Tabkyra passcode</label><input id="passcode" name="passcode" type="password" autocomplete="current-password" required autofocus>
+<label for="passcode">Tabkyra passcode</label><input id="passcode" name="passcode" type="text" class="secret" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore required autofocus>
 <div class="row"><button type="submit" name="decision" value="deny" formnovalidate>Deny</button><button class="primary" type="submit" name="decision" value="allow">Allow</button></div></form></main></body></html>`;
 	return {
 		html,

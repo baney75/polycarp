@@ -131,6 +131,7 @@ function withTokensLock<T>(fn: () => T): T {
 export function createToken(name: string, scopes: string[]): { record: TokenRecord; token: string } {
 	if (!/^[\w.-]{1,40}$/.test(name)) throw new Error("Token name: letters, digits, dot, dash or underscore, up to 40.");
 	if (/^[0-9a-f]{8}$/.test(name)) throw new Error("A token name can't look like a token id (8 hex characters).");
+	if (/^(tkc_|o-)/.test(name)) throw new Error("A token name can't start with tkc_ or o-: those name OAuth clients and grants.");
 
 	if (scopes.length === 0) throw new Error(`Name at least one scope: ${Object.keys(SCOPES).join(", ")}. There is no wildcard.`);
 	for (const s of scopes) if (!Object.hasOwn(SCOPES, s)) throw new Error(`Unknown scope ${s}. Scopes: ${Object.keys(SCOPES).join(", ")}. There is no wildcard.`);
@@ -320,6 +321,9 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 			return true;
 		}
 		const oauthPaths = ["/register", "/authorize", "/token", "/revoke"];
+		// For rate limits only (oauth.ts): a forged header can spread a flood out, not get past the passcode.
+		const forwarded = String(req.headers["cf-connecting-ip"] ?? String(req.headers["x-forwarded-for"] ?? "").split(",")[0]).trim();
+		const source = forwarded || req.socket.remoteAddress || "unknown";
 		if (!oauthPaths.includes(path)) return false;
 		const page = (status: number, html: { html: string; headers: Record<string, string> }) => {
 			res.writeHead(status, html.headers);
@@ -341,7 +345,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 				} catch {
 					throw new OAuthError(400, "invalid_client_metadata", "The registration body isn't valid JSON.");
 				}
-				sendJson(res, 201, registerClient(config, body));
+				sendJson(res, 201, registerClient(config, body, source));
 				return true;
 			}
 			if (path === "/authorize" && req.method === "GET") {
@@ -353,13 +357,13 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 			if (path === "/authorize" && req.method === "POST") {
 				const form = new URLSearchParams(await readBody(req, 64_000));
 				try {
-					redirect(approveAuthorize(config, form).redirect);
+					redirect((await approveAuthorize(config, form, source)).redirect);
 				} catch (err) {
 					// A wrong passcode or no permission ticked: show the form again.
 					if (err instanceof OAuthError && (err.status === 401 || err.error === "invalid_scope")) {
 						let again: ReturnType<typeof describeSigned> | undefined;
 						try {
-							again = describeSigned(form.get("request") ?? "");
+							again = describeSigned(form.get("request") ?? "", form.getAll("scope"));
 						} catch {
 							again = undefined;
 						}

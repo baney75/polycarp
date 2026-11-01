@@ -404,11 +404,13 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 	mkdirSync(home, { recursive: true });
 	const oenv = { ...env, HOME: home };
 	const run = (args) => {
-		const r = spawnSync(process.execPath, [cli, ...args], { env: oenv, encoding: "utf8" });
+		const r = spawnSync(process.execPath, [cli, ...args], { env: oenv, encoding: "utf8", timeout: 10_000, killSignal: "SIGKILL" });
 		return { code: r.status, out: `${r.stdout}${r.stderr}` };
 	};
-	assert.notEqual(run(["serve", "--public-url", "https://x.example/path"]).code, 0, "a public URL with a path is refused");
-	assert.notEqual(run(["serve", "--redirect-host", "a.example"]).code, 0, "--redirect-host needs --public-url");
+	// A refused serve exits on its own (status 2), not by the timeout (status null).
+	assert.equal(run(["serve", "--port", "0", "--public-url", "https://x.example/path"]).code, 2, "a public URL with a path is refused");
+	assert.equal(run(["serve", "--port", "0", "--redirect-host", "a.example"]).code, 2, "--redirect-host needs --public-url");
+	assert.equal(run(["token", "create", "tkc_x", "--scope", "browser.read"]).code, 2, "token names can't look like OAuth client ids");
 	const passcode = /([a-zA-Z0-9]{5}-){3}[a-zA-Z0-9]{5}/.exec(run(["token", "passcode"]).out)?.[0];
 	assert.ok(passcode, "token passcode prints a passcode");
 	const srv = spawn(process.execPath, [cli, "serve", "--port", String(port), "--public-url", base], { env: oenv });
@@ -456,9 +458,13 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 		const signed = /name="request" value="([^"]+)"/.exec(html)[1];
 
 		const approve = (fields) => fetch(`${base}/authorize`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(fields) });
+		assert.match(html, /autocomplete="one-time-code"/, "the passcode field isn't a password field a manager would fill");
 		const wrong = await approve([["request", signed], ["passcode", "nope"], ["scope", "browser.read"], ["decision", "allow"]]);
 		assert.equal(wrong.status, 401);
-		assert.match(await wrong.text(), /Wrong passcode/);
+		const wrongHtml = await wrong.text();
+		assert.match(wrongHtml, /Wrong passcode/);
+		assert.match(wrongHtml, /value="browser\.read" checked/);
+		assert.doesNotMatch(wrongHtml, /value="browser\.act" checked/, "the page shown again keeps what the owner unticked");
 		const forged = await approve([["request", `${signed.split(".")[0]}.AAAA`], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
 		assert.equal(forged.status, 400, "a tampered approval form is refused");
 		const ok = await approve([["request", signed], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
@@ -491,11 +497,26 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 
 		const rotated = await (await token({ grant_type: "refresh_token", refresh_token: grant.refresh_token, client_id })).json();
 		assert.match(rotated.access_token, /^tko_/);
+		// A retry inside the grace window (a lost response) gets a fresh pair and keeps the grant.
+		const retry = await (await token({ grant_type: "refresh_token", refresh_token: grant.refresh_token, client_id })).json();
+		assert.match(retry.access_token, /^tko_/);
+		const grants = JSON.parse(run(["token", "clients", "--json"]).out)[0].grants;
+		assert.equal(grants.length, 1);
+		assert.match(grants[0].id, /^o-[0-9a-f]{32}$/, "grant ids carry 128 random bits");
+		// A second use of the same old token is a copy in someone else's hands: the grant ends.
 		const reuse = await token({ grant_type: "refresh_token", refresh_token: grant.refresh_token, client_id });
 		assert.equal((await reuse.json()).error, "invalid_grant", "an old refresh token is refused");
-		const afterReuse = await fetch(`${base}/mcp`, { method: "POST", headers: { authorization: `Bearer ${rotated.access_token}`, "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } }) });
+		const afterReuse = await fetch(`${base}/mcp`, { method: "POST", headers: { authorization: `Bearer ${retry.access_token}`, "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } }) });
 		assert.equal(afterReuse.status, 401, "reusing an old refresh token ends the whole grant");
 
+		// One grant can be ended on its own.
+		const consent3 = await (await fetch(`${base}/authorize?${q}`)).text();
+		const ok3 = await approve([["request", /name="request" value="([^"]+)"/.exec(consent3)[1]], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
+		const grant3 = await (await token({ grant_type: "authorization_code", code: new URL(ok3.headers.get("location")).searchParams.get("code"), client_id, redirect_uri: callback, code_verifier: verifier })).json();
+		const id3 = JSON.parse(run(["token", "clients", "--json"]).out)[0].grants[0].id;
+		assert.equal(run(["token", "revoke", id3]).code, 0);
+		const afterGrantRevoke = await fetch(`${base}/mcp`, { method: "POST", headers: { authorization: `Bearer ${grant3.access_token}`, "content-type": "application/json" }, body: "{}" });
+		assert.equal(afterGrantRevoke.status, 401);
 		const listed = JSON.parse(run(["token", "clients", "--json"]).out);
 		assert.equal(listed[0].client_id, client_id);
 		assert.equal(run(["token", "revoke", client_id]).code, 0);

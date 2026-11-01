@@ -13,7 +13,7 @@ import { sdkInstalled } from "./subscriptions/copilot.ts";
 import { installCopilotSdk } from "./subscriptions/install-sdk.ts";
 import { LIBRARY_USAGE, runLibrary } from "./library.ts";
 import { createToken, loadTokens, loadUsage, revokeToken, SCOPES, serve } from "./remote.ts";
-import { listClients, normalizePublicUrl, type OAuthConfig, passcodeSet, revokeClient, setPasscode } from "./oauth.ts";
+import { listClients, normalizePublicUrl, type OAuthConfig, passcodeSet, revokeClient, revokeGrantById, setPasscode } from "./oauth.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
 import { runSessions, runTabs, SessionsUsageError } from "./sessions.ts";
 import { runThreads, ThreadsUsageError } from "./threads.ts";
@@ -454,7 +454,7 @@ async function main(): Promise<void> {
 			if (sub === "passcode") {
 				const passcode = setPasscode();
 				console.log(`${sym.ok} OAuth passcode:\n\n  ${passcode}\n`);
-				console.log(c.dim("Shown once. Enter it on the approval page when claude.ai, ChatGPT or grok.com connects. Keep it in your password manager. Running this again replaces it; grants already approved keep working."));
+				console.log(c.dim("Shown once. Type it on the approval page when claude.ai, ChatGPT or grok.com connects. Keep it in a password manager, but not one the browser Tabkyra drives can fill. Running this again replaces it and clears approval rate limits; grants already approved keep working."));
 				return;
 			}
 			if (sub === "clients") {
@@ -471,7 +471,13 @@ async function main(): Promise<void> {
 				return;
 			}
 			if (sub === "revoke") {
-				if (!name) throw new UsageError("Usage: tabkyra token revoke <id|name|client id>");
+				if (!name) throw new UsageError("Usage: tabkyra token revoke <id|name|client id|grant id>");
+				if (name.startsWith("o-")) {
+					const gone = revokeGrantById(name);
+					console.log(gone ? `${sym.ok} Ended grant ${name}.` : `${sym.dot} No live grant ${name}.`);
+					process.exitCode = gone ? 0 : 1;
+					return;
+				}
 				if (name.startsWith("tkc_")) {
 					const gone = revokeClient(name);
 					console.log(gone ? `${sym.ok} Removed OAuth client ${name} and its grants.` : `${sym.dot} No OAuth client ${name}.`);
@@ -491,7 +497,7 @@ async function main(): Promise<void> {
 				for (const [scope, { what, tools }] of Object.entries(SCOPES)) console.log(`${c.bold(scope.padEnd(18))} ${what}\n${"".padEnd(19)}${c.dim(tools.join(", "))}`);
 				return;
 			}
-			throw new UsageError("Usage: tabkyra token create <name> --scope a,b | list | revoke <id|name|client id> | scopes | passcode | clients");
+			throw new UsageError("Usage: tabkyra token create <name> --scope a,b | list | revoke <id|name|client id|grant id> | scopes | passcode | clients");
 		}
 		case "tunnel": {
 			const kind = argv.slice(1).find((a) => !a.startsWith("-") && a !== option("--port"));

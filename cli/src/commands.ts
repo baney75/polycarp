@@ -172,7 +172,7 @@ export const COMMANDS: CommandSpec[] = [
 		subcommands: [
 			{ name: "create", args: "<name>", what: "A scoped, revocable token, shown once", flags: ["--scope"], max: 1 },
 			{ name: "list", what: "Every token and when it was last used", flags: ["--json"] },
-			{ name: "revoke", args: "<id|name|client id>", what: "End a token, or an OAuth client and its grants", max: 1 },
+			{ name: "revoke", args: "<id|name|client id|grant id>", what: "End a token, an OAuth client and its grants, or one grant", max: 1 },
 			{ name: "passcode", what: "A new passcode for the OAuth approval page, shown once" },
 			{ name: "clients", what: "OAuth clients (claude.ai, ChatGPT, grok.com) and their grants", flags: ["--json"] },
 			{ name: "scopes", what: "The scopes a token can have", flags: ["--json"] },
