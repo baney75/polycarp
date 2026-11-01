@@ -528,6 +528,51 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 		assert.equal((await old.json()).error, "invalid_grant");
 		const afterOld = await fetch(`${base}/mcp`, { method: "POST", headers: { authorization: `Bearer ${chain.access_token}`, "content-type": "application/json" }, body: "{}" });
 		assert.equal(afterOld.status, 401, "a replay from three rotations back ends the grant");
+
+		// Retention caps never discard a live grant's spent tokens. serve reads oauth.json on every
+		// change, so the test adds records to it between requests.
+		const oauthPath = join(home, ".config", "tabkyra", "oauth.json");
+		const newGrant = async () => {
+			const page = await (await fetch(`${base}/authorize?${q}`)).text();
+			const res = await approve([["request", /name="request" value="([^"]+)"/.exec(page)[1]], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
+			return await (await token({ grant_type: "authorization_code", code: new URL(res.headers.get("location")).searchParams.get("code"), client_id, redirect_uri: callback, code_verifier: verifier })).json();
+		};
+		const seed = (records) => {
+			const state = JSON.parse(readFileSync(oauthPath, "utf8"));
+			for (const r of records) state.tokens[randomBytes(32).toString("hex")] = r;
+			writeFileSync(oauthPath, JSON.stringify(state), { mode: 0o600 });
+		};
+		const recordOf = (raw) => JSON.parse(readFileSync(oauthPath, "utf8")).tokens[createHash("sha256").update(raw).digest("hex")];
+		const mcpStatus = async (access) => (await fetch(`${base}/mcp`, { method: "POST", headers: { authorization: `Bearer ${access}`, "content-type": "application/json" }, body: "{}" })).status;
+		const nowS = Math.floor(Date.now() / 1000);
+
+		// Per-grant cap (1500 spent): a grant past it ends rather than forget its oldest spent token.
+		const capStart = await newGrant();
+		const capNext = await (await token({ grant_type: "refresh_token", refresh_token: capStart.refresh_token, client_id })).json();
+		const capRec = recordOf(capNext.refresh_token);
+		seed(Array.from({ length: 1500 }, (_, i) => ({ ...capRec, revoked: true, expires: capRec.expires + 10 + i })));
+		const overCap = await token({ grant_type: "refresh_token", refresh_token: capNext.refresh_token, client_id });
+		assert.equal((await overCap.json()).error, "invalid_grant", "a refresh past the spent cap is refused");
+		assert.equal(await mcpStatus(capNext.access_token), 401, "and the grant's access token is dead");
+		assert.equal((await token({ grant_type: "refresh_token", refresh_token: capStart.refresh_token, client_id })).status, 400, "an early spent token still gets nothing");
+		assert.equal(Object.values(JSON.parse(readFileSync(oauthPath, "utf8")).tokens).filter((t) => t.family === capRec.family).length, 0, "no token of the ended grant remains");
+
+		// Global cap (10,000 tokens): eviction drops whole older grants and keeps a live grant's spent tokens.
+		const live = await newGrant();
+		const liveNext = await (await token({ grant_type: "refresh_token", refresh_token: live.refresh_token, client_id })).json();
+		const liveRec = recordOf(liveNext.refresh_token);
+		const filler = { ...liveRec, family: "f".repeat(32), kind: "access", expires: nowS + 86400, rotated_at: undefined };
+		seed(Array.from({ length: 10_001 }, () => filler));
+		const pressured = await (await token({ grant_type: "refresh_token", refresh_token: liveNext.refresh_token, client_id })).json();
+		assert.match(pressured.access_token, /^tko_/, "the live grant survives the cap");
+		const remaining = Object.values(JSON.parse(readFileSync(oauthPath, "utf8")).tokens);
+		assert.ok(remaining.length <= 10_000, "the cap holds");
+		assert.ok(!remaining.some((t) => t.family === filler.family), "the older grant went whole");
+		assert.ok(remaining.some((t) => t.family === liveRec.family && t.revoked), "the live grant kept its spent tokens");
+		assert.notEqual(await mcpStatus(pressured.access_token), 401, "the live grant works before the replay");
+		const replay = await token({ grant_type: "refresh_token", refresh_token: live.refresh_token, client_id });
+		assert.equal((await replay.json()).error, "invalid_grant");
+		assert.equal(await mcpStatus(pressured.access_token), 401, "a replay after eviction still ends the grant");
 		// One grant can be ended on its own.
 		const consent3 = await (await fetch(`${base}/authorize?${q}`)).text();
 		const ok3 = await approve([["request", /name="request" value="([^"]+)"/.exec(consent3)[1]], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
