@@ -14,6 +14,7 @@ import { installCopilotSdk } from "./subscriptions/install-sdk.ts";
 import { LIBRARY_USAGE, runLibrary } from "./library.ts";
 import { createToken, loadTokens, loadUsage, revokeToken, SCOPES, serve } from "./remote.ts";
 import { listClients, normalizePublicUrl, type OAuthConfig, passcodeSet, revokeClient, revokeGrantById, setPasscode } from "./oauth.ts";
+import { loadRemoteConfig, remoteFile, remoteOff, remoteSetup, remoteStatus } from "./remote-setup.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
 import { runSessions, runTabs, SessionsUsageError } from "./sessions.ts";
 import { runThreads, ThreadsUsageError } from "./threads.ts";
@@ -401,14 +402,19 @@ async function main(): Promise<void> {
 			return;
 		}
 		case "serve": {
-			const port = Number(option("--port") ?? DEFAULT_PORT);
+			// remote.json (tabkyra remote setup) supplies what flags leave out; flags win.
+			const rawPublic = option("--public-url");
+			const saved = rawPublic === undefined ? loadRemoteConfig() : undefined;
+			if (saved) console.log(`Using ${remoteFile()} (tabkyra remote off removes it).`);
+			const port = Number(option("--port") ?? saved?.port ?? DEFAULT_PORT);
 			if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError("--port takes a port number.");
 			const list = (name: string) => (option(name) ?? "").split(",").map((x) => x.trim()).filter(Boolean);
-			const rawPublic = option("--public-url");
+			const redirectHosts = option("--redirect-host") !== undefined ? list("--redirect-host") : (saved?.redirectHosts ?? []);
+			const allowedHosts = option("--allow-host") !== undefined ? list("--allow-host") : (saved?.allowHosts ?? []);
 			let oauth: OAuthConfig | undefined;
-			if (rawPublic !== undefined) {
+			if (rawPublic !== undefined || saved) {
 				try {
-					oauth = { publicUrl: normalizePublicUrl(rawPublic), redirectHosts: list("--redirect-host"), scopes: SCOPES };
+					oauth = { publicUrl: normalizePublicUrl(rawPublic ?? saved?.publicUrl ?? ""), redirectHosts, scopes: SCOPES };
 				} catch (err) {
 					throw new UsageError(err instanceof Error ? err.message : String(err));
 				}
@@ -417,7 +423,7 @@ async function main(): Promise<void> {
 			}
 			if (oauth && !passcodeSet()) console.log(`${sym.warn} No OAuth passcode yet; nobody can approve a connection. Run: tabkyra token passcode`);
 			else if (!oauth && loadTokens().every((t) => t.revokedAt)) console.log(`${sym.warn} No tokens yet; every request will be refused. Create one: tabkyra token create <name> --scope browser.read`);
-			const { url } = await serve({ port, host: "127.0.0.1", oauth, allowedHosts: list("--allow-host") });
+			const { url } = await serve({ port, host: "127.0.0.1", oauth, allowedHosts });
 			console.log(`${sym.ok} MCP over HTTP at ${url} (loopback only; every request needs a token). Ctrl-C stops it.`);
 			if (oauth) console.log(`${sym.ok} OAuth on for ${oauth.publicUrl}/mcp: add that URL as a custom connector, then approve it with your passcode.`);
 			await new Promise(() => {});
@@ -497,6 +503,34 @@ async function main(): Promise<void> {
 				return;
 			}
 			throw new UsageError("Usage: tabkyra token create <name> --scope a,b | list | revoke <id|name|client id|grant id> | scopes | passcode | clients");
+		}
+		case "remote": {
+			const sub = argv.slice(1).find((a) => !a.startsWith("-") && a !== option("--public-url") && a !== option("--port"));
+			if (sub === "setup") {
+				const rawPublic = option("--public-url");
+				const rawPort = option("--port");
+				const port = rawPort === undefined ? undefined : Number(rawPort);
+				if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) throw new UsageError("--port takes a port number from 1 to 65535.");
+				let publicUrl: string | undefined;
+				if (rawPublic !== undefined) {
+					try {
+						publicUrl = normalizePublicUrl(rawPublic);
+					} catch (err) {
+						throw new UsageError(err instanceof Error ? err.message : String(err));
+					}
+				}
+				process.exitCode = await remoteSetup({ publicUrl, port, service: !flag("--no-service") });
+				return;
+			}
+			if (sub === "status") {
+				process.exitCode = await remoteStatus({ json: flag("--json") });
+				return;
+			}
+			if (sub === "off") {
+				process.exitCode = await remoteOff();
+				return;
+			}
+			throw new UsageError("Usage: tabkyra remote setup [--public-url https://host] [--port N] [--no-service] | status [--json] | off");
 		}
 		case "tunnel": {
 			const kind = argv.slice(1).find((a) => !a.startsWith("-") && a !== option("--port"));

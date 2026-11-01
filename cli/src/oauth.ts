@@ -95,7 +95,7 @@ const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const now = () => Math.floor(Date.now() / 1000);
 const b64 = (bytes = 32) => randomBytes(bytes).toString("base64url");
 
-function configDir(): string {
+export function configDir(): string {
 	return process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
 }
 

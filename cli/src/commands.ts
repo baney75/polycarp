@@ -179,6 +179,17 @@ export const COMMANDS: CommandSpec[] = [
 		],
 	},
 	{
+		name: "remote",
+		summary: "One command to reach serve from claude.ai, ChatGPT and grok.com",
+		what: "Remote access for web connectors",
+		group: "Remote",
+		subcommands: [
+			{ name: "setup", what: "Tailscale Funnel (or your own --public-url), a passcode and a service that keeps serve running", flags: ["--public-url", "--port", "--no-service"] },
+			{ name: "status", what: "Is it up and reachable from the internet?", flags: ["--json"] },
+			{ name: "off", what: "Stop the service, turn Funnel off and remove remote.json" },
+		],
+	},
+	{
 		name: "tunnel",
 		summary: "Reach serve over Tailscale or Cloudflare",
 		what: "Tunnels for serve",
