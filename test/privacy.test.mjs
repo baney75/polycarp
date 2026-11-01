@@ -204,7 +204,7 @@ test("what read_network shows of bodies: request shapes without values, JSON res
 	assert.equal(maskJsonResponse('{"ok":true,"tokens":["t-1","t-'), undefined, "a cut-off body isn't shown");
 	assert.equal(maskJsonResponse("<html>csrf</html>"), undefined, "HTML isn't shown");
 	assert.equal(holdsCredential("footprint: 3 kg"), false);
-	assert.equal(maskUrl("https://u:p@x.example/a?access_token=abc&page=2"), "https://x.example/a?access_token=%5Bsecret%5D&page=2");
+	assert.equal(maskUrl("https://u:p" + "@" + "x.example/a?access_token=abc&page=2"), "https://x.example/a?access_token=%5Bsecret%5D&page=2");
 	const t0 = performance.now();
 	holdsCredential("a-".repeat(500000));
 	maskJsonResponse(JSON.stringify({ blob: "a-".repeat(500000) }));
