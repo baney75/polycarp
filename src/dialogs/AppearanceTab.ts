@@ -109,9 +109,11 @@ export class AppearanceTab extends SettingsTab {
 
 	render(): TemplateResult {
 		const choice = currentAppearance();
+		const dark = document.documentElement.classList.contains("dark");
+		const presetAccent = (PRESETS[choice.preset] ?? PRESETS.tabkyra)[dark ? "dark" : "light"].accent;
 		const hex = HEX.test(normalizeHex(this.accentText))
 			? normalizeHex(this.accentText)
-			: (choice.accent ?? "#000000");
+			: (choice.accent ?? presetAccent);
 		return html`
 			<div class="flex flex-col gap-6">
 				<div class="space-y-1">

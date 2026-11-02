@@ -7,27 +7,8 @@
 
 import { onConnectMessage, sendConnect } from "../bridge/native.js";
 import { isExtensionPage } from "../subscriptions/relay-protocol.js";
-import { CONNECT_METHODS, CONNECT_PORT, type ConnectReply, type ConnectRequest } from "./types.js";
-
-const METHODS: ReadonlySet<string> = new Set(CONNECT_METHODS);
-
-/** The request as the host should get it, or the reason it is refused here. */
-export function checkConnectRequest(
-	raw: unknown,
-): { ok: true; request: ConnectRequest } | { ok: false; id?: number; message: string } {
-	const req = raw as Partial<ConnectRequest> | null;
-	if (typeof req !== "object" || req === null || typeof req.id !== "number")
-		return { ok: false, message: "A request has a numeric id." };
-	if (typeof req.method !== "string" || !METHODS.has(req.method))
-		return { ok: false, id: req.id, message: `Unknown method ${String(req.method).slice(0, 40)}` };
-	if (
-		req.params !== undefined &&
-		(typeof req.params !== "object" || req.params === null || Array.isArray(req.params))
-	) {
-		return { ok: false, id: req.id, message: "params must be an object." };
-	}
-	return { ok: true, request: { id: req.id, method: req.method, ...(req.params ? { params: req.params } : {}) } };
-}
+import { checkConnectRequest } from "./check.js";
+import { CONNECT_PORT, type ConnectReply } from "./types.js";
 
 export function startConnectRelay(): void {
 	const waiting = new Map<number, { port: chrome.runtime.Port; id: number }>();

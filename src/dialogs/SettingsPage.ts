@@ -6,7 +6,8 @@ import { PageBase } from "../components/PageBase.js";
 /**
  * Settings as a page that fills the side panel, with a back arrow. Its tabs are chips that all
  * fit the panel's width: an even grid (two rows of equal columns) until one row fits, so no tab
- * is hidden off the edge or left alone on a line.
+ * is hidden off the edge or left alone on a line. Eight chips at 400 px fit two rows of four with
+ * the longest name (Appearance) whole; a chip that ever scrolls out of sight is brought back when selected.
  */
 export class SettingsPage extends PageBase {
 	private tabs: SettingsTab[] = [];
@@ -58,7 +59,7 @@ export class SettingsPage extends PageBase {
 				type="button"
 				role="tab"
 				aria-selected=${selected ? "true" : "false"}
-				class="min-w-0 truncate whitespace-nowrap h-8 px-1.5 @[28rem]:px-3 rounded-full text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+				class="min-w-0 truncate whitespace-nowrap h-8 px-1 @[28rem]:px-3 rounded-full text-[13px] @[28rem]:text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${
 					selected
 						? "bg-secondary text-foreground"
 						: "text-muted-foreground hover:text-foreground hover:bg-secondary/60"

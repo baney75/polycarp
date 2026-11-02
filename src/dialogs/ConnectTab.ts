@@ -155,7 +155,7 @@ export class ConnectTab extends SettingsTab {
 						Copy
 					</button>
 				</div>
-				<code class="block rounded-md border border-border bg-muted px-2.5 py-2 text-foreground font-mono text-xs leading-5 break-words select-all">${text}</code>
+				<code class="block rounded-md border border-border bg-muted px-2.5 py-2 text-foreground font-mono text-xs leading-5 break-words select-all [font-variant-ligatures:none]">${text}</code>
 			</div>
 		`;
 	}
@@ -174,7 +174,7 @@ export class ConnectTab extends SettingsTab {
 					}
 				</div>
 				<div class="flex items-center justify-between gap-2">
-					<code class="font-mono text-2xl font-semibold tracking-wider text-foreground select-all ${left ? "" : "line-through opacity-60"}">${code}</code>
+					<code class="font-mono text-2xl font-semibold tracking-wider [font-variant-ligatures:none] text-foreground select-all ${left ? "" : "line-through opacity-60"}">${code}</code>
 					${left ? Button({ size: "sm", variant: "secondary", children: "Copy", onClick: () => void copyText(code, "Code copied.") }) : nothing}
 				</div>
 			</div>
@@ -255,7 +255,7 @@ export class ConnectTab extends SettingsTab {
 								})
 							: html`<p class="text-xs text-muted-foreground">This device can't make codes. Make one on your hub, or on a device linked as a manager.</p>`
 					}
-					<p class="text-xs text-muted-foreground">Paste the URL into the assistant's connector settings, then type this code on Tabkyra's approval page.</p>
+					${canMint ? html`<p class="text-xs text-muted-foreground">Paste the URL into the assistant's connector settings, then type this code on Tabkyra's approval page.</p>` : nothing}
 				</div>
 			`,
 		);

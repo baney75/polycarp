@@ -28,6 +28,16 @@ test("a custom accent keeps every pair readable, for light, dark and mid colors"
 	}
 });
 
+test("the focus ring stays visible (3:1) against the page, for every preset, in light and dark", () => {
+	for (const preset of Object.keys(PRESETS)) {
+		for (const dark of [false, true]) {
+			const vars = appearanceVariables({ preset }, dark);
+			const ratio = contrast(vars["--ring"], vars["--background"]);
+			assert.ok(ratio >= 3, `${preset} ${dark ? "dark" : "light"}: ring ${vars["--ring"]} on ${vars["--background"]} is ${ratio.toFixed(2)}:1`);
+		}
+	}
+});
+
 test("the variables cover mini-lit's tokens, are all #rrggbb, and the accent shows up as the primary color", () => {
 	for (const dark of [false, true]) {
 		const vars = appearanceVariables({ preset: "forest" }, dark);
