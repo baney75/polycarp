@@ -26,7 +26,7 @@ import {
 
 export const PENDING_QUESTIONS_KEY = "bridge_pending_questions";
 export const ANSWER_KEY_PREFIX = "bridge_answer_";
-/** Settings > Bridge on/off (src/bridge/permissions.ts). */
+/** Settings > Agents on/off (src/bridge/permissions.ts). */
 const BRIDGE_ENABLED_KEY = "bridge_enabled";
 
 export interface PendingQuestion {

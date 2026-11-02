@@ -359,7 +359,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	state.lastActivityAt = Date.now();
 	try {
 		if (!(await isBridgeEnabled())) {
-			throw new BridgeError(ERR.DISABLED, "The tabkyra bridge is disabled in Settings > Bridge.");
+			throw new BridgeError(ERR.DISABLED, "The tabkyra bridge is disabled in Settings > Agents.");
 		}
 		if (gone()) return;
 
@@ -385,7 +385,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 						ERR.PERMISSION_DENIED,
 						`Not allowed to open ${hostOf(url) || url}. ` +
 							(mode === "ask"
-								? "The user can allow it in the tabkyra side panel under Settings > Bridge, or answer the permission prompt."
+								? "The user can allow it in the tabkyra side panel under Settings > Agents, or answer the permission prompt."
 								: "Bridge navigation is blocked."),
 					);
 				}
@@ -448,7 +448,7 @@ async function runAsk(state: ClientState, req: HostForwardedRequest): Promise<vo
 			});
 		if (!(await isBridgeEnabled()))
 			return respond({
-				error: { code: ERR.DISABLED, message: "The tabkyra bridge is disabled in Settings > Bridge." },
+				error: { code: ERR.DISABLED, message: "The tabkyra bridge is disabled in Settings > Agents." },
 			});
 		// The client may have hung up during the awaits; its question would have nobody to answer to.
 		if (clients.get(state.clientId) !== state) return;
@@ -551,7 +551,7 @@ function onHostMessage(message: HostToExt): void {
 			}
 			if (message.method === "permission.setMode") {
 				// `tabkyra allow-all` / `tabkyra ask`: a local user process flipping the site-permission mode,
-				// same trust as the Settings > Bridge toggle.
+				// same trust as the Settings > Agents toggle.
 				const mode = String(message.params?.mode ?? "");
 				if (mode !== "ask" && mode !== "allow_all") {
 					send({

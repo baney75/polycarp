@@ -22,6 +22,18 @@ export class SettingsPage extends PageBase {
 		return page;
 	}
 
+	/** Show the tab with this name, and scroll to the element with `anchor` inside it when given. */
+	showTab(name: string, anchor?: string): void {
+		const index = this.tabs.findIndex((tab) => tab.getTabName() === name);
+		if (index < 0) return;
+		this.select(index);
+		if (!anchor) return;
+		// The tab's content renders after it is shown; look for the anchor once it has.
+		void this.updateComplete.then(() =>
+			requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView({ block: "start" })),
+		);
+	}
+
 	protected pageTitle(): string {
 		return i18n("Settings");
 	}
@@ -30,6 +42,13 @@ export class SettingsPage extends PageBase {
 		this.active = index;
 		this.requestUpdate();
 		this.querySelector(".tk-page-body")?.scrollTo(0, 0);
+		// A chip scrolled out of a narrow strip comes back into view.
+		void this.updateComplete.then(() =>
+			this.querySelector('[role="tab"][aria-selected="true"]')?.scrollIntoView({
+				block: "nearest",
+				inline: "nearest",
+			}),
+		);
 	}
 
 	private renderTab(tab: SettingsTab, index: number): TemplateResult {

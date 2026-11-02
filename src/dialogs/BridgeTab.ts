@@ -22,7 +22,7 @@ import { probeUserScripts } from "../browser/userscripts-status.js";
 import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
 
 /**
- * Settings > Bridge: who may drive the browser from outside (omp, pi, Claude
+ * Settings > Agents: who may drive the browser from outside (omp, pi, Claude
  * Code, Codex through `tabkyra mcp`), which hosts they may open, and pending
  * permission requests.
  */
@@ -42,7 +42,7 @@ export class BridgeTab extends SettingsTab {
 	};
 
 	getTabName(): string {
-		return "Bridge";
+		return "Agents";
 	}
 
 	private permissionListener = () => this.load();
@@ -96,25 +96,36 @@ export class BridgeTab extends SettingsTab {
 		const status = this.userScripts;
 		if (!status) return html``;
 		const line = (text: string) => html`<div class="text-xs text-muted-foreground">${text}</div>`;
+		/** The detail stays one click away, for the person who needs the browser's own wording. */
+		const details = (text: string) => html`
+			<details class="text-xs text-muted-foreground">
+				<summary class="cursor-pointer text-foreground">Details</summary>
+				<p class="mt-1">${text}</p>
+			</details>
+		`;
 		let body: TemplateResult;
 		switch (status.state) {
 			case "ready":
-				body = line("On. Agents run page scripts through the userScripts API.");
+				body = html`${line("On: agents' page scripts run faster.")}${details("Agents run page scripts through the browser's userScripts API.")}`;
 				break;
 			case "not_granted":
 				body = html`
-					${line(
-						'Off: Tabkyra has not been granted the userScripts permission. The "Allow user scripts" toggle on the extension\'s Details page is not enough on its own. Without it, page scripts run through the debugger, which is slower.',
-					)}
+					${line("Turning this on makes agents' page scripts run faster.")}
 					<div>${Button({ size: "sm", variant: "secondary", children: "Allow", onClick: () => this.grantUserScripts() })}</div>
+					${details(
+						'Tabkyra has not been granted the userScripts permission. The "Allow user scripts" toggle on the extension\'s Details page is not enough on its own. Without it, page scripts run through the debugger, which is slower.',
+					)}
 				`;
 				break;
 			case "toggle_off":
-				body = line(
-					status.apiPresent
-						? 'Off: the permission is granted, but "Allow user scripts" is off. Turn it on at chrome://extensions > Tabkyra > Details.'
-						: 'Off: the permission is granted, but the browser hides the API. Check "Allow user scripts" at chrome://extensions > Tabkyra > Details, then restart Tabkyra (tabkyra reload; agent sessions reconnect).',
-				);
+				body = html`
+					${line("Page scripts are slower than they could be: one more switch is needed in the browser.")}
+					${details(
+						status.apiPresent
+							? 'The permission is granted, but "Allow user scripts" is off. Turn it on at chrome://extensions > Tabkyra > Details.'
+							: 'The permission is granted, but the browser hides the API. Check "Allow user scripts" at chrome://extensions > Tabkyra > Details, then restart Tabkyra (tabkyra reload; agent sessions reconnect).',
+					)}
+				`;
 				break;
 			case "probe_error":
 				body = line(`Couldn't check: ${status.error ?? "unknown error"}`);
@@ -150,7 +161,7 @@ export class BridgeTab extends SettingsTab {
 		return html`
 			<div class="flex flex-col gap-5">
 				<div class="space-y-1">
-					<h3 class="text-lg font-semibold text-foreground">Bridge</h3>
+					<h3 class="text-lg font-semibold text-foreground">Agents</h3>
 					<p class="text-sm text-muted-foreground">
 						Lets coding agents on this computer (Claude Code, Codex, omp, pi) drive the browser through
 						Tabkyra. Each agent gets its own tab group and works in the background.

@@ -23,7 +23,7 @@ import {
 	setTranscriptRenderer,
 } from "@mariozechner/pi-web-ui";
 import { html, render } from "lit";
-import { CircleDot, Copy, FileCode2, History, type IconNode, Monitor, Moon, Plus, Settings, Sun } from "lucide";
+import { CircleDot, Copy, FileCode2, History, type IconNode, Palette, Plus, Settings } from "lucide";
 import { isBlockedModel, purgeRemovedSignIns, RemovedSignInError, resolveApiKey } from "./auth/policy.js";
 import { isRestrictedUrl } from "./browser/cdp.js";
 import { setCurrentBrowserSession } from "./browser/current.js";
@@ -33,6 +33,8 @@ import { shareActiveTab } from "./browser/share-tab.js";
 import { communityLibrary, readCommunityStatus } from "./community/status.js";
 import { helmMark } from "./components/HelmMark.js";
 import "./components/HeaderMenu.js";
+import { startAppearance } from "./appearance/apply.js";
+import { followSystem } from "./appearance/mode.js";
 import type { HeaderMenuItem } from "./components/HeaderMenu.js";
 import { Toast } from "./components/Toast.js";
 import { composerChips, knownSkills, knownTabs } from "./composer/chips.js";
@@ -50,8 +52,10 @@ import {
 import { AboutTab } from "./dialogs/AboutTab.js";
 import { ApiKeyDialog } from "./dialogs/ApiKeyDialog.js";
 import { ApiKeysTab } from "./dialogs/ApiKeysTab.js";
+import { AppearanceTab } from "./dialogs/AppearanceTab.js";
 import { BridgeTab } from "./dialogs/BridgeTab.js";
 import { CombinedTab } from "./dialogs/CombinedTab.js";
+import { ConnectTab } from "./dialogs/ConnectTab.js";
 import { CostsTab } from "./dialogs/CostsTab.js";
 import { PrivacyTab } from "./dialogs/PrivacyTab.js";
 import { RecordSkillDialog } from "./dialogs/RecordSkillDialog.js";
@@ -60,7 +64,7 @@ import { TabkyraSessionListDialog } from "./dialogs/SessionListDialog.js";
 import { SettingsPage } from "./dialogs/SettingsPage.js";
 import { SkillsTab } from "./dialogs/SkillsTab.js";
 import { UpdatesTab } from "./dialogs/UpdatesTab.js";
-import { WelcomeSetupDialog } from "./dialogs/WelcomeSetupDialog.js";
+import { type WelcomeChoice, WelcomeSetupDialog } from "./dialogs/WelcomeSetupDialog.js";
 import { browserMessageTransformer } from "./messages/message-transformer.js";
 import {
 	createNavigationMessage,
@@ -587,17 +591,30 @@ async function getProvidersWithKeys(): Promise<string[]> {
 	return result;
 }
 
+/** No provider key and no subscription sign-in: the model button says what to do instead of naming a model. */
+let providerless = false;
+async function refreshProviderless(): Promise<void> {
+	const none =
+		(await getProvidersWithKeys()).length === 0 && (await refreshSubscriptionModels().catch(() => [])).length === 0;
+	if (none === providerless) return;
+	providerless = none;
+	refreshModelLabel(true);
+	chatPanel?.agentInterface?.requestUpdate();
+}
+
 /** The composer's model button text; Free mode names the model that answered last. */
 let modelLabelKey: string | undefined;
 function refreshModelLabel(force = false) {
 	const ai = chatPanel?.agentInterface;
 	if (!ai || !agent) return;
 	const free = freeComposerText(agent.state.model, agent.state.messages);
-	const key = free ?? "";
+	const key = `${providerless ? "none:" : ""}${free ?? ""}`;
 	if (!force && key === modelLabelKey) return;
 	modelLabelKey = key;
 	// A new function each time: the composer re-renders only when the property changes.
 	ai.modelLabel = (model) => {
+		if (providerless)
+			return { content: "Add a provider", title: "No provider is set up yet. Click to open Settings." };
 		const text = freeComposerText(model, agent.state.messages);
 		if (text) return { content: text, title: `${text}. ${FREE_PRIVACY_NOTE}` };
 		const parts = modelLabelParts(model);
@@ -614,19 +631,25 @@ async function hasAnyApiKey(): Promise<boolean> {
 }
 
 /**
- * Settings, a page over the chat with six tabs that fit the panel's width: Providers (keys and
- * custom providers), Skills, Bridge, Privacy (with the network proxy), Costs, About (with
- * updates). Settles when it closes; an open Settings page is reused, not opened twice.
+ * Settings, a page over the chat with eight tabs: Providers (keys and custom providers), Agents (who
+ * may drive the browser from outside), Connect (use it from claude.ai, ChatGPT or grok.com, and your
+ * devices), Skills, Privacy (with the network proxy), Appearance, Costs, About (with updates). Settles
+ * when it closes; an open Settings page is reused, not opened twice, and `show` moves it to a tab.
  */
-function openApiKeysDialog(): Promise<void> {
+function openApiKeysDialog(show?: { tab: string; anchor?: string }): Promise<void> {
 	const open = document.querySelector<SettingsPage>("tabkyra-settings");
-	if (open) return open.closed;
+	if (open) {
+		if (show) open.showTab(show.tab, show.anchor);
+		return open.closed;
+	}
 	const providers = new ApiKeysTab();
 	const page = SettingsPage.open([
 		providers,
-		new SkillsTab(),
 		new BridgeTab(),
+		new ConnectTab(),
+		new SkillsTab(),
 		new CombinedTab("Privacy", [{ tab: new PrivacyTab() }, { tab: new ProxyTab(), heading: "CORS proxy" }]),
+		new AppearanceTab(),
 		new CostsTab(),
 		new CombinedTab("About", [{ tab: new AboutTab() }, { tab: new UpdatesTab() }]),
 	]);
@@ -634,7 +657,8 @@ function openApiKeysDialog(): Promise<void> {
 		page.close();
 		void chatPanel?.agentInterface?.onModelSelect?.();
 	};
-	return page.closed;
+	if (show) page.showTab(show.tab, show.anchor);
+	return page.closed.then(() => refreshProviderless());
 }
 
 // Export getter for message transformer
@@ -1097,6 +1121,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		chatPanel.agentInterface.composerActions = (value, setValue) =>
 			html`<tabkyra-dictation .value=${value} .setValue=${setValue}></tabkyra-dictation>`;
 		refreshModelLabel(true);
+		void refreshProviderless();
 		// ArrowUp in an empty composer recalls the last prompt for editing or resending.
 		chatPanel.agentInterface.historyProvider = () => {
 			for (let i = agent.state.messages.length - 1; i >= 0; i--) {
@@ -1175,19 +1200,6 @@ function artifactsButton() {
 	const count = chatPanel?.artifactsCount ?? 0;
 	if (count === 0) return "";
 	return headerButton(`Artifacts (${count})`, FileCode2, () => chatPanel?.openArtifacts(), count);
-}
-
-type Theme = "light" | "dark" | "system";
-/** The same setting mini-lit's theme toggle keeps (localStorage "theme", the .dark class). */
-function currentTheme(): Theme {
-	return (localStorage.getItem("theme") as Theme | null) ?? "system";
-}
-function setTheme(theme: Theme) {
-	if (theme === "system") localStorage.removeItem("theme");
-	else localStorage.setItem("theme", theme);
-	const dark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-	document.documentElement.classList.toggle("dark", dark);
-	renderApp();
 }
 
 function openSettings() {
@@ -1272,22 +1284,10 @@ function titleArea() {
 }
 
 function moreMenuItems(): HeaderMenuItem[] {
-	const theme = currentTheme();
-	const themes: Array<[Theme, string, IconNode]> = [
-		["light", "Light theme", Sun],
-		["dark", "Dark theme", Moon],
-		["system", "Match the system", Monitor],
-	];
 	return [
 		{ label: "Copy chat as Markdown", icon: Copy, run: () => void copyCurrentChat() },
 		{ label: "Record a skill on this page", icon: CircleDot, run: () => void toggleRecording() },
-		...themes.map(([value, label, i], n) => ({
-			label,
-			icon: i,
-			checked: theme === value,
-			separator: n === 0,
-			run: () => setTheme(value),
-		})),
+		{ label: "Theme", icon: Palette, separator: true, run: () => void openApiKeysDialog({ tab: "Appearance" }) },
 	];
 }
 
@@ -1463,6 +1463,13 @@ async function initApp() {
 		document.body,
 	);
 
+	// The saved colors, before anything is drawn in them; the system setting is followed while the mode is "match system".
+	await startAppearance();
+	followSystem();
+	// Adding or removing a key changes what the model button says.
+	for (const event of ["provider-key-saved", "provider-key-removed"])
+		document.addEventListener(event, () => void refreshProviderless());
+
 	// Load showJsonMode setting
 	const stored = await chrome.storage.local.get("showJsonMode");
 	const showJsonModeEnabled = (stored.showJsonMode as boolean) || false;
@@ -1606,8 +1613,11 @@ async function initApp() {
 
 	// If no API keys configured, show welcome dialog, open settings, then auto-select model
 	if (!(await hasAnyApiKey())) {
-		await WelcomeSetupDialog.show();
-		await openApiKeysDialog();
+		const choice: WelcomeChoice = await WelcomeSetupDialog.show();
+		// "Set up provider" lands on the API keys list, not the top of the tab (Free mode and subscriptions sit above it).
+		await openApiKeysDialog(
+			choice === "connect" ? { tab: "Connect" } : { tab: "Providers", anchor: "api-keys-heading" },
+		);
 		await refreshDiscoveredModels(storage, { wait: true }).catch(() => {});
 		await selectDefaultModelForAvailableProvider();
 		renderApp();
