@@ -159,7 +159,8 @@ codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp
 **pi** has no MCP client, so `tabkyra pi-extension` writes a native pi extension instead.
 
 Any other MCP client can run the stdio server with `~/.config/tabkyra/tabkyra mcp`. For an
-agent on another machine, see [Remote MCP and tunnels](#remote-mcp-and-tunnels).
+agent on another machine, or to add Tabkyra to claude.ai, ChatGPT or grok.com as a
+connector, see [Remote MCP and tunnels](#remote-mcp-and-tunnels).
 
 ## What your agent can do
 
@@ -385,6 +386,25 @@ Tabkyra doesn't control.
 
 For an agent that isn't on this machine, such as a cloud agent or your laptop reaching your
 desktop browser. Nothing is exposed until you start it.
+
+### claude.ai, ChatGPT and grok.com
+
+Each person runs their own connector on their own computer, so it drives their own
+browser and costs them nothing. There's no account with us, no relay and no shared
+server.
+
+```bash
+tabkyra remote setup     # Tailscale Funnel (free plan), an approval passcode, a service that keeps it running
+tabkyra remote status    # is it up and reachable from the internet?
+```
+
+Setup prints the connector URL. Paste it into claude.ai (Settings > Connectors > Add custom
+connector), ChatGPT or grok.com. Each one opens Tabkyra's approval page, where you pick the
+permissions and enter your passcode. Without Tailscale, a free Cloudflare named tunnel on
+your own domain works too: `tabkyra remote setup --public-url https://tabkyra.<your domain>`.
+[docs/remote.md](docs/remote.md) has both routes, revoking and the security notes.
+
+### Other agents, with a token
 
 ```bash
 tabkyra token create laptop --scope browser.read,browser.navigate   # prints the token once
