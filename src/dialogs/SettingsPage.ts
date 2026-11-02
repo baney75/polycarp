@@ -75,13 +75,15 @@ export class SettingsPage extends PageBase {
 
 	protected renderContent(): TemplateResult {
 		const columns = this.tabs.length > 3 ? Math.ceil(this.tabs.length / 2) : this.tabs.length;
+		// Below 22rem (a panel narrower than about 350 px) a third row keeps the longest name whole.
+		const narrow = this.tabs.length > 6 ? Math.ceil(this.tabs.length / 3) : columns;
 		return html`
 			<div class="@container flex-shrink-0 border-b border-border px-3 py-2">
 				<div
 					role="tablist"
 					aria-label="Settings sections"
-					class="grid gap-1 @[28rem]:flex @[28rem]:flex-wrap"
-					style="grid-template-columns: repeat(${columns}, minmax(0, 1fr))"
+					class="grid gap-1 [grid-template-columns:repeat(var(--tk-cols),minmax(0,1fr))] @max-[22rem]:[grid-template-columns:repeat(var(--tk-cols-narrow),minmax(0,1fr))] @[28rem]:flex @[28rem]:flex-wrap"
+					style="--tk-cols: ${columns}; --tk-cols-narrow: ${narrow}"
 				>
 					${this.tabs.map((tab, index) => this.renderTab(tab, index))}
 				</div>

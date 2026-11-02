@@ -170,3 +170,18 @@ test("the Appearance color box and hex box show the accent in use, never black, 
 		await page.close();
 	}
 });
+
+for (const width of [400, 320]) {
+	test(`every Settings tab name is whole at ${width} px`, async () => {
+		const page = await settings("Connect", "light", width);
+		try {
+			const tabs = await page.evaluate(() =>
+				[...document.querySelectorAll('tabkyra-settings [role="tab"]')].map((t) => ({ name: t.textContent.trim(), cut: t.scrollWidth > t.clientWidth + 1 })),
+			);
+			assert.deepEqual(tabs.map((t) => t.name), ["Providers", "Agents", "Connect", "Skills", "Privacy", "Appearance", "Costs", "About"]);
+			assert.deepEqual(tabs.filter((t) => t.cut), []);
+		} finally {
+			await page.close();
+		}
+	});
+}
