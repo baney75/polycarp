@@ -404,6 +404,10 @@ permissions and enter your passcode. Without Tailscale, a free Cloudflare named 
 your own domain works too: `tabkyra remote setup --public-url https://tabkyra.<your domain>`.
 [docs/remote.md](docs/remote.md) has both routes, revoking and the security notes.
 
+Several computers with a browser? Run `tabkyra hub setup --public-url https://host` on an always-on box and
+`tabkyra link <hub URL> --code <code>` on each computer: one connector URL, and a session goes to a device
+that is online and least busy. See [Many devices, one connector](docs/remote.md#many-devices-one-connector).
+
 ### Other agents, with a token
 
 ```bash

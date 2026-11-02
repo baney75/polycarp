@@ -13,7 +13,11 @@ import { sdkInstalled } from "./subscriptions/copilot.ts";
 import { installCopilotSdk } from "./subscriptions/install-sdk.ts";
 import { LIBRARY_USAGE, runLibrary } from "./library.ts";
 import { createToken, loadTokens, loadUsage, revokeToken, SCOPES, serve } from "./remote.ts";
-import { listClients, normalizePublicUrl, type OAuthConfig, passcodeSet, revokeClient, revokeGrantById, setPasscode } from "./oauth.ts";
+import { listClients, mintApprovalCode, normalizePublicUrl, type OAuthConfig, passcodeSet, revokeClient, revokeGrantById, setPasscode } from "./oauth.ts";
+import { hubCode, hubDevices, hubOff, hubPrefer, hubRemove, hubServe, hubSetup, hubStatus } from "./hub-admin.ts";
+import { loadHubConfig } from "./hub-state.ts";
+import { linkBusy, linkEnroll, linkMintCode, linkOff, linkRun, linkStatus, normalizeHubUrl, printCode } from "./link.ts";
+import { runTheme } from "./theme.ts";
 import { loadRemoteConfig, remoteFile, remoteOff, remoteSetup, remoteStatus } from "./remote-setup.ts";
 import { createHubToken, hubTunnel, HUB_SCOPES } from "./hub.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
@@ -210,7 +214,8 @@ async function main(): Promise<void> {
 		return;
 	}
 	// `host` is spawned by the browser with its origin as an argument; leave it alone.
-	if (command && command !== "host") checkArgs(command, argv.slice(1));
+	// `tabkyra link https://hub...` is `link enroll`.
+	if (command && command !== "host") checkArgs(command, command === "link" && /^https?:\/\//.test(argv[1] ?? "") ? ["enroll", ...argv.slice(1)] : argv.slice(1));
 	// Bad setup or update options are refused before anything below touches the checkout.
 	const setupArgs = command === "setup" ? parseSetupArgs(argv.slice(1)) : undefined;
 	if (typeof setupArgs === "string") throw new UsageError(`${setupArgs} Usage: tabkyra setup [--yes] [--no-wait] [--timeout <seconds>]`);
@@ -464,6 +469,18 @@ async function main(): Promise<void> {
 				console.log(c.dim("Shown once. Type it on the approval page when claude.ai, ChatGPT or grok.com connects. Keep it in a password manager, but not one the browser Tabkyra drives can fill. Running this again replaces it and clears approval rate limits; grants already approved keep working."));
 				return;
 			}
+			if (sub === "approval-code") {
+				const { code, expiresAt } = mintApprovalCode();
+				let url: string | undefined;
+				try {
+					url = loadHubConfig()?.publicUrl ?? loadRemoteConfig()?.publicUrl;
+				} catch {
+					url = undefined;
+				}
+				if (flag("--json")) console.log(JSON.stringify({ ok: true, kind: "approval", code, expiresAt, ...(url ? { url: `${url}/mcp` } : {}) }, null, 2));
+				else printCode("approval", code, expiresAt, url ? `${url}/mcp` : undefined);
+				return;
+			}
 			if (sub === "clients") {
 				const clients = listClients();
 				if (flag("--json")) {
@@ -503,7 +520,7 @@ async function main(): Promise<void> {
 				for (const [scope, { what, tools }] of Object.entries(SCOPES)) console.log(`${c.bold(scope.padEnd(18))} ${what}\n${"".padEnd(19)}${c.dim(tools.join(", "))}`);
 				return;
 			}
-			throw new UsageError("Usage: tabkyra token create <name> --scope a,b | list | revoke <id|name|client id|grant id> | scopes | passcode | clients");
+			throw new UsageError("Usage: tabkyra token create <name> --scope a,b | list | revoke <id|name|client id|grant id> | scopes | passcode | approval-code | clients");
 		}
 		case "remote": {
 			const sub = argv.slice(1).find((a) => !a.startsWith("-") && a !== option("--public-url") && a !== option("--port"));
@@ -534,9 +551,63 @@ async function main(): Promise<void> {
 			throw new UsageError("Usage: tabkyra remote setup [--public-url https://host] [--port N] [--no-service] | status [--json] | off");
 		}
 		case "hub": {
-			const sub = argv.slice(1).find((a) => !a.startsWith("-"));
+			const rest = argv.slice(1).filter((a, i, all) => !a.startsWith("-") && !(VALUE_FLAGS.has(all[i - 1] ?? "") && !(all[i - 1] ?? "").includes("=")));
+			const [sub, arg] = rest;
+			const portOption = (): number | undefined => {
+				const raw = option("--port");
+				if (raw === undefined) return undefined;
+				const n = Number(raw);
+				if (!Number.isInteger(n) || n < 0 || n > 65535) throw new UsageError("--port takes a port number.");
+				return n;
+			};
+			const publicOption = (): string | undefined => {
+				const raw = option("--public-url");
+				if (raw === undefined) return undefined;
+				try {
+					return normalizePublicUrl(raw);
+				} catch (err) {
+					throw new UsageError(err instanceof Error ? err.message : String(err));
+				}
+			};
+			if (sub === "setup") {
+				const publicUrl = publicOption();
+				if (!publicUrl) throw new UsageError("Usage: tabkyra hub setup --public-url https://host [--port N] [--no-service] [--json]");
+				const port = portOption();
+				if (port !== undefined && port < 1) throw new UsageError("--port takes a port number from 1 to 65535.");
+				process.exitCode = await hubSetup({ publicUrl, port, service: !flag("--no-service"), json: flag("--json") });
+				return;
+			}
+			if (sub === "serve") {
+				await hubServe({ port: portOption(), publicUrl: publicOption() });
+				return;
+			}
+			if (sub === "code") {
+				process.exitCode = hubCode({ name: option("--name"), manage: flag("--manage"), json: flag("--json") });
+				return;
+			}
+			if (sub === "devices") {
+				process.exitCode = hubDevices(flag("--json"));
+				return;
+			}
+			if (sub === "remove") {
+				if (!arg) throw new UsageError("Usage: tabkyra hub remove <name|id>");
+				process.exitCode = hubRemove(arg);
+				return;
+			}
+			if (sub === "prefer") {
+				if (!arg) throw new UsageError("Usage: tabkyra hub prefer <name,name,...>");
+				process.exitCode = hubPrefer(arg);
+				return;
+			}
+			if (sub === "status") {
+				process.exitCode = await hubStatus(flag("--json"));
+				return;
+			}
+			if (sub === "off") {
+				process.exitCode = hubOff();
+				return;
+			}
 			if (sub === "token") {
-				checkArgs("hub", argv.slice(1));
 				const name = option("--name") ?? "hub";
 				const { token, id } = createHubToken(name);
 				console.log(`${sym.ok} Hub token ${name} (${id}) scopes: ${HUB_SCOPES.join(", ")}`);
@@ -544,7 +615,6 @@ async function main(): Promise<void> {
 				break;
 			}
 			if (sub === "tunnel") {
-				checkArgs("hub", argv.slice(1));
 				const port = Number(option("--port") ?? DEFAULT_PORT);
 				if (!Number.isInteger(port) || port < 1 || port > 65535) throw new UsageError("--port takes a port number from 1 to 65535.");
 				const result = hubTunnel(port);
@@ -554,8 +624,57 @@ async function main(): Promise<void> {
 				break;
 			}
 			throw new UsageError(
-				"Usage: tabkyra hub token [--name hub] | tabkyra hub tunnel [--port N]\nHub profile: scopes browser.read + browser.navigate; tunnel uses Tailscale serve (Funnel off).",
+				"Usage: tabkyra hub setup --public-url https://host | serve | code [--name N] [--manage] | devices | remove <name|id> | prefer <a,b> | status | off | token [--name hub] | tunnel [--port N]",
 			);
+		}
+		case "link": {
+			const rest = argv.slice(1).filter((a, i, all) => !a.startsWith("-") && !(VALUE_FLAGS.has(all[i - 1] ?? "") && !(all[i - 1] ?? "").includes("=")));
+			const enrolling = /^https?:\/\//.test(rest[0] ?? "") || rest[0] === "enroll";
+			const [sub, arg] = rest;
+			if (enrolling) {
+				const target = rest[0] === "enroll" ? rest[1] : rest[0];
+				const code = option("--code");
+				if (!target || !code) throw new UsageError("Usage: tabkyra link <hub-url> --code TK-XXXX-XXXX [--name N] [--scope a,b] [--no-service] [--json]");
+				let hubUrl: string;
+				try {
+					hubUrl = normalizeHubUrl(target);
+				} catch (err) {
+					throw new UsageError(err instanceof Error ? err.message : String(err));
+				}
+				const scopes = option("--scope") === undefined ? undefined : (option("--scope") ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+				process.exitCode = await linkEnroll({ hubUrl, code, name: option("--name"), scopes, service: !flag("--no-service"), json: flag("--json") });
+				return;
+			}
+			if (sub === "run") {
+				await linkRun();
+				return;
+			}
+			if (sub === "status") {
+				process.exitCode = await linkStatus(flag("--json"));
+				return;
+			}
+			if (sub === "off") {
+				process.exitCode = await linkOff();
+				return;
+			}
+			if (sub === "busy") {
+				process.exitCode = linkBusy(arg);
+				return;
+			}
+			if (sub === "code") {
+				process.exitCode = await linkMintCode("connect", { manage: flag("--manage"), json: flag("--json") });
+				return;
+			}
+			if (sub === "approval-code") {
+				process.exitCode = await linkMintCode("approval", { manage: false, json: flag("--json") });
+				return;
+			}
+			throw new UsageError("Usage: tabkyra link <hub-url> --code TK-XXXX-XXXX | run | status | off | busy on|off | code [--manage] | approval-code");
+		}
+		case "theme": {
+			const rest = argv.slice(1).filter((a) => !a.startsWith("-"));
+			process.exitCode = runTheme(rest, flag("--json"));
+			return;
 		}
 		case "tunnel": {
 			const kind = argv.slice(1).find((a) => !a.startsWith("-") && a !== option("--port"));

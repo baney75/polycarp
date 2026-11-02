@@ -678,3 +678,72 @@ setup` (docs/remote.md) is the one command for it.
 - `remote.json` in the config dir (0600) holds the route; `tabkyra serve` reads it when
   `--public-url` is absent, and flags win. A user service (launchd or systemd, user level) keeps
   serve running.
+
+## D32. Many devices behind one hub, still single-owner (Claude, 2026-11-02)
+
+Owner, 2026-11-02: one public URL (for example `https://tabkyra.dbaney.com/mcp`) that claude.ai,
+ChatGPT and grok.com add once, with any number of his own computers behind it.
+
+- `tabkyra hub setup` turns an always-on box into the hub. It needs no browser. It serves the D30
+  OAuth server and consent page (shared code, `oauth-http.ts`) and `/mcp`, and proxies each MCP
+  session to one of the owner's devices. A device runs `tabkyra link`, which dials out to the hub
+  over a WebSocket, so devices need no inbound port or tunnel of their own.
+- Still D31: one owner, no relay run by the maintainer, no cost. The hub is the owner's own
+  server; the maintainer runs nothing. An install has one public route, so `hub setup` refuses
+  next to `remote.json` and `remote setup` refuses next to `hub.json`.
+- Routing: a new session goes to an online device with the extension connected; not busy first,
+  then fewest sessions, then the `prefer` order, then most recently seen. With no extension
+  anywhere, any online device (tools such as `skill_match` still work). A session stays on its
+  device and caller. If that device's link is gone, the hub answers 404 "Unknown or expired
+  session", and the client's re-initialize lands elsewhere.
+- Scopes never widen across the hop. The hub sets `x-tabkyra-hub-scopes` and
+  `x-tabkyra-hub-caller` itself from the caller it authenticated, and drops any
+  `x-tabkyra-hub-*` header a public client sends (the forwarded headers come from a short
+  list). A device's `serve` honors those headers only for a `link`-kind token, only on the
+  loopback serve `link run` starts (never one with a public URL, which refuses to start with
+  that option), and uses the intersection of the token's scopes (the device's cap, default
+  `DEFAULT_GRANT`, never `browser.script` or `threads.read` unless named) and the header's. Every
+  other token ignores the headers. `link run` mints its link token at start and holds it in
+  memory only; it is revoked when `link run` stops.
+- Secrets: a device credential is 32 random bytes, kept on the hub as SHA-256 and compared with
+  `timingSafeEqual`. Connect codes (`TK-XXXX-XXXX`, Crockford base32, 40 bits, 10 minutes,
+  single use) and approval codes are kept as SHA-256. A code has 40 bits, far less than the
+  passcode's 100, so the limits matter. Five wrong connect codes per source and 20 in all in 15
+  minutes lock `/link/enroll` (429); the global cap holds even against forged source headers, and
+  the cost is accepted: anyone can lock enrollment (only enrollment) for 15 minutes. Approval
+  codes share the passcode's counter (five per client, 20 per source, 1,000 in all) and lockout.
+  A device credential has 256 bits, so `/link` and `/link/code` check it first and never refuse a
+  valid one; only failures are throttled, per source (30 in 15 minutes), with no global cap, so
+  forged sources can't lock devices out.
+- Capacity: a device handles 32 POST and DELETE requests at once and 24 sessions (its link
+  token's cap). Each session has at most one GET event stream, counted apart from requests (up to
+  24 per device), so open streams never starve tool calls. The hub reserves a request slot before
+  it reads the body. A device reports its session cap and its scope cap in its status frame; the
+  hub routes only to devices that have reported, allow at least one of the caller's scopes and
+  have room, and prefers full scope coverage before busy and load. When no device grants any of a
+  caller's scopes the answer is 403, not a forward that fails. The head timeout (120 s) waits for
+  a response head only; a stream may run as long as it likes. Whenever the hub abandons a request
+  it sends `cancel`. A request whose frame would exceed 16 MB after JSON escaping gets 413 without
+  touching the link.
+- Hostile and slow peers: the upgrade handler attaches its own error listener and answers a
+  malformed request with 400, and `hub serve` survives a connection error that escapes (any other
+  uncaught error is logged with its stack and ends the process, so the service restarts clean).
+  An initialize reserves a per-caller and hub-wide (64) slot before its body is read. A client
+  that stops reading pauses the device's link for at most 30 seconds, then the request is
+  cancelled; a request past 16 MB of unread output is cancelled at once. An initialize the hub
+  abandons leaves no session behind: the device lets it finish and closes what it made, and the
+  hub deletes the session of a head that arrives late. Chunks never split a surrogate pair. An
+  unreadable `hub-devices.json` is never overwritten, never revokes a live link, and authorizes
+  nobody. Request handlers wait at most 200 ms for a lock file (503 after); a wrong code is
+  rejected from a read-only look, before any lock.
+- Reconnect: when a link ends, the device closes every MCP session that connection carried (the
+  hub has already forgotten them), and `link run` holds an exclusive pid file so a second run
+  refuses instead of revoking the first one's token. The link token is named `link:run`, a name
+  ordinary tokens can't have.
+- `hub remove` deletes the credential; the running hub notices within a second and closes the
+  link. A manager device (`hub code --manage`) may mint connect and approval codes through
+  `/link/code`; a stolen manager credential is therefore as strong as the passcode, and
+  `hub remove` is the answer.
+- Considered and not done: a hub that also drives its own browser (run `link` on the hub box
+  instead), and a maintainer-run hub (D31).
+

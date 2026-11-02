@@ -6,21 +6,19 @@
  * remote.json when `--public-url` is absent.
  */
 
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { get as httpGet } from "node:http";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { launcherValid, tabkyraBinary, which } from "./harness.ts";
+import { installService, removeService, run, serviceFile, serviceLogHint, sleep, writeAtomic } from "./service.ts";
 import { configDir, listClients, passcodeSet, setPasscode } from "./oauth.ts";
+import { hubFile } from "./hub-state.ts";
 import { DEFAULT_PORT } from "./tunnel.ts";
 import { c, sym } from "./ui.ts";
 
 /** Funnel's own port: keeps the OAuth paths at the root and anything on 443 private. */
 export const FUNNEL_PORT = 8443;
-const LAUNCHD_LABEL = "com.tabkyra.serve";
-const SYSTEMD_UNIT = "tabkyra-serve.service";
-const METADATA_PATH = "/.well-known/oauth-protected-resource/mcp";
+export const METADATA_PATH = "/.well-known/oauth-protected-resource/mcp";
 
 export interface RemoteConfig {
 	publicUrl: string;
@@ -56,27 +54,10 @@ export function loadRemoteConfig(): RemoteConfig | undefined {
 	return { publicUrl: raw.publicUrl, port: raw.port, route: raw.route, ...(redirectHosts ? { redirectHosts } : {}), ...(allowHosts ? { allowHosts } : {}) };
 }
 
-function writeAtomic(path: string, text: string, mode: number): void {
-	mkdirSync(dirname(path), { recursive: true });
-	const tmp = `${path}.${process.pid}.tmp`;
-	writeFileSync(tmp, text, { mode });
-	renameSync(tmp, path);
-}
-
 export function saveRemoteConfig(config: RemoteConfig): void {
 	mkdirSync(configDir(), { recursive: true, mode: 0o700 });
 	writeAtomic(remoteFile(), `${JSON.stringify(config, null, "\t")}\n`, 0o600);
 }
-
-function run(cmd: string, args: string[]): { code: number; out: string } {
-	const r = spawnSync(cmd, args, { encoding: "utf8", timeout: 60_000 });
-	const output = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();
-	// A timeout or spawn error still keeps what the command printed: tailscale prints its sign-in URL before it waits.
-	if (r.error) return { code: 1, out: [output, r.error.message].filter(Boolean).join("\n") };
-	return { code: r.status ?? 1, out: output };
-}
-
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 // ---------- Tailscale Funnel ----------
 
@@ -170,130 +151,6 @@ async function strayFunnel(): Promise<StrayFunnel> {
 	return { kind: "found", bin, paths: local.map(([path]) => path), ours };
 }
 
-// ---------- User service ----------
-
-const xml = (text: string) => text.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
-/** systemd expands % specifiers in unit files, so a literal % is written %%. In ExecStart it also expands $, so a literal $ is written $$. */
-const systemdQuote = (text: string, execStart = false) => {
-	const escaped = (execStart ? text.replace(/\$/g, "$$$$") : text).replace(/%/g, "%%");
-	return /^[A-Za-z0-9_./:@+=,-]+$/.test(text) ? escaped : `"${escaped.replace(/(["\\])/g, "\\$1")}"`;
-};
-
-/** The service reads remote.json and oauth.json from the same directory as this shell; the socket directory only when it was moved. Both as absolute paths, since a service doesn't start in this shell's directory. */
-function serviceEnvironment(): Record<string, string> {
-	const out: Record<string, string> = { TABKYRA_CONFIG_DIR: resolve(configDir()) };
-	if (process.env.TABKYRA_SOCKET_DIR) out.TABKYRA_SOCKET_DIR = resolve(process.env.TABKYRA_SOCKET_DIR);
-	return out;
-}
-
-const plistPath = () => join(homedir(), "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
-const unitPath = () => join(homedir(), ".config", "systemd", "user", SYSTEMD_UNIT);
-const launchdTarget = () => `gui/${process.getuid?.() ?? 0}/${LAUNCHD_LABEL}`;
-
-export function plistText(binary: string, env: Record<string, string>, log: string): string {
-	const vars = Object.entries(env)
-		.map(([k, v]) => `\t\t<key>${xml(k)}</key>\n\t\t<string>${xml(v)}</string>\n`)
-		.join("");
-	return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>${LAUNCHD_LABEL}</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>${xml(binary)}</string>
-		<string>serve</string>
-	</array>
-${vars ? `\t<key>EnvironmentVariables</key>\n\t<dict>\n${vars}\t</dict>\n` : ""}	<key>RunAtLoad</key>
-	<true/>
-	<key>KeepAlive</key>
-	<true/>
-	<key>ThrottleInterval</key>
-	<integer>10</integer>
-	<key>StandardOutPath</key>
-	<string>${xml(log)}</string>
-	<key>StandardErrorPath</key>
-	<string>${xml(log)}</string>
-</dict>
-</plist>
-`;
-}
-
-export function unitText(binary: string, env: Record<string, string>): string {
-	const vars = Object.entries(env)
-		.map(([k, v]) => `Environment=${systemdQuote(`${k}=${v}`)}\n`)
-		.join("");
-	return `[Unit]
-Description=Tabkyra serve (MCP over HTTP for claude.ai, ChatGPT and grok.com)
-
-[Service]
-ExecStart=${systemdQuote(binary, true)} serve
-${vars}Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=default.target
-`;
-}
-
-const serviceFile = (): string | undefined => (process.platform === "darwin" ? plistPath() : process.platform === "linux" ? unitPath() : undefined);
-const launchdLog = () => join(homedir(), "Library", "Logs", "tabkyra-serve.log");
-const serviceLogHint = () => (process.platform === "darwin" ? launchdLog() : `journalctl --user -u ${SYSTEMD_UNIT}`);
-
-/** After bootout, launchd can still list the service for a moment; bootstrap into that fails. */
-async function waitUntilUnloaded(): Promise<void> {
-	const deadline = Date.now() + 5000;
-	while (run("launchctl", ["print", launchdTarget()]).code === 0 && Date.now() < deadline) await sleep(250);
-}
-
-/** Install and (re)start the user service. Returns the step that failed, if any; the file is written either way. */
-async function installService(): Promise<{ ok: boolean; message: string; file?: string }> {
-	const binary = tabkyraBinary();
-	const env = serviceEnvironment();
-	if (process.platform === "darwin") {
-		const log = launchdLog();
-		mkdirSync(dirname(log), { recursive: true });
-		writeAtomic(plistPath(), plistText(binary, env, log), 0o644);
-		run("launchctl", ["bootout", launchdTarget()]);
-		await waitUntilUnloaded();
-		const r = run("launchctl", ["bootstrap", `gui/${process.getuid?.() ?? 0}`, plistPath()]);
-		return { ok: r.code === 0, file: plistPath(), message: r.code === 0 ? `Service installed (${plistPath()}); logs in ${log}.` : `launchctl bootstrap failed: ${r.out}. Run: launchctl bootstrap gui/${process.getuid?.() ?? 0} ${plistPath()}` };
-	}
-	if (process.platform === "linux") {
-		writeAtomic(unitPath(), unitText(binary, env), 0o644);
-		for (const args of [["daemon-reload"], ["enable", SYSTEMD_UNIT], ["restart", SYSTEMD_UNIT]]) {
-			const r = run("systemctl", ["--user", ...args]);
-			if (r.code !== 0) return { ok: false, file: unitPath(), message: `systemctl --user ${args.join(" ")} failed: ${r.out}. The unit is at ${unitPath()}.` };
-		}
-		return { ok: true, file: unitPath(), message: `Service installed (${unitPath()}); journalctl --user -u ${SYSTEMD_UNIT} shows its log.` };
-	}
-	return { ok: false, message: `No service manager is set up for ${process.platform}. Keep it running yourself: ${binary} serve` };
-}
-
-/** Stop and remove the user service. A failed stop keeps the service file so `remote off` can be run again. */
-function removeService(): { ok: boolean; notes: string[]; failure?: string } {
-	if (process.platform === "darwin" && existsSync(plistPath())) {
-		const r = run("launchctl", ["bootout", launchdTarget()]);
-		// bootout also fails when the service was never loaded; that is already stopped.
-		if (r.code !== 0 && run("launchctl", ["print", launchdTarget()]).code === 0) {
-			return { ok: false, notes: [], failure: `launchctl bootout failed: ${r.out}. The service is still installed and remote.json is kept. Run: launchctl bootout ${launchdTarget()}, then tabkyra remote off again.` };
-		}
-		rmSync(plistPath(), { force: true });
-		return { ok: true, notes: [`Stopped and removed ${plistPath()}.`] };
-	}
-	if (process.platform === "linux" && existsSync(unitPath())) {
-		const r = run("systemctl", ["--user", "disable", "--now", SYSTEMD_UNIT]);
-		if (r.code !== 0) {
-			return { ok: false, notes: [], failure: `systemctl --user disable --now ${SYSTEMD_UNIT} failed: ${r.out}. The service is still installed and remote.json is kept. Run that command yourself, then tabkyra remote off again.` };
-		}
-		rmSync(unitPath(), { force: true });
-		run("systemctl", ["--user", "daemon-reload"]);
-		return { ok: true, notes: [`Stopped and removed ${unitPath()}.`] };
-	}
-	return { ok: true, notes: [] };
-}
-
 // ---------- the local serve ----------
 
 type LocalServe = { state: "none" } | { state: "match" } | { state: "other"; detail: string };
@@ -319,7 +176,7 @@ function getLocal(port: number, timeoutMs: number): Promise<{ status: number; bo
 }
 
 /** Does anything answer on the local port, and is it Tabkyra with OAuth for this publicUrl? */
-async function probeLocal(port: number, publicUrl: string, timeoutMs = 2000): Promise<LocalServe> {
+export async function probeLocal(port: number, publicUrl: string, timeoutMs = 2000): Promise<LocalServe> {
 	const res = await getLocal(port, timeoutMs);
 	if ("error" in res) return res.refused ? { state: "none" } : { state: "other", detail: res.error };
 	if (res.status !== 200) return { state: "other", detail: `it answered ${res.status} for ${METADATA_PATH}` };
@@ -344,7 +201,7 @@ async function answersLikeTabkyra(port: number): Promise<boolean> {
 	}
 }
 
-async function waitForServe(port: number, publicUrl: string, totalMs: number): Promise<boolean> {
+export async function waitForServe(port: number, publicUrl: string, totalMs: number): Promise<boolean> {
 	const deadline = Date.now() + totalMs;
 	for (;;) {
 		if ((await probeLocal(port, publicUrl, 1500)).state === "match") return true;
@@ -363,6 +220,11 @@ export interface SetupOptions {
 }
 
 export async function remoteSetup(options: SetupOptions): Promise<number> {
+	// One public route per install: a hub (tabkyra hub setup) owns it.
+	if (existsSync(hubFile())) {
+		console.error(`${sym.fail} This install is set up as a hub (${hubFile()}), and an install has one public route. Run tabkyra hub off first. Nothing was changed.`);
+		return 1;
+	}
 	let previous: RemoteConfig | undefined;
 	try {
 		previous = loadRemoteConfig();
@@ -487,7 +349,7 @@ export function inTailnetRange(address: string): boolean {
 	return Boolean(m) && Number(m?.[1]) >= 64 && Number(m?.[1]) <= 127;
 }
 
-async function metadata(url: string, timeoutMs: number, publicUrl: string): Promise<{ ok: boolean; detail: string }> {
+export async function metadata(url: string, timeoutMs: number, publicUrl: string): Promise<{ ok: boolean; detail: string }> {
 	try {
 		const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
 		if (!res.ok) return { ok: false, detail: `${url} answered ${res.status}` };
@@ -499,7 +361,7 @@ async function metadata(url: string, timeoutMs: number, publicUrl: string): Prom
 	}
 }
 
-async function dnsCheck(host: string): Promise<Check> {
+export async function dnsCheck(host: string): Promise<Check> {
 	const name = "public DNS";
 	if (/^[\d.]+$/.test(host) || host.includes(":")) return { name, status: "ok", detail: `${host} is an address, no DNS to check` };
 	const doh = process.env.TABKYRA_DOH_URL || "https://cloudflare-dns.com/dns-query";

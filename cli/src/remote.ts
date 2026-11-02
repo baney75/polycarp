@@ -18,22 +18,9 @@ import { join } from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createMcpServer } from "./mcp.ts";
-import {
-	approveAuthorize,
-	authorizationServerMetadata,
-	consentPage,
-	describeSigned,
-	exchangeToken,
-	liveGrantIds,
-	type OAuthConfig,
-	OAuthError,
-	protectedResourceMetadata,
-	registerClient,
-	resourceMetadataUrl,
-	revokeGrant,
-	validateAuthorize,
-	verifyAccessToken,
-} from "./oauth.ts";
+import { MAX_LINK_SESSIONS } from "./link-protocol.ts";
+import { handleOAuth, readBody } from "./oauth-http.ts";
+import { liveGrantIds, type OAuthConfig, resourceMetadataUrl, verifyAccessToken } from "./oauth.ts";
 
 /** What each scope grants. Acting under the user's sign-in is its own scope, never implied. */
 export const SCOPES: Record<string, { tools: string[]; what: string }> = {
@@ -77,7 +64,15 @@ export interface TokenRecord {
 	createdAt: string;
 	revokedAt?: string;
 	lastUsedAt?: string;
+	/** "link": the token `tabkyra link run` holds for its own loopback serve. Only that serve accepts it (see ServeOptions.acceptLinkTokens). */
+	kind?: "link";
 }
+
+/**
+ * The name of the token a running `link run` holds. Ordinary tokens can't take it: their names are
+ * letters, digits, dot, dash and underscore, and this one has a colon.
+ */
+export const LINK_TOKEN_NAME = "link:run";
 
 function configDir(): string {
 	return process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
@@ -133,8 +128,8 @@ function withTokensLock<T>(fn: () => T): T {
 }
 
 /** A new token for `name` with exactly `scopes`. The secret is returned once and never stored. */
-export function createToken(name: string, scopes: string[]): { record: TokenRecord; token: string } {
-	if (!/^[\w.-]{1,40}$/.test(name)) throw new Error("Token name: letters, digits, dot, dash or underscore, up to 40.");
+export function createToken(name: string, scopes: string[], kind?: "link"): { record: TokenRecord; token: string } {
+	if (kind === "link" ? name !== LINK_TOKEN_NAME : !/^[\w.-]{1,40}$/.test(name)) throw new Error("Token name: letters, digits, dot, dash or underscore, up to 40.");
 	if (/^[0-9a-f]{8}$/.test(name)) throw new Error("A token name can't look like a token id (8 hex characters).");
 	if (/^(tkc_|o-)/.test(name)) throw new Error("A token name can't start with tkc_ or o-: those name OAuth clients and grants.");
 
@@ -143,9 +138,33 @@ export function createToken(name: string, scopes: string[]): { record: TokenReco
 	return withTokensLock(() => {
 		if (loadTokens().some((t) => t.name === name && !t.revokedAt)) throw new Error(`An active token is already named ${name}. Revoke it or pick another name.`);
 		const token = `tkr_${randomBytes(32).toString("base64url")}`;
-		const record: TokenRecord = { id: randomUUID().slice(0, 8), name, scopes: [...new Set(scopes)], sha256: hash(token), createdAt: new Date().toISOString() };
+		const record: TokenRecord = { id: randomUUID().slice(0, 8), name, scopes: [...new Set(scopes)], sha256: hash(token), createdAt: new Date().toISOString(), ...(kind ? { kind } : {}) };
 		saveTokens([...loadTokens(), record]);
 		return { record, token };
+	});
+}
+
+/** Delete every link-kind record. Only `link run`, holding its pid lock, calls this at start: no other run is alive to need its token. */
+export function pruneLinkTokens(): void {
+	withTokensLock(() => {
+		const tokens = loadTokens();
+		if (tokens.some((t) => t.kind === "link")) saveTokens(tokens.filter((t) => t.kind !== "link"));
+	});
+}
+
+/** End every link-kind token (`link off`). A running `link run` revokes only its own, by id. */
+export function revokeLinkTokens(): number {
+	return withTokensLock(() => {
+		const tokens = loadTokens();
+		let n = 0;
+		for (const t of tokens) {
+			if (t.kind === "link" && !t.revokedAt) {
+				t.revokedAt = new Date().toISOString();
+				n++;
+			}
+		}
+		saveTokens(tokens);
+		return n;
 	});
 }
 
@@ -227,6 +246,29 @@ interface Caller {
 	id: string;
 	name: string;
 	scopes: string[];
+	kind?: "link";
+}
+
+/** Headers the hub sets on a request to a device: who the caller is and which scopes they hold. The device honors them only from its link token. */
+export const HUB_SCOPES_HEADER = "x-tabkyra-hub-scopes";
+export const HUB_CALLER_HEADER = "x-tabkyra-hub-caller";
+
+/** The scopes both lists hold, in `cap` order. A scope outside `cap` can never come back through the second list. */
+export function intersectScopes(cap: string[], asked: string[]): string[] {
+	const wanted = new Set(asked);
+	return cap.filter((s) => wanted.has(s) && Object.hasOwn(SCOPES, s));
+}
+
+/** The scopes named in a hub header value: known scope names only. */
+export function parseScopeHeader(value: string | string[] | undefined): string[] {
+	const text = Array.isArray(value) ? value.join(",") : (value ?? "");
+	return text.split(",").map((x) => x.trim()).filter((x) => Object.hasOwn(SCOPES, x));
+}
+
+/** A caller name safe for a tab group label and a session key. */
+export function safeCallerName(value: string | string[] | undefined): string {
+	const text = Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
+	return text.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24);
 }
 
 export interface ServeOptions {
@@ -237,15 +279,29 @@ export interface ServeOptions {
 	oauth?: OAuthConfig;
 	/** Extra Host values to accept besides the public URL's and loopback (with oauth only). */
 	allowedHosts?: string[];
+	/**
+	 * Accept the link-kind token and honor the hub's scope headers on it. Only `tabkyra link run` sets
+	 * this, on its own loopback serve. It can't be combined with oauth (a public route): a link token
+	 * must never be usable from the internet.
+	 */
+	acceptLinkTokens?: boolean;
+	/** Called when the number of open or opening sessions changes (the link's heartbeat). */
+	onSessionsChange?: (count: number) => void;
 }
 
 /** Serve MCP over Streamable HTTP on loopback. Each session is bound to the token that opened it. */
-export async function serve(options: ServeOptions): Promise<{ close: () => Promise<void>; url: string }> {
+export async function serve(options: ServeOptions): Promise<{ close: () => Promise<void>; url: string; sessionCount: () => number; closeSessions: () => void }> {
 	if (!LOOPBACK.has(options.host)) throw new Error(`tabkyra serve binds to loopback only (got ${options.host}). Use tabkyra tunnel to reach it from another device over TLS.`);
+	if (options.acceptLinkTokens && options.oauth) throw new Error("A link token is never accepted on a public route: acceptLinkTokens can't be combined with a public URL.");
 	const sessions = new Map<string, { transport: StreamableHTTPServerTransport; tokenId: string; lastSeen: number }>();
 	const IDLE_MS = 30 * 60_000;
 	const pending = new Map<string, number>();
 	const MAX_SESSIONS_PER_TOKEN = 8;
+	// The link token carries every caller the hub sends this device; the hub holds each caller to their own sessions.
+	const MAX_SESSIONS_LINK = MAX_LINK_SESSIONS;
+	// closeSessions() bumps this; a session still being set up when it did is closed as soon as it exists.
+	let generation = 0;
+	const notifySessions = () => options.onSessionsChange?.(sessions.size + [...pending.values()].reduce((a, b) => a + b, 0));
 	// Close sessions that went quiet or whose token was revoked; a client that vanished without
 	// a DELETE would otherwise hold a server and a tab group forever.
 	const sweep = setInterval(() => {
@@ -261,6 +317,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 			if (!live.has(s.tokenId) || Date.now() - s.lastSeen > IDLE_MS) {
 				sessions.delete(id);
 				void s.transport.close();
+				notifySessions();
 			}
 		}
 	}, 60_000);
@@ -273,15 +330,12 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		res.writeHead(status, { "content-type": "application/json", ...(status === 401 ? { "www-authenticate": challenge } : {}) });
 		res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message }, id: null }));
 	};
-	const sendJson = (res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) => {
-		res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...headers });
-		res.end(JSON.stringify(body));
-	};
 
 	/** A static token, or with OAuth on, a live OAuth access token. */
 	function caller(header: string | undefined): Caller | undefined {
 		const record = authenticate(header);
-		if (record) return record;
+		// A link token works only on the loopback serve `link run` starts; anywhere else it is no token at all.
+		if (record) return record.kind === "link" && !options.acceptLinkTokens ? undefined : record;
 		const m = /^Bearer (\S+)$/.exec(header ?? "");
 		return oauth && m ? verifyAccessToken(oauth, m[1]) : undefined;
 	}
@@ -294,17 +348,6 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		});
 	});
 
-	async function readBody(req: IncomingMessage, limit = 4_000_000): Promise<string> {
-		const chunks: Buffer[] = [];
-		let size = 0;
-		for await (const chunk of req) {
-			size += (chunk as Buffer).length;
-			if (size > limit) throw new Error("Request body too large.");
-			chunks.push(chunk as Buffer);
-		}
-		return Buffer.concat(chunks).toString("utf8");
-	}
-
 	async function readJson(req: IncomingMessage): Promise<unknown> {
 		return JSON.parse(await readBody(req));
 	}
@@ -313,95 +356,6 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		const address = http.address();
 		return typeof address === "object" && address ? address.port : options.port;
 	};
-
-	/** The OAuth endpoints. Returns false when the path isn't one of them. */
-	async function handleOAuth(config: OAuthConfig, req: IncomingMessage, res: ServerResponse, path: string): Promise<boolean> {
-		const metadata = { "access-control-allow-origin": "*", "cache-control": "max-age=300" };
-		if (path === "/.well-known/oauth-protected-resource" || path === "/.well-known/oauth-protected-resource/mcp") {
-			sendJson(res, 200, protectedResourceMetadata(config), metadata);
-			return true;
-		}
-		if (path === "/.well-known/oauth-authorization-server" || path === "/.well-known/oauth-authorization-server/mcp") {
-			sendJson(res, 200, authorizationServerMetadata(config), metadata);
-			return true;
-		}
-		const oauthPaths = ["/register", "/authorize", "/token", "/revoke"];
-		// For rate limits only (oauth.ts): a forged header can spread a flood out, not get past the passcode.
-		const forwarded = String(req.headers["cf-connecting-ip"] ?? String(req.headers["x-forwarded-for"] ?? "").split(",")[0]).trim();
-		const source = forwarded || req.socket.remoteAddress || "unknown";
-		if (!oauthPaths.includes(path)) return false;
-		const page = (status: number, html: { html: string; headers: Record<string, string> }) => {
-			res.writeHead(status, html.headers);
-			res.end(html.html);
-		};
-		const redirect = (to: string) => {
-			res.writeHead(302, { location: to, "cache-control": "no-store", "referrer-policy": "no-referrer" });
-			res.end();
-		};
-		const errorText = (status: number, message: string) => {
-			res.writeHead(status, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
-			res.end(`${message}\n`);
-		};
-		try {
-			if (path === "/register" && req.method === "POST") {
-				let body: unknown;
-				try {
-					body = JSON.parse(await readBody(req, 64_000));
-				} catch {
-					throw new OAuthError(400, "invalid_client_metadata", "The registration body isn't valid JSON.");
-				}
-				sendJson(res, 201, registerClient(config, body, source));
-				return true;
-			}
-			if (path === "/authorize" && req.method === "GET") {
-				const result = validateAuthorize(config, new URL(req.url ?? "/", "http://x").searchParams);
-				if ("redirect" in result) redirect(result.redirect);
-				else page(200, consentPage(config, result));
-				return true;
-			}
-			if (path === "/authorize" && req.method === "POST") {
-				const form = new URLSearchParams(await readBody(req, 64_000));
-				try {
-					redirect((await approveAuthorize(config, form, source)).redirect);
-				} catch (err) {
-					// A wrong passcode or no permission ticked: show the form again.
-					if (err instanceof OAuthError && (err.status === 401 || err.error === "invalid_scope")) {
-						let again: ReturnType<typeof describeSigned> | undefined;
-						try {
-							again = describeSigned(form.get("request") ?? "", form.getAll("scope"));
-						} catch {
-							again = undefined;
-						}
-						if (again) {
-							page(err.status, consentPage(config, again, err.description));
-							return true;
-						}
-					}
-					throw err;
-				}
-				return true;
-			}
-			if (path === "/token" && req.method === "POST") {
-				const params = new URLSearchParams(await readBody(req, 64_000));
-				sendJson(res, 200, exchangeToken(params, req.headers.authorization));
-				return true;
-			}
-			if (path === "/revoke" && req.method === "POST") {
-				const params = new URLSearchParams(await readBody(req, 64_000));
-				revokeGrant(params, req.headers.authorization);
-				sendJson(res, 200, {});
-				return true;
-			}
-			errorText(405, "Method not allowed.");
-			return true;
-		} catch (err) {
-			if (!(err instanceof OAuthError)) throw err;
-			// The authorize page is a browser page; the rest are JSON APIs.
-			if (path === "/authorize") errorText(err.status, err.description);
-			else sendJson(res, err.status, { error: err.error, error_description: err.description });
-			return true;
-		}
-	}
 
 	async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
 		const path = new URL(req.url ?? "/", "http://x").pathname;
@@ -435,33 +389,54 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		// Only an initialize request creates a server; anything else would leak one per request.
 		if (!isInitializeRequest(body)) return deny(res, 400, "Start a session with an initialize request.");
 		// Count sessions being set up too, so parallel initializes can't pass the cap together.
+		const isLink = token.kind === "link";
+		const sessionCap = isLink ? MAX_SESSIONS_LINK : MAX_SESSIONS_PER_TOKEN;
 		const open = [...sessions.values()].filter((s) => s.tokenId === token.id).length + (pending.get(token.id) ?? 0);
-		if (open >= MAX_SESSIONS_PER_TOKEN) return deny(res, 429, `This token already has ${MAX_SESSIONS_PER_TOKEN} open sessions. Close one first.`);
+		if (open >= sessionCap) return deny(res, 429, `This token already has ${sessionCap} open sessions. Close one first.`);
+		// Through the hub, the caller's scopes can only narrow the link token's own cap, never widen it. Every other token ignores the hub headers.
+		let scopes = token.scopes;
+		let label = token.name;
+		if (isLink) {
+			const asked = req.headers[HUB_SCOPES_HEADER];
+			if (asked !== undefined) scopes = intersectScopes(token.scopes, parseScopeHeader(asked));
+			label = safeCallerName(req.headers[HUB_CALLER_HEADER]) || token.name;
+			if (scopes.length === 0) return deny(res, 403, "None of the caller's permissions are allowed on this device.");
+		}
 		pending.set(token.id, (pending.get(token.id) ?? 0) + 1);
+		notifySessions();
 		let reserved = true;
 		const release = () => {
 			if (!reserved) return;
 			reserved = false;
 			pending.set(token.id, Math.max(0, (pending.get(token.id) ?? 1) - 1));
+			notifySessions();
 		};
-		const allowed = toolsFor(token.scopes);
+		const allowed = toolsFor(scopes);
 		// Each session gets its own browser session (its own tab group), even under one token.
 		const { server, client } = createMcpServer({
-			name: `remote-${token.name}`,
+			name: `remote-${label}`,
 			session: `remote-${token.id}-${randomUUID().slice(0, 8)}`,
 			allowedTools: allowed,
 			remote: true,
 		});
+		const born = generation;
 		const transport = new StreamableHTTPServerTransport({
 			sessionIdGenerator: () => randomUUID(),
 			onsessioninitialized: (id) => {
+				if (born !== generation) {
+					void transport.close();
+					release();
+					return;
+				}
 				sessions.set(id, { transport, tokenId: token.id, lastSeen: Date.now() });
 				release();
+				notifySessions();
 			},
 		});
 		transport.onclose = () => {
 			if (transport.sessionId) sessions.delete(transport.sessionId);
 			client.close?.();
+			notifySessions();
 		};
 		try {
 			await server.connect(transport);
@@ -478,6 +453,16 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 	options.onListen?.(url);
 	return {
 		url,
+		sessionCount: () => sessions.size + [...pending.values()].reduce((a, b) => a + b, 0),
+		/** Close every open session (and any being set up): the link connection that carried them is gone. */
+		closeSessions: () => {
+			generation++;
+			for (const [id, s] of [...sessions]) {
+				sessions.delete(id);
+				void s.transport.close();
+			}
+			notifySessions();
+		},
 		close: () =>
 			new Promise<void>((resolve) => {
 				clearInterval(sweep);

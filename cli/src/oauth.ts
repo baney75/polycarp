@@ -14,8 +14,12 @@
 
 import { createHash, createHmac, randomBytes, scrypt, scryptSync, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { CODE_TTL_MS, CodeLimitError, type CodeRecord, findCode, hashCode, liveCodes, newCode, normalizeCode, REQUEST_LOCK_MS } from "./codes.ts";
+import { configDir, LockTimeoutError, readJsonFile, withFileLock, writeJsonPrivate } from "./files.ts";
+import { pageCss } from "./theme.ts";
+
+export { configDir };
 
 const ACCESS_TTL = 3600;
 const REFRESH_TTL = 30 * 86400;
@@ -94,10 +98,6 @@ export class OAuthError extends Error {
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const now = () => Math.floor(Date.now() / 1000);
 const b64 = (bytes = 32) => randomBytes(bytes).toString("base64url");
-
-export function configDir(): string {
-	return process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
-}
 
 function stateFile(): string {
 	return join(configDir(), "oauth.json");
@@ -220,6 +220,64 @@ export function passcodeSet(): boolean {
 		return Boolean(load().passcode);
 	} catch {
 		return false;
+	}
+}
+
+// ---------- One-time approval codes ----------
+
+/** Codes a connector may be approved with instead of the passcode: TK-XXXX-XXXX, ten minutes, once (codes.ts). Only SHA-256 is stored. */
+const approvalFile = () => join(configDir(), "oauth-codes.json");
+const MAX_LIVE_APPROVAL_CODES = 20;
+
+function loadApprovalCodes(): CodeRecord[] {
+	try {
+		const data = readJsonFile<{ codes?: CodeRecord[] }>(approvalFile(), {});
+		return Array.isArray(data.codes) ? data.codes : [];
+	} catch {
+		return [];
+	}
+}
+
+/** A new approval code, returned once. `lockMs` is how long to wait for the lock (a request handler passes a short one). */
+export function mintApprovalCode(lockMs?: number): { code: string; expiresAt: number } {
+	return withFileLock(
+		approvalFile(),
+		() => {
+			const time = Date.now();
+			const live = liveCodes(loadApprovalCodes(), time);
+			if (live.length >= MAX_LIVE_APPROVAL_CODES) throw new CodeLimitError(`${MAX_LIVE_APPROVAL_CODES} approval codes are already waiting. Use or wait out one first.`);
+			const code = newCode();
+			const expiresAt = time + CODE_TTL_MS;
+			writeJsonPrivate(approvalFile(), { codes: [...live, { sha256: hashCode(code), expiresAt, createdAt: time }] });
+			return { code, expiresAt };
+		},
+		lockMs,
+	);
+}
+
+/** Whether a typed value is a live approval code. Does not use it up. */
+function approvalCodeLive(typed: string): boolean {
+	return findCode(loadApprovalCodes(), typed, Date.now()) >= 0;
+}
+
+/** Use up a live approval code. False when it is wrong, expired or already used (two requests racing for one code: one wins). */
+function consumeApprovalCode(typed: string): boolean {
+	try {
+		// Runs in the server's event loop: wait briefly for the lock, and answer 503 if it stays held.
+		return withFileLock(
+			approvalFile(),
+			() => {
+				const time = Date.now();
+				const live = liveCodes(loadApprovalCodes(), time);
+				const at = findCode(live, typed, time);
+				writeJsonPrivate(approvalFile(), { codes: live.filter((_, i) => i !== at) });
+				return at >= 0;
+			},
+			REQUEST_LOCK_MS,
+		);
+	} catch (err) {
+		if (err instanceof LockTimeoutError) throw new OAuthError(503, "temporarily_unavailable", "Busy. Try again in a moment.");
+		throw err;
 	}
 }
 
@@ -513,15 +571,22 @@ export async function approveAuthorize(config: OAuthConfig, form: URLSearchParam
 	// The passcode carries about 100 bits, so these caps bound work, not guessing. Per client and
 	// per source first; the global cap is high, and a new passcode clears all of them.
 	if (failures.filter((f) => f.client === request.client_id).length >= 5 || failures.filter((f) => f.source === source).length >= 20 || failures.length >= 1000) {
-		throw new OAuthError(429, "temporarily_unavailable", "Too many wrong passcodes. Wait 15 minutes, or run tabkyra token passcode for a new one, which clears this limit.");
+		throw new OAuthError(429, "temporarily_unavailable", "Too many wrong passcodes or connect codes. Wait 15 minutes, or run tabkyra token passcode for a new passcode, which clears this limit.");
 	}
-	if (!(await checkPasscode(state.passcode, form.get("passcode") ?? ""))) {
+	const typed = form.get("passcode") ?? "";
+	// A live approval code stands in for the passcode. It is checked first (a file read), and used up only once the scopes are valid.
+	const byCode = normalizeCode(typed) !== undefined && approvalCodeLive(typed);
+	const refuse = (message: string): never => {
 		failures.push({ at: time, client: request.client_id, source });
-		throw new OAuthError(401, "access_denied", state.passcode ? "Wrong passcode." : "No passcode is set. Run tabkyra token passcode on the computer that runs serve.");
+		throw new OAuthError(401, "access_denied", message);
+	};
+	if (!byCode && !(await checkPasscode(state.passcode, typed))) {
+		refuse(state.passcode ? "Wrong passcode or connect code." : "No passcode is set. Run tabkyra token passcode, or tabkyra token approval-code for a one-time connect code, on the computer that runs serve.");
 	}
 	const scopes = [...new Set(form.getAll("scope"))];
 	if (scopes.length === 0) throw new OAuthError(400, "invalid_scope", "Tick at least one permission.");
 	for (const s of scopes) if (!Object.hasOwn(config.scopes, s)) throw new OAuthError(400, "invalid_scope", `Unknown permission ${s}.`);
+	if (byCode && !consumeApprovalCode(typed)) refuse("That connect code was already used or has expired.");
 	const code = `tka_${b64()}`;
 	for (const [key, value] of codes) if (value.expires < now()) codes.delete(key);
 	codes.set(sha(code), { ...request, scopes, expires: now() + CODE_TTL });
@@ -704,14 +769,14 @@ export function consentPage(config: OAuthConfig, d: ConsentDetails, error?: stri
 		)
 		.join("");
 	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Approve Tabkyra access</title>
-<style>body{font:16px/1.5 system-ui,sans-serif;margin:0;background:#f6f5f2;color:#1b1b1b}main{max-width:560px;margin:6vh auto;padding:28px;background:#fff;border-radius:14px;box-shadow:0 1px 3px #0002}h1{font-size:1.3rem;margin:0 0 .5rem}.scope{display:flex;gap:.6rem;align-items:flex-start;margin:.45rem 0;font-size:.93rem}.scope input{margin-top:.3rem}fieldset{border:1px solid #ddd;border-radius:10px;padding:.6rem .9rem;margin:1rem 0}legend{font-weight:600;padding:0 .3rem}label[for]{display:block;font-weight:600;margin-top:1rem}.secret{-webkit-text-security:disc}input.secret{width:100%;box-sizing:border-box;font:inherit;padding:.6rem;border:1px solid #bbb;border-radius:8px}.row{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.2rem}button{font:inherit;padding:.55rem 1.1rem;border-radius:8px;border:1px solid #bbb;background:#fff;cursor:pointer}.primary{background:#1b1b1b;color:#fff;border-color:#1b1b1b}.error{color:#a40000;font-weight:600}@media (prefers-color-scheme:dark){body{background:#151515;color:#eee}main{background:#222}fieldset{border-color:#444}button{background:#333;color:#eee;border-color:#555}.primary{background:#eee;color:#111}.error{color:#ff8a8a}}</style></head>
+<style>${pageCss()}</style></head>
 <body><main><h1>Allow ${escape(d.clientName)} to use your browser through Tabkyra?</h1>
 <p>It will work in its own tab group in your signed-in browser, with the permissions you tick. After you approve, you go back to <strong>${escape(d.redirectHost)}</strong>.</p>
 <p>Only approve a connection you started yourself, just now, in your own account. A link someone sent you could connect their account to your browser. This connection registered ${escape(d.registeredAgo)} and returns to <code>${escape(d.redirectUri)}</code>.</p>
-${error ? `<p class="error">${escape(error)}</p>` : ""}${d.passcodeSet ? "" : '<p class="error">No passcode is set yet. Run tabkyra token passcode on the computer that runs serve.</p>'}
+${error ? `<p class="error">${escape(error)}</p>` : ""}${d.passcodeSet ? "" : '<p class="error">No passcode is set yet. Run tabkyra token passcode on the computer that runs serve, or tabkyra token approval-code for a one-time connect code.</p>'}
 <form method="post" action="/authorize"><input type="hidden" name="request" value="${escape(d.signed)}">
 <fieldset><legend>Permissions</legend>${boxes}</fieldset>
-<label for="passcode">Tabkyra passcode</label><input id="passcode" name="passcode" type="text" class="secret" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore required autofocus>
+<label for="passcode">Passcode or connect code</label><input id="passcode" name="passcode" type="text" class="secret" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore required autofocus>
 <div class="row"><button type="submit" name="decision" value="deny" formnovalidate>Deny</button><button class="primary" type="submit" name="decision" value="allow">Allow</button></div></form></main></body></html>`;
 	return {
 		html,
