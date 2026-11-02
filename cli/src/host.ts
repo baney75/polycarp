@@ -12,6 +12,7 @@ import type { ClientToHost, ExtToHost, HostClientConnected, HostToClient, HostTo
 import { ERR, MAX_FRAME_FROM_EXTENSION, MAX_FRAME_TO_EXTENSION } from "../../src/bridge/protocol.ts";
 import { encodeFrame, FrameParser } from "./framing.ts";
 import { socketDir, socketPath } from "./paths.ts";
+import { ConnectService } from "./connect-host.ts";
 import { SubscriptionService } from "./subscriptions/service.ts";
 import { applyMirror } from "./threads-mirror.ts";
 import { handleCommunityAction, onCommunityHello, startCommunityTimer } from "./community-host.ts";
@@ -35,6 +36,8 @@ let browserId: string | undefined;
 let seq = 0;
 /** ChatGPT and Copilot sign-ins; made on the first request, so a host that never sees one opens nothing. */
 let subscriptions: SubscriptionService | undefined;
+/** Settings > Connect: routes, codes, devices, joining a hub, the page theme. Made on the first frame. */
+let connect: ConnectService | undefined;
 /** Set once the host has decided to exit; no request is forwarded after that. */
 let stopping = false;
 
@@ -138,6 +141,11 @@ function onExtensionMessage(message: ExtToHost): void {
 			if (typeof message.id !== "number" || typeof message.method !== "string") return;
 			subscriptions ??= new SubscriptionService();
 			void subscriptions.handle(message, toExtension);
+			return;
+		case "connect":
+			// Parsed strictly inside: a frame that isn't exactly a known call gets an error and runs nothing.
+			connect ??= new ConnectService();
+			void connect.handle(message, toExtension);
 			return;
 	}
 }

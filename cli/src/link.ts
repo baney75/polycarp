@@ -156,33 +156,43 @@ export interface EnrollOptions {
 	json: boolean;
 }
 
-export async function linkEnroll(options: EnrollOptions): Promise<number> {
-	const say = (line: string) => {
-		if (!options.json) console.log(line);
-	};
-	const fail = (message: string): number => {
-		if (options.json) console.log(JSON.stringify({ ok: false, error: message }));
-		else console.error(`${sym.fail} ${message}`);
-		return 1;
-	};
+/** What enrolling did. `failed`: nothing was written. `linked`: link.json exists; `ok` is false when the service didn't start. */
+export type EnrollResult =
+	| { kind: "failed"; error: string }
+	| { kind: "linked"; ok: boolean; name: string; deviceId: string; manage: boolean; scopes: string[]; service: string };
+
+/** What enrolling touches besides the hub: output, progress, and the user service. Tests and the native host pass their own. */
+export interface EnrollHooks {
+	/** A human line (the CLI prints it; the native host drops it, because stdout is its channel to the browser). */
+	say?: (line: string) => void;
+	/** A step the person is waiting on. */
+	step?: (step: "contacting" | "service") => void;
+	service?: { valid: () => boolean; install: () => Promise<{ ok: boolean; message: string }> };
+}
+
+/** Enroll this device. Prints nothing itself: it reports through `hooks` and its result. */
+export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: EnrollHooks = {}): Promise<EnrollResult> {
+	const say = hooks.say ?? (() => {});
+	const service = hooks.service ?? { valid: launcherValid, install: () => installService(LINK_SERVICE) };
 	let existing: LinkConfig | undefined;
 	try {
 		existing = loadLinkConfig();
 	} catch (err) {
-		return fail(`${err instanceof Error ? err.message : String(err)} Nothing was changed.`);
+		return { kind: "failed", error: `${err instanceof Error ? err.message : String(err)} Nothing was changed.` };
 	}
-	if (existing) return fail(`This device is already linked to ${existing.hubUrl} as ${existing.name}. Run tabkyra link off first. Nothing was changed.`);
+	if (existing) return { kind: "failed", error: `This device is already linked to ${existing.hubUrl} as ${existing.name}. Run tabkyra link off first. Nothing was changed.` };
 	const scopes = options.scopes?.length ? [...new Set(options.scopes)] : [...DEFAULT_GRANT];
-	for (const s of scopes) if (!Object.hasOwn(SCOPES, s)) return fail(`Unknown scope ${s}. Scopes: ${Object.keys(SCOPES).join(", ")}.`);
-	if (options.service && !launcherValid()) return fail(`${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run tabkyra install first, then link again (or pass --no-service). Nothing was changed.`);
+	for (const s of scopes) if (!Object.hasOwn(SCOPES, s)) return { kind: "failed", error: `Unknown scope ${s}. Scopes: ${Object.keys(SCOPES).join(", ")}.` };
+	if (options.service && !service.valid()) return { kind: "failed", error: `${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run tabkyra install first, then link again (or pass --no-service). Nothing was changed.` };
+	hooks.step?.("contacting");
 	let result: Awaited<ReturnType<typeof hubPost>>;
 	try {
 		result = await hubPost(options, "/link/enroll", { code: options.code, name: options.name ?? hostname().split(".")[0], version: VERSION });
 	} catch (err) {
-		return fail(`Couldn't reach ${options.hubUrl}: ${err instanceof Error ? err.message : String(err)}`);
+		return { kind: "failed", error: `Couldn't reach ${options.hubUrl}: ${err instanceof Error ? err.message : String(err)}` };
 	}
 	const { deviceId, secret, manage, name } = result.body;
-	if (result.status !== 200 || typeof deviceId !== "string" || typeof secret !== "string" || typeof name !== "string") return fail(`The hub refused: ${describe(result.body, result.status)}`);
+	if (result.status !== 200 || typeof deviceId !== "string" || typeof secret !== "string" || typeof name !== "string") return { kind: "failed", error: `The hub refused: ${describe(result.body, result.status)}` };
 	const config: LinkConfig = { hubUrl: options.hubUrl, deviceId, secret, name, manage: manage === true, scopes };
 	writeJsonPrivate(linkFile(), config);
 	say(`${sym.ok} Linked as ${c.bold(name)} (${deviceId})${config.manage ? ", a manager device" : ""}. Wrote ${c.dim(linkFile())}`);
@@ -190,16 +200,27 @@ export async function linkEnroll(options: EnrollOptions): Promise<number> {
 	let serviceMessage = "no service (run: tabkyra link run)";
 	let serviceOk = true;
 	if (options.service) {
-		const service = await installService(LINK_SERVICE);
-		serviceOk = service.ok;
-		serviceMessage = service.message;
-		say(`${service.ok ? sym.ok : sym.fail} ${service.message}`);
-		if (!service.ok) say(`${sym.dot} link.json is kept. Fix the cause and run tabkyra link ${options.hubUrl} again after tabkyra link off, or start it yourself: tabkyra link run`);
+		hooks.step?.("service");
+		const installed = await service.install();
+		serviceOk = installed.ok;
+		serviceMessage = installed.message;
+		say(`${installed.ok ? sym.ok : sym.fail} ${installed.message}`);
+		if (!installed.ok) say(`${sym.dot} link.json is kept. Fix the cause and run tabkyra link ${options.hubUrl} again after tabkyra link off, or start it yourself: tabkyra link run`);
 	} else {
 		say(`${sym.dot} No service installed. Start it yourself: ${c.bold("tabkyra link run")}`);
 	}
-	if (options.json) console.log(JSON.stringify({ ok: serviceOk, name, deviceId, manage: config.manage, scopes, service: serviceMessage }, null, 2));
-	return serviceOk ? 0 : 1;
+	return { kind: "linked", ok: serviceOk, name, deviceId, manage: config.manage, scopes, service: serviceMessage };
+}
+
+export async function linkEnroll(options: EnrollOptions): Promise<number> {
+	const result = await enrollDevice(options, { say: options.json ? undefined : (line) => console.log(line) });
+	if (result.kind === "failed") {
+		if (options.json) console.log(JSON.stringify({ ok: false, error: result.error }));
+		else console.error(`${sym.fail} ${result.error}`);
+		return 1;
+	}
+	if (options.json) console.log(JSON.stringify({ ok: result.ok, name: result.name, deviceId: result.deviceId, manage: result.manage, scopes: result.scopes, service: result.service }, null, 2));
+	return result.ok ? 0 : 1;
 }
 
 // ---------- link run ----------
@@ -224,7 +245,7 @@ async function extensionConnected(): Promise<boolean> {
 	}
 }
 
-interface LiveState {
+export interface LiveState {
 	pid: number;
 	updatedAt: number;
 	connected: boolean;
@@ -236,6 +257,20 @@ interface LiveState {
 	streams: number;
 	extensionConnected: boolean;
 	busy: boolean;
+}
+
+/** What `link run` last wrote about itself, or undefined when it never has or the file is unreadable. */
+export function readLinkLive(): LiveState | undefined {
+	try {
+		return readJsonFile<LiveState | undefined>(liveFile(), undefined);
+	} catch {
+		return undefined;
+	}
+}
+
+/** Whether `link run` is connected to the hub, by its own recent report (it rewrites the file every 5 to 15 seconds). */
+export function linkOnline(state: LiveState | undefined, now = Date.now()): boolean {
+	return Boolean(state && now - state.updatedAt < 45_000 && state.connected);
 }
 
 /** Run until stopped: serve on loopback, dial the hub, answer its requests. */
@@ -572,46 +607,62 @@ export async function linkOff(): Promise<number> {
 	return 0;
 }
 
+/** Mark this device busy or not. Throws when it isn't linked. */
+export function setLinkBusy(busy: boolean): void {
+	const config = loadLinkConfig();
+	if (!config) throw new Error("This device isn't linked. Run tabkyra link <hub-url> --code <code>.");
+	const { busy: _old, ...rest } = config;
+	writeJsonPrivate(linkFile(), busy ? { ...rest, busy: true } : rest);
+}
+
 export function linkBusy(value: string | undefined): number {
 	if (value !== "on" && value !== "off") {
 		console.error("Usage: tabkyra link busy on|off");
 		return 2;
 	}
-	const config = loadLinkConfig();
-	if (!config) {
-		console.error(`${sym.fail} This device isn't linked. Run tabkyra link <hub-url> --code <code>.`);
+	try {
+		setLinkBusy(value === "on");
+	} catch (err) {
+		console.error(`${sym.fail} ${err instanceof Error ? err.message : String(err)}`);
 		return 1;
 	}
-	const { busy: _old, ...rest } = config;
-	writeJsonPrivate(linkFile(), value === "on" ? { ...rest, busy: true } : rest);
 	console.log(value === "on" ? `${sym.ok} Marked busy: the hub sends new sessions to your other devices first.` : `${sym.ok} Not busy: the hub may send new sessions here.`);
 	return 0;
 }
 
 // ---------- link code / approval-code ----------
 
-export async function linkMintCode(kind: "connect" | "approval", options: { manage: boolean; json: boolean }): Promise<number> {
+/** A code from the hub, asked for with this device's credential. Throws a sentence a person can act on. */
+export async function mintViaHub(kind: "connect" | "approval", manage: boolean): Promise<{ code: string; expiresAt: number; url?: string; hubUrl: string }> {
 	const config = loadLinkConfig();
-	const fail = (message: string): number => {
+	if (!config) throw new Error("This device isn't linked. Run tabkyra link <hub-url> --code <code>.");
+	if (!config.manage) throw new Error("This device isn't a manager, so it can't ask the hub for codes. Link it with a code from tabkyra hub code --manage, or run the command on the hub.");
+	let result: Awaited<ReturnType<typeof hubPost>>;
+	try {
+		result = await hubPost(config, "/link/code", { kind, manage }, `${config.deviceId}.${config.secret}`);
+	} catch (err) {
+		throw new Error(`Couldn't reach ${config.hubUrl}: ${err instanceof Error ? err.message : String(err)}`);
+	}
+	const { code, expiresAt, url } = result.body;
+	if (result.status !== 200 || typeof code !== "string" || typeof expiresAt !== "number") throw new Error(`The hub refused: ${describe(result.body, result.status)}`);
+	return { code, expiresAt, ...(typeof url === "string" ? { url } : {}), hubUrl: config.hubUrl };
+}
+
+export async function linkMintCode(kind: "connect" | "approval", options: { manage: boolean; json: boolean }): Promise<number> {
+	let minted: Awaited<ReturnType<typeof mintViaHub>>;
+	try {
+		minted = await mintViaHub(kind, options.manage);
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
 		if (options.json) console.log(JSON.stringify({ ok: false, error: message }));
 		else console.error(`${sym.fail} ${message}`);
 		return 1;
-	};
-	if (!config) return fail("This device isn't linked. Run tabkyra link <hub-url> --code <code>.");
-	if (!config.manage) return fail("This device isn't a manager, so it can't ask the hub for codes. Link it with a code from tabkyra hub code --manage, or run the command on the hub.");
-	let result: Awaited<ReturnType<typeof hubPost>>;
-	try {
-		result = await hubPost(config, "/link/code", { kind, manage: options.manage }, `${config.deviceId}.${config.secret}`);
-	} catch (err) {
-		return fail(`Couldn't reach ${config.hubUrl}: ${err instanceof Error ? err.message : String(err)}`);
 	}
-	const { code, expiresAt, url } = result.body;
-	if (result.status !== 200 || typeof code !== "string" || typeof expiresAt !== "number") return fail(`The hub refused: ${describe(result.body, result.status)}`);
 	if (options.json) {
-		console.log(JSON.stringify({ ok: true, kind, code, expiresAt, ...(typeof url === "string" ? { url } : {}) }, null, 2));
+		console.log(JSON.stringify({ ok: true, kind, code: minted.code, expiresAt: minted.expiresAt, ...(minted.url ? { url: minted.url } : {}) }, null, 2));
 		return 0;
 	}
-	printCode(kind, code, expiresAt, typeof url === "string" ? url : undefined, config.hubUrl);
+	printCode(kind, minted.code, minted.expiresAt, minted.url, minted.hubUrl);
 	return 0;
 }
 

@@ -59,6 +59,9 @@ export interface ThemeChoice {
 
 const HEX = /^#[0-9a-f]{6}$/i;
 
+/** Whether a value is a #rrggbb accent. */
+export const isAccent = (value: unknown): value is string => typeof value === "string" && HEX.test(value);
+
 export const themeFile = () => join(configDir(), "theme.json");
 
 /** The saved choice. A missing, unreadable or unknown file gives the default: a page never fails on its theme. */
@@ -71,6 +74,18 @@ export function loadTheme(): ThemeChoice {
 	} catch {
 		return { preset: DEFAULT_PRESET };
 	}
+}
+
+/**
+ * Save a choice with the same checks `tabkyra theme` makes. `accent` undefined keeps the saved
+ * accent (as `theme set` does), null clears it, a string sets it. Throws on a bad preset or accent.
+ */
+export function saveTheme(preset: string, accent?: string | null): ThemeChoice {
+	if (!Object.hasOwn(PRESETS, preset)) throw new Error(`Pick a preset: ${Object.keys(PRESETS).join(", ")}.`);
+	if (typeof accent === "string" && !HEX.test(accent)) throw new Error("Give the accent as #rrggbb, for example #3b82f6.");
+	const kept = accent === undefined ? loadTheme().accent : accent === null ? undefined : accent.toLowerCase();
+	writeJsonPrivate(themeFile(), { preset, ...(kept ? { accent: kept } : {}) });
+	return loadTheme();
 }
 
 function channel(value: number): number {

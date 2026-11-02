@@ -176,6 +176,18 @@ export interface ExtSubscription {
 	params?: Record<string, unknown>;
 }
 
+/**
+ * A Connect request from the side panel (relayed by the background worker): how this computer is
+ * reachable from claude.ai, ChatGPT or grok.com, and the devices behind one connector. The host
+ * parses it strictly (cli/src/connect-host.ts) and never returns a secret, a token hash or the passcode.
+ */
+export interface ExtConnect {
+	type: "connect";
+	id: number;
+	method: string;
+	params?: Record<string, unknown>;
+}
+
 export type ExtToHost =
 	| ExtHello
 	| ExtResponse
@@ -184,7 +196,8 @@ export type ExtToHost =
 	| ExtUpdateAction
 	| ExtThreadsMirror
 	| ExtCommunityAction
-	| ExtSubscription;
+	| ExtSubscription
+	| ExtConnect;
 
 export interface HostClientConnected {
 	type: "client_connected";
@@ -341,8 +354,18 @@ export interface HostSubscription {
 	progress?: Record<string, unknown>;
 }
 
+/** The answer to an ExtConnect; `joinHub` sends `progress` first. */
+export interface HostConnect {
+	type: "connect";
+	id: number;
+	result?: unknown;
+	error?: RpcError;
+	progress?: Record<string, unknown>;
+}
+
 export type HostToExt =
 	| HostSubscription
+	| HostConnect
 	| HostClientConnected
 	| HostClientDisconnected
 	| HostForwardedRequest

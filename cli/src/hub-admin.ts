@@ -147,7 +147,8 @@ export function hubCode(options: { name?: string; manage: boolean; json: boolean
 
 // ---------- hub devices / remove / prefer ----------
 
-export function hubDevices(json: boolean): number {
+/** One row per enrolled device, joined with what the running hub last reported. */
+export function deviceRows() {
 	const { devices, prefer } = loadDevices();
 	const live = readLive();
 	const rows = devices.map((d) => {
@@ -164,15 +165,20 @@ export function hubDevices(json: boolean): number {
 			manager: d.manage,
 		};
 	});
+	return { rows, prefer, hubRunning: Boolean(live) };
+}
+
+export function hubDevices(json: boolean): number {
+	const { rows, prefer, hubRunning } = deviceRows();
 	if (json) {
-		console.log(JSON.stringify({ hubRunning: Boolean(live), prefer, devices: rows }, null, 2));
+		console.log(JSON.stringify({ hubRunning, prefer, devices: rows }, null, 2));
 		return 0;
 	}
 	if (!rows.length) {
 		console.log(`${sym.dot} No devices. Run tabkyra hub code, then tabkyra link on a device.`);
 		return 0;
 	}
-	if (!live) console.log(`${sym.warn} The hub isn't running, so every device shows offline.`);
+	if (!hubRunning) console.log(`${sym.warn} The hub isn't running, so every device shows offline.`);
 	for (const r of rows) {
 		const state = r.online ? c.green("online ") : c.dim("offline");
 		console.log(
