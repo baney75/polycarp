@@ -4,6 +4,7 @@ import { customElement, state } from "lit/decorators.js";
 import { currentAppearance, onAppearance, setAppearance } from "../appearance/apply.js";
 import { currentMode, type Mode, setMode } from "../appearance/mode.js";
 import { PRESETS, textOn } from "../appearance/palettes.js";
+import { effectiveAccent } from "../appearance/tokens.js";
 import { connectSetTheme } from "../connect/client.js";
 
 const PRESET_LABELS: Record<string, string> = {
@@ -36,7 +37,8 @@ export function normalizeHex(text: string): string {
 @customElement("tabkyra-appearance-tab")
 export class AppearanceTab extends SettingsTab {
 	@state() private mode: Mode = currentMode();
-	@state() private accentText = "";
+	/** What the person has typed in the hex box and not yet applied; undefined shows the accent in use. */
+	@state() private draft?: string;
 	@state() private accentError?: string;
 	@state() private shared = true;
 	private off?: () => void;
@@ -47,9 +49,9 @@ export class AppearanceTab extends SettingsTab {
 
 	override connectedCallback(): void {
 		super.connectedCallback();
-		this.accentText = currentAppearance().accent ?? "";
-		this.off = onAppearance((c) => {
-			this.accentText = c.accent ?? "";
+		this.off = onAppearance(() => {
+			this.draft = undefined;
+			this.accentError = undefined;
 			this.requestUpdate();
 		});
 	}
@@ -68,11 +70,19 @@ export class AppearanceTab extends SettingsTab {
 		);
 	}
 
+	private isDark(): boolean {
+		return document.documentElement.classList.contains("dark");
+	}
+
 	private commitAccent(): void {
-		const text = this.accentText.trim();
+		if (this.draft === undefined) return;
+		const text = this.draft.trim();
+		const choice = currentAppearance();
 		if (!text) {
+			// An emptied box goes back to the preset's own accent.
+			this.draft = undefined;
 			this.accentError = undefined;
-			void this.choose(currentAppearance().preset, undefined);
+			if (choice.accent) void this.choose(choice.preset, undefined);
 			return;
 		}
 		const hex = normalizeHex(text);
@@ -81,13 +91,15 @@ export class AppearanceTab extends SettingsTab {
 			return;
 		}
 		this.accentError = undefined;
-		this.accentText = hex;
-		void this.choose(currentAppearance().preset, hex);
+		this.draft = undefined;
+		// Typing the accent already in use changes nothing, and must not turn the preset's into a custom one.
+		if (hex === effectiveAccent(choice, this.isDark())) return;
+		void this.choose(choice.preset, hex);
 	}
 
 	private swatch(name: string): TemplateResult {
 		const choice = currentAppearance();
-		const dark = document.documentElement.classList.contains("dark");
+		const dark = this.isDark();
 		const palette = PRESETS[name][dark ? "dark" : "light"];
 		const selected = choice.preset === name;
 		return html`
@@ -109,11 +121,9 @@ export class AppearanceTab extends SettingsTab {
 
 	render(): TemplateResult {
 		const choice = currentAppearance();
-		const dark = document.documentElement.classList.contains("dark");
-		const presetAccent = (PRESETS[choice.preset] ?? PRESETS.tabkyra)[dark ? "dark" : "light"].accent;
-		const hex = HEX.test(normalizeHex(this.accentText))
-			? normalizeHex(this.accentText)
-			: (choice.accent ?? presetAccent);
+		const inUse = effectiveAccent(choice, this.isDark());
+		const shown = this.draft ?? inUse;
+		const hex = HEX.test(normalizeHex(shown)) ? normalizeHex(shown) : inUse;
 		return html`
 			<div class="flex flex-col gap-6">
 				<div class="space-y-1">
@@ -135,22 +145,22 @@ export class AppearanceTab extends SettingsTab {
 							class="h-9 w-12 shrink-0 cursor-pointer rounded-md border border-input bg-background p-1"
 							.value=${hex}
 							@input=${(e: Event) => {
-								this.accentText = (e.target as HTMLInputElement).value;
+								this.draft = undefined;
 								this.accentError = undefined;
-								void this.choose(currentAppearance().preset, this.accentText);
+								void this.choose(currentAppearance().preset, (e.target as HTMLInputElement).value);
 							}}
 						/>
 						<input
 							id="tk-accent-text"
 							class="h-9 w-32 rounded-md border border-input bg-background px-3 font-mono text-sm text-foreground placeholder:text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							placeholder="#3b82f6"
+							placeholder="e.g. #3b82f6"
 							spellcheck="false"
 							autocomplete="off"
 							aria-invalid=${this.accentError ? "true" : "false"}
 							aria-describedby="tk-accent-help"
-							.value=${this.accentText}
+							.value=${shown}
 							@input=${(e: Event) => {
-								this.accentText = (e.target as HTMLInputElement).value;
+								this.draft = (e.target as HTMLInputElement).value;
 							}}
 							@blur=${() => this.commitAccent()}
 							@keydown=${(e: KeyboardEvent) => {
@@ -163,7 +173,7 @@ export class AppearanceTab extends SettingsTab {
 										type="button"
 										class="rounded px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
 										@click=${() => {
-											this.accentText = "";
+											this.draft = undefined;
 											this.accentError = undefined;
 											void this.choose(choice.preset, undefined);
 										}}
@@ -174,7 +184,7 @@ export class AppearanceTab extends SettingsTab {
 						}
 					</div>
 					<p id="tk-accent-help" class="text-xs ${this.accentError ? "text-destructive" : "text-muted-foreground"}" role=${this.accentError ? "alert" : "note"}>
-						${this.accentError ?? `Buttons and highlights. Text on it turns ${textOn(hex) === "#000000" ? "dark" : "light"} so it stays readable.`}
+						${this.accentError ?? `${choice.accent ? "Your accent" : "The preset's accent"} for buttons and highlights. Type another color to change it; text on it turns ${textOn(hex) === "#000000" ? "dark" : "light"} so it stays readable.`}
 					</p>
 				</div>
 

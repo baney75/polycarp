@@ -61,7 +61,7 @@ export class SettingsPage extends PageBase {
 				aria-selected=${selected ? "true" : "false"}
 				class="min-w-0 truncate whitespace-nowrap h-8 px-1 @[28rem]:px-3 rounded-full text-[13px] @[28rem]:text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${
 					selected
-						? "bg-secondary text-foreground"
+						? "bg-[var(--tk-selected)] text-[var(--tk-on-selected)]"
 						: "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
 				}"
 				@click=${() => this.select(index)}

@@ -1,6 +1,7 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { html, LitElement, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { COMMAND_BOX_CLASS } from "../components/command-box.js";
 import { Toast } from "../components/Toast.js";
 import { request, SubscriptionRequestError, type SubscriptionStatus, subscriptionStatus } from "./client.js";
 import { CLI_MCP_SETUP, COPILOT, SIWC } from "./constants.js";
@@ -158,7 +159,7 @@ export class SubscriptionsSection extends LitElement {
 					</button>
 					<span class="sr-only" role="status">${this.copied === text ? `Copied the ${label} command` : ""}</span>
 				</div>
-				<code class="block rounded-md border border-border bg-muted px-2.5 py-2 text-foreground font-mono text-xs leading-5 break-words select-all">${text}</code>
+				<code class=${COMMAND_BOX_CLASS}>${text}</code>
 			</div>
 		`;
 	}

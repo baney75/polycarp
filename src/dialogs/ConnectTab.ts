@@ -3,6 +3,7 @@ import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { deviceSetupPrompt, remoteSetupPrompt } from "../agent-setup-prompt.js";
+import { COMMAND_BOX_CLASS } from "../components/command-box.js";
 import { Toast } from "../components/Toast.js";
 import {
 	connectApprovalCode,
@@ -155,7 +156,7 @@ export class ConnectTab extends SettingsTab {
 						Copy
 					</button>
 				</div>
-				<code class="block rounded-md border border-border bg-muted px-2.5 py-2 text-foreground font-mono text-xs leading-5 break-words select-all [font-variant-ligatures:none]">${text}</code>
+				<code class=${COMMAND_BOX_CLASS}>${text}</code>
 			</div>
 		`;
 	}
@@ -174,7 +175,7 @@ export class ConnectTab extends SettingsTab {
 					}
 				</div>
 				<div class="flex items-center justify-between gap-2">
-					<code class="font-mono text-2xl font-semibold tracking-wider [font-variant-ligatures:none] text-foreground select-all ${left ? "" : "line-through opacity-60"}">${code}</code>
+					<code class="min-w-0 [overflow-wrap:anywhere] font-mono text-2xl font-semibold tracking-wider [font-variant-ligatures:none] text-foreground select-all ${left ? "" : "line-through opacity-60"}">${code}</code>
 					${left ? Button({ size: "sm", variant: "secondary", children: "Copy", onClick: () => void copyText(code, "Code copied.") }) : nothing}
 				</div>
 			</div>

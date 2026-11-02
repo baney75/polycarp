@@ -23,6 +23,9 @@
 	--tk-ink: #0f1b24;
 	--tk-tide: #43b3a0;
 	--ring: var(--tk-brass-deep);
+	/* The selected Settings chip. Appearance (src/appearance/tokens.ts) sets the same names per preset. */
+	--tk-selected: var(--foreground);
+	--tk-on-selected: var(--background);
 	/* Native controls (checkboxes, the search box's clear button, scrollbars) follow the theme. */
 	color-scheme: light;
 	accent-color: var(--tk-brass-deep);

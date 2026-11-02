@@ -6,6 +6,11 @@
 
 import { accentInk, mix, type Palette, resolveTheme, type ThemeChoice, textOn } from "./palettes.js";
 
+/** The accent the panel draws in this mode: the custom one, or the preset's own. What the color box and swatches show. */
+export function effectiveAccent(choice: ThemeChoice, dark: boolean): string {
+	return resolveTheme(choice)[dark ? "dark" : "light"].accent;
+}
+
 /** CSS custom properties for one mode, keyed by name (with the leading dashes). */
 export function appearanceVariables(choice: ThemeChoice, dark: boolean): Record<string, string> {
 	const p: Palette = resolveTheme(choice)[dark ? "dark" : "light"];
@@ -31,6 +36,10 @@ export function appearanceVariables(choice: ThemeChoice, dark: boolean): Record<
 		"--border": p.border,
 		"--input": p.border,
 		"--ring": accentInk(p.accent, [p.bg], p.text),
+		// The selected Settings chip: body text color as the fill and the page color as its text, so it
+		// stands out from the page at 3:1 or better in every preset and mode, whatever the accent.
+		"--tk-selected": p.text,
+		"--tk-on-selected": p.bg,
 		"--tk-brass": p.accent,
 		"--tk-brass-text": accentInk(p.accent, [p.panel, p.bg, secondary], p.text),
 	};
@@ -48,8 +57,16 @@ export const TEXT_PAIRS: ReadonlyArray<readonly [string, string]> = [
 	["--foreground", "--accent"],
 	["--primary-foreground", "--primary"],
 	["--destructive-foreground", "--destructive"],
+	["--tk-on-selected", "--tk-selected"],
 	["--tk-brass-text", "--card"],
 	["--tk-brass-text", "--background"],
+];
+
+/** Pairs that are not text but must stand apart from the page: [shape, background], at 3:1 (WCAG 1.4.11). */
+export const SHAPE_PAIRS: ReadonlyArray<readonly [string, string]> = [
+	["--tk-selected", "--background"],
+	["--tk-selected", "--card"],
+	["--ring", "--background"],
 ];
 
 export const APPEARANCE_KEY = "tabkyra.appearance";
