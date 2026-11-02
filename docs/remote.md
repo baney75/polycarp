@@ -153,6 +153,11 @@ tabkyra link busy on                 # on a device: new sessions go elsewhere fi
 tabkyra hub status                   # hub.json, passcode, local answer, public DNS and fetch, devices
 ```
 
+Settings > Connect in the side panel does the same from the browser: it shows the connector URL,
+makes a one-time code for the approval page, lists the devices (on the hub's computer), makes a
+connect code for another device, and joins a hub from a code. It asks Tabkyra's helper, so it needs
+`tabkyra setup` first. See D33 in [decisions.md](decisions.md).
+
 ### How a session is routed
 
 A new session goes to an online device that has reported in, grants at least one of the caller's
