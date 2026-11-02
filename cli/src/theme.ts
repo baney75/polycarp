@@ -7,60 +7,21 @@
 
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import {
+	contrast,
+	DEFAULT_PRESET,
+	isAccent,
+	isPreset,
+	luminance,
+	type Palette,
+	type Preset,
+	PRESETS,
+	resolveTheme as resolvePalettes,
+	textOn,
+	type ThemeChoice,
+} from "../../src/appearance/palettes.ts";
 import { writeJsonPrivate } from "./files.ts";
 import { configDir } from "./oauth.ts";
-
-export interface Palette {
-	bg: string;
-	panel: string;
-	text: string;
-	muted: string;
-	border: string;
-	accent: string;
-	/** Text on a button drawn in the accent. */
-	accentText: string;
-	danger: string;
-}
-
-export interface Preset {
-	light: Palette;
-	dark: Palette;
-}
-
-export const PRESETS: Record<string, Preset> = {
-	tabkyra: {
-		light: { bg: "#f6f5f2", panel: "#ffffff", text: "#1b1b1b", muted: "#5c5850", border: "#d6d2c8", accent: "#e3a93b", accentText: "#1b1b1b", danger: "#a40000" },
-		dark: { bg: "#151515", panel: "#222222", text: "#eeeeee", muted: "#b0aca2", border: "#444444", accent: "#e3a93b", accentText: "#151515", danger: "#ff8a8a" },
-	},
-	slate: {
-		light: { bg: "#f1f5f9", panel: "#ffffff", text: "#0f172a", muted: "#475569", border: "#cbd5e1", accent: "#334155", accentText: "#ffffff", danger: "#b91c1c" },
-		dark: { bg: "#0f172a", panel: "#1e293b", text: "#e2e8f0", muted: "#a3b0c2", border: "#475569", accent: "#cbd5e1", accentText: "#0f172a", danger: "#fca5a5" },
-	},
-	forest: {
-		light: { bg: "#f1f6f1", panel: "#ffffff", text: "#14261a", muted: "#4a5f50", border: "#c5d6c8", accent: "#1f6a3a", accentText: "#ffffff", danger: "#a40000" },
-		dark: { bg: "#0f1a13", panel: "#1a2a20", text: "#e4f0e6", muted: "#a5bba9", border: "#3b5443", accent: "#7fd39a", accentText: "#0f1a13", danger: "#ff9a9a" },
-	},
-	rose: {
-		light: { bg: "#fbf3f4", panel: "#ffffff", text: "#2a1519", muted: "#6b4a50", border: "#e6cdd2", accent: "#b4234a", accentText: "#ffffff", danger: "#9b1c1c" },
-		dark: { bg: "#1d1013", panel: "#2c1a1e", text: "#f6e4e8", muted: "#cdaab2", border: "#5a3a41", accent: "#f08ea9", accentText: "#1d1013", danger: "#ffa3a3" },
-	},
-	midnight: {
-		light: { bg: "#eef0fb", panel: "#ffffff", text: "#14173a", muted: "#4a4f7a", border: "#c9cdee", accent: "#3b3fb5", accentText: "#ffffff", danger: "#a40000" },
-		dark: { bg: "#0b0d24", panel: "#151839", text: "#e6e8ff", muted: "#a9aedd", border: "#3a3f7a", accent: "#9aa2ff", accentText: "#0b0d24", danger: "#ff9a9a" },
-	},
-};
-
-export const DEFAULT_PRESET = "tabkyra";
-
-export interface ThemeChoice {
-	preset: string;
-	accent?: string;
-}
-
-const HEX = /^#[0-9a-f]{6}$/i;
-
-/** Whether a value is a #rrggbb accent. */
-export const isAccent = (value: unknown): value is string => typeof value === "string" && HEX.test(value);
 
 export const themeFile = () => join(configDir(), "theme.json");
 
@@ -69,8 +30,8 @@ export function loadTheme(): ThemeChoice {
 	try {
 		if (!existsSync(themeFile())) return { preset: DEFAULT_PRESET };
 		const raw = JSON.parse(readFileSync(themeFile(), "utf8")) as Partial<ThemeChoice>;
-		const preset = typeof raw.preset === "string" && Object.hasOwn(PRESETS, raw.preset) ? raw.preset : DEFAULT_PRESET;
-		return { preset, ...(typeof raw.accent === "string" && HEX.test(raw.accent) ? { accent: raw.accent.toLowerCase() } : {}) };
+		const preset = isPreset(raw.preset) ? raw.preset : DEFAULT_PRESET;
+		return { preset, ...(isAccent(raw.accent) ? { accent: raw.accent.toLowerCase() } : {}) };
 	} catch {
 		return { preset: DEFAULT_PRESET };
 	}
@@ -81,42 +42,17 @@ export function loadTheme(): ThemeChoice {
  * accent (as `theme set` does), null clears it, a string sets it. Throws on a bad preset or accent.
  */
 export function saveTheme(preset: string, accent?: string | null): ThemeChoice {
-	if (!Object.hasOwn(PRESETS, preset)) throw new Error(`Pick a preset: ${Object.keys(PRESETS).join(", ")}.`);
-	if (typeof accent === "string" && !HEX.test(accent)) throw new Error("Give the accent as #rrggbb, for example #3b82f6.");
+	if (!isPreset(preset)) throw new Error(`Pick a preset: ${Object.keys(PRESETS).join(", ")}.`);
+	if (typeof accent === "string" && !isAccent(accent)) throw new Error("Give the accent as #rrggbb, for example #3b82f6.");
 	const kept = accent === undefined ? loadTheme().accent : accent === null ? undefined : accent.toLowerCase();
 	writeJsonPrivate(themeFile(), { preset, ...(kept ? { accent: kept } : {}) });
 	return loadTheme();
 }
 
-function channel(value: number): number {
-	const v = value / 255;
-	return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
-}
+export { contrast, DEFAULT_PRESET, isAccent, luminance, type Palette, type Preset, PRESETS, textOn, type ThemeChoice };
 
-/** WCAG relative luminance of #rrggbb. */
-export function luminance(hex: string): number {
-	const n = Number.parseInt(hex.slice(1), 16);
-	return 0.2126 * channel((n >> 16) & 255) + 0.7152 * channel((n >> 8) & 255) + 0.0722 * channel(n & 255);
-}
-
-/** WCAG contrast ratio between two #rrggbb colors, 1 to 21. */
-export function contrast(a: string, b: string): number {
-	const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-	return (hi + 0.05) / (lo + 0.05);
-}
-
-/** Black or white, whichever reads better on `background`; one of them always reaches 4.5:1 (the worst case, a mid gray, gets 4.58). */
-export function textOn(background: string): string {
-	return contrast("#000000", background) >= contrast("#ffffff", background) ? "#000000" : "#ffffff";
-}
-
-/** The two palettes a choice resolves to, with a custom accent applied to both. */
-export function resolveTheme(choice: ThemeChoice = loadTheme()): Preset {
-	const base = PRESETS[choice.preset] ?? PRESETS[DEFAULT_PRESET];
-	if (!choice.accent || !HEX.test(choice.accent)) return base;
-	const accent = choice.accent.toLowerCase();
-	return { light: { ...base.light, accent, accentText: textOn(accent) }, dark: { ...base.dark, accent, accentText: textOn(accent) } };
-}
+/** The two palettes a choice resolves to (the saved choice by default). */
+export const resolveTheme = (choice: ThemeChoice = loadTheme()): Preset => resolvePalettes(choice);
 
 const vars = (p: Palette) =>
 	`--bg:${p.bg};--panel:${p.panel};--text:${p.text};--muted:${p.muted};--border:${p.border};--accent:${p.accent};--accent-text:${p.accentText};--danger:${p.danger}`;
@@ -162,7 +98,7 @@ export function runTheme(args: string[], json: boolean): number {
 		return 0;
 	}
 	if (sub === "accent") {
-		if (!value || !HEX.test(value)) {
+		if (!value || !isAccent(value)) {
 			console.error("Give the accent as #rrggbb, for example #3b82f6.");
 			return 2;
 		}

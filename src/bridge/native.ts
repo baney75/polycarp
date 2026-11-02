@@ -35,9 +35,11 @@ import {
 import {
 	BRIDGE_METHODS,
 	ERR,
+	type ExtConnect,
 	type ExtSubscription,
 	type ExtToHost,
 	type HostClientConnected,
+	type HostConnect,
 	type HostForwardedRequest,
 	type HostSubscription,
 	type HostToExt,
@@ -470,8 +472,25 @@ export function sendSubscription(message: ExtSubscription): boolean {
 	return true;
 }
 
+/** Connect frames go to the relay (src/connect/relay.ts); "disconnected" when the host goes. */
+let connectHandler: ((message: HostConnect | "disconnected") => void) | undefined;
+
+export function onConnectMessage(handler: (message: HostConnect | "disconnected") => void): void {
+	connectHandler = handler;
+}
+
+/** Send a Connect request to the host; false when no host is connected. */
+export function sendConnect(message: ExtConnect): boolean {
+	if (!port) return false;
+	send(message);
+	return true;
+}
+
 function onHostMessage(message: HostToExt): void {
 	switch (message.type) {
+		case "connect":
+			connectHandler?.(message);
+			return;
 		case "subscription":
 			subscriptionHandler?.(message);
 			return;
@@ -776,6 +795,7 @@ function connect(): void {
 		console.debug("[Bridge] native host disconnected:", reason);
 		if (port === next) port = undefined;
 		subscriptionHandler?.("disconnected");
+		connectHandler?.("disconnected");
 		// The host answered these "interrupted: it may have run" and the agent may repeat them
 		// after checking the page: the running handlers must send no more input.
 		for (const state of clients.values()) {

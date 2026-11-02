@@ -4,6 +4,7 @@ import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard
 import { startGroupGestures } from "./browser/group-gestures.js";
 import { BrowserSession, cleanupOrphanGroups, listSessions } from "./browser/session.js";
 import { startCommunityWorker } from "./community/worker.js";
+import { startConnectRelay } from "./connect/relay.js";
 import { startSubscriptionRelay } from "./subscriptions/relay.js";
 import { setPanelsOpening, startUpdateWorker } from "./update/worker.js";
 
@@ -27,6 +28,7 @@ chrome.webNavigation.onTabReplaced.addListener(({ replacedTabId, tabId }) => {
 // native-messaging bridge. Connects when the CLI has installed the host manifest.
 startBridge();
 startSubscriptionRelay();
+startConnectRelay();
 
 // "Update now", the reload after an update (only when no agent runs), automatic updates.
 startUpdateWorker();
