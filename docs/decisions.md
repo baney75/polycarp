@@ -747,3 +747,31 @@ ChatGPT and grok.com add once, with any number of his own computers behind it.
 - Considered and not done: a hub that also drives its own browser (run `link` on the hub box
   instead), and a maintainer-run hub (D31).
 
+
+## D33. Connect in the side panel: what the host answers and what the panel shows (Claude, 2026-11-02)
+
+- The panel reaches the helper through a `connect` native-messaging frame, parsed strictly in
+  `cli/src/connect-host.ts`: exactly `{type, id, method, params?}`, a known method, and that
+  method's own params. A frame that isn't exactly that is answered `bad_params` when it has an
+  id and runs nothing. The background worker (`src/connect/relay.ts`) only takes Tabkyra's own
+  pages and known method names; the host is the authority.
+- `status` reads local files only (hub.json, remote.json, link.json, the live snapshots, the
+  theme), never the network, so the panel can ask every 10 seconds. It reports `route` as hub,
+  then remote, then link, then none. A config file that is present but unreadable shows as
+  `problem` and the route reads none.
+- Never in an answer: the passcode, a device secret or credential, a token hash, a device id.
+  Codes are returned once to the panel that asked and are stored only as hashes (D32).
+- `approvalCode` and `deviceCode` share one limit in the host: 10 in 10 minutes of either kind,
+  counted when asked, so a refused or failed call still counts. The host process keeps the
+  count in memory, so a restart resets it; the hub's own caps (20 live codes) still hold.
+- `joinHub` runs the same enrollment as `tabkyra link <hub> --code`, including the service.
+  The address (https origin, or http on loopback; a pasted `/mcp` is dropped) and the code
+  (`TK-XXXX-XXXX`, case and look-alike letters folded) are checked in the parser, before any
+  file is read or any network call. It runs only when the route is none, one at a time.
+- The device list shows on a hub's computer. A device linked as a manager can make codes but
+  sees no list: the hub has no endpoint that lists devices for a device credential, and adding
+  one widens what a stolen manager credential reads. Not done; the list stays on the hub.
+- The side panel's colors are the approval and hub pages' presets (`src/appearance/palettes.ts`),
+  so the three match. That changes the default look from mini-lit's neutral palette to the Tabkyra
+  one for everyone on update; the choice is saved in `chrome.storage.local`. Text pairs reach
+  4.5:1 and the focus ring 3:1 in both modes (`test/appearance.test.mjs`).
