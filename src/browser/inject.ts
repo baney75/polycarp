@@ -15,7 +15,7 @@
  * Both paths run the same code; callers do not need to know which one is in use.
  */
 
-import { cdpSend, ensureAttached } from "./cdp.js";
+import { cdpSend, ensureAttached, PageException } from "./cdp.js";
 import { isUserScriptsGated, userScriptsApi } from "./userscripts-status.js";
 
 export function hasUserScripts(): boolean {
@@ -166,7 +166,7 @@ async function cdpInject<T>(tabId: number, code: string, options: InjectOptions)
 			exceptionDetails?: { exception?: { description?: string }; text?: string };
 		}>(tabId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
 		if (result.exceptionDetails) {
-			throw new Error(
+			throw new PageException(
 				result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? "Evaluation failed",
 			);
 		}
@@ -209,7 +209,7 @@ export async function injectScript<T = unknown>(tabId: number, code: string, opt
 		throw err;
 	}
 	const first = results[0];
-	if (first?.error) throw new Error(String((first.error as { message?: string }).message ?? first.error));
+	if (first?.error) throw new PageException(String((first.error as { message?: string }).message ?? first.error));
 	return first?.result as T;
 }
 

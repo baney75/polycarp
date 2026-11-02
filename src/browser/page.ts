@@ -554,6 +554,53 @@ function pageSnapshot(
 			}
 			const parentLabel = el.closest("label");
 			if (parentLabel?.textContent?.trim()) return parentLabel.textContent.trim();
+			if (tag === "input" && (f.type === "checkbox" || f.type === "radio")) {
+				// No label of its own (TodoMVC's item toggle). Text a person would call its name, best first.
+				const clean = (t: string | null | undefined) => (t ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+				const isControl = (c: Element) =>
+					c.tagName === "INPUT" &&
+					((c as HTMLInputElement).type === "checkbox" || (c as HTMLInputElement).type === "radio");
+				const isPlainLabel = (c: Element | null): c is Element =>
+					!!c && c.tagName === "LABEL" && !c.hasAttribute("for");
+				// 1. The label beside it. A group lays out one way (label before each control, or after):
+				//    settle that from its first member, so a label is never taken by its neighbour.
+				const siblings = Array.from(el.parentElement?.children ?? []);
+				const firstMember = siblings.find((c) => isControl(c) || isPlainLabel(c));
+				const labelFirst = !!firstMember && isPlainLabel(firstMember);
+				const beside = labelFirst ? el.previousElementSibling : el.nextElementSibling;
+				if (isPlainLabel(beside) && clean(beside.textContent)) return clean(beside.textContent);
+				// 2. The text of its row, when the row is one control's: a real row container holding
+				//    this control alone, or its parent when nothing else there takes input and the
+				//    text is short. Links, other labels and buttons in the row are not its name.
+				const real = el.closest("li,tr,[role=row],[role=listitem],[role=option],[role=menuitemcheckbox]");
+				const parent = el.parentElement;
+				const row =
+					real && real.querySelectorAll("input[type=checkbox],input[type=radio]").length === 1
+						? real
+						: !real && parent && parent.querySelectorAll("input,select,textarea,button").length === 1
+							? parent
+							: null;
+				if (row) {
+					const walker = row.ownerDocument.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+					const parts: string[] = [];
+					for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+						if (
+							n.parentElement?.closest(
+								"a,label[for],[role=link],button,select,textarea,[role=button],script,style",
+							)
+						)
+							continue;
+						const t = (n.textContent ?? "").replace(/\s+/g, " ").trim();
+						if (t) parts.push(t);
+					}
+					const text = parts.join(" ");
+					// A parent that is not a real row must be short: long text is the page's, not the label's.
+					if (text && (real || text.length <= 80)) return clean(text);
+				}
+				// 3. A value that means something ("on" is what a checkbox without one reports), a title, a name.
+				if (f.value && f.value !== "on") return clean(f.value);
+				return el.getAttribute("title") ?? el.getAttribute("name") ?? "";
+			}
 			if (tag === "input" && (f.placeholder || f.value) && f.type !== "password")
 				return (f.placeholder || f.value) ?? "";
 			if (tag === "textarea" && f.placeholder) return f.placeholder;

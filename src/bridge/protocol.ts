@@ -54,6 +54,12 @@ export type ClientToHost = ClientHello | ClientRequest;
 export interface RpcError {
 	code: string;
 	message: string;
+	/**
+	 * Set by the extension on an `interrupted` it worded itself (the debugger detached, the page
+	 * navigated under the call): the connection is fine, so the client passes it on as it is
+	 * instead of treating it as a dropped bridge.
+	 */
+	source?: "extension";
 }
 
 export interface HostWelcome {
@@ -365,6 +371,14 @@ export const ERR = {
 	INTERRUPTED: "interrupted",
 	/** The request was refused before it reached the browser (the bridge is restarting); repeating it is safe. */
 	NOT_SENT: "not_sent",
+	/** A ref names an element that left the page, is hidden now, or shows something else; read_page gives fresh refs. */
+	STALE_REF: "stale_ref",
+	/** The element exists but a click or fill can't reach it (covered, off screen, not a form control). */
+	NOT_ACTIONABLE: "not_actionable",
+	/** The page's own script threw (run_js); the message is its error, without a stack. */
+	SCRIPT_ERROR: "script_error",
+	/** The navigation failed in the network stack (DNS, refused, certificate). */
+	NAV_FAILED: "navigation_failed",
 	/** The session holds the most tabs it may (MAX_SESSION_TABS); close some first. */
 	TAB_LIMIT: "tab_limit",
 } as const;

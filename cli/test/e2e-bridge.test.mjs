@@ -112,6 +112,43 @@ customElements.define("x-frame", class extends HTMLElement { constructor() { sup
 <p id="r">untouched</p>`;
 const FRAME_C = `<!doctype html><input aria-label="Frame field">`;
 
+// Pages added by the tool-fix tests, served by path (see the server in before()).
+const extraPages = {};
+extraPages["/edit"] = `<!doctype html><title>Tabkyra edit</title>
+<input id="t" aria-label="Task" value="first task"><p id="r">untouched</p>`;
+
+// TodoMVC's markup: item checkboxes carry no label, their text sits in a sibling <label>.
+extraPages["/todo"] = `<!doctype html><title>TodoMVC</title>
+<section class="todoapp"><header><h1>todos</h1><input class="new-todo" placeholder="What needs to be done?"></header>
+<ul class="todo-list">
+<li><div class="view"><input class="toggle" type="checkbox"><label>first task</label><button class="destroy"></button></div></li>
+<li><div class="view"><input class="toggle" type="checkbox"><label>second task</label><button class="destroy"></button></div></li>
+<li class="completed"><div class="view"><input class="toggle" type="checkbox" checked><label>third task</label><button class="destroy"></button></div></li>
+</ul>
+<footer><span class="todo-count"><strong>2</strong> items left</span>
+<ul class="filters"><li><a class="selected" href="#/">All</a></li><li><a href="#/active">Active</a></li><li><a href="#/completed">Completed</a></li></ul>
+<button class="clear-completed">Clear completed</button></footer></section>
+<footer class="info"><p>Part of <a href="http://todomvc.com/examples/checkbox-guide">TodoMVC</a></p><a href="/docs#first-task-howto">Docs</a></footer>`;
+
+// The first load logs and fetches: capture has to be on before it.
+extraPages["/boot"] = `<!doctype html><title>Tabkyra boot</title><p id="x">boot</p>
+<script>console.log("boot-log"); fetch("/boot-data").then((r) => r.text());</script>`;
+
+// Radios sharing one parent, each with the label beside it (no `for`), and a checkbox in a big
+// container with a lot of text around it.
+extraPages["/radios"] = `<!doctype html><title>Radios</title>
+<div id="sizes"><input type="radio" name="s"><label>Small</label><input type="radio" name="s"><label>Large</label></div>
+<div id="firsts"><label>Medium</label><input type="radio" name="m"><label>Extra</label><input type="radio" name="m"></div>
+<div id="values"><input type="radio" name="size" value="tiny"><input type="radio" name="size" value="huge"></div>
+<ul><li><input type="checkbox"><a href="#e">Edit</a> Buy milk <span>2 days ago</span></li></ul>
+<form><input type="checkbox" name="agree">${"Lots of unrelated text in the same container. ".repeat(12)}<p>More text.</p><input type="text" aria-label="Email"></form>`;
+
+// Clipboard events and key events a clipboard chord would raise are logged; none may fire.
+extraPages["/clip"] = `<!doctype html><title>Clip</title>
+<input id="t" aria-label="Task" value="">
+<script>window.__seen = [];
+for (const type of ["paste", "copy", "cut", "keydown", "keyup", "beforeinput"]) document.addEventListener(type, (e) => window.__seen.push(type + ":" + (e.key || "")), true);</script>`;
+
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
 
@@ -215,6 +252,12 @@ async function connected() {
 	);
 }
 
+/** Navigate, waiting for the extension to connect first (these tests may run alone). */
+async function go(path) {
+	await connected();
+	await tool("navigate", { url: `${pageUrl}${path}` });
+}
+
 async function until(fn, ms, what) {
 	const end = Date.now() + ms;
 	let last;
@@ -256,6 +299,7 @@ before(async () => {
 		if (req.url === "/frame-c") return res.end(FRAME_C);
 		if (req.url === "/frame-a") return res.end(FRAME_A);
 		if (req.url === "/frame-b") return res.end(FRAME_B);
+		if (extraPages[req.url.split("?")[0]]) return res.end(extraPages[req.url.split("?")[0]]);
 		res.end(req.url === "/dialog" ? DIALOG_PAGE : req.url === "/onload" ? ONLOAD_PAGE : req.url === "/typing" ? TYPING_PAGE : PAGE);
 	});
 	await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -553,18 +597,27 @@ test("web components, a frame in a shadow root, a row's own button, a frame fiel
 	assert.match(field.text, /covered by div "Cookie settings"/);
 });
 
-test("a confirm() box fails the call at once with its text, and handle_dialog answers it", async () => {
-	await tool("navigate", { url: `${pageUrl}dialog` });
+test("a click that opens a confirm() box succeeds and says so; calls after it fail with dialog_open until handle_dialog answers", async () => {
+	await go("dialog");
 	const started = Date.now();
-	const blocked = await mcp.callTool({ name: "click", arguments: { selector: "#del" } });
-	const message = blocked.content.map((c) => c.text).join("\n");
-	assert.ok(blocked.isError, message);
-	assert.match(message, /dialog_open: A confirm dialog is open on tab \d+: "Really delete\?"/);
+	const clicked = await mcp.callTool({ name: "click", arguments: { selector: "#del" } });
+	const message = clicked.content.map((c) => c.text).join("\n");
+	// The click worked: an error here made agents repeat it.
+	assert.ok(!clicked.isError, message);
+	const result = JSON.parse(message);
+	assert.equal(result.dialog.type, "confirm");
+	assert.equal(result.dialog.message, "Really delete?");
+	assert.match(result.dialog.tabId.toString(), /^\d+$/);
+	assert.match(result.note, /confirm dialog is now open on tab \d+: "Really delete\?"/);
+	assert.match(result.note, /handle_dialog/);
 	assert.ok(Date.now() - started < 10_000, "the call must not wait for the 90 s handler timeout");
-	// While it is open, page calls fail the same way instead of hanging.
+	// While it is open, page calls fail instead of hanging, and a second click did not run.
 	const frozen = await mcp.callTool({ name: "get_page_text", arguments: {} });
 	assert.ok(frozen.isError);
-	assert.match(frozen.content[0].text, /dialog_open/);
+	assert.match(frozen.content[0].text, /dialog_open: A confirm dialog is open on tab \d+: "Really delete\?"/);
+	const again = await mcp.callTool({ name: "click", arguments: { selector: "#del" } });
+	assert.ok(again.isError, again.content[0].text);
+	assert.match(again.content[0].text, /^dialog_open: /);
 
 	const answered = JSON.parse(await tool("handle_dialog", { accept: false }));
 	assert.equal(answered.type, "confirm");
@@ -577,6 +630,19 @@ test("a confirm() box fails the call at once with its text, and handle_dialog an
 	const none = await mcp.callTool({ name: "handle_dialog", arguments: { accept: true } });
 	assert.ok(none.isError);
 	assert.match(none.content[0].text, /No dialog is open/);
+});
+
+test("a click step in actions that opens a dialog succeeds and says how many steps did not run", async () => {
+	await go("dialog");
+	const res = await mcp.callTool({ name: "actions", arguments: { steps: [{ click: { selector: "#del" } }, { wait: 100 }, { wait: 100 }] } });
+	const text = res.content.map((c) => c.text).join("\n");
+	assert.ok(!res.isError, text);
+	assert.match(text, /^1 steps done\. /);
+	assert.match(text, /confirm dialog is now open on tab \d+: "Really delete\?"/);
+	assert.match(text, /The 2 later steps did not run/);
+	assert.match(text, /handle_dialog/);
+	await tool("handle_dialog", { accept: false });
+	assert.match(await tool("get_page_text"), /kept/);
 });
 
 test("an alert() fired while the page loads is reported, not a 90 s hang", async () => {
@@ -864,4 +930,408 @@ test("subscription sign-ins: the side panel reaches the native host through the 
 	assert.equal(signedOut.status, 401);
 	assert.equal(signedOut.body.error.code, "not_signed_in");
 	await cdp(version.webSocketDebuggerUrl, "Target.closeTarget", { targetId });
+});
+
+// ---- tool fixes (2026-11-02 live test) ------------------------------------------------------
+
+/** run_js in the page, parsed. */
+async function js(code, args = {}) {
+	return JSON.parse(await tool("run_js", { code, ...args })).value;
+}
+
+test("press select-all (Meta+a and Control+a) selects the field's text, so typing replaces it", async () => {
+	await go("edit");
+	for (const chord of ["Meta+a", "Control+a"]) {
+		await tool("fill", { selector: "#t", value: "first task" });
+		await tool("click", { selector: "#t" });
+		await tool("press", { key: chord });
+		await tool("type", { text: "edited task" });
+		assert.equal(await js("document.getElementById('t').value"), "edited task", `${chord} did not select all`);
+	}
+});
+
+/**
+ * Make the extension's next `count` chrome.debugger.sendCommand calls of `method` fail with
+ * `message`, before they reach the page: the errors Chromium gives when the debugger detaches.
+ */
+async function failNext(method, message, count = 1) {
+	await sw(`(() => {
+		const g = globalThis;
+		g.__faults = g.__faults || [];
+		if (!g.__faultWrapped) {
+			g.__faultWrapped = true;
+			const original = chrome.debugger.sendCommand.bind(chrome.debugger);
+			chrome.debugger.sendCommand = (target, m, p) => {
+				const i = g.__faults.findIndex((f) => f.method === m && f.left > 0);
+				if (i >= 0) { g.__faults[i].left--; return Promise.reject(new Error(g.__faults[i].message)); }
+				return original(target, m, p);
+			};
+		}
+		g.__faults.push({ method: ${JSON.stringify(method)}, message: ${JSON.stringify(message)}, left: ${count} });
+		return true;
+	})()`);
+}
+
+/** The id of the tab showing `path` of the test server. */
+async function tabOn(path) {
+	return sw(`(async () => (await chrome.tabs.query({})).find((t) => t.url === ${JSON.stringify(pageUrl + path)})?.id)()`);
+}
+
+/** The text of a failed tool call. */
+async function failure(name, args) {
+	const res = await mcp.callTool({ name, arguments: args });
+	const text = res.content.map((c) => c.text).join("\n");
+	assert.ok(res.isError, `${name} should have failed: ${text}`);
+	return text;
+}
+
+test("type after the debugger detached before any key was sent re-attaches and types", async () => {
+	await go("edit");
+	await tool("fill", { selector: "#t", value: "" });
+	await tool("click", { selector: "#t" });
+	// A detach nobody was told about: Tabkyra still believes it is attached.
+	await sw(`chrome.debugger.detach({ tabId: ${await tabOn("edit")} }).then(() => true)`);
+	await tool("type", { selector: "#t", text: "abc" });
+	assert.equal(await js("document.getElementById('t').value"), "abc");
+});
+
+test("type that hits 'Detached while handling command' before its first key retries once and types", async () => {
+	await go("edit");
+	await tool("fill", { selector: "#t", value: "" });
+	await failNext("Input.dispatchMouseEvent", "Detached while handling command.");
+	await tool("type", { selector: "#t", text: "abc" });
+	assert.equal(await js("document.getElementById('t').value"), "abc");
+});
+
+test("type that detaches once keys may have been sent is interrupted, never the raw CDP message", async () => {
+	await go("edit");
+	await tool("fill", { selector: "#t", value: "" });
+	await failNext("Input.dispatchKeyEvent", "Detached while handling command.");
+	const message = await failure("type", { selector: "#t", text: "abc" });
+	assert.match(message, /^interrupted: /);
+	assert.match(message, /Check the page with read_page before you repeat it/);
+	assert.doesNotMatch(message, /Detached while handling command/);
+});
+
+test("expected failures carry their own code and no stack trace; internal is for real bugs", async () => {
+	await go("stale");
+	const first = await tool("read_page", { filter: "interactive" });
+	const row = refFor(first, "Delete invoice 5");
+	await tool("click", { ref: refFor(first, "Scroll list") });
+	await tool("read_page", { filter: "interactive" });
+	const cases = [
+		["a ref the page reused", "stale_ref", () => failure("click", { ref: row })],
+		["a selector with no element (click)", "not_found", () => failure("click", { selector: "#nope" })],
+		["a selector with no element (fill)", "not_found", () => failure("fill", { selector: "#nope", value: "x" })],
+		["tabs_select of no such tab", "not_found", () => failure("tabs_select", { tabId: 987654 })],
+		["tabs_close of no such tab", "not_found", () => failure("tabs_close", { tabId: 987654 })],
+		["a read on no such tab", "not_found", () => failure("get_page_text", { tabId: 987654 })],
+		["a run_js that throws (isolated world)", "script_error", () => failure("run_js", { code: "(() => { throw new Error('boom') })()" })],
+		["a run_js that throws (main world)", "script_error", () => failure("run_js", { code: "(() => { throw new Error('boom') })()", world: "main" })],
+		["a bad regex", "bad_params", () => failure("read_console", { pattern: "(" })],
+		// The page's own SyntaxError reads like Tabkyra's bad-regex message but is the page's.
+		["a run_js whose own regex is invalid", "script_error", () => failure("run_js", { code: "new RegExp('(')" })],
+		["a run_js error that reads like a missing selector", "script_error", () => failure("run_js", { code: "(() => { throw new Error('Selector not found: x') })()", world: "main" })],
+		["a wait that timed out", "timeout", () => failure("wait", { text: "never appears", timeoutMs: 300 })],
+		["a host that does not resolve", "navigation_failed", () => failure("navigate", { url: "https://example.invalid/" })],
+		["a stale ref inside actions", "stale_ref", () => failure("actions", { steps: [{ click: { ref: row } }] })],
+	];
+	for (const [what, code, run] of cases) {
+		const text = await run();
+		assert.ok(text.startsWith(`${code}: `), `${what}: expected ${code}, got ${text}`);
+		assert.doesNotMatch(text, /\n\s+at /, `${what} carries a stack trace: ${text}`);
+		assert.doesNotMatch(text, /^internal/, what);
+	}
+	const thrown = await failure("run_js", { code: "(() => { throw new Error('boom') })()" });
+	assert.match(thrown, /^script_error: Error: boom$/);
+	// The element is there but a click can't reach it: its own code.
+	await go("hits");
+	const hits = await tool("read_page", { filter: "interactive" });
+	assert.match(await failure("click", { ref: refFor(hits, "Pay now") }), /^not_actionable: .*covered by/);
+});
+
+test("find ranks exact and whole-word name matches first, names unlabeled checkboxes from their row, and skips URL-only links", async () => {
+	await go("todo");
+	const lines = (text) => text.split("\n").filter(Boolean);
+	// The item checkboxes have no label of their own: they are named after their row.
+	const boxes = lines(await tool("find", { query: "checkbox" }));
+	assert.equal(boxes.length, 3, boxes.join("\n"));
+	assert.ok(boxes.every((l) => / checkbox "/.test(l)), boxes.join("\n"));
+	assert.ok(boxes.some((l) => /checkbox "first task"/.test(l)), boxes.join("\n"));
+	assert.ok(boxes.some((l) => /checkbox "third task".*checked/.test(l)), boxes.join("\n"));
+	// read_page names them the same way (it printed "on", the checkbox's default value).
+	assert.match(await tool("read_page", { filter: "interactive" }), /checkbox "second task"/);
+	// A link whose only match is a piece of its URL ("checkbox-guide", "first-task-howto") is not an answer.
+	assert.ok(!boxes.some((l) => /TodoMVC|Docs/.test(l)), boxes.join("\n"));
+	// Name the row and get its checkbox first.
+	const first = lines(await tool("find", { query: "first task checkbox" }));
+	assert.match(first[0], /checkbox "first task"/, first.join("\n"));
+	// An exact name beats a longer name that merely contains the word.
+	const completed = lines(await tool("find", { query: "completed" }));
+	assert.match(completed[0], /link "Completed"/, completed.join("\n"));
+	// Without a better match, a link found only by its URL is still returned.
+	const urlOnly = lines(await tool("find", { query: "howto" }));
+	assert.match(urlOnly.join("\n"), /link "Docs"/);
+	// Radios that share a parent are named by the label beside each, not the first label among siblings.
+	await go("radios");
+	const radios = lines(await tool("find", { query: "Large" }));
+	assert.equal(radios.filter((l) => / radio "/.test(l)).length, 1, radios.join("\n"));
+	assert.match(radios.join("\n"), /radio "Large"/);
+	const small = lines(await tool("find", { query: "Small" }));
+	assert.equal(small.filter((l) => / radio "/.test(l)).length, 1, small.join("\n"));
+	// A group laid out label-first is named the same way: each label belongs to the control after it.
+	const medium = lines(await tool("find", { query: "Medium" })).filter((l) => / radio "/.test(l));
+	assert.equal(medium.length, 1, medium.join("\n"));
+	assert.match(medium[0], /radio "Medium"/);
+	assert.match(await tool("read_page", { filter: "interactive" }), /radio "Extra"/);
+	assert.doesNotMatch(await tool("read_page", { filter: "interactive" }), /radio "Medium"[\s\S]*radio "Medium"/);
+	// Radios that differ only by value are told apart by it.
+	const page = await tool("read_page", { filter: "interactive" });
+	assert.match(page, /radio "tiny"/);
+	assert.match(page, /radio "huge"/);
+	// A row's link and its other small text are not its name: the link is found as the link.
+	assert.match(page, /checkbox "Buy milk 2 days ago"/);
+	const edit = lines(await tool("find", { query: "edit" }));
+	assert.match(edit[0], /link "Edit"/, edit.join("\n"));
+	assert.ok(!edit.some((l) => / checkbox "/.test(l)), edit.join("\n"));
+	// A control alone in a form full of other text is not named with that text: its own name is.
+	assert.match(page, /checkbox "agree"/);
+	await go("todo");
+	// And it is the checkbox, not the row's label, that click and fill need: both are listed.
+	const task = lines(await tool("find", { query: "second task" }));
+	assert.ok(task.some((l) => /checkbox "second task"/.test(l)), task.join("\n"));
+});
+
+
+/** The console entries of a read_console result, as their texts. */
+const texts = (result) => result.entries.map((e) => e.text);
+const readConsole = async (args = {}) => JSON.parse(await tool("read_console", args));
+const readNetwork = async (args = {}) => JSON.parse(await tool("read_network", args));
+const logInPage = (message) => js(`console.log(${JSON.stringify(message)}); 1`, { world: "main" });
+const fetchInPage = (path) => js(`fetch(${JSON.stringify(path)}).then((r) => r.status)`, { world: "main" });
+
+test("capture that stopped (a detach nobody announced) is reported by the next read, and resumes", async () => {
+	await go("edit");
+	await readConsole();
+	await readNetwork();
+	await logInPage("before-gap");
+	await fetchInPage("/before-gap");
+	const first = await readConsole();
+	assert.deepEqual(texts(first), ["before-gap"]);
+	assert.equal(first.capture, undefined, "nothing had stopped yet");
+
+	// The debugger leaves without an onDetach event; the next input re-attaches silently.
+	await sw(`chrome.debugger.detach({ tabId: ${await tabOn("edit")} }).then(() => true)`);
+	await logInPage("during-gap");
+	await fetchInPage("/during-gap");
+
+	const afterGap = await readConsole();
+	assert.ok(afterGap.capture, "the read must say capture stopped, not return old data as live");
+	assert.match(afterGap.capture.stopped[0].reason, /detached without notice/);
+	assert.ok(afterGap.capture.stopped[0].at && afterGap.capture.resumedAt);
+	assert.match(afterGap.capture.note, /on again/);
+	assert.equal(texts(afterGap).filter((t) => t === "before-gap").length, 1, "a replayed entry doubled an old one");
+	const net = await readNetwork();
+	assert.ok(net.capture, "network capture stopped too");
+	assert.match(net.capture.stopped[0].reason, /detached without notice/);
+	assert.ok(net.entries.some((e) => e.url.endsWith("/before-gap")));
+	assert.ok(!net.entries.some((e) => e.url.endsWith("/during-gap")), "a request from the gap cannot be there");
+
+	// Reported once; events after the gap are captured.
+	await logInPage("after-gap");
+	await fetchInPage("/after-gap");
+	const later = await readConsole();
+	assert.equal(later.capture, undefined);
+	assert.ok(texts(later).includes("after-gap"));
+	const laterNet = await readNetwork();
+	assert.equal(laterNet.capture, undefined);
+	assert.ok(laterNet.entries.some((e) => e.url.endsWith("/after-gap")));
+});
+
+test("after a gap, messages already read and cleared do not come back, and the same text on a new page is kept", async () => {
+	await go("edit");
+	await readConsole({ clear: true });
+	await logInPage("cleared-msg");
+	assert.deepEqual(texts(await readConsole({ clear: true })), ["cleared-msg"]);
+	await logInPage("ready");
+	const id = await tabOn("edit");
+	await sw(`chrome.debugger.detach({ tabId: ${id} }).then(() => true)`);
+	await logInPage("during-gap");
+	const first = await readConsole();
+	assert.ok(first.capture);
+	assert.ok(!texts(first).includes("cleared-msg"), `a cleared message came back: ${JSON.stringify(first.entries)}`);
+	assert.equal(texts(first).filter((t) => t === "ready").length, 1, "the buffered entry was doubled by the replay");
+
+	// A new page (another document) logs the same text while the debugger is away.
+	await sw(`chrome.debugger.detach({ tabId: ${id} }).then(() => true)`);
+	await tool("navigate", { url: `${pageUrl}edit?b` });
+	await logInPage("ready");
+	const second = await readConsole();
+	assert.ok(second.capture);
+	assert.equal(texts(second).filter((t) => t === "ready").length, 2, "the new page's message was taken for the old one");
+	assert.ok(!texts(second).includes("cleared-msg"));
+});
+
+test("a navigation under type's focusing click is reported, not retried on the new page; capture keeps running", async () => {
+	await go("edit");
+	await tool("fill", { selector: "#t", value: "" });
+	await readConsole({ clear: true });
+	await readNetwork({ clear: true });
+	await failNext("Input.dispatchMouseEvent", "Inspected target navigated or closed");
+	const message = await failure("type", { selector: "#t", text: "abc" });
+	assert.match(message, /^interrupted: The page navigated while type was running, so it may have run \(no key was typed\)/);
+	assert.equal(await js("document.getElementById('t').value"), "", "type must not have typed after the navigation");
+	await logInPage("still-captured");
+	const result = await readConsole();
+	assert.equal(result.capture, undefined, "the debugger never detached: nothing stopped");
+	assert.ok(texts(result).includes("still-captured"));
+	assert.equal((await readNetwork()).capture, undefined);
+	// And when keys may already have gone out, the agent hears about the navigation, not a detach.
+	await failNext("Input.dispatchKeyEvent", "Inspected target navigated or closed");
+	const later = await failure("type", { selector: "#t", text: "x" });
+	assert.match(later, /^interrupted: The page navigated while type was running/);
+});
+
+test("a silent detach is reported once when read_console is the first call after it", async () => {
+	await go("edit");
+	await readConsole();
+	await readNetwork();
+	await sw(`chrome.debugger.detach({ tabId: ${await tabOn("edit")} }).then(() => true)`);
+	// No input between the detach and the read: nothing has noticed it yet.
+	const first = await readConsole();
+	assert.ok(first.capture, "the first read after a silent detach reports it");
+	assert.equal((await readConsole()).capture, undefined, "and only once: nothing stopped in between");
+	const net = await readNetwork();
+	assert.ok(net.capture);
+	assert.equal((await readNetwork()).capture, undefined);
+});
+
+test("capture that stopped because the page crashed is reported, and resumes after the reload", async () => {
+	await go("edit");
+	await readConsole();
+	await logInPage("before-crash");
+	const id = await tabOn("edit");
+	const page = (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.type === "page" && t.url === `${pageUrl}edit`);
+	await cdp(page.webSocketDebuggerUrl, "Page.crash").catch(() => {});
+	await until(() => sw(`chrome.tabs.get(${id}).then(() => true)`), 5000, "the crashed tab");
+	await sw(`chrome.tabs.reload(${id}).then(() => true)`);
+	await until(async () => (await js("document.readyState")) === "complete", 30_000, "the reloaded page");
+	await logInPage("after-crash");
+	const result = await readConsole();
+	assert.ok(result.capture, "a crash must be reported");
+	assert.match(result.capture.stopped[0].reason, /crashed/);
+	assert.ok(texts(result).includes("after-crash"));
+	assert.equal((await readConsole()).capture, undefined);
+});
+
+test("capture lost to a worker restart is reported, and resumes", async () => {
+	await go("edit");
+	await readConsole();
+	await logInPage("before-restart");
+	const version = await (await fetch(`http://${devtools}/json/version`)).json();
+	const worker = (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.type === "service_worker" && t.url.includes(EXTENSION_ID));
+	await cdp(version.webSocketDebuggerUrl, "Target.closeTarget", { targetId: worker.id });
+	await connected();
+	const result = await readConsole();
+	assert.ok(result.capture, "a restart must be reported, not look like a first call");
+	assert.match(result.capture.stopped[0].reason, /background worker restarted/);
+	// Anything from before the restart that the browser replays is flagged, never passed off as live.
+	const old = result.entries.filter((x) => x.text === "before-restart");
+	assert.equal(old.length, 1, `the browser's history should bring the pre-restart message back: ${JSON.stringify(result.entries)}`);
+	assert.equal(old[0].replayed, true, JSON.stringify(old[0]));
+	// What is logged from here on is captured again.
+	await logInPage("after-restart");
+	const later = await readConsole();
+	assert.equal(later.capture, undefined);
+	assert.ok(texts(later).includes("after-restart"));
+});
+
+test("a tab the tool opens captures its first load: tabs_create and the first navigate of a session", async () => {
+	await connected();
+	const created = await tool("tabs_create", { url: `${pageUrl}boot` });
+	const tabId = Number(created.match(/"tabId":(\d+)/)?.[1] ?? created.match(/\b(\d{6,})\b/)?.[1]);
+	assert.ok(tabId, created);
+	const net = await readNetwork({ tabId });
+	assert.ok(net.entries.some((e) => e.url.endsWith("/boot") && e.type === "Document"), JSON.stringify(net.entries));
+	assert.ok(net.entries.some((e) => e.url.endsWith("/boot-data")), "the first load's fetch was missed");
+	assert.ok(texts(await readConsole({ tabId })).includes("boot-log"));
+	await tool("tabs_close", { tabId });
+
+	// A fresh session's first navigate opens its tab on the URL.
+	const project = join(home, "projects", "first-load");
+	mkdirSync(project, { recursive: true });
+	execFileSync("git", ["init", "-q", project]);
+	const agent = await agentIn(project);
+	try {
+		await on(agent, "navigate", { url: `${pageUrl}boot` });
+		const net2 = JSON.parse(await on(agent, "read_network", {}));
+		assert.ok(net2.entries.some((e) => e.url.endsWith("/boot-data")), JSON.stringify(net2.entries));
+		assert.ok(JSON.parse(await on(agent, "read_console", {})).entries.some((e) => e.text === "boot-log"));
+	} finally {
+		await agent.close();
+	}
+});
+
+test("the first navigate of a session that cannot load the page fails with navigation_failed, and the tab stays", async () => {
+	await connected();
+	const project = join(home, "projects", "first-nav-fails");
+	mkdirSync(project, { recursive: true });
+	execFileSync("git", ["init", "-q", project]);
+	const agent = await agentIn(project);
+	try {
+		const res = await agent.callTool({ name: "navigate", arguments: { url: "https://example.invalid/" } });
+		const text = res.content.map((c) => c.text).join("\n");
+		assert.ok(res.isError, `a page that did not load must not be reported as loaded: ${text}`);
+		assert.match(text, /^navigation_failed: /);
+		// Same answer as for a session that already had a tab; the tab it opened is still the agent's.
+		assert.match(await on(agent, "tabs_context"), /about:blank|example\.invalid/);
+	} finally {
+		await agent.close();
+	}
+});
+
+test("a new tab says so when capture could not start on it, instead of silently missing the first load", async () => {
+	await connected();
+	await failNext("Runtime.enable", "Cannot attach to this target");
+	const created = JSON.parse(await tool("tabs_create", { url: `${pageUrl}boot` }));
+	assert.match(created.note, /capture could not start on this tab \(console: Cannot attach to this target\)/);
+	assert.match(created.note, /first load was not captured/);
+	await tool("tabs_close", { tabId: created.tabId });
+	// And a tab where it started carries no note.
+	const fine = JSON.parse(await tool("tabs_create", { url: `${pageUrl}boot` }));
+	assert.equal(fine.note, undefined);
+	await tool("tabs_close", { tabId: fine.tabId });
+});
+
+test("press refuses clipboard chords before any key event: no paste/copy/cut or keydown reaches the page", async () => {
+	await go("clip");
+	await tool("click", { selector: "#t" });
+	const chords = ["Control+v", "Meta+v", "Control+c", "Meta+c", "Control+x", "Meta+x", "Control+Shift+v", "Shift+Insert", "Control+Insert", "Shift+Delete", "ctrl+V"];
+	for (const key of chords) {
+		const text = await failure("press", { key });
+		assert.match(text, /^bad_params: .*clipboard chords are not supported; use fill or type/, key);
+	}
+	assert.match(await failure("actions", { steps: [{ press: "Control+v" }] }), /^bad_params: .*step 0 \(press\).*clipboard chords are not supported/);
+	assert.deepEqual(await js("window.__seen", { world: "main" }), [], "a key event or clipboard event reached the page");
+	assert.equal(await js("document.getElementById('t').value"), "");
+	// Other chords still go through.
+	await tool("press", { key: "Control+a" });
+	assert.ok((await js("window.__seen", { world: "main" })).includes("keydown:a"));
+});
+
+test("an actions step that is interrupted keeps the extension's own message, not 'connection dropped'", async () => {
+	await go("edit");
+	await tool("fill", { selector: "#t", value: "" });
+	await failNext("Input.dispatchKeyEvent", "Detached while handling command.");
+	const message = await failure("actions", { steps: [{ type: { selector: "#t", text: "abc" } }] });
+	assert.match(message, /^interrupted: step 0 \(type\) failed after 0 steps succeeded: /);
+	assert.match(message, /Check the page with read_page before you repeat it/);
+	assert.doesNotMatch(message, /connection dropped/);
+});
+
+test("tabs_create on a page that cannot load opens the tab and says the page did not load", async () => {
+	await connected();
+	const created = JSON.parse(await tool("tabs_create", { url: "https://example.invalid/" }));
+	assert.match(created.note, /^The page did not load: Navigation to https:\/\/example\.invalid\/ failed: /);
+	await tool("tabs_close", { tabId: created.tabId });
 });

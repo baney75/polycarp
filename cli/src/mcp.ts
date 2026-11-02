@@ -201,7 +201,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"To save a scholarly source, use library_add with its DOI; it verifies the source exists and isn't retracted before you cite it.",
 				ASK_USER_INSTRUCTION,
 				THREADS_INSTRUCTION,
-				"If a call fails with dialog_open, an alert/confirm/prompt box froze the page: answer it with handle_dialog (Cancel is always safe; OK is fine when the box confirms exactly what the user asked for, otherwise ask the user before OK on anything that acts under their sign-in).",
+				"A click that opens an alert/confirm/prompt box succeeds and says so: do not repeat it. If a call fails with dialog_open, a box froze the page: answer it with handle_dialog (Cancel is always safe; OK is fine when the box confirms exactly what the user asked for, otherwise ask the user before OK on anything that acts under their sign-in).",
 				"If a call fails with interrupted, the browser connection dropped while it ran: check the page with read_page before you repeat it.",
 			]
 				// A scoped session hears only about the tools it has, so a small model isn't sent
@@ -541,7 +541,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"press",
 		{
 			title: "Press a key",
-			description: "Press a key or chord: Enter, Escape, Tab, ArrowDown, Control+a, Meta+Shift+p. Example: {\"key\":\"Escape\"}",
+			description: "Press a key or chord: Enter, Escape, Tab, ArrowDown, Control+a, Meta+Shift+p; clipboard chords (Control+v, Meta+c) are refused. Example: {\"key\":\"Escape\"}",
 			inputSchema: { key: z.string().describe("Key name or chord joined with +"), tabId, repeat: z.number().int().optional().describe("Times to press") },
 		},
 		(args) => call("press", args),
@@ -600,9 +600,11 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			try {
 				const res = (await client.call("actions", args)) as {
 					steps: number;
+					/** Set when a step opened a dialog: what it is and how to answer it. */
+					note?: string;
 					screenshot?: { data: string; mimeType: string; width: number; height: number };
 				};
-				const content: Content[] = [{ type: "text", text: `${res.steps} steps done.` }];
+				const content: Content[] = [{ type: "text", text: `${res.steps} steps done.${res.note ? ` ${res.note}` : ""}` }];
 				if (res.screenshot) {
 					content.unshift({ type: "image", data: res.screenshot.data, mimeType: res.screenshot.mimeType });
 					content.push({
@@ -662,7 +664,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"read_console",
 		{
 			title: "Read console messages",
-			description: "Console messages from your tab. The first call starts capturing, so call it before reproducing a problem. Example: {\"onlyErrors\":true}",
+			description: "Console messages from your tab. Tabs you open capture from their first load; on others the first call starts capturing. Example: {\"onlyErrors\":true}",
 			inputSchema: {
 				tabId,
 				onlyErrors: z.boolean().optional().describe("Only errors and uncaught exceptions"),
@@ -677,7 +679,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"read_network",
 		{
 			title: "Read network requests",
-			description: "Your tab's requests (id, method, URL, status, type). Capture starts on the first call: call it before loading. requestId gives what it sent (keys only) and a JSON response, secrets masked. Example: {\"type\":\"Fetch\"}",
+			description: "Your tab's requests (id, method, URL, status, type). Tabs you open capture from their first load; on others the first call starts capture. requestId gives what it sent (keys only) and a JSON response, secrets masked. Example: {\"type\":\"Fetch\"}",
 			inputSchema: {
 				tabId,
 				urlPattern: z.string().optional().describe("Substring or regex the URL must match"),

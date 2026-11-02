@@ -14,13 +14,17 @@ import {
 	enableNetworkCapture,
 	evaluateMain,
 	hover,
+	isDetachError,
+	isNavigatedError,
 	networkCapturing,
 	openDialog,
 	pressKey,
 	readConsole,
 	readNetwork,
 	readNetworkDetail,
+	reattach,
 	screenshotToCss,
+	startCapture,
 	startScreencast,
 	stopScreencast,
 	typeText,
@@ -39,23 +43,14 @@ import {
 	scrollPage,
 	snapshot,
 	waitFor,
-	waitForLoad,
 } from "../browser/page.js";
 import { type BrowserSession, TabLimitError, takeNotices } from "../browser/session.js";
+import { BridgeError, classify, detachedError, interruptedError, navigatedError } from "./errors.js";
+import { rankMatches } from "./find.js";
 import { getAllowedHosts, getPermissionMode } from "./permissions.js";
-import { ERR, type RpcError } from "./protocol.js";
+import { ERR } from "./protocol.js";
 
-export class BridgeError extends Error {
-	constructor(
-		readonly code: string,
-		message: string,
-	) {
-		super(message);
-	}
-	toRpc(): RpcError {
-		return { code: this.code, message: this.message };
-	}
-}
+export { BridgeError, detachedError };
 
 type Params = Record<string, unknown>;
 
@@ -72,6 +67,16 @@ export interface HandlerContext {
 	 * call was waiting on the frozen page); it must send no more input after that.
 	 */
 	aborted(): boolean;
+	/**
+	 * Call just before the last input event of an action goes out, with the result to report. If a
+	 * dialog opens from here on, the action itself worked, and the call returns this result with a
+	 * note about the dialog instead of failing with dialog_open (which made agents repeat it).
+	 * `tabId` is the tab the input went to: only a dialog that opens on it counts as this action's
+	 * effect (a dialog on another tab of the session keeps failing with dialog_open).
+	 * `notRun`, if set, is how many later steps of the call did not run. Call with no result once
+	 * the action has finished, so a dialog from a later step is not blamed on this one.
+	 */
+	delivered(result?: Record<string, unknown>, tabId?: number): void;
 }
 
 function stopIfAborted(ctx: HandlerContext): void {
@@ -123,6 +128,43 @@ async function createCapped(session: BrowserSession, url?: string): Promise<chro
 		return await session.createTab(url, { capped: true });
 	} catch (err) {
 		if (err instanceof TabLimitError) throw new BridgeError(ERR.TAB_LIMIT, err.message);
+		throw err;
+	}
+}
+
+/**
+ * A new tab for the agent with console and network capture already on. The tab opens on
+ * about:blank and the URL loads after capture starts, so the first page's requests and logs are
+ * kept (a tab opened straight on the URL had loaded before anything listened). `ready` is false
+ * when the wait for the page gave up. `note` says so when capture could not start: the first load
+ * is then missed, and the first read_console/read_network starts capture as before.
+ *
+ * A page that fails to load (DNS, refused) is `tolerant` for tabs_create, which has always opened
+ * the tab and reported it; navigate rethrows, so the agent gets navigation_failed (the tab stays
+ * in the session either way).
+ */
+async function openCapturedTab(
+	ctx: HandlerContext,
+	url: string | undefined,
+	timeoutMs: number,
+	tolerant: boolean,
+): Promise<{ tab: chrome.tabs.Tab; ready: boolean; note?: string }> {
+	const tab = await createCapped(ctx.session, "about:blank");
+	const tabId = tab.id as number;
+	const failed = await startCapture(tabId);
+	const note = failed
+		? `Console and network capture could not start on this tab (${failed}), so its first load was not captured; read_console or read_network starts capture from the next call.`
+		: undefined;
+	if (failed) console.warn("[Bridge] capture did not start on a new tab:", failed);
+	if (!url) return { tab, ready: true, note };
+	try {
+		return { tab, ready: !(await navigateTabDetailed(tabId, url, { timeoutMs })).timedOut, note };
+	} catch (err) {
+		if (tolerant && err instanceof Error && err.message.startsWith("Navigation to ")) {
+			// Opened, as tabs_create always did, but say the page is not there.
+			const notLoaded = `The page did not load: ${err.message}`;
+			return { tab, ready: true, note: note ? `${notLoaded} ${note}` : notLoaded };
+		}
 		throw err;
 	}
 }
@@ -231,9 +273,8 @@ export const handlers: Record<string, Handler> = {
 	"tabs.create": async (ctx, params) => {
 		const url = str(params, "url");
 		if (url) await ctx.checkUrl(url);
-		const tab = await createCapped(ctx.session, url);
-		const ready = url ? await waitForLoad(tab.id!, 20000) : true;
-		return tabSummary(tab.id!, !ready);
+		const { tab, ready, note } = await openCapturedTab(ctx, url, 20000, true);
+		return { ...(await tabSummary(tab.id!, !ready)), ...(note ? { note } : {}) };
 	},
 
 	"tabs.close": async (ctx, params) => {
@@ -300,11 +341,10 @@ export const handlers: Record<string, Handler> = {
 		const url = requireStr(params, "url");
 		const history = url === "back" || url === "forward";
 		if (!history) await ctx.checkUrl(url);
-		// The first navigate of a session opens its tab straight on the URL (no blank tab).
+		// The first navigate of a session opens its tab (blank, with capture on) and loads the URL into it.
 		if (!history && num(params, "tabId") === undefined && !(await ctx.session.currentTab())) {
-			const tab = await createCapped(ctx.session, url);
-			const ready = await waitForLoad(tab.id!, num(params, "timeoutMs") ?? 20000);
-			return tabSummary(tab.id!, !ready);
+			const { tab, ready, note } = await openCapturedTab(ctx, url, num(params, "timeoutMs") ?? 20000, false);
+			return { ...(await tabSummary(tab.id!, !ready)), ...(note ? { note } : {}) };
 		}
 		const tabId = await resolveTab(ctx, params, false);
 		let timedOut = false;
@@ -417,19 +457,7 @@ export const handlers: Record<string, Handler> = {
 		const query = requireStr(params, "query").toLowerCase();
 		const tabId = await resolveTab(ctx, params, false);
 		const snap = await snapshot(tabId, { filter: "all", maxNodes: 600, maxTextChars: 0 });
-		const words = query.split(/\s+/).filter(Boolean);
-		const scored = snap.nodes
-			.map((n) => {
-				const hay = `${n.role} ${n.name} ${n.value ?? ""} ${n.href ?? ""}`.toLowerCase();
-				let score = 0;
-				for (const w of words) if (hay.includes(w)) score += w.length;
-				if (n.name.toLowerCase() === query) score += 100;
-				return { node: n, score };
-			})
-			.filter((s) => s.score > 0)
-			.sort((a, b) => b.score - a.score)
-			.slice(0, num(params, "limit") ?? 20);
-		return { matches: scored.map((s) => s.node) };
+		return { matches: rankMatches(snap.nodes, query, num(params, "limit") ?? 20) };
 	},
 
 	click: async (ctx, params) => {
@@ -439,7 +467,9 @@ export const handlers: Record<string, Handler> = {
 		await click(tabId, p.x, p.y, {
 			button: button === "right" || button === "middle" ? button : "left",
 			clickCount: num(params, "clickCount") ?? 1,
+			beforeLastEvent: () => ctx.delivered({ clicked: p }, tabId),
 		});
+		ctx.delivered();
 		return { clicked: p };
 	},
 
@@ -467,14 +497,44 @@ export const handlers: Record<string, Handler> = {
 		const text = requireStr(params, "text");
 		const tabId = await resolveTab(ctx, params, true);
 		const t = target(params);
-		if (t.ref || t.selector) {
-			const rect = await locate(tabId, t);
-			await click(tabId, rect.x, rect.y);
+		/** Set just before the first key event goes out: after that the page may hold some of the text. */
+		let keysStarted = false;
+		const attempt = async () => {
+			if (t.ref || t.selector) {
+				const rect = await locate(tabId, t);
+				await click(tabId, rect.x, rect.y);
+			}
+			stopIfAborted(ctx);
+			await typeText(tabId, text, ctx.aborted, () => {
+				keysStarted = true;
+			});
+			stopIfAborted(ctx);
+			if (params.submit === true) await pressKey(tabId, "Enter");
+		};
+		try {
+			await attempt();
+		} catch (err) {
+			if (!isDetachError(err)) throw err;
+			// A navigation under the focusing click is often the click's own doing (a field in a link):
+			// typing again would act on the new page. Only a debugger that really detached is retried.
+			if (isNavigatedError(err))
+				throw navigatedError("type", keysStarted ? "some of the text may be in the field" : "no key was typed");
+			// Detached before any key went out: nothing was typed, so attach again and go once more.
+			// Once a key was sent the text may be partly there, and typing again would double it.
+			if (keysStarted) throw interruptedError(err, "type", "some of the text may be in the field");
+			try {
+				await reattach(tabId);
+				await attempt();
+			} catch (again) {
+				if (isDetachError(again))
+					throw interruptedError(
+						again,
+						"type",
+						keysStarted ? "some of the text may be in the field" : "no key was typed",
+					);
+				throw again;
+			}
 		}
-		stopIfAborted(ctx);
-		await typeText(tabId, text, ctx.aborted);
-		stopIfAborted(ctx);
-		if (params.submit === true) await pressKey(tabId, "Enter");
 		return { typed: text.length };
 	},
 
@@ -598,11 +658,27 @@ export const handlers: Record<string, Handler> = {
 			}
 			const withTab = params.tabId !== undefined && sub.tabId === undefined ? { ...sub, tabId: params.tabId } : sub;
 			stopIfAborted(ctx);
+			// A step that opens a dialog worked, but the steps after it did not run: say so.
+			const stepCtx: HandlerContext = {
+				...ctx,
+				delivered: (result, tabId) =>
+					ctx.delivered(
+						result ? { ...result, steps: done.length + 1, notRun: steps.length - i - 1 } : undefined,
+						tabId,
+					),
+			};
 			try {
-				done.push(await handlers[kind](ctx, withTab));
+				done.push(await handlers[kind](stepCtx, withTab));
 			} catch (err) {
-				const message = err instanceof Error ? err.message : String(err);
-				throw new BridgeError(ERR.BAD_PARAMS, `step ${i} (${kind}) failed after ${i} steps succeeded: ${message}`);
+				// Keep the step's own code (stale_ref, interrupted, ...): the agent acts on it.
+				const { error } = classify(err, kind);
+				const code = error.code === ERR.INTERNAL ? ERR.BAD_PARAMS : error.code;
+				// `source` stays: the client passes the extension's own interrupted on, not as a dropped bridge.
+				throw new BridgeError(
+					code,
+					`step ${i} (${kind}) failed after ${i} steps succeeded: ${error.message}`,
+					error.source,
+				);
 			}
 			if (settleMs > 0 && i < steps.length - 1) await new Promise((r) => setTimeout(r, settleMs));
 		}
@@ -614,7 +690,7 @@ export const handlers: Record<string, Handler> = {
 
 	"console.read": async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, true);
-		await enableConsoleCapture(tabId);
+		const capture = await enableConsoleCapture(tabId);
 		let entries = readConsole(tabId, params.clear === true);
 		if (params.onlyErrors === true) entries = entries.filter((e) => e.level === "error");
 		const pattern = str(params, "pattern");
@@ -622,14 +698,14 @@ export const handlers: Record<string, Handler> = {
 			const re = new RegExp(pattern, "i");
 			entries = entries.filter((e) => re.test(e.text));
 		}
-		return { entries: entries.slice(-(num(params, "limit") ?? 100)) };
+		return { ...(capture ? { capture } : {}), entries: entries.slice(-(num(params, "limit") ?? 100)) };
 	},
 
 	"network.read": async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, true);
-		await enableNetworkCapture(tabId);
+		const capture = await enableNetworkCapture(tabId);
 		const requestId = str(params, "requestId");
-		if (requestId) return { request: await readNetworkDetail(tabId, requestId) };
+		if (requestId) return { ...(capture ? { capture } : {}), request: await readNetworkDetail(tabId, requestId) };
 		let entries = readNetwork(tabId, params.clear === true);
 		const pattern = str(params, "urlPattern");
 		if (pattern) {
@@ -638,6 +714,6 @@ export const handlers: Record<string, Handler> = {
 		}
 		const type = str(params, "type");
 		if (type) entries = entries.filter((e) => e.type?.toLowerCase() === type.toLowerCase());
-		return { entries: entries.slice(-(num(params, "limit") ?? 100)) };
+		return { ...(capture ? { capture } : {}), entries: entries.slice(-(num(params, "limit") ?? 100)) };
 	},
 };

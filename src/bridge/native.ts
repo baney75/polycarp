@@ -8,22 +8,17 @@
  */
 
 import { cancelQuestion, cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
-import { openDialog, type PageDialog, stopScreencastsOwnedBy, watchDialogs } from "../browser/cdp.js";
+import { openDialog, type PageDialog, stopScreencastsOwnedBy } from "../browser/cdp.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
-import {
-	BrowserSession,
-	listSessions,
-	NoTabError,
-	pruneSessions,
-	type SessionMeta,
-	sanitizeLabel,
-} from "../browser/session.js";
+import { BrowserSession, listSessions, pruneSessions, type SessionMeta, sanitizeLabel } from "../browser/session.js";
 import { probeUserScripts } from "../browser/userscripts-status.js";
 import { COMMUNITY_STATUS_KEY } from "../community/status.js";
 import { handleThreads } from "../threads/bridge.js";
 import { resyncMirror, startThreadMirror } from "../threads/mirror.js";
 import { asBuildInfo, BUILD, type BuildInfo } from "../update/build.js";
 import type { UpdateAction } from "../update/logic.js";
+import { type Delivered, dialogError, raceDialogs } from "./dialogs.js";
+import { BridgeError, classify } from "./errors.js";
 import {
 	addPendingRequest,
 	allowHost,
@@ -55,7 +50,7 @@ import {
 	UPDATE_STATUS_KEY,
 } from "./protocol.js";
 import { handleSessionsAdmin } from "./sessions-admin.js";
-import { BridgeError, type HandlerContext, handlers } from "./tools.js";
+import { type HandlerContext, handlers } from "./tools.js";
 
 const ALARM_NAME = "tabkyra-bridge-keepalive";
 const WORKER_STARTED_AT = Date.now();
@@ -321,42 +316,6 @@ const DIALOG_SAFE = new Set([
 	"network.read",
 ]);
 
-function dialogError(tabId: number, dialog: PageDialog): BridgeError {
-	const kind = dialog.type === "beforeunload" ? "leave-page" : dialog.type;
-	return new BridgeError(
-		ERR.DIALOG_OPEN,
-		`${/^[aeiou]/.test(kind) ? "An" : "A"} ${kind} dialog is open on tab ${tabId}: ${JSON.stringify(dialog.message)}. The page is frozen until it is answered. ` +
-			`Call handle_dialog with tabId ${tabId} and accept true (OK) or false (Cancel). Cancel is always safe. ` +
-			"OK is fine when the user already asked for exactly this action; otherwise ask them first if OK would act under their sign-in (delete, send, buy, post).",
-	);
-}
-
-/**
- * Run a handler, but fail at once if a dialog opens on one of the session's tabs. The
- * handler can't be cancelled mid-CDP-call, so `onAbort` flips the flag it checks before
- * sending more input.
- */
-function raceDialogs<T>(session: BrowserSession, work: Promise<T>, onAbort: () => void): Promise<T> {
-	return new Promise<T>((resolve, reject) => {
-		const stop = watchDialogs((tabId, dialog) => {
-			if (!session.tabIds.includes(tabId)) return;
-			stop();
-			onAbort();
-			reject(dialogError(tabId, dialog));
-		});
-		work.then(
-			(v) => {
-				stop();
-				resolve(v);
-			},
-			(e) => {
-				stop();
-				reject(e);
-			},
-		);
-	});
-}
-
 async function runRequest(state: ClientState, req: HostForwardedRequest): Promise<void> {
 	const reply = (result?: unknown, error?: BridgeError) =>
 		send({
@@ -372,6 +331,8 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	state.abort = () => {
 		aborted = true;
 	};
+	/** Set by a handler just before the input that completes its action goes out (HandlerContext.delivered). */
+	let deliveredResult: Delivered | undefined;
 	/** Gone: send nothing, start nothing (nobody can receive the answer, and the agent may retry). */
 	const gone = () => aborted || state.closed === true;
 	if (gone()) return;
@@ -412,6 +373,9 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			clientId: state.clientId,
 			emit: (event, data) => send({ type: "event", clientId: state.clientId, event, data }),
 			aborted: () => aborted,
+			delivered: (result, tabId) => {
+				deliveredResult = result && tabId !== undefined ? { result, tabId } : undefined;
+			},
 			checkUrl: async (url: string) => {
 				if (!(await askPermission(state, url))) {
 					const mode = await getPermissionMode();
@@ -436,9 +400,14 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		const result = await withTimeout(
 			dialogSafe
 				? work
-				: raceDialogs(session, work, () => {
-						aborted = true;
-					}),
+				: raceDialogs(
+						session,
+						work,
+						() => {
+							aborted = true;
+						},
+						() => deliveredResult,
+					),
 			HANDLER_TIMEOUT_MS,
 			req.method,
 		);
@@ -447,9 +416,10 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	} catch (err) {
 		state.lastError = `${req.method}: ${err instanceof Error ? err.message : String(err)}`;
 		console.warn("[Bridge]", state.lastError);
-		if (err instanceof BridgeError) reply(undefined, err);
-		else if (err instanceof NoTabError) reply(undefined, new BridgeError(ERR.NO_TAB, err.message));
-		else reply(undefined, new BridgeError(ERR.INTERNAL, err instanceof Error ? err.message : String(err)));
+		const { error, stack } = classify(err, req.method);
+		// The trace is for whoever debugs Tabkyra (tabkyra debug), not for the agent.
+		if (stack) trace(`${req.method} ${error.code}: ${stack.split("\n").slice(0, 6).join(" | ")}`);
+		reply(undefined, error);
 	} finally {
 		state.abort = undefined;
 		state.inFlight = undefined;

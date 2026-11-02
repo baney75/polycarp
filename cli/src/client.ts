@@ -379,6 +379,8 @@ export class BridgeClient {
 			} catch (err) {
 				const refused = err instanceof BridgeRpcError && err.rpc.code === ERR.NOT_SENT;
 				const unsent = err instanceof NotSentError;
+				// The extension's own interrupted (debugger detached, page navigated) is an answer, not a dropped bridge.
+				if (err instanceof BridgeRpcError && err.rpc.code === ERR.INTERRUPTED && err.rpc.source === "extension") throw err;
 				const interrupted = err instanceof BridgeRpcError && err.rpc.code === ERR.INTERRUPTED;
 				if (err instanceof BridgeRpcError && !refused && !interrupted) throw err;
 				if (!refused && !unsent && !interrupted && !isConnectionError(err)) throw err;
