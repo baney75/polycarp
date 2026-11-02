@@ -114,7 +114,7 @@ Cursor (`~/.cursor/mcp.json`) and OMP (`~/.omp/agent/mcp.json`):
 
 By default the extension asks before an agent opens a new site. MCP clients that support
 elicitation (Claude Code, Codex) show the prompt inline; otherwise answer it in the
-Tabkyra side panel under Settings > Bridge, run `tabkyra allow <host>`, or switch the
+Tabkyra side panel under Settings > Agents, run `tabkyra allow <host>`, or switch the
 mode to "allow any site" there. pi: set `TABKYRA_AUTO_ALLOW=1` to auto-approve.
 
 `TABKYRA_SESSION=<name>` makes a harness re-adopt the same tab group across restarts.

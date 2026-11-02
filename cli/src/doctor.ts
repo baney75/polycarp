@@ -158,7 +158,7 @@ export interface DebugInfo {
 }
 
 const GRANT_STEPS =
-	"Open the Tabkyra side panel > Settings > Bridge > Page scripts and click Allow, then accept the browser's prompt. If doctor still warns, run tabkyra reload.";
+	"Open the Tabkyra side panel > Settings > Agents > Page scripts and click Allow, then accept the browser's prompt. If doctor still warns, run tabkyra reload.";
 
 /** The "Allow user scripts" row of `tabkyra doctor`, or undefined when there is nothing to say. */
 export function userScriptsCheck(info: DebugInfo): Check | undefined {

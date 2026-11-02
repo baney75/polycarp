@@ -88,7 +88,7 @@ test("server instructions and the skill teach the same rules", () => {
 		[/handle_dialog/, /handle_dialog/],
 		[/Cancel is always safe/, /Cancel, which is always safe/],
 		[/confirms exactly what the user asked for/, /confirms exactly what\s+the user asked for/],
-		[/Settings > Bridge/, /Settings > Bridge/],
+		[/Settings > Agents/, /Settings > Agents/],
 		[/tabs_close/, /tabs_close/],
 		[/tabs_show/, /tabs_show/],
 		[/do not try to get around it/, /Don't try another URL to\s+get around it/],

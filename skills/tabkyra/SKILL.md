@@ -46,7 +46,7 @@ Repeat 2 to 4 until the task is done. Prefer refs over selectors, and selectors 
   `read_page`. Don't loop `read_page` to poll.
 - **Site approval**: opening a new site may ask the user first. If the result says "Not
   allowed to open" a site, tell the user. They can allow it in the Tabkyra side panel
-  (Settings > Bridge) or with `tabkyra allow <host>`. Don't try another URL to get around it.
+  (Settings > Agents) or with `tabkyra allow <host>`. Don't try another URL to get around it.
 - **Sign-in, captcha or payment**: never type passwords or card numbers. Call `tabs_show`
   so the user sees the tab, ask them to finish, and continue after they say so.
 - **Error `dialog_open`**: the page opened an alert, confirm or prompt box, and the page
