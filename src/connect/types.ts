@@ -23,7 +23,7 @@ export interface ConnectStatus {
 	passcodeSet: boolean;
 	link?: { hubUrl: string; name: string; online: boolean; busy: boolean; manage: boolean };
 	hub?: { devices: ConnectDevice[] };
-	theme: { preset: string; accent?: string };
+	theme: { preset: string; accent?: string; mode?: "light" | "dark" };
 	/** A config file that is present but unreadable, in a sentence; the route reads as none until it is fixed. */
 	problem?: string;
 }

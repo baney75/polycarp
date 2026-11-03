@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { WebSocket } from "ws";
 import { BridgeClient } from "./client.ts";
+import { normalizeCode } from "./codes.ts";
 import { readJsonFile, writeJsonPrivate } from "./files.ts";
 import { launcherValid, tabkyraBinary } from "./harness.ts";
 import {
@@ -644,8 +645,24 @@ export async function mintViaHub(kind: "connect" | "approval", manage: boolean):
 		throw new Error(`Couldn't reach ${config.hubUrl}: ${err instanceof Error ? err.message : String(err)}`);
 	}
 	const { code, expiresAt, url } = result.body;
-	if (result.status !== 200 || typeof code !== "string" || typeof expiresAt !== "number") throw new Error(`The hub refused: ${describe(result.body, result.status)}`);
-	return { code, expiresAt, ...(typeof url === "string" ? { url } : {}), hubUrl: config.hubUrl };
+	if (result.status !== 200) throw new Error(`The hub refused: ${describe(result.body, result.status)}`);
+	// The reply is untrusted: the owner may paste what it carries into a shell, so only the exact shapes pass.
+	const shaped = typeof code === "string" ? normalizeCode(code) : undefined;
+	if (!shaped || shaped !== code || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) throw new Error("The hub answered with a malformed code.");
+	if (url !== undefined && (typeof url !== "string" || !isConnectorUrl(url))) throw new Error("The hub answered with a malformed code.");
+	return { code: shaped, expiresAt, ...(typeof url === "string" ? { url } : {}), hubUrl: config.hubUrl };
+}
+
+/** An https origin (http only on loopback, as for a hub address) plus /mcp, with no credentials, query or fragment. */
+function isConnectorUrl(value: string): boolean {
+	if (value.length > 300 || /[\s"'`$;&|<>\\]/.test(value)) return false;
+	try {
+		const u = new URL(value);
+		const loopback = u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "[::1]";
+		return (u.protocol === "https:" || (u.protocol === "http:" && loopback)) && u.pathname === "/mcp" && !u.search && !u.hash && !u.username && !u.password && value === `${u.origin}/mcp`;
+	} catch {
+		return false;
+	}
 }
 
 export async function linkMintCode(kind: "connect" | "approval", options: { manage: boolean; json: boolean }): Promise<number> {

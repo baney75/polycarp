@@ -8,7 +8,7 @@
  * fields, a known method, params of exactly that method's shape. Anything else is answered with
  * an error and runs nothing. `joinHub` checks its hub address and its code before any network
  * call. Replies never carry a secret, a token hash or the passcode. Code minting is limited to
- * ten per ten minutes. Nothing here prints to stdout: that stream is the channel to the browser.
+ * ten per ten minutes, counted in a private file so a new host process does not reset it. Nothing here prints to stdout: that stream is the channel to the browser.
  */
 
 import type { HostConnect } from "../../src/bridge/protocol.ts";
@@ -24,13 +24,16 @@ import {
 	type DeviceCode,
 	type JoinResult,
 } from "../../src/connect/types.ts";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { normalizeCode } from "./codes.ts";
+import { readJsonFile, withFileLock, writeJsonPrivate } from "./files.ts";
 import { deviceRows } from "./hub-admin.ts";
-import { loadHubConfig, mintConnectCode, validDeviceName } from "./hub-state.ts";
+import { devicesFile, devicesReadable, hubFile, loadHubConfig, mintConnectCode, validDeviceName } from "./hub-state.ts";
 import { type EnrollHooks, enrollDevice, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusy } from "./link.ts";
-import { mintApprovalCode, passcodeSet } from "./oauth.ts";
-import { loadRemoteConfig } from "./remote-setup.ts";
-import { isAccent, loadTheme, PRESETS, saveTheme } from "./theme.ts";
+import { configDir, mintApprovalCode, passcodeSet } from "./oauth.ts";
+import { loadRemoteConfig, remoteFile } from "./remote-setup.ts";
+import { isAccent, isMode, loadTheme, PRESETS, saveTheme } from "./theme.ts";
 
 // ---------- parsing ----------
 
@@ -40,7 +43,7 @@ export type ConnectCall =
 	| { method: "deviceCode" }
 	| { method: "setBusy"; busy: boolean }
 	| { method: "joinHub"; hubUrl: string; code: string; name?: string }
-	| { method: "setTheme"; preset: string; accent?: string | null };
+	| { method: "setTheme"; preset: string; accent?: string | null; mode?: string };
 
 export type ParsedConnect = { ok: true; id: number; call: ConnectCall } | { ok: false; id?: number; message: string };
 
@@ -106,11 +109,17 @@ export function parseConnect(message: unknown): ParsedConnect {
 			return call({ method, hubUrl, code, ...(typeof params.name === "string" ? { name: params.name } : {}) });
 		}
 		case "setTheme": {
-			const problem = onlyKeys(params, ["preset", "accent"]);
+			const problem = onlyKeys(params, ["preset", "accent", "mode"]);
 			if (problem) return fail(problem);
 			if (typeof params.preset !== "string" || !Object.hasOwn(PRESETS, params.preset)) return fail(`preset is one of ${Object.keys(PRESETS).join(", ")}.`);
 			if (params.accent !== undefined && params.accent !== null && !isAccent(params.accent)) return fail("accent is #rrggbb, or null for the preset's own.");
-			return call({ method, preset: params.preset, ...(params.accent !== undefined ? { accent: params.accent as string | null } : {}) });
+			if (params.mode !== undefined && !isMode(params.mode)) return fail("mode is light, dark or system.");
+			return call({
+				method,
+				preset: params.preset,
+				...(params.accent !== undefined ? { accent: params.accent as string | null } : {}),
+				...(params.mode !== undefined ? { mode: params.mode as string } : {}),
+			});
 		}
 	}
 }
@@ -135,10 +144,12 @@ export interface ConnectOptions {
 
 type Reply = (frame: HostConnect) => void;
 
+const JOIN_REFUSED = "This computer already has a public address or a hub link. Run tabkyra remote off, tabkyra hub off or tabkyra link off first.";
+const MINT_FILE = "connect-mints.json";
+
 const NO_ROUTE = "This computer has no public address yet. Run tabkyra remote setup (one computer) or tabkyra hub setup --public-url https://host (many devices) first.";
 
 export class ConnectService {
-	private readonly minted: number[] = [];
 	private joining = false;
 	private readonly service?: EnrollHooks["service"];
 	private readonly now: () => number;
@@ -189,7 +200,7 @@ export class ConnectService {
 				return this.joinHub(call, progress);
 			case "setTheme":
 				try {
-					return saveTheme(call.preset, call.accent);
+					return saveTheme(call.preset, call.accent, call.mode);
 				} catch (err) {
 					throw new ConnectError("bad_params", err instanceof Error ? err.message : String(err));
 				}
@@ -214,7 +225,12 @@ export class ConnectService {
 		const publicUrl = hub?.publicUrl ?? remote?.publicUrl;
 		let devices: ConnectDevice[] | undefined;
 		if (hub) {
-			devices = deviceRows().rows.map((d) => ({ name: d.name, online: d.online, extensionConnected: d.extensionConnected, sessions: d.sessions, busy: d.busy, lastSeen: d.lastSeen }));
+			// A bad hub-devices.json is a problem to show, not a reason to fail every call; the route stays "hub".
+			devices = tryLoad(() => {
+				// loadDevices() answers an empty list for a file it can't read (it fails closed), which would read as "No devices yet".
+				if (!devicesReadable()) throw new Error(`${devicesFile()} is unreadable. Fix it or move it aside; the hub lists no devices until then.`);
+				return deviceRows().rows.map((d) => ({ name: d.name, online: d.online, extensionConnected: d.extensionConnected, sessions: d.sessions, busy: d.busy, lastSeen: d.lastSeen }));
+			});
 		}
 		return {
 			route,
@@ -227,15 +243,33 @@ export class ConnectService {
 		};
 	}
 
-	/** Ten codes per ten minutes, of either kind. */
+	/**
+	 * Ten codes per ten minutes, of either kind. The window is a 0600 file of timestamps in the config
+	 * dir, because Chrome starts a new host process for each connection and a counter in memory would
+	 * start again at zero. An unreadable file counts as empty; the hub's own cap on live codes stays.
+	 */
 	private takeCodeSlot(): void {
 		const now = this.now();
-		while (this.minted.length && now - this.minted[0] >= CODE_WINDOW_MS) this.minted.shift();
-		if (this.minted.length >= CODE_LIMIT) {
-			const wait = Math.max(1, Math.ceil((CODE_WINDOW_MS - (now - this.minted[0])) / 60_000));
-			throw new ConnectError("rate_limited", `That is ${CODE_LIMIT} codes in ten minutes. Wait ${wait} minute${wait === 1 ? "" : "s"} and try again.`);
-		}
-		this.minted.push(now);
+		const file = join(configDir(), MINT_FILE);
+		withFileLock(
+			file,
+			() => {
+				let stamps: number[] = [];
+				try {
+					const raw = readJsonFile<{ minted?: unknown }>(file, {}).minted;
+					if (Array.isArray(raw)) stamps = raw.filter((t): t is number => typeof t === "number" && Number.isFinite(t) && now - t < CODE_WINDOW_MS && t <= now + CODE_WINDOW_MS);
+				} catch {
+					stamps = [];
+				}
+				stamps.sort((x, y) => x - y);
+				if (stamps.length >= CODE_LIMIT) {
+					const wait = Math.max(1, Math.ceil((CODE_WINDOW_MS - (now - stamps[0])) / 60_000));
+					throw new ConnectError("rate_limited", `That is ${CODE_LIMIT} codes in ten minutes. Wait ${wait} minute${wait === 1 ? "" : "s"} and try again.`);
+				}
+				writeJsonPrivate(file, { minted: [...stamps, now] });
+			},
+			2000,
+		);
 	}
 
 	private async approvalCode(): Promise<ApprovalCode> {
@@ -273,7 +307,9 @@ export class ConnectService {
 
 	private async joinHub(call: Extract<ConnectCall, { method: "joinHub" }>, progress: (p: Record<string, unknown>) => void): Promise<JoinResult> {
 		// The address and the code were validated in parseConnect, before this ran and before any network call.
-		if (this.status().route !== "none") throw new ConnectError("unavailable", "This computer already has a public address or a hub link. Run tabkyra remote off, tabkyra hub off or tabkyra link off first.");
+		// A hub.json or remote.json that exists but can't be read leaves the route at none, so check the files too.
+		const status = this.status();
+		if (status.route !== "none" || status.problem || existsSync(hubFile()) || existsSync(remoteFile())) throw new ConnectError("unavailable", JOIN_REFUSED);
 		if (this.joining) throw new ConnectError("busy", "Already joining a hub.");
 		this.joining = true;
 		try {
