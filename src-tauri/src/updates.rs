@@ -246,7 +246,7 @@ fn read_requirement(app: &Path) -> Option<String> {
 }
 
 /// `Silas.app/Contents/MacOS/silas` -> `Silas.app`; None outside a bundle (a dev build).
-fn bundle_of(exe: &Path) -> Option<PathBuf> {
+pub(crate) fn bundle_of(exe: &Path) -> Option<PathBuf> {
     exe.ancestors()
         .nth(3)
         .filter(|p| p.extension().is_some_and(|e| e == "app"))

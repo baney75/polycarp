@@ -231,7 +231,10 @@ pub fn export_dictionary(core: State<Shared>) -> R<String> {
 #[tauri::command]
 pub fn save_dictionary(core: State<Shared>) -> R<String> {
     let dir = dirs::download_dir().unwrap_or_else(store::data_dir);
-    let path = dir.join(format!("silas-dictionary-{}.json", chrono::Local::now().format("%Y-%m-%d")));
+    let path = dir.join(format!(
+        "silas-dictionary-{}.json",
+        chrono::Local::now().format("%Y-%m-%d")
+    ));
     let json = serde_json::to_string_pretty(&*core.dict.lock()).map_err(err)?;
     std::fs::write(&path, json).map_err(err)?;
     Ok(path.display().to_string())
@@ -272,6 +275,46 @@ pub fn reset_accessibility() {
     permissions::reset_accessibility();
 }
 
+/// The home banner's Fix Permission (macOS). Clears Silas's stale Accessibility entry, then
+/// reopens Silas so a new process asks once (`permissions::after_fix_relaunch`).
+#[tauri::command]
+pub fn fix_accessibility(app: AppHandle) {
+    if !cfg!(target_os = "macos") || !permissions::fix_accessibility() {
+        return;
+    }
+    let bundle = std::env::current_exe()
+        .ok()
+        .and_then(|exe| updates::bundle_of(&exe));
+    let Some(bundle) = bundle else {
+        // A dev build has no bundle to reopen; ask from this process instead.
+        log::info!(target: "silas.permissions", "fix: no app bundle to reopen; asking from this process");
+        permissions::after_fix_relaunch();
+        return;
+    };
+    // Single-instance would hand a second copy back to this one, so the relaunch waits for
+    // this process to exit, then opens the same bundle through Launch Services.
+    let spawned = std::process::Command::new("/bin/sh")
+        .args([
+            "-c",
+            r#"while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec /usr/bin/open "$2" --args "$3""#,
+            "sh",
+        ])
+        .arg(std::process::id().to_string())
+        .arg(&bundle)
+        .arg(permissions::FIX_RELAUNCH_ARG)
+        .spawn();
+    match spawned {
+        Ok(_) => {
+            log::info!(target: "silas.permissions", "fix: reopening {}", bundle.display());
+            app.exit(0);
+        }
+        Err(e) => {
+            log::warn!(target: "silas.permissions", "fix: could not reopen Silas ({e}); asking from this process");
+            permissions::after_fix_relaunch();
+        }
+    }
+}
+
 #[tauri::command]
 pub fn list_microphones() -> Vec<String> {
     audio::microphones()
@@ -284,7 +327,9 @@ pub fn show_main(app: AppHandle) {
 
 #[tauri::command]
 pub async fn get_benchmark() -> R<Option<benchmark::Report>> {
-    tauri::async_runtime::spawn_blocking(benchmark::load_report).await.map_err(err)
+    tauri::async_runtime::spawn_blocking(benchmark::load_report)
+        .await
+        .map_err(err)
 }
 
 /// Returns when the run ends; progress and the result also arrive as events.
@@ -296,10 +341,13 @@ pub async fn run_benchmark(core: State<'_, Shared>, all: bool) -> R<()> {
     if core.active_model().is_none() {
         return Err("No model is loaded yet".into());
     }
-    tauri::async_runtime::spawn_blocking(move || core.run_benchmark(if all { Scope::All } else { Scope::Active }, guard).map(|_| ()))
-        .await
-        .map_err(err)?
-        .map_err(err)
+    tauri::async_runtime::spawn_blocking(move || {
+        core.run_benchmark(if all { Scope::All } else { Scope::Active }, guard)
+            .map(|_| ())
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
 }
 
 #[tauri::command]
@@ -315,14 +363,18 @@ pub async fn share_benchmark() -> R<()> {
 /// Resolves once this run has asked the device registry (at most 6 s), for first-run setup.
 #[tauri::command]
 pub async fn wait_device_pick() -> R<()> {
-    tauri::async_runtime::spawn_blocking(|| benchmark::wait_for_registry(std::time::Duration::from_secs(6)))
-        .await
-        .map_err(err)
+    tauri::async_runtime::spawn_blocking(|| {
+        benchmark::wait_for_registry(std::time::Duration::from_secs(6))
+    })
+    .await
+    .map_err(err)
 }
 
 #[tauri::command]
 pub async fn get_device() -> R<benchmark::Device> {
-    tauri::async_runtime::spawn_blocking(|| benchmark::device().clone()).await.map_err(err)
+    tauri::async_runtime::spawn_blocking(|| benchmark::device().clone())
+        .await
+        .map_err(err)
 }
 
 #[tauri::command]

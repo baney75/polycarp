@@ -525,6 +525,7 @@ export async function mockInvoke<T>(cmd: string, args: Record<string, unknown> =
       return null as T;
     }
     case "reset_accessibility":
+    case "fix_accessibility":
       window.setTimeout(() => (state.permissions.accessibility = "granted"), 2500);
       return null as T;
     case "list_microphones":

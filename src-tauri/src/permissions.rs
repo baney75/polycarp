@@ -131,6 +131,40 @@ impl<H: PermissionHost> PermissionGate<H> {
         self.host.open_pane(Pane::Accessibility);
     }
 
+    /// The home banner's Fix Permission, for a stale grant: Settings shows Silas on, but the
+    /// entry holds an older build's code requirement and `AXIsProcessTrusted` says no. Turning
+    /// the switch off and on keeps that requirement, so it never fixes this. Clearing Silas's
+    /// own entry does, and a new process must then ask, so this returns true when the caller
+    /// should relaunch Silas. A trusted process has nothing to fix and is left alone.
+    pub fn fix_accessibility(&mut self) -> bool {
+        let status = self.host.ax_status();
+        if status == Grant::Granted {
+            log::info!(target: LOG, "fix: preflight accessibility=Granted; no reset, no relaunch");
+            return false;
+        }
+        self.host.reset_ax();
+        log::info!(target: LOG, "fix: preflight accessibility={status:?}; reset, relaunching to ask once");
+        true
+    }
+
+    /// The first launch after Fix Permission: ask once if still not trusted, then open the
+    /// Accessibility pane so the new entry is right there.
+    pub fn after_fix_relaunch(&mut self) {
+        let status = self.host.ax_status();
+        if status == Grant::Granted {
+            log::info!(target: LOG, "after fix: preflight accessibility=Granted; no request");
+            return;
+        }
+        if self.asked_ax {
+            log::info!(target: LOG, "after fix: preflight accessibility={status:?}; no request (asked=true), opening Settings");
+        } else {
+            log::info!(target: LOG, "after fix: preflight accessibility={status:?}; requesting once, opening Settings");
+            self.asked_ax = true;
+            self.host.request_ax();
+        }
+        self.host.open_pane(Pane::Accessibility);
+    }
+
     /// Preflight for a dictation recording. Never asks: only `Granted` may record.
     pub fn mic_ready_for_recording(&mut self) -> bool {
         let status = self.host.mic_status();
@@ -153,6 +187,17 @@ pub fn open(kind: &str) {
 
 pub fn reset_accessibility() {
     GATE.lock().reset_accessibility();
+}
+
+/// Passed to the relaunched Silas after Fix Permission.
+pub const FIX_RELAUNCH_ARG: &str = "--after-accessibility-fix";
+
+pub fn fix_accessibility() -> bool {
+    GATE.lock().fix_accessibility()
+}
+
+pub fn after_fix_relaunch() {
+    GATE.lock().after_fix_relaunch();
 }
 
 pub fn mic_ready_for_recording() -> bool {
@@ -191,9 +236,10 @@ impl PermissionHost for System {
     fn reset_ax(&mut self) {
         #[cfg(target_os = "macos")]
         {
-            let _ = std::process::Command::new("tccutil")
+            let status = std::process::Command::new("tccutil")
                 .args(["reset", "Accessibility", "com.baney.silas"])
                 .status();
+            log::info!(target: LOG, "tccutil reset Accessibility com.baney.silas: {status:?}");
         }
     }
 
@@ -442,8 +488,42 @@ mod tests {
     }
 
     #[test]
+    fn fix_leaves_a_trusted_process_alone() {
+        let mut g = PermissionGate::new(Fake::new(Grant::Granted, Grant::Granted));
+        assert!(!g.fix_accessibility());
+        g.after_fix_relaunch();
+        assert_eq!((g.host.resets, g.host.requests()), (0, 0));
+        assert!(g.host.panes.is_empty());
+    }
+
+    #[test]
+    fn fix_resets_and_relaunches_without_asking_from_the_stale_process() {
+        let mut g = PermissionGate::new(Fake::new(Grant::Granted, Grant::Denied));
+        assert!(g.fix_accessibility());
+        assert_eq!((g.host.resets, g.host.ax_requests), (1, 0));
+        assert!(g.host.panes.is_empty());
+    }
+
+    #[test]
+    fn after_fix_relaunch_asks_once_and_opens_settings() {
+        let mut g = PermissionGate::new(Fake::new(Grant::Granted, Grant::Denied));
+        g.after_fix_relaunch();
+        assert_eq!((g.host.resets, g.host.ax_requests), (0, 1));
+        assert_eq!(g.host.panes, vec![Pane::Accessibility]);
+        // The one prompt is spent: neither a second call nor Allow asks again.
+        g.after_fix_relaunch();
+        g.open("accessibility");
+        assert_eq!(g.host.ax_requests, 1);
+        assert_eq!(g.host.panes, vec![Pane::Accessibility; 3]);
+    }
+
+    #[test]
     fn dictation_records_only_with_a_granted_microphone_and_never_asks() {
-        for (mic, ready) in [(Grant::Granted, true), (Grant::Denied, false), (Grant::Unknown, false)] {
+        for (mic, ready) in [
+            (Grant::Granted, true),
+            (Grant::Denied, false),
+            (Grant::Unknown, false),
+        ] {
             let mut g = PermissionGate::new(Fake::new(mic, Grant::Granted));
             for _ in 0..3 {
                 assert_eq!(g.mic_ready_for_recording(), ready, "{mic:?}");

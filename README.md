@@ -126,7 +126,7 @@ asks for Accessibility again after each nightly update. See [docs/signing.md](do
 
 | Problem | Fix |
 | --- | --- |
-| Holding the key does nothing (macOS) | System Settings › Privacy & Security › Accessibility: turn Silas off and on again. After a nightly update macOS may need this once more. |
+| Holding the key does nothing (macOS) | Click Fix Permission on the Silas home screen, then allow Silas when macOS asks. By hand: System Settings › Privacy & Security › Accessibility, select Silas, click the minus button, click plus and add Silas from Applications, then turn on its switch. Turning the switch off and on doesn't help. |
 | Words are typed into the wrong place | Silas types where the dictation started. Click into the field before you hold the key. |
 | Nothing is typed into a Wayland app (Linux) | Install `wtype`. |
 | The AppImage won't start (Linux) | Install your distro's FUSE 2 package (`libfuse2` or `fuse2`). |

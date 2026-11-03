@@ -117,12 +117,31 @@ export function mountHome(root: HTMLElement, go: Navigate): () => void {
                 "div",
                 null,
                 h("strong", null, "Silas can't hear your key yet."),
-                s.platform === "macos"
-                  ? " Turn on Silas under Privacy & Security, Accessibility. If the switch already looks on, an older Silas may hold it: turn it off and on, or remove Silas and add it again. Silas picks it up in a couple of seconds, no restart needed."
-                  : ` ${s.detail ?? ""}`,
+                // A switch that looks on may belong to an older Silas build. Turning it off and
+                // on keeps that build's signature, so only clearing the entry fixes it.
+                ...(s.platform === "macos"
+                  ? [
+                      " Click Fix Permission. Silas clears its old Accessibility entry and reopens, then macOS asks once. Click Open System Settings in that prompt and turn on Silas.",
+                      h("p", { class: "banner-note" }, "If that doesn't work, fix it by hand:"),
+                      h(
+                        "ol",
+                        { class: "banner-steps" },
+                        h("li", null, "Click Open Settings."),
+                        h("li", null, "Select Silas in the list."),
+                        h("li", null, "Click the minus (-) button to remove it."),
+                        h("li", null, "Click plus (+) and add Silas from Applications."),
+                        h("li", null, "Turn on the switch next to Silas."),
+                      ),
+                    ]
+                  : [` ${s.detail ?? ""}`]),
               ),
               s.platform === "macos"
-                ? h("button", { class: "btn btn-primary", type: "button", onclick: () => void api.openPermission("accessibility") }, "Open Settings")
+                ? h(
+                    "span",
+                    { class: "banner-actions" },
+                    h("button", { class: "btn btn-primary", type: "button", onclick: () => void api.fixAccessibility() }, "Fix Permission"),
+                    h("button", { class: "btn btn-ghost", type: "button", onclick: () => void api.openPermission("accessibility") }, "Open Settings"),
+                  )
                 : null,
             )
           : s.platform === "macos" && s.permissions.microphone !== "granted"
