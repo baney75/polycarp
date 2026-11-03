@@ -5,7 +5,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/baney75/silas/main/install.sh | sh -s -- --uninstall
 # macOS gets the stable channel (SILAS_CHANNEL=nightly for nightly); Linux gets nightly,
 # the only Linux channel. Other knobs: SILAS_INSTALL_DIR (macOS, default /Applications),
-# SILAS_LINUX_FORMAT=appimage (skip the .deb/.rpm), SILAS_NO_OPEN=1 (don't launch Silas).
+# SILAS_LINUX_FORMAT=appimage (skip the .deb/.rpm), SILAS_NO_OPEN=1 (don't launch Silas),
+# SILAS_ALLOW_NEW_SIGNATURE=1 (macOS: replace a Silas signed with a different certificate).
 set -eu
 # A CDPATH from the user's shell would send `cd` to some other folder of the same name.
 unset CDPATH
@@ -78,6 +79,66 @@ mac_uninstall() {
   say "System Settings › Privacy & Security › Accessibility and Microphone."
 }
 
+# Sets req to a bundle's designated requirement as `codesign -d -r-` prints it after
+# "designated => ". Returns 1 when the bundle is not signed at all and 2 when the signature
+# exists but can't be read.
+read_requirement() {
+  out=$(codesign -d -r- "$1" 2>&1) || true
+  req=$(printf '%s\n' "$out" | sed -n 's/^designated => //p')
+  [ -z "$req" ] || return 0
+  case "$out" in *'not signed at all'*) return 1 ;; esac
+  return 2
+}
+
+# The whole bundle's signature is valid, nested code included, and satisfies the requirement
+# (the in-app updater's verify_signature). `codesign -d` only prints the requirement, and a
+# damaged signature can still print the right one.
+signature_verifies() { # app, requirement
+  codesign --verify --deep --strict "-R=$2" "$1" >/dev/null 2>&1
+}
+
+# macOS keeps Silas's Accessibility and Microphone grants only while the designated requirement
+# stays the same (docs/signing.md). Refuse a download that would make an installed,
+# certificate-signed Silas a different app to macOS: the switch would still look on in Settings
+# while the new copy is not trusted. A matching requirement counts only when the download's
+# signature verifies against it. A missing, unsigned or ad-hoc (cdhash) install holds no grant
+# that survives an update, so it has nothing to keep. An install whose signature can't be read
+# might hold one, so it stops the install. SILAS_ALLOW_NEW_SIGNATURE=1 allows a planned signing
+# change (such as the move to Developer ID) when the download verifies, never an ad-hoc download.
+check_requirement() { # downloaded app, installed apps...
+  read_requirement "$1" || true
+  new=$req
+  download=$1
+  shift
+  for app in "$@"; do
+    [ -d "$app" ] || continue
+    status=0
+    read_requirement "$app" || status=$?
+    old=$req
+    [ "$status" != 1 ] || continue
+    [ "$status" = 0 ] ||
+      die "Can't read the signature of $app, so this can't tell whether replacing it would drop Silas's Accessibility permission. Nothing was changed. Move $app out of the way and run this again."
+    case "$old" in *'cdhash '*) continue ;; esac
+    if [ "$new" = "$old" ]; then
+      signature_verifies "$download" "$old" ||
+        die "The download's signature doesn't verify against $app. It may be damaged. Nothing was changed. Try again."
+      continue
+    fi
+    printf '  installed: %s\n  download:  %s\n' "$old" "${new:-(unsigned)}" >&2
+    case "$new" in
+    '' | *'cdhash '*) die "The download isn't signed with a certificate, unlike $app. macOS would drop Silas's Accessibility permission. Nothing was changed." ;;
+    esac
+    if [ "${SILAS_ALLOW_NEW_SIGNATURE:-}" = 1 ]; then
+      signature_verifies "$download" "$new" ||
+        die "The download's signature doesn't verify. It may be damaged. Nothing was changed. Try again."
+      say "SILAS_ALLOW_NEW_SIGNATURE=1: replacing $app, which is signed differently."
+      say "Silas will need Accessibility once more. If it can't hear your key, click Fix Permission."
+      continue
+    fi
+    die "The download is signed differently from $app. macOS would treat it as a new app and drop Silas's Accessibility permission. Nothing was changed. To install it anyway and allow Accessibility once more: curl -fsSL $RAW/install.sh | SILAS_ALLOW_NEW_SIGNATURE=1 sh"
+  done
+}
+
 mac_install() {
   # uname -m says x86_64 in a Rosetta terminal, so ask the hardware instead.
   [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = 1 ] ||
@@ -93,6 +154,12 @@ mac_install() {
   curl -fL# "$url" -o "$tmp/silas.tar.gz" || die "Could not download Silas from $url. Check your connection and try again."
   tar -xzf "$tmp/silas.tar.gz" -C "$tmp"
   [ -d "$tmp/Silas.app" ] || die "The download did not contain Silas.app."
+  # Before Silas is quit or anything is replaced.
+  if [ -n "${SILAS_INSTALL_DIR:-}" ]; then
+    check_requirement "$tmp/Silas.app" "$SILAS_INSTALL_DIR/Silas.app"
+  else
+    check_requirement "$tmp/Silas.app" /Applications/Silas.app "$HOME/Applications/Silas.app"
+  fi
   quit_mac
   if [ -n "${SILAS_INSTALL_DIR:-}" ]; then
     dest="$SILAS_INSTALL_DIR"

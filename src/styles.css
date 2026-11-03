@@ -630,6 +630,21 @@ button {
 .banner > div {
   flex: 1;
 }
+.banner-note {
+  margin: 8px 0 0;
+  color: var(--text-3);
+}
+.banner-steps {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  color: var(--text-3);
+}
+.banner-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+}
 
 .update-bar {
   display: flex;

@@ -257,6 +257,8 @@ export const api = {
   openPermission: (kind: PermissionKind) => call<null>("open_permission", { kind }),
   /** macOS: clear Silas's Accessibility entry and ask again (fixes a stale grant). */
   resetAccessibility: () => call<null>("reset_accessibility"),
+  /** macOS Fix Permission: clear the stale Accessibility entry, then reopen Silas to ask once. */
+  fixAccessibility: () => call<null>("fix_accessibility"),
   listMicrophones: () => call<string[]>("list_microphones"),
   showMain: () => call<null>("show_main"),
   getBenchmark: () => call<Report | null>("get_benchmark"),

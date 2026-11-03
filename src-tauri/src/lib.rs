@@ -64,11 +64,12 @@ fn start_listener(core: Shared) {
     });
 }
 
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,ort=warn,transcribe_rs=warn"))
-        .init();
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info,ort=warn,transcribe_rs=warn"),
+    )
+    .init();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
@@ -104,6 +105,10 @@ pub fn run() {
             let onboarded = core.settings.lock().onboarded;
             if !background || !onboarded {
                 show_main(&handle);
+                // Reopened by Fix Permission: the stale entry is gone, so ask once here.
+                if std::env::args().any(|a| a == permissions::FIX_RELAUNCH_ARG) {
+                    permissions::after_fix_relaunch();
+                }
             } else {
                 #[cfg(target_os = "macos")]
                 let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -150,6 +155,7 @@ pub fn run() {
             commands::capture_hotkey,
             commands::open_permission,
             commands::reset_accessibility,
+            commands::fix_accessibility,
             commands::list_microphones,
             commands::show_main,
             commands::get_benchmark,

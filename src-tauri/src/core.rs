@@ -112,10 +112,11 @@ pub fn key_access_message() -> String {
 
 /// The macOS text also covers a stale grant: after a build with a different signature, the
 /// Accessibility switch can still look on for the old one while this build is not trusted.
-/// Silas can't read the switch, so it never claims it is on.
+/// Turning that switch off and on keeps the old signature, so the text never suggests it:
+/// Fix Permission clears the entry, and removing and re-adding Silas by hand does the same.
 fn key_access_message_for(os: &str) -> String {
     match os {
-        "macos" => "Silas can't hear your key yet. Turn on Silas in System Settings, Privacy & Security, Accessibility. If the switch already looks on, turn it off and on, or remove Silas and add it again.".into(),
+        "macos" => "Silas can't hear your key yet. Click Fix Permission on the Silas home screen. If that doesn't work, open System Settings, Privacy & Security, Accessibility, select Silas, click the minus button to remove it, click plus and add Silas from Applications, then turn on its switch.".into(),
         "linux" => "Silas can't read the keyboard. Reinstall the package, or add the udev rule from the README, then log out and back in.".into(),
         _ => "Silas couldn't start its keyboard listener. Restart Silas.".into(),
     }
@@ -1136,9 +1137,13 @@ mod tests {
         // home.ts finds the banner by this phrase.
         assert!(m.contains("can't hear your key"));
         assert!(m.contains("Privacy & Security, Accessibility"));
-        assert!(m.contains(
-            "If the switch already looks on, turn it off and on, or remove Silas and add it again."
-        ));
+        assert!(m.contains("Fix Permission"));
+        assert!(m.contains("click the minus button to remove it, click plus and add Silas"));
+        // Off and on keeps the stale code requirement; never suggest it.
+        let lower = m.to_lowercase();
+        for banned in ["toggle", "off and on", "on and off"] {
+            assert!(!lower.contains(banned), "{m}");
+        }
         assert!(!m.contains(['\u{2014}', '\u{2013}', '\u{203a}']), "{m}");
     }
 
