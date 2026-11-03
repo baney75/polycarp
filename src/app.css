@@ -21,6 +21,8 @@
 	/* Brass text on light backgrounds: 4.5:1 or better on white and on the card. */
 	--tk-brass-text: #8a5f12;
 	--tk-ink: #0f1b24;
+	/* Text and glyphs drawn on --tk-brass. Appearance (src/appearance/tokens.ts) pairs it with the accent per preset. */
+	--tk-on-brass: var(--tk-ink);
 	--tk-tide: #43b3a0;
 	--ring: var(--tk-brass-deep);
 	/* The selected Settings chip. Appearance (src/appearance/tokens.ts) sets the same names per preset. */
@@ -269,7 +271,7 @@ body {
 	margin-top: 0.125rem;
 	border: 1.5px solid var(--color-muted-foreground);
 	border-radius: 999px;
-	color: var(--tk-ink);
+	color: var(--tk-on-brass);
 	background: transparent;
 	cursor: pointer;
 }
@@ -326,12 +328,12 @@ body {
 }
 
 .tk-ask-btn-primary {
-	color: var(--tk-ink);
+	color: var(--tk-on-brass);
 	background: var(--tk-brass);
 }
 
 .tk-ask-btn-primary:hover:not(:disabled) {
-	background: #eab650;
+	background: color-mix(in srgb, var(--tk-brass) 88%, var(--tk-on-brass));
 }
 
 /* Choices answer the click at once; the page-wide 0.3 s fade made them look unselected. */

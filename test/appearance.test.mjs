@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { contrast, PRESETS } from "../src/appearance/palettes.ts";
+import { contrast, mix, PRESETS } from "../src/appearance/palettes.ts";
 import { appearanceVariables, effectiveAccent, parseChoice, SHAPE_PAIRS, TEXT_PAIRS } from "../src/appearance/tokens.ts";
 
 const check = (choice, label) => {
@@ -149,6 +149,46 @@ test("the on switch and the accent-colored controls follow the preset: --tk-cont
 			}
 		}
 	}
+});
+
+// The Ask card's primary button and checked marks draw on --tk-brass; their text once stayed a fixed ink
+// whatever the accent was. Read the rules from app.css and resolve them against the panel's variables.
+test("rendered consumers of --tk-brass (Ask primary button, its hover, checked marks) reach 4.5:1 for every preset, mode and a black custom accent", () => {
+	const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "app.css"), "utf8");
+	const decl = (selector, prop) => {
+		const rule = new RegExp(`(?:^|\\n)${selector.replace(/[.:()[\]]/g, "\\$&")}\\s*\\{([^}]*)\\}`).exec(css);
+		assert.ok(rule, `no rule for ${selector}`);
+		const value = new RegExp(`${prop}:\\s*([^;]+);`).exec(rule[1]);
+		assert.ok(value, `${selector} sets no ${prop}`);
+		return value[1].trim();
+	};
+	const resolve = (value, vars) => {
+		const v = /^var\((--[\w-]+)\)$/.exec(value);
+		if (v) return vars[v[1]] ?? assert.fail(`${v[1]} is not set by appearance`);
+		const m = /^color-mix\(in srgb,\s*var\((--[\w-]+)\)\s*(\d+)%,\s*var\((--[\w-]+)\)\)$/.exec(value);
+		if (m) return mix(resolve(`var(${m[1]})`, vars), resolve(`var(${m[3]})`, vars), 1 - Number(m[2]) / 100);
+		assert.fail(`cannot resolve ${value}`);
+	};
+	const consumers = [
+		[".tk-ask-btn-primary", "color", ".tk-ask-btn-primary", "background"],
+		[".tk-ask-btn-primary", "color", ".tk-ask-btn-primary:hover:not(:disabled)", "background"],
+		[".tk-ask-mark", "color", ".tk-ask-mark[aria-checked=\"true\"]", "background"],
+	];
+	assert.equal(consumers.length, 3);
+	for (const preset of Object.keys(PRESETS)) {
+		for (const accent of [undefined, "#000000", "#ffffff"]) {
+			for (const dark of [false, true]) {
+				const vars = appearanceVariables({ preset, ...(accent ? { accent } : {}) }, dark);
+				for (const [fgSel, fgProp, bgSel, bgProp] of consumers) {
+					const fg = resolve(decl(fgSel, fgProp), vars);
+					const bg = resolve(decl(bgSel, bgProp), vars);
+					const ratio = contrast(fg, bg);
+					assert.ok(ratio >= 4.5, `${preset}${accent ? ` + ${accent}` : ""} ${dark ? "dark" : "light"}: ${bgSel} text ${fg} on ${bg} is ${ratio.toFixed(2)}:1`);
+				}
+			}
+		}
+	}
+	assert.doesNotMatch(css, /\.tk-ask-btn-primary\s*\{[^}]*var\(--tk-ink\)/);
 });
 
 test("a mode change sends only the mode, and a first load takes the helper's saved theme", () => {

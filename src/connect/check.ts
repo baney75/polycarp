@@ -11,8 +11,8 @@ export function checkConnectRequest(
 	const req = raw as Partial<ConnectRequest> | null;
 	if (typeof req !== "object" || req === null || typeof req.id !== "number")
 		return { ok: false, message: "A request has a numeric id." };
-	if (typeof req.method !== "string" || !METHODS.has(req.method))
-		return { ok: false, id: req.id, message: `Unknown method ${String(req.method).slice(0, 40)}` };
+	if (typeof req.method !== "string") return { ok: false, id: req.id, message: "The method must be a string." };
+	if (!METHODS.has(req.method)) return { ok: false, id: req.id, message: `Unknown method ${req.method.slice(0, 40)}` };
 	if (
 		req.params !== undefined &&
 		(typeof req.params !== "object" || req.params === null || Array.isArray(req.params))

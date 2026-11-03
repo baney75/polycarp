@@ -159,11 +159,30 @@ export interface EnrollOptions {
 
 /** What enrolling did. `failed`: nothing was written. `linked`: link.json exists; `ok` is false when the service didn't start. */
 export type EnrollResult =
-	| { kind: "failed"; error: string }
+	| { kind: "failed"; error: string; /** Fixed text for the side panel when `error` quotes the hub or the network. */ panelError?: string }
 	| { kind: "linked"; ok: boolean; name: string; deviceId: string; manage: boolean; scopes: string[]; service: string };
 
 /** A sentence from link.ts that is safe to show a person as written: it never quotes a file. */
 export class LinkError extends Error {}
+
+/**
+ * A failure that quotes the hub or the network (an error_description can echo a request header). `message` is for a
+ * terminal; `safe` is a fixed sentence the side panel and the host log may carry.
+ */
+export class HubError extends LinkError {
+	constructor(
+		message: string,
+		readonly safe: string,
+	) {
+		super(message);
+	}
+}
+
+const unreachableText = (hubUrl: string) => `Couldn't reach ${hubUrl}. Check the address and that the hub is running.`;
+const badCodeText = "That connect code is wrong, expired or already used. Run tabkyra hub code on the hub for a new one.";
+/** Fixed text for a hub refusal. Only the status and the hub's `invalid_code` error id pick it; no remote text is quoted. */
+const refusedText = (status: number, body: Record<string, unknown> = {}) =>
+	status === 401 && body.error === "invalid_code" ? badCodeText : `The hub refused the request (status ${status}). Check the code and try again, or look at the hub's own log.`;
 
 /** A valid device name from this computer's hostname: its first label, characters the hub allows, at most 40; "device" when nothing is left. */
 export function defaultDeviceName(host: string = hostname()): string {
@@ -207,10 +226,10 @@ export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: 
 	try {
 		result = await hubPost(options, "/link/enroll", { code: options.code, name: options.name ?? defaultDeviceName(), version: VERSION });
 	} catch (err) {
-		return { kind: "failed", error: `Couldn't reach ${options.hubUrl}: ${err instanceof Error ? err.message : String(err)}` };
+		return { kind: "failed", error: `Couldn't reach ${options.hubUrl}: ${err instanceof Error ? err.message : String(err)}`, panelError: unreachableText(options.hubUrl) };
 	}
 	const { deviceId, secret, manage, name } = result.body;
-	if (result.status !== 200 || typeof deviceId !== "string" || typeof secret !== "string" || typeof name !== "string") return { kind: "failed", error: `The hub refused: ${describe(result.body, result.status)}` };
+	if (result.status !== 200 || typeof deviceId !== "string" || typeof secret !== "string" || typeof name !== "string") return { kind: "failed", error: `The hub refused: ${describe(result.body, result.status)}`, panelError: refusedText(result.status, result.body) };
 	const config: LinkConfig = { hubUrl: options.hubUrl, deviceId, secret, name, manage: manage === true, scopes };
 	const write = () => writeJsonPrivate(linkFile(), config);
 	if (hooks.commit) await hooks.commit(write);
@@ -661,10 +680,10 @@ export async function mintViaHub(kind: "connect" | "approval", manage: boolean):
 	try {
 		result = await hubPost(config, "/link/code", { kind, manage }, `${config.deviceId}.${config.secret}`);
 	} catch (err) {
-		throw new LinkError(`Couldn't reach ${config.hubUrl}: ${err instanceof Error ? err.message : String(err)}`);
+		throw new HubError(`Couldn't reach ${config.hubUrl}: ${err instanceof Error ? err.message : String(err)}`, unreachableText(config.hubUrl));
 	}
 	const { code, expiresAt, url } = result.body;
-	if (result.status !== 200) throw new LinkError(`The hub refused: ${describe(result.body, result.status)}`);
+	if (result.status !== 200) throw new HubError(`The hub refused: ${describe(result.body, result.status)}`, refusedText(result.status, result.body));
 	// The reply is untrusted: the owner may paste what it carries into a shell, so only the exact shapes pass.
 	const shaped = typeof code === "string" ? normalizeCode(code) : undefined;
 	if (!shaped || shaped !== code || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) throw new LinkError("The hub answered with a malformed code.");

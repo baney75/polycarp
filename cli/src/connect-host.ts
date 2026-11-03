@@ -30,7 +30,7 @@ import { CodeLimitError, normalizeCode, REQUEST_LOCK_MS } from "./codes.ts";
 import { LockTimeoutError, readJsonFile, withFileLock, withFileLockAsync, writeJsonPrivate } from "./files.ts";
 import { deviceRows } from "./hub-admin.ts";
 import { devicesFile, devicesReadable, hubFile, loadHubConfig, mintConnectCode, validDeviceName } from "./hub-state.ts";
-import { type EnrollHooks, enrollDevice, LinkError, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusy } from "./link.ts";
+import { type EnrollHooks, enrollDevice, HubError, LinkError, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusy } from "./link.ts";
 import { configDir, mintApprovalCode, passcodeSet } from "./oauth.ts";
 import { loadRemoteConfig, remoteFile } from "./remote-setup.ts";
 import { isAccent, isMode, loadTheme, PRESETS, saveTheme } from "./theme.ts";
@@ -70,9 +70,8 @@ export function parseConnect(message: unknown): ParsedConnect {
 	if (id === undefined) return fail("The id must be a whole number.");
 	const stray = Object.keys(message).find((k) => !["type", "id", "method", "params"].includes(k));
 	if (stray !== undefined) return fail(`Unexpected field ${JSON.stringify(stray.slice(0, 30))}.`);
-	if (typeof message.method !== "string" || !(CONNECT_METHODS as readonly string[]).includes(message.method)) {
-		return fail(`Unknown method ${JSON.stringify(String(message.method).slice(0, 40))}.`);
-	}
+	if (typeof message.method !== "string") return fail("The method must be a string.");
+	if (!(CONNECT_METHODS as readonly string[]).includes(message.method)) return fail(`Unknown method ${JSON.stringify(message.method.slice(0, 40))}.`);
 	const method = message.method as ConnectMethod;
 	if (message.params !== undefined && !isPlainObject(message.params)) return fail("params must be an object.");
 	const params = (message.params ?? {}) as Record<string, unknown>;
@@ -164,6 +163,8 @@ const unreadable = (file: string) => `${file} is unreadable. Fix it or move it a
  * becomes a fixed sentence, naming `file` when the failure is about reading one.
  */
 function safeMessage(err: unknown, file?: string): string {
+	// Text that quotes the hub or the network never passes: a hub can echo a request header, and the credential is in it.
+	if (err instanceof HubError) return err.safe;
 	if (err instanceof ConnectError || err instanceof CodeLimitError || err instanceof LinkError) return err.message;
 	if (err instanceof LockTimeoutError) return "Another Tabkyra window is busy with that. Try again in a moment.";
 	return file ? unreadable(file) : GENERIC_FAILURE;
@@ -404,7 +405,7 @@ export class ConnectService {
 					...(this.service ? { service: this.service } : {}),
 				},
 			);
-			if (result.kind === "failed") throw new ConnectError("failed", result.error);
+			if (result.kind === "failed") throw new ConnectError("failed", result.panelError ?? result.error);
 			if (!result.ok) throw new ConnectError("failed", `Linked as ${result.name}, but the background service didn't start. ${result.service}`);
 			return { name: result.name, manage: result.manage };
 		} finally {

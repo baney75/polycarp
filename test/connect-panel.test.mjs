@@ -245,3 +245,12 @@ test("Join a hub asks for a Device code from Add a device, takes an optional nam
 	assert.match(tab, /Tabkyra may have linked this device\. Reopen Settings to check\./);
 	assert.match(tab, /linkWritten && err instanceof ConnectRequestError && err\.code === "no_reply"/);
 });
+
+test("checkConnectRequest refuses a method that is not a string without coercing it", () => {
+	for (const method of [{ toString: 0 }, { toString: "x" }, 5, null, ["status"]]) {
+		const out = checkConnectRequest({ id: 4, method });
+		assert.equal(out.ok, false);
+		assert.equal(out.id, 4);
+	}
+	assert.equal(checkConnectRequest({ id: 4, method: "status" }).ok, true);
+});

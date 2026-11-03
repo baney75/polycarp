@@ -43,6 +43,8 @@ export function appearanceVariables(choice: ThemeChoice, dark: boolean): Record<
 		"--tk-selected": p.text,
 		"--tk-on-selected": p.bg,
 		"--tk-brass": p.accent,
+		// Text and glyphs on --tk-brass (the Ask card's primary button and checked marks): the accent's own foreground, not a fixed ink.
+		"--tk-on-brass": p.accentText,
 		// The accent as a shape (the on switch's track, checkboxes): blended toward the text color until it reaches 3:1 on the page and the card.
 		"--tk-brass-deep": controlOn,
 		"--tk-control-on": controlOn,
@@ -62,6 +64,7 @@ export const TEXT_PAIRS: ReadonlyArray<readonly [string, string]> = [
 	["--muted-foreground", "--secondary"],
 	["--foreground", "--accent"],
 	["--primary-foreground", "--primary"],
+	["--tk-on-brass", "--tk-brass"],
 	["--destructive-foreground", "--destructive"],
 	["--destructive", "--background"],
 	["--destructive", "--card"],

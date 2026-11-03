@@ -1045,3 +1045,69 @@ test("a loopback IPv6 hub address is accepted by the host", () => {
 	const parsed = parseConnect({ type: "connect", id: 1, method: "joinHub", params: { hubUrl: "http://[::1]:8787", code: "TK-ABCD-EFGH" } });
 	assert.equal(parsed.ok, true, JSON.stringify(parsed));
 });
+
+// ---------- round 2 review fixes ----------
+
+test("a hub's 403 that echoes the Authorization header never reaches the panel's reply or the host log", async () => {
+	const secret = "Q".repeat(43);
+	const credential = `dv-hhhhhhhhhhhh.${secret}`;
+	const server = createServer((req, res) => {
+		req.resume();
+		req.on("end", () => {
+			res.statusCode = 403;
+			res.setHeader("content-type", "application/json");
+			res.end(JSON.stringify({ error: "forbidden", error_description: `bad credential: ${req.headers.authorization ?? "none"} ${credential}` }));
+		});
+	});
+	await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+	cleanup.push(() => server.close());
+	const url = `http://127.0.0.1:${server.address().port}`;
+	const logged = [];
+	const realWrite = process.stderr.write.bind(process.stderr);
+	process.stderr.write = (chunk, ...rest) => {
+		logged.push(String(chunk));
+		return realWrite(chunk, ...rest);
+	};
+	try {
+		await inConfig("hub-echo-link", async (dir) => {
+			writeJson(join(dir, "link.json"), { hubUrl: url, deviceId: "dv-hhhhhhhhhhhh", secret, name: "laptop", manage: true });
+			const s = new ConnectService();
+			for (const method of ["approvalCode", "deviceCode"]) {
+				const { frames, error, result } = await ask(s, method);
+				assert.equal(result, undefined);
+				assert.equal(error.code, "failed");
+				assert.match(error.message, /The hub refused the request \(status 403\)/);
+				assert.ok(!JSON.stringify(frames).includes(secret), `${method} reply carried the credential`);
+			}
+		});
+		await inConfig("hub-echo-join", async () => {
+			const { frames, error } = await ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: url, code: "TK-ABCD-EFGH" });
+			assert.equal(error.code, "failed");
+			assert.match(error.message, /The hub refused the request \(status 403\)/);
+			assert.ok(!JSON.stringify(frames).includes(secret), "joinHub reply carried the credential");
+			assert.ok(!JSON.stringify(frames).includes("bad credential"), "joinHub reply quoted the hub");
+		});
+	} finally {
+		process.stderr.write = realWrite;
+	}
+	assert.ok(logged.length > 0, "nothing was logged, so the check proves nothing");
+	assert.ok(!logged.join("").includes(secret), "the host log carried the credential");
+});
+
+test("a method that is not a string is bad_params, never coerced, and the host keeps answering", async () => {
+	for (const method of [{ toString: 0 }, { toString: "x" }, 5, null, ["status"], true]) {
+		const parsed = parseConnect({ type: "connect", id: 3, method });
+		assert.equal(parsed.ok, false);
+		assert.equal(parsed.id, 3);
+	}
+	const host = startHost("host-bad-method");
+	host.send({ type: "connect", id: 1, method: { toString: 0 } });
+	assert.equal((await host.reply(1)).error.code, "bad_params");
+	host.send({ type: "connect", id: 2, method: [1, 2] });
+	assert.equal((await host.reply(2)).error.code, "bad_params");
+	host.send({ type: "connect", id: 3, method: "status" });
+	assert.equal((await host.reply(3)).result.route, "none");
+	assert.equal(host.proc.exitCode, null, "the host exited");
+	assert.doesNotMatch(host.stderr(), /TypeError|Unhandled/);
+	host.proc.stdin.end();
+});
