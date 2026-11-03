@@ -187,7 +187,7 @@ export const COMMANDS: CommandSpec[] = [
 		summary: "One connector URL for many devices; hub token and Funnel-off tunnel",
 		what: "Many devices behind one connector URL",
 		subcommands: [
-			{ name: "setup", what: "Make this always-on box the hub: hub.json, a passcode and a service that runs hub serve", flags: ["--public-url", "--port", "--no-service", "--json"] },
+			{ name: "setup", what: "Make this always-on box the hub: hub.json, a passcode and a service that runs hub serve", flags: ["--public-url", "--port", "--no-service", "--no-passcode", "--json"] },
 			{ name: "serve", what: "Run the hub on loopback (the service runs this)", flags: ["--port", "--public-url"] },
 			{ name: "code", what: "A one-time code (10 minutes) that links a device to this hub", flags: ["--name", "--manage", "--json"] },
 			{ name: "devices", what: "Devices: online, extension, sessions, busy, last seen", flags: ["--json"] },
@@ -233,7 +233,7 @@ export const COMMANDS: CommandSpec[] = [
 		what: "Remote access for web connectors",
 		group: "Remote",
 		subcommands: [
-			{ name: "setup", what: "Tailscale Funnel (or your own --public-url), a passcode and a service that keeps serve running", flags: ["--public-url", "--port", "--no-service"] },
+			{ name: "setup", what: "Tailscale Funnel (or your own --public-url), a passcode and a service that keeps serve running", flags: ["--public-url", "--port", "--no-service", "--no-passcode"] },
 			{ name: "status", what: "Is it up and reachable from the internet?", flags: ["--json"] },
 			{ name: "off", what: "Stop the service, turn Funnel off and remove remote.json" },
 		],

@@ -453,6 +453,23 @@ test("hub setup writes a private hub.json, shows the passcode once and refuses n
 	assert.ok(existsSync(m.file("oauth.json")), "off keeps oauth state");
 });
 
+test("hub setup --no-passcode makes and prints no passcode, and a one-time code is the way in", () => {
+	const m = machine(root, "setup-nopass");
+	const json = m.json(["hub", "setup", "--public-url", "https://tabkyra.example.com", "--port", "9412", "--no-service", "--no-passcode", "--json"]);
+	assert.equal(json.passcode, undefined);
+	assert.equal(existsSync(m.file("oauth.json")) ? readJson(m.file("oauth.json")).passcode : undefined, undefined, "no passcode was stored");
+	const code = m.json(["token", "approval-code", "--json"]);
+	assert.match(code.code, /^TK-/);
+	const human = machine(root, "setup-nopass-human");
+	const r = human.run(["hub", "setup", "--public-url", "https://tabkyra.example.com", "--no-service", "--no-passcode"]);
+	assert.equal(r.code, 0, r.out);
+	assert.doesNotMatch(r.out, /OAuth passcode:/);
+	assert.match(r.out, /No passcode made \(--no-passcode\)/);
+	// Without the flag the passcode is still made.
+	const plain = machine(root, "setup-nopass-plain").json(["hub", "setup", "--public-url", "https://tabkyra.example.com", "--no-service", "--json"]);
+	assert.match(plain.passcode, /^([a-zA-Z0-9]{5}-){3}[a-zA-Z0-9]{5}$/);
+});
+
 test("hub setup refuses while remote.json exists, and changes nothing", () => {
 	const m = machine(root, "setup-remote");
 	mkdirSync(m.config, { recursive: true });

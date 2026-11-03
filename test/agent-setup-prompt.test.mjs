@@ -78,7 +78,12 @@ const device = deviceSetupPrompt("1.2.3", "https://hub.example.com", "TK-ABCD-EF
 
 test("the remote setup prompt runs setup, mints a one-time code and never repeats the passcode", () => {
 	for (const step of [/tabkyra doctor/, /tabkyra remote setup/, /tabkyra hub setup --public-url https:\/\/ADDRESS/, /tabkyra token approval-code/, /tabkyra remote status/, /Settings > Connectors/, /1\.2\.3/]) assert.match(remote, step);
-	assert.match(remote, /Don't repeat it, write it to a file or put it in a message/);
+	assert.match(remote, /don't repeat it, write it to a file or put it in a message/);
+	// The agent path makes no passcode, so none lands in the agent's output, transcript or logs.
+	assert.match(remote, /tabkyra remote setup --no-passcode/);
+	assert.match(remote, /tabkyra hub setup --public-url https:\/\/ADDRESS --no-passcode/);
+	assert.match(remote, /Don't run tabkyra token passcode yourself/);
+	assert.doesNotMatch(remote, /Setup prints an approval passcode once/);
 	assert.match(remote, /Don't ask me for API keys or passwords/);
 	assert.doesNotMatch(remote, /\|\s*(sh|bash)\b/);
 	assert.throws(() => remoteSetupPrompt("latest"), /No extension version/);
