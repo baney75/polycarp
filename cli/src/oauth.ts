@@ -53,6 +53,8 @@ interface Client {
 	client_name: string;
 	token_endpoint_auth_method: AuthMethod;
 	created_at: number;
+	/** When the owner first approved this client (seconds). Unset: never approved, so approval needs a one-time connect code (issue #97). */
+	approved_at?: number;
 	last_used?: number;
 }
 
@@ -485,6 +487,8 @@ export interface ConsentDetails {
 	redirectUri: string;
 	registeredAgo: string;
 	passcodeSet: boolean;
+	/** True until the owner has approved this client once: the passcode alone cannot approve it, only a one-time connect code (issue #97). */
+	newClient: boolean;
 	/** The scopes to show ticked: the defaults, or what the owner ticked before an error. */
 	ticked?: string[];
 }
@@ -518,6 +522,16 @@ export function validateAuthorize(config: OAuthConfig, params: URLSearchParams):
 	return details(state, request);
 }
 
+/**
+ * Whether the owner has approved this client before. A client seen in a grant (a token, or last_used
+ * from before approved_at existed) counts, so connectors that already work are not asked again.
+ */
+function clientApproved(state: State, clientId: string): boolean {
+	const registered = state.clients[clientId];
+	if (!registered) return false;
+	return registered.approved_at !== undefined || registered.last_used !== undefined || Object.values(state.tokens).some((t) => t.client_id === clientId);
+}
+
 function details(state: State, request: AuthorizeRequest): ConsentDetails {
 	const blob = Buffer.from(JSON.stringify(request)).toString("base64url");
 	const signature = createHmac("sha256", state.key).update(blob).digest("base64url");
@@ -532,6 +546,7 @@ function details(state: State, request: AuthorizeRequest): ConsentDetails {
 		redirectUri: request.redirect_uri,
 		registeredAgo,
 		passcodeSet: Boolean(state.passcode),
+		newClient: !clientApproved(state, request.client_id),
 	};
 }
 
@@ -574,6 +589,20 @@ export async function approveAuthorize(config: OAuthConfig, form: URLSearchParam
 		throw new OAuthError(429, "temporarily_unavailable", "Too many wrong passcodes or connect codes. Wait 15 minutes, or run tabkyra token passcode for a new passcode, which clears this limit.");
 	}
 	const typed = form.get("passcode") ?? "";
+	// Consent phishing (issue #97): anyone can register a client against this public URL and send the
+	// owner its approval link, and the durable passcode would approve it. A client the owner has not
+	// approved before needs a one-time code the owner mints on this computer, outside the browser.
+	// The passcode is not even tried here, so this refusal reveals nothing about it.
+	const firstGrant = !clientApproved(state, request.client_id);
+	if (firstGrant && !(normalizeCode(typed) !== undefined && approvalCodeLive(typed))) {
+		// Counted like a wrong passcode: a guessed connect code is bounded by the same lockout.
+		if (typed) failures.push({ at: time, client: request.client_id, source });
+		throw new OAuthError(
+			401,
+			"access_denied",
+			"This is a new connector, so your passcode alone does not approve it. On the computer that runs Tabkyra, run: tabkyra token approval-code, and enter that one-time connect code here. Only do this if you added this connector yourself, just now.",
+		);
+	}
 	// A live approval code stands in for the passcode. It is checked first (a file read), and used up only once the scopes are valid.
 	const byCode = normalizeCode(typed) !== undefined && approvalCodeLive(typed);
 	const refuse = (message: string): never => {
@@ -587,6 +616,10 @@ export async function approveAuthorize(config: OAuthConfig, form: URLSearchParam
 	if (scopes.length === 0) throw new OAuthError(400, "invalid_scope", "Tick at least one permission.");
 	for (const s of scopes) if (!Object.hasOwn(config.scopes, s)) throw new OAuthError(400, "invalid_scope", `Unknown permission ${s}.`);
 	if (byCode && !consumeApprovalCode(typed)) refuse("That connect code was already used or has expired.");
+	change((s) => {
+		const approved = s.clients[request.client_id];
+		if (approved && approved.approved_at === undefined) approved.approved_at = now();
+	});
 	const code = `tka_${b64()}`;
 	for (const [key, value] of codes) if (value.expires < now()) codes.delete(key);
 	codes.set(sha(code), { ...request, scopes, expires: now() + CODE_TTL });
@@ -773,10 +806,11 @@ export function consentPage(config: OAuthConfig, d: ConsentDetails, error?: stri
 <body><main><h1>Allow ${escape(d.clientName)} to use your browser through Tabkyra?</h1>
 <p>It will work in its own tab group in your signed-in browser, with the permissions you tick. After you approve, you go back to <strong>${escape(d.redirectHost)}</strong>.</p>
 <p>Only approve a connection you started yourself, just now, in your own account. A link someone sent you could connect their account to your browser. This connection registered ${escape(d.registeredAgo)} and returns to <code>${escape(d.redirectUri)}</code>.</p>
-${error ? `<p class="error">${escape(error)}</p>` : ""}${d.passcodeSet ? "" : '<p class="error">No passcode is set yet. Run tabkyra token passcode on the computer that runs serve, or tabkyra token approval-code for a one-time connect code.</p>'}
+${d.newClient ? "<p><strong>This is a new connector.</strong> Your passcode will not approve it. On the computer that runs Tabkyra, run <code>tabkyra token approval-code</code> and enter the one-time connect code it prints.</p>" : ""}
+${error ? `<p class="error">${escape(error)}</p>` : ""}${d.passcodeSet || d.newClient ? "" : '<p class="error">No passcode is set yet. Run tabkyra token passcode on the computer that runs serve, or tabkyra token approval-code for a one-time connect code.</p>'}
 <form method="post" action="/authorize"><input type="hidden" name="request" value="${escape(d.signed)}">
 <fieldset><legend>Permissions</legend>${boxes}</fieldset>
-<label for="passcode">Passcode or connect code</label><input id="passcode" name="passcode" type="text" class="secret" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore required autofocus>
+<label for="passcode">${d.newClient ? "One-time connect code" : "Passcode or connect code"}</label><input id="passcode" name="passcode" type="text" class="secret" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore required autofocus>
 <div class="row"><button type="submit" name="decision" value="deny" formnovalidate>Deny</button><button class="primary" type="submit" name="decision" value="allow">Allow</button></div></form></main></body></html>`;
 	return {
 		html,

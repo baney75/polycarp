@@ -58,6 +58,8 @@ export interface HandlerContext {
 	session: BrowserSession;
 	/** Ask before a navigation to a host that is not allowed yet; throws when denied. */
 	checkUrl(url: string): Promise<void>;
+	/** Whether the URL is on a host an agent never opens (the OAuth approval address, issue #94). */
+	isGuarded(url: string): boolean;
 	/** Stable id of the calling client. */
 	clientId: string;
 	/** Push an event to the calling client only. */
@@ -197,6 +199,23 @@ async function tabSummary(tabId: number, stillLoading = false) {
 	};
 }
 
+/**
+ * A redirect or a history step can land the agent's tab on a host it may not open. Move the tab off
+ * it and refuse, so the approval page is never left in front of the agent (issue #94).
+ */
+async function refuseGuardedLanding<T extends { url: string }>(
+	ctx: HandlerContext,
+	tabId: number,
+	summary: T,
+): Promise<T> {
+	if (!ctx.isGuarded(summary.url)) return summary;
+	await chrome.tabs.update(tabId, { url: "about:blank" }).catch(() => undefined);
+	throw new BridgeError(
+		ERR.PERMISSION_DENIED,
+		"That page led to this computer's Tabkyra approval address, which an agent never opens. The tab was reset to a blank page.",
+	);
+}
+
 function target(params: Params): { ref?: string; selector?: string } {
 	return { ref: str(params, "ref"), selector: str(params, "selector") };
 }
@@ -274,7 +293,7 @@ export const handlers: Record<string, Handler> = {
 		const url = str(params, "url");
 		if (url) await ctx.checkUrl(url);
 		const { tab, ready, note } = await openCapturedTab(ctx, url, 20000, true);
-		return { ...(await tabSummary(tab.id!, !ready)), ...(note ? { note } : {}) };
+		return refuseGuardedLanding(ctx, tab.id!, { ...(await tabSummary(tab.id!, !ready)), ...(note ? { note } : {}) });
 	},
 
 	"tabs.close": async (ctx, params) => {
@@ -344,7 +363,10 @@ export const handlers: Record<string, Handler> = {
 		// The first navigate of a session opens its tab (blank, with capture on) and loads the URL into it.
 		if (!history && num(params, "tabId") === undefined && !(await ctx.session.currentTab())) {
 			const { tab, ready, note } = await openCapturedTab(ctx, url, num(params, "timeoutMs") ?? 20000, false);
-			return { ...(await tabSummary(tab.id!, !ready)), ...(note ? { note } : {}) };
+			return refuseGuardedLanding(ctx, tab.id!, {
+				...(await tabSummary(tab.id!, !ready)),
+				...(note ? { note } : {}),
+			});
 		}
 		const tabId = await resolveTab(ctx, params, false);
 		let timedOut = false;
@@ -355,7 +377,7 @@ export const handlers: Record<string, Handler> = {
 			timedOut = (await navigateTabDetailed(tabId, url, { waitUntil, timeoutMs: num(params, "timeoutMs") ?? 20000 }))
 				.timedOut;
 		}
-		return tabSummary(tabId, timedOut);
+		return refuseGuardedLanding(ctx, tabId, await tabSummary(tabId, timedOut));
 	},
 
 	screenshot: async (ctx, params) => {

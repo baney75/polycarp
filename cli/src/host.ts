@@ -11,6 +11,7 @@ import { join } from "node:path";
 import type { ClientToHost, ExtToHost, HostClientConnected, HostToClient, HostToExt } from "../../src/bridge/protocol.ts";
 import { ERR, MAX_FRAME_FROM_EXTENSION, MAX_FRAME_TO_EXTENSION } from "../../src/bridge/protocol.ts";
 import { encodeFrame, FrameParser } from "./framing.ts";
+import { guardedHosts } from "./guarded-hosts.ts";
 import { socketDir, socketPath } from "./paths.ts";
 import { ConnectService } from "./connect-host.ts";
 import { SubscriptionService } from "./subscriptions/service.ts";
@@ -169,7 +170,8 @@ function onClientMessage(client: Client, message: ClientToHost): void {
 			toClient(client.id, { type: "response", id: message.id, error: restartError("the browser bridge is restarting", false) });
 			return;
 		}
-		if (toExtension({ type: "request", clientId: client.id, id: message.id, method: message.method, params: message.params }))
+		const guarded = guardedHosts();
+		if (toExtension({ type: "request", clientId: client.id, id: message.id, method: message.method, params: message.params, ...(guarded.length ? { guardedHosts: guarded } : {}) }))
 			client.outstanding.add(message.id);
 	}
 }

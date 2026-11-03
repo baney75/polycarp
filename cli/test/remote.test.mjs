@@ -466,13 +466,21 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 		const wrong = await approve([["request", signed], ["passcode", "nope"], ["scope", "browser.read"], ["decision", "allow"]]);
 		assert.equal(wrong.status, 401);
 		const wrongHtml = await wrong.text();
-		assert.match(wrongHtml, /Wrong passcode/);
+		assert.match(wrongHtml, /new connector/);
 		assert.match(wrongHtml, /value="browser\.read" checked/);
 		assert.doesNotMatch(wrongHtml, /value="browser\.act" checked/, "the page shown again keeps what the owner unticked");
 		const forged = await approve([["request", `${signed.split(".")[0]}.AAAA`], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
 		assert.equal(forged.status, 400, "a tampered approval form is refused");
-		const ok = await approve([["request", signed], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
-		assert.equal(ok.status, 302);
+		// Consent phishing (issue #97): the durable passcode alone never approves a client the owner has not approved.
+		assert.match(html, /This is a new connector/, "the page says a new connector needs a connect code");
+		assert.match(html, /One-time connect code/);
+		const phished = await approve([["request", signed], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
+		assert.equal(phished.status, 401, "the passcode alone is refused for a new client");
+		assert.equal(phished.headers.get("location"), null, "and no authorization code is issued");
+		assert.match(await phished.text(), /tabkyra token approval-code/);
+		const mint = () => /TK-[A-Z0-9]{4}-[A-Z0-9]{4}/.exec(run(["token", "approval-code"]).out)?.[0];
+		const ok = await approve([["request", signed], ["passcode", mint()], ["scope", "browser.read"], ["decision", "allow"]]);
+		assert.equal(ok.status, 302, "a freshly minted connect code approves the new client");
 		const back = new URL(ok.headers.get("location"));
 		assert.equal(back.origin + back.pathname, callback);
 		assert.equal(back.searchParams.get("state"), "s1");
@@ -484,7 +492,10 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 		assert.equal((await badVerifier.json()).error, "invalid_grant");
 		// The failed exchange used the code up; get a fresh one.
 		const consent2 = await (await fetch(`${base}/authorize?${q}`)).text();
+		assert.doesNotMatch(consent2, /This is a new connector/, "an approved client is not new any more");
 		const signed2 = /name="request" value="([^"]+)"/.exec(consent2)[1];
+		const wrongAgain = await approve([["request", signed2], ["passcode", "nope"], ["scope", "browser.read"], ["decision", "allow"]]);
+		assert.match(await wrongAgain.text(), /Wrong passcode/, "an approved client is checked against the passcode as before");
 		const ok2 = await approve([["request", signed2], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
 		const code2 = new URL(ok2.headers.get("location")).searchParams.get("code");
 		const grant = await (await token({ grant_type: "authorization_code", code: code2, client_id, redirect_uri: callback, code_verifier: verifier, resource: `${base}/mcp` })).json();

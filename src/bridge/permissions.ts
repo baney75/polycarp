@@ -71,6 +71,20 @@ export function hostAllowed(host: string, allowed: string[]): boolean {
 	return allowed.some((a) => host === a || host.endsWith(`.${a}`));
 }
 
+/**
+ * True when the URL is on a host an agent may never open: the public URL of this machine's OAuth
+ * approval page (issue #94). The native host sends those hostnames with each request. This holds in
+ * every permission mode, "allow_all" included, and covers only agent-driven navigation: a person
+ * who opens the page in their own tab is not stopped.
+ */
+export function isGuardedUrl(url: string, guardedHosts: readonly string[] | undefined): boolean {
+	if (!guardedHosts?.length) return false;
+	const host = hostOf(url)
+		.replace(/^\[|\]$/g, "")
+		.replace(/\.$/, "");
+	return host !== "" && guardedHosts.some((g) => g.toLowerCase().replace(/\.$/, "") === host);
+}
+
 export async function isUrlAllowed(url: string): Promise<boolean> {
 	if ((await getPermissionMode()) === "allow_all") return true;
 	const host = hostOf(url);

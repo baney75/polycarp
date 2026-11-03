@@ -319,7 +319,7 @@ async function consentFor(hub) {
 test("an approval code approves a connector once and counts toward the passcode lockout", async () => {
 	const hub = await hubFor("approval-hub");
 	const { html, approve } = await consentFor(hub);
-	assert.match(html, /Passcode or connect code/);
+	assert.match(html, /One-time connect code/);
 	assert.match(html, /autocomplete="one-time-code"/);
 	const minted = hub.json(["token", "approval-code", "--json"]);
 	assert.match(minted.code, /^TK-/);
