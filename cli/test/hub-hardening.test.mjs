@@ -25,7 +25,8 @@ after(() => {
 			/* already gone */
 		}
 	}
-	rmSync(root, { recursive: true, force: true });
+	// A hub that was just stopped can still be writing its files for a moment; retry instead of failing on ENOTEMPTY.
+	rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 async function hubFor(name, options) {

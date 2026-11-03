@@ -333,7 +333,9 @@ body {
 }
 
 .tk-ask-btn-primary:hover:not(:disabled) {
-	background: color-mix(in srgb, var(--tk-brass) 88%, var(--tk-on-brass));
+	/* Not a mix toward the text color: that lowers the text contrast, and a mid-gray accent fell under 4.5:1. */
+	background: var(--tk-brass);
+	box-shadow: inset 0 0 0 2px var(--tk-on-brass);
 }
 
 /* Choices answer the click at once; the page-wide 0.3 s fade made them look unselected. */

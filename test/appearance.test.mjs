@@ -153,7 +153,7 @@ test("the on switch and the accent-colored controls follow the preset: --tk-cont
 
 // The Ask card's primary button and checked marks draw on --tk-brass; their text once stayed a fixed ink
 // whatever the accent was. Read the rules from app.css and resolve them against the panel's variables.
-test("rendered consumers of --tk-brass (Ask primary button, its hover, checked marks) reach 4.5:1 for every preset, mode and a black custom accent", () => {
+test("rendered consumers of --tk-brass (Ask primary button, its hover, checked marks) reach 4.5:1 for every preset, mode and custom accent, mid-gray included", () => {
 	const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "app.css"), "utf8");
 	const decl = (selector, prop) => {
 		const rule = new RegExp(`(?:^|\\n)${selector.replace(/[.:()[\]]/g, "\\$&")}\\s*\\{([^}]*)\\}`).exec(css);
@@ -176,7 +176,7 @@ test("rendered consumers of --tk-brass (Ask primary button, its hover, checked m
 	];
 	assert.equal(consumers.length, 3);
 	for (const preset of Object.keys(PRESETS)) {
-		for (const accent of [undefined, "#000000", "#ffffff"]) {
+		for (const accent of [undefined, "#000000", "#ffffff", "#6b6b6b", "#777777", "#808080", "#8a8a8a", "#959595"]) {
 			for (const dark of [false, true]) {
 				const vars = appearanceVariables({ preset, ...(accent ? { accent } : {}) }, dark);
 				for (const [fgSel, fgProp, bgSel, bgProp] of consumers) {
