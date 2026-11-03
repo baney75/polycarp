@@ -121,6 +121,8 @@ async function resolveTab(ctx: HandlerContext, params: Params, attach: boolean):
 	}
 	const tab = attach ? await ctx.session.attachedCurrentTab() : await ctx.session.requireCurrentTab();
 	if (tab.id === undefined) throw new BridgeError(ERR.NO_TAB, "You have no tab yet: navigate opens one.");
+	// Backstop for a landing the commit watcher has not caught: no tool reads or acts on the approval page.
+	await refuseGuardedLanding(ctx, tab.id, { url: tab.url ?? "" });
 	return tab.id;
 }
 
@@ -153,6 +155,7 @@ async function openCapturedTab(
 ): Promise<{ tab: chrome.tabs.Tab; ready: boolean; note?: string }> {
 	const tab = await createCapped(ctx.session, "about:blank");
 	const tabId = tab.id as number;
+	watchGuardedCommits(ctx, tabId);
 	const failed = await startCapture(tabId);
 	const note = failed
 		? `Console and network capture could not start on this tab (${failed}), so its first load was not captured; read_console or read_network starts capture from the next call.`
@@ -214,6 +217,23 @@ async function refuseGuardedLanding<T extends { url: string }>(
 		ERR.PERMISSION_DENIED,
 		"That page led to this computer's Tabkyra approval address, which an agent never opens. The tab was reset to a blank page.",
 	);
+}
+
+/** How long after a navigation starts a late redirect is still caught. */
+const GUARD_WATCH_MS = 120000;
+
+/**
+ * A redirect can finish after navigate gave up waiting (its timeout, 20s by default), when the
+ * landing check has already read the old URL. Watch the tab's main-frame commits for a while after
+ * every agent navigation and blank the tab if one lands on a guarded host (issue #94).
+ */
+function watchGuardedCommits(ctx: HandlerContext, tabId: number): void {
+	const onCommitted = (d: chrome.webNavigation.WebNavigationTransitionCallbackDetails) => {
+		if (d.tabId === tabId && d.frameId === 0 && ctx.isGuarded(d.url))
+			void chrome.tabs.update(tabId, { url: "about:blank" }).catch(() => undefined);
+	};
+	chrome.webNavigation.onCommitted.addListener(onCommitted);
+	setTimeout(() => chrome.webNavigation.onCommitted.removeListener(onCommitted), GUARD_WATCH_MS);
 }
 
 function target(params: Params): { ref?: string; selector?: string } {
@@ -370,6 +390,7 @@ export const handlers: Record<string, Handler> = {
 		}
 		const tabId = await resolveTab(ctx, params, false);
 		let timedOut = false;
+		watchGuardedCommits(ctx, tabId);
 		if (url === "back") timedOut = !(await goBack(tabId));
 		else if (url === "forward") timedOut = !(await goForward(tabId));
 		else {

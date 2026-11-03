@@ -73,16 +73,32 @@ export function hostAllowed(host: string, allowed: string[]): boolean {
 
 /**
  * True when the URL is on a host an agent may never open: the public URL of this machine's OAuth
- * approval page (issue #94). The native host sends those hostnames with each request. This holds in
- * every permission mode, "allow_all" included, and covers only agent-driven navigation: a person
- * who opens the page in their own tab is not stopped.
+ * approval page and the loopback addresses serve and the hub answer on (issue #94). The native
+ * host sends them with each request. An entry is a hostname, which guards every port, or
+ * "host:port" ("[::1]:port" for IPv6), which guards that port only: a local dev server on another
+ * port stays open. This holds in every permission mode, "allow_all" included, and covers only
+ * agent-driven navigation: a person who opens the page in their own tab is not stopped.
  */
 export function isGuardedUrl(url: string, guardedHosts: readonly string[] | undefined): boolean {
 	if (!guardedHosts?.length) return false;
-	const host = hostOf(url)
+	let parsed: URL;
+	try {
+		parsed = new URL(url);
+	} catch {
+		return false;
+	}
+	const host = parsed.hostname
+		.toLowerCase()
 		.replace(/^\[|\]$/g, "")
 		.replace(/\.$/, "");
-	return host !== "" && guardedHosts.some((g) => g.toLowerCase().replace(/\.$/, "") === host);
+	if (host === "") return false;
+	const port = parsed.port || (parsed.protocol === "https:" ? "443" : parsed.protocol === "http:" ? "80" : "");
+	return guardedHosts.some((entry) => {
+		const e = entry.toLowerCase().replace(/\.$/, "");
+		const withPort = /^(?:\[([^\]]+)\]|([^:\]]+)):(\d+)$/.exec(e);
+		if (withPort) return (withPort[1] ?? withPort[2]) === host && withPort[3] === port;
+		return e.replace(/^\[|\]$/g, "") === host;
+	});
 }
 
 export async function isUrlAllowed(url: string): Promise<boolean> {

@@ -109,6 +109,16 @@ export function installFakeChrome() {
 		dropEmptyGroup(before);
 		fire(tabEvents.onUpdated, id, { groupId: g }, { ...t });
 	};
+	const webNavigation = {
+		onCreatedNavigationTarget: event(),
+		onTabReplaced: event(),
+		onCommitted: event(),
+		onDOMContentLoaded: event(),
+		onCompleted: event(),
+		onReferenceFragmentUpdated: event(),
+		onHistoryStateUpdated: event(),
+		onErrorOccurred: event(),
+	};
 	globalThis.chrome = {
 		storage: { local: area("local"), session: area("session"), onChanged },
 		tabs: {
@@ -254,7 +264,7 @@ export function installFakeChrome() {
 			},
 		},
 		permissions: { async getAll() { return { permissions: [] }; } },
-		webNavigation: { onCreatedNavigationTarget: event(), onTabReplaced: event() },
+		webNavigation,
 		sidePanel: { async getOptions() { return {}; } },
 	};
 	return {
@@ -265,6 +275,11 @@ export function installFakeChrome() {
 			return tab.id;
 		},
 		removeTab: (id) => tabs.delete(id),
+		/** A navigation commits in a tab's top frame (a redirect that finished late, say). */
+		commitNav: (id, url) => {
+			Object.assign(tabs.get(id), { url });
+			fire(webNavigation.onCommitted, { tabId: id, frameId: 0, url });
+		},
 		/** The user closes a tab (fires onRemoved, drops an emptied group). */
 		userCloseTab: (id, isWindowClosing = false) => {
 			const t = tabs.get(id);

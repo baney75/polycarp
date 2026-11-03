@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { installFakeChrome } from "./fake-chrome.mjs";
 
-const GUARDED = ["tabkyra.example.com"];
+const GUARDED = ["tabkyra.example.com", "127.0.0.1:8787", "localhost:8787", "[::1]:8787"];
 
 async function startBridge() {
 	const fake = installFakeChrome();
@@ -15,11 +15,8 @@ async function startBridge() {
 		if (ms >= 10000) t.unref();
 		return t;
 	};
-	try {
-		native.startBridge();
-	} finally {
-		globalThis.setTimeout = realSetTimeout;
-	}
+	// Left in place: the guard's two-minute commit watcher must not keep the test process alive.
+	native.startBridge();
 	const port = fake.ports[0];
 	let nextId = 1;
 	const request = async (clientId, method, params = {}, guardedHosts = GUARDED) => {
@@ -33,7 +30,7 @@ async function startBridge() {
 		throw new Error(`no reply to ${method}`);
 	};
 	port.deliver({ type: "client_connected", clientId: "c1", client: { name: "claude", session: "guard" } });
-	return { fake, request };
+	return { fake, request, realSetTimeout };
 }
 
 test("isGuardedUrl matches the host exactly, ignoring case, a trailing dot and the port", async () => {
@@ -43,6 +40,12 @@ test("isGuardedUrl matches the host exactly, ignoring case, a trailing dot and t
 	assert.equal(isGuardedUrl("HTTPS://TabKyra.Example.COM./authorize", GUARDED), true);
 	assert.equal(isGuardedUrl("https://tabkyra.example.com:8443/", GUARDED), true);
 	assert.equal(isGuardedUrl("http://[::1]:8443/authorize", ["::1"]), true);
+	assert.equal(isGuardedUrl("http://127.0.0.1:8787/authorize?x=1", GUARDED), true);
+	assert.equal(isGuardedUrl("http://localhost:8787/", GUARDED), true);
+	assert.equal(isGuardedUrl("http://[::1]:8787/authorize", GUARDED), true);
+	assert.equal(isGuardedUrl("http://127.0.0.1:3000/", GUARDED), false, "another local port stays open");
+	assert.equal(isGuardedUrl("http://127.0.0.1/", GUARDED), false);
+	assert.equal(isGuardedUrl("http://127.0.0.1:80/", ["127.0.0.1:80"]), true, "default port counts");
 	assert.equal(isGuardedUrl("https://example.com/", GUARDED), false);
 	assert.equal(isGuardedUrl("https://evil-tabkyra.example.com/", GUARDED), false);
 	assert.equal(isGuardedUrl("https://tabkyra.example.com/", []), false);
@@ -64,4 +67,41 @@ test("navigate and tabs_create refuse the approval host, even with every host al
 	}
 	const ctx = await request("c1", "tabs.context");
 	assert.deepEqual(ctx.result.tabs ?? [], [], "no tab was opened for the refused calls");
+});
+
+test("navigate and tabs_create refuse loopback aliases of the approval page, other local ports stay open", async () => {
+	const { request } = await startBridge();
+	await chrome.storage.local.set({ bridge_permission_mode: "allow_all" });
+	for (const url of [
+		"http://127.0.0.1:8787/authorize?client_id=x",
+		"http://localhost:8787/",
+		"http://[::1]:8787/authorize",
+	]) {
+		for (const method of ["navigate", "tabs.create"]) {
+			const reply = await request("c1", method, { url, timeoutMs: 1 });
+			assert.equal(reply.result, undefined, `${method} opened ${url}`);
+			assert.equal(reply.error?.code, "permission_denied");
+		}
+	}
+	const open = await request("c1", "navigate", { url: "http://127.0.0.1:3000/", timeoutMs: 1 });
+	assert.equal(open.error, undefined, "a dev server on another port is not guarded");
+});
+
+test("a redirect that commits after navigate timed out is blanked and its tab refused", async () => {
+	const { fake, request, realSetTimeout } = await startBridge();
+	await chrome.storage.local.set({ bridge_permission_mode: "allow_all" });
+	const first = await request("c1", "navigate", { url: "https://slow.example.com/", timeoutMs: 1 });
+	assert.equal(first.error, undefined);
+	const tabId = first.result.tabId;
+	fake.commitNav(tabId, "https://tabkyra.example.com/authorize?client_id=x");
+	for (let i = 0; i < 100 && (await chrome.tabs.get(tabId)).url !== "about:blank"; i++)
+		await new Promise((r) => realSetTimeout(r, 5));
+	assert.equal((await chrome.tabs.get(tabId)).url, "about:blank", "the late landing was reset");
+
+	// The backstop: a landing the watcher missed is refused by every tool that resolves the tab.
+	fake.commitNav(tabId, "http://127.0.0.1:8787/authorize");
+	chrome.webNavigation.onCommitted.listeners.length = 0;
+	const read = await request("c1", "text", {});
+	assert.equal(read.result, undefined, "text read the approval page");
+	assert.equal(read.error?.code, "permission_denied");
 });
