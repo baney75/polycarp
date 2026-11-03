@@ -23,11 +23,16 @@ export function currentAppearance(): ThemeChoice {
 	return current;
 }
 
-/** Use this choice now and keep it in extension storage. */
-export async function setAppearance(choice: ThemeChoice): Promise<void> {
+/** Paint this choice now without saving it: the color box fires this while a person drags. */
+export function previewAppearance(choice: ThemeChoice): void {
 	current = choice;
 	paint();
 	for (const listener of listeners) listener(choice);
+}
+
+/** Use this choice now and keep it in extension storage. */
+export async function setAppearance(choice: ThemeChoice): Promise<void> {
+	previewAppearance(choice);
 	await chrome.storage.local.set({ [APPEARANCE_KEY]: choice });
 }
 

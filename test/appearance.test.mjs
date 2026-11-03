@@ -101,3 +101,38 @@ test("a saved choice that isn't one falls back to the default", () => {
 	// An unknown but well-formed name resolves to the default palette.
 	assert.equal(appearanceVariables(parseChoice({ preset: "nope" }), false)["--background"], PRESETS.tabkyra.light.bg);
 });
+
+test("control edges (text boxes, the off switch's track) reach 3:1 against the page and the card, in every preset and mode", () => {
+	assert.ok(SHAPE_PAIRS.some(([a, b]) => a === "--input" && b === "--background"));
+	assert.ok(SHAPE_PAIRS.some(([a, b]) => a === "--input" && b === "--card"));
+	for (const preset of Object.keys(PRESETS)) {
+		for (const accent of [undefined, "#e3a93b", "#000000", "#ffffff"]) {
+			for (const dark of [false, true]) {
+				const vars = appearanceVariables({ preset, ...(accent ? { accent } : {}) }, dark);
+				for (const surface of ["--background", "--card"]) {
+					const ratio = contrast(vars["--input"], vars[surface]);
+					assert.ok(ratio >= 3, `${preset} ${dark ? "dark" : "light"}: --input ${vars["--input"]} on ${surface} ${vars[surface]} is ${ratio.toFixed(2)}:1`);
+				}
+				// --border stays the soft divider; only controls got the stronger edge.
+				assert.equal(vars["--border"], PRESETS[preset][dark ? "dark" : "light"].border);
+			}
+		}
+	}
+});
+
+test("error text (--destructive) is checked as text on the page and the card, and the off switch track is the control edge", () => {
+	assert.ok(TEXT_PAIRS.some(([a, b]) => a === "--destructive" && b === "--background"));
+	assert.ok(TEXT_PAIRS.some(([a, b]) => a === "--destructive" && b === "--card"));
+	const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "app.css"), "utf8");
+	assert.doesNotMatch(css, /--tk-control-off:\s*color-mix/);
+	assert.equal((css.match(/--tk-control-off:\s*var\(--input\)/g) ?? []).length, 2, "light and dark both draw the track from --input");
+});
+
+test("the color box paints on input and saves and tells the helper only on change", () => {
+	const text = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "dialogs", "AppearanceTab.ts"), "utf8");
+	const box = /type="color"[\s\S]*?\/>/.exec(text)?.[0] ?? "";
+	const onInput = /@input=\$\{[\s\S]*?\n\t{7}\}\}/.exec(box)?.[0] ?? "";
+	assert.match(onInput, /previewAppearance\(/);
+	assert.doesNotMatch(onInput, /this\.choose\(|setAppearance\(|connectSetTheme\(/);
+	assert.match(box, /@change=\$\{[\s\S]*?this\.choose\(/);
+});

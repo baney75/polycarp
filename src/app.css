@@ -491,17 +491,19 @@ body {
 	}
 }
 
+/* The off switch's track is --input, which tokens.ts derives to 3:1 against the page and the card in
+   every preset and mode (test/appearance.test.mjs). */
 /* Checkboxes, switches and radio buttons share one look in both themes. Bare native checkboxes
    were small grey squares beside the CORS proxy's switch. An on/off setting is a switch
    (.tk-switch, the same size as that switch); a box that picks items from a list stays a
    checkbox. Each one is still a native input, so its label, the Space key and change events work
    as before. */
 :root {
-	--tk-control-off: color-mix(in oklch, var(--muted-foreground) 85%, transparent);
+	--tk-control-off: var(--input);
 	--tk-control-on: var(--tk-brass-deep);
 }
 .dark {
-	--tk-control-off: color-mix(in oklch, var(--muted-foreground) 60%, transparent);
+	--tk-control-off: var(--input);
 	--tk-control-on: var(--tk-brass);
 }
 

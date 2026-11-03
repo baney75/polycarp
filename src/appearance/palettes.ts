@@ -200,3 +200,16 @@ export function accentInk(accent: string, surfaces: string[], text: string): str
 	}
 	return text;
 }
+
+/**
+ * The edge of a control (a text box, a switch track): the body text color blended into the page color
+ * until it reaches 3:1 against every one of `surfaces` (WCAG 1.4.11). The preset's own `border` is a
+ * soft divider, about 1.4:1, and stays that for dividers.
+ */
+export function controlEdge(surfaces: string[], text: string): string {
+	for (let t = 0; t <= 1.0001; t += 0.01) {
+		const candidate = mix(surfaces[0], text, Math.min(t, 1));
+		if (surfaces.every((surface) => contrast(candidate, surface) >= 3)) return candidate;
+	}
+	return text;
+}

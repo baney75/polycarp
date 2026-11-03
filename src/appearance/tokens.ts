@@ -4,7 +4,7 @@
  * match. Pure: test/appearance.test.mjs checks every pair the panel draws as text for WCAG AA.
  */
 
-import { accentInk, mix, type Palette, resolveTheme, type ThemeChoice, textOn } from "./palettes.js";
+import { accentInk, controlEdge, mix, type Palette, resolveTheme, type ThemeChoice, textOn } from "./palettes.js";
 
 /** The accent the panel draws in this mode: the custom one, or the preset's own. What the color box and swatches show. */
 export function effectiveAccent(choice: ThemeChoice, dark: boolean): string {
@@ -34,7 +34,8 @@ export function appearanceVariables(choice: ThemeChoice, dark: boolean): Record<
 		"--destructive": p.danger,
 		"--destructive-foreground": textOn(p.danger),
 		"--border": p.border,
-		"--input": p.border,
+		// Control edges (text boxes, the off switch's track) reach 3:1 against the page and the card; --border stays the soft divider.
+		"--input": controlEdge([p.bg, p.panel], p.text),
 		"--ring": accentInk(p.accent, [p.bg], p.text),
 		// The selected Settings chip: body text color as the fill and the page color as its text, so it
 		// stands out from the page at 3:1 or better in every preset and mode, whatever the accent.
@@ -57,16 +58,20 @@ export const TEXT_PAIRS: ReadonlyArray<readonly [string, string]> = [
 	["--foreground", "--accent"],
 	["--primary-foreground", "--primary"],
 	["--destructive-foreground", "--destructive"],
+	["--destructive", "--background"],
+	["--destructive", "--card"],
 	["--tk-on-selected", "--tk-selected"],
 	["--tk-brass-text", "--card"],
 	["--tk-brass-text", "--background"],
 ];
 
-/** Pairs that are not text but must stand apart from the page: [shape, background], at 3:1 (WCAG 1.4.11). */
+/** Pairs that are not text but must stand apart from the page: [shape, background], at 3:1 (WCAG 1.4.11): the selected chip, the focus ring, and control edges (--input, which is also the off switch's track). */
 export const SHAPE_PAIRS: ReadonlyArray<readonly [string, string]> = [
 	["--tk-selected", "--background"],
 	["--tk-selected", "--card"],
 	["--ring", "--background"],
+	["--input", "--background"],
+	["--input", "--card"],
 ];
 
 export const APPEARANCE_KEY = "tabkyra.appearance";

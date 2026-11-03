@@ -1,7 +1,7 @@
 import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { currentAppearance, onAppearance, setAppearance } from "../appearance/apply.js";
+import { currentAppearance, onAppearance, previewAppearance, setAppearance } from "../appearance/apply.js";
 import { currentMode, type Mode, setMode } from "../appearance/mode.js";
 import { PRESETS, textOn } from "../appearance/palettes.js";
 import { effectiveAccent } from "../appearance/tokens.js";
@@ -64,7 +64,7 @@ export class AppearanceTab extends SettingsTab {
 	private async choose(preset: string, accent: string | undefined): Promise<void> {
 		await setAppearance({ preset, ...(accent ? { accent } : {}) });
 		// The pages served from this computer follow; no helper means nothing to tell.
-		this.shared = await connectSetTheme(preset, accent ?? null).then(
+		this.shared = await connectSetTheme(preset, accent ?? null, currentMode()).then(
 			() => true,
 			() => false,
 		);
@@ -145,9 +145,19 @@ export class AppearanceTab extends SettingsTab {
 							class="h-9 w-12 shrink-0 cursor-pointer rounded-md border border-input bg-background p-1"
 							.value=${hex}
 							@input=${(e: Event) => {
+								// Dragging in the picker fires this many times a second: paint only. Saving and telling the helper wait for "change", when the picker closes.
 								this.draft = undefined;
 								this.accentError = undefined;
-								void this.choose(currentAppearance().preset, (e.target as HTMLInputElement).value);
+								previewAppearance({
+									preset: currentAppearance().preset,
+									accent: (e.target as HTMLInputElement).value.toLowerCase(),
+								});
+							}}
+							@change=${(e: Event) => {
+								void this.choose(
+									currentAppearance().preset,
+									(e.target as HTMLInputElement).value.toLowerCase(),
+								);
 							}}
 						/>
 						<input
@@ -195,10 +205,15 @@ export class AppearanceTab extends SettingsTab {
 							value,
 							label,
 						]) => html`<label class="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-							<input type="radio" name="tk-mode" .checked=${this.mode === value} @change=${() => {
+							<input type="radio" name="tk-mode" .checked=${this.mode === value} @change=${async () => {
 								setMode(value);
 								this.mode = value;
 								this.requestUpdate();
+								const choice = currentAppearance();
+								this.shared = await connectSetTheme(choice.preset, choice.accent ?? null, value).then(
+									() => true,
+									() => false,
+								);
 							}} />
 							${label}
 						</label>`,
