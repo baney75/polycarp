@@ -16,7 +16,7 @@ import { createHash, createHmac, randomBytes, scrypt, scryptSync, timingSafeEqua
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CODE_TTL_MS, CodeLimitError, type CodeRecord, findCode, hashCode, liveCodes, newCode, normalizeCode, REQUEST_LOCK_MS } from "./codes.ts";
-import { configDir, LockTimeoutError, readJsonFile, withFileLock, writeJsonPrivate } from "./files.ts";
+import { configDir, LockTimeoutError, readJsonFile, withFileLock, withFileLockAsync, writeJsonPrivate } from "./files.ts";
 import { pageCss } from "./theme.ts";
 
 export { configDir };
@@ -138,46 +138,41 @@ function save(state: State): void {
 	renameSync(tmp, stateFile());
 }
 
-/** Change oauth.json under an exclusive lock file, pruning expired tokens on the way out. */
-function change<T>(update: (state: State) => T): T {
-	mkdirSync(configDir(), { recursive: true, mode: 0o700 });
-	const lock = `${stateFile()}.lock`;
-	const deadline = Date.now() + 10_000;
-	for (;;) {
-		try {
-			writeFileSync(lock, String(process.pid), { flag: "wx" });
-			break;
-		} catch {
-			let stale = false;
-			try {
-				stale = Date.now() - statSync(lock).mtimeMs > 30_000;
-			} catch {
-				/* gone */
-			}
-			if (stale) rmSync(lock, { force: true });
-			else if (Date.now() > deadline) throw new Error(`oauth.json is locked (${lock}).`);
-			else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+/** Apply `update` to oauth.json while the caller holds the lock, pruning expired tokens on the way out. */
+function apply<T>(update: (state: State) => T): T {
+	const state = load();
+	const result = update(state);
+	const time = now();
+	for (const [hash, item] of Object.entries(state.tokens)) if (item.expires < time) delete state.tokens[hash];
+	// Over the cap: drop whole grants, oldest first, never part of one. A live grant keeps its spent
+	// refresh tokens, so a replay of one still ends it.
+	if (Object.keys(state.tokens).length > MAX_TOKENS) {
+		const newest = new Map<string, number>();
+		for (const t of Object.values(state.tokens)) newest.set(t.family, Math.max(newest.get(t.family) ?? 0, t.expires));
+		for (const [family] of [...newest].sort((a, b) => a[1] - b[1])) {
+			if (Object.keys(state.tokens).length <= MAX_TOKENS) break;
+			for (const [hash, t] of Object.entries(state.tokens)) if (t.family === family) delete state.tokens[hash];
 		}
 	}
+	save(state);
+	return result;
+}
+
+/** Change oauth.json under an exclusive lock file. Blocks the thread while it waits: for CLI commands only, never a request handler. */
+function change<T>(update: (state: State) => T): T {
+	return withFileLock(stateFile(), () => apply(update));
+}
+
+/** How long a request handler waits for the oauth.json lock before answering 503. The wait is a timer, so serve keeps answering meanwhile (issue #96). */
+const REQUEST_STATE_LOCK_MS = 10_000;
+
+/** Like `change`, for the request path: the wait for the lock polls with a timer instead of blocking the event loop. `update` itself is synchronous, so nothing else runs between the read and the write. */
+async function changeAsync<T>(update: (state: State) => T): Promise<T> {
 	try {
-		const state = load();
-		const result = update(state);
-		const time = now();
-		for (const [hash, item] of Object.entries(state.tokens)) if (item.expires < time) delete state.tokens[hash];
-		// Over the cap: drop whole grants, oldest first, never part of one. A live grant keeps its spent
-		// refresh tokens, so a replay of one still ends it.
-		if (Object.keys(state.tokens).length > MAX_TOKENS) {
-			const newest = new Map<string, number>();
-			for (const t of Object.values(state.tokens)) newest.set(t.family, Math.max(newest.get(t.family) ?? 0, t.expires));
-			for (const [family] of [...newest].sort((a, b) => a[1] - b[1])) {
-				if (Object.keys(state.tokens).length <= MAX_TOKENS) break;
-				for (const [hash, t] of Object.entries(state.tokens)) if (t.family === family) delete state.tokens[hash];
-			}
-		}
-		save(state);
-		return result;
-	} finally {
-		rmSync(lock, { force: true });
+		return await withFileLockAsync(stateFile(), async () => apply(update), REQUEST_STATE_LOCK_MS);
+	} catch (err) {
+		if (err instanceof LockTimeoutError) throw new OAuthError(503, "temporarily_unavailable", "Busy. Try again in a moment.");
+		throw err;
 	}
 }
 
@@ -263,12 +258,12 @@ function approvalCodeLive(typed: string): boolean {
 }
 
 /** Use up a live approval code. False when it is wrong, expired or already used (two requests racing for one code: one wins). */
-function consumeApprovalCode(typed: string): boolean {
+async function consumeApprovalCode(typed: string): Promise<boolean> {
 	try {
-		// Runs in the server's event loop: wait briefly for the lock, and answer 503 if it stays held.
-		return withFileLock(
+		// Runs in the server's event loop: wait briefly for the lock without blocking it, and answer 503 if it stays held.
+		return await withFileLockAsync(
 			approvalFile(),
-			() => {
+			async () => {
 				const time = Date.now();
 				const live = liveCodes(loadApprovalCodes(), time);
 				const at = findCode(live, typed, time);
@@ -405,7 +400,7 @@ function resetLimitsOnNewPasscode(state: State): void {
 	limits.failures.length = 0;
 }
 
-export function registerClient(config: OAuthConfig, body: unknown, source = "unknown") {
+export async function registerClient(config: OAuthConfig, body: unknown, source = "unknown") {
 	resetLimitsOnNewPasscode(load());
 	const time = Date.now();
 	while (limits.registrations.length && limits.registrations[0].at < time - 10 * 60_000) limits.registrations.shift();
@@ -437,7 +432,7 @@ export function registerClient(config: OAuthConfig, body: unknown, source = "unk
 	const rawName = typeof request.client_name === "string" ? request.client_name : "";
 	// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this strips.
 	const name = rawName.replace(/[\x00-\x1f\x7f<>]/g, "").slice(0, 100) || "MCP client";
-	change((state) => {
+	await changeAsync((state) => {
 		const clients = Object.values(state.clients);
 		if (clients.length >= MAX_CLIENTS) {
 			// Evict the oldest client that never got a grant, at any age: a flood of registrations pushes
@@ -615,8 +610,8 @@ export async function approveAuthorize(config: OAuthConfig, form: URLSearchParam
 	const scopes = [...new Set(form.getAll("scope"))];
 	if (scopes.length === 0) throw new OAuthError(400, "invalid_scope", "Tick at least one permission.");
 	for (const s of scopes) if (!Object.hasOwn(config.scopes, s)) throw new OAuthError(400, "invalid_scope", `Unknown permission ${s}.`);
-	if (byCode && !consumeApprovalCode(typed)) refuse("That connect code was already used or has expired.");
-	change((s) => {
+	if (byCode && !(await consumeApprovalCode(typed))) refuse("That connect code was already used or has expired.");
+	await changeAsync((s) => {
 		const approved = s.clients[request.client_id];
 		if (approved && approved.approved_at === undefined) approved.approved_at = now();
 	});
@@ -672,13 +667,13 @@ function issue(state: State, clientId: string, resource: string, scopes: string[
 	return { access_token: access, token_type: "Bearer", expires_in: ACCESS_TTL, refresh_token: refresh, scope: scopes.join(" ") };
 }
 
-export function exchangeToken(params: URLSearchParams, authorization: string | undefined) {
+export async function exchangeToken(params: URLSearchParams, authorization: string | undefined) {
 	const grant = params.get("grant_type");
 	if (grant === "authorization_code") {
 		const code = params.get("code") ?? "";
 		const saved = codes.get(sha(code));
 		codes.delete(sha(code));
-		return change((state) => {
+		return changeAsync((state) => {
 			const registered = authenticateClient(state, params, authorization);
 			if (!saved || saved.expires < now() || saved.client_id !== registered.client_id) throw new OAuthError(400, "invalid_grant", "The authorization code is invalid, expired or already used.");
 			if (params.get("redirect_uri") !== saved.redirect_uri) throw new OAuthError(400, "invalid_grant", "redirect_uri doesn't match the authorization request.");
@@ -693,7 +688,7 @@ export function exchangeToken(params: URLSearchParams, authorization: string | u
 	}
 	if (grant === "refresh_token") {
 		const presented = sha(params.get("refresh_token") ?? "");
-		const result = change((state) => {
+		const result = await changeAsync((state) => {
 			const registered = authenticateClient(state, params, authorization);
 			const saved = state.tokens[presented];
 			if (!saved || saved.kind !== "refresh" || saved.client_id !== registered.client_id || saved.expires < now()) throw new OAuthError(400, "invalid_grant", "The refresh token is invalid or expired.");
@@ -738,8 +733,8 @@ export function exchangeToken(params: URLSearchParams, authorization: string | u
 	throw new OAuthError(400, "unsupported_grant_type", "Use authorization_code or refresh_token.");
 }
 
-export function revokeGrant(params: URLSearchParams, authorization: string | undefined): void {
-	change((state) => {
+export async function revokeGrant(params: URLSearchParams, authorization: string | undefined): Promise<void> {
+	await changeAsync((state) => {
 		const registered = authenticateClient(state, params, authorization);
 		const saved = state.tokens[sha(params.get("token") ?? "")];
 		if (saved && saved.client_id === registered.client_id) {

@@ -604,6 +604,70 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 	}
 });
 
+// Issue #96: a CLI command holding oauth.json.lock must not freeze serve. The request path waits
+// for the lock with a timer, so other requests keep being answered, and the waiting one finishes
+// once the lock is released (or answers 503 if it never is).
+test("serve keeps answering while a CLI command holds the oauth.json lock, and the waiting request finishes after", async () => {
+	const port = await freePort();
+	const base = `http://127.0.0.1:${port}`;
+	const home = join(root, "oauth-lock-home");
+	mkdirSync(home, { recursive: true });
+	const oenv = { ...env, HOME: home };
+	assert.equal(spawnSync(process.execPath, [cli, "token", "passcode"], { env: oenv, encoding: "utf8" }).status, 0);
+	const srv = spawn(process.execPath, [cli, "serve", "--port", String(port), "--public-url", base], { env: oenv });
+	try {
+		await new Promise((resolve, reject) => {
+			let out = "";
+			srv.stdout.on("data", (d) => {
+				out += d;
+				if (/OAuth on/.test(out)) resolve();
+			});
+			srv.on("exit", (code) => reject(new Error(`serve exited ${code}: ${out}`)));
+			setTimeout(() => reject(new Error(`serve didn't start: ${out}`)), 15_000);
+		});
+		const lock = join(home, ".config", "tabkyra", "oauth.json.lock");
+		writeFileSync(lock, "99999");
+		const register = fetch(`${base}/register`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ client_name: "Claude", redirect_uris: ["https://claude.ai/api/mcp/auth_callback"] }),
+		});
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		// The register request is now waiting on the held lock. Time ten other requests meanwhile.
+		const started = Date.now();
+		for (let i = 0; i < 10; i++) assert.equal((await fetch(`${base}/.well-known/oauth-authorization-server`)).status, 200);
+		const elapsed = Date.now() - started;
+		assert.ok(elapsed < 1000, `serve answered 10 requests in ${elapsed} ms while the lock was held`);
+		let settled = false;
+		register.then(() => {
+			settled = true;
+		});
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		assert.equal(settled, false, "the register request is still waiting for the lock");
+		rmSync(lock, { force: true });
+		assert.equal((await register).status, 201, "the waiting request finishes once the lock is released");
+	} finally {
+		srv.kill();
+	}
+});
+
+test("oauth.ts: the request path never calls the thread-blocking change() or withFileLock", () => {
+	const src = readFileSync(join(here, "..", "src", "oauth.ts"), "utf8");
+	const body = (name) => {
+		const at = src.search(new RegExp(`(async )?function ${name}[<(]`));
+		assert.ok(at >= 0, `${name} exists`);
+		const next = src.slice(at + 1).search(/\n(export )?(async )?function |\n\/\/ -{5,}/);
+		return src.slice(at, next < 0 ? undefined : at + 1 + next);
+	};
+	for (const name of ["registerClient", "approveAuthorize", "exchangeToken", "revokeGrant", "consumeApprovalCode"]) {
+		const text = body(name);
+		assert.doesNotMatch(text, /(?<![A-Za-z])change\(/, `${name} must use changeAsync`);
+		assert.doesNotMatch(text, /(?<![A-Za-z])withFileLock\(/, `${name} must use withFileLockAsync`);
+	}
+	assert.doesNotMatch(src, /Atomics\.wait/, "oauth.ts has no Atomics.wait of its own; the sync lock lives in files.ts for CLI commands");
+	assert.match(body("changeAsync"), /withFileLockAsync/);
+});
+
 // tabkyra remote setup|status|off: one command for Funnel (or a custom HTTPS front door), the
 // passcode and a user service. tailscale, launchctl and systemctl are stubs that log their args.
 const DNS = "mac.example.ts.net";
