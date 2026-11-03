@@ -26,6 +26,7 @@ import {
 	getPermissionMode,
 	hostOf,
 	isBridgeEnabled,
+	isGuardedUrl,
 	isUrlAllowed,
 	type PermissionDecision,
 	type PermissionMode,
@@ -295,6 +296,13 @@ async function askPermission(state: ClientState, url: string): Promise<boolean> 
 	return result !== "deny";
 }
 
+function guardedError(url: string): BridgeError {
+	return new BridgeError(
+		ERR.PERMISSION_DENIED,
+		`Not allowed to open ${hostOf(url) || url}: it is this computer's Tabkyra approval address, and an agent never opens it. The owner approves a connector there themselves, outside the agent's browser.`,
+	);
+}
+
 function resolveDecision(requestId: string, decision: PermissionDecision): boolean {
 	const resolve = pendingDecisions.get(requestId);
 	if (!resolve) return false;
@@ -378,7 +386,9 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			delivered: (result, tabId) => {
 				deliveredResult = result && tabId !== undefined ? { result, tabId } : undefined;
 			},
+			isGuarded: (url: string) => isGuardedUrl(url, req.guardedHosts),
 			checkUrl: async (url: string) => {
+				if (isGuardedUrl(url, req.guardedHosts)) throw guardedError(url);
 				if (!(await askPermission(state, url))) {
 					const mode = await getPermissionMode();
 					throw new BridgeError(

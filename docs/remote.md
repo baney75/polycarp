@@ -144,7 +144,10 @@ tabkyra link https://tabkyra.<your domain> --code TK-XXXX-XXXX [--name laptop] [
 most; without it, the default grant (no `browser.script`, no `threads.read`). Then add
 `https://tabkyra.<your domain>/mcp` once in each assistant, as above. Approve with your passcode,
 or with a one-time code from `tabkyra token approval-code` (or `tabkyra link approval-code` on a
-manager device): the field reads "Passcode or connect code".
+manager device): the field reads "Passcode or connect code". A connector you have not approved
+before (a new client) needs the one-time code; the passcode alone is refused for it, so a link
+someone else sends you cannot be approved by typing the passcode (D34). Once a client is approved,
+later approvals for it take the passcode as before.
 
 ```bash
 tabkyra hub devices                  # online, extension, sessions, busy, last seen

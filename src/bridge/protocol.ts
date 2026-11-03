@@ -216,6 +216,11 @@ export interface HostForwardedRequest {
 	id: number;
 	method: string;
 	params?: Record<string, unknown>;
+	/**
+	 * Hostnames an agent may not open: the public URL of this machine's OAuth approval page
+	 * (issue #94). Read by the host for each request, so a new `remote setup` takes effect at once.
+	 */
+	guardedHosts?: string[];
 }
 
 export interface HostPing {

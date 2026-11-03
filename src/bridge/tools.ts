@@ -58,6 +58,8 @@ export interface HandlerContext {
 	session: BrowserSession;
 	/** Ask before a navigation to a host that is not allowed yet; throws when denied. */
 	checkUrl(url: string): Promise<void>;
+	/** Whether the URL is on a host an agent never opens (the OAuth approval address, issue #94). */
+	isGuarded(url: string): boolean;
 	/** Stable id of the calling client. */
 	clientId: string;
 	/** Push an event to the calling client only. */
@@ -119,6 +121,8 @@ async function resolveTab(ctx: HandlerContext, params: Params, attach: boolean):
 	}
 	const tab = attach ? await ctx.session.attachedCurrentTab() : await ctx.session.requireCurrentTab();
 	if (tab.id === undefined) throw new BridgeError(ERR.NO_TAB, "You have no tab yet: navigate opens one.");
+	// Backstop for a landing the commit watcher has not caught: no tool reads or acts on the approval page.
+	await refuseGuardedLanding(ctx, tab.id, { url: tab.url ?? "" });
 	return tab.id;
 }
 
@@ -151,6 +155,7 @@ async function openCapturedTab(
 ): Promise<{ tab: chrome.tabs.Tab; ready: boolean; note?: string }> {
 	const tab = await createCapped(ctx.session, "about:blank");
 	const tabId = tab.id as number;
+	watchGuardedCommits(ctx, tabId);
 	const failed = await startCapture(tabId);
 	const note = failed
 		? `Console and network capture could not start on this tab (${failed}), so its first load was not captured; read_console or read_network starts capture from the next call.`
@@ -195,6 +200,40 @@ async function tabSummary(tabId: number, stillLoading = false) {
 		title: tab.title ?? "",
 		...(stillLoading ? { loading: true } : {}),
 	};
+}
+
+/**
+ * A redirect or a history step can land the agent's tab on a host it may not open. Move the tab off
+ * it and refuse, so the approval page is never left in front of the agent (issue #94).
+ */
+async function refuseGuardedLanding<T extends { url: string }>(
+	ctx: HandlerContext,
+	tabId: number,
+	summary: T,
+): Promise<T> {
+	if (!ctx.isGuarded(summary.url)) return summary;
+	await chrome.tabs.update(tabId, { url: "about:blank" }).catch(() => undefined);
+	throw new BridgeError(
+		ERR.PERMISSION_DENIED,
+		"That page led to this computer's Tabkyra approval address, which an agent never opens. The tab was reset to a blank page.",
+	);
+}
+
+/** How long after a navigation starts a late redirect is still caught. */
+const GUARD_WATCH_MS = 120000;
+
+/**
+ * A redirect can finish after navigate gave up waiting (its timeout, 20s by default), when the
+ * landing check has already read the old URL. Watch the tab's main-frame commits for a while after
+ * every agent navigation and blank the tab if one lands on a guarded host (issue #94).
+ */
+function watchGuardedCommits(ctx: HandlerContext, tabId: number): void {
+	const onCommitted = (d: chrome.webNavigation.WebNavigationTransitionCallbackDetails) => {
+		if (d.tabId === tabId && d.frameId === 0 && ctx.isGuarded(d.url))
+			void chrome.tabs.update(tabId, { url: "about:blank" }).catch(() => undefined);
+	};
+	chrome.webNavigation.onCommitted.addListener(onCommitted);
+	setTimeout(() => chrome.webNavigation.onCommitted.removeListener(onCommitted), GUARD_WATCH_MS);
 }
 
 function target(params: Params): { ref?: string; selector?: string } {
@@ -274,7 +313,7 @@ export const handlers: Record<string, Handler> = {
 		const url = str(params, "url");
 		if (url) await ctx.checkUrl(url);
 		const { tab, ready, note } = await openCapturedTab(ctx, url, 20000, true);
-		return { ...(await tabSummary(tab.id!, !ready)), ...(note ? { note } : {}) };
+		return refuseGuardedLanding(ctx, tab.id!, { ...(await tabSummary(tab.id!, !ready)), ...(note ? { note } : {}) });
 	},
 
 	"tabs.close": async (ctx, params) => {
@@ -344,10 +383,14 @@ export const handlers: Record<string, Handler> = {
 		// The first navigate of a session opens its tab (blank, with capture on) and loads the URL into it.
 		if (!history && num(params, "tabId") === undefined && !(await ctx.session.currentTab())) {
 			const { tab, ready, note } = await openCapturedTab(ctx, url, num(params, "timeoutMs") ?? 20000, false);
-			return { ...(await tabSummary(tab.id!, !ready)), ...(note ? { note } : {}) };
+			return refuseGuardedLanding(ctx, tab.id!, {
+				...(await tabSummary(tab.id!, !ready)),
+				...(note ? { note } : {}),
+			});
 		}
 		const tabId = await resolveTab(ctx, params, false);
 		let timedOut = false;
+		watchGuardedCommits(ctx, tabId);
 		if (url === "back") timedOut = !(await goBack(tabId));
 		else if (url === "forward") timedOut = !(await goForward(tabId));
 		else {
@@ -355,7 +398,7 @@ export const handlers: Record<string, Handler> = {
 			timedOut = (await navigateTabDetailed(tabId, url, { waitUntil, timeoutMs: num(params, "timeoutMs") ?? 20000 }))
 				.timedOut;
 		}
-		return tabSummary(tabId, timedOut);
+		return refuseGuardedLanding(ctx, tabId, await tabSummary(tabId, timedOut));
 	},
 
 	screenshot: async (ctx, params) => {

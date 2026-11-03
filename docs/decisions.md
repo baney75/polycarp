@@ -798,3 +798,27 @@ ChatGPT and grok.com add once, with any number of his own computers behind it.
   the card; `--border` stays the soft divider. Light, Dark or Match system is sent to the helper
   with the preset and accent, kept in `theme.json` as `mode` (absent for Match system), and fixes
   the pages' `color-scheme`.
+
+## D34. OAuth consent: agents never open the approval page; a new client needs a connect code (Claude, 2026-11-02)
+
+Issues #94 and #97, follow-ups from #93.
+
+- The native host reads `remote.json`, `hub.json` and `link.json` and sends the hostnames of their
+  public URLs with each bridge request (`guardedHosts`, `cli/src/guarded-hosts.ts`). The extension
+  refuses `navigate` and `tabs_create` to those hosts in every permission mode, `allow_all`
+  included, and resets a tab that a redirect or history step lands on one (`isGuardedUrl`,
+  `src/bridge/permissions.ts`). Only agent calls are checked, so a person opening the page in their
+  own tab is not stopped. The match is the exact hostname (any port, any path), not subdomains: a
+  public URL host is one name, and a wider match would block unrelated sites on a shared domain.
+  Not covered: a link an agent clicks in a page already open, which the extension does not see as
+  a bridge navigation.
+- Consent phishing: anyone can register a client against the public URL and send the owner its
+  approval link. A client with no earlier grant (`approved_at` unset, no `last_used`, no token)
+  is approved only by a live one-time connect code, which the owner mints on their computer
+  (`tabkyra token approval-code`), outside the browser an agent drives. The passcode is not even
+  checked for such a client, so the refusal tells an attacker nothing about it. A wrong code counts
+  toward the same lockout. Clients with a grant before this change count as approved, so existing
+  connectors keep working. Rejected: a separate `tabkyra token clients approve <id>` pending flow;
+  it adds a second state and a second command for the same out-of-browser step the connect code
+  already is.
+
