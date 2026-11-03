@@ -46,7 +46,7 @@ import {
 	type StatusFrame,
 } from "./link-protocol.ts";
 import { handleOAuth, readBody, requestSource, sendJson } from "./oauth-http.ts";
-import { liveGrantIds, mintApprovalCode, type OAuthConfig, resourceMetadataUrl, verifyAccessToken } from "./oauth.ts";
+import { liveGrantIds, mintApprovalCode, normalizePublicUrl, type OAuthConfig, resourceMetadataUrl, verifyAccessToken } from "./oauth.ts";
 import { authenticate, HUB_CALLER_HEADER, HUB_SCOPES_HEADER, loadTokens, SCOPES, safeCallerName } from "./remote.ts";
 import { pageCss } from "./theme.ts";
 
@@ -663,7 +663,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			}
 			if (body.kind === "connect") {
 				const { code, expiresAt } = mintConnectCode({ name: typeof body.name === "string" && body.name ? body.name : undefined, manage: body.manage === true }, Date.now(), REQUEST_LOCK_MS);
-				return sendJson(res, 200, { kind: "connect", code, expiresAt });
+				return sendJson(res, 200, { kind: "connect", code, expiresAt, hubUrl: hubOrigin(options.publicUrl) });
 			}
 		} catch (err) {
 			if (err instanceof HubStateError) return sendJson(res, err.status, { error: "invalid_request", error_description: err.message });
@@ -820,4 +820,13 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 				http.close(() => resolve());
 			}),
 	};
+}
+
+/** The hub's public origin in the canonical form a manager accepts (no trailing slash, default port, capitals or /mcp); as configured when it will not normalize. */
+function hubOrigin(publicUrl: string): string {
+	try {
+		return normalizePublicUrl(publicUrl.replace(/\/mcp\/?$/, ""));
+	} catch {
+		return publicUrl;
+	}
 }

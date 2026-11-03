@@ -27,6 +27,7 @@ import {
 	hostOf,
 	isBridgeEnabled,
 	isGuardedUrl,
+	isOwnExtensionUrl,
 	isUrlAllowed,
 	type PermissionDecision,
 	type PermissionMode,
@@ -266,6 +267,7 @@ async function onClientDisconnected(clientId: string): Promise<void> {
 }
 
 async function askPermission(state: ClientState, url: string): Promise<boolean> {
+	if (isOwnExtensionUrl(url)) return false;
 	if (await isUrlAllowed(url)) return true;
 	const host = hostOf(url);
 	if (!host) return false;
@@ -393,10 +395,12 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 					const mode = await getPermissionMode();
 					throw new BridgeError(
 						ERR.PERMISSION_DENIED,
-						`Not allowed to open ${hostOf(url) || url}. ` +
-							(mode === "ask"
-								? "The user can allow it in the tabkyra side panel under Settings > Agents, or answer the permission prompt."
-								: "Bridge navigation is blocked."),
+						isOwnExtensionUrl(url)
+							? "Not allowed to open Tabkyra's own pages."
+							: `Not allowed to open ${hostOf(url) || url}. ` +
+									(mode === "ask"
+										? "The user can allow it in the tabkyra side panel under Settings > Agents, or answer the permission prompt."
+										: "Bridge navigation is blocked."),
 					);
 				}
 			},

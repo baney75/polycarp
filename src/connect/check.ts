@@ -1,6 +1,6 @@
 /** The background worker's first look at a Connect request from the side panel; the host parses the rest. */
 
-import { CONNECT_METHODS, type ConnectRequest } from "./types.js";
+import { CONNECT_METHODS, type ConnectRequest, type Gesture } from "./types.js";
 
 const METHODS: ReadonlySet<string> = new Set(CONNECT_METHODS);
 
@@ -19,5 +19,27 @@ export function checkConnectRequest(
 	) {
 		return { ok: false, id: req.id, message: "params must be an object." };
 	}
-	return { ok: true, request: { id: req.id, method: req.method, ...(req.params ? { params: req.params } : {}) } };
+	let gesture: Gesture | undefined;
+	if (req.gesture !== undefined) {
+		const g = req.gesture as Partial<Gesture> | null;
+		if (
+			typeof g !== "object" ||
+			g === null ||
+			typeof g.token !== "string" ||
+			g.token.length > 64 ||
+			typeof g.at !== "number" ||
+			!Number.isFinite(g.at)
+		)
+			return { ok: false, id: req.id, message: "The gesture is malformed." };
+		gesture = { token: g.token, at: g.at };
+	}
+	return {
+		ok: true,
+		request: {
+			id: req.id,
+			method: req.method,
+			...(req.params ? { params: req.params } : {}),
+			...(gesture ? { gesture } : {}),
+		},
+	};
 }

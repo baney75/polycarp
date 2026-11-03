@@ -1,13 +1,16 @@
 /**
  * Background worker: carries the side panel's Connect requests to the native host and the answers
- * back. Only Tabkyra's own extension pages may use it (never a content script or a page). The
+ * back. Only the side panel document may use it (never a content script, a page, or the panel
+ * opened as a tab); that is the boundary. The methods that mint a code or join a hub also need a
+ * single-use, short-lived token from the panel, a guard against accidental or scripted calls from
+ * the panel's own code paths, not proof of a click (the worker cannot see one). The
  * worker checks the method name and that params is a plain object; the host parses the rest
  * strictly (cli/src/connect-host.ts) and is the authority.
  */
 
 import { onConnectMessage, sendConnect } from "../bridge/native.js";
-import { isExtensionPage } from "../subscriptions/relay-protocol.js";
 import { checkConnectRequest } from "./check.js";
+import { GestureGate, isSidePanelPort } from "./gate.js";
 import { CONNECT_PORT, type ConnectReply } from "./types.js";
 
 /** A request the host never answers (a helper from before Connect drops the frame) is forgotten after this; the panel gave up sooner. */
@@ -55,9 +58,10 @@ export function startConnectRelay(): void {
 		else arm(message.id);
 	});
 	const origin = chrome.runtime.getURL("");
+	const gate = new GestureGate();
 	chrome.runtime.onConnect.addListener((port) => {
 		if (port.name !== CONNECT_PORT) return;
-		if (!isExtensionPage(port.sender, origin)) {
+		if (!isSidePanelPort(port.sender, origin)) {
 			port.disconnect();
 			return;
 		}
@@ -72,6 +76,13 @@ export function startConnectRelay(): void {
 				return;
 			}
 			const { request } = checked;
+			if (!gate.allows(request.method, request.gesture)) {
+				port.postMessage({
+					id: request.id,
+					error: { code: "no_gesture", message: "Click the button in the Tabkyra side panel to do that." },
+				} satisfies ConnectReply);
+				return;
+			}
 			const hostId = ++seq;
 			waiting.set(hostId, { port, id: request.id });
 			arm(hostId);

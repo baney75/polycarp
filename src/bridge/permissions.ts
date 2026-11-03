@@ -101,7 +101,24 @@ export function isGuardedUrl(url: string, guardedHosts: readonly string[] | unde
 	});
 }
 
+/**
+ * Tabkyra's own pages (the side panel, Settings, the Connect relay's callers) are never a place a
+ * bridge client may take a tab: a page there runs with the extension's rights. Refused in every
+ * mode, and never put to the user as a permission prompt.
+ */
+export function isOwnExtensionUrl(url: string): boolean {
+	try {
+		let u = new URL(url);
+		// blob: and filesystem: URLs carry the origin that made them after the scheme; that document has the extension's rights.
+		if (u.protocol === "blob:" || u.protocol === "filesystem:") u = new URL(u.pathname);
+		return u.protocol === "chrome-extension:" && u.hostname.toLowerCase() === String(chrome.runtime.id).toLowerCase();
+	} catch {
+		return false;
+	}
+}
+
 export async function isUrlAllowed(url: string): Promise<boolean> {
+	if (isOwnExtensionUrl(url)) return false;
 	if ((await getPermissionMode()) === "allow_all") return true;
 	const host = hostOf(url);
 	if (!host) return url === "about:blank";

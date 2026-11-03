@@ -25,14 +25,19 @@ export function writeJsonPrivate(path: string, value: unknown): void {
 /** A lock file stayed held past the caller's patience. Request handlers map it to 503. */
 export class LockTimeoutError extends Error {}
 
-/** Run `fn` holding an exclusive lock file next to `path`; gives up after `timeoutMs`. A lock older than 30 seconds is stale. */
+/**
+ * Run `fn` holding an exclusive lock file next to `path`; gives up after `timeoutMs`. A lock older than 30 seconds is stale.
+ * The lock records an owner token and is removed only while it still holds that token, so a holder whose lock
+ * was taken as stale never deletes the next holder's lock.
+ */
 export function withFileLock<T>(path: string, fn: () => T, timeoutMs = 10_000): T {
 	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 	const lock = `${path}.lock`;
+	const token = `${process.pid}:${randomBytes(8).toString("hex")}`;
 	const deadline = Date.now() + timeoutMs;
 	for (;;) {
 		try {
-			writeFileSync(lock, String(process.pid), { flag: "wx" });
+			writeFileSync(lock, token, { flag: "wx" });
 			break;
 		} catch {
 			let stale = false;
@@ -49,7 +54,11 @@ export function withFileLock<T>(path: string, fn: () => T, timeoutMs = 10_000): 
 	try {
 		return fn();
 	} finally {
-		rmSync(lock, { force: true });
+		try {
+			if (readFileSync(lock, "utf8") === token) rmSync(lock, { force: true });
+		} catch {
+			/* already gone */
+		}
 	}
 }
 
