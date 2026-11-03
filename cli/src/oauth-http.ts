@@ -75,7 +75,7 @@ export async function handleOAuth(config: OAuthConfig, req: IncomingMessage, res
 			} catch {
 				throw new OAuthError(400, "invalid_client_metadata", "The registration body isn't valid JSON.");
 			}
-			sendJson(res, 201, registerClient(config, body, source));
+			sendJson(res, 201, await registerClient(config, body, source));
 			return true;
 		}
 		if (path === "/authorize" && req.method === "GET") {
@@ -108,12 +108,12 @@ export async function handleOAuth(config: OAuthConfig, req: IncomingMessage, res
 		}
 		if (path === "/token" && req.method === "POST") {
 			const params = new URLSearchParams(await readBody(req, 64_000));
-			sendJson(res, 200, exchangeToken(params, req.headers.authorization));
+			sendJson(res, 200, await exchangeToken(params, req.headers.authorization));
 			return true;
 		}
 		if (path === "/revoke" && req.method === "POST") {
 			const params = new URLSearchParams(await readBody(req, 64_000));
-			revokeGrant(params, req.headers.authorization);
+			await revokeGrant(params, req.headers.authorization);
 			sendJson(res, 200, {});
 			return true;
 		}
