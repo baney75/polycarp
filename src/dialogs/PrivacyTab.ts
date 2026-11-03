@@ -177,7 +177,7 @@ export class PrivacyTab extends SettingsTab {
 							: ""
 					}
 					${explained(
-						"Your coding agents can look up what you asked Tabkyra.",
+						"Keeps a copy of your chats on this computer so your coding agents can look up what you asked Tabkyra.",
 						`Keeps a copy of your side panel chats in ~/.local/share/tabkyra/threads (readable only by your user), so
 						agents like Claude Code and Codex can look up what you asked Tabkyra, through tabkyra mcp or as files.
 						Keys pasted into a chat are removed from the copy, and chats from private mode are never copied. Turning
