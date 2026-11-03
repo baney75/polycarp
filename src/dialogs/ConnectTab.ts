@@ -2,6 +2,7 @@ import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { live } from "lit/directives/live.js";
 import { deviceSetupPrompt, remoteSetupPrompt } from "../agent-setup-prompt.js";
 import { COMMAND_BOX_CLASS } from "../components/command-box.js";
 import { Toast } from "../components/Toast.js";
@@ -13,7 +14,15 @@ import {
 	connectStatus,
 	isNoHost,
 } from "../connect/client.js";
-import { connectorUrl, countdown, lastSeen, linkCommand } from "../connect/format.js";
+import {
+	connectorUrl,
+	countdown,
+	lastSeen,
+	linkCommand,
+	MALFORMED_CODE,
+	validApprovalCode,
+	validDeviceCode,
+} from "../connect/format.js";
 import type { ApprovalCode, ConnectStatus, DeviceCode } from "../connect/types.js";
 
 const POLL_MS = 10_000;
@@ -55,6 +64,8 @@ export class ConnectTab extends SettingsTab {
 	@state() private joining?: string;
 	@state() private joinMessage?: { ok: boolean; text: string };
 	@state() private busyPending = false;
+	/** A refused or failed Busy toggle. Its own field: the status poll clears `error`, and this must outlast it. */
+	@state() private busyError?: string;
 	private timer?: ReturnType<typeof setInterval>;
 	private lastLoad = 0;
 	private loading = false;
@@ -102,8 +113,15 @@ export class ConnectTab extends SettingsTab {
 		this.minting = kind;
 		this.codeError = undefined;
 		try {
-			if (kind === "approval") this.approval = await connectApprovalCode();
-			else this.device = await connectDeviceCode();
+			if (kind === "approval") {
+				const made = await connectApprovalCode();
+				if (!validApprovalCode(made)) throw new Error(MALFORMED_CODE);
+				this.approval = made;
+			} else {
+				const made = await connectDeviceCode();
+				if (!validDeviceCode(made)) throw new Error(MALFORMED_CODE);
+				this.device = made;
+			}
 		} catch (err) {
 			this.codeError = err instanceof Error ? err.message : String(err);
 		} finally {
@@ -113,12 +131,14 @@ export class ConnectTab extends SettingsTab {
 
 	private async setBusy(busy: boolean): Promise<void> {
 		this.busyPending = true;
+		this.busyError = undefined;
 		try {
 			await connectSetBusy(busy);
 		} catch (err) {
-			this.error = err instanceof Error ? err.message : String(err);
+			this.busyError = err instanceof Error ? err.message : String(err);
+		} finally {
+			this.busyPending = false;
 		}
-		this.busyPending = false;
 		await this.load();
 	}
 
@@ -137,8 +157,9 @@ export class ConnectTab extends SettingsTab {
 		} catch (err) {
 			if (isNoHost(err)) this.noHost = true;
 			this.joinMessage = { ok: false, text: err instanceof Error ? err.message : String(err) };
+		} finally {
+			this.joining = undefined;
 		}
-		this.joining = undefined;
 		await this.load();
 	}
 
@@ -243,7 +264,7 @@ export class ConnectTab extends SettingsTab {
 			"Use from claude.ai, ChatGPT or grok.com",
 			html`
 				${this.command("Connector URL", connectorUrl(origin))}
-				${this.approval ? this.codeBox(this.approval.code, this.approval.expiresAt, "Connect code") : nothing}
+				${validApprovalCode(this.approval) ? this.codeBox(this.approval.code, this.approval.expiresAt, "Connect code") : nothing}
 				<div class="flex flex-col gap-1.5 items-start">
 					${
 						canMint
@@ -295,11 +316,13 @@ export class ConnectTab extends SettingsTab {
 										</li>`,
 									)}
 								</ul>`
-						: html`<p class="text-xs text-muted-foreground">This device manages the hub's codes. Open Settings > Connect on the hub's computer to see the device list.</p>`
+						: isHub
+							? html`<p class="text-xs text-muted-foreground">The device list couldn't be read. See the message above.</p>`
+							: html`<p class="text-xs text-muted-foreground">This device manages the hub's codes. Open Settings > Connect on the hub's computer to see the device list.</p>`
 				}
-				${this.device ? this.codeBox(this.device.code, this.device.expiresAt, "Device code") : nothing}
+				${validDeviceCode(this.device) ? this.codeBox(this.device.code, this.device.expiresAt, "Device code") : nothing}
 				${
-					this.device && countdown(this.device.expiresAt, this.now)
+					validDeviceCode(this.device) && countdown(this.device.expiresAt, this.now)
 						? html`
 								${this.command("On the other device, run", linkCommand(this.device.hubUrl, this.device.code))}
 								<div class="flex flex-col gap-1.5 items-start">
@@ -309,7 +332,7 @@ export class ConnectTab extends SettingsTab {
 										children: "Copy a setup prompt for an agent on that device",
 										onClick: () => {
 											const made = this.device;
-											if (!made) return;
+											if (!validDeviceCode(made)) return;
 											try {
 												void copyText(
 													deviceSetupPrompt(extensionVersion(), made.hubUrl, made.code),
@@ -360,17 +383,19 @@ export class ConnectTab extends SettingsTab {
 						type="checkbox"
 						role="switch"
 						class="tk-switch"
-						.checked=${link.busy}
+						.checked=${live(link.busy)}
 						?disabled=${this.busyPending}
 						@change=${(e: Event) => void this.setBusy((e.target as HTMLInputElement).checked)}
 					/>
 				</label>
+				${this.busyError ? html`<p class="text-xs text-destructive" role="alert" data-busy-error>${this.busyError}</p>` : nothing}
 			`,
 		);
 	}
 
 	private joinForm(s: ConnectStatus): TemplateResult | typeof nothing {
-		if (s.route !== "none") return nothing;
+		// A hub.json or remote.json the helper could not read leaves the route at none; joining would link this computer next to it.
+		if (s.route !== "none" || s.problem) return nothing;
 		const inputClass =
 			"w-full h-9 px-3 text-sm rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50";
 		return this.section(

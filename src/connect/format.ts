@@ -1,5 +1,37 @@
 /** Small text helpers for Settings > Connect. */
 
+import { CONNECT_CODE, HUB_ORIGIN } from "../agent-setup-prompt.js";
+import type { ApprovalCode, DeviceCode } from "./types.js";
+
+export const MALFORMED_CODE = "The helper answered with a malformed code. Try again, or update it: tabkyra update";
+
+/**
+ * A code reply is shown in a box the owner copies, and a device code also goes into a command they
+ * paste into a shell. Only the exact shapes may be drawn: a code TK-XXXX-XXXX, an origin, a time.
+ */
+export function validApprovalCode(value: ApprovalCode | undefined): value is ApprovalCode {
+	return (
+		value !== undefined &&
+		typeof value.code === "string" &&
+		CONNECT_CODE.test(value.code) &&
+		Number.isFinite(value.expiresAt) &&
+		typeof value.connectorUrl === "string" &&
+		value.connectorUrl.endsWith("/mcp") &&
+		HUB_ORIGIN.test(value.connectorUrl.slice(0, -4))
+	);
+}
+
+export function validDeviceCode(value: DeviceCode | undefined): value is DeviceCode {
+	return (
+		value !== undefined &&
+		typeof value.code === "string" &&
+		CONNECT_CODE.test(value.code) &&
+		Number.isFinite(value.expiresAt) &&
+		typeof value.hubUrl === "string" &&
+		HUB_ORIGIN.test(value.hubUrl)
+	);
+}
+
 /** "9:41" for the time left on a code, or "" once it has expired. */
 export function countdown(expiresAt: number, now: number): string {
 	const left = Math.ceil((expiresAt - now) / 1000);
