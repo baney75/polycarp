@@ -171,7 +171,7 @@ export interface McpServerOptions {
 	allowedTools?: Set<string>;
 	/**
 	 * A remote session's client is not the user, so site-permission requests are never put to
-	 * it: they wait in the side panel (Settings > Bridge) for the user.
+	 * it: they wait in the side panel (Settings > Agents) for the user.
 	 */
 	remote?: boolean;
 }
@@ -189,7 +189,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"The browser is signed in as the user. Ask the user before you act under their sign-in: sending messages or email, posting, buying, booking, deleting, changing settings, or submitting forms that do any of these.",
 				"Do not enter passwords or payment details.",
 				"When a page needs a sign-in or captcha, call tabs_show and ask the user to do it.",
-				"Opening a new site may need the user's approval; if a site is denied (\"Not allowed to open\"), tell the user they can allow it in the Tabkyra side panel (Settings > Bridge) or with `tabkyra allow <host>`, and do not try to get around it.",
+				"Opening a new site may need the user's approval; if a site is denied (\"Not allowed to open\"), tell the user they can allow it in the Tabkyra side panel (Settings > Agents) or with `tabkyra allow <host>`, and do not try to get around it.",
 				"First call skill_match with the user's task (it needs no browser). If it names a skill, call skill_read for that one skill only and follow it; if it says none, work without one.",
 				"Call tabs_context before any browser tool: it shows your session, your tab group and tabs (including ones left from earlier work in this project) and news from the user. If it says Tabkyra isn't connected, tell the user and stop browser work.",
 				"status adds the site permissions.",
@@ -266,7 +266,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			// Client without elicitation support (headless runs): deny now instead of stalling
 			// the tool call; the error text tells the model how the user can allow the host.
 			process.stderr.write(
-				`[tabkyra] ${host} needs approval: run \`tabkyra allow ${host}\`, use the side panel (Settings > Bridge), or set TABKYRA_AUTO_ALLOW=1.\n`,
+				`[tabkyra] ${host} needs approval: run \`tabkyra allow ${host}\`, use the side panel (Settings > Agents), or set TABKYRA_AUTO_ALLOW=1.\n`,
 			);
 		}
 		await client.call("permission.respond", { requestId, decision }).catch(() => undefined);

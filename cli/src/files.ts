@@ -3,6 +3,7 @@
  * rename, and an exclusive lock file for read-modify-write across processes.
  */
 
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -49,6 +50,45 @@ export function withFileLock<T>(path: string, fn: () => T, timeoutMs = 10_000): 
 		return fn();
 	} finally {
 		rmSync(lock, { force: true });
+	}
+}
+
+/**
+ * Like `withFileLock`, for work that awaits while it holds the lock. The wait polls with a timer, so
+ * the event loop keeps running meanwhile. Same lock file, same 30-second stale rule, so hold it only
+ * for short work (a check and a write), never across a network call or a service manager. The lock
+ * records an owner token (pid and a random nonce) and is removed only while it still holds that
+ * token, so a holder whose lock was taken as stale never deletes the next holder's lock.
+ */
+export async function withFileLockAsync<T>(path: string, fn: () => Promise<T>, timeoutMs = 10_000): Promise<T> {
+	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+	const lock = `${path}.lock`;
+	const token = `${process.pid}:${randomBytes(8).toString("hex")}`;
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		try {
+			writeFileSync(lock, token, { flag: "wx" });
+			break;
+		} catch {
+			let stale = false;
+			try {
+				stale = Date.now() - statSync(lock).mtimeMs > 30_000;
+			} catch {
+				/* gone */
+			}
+			if (stale) rmSync(lock, { force: true });
+			else if (Date.now() > deadline) throw new LockTimeoutError(`${path} is locked (${lock}).`);
+			else await new Promise((resolve) => setTimeout(resolve, 25));
+		}
+	}
+	try {
+		return await fn();
+	} finally {
+		try {
+			if (readFileSync(lock, "utf8") === token) rmSync(lock, { force: true });
+		} catch {
+			/* already gone */
+		}
 	}
 }
 

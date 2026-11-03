@@ -133,9 +133,12 @@ test("the Claude and Gemini MCP setup commands render as readable command blocks
 	assert.match(source, /this\.command\("Claude Code", CLI_MCP_SETUP\.claude\)/);
 	assert.match(source, /this\.command\("Gemini CLI", CLI_MCP_SETUP\.gemini\)/);
 	const block = source.slice(source.indexOf("private command("), source.indexOf("private row("));
-	const codeClass = block.match(/<code class="([^"]*)"/)?.[1] ?? "";
+	// The look is shared with Settings > Connect (src/components/command-box.ts): it wraps anywhere, so a long command can't run off the panel.
+	assert.match(block, /<code class=\$\{COMMAND_BOX_CLASS\}>/);
+	const codeClass = readFileSync(new URL("../src/components/command-box.ts", import.meta.url), "utf8").match(/COMMAND_BOX_CLASS =\s*"([^"]*)"/)?.[1] ?? "";
 	assert.match(codeClass, /\btext-foreground\b/);
 	assert.match(codeClass, /\bfont-mono\b/);
+	assert.match(codeClass, /\[overflow-wrap:anywhere\]/);
 	assert.match(block, /@click=\$\{\(\) => this\.copy\(text\)\}/);
 });
 

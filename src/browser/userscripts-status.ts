@@ -3,7 +3,7 @@
  *
  * Chromium 138+ exposes the API only when two separate things are true:
  * 1. The optional `userScripts` permission is granted (manifest `optional_permissions`;
- *    granted by `chrome.permissions.request` from a click, see Settings > Bridge).
+ *    granted by `chrome.permissions.request` from a click, see Settings > Agents).
  * 2. The "Allow user scripts" toggle on the extension's Details page is on.
  * The toggle can be on while the permission was never granted; the API is then missing,
  * and the fix is the grant, not the toggle.

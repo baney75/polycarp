@@ -104,7 +104,7 @@ test("not_granted: says the permission is missing and how to grant it, not 'turn
 	assert.equal(row.status, "warn");
 	assert.match(row.label, /permission is not granted/);
 	assert.doesNotMatch(row.label, /is off/);
-	assert.match(row.fix, /Settings > Bridge > Page scripts.*Allow/);
+	assert.match(row.fix, /Settings > Agents > Page scripts.*Allow/);
 });
 
 test("toggle_off: points at the Details-page toggle and shows the browser's text", async () => {

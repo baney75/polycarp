@@ -21,8 +21,13 @@
 	/* Brass text on light backgrounds: 4.5:1 or better on white and on the card. */
 	--tk-brass-text: #8a5f12;
 	--tk-ink: #0f1b24;
+	/* Text and glyphs drawn on --tk-brass. Appearance (src/appearance/tokens.ts) pairs it with the accent per preset. */
+	--tk-on-brass: var(--tk-ink);
 	--tk-tide: #43b3a0;
 	--ring: var(--tk-brass-deep);
+	/* The selected Settings chip. Appearance (src/appearance/tokens.ts) sets the same names per preset. */
+	--tk-selected: var(--foreground);
+	--tk-on-selected: var(--background);
 	/* Native controls (checkboxes, the search box's clear button, scrollbars) follow the theme. */
 	color-scheme: light;
 	accent-color: var(--tk-brass-deep);
@@ -266,7 +271,7 @@ body {
 	margin-top: 0.125rem;
 	border: 1.5px solid var(--color-muted-foreground);
 	border-radius: 999px;
-	color: var(--tk-ink);
+	color: var(--tk-on-brass);
 	background: transparent;
 	cursor: pointer;
 }
@@ -323,12 +328,14 @@ body {
 }
 
 .tk-ask-btn-primary {
-	color: var(--tk-ink);
+	color: var(--tk-on-brass);
 	background: var(--tk-brass);
 }
 
 .tk-ask-btn-primary:hover:not(:disabled) {
-	background: #eab650;
+	/* Not a mix toward the text color: that lowers the text contrast, and a mid-gray accent fell under 4.5:1. */
+	background: var(--tk-brass);
+	box-shadow: inset 0 0 0 2px var(--tk-on-brass);
 }
 
 /* Choices answer the click at once; the page-wide 0.3 s fade made them look unselected. */
@@ -488,17 +495,19 @@ body {
 	}
 }
 
+/* The off switch's track is --input, which tokens.ts derives to 3:1 against the page and the card in
+   every preset and mode (test/appearance.test.mjs). */
 /* Checkboxes, switches and radio buttons share one look in both themes. Bare native checkboxes
    were small grey squares beside the CORS proxy's switch. An on/off setting is a switch
    (.tk-switch, the same size as that switch); a box that picks items from a list stays a
    checkbox. Each one is still a native input, so its label, the Space key and change events work
    as before. */
 :root {
-	--tk-control-off: color-mix(in oklch, var(--muted-foreground) 85%, transparent);
+	--tk-control-off: var(--input);
 	--tk-control-on: var(--tk-brass-deep);
 }
 .dark {
-	--tk-control-off: color-mix(in oklch, var(--muted-foreground) 60%, transparent);
+	--tk-control-off: var(--input);
 	--tk-control-on: var(--tk-brass);
 }
 

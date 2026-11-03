@@ -3,7 +3,7 @@
  *
  * Mode "ask" (default): a harness may only navigate to hosts the user allowed.
  * Unknown hosts raise a permission request that the harness shows (MCP
- * elicitation) or that the user answers in Settings > Bridge. Mode "allow_all"
+ * elicitation) or that the user answers in Settings > Agents. Mode "allow_all"
  * skips the check for people who trust their harness.
  */
 

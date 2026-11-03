@@ -6,7 +6,8 @@ import { PageBase } from "../components/PageBase.js";
 /**
  * Settings as a page that fills the side panel, with a back arrow. Its tabs are chips that all
  * fit the panel's width: an even grid (two rows of equal columns) until one row fits, so no tab
- * is hidden off the edge or left alone on a line.
+ * is hidden off the edge or left alone on a line. Eight chips at 400 px fit two rows of four with
+ * the longest name (Appearance) whole; a chip that ever scrolls out of sight is brought back when selected.
  */
 export class SettingsPage extends PageBase {
 	private tabs: SettingsTab[] = [];
@@ -22,6 +23,18 @@ export class SettingsPage extends PageBase {
 		return page;
 	}
 
+	/** Show the tab with this name, and scroll to the element with `anchor` inside it when given. */
+	showTab(name: string, anchor?: string): void {
+		const index = this.tabs.findIndex((tab) => tab.getTabName() === name);
+		if (index < 0) return;
+		this.select(index);
+		if (!anchor) return;
+		// The tab's content renders after it is shown; look for the anchor once it has.
+		void this.updateComplete.then(() =>
+			requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView({ block: "start" })),
+		);
+	}
+
 	protected pageTitle(): string {
 		return i18n("Settings");
 	}
@@ -30,6 +43,13 @@ export class SettingsPage extends PageBase {
 		this.active = index;
 		this.requestUpdate();
 		this.querySelector(".tk-page-body")?.scrollTo(0, 0);
+		// A chip scrolled out of a narrow strip comes back into view.
+		void this.updateComplete.then(() =>
+			this.querySelector('[role="tab"][aria-selected="true"]')?.scrollIntoView({
+				block: "nearest",
+				inline: "nearest",
+			}),
+		);
 	}
 
 	private renderTab(tab: SettingsTab, index: number): TemplateResult {
@@ -39,9 +59,9 @@ export class SettingsPage extends PageBase {
 				type="button"
 				role="tab"
 				aria-selected=${selected ? "true" : "false"}
-				class="min-w-0 truncate whitespace-nowrap h-8 px-1.5 @[28rem]:px-3 rounded-full text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+				class="min-w-0 truncate whitespace-nowrap h-8 px-1 @[28rem]:px-3 rounded-full text-[13px] @[28rem]:text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${
 					selected
-						? "bg-secondary text-foreground"
+						? "bg-[var(--tk-selected)] text-[var(--tk-on-selected)]"
 						: "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
 				}"
 				@click=${() => this.select(index)}
@@ -55,13 +75,15 @@ export class SettingsPage extends PageBase {
 
 	protected renderContent(): TemplateResult {
 		const columns = this.tabs.length > 3 ? Math.ceil(this.tabs.length / 2) : this.tabs.length;
+		// Below 22rem (a panel narrower than about 350 px) a third row keeps the longest name whole.
+		const narrow = this.tabs.length > 6 ? Math.ceil(this.tabs.length / 3) : columns;
 		return html`
 			<div class="@container flex-shrink-0 border-b border-border px-3 py-2">
 				<div
 					role="tablist"
 					aria-label="Settings sections"
-					class="grid gap-1 @[28rem]:flex @[28rem]:flex-wrap"
-					style="grid-template-columns: repeat(${columns}, minmax(0, 1fr))"
+					class="grid gap-1 [grid-template-columns:repeat(var(--tk-cols),minmax(0,1fr))] @max-[22rem]:[grid-template-columns:repeat(var(--tk-cols-narrow),minmax(0,1fr))] @[28rem]:flex @[28rem]:flex-wrap"
+					style="--tk-cols: ${columns}; --tk-cols-narrow: ${narrow}"
 				>
 					${this.tabs.map((tab, index) => this.renderTab(tab, index))}
 				</div>

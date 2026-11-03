@@ -11,6 +11,17 @@ import { getTabkyraStorage } from "../storage/app-storage.js";
 import { MIRROR_KEY } from "../threads/keys.js";
 import { SHARE_OLDER_KEY, SHARED_SINCE_KEY } from "../threads/store.js";
 
+/** One plain sentence stays visible; the full explanation is one click away and unchanged. */
+function explained(summary: string, detail: TemplateResult | string): TemplateResult {
+	return html`
+		<p class="text-xs text-muted-foreground">${summary}</p>
+		<details class="text-xs text-muted-foreground">
+			<summary class="cursor-pointer text-foreground">Details</summary>
+			<p class="mt-1">${detail}</p>
+		</details>
+	`;
+}
+
 /** Settings > Privacy: private mode, the hosts the user trusts as their own, and opt-in bug reports. */
 @customElement("tabkyra-privacy-tab")
 export class PrivacyTab extends SettingsTab {
@@ -109,24 +120,31 @@ export class PrivacyTab extends SettingsTab {
 							@change=${(e: Event) => this.setPrivateMode((e.target as HTMLInputElement).checked)}
 						/>
 					</label>
-					<p class="text-xs text-muted-foreground">
-						The side panel agent then runs only OpenRouter models, sent with zero data retention required and no
+					${explained(
+						"Your prompts go only to models that promise not to keep them, or to machines of your own.",
+						`The side panel agent then runs only OpenRouter models, sent with zero data retention required and no
 						fallback to other endpoints, and models on this computer or on the hosts you list below (a LAN or tailnet
 						machine counts only once you list it). Free mode then uses only free models with zero data retention, and
 						refuses to send when none is available. A local server that forwards to a cloud service (for example an
 						Ollama cloud model) is still a cloud service: don't use one in private mode.
 						Other providers, and a CORS proxy that isn't on those machines, are refused. This covers the side panel
-						agent; an outside agent using the Bridge follows its own settings.
-					</p>
+						agent; an outside agent using the Bridge follows its own settings.`,
+					)}
+					<div class="flex flex-col gap-1">
 					<label class="flex flex-col gap-1 text-xs text-muted-foreground">
-						<span>Your own machines, comma-separated. Prefer names over IPs (for example mac.example.ts.net): a listed IP is trusted on every network, including one where it belongs to someone else.</span>
-						<input
-							class="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-							placeholder="mac.example.ts.net, nas.local"
-							.value=${this.trustedHosts}
-							@change=${(e: Event) => this.saveTrustedHosts((e.target as HTMLInputElement).value)}
-						/>
-					</label>
+							<span>Your own machines, comma-separated.</span>
+							<input
+								class="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								placeholder="mac.example.ts.net, nas.local"
+								.value=${this.trustedHosts}
+								@change=${(e: Event) => this.saveTrustedHosts((e.target as HTMLInputElement).value)}
+							/>
+						</label>
+						<details class="text-xs text-muted-foreground">
+							<summary class="cursor-pointer text-foreground">Details</summary>
+							<p class="mt-1">Prefer names over IPs (for example mac.example.ts.net): a listed IP is trusted on every network, including one where it belongs to someone else.</p>
+						</details>
+					</div>
 				</div>
 
 				<div class="space-y-2">
@@ -158,12 +176,13 @@ export class PrivacyTab extends SettingsTab {
 							</label>`
 							: ""
 					}
-					<p class="text-xs text-muted-foreground">
-						Keeps a copy of your side panel chats in ~/.local/share/tabkyra/threads (readable only by your user), so
+					${explained(
+						"Keeps a copy of your chats on this computer so your coding agents can look up what you asked Tabkyra.",
+						`Keeps a copy of your side panel chats in ~/.local/share/tabkyra/threads (readable only by your user), so
 						agents like Claude Code and Codex can look up what you asked Tabkyra, through tabkyra mcp or as files.
 						Keys pasted into a chat are removed from the copy, and chats from private mode are never copied. Turning
-						this off deletes the copy and stops agents reading past chats. Agents connected through tabkyra serve need a token with the threads.read scope.
-					</p>
+						this off deletes the copy and stops agents reading past chats. Agents connected through tabkyra serve need a token with the threads.read scope.`,
+					)}
 				</div>
 
 				<tabkyra-dictation-settings></tabkyra-dictation-settings>
@@ -180,10 +199,11 @@ export class PrivacyTab extends SettingsTab {
 							@change=${(e: Event) => this.setBugReports((e.target as HTMLInputElement).checked)}
 						/>
 					</label>
-					<p class="text-xs text-muted-foreground">
-						Optional and off by default. Errors are kept in this browser with web addresses, emails and keys removed.
-						Nothing is sent: you review the report here, copy it, and paste it into a GitHub issue yourself.
-					</p>
+					${explained(
+						"Optional and off by default. Nothing is sent unless you send it.",
+						`Optional and off by default. Errors are kept in this browser with web addresses, emails and keys removed.
+						Nothing is sent: you review the report here, copy it, and paste it into a GitHub issue yourself.`,
+					)}
 					${
 						this.bugReports
 							? this.draft === undefined

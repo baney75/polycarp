@@ -8,12 +8,16 @@ import { BUG_REPORTS_KEY } from "../privacy/bug-reports.js";
 import { setBugReports } from "../privacy/capture.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
 
+/** Where the dialog sends the person: the provider keys, or Connect (use Tabkyra from claude.ai or ChatGPT). */
+export type WelcomeChoice = "provider" | "connect";
+
 /**
  * Shown on first launch when no API keys are configured.
- * Blocks until user clicks OK, then opens the API Keys settings.
+ * Blocks until the person picks one of two ways in: add a provider key, or use Tabkyra from claude.ai or ChatGPT. Pairs with a third, copying a prompt for their own agent.
  */
 export class WelcomeSetupDialog extends DialogBase {
-	private resolvePromise?: () => void;
+	private resolvePromise?: (choice: WelcomeChoice) => void;
+	private choice: WelcomeChoice = "provider";
 
 	protected modalWidth = "min(450px, 90vw)";
 	protected modalHeight = "auto";
@@ -21,9 +25,9 @@ export class WelcomeSetupDialog extends DialogBase {
 	/** Bug reports were already on (turned on earlier in Settings > Privacy). */
 	private reportsOn = false;
 
-	static async show(): Promise<void> {
+	static async show(): Promise<WelcomeChoice> {
 		const reportsOn = (await getTabkyraStorage().settings.get<boolean>(BUG_REPORTS_KEY)) === true;
-		return new Promise((resolve) => {
+		return new Promise<WelcomeChoice>((resolve) => {
 			const dialog = new WelcomeSetupDialog();
 			dialog.reportsOn = reportsOn;
 			dialog.resolvePromise = resolve;
@@ -33,7 +37,7 @@ export class WelcomeSetupDialog extends DialogBase {
 
 	override close() {
 		super.close();
-		this.resolvePromise?.();
+		this.resolvePromise?.(this.choice);
 	}
 
 	protected renderContent() {
@@ -63,7 +67,15 @@ export class WelcomeSetupDialog extends DialogBase {
 									/>
 								</label>`
 					}
-					<div class="flex justify-end">
+					<div class="flex flex-wrap justify-end gap-2">
+						${Button({
+							variant: "outline",
+							onClick: () => {
+								this.choice = "connect";
+								this.close();
+							},
+							children: "Use from claude.ai or ChatGPT",
+						})}
 						${Button({
 							variant: "default",
 							onClick: () => this.close(),

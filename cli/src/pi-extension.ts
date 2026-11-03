@@ -121,7 +121,7 @@ class Bridge {
 				if (process.env.TABKYRA_AUTO_ALLOW === "1") {
 					this.socket?.write(encode({ type: "request", id: ++this.seq, method: "permission.respond", params: { requestId: msg.data.requestId, decision: "allow_once" } }));
 				} else {
-					process.stderr.write(\`[tabkyra] \${msg.data.host} needs approval: run \\\`tabkyra allow \${msg.data.host}\\\` or use the side panel (Settings > Bridge)\\n\`);
+					process.stderr.write(\`[tabkyra] \${msg.data.host} needs approval: run \\\`tabkyra allow \${msg.data.host}\\\` or use the side panel (Settings > Agents)\\n\`);
 				}
 			}
 		}

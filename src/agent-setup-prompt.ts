@@ -32,3 +32,51 @@ export function agentSetupPrompt(version: string): string {
 
 Don't ask me for API keys or passwords. Tabkyra doesn't need them for this.`;
 }
+
+const CLOSING = "Don't ask me for API keys or passwords. Tabkyra doesn't need them for this.";
+
+/**
+ * A prompt for an agent on the computer that should be reachable from claude.ai, ChatGPT or
+ * grok.com: set up the public route, then print a one-time approval code. Setup runs with
+ * --no-passcode, so no long-lived passcode is made or printed into the agent's output, and the
+ * prompt pipes nothing into a shell.
+ */
+export function remoteSetupPrompt(version: string): string {
+	if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`No extension version to pin the CLI to (got "${version}").`);
+	return `Set up Tabkyra (https://github.com/baney75/tabkyra) so claude.ai, ChatGPT or grok.com can use my browser through my own computer. The Tabkyra extension ${version} is already loaded in my browser. Run each step yourself and show me any output you can't fix. Nothing here costs money or goes through anyone else's server.
+
+1. Run: tabkyra doctor
+   If tabkyra isn't installed, stop and tell me to copy the setup prompt from Tabkyra's Settings > Agents tab and run that first.
+2. Pick the route. If it isn't clear from what I told you, ask me which one:
+   - One computer with Tailscale installed and signed in: tabkyra remote setup --no-passcode
+   - Several computers behind one address, on an always-on machine with an HTTPS address I already own: tabkyra hub setup --public-url https://ADDRESS --no-passcode (with my address in place of ADDRESS)
+   If a command stops and names a reason, show me the reason and the fix it names. Don't work around it.
+3. --no-passcode makes no long-lived passcode, so setup prints none. Don't run tabkyra token passcode yourself. If a passcode shows up in any output anyway, don't repeat it, write it to a file or put it in a message: tell me, and I will replace it with tabkyra token passcode in my own terminal. I can also choose a passcode there later; the one-time code in step 4 is enough for now.
+4. Run: tabkyra token approval-code
+   Show me the code and the connector URL it prints (the URL ends in /mcp). The code works once, for 10 minutes.
+5. Run tabkyra remote status (tabkyra hub status on a hub) and tell me what each line says.
+6. Tell me to add the connector URL as a custom connector in claude.ai (Settings > Connectors), ChatGPT (Settings > Apps & Connectors) or grok.com (grok.com/connectors), and to type the code on Tabkyra's approval page when it asks.
+
+${CLOSING}`;
+}
+
+/** The hub origin and code a device prompt may carry; anything else would let a stray string become a command. */
+export const HUB_ORIGIN = /^https?:\/\/(?:[A-Za-z0-9.-]+|\[::1\])(?::\d{1,5})?$/;
+export const CONNECT_CODE = /^TK-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/;
+
+/** A prompt for an agent on another device: link it to this hub with a one-time connect code. */
+export function deviceSetupPrompt(version: string, hubUrl: string, code: string): string {
+	if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`No extension version to pin the CLI to (got "${version}").`);
+	if (!HUB_ORIGIN.test(hubUrl)) throw new Error("The hub address must be an origin like https://hub.example.com.");
+	if (!CONNECT_CODE.test(code)) throw new Error("The connect code must look like TK-XXXX-XXXX.");
+	return `Connect this computer's browser to my Tabkyra hub at ${hubUrl}, so claude.ai, ChatGPT or grok.com can use it through my one connector. The Tabkyra extension ${version} should already be loaded in my browser on this computer. Run each step yourself and show me any output you can't fix.
+
+1. Run: tabkyra doctor
+   If tabkyra isn't installed, stop and tell me to copy the setup prompt from Tabkyra's Settings > Agents tab and run that first.
+2. Run: tabkyra link ${hubUrl} --code ${code}
+   The code works once and expires 10 minutes after I copied this prompt. If the hub refuses it, tell me to get a new one in Settings > Connect > Add a device.
+3. Run: tabkyra link status
+   Tell me whether it says connected.
+
+${CLOSING}`;
+}

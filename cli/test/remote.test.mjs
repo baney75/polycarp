@@ -1188,3 +1188,58 @@ test("remote lists its subcommands in help and rejects unknown flags", () => {
 	assert.equal(cliRun(["remote", "setup", "--bogus"]).code, 2);
 	assert.equal(cliRun(["remote"]).code, 2);
 });
+
+// An agent runs setup in its own shell, so its output lands in a transcript. --no-passcode mints and
+// prints no passcode; a one-time connect code approves the connection.
+test("remote setup --no-passcode makes and prints no passcode, and serve then approves with a one-time code", async () => {
+	const s = remoteScenario("no-passcode");
+	const ok = s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--port", "9101", "--no-service", "--no-passcode"]);
+	assert.equal(ok.code, 0, ok.out);
+	assert.doesNotMatch(ok.out, /OAuth passcode/);
+	assert.doesNotMatch(ok.out, /([a-zA-Z0-9]{5}-){3}[a-zA-Z0-9]{5}/, "no passcode-shaped string in the output");
+	assert.match(ok.out, /No passcode made \(--no-passcode\)/);
+	assert.match(ok.out, /Approve with a one-time connect code: tabkyra token approval-code\./);
+	assert.doesNotMatch(ok.out, /Approve with your Tabkyra passcode/);
+	const oauthFile = join(s.config, "oauth.json");
+	assert.equal(existsSync(oauthFile) ? JSON.parse(readFileSync(oauthFile, "utf8")).passcode : undefined, undefined, "no passcode was stored");
+	// A second setup without the flag still mints one, as before.
+	const again = s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--port", "9101", "--no-service"]);
+	assert.match(again.out, /OAuth passcode/);
+});
+
+test("serve with no passcode starts, says only a connect code can approve, and takes that code", async () => {
+	const port = await freePort();
+	const base = `http://127.0.0.1:${port}`;
+	const home = join(root, "nopass-home");
+	mkdirSync(home, { recursive: true });
+	const oenv = { ...env, HOME: home };
+	const minted = spawnSync(process.execPath, [cli, "token", "approval-code", "--json"], { env: oenv, encoding: "utf8" });
+	const connectCode = /TK-[0-9A-Z]{4}-[0-9A-Z]{4}/.exec(minted.stdout)?.[0];
+	assert.ok(connectCode, `approval-code printed a code: ${minted.stdout}${minted.stderr}`);
+	const srv = spawn(process.execPath, [cli, "serve", "--port", String(port), "--public-url", base], { env: oenv });
+	try {
+		let out = "";
+		await new Promise((resolve, reject) => {
+			srv.stdout.on("data", (d) => {
+				out += d;
+				if (/OAuth on/.test(out)) resolve();
+			});
+			srv.on("exit", (code) => reject(new Error(`serve exited ${code}: ${out}`)));
+			setTimeout(() => reject(new Error(`serve didn't start: ${out}`)), 15_000);
+		});
+		assert.match(out, /only a connect code \(tabkyra token approval-code\) can approve a connection/);
+		assert.doesNotMatch(out, /nobody can approve/);
+		const callback = "https://claude.ai/api/mcp/auth_callback";
+		const { client_id } = await (await fetch(`${base}/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "Claude", redirect_uris: [callback] }) })).json();
+		const challenge = createHash("sha256").update(randomBytes(32).toString("base64url")).digest("base64url");
+		const q = new URLSearchParams({ response_type: "code", client_id, redirect_uri: callback, code_challenge: challenge, code_challenge_method: "S256", state: "s1", resource: `${base}/mcp` });
+		const signed = /name="request" value="([^"]+)"/.exec(await (await fetch(`${base}/authorize?${q}`)).text())[1];
+		const approve = (passcode) => fetch(`${base}/authorize`, { method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams([["request", signed], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]) });
+		assert.equal((await approve("nope")).status, 401, "a wrong value is refused with no passcode set");
+		const done = await approve(connectCode);
+		assert.equal(done.status, 302, "the one-time code approves");
+		assert.ok(new URL(done.headers.get("location")).searchParams.get("code"));
+	} finally {
+		srv.kill();
+	}
+});

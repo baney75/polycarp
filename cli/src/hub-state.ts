@@ -16,7 +16,7 @@ export interface HubConfig {
 }
 
 export const hubFile = () => join(configDir(), "hub.json");
-const devicesFile = () => join(configDir(), "hub-devices.json");
+export const devicesFile = () => join(configDir(), "hub-devices.json");
 const codesFile = () => join(configDir(), "hub-codes.json");
 export const liveFile = () => join(configDir(), "hub-live.json");
 

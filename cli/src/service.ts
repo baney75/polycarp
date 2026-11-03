@@ -3,7 +3,7 @@
  * or `tabkyra link run` running. Shared by remote setup, hub setup and link.
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -17,12 +17,48 @@ export function writeAtomic(path: string, text: string, mode: number): void {
 	renameSync(tmp, path);
 }
 
+/** stdio is explicit: a child never inherits this process's stdout, which is the native host's channel to the browser. */
 export function run(cmd: string, args: string[]): { code: number; out: string } {
-	const r = spawnSync(cmd, args, { encoding: "utf8", timeout: 60_000 });
+	const r = spawnSync(cmd, args, { encoding: "utf8", timeout: 60_000, stdio: ["ignore", "pipe", "pipe"] });
 	const output = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();
 	// A timeout or spawn error still keeps what the command printed: tailscale prints its sign-in URL before it waits.
 	if (r.error) return { code: 1, out: [output, r.error.message].filter(Boolean).join("\n") };
 	return { code: r.status ?? 1, out: output };
+}
+
+/**
+ * `run` without blocking the event loop, for the native host, which relays every agent's traffic. Same
+ * explicit stdio and the same 60 s limit; `timeoutMs` is for tests. A command that outlives the limit
+ * is killed and its pipes closed, so a grandchild that holds them cannot keep this waiting.
+ */
+export function runAsync(cmd: string, args: string[], timeoutMs = 60_000): Promise<{ code: number; out: string }> {
+	return new Promise((resolve) => {
+		let out = "";
+		let done = false;
+		const finish = (code: number, extra?: string) => {
+			if (done) return;
+			done = true;
+			clearTimeout(timer);
+			const text = [out.trim(), extra].filter(Boolean).join("\n");
+			resolve({ code, out: text });
+		};
+		let child: ReturnType<typeof spawn>;
+		try {
+			child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+		} catch (err) {
+			resolve({ code: 1, out: err instanceof Error ? err.message : String(err) });
+			return;
+		}
+		const timer = setTimeout(() => {
+			child.kill("SIGKILL");
+			child.stdout?.destroy();
+			child.stderr?.destroy();
+			finish(1, `${cmd} timed out after ${Math.round(timeoutMs / 1000)} s`);
+		}, timeoutMs);
+		for (const stream of [child.stdout, child.stderr]) stream?.on("data", (chunk: Buffer) => (out += chunk.toString("utf8")));
+		child.on("error", (err) => finish(1, err.message));
+		child.on("close", (code) => finish(code ?? 1));
+	});
 }
 
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -141,28 +177,39 @@ const launchdLog = (spec: ServiceSpec) => join(homedir(), "Library", "Logs", spe
 export const serviceLogHint = (spec: ServiceSpec = SERVE_SERVICE) => (process.platform === "darwin" ? launchdLog(spec) : `journalctl --user -u ${spec.unit}`);
 
 /** After bootout, launchd can still list the service for a moment; bootstrap into that fails. */
-async function waitUntilUnloaded(spec: ServiceSpec): Promise<void> {
+async function waitUntilUnloaded(spec: ServiceSpec, exec: Runner): Promise<void> {
 	const deadline = Date.now() + 5000;
-	while (run("launchctl", ["print", launchdTarget(spec)]).code === 0 && Date.now() < deadline) await sleep(250);
+	while ((await exec("launchctl", ["print", launchdTarget(spec)])).code === 0 && Date.now() < deadline) await sleep(250);
 }
 
-/** Install and (re)start the user service. Returns the step that failed, if any; the file is written either way. */
-export async function installService(spec: ServiceSpec = SERVE_SERVICE): Promise<{ ok: boolean; message: string; file?: string }> {
+type Runner = (cmd: string, args: string[]) => Promise<{ code: number; out: string }> | { code: number; out: string };
+
+/** Install and (re)start the user service. Returns the step that failed, if any; the file is written either way. Blocks the event loop while the service manager runs: for the CLI. */
+export function installService(spec: ServiceSpec = SERVE_SERVICE): Promise<{ ok: boolean; message: string; file?: string }> {
+	return installWith(spec, run);
+}
+
+/** The same install without blocking the event loop: for the native host, which keeps relaying while the service manager works. */
+export function installServiceAsync(spec: ServiceSpec = SERVE_SERVICE, timeoutMs?: number): Promise<{ ok: boolean; message: string; file?: string }> {
+	return installWith(spec, (cmd, args) => runAsync(cmd, args, timeoutMs));
+}
+
+async function installWith(spec: ServiceSpec, exec: Runner): Promise<{ ok: boolean; message: string; file?: string }> {
 	const binary = tabkyraBinary();
 	const env = serviceEnvironment();
 	if (process.platform === "darwin") {
 		const log = launchdLog(spec);
 		mkdirSync(dirname(log), { recursive: true });
 		writeAtomic(plistPath(spec), plistText(binary, env, log, spec), 0o644);
-		run("launchctl", ["bootout", launchdTarget(spec)]);
-		await waitUntilUnloaded(spec);
-		const r = run("launchctl", ["bootstrap", `gui/${process.getuid?.() ?? 0}`, plistPath(spec)]);
+		await exec("launchctl", ["bootout", launchdTarget(spec)]);
+		await waitUntilUnloaded(spec, exec);
+		const r = await exec("launchctl", ["bootstrap", `gui/${process.getuid?.() ?? 0}`, plistPath(spec)]);
 		return { ok: r.code === 0, file: plistPath(spec), message: r.code === 0 ? `Service installed (${plistPath(spec)}); logs in ${log}.` : `launchctl bootstrap failed: ${r.out}. Run: launchctl bootstrap gui/${process.getuid?.() ?? 0} ${plistPath(spec)}` };
 	}
 	if (process.platform === "linux") {
 		writeAtomic(unitPath(spec), unitText(binary, env, spec), 0o644);
 		for (const args of [["daemon-reload"], ["enable", spec.unit], ["restart", spec.unit]]) {
-			const r = run("systemctl", ["--user", ...args]);
+			const r = await exec("systemctl", ["--user", ...args]);
 			if (r.code !== 0) return { ok: false, file: unitPath(spec), message: `systemctl --user ${args.join(" ")} failed: ${r.out}. The unit is at ${unitPath(spec)}.` };
 		}
 		return { ok: true, file: unitPath(spec), message: `Service installed (${unitPath(spec)}); journalctl --user -u ${spec.unit} shows its log.` };

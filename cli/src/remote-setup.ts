@@ -217,6 +217,8 @@ export interface SetupOptions {
 	publicUrl?: string;
 	port?: number;
 	service: boolean;
+	/** False (--no-passcode) mints and prints no passcode; the one-time connect code is the way in. For an agent's shell. */
+	passcode?: boolean;
 }
 
 export async function remoteSetup(options: SetupOptions): Promise<number> {
@@ -283,7 +285,9 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 			return 1;
 		}
 	}
-	if (!passcodeSet()) {
+	if (options.passcode === false && !passcodeSet()) {
+		console.log(`${sym.dot} No passcode made (--no-passcode). Approve a connection with a one-time connect code: tabkyra token approval-code. tabkyra token passcode sets a passcode later.`);
+	} else if (!passcodeSet()) {
 		const passcode = setPasscode();
 		console.log(`${sym.ok} OAuth passcode:\n\n  ${passcode}\n`);
 		console.log(c.dim("Shown once. Type it on the approval page when claude.ai, ChatGPT or grok.com connects. Keep it in a password manager, but not one the browser Tabkyra drives can fill. tabkyra token passcode replaces it; grants already approved keep working."));
@@ -330,7 +334,7 @@ Connector URL: ${c.bold(`${publicUrl}/mcp`)}
   ChatGPT     Settings > Apps & Connectors (developer mode) > Create, paste the URL, OAuth.
   grok.com    grok.com/connectors > New Connector > Custom, paste the URL.
 
-Approve with your Tabkyra passcode.
+${passcodeSet() ? "Approve with your Tabkyra passcode." : "Approve with a one-time connect code: tabkyra token approval-code."}
 Check it with: tabkyra remote status`);
 	return 0;
 }
@@ -398,7 +402,7 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 	let clients = 0;
 	if (config) {
 		const passcode = passcodeSet();
-		checks.push({ name: "passcode", status: passcode ? "ok" : "fail", detail: passcode ? "set" : "not set, so nobody can approve a connection. Run tabkyra token passcode." });
+		checks.push({ name: "passcode", status: passcode ? "ok" : "warn", detail: passcode ? "set" : "not set; only a connect code (tabkyra token approval-code) can approve a connection. tabkyra token passcode sets one." });
 		const local = await probeLocal(config.port, config.publicUrl, 3000);
 		const where = `http://127.0.0.1:${config.port}${METADATA_PATH}`;
 		checks.push({

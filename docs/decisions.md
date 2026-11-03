@@ -747,3 +747,54 @@ ChatGPT and grok.com add once, with any number of his own computers behind it.
 - Considered and not done: a hub that also drives its own browser (run `link` on the hub box
   instead), and a maintainer-run hub (D31).
 
+
+## D33. Connect in the side panel: what the host answers and what the panel shows (Claude, 2026-11-02)
+
+- The panel reaches the helper through a `connect` native-messaging frame, parsed strictly in
+  `cli/src/connect-host.ts`: exactly `{type, id, method, params?}`, a known method, and that
+  method's own params. A frame that isn't exactly that is answered `bad_params` when it has an
+  id and runs nothing. The background worker (`src/connect/relay.ts`) only takes Tabkyra's own
+  pages and known method names; the host is the authority.
+- `status` reads local files only (hub.json, remote.json, link.json, the live snapshots, the
+  theme), never the network, so the panel can ask every 10 seconds. It reports `route` as hub,
+  then remote, then link, then none. A config file that is present but unreadable shows as
+  `problem` and the route reads none. An unreadable `hub-devices.json` also shows as `problem`,
+  with the route still hub and no device list. `joinHub` and the panel's join form refuse while
+  `problem` is set and whenever `hub.json` or `remote.json` exists, readable or not.
+- Never in an answer: the passcode, a device secret or credential, a token hash, a device id.
+  Codes are returned once to the panel that asked and are stored only as hashes (D32).
+- `approvalCode` and `deviceCode` share one limit in the host: 10 in 10 minutes of either kind,
+  counted when asked: a call that passes the route checks takes a slot, even if the hub then
+  fails it; a call refused before that (no route, not a manager, a remote route) takes none. The window is a 0600 file of
+  timestamps (`connect-mints.json` in the config dir), so a new host process or a second browser
+  profile on the same config shares it; the hub's own caps (20 live codes) still hold.
+- A code the hub returns to a linked manager device is checked before anything shows it: the
+  code must be exactly `TK-XXXX-XXXX` and a connector URL an https origin plus `/mcp`, else the
+  host answers "The hub answered with a malformed code." The panel checks again before drawing a
+  code or the command that carries it.
+- A request the helper never answers (a helper older than the panel drops the frame) fails after
+  20 seconds, 30 for `joinHub`, with `no_reply` and "Update it: tabkyra update".
+- The setup prompt for an agent runs `remote setup` and `hub setup` with `--no-passcode`, which
+  mint and print no passcode, so no long-lived secret lands in an agent's output or transcript.
+  The one-time connect code approves the connection (D32), and the owner can set a passcode later
+  with `tabkyra token passcode` in their own terminal.
+- `joinHub` runs the same enrollment as `tabkyra link <hub> --code`, including the service.
+  The address (https origin, or http on loopback; a pasted `/mcp` is dropped) and the code
+  (`TK-XXXX-XXXX`, case and look-alike letters folded) are checked in the parser, before any
+  file is read or any network call. It runs only when the route is none, one at a time.
+  The lock on `link.json` covers only the check and the write, never the hub call or the service
+  manager: a second join that starts meanwhile enrolls too, but finds the first one's link at its
+  own write and is refused. The service install runs without blocking the host's event loop, and
+  the host repeats its progress frame every 10 seconds so the panel's 30-second wait stays armed.
+  A panel that still hears nothing after the service step began says the device may be linked.
+- The device list shows on a hub's computer. A device linked as a manager can make codes but
+  sees no list: the hub has no endpoint that lists devices for a device credential, and adding
+  one widens what a stolen manager credential reads. Not done; the list stays on the hub.
+- The side panel's colors are the approval and hub pages' presets (`src/appearance/palettes.ts`),
+  so the three match. That changes the default look from mini-lit's neutral palette to the Tabkyra
+  one for everyone on update; the choice is saved in `chrome.storage.local`. Text pairs reach
+  4.5:1 and the focus ring 3:1 in both modes (`test/appearance.test.mjs`). Control edges (`--input`,
+  also the off switch's track) are derived from the text color to reach 3:1 against the page and
+  the card; `--border` stays the soft divider. Light, Dark or Match system is sent to the helper
+  with the preset and accent, kept in `theme.json` as `mode` (absent for Match system), and fixes
+  the pages' `color-scheme`.

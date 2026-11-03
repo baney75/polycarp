@@ -110,7 +110,7 @@ provider's API key, or pick [Free mode](#free-mode) with a free OpenRouter key.
 
 ### Let your agent do the rest
 
-Once the extension is loaded, open the side panel's **Settings > Bridge** (the welcome
+Once the extension is loaded, open the side panel's **Settings > Agents** (the welcome
 dialog and Settings > Providers have the same button) and click
 **Copy setup prompt for your agent**. Paste it into Claude Code, Codex, pi, OMP or any
 agent with a shell. The agent reuses a working CLI or installs one from the tag that
@@ -440,7 +440,7 @@ Tailscale and a real Cloudflare tunnel hasn't been recorded yet
 Your browser is signed in as you, so the defaults are conservative.
 
 - **The agent asks before it opens a new site.** Claude Code and Codex show the prompt
-  inline; otherwise answer it in the side panel under Settings > Bridge. Run
+  inline; otherwise answer it in the side panel under Settings > Agents. Run
   `tabkyra allow <host>` to pre-approve a site, `tabkyra allow-all` to skip prompts and
   `tabkyra ask` to turn them back on.
 - **Page text is data, not instructions.** The MCP server tells every agent that page

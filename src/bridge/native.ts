@@ -35,9 +35,11 @@ import {
 import {
 	BRIDGE_METHODS,
 	ERR,
+	type ExtConnect,
 	type ExtSubscription,
 	type ExtToHost,
 	type HostClientConnected,
+	type HostConnect,
 	type HostForwardedRequest,
 	type HostSubscription,
 	type HostToExt,
@@ -357,7 +359,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	state.lastActivityAt = Date.now();
 	try {
 		if (!(await isBridgeEnabled())) {
-			throw new BridgeError(ERR.DISABLED, "The tabkyra bridge is disabled in Settings > Bridge.");
+			throw new BridgeError(ERR.DISABLED, "The tabkyra bridge is disabled in Settings > Agents.");
 		}
 		if (gone()) return;
 
@@ -383,7 +385,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 						ERR.PERMISSION_DENIED,
 						`Not allowed to open ${hostOf(url) || url}. ` +
 							(mode === "ask"
-								? "The user can allow it in the tabkyra side panel under Settings > Bridge, or answer the permission prompt."
+								? "The user can allow it in the tabkyra side panel under Settings > Agents, or answer the permission prompt."
 								: "Bridge navigation is blocked."),
 					);
 				}
@@ -446,7 +448,7 @@ async function runAsk(state: ClientState, req: HostForwardedRequest): Promise<vo
 			});
 		if (!(await isBridgeEnabled()))
 			return respond({
-				error: { code: ERR.DISABLED, message: "The tabkyra bridge is disabled in Settings > Bridge." },
+				error: { code: ERR.DISABLED, message: "The tabkyra bridge is disabled in Settings > Agents." },
 			});
 		// The client may have hung up during the awaits; its question would have nobody to answer to.
 		if (clients.get(state.clientId) !== state) return;
@@ -470,8 +472,25 @@ export function sendSubscription(message: ExtSubscription): boolean {
 	return true;
 }
 
+/** Connect frames go to the relay (src/connect/relay.ts); "disconnected" when the host goes. */
+let connectHandler: ((message: HostConnect | "disconnected") => void) | undefined;
+
+export function onConnectMessage(handler: (message: HostConnect | "disconnected") => void): void {
+	connectHandler = handler;
+}
+
+/** Send a Connect request to the host; false when no host is connected. */
+export function sendConnect(message: ExtConnect): boolean {
+	if (!port) return false;
+	send(message);
+	return true;
+}
+
 function onHostMessage(message: HostToExt): void {
 	switch (message.type) {
+		case "connect":
+			connectHandler?.(message);
+			return;
 		case "subscription":
 			subscriptionHandler?.(message);
 			return;
@@ -532,7 +551,7 @@ function onHostMessage(message: HostToExt): void {
 			}
 			if (message.method === "permission.setMode") {
 				// `tabkyra allow-all` / `tabkyra ask`: a local user process flipping the site-permission mode,
-				// same trust as the Settings > Bridge toggle.
+				// same trust as the Settings > Agents toggle.
 				const mode = String(message.params?.mode ?? "");
 				if (mode !== "ask" && mode !== "allow_all") {
 					send({
@@ -776,6 +795,7 @@ function connect(): void {
 		console.debug("[Bridge] native host disconnected:", reason);
 		if (port === next) port = undefined;
 		subscriptionHandler?.("disconnected");
+		connectHandler?.("disconnected");
 		// The host answered these "interrupted: it may have run" and the agent may repeat them
 		// after checking the page: the running handlers must send no more input.
 		for (const state of clients.values()) {

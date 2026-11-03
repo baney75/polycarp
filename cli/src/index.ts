@@ -427,11 +427,11 @@ async function main(): Promise<void> {
 			} else if (option("--redirect-host") !== undefined || option("--allow-host") !== undefined) {
 				throw new UsageError("--redirect-host and --allow-host need --public-url.");
 			}
-			if (oauth && !passcodeSet()) console.log(`${sym.warn} No OAuth passcode yet; nobody can approve a connection. Run: tabkyra token passcode`);
+			if (oauth && !passcodeSet()) console.log(`${sym.warn} No OAuth passcode yet; only a connect code (tabkyra token approval-code) can approve a connection. Run: tabkyra token passcode`);
 			else if (!oauth && loadTokens().every((t) => t.revokedAt)) console.log(`${sym.warn} No tokens yet; every request will be refused. Create one: tabkyra token create <name> --scope browser.read`);
 			const { url } = await serve({ port, host: "127.0.0.1", oauth, allowedHosts });
 			console.log(`${sym.ok} MCP over HTTP at ${url} (loopback only; every request needs a token). Ctrl-C stops it.`);
-			if (oauth) console.log(`${sym.ok} OAuth on for ${oauth.publicUrl}/mcp: add that URL as a custom connector, then approve it with your passcode.`);
+			if (oauth) console.log(`${sym.ok} OAuth on for ${oauth.publicUrl}/mcp: add that URL as a custom connector, then approve it with your passcode or a connect code.`);
 			await new Promise(() => {});
 			return;
 		}
@@ -537,7 +537,7 @@ async function main(): Promise<void> {
 						throw new UsageError(err instanceof Error ? err.message : String(err));
 					}
 				}
-				process.exitCode = await remoteSetup({ publicUrl, port, service: !flag("--no-service") });
+				process.exitCode = await remoteSetup({ publicUrl, port, service: !flag("--no-service"), passcode: !flag("--no-passcode") });
 				return;
 			}
 			if (sub === "status") {
@@ -548,7 +548,7 @@ async function main(): Promise<void> {
 				process.exitCode = await remoteOff();
 				return;
 			}
-			throw new UsageError("Usage: tabkyra remote setup [--public-url https://host] [--port N] [--no-service] | status [--json] | off");
+			throw new UsageError("Usage: tabkyra remote setup [--public-url https://host] [--port N] [--no-service] [--no-passcode] | status [--json] | off");
 		}
 		case "hub": {
 			const rest = argv.slice(1).filter((a, i, all) => !a.startsWith("-") && !(VALUE_FLAGS.has(all[i - 1] ?? "") && !(all[i - 1] ?? "").includes("=")));
@@ -571,10 +571,10 @@ async function main(): Promise<void> {
 			};
 			if (sub === "setup") {
 				const publicUrl = publicOption();
-				if (!publicUrl) throw new UsageError("Usage: tabkyra hub setup --public-url https://host [--port N] [--no-service] [--json]");
+				if (!publicUrl) throw new UsageError("Usage: tabkyra hub setup --public-url https://host [--port N] [--no-service] [--no-passcode] [--json]");
 				const port = portOption();
 				if (port !== undefined && port < 1) throw new UsageError("--port takes a port number from 1 to 65535.");
-				process.exitCode = await hubSetup({ publicUrl, port, service: !flag("--no-service"), json: flag("--json") });
+				process.exitCode = await hubSetup({ publicUrl, port, service: !flag("--no-service"), json: flag("--json"), passcode: !flag("--no-passcode") });
 				return;
 			}
 			if (sub === "serve") {

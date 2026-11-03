@@ -28,6 +28,8 @@ export interface HubSetupOptions {
 	port?: number;
 	service: boolean;
 	json: boolean;
+	/** False (--no-passcode) mints and prints no passcode; the one-time connect code is the way in. For an agent's shell. */
+	passcode?: boolean;
 }
 
 export async function hubSetup(options: HubSetupOptions): Promise<number> {
@@ -51,7 +53,9 @@ export async function hubSetup(options: HubSetupOptions): Promise<number> {
 	const probe = await probeLocal(port, options.publicUrl);
 	if (probe.state === "other" && !options.service) return fail(`Something already listens on 127.0.0.1:${port} and isn't a Tabkyra server for ${options.publicUrl} (${probe.detail}). Nothing was changed.`);
 	let passcode: string | undefined;
-	if (!passcodeSet()) {
+	if (options.passcode === false && !passcodeSet()) {
+		say(`${sym.dot} No passcode made (--no-passcode). Approve a connection with a one-time connect code: tabkyra token approval-code. tabkyra token passcode sets a passcode later.`);
+	} else if (!passcodeSet()) {
 		passcode = setPasscode();
 		say(`${sym.ok} OAuth passcode:\n\n  ${passcode}\n`);
 		say(c.dim("Shown once. Type it on the approval page when claude.ai, ChatGPT or grok.com connects (a one-time connect code from tabkyra token approval-code works too). tabkyra token passcode replaces it; grants already approved keep working."));
@@ -147,7 +151,8 @@ export function hubCode(options: { name?: string; manage: boolean; json: boolean
 
 // ---------- hub devices / remove / prefer ----------
 
-export function hubDevices(json: boolean): number {
+/** One row per enrolled device, joined with what the running hub last reported. */
+export function deviceRows() {
 	const { devices, prefer } = loadDevices();
 	const live = readLive();
 	const rows = devices.map((d) => {
@@ -164,15 +169,20 @@ export function hubDevices(json: boolean): number {
 			manager: d.manage,
 		};
 	});
+	return { rows, prefer, hubRunning: Boolean(live) };
+}
+
+export function hubDevices(json: boolean): number {
+	const { rows, prefer, hubRunning } = deviceRows();
 	if (json) {
-		console.log(JSON.stringify({ hubRunning: Boolean(live), prefer, devices: rows }, null, 2));
+		console.log(JSON.stringify({ hubRunning, prefer, devices: rows }, null, 2));
 		return 0;
 	}
 	if (!rows.length) {
 		console.log(`${sym.dot} No devices. Run tabkyra hub code, then tabkyra link on a device.`);
 		return 0;
 	}
-	if (!live) console.log(`${sym.warn} The hub isn't running, so every device shows offline.`);
+	if (!hubRunning) console.log(`${sym.warn} The hub isn't running, so every device shows offline.`);
 	for (const r of rows) {
 		const state = r.online ? c.green("online ") : c.dim("offline");
 		console.log(
