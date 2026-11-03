@@ -61,7 +61,7 @@ ${CLOSING}`;
 }
 
 /** The hub origin and code a device prompt may carry; anything else would let a stray string become a command. */
-export const HUB_ORIGIN = /^https?:\/\/[A-Za-z0-9.-]+(?::\d{1,5})?$/;
+export const HUB_ORIGIN = /^https?:\/\/(?:[A-Za-z0-9.-]+|\[::1\])(?::\d{1,5})?$/;
 export const CONNECT_CODE = /^TK-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/;
 
 /** A prompt for an agent on another device: link it to this hub with a one-time connect code. */

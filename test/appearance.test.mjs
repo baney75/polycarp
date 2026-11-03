@@ -160,3 +160,9 @@ test("a mode change sends only the mode, and a first load takes the helper's sav
 	assert.match(apply, /connectStatus\(\)/);
 	assert.match(apply, /if \(!saved\) void seedFromHelper\(\)/);
 });
+
+test("picking a preset when the panel's choice has no accent sends accent: null, so theme.json matches", () => {
+	const tab = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "dialogs", "AppearanceTab.ts"), "utf8");
+	assert.match(tab, /this\.choose\(name, choice\.accent, !choice\.accent\)/);
+	assert.match(tab, /clearedAccent \? \{ accent: null \}/);
+});

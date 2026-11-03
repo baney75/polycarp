@@ -26,11 +26,11 @@ import {
 } from "../../src/connect/types.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { normalizeCode, REQUEST_LOCK_MS } from "./codes.ts";
+import { CodeLimitError, normalizeCode, REQUEST_LOCK_MS } from "./codes.ts";
 import { LockTimeoutError, readJsonFile, withFileLock, withFileLockAsync, writeJsonPrivate } from "./files.ts";
 import { deviceRows } from "./hub-admin.ts";
 import { devicesFile, devicesReadable, hubFile, loadHubConfig, mintConnectCode, validDeviceName } from "./hub-state.ts";
-import { type EnrollHooks, enrollDevice, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusy } from "./link.ts";
+import { type EnrollHooks, enrollDevice, LinkError, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusy } from "./link.ts";
 import { configDir, mintApprovalCode, passcodeSet } from "./oauth.ts";
 import { loadRemoteConfig, remoteFile } from "./remote-setup.ts";
 import { isAccent, isMode, loadTheme, PRESETS, saveTheme } from "./theme.ts";
@@ -142,6 +142,8 @@ export interface ConnectOptions {
 	/** The user service `joinHub` installs; tests pass a stand-in so no real service is touched. */
 	service?: EnrollHooks["service"];
 	now?: () => number;
+	/** How often `joinHub` tells the panel it is still working. The panel waits 30 seconds between frames. Tests shorten it. */
+	keepAliveMs?: number;
 }
 
 type Reply = (frame: HostConnect) => void;
@@ -152,14 +154,31 @@ const MINT_FILE = "connect-mints.json";
 const NOT_MANAGER = "This device isn't a manager, so it can't ask the hub for codes. Link it with a code from tabkyra hub code --manage, or run the command on the hub.";
 const NO_ROUTE = "This computer has no public address yet. Run tabkyra remote setup (one computer) or tabkyra hub setup --public-url https://host (many devices) first.";
 
+const GENERIC_FAILURE = "That didn't work on this computer. Try again, or run the matching tabkyra command in a terminal.";
+const unreadable = (file: string) => `${file} is unreadable. Fix it or move it aside.`;
+
+/**
+ * The text a person sees for an error from the library. Only our own sentences pass as written
+ * (ConnectError, CodeLimitError, and the link.ts sentences, none of which quotes a file). Anything else
+ * can carry a file's contents (a JSON parse error quotes the start of the file) or a path, so it
+ * becomes a fixed sentence, naming `file` when the failure is about reading one.
+ */
+function safeMessage(err: unknown, file?: string): string {
+	if (err instanceof ConnectError || err instanceof CodeLimitError || err instanceof LinkError) return err.message;
+	if (err instanceof LockTimeoutError) return "Another Tabkyra window is busy with that. Try again in a moment.";
+	return file ? unreadable(file) : GENERIC_FAILURE;
+}
+
 export class ConnectService {
 	private joining = false;
 	private readonly service?: EnrollHooks["service"];
 	private readonly now: () => number;
+	private readonly keepAliveMs: number;
 
 	constructor(options: ConnectOptions = {}) {
 		this.service = options.service;
 		this.now = options.now ?? Date.now;
+		this.keepAliveMs = options.keepAliveMs ?? 10_000;
 	}
 
 	/** Answer one frame from the side panel. Never throws; a bad frame gets an error and runs nothing. */
@@ -178,7 +197,7 @@ export class ConnectService {
 			const code = err instanceof ConnectError ? err.code : "failed";
 			// The method only: params (a code, a hub address) stay out of the log.
 			process.stderr.write(`[tabkyra-host] connect ${call.method} failed (${code})\n`);
-			reply({ type: "connect", id, error: { code, message: err instanceof Error ? err.message : String(err) } });
+			reply({ type: "connect", id, error: { code, message: safeMessage(err) } });
 		}
 	}
 
@@ -202,7 +221,7 @@ export class ConnectService {
 				try {
 					setLinkBusy(call.busy);
 				} catch (err) {
-					throw new ConnectError("failed", err instanceof Error ? err.message : String(err));
+					throw new ConnectError("failed", safeMessage(err, linkFile()));
 				}
 				return { busy: call.busy };
 			}
@@ -212,7 +231,7 @@ export class ConnectService {
 				try {
 					return saveTheme(call.preset, call.accent, call.mode);
 				} catch (err) {
-					throw new ConnectError("bad_params", err instanceof Error ? err.message : String(err));
+					throw new ConnectError("bad_params", safeMessage(err, join(configDir(), "theme.json")));
 				}
 		}
 	}
@@ -247,7 +266,7 @@ export class ConnectService {
 		return {
 			route,
 			...(publicUrl && route !== "link" ? { publicUrl } : {}),
-			passcodeSet: passcodeSet(),
+			passcodeSet: tryLoad(join(configDir(), "oauth.json"), passcodeSet) ?? false,
 			...(link ? { link: { hubUrl: link.hubUrl, name: link.name, online: linkOnline(readLinkLive(), this.now()), busy: link.busy === true, manage: link.manage } } : {}),
 			...(devices ? { hub: { devices } } : {}),
 			theme: loadTheme(),
@@ -307,8 +326,14 @@ export class ConnectService {
 			const made = mintApprovalCode();
 			return { code: made.code, expiresAt: made.expiresAt, connectorUrl: `${status.publicUrl}/mcp` };
 		} catch (err) {
-			throw new ConnectError(err instanceof Error && /manager/.test(err.message) ? "unavailable" : "failed", err instanceof Error ? err.message : String(err));
+			throw this.codeFailure(err, status.route === "link" ? undefined : join(configDir(), "oauth-codes.json"));
 		}
+	}
+
+	/** A minting error as the panel sees it: our own sentences as written, a fixed one for anything else. */
+	private codeFailure(err: unknown, file?: string): ConnectError {
+		if (err instanceof ConnectError) return err;
+		return new ConnectError(err instanceof LinkError && /manager/.test(err.message) ? "unavailable" : "failed", safeMessage(err, file));
 	}
 
 	private async deviceCode(): Promise<DeviceCode> {
@@ -325,43 +350,65 @@ export class ConnectService {
 			const made = mintConnectCode({ manage: false }, this.now());
 			return { code: made.code, expiresAt: made.expiresAt, hubUrl: status.publicUrl ?? "" };
 		} catch (err) {
-			throw new ConnectError(err instanceof Error && /manager/.test(err.message) ? "unavailable" : "failed", err instanceof Error ? err.message : String(err));
+			throw this.codeFailure(err, status.route === "link" ? undefined : join(configDir(), "hub-codes.json"));
 		}
 	}
 
 	private async joinHub(call: Extract<ConnectCall, { method: "joinHub" }>, progress: (p: Record<string, unknown>) => void): Promise<JoinResult> {
 		// The address and the code were validated in parseConnect, before this ran and before any network call.
 		// A hub.json or remote.json that exists but can't be read leaves the route at none, so check the files too.
-		const status = this.status();
-		if (status.route !== "none" || status.problem || existsSync(hubFile()) || existsSync(remoteFile())) throw new ConnectError("unavailable", JOIN_REFUSED);
+		const refuse = (): void => {
+			const status = this.status();
+			if (status.route !== "none" || status.problem || existsSync(hubFile()) || existsSync(remoteFile())) throw new ConnectError("unavailable", JOIN_REFUSED);
+		};
+		refuse();
 		if (this.joining) throw new ConnectError("busy", "Already joining a hub.");
 		this.joining = true;
+		// The hub call and the service manager take as long as they take; the lock on link.json covers only the check and the write.
+		// Chrome starts a host per connection, so two panels can join at once: whichever commits second finds the first one's link and is refused.
+		const locked = async <T>(fn: () => T): Promise<T> => {
+			try {
+				return await withFileLockAsync(linkFile(), async () => fn(), REQUEST_LOCK_MS);
+			} catch (err) {
+				if (err instanceof LockTimeoutError) throw new ConnectError("busy", "Another Tabkyra window is joining a hub. Try again in a moment.");
+				throw err;
+			}
+		};
+		const noLink = (): void => {
+			let existing: ReturnType<typeof loadLinkConfig>;
+			try {
+				existing = loadLinkConfig();
+			} catch {
+				throw new ConnectError("unavailable", JOIN_REFUSED);
+			}
+			if (existing) throw new ConnectError("unavailable", JOIN_REFUSED);
+		};
+		// The panel gives up 30 seconds after the last frame, and a slow service manager can take longer: repeat the current step until the work ends.
+		let current = "contacting";
+		const keepAlive = setInterval(() => progress({ step: current }), this.keepAliveMs);
 		try {
-			// Chrome starts a host per connection, so two panels can join at once. The lock on link.json makes the second one see the first one's link.
-			return await withFileLockAsync(
-				linkFile(),
-				async () => {
-					let existing: ReturnType<typeof loadLinkConfig>;
-					try {
-						existing = loadLinkConfig();
-					} catch {
-						throw new ConnectError("unavailable", JOIN_REFUSED);
-					}
-					if (existing) throw new ConnectError("unavailable", JOIN_REFUSED);
-					const result = await enrollDevice(
-						{ hubUrl: call.hubUrl, code: call.code, name: call.name, service: true },
-						{ step: (step) => progress({ step }), ...(this.service ? { service: this.service } : {}) },
-					);
-					if (result.kind === "failed") throw new ConnectError("failed", result.error);
-					if (!result.ok) throw new ConnectError("failed", `Linked as ${result.name}, but the background service didn't start. ${result.service}`);
-					return { name: result.name, manage: result.manage };
+			await locked(noLink);
+			const result = await enrollDevice(
+				{ hubUrl: call.hubUrl, code: call.code, name: call.name, service: true },
+				{
+					step: (step) => {
+						current = step;
+						progress({ step });
+					},
+					nonBlocking: true,
+					commit: (write) =>
+						locked(() => {
+							noLink();
+							write();
+						}),
+					...(this.service ? { service: this.service } : {}),
 				},
-				REQUEST_LOCK_MS,
 			);
-		} catch (err) {
-			if (err instanceof LockTimeoutError) throw new ConnectError("busy", "Another Tabkyra window is joining a hub. Try again in a moment.");
-			throw err;
+			if (result.kind === "failed") throw new ConnectError("failed", result.error);
+			if (!result.ok) throw new ConnectError("failed", `Linked as ${result.name}, but the background service didn't start. ${result.service}`);
+			return { name: result.name, manage: result.manage };
 		} finally {
+			clearInterval(keepAlive);
 			this.joining = false;
 		}
 	}

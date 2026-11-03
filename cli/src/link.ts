@@ -34,7 +34,7 @@ import {
 } from "./link-protocol.ts";
 import { configDir, DEFAULT_GRANT, normalizePublicUrl } from "./oauth.ts";
 import { createToken, HUB_CALLER_HEADER, HUB_SCOPES_HEADER, LINK_TOKEN_NAME, pruneLinkTokens, revokeLinkTokens, revokeToken, SCOPES, serve } from "./remote.ts";
-import { installService, LINK_SERVICE, removeService, serviceFile, serviceLogHint } from "./service.ts";
+import { installService, installServiceAsync, LINK_SERVICE, removeService, serviceFile, serviceLogHint } from "./service.ts";
 import { splitText } from "./text-split.ts";
 import { c, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
@@ -162,6 +162,15 @@ export type EnrollResult =
 	| { kind: "failed"; error: string }
 	| { kind: "linked"; ok: boolean; name: string; deviceId: string; manage: boolean; scopes: string[]; service: string };
 
+/** A sentence from link.ts that is safe to show a person as written: it never quotes a file. */
+export class LinkError extends Error {}
+
+/** A valid device name from this computer's hostname: its first label, characters the hub allows, at most 40; "device" when nothing is left. */
+export function defaultDeviceName(host: string = hostname()): string {
+	const cleaned = (host.split(".")[0] ?? "").replace(/[^A-Za-z0-9._ -]/g, "-").replace(/^[-. ]+|[-. ]+$/g, "").slice(0, 40).replace(/[-. ]+$/g, "");
+	return cleaned || "device";
+}
+
 /** What enrolling touches besides the hub: output, progress, and the user service. Tests and the native host pass their own. */
 export interface EnrollHooks {
 	/** A human line (the CLI prints it; the native host drops it, because stdout is its channel to the browser). */
@@ -169,12 +178,20 @@ export interface EnrollHooks {
 	/** A step the person is waiting on. */
 	step?: (step: "contacting" | "service") => void;
 	service?: { valid: () => boolean; install: () => Promise<{ ok: boolean; message: string }> };
+	/** Install the service without blocking the event loop (the native host). The CLI blocks, which is simpler and harmless there. */
+	nonBlocking?: boolean;
+	/**
+	 * Called with the write of link.json, after the hub has enrolled this device. The native host takes
+	 * its lock here, re-checks that no link.json appeared meanwhile, and throws to refuse; the slow
+	 * work (the hub, the service) stays outside the lock.
+	 */
+	commit?: (write: () => void) => Promise<void>;
 }
 
 /** Enroll this device. Prints nothing itself: it reports through `hooks` and its result. */
 export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: EnrollHooks = {}): Promise<EnrollResult> {
 	const say = hooks.say ?? (() => {});
-	const service = hooks.service ?? { valid: launcherValid, install: () => installService(LINK_SERVICE) };
+	const service = hooks.service ?? { valid: launcherValid, install: () => (hooks.nonBlocking ? installServiceAsync(LINK_SERVICE) : installService(LINK_SERVICE)) };
 	let existing: LinkConfig | undefined;
 	try {
 		existing = loadLinkConfig();
@@ -188,14 +205,16 @@ export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: 
 	hooks.step?.("contacting");
 	let result: Awaited<ReturnType<typeof hubPost>>;
 	try {
-		result = await hubPost(options, "/link/enroll", { code: options.code, name: options.name ?? hostname().split(".")[0], version: VERSION });
+		result = await hubPost(options, "/link/enroll", { code: options.code, name: options.name ?? defaultDeviceName(), version: VERSION });
 	} catch (err) {
 		return { kind: "failed", error: `Couldn't reach ${options.hubUrl}: ${err instanceof Error ? err.message : String(err)}` };
 	}
 	const { deviceId, secret, manage, name } = result.body;
 	if (result.status !== 200 || typeof deviceId !== "string" || typeof secret !== "string" || typeof name !== "string") return { kind: "failed", error: `The hub refused: ${describe(result.body, result.status)}` };
 	const config: LinkConfig = { hubUrl: options.hubUrl, deviceId, secret, name, manage: manage === true, scopes };
-	writeJsonPrivate(linkFile(), config);
+	const write = () => writeJsonPrivate(linkFile(), config);
+	if (hooks.commit) await hooks.commit(write);
+	else write();
 	say(`${sym.ok} Linked as ${c.bold(name)} (${deviceId})${config.manage ? ", a manager device" : ""}. Wrote ${c.dim(linkFile())}`);
 	say(`${sym.dot} This device allows: ${scopes.join(", ")}`);
 	let serviceMessage = "no service (run: tabkyra link run)";
@@ -611,7 +630,7 @@ export async function linkOff(): Promise<number> {
 /** Mark this device busy or not. Throws when it isn't linked. */
 export function setLinkBusy(busy: boolean): void {
 	const config = loadLinkConfig();
-	if (!config) throw new Error("This device isn't linked. Run tabkyra link <hub-url> --code <code>.");
+	if (!config) throw new LinkError("This device isn't linked. Run tabkyra link <hub-url> --code <code>.");
 	const { busy: _old, ...rest } = config;
 	writeJsonPrivate(linkFile(), busy ? { ...rest, busy: true } : rest);
 }
@@ -636,20 +655,20 @@ export function linkBusy(value: string | undefined): number {
 /** A code from the hub, asked for with this device's credential. Throws a sentence a person can act on. */
 export async function mintViaHub(kind: "connect" | "approval", manage: boolean): Promise<{ code: string; expiresAt: number; url?: string; hubUrl: string }> {
 	const config = loadLinkConfig();
-	if (!config) throw new Error("This device isn't linked. Run tabkyra link <hub-url> --code <code>.");
-	if (!config.manage) throw new Error("This device isn't a manager, so it can't ask the hub for codes. Link it with a code from tabkyra hub code --manage, or run the command on the hub.");
+	if (!config) throw new LinkError("This device isn't linked. Run tabkyra link <hub-url> --code <code>.");
+	if (!config.manage) throw new LinkError("This device isn't a manager, so it can't ask the hub for codes. Link it with a code from tabkyra hub code --manage, or run the command on the hub.");
 	let result: Awaited<ReturnType<typeof hubPost>>;
 	try {
 		result = await hubPost(config, "/link/code", { kind, manage }, `${config.deviceId}.${config.secret}`);
 	} catch (err) {
-		throw new Error(`Couldn't reach ${config.hubUrl}: ${err instanceof Error ? err.message : String(err)}`);
+		throw new LinkError(`Couldn't reach ${config.hubUrl}: ${err instanceof Error ? err.message : String(err)}`);
 	}
 	const { code, expiresAt, url } = result.body;
-	if (result.status !== 200) throw new Error(`The hub refused: ${describe(result.body, result.status)}`);
+	if (result.status !== 200) throw new LinkError(`The hub refused: ${describe(result.body, result.status)}`);
 	// The reply is untrusted: the owner may paste what it carries into a shell, so only the exact shapes pass.
 	const shaped = typeof code === "string" ? normalizeCode(code) : undefined;
-	if (!shaped || shaped !== code || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) throw new Error("The hub answered with a malformed code.");
-	if (url !== undefined && (typeof url !== "string" || !isConnectorUrl(url))) throw new Error("The hub answered with a malformed code.");
+	if (!shaped || shaped !== code || typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) throw new LinkError("The hub answered with a malformed code.");
+	if (url !== undefined && (typeof url !== "string" || !isConnectorUrl(url))) throw new LinkError("The hub answered with a malformed code.");
 	return { code: shaped, expiresAt, ...(typeof url === "string" ? { url } : {}), hubUrl: config.hubUrl };
 }
 

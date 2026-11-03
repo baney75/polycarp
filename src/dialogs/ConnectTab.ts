@@ -7,6 +7,7 @@ import { deviceSetupPrompt, remoteSetupPrompt } from "../agent-setup-prompt.js";
 import { COMMAND_BOX_CLASS } from "../components/command-box.js";
 import { Toast } from "../components/Toast.js";
 import {
+	ConnectRequestError,
 	connectApprovalCode,
 	connectDeviceCode,
 	connectJoinHub,
@@ -61,6 +62,7 @@ export class ConnectTab extends SettingsTab {
 	@state() private codeError?: string;
 	@state() private hubUrl = "";
 	@state() private joinCode = "";
+	@state() private joinName = "";
 	@state() private joining?: string;
 	@state() private joinMessage?: { ok: boolean; text: string };
 	@state() private busyPending = false;
@@ -145,10 +147,18 @@ export class ConnectTab extends SettingsTab {
 	private async join(): Promise<void> {
 		this.joinMessage = undefined;
 		this.joining = "Checking the address and code...";
+		// Once the service step began, link.json is written: a silent helper after that may well have linked this device.
+		let linkWritten = false;
 		try {
-			const result = await connectJoinHub(this.hubUrl.trim(), this.joinCode.trim(), undefined, (step) => {
-				this.joining = step === "service" ? "Starting the background service..." : "Contacting the hub...";
-			});
+			const result = await connectJoinHub(
+				this.hubUrl.trim(),
+				this.joinCode.trim(),
+				this.joinName.trim() || undefined,
+				(step) => {
+					if (step === "service") linkWritten = true;
+					this.joining = step === "service" ? "Starting the background service..." : "Contacting the hub...";
+				},
+			);
 			this.joinMessage = {
 				ok: true,
 				text: `Joined as ${result.name}. This computer now shows in your hub's device list.`,
@@ -156,7 +166,15 @@ export class ConnectTab extends SettingsTab {
 			this.joinCode = "";
 		} catch (err) {
 			if (isNoHost(err)) this.noHost = true;
-			this.joinMessage = { ok: false, text: err instanceof Error ? err.message : String(err) };
+			this.joinMessage = {
+				ok: false,
+				text:
+					linkWritten && err instanceof ConnectRequestError && err.code === "no_reply"
+						? "Tabkyra may have linked this device. Reopen Settings to check."
+						: err instanceof Error
+							? err.message
+							: String(err),
+			};
 		} finally {
 			this.joining = undefined;
 		}
@@ -401,7 +419,7 @@ export class ConnectTab extends SettingsTab {
 		return this.section(
 			"Join a hub",
 			html`
-				<p class="text-xs text-muted-foreground">Already run a hub on another computer? Enter its address and a connect code from its Settings > Connect.</p>
+				<p class="text-xs text-muted-foreground">Already run a hub on another computer? Enter its address and a device code from Settings › Connect › Your devices › Add a device on the hub (or a manager device).</p>
 				<label class="flex flex-col gap-1 text-xs text-muted-foreground">
 					<span>Hub address</span>
 					<input class=${inputClass} placeholder="https://hub.example.com" autocomplete="off" spellcheck="false" .value=${this.hubUrl} @input=${(
@@ -411,11 +429,19 @@ export class ConnectTab extends SettingsTab {
 					}} />
 				</label>
 				<label class="flex flex-col gap-1 text-xs text-muted-foreground">
-					<span>Connect code</span>
+					<span>Device code</span>
 					<input class="${inputClass} font-mono" placeholder="TK-XXXX-XXXX" autocomplete="off" spellcheck="false" .value=${this.joinCode} @input=${(
 						e: Event,
 					) => {
 						this.joinCode = (e.target as HTMLInputElement).value;
+					}} />
+				</label>
+				<label class="flex flex-col gap-1 text-xs text-muted-foreground">
+					<span>Device name (optional)</span>
+					<input class=${inputClass} placeholder="Letters, digits, dot, dash, underscore, space; up to 40" maxlength="40" autocomplete="off" spellcheck="false" .value=${this.joinName} @input=${(
+						e: Event,
+					) => {
+						this.joinName = (e.target as HTMLInputElement).value;
 					}} />
 				</label>
 				<div class="flex items-center gap-3">

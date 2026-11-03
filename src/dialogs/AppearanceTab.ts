@@ -112,7 +112,7 @@ export class AppearanceTab extends SettingsTab {
 				aria-pressed=${selected ? "true" : "false"}
 				data-preset=${name}
 				class="flex items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected ? "border-foreground" : "border-border hover:bg-secondary/60"}"
-				@click=${() => void this.choose(name, choice.accent)}
+				@click=${() => void this.choose(name, choice.accent, !choice.accent)}
 			>
 				<span class="flex h-6 w-9 shrink-0 overflow-hidden rounded border border-border" aria-hidden="true">
 					<span class="w-1/2" style="background:${palette.bg}"></span>

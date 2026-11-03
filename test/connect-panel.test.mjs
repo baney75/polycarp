@@ -226,3 +226,22 @@ test("the relay forgets a request the host never answers, and clears the timer w
 	assert.match(relay, /if \(message\.error \|\| reply\.result !== undefined\) forget\(message\.id\);/);
 	assert.match(relay, /if \(w\.port === port\) forget\(hostId\);/);
 });
+
+test("a hub at http://[::1]:port passes the panel's shape checks, as it does the host's", async () => {
+	const { validApprovalCode, validDeviceCode } = await import("../src/connect/format.ts");
+	const soon = Date.now() + 600_000;
+	assert.equal(validDeviceCode({ code: "TK-ABCD-EFGH", expiresAt: soon, hubUrl: "http://[::1]:8787" }), true);
+	assert.equal(validApprovalCode({ code: "TK-ABCD-EFGH", expiresAt: soon, connectorUrl: "http://[::1]:8787/mcp" }), true);
+	for (const hubUrl of ["http://[::2]:8787", "http://[::1", "http://[::1]x", "http://[::1]/x"]) assert.equal(validDeviceCode({ code: "TK-ABCD-EFGH", expiresAt: soon, hubUrl }), false, hubUrl);
+});
+
+test("Join a hub asks for a Device code from Add a device, takes an optional name, and tells a silent helper after the link step", () => {
+	const tab = read("src/dialogs/ConnectTab.ts");
+	assert.match(tab, /a device code from Settings › Connect › Your devices › Add a device on the hub \(or a manager device\)/);
+	assert.match(tab, /<span>Device code<\/span>/);
+	assert.doesNotMatch(tab, /<span>Connect code<\/span>/);
+	assert.match(tab, /<span>Device name \(optional\)<\/span>/);
+	assert.match(tab, /this\.joinName\.trim\(\) \|\| undefined/);
+	assert.match(tab, /Tabkyra may have linked this device\. Reopen Settings to check\./);
+	assert.match(tab, /linkWritten && err instanceof ConnectRequestError && err\.code === "no_reply"/);
+});

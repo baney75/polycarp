@@ -29,8 +29,11 @@ const mod = await loadTs(`
 export { ConnectService, parseConnect } from "@src/connect-host.ts";
 export { setPasscode } from "@src/oauth.ts";
 export { themeCss } from "@src/theme.ts";
+export { withFileLockAsync } from "@src/files.ts";
+export { defaultDeviceName } from "@src/link.ts";
+export { installServiceAsync, runAsync, LINK_SERVICE } from "@src/service.ts";
 `);
-const { ConnectService, parseConnect, setPasscode, themeCss } = mod;
+const { ConnectService, parseConnect, setPasscode, themeCss, withFileLockAsync, defaultDeviceName, installServiceAsync, runAsync, LINK_SERVICE } = mod;
 
 /** Run `fn` with TABKYRA_CONFIG_DIR pointing at a fresh temp dir (the bundle reads it on every call). */
 async function inConfig(name, fn) {
@@ -819,4 +822,226 @@ exit 0
 	assert.ok(host.frames.every((f) => f && typeof f === "object" && f.type), "a frame without a type");
 	assert.doesNotMatch(JSON.stringify(host.frames), /noise on std/);
 	host.proc.stdin.end();
+});
+
+// ---------- round 1 review fixes ----------
+
+const sleepMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A hub that only enrolls: each /link/enroll waits for gate(n) (if given), then answers with a fresh device. */
+async function enrollHub(gate = async () => {}) {
+	const bodies = [];
+	const server = createServer((req, res) => {
+		let body = "";
+		req.on("data", (d) => (body += d));
+		req.on("end", async () => {
+			const parsed = JSON.parse(body || "{}");
+			const n = bodies.push(parsed);
+			await gate(n);
+			res.setHeader("content-type", "application/json");
+			res.end(JSON.stringify({ deviceId: `dv-${String(n).padStart(12, "a")}`, secret: `S${n}`.padEnd(43, "x"), name: parsed.name ?? `dev${n}`, manage: false }));
+		});
+	});
+	await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+	cleanup.push(() => server.close());
+	return { bodies, url: `http://127.0.0.1:${server.address().port}` };
+}
+
+const stubService = () => ({ valid: () => true, install: async () => ({ ok: true, message: "stub" }) });
+
+test("a second join that starts while the first is mid-enroll cannot overwrite the first's link.json", async () => {
+	let release;
+	const held = new Promise((resolve) => (release = resolve));
+	const hub = await enrollHub(async (n) => {
+		if (n === 1) await held;
+	});
+	await inConfig("join-mid-enroll", async (dir) => {
+		const first = ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH", name: "first" }, 1);
+		while (hub.bodies.length < 1) await sleepMs(10);
+		// The first is inside its hub call and holds no lock: the second is not stuck behind it, enrolls, and links.
+		const second = await ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH", name: "second" }, 2);
+		assert.equal(second.result?.name, "second", JSON.stringify(second.error));
+		assert.equal(existsSync(join(dir, "link.json.lock")), false, "a lock was held across the hub call");
+		release();
+		const late = await first;
+		assert.equal(late.result, undefined);
+		assert.equal(late.error.code, "unavailable");
+		assert.equal(JSON.parse(readFileSync(join(dir, "link.json"), "utf8")).name, "second", "the first overwrote the second's link.json");
+		assert.equal(existsSync(join(dir, "link.json.lock")), false);
+	});
+});
+
+test("a join that starts after a slow service step began finds the link and is refused", async () => {
+	const hub = await enrollHub();
+	await inConfig("join-during-service", async (dir) => {
+		let inService;
+		const reached = new Promise((resolve) => (inService = resolve));
+		let finish;
+		const slow = { valid: () => true, install: () => new Promise((resolve) => { inService(); finish = () => resolve({ ok: true, message: "stub" }); }) };
+		const first = ask(new ConnectService({ service: slow }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH", name: "first" }, 1);
+		await reached;
+		const second = await ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH", name: "second" }, 2);
+		assert.equal(second.error.code, "unavailable");
+		assert.equal(hub.bodies.length, 1, "the second reached the hub");
+		finish();
+		assert.equal((await first).result.name, "first");
+		assert.equal(JSON.parse(readFileSync(join(dir, "link.json"), "utf8")).name, "first");
+	});
+});
+
+test("the async lock removes only a lock it owns, and the lock records pid and a nonce", async () => {
+	const dir = join(root, "lock-owner");
+	mkdirSync(dir, { recursive: true });
+	const target = join(dir, "x.json");
+	let seen;
+	await withFileLockAsync(target, async () => {
+		seen = readFileSync(`${target}.lock`, "utf8");
+		// Another process took the lock as stale while this one worked.
+		writeFileSync(`${target}.lock`, "999:othernonce");
+	});
+	assert.match(seen, new RegExp(`^${process.pid}:[0-9a-f]{16}$`));
+	assert.equal(readFileSync(`${target}.lock`, "utf8"), "999:othernonce", "removed a lock it no longer owned");
+	rmSync(`${target}.lock`);
+	await withFileLockAsync(target, async () => {});
+	assert.equal(existsSync(`${target}.lock`), false);
+});
+
+test("the service install does not block the event loop, and a hung service manager is cut off", async () => {
+	const bin = join(root, "slow-bin");
+	mkdirSync(bin, { recursive: true });
+	for (const name of ["launchctl", "systemctl"]) {
+		writeFileSync(join(bin, name), '#!/bin/sh\n[ "$1" = "print" ] && exit 1\nsleep 1\nexit 0\n');
+		chmodSync(join(bin, name), 0o755);
+	}
+	const home = join(root, "slow-home");
+	mkdirSync(home, { recursive: true });
+	const saved = { PATH: process.env.PATH, HOME: process.env.HOME };
+	process.env.PATH = `${bin}:${saved.PATH}`;
+	process.env.HOME = home;
+	try {
+		let longest = 0;
+		let last = Date.now();
+		const ticker = setInterval(() => {
+			longest = Math.max(longest, Date.now() - last);
+			last = Date.now();
+		}, 20);
+		const started = Date.now();
+		const done = await installServiceAsync(LINK_SERVICE);
+		clearInterval(ticker);
+		assert.equal(done.ok, true, done.message);
+		assert.ok(Date.now() - started >= 900, "the fake service manager never ran");
+		assert.ok(longest < 400, `the event loop stalled for ${longest} ms`);
+		// A command that outlives its limit is killed and reported, not waited on.
+		const cut = await runAsync("sleep", ["30"], 150);
+		assert.equal(cut.code, 1);
+		assert.match(cut.out, /timed out/);
+	} finally {
+		for (const [k, v] of Object.entries(saved)) {
+			if (v === undefined) delete process.env[k];
+			else process.env[k] = v;
+		}
+	}
+});
+
+test("joinHub repeats its progress while the service works, so the panel's wait stays armed", async () => {
+	const hub = await enrollHub();
+	await inConfig("join-keepalive", async () => {
+		const slow = { valid: () => true, install: async () => (await sleepMs(500), { ok: true, message: "stub" }) };
+		const { result, progress } = await ask(new ConnectService({ service: slow, keepAliveMs: 100 }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH" });
+		assert.ok(result);
+		const services = progress.filter((p) => p.step === "service").length;
+		assert.ok(services >= 3, `only ${services} service frames: ${JSON.stringify(progress)}`);
+	});
+});
+
+test("the native host keeps answering while a slow service manager runs", async () => {
+	const hub = await startHub(root, "join-slow-hub");
+	cleanup.push(() => hub.stop());
+	const code = hub.json(["hub", "code", "--name", "slowsvc", "--json"]).code;
+	const bin = join(root, "slow-host-bin");
+	mkdirSync(bin, { recursive: true });
+	for (const name of ["launchctl", "systemctl"]) {
+		writeFileSync(join(bin, name), '#!/bin/sh\n[ "$1" = "print" ] && exit 1\nsleep 1\nexit 0\n');
+		chmodSync(join(bin, name), 0o755);
+	}
+	const host = startHost("slowhost", { PATH: `${bin}:${dirname(process.execPath)}:/bin:/usr/bin` });
+	mkdirSync(host.m.config, { recursive: true, mode: 0o700 });
+	const launcher = join(host.m.env.HOME, ".config", "tabkyra", "tabkyra");
+	mkdirSync(dirname(launcher), { recursive: true });
+	writeFileSync(launcher, `#!/bin/sh\nexec "${process.execPath}" "${cli}" "$@"\n`);
+	chmodSync(launcher, 0o755);
+	host.send({ type: "connect", id: 1, method: "joinHub", params: { hubUrl: hub.url, code } });
+	const until = Date.now() + 15_000;
+	while (!host.frames.some((f) => f.progress?.step === "service") && Date.now() < until) await sleepMs(10);
+	assert.ok(host.frames.some((f) => f.progress?.step === "service"), "the service step never began");
+	const asked = Date.now();
+	host.send({ type: "connect", id: 2, method: "status" });
+	const status = await host.reply(2, 3000);
+	assert.ok(status.result, "no status while the service installed");
+	assert.ok(Date.now() - asked < 600, `status waited ${Date.now() - asked} ms behind the service manager`);
+	assert.equal(host.frames.some((f) => f.id === 1 && (f.result || f.error)), false, "the join finished before the status reply, so nothing was proved");
+	assert.equal((await host.reply(1, 20_000)).result.name, "slowsvc");
+	host.proc.stdin.end();
+});
+
+test("errors from the library never reach the panel as written: corrupt files and unreadable ones get a fixed sentence", async () => {
+	const secret = "SUPERSECRET".repeat(4);
+	await inConfig("corrupt-codes", async (dir) => {
+		writeJson(join(dir, "hub.json"), { publicUrl: "https://hub.example.com", port: 8787 });
+		writeFileSync(join(dir, "oauth.json"), `x{"passcode":"${secret}"`);
+		writeFileSync(join(dir, "hub-codes.json"), `x{"sha256":"${secret}"`);
+		writeFileSync(join(dir, "oauth-codes.json"), `x{"sha256":"${secret}"`);
+		const s = new ConnectService();
+		const frames = [await ask(s, "status", undefined, 1), await ask(s, "approvalCode", undefined, 2), await ask(s, "deviceCode", undefined, 3)];
+		assert.ok(!JSON.stringify(frames).includes(secret), JSON.stringify(frames));
+		assert.equal(frames[0].result.passcodeSet, false);
+	});
+	await inConfig("unreadable-codes", async (dir) => {
+		// A directory where the code file belongs: the read and the write both fail with an error that names paths.
+		writeJson(join(dir, "hub.json"), { publicUrl: "https://hub.example.com", port: 8787 });
+		mkdirSync(join(dir, "hub-codes.json", "inside"), { recursive: true });
+		mkdirSync(join(dir, "oauth-codes.json", "inside"), { recursive: true });
+		const s = new ConnectService();
+		const device = await ask(s, "deviceCode", undefined, 1);
+		assert.equal(device.error.code, "failed");
+		assert.equal(device.error.message, `${join(dir, "hub-codes.json")} is unreadable. Fix it or move it aside.`);
+		const approval = await ask(s, "approvalCode", undefined, 2);
+		assert.equal(approval.error.message, `${join(dir, "oauth-codes.json")} is unreadable. Fix it or move it aside.`);
+		assert.ok(!/ENOTEMPTY|EISDIR|rename/.test(JSON.stringify([device, approval])));
+	});
+});
+
+test("a limit sentence still reaches the panel as written", async () => {
+	await inConfig("limit-text", async (dir) => {
+		writeJson(join(dir, "hub.json"), { publicUrl: "https://hub.example.com", port: 8787 });
+		const s = new ConnectService();
+		const outcomes = [];
+		for (let i = 1; i <= 21; i++) outcomes.push(await ask(s, "deviceCode", undefined, i));
+		// Ten per ten minutes: the 11th is the host's own sentence.
+		assert.match(outcomes[10].error.message, /10 codes in ten minutes/);
+	});
+});
+
+test("joinHub passes a device name to the hub, and the default name is a valid one", () => {
+	for (const host of ["dbaney-thinkpad-x1-carbon-gen-11-workstation-2.local", "My Mac's iMac.local", "!!!", "", "a_b.c"]) {
+		const name = defaultDeviceName(host);
+		assert.match(name, /^[A-Za-z0-9._ -]{1,40}$/, host);
+		assert.equal(parseConnect({ type: "connect", id: 1, method: "joinHub", params: { hubUrl: "https://h.example.com", code: "TK-ABCD-EFGH", name } }).ok, true, host);
+	}
+	assert.equal(defaultDeviceName("dbaney-thinkpad-x1-carbon-gen-11-workstation-2.local").length <= 40, true);
+	assert.equal(defaultDeviceName("!!!"), "device");
+});
+
+test("joinHub forwards the name the panel sent", async () => {
+	const hub = await enrollHub();
+	await inConfig("join-named", async () => {
+		const { result } = await ask(new ConnectService({ service: stubService() }), "joinHub", { hubUrl: hub.url, code: "TK-ABCD-EFGH", name: "Front Desk" });
+		assert.equal(result.name, "Front Desk");
+		assert.equal(hub.bodies[0].name, "Front Desk");
+	});
+});
+
+test("a loopback IPv6 hub address is accepted by the host", () => {
+	const parsed = parseConnect({ type: "connect", id: 1, method: "joinHub", params: { hubUrl: "http://[::1]:8787", code: "TK-ABCD-EFGH" } });
+	assert.equal(parsed.ok, true, JSON.stringify(parsed));
 });
