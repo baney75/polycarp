@@ -3,13 +3,16 @@
  * a light and a dark palette, and an optional custom accent (#rrggbb). `theme.json` in the config
  * dir holds the choice. Pages follow prefers-color-scheme unless the choice fixes a mode (light or
  * dark, sent from the side panel's Appearance tab); every pair a page draws as text on a
- * background reaches WCAG AA (4.5:1), which cli/test/theme.test.mjs checks for every preset.
+ * background reaches WCAG AA (4.5:1), and the focus ring and control edges reach 3:1 (--ring, --edge),
+ * which cli/test/theme.test.mjs checks for every preset.
  */
 
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
+	accentInk,
 	contrast,
+	controlEdge,
 	DEFAULT_PRESET,
 	isAccent,
 	isPreset,
@@ -48,11 +51,12 @@ export function loadTheme(): SavedTheme {
 }
 
 /**
- * Save a choice with the same checks `tabkyra theme` makes. `accent` undefined keeps the saved
+ * Save a choice with the same checks `tabkyra theme` makes. `preset` undefined keeps the saved preset (a mode-only change). `accent` undefined keeps the saved
  * accent (as `theme set` does), null clears it, a string sets it. `mode` works the same way: undefined
  * keeps the saved mode, "system" clears it, "light" or "dark" pins the pages. Throws on a bad value.
  */
-export function saveTheme(preset: string, accent?: string | null, mode?: string): SavedTheme {
+export function saveTheme(presetArg: string | undefined, accent?: string | null, mode?: string): SavedTheme {
+	const preset = presetArg ?? loadTheme().preset;
 	if (!isPreset(preset)) throw new Error(`Pick a preset: ${Object.keys(PRESETS).join(", ")}.`);
 	if (typeof accent === "string" && !isAccent(accent)) throw new Error("Give the accent as #rrggbb, for example #3b82f6.");
 	if (mode !== undefined && !isMode(mode)) throw new Error("Give the mode as light, dark or system.");
@@ -69,7 +73,7 @@ export { contrast, DEFAULT_PRESET, isAccent, luminance, type Palette, type Prese
 export const resolveTheme = (choice: ThemeChoice = loadTheme()): Preset => resolvePalettes(choice);
 
 const vars = (p: Palette) =>
-	`--bg:${p.bg};--panel:${p.panel};--text:${p.text};--muted:${p.muted};--border:${p.border};--accent:${p.accent};--accent-text:${p.accentText};--danger:${p.danger}`;
+	`--bg:${p.bg};--panel:${p.panel};--text:${p.text};--muted:${p.muted};--border:${p.border};--accent:${p.accent};--accent-text:${p.accentText};--danger:${p.danger};--ring:${accentInk(p.accent, [p.bg, p.panel], p.text, 3)};--edge:${controlEdge([p.bg, p.panel], p.text)}`;
 
 /** CSS custom properties for both modes, following prefers-color-scheme, or for the one mode the choice pins. */
 export function themeCss(choice: SavedTheme = loadTheme()): string {
@@ -80,7 +84,7 @@ export function themeCss(choice: SavedTheme = loadTheme()): string {
 
 /** The page chrome every Tabkyra page shares, drawn from the theme variables. */
 export function pageCss(choice: SavedTheme = loadTheme()): string {
-	return `${themeCss(choice)}body{font:16px/1.5 system-ui,sans-serif;margin:0;background:var(--bg);color:var(--text)}main{max-width:560px;margin:6vh auto;padding:28px;background:var(--panel);border-radius:14px;border-top:4px solid var(--accent);box-shadow:0 1px 3px #0002}h1{font-size:1.3rem;margin:0 0 .5rem}p.muted{color:var(--muted)}code{overflow-wrap:anywhere}.scope{display:flex;gap:.6rem;align-items:flex-start;margin:.45rem 0;font-size:.93rem}.scope input{margin-top:.3rem;accent-color:var(--accent)}fieldset{border:1px solid var(--border);border-radius:10px;padding:.6rem .9rem;margin:1rem 0}legend{font-weight:600;padding:0 .3rem}label[for]{display:block;font-weight:600;margin-top:1rem}.secret{-webkit-text-security:disc}input.secret{width:100%;box-sizing:border-box;font:inherit;padding:.6rem;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}.row{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.2rem}button{font:inherit;padding:.55rem 1.1rem;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);cursor:pointer}button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}.primary{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}.error{color:var(--danger);font-weight:600}`;
+	return `${themeCss(choice)}body{font:16px/1.5 system-ui,sans-serif;margin:0;background:var(--bg);color:var(--text)}main{max-width:560px;margin:6vh auto;padding:28px;background:var(--panel);border-radius:14px;border-top:4px solid var(--accent);box-shadow:0 1px 3px #0002}h1{font-size:1.3rem;margin:0 0 .5rem}p.muted{color:var(--muted)}code{overflow-wrap:anywhere}.scope{display:flex;gap:.6rem;align-items:flex-start;margin:.45rem 0;font-size:.93rem}.scope input{margin-top:.3rem;accent-color:var(--accent)}fieldset{border:1px solid var(--border);border-radius:10px;padding:.6rem .9rem;margin:1rem 0}legend{font-weight:600;padding:0 .3rem}label[for]{display:block;font-weight:600;margin-top:1rem}.secret{-webkit-text-security:disc}input.secret{width:100%;box-sizing:border-box;font:inherit;padding:.6rem;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text)}.row{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.2rem}button{font:inherit;padding:.55rem 1.1rem;border-radius:8px;border:1px solid var(--edge);background:var(--panel);color:var(--text);cursor:pointer}button:focus-visible,input:focus-visible{outline:3px solid var(--ring);outline-offset:2px}.primary{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}.error{color:var(--danger);font-weight:600}`;
 }
 
 // ---------- tabkyra theme ----------

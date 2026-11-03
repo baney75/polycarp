@@ -4,6 +4,9 @@ import assert from "node:assert/strict";
 import { readFileSync, statSync } from "node:fs";
 import { after, test } from "node:test";
 import { machine, tempRoot, rmSync } from "./helpers/hub-fixture.mjs";
+import { loadTs } from "./helpers/bundle-ts.mjs";
+
+const { pageCss } = await loadTs('export { pageCss } from "@src/theme.ts";');
 
 const root = tempRoot("tabkyra-theme-");
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -80,3 +83,29 @@ function readTheme(m) {
 	assert.equal(mode, 0o600, "theme.json is private");
 	return readFileSync(m.file("theme.json"), "utf8");
 }
+
+/** The variables of one pinned mode, read from the CSS a page gets. */
+function pageVars(choice, mode) {
+	const css = pageCss({ ...choice, mode });
+	const block = /^:root\{color-scheme:[a-z]+;([^}]*)\}/.exec(css)?.[1] ?? "";
+	return { css, vars: Object.fromEntries(block.split(";").map((d) => d.split(":"))) };
+}
+
+test("the pages' focus ring and control edges reach 3:1 on the page and the card: every preset, both modes, custom accents including #000000 and #ffffff", () => {
+	for (const preset of ["tabkyra", "slate", "forest", "rose", "midnight"]) {
+		for (const accent of [undefined, "#e3a93b", "#000000", "#ffffff", "#777777", "#3b82f6"]) {
+			for (const mode of ["light", "dark"]) {
+				const { css, vars } = pageVars({ preset, ...(accent ? { accent } : {}) }, mode);
+				for (const shape of ["--ring", "--edge"]) {
+					for (const surface of ["--bg", "--panel"]) {
+						const ratio = contrast(vars[shape], vars[surface]);
+						assert.ok(ratio >= 3, `${preset} ${accent ?? "preset"} ${mode}: ${shape} ${vars[shape]} on ${surface} ${vars[surface]} is ${ratio.toFixed(2)}:1`);
+					}
+				}
+				assert.match(css, /focus-visible[^}]*outline:3px solid var\(--ring\)/);
+				assert.match(css, /input\.secret\{[^}]*border:1px solid var\(--edge\)/);
+				assert.match(css, /button\{[^}]*border:1px solid var\(--edge\)/);
+			}
+		}
+	}
+});

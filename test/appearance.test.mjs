@@ -136,3 +136,27 @@ test("the color box paints on input and saves and tells the helper only on chang
 	assert.doesNotMatch(onInput, /this\.choose\(|setAppearance\(|connectSetTheme\(/);
 	assert.match(box, /@change=\$\{[\s\S]*?this\.choose\(/);
 });
+
+test("the on switch and the accent-colored controls follow the preset: --tk-control-on reaches 3:1 on the page and the card for every preset, mode and accent", () => {
+	assert.ok(SHAPE_PAIRS.some(([a, b]) => a === "--tk-control-on" && b === "--background"));
+	assert.ok(SHAPE_PAIRS.some(([a, b]) => a === "--tk-control-on" && b === "--card"));
+	for (const preset of Object.keys(PRESETS)) {
+		for (const accent of [undefined, "#000000", "#ffffff", "#1b1b1b"]) {
+			for (const dark of [false, true]) {
+				const vars = appearanceVariables({ preset, ...(accent ? { accent } : {}) }, dark);
+				assert.equal(vars["--tk-brass-deep"], vars["--tk-control-on"]);
+				assert.equal(vars["accent-color"], vars["--tk-control-on"]);
+			}
+		}
+	}
+});
+
+test("a mode change sends only the mode, and a first load takes the helper's saved theme", () => {
+	const root = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+	const tab = readFileSync(join(root, "dialogs", "AppearanceTab.ts"), "utf8");
+	assert.match(tab, /connectSetTheme\(\{ mode: value \}\)/);
+	assert.doesNotMatch(tab, /accent \?\? null/, "accent:null is sent only when the person cleared the accent");
+	const apply = readFileSync(join(root, "appearance", "apply.ts"), "utf8");
+	assert.match(apply, /connectStatus\(\)/);
+	assert.match(apply, /if \(!saved\) void seedFromHelper\(\)/);
+});

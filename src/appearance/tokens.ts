@@ -16,6 +16,7 @@ export function appearanceVariables(choice: ThemeChoice, dark: boolean): Record<
 	const p: Palette = resolveTheme(choice)[dark ? "dark" : "light"];
 	const secondary = mix(p.panel, p.text, 0.05);
 	const hover = mix(p.panel, p.text, 0.1);
+	const controlOn = accentInk(p.accent, [p.bg, p.panel], p.text, 3);
 	return {
 		"--background": p.bg,
 		"--foreground": p.text,
@@ -42,6 +43,10 @@ export function appearanceVariables(choice: ThemeChoice, dark: boolean): Record<
 		"--tk-selected": p.text,
 		"--tk-on-selected": p.bg,
 		"--tk-brass": p.accent,
+		// The accent as a shape (the on switch's track, checkboxes): blended toward the text color until it reaches 3:1 on the page and the card.
+		"--tk-brass-deep": controlOn,
+		"--tk-control-on": controlOn,
+		"accent-color": controlOn,
 		"--tk-brass-text": accentInk(p.accent, [p.panel, p.bg, secondary], p.text),
 	};
 }
@@ -72,6 +77,8 @@ export const SHAPE_PAIRS: ReadonlyArray<readonly [string, string]> = [
 	["--ring", "--background"],
 	["--input", "--background"],
 	["--input", "--card"],
+	["--tk-control-on", "--background"],
+	["--tk-control-on", "--card"],
 ];
 
 export const APPEARANCE_KEY = "tabkyra.appearance";

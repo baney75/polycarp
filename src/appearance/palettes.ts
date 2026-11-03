@@ -191,12 +191,12 @@ export function mix(a: string, b: string, t: number): string {
 
 /**
  * The accent as text on every one of `surfaces`: the accent itself when it reads at 4.5:1, otherwise blended
- * toward the body text color until it does (brass #e3a93b is 2.1:1 on white, so it becomes a darker brass).
+ * toward the body text color until it does, or until `target` (3 for a shape such as a switch's on track) (brass #e3a93b is 2.1:1 on white, so it becomes a darker brass).
  */
-export function accentInk(accent: string, surfaces: string[], text: string): string {
+export function accentInk(accent: string, surfaces: string[], text: string, target = 4.5): string {
 	for (let t = 0; t <= 1.0001; t += 0.05) {
 		const candidate = mix(accent, text, Math.min(t, 1));
-		if (surfaces.every((surface) => contrast(candidate, surface) >= 4.5)) return candidate;
+		if (surfaces.every((surface) => contrast(candidate, surface) >= target)) return candidate;
 	}
 	return text;
 }
