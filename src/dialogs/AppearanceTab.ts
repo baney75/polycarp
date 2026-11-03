@@ -61,10 +61,14 @@ export class AppearanceTab extends SettingsTab {
 		this.off?.();
 	}
 
-	private async choose(preset: string, accent: string | undefined): Promise<void> {
+	/** `clearedAccent` is true only when the person went back to the preset's own accent; otherwise the helper's saved accent is left alone. */
+	private async choose(preset: string, accent: string | undefined, clearedAccent = false): Promise<void> {
 		await setAppearance({ preset, ...(accent ? { accent } : {}) });
 		// The pages served from this computer follow; no helper means nothing to tell.
-		this.shared = await connectSetTheme(preset, accent ?? null, currentMode()).then(
+		this.shared = await connectSetTheme({
+			preset,
+			...(accent ? { accent } : clearedAccent ? { accent: null } : {}),
+		}).then(
 			() => true,
 			() => false,
 		);
@@ -82,7 +86,7 @@ export class AppearanceTab extends SettingsTab {
 			// An emptied box goes back to the preset's own accent.
 			this.draft = undefined;
 			this.accentError = undefined;
-			if (choice.accent) void this.choose(choice.preset, undefined);
+			if (choice.accent) void this.choose(choice.preset, undefined, true);
 			return;
 		}
 		const hex = normalizeHex(text);
@@ -185,7 +189,7 @@ export class AppearanceTab extends SettingsTab {
 										@click=${() => {
 											this.draft = undefined;
 											this.accentError = undefined;
-											void this.choose(choice.preset, undefined);
+											void this.choose(choice.preset, undefined, true);
 										}}
 									>
 										Use the preset's
@@ -209,8 +213,8 @@ export class AppearanceTab extends SettingsTab {
 								setMode(value);
 								this.mode = value;
 								this.requestUpdate();
-								const choice = currentAppearance();
-								this.shared = await connectSetTheme(choice.preset, choice.accent ?? null, value).then(
+								// Only the mode goes to the helper; the preset and accent it has saved stay as they are.
+								this.shared = await connectSetTheme({ mode: value }).then(
 									() => true,
 									() => false,
 								);

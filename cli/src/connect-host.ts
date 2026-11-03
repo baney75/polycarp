@@ -26,11 +26,11 @@ import {
 } from "../../src/connect/types.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { normalizeCode } from "./codes.ts";
-import { readJsonFile, withFileLock, writeJsonPrivate } from "./files.ts";
+import { normalizeCode, REQUEST_LOCK_MS } from "./codes.ts";
+import { LockTimeoutError, readJsonFile, withFileLock, withFileLockAsync, writeJsonPrivate } from "./files.ts";
 import { deviceRows } from "./hub-admin.ts";
 import { devicesFile, devicesReadable, hubFile, loadHubConfig, mintConnectCode, validDeviceName } from "./hub-state.ts";
-import { type EnrollHooks, enrollDevice, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusy } from "./link.ts";
+import { type EnrollHooks, enrollDevice, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusy } from "./link.ts";
 import { configDir, mintApprovalCode, passcodeSet } from "./oauth.ts";
 import { loadRemoteConfig, remoteFile } from "./remote-setup.ts";
 import { isAccent, isMode, loadTheme, PRESETS, saveTheme } from "./theme.ts";
@@ -43,7 +43,7 @@ export type ConnectCall =
 	| { method: "deviceCode" }
 	| { method: "setBusy"; busy: boolean }
 	| { method: "joinHub"; hubUrl: string; code: string; name?: string }
-	| { method: "setTheme"; preset: string; accent?: string | null; mode?: string };
+	| { method: "setTheme"; preset?: string; accent?: string | null; mode?: string };
 
 export type ParsedConnect = { ok: true; id: number; call: ConnectCall } | { ok: false; id?: number; message: string };
 
@@ -111,12 +111,14 @@ export function parseConnect(message: unknown): ParsedConnect {
 		case "setTheme": {
 			const problem = onlyKeys(params, ["preset", "accent", "mode"]);
 			if (problem) return fail(problem);
-			if (typeof params.preset !== "string" || !Object.hasOwn(PRESETS, params.preset)) return fail(`preset is one of ${Object.keys(PRESETS).join(", ")}.`);
+			// The preset may be left out only to change the mode alone; the saved preset and accent are then kept.
+			if (params.preset === undefined && params.mode === undefined) return fail("Send a preset, a mode, or both.");
+			if (params.preset !== undefined && (typeof params.preset !== "string" || !Object.hasOwn(PRESETS, params.preset))) return fail(`preset is one of ${Object.keys(PRESETS).join(", ")}.`);
 			if (params.accent !== undefined && params.accent !== null && !isAccent(params.accent)) return fail("accent is #rrggbb, or null for the preset's own.");
 			if (params.mode !== undefined && !isMode(params.mode)) return fail("mode is light, dark or system.");
 			return call({
 				method,
-				preset: params.preset,
+				...(params.preset !== undefined ? { preset: params.preset as string } : {}),
 				...(params.accent !== undefined ? { accent: params.accent as string | null } : {}),
 				...(params.mode !== undefined ? { mode: params.mode as string } : {}),
 			});
@@ -147,6 +149,7 @@ type Reply = (frame: HostConnect) => void;
 const JOIN_REFUSED = "This computer already has a public address or a hub link. Run tabkyra remote off, tabkyra hub off or tabkyra link off first.";
 const MINT_FILE = "connect-mints.json";
 
+const NOT_MANAGER = "This device isn't a manager, so it can't ask the hub for codes. Link it with a code from tabkyra hub code --manage, or run the command on the hub.";
 const NO_ROUTE = "This computer has no public address yet. Run tabkyra remote setup (one computer) or tabkyra hub setup --public-url https://host (many devices) first.";
 
 export class ConnectService {
@@ -188,7 +191,14 @@ export class ConnectService {
 			case "deviceCode":
 				return this.deviceCode();
 			case "setBusy": {
-				if (this.status().route !== "link") throw new ConnectError("unavailable", "Only a device linked to a hub can be marked busy.");
+				// Any device with a link.json can be marked busy, whatever else is set up on this computer.
+				let linked: ReturnType<typeof loadLinkConfig>;
+				try {
+					linked = loadLinkConfig();
+				} catch {
+					throw new ConnectError("failed", `${linkFile()} is unreadable. Fix it or move it aside.`);
+				}
+				if (!linked) throw new ConnectError("unavailable", "Only a device linked to a hub can be marked busy.");
 				try {
 					setLinkBusy(call.busy);
 				} catch (err) {
@@ -210,23 +220,25 @@ export class ConnectService {
 	/** Local files only: no network call, so the panel can ask every few seconds. */
 	status(): ConnectStatus {
 		const problems: string[] = [];
-		const tryLoad = <T>(load: () => T): T | undefined => {
+		// The reply never carries the library's error text: a parse error can quote the start of a file, and link.json holds a secret.
+		const tryLoad = <T>(file: string, load: () => T): T | undefined => {
 			try {
 				return load();
-			} catch (err) {
-				problems.push(err instanceof Error ? err.message : String(err));
+			} catch {
+				problems.push(`${file} is unreadable. Fix it or move it aside.`);
 				return undefined;
 			}
 		};
-		const hub = tryLoad(loadHubConfig);
-		const remote = tryLoad(loadRemoteConfig);
-		const link = tryLoad(loadLinkConfig);
+		const hub = tryLoad(hubFile(), loadHubConfig);
+		const remote = tryLoad(remoteFile(), loadRemoteConfig);
+		const link = tryLoad(linkFile(), loadLinkConfig);
+		// The route is the public face of this computer; a link to a hub is reported beside it, not instead of it.
 		const route: ConnectRoute = hub ? "hub" : remote ? "remote" : link ? "link" : "none";
 		const publicUrl = hub?.publicUrl ?? remote?.publicUrl;
 		let devices: ConnectDevice[] | undefined;
 		if (hub) {
 			// A bad hub-devices.json is a problem to show, not a reason to fail every call; the route stays "hub".
-			devices = tryLoad(() => {
+			devices = tryLoad(devicesFile(), () => {
 				// loadDevices() answers an empty list for a file it can't read (it fails closed), which would read as "No devices yet".
 				if (!devicesReadable()) throw new Error(`${devicesFile()} is unreadable. Fix it or move it aside; the hub lists no devices until then.`);
 				return deviceRows().rows.map((d) => ({ name: d.name, online: d.online, extensionConnected: d.extensionConnected, sessions: d.sessions, busy: d.busy, lastSeen: d.lastSeen }));
@@ -236,7 +248,7 @@ export class ConnectService {
 			route,
 			...(publicUrl && route !== "link" ? { publicUrl } : {}),
 			passcodeSet: passcodeSet(),
-			...(route === "link" && link ? { link: { hubUrl: link.hubUrl, name: link.name, online: linkOnline(readLinkLive(), this.now()), busy: link.busy === true, manage: link.manage } } : {}),
+			...(link ? { link: { hubUrl: link.hubUrl, name: link.name, online: linkOnline(readLinkLive(), this.now()), busy: link.busy === true, manage: link.manage } } : {}),
 			...(devices ? { hub: { devices } } : {}),
 			theme: loadTheme(),
 			...(problems.length ? { problem: problems[0] } : {}),
@@ -251,6 +263,16 @@ export class ConnectService {
 	private takeCodeSlot(): void {
 		const now = this.now();
 		const file = join(configDir(), MINT_FILE);
+		try {
+			this.stampCodeSlot(file, now);
+		} catch (err) {
+			// A short wait: the event loop is blocked meanwhile, and this host relays every agent's traffic.
+			if (err instanceof LockTimeoutError) throw new ConnectError("busy", "Another Tabkyra window is making a code. Try again in a moment.");
+			throw err;
+		}
+	}
+
+	private stampCodeSlot(file: string, now: number): void {
 		withFileLock(
 			file,
 			() => {
@@ -268,13 +290,14 @@ export class ConnectService {
 				}
 				writeJsonPrivate(file, { minted: [...stamps, now] });
 			},
-			2000,
+			REQUEST_LOCK_MS,
 		);
 	}
 
 	private async approvalCode(): Promise<ApprovalCode> {
 		const status = this.status();
 		if (status.route === "none") throw new ConnectError("unavailable", NO_ROUTE);
+		if (status.route === "link" && !status.link?.manage) throw new ConnectError("unavailable", NOT_MANAGER);
 		this.takeCodeSlot();
 		try {
 			if (status.route === "link") {
@@ -292,6 +315,7 @@ export class ConnectService {
 		const status = this.status();
 		if (status.route === "none") throw new ConnectError("unavailable", NO_ROUTE);
 		if (status.route === "remote") throw new ConnectError("unavailable", "This computer serves one connector for itself. To add other devices behind one connector, run tabkyra hub setup --public-url https://host instead.");
+		if (status.route === "link" && !status.link?.manage) throw new ConnectError("unavailable", NOT_MANAGER);
 		this.takeCodeSlot();
 		try {
 			if (status.route === "link") {
@@ -313,13 +337,30 @@ export class ConnectService {
 		if (this.joining) throw new ConnectError("busy", "Already joining a hub.");
 		this.joining = true;
 		try {
-			const result = await enrollDevice(
-				{ hubUrl: call.hubUrl, code: call.code, name: call.name, service: true },
-				{ step: (step) => progress({ step }), ...(this.service ? { service: this.service } : {}) },
+			// Chrome starts a host per connection, so two panels can join at once. The lock on link.json makes the second one see the first one's link.
+			return await withFileLockAsync(
+				linkFile(),
+				async () => {
+					let existing: ReturnType<typeof loadLinkConfig>;
+					try {
+						existing = loadLinkConfig();
+					} catch {
+						throw new ConnectError("unavailable", JOIN_REFUSED);
+					}
+					if (existing) throw new ConnectError("unavailable", JOIN_REFUSED);
+					const result = await enrollDevice(
+						{ hubUrl: call.hubUrl, code: call.code, name: call.name, service: true },
+						{ step: (step) => progress({ step }), ...(this.service ? { service: this.service } : {}) },
+					);
+					if (result.kind === "failed") throw new ConnectError("failed", result.error);
+					if (!result.ok) throw new ConnectError("failed", `Linked as ${result.name}, but the background service didn't start. ${result.service}`);
+					return { name: result.name, manage: result.manage };
+				},
+				REQUEST_LOCK_MS,
 			);
-			if (result.kind === "failed") throw new ConnectError("failed", result.error);
-			if (!result.ok) throw new ConnectError("failed", `Linked as ${result.name}, but the background service didn't start. ${result.service}`);
-			return { name: result.name, manage: result.manage };
+		} catch (err) {
+			if (err instanceof LockTimeoutError) throw new ConnectError("busy", "Another Tabkyra window is joining a hub. Try again in a moment.");
+			throw err;
 		} finally {
 			this.joining = false;
 		}

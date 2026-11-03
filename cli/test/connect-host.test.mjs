@@ -5,9 +5,9 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { createServer } from "node:http";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { cli, machine, rmSync, startHub, tempRoot, writeJson } from "./helpers/hub-fixture.mjs";
 import { loadTs } from "./helpers/bundle-ts.mjs";
@@ -590,9 +590,9 @@ const frame = (m) => {
 };
 
 /** `tabkyra host` as a process: write frames to its stdin, read frames from its stdout. */
-function startHost(name) {
+function startHost(name, extraEnv = {}) {
 	const m = machine(root, name);
-	const proc = spawn(process.execPath, [cli, "host"], { env: m.env, stdio: ["pipe", "pipe", "pipe"] });
+	const proc = spawn(process.execPath, [cli, "host"], { env: { ...m.env, ...extraEnv }, stdio: ["pipe", "pipe", "pipe"] });
 	let buf = Buffer.alloc(0);
 	let garbage = false;
 	const frames = [];
@@ -684,5 +684,139 @@ test("the native host limits codes to 10 per 10 minutes", async () => {
 	}
 	host.send({ type: "connect", id: 11, method: "approvalCode" });
 	assert.equal((await host.reply(11)).error.code, "rate_limited");
+	host.proc.stdin.end();
+});
+
+// ---------- review round 1b ----------
+
+const LINK = { hubUrl: "https://hub.example.com", deviceId: "dv-gggggggggggg", secret: "V".repeat(43), name: "boxy", manage: true };
+
+test("a hub box that also links to itself reports both, shows the link, and can be marked busy", async () => {
+	await inConfig("hub-and-link", async (dir) => {
+		writeJson(join(dir, "hub.json"), { publicUrl: "https://hub.example.com", port: 8787 });
+		writeJson(join(dir, "link.json"), LINK);
+		const s = new ConnectService();
+		const { result } = await ask(s, "status");
+		assert.equal(result.route, "hub");
+		assert.deepEqual(result.link, { hubUrl: LINK.hubUrl, name: "boxy", online: false, busy: false, manage: true });
+		assert.ok(!JSON.stringify(result).includes(LINK.secret));
+		assert.deepEqual((await ask(s, "setBusy", { busy: true })).result, { busy: true });
+		assert.equal((await ask(s, "status")).result.link.busy, true);
+		assert.equal(JSON.parse(readFileSync(join(dir, "link.json"), "utf8")).busy, true);
+	});
+});
+
+test("status never repeats a file's own error text: a corrupt link.json that holds the secret answers with a fixed sentence", async () => {
+	await inConfig("corrupt-link", async (dir) => {
+		const secret = "SUPERSECRET".repeat(4);
+		writeFileSync(join(dir, "link.json"), `x{"secret":"${secret}","hubUrl":`);
+		const s = new ConnectService();
+		const { result } = await ask(s, "status");
+		assert.equal(result.problem, `${join(dir, "link.json")} is unreadable. Fix it or move it aside.`);
+		assert.ok(!JSON.stringify(result).includes(secret));
+		const busy = await ask(s, "setBusy", { busy: true }, 2);
+		assert.ok(!JSON.stringify(busy).includes(secret));
+	});
+	await inConfig("corrupt-remote", async (dir) => {
+		writeFileSync(join(dir, "remote.json"), '{"passcode":"HUSH-HUSH"');
+		const { result } = await ask(new ConnectService(), "status");
+		assert.equal(result.problem, `${join(dir, "remote.json")} is unreadable. Fix it or move it aside.`);
+	});
+});
+
+test("a linked device that isn't a manager records no mint stamp when it is refused", async () => {
+	await inConfig("nonmanager-no-stamp", async (dir) => {
+		writeJson(join(dir, "link.json"), { ...LINK, manage: false });
+		const s = new ConnectService();
+		for (let i = 1; i <= 12; i++) assert.equal((await ask(s, i % 2 ? "approvalCode" : "deviceCode", undefined, i)).error.code, "unavailable");
+		assert.equal(existsSync(join(dir, "connect-mints.json")), false, "a refused frame took a code slot");
+	});
+});
+
+test("a held lock answers busy within a fraction of a second, for a code and for joinHub", async () => {
+	await inConfig("lock-busy", async (dir) => {
+		writeJson(join(dir, "hub.json"), { publicUrl: "https://hub.example.com", port: 8787 });
+		writeFileSync(join(dir, "connect-mints.json.lock"), "1");
+		const started = Date.now();
+		const { error } = await ask(new ConnectService(), "approvalCode");
+		assert.equal(error.code, "busy");
+		assert.ok(Date.now() - started < 1500, `waited ${Date.now() - started} ms for a lock`);
+	});
+	await inConfig("lock-busy-join", async (dir) => {
+		writeFileSync(join(dir, "link.json.lock"), "1");
+		const started = Date.now();
+		const service = new ConnectService({ service: { valid: () => true, install: async () => ({ ok: true, message: "stub" }) } });
+		const { error } = await ask(service, "joinHub", { hubUrl: "http://127.0.0.1:1", code: "TK-ABCD-EFGH" });
+		assert.equal(error.code, "busy");
+		assert.ok(Date.now() - started < 1500);
+		assert.equal(existsSync(join(dir, "link.json")), false);
+	});
+});
+
+test("two hosts joining at once: one links, the other is refused, and link.json is the first one's", async () => {
+	const hub = await startHub(root, "join-race");
+	cleanup.push(() => hub.stop());
+	const codes = ["one", "two"].map((name) => hub.json(["hub", "code", "--name", name, "--json"]).code);
+	await inConfig("join-race", async (dir) => {
+		const stub = () => new ConnectService({ service: { valid: () => true, install: async () => ({ ok: true, message: "stub" }) } });
+		const [a, b] = await Promise.all(codes.map((code, i) => ask(stub(), "joinHub", { hubUrl: hub.url, code }, i + 1)));
+		const wins = [a, b].filter((r) => r.result);
+		assert.equal(wins.length, 1, JSON.stringify([a.error, b.error]));
+		const loser = [a, b].find((r) => r.error);
+		assert.ok(["busy", "unavailable"].includes(loser.error.code), JSON.stringify(loser.error));
+		assert.equal(JSON.parse(readFileSync(join(dir, "link.json"), "utf8")).name, wins[0].result.name);
+		assert.equal(existsSync(join(dir, "link.json.lock")), false, "the lock was left behind");
+	});
+});
+
+test("setTheme with only a mode keeps the saved preset and accent; it needs a preset or a mode, validated strictly", async () => {
+	const ok = (params) => parseConnect({ type: "connect", id: 1, method: "setTheme", params });
+	assert.deepEqual(ok({ mode: "dark" }).call, { method: "setTheme", mode: "dark" });
+	for (const params of [{}, { accent: null }, { accent: "#112233" }, { mode: "blue" }, { mode: null }, { mode: 1 }, { preset: null, mode: "dark" }, { preset: 5 }]) assert.equal(ok(params).ok, false, JSON.stringify(params));
+	await inConfig("theme-mode-only", async (dir) => {
+		writeJson(join(dir, "theme.json"), { preset: "forest", accent: "#112233" });
+		const s = new ConnectService();
+		assert.deepEqual((await ask(s, "setTheme", { mode: "dark" })).result, { preset: "forest", accent: "#112233", mode: "dark" });
+		assert.deepEqual((await ask(s, "setTheme", { mode: "system" }, 2)).result, { preset: "forest", accent: "#112233" });
+	});
+});
+
+test("the native host joins a hub with a service command that prints to stdout and stderr, and its framing stays clean", async () => {
+	const hub = await startHub(root, "join-host-hub");
+	cleanup.push(() => hub.stop());
+	const code = hub.json(["hub", "code", "--name", "framed", "--json"]).code;
+	// Fake service managers first on PATH: they print to both streams and succeed. HOME is a temp dir, so no real unit or plist is written, and nothing here installs a service.
+	const bin = join(root, "fake-bin");
+	mkdirSync(bin, { recursive: true });
+	const log = join(root, "fake-service.log");
+	const fake = `#!/bin/sh
+echo "$0 $*" >> "${log}"
+echo "noise on stdout from $0"
+echo "noise on stderr from $0" >&2
+[ "$1" = "print" ] && exit 1
+exit 0
+`;
+	for (const name of ["launchctl", "systemctl"]) {
+		writeFileSync(join(bin, name), fake);
+		chmodSync(join(bin, name), 0o755);
+	}
+	const host = startHost("hj", { PATH: `${bin}:${dirname(process.execPath)}` });
+	mkdirSync(host.m.config, { recursive: true, mode: 0o700 });
+	// A launcher that passes launcherValid(): an executable that names a script which exists.
+	const launcher = join(host.m.env.HOME, ".config", "tabkyra", "tabkyra");
+	mkdirSync(dirname(launcher), { recursive: true });
+	writeFileSync(launcher, `#!/bin/sh\nexec "${process.execPath}" "${cli}" "$@"\n`);
+	chmodSync(launcher, 0o755);
+	host.send({ type: "connect", id: 1, method: "joinHub", params: { hubUrl: hub.url, code } });
+	const reply = await host.reply(1, 20_000);
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	assert.equal(reply.result.name, "framed");
+	assert.ok(existsSync(log) && readFileSync(log, "utf8").length > 0, "the fake service manager never ran");
+	// The status frame after the join still parses: nothing the commands printed reached stdout.
+	host.send({ type: "connect", id: 2, method: "status" });
+	assert.equal((await host.reply(2)).result.route, "link");
+	assert.equal(host.garbage(), false, "stdout carried something that isn't a frame");
+	assert.ok(host.frames.every((f) => f && typeof f === "object" && f.type), "a frame without a type");
+	assert.doesNotMatch(JSON.stringify(host.frames), /noise on std/);
 	host.proc.stdin.end();
 });

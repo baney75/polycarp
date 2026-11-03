@@ -21,6 +21,7 @@ export interface ConnectStatus {
 	/** The public origin (remote and hub routes). The connector URL is this plus /mcp. */
 	publicUrl?: string;
 	passcodeSet: boolean;
+	/** This device's link to a hub; present whenever link.json loads, whatever the route is (a hub box can link to itself). */
 	link?: { hubUrl: string; name: string; online: boolean; busy: boolean; manage: boolean };
 	hub?: { devices: ConnectDevice[] };
 	theme: { preset: string; accent?: string; mode?: "light" | "dark" };

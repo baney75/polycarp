@@ -4,6 +4,8 @@
  * switch (the `dark` class) and the system setting. Applies at once; nothing reloads.
  */
 
+import { connectStatus } from "../connect/client.js";
+import { currentMode, setMode } from "./mode.js";
 import type { ThemeChoice } from "./palettes.js";
 import { APPEARANCE_KEY, appearanceVariables, parseChoice } from "./tokens.js";
 
@@ -41,13 +43,28 @@ export function onAppearance(listener: (choice: ThemeChoice) => void): () => voi
 	return () => listeners.delete(listener);
 }
 
+/**
+ * A panel with no saved choice takes the one `tabkyra theme` saved on this computer, so the first
+ * click on Light or Dark (or any later change) starts from what the pages already show. Quiet when the helper is absent; it tries again next load.
+ */
+async function seedFromHelper(): Promise<void> {
+	const { theme } = await connectStatus();
+	if ((await chrome.storage.local.get(APPEARANCE_KEY))[APPEARANCE_KEY] !== undefined) return;
+	await setAppearance(parseChoice(theme));
+	if (theme.mode && localStorage.getItem("theme") === null && currentMode() === "system") setMode(theme.mode);
+}
+
 /** Read the saved choice, apply it, and keep it applied when the light/dark switch or the system setting changes. */
 export async function startAppearance(): Promise<void> {
+	let saved = false;
 	try {
-		current = parseChoice((await chrome.storage.local.get(APPEARANCE_KEY))[APPEARANCE_KEY]);
+		const raw = (await chrome.storage.local.get(APPEARANCE_KEY))[APPEARANCE_KEY];
+		saved = raw !== undefined;
+		current = parseChoice(raw);
 	} catch {
 		current = { preset: "tabkyra" };
 	}
 	paint();
+	if (!saved) void seedFromHelper().catch(() => {});
 	new MutationObserver(paint).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
 }

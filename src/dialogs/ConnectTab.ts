@@ -364,7 +364,7 @@ export class ConnectTab extends SettingsTab {
 	}
 
 	private thisDevice(s: ConnectStatus): TemplateResult | typeof nothing {
-		if (s.route !== "link" || !s.link) return nothing;
+		if (!s.link) return nothing;
 		const link = s.link;
 		return this.section(
 			"This device",

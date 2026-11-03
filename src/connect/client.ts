@@ -116,11 +116,16 @@ export const connectJoinHub = (
 	request<JoinResult>("joinHub", { hubUrl, code, ...(name ? { name } : {}) }, (p) => {
 		if (typeof p.step === "string") onProgress(p.step);
 	});
-export const connectSetTheme = (preset: string, accent: string | null, mode?: "light" | "dark" | "system") =>
+/** Only the fields given are sent: no preset keeps the saved one, no accent keeps the saved accent, null clears it. */
+export const connectSetTheme = (change: {
+	preset?: string;
+	accent?: string | null;
+	mode?: "light" | "dark" | "system";
+}) =>
 	request<{ preset: string; accent?: string; mode?: string }>("setTheme", {
-		preset,
-		accent,
-		...(mode ? { mode } : {}),
+		...(change.preset !== undefined ? { preset: change.preset } : {}),
+		...(change.accent !== undefined ? { accent: change.accent } : {}),
+		...(change.mode !== undefined ? { mode: change.mode } : {}),
 	});
 
 /** True when the host is absent: the panel then shows how to set Tabkyra up. */
