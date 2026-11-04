@@ -120,32 +120,42 @@ test("many slow unfinished initialize bodies hit the caps (429) and memory stays
 	const statuses = [];
 	const slow = (secret) => {
 		const req = httpRequest({ host: url.hostname, port: url.port, path: "/mcp", method: "POST", agent: false, headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${secret}`, "content-length": "3000000" } });
+		// One outcome per request: on macOS the hub closing on an unread body can reset the socket, losing the 429 or following it.
+		let told = false;
+		const tell = (outcome) => {
+			if (!told) statuses.push(outcome);
+			told = true;
+		};
 		req.on("response", (res) => {
-			statuses.push(res.statusCode);
+			tell(res.statusCode);
 			res.resume();
 		});
-		req.on("error", () => undefined);
+		req.on("error", (err) => tell(err.code));
 		req.write(Buffer.alloc(1_000_000, 0x20));
 		open.push(req);
 	};
 	// One caller: its cap of 8 sessions-or-initializes holds before any body is read.
 	const one = createToken(hub, "one", "skills.read");
+	const refused = () => statuses.filter((x) => x === 429 || x === "ECONNRESET" || x === "EPIPE").length;
+	// A floor keeps the hub's time to read bodies; the deadline allows for a slow machine. A crash is caught below.
+	const refusalsReach = async (count, floorMs) => {
+		const started = Date.now();
+		while (Date.now() - started < 15000 && refused() < count) await sleep(50);
+		await sleep(Math.max(0, floorMs - (Date.now() - started)));
+	};
 	for (let i = 0; i < 20; i++) slow(one);
-	await sleep(800);
-	assert.ok(statuses.filter((x) => x === 429).length >= 12, `one caller is held to its cap: ${statuses.join(",")}`);
+	await refusalsReach(12, 800);
+	assert.ok(refused() >= 12, `one caller is held to its cap: ${statuses.join(",")}`);
+	assert.ok(statuses.includes(429), `the hub answers 429: ${statuses.join(",")}`);
 	// Many callers: the hub-wide cap holds too.
 	statuses.length = 0;
 	for (let c = 0; c < 12; c++) {
 		const secret = createToken(hub, `c${c}`, "skills.read");
 		for (let i = 0; i < 8; i++) slow(secret);
 	}
-	const started = Date.now();
-	// Refusals arrive as the hub accepts each connection, which takes longer on some machines.
-	const refusals = () => statuses.filter((x) => x === 429).length;
-	for (let waited = 0; waited < 15000 && refusals() < 96 - 64 - 8; waited += 100) await sleep(100);
-	// Never sample crash and memory sooner than the 1.5 s the hub has always had to read these bodies.
-	await sleep(Math.max(0, 1500 - (Date.now() - started)));
-	assert.ok(refusals() >= 96 - 64 - 8, `the hub-wide cap refuses the rest: ${refusals()} refusals`);
+	await refusalsReach(96 - 64 - 8, 1500);
+	assert.ok(refused() >= 96 - 64 - 8, `the hub-wide cap refuses the rest: ${statuses.join(",")}`);
+	assert.ok(statuses.includes(429), `the hub answers 429: ${statuses.join(",")}`);
 	assert.equal(hub.proc.exitCode, null);
 	assert.ok(rssMb(hub.proc.pid) - before < 250, `memory is bounded (${(rssMb(hub.proc.pid) - before).toFixed(0)} MB more)`);
 	for (const req of open) req.destroy();
