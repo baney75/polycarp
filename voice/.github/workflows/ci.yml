@@ -1,0 +1,38 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: src-tauri, key: "${{ matrix.os }}" }
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libudev-dev libxdo-dev
+      - name: Release requirement pin
+        if: runner.os == 'Linux'
+        run: scripts/check-requirement.sh --pin && scripts/check-requirement-test.sh && bash scripts/signing-identity-test.sh && bash scripts/install-requirement-test.sh
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: Unit tests
+        working-directory: src-tauri
+        run: cargo test --lib
+      - name: Lint
+        if: runner.os == 'macOS'
+        working-directory: src-tauri
+        run: cargo clippy --lib -- -D warnings

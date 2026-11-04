@@ -1,0 +1,170 @@
+name: Installers
+# Runs the real one-line installers against the published releases on each OS, then
+# uninstalls, so a broken install path fails here instead of on someone's computer.
+on:
+  pull_request:
+    paths: [install.sh, install.ps1, .github/workflows/installers.yml]
+  push:
+    branches: [main]
+    paths: [install.sh, install.ps1, .github/workflows/installers.yml]
+  schedule:
+    - cron: "30 9 * * *" # after the nightly build
+  workflow_dispatch:
+concurrency:
+  group: installers-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+env:
+  SILAS_NO_OPEN: "1"
+  SILAS_GITHUB_TOKEN: ${{ github.token }}
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - run: shellcheck -s sh install.sh
+      - run: dash -n install.sh
+      - name: PowerShell parses
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors; exit 1 }
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - name: Install stable
+        run: SILAS_INSTALL_DIR="$RUNNER_TEMP/apps" sh install.sh
+      - run: codesign --verify --deep --strict "$RUNNER_TEMP/apps/Silas.app"
+      - name: Uninstall
+        run: |
+          SILAS_INSTALL_DIR="$RUNNER_TEMP/apps" sh install.sh --uninstall
+          test ! -e "$RUNNER_TEMP/apps/Silas.app"
+
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        format: [deb, appimage]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - name: Install (${{ matrix.format }})
+        run: SILAS_LINUX_FORMAT=${{ matrix.format }} sh install.sh
+      - name: Installed
+        run: |
+          if [ "${{ matrix.format }}" = deb ]; then
+            test -x /usr/bin/silas && test -f /usr/lib/udev/rules.d/70-silas-input.rules
+          else
+            test -x "$HOME/.local/bin/silas"
+            grep -qx "Exec=\"$HOME/.local/bin/silas\"" "$HOME/.local/share/applications/silas.desktop"
+            test -s "$HOME/.local/share/icons/hicolor/128x128/apps/silas.png"
+            test -f /etc/udev/rules.d/70-silas-input.rules
+          fi
+      - name: Uninstall
+        run: |
+          sh install.sh --uninstall
+          test ! -e /usr/bin/silas
+          test ! -e "$HOME/.local/bin/silas"
+          test ! -e "$HOME/.local/share/applications/silas.desktop"
+          test ! -e /etc/udev/rules.d/70-silas-input.rules
+          test ! -e /usr/lib/udev/rules.d/70-silas-input.rules
+          if dpkg -s silas >/dev/null 2>&1; then exit 1; fi
+      - name: Switching from AppImage to the .deb removes the AppImage
+        if: matrix.format == 'appimage'
+        run: |
+          SILAS_LINUX_FORMAT=appimage sh install.sh
+          SILAS_LINUX_FORMAT=deb sh install.sh
+          test -x /usr/bin/silas
+          test ! -e "$HOME/.local/bin/silas"
+          test ! -e "$HOME/.local/share/applications/silas.desktop"
+          test ! -e /etc/udev/rules.d/70-silas-input.rules
+          # An AppImage over the package is refused, and a bad format is refused.
+          if SILAS_LINUX_FORMAT=appimage sh install.sh; then exit 1; fi
+          test ! -e "$HOME/.local/bin/silas"
+          if SILAS_LINUX_FORMAT=foo sh install.sh; then exit 1; fi
+          sh install.sh --uninstall
+          test ! -e /usr/bin/silas
+      - name: A user's own ~/.local/bin/silas and launcher survive
+        run: |
+          mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
+          printf '#!/bin/sh\necho mine\n' > "$HOME/.local/bin/silas"
+          printf '[Desktop Entry]\nName=My silas\nExec="%s"\n' "$HOME/.local/bin/silas" > "$HOME/.local/share/applications/silas.desktop"
+          # A user process that is merely named silas must survive both paths.
+          cp /bin/sleep /tmp/silas
+          /tmp/silas 600 &
+          mine=$!
+          sleep 1
+          if [ "${{ matrix.format }}" = appimage ]; then
+            # The AppImage install refuses rather than overwrite someone's own file.
+            if SILAS_LINUX_FORMAT=appimage sh install.sh 2> refuse.txt; then exit 1; fi
+            grep -q "exists and isn't a Silas AppImage" refuse.txt
+          else
+            sh install.sh
+            sh install.sh --uninstall
+          fi
+          if sh install.sh --uninstall 2> err.txt; then exit 1; fi
+          grep -q "isn't a Silas AppImage" err.txt
+          grep -q mine "$HOME/.local/bin/silas"
+          grep -q "My silas" "$HOME/.local/share/applications/silas.desktop"
+          kill -0 "$mine" # this exact process survived, not just something named silas
+          kill "$mine"
+
+  rpm:
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["fedora:40", "opensuse/tumbleweed"]
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - name: curl (minimal images may lack it)
+        run: command -v curl || zypper --non-interactive install curl || dnf install -y curl
+      - name: Install (.rpm, as root without sudo)
+        run: sh install.sh
+      - name: Installed
+        run: |
+          test -x /usr/bin/silas
+          rpm -q silas
+      - name: Uninstall
+        run: |
+          sh install.sh --uninstall
+          test ! -e /usr/bin/silas
+          if rpm -q silas; then exit 1; fi
+
+  old-glibc:
+    runs-on: ubuntu-24.04
+    container: debian:12 # glibc 2.36
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - name: Refuses with a plain message
+        run: |
+          if sh install.sh > out.txt 2>&1; then cat out.txt; exit 1; fi
+          cat out.txt
+          grep -q "needs glibc 2.39 or newer" out.txt
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - name: Install (the README's one-liner, from this checkout)
+        shell: powershell
+        run: Get-Content -Raw install.ps1 | Invoke-Expression
+      - shell: powershell
+        run: if (-not (Test-Path "$env:LOCALAPPDATA\Silas\silas.exe")) { exit 1 }
+      - name: Uninstall
+        shell: powershell
+        run: |
+          & ([scriptblock]::Create((Get-Content -Raw install.ps1))) -Uninstall
+          Start-Sleep -Seconds 3
+          if (Test-Path "$env:LOCALAPPDATA\Silas\silas.exe") { exit 1 }

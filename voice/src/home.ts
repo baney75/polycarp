@@ -1,0 +1,235 @@
+import { hotkeyLabel, installUpdate, refreshState, statusText, store, subscribe } from "./store";
+import { clear, h, icon, keycap, num, timeAgo } from "./ui";
+import type { Navigate } from "./main";
+import { api } from "./api";
+
+// Hidden until the next launch once the user says "later".
+let dismissed = false;
+
+export function mountHome(root: HTMLElement, go: Navigate): () => void {
+  const updateBar = h("div");
+  const hero = h("section", { class: "hero" });
+  const banner = h("div");
+  const stats = h("section", { class: "stats", "aria-label": "Your numbers" });
+  const recent = h("section", { class: "recent" });
+  root.append(updateBar, hero, banner, stats, recent);
+
+  function drawUpdate() {
+    const u = store.update;
+    const p = store.updateProgress;
+    if (!u || dismissed) return clear(updateBar);
+    const pct = p && p.total ? Math.round((p.downloaded / p.total) * 100) : null;
+    clear(
+      updateBar,
+      h(
+        "div",
+        { class: "update-bar", role: "status" },
+        h("span", { class: "update-dot", "aria-hidden": "true" }),
+        h("span", { class: "update-text" }, h("strong", null, `Silas ${u.version}`), p ? (pct === null ? " is downloading…" : ` is downloading… ${pct}%`) : " is ready."),
+        p
+          ? null
+          : h(
+              "span",
+              { class: "update-actions" },
+              h("button", { class: "link", type: "button", onclick: () => go("settings") }, "What's new"),
+              h("button", { class: "btn btn-primary btn-sm", type: "button", onclick: () => void installUpdate() }, "Install and restart"),
+              h(
+                "button",
+                {
+                  class: "icon-btn",
+                  type: "button",
+                  "aria-label": "Hide until next launch",
+                  title: "Later",
+                  onclick: () => {
+                    dismissed = true;
+                    drawUpdate();
+                  },
+                },
+                icon("x", 14),
+              ),
+            ),
+      ),
+    );
+  }
+
+  function drawHero() {
+    const s = store.state;
+    const busy = s.status === "recording" || s.status === "transcribing" || s.status === "typing";
+    clear(
+      hero,
+      h(
+        "div",
+        { class: "hero-line" },
+        h("span", null, "Hold"),
+        keycap(hotkeyLabel(), "lg"),
+        h("span", null, "and speak"),
+      ),
+      h(
+        "p",
+        { class: "hero-sub" },
+        "Release to type",
+        store.settings.tapToToggle ? h("span", { class: "sep", "aria-hidden": "true" }, "·") : null,
+        store.settings.tapToToggle ? "Tap for hands-free" : null,
+      ),
+      h(
+        "div",
+        { class: `live live-${s.status}${busy ? " busy" : ""}`, role: "status", "aria-live": "polite" },
+        h("span", { class: "dot" }),
+        statusText[s.status],
+        s.status === "error" && s.detail ? h("span", { class: "live-detail" }, s.detail) : null,
+      ),
+    );
+    drawBanner();
+  }
+
+  // The key banner polls state every second. Rebuilding it each time would delete the
+  // focused Open Settings button, so it only redraws when what it says changes.
+  let shownBanner: string | null = null;
+
+  function bannerKey(s: typeof store.state): string {
+    if (s.status === "needs_model") return "model";
+    if (keyAccessMissing(s)) return `key:${s.platform}:${s.platform === "macos" ? "" : (s.detail ?? "")}`;
+    if (s.platform === "macos" && s.permissions.microphone !== "granted") return `mic:${s.permissions.microphone}`;
+    return "";
+  }
+
+  function drawBanner() {
+    const s = store.state;
+    const key = bannerKey(s);
+    if (key === shownBanner) return;
+    shownBanner = key;
+    clear(
+      banner,
+      s.status === "needs_model"
+        ? h(
+            "div",
+            { class: "banner" },
+            icon("model", 20),
+            h("div", null, h("strong", null, "Silas needs a speech model."), " It downloads once and runs on this computer."),
+            h("button", { class: "btn btn-primary", type: "button", onclick: () => go("model") }, "Choose a model"),
+          )
+        : keyAccessMissing(s)
+          ? h(
+              "div",
+              { class: "banner" },
+              icon("keyboard", 20),
+              h(
+                "div",
+                null,
+                h("strong", null, "Silas can't hear your key yet."),
+                // A switch that looks on may belong to an older Silas build. Turning it off and
+                // on keeps that build's signature, so only clearing the entry fixes it.
+                ...(s.platform === "macos"
+                  ? [
+                      " Click Fix Permission. Silas clears its old Accessibility entry and reopens, then macOS asks once. Click Open System Settings in that prompt and turn on Silas.",
+                      h("p", { class: "banner-note" }, "If that doesn't work, fix it by hand:"),
+                      h(
+                        "ol",
+                        { class: "banner-steps" },
+                        h("li", null, "Click Open Settings."),
+                        h("li", null, "Select Silas in the list."),
+                        h("li", null, "Click the minus (-) button to remove it."),
+                        h("li", null, "Click plus (+) and add Silas from Applications."),
+                        h("li", null, "Turn on the switch next to Silas."),
+                      ),
+                    ]
+                  : [` ${s.detail ?? ""}`]),
+              ),
+              s.platform === "macos"
+                ? h(
+                    "span",
+                    { class: "banner-actions" },
+                    h("button", { class: "btn btn-primary", type: "button", onclick: () => void api.fixAccessibility() }, "Fix Permission"),
+                    h("button", { class: "btn btn-ghost", type: "button", onclick: () => void api.openPermission("accessibility") }, "Open Settings"),
+                  )
+                : null,
+            )
+          : s.platform === "macos" && s.permissions.microphone !== "granted"
+            ? h(
+                "div",
+                { class: "banner" },
+                icon("mic", 20),
+                s.permissions.microphone === "denied"
+                  ? h("div", null, h("strong", null, "Silas can't use the microphone."), " Allow it in Privacy & Security, Microphone.")
+                  : h("div", null, h("strong", null, "Silas needs the microphone."), " Click Allow, then Allow in the macOS prompt."),
+                // Unknown asks once (PermissionGate); denied, or a second click, opens Settings.
+                h(
+                  "button",
+                  { class: "btn btn-primary", type: "button", onclick: () => void api.openPermission("microphone") },
+                  s.permissions.microphone === "denied" ? "Open Settings" : "Allow",
+                ),
+              )
+            : null,
+    );
+  }
+
+  function keyAccessMissing(s: typeof store.state): boolean {
+    return s.permissions.accessibility === "denied" || (s.status === "error" && (s.detail ?? "").includes("can't hear your key"));
+  }
+
+  function drawStats() {
+    const st = store.stats;
+    const card = (label: string, value: string, hint: string) =>
+      h("div", { class: "stat" }, h("div", { class: "stat-value" }, value), h("div", { class: "stat-label" }, label), h("div", { class: "stat-hint" }, hint));
+    clear(
+      stats,
+      card("Words today", st ? num(st.wordsToday) : "–", st ? `${num(st.avgWpm)} wpm average pace` : ""),
+      card("Total words", st ? num(st.wordsTotal) : "–", st ? `${num(st.dictations)} dictations` : ""),
+      card("Minutes saved", st ? num(st.minutesSaved) : "–", "Compared with typing at 40 wpm"),
+      card("Words learned", st ? num(st.learned) : "–", "From your fixes"),
+    );
+  }
+
+  function drawRecent() {
+    const items = store.history.slice(0, 3);
+    clear(
+      recent,
+      h(
+        "div",
+        { class: "section-head" },
+        h("h2", null, "Recent"),
+        store.history.length > 3
+          ? h("button", { class: "link", type: "button", onclick: () => go("history") }, "See all", icon("arrow", 14))
+          : null,
+      ),
+      items.length
+        ? h(
+            "ul",
+            { class: "recent-list" },
+            ...items.map((it) =>
+              h(
+                "li",
+                { class: "recent-item" },
+                h("p", null, it.corrected ?? it.text),
+                h("time", { datetime: it.ts }, timeAgo(it.ts)),
+              ),
+            ),
+          )
+        : h(
+            "div",
+            { class: "empty" },
+            h("p", null, "Nothing yet. Click into any text field, hold ", keycap(hotkeyLabel(), "sm"), " and say a sentence."),
+          ),
+    );
+  }
+
+  drawUpdate();
+  drawHero();
+  drawStats();
+  drawRecent();
+  // While the key banner shows, re-read permissions every second so it clears as soon as
+  // macOS trusts this build, without a restart or a click back into Silas.
+  const poll = window.setInterval(() => {
+    if (keyAccessMissing(store.state)) void refreshState();
+  }, 1000);
+  const unsubs = [
+    subscribe(["state", "settings"], drawHero),
+    subscribe(["stats"], drawStats),
+    subscribe(["history", "state"], drawRecent),
+    subscribe(["update"], drawUpdate),
+  ];
+  return () => {
+    window.clearInterval(poll);
+    unsubs.forEach((u) => u());
+  };
+}
