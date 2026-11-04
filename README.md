@@ -1,4 +1,4 @@
-<p align="center"><img src="brand/wordmark.svg" alt="Polycarp" height="66"></p>
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="brand/wordmark-on-dark.svg"><img src="brand/wordmark.svg" alt="Polycarp" height="66"></picture></p>
 
 # Polycarp
 
