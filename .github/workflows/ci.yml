@@ -1,0 +1,186 @@
+name: CI
+on:
+  push:
+    branches: [main]
+    paths: ['spaces/**', 'voice/**', 'browser/**', '.github/workflows/ci.yml']
+  pull_request:
+    paths: ['spaces/**', 'voice/**', 'browser/**', '.github/workflows/ci.yml']
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      spaces: ${{ steps.f.outputs.spaces }}
+      voice: ${{ steps.f.outputs.voice }}
+      browser: ${{ steps.f.outputs.browser }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: f
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            spaces: ['spaces/**', '.github/workflows/ci.yml']
+            voice: ['voice/**', '.github/workflows/ci.yml']
+            browser: ['browser/**', '.github/workflows/ci.yml']
+
+  spaces:
+    needs: changes
+    if: needs.changes.outputs.spaces == 'true'
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: spaces
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the install scripts
+        run: bash -n install.sh && bash -n uninstall.sh && bash -n scripts/bundle.sh && bash -n scripts/build-engine.sh
+      - name: Build the hands engine
+        run: BANEYSPACES_ARM64_ONLY=1 scripts/build-engine.sh
+      - name: Test
+        run: swift test
+
+  spaces-bundle:
+    needs: changes
+    if: needs.changes.outputs.spaces == 'true'
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: spaces
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bundle the app
+        run: BANEYSPACES_ADHOC=1 BANEYSPACES_ARM64_ONLY=1 scripts/bundle.sh
+      - name: The licence of ported code and the probe app are in the bundle
+        run: |
+          test -s build/BaneySpaces.app/Contents/Resources/licenses/cua-driver-MIT.txt
+          test -s build/BaneySpaces.app/Contents/Resources/probe/CanvasProbe.cdhash
+          codesign --verify --deep --strict build/BaneySpaces.app/Contents/Resources/probe/CanvasProbe.app
+
+  voice:
+    needs: changes
+    if: needs.changes.outputs.voice == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: voice
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: voice/src-tauri, key: "${{ matrix.os }}" }
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libudev-dev libxdo-dev
+      - name: Release requirement pin
+        if: runner.os == 'Linux'
+        run: scripts/check-requirement.sh --pin && scripts/check-requirement-test.sh && bash scripts/signing-identity-test.sh && bash scripts/install-requirement-test.sh
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - name: Unit tests
+        working-directory: voice/src-tauri
+        run: cargo test --lib
+      - name: Lint
+        if: runner.os == 'macOS'
+        working-directory: voice/src-tauri
+        run: cargo clippy --lib -- -D warnings
+
+  browser-skills:
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: browser
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install the CLI without install scripts
+        working-directory: browser/cli
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node node_modules/esbuild/install.js
+      - name: Build the CLI
+        working-directory: browser/cli
+        run: npm run build
+      - name: Lint every skill
+        run: node cli/dist/index.js skill lint skills
+      - name: Red-team the lint
+        working-directory: browser/cli
+        run: node --test test/skill-lint.test.mjs
+
+  browser-skill-regression:
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: browser
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install the CLI without install scripts
+        working-directory: browser/cli
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node node_modules/esbuild/install.js
+      - name: Build the CLI
+        working-directory: browser/cli
+        run: npm run build
+      - name: Lint and budget-check every skill
+        run: node cli/dist/index.js skill lint skills
+      - name: Router eval and regression snapshot
+        run: node cli/dist/index.js skill eval
+      - name: Router, version, rollback, editor and community tests
+        working-directory: browser/cli
+        run: node --test test/skill-router.test.mjs test/skill-platform.test.mjs test/judge-label.test.mjs test/community.test.mjs
+
+  browser-check:
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      # Clones mini-lit/ and pi-mono/ into the repo root (gitignored).
+      - name: Check out the pinned siblings and install
+        run: ./browser/scripts/setup-siblings.sh
+      - name: Build
+        working-directory: browser
+        env:
+          TABKYRA_NO_BUMP: "1"
+        run: |
+          npm run build
+          (cd cli && npm run build)
+      - name: Test
+        working-directory: browser
+        run: |
+          npx biome check .
+          npx tsc --noEmit
+          node --import tsx --test test/*.test.mjs
+          (cd cli && npx tsc --noEmit && npm test)
