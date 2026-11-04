@@ -139,9 +139,12 @@ test("many slow unfinished initialize bodies hit the caps (429) and memory stays
 		const secret = createToken(hub, `c${c}`, "skills.read");
 		for (let i = 0; i < 8; i++) slow(secret);
 	}
+	const started = Date.now();
 	// Refusals arrive as the hub accepts each connection, which takes longer on some machines.
 	const refusals = () => statuses.filter((x) => x === 429).length;
 	for (let waited = 0; waited < 15000 && refusals() < 96 - 64 - 8; waited += 100) await sleep(100);
+	// Never sample crash and memory sooner than the 1.5 s the hub has always had to read these bodies.
+	await sleep(Math.max(0, 1500 - (Date.now() - started)));
 	assert.ok(refusals() >= 96 - 64 - 8, `the hub-wide cap refuses the rest: ${refusals()} refusals`);
 	assert.equal(hub.proc.exitCode, null);
 	assert.ok(rssMb(hub.proc.pid) - before < 250, `memory is bounded (${(rssMb(hub.proc.pid) - before).toFixed(0)} MB more)`);

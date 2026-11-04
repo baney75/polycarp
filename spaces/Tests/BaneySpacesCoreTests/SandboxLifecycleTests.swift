@@ -282,8 +282,12 @@ final class SandboxLifecycleTests: XCTestCase {
         let r = rig()
         _ = try r.manager.up(task: "t1")
         let host = FakeWindowHost(); host.workspace = nil
+        // up also boots the warm clone in the background, so count only the task VM's runs.
+        let vm = r.manager.snapshot().vm
+        let runs = { r.tart.spawned.filter { $0.args.last == vm }.count }
+        let before = runs()
         XCTAssertThrowsError(try r.manager.view(show: true, host: host)) { XCTAssertEqual(($0 as? SandboxError)?.code, "no_agent_workspace") }
-        // up also boots the warm clone in the background, so a count can move here. A window is any run with graphics.
+        XCTAssertEqual(runs(), before, "the task VM was not restarted")
         XCTAssertTrue(r.tart.spawned.allSatisfy { $0.args.contains("--no-graphics") }, "no window process started")
         XCTAssertTrue(host.log.isEmpty)
         XCTAssertNotNil(r.manager.snapshot().vm)
