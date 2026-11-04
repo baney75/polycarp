@@ -1143,9 +1143,11 @@ async function funnelWithService(name, options = {}) {
 serviceTest("remote off turns Funnel off first, then removes the service and remote.json, and keeps oauth.json", async () => {
 	const { s } = await funnelWithService("off");
 	assert.ok(existsSync(s.serviceFile()));
+	// Only what remote off does: on macOS, setup also runs launchctl bootout before it bootstraps.
+	const before = s.calls().length;
 	const r = s.run(["remote", "off"]);
 	assert.equal(r.code, 0, r.out);
-	const calls = s.calls();
+	const calls = s.calls().slice(before);
 	assert.ok(calls.includes("tailscale funnel --https=8443 off"), calls.join("\n"));
 	assert.ok(calls.indexOf("tailscale funnel --https=8443 off") < calls.indexOf(stopCall), `Funnel closes before the service stops:\n${calls.join("\n")}`);
 	assert.equal(existsSync(s.serviceFile()), false);
@@ -1157,12 +1159,13 @@ serviceTest("remote off turns Funnel off first, then removes the service and rem
 
 serviceTest("remote off leaves the service running and the files in place when Funnel won't turn off", async () => {
 	const { s, port } = await funnelWithService("off-funnel-stuck", { funnelOffFails: true });
+	const before = s.calls().length;
 	const r = s.run(["remote", "off"]);
 	assert.equal(r.code, 1, r.out);
 	assert.match(r.out, /Couldn't turn Funnel off: boom/);
 	assert.match(r.out, /The service and remote\.json are kept/);
 	assert.ok(existsSync(s.serviceFile()), "the service file is kept");
-	assert.ok(!s.calls().includes(stopCall), "the service is not stopped while Funnel is open");
+	assert.ok(!s.calls().slice(before).includes(stopCall), "the service is not stopped while Funnel is open");
 	assert.deepEqual(s.remoteJson(), { publicUrl: FUNNEL_URL, port, route: "funnel" });
 });
 

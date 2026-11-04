@@ -1,3 +1,5 @@
+<p align="center"><img src="brand/wordmark.svg" alt="Polycarp" height="66"></p>
+
 # Polycarp
 
 Polycarp is being assembled from three apps: [BaneySpaces](https://github.com/baney75/baneyspaces)
@@ -10,6 +12,10 @@ replace them yet.
 
 Polycarp means "much fruit". John 15:5 (ESV): "Whoever abides in me and I in him, he it is that
 bears much fruit, for apart from me you can do nothing."
+
+## Plan
+
+See [PLAN.md](PLAN.md). The name, logo and colors are in [brand/](brand/README.md).
 
 ## Checks
 
