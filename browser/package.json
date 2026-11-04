@@ -1,0 +1,51 @@
+{
+	"name": "tabkyra",
+	"version": "1.1.8",
+	"private": true,
+	"description": "Tabkyra browser extension",
+	"type": "module",
+	"main": "dist/background.js",
+	"scripts": {
+		"clean": "rm -rf dist-chrome",
+		"build:chrome": "node ./scripts/build.mjs",
+		"build": "npm run build:chrome",
+		"dev": "concurrently -n \"build,css,server\" -c \"blue,green,yellow\" \"node ./scripts/build.mjs --watch\" \"tailwindcss -i ./src/app.css -o ./dist-chrome/app.css --watch\" \"node ./scripts/dev-server.mjs\"",
+		"typecheck": "tsc --noEmit",
+		"check": "biome check --write . && tsc --noEmit && node --import tsx --test test/*.test.mjs && cd site && npm run check",
+		"prepare": "husky"
+	},
+	"dependencies": {
+		"@huggingface/transformers": "4.3.2",
+		"@mariozechner/jailjs": "^0.1.0",
+		"@mariozechner/mini-lit": "file:../mini-lit",
+		"@mariozechner/pi-agent-core": "file:../pi-mono/packages/agent",
+		"@mariozechner/pi-ai": "file:../pi-mono/packages/ai",
+		"@mariozechner/pi-web-ui": "file:../pi-mono/packages/web-ui",
+		"@sinclair/typebox": "^0.34.41",
+		"chart.js": "^4.5.1",
+		"docx-preview": "^0.3.7",
+		"fuse.js": "^7.1.0",
+		"highlight.js": "^11.11.1",
+		"js-interpreter": "^6.0.1",
+		"jszip": "^3.10.1",
+		"lit": "^3.3.1",
+		"lucide": "^0.544.0",
+		"marked": "^16.4.2",
+		"minimatch": "^10.0.3",
+		"ollama": "^0.6.0",
+		"pdfjs-dist": "5.4.394",
+		"tsx": "^4.20.6",
+		"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.3.5",
+		"@tailwindcss/cli": "^4.0.0-beta.14",
+		"@types/chrome": "^0.1.24",
+		"@types/webextension-polyfill": "^0.12.4",
+		"concurrently": "^9.2.1",
+		"esbuild": "^0.25.10",
+		"husky": "^9.1.7",
+		"typescript": "5.9",
+		"ws": "^8.18.0"
+	}
+}

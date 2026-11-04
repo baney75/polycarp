@@ -1,0 +1,21 @@
+node_modules/
+dist-chrome/
+site/dist/
+site/data/
+*.log
+.DS_Store
+sitegeist-latest.zip
+.playwright-mcp/
+*.screenflow/
+*.mp4
+version.json
+docs/*.html
+cli/node_modules
+cli/dist
+# The checkout updater's builds in progress and the build kept for rollback (cli/src/checkout.ts).
+.tabkyra-update/
+
+# The demo video and its poster are published assets.
+!media/demo.mp4
+!media/hero.mp4
+!media/hero-vertical.mp4

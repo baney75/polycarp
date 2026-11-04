@@ -1,0 +1,19 @@
+{
+	"drops": [
+		{
+			"skill": "kyraskillmaker",
+			"value": 0.7222,
+			"reason": "Merging #19 (19 skills) with #26 (visual-explainer, mechanism-design) puts 34 skills in one catalog; the extra skills shift word weights (IDF), and the merged router routes kyraskillmaker at 72.2% against 77.8% on main. Accepted to land both (Donovan, 2026-10-26: \"Just merge it for now\"); to be won back in a follow-up."
+		},
+		{
+			"skill": "mechanism-design",
+			"value": 0.9333,
+			"reason": "Merging #19 (19 skills) with #26 (visual-explainer, mechanism-design) puts 34 skills in one catalog; the extra skills shift word weights (IDF), and the merged router routes mechanism-design at 93.3% against 100.0% on main. Accepted to land both (Donovan, 2026-10-26: \"Just merge it for now\"); to be won back in a follow-up."
+		},
+		{
+			"skill": "visual-explainer",
+			"value": 0.9412,
+			"reason": "Merging #19 (19 skills) with #26 (visual-explainer, mechanism-design) puts 34 skills in one catalog; the extra skills shift word weights (IDF), and the merged router routes visual-explainer at 94.1% against 100.0% on main. Accepted to land both (Donovan, 2026-10-26: \"Just merge it for now\"); to be won back in a follow-up."
+		}
+	]
+}

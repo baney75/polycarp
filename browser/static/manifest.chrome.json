@@ -1,0 +1,70 @@
+{
+	"manifest_version": 3,
+	"minimum_chrome_version": "141",
+	"name": "Tabkyra",
+	"description": "An AI agent in your browser side panel, and a browser for your coding agents",
+	"version": "1.1.9",
+	"key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2kC2+fqshozr+m/uopS9WXvavWghH5/l2yJbwV0sZZUpq0OOMfnVkGZLJtN7y/n0ifjKi4NENTCFou2e7CfX8D2j+0GSYuYFC/D4x0SElBEaL1Ey23JbjEL3auyfG5B4k4YfqU1hKk0Vxw1ENP46dvE7Vv0xvkOCnB1vcZzdJhqGFXjyPIrrTfiXNmzozeFSGPzi+AfNNh41T3pbN/9CB81rlhZnxVav3tTYLsvi8xrBbC88H4B1BtDw4OVLLETvmYJeXUE7tHftQdmZzAg70D6ABBfmYqKNIC+6mDYMH6uXokSZb4qog3LNrV1XCvaUHKGU9E/Xla3gTs8PLiR+8wIDAQAB",
+	"action": {
+		"default_title": "Open Tabkyra"
+	},
+	"background": {
+		"service_worker": "background.js",
+		"type": "module"
+	},
+	"icons": {
+		"16": "icon-16.png",
+		"32": "icon-32.png",
+		"48": "icon-48.png",
+		"128": "icon-128.png"
+	},
+	"commands": {
+		"toggle-sidepanel": {
+			"suggested_key": {
+				"default": "Ctrl+Shift+S",
+				"mac": "Command+Shift+S"
+			},
+			"description": "Toggle side panel"
+		}
+	},
+	"permissions": [
+		"storage",
+		"unlimitedStorage",
+		"activeTab",
+		"scripting",
+		"sidePanel",
+		"webNavigation",
+		"debugger",
+		"declarativeNetRequest",
+		"tabGroups",
+		"nativeMessaging",
+		"alarms"
+	],
+	"optional_permissions": [
+		"userScripts"
+	],
+	"host_permissions": [
+		"http://*/*",
+		"https://*/*",
+		"http://localhost/*",
+		"http://127.0.0.1/*"
+	],
+	"declarative_net_request": {
+		"rule_resources": [
+			{
+				"id": "cors_rules",
+				"enabled": true,
+				"path": "cors-rules.json"
+			}
+		]
+	},
+	"sandbox": {
+		"pages": [
+			"sandbox.html"
+		]
+	},
+	"content_security_policy": {
+		"extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+		"sandbox": "sandbox allow-scripts allow-modals; default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net/ https://unpkg.com/ https://cdnjs.cloudflare.com/ https://esm.sh/ https://esm.run/ https://cdn.skypack.dev/ https://cdn.tailwindcss.com; script-src-elem 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net/ https://unpkg.com/ https://cdnjs.cloudflare.com/ https://esm.sh/ https://esm.run/ https://cdn.skypack.dev/ https://cdn.tailwindcss.com; connect-src https://cdn.jsdelivr.net/ https://unpkg.com/ https://cdnjs.cloudflare.com/ https://esm.sh/ https://esm.run/ https://cdn.skypack.dev/ https://cdn.tailwindcss.com https://t1.gstatic.com/; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/ https://cdnjs.cloudflare.com/ https://cdn.tailwindcss.com; img-src 'self' data: blob: https:; font-src 'self' data: https://cdn.jsdelivr.net/ https://cdnjs.cloudflare.com/; object-src 'none'; base-uri 'none'; form-action 'none'"
+	}
+}

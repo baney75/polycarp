@@ -1,0 +1,177 @@
+/**
+ * `tabkyra pi-extension`: writes a self-contained pi extension that registers
+ * the browser tools by talking to the bridge socket directly (pi loads TypeScript
+ * extensions and has no MCP client).
+ */
+
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+const TOOLS: Array<{ name: string; method: string; description: string; params: string }> = [
+	{ name: "browser_tabs", method: "tabs.context", description: "List the tabs this session owns", params: "{}" },
+	{ name: "browser_navigate", method: "navigate", description: "Navigate the current tab to a URL ('back'/'forward' allowed)", params: "{ url: Type.String(), tabId: Type.Optional(Type.Number()) }" },
+	{ name: "browser_new_tab", method: "tabs.create", description: "Open a new background tab in the session", params: "{ url: Type.Optional(Type.String()) }" },
+	{ name: "browser_close_tab", method: "tabs.close", description: "Close one of the session's tabs", params: "{ tabId: Type.Number() }" },
+	{ name: "browser_show_tab", method: "tabs.show", description: "Bring a tab in front of the user (only when they must see it)", params: "{ tabId: Type.Optional(Type.Number()) }" },
+	{ name: "browser_screenshot", method: "screenshot", description: "Screenshot the current tab (returns an image)", params: "{ tabId: Type.Optional(Type.Number()), fullPage: Type.Optional(Type.Boolean()), maxWidth: Type.Optional(Type.Number()) }" },
+	{ name: "browser_read_page", method: "snapshot", description: "Interactive elements with refs plus page text", params: "{ tabId: Type.Optional(Type.Number()), filter: Type.Optional(Type.String()), maxNodes: Type.Optional(Type.Number()) }" },
+	{ name: "browser_text", method: "text", description: "Readable text of the page or a selector", params: "{ tabId: Type.Optional(Type.Number()), selector: Type.Optional(Type.String()), maxChars: Type.Optional(Type.Number()) }" },
+	{ name: "browser_find", method: "find", description: "Find elements by words in role/label/value/href", params: "{ query: Type.String(), tabId: Type.Optional(Type.Number()) }" },
+	{ name: "browser_click", method: "click", description: "Click by ref, selector, or x/y", params: "{ ref: Type.Optional(Type.String()), selector: Type.Optional(Type.String()), x: Type.Optional(Type.Number()), y: Type.Optional(Type.Number()), tabId: Type.Optional(Type.Number()) }" },
+	{ name: "browser_type", method: "type", description: "Type text with real key events; submit presses Enter", params: "{ text: Type.String(), ref: Type.Optional(Type.String()), selector: Type.Optional(Type.String()), submit: Type.Optional(Type.Boolean()), tabId: Type.Optional(Type.Number()) }" },
+	{ name: "browser_press", method: "press", description: "Press a key or chord (Enter, Control+a, ...)", params: "{ key: Type.String(), tabId: Type.Optional(Type.Number()) }" },
+	{ name: "browser_fill", method: "fill", description: "Set a form control's value", params: "{ value: Type.String(), ref: Type.Optional(Type.String()), selector: Type.Optional(Type.String()), tabId: Type.Optional(Type.Number()) }" },
+	{ name: "browser_scroll", method: "scroll", description: "Scroll by dx/dy, to top/bottom, or to an element", params: "{ dx: Type.Optional(Type.Number()), dy: Type.Optional(Type.Number()), to: Type.Optional(Type.String()), ref: Type.Optional(Type.String()), selector: Type.Optional(Type.String()), tabId: Type.Optional(Type.Number()) }" },
+	{ name: "browser_actions", method: "actions", description: "Several input steps in one call (press/click/drag/type/hover/scroll/wait, x/y = latest screenshot pixels), optional screenshot at the end", params: "{ steps: Type.Array(Type.Record(Type.String(), Type.Any())), screenshot: Type.Optional(Type.Boolean()), tabId: Type.Optional(Type.Number()) }" },
+	{ name: "browser_js", method: "evaluate", description: "Run JavaScript in the page and return its JSON value", params: "{ code: Type.String(), world: Type.Optional(Type.String()), tabId: Type.Optional(Type.Number()) }" },
+	{ name: "browser_wait", method: "wait", description: "Wait for selector/text/url or ms", params: "{ selector: Type.Optional(Type.String()), text: Type.Optional(Type.String()), urlIncludes: Type.Optional(Type.String()), ms: Type.Optional(Type.Number()), timeoutMs: Type.Optional(Type.Number()), tabId: Type.Optional(Type.Number()) }" },
+	{ name: "browser_console", method: "console.read", description: "Console messages captured on the tab", params: "{ onlyErrors: Type.Optional(Type.Boolean()), pattern: Type.Optional(Type.String()), clear: Type.Optional(Type.Boolean()), tabId: Type.Optional(Type.Number()) }" },
+];
+
+function extensionSource(): string {
+	const tools = TOOLS.map(
+		(t) => `	pi.registerTool({
+		name: ${JSON.stringify(t.name)},
+		label: ${JSON.stringify(t.name.replace("browser_", "Browser: "))},
+		description: ${JSON.stringify(t.description)},
+		parameters: Type.Object(${t.params}),
+		async execute(_id, params) {
+			return toResult(await bridge.call(${JSON.stringify(t.method)}, params as Record<string, unknown>));
+		},
+	});`,
+	).join("\n");
+
+	return `// Generated by \`tabkyra pi-extension\`. Talks to the tabkyra browser bridge
+// (the tabkyra Chromium extension) over its unix socket; no MCP needed.
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { connect } from "node:net";
+import { userInfo } from "node:os";
+import { join } from "node:path";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+
+const SOCKET_DIR = process.env.TABKYRA_SOCKET_DIR || \`/tmp/tabkyra-bridge-\${userInfo().username}\`;
+// One key per pi process: a reconnect (extension reload) must land on the same tabs.
+const SESSION_FALLBACK = \`p\${process.pid}-\${Date.now().toString(36)}\`;
+
+function encode(message: unknown): Buffer {
+	const body = Buffer.from(JSON.stringify(message), "utf8");
+	const header = Buffer.alloc(4);
+	header.writeUInt32LE(body.length, 0);
+	return Buffer.concat([header, body]);
+}
+
+function newestSocket(): string | undefined {
+	if (!existsSync(SOCKET_DIR)) return undefined;
+	const st = statSync(SOCKET_DIR);
+	if ((st.mode & 0o777) !== 0o700 || st.uid !== process.getuid?.()) throw new Error(\`\${SOCKET_DIR} is not private to this user\`);
+	return readdirSync(SOCKET_DIR)
+		.filter((n) => n.endsWith(".sock"))
+		.filter((n) => {
+			try {
+				process.kill(Number.parseInt(n, 10), 0);
+				return true;
+			} catch {
+				return false;
+			}
+		})
+		.map((n) => join(SOCKET_DIR, n))
+		.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+}
+
+class Bridge {
+	private socket?: ReturnType<typeof connect>;
+	private buffer = Buffer.alloc(0);
+	private seq = 0;
+	private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+
+	private async ensure(): Promise<void> {
+		if (this.socket && !this.socket.destroyed) return;
+		const path = newestSocket();
+		if (!path) throw new Error("tabkyra browser bridge is not running (is the tabkyra extension loaded and \`tabkyra install\` done?)");
+		await new Promise<void>((resolve, reject) => {
+			const socket = connect(path);
+			socket.once("error", reject);
+			socket.on("data", (chunk) => this.onData(chunk, resolve));
+			socket.on("close", () => {
+				for (const p of this.pending.values()) p.reject(new Error("bridge closed"));
+				this.pending.clear();
+			});
+			this.socket = socket;
+			socket.write(encode({ type: "hello", client: { name: "pi", session: process.env.TABKYRA_SESSION || process.env.PI_SESSION_ID || SESSION_FALLBACK } }));
+		});
+	}
+
+	private onData(chunk: Buffer, welcomed: () => void): void {
+		this.buffer = Buffer.concat([this.buffer, chunk]);
+		while (this.buffer.length >= 4) {
+			const len = this.buffer.readUInt32LE(0);
+			if (this.buffer.length < 4 + len) break;
+			const msg = JSON.parse(this.buffer.subarray(4, 4 + len).toString("utf8"));
+			this.buffer = this.buffer.subarray(4 + len);
+			if (msg.type === "welcome") welcomed();
+			else if (msg.type === "response") {
+				const p = this.pending.get(msg.id);
+				if (!p) continue;
+				this.pending.delete(msg.id);
+				if (msg.error) p.reject(new Error(\`\${msg.error.code}: \${msg.error.message}\`));
+				else p.resolve(msg.result);
+			} else if (msg.type === "event" && msg.event === "permission_request") {
+				if (process.env.TABKYRA_AUTO_ALLOW === "1") {
+					this.socket?.write(encode({ type: "request", id: ++this.seq, method: "permission.respond", params: { requestId: msg.data.requestId, decision: "allow_once" } }));
+				} else {
+					process.stderr.write(\`[tabkyra] \${msg.data.host} needs approval: run \\\`tabkyra allow \${msg.data.host}\\\` or use the side panel (Settings > Agents)\\n\`);
+				}
+			}
+		}
+	}
+
+	async call(method: string, params: Record<string, unknown>): Promise<unknown> {
+		await this.ensure();
+		const id = ++this.seq;
+		return new Promise((resolve, reject) => {
+			this.pending.set(id, { resolve, reject });
+			this.socket!.write(encode({ type: "request", id, method, params }));
+			setTimeout(() => {
+				if (this.pending.delete(id)) reject(new Error(\`\${method} timed out\`));
+			}, 120000);
+		});
+	}
+}
+
+const bridge = new Bridge();
+
+function toResult(value: unknown): { content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>; details: unknown } {
+	// actions: { steps, screenshot? } -> the screenshot as an image plus the step count
+	if (value && typeof value === "object" && "steps" in value && "screenshot" in value) {
+		const v = value as { steps: number; screenshot: unknown };
+		const shot = toResult(v.screenshot);
+		return { content: [...shot.content, { type: "text" as const, text: \`\${v.steps} steps done\` }], details: { steps: v.steps } };
+	}
+	if (value && typeof value === "object" && "data" in value && "mimeType" in value) {
+		const shot = value as { data: string; mimeType: string; width: number; height: number };
+		return {
+			content: [
+				{ type: "image" as const, data: shot.data, mimeType: shot.mimeType },
+				{ type: "text" as const, text: \`\${shot.width}x\${shot.height} screenshot; give x/y in this image's pixels\` },
+			],
+			details: { width: shot.width, height: shot.height },
+		};
+	}
+	return { content: [{ type: "text" as const, text: JSON.stringify(value) }], details: value };
+}
+
+export default function tabkyraExtension(pi: ExtensionAPI) {
+${tools}
+}
+`;
+}
+
+export function writePiExtension(dirOverride?: string): string {
+	const dir = dirOverride ?? join(homedir(), ".pi", "agent", "extensions");
+	if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+	const file = join(dir, "tabkyra.ts");
+	writeFileSync(file, extensionSource());
+	return file;
+}

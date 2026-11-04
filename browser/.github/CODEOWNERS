@@ -1,0 +1,29 @@
+# Skills run with the user's sign-in in every agent that loads them, and the lint and CI
+# are what keep a bad one out. Changes to any of these need a maintainer's review.
+/skills/                    @baney75
+/cli/src/skill-lint.ts      @baney75
+/cli/src/skills-catalog.ts  @baney75
+/cli/test/skill-lint.test.mjs @baney75
+/.github/                   @baney75
+/cli/src/skill.ts           @baney75
+/cli/scripts/               @baney75
+/cli/package.json           @baney75
+/cli/package-lock.json      @baney75
+/src/agent-setup-prompt.ts  @baney75
+/test/agent-setup-prompt.test.mjs @baney75
+/docs/skill-security.md     @baney75
+/skills-eval/               @baney75
+/skills-eval/accepted-drops.json @baney75
+/cli/scripts/skills-catalog.mjs @baney75
+/cli/src/skill-eval.ts      @baney75
+/cli/src/skill-router.ts    @baney75
+/cli/src/router-worker.ts   @baney75
+/cli/test/                  @baney75
+# Community skills run with the user's sign-in on every client that syncs them; the catalog
+# is signed and published from main. Merging a community skill is a maintainer's call.
+/community/                 @baney75
+/cli/src/skill-community.ts @baney75
+/cli/src/community-catalog.ts @baney75
+/cli/src/community-host.ts  @baney75
+/cli/src/skill-submit.ts    @baney75
+/CONTRIBUTING-skills.md     @baney75

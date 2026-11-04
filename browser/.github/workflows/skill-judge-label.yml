@@ -1,0 +1,43 @@
+# The skill-judge-change label approves one version of the judge (cli/src/skill-eval.ts and
+# cli/src/skill-router.ts). When a push to a pull request changes either file, this removes
+# the label, so a maintainer must review the new judge and add it again.
+#
+# pull_request_target runs this file from the base branch, with a token that may edit labels.
+# It never checks out or runs pull request code: it compares the push's two commits through
+# the GitHub API only (.github/scripts/judge-label.mjs, from the base checkout).
+name: Skill judge label
+
+on:
+  pull_request_target:
+    types: [synchronize]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  void-approval:
+    if: contains(github.event.pull_request.labels.*.name, 'skill-judge-change')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out the base branch (never the pull request)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Remove the label if this push changed the judge
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: node .github/scripts/judge-label.mjs remove

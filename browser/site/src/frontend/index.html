@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Tabkyra: you steer, your agents work the tabs</title>
+	<meta name="description" content="Let Claude Code, Codex or any MCP agent drive your real Chromium browser in its own tab group, with your approval for every new site. One command to set up.">
+	<meta property="og:title" content="Tabkyra">
+	<meta property="og:description" content="You steer. Your agents work the tabs.">
+	<link rel="icon" href="img/favicon.svg" type="image/svg+xml">
+	<link rel="stylesheet" href="app.css">
+</head>
+<body>
+	<header class="nav">
+		<a class="brand" href="#top"><img src="img/icon.svg" alt="" width="28" height="28"><span>Tabkyra</span></a>
+		<nav>
+			<a href="#start">Quick start</a>
+			<a href="#safety">Safety</a>
+			<a href="#how">How it works</a>
+			<a href="#credits">Credits</a>
+			<a class="gh" href="https://github.com/baney75/tabkyra">GitHub</a>
+		</nav>
+	</header>
+
+	<main id="top">
+		<section class="hero">
+			<div class="hero-copy">
+				<p class="eyebrow">A browser for your coding agents</p>
+				<h1>You steer.<br><em>Your agents work the tabs.</em></h1>
+				<p class="lede">
+					Claude Code, Codex or any MCP agent drives your real Chromium browser in its own tab group,
+					in the background, and asks before it opens a site you haven't allowed.
+				</p>
+				<div class="cta">
+					<a class="btn primary" href="#start">Set it up in 60 seconds</a>
+					<a class="btn" href="https://github.com/baney75/tabkyra">View the source</a>
+				</div>
+				<p class="built-on">
+					Built on <a href="https://github.com/0xSero/sitegeist">0xSero's agent bridge</a> and
+					<a href="https://github.com/badlogic/sitegeist">Mario Zechner's Sitegeist</a>.
+				</p>
+			</div>
+			<figure class="hero-demo">
+				<img src="img/demo.gif" alt="A scripted MCP client searches a library catalog, places a hold and reads the confirmation through Tabkyra's tools" width="960" height="464">
+				<figcaption>A scripted MCP client driving the real stack, recorded headless. The page in each frame is its own screenshot.</figcaption>
+			</figure>
+		</section>
+
+		<section class="start" id="start">
+			<h2><span class="num">60s</span> To your first agent-driven tab</h2>
+			<p class="section-lede">Node 20+, git and a Chromium 141+ browser such as Helium, Chrome or Brave (tested headless in Chromium). Clone into a folder of its own: the first build puts pi-mono and mini-lit beside it. A fresh clone reached "Connected" in 45 seconds on a Mac with a warm npm cache; a cold first install takes longer.</p>
+			<div class="term">
+				<div class="term-bar"><span></span><span></span><span></span><button class="copy" data-copy="mkdir tabkyra-src &amp;&amp; cd tabkyra-src&#10;git clone https://github.com/baney75/tabkyra &amp;&amp; cd tabkyra&#10;(cd cli &amp;&amp; npm install &amp;&amp; npm run build &amp;&amp; npm link)&#10;tabkyra setup">Copy</button></div>
+<pre><code><span class="p">$</span> mkdir tabkyra-src &amp;&amp; cd tabkyra-src
+<span class="p">$</span> git clone https://github.com/baney75/tabkyra &amp;&amp; cd tabkyra
+<span class="p">$</span> (cd cli &amp;&amp; npm install &amp;&amp; npm run build &amp;&amp; npm link)
+<span class="p">$</span> tabkyra setup
+<span class="b">Tabkyra</span> <span class="d">setup 0.1.0</span>
+
+<span class="b">1.</span> Build the extension
+  <span class="g">✓</span> Extension built <span class="d">(1.1.8)</span>
+<span class="b">2.</span> Register the native host with your browsers
+  <span class="g">✓</span> Helium        <span class="d">registered</span>
+<span class="b">3.</span> Connect your coding agents
+  <span class="g">✓</span> Claude Code is set up.
+  <span class="g">✓</span> Codex is set up.
+<span class="b">4.</span> Load the extension
+<span class="d">╭─ One step in your browser ─────────────────────────────────╮</span>
+<span class="d">│</span> <span class="b">1</span>  Open chrome://extensions, turn on <span class="w">Developer mode</span>,       <span class="d">│</span>
+<span class="d">│</span>    and click <span class="w">Load unpacked</span>.                                <span class="d">│</span>
+<span class="d">│</span> <span class="b">2</span>  Pick this folder:                                       <span class="d">│</span>
+<span class="d">│</span>    <span class="c">/path/to/tabkyra/dist-chrome</span>                            <span class="d">│</span>
+<span class="d">│</span> <span class="b">3</span>  Optional: click <span class="w">Details</span> on Tabkyra and turn on          <span class="d">│</span>
+<span class="d">│</span>    <span class="w">Allow user scripts</span> (faster page scripts).               <span class="d">│</span>
+<span class="d">╰────────────────────────────────────────────────────────────╯</span>
+  <span class="g">✓</span> Connected. Tabkyra can reach your browser <span class="d">(1.1.8)</span>.</code></pre>
+			</div>
+			<ol class="steps">
+				<li><b>Setup does the work.</b> It builds the extension, registers the native host with every Chromium browser it finds, and offers to add Tabkyra to Claude Code and Codex. For OpenCode, Cursor and OMP it prints the config to paste.</li>
+				<li><b>One step is yours.</b> Browsers make you load an unpacked extension by hand. Setup shows the exact folder and waits until it connects.</li>
+				<li><b>Ask your agent.</b> For example: <i>"Use tabkyra to open news.ycombinator.com and list the top five stories."</i> If anything is off, <code>tabkyra doctor</code> prints the exact fix.</li>
+			</ol>
+			<p class="harnesses">Works with <span>Claude Code</span><span>Codex</span><span>OpenCode</span><span>Cursor</span><span>OMP</span><span>pi</span><span>any MCP client</span></p>
+		</section>
+
+		<section class="safety" id="safety">
+			<h2>Your browser is signed in as you.<br><em>So you stay in command.</em></h2>
+			<div class="cards">
+				<article>
+					<h3>It asks before a new site</h3>
+					<p>An agent can open only the sites you've allowed. Claude Code and Codex show the prompt inline. You can also pre-approve a site with <code>tabkyra allow github.com</code>.</p>
+				</article>
+				<article>
+					<h3>Page text is data</h3>
+					<p>Every agent is told that page content is untrusted, that it must ask you before sending, buying, posting or deleting under your sign-in, and that it never types passwords or payment details. That's guidance to the model, not a lock. The lock is the site permission, and it limits where an agent goes, not what it does on a site you allowed.</p>
+				</article>
+				<article>
+					<h3>Its own tab group</h3>
+					<p>Agents work in "Tabkyra · claude" and similar groups, in background tabs. They can't see your other tabs, and their popups don't steal focus.</p>
+				</article>
+				<article>
+					<h3>Nothing on the network</h3>
+					<p>The browser starts a native host that talks over a Unix socket other users can't open. Only the Tabkyra extension can make the browser start it. Programs running as you can reach it, as they can your shell.</p>
+				</article>
+			</div>
+		</section>
+
+		<section class="how" id="how">
+			<h2>How it works</h2>
+			<svg class="diagram" viewBox="0 0 1000 120" role="img" aria-label="Your agent talks MCP over stdio to tabkyra mcp, which reaches the native host over a user-only Unix socket; the host talks to the extension over native messaging; the extension drives background tabs in the agent's own tab group.">
+				<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#E3A93B"/></marker></defs>
+				<g class="node"><rect x="0" y="20" width="176" height="80" rx="14"/><text x="88" y="56">Your agent</text><text class="sub" x="88" y="78">Claude Code, Codex…</text></g>
+				<g class="node"><rect x="206" y="20" width="176" height="80" rx="14"/><text x="294" y="56">tabkyra mcp</text><text class="sub" x="294" y="78">MCP over stdio</text></g>
+				<g class="node"><rect x="412" y="20" width="176" height="80" rx="14"/><text x="500" y="56">Native host</text><text class="sub" x="500" y="78">Unix socket, user-only</text></g>
+				<g class="node"><rect x="618" y="20" width="176" height="80" rx="14"/><text x="706" y="56">Extension</text><text class="sub" x="706" y="78">native messaging</text></g>
+				<g class="node tabs"><rect x="824" y="20" width="176" height="80" rx="14"/><text x="912" y="56">Background tabs</text><text class="sub" x="912" y="78">Tabkyra · claude</text></g>
+				<g class="edge"><line x1="179" y1="60" x2="203" y2="60" marker-end="url(#ar)"/><line x1="385" y1="60" x2="409" y2="60" marker-end="url(#ar)"/><line x1="591" y1="60" x2="615" y2="60" marker-end="url(#ar)"/><line x1="797" y1="60" x2="821" y2="60" marker-end="url(#ar)"/></g>
+			</svg>
+			<p class="section-lede">Each agent session gets its own tab group, and it survives extension reloads, so a harness that reconnects lands back on its own tabs. Screenshots and input go through <code>chrome.debugger</code>, which works on hidden tabs, so your window never has to be in front.</p>
+		</section>
+
+		<section class="credits" id="credits">
+			<h2>Credits</h2>
+			<div class="credit-grid">
+				<article>
+					<h3><a href="https://github.com/0xSero">0xSero</a></h3>
+					<p class="repo"><a href="https://github.com/0xSero/sitegeist">github.com/0xSero/sitegeist</a></p>
+					<p>Built the agent bridge Tabkyra is made of: the native messaging host, the CLI and MCP server, one tab group per agent, background screenshots and input, per-tab side panels and the foreground guard.</p>
+				</article>
+				<article>
+					<h3><a href="https://github.com/badlogic">Mario Zechner</a></h3>
+					<p class="repo"><a href="https://github.com/badlogic/sitegeist">github.com/badlogic/sitegeist</a></p>
+					<p>Wrote Sitegeist, the original extension and its side panel agent, and the pi and mini-lit libraries it runs on.</p>
+				</article>
+				<article>
+					<h3><a href="https://github.com/baney75/tabkyra">Tabkyra</a></h3>
+					<p class="repo"><a href="https://github.com/baney75/tabkyra">github.com/baney75/tabkyra</a></p>
+					<p>The name and brand, one-command setup, the doctor, Helium support, and MCP tools documented for agents. AGPL-3.0, like upstream.</p>
+				</article>
+			</div>
+		</section>
+	</main>
+
+	<footer>
+		<div class="foot-brand"><img src="img/icon.svg" alt="" width="22" height="22"> Tabkyra <span>· tab + kybernētēs, "helmsman"</span></div>
+		<p>
+			Built on <a href="https://github.com/0xSero/sitegeist">0xSero's agent bridge</a> and
+			<a href="https://github.com/badlogic/sitegeist">Mario Zechner's Sitegeist</a>.
+			<a href="https://github.com/baney75/tabkyra/blob/main/LICENSE">AGPL-3.0</a>.
+		</p>
+		<p class="quiet">This page sets no cookies and collects nothing.</p>
+	</footer>
+
+	<script type="module" src="main.ts"></script>
+</body>
+</html>

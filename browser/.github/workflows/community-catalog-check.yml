@@ -1,0 +1,146 @@
+# Daily check that the published community catalog is current and verifiable (docs/decisions.md
+# D27). Publishing needs a signing approval, so it runs only when its inputs change; this check
+# catches anything that slipped: a rejected, failed or long-pending publish, a half-finished
+# upload, a main that can't build a catalog (or can't even build the CLI), or an input change the
+# publish triggers don't list. It holds no signing key and needs no approval.
+#
+# Two jobs on separate runners, so repo code never shares a runner with a write token:
+#   compare: read-only token (contents, actions). Builds main's CLI, verifies the published file
+#            and signature with the CLI's own sync code and the committed key, and compares skills
+#            and revoked with a rebuild. Writes only a small verdict file as an artifact.
+#   report:  issues: write, no checkout, gh and jq only. Reads the verdict (a failed or missing
+#            compare is itself a finding), then opens or comments on this workflow's own labeled
+#            issue, or closes it once the catalog matches again.
+name: Community catalog check
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  compare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch the published catalog and pending publishes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/check"; mkdir -p "$out/published"
+          # The oldest publish still waiting or running. A recent one isn't a miss yet; an old one is.
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow community-catalog.yml --limit 50 --json status,createdAt \
+            --jq '[.[] | select(.status != "completed") | .createdAt | fromdateiso8601] | min // empty' > "$out/oldest-pending"
+          # Any error reading GitHub fails the job (report then says the check couldn't run);
+          # only a real absence becomes a catalog finding.
+          if ! gh release view community-catalog --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name]' > "$out/assets.json" 2> "$out/view.err"; then
+            if grep -qi "release not found" "$out/view.err"; then echo "[]" > "$out/assets.json"; else cat "$out/view.err"; exit 1; fi
+          fi
+          for name in community-catalog.json community-catalog.json.minisig; do
+            if jq -e --arg n "$name" 'index($n)' "$out/assets.json" >/dev/null; then
+              gh release download community-catalog --repo "$GITHUB_REPOSITORY" -D "$out/published" -p "$name"
+            fi
+          done
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Build main's CLI without install scripts
+        id: build
+        continue-on-error: true
+        working-directory: cli
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node node_modules/esbuild/install.js
+          npm run build
+
+      - name: Verify and compare
+        env:
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/check"; pub="$out/published"; reason=""
+          if [ "$BUILD_OUTCOME" != success ]; then
+            reason="main at $GITHUB_SHA doesn't build the CLI, so no catalog can be built or published."
+          elif [ ! -s "$pub/community-catalog.json" ] || [ ! -s "$pub/community-catalog.json.minisig" ]; then
+            reason="The community-catalog release is missing community-catalog.json or its signature."
+          elif ! TABKYRA_CONFIG_DIR="$(mktemp -d)" TABKYRA_COMMUNITY_URL="$pub" node cli/dist/index.js skill sync --json > "$out/sync.json" 2>&1; then
+            reason="The published catalog doesn't verify: $(jq -r .message "$out/sync.json" 2>/dev/null || tail -3 "$out/sync.json")"
+          elif ! node cli/dist/index.js skill catalog . --out "$out/rebuilt.json" --serial 1 --source "$GITHUB_SHA" > "$out/build.log" 2>&1; then
+            reason="main at $GITHUB_SHA no longer builds a community catalog, so no publish can succeed: $(tail -5 "$out/build.log")"
+          elif ! cmp -s <(jq -S '{skills, revoked}' "$out/rebuilt.json") <(jq -S '{skills, revoked}' "$pub/community-catalog.json"); then
+            reason="The published catalog (built from $(jq -r .source "$pub/community-catalog.json")) differs from a catalog built from main at $GITHUB_SHA."
+          fi
+          state=ok
+          if [ -n "$reason" ]; then
+            state=behind
+            # Grace only while the oldest pending publish is under 20 hours old (the check runs daily,
+            # so a missed publish is reported within about a day). Newer runs can't extend it.
+            oldest=$(cat "$out/oldest-pending")
+            if [ -n "$oldest" ] && [ $(( $(date -u +%s) - ${oldest%.*} )) -lt 72000 ]; then state=pending; fi
+          fi
+          mkdir -p "$out/verdict"
+          jq -n --arg state "$state" --arg reason "$reason" --arg sha "$GITHUB_SHA" '{state: $state, reason: $reason, sha: $sha}' > "$out/verdict/verdict.json"
+          cat "$out/verdict/verdict.json"
+
+      - name: Upload the verdict
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: catalog-verdict
+          path: ${{ runner.temp }}/check/verdict/verdict.json
+          if-no-files-found: error
+          retention-days: 7
+
+  report:
+    needs: compare
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+      actions: read
+    steps:
+      - name: Download the verdict
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: catalog-verdict
+          path: verdict
+
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPARE_RESULT: ${{ needs.compare.result }}
+        run: |
+          set -euo pipefail
+          if [ "$COMPARE_RESULT" = success ] && [ -s verdict/verdict.json ]; then
+            state=$(jq -r .state verdict/verdict.json); reason=$(jq -r .reason verdict/verdict.json)
+          else
+            state=behind; reason="The catalog check couldn't run (compare job: $COMPARE_RESULT); see $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID."
+          fi
+          case "$state" in ok|behind|pending) ;; *) echo "::error::bad verdict"; exit 1;; esac
+          [ "$state" = pending ] && { echo "A recent publish is pending; not reporting yet."; exit 0; }
+          label=community-catalog-check
+          gh label create "$label" --repo "$GITHUB_REPOSITORY" --color B60205 --description "Opened by the community catalog check" 2>/dev/null || true
+          # Only this workflow's own issue: labeled, and opened by GitHub Actions.
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label "$label" --limit 50 --json number,author \
+            --jq '[.[] | select(.author.login == "app/github-actions" or .author.login == "github-actions" or .author.login == "github-actions[bot]")] | .[0].number // empty')
+          if [ "$state" = ok ]; then
+            if [ -n "$open" ]; then gh issue close "$open" --repo "$GITHUB_REPOSITORY" --comment "The published catalog verifies and matches main."; fi
+            exit 0
+          fi
+          body="$reason Re-run the Community catalog workflow and approve its publish: \`gh workflow run community-catalog.yml --repo $GITHUB_REPOSITORY\`."
+          if [ -n "$open" ]; then gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else gh issue create --repo "$GITHUB_REPOSITORY" --title "Community catalog is behind main" --label "$label" --body "$body"; fi

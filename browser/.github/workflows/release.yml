@@ -1,0 +1,142 @@
+# Builds, tests, packages and signs a release when a version tag is pushed, then attaches
+# tabkyra-<version>.zip, SHA256SUMS and SHA256SUMS.minisig. `tabkyra update` verifies the
+# signature against keys/tabkyra-release.pub. One-time setup and key handling: docs/updates.md.
+#
+# Two jobs, so the signing key never shares a runner with npm install scripts or the build:
+#   build:   read-only token, no secrets. Builds, tests and packages, uploads the files.
+#   publish: no npm and no repo code. Downloads the files, signs with minisign, checks the
+#            signature against the committed public key, and creates the release.
+#   v1.2.0                  stable release
+#   v1.2.0-nightly.20261025 nightly (published as a prerelease)
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Nothing gets write access by default; only the publish job, which runs no repo code, does.
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: tabkyra
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: Check the tag
+        working-directory: tabkyra
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$GITHUB_REF_NAME is not v<major>.<minor>.<patch>[-pre]"; exit 1
+          fi
+          manifest=$(node -p "require('./static/manifest.chrome.json').version")
+          if [ "${version%%-*}" != "$manifest" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match static/manifest.chrome.json ($manifest)"; exit 1
+          fi
+          grep -q '^RW' keys/tabkyra-release.pub || { echo "::error::keys/tabkyra-release.pub has no key (docs/updates.md)"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Check out the pinned siblings and install
+        run: ./tabkyra/scripts/setup-siblings.sh
+
+      - name: Build
+        working-directory: tabkyra
+        env:
+          TABKYRA_NO_BUMP: "1"
+        run: |
+          npm run build
+          (cd cli && npm run build)
+
+      - name: Test
+        working-directory: tabkyra
+        run: |
+          npx biome check .
+          npx tsc --noEmit
+          node --import tsx --test test/*.test.mjs
+          (cd cli && npx tsc --noEmit && npm test)
+
+      - name: Package
+        working-directory: tabkyra
+        run: |
+          node scripts/release/package.mjs --version "$VERSION" --out ../release
+          node scripts/release/notes.mjs "$VERSION" > ../release/notes.md
+
+      - name: Upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: release/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    # The signing key is an environment secret that only main and v* tags can reach.
+    environment: release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: release
+
+      - name: Install minisign
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq minisign
+          echo "MINISIGN=$(command -v minisign)" >> "$GITHUB_ENV"
+
+      - name: Sign
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::error::The release environment's MINISIGN_SECRET_KEY secret is not set (docs/updates.md)"; exit 1
+          fi
+          umask 077
+          key="$RUNNER_TEMP/minisign.key"
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
+          # The trusted comment is signed; tabkyra update refuses a signature that names another version.
+          "$MINISIGN" -S -s "$key" -m release/SHA256SUMS -t "tabkyra $version" < /dev/null
+          rm -f "$key"
+
+      - name: Verify against the committed public key
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/contents/keys/tabkyra-release.pub?ref=$GITHUB_SHA" --jq .content | base64 -d > "$RUNNER_TEMP/release.pub"
+          "$MINISIGN" -V -p "$RUNNER_TEMP/release.pub" -m release/SHA256SUMS
+          (cd release && sha256sum -c SHA256SUMS)
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          prerelease=""
+          case "$version" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" \
+            "release/tabkyra-$version.zip" release/SHA256SUMS release/SHA256SUMS.minisig \
+            --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "Tabkyra $version" --notes-file release/notes.md $prerelease

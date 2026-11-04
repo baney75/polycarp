@@ -1,0 +1,1660 @@
+diff --git a/packages/ai/src/models.ts b/packages/ai/src/models.ts
+index 101c83f2c..12cd0c2e3 100644
+--- a/packages/ai/src/models.ts
++++ b/packages/ai/src/models.ts
+@@ -75,3 +75,25 @@ export function modelsAreEqual<TApi extends Api>(
+ 	if (!a || !b) return false;
+ 	return a.id === b.id && a.provider === b.provider;
+ }
++
++export function registerModels(provider: string, models: Model<Api>[]): void {
++	const providerModels = new Map<string, Model<Api>>();
++	for (const model of models) providerModels.set(model.id, model);
++	modelRegistry.set(provider, providerModels);
++}
++
++export function resetProviderModels(provider: string): void {
++	const generated = (MODELS as Record<string, Record<string, Model<Api>>>)[provider];
++	if (!generated) {
++		modelRegistry.delete(provider);
++		return;
++	}
++	const providerModels = new Map<string, Model<Api>>();
++	for (const [id, model] of Object.entries(generated)) providerModels.set(id, model);
++	modelRegistry.set(provider, providerModels);
++}
++
++export function getGeneratedModels(provider: string): Model<Api>[] {
++	const generated = (MODELS as Record<string, Record<string, Model<Api>>>)[provider];
++	return generated ? Object.values(generated) : [];
++}
+diff --git a/packages/ai/src/providers/openai-completions.ts b/packages/ai/src/providers/openai-completions.ts
+index 2714e91c0..b92a4c8aa 100644
+--- a/packages/ai/src/providers/openai-completions.ts
++++ b/packages/ai/src/providers/openai-completions.ts
+@@ -130,6 +130,8 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
+ 				// OpenAI documents ChatCompletionChunk.id as the unique chat completion identifier,
+ 				// and each chunk in a streamed completion carries the same id.
+ 				output.responseId ||= chunk.id;
++				// Routers (OpenRouter's fallback list, its free router) report the model that answered.
++				if (chunk.model && chunk.model !== model.id) output.responseModel ||= chunk.model;
+ 				if (chunk.usage) {
+ 					output.usage = parseChunkUsage(chunk.usage, model);
+ 				}
+diff --git a/packages/ai/src/types.ts b/packages/ai/src/types.ts
+index f87f462c2..b5a502c58 100644
+--- a/packages/ai/src/types.ts
++++ b/packages/ai/src/types.ts
+@@ -194,6 +194,7 @@ export interface AssistantMessage {
+ 	provider: Provider;
+ 	model: string;
+ 	responseId?: string; // Provider-specific response/message identifier when the upstream API exposes one
++	responseModel?: string; // The model the provider says answered, when it reports one (routers and fallbacks can differ from `model`)
+ 	usage: Usage;
+ 	stopReason: StopReason;
+ 	errorMessage?: string;
+diff --git a/packages/web-ui/src/ChatPanel.ts b/packages/web-ui/src/ChatPanel.ts
+index 2c76c391d..73792853a 100644
+--- a/packages/web-ui/src/ChatPanel.ts
++++ b/packages/web-ui/src/ChatPanel.ts
+@@ -2,7 +2,7 @@ import { Badge } from "@mariozechner/mini-lit/dist/Badge.js";
+ import { html, LitElement } from "lit";
+ import { customElement, state } from "lit/decorators.js";
+ import "./components/AgentInterface.js";
+-import type { Agent, AgentTool } from "@mariozechner/pi-agent-core";
++import type { Agent, AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
+ import type { AgentInterface } from "./components/AgentInterface.js";
+ import { ArtifactsRuntimeProvider } from "./components/sandbox/ArtifactsRuntimeProvider.js";
+ import { AttachmentsRuntimeProvider } from "./components/sandbox/AttachmentsRuntimeProvider.js";
+@@ -23,6 +23,21 @@ export class ChatPanel extends LitElement {
+ 	@state() private artifactCount = 0;
+ 	@state() private showArtifactsPanel = false;
+ 	@state() private windowWidth = 0;
++	/** The floating "Artifacts" pill over the chat. An app that shows artifacts elsewhere turns it off. */
++	@state() public showArtifactsPill = true;
++	/** Called when the number of artifacts changes. */
++	public onArtifactsCountChange?: (count: number) => void;
++
++	/** How many artifacts the session has. */
++	get artifactsCount(): number {
++		return this.artifactCount;
++	}
++
++	/** Show the artifacts panel (it only renders when there are artifacts). */
++	openArtifacts(): void {
++		this.showArtifactsPanel = true;
++		this.requestUpdate();
++	}
+ 
+ 	private resizeHandler = () => {
+ 		this.windowWidth = window.innerWidth;
+@@ -58,6 +73,7 @@ export class ChatPanel extends LitElement {
+ 		config?: {
+ 			onApiKeyRequired?: (provider: string) => Promise<boolean>;
+ 			onBeforeSend?: () => void | Promise<void>;
++			steerContext?: () => Promise<AgentMessage[]>;
+ 			onCostClick?: () => void;
+ 			onModelSelect?: () => void;
+ 			sandboxUrlProvider?: () => string;
+@@ -81,6 +97,7 @@ export class ChatPanel extends LitElement {
+ 		this.agentInterface.onApiKeyRequired = config?.onApiKeyRequired;
+ 		this.agentInterface.onModelSelect = config?.onModelSelect;
+ 		this.agentInterface.onBeforeSend = config?.onBeforeSend;
++		this.agentInterface.steerContext = config?.steerContext;
+ 		this.agentInterface.onCostClick = config?.onCostClick;
+ 
+ 		// Set up artifacts panel
+@@ -123,6 +140,7 @@ export class ChatPanel extends LitElement {
+ 			if (this.hasArtifacts && created) {
+ 				this.showArtifactsPanel = true;
+ 			}
++			this.onArtifactsCountChange?.(count);
+ 			this.requestUpdate();
+ 		};
+ 
+@@ -152,6 +170,7 @@ export class ChatPanel extends LitElement {
+ 
+ 		this.hasArtifacts = this.artifactsPanel.artifacts.size > 0;
+ 		this.artifactCount = this.artifactsPanel.artifacts.size;
++		this.onArtifactsCountChange?.(this.artifactCount);
+ 
+ 		this.requestUpdate();
+ 	}
+@@ -179,7 +198,7 @@ export class ChatPanel extends LitElement {
+ 
+ 					<!-- Floating pill when artifacts exist and panel is collapsed -->
+ 					${
+-						this.hasArtifacts && !this.showArtifactsPanel
++						this.showArtifactsPill && this.hasArtifacts && !this.showArtifactsPanel
+ 							? html`
+ 								<button
+ 									class="absolute z-30 top-4 left-1/2 -translate-x-1/2 pointer-events-auto"
+diff --git a/packages/web-ui/src/components/AgentInterface.ts b/packages/web-ui/src/components/AgentInterface.ts
+index b8f6550ec..81a8566e6 100644
+--- a/packages/web-ui/src/components/AgentInterface.ts
++++ b/packages/web-ui/src/components/AgentInterface.ts
+@@ -1,3 +1,4 @@
++import type { ComposerAccessory, ModelLabel, SlashCommandProvider } from "./MessageEditor.js";
+ import { streamSimple, type ToolResultMessage, type Usage } from "@mariozechner/pi-ai";
+ import { html, LitElement } from "lit";
+ import { customElement, property, query } from "lit/decorators.js";
+@@ -8,10 +9,11 @@ import "./MessageList.js";
+ import "./Messages.js"; // Import for side effects to register the custom elements
+ import { getAppStorage } from "../storage/app-storage.js";
+ import "./StreamingMessageContainer.js";
+-import type { Agent, AgentEvent } from "@mariozechner/pi-agent-core";
++import type { Agent, AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
+ import type { Attachment } from "../utils/attachment-utils.js";
+ import { formatUsage } from "../utils/format.js";
+ import { i18n } from "../utils/i18n.js";
++import { MessageQueue, type SendResult } from "../utils/message-queue.js";
+ import { createStreamFn } from "../utils/proxy-utils.js";
+ import type { UserMessageWithAttachments } from "./Messages.js";
+ import type { StreamingMessageContainer } from "./StreamingMessageContainer.js";
+@@ -28,12 +30,26 @@ export class AgentInterface extends LitElement {
+ 	@property({ attribute: false }) onApiKeyRequired?: (provider: string) => Promise<boolean>;
+ 	// Optional callback called before sending a message
+ 	@property({ attribute: false }) onBeforeSend?: () => void | Promise<void>;
++	/** Context to deliver ahead of a "Send now" message mid-run (onBeforeSend can't append mid-run). */
++	@property({ attribute: false }) steerContext?: () => Promise<AgentMessage[]>;
+ 	// Optional callback called before executing a tool call - return false to prevent execution
+ 	@property({ attribute: false }) onBeforeToolCall?: (toolName: string, args: any) => boolean | Promise<boolean>;
+ 	// Optional callback called when cost display is clicked
+ 	@property({ attribute: false }) onCostClick?: () => void;
+ 	// Optional callback to override model selector behavior
+ 	@property({ attribute: false }) onModelSelect?: () => void;
++	// Returns the text ArrowUp recalls into an empty composer
++	@property({ attribute: false }) historyProvider?: () => string | undefined;
++	// Suggestions shown when the composer starts with "/"
++	@property({ attribute: false }) slashCommandProvider?: SlashCommandProvider;
++	// Suggestions shown after "@" (tab references)
++	@property({ attribute: false }) mentionProvider?: SlashCommandProvider;
++	// Rendered above the composer's text box
++	@property({ attribute: false }) composerAccessory?: ComposerAccessory;
++	/** Extra composer buttons beside the attachment button (MessageEditor.actions). */
++	@property({ attribute: false }) composerActions?: ComposerAccessory;
++	/** Names the current model in the composer; the raw model id when unset. */
++	@property({ attribute: false }) modelLabel?: ModelLabel;
+ 
+ 	// References
+ 	@query("message-editor") private _messageEditor!: MessageEditor;
+@@ -46,6 +62,12 @@ export class AgentInterface extends LitElement {
+ 	private _resizeObserver?: ResizeObserver;
+ 	private _unsubscribeSession?: () => void;
+ 
++
++	/** Messages sent while the agent runs (see MessageQueue); one queue per session. */
++	private _queue?: MessageQueue;
++	/** A send is between its checks and prompt(); another send in that window queues. */
++	private _starting = false;
++
+ 	public setInput(text: string, attachments?: Attachment[]) {
+ 		const update = () => {
+ 			if (!this._messageEditor) requestAnimationFrame(update);
+@@ -150,12 +172,37 @@ export class AgentInterface extends LitElement {
+ 			};
+ 		}
+ 
++		const session = this.session;
++		if (this._queue?.agent === session) {
++			// Same session after a reconnect: events may have been missed while unsubscribed.
++			this._queue.sync();
++		} else {
++			this._queue?.dispose();
++			session.setSteeringMode("all"); // a Send now message and its page context arrive together
++			const queue: MessageQueue = new MessageQueue(
++				session,
++				// A queue sends only into its own session, and only while it is the panel's queue.
++				(item) =>
++					this.session === session && this._queue === queue
++						? this.startSend(item.input, item.attachments, "queue").then((r) => r.result)
++						: Promise.resolve<SendResult>("busy"),
++				() => this.requestUpdate(),
++				() => this.steerContext?.() ?? Promise.resolve([]),
++			);
++			this._queue = queue;
++		}
+ 		this._unsubscribeSession = this.session.subscribe(async (ev: AgentEvent) => {
+ 			switch (ev.type) {
+ 				case "message_start":
++					this._queue?.onMessageStart(ev.message);
++					this.requestUpdate();
++					break;
++				case "agent_start":
++					this._queue?.onAgentStart();
++					this.requestUpdate();
++					break;
+ 				case "turn_start":
+ 				case "turn_end":
+-				case "agent_start":
+ 					this.requestUpdate();
+ 					break;
+ 				case "message_end":
+@@ -166,14 +213,16 @@ export class AgentInterface extends LitElement {
+ 					}
+ 					this.requestUpdate();
+ 					break;
+-				case "agent_end":
++				case "agent_end": {
+ 					// Clear streaming container when agent finishes
+ 					if (this._streamingContainer) {
+ 						this._streamingContainer.isStreaming = false;
+ 						this._streamingContainer.setMessage(null, true);
+ 					}
++					this._queue?.onAgentEnd(ev.messages);
+ 					this.requestUpdate();
+ 					break;
++				}
+ 				case "message_update":
+ 					if (this._streamingContainer) {
+ 						const isStreaming = this.session?.state.isStreaming || false;
+@@ -213,52 +262,167 @@ export class AgentInterface extends LitElement {
+ 	};
+ 
+ 	public async sendMessage(input: string, attachments?: Attachment[]) {
+-		if ((!input.trim() && attachments?.length === 0) || this.session?.state.isStreaming) return;
++		const { run } = await this.startSend(input, attachments, "api");
++		await run;
++	}
++
++	/**
++	 * Start a send. While a run or another send is under way it queues instead (a send from the
++	 * queue reports "busy" and stays queued). Resolves once prompt() has started, with the run.
++	 * Only a send that came from the editor clears it, so a draft survives queued sends.
++	 */
++	private async startSend(
++		input: string,
++		attachments: Attachment[] | undefined,
++		origin: "editor" | "api" | "queue",
++	): Promise<{ result: SendResult; run?: Promise<void> }> {
++		const fromQueue = origin === "queue";
++		if (!input.trim() && (attachments?.length ?? 0) === 0) return { result: "refused" };
+ 		const session = this.session;
+ 		if (!session) throw new Error("No session set on AgentInterface");
+-		if (!session.state.model) throw new Error("No model set on AgentInterface");
+-
+-		// Check if API key exists for the provider (only needed in direct mode)
+-		const provider = session.state.model.provider;
+-		const apiKey = await getAppStorage().providerKeys.get(provider);
++		// The queue this send belongs to; a later session switch must not move it to another chat.
++		const queue = this._queue;
++		// An editor send takes its text out of the editor at once, so a second Enter in the
++		// window below can't send it again. It goes back only if the send is refused.
++		// (A programmatic send can come before the first render, when there is no editor yet.)
++		const editor = this._messageEditor as MessageEditor | undefined;
++		const fromEditor = origin === "editor" && !!editor;
++		const draftAttachments = fromEditor ? editor?.attachments : undefined;
++		if (fromEditor && editor) {
++			editor.value = "";
++			editor.attachments = [];
++		}
++		const giveBack = () => {
++			if (fromEditor && editor && !editor.value && editor.attachments.length === 0) {
++				editor.value = input;
++				editor.attachments = draftAttachments ?? [];
++			}
++		};
++		const queueIt = (): { result: SendResult } => {
++			if (fromQueue) return { result: "busy" };
++			if (queue && queue === this._queue && queue.agent === session) {
++				queue.add(input, attachments);
++				if (!session.state.isStreaming && !this._starting) queue.kick();
++			} else giveBack();
++			return { result: "busy" };
++		};
++		// While a run, another send, or queued items about to go out are ahead, a new send waits its turn.
++		if (session.state.isStreaming || this._starting || (!fromQueue && queue?.hasSendable)) return queueIt();
++		if (!session.state.model) {
++			giveBack();
++			if (fromQueue) return { result: "refused" };
++			throw new Error("No model set on AgentInterface");
++		}
+ 
+-		// If no API key, prompt for it
+-		if (!apiKey) {
+-			if (!this.onApiKeyRequired) {
+-				console.error("No API key configured and no onApiKeyRequired handler set");
+-				return;
++		this._starting = true;
++		let started = false;
++		try {
++			// Check if API key exists for the provider (only needed in direct mode)
++			const provider = session.state.model.provider;
++			const apiKey = await getAppStorage().providerKeys.get(provider);
++
++			// If no API key, prompt for it
++			if (!apiKey) {
++				if (!this.onApiKeyRequired) {
++					console.error("No API key configured and no onApiKeyRequired handler set");
++					giveBack();
++					return { result: "refused" };
++				}
++				if (!(await this.onApiKeyRequired(provider))) {
++					giveBack();
++					return { result: "refused" };
++				}
+ 			}
+ 
+-			const success = await this.onApiKeyRequired(provider);
++			// The panel moved to another session, or a run started while we waited.
++			if (session !== this.session || session.state.isStreaming) return queueIt();
+ 
+-			// If still no API key, abort the send
+-			if (!success) {
+-				return;
++			// Call onBeforeSend hook before sending
++			if (this.onBeforeSend) {
++				await this.onBeforeSend();
++			}
++			if (session !== this.session || session.state.isStreaming) return queueIt();
++
++			this._autoScroll = true; // Enable auto-scroll when sending a message
++
++			// Compose message with attachments if any. prompt() marks the session streaming at once.
++			let run: Promise<void>;
++			if (attachments && attachments.length > 0) {
++				const message: UserMessageWithAttachments = {
++					role: "user-with-attachments",
++					content: input,
++					attachments,
++					timestamp: Date.now(),
++				};
++				run = session.prompt(message);
++			} else {
++				run = session.prompt(input);
++			}
++			started = true;
++			return { result: "started", run };
++		} catch (err) {
++			giveBack();
++			throw err;
++		} finally {
++			this._starting = false;
++			// Items that queued behind this send would otherwise wait for a run that never comes.
++			// A queue send's drain decides what comes next itself; kicking it here would retry the next
++			// item at once (another key dialog right after the user cancelled one).
++			if (!started && !fromQueue) {
++				queue?.kick();
++				// _starting held up the whole panel, so a queue for another session may be waiting too.
++				if (this._queue !== queue) this._queue?.kick();
+ 			}
+ 		}
++	}
+ 
+-		// Call onBeforeSend hook before sending
+-		if (this.onBeforeSend) {
+-			await this.onBeforeSend();
+-		}
+-
+-		// Only clear editor after we know we can send
+-		this._messageEditor.value = "";
+-		this._messageEditor.attachments = [];
+-		this._autoScroll = true; // Enable auto-scroll when sending a message
+-
+-		// Compose message with attachments if any
+-		if (attachments && attachments.length > 0) {
+-			const message: UserMessageWithAttachments = {
+-				role: "user-with-attachments",
+-				content: input,
+-				attachments,
+-				timestamp: Date.now(),
+-			};
+-			await this.session?.prompt(message);
+-		} else {
+-			await this.session?.prompt(input);
+-		}
++	private renderQueue() {
++		const queue = this._queue;
++		if (!queue || queue.items.length === 0) return "";
++		return html`
++			<div class="flex flex-col gap-1 pt-2" role="list" aria-label=${i18n("Queued")}>
++				${queue.items.map(
++					(item) => html`
++						<div
++							role="listitem"
++							class="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1 text-sm"
++						>
++							<span class="text-xs text-muted-foreground shrink-0">${i18n("Queued")}</span>
++							<span class="flex-1 truncate" title=${item.input}>${item.input.trim() || i18n("(attachments)")}</span>
++							${
++								item.steered
++									? html`<span class="text-xs text-muted-foreground shrink-0">${i18n("Sending…")}</span>`
++									: html`
++										<button
++											type="button"
++											class="text-xs font-medium text-foreground hover:underline shrink-0"
++											@click=${() => void queue.sendNow(item.id)}
++										>
++											${i18n("Send now")}
++										</button>
++										<button
++											type="button"
++											class="text-muted-foreground hover:text-foreground shrink-0 px-1"
++											aria-label=${i18n("Remove from queue")}
++											title=${i18n("Remove from queue")}
++											@click=${() => queue.remove(item.id)}
++										>
++											×
++										</button>
++									`
++							}
++						</div>
++					`,
++				)}
++				${
++					queue.paused && !this.session?.state.isStreaming
++						? html`<div class="text-xs text-muted-foreground px-1">
++								${i18n("Stopped. Send a queued message or remove it.")}
++							</div>`
++						: ""
++				}
++			</div>
++		`;
+ 	}
+ 
+ 	private renderMessages() {
+@@ -361,6 +525,7 @@ export class AgentInterface extends LitElement {
+ 				<!-- Input Area -->
+ 				<div class="shrink-0">
+ 					<div class="max-w-3xl mx-auto px-2">
++						${this.renderQueue()}
+ 						<message-editor
+ 							.isStreaming=${state.isStreaming}
+ 							.currentModel=${state.model}
+@@ -368,8 +533,14 @@ export class AgentInterface extends LitElement {
+ 							.showAttachmentButton=${this.enableAttachments}
+ 							.showModelSelector=${this.enableModelSelector}
+ 							.showThinkingSelector=${this.enableThinkingSelector}
++							.historyProvider=${this.historyProvider}
++							.slashCommandProvider=${this.slashCommandProvider}
++							.mentionProvider=${this.mentionProvider}
++							.accessory=${this.composerAccessory}
++							.actions=${this.composerActions}
++							.modelLabel=${this.modelLabel}
+ 							.onSend=${(input: string, attachments: Attachment[]) => {
+-								this.sendMessage(input, attachments);
++								void this.startSend(input, attachments, "editor").then(({ run }) => run);
+ 							}}
+ 							.onAbort=${() => session.abort()}
+ 							.onModelSelect=${() => {
+diff --git a/packages/web-ui/src/components/MessageEditor.ts b/packages/web-ui/src/components/MessageEditor.ts
+index f0987c4d1..6fc0c0a1c 100644
+--- a/packages/web-ui/src/components/MessageEditor.ts
++++ b/packages/web-ui/src/components/MessageEditor.ts
+@@ -11,6 +11,35 @@ import { i18n } from "../utils/i18n.js";
+ import "./AttachmentTile.js";
+ import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+ 
++export interface SlashCommand {
++	id: string;
++	title: string;
++	description?: string;
++	hint?: string;
++	value: string;
++	/** Shown but not choosable (the hint says why). */
++	disabled?: boolean;
++	/** Image shown before the title (a favicon). */
++	iconUrl?: string;
++	/** Items with a section get a heading where the section changes. */
++	section?: string;
++}
++
++export type SlashCommandProvider = (query: string) => Promise<SlashCommand[]>;
++
++/** Renders above the text box (reference chips); `setValue` replaces the composer text. */
++export type ComposerAccessory = (value: string, setValue: (value: string) => void) => unknown;
++
++/** How the composer names the current model: the button's content and its tooltip. */
++export type ModelLabel = (model: Model<any>) => { content: unknown; title: string };
++
++/** Where the open menu came from and which text it replaces. */
++interface MenuTrigger {
++	kind: "slash" | "mention";
++	start: number;
++	end: number;
++}
++
+ @customElement("message-editor")
+ export class MessageEditor extends LitElement {
+ 	private _value = "";
+@@ -38,6 +67,14 @@ export class MessageEditor extends LitElement {
+ 	@property() onAbort?: () => void;
+ 	@property() onModelSelect?: () => void;
+ 	@property() onThinkingChange?: (level: "off" | "minimal" | "low" | "medium" | "high") => void;
++	@property({ attribute: false }) historyProvider?: () => string | undefined;
++	@property({ attribute: false }) slashCommandProvider?: SlashCommandProvider;
++	/** Suggestions shown after an "@" that starts a word (tab references). */
++	@property({ attribute: false }) mentionProvider?: SlashCommandProvider;
++	@property({ attribute: false }) accessory?: ComposerAccessory;
++	/** Extra buttons beside the attachment button (e.g. dictation): they get the text and a setter. */
++	@property({ attribute: false }) actions?: ComposerAccessory;
++	@property({ attribute: false }) modelLabel?: ModelLabel;
+ 	@property() onFilesChange?: (files: Attachment[]) => void;
+ 	@property() attachments: Attachment[] = [];
+ 	@property() maxFiles = 10;
+@@ -47,6 +84,12 @@ export class MessageEditor extends LitElement {
+ 
+ 	@state() processingFiles = false;
+ 	@state() isDragging = false;
++	@state() private slashItems: SlashCommand[] = [];
++	@state() private slashIndex = 0;
++	private slashRequest = 0;
++	private menuTrigger?: MenuTrigger;
++	private static menuSeq = 0;
++	private readonly menuId = `composer-menu-${++MessageEditor.menuSeq}`;
+ 	private fileInputRef = createRef<HTMLInputElement>();
+ 
+ 	protected override createRenderRoot(): HTMLElement | DocumentFragment {
+@@ -57,12 +100,118 @@ export class MessageEditor extends LitElement {
+ 		const textarea = e.target as HTMLTextAreaElement;
+ 		this.value = textarea.value;
+ 		this.onInput?.(this.value);
++		this.updateSlashItems();
+ 	};
+ 
++	/** The menu the text before the caret asks for: "/" at the very start, or "@" starting a word. */
++	private findTrigger(): { trigger: MenuTrigger; query: string; provider: SlashCommandProvider } | undefined {
++		const caret = this.textareaRef.value?.selectionStart ?? this.value.length;
++		const before = this.value.slice(0, caret);
++		const after = this.value.slice(caret);
++		const wordEnd = caret + (/^\S*/.exec(after)?.[0].length ?? 0);
++		const slash = /^\/(\S*)$/.exec(before);
++		if (slash && this.slashCommandProvider)
++			return { trigger: { kind: "slash", start: 0, end: wordEnd }, query: slash[1], provider: this.slashCommandProvider };
++		const mention = /(^|\s)@(\S*)$/.exec(before);
++		if (mention && this.mentionProvider) {
++			const start = caret - mention[2].length - 1;
++			return { trigger: { kind: "mention", start, end: wordEnd }, query: mention[2], provider: this.mentionProvider };
++		}
++		return undefined;
++	}
++
++	private async updateSlashItems() {
++		const found = this.findTrigger();
++		const request = ++this.slashRequest;
++		if (!found) {
++			this.slashItems = [];
++			this.menuTrigger = undefined;
++			return;
++		}
++		const items = await found.provider(found.query).catch(() => []);
++		if (request !== this.slashRequest) return;
++		this.menuTrigger = found.trigger;
++		this.slashItems = items;
++		const first = items.findIndex((i) => !i.disabled);
++		this.slashIndex = first < 0 ? 0 : first;
++	}
++
++	private closeMenu() {
++		this.slashItems = [];
++		this.menuTrigger = undefined;
++		this.slashRequest++;
++	}
++
++	private applySlashItem(item: SlashCommand) {
++		if (item.disabled) return;
++		const trigger = this.menuTrigger ?? { kind: "slash", start: 0, end: this.value.length };
++		const head = this.value.slice(0, trigger.start);
++		const tail = this.value.slice(trigger.end).replace(/^ /, "");
++		const inserted = `${item.value} `;
++		this.value = `${head}${inserted}${tail}`;
++		this.closeMenu();
++		this.onInput?.(this.value);
++		const caret = head.length + inserted.length;
++		const textarea = this.textareaRef.value;
++		textarea?.focus();
++		// The textarea takes the new value on the next render; put the caret after the insert then.
++		void this.updateComplete.then(() => textarea?.setSelectionRange(caret, caret));
++	}
++
++	/** Step the highlight, skipping items that can't be chosen. */
++	private moveHighlight(step: 1 | -1) {
++		const n = this.slashItems.length;
++		for (let k = 1; k <= n; k++) {
++			const i = (this.slashIndex + step * k + n * k) % n;
++			if (!this.slashItems[i].disabled) {
++				this.slashIndex = i;
++				return;
++			}
++		}
++	}
++
+ 	private handleKeyDown = (e: KeyboardEvent) => {
++		// Keys that confirm an IME composition belong to the IME, not the menu.
++		if (e.isComposing || e.keyCode === 229) return;
++		if (this.slashItems.length > 0) {
++			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
++				e.preventDefault();
++				this.moveHighlight(e.key === "ArrowDown" ? 1 : -1);
++				return;
++			}
++			if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
++				const item = this.slashItems[this.slashIndex];
++				// Nothing choosable: Enter sends as usual, Tab does nothing special.
++				if (item && !item.disabled) {
++					e.preventDefault();
++					this.applySlashItem(item);
++					return;
++				}
++				if (e.key === "Tab") {
++					e.preventDefault();
++					return;
++				}
++			}
++			if (e.key === "Escape") {
++				e.preventDefault();
++				e.stopPropagation();
++				this.closeMenu();
++				return;
++			}
++		}
++		if (e.key === "ArrowUp" && !this.value && this.historyProvider) {
++			const previous = this.historyProvider();
++			if (previous) {
++				e.preventDefault();
++				this.value = previous;
++				this.onInput?.(this.value);
++			}
++			return;
++		}
+ 		if (e.key === "Enter" && !e.shiftKey) {
+ 			e.preventDefault();
+-			if (!this.isStreaming && !this.processingFiles && (this.value.trim() || this.attachments.length > 0)) {
++			// While the agent runs, a send goes to the queue (AgentInterface decides).
++			if (!this.processingFiles && (this.value.trim() || this.attachments.length > 0)) {
+ 				this.handleSend();
+ 			}
+ 		} else if (e.key === "Escape" && this.isStreaming) {
+@@ -225,6 +374,67 @@ export class MessageEditor extends LitElement {
+ 		this.processingFiles = false;
+ 	};
+ 
++	private setComposerValue(value: string) {
++		this.value = value;
++		this.onInput?.(value);
++		this.updateSlashItems();
++		this.textareaRef.value?.focus();
++	}
++
++	private renderMenu() {
++		if (this.slashItems.length === 0) return "";
++		const label = this.menuTrigger?.kind === "mention" ? i18n("Tabs") : i18n("Skills");
++		let lastSection: string | undefined;
++		return html`
++			<div
++				id=${this.menuId}
++				role="listbox"
++				aria-label=${label}
++				@mousedown=${(e: MouseEvent) => e.preventDefault()}
++				class="absolute bottom-full left-0 right-0 mb-1 max-h-72 overflow-y-auto rounded-lg border border-border bg-popover text-popover-foreground shadow-md z-20 py-1"
++			>
++				${this.slashItems.map((item, i) => {
++					const heading =
++						item.section && item.section !== lastSection
++							? html`<div role="presentation" class="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground">${item.section}</div>`
++							: "";
++					lastSection = item.section;
++					const active = i === this.slashIndex;
++					return html`
++						${heading}
++						<div
++							id="${this.menuId}-${i}"
++							role="option"
++							aria-selected=${active ? "true" : "false"}
++							aria-disabled=${item.disabled ? "true" : "false"}
++							class="px-3 py-1.5 text-sm ${item.disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"} ${active && !item.disabled ? "bg-accent text-accent-foreground" : ""}"
++							@mousemove=${() => {
++								if (!item.disabled && this.slashIndex !== i) this.slashIndex = i;
++							}}
++							@mousedown=${(e: MouseEvent) => {
++								e.preventDefault();
++								this.applySlashItem(item);
++							}}
++						>
++							<div class="flex items-center gap-2 min-w-0">
++								${
++									item.iconUrl
++										? html`<img src=${item.iconUrl} alt="" class="w-4 h-4 shrink-0" @error=${(e: Event) => {
++												(e.target as HTMLImageElement).style.visibility = "hidden";
++											}} />`
++										: ""
++								}
++								<span class="font-medium truncate">${item.title}</span>
++								${item.hint ? html`<span class="ml-auto shrink-0 text-xs text-muted-foreground">${item.hint}</span>` : ""}
++							</div>
++							${item.description ? html`<div class="text-xs text-muted-foreground truncate ${item.iconUrl ? "pl-6" : ""}">${item.description}</div>` : ""}
++						</div>
++					`;
++				})}
++			</div>
++		`;
++	}
++
+ 	override firstUpdated() {
+ 		const textarea = this.textareaRef.value;
+ 		if (textarea) {
+@@ -236,6 +446,7 @@ export class MessageEditor extends LitElement {
+ 		// Check if current model supports thinking/reasoning
+ 		const model = this.currentModel;
+ 		const supportsThinking = model?.reasoning === true; // Models with reasoning:true support thinking
++		const modelLabel = model && this.modelLabel ? this.modelLabel(model) : undefined;
+ 
+ 		return html`
+ 			<div
+@@ -274,13 +485,25 @@ export class MessageEditor extends LitElement {
+ 						: ""
+ 				}
+ 
++				${this.renderMenu()}
++				${this.accessory ? this.accessory(this.value, (v) => this.setComposerValue(v)) : ""}
++
+ 				<textarea
+ 					class="w-full bg-transparent p-4 text-foreground placeholder-muted-foreground outline-none resize-none overflow-y-auto"
+ 					placeholder=${i18n("Type a message...")}
+ 					rows="1"
+ 					style="max-height: 200px; field-sizing: content; min-height: 1lh; height: auto;"
+ 					.value=${this.value}
++					role="combobox"
++					aria-autocomplete="list"
++					aria-expanded=${this.slashItems.length > 0 ? "true" : "false"}
++					aria-controls=${this.menuId}
++					aria-activedescendant=${this.slashItems.length > 0 ? `${this.menuId}-${this.slashIndex}` : ""}
+ 					@input=${this.handleTextareaInput}
++					@click=${() => {
++						if (this.slashItems.length > 0) this.updateSlashItems();
++					}}
++					@blur=${() => this.closeMenu()}
+ 					@keydown=${this.handleKeyDown}
+ 					@paste=${this.handlePaste}
+ 					${ref(this.textareaRef)}
+@@ -319,6 +542,7 @@ export class MessageEditor extends LitElement {
+ 									`
+ 								: ""
+ 						}
++						${this.actions ? this.actions(this.value, (v: string) => this.setComposerValue(v)) : ""}
+ 						${
+ 							supportsThinking && this.showThinkingSelector
+ 								? html`
+@@ -348,7 +572,7 @@ export class MessageEditor extends LitElement {
+ 					</div>
+ 
+ 					<!-- Model selector and send on the right -->
+-					<div class="flex gap-2 items-center">
++					<div class="flex gap-2 items-center min-w-0">
+ 						${
+ 							this.showModelSelector && this.currentModel
+ 								? html`
+@@ -365,9 +589,10 @@ export class MessageEditor extends LitElement {
+ 										},
+ 										children: html`
+ 											${icon(Sparkles, "sm")}
+-											<span class="ml-1">${this.currentModel.id}</span>
++											<span class="ml-1 min-w-0 truncate">${modelLabel ? modelLabel.content : this.currentModel.id}</span>
+ 										`,
+-										className: "h-8 text-xs truncate",
++										title: modelLabel?.title ?? this.currentModel.id,
++										className: "h-8 text-xs min-w-0 max-w-full shrink!",
+ 									})}
+ 								`
+ 								: ""
+@@ -383,17 +608,17 @@ export class MessageEditor extends LitElement {
+ 										className: "h-8 w-8",
+ 									})}
+ 								`
+-								: html`
+-									${Button({
+-										variant: "ghost",
+-										size: "icon",
+-										onClick: this.handleSend,
+-										disabled: (!this.value.trim() && this.attachments.length === 0) || this.processingFiles,
+-										children: html`<div style="transform: rotate(-45deg)">${icon(Send, "sm")}</div>`,
+-										className: "h-8 w-8",
+-									})}
+-								`
++								: ""
+ 						}
++						${Button({
++							variant: "ghost",
++							size: "icon",
++							onClick: this.handleSend,
++							disabled: (!this.value.trim() && this.attachments.length === 0) || this.processingFiles,
++							children: html`<div style="transform: rotate(-45deg)">${icon(Send, "sm")}</div>`,
++							className: "h-8 w-8",
++							title: this.isStreaming ? i18n("Add to queue") : undefined,
++						})}
+ 					</div>
+ 				</div>
+ 			</div>
+diff --git a/packages/web-ui/src/components/MessageList.ts b/packages/web-ui/src/components/MessageList.ts
+index 75afda08c..881b06c65 100644
+--- a/packages/web-ui/src/components/MessageList.ts
++++ b/packages/web-ui/src/components/MessageList.ts
+@@ -7,6 +7,7 @@ import { html, LitElement, type TemplateResult } from "lit";
+ import { property } from "lit/decorators.js";
+ import { repeat } from "lit/directives/repeat.js";
+ import { renderMessage } from "./message-renderer-registry.js";
++import { getTranscriptRenderer } from "./transcript-hook.js";
+ 
+ export class MessageList extends LitElement {
+ 	@property({ type: Array }) messages: AgentMessage[] = [];
+@@ -33,6 +34,15 @@ export class MessageList extends LitElement {
+ 			}
+ 		}
+ 
++		const custom = getTranscriptRenderer()?.items(this.messages, {
++			tools: this.tools,
++			pendingToolCalls: this.pendingToolCalls,
++			toolResultsById: resultByCallId,
++			isStreaming: this.isStreaming,
++			onCostClick: this.onCostClick,
++		});
++		if (custom) return custom;
++
+ 		const items: Array<{ key: string; template: TemplateResult }> = [];
+ 		let index = 0;
+ 		for (const msg of this.messages) {
+diff --git a/packages/web-ui/src/components/ProviderKeyInput.ts b/packages/web-ui/src/components/ProviderKeyInput.ts
+index 61dac6068..1b4b908d6 100644
+--- a/packages/web-ui/src/components/ProviderKeyInput.ts
++++ b/packages/web-ui/src/components/ProviderKeyInput.ts
+@@ -24,6 +24,8 @@ const TEST_MODELS: Record<string, string> = {
+ @customElement("provider-key-input")
+ export class ProviderKeyInput extends LitElement {
+ 	@property() provider = "";
++	/** The provider's display name; the provider id when unset. */
++	@property() label = "";
+ 	@state() private keyInput = "";
+ 	@state() private testing = false;
+ 	@state() private failed = false;
+@@ -95,7 +97,9 @@ export class ProviderKeyInput extends LitElement {
+ 				await getAppStorage().providerKeys.set(this.provider, this.keyInput);
+ 				this.hasKey = true;
+ 				this.inputChanged = false;
++				this.keyInput = "";
+ 				this.requestUpdate();
++				this.dispatchEvent(new CustomEvent("provider-key-saved", { detail: this.provider, bubbles: true }));
+ 			} catch (error) {
+ 				console.error("Failed to save API key:", error);
+ 				this.failed = true;
+@@ -117,12 +121,12 @@ export class ProviderKeyInput extends LitElement {
+ 		return html`
+ 			<div class="space-y-3">
+ 				<div class="flex items-center gap-2">
+-					<span class="text-sm font-medium capitalize text-foreground">${this.provider}</span>
++					<span class="text-sm font-medium ${this.label ? "" : "capitalize"} text-foreground">${this.label || this.provider}</span>
+ 					${
+ 						this.testing
+ 							? Badge({ children: i18n("Testing..."), variant: "secondary" })
+ 							: this.hasKey
+-								? html`<span class="text-green-600 dark:text-green-400">✓</span>`
++								? html`<span class="text-xs text-muted-foreground">${i18n("Key saved")}</span>`
+ 								: ""
+ 					}
+ 					${this.failed ? Badge({ children: i18n("✗ Invalid"), variant: "destructive" }) : ""}
+@@ -137,6 +141,9 @@ export class ProviderKeyInput extends LitElement {
+ 							this.inputChanged = true;
+ 							this.requestUpdate();
+ 						},
++						onKeyDown: (e: KeyboardEvent) => {
++							if (e.key === "Enter" && this.keyInput && !this.testing) this.saveKey();
++						},
+ 						className: "flex-1",
+ 					})}
+ 					${Button({
+diff --git a/packages/web-ui/src/components/StreamingMessageContainer.ts b/packages/web-ui/src/components/StreamingMessageContainer.ts
+index 3d2693150..520034e64 100644
+--- a/packages/web-ui/src/components/StreamingMessageContainer.ts
++++ b/packages/web-ui/src/components/StreamingMessageContainer.ts
+@@ -2,6 +2,7 @@ import type { AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
+ import type { ToolResultMessage } from "@mariozechner/pi-ai";
+ import { html, LitElement } from "lit";
+ import { property, state } from "lit/decorators.js";
++import { getTranscriptRenderer } from "./transcript-hook.js";
+ 
+ export class StreamingMessageContainer extends LitElement {
+ 	@property({ type: Array }) tools: AgentTool[] = [];
+@@ -78,6 +79,14 @@ export class StreamingMessageContainer extends LitElement {
+ 			// Skip standalone tool result in streaming; the stable list will render it immediiately
+ 			return html``;
+ 		} else if (msg.role === "assistant") {
++			const live = getTranscriptRenderer()?.live?.(msg, {
++				tools: this.tools,
++				pendingToolCalls: this.pendingToolCalls,
++				toolResultsById: this.toolResultsById ?? new Map(),
++				isStreaming: this.isStreaming,
++				onCostClick: this.onCostClick,
++			});
++			if (live) return live;
+ 			// Assistant message - render inline tool messages during streaming
+ 			return html`
+ 				<div class="flex flex-col gap-3 mb-3">
+diff --git a/packages/web-ui/src/components/transcript-hook.ts b/packages/web-ui/src/components/transcript-hook.ts
+new file mode 100644
+index 000000000..0b51c2070
+--- /dev/null
++++ b/packages/web-ui/src/components/transcript-hook.ts
+@@ -0,0 +1,34 @@
++import type { AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
++import type { AssistantMessage, ToolResultMessage } from "@mariozechner/pi-ai";
++import type { TemplateResult } from "lit";
++
++export interface TranscriptContext {
++	tools: AgentTool[];
++	pendingToolCalls?: Set<string>;
++	toolResultsById: Map<string, ToolResultMessage>;
++	isStreaming: boolean;
++	onCostClick?: () => void;
++}
++
++/**
++ * An app-supplied transcript layout. `items` replaces MessageList's one-item-per-message
++ * rendering; `live` renders the assistant message still streaming. Either may return
++ * undefined to fall back to the built-in rendering.
++ */
++export interface TranscriptRenderer {
++	items(
++		messages: AgentMessage[],
++		ctx: TranscriptContext,
++	): Array<{ key: string; template: TemplateResult }> | undefined;
++	live?(message: AssistantMessage, ctx: TranscriptContext): TemplateResult | undefined;
++}
++
++let current: TranscriptRenderer | undefined;
++
++export function setTranscriptRenderer(renderer: TranscriptRenderer | undefined): void {
++	current = renderer;
++}
++
++export function getTranscriptRenderer(): TranscriptRenderer | undefined {
++	return current;
++}
+diff --git a/packages/web-ui/src/dialogs/ModelSelector.ts b/packages/web-ui/src/dialogs/ModelSelector.ts
+index 192c3c536..9cdc25848 100644
+--- a/packages/web-ui/src/dialogs/ModelSelector.ts
++++ b/packages/web-ui/src/dialogs/ModelSelector.ts
+@@ -1,3 +1,4 @@
++import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+ import { icon } from "@mariozechner/mini-lit";
+ import { Badge } from "@mariozechner/mini-lit/dist/Badge.js";
+ import { Button } from "@mariozechner/mini-lit/dist/Button.js";
+@@ -14,6 +15,7 @@ import type { AutoDiscoveryProviderType } from "../storage/stores/custom-provide
+ import { formatModelCost } from "../utils/format.js";
+ import { i18n } from "../utils/i18n.js";
+ import { discoverModels } from "../utils/model-discovery.js";
++import { getPinnedModels, type PinnedModel } from "../utils/model-hooks.js";
+ 
+ /**
+  * Score a query against a text using subsequence matching.
+@@ -46,6 +48,13 @@ function subsequenceScore(query: string, text: string): number {
+ 	return query.length / (query.length + gaps);
+ }
+ 
++const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
++
++export interface ModelSelectorThinking {
++	level: ThinkingLevel;
++	onChange: (level: ThinkingLevel) => void;
++}
++
+ @customElement("agent-model-selector")
+ export class ModelSelector extends DialogBase {
+ 	@state() currentModel: Model<any> | null = null;
+@@ -58,6 +67,7 @@ export class ModelSelector extends DialogBase {
+ 	@state() private customProviderModels: Model<any>[] = [];
+ 
+ 	private onSelectCallback?: (model: Model<any>) => void;
++	@state() private thinking?: ModelSelectorThinking;
+ 	private allowedProviders?: Set<string>;
+ 	private scrollContainerRef = createRef<HTMLDivElement>();
+ 	private searchInputRef = createRef<HTMLInputElement>();
+@@ -69,8 +79,10 @@ export class ModelSelector extends DialogBase {
+ 		currentModel: Model<any> | null,
+ 		onSelect: (model: Model<any>) => void,
+ 		allowedProviders?: string[],
++		thinking?: ModelSelectorThinking,
+ 	) {
+ 		const selector = new ModelSelector();
++		selector.thinking = thinking;
+ 		selector.currentModel = currentModel;
+ 		selector.onSelectCallback = onSelect;
+ 		if (allowedProviders) {
+@@ -182,6 +194,25 @@ export class ModelSelector extends DialogBase {
+ 		}
+ 	}
+ 
++	private renderThinkingLevels(): TemplateResult | string {
++		const thinking = this.thinking;
++		if (!thinking) return "";
++		return html`<div class="flex gap-1 items-center text-xs">
++			<span class="text-muted-foreground mr-1">${i18n("Thinking")}</span>
++			${THINKING_LEVELS.map((level) =>
++				Button({
++					variant: thinking.level === level ? "default" : "ghost",
++					size: "sm",
++					onClick: () => {
++						this.thinking = { ...thinking, level };
++						thinking.onChange(level);
++					},
++					children: level,
++				}),
++			)}
++		</div>`;
++	}
++
+ 	private formatTokens(tokens: number): string {
+ 		if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(0)}M`;
+ 		if (tokens >= 1000) return `${(tokens / 1000).toFixed(0)}`;
+@@ -195,7 +226,7 @@ export class ModelSelector extends DialogBase {
+ 		}
+ 	}
+ 
+-	private getFilteredModels(): Array<{ provider: string; id: string; model: any }> {
++	private getFilteredModels(): Array<{ provider: string; id: string; model: any; pinned?: PinnedModel }> {
+ 		// Collect all models from known providers
+ 		const allModels: Array<{ provider: string; id: string; model: any }> = [];
+ 		const knownProviders = getProviders();
+@@ -246,6 +277,19 @@ export class ModelSelector extends DialogBase {
+ 			filteredModels = filteredModels.filter(({ model }) => model.input.includes("image"));
+ 		}
+ 
++		// App-pinned entries (setPinnedModels) lead the list whatever the provider filter; a search
++		// or capability filter still applies to them.
++		const query = this.searchQuery.toLowerCase().replace(/\s+/g, "");
++		const pinned = getPinnedModels()
++			.filter(
++				(p) => !query || subsequenceScore(query, `${p.title} ${p.model.provider} ${p.model.id}`.toLowerCase()) > 0,
++			)
++			.filter((p) => !this.filterThinking || p.model.reasoning)
++			.filter((p) => !this.filterVision || p.model.input.includes("image"))
++			.map((p) => ({ provider: p.model.provider, id: p.model.id, model: p.model, pinned: p }));
++		const pinnedKeys = new Set(pinned.map((p) => `${p.provider}/${p.id}`));
++		filteredModels = filteredModels.filter((m) => !pinnedKeys.has(`${m.provider}/${m.id}`));
++
+ 		// Sort: when not searching, current model first then by provider.
+ 		// When searching, preserve the score-based order from above,
+ 		// but still float the current model to the top.
+@@ -259,7 +303,7 @@ export class ModelSelector extends DialogBase {
+ 			});
+ 		}
+ 
+-		return filteredModels;
++		return [...pinned, ...filteredModels];
+ 	}
+ 
+ 	private scrollToSelected() {
+@@ -281,6 +325,7 @@ export class ModelSelector extends DialogBase {
+ 			<!-- Header and Search -->
+ 			<div class="p-6 pb-4 flex flex-col gap-4 border-b border-border flex-shrink-0">
+ 				${DialogHeader({ title: i18n("Select Model") })}
++				${this.renderThinkingLevels()}
+ 				${Input({
+ 					placeholder: i18n("Search models..."),
+ 					value: this.searchQuery,
+@@ -326,7 +371,7 @@ export class ModelSelector extends DialogBase {
+ 
+ 			<!-- Scrollable model list -->
+ 			<div class="flex-1 overflow-y-auto" ${ref(this.scrollContainerRef)}>
+-				${filteredModels.map(({ provider, id, model }, index) => {
++				${filteredModels.map(({ provider, id, model, pinned }, index) => {
+ 					const isCurrent = modelsAreEqual(this.currentModel, model);
+ 					const isSelected = index === this.selectedIndex;
+ 					return html`
+@@ -345,7 +390,7 @@ export class ModelSelector extends DialogBase {
+ 						>
+ 							<div class="flex items-center justify-between gap-2 mb-1">
+ 								<div class="flex items-center gap-2 flex-1 min-w-0">
+-									<span class="text-sm font-medium text-foreground truncate">${id}</span>
++									<span class="text-sm font-medium text-foreground truncate">${pinned?.title ?? id}</span>
+ 									${isCurrent ? html`<span class="text-green-500">✓</span>` : ""}
+ 								</div>
+ 								${Badge(provider, "outline")}
+@@ -356,7 +401,7 @@ export class ModelSelector extends DialogBase {
+ 									<span class="${model.input.includes("image") ? "" : "opacity-30"}">${icon(ImageIcon, "sm")}</span>
+ 									<span>${this.formatTokens(model.contextWindow)}K/${this.formatTokens(model.maxTokens)}K</span>
+ 								</div>
+-								<span>${formatModelCost(model.cost)}</span>
++								<span>${pinned?.subtitle ?? formatModelCost(model.cost)}</span>
+ 							</div>
+ 						</div>
+ 					`;
+diff --git a/packages/web-ui/src/dialogs/SettingsDialog.ts b/packages/web-ui/src/dialogs/SettingsDialog.ts
+index 71620552e..7a0727bba 100644
+--- a/packages/web-ui/src/dialogs/SettingsDialog.ts
++++ b/packages/web-ui/src/dialogs/SettingsDialog.ts
+@@ -78,7 +78,7 @@ export class ProxyTab extends SettingsTab {
+ 		return html`
+ 			<div class="flex flex-col gap-4">
+ 				<p class="text-sm text-muted-foreground">
+-					${i18n("Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z-AI and Anthropic with OAuth token.")}
++					${i18n("Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z.ai.")}
+ 				</p>
+ 
+ 				<div class="flex items-center justify-between">
+@@ -152,12 +152,19 @@ export class SettingsDialog extends LitElement {
+ 		`;
+ 	}
+ 
++	/**
++	 * Narrow layout (the side panel): every tab is a chip, none hidden off the edge. Chips sit in
++	 * an even grid (two rows of equal columns) until one row fits, so no tab is left alone on a line.
++	 */
+ 	private renderMobileTab(tab: SettingsTab, index: number): TemplateResult {
+ 		const isActive = this.activeTabIndex === index;
+ 		return html`
+ 			<button
+-				class="px-3 py-2 text-sm font-medium transition-colors ${
+-					isActive ? "border-b-2 border-primary text-foreground" : "text-muted-foreground hover:text-foreground"
++				type="button"
++				role="tab"
++				aria-selected=${isActive ? "true" : "false"}
++				class="min-w-0 truncate whitespace-nowrap h-8 px-1.5 @[28rem]:px-3 rounded-full text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${
++					isActive ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
+ 				}"
+ 				@click=${() => this.setActiveTab(index)}
+ 			>
+@@ -183,15 +190,21 @@ export class SettingsDialog extends LitElement {
+ 			backdropClassName: "bg-black/50 backdrop-blur-sm",
+ 			children: html`
+ 				${DialogContent({
+-					className: "h-full p-6",
++					className: "h-full p-4 md:p-6",
+ 					children: html`
+ 						<div class="flex flex-col h-full overflow-hidden">
+ 							<!-- Header -->
+-							<div class="pb-4 flex-shrink-0">${DialogHeader({ title: i18n("Settings") })}</div>
++							<div class="pb-3 flex-shrink-0">${DialogHeader({ title: i18n("Settings") })}</div>
+ 
+ 							<!-- Mobile Tabs -->
+-							<div class="md:hidden flex flex-shrink-0 pb-4">
+-								${this.tabs.map((tab, index) => this.renderMobileTab(tab, index))}
++							<div class="@container md:hidden flex-shrink-0 mb-4 pb-3 border-b border-border">
++								<div
++									role="tablist"
++									class="grid gap-1 @[28rem]:flex @[28rem]:flex-wrap"
++									style="grid-template-columns: repeat(${this.tabs.length > 3 ? Math.ceil(this.tabs.length / 2) : this.tabs.length}, minmax(0, 1fr))"
++								>
++									${this.tabs.map((tab, index) => this.renderMobileTab(tab, index))}
++								</div>
+ 							</div>
+ 
+ 							<!-- Layout -->
+diff --git a/packages/web-ui/src/index.ts b/packages/web-ui/src/index.ts
+index 48284c742..583eabc9d 100644
+--- a/packages/web-ui/src/index.ts
++++ b/packages/web-ui/src/index.ts
+@@ -10,7 +10,13 @@ export { ConsoleBlock } from "./components/ConsoleBlock.js";
+ export { CustomProviderCard } from "./components/CustomProviderCard.js";
+ export { ExpandableSection } from "./components/ExpandableSection.js";
+ export { Input } from "./components/Input.js";
+-export { MessageEditor } from "./components/MessageEditor.js";
++export {
++	type ComposerAccessory,
++	type ModelLabel,
++	MessageEditor,
++	type SlashCommand,
++	type SlashCommandProvider,
++} from "./components/MessageEditor.js";
+ export { MessageList } from "./components/MessageList.js";
+ // Message components
+ export type { ArtifactMessage, UserMessageWithAttachments } from "./components/Messages.js";
+@@ -41,6 +47,12 @@ export {
+ 	type SandboxUrlProvider,
+ } from "./components/SandboxedIframe.js";
+ export { StreamingMessageContainer } from "./components/StreamingMessageContainer.js";
++export {
++	getTranscriptRenderer,
++	setTranscriptRenderer,
++	type TranscriptContext,
++	type TranscriptRenderer,
++} from "./components/transcript-hook.js";
+ // Sandbox Runtime Providers
+ export { ArtifactsRuntimeProvider } from "./components/sandbox/ArtifactsRuntimeProvider.js";
+ export { AttachmentsRuntimeProvider } from "./components/sandbox/AttachmentsRuntimeProvider.js";
+@@ -57,7 +69,8 @@ export { ApiKeyPromptDialog } from "./dialogs/ApiKeyPromptDialog.js";
+ export { AttachmentOverlay } from "./dialogs/AttachmentOverlay.js";
+ export { CustomProviderDialog } from "./dialogs/CustomProviderDialog.js";
+ // Dialogs
+-export { ModelSelector } from "./dialogs/ModelSelector.js";
++export { ModelSelector, type ModelSelectorThinking } from "./dialogs/ModelSelector.js";
++export { type PinnedModel, setPinnedModels } from "./utils/model-hooks.js";
+ export { PersistentStorageDialog } from "./dialogs/PersistentStorageDialog.js";
+ export { ProvidersModelsTab } from "./dialogs/ProvidersModelsTab.js";
+ export { SessionListDialog } from "./dialogs/SessionListDialog.js";
+@@ -93,7 +106,13 @@ export type {
+ // Artifacts
+ export { ArtifactElement } from "./tools/artifacts/ArtifactElement.js";
+ export { ArtifactPill } from "./tools/artifacts/ArtifactPill.js";
+-export { type Artifact, ArtifactsPanel, type ArtifactsParams } from "./tools/artifacts/artifacts.js";
++export {
++	type Artifact,
++	ArtifactsPanel,
++	type ArtifactsParams,
++	type ArtifactViewerFactory,
++	setArtifactViewerFactory,
++} from "./tools/artifacts/artifacts.js";
+ export { ArtifactsToolRenderer } from "./tools/artifacts/artifacts-tool-renderer.js";
+ export { HtmlArtifact } from "./tools/artifacts/HtmlArtifact.js";
+ export { ImageArtifact } from "./tools/artifacts/ImageArtifact.js";
+diff --git a/packages/web-ui/src/tools/artifacts/artifacts.ts b/packages/web-ui/src/tools/artifacts/artifacts.ts
+index 0a5474a7a..05f41d16d 100644
+--- a/packages/web-ui/src/tools/artifacts/artifacts.ts
++++ b/packages/web-ui/src/tools/artifacts/artifacts.ts
+@@ -30,6 +30,16 @@ import { PdfArtifact } from "./PdfArtifact.js";
+ import { SvgArtifact } from "./SvgArtifact.js";
+ import { TextArtifact } from "./TextArtifact.js";
+ 
++/** Supplies a viewer for a file, or undefined to keep the built-in one. */
++export type ArtifactViewerFactory = (filename: string) => ArtifactElement | undefined;
++
++let viewerFactory: ArtifactViewerFactory | undefined;
++
++/** Let the host app add or replace artifact viewers (Tabkyra's previews for more file types). */
++export function setArtifactViewerFactory(factory: ArtifactViewerFactory | undefined): void {
++	viewerFactory = factory;
++}
++
+ // Simple artifact model
+ export interface Artifact {
+ 	filename: string;
+@@ -183,7 +193,10 @@ export class ArtifactsPanel extends LitElement {
+ 
+ 		if (!element) {
+ 			const type = this.getFileType(filename);
+-			if (type === "html") {
++			const custom = type === "html" ? undefined : viewerFactory?.(filename);
++			if (custom) {
++				element = custom;
++			} else if (type === "html") {
+ 				element = new HtmlArtifact();
+ 				(element as HtmlArtifact).runtimeProviders = this.getHtmlArtifactRuntimeProviders();
+ 				if (this.sandboxUrlProvider) {
+diff --git a/packages/web-ui/src/utils/i18n.ts b/packages/web-ui/src/utils/i18n.ts
+index 1f50a7d08..dad235a65 100644
+--- a/packages/web-ui/src/utils/i18n.ts
++++ b/packages/web-ui/src/utils/i18n.ts
+@@ -22,6 +22,7 @@ declare module "@mariozechner/mini-lit" {
+ 		"✓ Valid": string;
+ 		"✗ Invalid": string;
+ 		"Testing...": string;
++		"Key saved": string;
+ 		Update: string;
+ 		Test: string;
+ 		Remove: string;
+@@ -61,6 +62,15 @@ declare module "@mariozechner/mini-lit" {
+ 		"Call was aborted; no result.": string;
+ 		"No session available": string;
+ 		"No session set": string;
++		"Queued": string;
++		Skills: string;
++		Tabs: string;
++		"Add to queue": string;
++		"Send now": string;
++		"Remove from queue": string;
++		"Sending…": string;
++		"Stopped. Send a queued message or remove it.": string;
++		"(attachments)": string;
+ 		"Preparing tool parameters...": string;
+ 		"(no output)": string;
+ 		Input: string;
+@@ -142,7 +152,7 @@ declare module "@mariozechner/mini-lit" {
+ 		Clear: string;
+ 		"API Key Required": string;
+ 		"Enter your API key for {provider}": string;
+-		"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z-AI and Anthropic with OAuth token.": string;
++		"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z.ai.": string;
+ 		Off: string;
+ 		Minimal: string;
+ 		Low: string;
+@@ -231,6 +241,7 @@ export const translations = {
+ 		"✓ Valid": "✓ Valid",
+ 		"✗ Invalid": "✗ Invalid",
+ 		"Testing...": "Testing...",
++		"Key saved": "Key saved",
+ 		Update: "Update",
+ 		Test: "Test",
+ 		Remove: "Remove",
+@@ -272,6 +283,15 @@ export const translations = {
+ 		"Call was aborted; no result.": "Call was aborted; no result.",
+ 		"No session available": "No session available",
+ 		"No session set": "No session set",
++		"Queued": "Queued",
++		Skills: "Skills",
++		Tabs: "Tabs",
++		"Add to queue": "Add to queue",
++		"Send now": "Send now",
++		"Remove from queue": "Remove from queue",
++		"Sending…": "Sending…",
++		"Stopped. Send a queued message or remove it.": "Stopped. Send a queued message or remove it.",
++		"(attachments)": "(attachments)",
+ 		"Preparing tool parameters...": "Preparing tool parameters...",
+ 		"(no output)": "(no output)",
+ 		Input: "Input",
+@@ -353,8 +373,8 @@ export const translations = {
+ 		Clear: "Clear",
+ 		"API Key Required": "API Key Required",
+ 		"Enter your API key for {provider}": "Enter your API key for {provider}",
+-		"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z-AI and Anthropic with OAuth token.":
+-			"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z-AI and Anthropic with OAuth token.",
++		"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z.ai.":
++			"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z.ai.",
+ 		Off: "Off",
+ 		Minimal: "Minimal",
+ 		Low: "Low",
+@@ -450,6 +470,7 @@ export const translations = {
+ 		"✓ Valid": "✓ Gültig",
+ 		"✗ Invalid": "✗ Ungültig",
+ 		"Testing...": "Teste...",
++		"Key saved": "Schlüssel gespeichert",
+ 		Update: "Aktualisieren",
+ 		Test: "Testen",
+ 		Remove: "Entfernen",
+@@ -491,6 +512,15 @@ export const translations = {
+ 		"Call was aborted; no result.": "Aufruf wurde abgebrochen; kein Ergebnis.",
+ 		"No session available": "Keine Sitzung verfügbar",
+ 		"No session set": "Keine Sitzung gesetzt",
++		"Queued": "In Warteschlange",
++		Skills: "Skills",
++		Tabs: "Tabs",
++		"Add to queue": "Zur Warteschlange hinzufügen",
++		"Send now": "Jetzt senden",
++		"Remove from queue": "Aus der Warteschlange entfernen",
++		"Sending…": "Wird gesendet…",
++		"Stopped. Send a queued message or remove it.": "Gestoppt. Sende eine Nachricht aus der Warteschlange oder entferne sie.",
++		"(attachments)": "(Anhänge)",
+ 		"Preparing tool parameters...": "Bereite Tool-Parameter vor...",
+ 		"(no output)": "(keine Ausgabe)",
+ 		Input: "Eingabe",
+@@ -572,8 +602,8 @@ export const translations = {
+ 		Clear: "Löschen",
+ 		"API Key Required": "API-Schlüssel erforderlich",
+ 		"Enter your API key for {provider}": "Geben Sie Ihren API-Schlüssel für {provider} ein",
+-		"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z-AI and Anthropic with OAuth token.":
+-			"Ermöglicht browserbasierten Anwendungen, CORS-Einschränkungen beim Aufruf von LLM-Anbietern zu umgehen. Erforderlich für Z-AI und Anthropic mit OAuth-Token.",
++		"Allows browser-based apps to bypass CORS restrictions when calling LLM providers. Required for Z.ai.":
++			"Ermöglicht browserbasierten Anwendungen, CORS-Einschränkungen beim Aufruf von LLM-Anbietern zu umgehen. Erforderlich für Z.ai.",
+ 		Off: "Aus",
+ 		Minimal: "Minimal",
+ 		Low: "Niedrig",
+diff --git a/packages/web-ui/src/utils/message-queue.ts b/packages/web-ui/src/utils/message-queue.ts
+new file mode 100644
+index 000000000..daa256961
+--- /dev/null
++++ b/packages/web-ui/src/utils/message-queue.ts
+@@ -0,0 +1,248 @@
++import type { AgentMessage } from "@mariozechner/pi-agent-core";
++import type { Attachment } from "./attachment-utils.js";
++
++export interface QueuedMessage {
++	id: number;
++	input: string;
++	attachments?: Attachment[];
++	/** Set once "Send now" handed it to the running agent; cleared if the run ends first. */
++	steered?: AgentMessage;
++	/** Set by Send now: its press order. Pressed items lead the list, in press order. */
++	nowSeq?: number;
++}
++
++/** The parts of Agent the queue uses. */
++export interface QueueAgent {
++	state: { isStreaming: boolean; messages: AgentMessage[] };
++	steer(message: AgentMessage): void;
++	clearSteeringQueue(): void;
++	waitForIdle(): Promise<void>;
++}
++
++/**
++ * How a send went. "started": a prompt is running. "busy": another send or run got there
++ * first, so the item goes back in its place and waits for the next chance. "refused": it can't
++ * go (no key, no model), so the item goes back in its place and is held until Send now or ×.
++ */
++export type SendResult = "started" | "busy" | "refused";
++
++/**
++ * Messages the user sends while the agent runs, for one agent. The list is the only queue:
++ * when a run ends the first item goes out through `send` as an ordinary prompt. "Send now"
++ * during a run hands the item (after a page note, unless the same note already went this run)
++ * to the agent with steer(), which delivers it after the current tool call; it leaves the list
++ * once the agent injects it, and if the run ends first it goes out ahead of the rest. Items
++ * pressed with Send now lead the list in press order. A stopped or failed run holds the items
++ * that were waiting then (not pressed ones, not later ones) until Send now or ×.
++ */
++export class MessageQueue {
++	items: QueuedMessage[] = [];
++	/** Items that were waiting when a run was stopped or failed; they wait for Send now or ×. */
++	private held = new Set<number>();
++	private running: boolean;
++	private seq = 0;
++	private nowSeq = 0;
++	private draining = false;
++	/** A drain was asked for while one ran; run again when it finishes. */
++	private drainAgain = false;
++	private disposed = false;
++	/** The page note steered but not yet injected, so the same note isn't steered twice. */
++	private lastContext?: string;
++	private pendingContext: AgentMessage[] = [];
++	/** Send now presses still building their page context; the drain waits for them to decide. */
++	private sendNowPending = 0;
++
++	constructor(
++		readonly agent: QueueAgent,
++		private readonly send: (item: QueuedMessage) => Promise<SendResult>,
++		private readonly changed: () => void,
++		private readonly beforeSteer?: () => Promise<AgentMessage[]>,
++	) {
++		this.running = agent.state.isStreaming;
++	}
++
++	/** Something is held after a Stop or failure (the panel shows a note). */
++	get paused(): boolean {
++		return this.items.some((q) => this.held.has(q.id));
++	}
++
++	add(input: string, attachments?: Attachment[]): void {
++		// New items are never held: a Stop only holds what was waiting when it happened.
++		this.items = [...this.items, { id: ++this.seq, input, attachments }];
++		this.changed();
++	}
++
++	/** The user message for an item, shaped as Agent.prompt() builds one. */
++	static message(item: QueuedMessage): AgentMessage {
++		if (item.attachments && item.attachments.length > 0) {
++			return {
++				role: "user-with-attachments",
++				content: item.input,
++				attachments: item.attachments,
++				timestamp: Date.now(),
++			} as unknown as AgentMessage;
++		}
++		return { role: "user", content: [{ type: "text", text: item.input }], timestamp: Date.now() } as AgentMessage;
++	}
++
++	/** Send an item now: into the running turn, or next when nothing runs. Always resumes. */
++	async sendNow(id: number): Promise<void> {
++		const pending = (q: QueuedMessage) => q.id === id && !q.steered;
++		if (!this.items.some(pending)) return;
++		this.held.clear();
++		// Press order, recorded on the item at once: a Stop during the wait below must not hold it.
++		const nowSeq = ++this.nowSeq;
++		this.items = this.items.map((q) => (q.id === id ? { ...q, nowSeq } : q));
++		let context: AgentMessage[] = [];
++		if (this.running) {
++			this.sendNowPending++;
++			try {
++				context = (await this.beforeSteer?.().catch(() => [])) ?? [];
++			} finally {
++				this.sendNowPending--;
++			}
++		}
++		const item = this.items.find(pending);
++		if (!item) {
++			// Removed while its context was built; the drain stood down for it, so restart it.
++			if (!this.running) void this.drain();
++			return;
++		}
++		this.held.delete(id);
++		if (this.running) {
++			const message = MessageQueue.message(item);
++			// The page note goes unless it repeats the one already steered in this run.
++			const key = context.length > 0 ? JSON.stringify(context.map((m) => (m as { url?: string }).url ?? m)) : undefined;
++			if (key && key !== this.lastContext) {
++				for (const extra of context) this.agent.steer(extra);
++				this.lastContext = key;
++				this.pendingContext = context;
++			}
++			this.agent.steer(message);
++			this.items = this.items.map((q) => (q.id === id ? { ...q, steered: message, nowSeq } : q));
++			this.changed();
++			return;
++		}
++		// Nothing runs: it goes next, after items pressed before it.
++		this.items = this.ordered(this.items.map((q) => (q.id === id ? { ...q, nowSeq } : q)));
++		this.changed();
++		void this.drain();
++	}
++
++	/** Pressed items first, in press order; the rest keep their order. */
++	private ordered(items: QueuedMessage[]): QueuedMessage[] {
++		const pressed = items.filter((q) => q.nowSeq !== undefined).sort((x, y) => (x.nowSeq ?? 0) - (y.nowSeq ?? 0));
++		return [...pressed, ...items.filter((q) => q.nowSeq === undefined)];
++	}
++
++	/** The panel missed events (it was disconnected): take the run state from the agent again. */
++	sync(): void {
++		// A Send now message the agent injected while nobody listened is already sent.
++		const seen = new Set(this.agent.state.messages);
++		this.items = this.items.filter((q) => !q.steered || !seen.has(q.steered));
++		this.running = this.agent.state.isStreaming;
++		if (this.running) {
++			this.changed();
++			return;
++		}
++		// The run ended unheard: apply the end-of-run rules (a Stop still holds what waited).
++		this.onAgentEnd(this.agent.state.messages);
++	}
++
++	/** Try to send again (a send that held the panel ended without starting a run). */
++	kick(): void {
++		void this.drain();
++	}
++
++	remove(id: number): void {
++		this.items = this.items.filter((q) => q.id !== id || q.steered);
++		this.held.delete(id);
++		this.changed();
++	}
++
++	onAgentStart(): void {
++		this.running = true;
++		this.lastContext = undefined;
++		this.pendingContext = [];
++	}
++
++	/** A message the agent injected: a steered item is now in the transcript. */
++	onMessageStart(message: AgentMessage): void {
++		// Once the note is in the transcript, the panel's own page check takes over from here.
++		if (this.pendingContext.includes(message)) {
++			this.lastContext = undefined;
++			this.pendingContext = [];
++		}
++		if (!this.items.some((q) => q.steered === message)) return;
++		this.items = this.items.filter((q) => q.steered !== message);
++		this.changed();
++	}
++
++	/** The run is over; send the next item, or pause if the user stopped it or it failed. */
++	onAgentEnd(messages: AgentMessage[]): void {
++		this.running = false;
++		this.lastContext = undefined;
++		this.pendingContext = [];
++		// A steer that arrived after the last turn is never injected. It was asked for first, so
++		// it goes out first.
++		this.agent.clearSteeringQueue();
++		this.items = this.ordered(this.items.map((q) => (q.steered ? { ...q, steered: undefined } : q)));
++		const last = [...messages].reverse().find((m) => m.role === "assistant") as { stopReason?: string } | undefined;
++		// A Stop or failure holds what was waiting, except items the user pressed Send now on.
++		if (last?.stopReason === "aborted" || last?.stopReason === "error") {
++			for (const q of this.items) if (q.nowSeq === undefined) this.held.add(q.id);
++		}
++		this.changed();
++		void this.drain();
++	}
++
++	/** Forget everything (the panel switched to another session). */
++	dispose(): void {
++		this.disposed = true;
++		this.agent.clearSteeringQueue();
++		this.items = [];
++		this.held.clear();
++	}
++
++	/** Once the agent is idle, send the first item not held; the next waits for that run's end. */
++	private async drain(): Promise<void> {
++		if (this.draining) {
++			this.drainAgain = true;
++			return;
++		}
++		this.draining = true;
++		try {
++			await this.agent.waitForIdle();
++			// A Send now still building its context decides what goes next; it drains when done.
++			if (this.disposed || this.running || this.sendNowPending > 0) return;
++			const next = this.items.find((q) => !this.held.has(q.id));
++			if (!next) return;
++			this.items = this.items.filter((q) => q !== next);
++			this.changed();
++			let result: SendResult;
++			try {
++				result = await this.send(next);
++			} catch {
++				result = "refused";
++			}
++			if (result !== "started" && !this.disposed) {
++				// Back in its place: behind anything pressed while it was out.
++				this.items = this.ordered([next, ...this.items]);
++				if (result === "refused") this.held.add(next.id);
++				this.changed();
++			}
++		} finally {
++			this.draining = false;
++			// Can't spin: a refused item is held, and a busy one waits on waitForIdle or a run.
++			if (this.drainAgain) {
++				this.drainAgain = false;
++				void this.drain();
++			}
++		}
++	}
++
++	/** Whether the queue has something it would send now (nothing held, not mid-send). */
++	get hasSendable(): boolean {
++		return this.items.some((q) => !q.steered && !this.held.has(q.id));
++	}
++}
+diff --git a/packages/web-ui/src/utils/model-hooks.ts b/packages/web-ui/src/utils/model-hooks.ts
+new file mode 100644
+index 000000000..76862744d
+--- /dev/null
++++ b/packages/web-ui/src/utils/model-hooks.ts
+@@ -0,0 +1,23 @@
++import type { Model } from "@mariozechner/pi-ai";
++
++/** An app-supplied entry the model selector always lists first, with its own title. */
++export interface PinnedModel {
++	model: Model<any>;
++	title: string;
++	subtitle?: string;
++}
++
++let pinned: (() => PinnedModel[]) | undefined;
++
++/** Entries the model selector lists above every provider's models. */
++export function setPinnedModels(provider: (() => PinnedModel[]) | undefined): void {
++	pinned = provider;
++}
++
++export function getPinnedModels(): PinnedModel[] {
++	try {
++		return pinned?.() ?? [];
++	} catch {
++		return [];
++	}
++}
