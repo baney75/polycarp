@@ -484,7 +484,9 @@ final class SessionController {
             guard writeSetting(key, value), let v = readSetting(key) else { return notReady }
             // Agents may change how this Mac looks, so each change says who made it.
             Trace.log("setting \(key.rawValue)=\(v) by \(r.caller ?? "unnamed caller")")
-            return .init(ok: true, info: [key.rawValue: v])
+            var info = [key.rawValue: v]
+            if let note = key.polycarpNote(inForce: Appearance.shared.polycarp != nil) { info["note"] = note }
+            return .init(ok: true, info: info)
         }
     }
 

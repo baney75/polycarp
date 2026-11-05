@@ -775,6 +775,25 @@ final class PolycarpWiringTests: XCTestCase {
         XCTAssertFalse(core.contains("FileManager"), "a poll is one stat")
     }
 
+    func testSettingAThemeWhilePolycarpIsInForceStoresItAndSaysItIsNotDrawn() throws {
+        for key in [SettingKey.theme, .palette] {
+            let note = try XCTUnwrap(key.polycarpNote(inForce: true), key.rawValue)
+            XCTAssertTrue(note.contains("saved") && note.contains("not drawn until the Polycarp theme is removed"), note)
+            XCTAssertNil(key.polycarpNote(inForce: false), "no Polycarp theme, no note")
+        }
+        XCTAssertNil(SettingKey.dockEnabled.polycarpNote(inForce: true), "the dock switch is drawn either way")
+        // The stored value still changes: the answer carries it, and the app writes it as before.
+        let code = try Repo.code("Sources/BaneySpaces/Session/SessionController.swift")
+        XCTAssertTrue(code.contains("info[\"note\"] = note"))
+        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/AppDelegate.swift").contains("Appearance.shared.settings.theme = ThemeID(rawValue: value)"))
+        // The same setting stored while a Polycarp theme is in force leaves the theme in force.
+        var settings = AppearanceSettings()
+        let t = try PolycarpTheme.parse(Data(PolycarpFixtures.still_water.utf8)).get()
+        settings.theme = .omarchy
+        XCTAssertEqual(settings.look(systemAccent: RGB(r: 0, g: 0, b: 0), polycarp: t, systemDark: false).polycarp, "still-water")
+        XCTAssertEqual(settings.theme, .omarchy)
+    }
+
     func testSettingsAndDoctorReportIt() throws {
         XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Setup.swift").contains("section(\"Polycarp theme\")"))
         XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Setup.swift").contains("polycarp theme set <name>"))
