@@ -29,6 +29,17 @@ Asked for by Donovan, 2026-11-04.
 - [ ] Linux outside Omarchy: decide after Omarchy works
 - [ ] Phones: not possible. iOS and Android don't let an app replace the status bar
 
+## Quality bar
+Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all hyper themable and customizable.
+- [ ] One theme file drives every product and the site. Check: `polycarp theme set still-water` changes Spaces, Voice, Browser and a local site build, read back from each
+- [ ] Every color, radius, font and duration in every surface comes from the theme. Check: a test fails on a hard-coded value in product UI, with a written allowlist
+- [ ] Any value can be overridden per product. Check: a `[surface.*]` override changes only that product
+- [ ] Unreadable themes are refused. Check: contrast tests on every built-in and surface
+- [ ] Keys, motion and behavior are configurable from one file, by people and by agents, with undo and a recovery key. Check: `spaces/spec/config.md` conformance across products
+- [ ] Site passes on phone and desktop, in every built-in theme and both modes. Check: `design_check.js` plus screenshots at 390 and 1280
+- [ ] Docs cover install, every command, every setting and theming, for each device. Check: every command in `--help` appears in the docs, tested
+- [ ] Accessibility: keyboard, screen reader, reduced motion and text size on each surface. Check: per-surface checklist with evidence
+
 ## 4. Move the fleet
 - [ ] BaneyFleet PR for the files that name these products, plus skills, agents and `CLAUDE.md`. Field notes keep old names as history. Check: agents reach Polycarp's tools on each machine
 

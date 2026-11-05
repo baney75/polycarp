@@ -11,3 +11,6 @@ name = "polycarp"
 path = "src/main.rs"
 
 [dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.2.0"
