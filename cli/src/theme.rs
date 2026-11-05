@@ -50,7 +50,7 @@ Usage:
   polycarp theme export <css|json> [name] [--surface spaces|voice|browser|site]
   polycarp theme undo [--force]
   polycarp theme history [--json]
-  polycarp theme follow [omarchy [--sync] | reset | off] [--json]
+  polycarp theme follow [omarchy [--sync | --if-fresh] | reset | off] [--json]
   polycarp theme off
   polycarp theme on
   polycarp theme reset
@@ -949,6 +949,11 @@ struct Follow {
     /// Overrides that were moved to read on the current Omarchy theme: path -> (what the person
     /// set, or "" if nothing; what is written now). A sync puts the first back before it checks.
     fits: BTreeMap<String, (String, String)>,
+    /// The accents `theme accent` had set before following, put back when it stops.
+    prev_accent_light: Option<String>,
+    prev_accent_dark: Option<String>,
+    /// A mode chosen while following (`set --mode`); it wins over Omarchy's.
+    mode_override: Option<String>,
 }
 
 impl State {
@@ -988,10 +993,23 @@ fn read_follow(cfg: &Cfg) -> Option<Follow> {
             }
         }
     }
+    let hex = |k: &str| {
+        t.get(k)
+            .and_then(Value::as_str)
+            .filter(|s| is_hex(s))
+            .map(str::to_lowercase)
+    };
     Some(Follow {
         previous_theme: theme.to_string(),
         previous_mode: mode.to_string(),
         fits,
+        prev_accent_light: hex("prev_accent_light"),
+        prev_accent_dark: hex("prev_accent_dark"),
+        mode_override: t
+            .get("mode_override")
+            .and_then(Value::as_str)
+            .filter(|m| mode_ok(m))
+            .map(str::to_string),
     })
 }
 
@@ -1153,6 +1171,15 @@ fn state_table(cfg: &Cfg, st: &State) -> String {
                 "previous_mode".into(),
                 Value::String(f.previous_mode.clone()),
             );
+            for (k, v) in [
+                ("prev_accent_light", &f.prev_accent_light),
+                ("prev_accent_dark", &f.prev_accent_dark),
+                ("mode_override", &f.mode_override),
+            ] {
+                if let Some(v) = v {
+                    o.insert(k.into(), Value::String(v.clone()));
+                }
+            }
             if !f.fits.is_empty() {
                 let mut fits = Table::new();
                 for (k, (a, b)) in &f.fits {
@@ -2626,7 +2653,10 @@ pub(crate) fn op_off(c: &Ctx) -> Res {
 /// Turns the last theme back on and writes `current/` again. Plain files are written, whatever
 /// was there before (a link that `off` removed is not remembered).
 pub(crate) fn op_on(c: &Ctx) -> Res {
-    set_enabled(c, true)
+    omarchy::with_default(c, || {
+        let out = set_enabled(c, true)?;
+        Ok(omarchy::reconcile(c, out))
+    })
 }
 
 fn set_enabled(c: &Ctx, want: bool) -> Res {
@@ -2733,11 +2763,13 @@ pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
             return Err(ApiErr::usage("--mode must be auto, light or dark"));
         }
     }
+    let (alias, alias_note) = omarchy::alias_set(c, name);
+    let name = alias.as_str();
     let _lock = Lock::acquire(&c.cfg)?;
     let full = resolve_name(&c.cfg, name)
         .map_err(|ps| bad_theme(&format!("theme {name:?} cannot be used"), &ps))?;
     let (mut st, old_problems) = load_state(&c.cfg);
-    let mut notes = Vec::new();
+    let mut notes: Vec<String> = alias_note.into_iter().collect();
     if !old_problems.is_empty() {
         notes.push(format!(
             "the old settings were invalid and are replaced: {}",
@@ -2748,6 +2780,7 @@ pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
         st.mode = m.to_string();
     }
     st.theme = name.to_string();
+    omarchy::note_mode(&mut st, name, mode, &mut notes);
     let stopped = omarchy::stop_for_switch(&mut st, name, &mut notes);
     turn_on(&mut st, &mut notes);
     if apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref()).is_err() {
@@ -2759,8 +2792,9 @@ pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
     }
     let mut out = commit(c, Some(&st), &format!("theme set {name}"), None)?;
     out.notes.splice(0..0, notes);
-    if stopped {
-        out = omarchy::drop_hook(out);
+    drop(_lock);
+    if stopped.is_some() || !old_problems.is_empty() {
+        out = omarchy::after_stop(c, out, stopped);
     }
     Ok(out)
 }
@@ -3325,11 +3359,13 @@ pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) ->
     }
 
     let mut notes = Vec::new();
-    let mut stopped = false;
+    let mut stopped = None;
+    let mut bad_old = false;
     let st_opt = if activate {
         // Like `set`: keep the mode and accents when only the theme was broken.
         let (mut st, old_problems) = load_state(&c.cfg);
         if !old_problems.is_empty() {
+            bad_old = true;
             notes.push(format!(
                 "the old settings were invalid and are replaced: {}",
                 old_problems.join("; ")
@@ -3356,8 +3392,9 @@ pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) ->
         Some((&name, Some(&saved))),
     )?;
     out.notes.splice(0..0, notes);
-    if stopped {
-        out = omarchy::drop_hook(out);
+    drop(_lock);
+    if stopped.is_some() || bad_old {
+        out = omarchy::after_stop(c, out, stopped);
     }
     let mut text = format!("saved {}\n", path.display());
     if !activate {
@@ -3389,10 +3426,12 @@ fn free_custom_name(cfg: &Cfg, base: &str) -> String {
 }
 
 pub(crate) fn op_change(c: &Ctx, path: &str, value: &Json) -> Res {
+    // Refuse a request that is wrong on its face before anything starts following.
+    check_change(path, value)?;
     omarchy::with_default(c, || change_inner(c, path, value))
 }
 
-fn change_inner(c: &Ctx, path: &str, value: &Json) -> Res {
+fn check_change(path: &str, value: &Json) -> Result<(Target, Value), ApiErr> {
     let target = parse_target(path)?;
     let new = coerce(path, &target, value)?;
     // The value alone, so a bad range is reported as the value's problem.
@@ -3411,6 +3450,11 @@ fn change_inner(c: &Ctx, path: &str, value: &Json) -> Res {
             return Err(e);
         }
     }
+    Ok((target, new))
+}
+
+fn change_inner(c: &Ctx, path: &str, value: &Json) -> Res {
+    let (target, new) = check_change(path, value)?;
 
     let _lock = Lock::acquire(&c.cfg)?;
     let eff = effective(&c.cfg);
@@ -3625,8 +3669,15 @@ fn put_back(path: &Path, was: &Option<Vec<u8>>) {
 }
 
 pub(crate) fn op_undo(c: &Ctx, force: bool) -> Res {
-    let out = undo_inner(c, force)?;
-    Ok(omarchy::reconcile(c, out))
+    omarchy::before_undo(c);
+    match undo_inner(c, force) {
+        Ok(out) => Ok(omarchy::reconcile(c, out)),
+        Err(e) => {
+            // Whatever refused it, put the colors and the hook right again.
+            let _ = omarchy::reconcile(c, Out::new(json!({}), ""));
+            Err(e)
+        }
+    }
 }
 
 fn undo_inner(c: &Ctx, force: bool) -> Res {
@@ -3802,10 +3853,15 @@ pub(crate) fn op_history(c: &Ctx) -> Res {
 /// Always gets back to the defaults. Once `config.toml` is written, a lock, history or output
 /// failure is a warning: recovery must not depend on any of them.
 pub(crate) fn op_reset(c: &Ctx) -> Res {
+    if let Some(r) = omarchy::reset_on_fresh(c) {
+        return r;
+    }
     let mut warnings = Vec::new();
     let (before, _) = load_state(&c.cfg);
     let was_off = !before.enabled;
     let was_following = before.follow.is_some();
+    let mut before = before;
+    let stopped = omarchy::release_for_reset(&mut before);
     let _lock = match Lock::acquire(&c.cfg) {
         Ok(l) => Some(l),
         Err(e) => {
@@ -3857,11 +3913,13 @@ pub(crate) fn op_reset(c: &Ctx) -> Res {
         out.notes
             .push("the theme was off; reset turned it on, with the default theme".to_string());
     }
+    drop(_lock);
     if was_following {
         out.notes
             .push("Polycarp was following Omarchy's theme; it no longer does".to_string());
-        out = omarchy::drop_hook(out);
     }
+    // Whatever the old settings held, a hook that is ours does not outlive them.
+    out = omarchy::after_stop(c, out, stopped);
     for w in warnings {
         out = out.caution(w);
     }
@@ -4176,13 +4234,13 @@ pub fn run(args: &[OsString]) -> i32 {
             exactly(p, 0, "no arguments")?;
             op_on(c)
         }),
-        "follow" => cmd(rest, &[], &["sync"], |c, p| {
+        "follow" => cmd(rest, &[], &["sync", "if-fresh"], |c, p| {
             if p.pos.len() > 1 {
                 return Err(ApiErr::usage(
-                    "expected `follow`, `follow omarchy` or `follow off`",
+                    "expected `follow`, `follow omarchy`, `follow reset` or `follow off`",
                 ));
             }
-            op_follow(c, first(p), p.flag("sync"))
+            op_follow(c, first(p), p.flag("sync"), p.flag("if-fresh"))
         }),
         "reset" => cmd(rest, &[], &[], |c, p| {
             exactly(p, 0, "no arguments")?;

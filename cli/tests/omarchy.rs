@@ -361,7 +361,9 @@ fn the_hook_is_marked_runs_the_binary_by_absolute_path_and_always_exits_zero() {
         lines[1]
     );
     let exe = fs::canonicalize(env!("CARGO_BIN_EXE_polycarp")).unwrap();
-    assert!(text.contains(&format!("'{}' theme follow omarchy --sync", exe.display())));
+    assert!(text.contains(&format!("exe='{}'", exe.display())));
+    assert!(text.contains("theme follow omarchy --sync"));
+    assert!(lines[1].contains("config="), "{}", lines[1]);
     assert!(text.trim_end().ends_with("exit 0"));
     assert!(
         text.contains("POLYCARP_CONFIG_DIR="),

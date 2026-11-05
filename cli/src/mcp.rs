@@ -233,8 +233,9 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "theme_follow",
-            description: "Match the Omarchy system theme and follow it when the person switches themes. target \"omarchy\" builds a theme named omarchy from Omarchy's current colors (square corners, monospace), makes it current in Omarchy's mode and installs Polycarp's hook in ~/.config/omarchy/hooks/theme-set.d/. Omarchy's colors are kept exactly where they read well; a color that would fail the contrast rules is moved the smallest step that passes, and each move is listed in notes and data.nudges. It refuses on a machine with no Omarchy (code no_omarchy) and never replaces a hook that is not Polycarp's. target \"off\" removes only Polycarp's hook and goes back to the theme set before following. Changes made while following (theme_change, theme_accent, a font, corners, a surface override) are kept on top and win over every later Omarchy theme; if one stops reading on a later theme it is moved the smallest step and noted. target \"reset\" drops those changes. Leave target out to see the state and the changes in force. theme_set with another theme also stops following. On a machine with Omarchy and no settings yet, the first theme_change or theme_accent starts following by default and says so in notes.",
+            description: "Match the Omarchy system theme and follow it when the person switches themes. target \"omarchy\" builds a theme named omarchy from Omarchy's current colors (square corners, monospace), and makes omarchy-overrides, which extends it and holds the person's changes, the current theme in Omarchy's mode; it installs Polycarp's hook in ~/.config/omarchy/hooks/theme-set.d/. Omarchy's colors are kept exactly where they read well; a color that would fail the contrast rules is moved the smallest step that passes, and each move is listed in notes and data.nudges. It refuses on a machine with no Omarchy (code no_omarchy) and never replaces a hook that is not Polycarp's. target \"off\" removes only Polycarp's hook and goes back to the theme set before following. Changes made while following (theme_change, theme_accent, a font, corners, a surface override) are kept on top and win over every later Omarchy theme; if one stops reading on a later theme it is moved the smallest step and noted. target \"reset\" drops those changes. Leave target out to see the state and the changes in force. theme_set with another theme also stops following. On a machine with Omarchy and no settings yet, the first theme_change, theme_accent, theme_on or theme_reset starts following by default (theme_set, theme_apply and theme_off are choices and do not) and says so in notes.",
             schema: obj(json!({
+                "if_fresh": {"type":"boolean","description":"With target omarchy: start following only if Omarchy is found and there are no settings yet; otherwise do nothing and succeed. For installers."},
                 "target": {"type":"string","enum":["omarchy","reset","off","status"],"description":"omarchy starts following, reset drops the changes made on top, off stops, status (the default) only reports and lists the changes on top."},
             }), &[]),
             read_only: false,
@@ -404,7 +405,12 @@ fn call(name: &str, args: Option<&Json>, caller: &str) -> Option<theme::Envelope
             "theme_history" => theme::op_history(&c),
             "theme_off" => theme::op_off(&c),
             "theme_on" => theme::op_on(&c),
-            "theme_follow" => theme::op_follow(&c, a.text("target")?, false),
+            "theme_follow" => theme::op_follow(
+                &c,
+                a.text("target")?,
+                false,
+                a.flag("if_fresh")?.unwrap_or(false),
+            ),
             "theme_reset" => theme::op_reset(&c),
             _ => Err(ApiErr::usage("unknown tool")),
         }

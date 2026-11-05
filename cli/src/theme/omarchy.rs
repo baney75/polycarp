@@ -109,7 +109,13 @@ fn norm_hex(s: &str) -> Option<String> {
 }
 
 fn to_hsl(hex: &str) -> (f64, f64, f64) {
-    let b = |i: usize| f64::from(u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0)) / 255.0;
+    let b = |i: usize| {
+        f64::from(
+            hex.get(i..i + 2)
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
+                .unwrap_or(0),
+        ) / 255.0
+    };
     let (r, g, bl) = (b(1), b(3), b(5));
     let max = r.max(g).max(bl);
     let min = r.min(g).min(bl);
@@ -171,7 +177,12 @@ fn constraints(colors: &Colors, role: &str) -> Vec<(String, String, f64)> {
     pairs()
         .into_iter()
         .filter(|(fg, _, _)| *fg == role)
-        .filter_map(|(_, bg, min)| colors.get(bg).map(|c| (bg.to_string(), c.clone(), min)))
+        .filter_map(|(_, bg, min)| {
+            colors
+                .get(bg)
+                .filter(|c| is_hex(c))
+                .map(|c| (bg.to_string(), c.clone(), min))
+        })
         .collect()
 }
 
@@ -212,10 +223,13 @@ fn nearest_passing(
 
 /// Moves `role` in `colors` if it fails, and records the move.
 fn settle_role(mode: &str, colors: &mut Colors, role: &str, nudges: &mut Vec<Nudge>) {
-    let Some(from) = colors.get(role).cloned() else {
+    let Some(from) = colors.get(role).cloned().filter(|c| is_hex(c)) else {
         return;
     };
     let cons = constraints(colors, role);
+    if cons.is_empty() {
+        return;
+    }
     if passes(&from, &cons) {
         return;
     }
@@ -246,6 +260,67 @@ fn settle_role(mode: &str, colors: &mut Colors, role: &str, nudges: &mut Vec<Nud
     colors.insert(role.to_string(), to);
 }
 
+/// True if any pair the UI draws fails in this mode's colors.
+fn any_fail(c: &Colors) -> bool {
+    pairs().into_iter().any(|(fg, bg, min)| {
+        matches!((c.get(fg), c.get(bg)), (Some(f), Some(b)) if is_hex(f) && is_hex(b) && contrast(f, b) < min)
+    })
+}
+
+/// Settles every text role. If some surface leaves no color that reads together with the
+/// others (a mid-gray background with a light and a dark surface), that surface, and only a
+/// surface, sunken or selection, moves toward the background until text can read. The
+/// background itself never moves.
+fn settle_all(mode: &str, mapped: &Colors) -> (Colors, Vec<Nudge>) {
+    let run = |c: &mut Colors, n: &mut Vec<Nudge>| {
+        for role in SETTLE {
+            settle_role(mode, c, role, n);
+        }
+    };
+    let mut c = mapped.clone();
+    let mut n = Vec::new();
+    run(&mut c, &mut n);
+    if !any_fail(&c) {
+        return (c, n);
+    }
+    let Some(bg) = mapped.get("background").cloned() else {
+        return (c, n);
+    };
+    let bad: Vec<&str> = ["surface", "sunken", "selection"]
+        .into_iter()
+        .filter(|r| {
+            pairs().into_iter().any(|(fg, b, min)| {
+                b == *r
+                    && matches!((c.get(fg), c.get(b)), (Some(f), Some(x)) if contrast(f, x) < min)
+            })
+        })
+        .collect();
+    for step in 1..=20 {
+        let t = f64::from(step) * 0.05;
+        let mut c2 = mapped.clone();
+        let mut n2 = Vec::new();
+        for r in &bad {
+            if let Some(from) = mapped.get(*r) {
+                let to = mix(from, &bg, t);
+                if to != *from {
+                    n2.push(Nudge {
+                        path: format!("{mode}.{r}"),
+                        from: from.clone(),
+                        to: to.clone(),
+                        reason: "leaves no text color that reads on it together with the other surfaces, so it moved toward the background".into(),
+                    });
+                    c2.insert((*r).to_string(), to);
+                }
+            }
+        }
+        run(&mut c2, &mut n2);
+        if !any_fail(&c2) {
+            return (c2, n2);
+        }
+    }
+    (c, n)
+}
+
 /// Black or white for `on_accent` unless `first` reads on the accent.
 fn on_accent_for(accent: &str, first: Option<&str>) -> String {
     first
@@ -274,9 +349,23 @@ struct Mapped {
 }
 
 fn map_colors(src: &Table, fallback_light: &Colors, fallback_dark: &Colors) -> Mapped {
-    let mode = match src.get("mode").and_then(Value::as_str) {
+    // The `mode` key, in any case. Without a usable one, the background decides.
+    let named = src
+        .get("mode")
+        .and_then(Value::as_str)
+        .map(|m| m.trim().to_lowercase());
+    let mode = match named.as_deref() {
         Some("light") => "light",
-        _ => "dark",
+        Some("dark") => "dark",
+        _ => {
+            let bg = ["background", "dark_background", "lighter_background"]
+                .iter()
+                .find_map(|k| src.get(*k).and_then(Value::as_str).and_then(norm_hex));
+            match bg {
+                Some(b) if contrast(&b, "#ffffff") < contrast(&b, "#000000") => "light",
+                _ => "dark",
+            }
+        }
     };
     let fallback = if mode == "light" {
         fallback_light
@@ -368,10 +457,8 @@ fn build(cfg: &Cfg, home: &Path) -> Result<Built, ApiErr> {
     } = map_colors(&table, &base.base.light, &base.base.dark);
     let other = if mode == "dark" { "light" } else { "dark" };
 
-    let mut nudges = Vec::new();
-    for role in SETTLE {
-        settle_role(&mode, &mut colors, role, &mut nudges);
-    }
+    let (settled, mut nudges) = settle_all(&mode, &colors);
+    colors = settled;
     let bg = colors.get("background").cloned().unwrap_or_default();
     let accent = colors.get("accent").cloned().unwrap_or_default();
     colors.insert(
@@ -472,14 +559,21 @@ fn check_theme_file(cfg: &Cfg) -> Result<(), ApiErr> {
 // The hook
 // ---------------------------------------------------------------------------------------------
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 enum Hook {
     Absent,
+    /// Ours, and for this config folder.
     Ours,
+    /// Polycarp's, but written for another config folder. Not ours to replace or remove.
+    Other(String),
     Foreign,
 }
 
-fn hook_state(path: &Path) -> Result<Hook, ApiErr> {
+fn hook_marker(cfg_dir: &Path) -> String {
+    format!("{HOOK_MARK}: config={}", cfg_dir.display())
+}
+
+fn hook_state(path: &Path, cfg_dir: &Path) -> Result<Hook, ApiErr> {
     let meta = match fs::symlink_metadata(path) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Hook::Absent),
@@ -492,23 +586,33 @@ fn hook_state(path: &Path) -> Result<Hook, ApiErr> {
         fs::read(path).map_err(|e| io_err(format!("could not read {}: {e}", path.display())))?;
     let text = String::from_utf8_lossy(&bytes);
     let second = text.lines().nth(1).unwrap_or("");
-    Ok(if second.starts_with(HOOK_MARK) {
-        Hook::Ours
-    } else {
-        Hook::Foreign
+    Ok(match second.strip_prefix(HOOK_MARK) {
+        None => Hook::Foreign,
+        Some(rest) => match rest.strip_prefix(": config=") {
+            Some(dir) if dir == cfg_dir.display().to_string() => Hook::Ours,
+            Some(dir) => Hook::Other(dir.to_string()),
+            None => Hook::Other("unknown".into()),
+        },
     })
 }
 
-fn refuse_foreign_hook(path: &Path) -> ApiErr {
-    ApiErr::at(
-        "exists",
-        "hook",
-        format!(
-            "{} already exists and is not Polycarp's, so it was left alone and nothing was changed",
-            path.display()
-        ),
-    )
-    .suggest("Move your hook aside or merge the two by hand, then run the command again.")
+/// The program the hook calls, read back from the hook file.
+fn hook_exe(path: &Path) -> Option<PathBuf> {
+    let text = fs::read_to_string(path).ok()?;
+    let line = text.lines().find_map(|l| l.strip_prefix("exe="))?;
+    let inner = line.strip_prefix('\'')?.strip_suffix('\'')?;
+    Some(PathBuf::from(inner.replace("'\\''", "'")))
+}
+
+fn refuse_hook(path: &Path, state: &Hook) -> ApiErr {
+    let why = match state {
+        Hook::Other(dir) => {
+            format!("is Polycarp's hook for another config folder ({dir}), so it was left alone")
+        }
+        _ => "already exists and is not Polycarp's, so it was left alone".to_string(),
+    };
+    ApiErr::at("exists", "hook", format!("{} {why} and nothing was changed", path.display()))
+        .suggest("Move that file aside (or run `polycarp theme follow off` with the config folder it names), then run the command again.")
 }
 
 fn sh_quote(s: &str) -> String {
@@ -516,32 +620,47 @@ fn sh_quote(s: &str) -> String {
 }
 
 /// The hook script. Omarchy runs it with `bash <file> <theme name>`, so no executable bit is
-/// needed. It always exits 0, so it can never break `omarchy-theme-set`.
-fn hook_text(exe: &Path, config_dir: Option<&Path>) -> Result<String, ApiErr> {
-    let exe = exe.to_str().filter(|s| !s.contains('\n')).ok_or_else(|| {
-        ApiErr::new(
-            "io_error",
-            "the path of this program is not plain text, so a hook cannot call it",
-        )
-    })?;
-    let env_part = match config_dir {
-        Some(d) => {
-            let d = d
-                .to_str()
-                .filter(|s| !s.contains('\n'))
-                .ok_or_else(|| ApiErr::new("io_error", "POLYCARP_CONFIG_DIR is not plain text"))?;
-            format!("POLYCARP_CONFIG_DIR={} ", sh_quote(d))
-        }
-        None => String::new(),
+/// needed. It always exits 0, so it can never break `omarchy-theme-set`; a sync that fails, or a
+/// program that is gone, is written to `follow.log`. It gives the sync 5 seconds when `timeout`
+/// exists.
+fn hook_text(exe: &Path, cfg_dir: &Path) -> Result<String, ApiErr> {
+    let plain = |p: &Path, what: &str| -> Result<String, ApiErr> {
+        p.to_str()
+            .filter(|s| !s.contains('\n'))
+            .map(str::to_string)
+            .ok_or_else(|| {
+                ApiErr::new(
+                    "io_error",
+                    format!("{what} is not plain text, so a hook cannot use it"),
+                )
+            })
     };
+    let exe = plain(exe, "the path of this program")?;
+    let dir = plain(cfg_dir, "the config folder")?;
     Ok(format!(
         "#!/bin/bash\n\
-{HOOK_MARK}: written by `polycarp theme follow omarchy`; `polycarp theme follow off` removes it.\n\
-# Omarchy runs this after omarchy-theme-set, with the theme name as the first argument.\n\
-# It asks for no input, prints nothing and always exits 0.\n\
-{env_part}{exe} theme follow omarchy --sync </dev/null >/dev/null 2>&1 || true\n\
+{marker}\n\
+# `polycarp theme follow off` removes it. Omarchy runs this after omarchy-theme-set, with the\n\
+# theme name as the first argument. It asks for no input, prints nothing and always exits 0.\n\
+exe={exe}\n\
+dir={dir}\n\
+log=\"$dir/follow.log\"\n\
+stamp() {{ date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null; }}\n\
+if [ -x \"$exe\" ]; then\n\
+  if command -v timeout >/dev/null 2>&1; then\n\
+    POLYCARP_CONFIG_DIR=\"$dir\" timeout 5 \"$exe\" theme follow omarchy --sync </dev/null >/dev/null 2>&1\n\
+  else\n\
+    POLYCARP_CONFIG_DIR=\"$dir\" \"$exe\" theme follow omarchy --sync </dev/null >/dev/null 2>&1\n\
+  fi\n\
+  rc=$?\n\
+  [ \"$rc\" -eq 0 ] || echo \"$(stamp) FAILED: the hook's sync exited $rc\" >> \"$log\" 2>/dev/null\n\
+else\n\
+  echo \"$(stamp) FAILED: $exe is missing; run polycarp theme follow omarchy again\" >> \"$log\" 2>/dev/null\n\
+fi\n\
 exit 0\n",
-        exe = sh_quote(exe)
+        marker = hook_marker(cfg_dir),
+        exe = sh_quote(&exe),
+        dir = sh_quote(&dir),
     ))
 }
 
@@ -556,12 +675,16 @@ fn write_hook(path: &Path, text: &str) -> Result<(), ApiErr> {
     Ok(())
 }
 
-/// Removes the hook if it is ours. Returns a sentence about what happened.
-fn remove_hook(path: &Path) -> Result<String, ApiErr> {
-    match hook_state(path)? {
+/// Removes the hook if it is ours (for this config folder). Returns a sentence about what happened.
+fn remove_hook(path: &Path, cfg_dir: &Path) -> Result<String, ApiErr> {
+    match hook_state(path, cfg_dir)? {
         Hook::Absent => Ok(format!("no hook at {}", path.display())),
         Hook::Foreign => Ok(format!(
             "{} is not Polycarp's, so it was left alone",
+            path.display()
+        )),
+        Hook::Other(dir) => Ok(format!(
+            "{} is Polycarp's hook for another config folder ({dir}), so it was left alone",
             path.display()
         )),
         Hook::Ours => {
@@ -572,11 +695,40 @@ fn remove_hook(path: &Path) -> Result<String, ApiErr> {
     }
 }
 
+/// Installs the hook for this config folder. Refuses a file that is not ours or is for another
+/// folder. Returns whether it wrote one.
+fn install_hook(cfg: &Cfg, home: &Path) -> Result<bool, ApiErr> {
+    let hook = hook_path(home);
+    let state = hook_state(&hook, &cfg.dir)?;
+    if matches!(state, Hook::Foreign | Hook::Other(_)) {
+        return Err(refuse_hook(&hook, &state));
+    }
+    let exe = env::current_exe()
+        .and_then(|p| p.canonicalize())
+        .map_err(|e| io_err(format!("could not find this program's own path: {e}")))?;
+    let text = hook_text(&exe, &cfg.dir)?;
+    if state == Hook::Ours && fs::read_to_string(&hook).ok().as_deref() == Some(text.as_str()) {
+        return Ok(false);
+    }
+    write_hook(&hook, &text)?;
+    Ok(true)
+}
+
+/// The last line of `follow.log` if it records a failure.
+fn last_failure(cfg: &Cfg) -> Option<String> {
+    let text = fs::read_to_string(cfg.dir.join("follow.log")).ok()?;
+    text.lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .filter(|l| l.contains("FAILED"))
+        .map(str::to_string)
+}
+
 // ---------------------------------------------------------------------------------------------
 // The person's changes on top
 // ---------------------------------------------------------------------------------------------
 
-const OVERRIDES_HEAD: &str = "# Your changes on top of the Omarchy theme. `polycarp theme change`, `accent` and the like\n# edit this file; a switch of Omarchy's theme never touches it, so your changes win every time.\n";
+const OVERRIDES_HEAD: &str = "# Your changes on top of the Omarchy theme. `polycarp theme change`, `accent` and the like edit\n# this file. A switch of Omarchy's theme does not overwrite your values, so they win every time.\n# One exception: if a value of yours stops reading on a new Omarchy theme, the switch moves it\n# the smallest step that reads (`polycarp theme follow` shows it) and puts yours back when it can.\n";
 
 fn skeleton() -> String {
     format!(
@@ -584,28 +736,28 @@ fn skeleton() -> String {
     )
 }
 
-/// The user theme `omarchy-overrides` must extend `omarchy`, or it is not ours to use.
+/// The user theme `omarchy-overrides`: its text if it is usable, None if there is none.
 fn check_top_file(cfg: &Cfg) -> Result<Option<String>, ApiErr> {
     let p = cfg.theme_path(TOP);
     match fs::read_to_string(&p) {
-        Ok(t) => {
-            let ok = parse_toml(&t)
-                .ok()
-                .is_some_and(|d| ext_of(&d).as_deref() == Some(THEME_NAME));
-            if ok {
-                Ok(Some(t))
-            } else {
-                Err(ApiErr::at(
-                    "exists",
-                    "name",
-                    format!(
-                        "{} already exists and does not extend {THEME_NAME:?}, so it was not used",
-                        p.display()
-                    ),
-                )
-                .suggest("Rename or delete that theme, then run the command again."))
-            }
-        }
+        Ok(t) => match parse_toml(&t) {
+            Err(e) => Err(ApiErr::at(
+                "invalid_theme",
+                "name",
+                format!("{} is not valid TOML: {e}", p.display()),
+            )
+            .suggest("Fix the file by hand, or run `polycarp theme follow reset`, which replaces it (`theme undo` brings the old text back).")),
+            Ok(d) if ext_of(&d).as_deref() == Some(THEME_NAME) => Ok(Some(t)),
+            Ok(_) => Err(ApiErr::at(
+                "exists",
+                "name",
+                format!(
+                    "{} already exists and does not extend {THEME_NAME:?}, so it was not used",
+                    p.display()
+                ),
+            )
+            .suggest("Rename or delete that theme, or run `polycarp theme follow reset` to replace it.")),
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(io_err(format!("could not read {}: {e}", p.display()))),
     }
@@ -628,34 +780,13 @@ fn file_set(text: &str, path: &str, value: &str) -> Result<String, ApiErr> {
         .map_err(|e| ApiErr::at("invalid_theme", path, e))
 }
 
-/// Removes a key. The leading comment lines are kept; comments further down are not.
+/// Removes a key with the format-preserving editor, so every comment stays.
 fn file_remove(text: &str, path: &str) -> Result<String, ApiErr> {
-    let mut t = parse_toml(text).map_err(|e| ApiErr::at("invalid_theme", path, e))?;
-    let parts: Vec<&str> = path.split('.').collect();
-    fn go(t: &mut Table, parts: &[&str]) {
-        match parts {
-            [k] => {
-                t.remove(*k);
-            }
-            [k, rest @ ..] => {
-                if let Some(Value::Table(sub)) = t.get_mut(*k) {
-                    go(sub, rest);
-                    if sub.is_empty() {
-                        t.remove(*k);
-                    }
-                }
-            }
-            [] => {}
-        }
-    }
-    go(&mut t, &parts);
-    let head: String = text
-        .lines()
-        .take_while(|l| l.starts_with('#'))
-        .map(|l| format!("{l}\n"))
-        .collect();
-    let body = toml::to_string(&t).map_err(|e| io_err(e.to_string()))?;
-    Ok(format!("{head}{body}"))
+    let mut parts: Vec<&str> = path.split('.').collect();
+    let key = parts.pop().unwrap_or_default();
+    edit::remove(text, &parts, key)
+        .map(|e| e.text)
+        .map_err(|e| ApiErr::at("invalid_theme", path, e))
 }
 
 /// Base theme, Omarchy's colors and the person's file merged, with no contrast check.
@@ -693,6 +824,37 @@ fn colors_in(m: &Table, mode: &str, surface: Option<&str>, accent: Option<&str>)
     c
 }
 
+/// Puts back what a sync moved, wherever the person has not changed it since: file values and
+/// the accent slots. A record whose value no longer matches is dropped, since the person has
+/// changed it.
+fn revert_fits(
+    text: &str,
+    fits: &BTreeMap<String, (String, String)>,
+    light: &mut Option<String>,
+    dark: &mut Option<String>,
+) -> Result<String, ApiErr> {
+    let mut text = text.to_string();
+    for (path, (orig, fitted)) in fits {
+        if let Some(mode) = path.strip_prefix("accent.") {
+            let slot = if mode == "light" {
+                &mut *light
+            } else {
+                &mut *dark
+            };
+            if slot.as_deref() == Some(fitted.as_str()) {
+                *slot = Some(orig.clone()).filter(|o| !o.is_empty());
+            }
+        } else if file_get(&text, path).as_deref() == Some(fitted.as_str()) {
+            text = if orig.is_empty() {
+                file_remove(&text, path)?
+            } else {
+                file_set(&text, path, orig)?
+            };
+        }
+    }
+    Ok(text)
+}
+
 struct Plan {
     built: Built,
     overrides: String,
@@ -709,41 +871,31 @@ fn plan(cfg: &Cfg, home: &Path, st_in: &State, fresh: bool) -> Result<Plan, ApiE
     let built = build(cfg, home)?;
     let mut st = st_in.clone();
     st.theme = TOP.into();
-    st.mode = built.mode.clone();
     let mut follow = st.follow.clone().ok_or_else(|| {
         ApiErr::new(
             "io_error",
             "internal: planning a follow without a follow record",
         )
     })?;
-    let mut text = match (fresh, check_top_file(cfg)?) {
-        (false, Some(t)) => t,
-        _ => skeleton(),
+    let mut text = if fresh {
+        skeleton()
+    } else {
+        check_top_file(cfg)?.unwrap_or_else(skeleton)
     };
     if fresh {
         st.accent_light = None;
         st.accent_dark = None;
         follow.fits.clear();
+        follow.mode_override = None;
     }
+    // A mode the person chose wins over Omarchy's.
+    st.mode = follow
+        .mode_override
+        .clone()
+        .unwrap_or_else(|| built.mode.clone());
     // Take back what the last sync moved, if the person has not changed it since.
-    for (path, (orig, fitted)) in std::mem::take(&mut follow.fits) {
-        if let Some(mode) = path.strip_prefix("accent.") {
-            let slot = if mode == "light" {
-                &mut st.accent_light
-            } else {
-                &mut st.accent_dark
-            };
-            if slot.as_deref() == Some(fitted.as_str()) {
-                *slot = Some(orig).filter(|o| !o.is_empty());
-            }
-        } else if file_get(&text, &path).as_deref() == Some(fitted.as_str()) {
-            text = if orig.is_empty() {
-                file_remove(&text, &path)?
-            } else {
-                file_set(&text, &path, &orig)?
-            };
-        }
-    }
+    let fits = std::mem::take(&mut follow.fits);
+    text = revert_fits(&text, &fits, &mut st.accent_light, &mut st.accent_dark)?;
 
     let mut nudges = built.nudges.clone();
     let mut fit = |text: &mut String,
@@ -767,7 +919,7 @@ fn plan(cfg: &Cfg, home: &Path, st_in: &State, fresh: bool) -> Result<Plan, ApiE
         }
         let (acc, on) = (c.get("accent").cloned(), c.get("on_accent").cloned());
         if let (Some(a), Some(o)) = (acc, on) {
-            if contrast(&o, &a) < TEXT_MIN {
+            if is_hex(&a) && is_hex(&o) && contrast(&o, &a) < TEXT_MIN {
                 c.insert("on_accent".into(), on_accent_for(&a, Some(&o)));
             }
         }
@@ -830,7 +982,7 @@ fn plan(cfg: &Cfg, home: &Path, st_in: &State, fresh: bool) -> Result<Plan, ApiE
 
     // The engine has the last word.
     let probe = cfg.with_overlays(&[(THEME_NAME, &built.text), (TOP, &text)]);
-    let full = resolve_name(&probe, TOP)
+    resolve_name(&probe, TOP)
         .and_then(|f| apply_accents(&f, st.accent_light.as_deref(), st.accent_dark.as_deref()))
         .map_err(|ps| {
             bad_theme(
@@ -838,7 +990,6 @@ fn plan(cfg: &Cfg, home: &Path, st_in: &State, fresh: bool) -> Result<Plan, ApiE
                 &ps,
             )
         })?;
-    let _ = full;
     Ok(Plan {
         built,
         overrides: text,
@@ -875,33 +1026,116 @@ fn follow_data(b: &Built, nudges: &[Nudge], hook: &Path) -> Json {
     })
 }
 
-fn config_dir_for_hook(cfg: &Cfg) -> Option<PathBuf> {
-    env::var_os("POLYCARP_CONFIG_DIR")
-        .filter(|v| !v.is_empty())
-        .map(|_| cfg.dir.clone())
+/// What stopping leaves to do after the settings are saved: put moved colors back in the file,
+/// and keep the accents the person set while following as changes on top.
+pub(super) struct Stopped {
+    fits: BTreeMap<String, (String, String)>,
+    accents: (Option<String>, Option<String>),
 }
 
-/// Called by `set` and `apply` when another theme is chosen: forgets the follow record, and
-/// returns whether the hook should go. The person's changes stay in their file.
-pub(super) fn stop_for_switch(st: &mut State, chosen: &str, notes: &mut Vec<String>) -> bool {
-    if st.follow.is_some() && chosen != TOP {
-        st.follow = None;
-        notes.push(
-            "Polycarp was following Omarchy's theme; it no longer does, because you chose another theme. Your changes on top stay in omarchy-overrides.toml, and `polycarp theme follow omarchy` picks them up again"
-                .into(),
-        );
-        return true;
+/// Ends the follow record in `st`: moved accents go back, the accents set while following are
+/// set aside for the file, and the accents from before following return.
+fn release(st: &mut State) -> Option<Stopped> {
+    let f = st.follow.take()?;
+    let (mut light, mut dark) = (st.accent_light.take(), st.accent_dark.take());
+    let mut file_fits = BTreeMap::new();
+    for (k, v) in &f.fits {
+        if k.starts_with("accent.") {
+            let one = BTreeMap::from([(k.clone(), v.clone())]);
+            let _ = revert_fits("", &one, &mut light, &mut dark);
+        } else {
+            file_fits.insert(k.clone(), v.clone());
+        }
     }
-    false
+    st.accent_light = f.prev_accent_light;
+    st.accent_dark = f.prev_accent_dark;
+    Some(Stopped {
+        fits: file_fits,
+        accents: (light, dark),
+    })
 }
 
-/// Removes our hook after `stop_for_switch` said so, and says what happened.
-pub(super) fn drop_hook(out: Out) -> Out {
+/// For `reset`: the same as stopping, on the settings that were read.
+pub(super) fn release_for_reset(st: &mut State) -> Option<Stopped> {
+    release(st)
+}
+
+/// `set` and `apply` call this when another theme is chosen. `set omarchy` is not another theme.
+pub(super) fn stop_for_switch(
+    st: &mut State,
+    chosen: &str,
+    notes: &mut Vec<String>,
+) -> Option<Stopped> {
+    if st.follow.is_none() || chosen == TOP {
+        return None;
+    }
+    let stopped = release(st)?;
+    notes.push(
+        "Polycarp was following Omarchy's theme; it no longer does, because you chose another theme. Your changes on top stay in omarchy-overrides.toml, and `polycarp theme follow omarchy` picks them up again"
+            .into(),
+    );
+    Some(stopped)
+}
+
+/// `theme set omarchy` while following means `omarchy-overrides`, the theme that is current.
+pub(super) fn alias_set(c: &Ctx, name: &str) -> (String, Option<String>) {
+    if name == THEME_NAME {
+        let (st, p) = load_state(&c.cfg);
+        if p.is_empty() && is_following(&st) {
+            return (
+                TOP.to_string(),
+                Some(format!(
+                    "{THEME_NAME} is the generated base; the theme in use while following is {TOP}, so that is what was set"
+                )),
+            );
+        }
+    }
+    (name.to_string(), None)
+}
+
+/// A mode chosen while following is kept as a change on top and wins over Omarchy's.
+pub(super) fn note_mode(st: &mut State, name: &str, mode: Option<&str>, notes: &mut Vec<String>) {
+    if let (Some(f), TOP, Some(m)) = (st.follow.as_mut(), name, mode) {
+        f.mode_override = Some(m.to_string());
+        notes.push(format!(
+            "mode {m} is kept as a change on top: it stays through every Omarchy switch until `polycarp theme follow reset`"
+        ));
+    }
+}
+
+/// After the settings are saved: put moved colors back, keep the accents in the file, and remove
+/// our hook. A hook that is not ours, or is for another config folder, is left alone.
+pub(super) fn after_stop(c: &Ctx, mut out: Out, stopped: Option<Stopped>) -> Out {
+    if let Some(s) = &stopped {
+        let path = c.cfg.theme_path(TOP);
+        if let Ok(text) = fs::read_to_string(&path) {
+            let (mut l, mut d) = (None, None);
+            let result = revert_fits(&text, &s.fits, &mut l, &mut d).and_then(|mut t| {
+                for (mode, a) in [("light", &s.accents.0), ("dark", &s.accents.1)] {
+                    if let Some(a) = a {
+                        t = file_set(&t, &format!("{mode}.accent"), a)?;
+                    }
+                }
+                Ok(t)
+            });
+            match result {
+                Ok(t) if t != text => {
+                    if let Err(e) = write_atomic(&path, t.as_bytes()) {
+                        out = out.caution(e);
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => out = out.caution(e.message),
+            }
+        }
+    }
     let Ok(h) = home() else { return out };
-    match remove_hook(&hook_path(&h)) {
+    let hook = hook_path(&h);
+    match remove_hook(&hook, &c.cfg.dir) {
         Ok(msg) => {
-            let mut out = out;
-            out.notes.push(msg);
+            if stopped.is_some() || !msg.starts_with("no hook") {
+                out.notes.push(msg);
+            }
             out
         }
         Err(e) => out.caution(format!(
@@ -911,7 +1145,38 @@ pub(super) fn drop_hook(out: Out) -> Out {
     }
 }
 
-/// After `undo`: the hook exists exactly while Polycarp follows. Anything else is put right.
+/// Before `undo`: take back what a sync moved, so the file is the one the change wrote and
+/// `undo` does not mistake the sync's work for an edit.
+pub(super) fn before_undo(c: &Ctx) {
+    let Ok(_lock) = Lock::acquire(&c.cfg) else {
+        return;
+    };
+    let (mut st, p) = load_state(&c.cfg);
+    if !p.is_empty() || !is_following(&st) {
+        return;
+    }
+    let Some(f) = st.follow.as_mut() else { return };
+    if f.fits.is_empty() {
+        return;
+    }
+    let fits = std::mem::take(&mut f.fits);
+    let path = c.cfg.theme_path(TOP);
+    let Ok(text) = fs::read_to_string(&path) else {
+        return;
+    };
+    let (mut l, mut d) = (st.accent_light.clone(), st.accent_dark.clone());
+    let Ok(t) = revert_fits(&text, &fits, &mut l, &mut d) else {
+        return;
+    };
+    st.accent_light = l;
+    st.accent_dark = d;
+    if write_atomic(&c.cfg.file(), state_table(&c.cfg, &st).as_bytes()).is_ok() && t != text {
+        let _ = write_atomic(&path, t.as_bytes());
+    }
+}
+
+/// After `undo`, `on` and similar: the hook exists exactly while Polycarp follows, and the colors
+/// are current. Anything else is put right, and said.
 pub(super) fn reconcile(c: &Ctx, mut out: Out) -> Out {
     let Ok(home) = home() else { return out };
     let hook = hook_path(&home);
@@ -923,72 +1188,163 @@ pub(super) fn reconcile(c: &Ctx, mut out: Out) -> Out {
         return out;
     }
     if st.follow.is_some() && st.theme != TOP {
-        st.follow = None;
+        let stopped = release(&mut st);
         match write_atomic(&c.cfg.file(), state_table(&c.cfg, &st).as_bytes()) {
-            Ok(()) => out
-                .notes
-                .push("undo went back to a theme that does not follow Omarchy, so Polycarp no longer does".into()),
+            Ok(()) => {
+                out.notes.push(
+                    "that went back to a theme that does not follow Omarchy, so Polycarp no longer does"
+                        .into(),
+                );
+                drop(_lock);
+                return after_stop(c, out, stopped);
+            }
             Err(e) => return out.caution(e),
         }
     }
-    if st.follow.is_none() && matches!(hook_state(&hook), Ok(Hook::Ours)) {
-        match remove_hook(&hook) {
-            Ok(msg) => out.notes.push(msg),
-            Err(e) => out = out.caution(e.message),
+    if st.follow.is_none() {
+        if matches!(hook_state(&hook, &c.cfg.dir), Ok(Hook::Ours)) {
+            match remove_hook(&hook, &c.cfg.dir) {
+                Ok(msg) => out.notes.push(msg),
+                Err(e) => out = out.caution(e.message),
+            }
         }
+        return out;
+    }
+    // Following: the hook is there and the colors are current.
+    if !detected(&home) {
+        return out;
+    }
+    match install_hook(&c.cfg, &home) {
+        Ok(true) => out
+            .notes
+            .push(format!("reinstalled the Omarchy hook {}", hook.display())),
+        Ok(false) => {}
+        Err(e) => out = out.caution(format!("the Omarchy hook is not in place: {}", e.message)),
+    }
+    match sync_locked(c, &home, &st) {
+        Ok(s) => {
+            if s.data["changed"] == true {
+                out.notes
+                    .push("the colors were brought up to date with Omarchy's current theme".into());
+                out.notes.extend(s.notes);
+            }
+        }
+        Err(e) => out = out.caution(format!("could not refresh the colors: {}", e.message)),
     }
     out
 }
 
-/// On a machine with Omarchy and no settings yet, a command that changes "the current theme"
-/// starts by following Omarchy. Never when `config.toml` exists, so no choice is overridden.
+fn fresh(c: &Ctx) -> bool {
+    matches!(
+        fs::symlink_metadata(c.cfg.file()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
+/// Omarchy is here and there are no settings yet.
+fn fresh_omarchy(c: &Ctx) -> bool {
+    fresh(c) && home().is_ok_and(|h| detected(&h))
+}
+
+const DEFAULT_NOTE: &str = "Omarchy was found and there were no theme settings yet, so Polycarp now follows Omarchy's theme by default. Anything you change stays on top of it. `polycarp theme set <name>` picks another theme, `polycarp theme follow off` stops following, `polycarp theme follow reset` drops your changes";
+
+/// On a machine with Omarchy and no settings yet, a command that writes theme state starts by
+/// following Omarchy (never `set`, `apply` or `off`, which are choices). Never when `config.toml`
+/// exists, so no choice is overridden. The caller has checked its own input first, so a refused
+/// request does not start anything.
 pub(super) fn with_default(c: &Ctx, f: impl FnOnce() -> Res) -> Res {
     let mut notes = Vec::new();
     let mut warnings = Vec::new();
-    let fresh = matches!(
-        fs::symlink_metadata(c.cfg.file()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound
-    );
-    if fresh {
-        if let Ok(h) = home() {
-            if detected(&h) {
-                match follow_on(c) {
-                    Ok(_) => notes.push(
-                        "Omarchy was found and there were no theme settings yet, so Polycarp now follows Omarchy's theme by default. Anything you change stays on top of it. `polycarp theme set <name>` picks another theme, `polycarp theme follow off` stops following, `polycarp theme follow reset` drops your changes".into(),
-                    ),
-                    Err(e) => warnings.push(format!(
-                        "Omarchy was found, but Polycarp could not follow it by default: {}",
-                        e.message
-                    )),
-                }
+    let mut extra = None;
+    if fresh_omarchy(c) {
+        match follow_on(c) {
+            Ok(fo) => {
+                notes = fo.notes.clone();
+                notes.push(DEFAULT_NOTE.to_string());
+                warnings = fo.warnings.clone();
+                extra = Some(json!({
+                    "following": true,
+                    "nudges": fo.data["nudges"],
+                    "hook": fo.data["hook"],
+                }));
             }
+            Err(e) => warnings.push(format!(
+                "Omarchy was found, but Polycarp could not follow it by default: {}",
+                e.message
+            )),
         }
     }
-    let mut out = f()?;
-    out.notes.splice(0..0, notes);
-    out.warnings.extend(warnings);
-    Ok(out)
+    match f() {
+        Ok(mut out) => {
+            out.notes.splice(0..0, notes);
+            out.warnings.extend(warnings);
+            Ok(match extra {
+                Some(d) => out.with(d),
+                None => out,
+            })
+        }
+        Err(mut e) => {
+            if extra.is_some() {
+                let s = e.suggestion();
+                e.suggestion = Some(format!(
+                    "{s} Note: Polycarp had just started following Omarchy's theme by default, because there were no settings yet; `polycarp theme follow off` undoes that."
+                ));
+            }
+            Err(e)
+        }
+    }
+}
+
+/// `theme reset` on a machine with Omarchy and no settings yet: Omarchy's own theme is the
+/// default, so that is what it starts.
+pub(super) fn reset_on_fresh(c: &Ctx) -> Option<Res> {
+    if !fresh_omarchy(c) {
+        return None;
+    }
+    match follow_on(c) {
+        Ok(mut out) => {
+            out.notes.push(DEFAULT_NOTE.to_string());
+            out.notes.push(
+                "reset on a machine with Omarchy and no settings means Omarchy's own theme, which is what was just set".into(),
+            );
+            Some(Ok(out))
+        }
+        Err(_) => None,
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
 // Operations
 // ---------------------------------------------------------------------------------------------
 
-pub(crate) fn op_follow(c: &Ctx, target: Option<&str>, sync: bool) -> Res {
-    match (target, sync) {
-        (Some(THEME_NAME), true) => op_sync(c),
-        (_, true) => Err(ApiErr::usage("--sync goes with `omarchy`")),
-        (Some(THEME_NAME), false) => follow_on(c),
-        (Some("off"), false) => follow_off(c),
-        (Some("reset"), false) => follow_reset(c),
-        (None | Some("status"), false) => status(c),
-        (Some(_), false) => Err(ApiErr::usage(
+pub(crate) fn op_follow(c: &Ctx, target: Option<&str>, sync: bool, if_fresh: bool) -> Res {
+    match (target, sync, if_fresh) {
+        (_, true, true) => Err(ApiErr::usage("--sync and --if-fresh do not go together")),
+        (Some(THEME_NAME), true, false) => op_sync(c),
+        (Some(THEME_NAME), false, true) => {
+            if fresh_omarchy(c) {
+                follow_on(c).map(|o| o.with(json!({"started": true})))
+            } else {
+                Ok(Out::new(
+                    json!({"started": false}),
+                    "nothing to do: either Omarchy was not found or Polycarp already has settings\n",
+                ))
+            }
+        }
+        (_, true, _) | (_, _, true) => {
+            Err(ApiErr::usage("--sync and --if-fresh go with `omarchy`"))
+        }
+        (Some(THEME_NAME), false, false) => follow_on(c),
+        (Some("off"), false, false) => follow_off(c),
+        (Some("reset"), false, false) => follow_reset(c),
+        (None | Some("status"), false, false) => status(c),
+        (Some(_), false, false) => Err(ApiErr::usage(
             "expected `omarchy`, `reset`, `off`, or nothing to see the state",
         )),
     }
 }
 
-/// What the person has set on top: the entries of their file and the accent overrides.
+/// What the person has set on top: the entries of their file, the accent overrides and a mode.
 fn overrides_in_force(cfg: &Cfg, st: &State) -> Vec<Json> {
     let mut out = Vec::new();
     let fits = st
@@ -1018,13 +1374,15 @@ fn overrides_in_force(cfg: &Cfg, st: &State) -> Vec<Json> {
             walk("", &t, &mut flat);
         }
     }
+    // An entry counts as moved only while the file still holds the moved value.
     for (path, value) in flat {
+        let shown = value.trim_matches('"').to_string();
         let item = match fits.get(&path) {
-            Some((orig, now)) if !orig.is_empty() => {
-                json!({"path": path, "value": now, "yours": orig, "adjusted": true})
-            }
-            Some((_, now)) => json!({"path": path, "value": now, "adjusted": true, "yours": null}),
-            None => json!({"path": path, "value": value.trim_matches('"'), "adjusted": false}),
+            Some((orig, now)) if *now == shown => json!({
+                "path": path, "value": now, "adjusted": true,
+                "yours": Some(orig).filter(|o| !o.is_empty()),
+            }),
+            _ => json!({"path": path, "value": shown, "adjusted": false}),
         };
         out.push(item);
     }
@@ -1032,13 +1390,16 @@ fn overrides_in_force(cfg: &Cfg, st: &State) -> Vec<Json> {
         if let Some(a) = a {
             let key = format!("accent.{mode}");
             let item = match fits.get(&key) {
-                Some((orig, now)) => {
+                Some((orig, now)) if now == a => {
                     json!({"path": key, "value": now, "yours": orig, "adjusted": true})
                 }
-                None => json!({"path": key, "value": a, "adjusted": false}),
+                _ => json!({"path": key, "value": a, "adjusted": false}),
             };
             out.push(item);
         }
+    }
+    if let Some(m) = st.follow.as_ref().and_then(|f| f.mode_override.clone()) {
+        out.push(json!({"path": "mode", "value": m, "adjusted": false}));
     }
     out
 }
@@ -1049,19 +1410,22 @@ fn status(c: &Ctx) -> Res {
     let (st, problems) = load_state(&c.cfg);
     let following = problems.is_empty() && is_following(&st);
     let hook = hook_path(&home);
-    let hook_state = hook_state(&hook)?;
+    let hook_state = hook_state(&hook, &c.cfg.dir)?;
     let name = omarchy_theme_name(&home);
     let agrees = match hook_state {
-        Hook::Foreign => true,
         Hook::Ours => following,
         Hook::Absent => !following,
+        // Not ours: it cannot serve this config, so following with it is a disagreement.
+        Hook::Foreign | Hook::Other(_) => !following,
     };
+    let exe = hook_exe(&hook).filter(|_| hook_state == Hook::Ours);
+    let exe_exists = exe.as_ref().map(|e| e.exists());
+    let failure = last_failure(&c.cfg);
     let overrides = if following {
         overrides_in_force(&c.cfg, &st)
     } else {
         Vec::new()
     };
-    let fresh = !c.cfg.file().exists();
     let mut text = String::new();
     text.push_str(&format!(
         "omarchy: {}\n",
@@ -1071,10 +1435,8 @@ fn status(c: &Ctx) -> Res {
         "following: {}\n",
         if following { "yes" } else { "no" }
     ));
-    if found && fresh {
-        text.push_str(
-            "no theme settings yet: the first `theme change` or `theme accent` starts following\n",
-        );
+    if found && fresh(c) {
+        text.push_str("no theme settings yet: the first theme command that writes settings (other than `set`, `apply` and `off`) starts following\n");
     }
     if let (true, Some(f)) = (following, &st.follow) {
         text.push_str(&format!(
@@ -1088,7 +1450,7 @@ fn status(c: &Ctx) -> Res {
             for o in &overrides {
                 let adj = if o["adjusted"] == true {
                     format!(
-                        " (moved to read on this theme; yours was {})",
+                        " (moved to read on this theme; yours is {})",
                         o["yours"].as_str().unwrap_or("not set")
                     )
                 } else {
@@ -1106,17 +1468,30 @@ fn status(c: &Ctx) -> Res {
     text.push_str(&format!(
         "hook: {} ({})\n",
         hook.display(),
-        match hook_state {
-            Hook::Absent => "not installed",
-            Hook::Ours => "installed",
-            Hook::Foreign => "someone else's file",
+        match &hook_state {
+            Hook::Absent => "not installed".to_string(),
+            Hook::Ours => "installed".to_string(),
+            Hook::Foreign => "someone else's file".to_string(),
+            Hook::Other(d) => format!("Polycarp's, for the config folder {d}"),
         }
     ));
+    if let Some(false) = exe_exists {
+        text.push_str(&format!(
+            "the hook calls {}, which does not exist; run `polycarp theme follow omarchy` again\n",
+            exe.as_ref()
+                .map(|e| e.display().to_string())
+                .unwrap_or_default()
+        ));
+    }
+    if let Some(f) = &failure {
+        text.push_str(&format!("last sync problem: {f}\n"));
+    }
     if !agrees {
-        text.push_str(if following {
-            "the hook is missing, so Polycarp will not notice a switch; run `polycarp theme follow omarchy`\n"
-        } else {
-            "the hook is installed but Polycarp is not following; run `polycarp theme follow off` to remove it\n"
+        text.push_str(match (&hook_state, following) {
+            (Hook::Absent, true) => "the hook is missing, so Polycarp will not notice a switch; run `polycarp theme follow omarchy`\n",
+            (Hook::Ours, false) => "the hook is installed but Polycarp is not following; run `polycarp theme follow off` to remove it\n",
+            (_, true) => "the file at the hook's place is not this config's hook, so Polycarp will not notice a switch; move it aside and run `polycarp theme follow omarchy`\n",
+            _ => "",
         });
     }
     let data = json!({
@@ -1128,8 +1503,11 @@ fn status(c: &Ctx) -> Res {
         "overrides": overrides,
         "hook": hook.display().to_string(),
         "hook_installed": hook_state == Hook::Ours,
-        "hook_foreign": hook_state == Hook::Foreign,
+        "hook_foreign": matches!(hook_state, Hook::Foreign | Hook::Other(_)),
         "hook_agrees": agrees,
+        "hook_exe": exe.map(|e| e.display().to_string()),
+        "hook_exe_exists": exe_exists,
+        "last_failure": failure,
     });
     Ok(Out::new(data, text).warn(problems))
 }
@@ -1151,16 +1529,12 @@ fn follow_on(c: &Ctx) -> Res {
     }
     let _lock = Lock::acquire(&c.cfg)?;
     let hook = hook_path(&home);
-    let hook_before = hook_state(&hook)?;
-    if hook_before == Hook::Foreign {
-        return Err(refuse_foreign_hook(&hook));
+    let hook_before = hook_state(&hook, &c.cfg.dir)?;
+    if matches!(hook_before, Hook::Foreign | Hook::Other(_)) {
+        return Err(refuse_hook(&hook, &hook_before));
     }
     check_theme_file(&c.cfg)?;
     check_top_file(&c.cfg)?;
-    let exe = env::current_exe()
-        .and_then(|p| p.canonicalize())
-        .map_err(|e| io_err(format!("could not find this program's own path: {e}")))?;
-    let script = hook_text(&exe, config_dir_for_hook(&c.cfg).as_deref())?;
 
     let (mut st, old_problems) = load_state(&c.cfg);
     let mut notes = Vec::new();
@@ -1170,27 +1544,34 @@ fn follow_on(c: &Ctx) -> Res {
             old_problems.join("; ")
         ));
     }
-    let previous = match (&st.follow, st.theme == TOP) {
-        (Some(f), _) => f.clone(),
-        (None, true) => Follow {
-            previous_theme: DEFAULT_THEME.into(),
-            previous_mode: "auto".into(),
+    if st.follow.is_none() {
+        // A first follow starts from Omarchy's colors exactly: accents set before are put aside
+        // and come back when following stops.
+        let (pl, pd) = (st.accent_light.take(), st.accent_dark.take());
+        if pl.is_some() || pd.is_some() {
+            notes.push("your earlier accent setting is put aside so the accent is Omarchy's; it comes back when you stop following".into());
+        }
+        let (previous_theme, previous_mode) = if st.theme == TOP {
+            (DEFAULT_THEME.to_string(), "auto".to_string())
+        } else {
+            (st.theme.clone(), st.mode.clone())
+        };
+        st.follow = Some(Follow {
+            previous_theme,
+            previous_mode,
             fits: BTreeMap::new(),
-        },
-        (None, false) => Follow {
-            previous_theme: st.theme.clone(),
-            previous_mode: st.mode.clone(),
-            fits: BTreeMap::new(),
-        },
-    };
-    st.follow = Some(previous);
+            prev_accent_light: pl,
+            prev_accent_dark: pd,
+            mode_override: None,
+        });
+    }
     turn_on(&mut st, &mut notes);
     let plan = plan(&c.cfg, &home, &st, false)?;
     let built = &plan.built;
     let had_top = c.cfg.theme_path(TOP).exists();
 
     write_generated(&c.cfg, &built.text)?;
-    write_hook(&hook, &script)?;
+    install_hook(&c.cfg, &home)?;
     let mut out = match commit(
         c,
         Some(&plan.st),
@@ -1249,7 +1630,7 @@ fn follow_reset(c: &Ctx) -> Res {
         )
         .suggest("Run `polycarp theme follow omarchy` first."));
     }
-    check_top_file(&c.cfg)?;
+    // The old file's contents do not matter: reset replaces them, and history keeps a copy.
     let plan = plan(&c.cfg, &home, &st, true)?;
     write_generated(&c.cfg, &plan.built.text)?;
     let mut out = commit(
@@ -1272,13 +1653,13 @@ fn follow_reset(c: &Ctx) -> Res {
 
 fn follow_off(c: &Ctx) -> Res {
     let home = home()?;
-    let hook = hook_path(&home);
     let _lock = Lock::acquire(&c.cfg)?;
     let (mut st, problems) = load_state(&c.cfg);
     let was = st.follow.clone();
-    let mut out = match (&was, problems.is_empty()) {
+    let (out, stopped) = match (&was, problems.is_empty()) {
         (Some(f), true) => {
             let mut notes = Vec::new();
+            let stopped = release(&mut st);
             if st.theme == TOP {
                 if resolve_name(&c.cfg, &f.previous_theme).is_ok() {
                     st.theme = f.previous_theme.clone();
@@ -1300,14 +1681,19 @@ fn follow_off(c: &Ctx) -> Res {
                 {
                     st.accent_light = None;
                     st.accent_dark = None;
+                    notes.push(
+                        "your earlier accent does not read on that theme, so it is cleared".into(),
+                    );
                 }
             }
-            st.follow = None;
             let mut o = commit(c, Some(&st), "theme follow off", None)?;
             notes.push("your changes on top stay in omarchy-overrides.toml; `polycarp theme follow omarchy` picks them up again".into());
             o.notes.splice(0..0, notes);
             o.text = format!("stopped following Omarchy\n{}", o.text);
-            o.with(json!({"following": false, "was_following": true}))
+            (
+                o.with(json!({"following": false, "was_following": true})),
+                stopped,
+            )
         }
         _ => {
             let mut o = Out::new(
@@ -1316,32 +1702,45 @@ fn follow_off(c: &Ctx) -> Res {
             )
             .warn(problems);
             o.notes.push("no theme setting was changed".into());
-            o
+            (o, None)
         }
     };
-    match remove_hook(&hook) {
-        Ok(msg) => out.notes.push(msg),
-        Err(e) => out = out.caution(e.message),
-    }
-    out.data["hook"] = json!(hook.display().to_string());
+    drop(_lock);
+    let mut out = after_stop(c, out, stopped);
+    out.data["hook"] = json!(hook_path(&home).display().to_string());
     Ok(out)
 }
 
 fn op_sync(c: &Ctx) -> Res {
+    let r = sync_entry(c);
+    if let Err(e) = &r {
+        log_line(&c.cfg, &format!("FAILED: {}", e.message.replace('\n', " ")));
+    }
+    r
+}
+
+fn sync_entry(c: &Ctx) -> Res {
     let home = home()?;
     if !detected(&home) {
         return Err(no_omarchy(&home));
     }
     let _lock = Lock::acquire(&c.cfg)?;
     let (st, problems) = load_state(&c.cfg);
-    if !problems.is_empty() || !is_following(&st) || !st.enabled {
+    if !problems.is_empty() || !is_following(&st) {
         return Ok(Out::new(
             json!({"following": false, "changed": false}),
             "not following Omarchy, so nothing was done\n",
         ));
     }
+    sync_locked(c, &home, &st)
+}
+
+/// Brings the generated theme, the person's file, the settings and (if the theme is on)
+/// `current/` up to date. The settings go before the theme file, so a failure between them never
+/// leaves a moved color without its record.
+fn sync_locked(c: &Ctx, home: &Path, st: &State) -> Res {
     check_theme_file(&c.cfg)?;
-    let plan = plan(&c.cfg, &home, &st, false)?;
+    let plan = plan(&c.cfg, home, st, false)?;
     let built = &plan.built;
     let gen_same =
         fs::read(c.cfg.theme_path(THEME_NAME)).ok().as_deref() == Some(built.text.as_bytes());
@@ -1355,14 +1754,22 @@ fn op_sync(c: &Ctx) -> Res {
             "the Omarchy colors have not changed\n",
         ));
     }
-    write_generated(&c.cfg, &built.text)?;
-    if !top_same {
-        write_atomic(&c.cfg.theme_path(TOP), plan.overrides.as_bytes()).map_err(io_err)?;
-    }
     if !cfg_same {
         write_atomic(&c.cfg.file(), state_table(&c.cfg, &plan.st).as_bytes()).map_err(io_err)?;
     }
-    let out = finish_with(&c.cfg, true)?;
+    if !top_same {
+        write_atomic(&c.cfg.theme_path(TOP), plan.overrides.as_bytes()).map_err(io_err)?;
+    }
+    write_generated(&c.cfg, &built.text)?;
+    // A theme that is off has no files in current/; `on` writes them from what is saved now.
+    let out = if plan.st.enabled {
+        finish_with(&c.cfg, true)?
+    } else {
+        Out::new(
+            json!({}),
+            "the theme is off; the saved colors were updated, and `theme on` will use them\n",
+        )
+    };
     log_line(
         &c.cfg,
         &format!(
@@ -1407,16 +1814,28 @@ pub(crate) fn doctor_line() -> Option<String> {
         .map(load_state)
         .is_some_and(|(st, p)| p.is_empty() && is_following(&st));
     let fresh = cfg.as_ref().is_some_and(|c| !c.file().exists());
-    let hook = hook_state(&hook_path(&home)).ok();
-    Some(match (following, hook) {
-        (true, Some(Hook::Ours)) => {
-            "omarchy: found, and Polycarp is following its theme".to_string()
-        }
+    let hook_path = hook_path(&home);
+    let hook = cfg
+        .as_ref()
+        .and_then(|c| hook_state(&hook_path, &c.dir).ok());
+    let mut line = match (following, &hook) {
+        (true, Some(Hook::Ours)) => "omarchy: found, and Polycarp is following its theme".to_string(),
+        (true, Some(Hook::Foreign | Hook::Other(_))) => format!("omarchy: found, and Polycarp is following its theme, but {} is not this config's hook, so it will not notice a switch. Move that file aside and run `polycarp theme follow omarchy`", hook_path.display()),
         (true, _) => "omarchy: found, and Polycarp is following its theme, but the hook is missing, so it will not notice a switch. Run `polycarp theme follow omarchy` again".to_string(),
         (false, Some(Hook::Ours)) => "omarchy: found; Polycarp is not following its theme, but a Polycarp hook is installed. Run `polycarp theme follow off` to remove it".to_string(),
-        (false, _) if fresh => "omarchy: found; Polycarp has no settings yet and will start following its theme with the first theme change".to_string(),
+        (false, _) if fresh => "omarchy: found; Polycarp has no settings yet and will start following its theme with the first theme command that writes settings (or `polycarp theme follow omarchy --if-fresh`)".to_string(),
         (false, _) => "omarchy: found; Polycarp is not following its theme. Run `polycarp theme follow omarchy` to match it".to_string(),
-    })
+    };
+    if let Some(exe) = hook_exe(&hook_path).filter(|e| !e.exists()) {
+        line.push_str(&format!(
+            "\nomarchy: the hook calls {}, which does not exist; run `polycarp theme follow omarchy` again",
+            exe.display()
+        ));
+    }
+    if let Some(f) = cfg.as_ref().and_then(last_failure) {
+        line.push_str(&format!("\nomarchy: last sync problem: {f}"));
+    }
+    Some(line)
 }
 
 #[cfg(test)]
