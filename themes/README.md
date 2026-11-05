@@ -259,6 +259,8 @@ says so and changes nothing. Each entry records a hash of the theme text the cha
 longer matches, someone edited it since, and `undo` refuses with the code `changed_since` instead of
 overwriting or deleting that work. `undo --force` first keeps the edited text in `history/` and then goes on. `create --force` and `delete` are recorded too, so `undo`
 brings the old theme back.
+A change that would leave the theme file and `config.toml` exactly as they are succeeds with a note and
+`changed: false`; it is not recorded in history and `current/` is not rewritten.
 If a theme file or `config.toml` cannot be written, the change is put back, its history entry is dropped
 and the command fails. If only a file in `current/` cannot be written, the settings stay saved and the
 command succeeds with a warning that names the files it could not write.

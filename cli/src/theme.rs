@@ -2266,6 +2266,11 @@ fn finish_with(cfg: &Cfg, soft: bool) -> Res {
             return Err(io_err(failed.join("; ")));
         }
     }
+    Ok(summary(cfg, eff, wrote, late))
+}
+
+/// What is in force, as a result. `wrote` is the files written (none for a no-op).
+fn summary(cfg: &Cfg, eff: Eff, wrote: Vec<PathBuf>, late: Option<String>) -> Out {
     let mut text = format!("theme: {}\nmode: {}\n", eff.state.theme, eff.state.mode);
     if eff.state.accent_light.is_some() || eff.state.accent_dark.is_some() {
         text.push_str(&format!(
@@ -2291,10 +2296,10 @@ fn finish_with(cfg: &Cfg, soft: bool) -> Res {
         "next": "Look at it with theme preview. If the person dislikes it, run theme undo.",
     });
     let out = Out::new(data, text).warn(eff.problems);
-    Ok(match late {
+    match late {
         Some(w) => out.caution(w),
         None => out,
-    })
+    }
 }
 
 /// A theme and the themes it extends, nearest first. Stops quietly at anything unreadable.
@@ -2361,6 +2366,24 @@ fn commit(c: &Ctx, st: Option<&State>, action: &str, file: Option<(&str, Option<
         None => None,
     };
     let config_was = read_or_absent(&c.cfg.file()).map_err(io_err)?;
+    // Nothing would change: do not record, do not write, so history stays accurate.
+    let new_config = st.map(|st| state_table(&c.cfg, st).into_bytes());
+    let theme_same = match (&theme_was, file) {
+        (Some((_, was)), Some((_, Some(text)))) => was.as_deref() == Some(text.as_bytes()),
+        (Some((_, was)), Some((_, None))) => was.is_none(),
+        _ => true,
+    };
+    let config_same = new_config
+        .as_ref()
+        .is_none_or(|n| config_was.as_deref() == Some(n.as_slice()));
+    if theme_same && config_same {
+        let mut out = summary(&c.cfg, effective(&c.cfg), Vec::new(), None);
+        out.text = format!("nothing to change: that is already how it is\n{}", out.text);
+        out.notes.push(
+            "nothing changed, so nothing was recorded in history or written to current/".into(),
+        );
+        return Ok(out.with(json!({"changed": false})));
+    }
     let kept = record(&c.cfg, &c.caller, action, file).map_err(io_err)?;
     let undo_all = |why: String| {
         if let Some((p, was)) = &theme_was {
@@ -2381,8 +2404,8 @@ fn commit(c: &Ctx, st: Option<&State>, action: &str, file: Option<(&str, Option<
         }
         None => {}
     }
-    if let Some(st) = st {
-        write_atomic(&c.cfg.file(), state_table(&c.cfg, st).as_bytes()).map_err(undo_all)?;
+    if let Some(new) = &new_config {
+        write_atomic(&c.cfg.file(), new).map_err(undo_all)?;
     }
     finish_with(&c.cfg, true)
 }

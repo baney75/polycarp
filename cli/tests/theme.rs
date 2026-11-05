@@ -3228,3 +3228,34 @@ fn windows_reserved_names_are_refused_everywhere() {
     let b = Box::new();
     b.ok(&["create", "com10", "--extends", "polycarp"]);
 }
+
+#[test]
+fn a_change_that_changes_nothing_is_not_recorded_or_written() {
+    let b = Box::new();
+    b.ok(&["set", "evening", "--mode", "dark"]);
+    let hist = b.history_count();
+    let site = b.cfg().join("current").join("site.css");
+    fs::remove_file(&site).unwrap();
+    for args in [
+        vec!["set", "evening", "--mode", "dark"],
+        vec!["set", "evening"],
+        vec!["accent", "--clear"],
+    ] {
+        let (c, v) = b.jrun(&args);
+        assert_eq!(c, 0, "{args:?}: {v}");
+        assert_eq!(v["data"]["changed"], false, "{args:?}: {v}");
+        assert!(
+            v["data"]["notes"].to_string().contains("nothing changed"),
+            "{v}"
+        );
+        assert_eq!(b.history_count(), hist, "{args:?}");
+        assert!(!site.exists(), "{args:?}: current/ was rewritten");
+    }
+    // A real change is still recorded and written.
+    b.ok(&["set", "calm"]);
+    assert_eq!(b.history_count(), hist + 1);
+    assert!(site.exists());
+    // undo goes back to evening, not to a no-op entry.
+    b.ok(&["undo"]);
+    assert_eq!(b.json(&["current", "--json"])["theme"], "evening");
+}
