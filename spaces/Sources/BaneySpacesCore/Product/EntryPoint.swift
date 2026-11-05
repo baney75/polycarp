@@ -42,10 +42,23 @@ public enum EntryPoint {
     }
 
     /// Arguments that print and exit without starting the app or taking its lock: they must work
-    /// while another copy runs.
+    /// while another copy runs. Only a complete invocation counts (`usageError`).
     public static let runsBesideAnotherCopy: Set<String> = ["--render", "--bangs"]
 
     public static func needsExclusiveCopy(arguments: [String]) -> Bool {
         Set(arguments.dropFirst()).isDisjoint(with: runsBesideAnotherCopy)
     }
+
+    /// A one-shot that is missing what it needs. It exits with a usage error (64) and never falls through to
+    /// the app: `--render` with no folder used to skip the lock and then start a second app.
+    public static func usageError(arguments: [String], binary: String = Product.name) -> String? {
+        let args = Array(arguments.dropFirst())
+        if let i = args.firstIndex(of: "--render"), i + 1 >= args.count || args[i + 1].hasPrefix("--") {
+            return "usage: \(binary) --render <folder>"
+        }
+        return nil
+    }
+
+    /// The exit status for `usageError` (EX_USAGE).
+    public static let usageExit: Int32 = 64
 }

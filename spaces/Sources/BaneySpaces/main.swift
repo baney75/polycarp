@@ -15,23 +15,52 @@ if let answer = EntryPoint.immediate(arguments: CommandLine.arguments, info: Bun
     exit(answer.code)
 }
 
-// Only one copy runs, however it was started (see `SingleInstance`). A second one hands over to the
-// running copy and exits here, before it touches anything the first one owns. The lock is held for
-// this process's life; it is kept in a global so it is never released early.
+// A one-shot with what it needs missing exits here with a usage error. It never falls through to start the app.
+if let problem = EntryPoint.usageError(arguments: CommandLine.arguments) {
+    FileHandle.standardError.write(Data((problem + "\n").utf8))
+    exit(EntryPoint.usageExit)
+}
+
+// Only one copy runs, however it was started (see `SingleInstance`). BaneySpaces, if it is running, is dealt
+// with first and in the open: one alert, before any file is touched. Among Polycarp copies the lock decides:
+// a second one hands over to the running copy and exits here, silently, before it touches anything the first
+// one owns. The lock is held for this process's life; it is kept in a global so it is never released early.
 let instanceLock: SingleInstance.Lock? = {
     guard EntryPoint.needsExclusiveCopy(arguments: CommandLine.arguments) else { return nil }
     let home = FileManager.default.homeDirectoryForCurrentUser
-    let running = [Product.bundleID, Product.Legacy.bundleID].flatMap {
-        NSRunningApplication.runningApplications(withBundleIdentifier: $0).map(\.processIdentifier)
+    let oneShot = !Set(CommandLine.arguments).isDisjoint(with: crashLoopOneShots)
+    let legacy = NSRunningApplication.runningApplications(withBundleIdentifier: Product.Legacy.bundleID)
+    if LegacyHandover.applies(oneShot: oneShot, legacyPids: legacy.map(\.processIdentifier)) {
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.accessory)
+        let outcome = LegacyHandover.run(
+            ask: {
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                alert.messageText = LegacyHandover.alertTitle
+                alert.informativeText = LegacyHandover.alertDetail
+                alert.addButton(withTitle: LegacyHandover.continueButton)
+                alert.addButton(withTitle: LegacyHandover.notNowButton)
+                return alert.runModal() == .alertFirstButtonReturn ? .quitAndContinue : .notNow
+            },
+            quit: { legacy.forEach { $0.terminate() } },
+            isRunning: { legacy.contains { !$0.isTerminated } })
+        if case .exit(let message) = outcome {
+            if let message {
+                let alert = NSAlert()
+                alert.messageText = message
+                alert.runModal()
+            }
+            exit(0)
+        }
     }
-    switch SingleInstance.claim(runningPids: running,
-                                lockURL: Product.supportDir(home: home).appendingPathComponent(Product.lockName)) {
+    switch SingleInstance.claim(lockURL: Product.supportDir(home: home).appendingPathComponent(Product.lockName)) {
     case .mine(let lock):
         return lock
     case .yield(let pid):
         if let pid, let other = NSRunningApplication(processIdentifier: pid) { other.activate(options: []) }
         // A one-shot that could not run says so (uninstall.sh reads the status); a second launch is not an error.
-        exit(Set(CommandLine.arguments).isDisjoint(with: crashLoopOneShots) ? 0 : 75)
+        exit(oneShot ? 75 : 0)
     }
 }()
 

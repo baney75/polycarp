@@ -485,6 +485,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startWhenTrusted()
         // ⌘Space works with or without Accessibility; Spotlight hands it over first.
         if Launcher.onCmdSpace { setLauncherOnCmdSpace(true) } else { registerShortcuts() }
+        legacyWatcher.start()
         updater.onChange = { [weak self] in self?.updateIcon() }
         updater.isBusy = { [weak self] in self?.spaces.switching ?? false }
         updater.start()
@@ -505,6 +506,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func showSetup() { setup.show() }
+    private let legacyWatcher = LegacyWatcher()
     @objc private func showWelcome() { welcome.show() }
     private lazy var welcome: WelcomeWindowController = {
         let c = WelcomeWindowController()

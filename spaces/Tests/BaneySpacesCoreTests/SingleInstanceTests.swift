@@ -33,24 +33,93 @@ final class SingleInstanceTests: XCTestCase {
 
     // MARK: the decision
 
-    func testAnotherCopyByBundleIDHandsOverEvenWithNoLockFile() {
+    func testTheLockAloneDecidesBetweenPolycarpCopies() {
+        // Two claimants that each see the other running: exactly one wins, whatever any process list says.
         let url = dir.appendingPathComponent("polycarp.lock")
-        guard case .yield(let to) = SingleInstance.claim(runningPids: [500], lockURL: url, me: 1) else { return XCTFail() }
-        XCTAssertEqual(to, 500)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path), "it decided before touching any file")
-    }
-
-    func testTheLockCatchesACopyThatTheBundleCheckMisses() {
-        // A copy run from another path (or renamed): no matching bundle ID, but it holds the lock.
-        let url = dir.appendingPathComponent("polycarp.lock")
-        guard case .mine = SingleInstance.claim(runningPids: [], lockURL: url, me: 7) else { return XCTFail("first runs") }
-        guard case .yield(let to) = SingleInstance.claim(runningPids: [], lockURL: url, me: 8) else { return XCTFail("second must yield") }
+        guard case .mine = SingleInstance.claim(lockURL: url, me: 7) else { return XCTFail("first runs") }
+        guard case .yield(let to) = SingleInstance.claim(lockURL: url, me: 8) else { return XCTFail("second must yield") }
         XCTAssertEqual(to, 7)
     }
 
-    func testOurOwnPidDoesNotCount() {
-        let url = dir.appendingPathComponent("polycarp.lock")
-        guard case .mine = SingleInstance.claim(runningPids: [7], lockURL: url, me: 7) else { return XCTFail() }
+    func testALockFileThatCannotBeUsedDoesNotStopTheApp() {
+        // A path under a regular file can't be made: the person still gets an app.
+        let blocker = dir.appendingPathComponent("file"); FileManager.default.createFile(atPath: blocker.path, contents: Data())
+        guard case .mine(let lock) = SingleInstance.claim(lockURL: blocker.appendingPathComponent("sub/polycarp.lock")) else { return XCTFail() }
+        XCTAssertFalse(lock.isHeld)
+    }
+
+    func testTheClaimNoLongerLooksAtProcessLists() throws {
+        let src = try Repo.code("Sources/BaneySpacesCore/Product/SingleInstance.swift")
+        XCTAssertFalse(src.contains("runningPids"), "among Polycarp copies the lock alone decides")
+    }
+
+    // MARK: BaneySpaces running
+
+    private func handover(choice: LegacyHandover.Choice, quitsAfter: Int?, timeout: TimeInterval = 10) -> (LegacyHandover.Outcome, quits: Int, asked: Int) {
+        var clock = Date(timeIntervalSince1970: 0), polls = 0, quits = 0, asked = 0, quitAt: Int? = nil
+        let outcome = LegacyHandover.run(
+            ask: { asked += 1; return choice },
+            quit: { quits += 1; quitAt = polls },
+            isRunning: { polls += 1; guard let n = quitsAfter, let at = quitAt else { return true }; return polls - at < n },
+            now: { clock }, sleep: { clock = clock.addingTimeInterval($0) }, timeout: timeout)
+        return (outcome, quits, asked)
+    }
+
+    func testNotNowExitsWithoutQuittingAnything() {
+        let r = handover(choice: .notNow, quitsAfter: 1)
+        XCTAssertEqual(r.0, .exit(message: nil))
+        XCTAssertEqual(r.quits, 0)
+        XCTAssertEqual(r.asked, 1)
+    }
+
+    func testContinueQuitsTheOldAppWaitsAndCarriesOn() {
+        let r = handover(choice: .quitAndContinue, quitsAfter: 6)
+        XCTAssertEqual(r.0, .carryOn)
+        XCTAssertEqual(r.quits, 1)
+        XCTAssertEqual(r.asked, 1, "one alert")
+    }
+
+    func testAnOldAppThatNeverQuitsStopsTheStartAfterTenSeconds() {
+        let r = handover(choice: .quitAndContinue, quitsAfter: nil)
+        XCTAssertEqual(r.0, .exit(message: LegacyHandover.didNotQuit))
+    }
+
+    func testTheAlertSaysWhatItSaysAndOneShotsSkipIt() {
+        XCTAssertEqual(LegacyHandover.alertTitle, "BaneySpaces is running. Polycarp replaces it.")
+        XCTAssertEqual(LegacyHandover.continueButton, "Quit BaneySpaces and Continue")
+        XCTAssertEqual(LegacyHandover.notNowButton, "Not Now")
+        XCTAssertTrue(LegacyHandover.applies(oneShot: false, legacyPids: [5]))
+        XCTAssertFalse(LegacyHandover.applies(oneShot: true, legacyPids: [5]), "restoring the Dock must work beside BaneySpaces")
+        XCTAssertFalse(LegacyHandover.applies(oneShot: false, legacyPids: []))
+    }
+
+    func testBaneySpacesStartingLaterIsAskedToQuitAndTheyAreToldOnce() {
+        XCTAssertEqual(LegacyHandover.onLaunch(bundleID: "com.baney.baneyspaces", alreadyNotified: false), .init(quit: true, notify: true))
+        XCTAssertEqual(LegacyHandover.onLaunch(bundleID: "com.baney.baneyspaces", alreadyNotified: true), .init(quit: true, notify: false))
+        XCTAssertEqual(LegacyHandover.onLaunch(bundleID: "com.apple.Safari", alreadyNotified: false), .init(quit: false, notify: false))
+        XCTAssertEqual(LegacyHandover.onLaunch(bundleID: Product.bundleID, alreadyNotified: false), .init(quit: false, notify: false), "a second Polycarp is the lock's business")
+    }
+
+    func testMainAsksBeforeTheLockAndSkipsTheAlertForOneShots() throws {
+        let main = try Repo.code("Sources/BaneySpaces/main.swift")
+        let at = { (s: String) in try XCTUnwrap(main.range(of: s)?.lowerBound, s) }
+        XCTAssertLessThan(try at("LegacyHandover.run"), try at("SingleInstance.claim"), "the alert comes before any file is touched")
+        XCTAssertTrue(main.contains("LegacyHandover.applies(oneShot: oneShot"))
+    }
+
+    // MARK: --render
+
+    func testAnIncompleteRenderIsAUsageErrorAndNeverStartsTheApp() throws {
+        XCTAssertNotNil(EntryPoint.usageError(arguments: ["Polycarp", "--render"]))
+        XCTAssertNotNil(EntryPoint.usageError(arguments: ["Polycarp", "--render", "--setup"]))
+        XCTAssertNil(EntryPoint.usageError(arguments: ["Polycarp", "--render", "/tmp/shots"]))
+        XCTAssertNil(EntryPoint.usageError(arguments: ["Polycarp"]))
+        XCTAssertEqual(EntryPoint.usageExit, 64)
+        let main = try Repo.code("Sources/BaneySpaces/main.swift")
+        let at = { (s: String) in try XCTUnwrap(main.range(of: s)?.lowerBound, s) }
+        XCTAssertLessThan(try at("EntryPoint.usageError"), try at("SingleInstance.claim"))
+        XCTAssertLessThan(try at("EntryPoint.usageError"), try at("NSApplication.shared"))
+        XCTAssertTrue(main.contains("exit(EntryPoint.usageExit)"))
     }
 
     func testMainDecidesBeforeAnythingElse() throws {
@@ -58,7 +127,7 @@ final class SingleInstanceTests: XCTestCase {
         let at = { (s: String) in try XCTUnwrap(main.range(of: s)?.lowerBound, s) }
         let version = try at("EntryPoint.immediate")
         let claim = try at("SingleInstance.claim")
-        for later in ["NSApplication.shared", "CrashLoop.", "SettingsImport.run", "Launcher.commandLine", "AppDelegate()"] {
+        for later in ["let app = NSApplication.shared", "CrashLoop.", "SettingsImport.run", "Launcher.commandLine", "AppDelegate()"] {
             XCTAssertLessThan(claim, try at(later), "the one-copy check must come before \(later)")
         }
         XCTAssertLessThan(version, claim, "--version answers before even the lock is looked at")

@@ -1,36 +1,30 @@
 import Darwin
 import Foundation
 
-/// Only one copy of the app runs, however it was started. Two copies fight over the same sockets,
+/// Only one copy of Polycarp runs, however it was started. Two copies fight over the same sockets,
 /// hotkeys, Dock settings and window positions, and the second one used to take the first one's
 /// sockets away (the `--version` incident, 2026-11-05).
 ///
-/// Two checks, because either alone misses a case:
-/// - the bundle ID: any other process of this app or of the app it replaces (`runningPids`, which
-///   the caller reads from NSWorkspace). The old app has no lock, so only this sees it.
-/// - a lock file held for the life of the process (`flock`): catches a copy run from another
-///   path, a renamed bundle, or a bare binary, which a bundle check cannot see.
+/// Among Polycarp copies the lock decides, alone: a lock file held for the life of the process
+/// (`flock`). It catches a copy run from any path, a renamed bundle or a bare binary, and two copies
+/// starting at the same moment cannot both win, which a look at the running list cannot promise.
+/// BaneySpaces is another matter: it has no lock, so only a look at its bundle ID sees it, and it is
+/// handled by `LegacyHandover` (an alert, then a quit), never by a silent exit.
 public enum SingleInstance {
     public enum Claim {
         /// This process is the one. Keep the lock alive until exit.
         case mine(Lock)
-        /// Another copy runs; bring it forward. `pid` is nil when it could not be told.
+        /// Another Polycarp holds the lock; bring it forward. `pid` is nil when it could not be told.
         case yield(to: Int32?)
     }
 
-    /// The pids of other processes with the app's bundle ID (or the old app's), this one removed.
-    public static func others(_ pids: [Int32], me: Int32 = getpid()) -> [Int32] { pids.filter { $0 != me } }
-
-    /// Decides at the top of `main`, before anything else is touched. `runningPids` is every pid
-    /// that has one of the two bundle IDs.
-    public static func claim(runningPids: [Int32], lockURL: URL, me: Int32 = getpid()) -> Claim {
-        if let other = others(runningPids, me: me).first { return .yield(to: other) }
+    /// Decides at the top of `main`.
+    public static func claim(lockURL: URL, me: Int32 = getpid()) -> Claim {
         switch Lock.acquire(at: lockURL, pid: me) {
         case .acquired(let lock): return .mine(lock)
         case .busy(let holder): return .yield(to: holder)
         case .failed:
-            // The folder or file can't be used. Refusing to start would leave the person with no
-            // app, and the bundle check above already passed; run without a lock.
+            // The folder or file can't be used. Refusing to start would leave the person with no app.
             return .mine(Lock(fd: -1, url: lockURL))
         }
     }
