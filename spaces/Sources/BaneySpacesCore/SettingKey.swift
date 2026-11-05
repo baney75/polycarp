@@ -30,6 +30,12 @@ public enum SettingKey: String, CaseIterable, Sendable {
         }
     }
 
+    /// What `set` adds to its answer while a Polycarp theme is in force: the value is stored, and not drawn.
+    public func polycarpNote(inForce: Bool) -> String? {
+        guard inForce, self == .theme || self == .palette else { return nil }
+        return "saved, but not drawn until the Polycarp theme is removed (delete its theme.json)"
+    }
+
     /// What a `set` or `get` was asked, from the request's fields.
     public enum Ask: Equatable {
         case get(SettingKey)
