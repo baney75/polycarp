@@ -575,6 +575,18 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertNotEqual(settings.accentRGB(system: system), t.accent(systemDark: false))
     }
 
+    func testDarkModeReadsTheEffectiveAppearanceOnTheMainThreadAndTheDefaultsElsewhere() {
+        // The notification arrives while the defaults still say Light: the appearance in force wins on main.
+        XCTAssertTrue(SystemDark.isDark(onMain: true, effective: { true }, defaults: { nil }))
+        XCTAssertFalse(SystemDark.isDark(onMain: true, effective: { false }, defaults: { "Dark" }))
+        // Off the main thread the effective appearance is never touched (it is main-thread only).
+        XCTAssertTrue(SystemDark.isDark(onMain: false, effective: { XCTFail("read off main"); return false }, defaults: { "Dark" }))
+        XCTAssertFalse(SystemDark.isDark(onMain: false, effective: { XCTFail("read off main"); return true }, defaults: { nil }))
+        // No app yet: the defaults.
+        XCTAssertTrue(SystemDark.isDark(onMain: true, effective: { nil }, defaults: { "Dark" }))
+        XCTAssertFalse(SystemDark.isDark(onMain: true, effective: { nil }, defaults: { nil }))
+    }
+
     func testTheTimerPollsOnItsOwnQueueNotTheMainThread() throws {
         let seen = Seen()
         let ran = expectation(description: "delivered")

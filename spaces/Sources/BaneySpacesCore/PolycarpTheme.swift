@@ -547,3 +547,14 @@ extension Look {
         return ThemeCatalog.shared.fontFamilies(key)
     }
 }
+
+/// Whether the system is in Dark Mode, for a Polycarp theme in `auto`. `AppleInterfaceStyle` in the defaults can
+/// still hold the old value when `AppleInterfaceThemeChangedNotification` arrives, so on the main thread the app's
+/// effective appearance (what is really drawn) is asked first. That is main-thread only, so any other thread,
+/// or no app yet, reads the defaults, which are safe from anywhere.
+public enum SystemDark {
+    public static func isDark(onMain: Bool, effective: () -> Bool?, defaults: () -> String?) -> Bool {
+        if onMain, let e = effective() { return e }
+        return defaults() == "Dark"
+    }
+}

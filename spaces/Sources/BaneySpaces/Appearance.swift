@@ -44,14 +44,22 @@ final class Appearance: ObservableObject {
     }
 
     /// Dark Mode, for a Polycarp theme whose mode is `auto`.
-    static var systemDark: Bool { UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark" }
+    /// The app's effective appearance on the main thread (the defaults can lag the change notification), the defaults elsewhere.
+    static var systemDark: Bool {
+        SystemDark.isDark(onMain: Thread.isMainThread,
+                          effective: { NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]).map { $0 == .darkAqua } },
+                          defaults: { UserDefaults.standard.string(forKey: "AppleInterfaceStyle") })
+    }
 
     /// The theme and palette every surface draws from, kept until the settings or the system accent change.
     private var cachedLook: Look?
+    private var cachedDark = false
     var look: Look {
         if let cachedLook { return cachedLook }
-        let l = settings.look(systemAccent: Appearance.systemAccent, polycarp: polycarp, systemDark: Appearance.systemDark)
+        let dark = Appearance.systemDark
+        let l = settings.look(systemAccent: Appearance.systemAccent, polycarp: polycarp, systemDark: dark)
         cachedLook = l
+        cachedDark = dark
         return l
     }
 
@@ -105,6 +113,13 @@ final class Appearance: ObservableObject {
             self.cachedLook = nil
             self.objectWillChange.send()
             NotificationCenter.default.post(name: Appearance.didChange, object: nil)
+            // If the system had not settled yet, the look just built is the old mode: look again shortly.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                guard let self, self.polycarp?.mode == .auto, self.cachedLook != nil, Appearance.systemDark != self.cachedDark else { return }
+                self.cachedLook = nil
+                self.objectWillChange.send()
+                NotificationCenter.default.post(name: Appearance.didChange, object: nil)
+            }
         }
     }
 
