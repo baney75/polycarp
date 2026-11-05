@@ -147,7 +147,7 @@ fn voice_with_args_gives_2() {
     let s = Sandbox::new();
     let o = s.run(&["voice", "dictate"]);
     assert_eq!(code(&o), 2);
-    assert!(err(&o).contains("silas#6"));
+    assert!(err(&o).contains("has no commands yet"));
 }
 
 #[test]
@@ -1193,4 +1193,64 @@ fn doctor_shows_the_bundled_browser_helper_and_its_version() {
     let o = s.run(&["doctor"]);
     let t = out(&o);
     assert!(t.contains("polycarp-browser (1.2.3)"), "{t}");
+}
+
+/// With Polycarp installed, voice is inside it: `polycarp voice` opens its Voice settings through `polycarp://voice`,
+/// even when a Silas is also there, and `doctor` says so. `open` is a stub, so nothing is launched.
+#[cfg(target_os = "macos")]
+#[test]
+fn voice_opens_polycarps_voice_settings_when_it_is_installed() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let polycarp = home.join("Applications/Polycarp.app");
+    let silas = home.join("Applications/Silas.app");
+    fs::create_dir_all(polycarp.join("Contents")).unwrap();
+    fs::create_dir_all(silas.join("Contents")).unwrap();
+    let log = s.dir("open-args");
+    let open = stub(
+        &s.dir("bin"),
+        "fake-open",
+        &format!("echo \"$@\" > '{}'", log.display()),
+    );
+    let o = s
+        .cmd(&["voice"])
+        .env("POLYCARP_OPEN_BIN", &open)
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let args = fs::read_to_string(&log).unwrap();
+    assert!(args.contains("polycarp://voice"), "{args}");
+    assert!(args.contains(polycarp.to_str().unwrap()), "{args}");
+    assert!(!args.contains("Silas.app"), "Silas is not opened: {args}");
+    let o = s.cmd(&["doctor"]).current_dir(&home).output().unwrap();
+    assert!(out(&o).contains("voice: inside Polycarp"), "{}", out(&o));
+}
+
+/// Silas is only the fallback: no Polycarp, the old behavior.
+#[cfg(target_os = "macos")]
+#[test]
+fn voice_falls_back_to_silas_only_when_polycarp_is_not_installed() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let silas = home.join("Applications/Silas.app");
+    fs::create_dir_all(silas.join("Contents")).unwrap();
+    let log = s.dir("open-args");
+    let open = stub(
+        &s.dir("bin"),
+        "fake-open",
+        &format!("echo \"$@\" > '{}'", log.display()),
+    );
+    let o = s
+        .cmd(&["voice"])
+        .env("POLYCARP_OPEN_BIN", &open)
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let args = fs::read_to_string(&log).unwrap();
+    assert!(
+        args.contains("Silas.app") && !args.contains("polycarp://"),
+        "{args}"
+    );
 }

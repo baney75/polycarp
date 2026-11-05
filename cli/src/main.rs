@@ -88,7 +88,7 @@ polycarp: one command for Polycarp Spaces, Tabkyra and Silas
 Usage:
   polycarp spaces [args...]    run the Spaces command
   polycarp browser [args...]   run the Tabkyra command
-  polycarp voice               open the Silas app
+  polycarp voice               open Polycarp's Voice settings (Silas only if Polycarp isn't installed)
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
   polycarp mcp                 serve the theme commands to an agent over MCP (stdio)
   polycarp doctor              show which tools were found
@@ -507,6 +507,36 @@ fn silas_app() -> Result<PathBuf, Miss> {
     Err(miss)
 }
 
+/// The Polycarp app, where voice lives now: `/Applications/Polycarp.app`, else `~/Applications/Polycarp.app`.
+/// Same rules as `silas_app`. Only the Mac has the integrated voice.
+#[cfg(target_os = "macos")]
+fn polycarp_app() -> Option<PathBuf> {
+    let mut spots = Vec::new();
+    if env::var_os("POLYCARP_NO_SYSTEM_SPOTS").is_none() {
+        spots.push(PathBuf::from("/Applications/Polycarp.app"));
+    }
+    if let Some(h) = home() {
+        spots.push(h.join("Applications/Polycarp.app"));
+    }
+    spots
+        .into_iter()
+        .filter(|a| a.is_dir())
+        .find(|a| against_cwd(a).is_ok())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn polycarp_app() -> Option<PathBuf> {
+    None
+}
+
+/// Voice is inside Polycarp when the app is installed and no explicit POLYCARP_VOICE_BIN says otherwise.
+fn integrated_voice() -> Option<PathBuf> {
+    if env::var_os(VOICE.env).is_some_and(|v| !v.is_empty()) {
+        return None;
+    }
+    polycarp_app()
+}
+
 /// Where a tool is, by the one rule for it.
 fn locate(tool: &Tool) -> Result<PathBuf, Miss> {
     #[cfg(target_os = "macos")]
@@ -516,12 +546,49 @@ fn locate(tool: &Tool) -> Result<PathBuf, Miss> {
     find(tool)
 }
 
+/// Opens the Voice settings in Polycarp through its own `polycarp://voice` address.
+#[cfg(target_os = "macos")]
+fn open_polycarp_voice(app: &Path) -> i32 {
+    // POLYCARP_OPEN_BIN lets a test stand in for `open`, so no app is launched.
+    let open = match env::var_os("POLYCARP_OPEN_BIN").filter(|v| !v.is_empty()) {
+        Some(v) => {
+            let v = PathBuf::from(v);
+            if check(&v).is_err() {
+                eprintln!(
+                    "polycarp: POLYCARP_OPEN_BIN {} was refused: it must be an absolute path to a program outside the current folder.",
+                    v.display()
+                );
+                return 127;
+            }
+            v
+        }
+        None => PathBuf::from("/usr/bin/open"),
+    };
+    match Command::new(open)
+        .arg("-a")
+        .arg(app)
+        .arg("polycarp://voice")
+        .status()
+    {
+        Ok(s) => s.code().unwrap_or(1),
+        Err(e) => {
+            eprintln!("polycarp: could not run open: {e}");
+            126
+        }
+    }
+}
+
 fn voice(args: &[OsString]) -> i32 {
     if !args.is_empty() {
         eprintln!(
-            "polycarp: voice has no commands yet (they arrive with baney75/silas#6). Run `polycarp voice` alone to open the app."
+            "polycarp: voice has no commands yet. Run `polycarp voice` alone to open Polycarp's Voice settings."
         );
         return 2;
+    }
+    // Dictation is inside Polycarp. Silas is only the fallback for a Mac that doesn't have Polycarp installed.
+    #[cfg(target_os = "macos")]
+    if let Some(app) = integrated_voice() {
+        return open_polycarp_voice(&app);
     }
     let path = match locate(&VOICE) {
         Ok(p) => p,
@@ -592,7 +659,15 @@ fn doctor() -> i32 {
     let mut printing = true;
     let mut ok = true;
     for tool in [&SPACES, &BROWSER, &VOICE] {
-        let line = match locate(tool) {
+        let integrated = if tool.sub == "voice" {
+            integrated_voice()
+        } else {
+            None
+        };
+        let line = match integrated.map(Ok).unwrap_or_else(|| locate(tool)) {
+            Ok(p) if tool.sub == "voice" && integrated_voice().as_ref() == Some(&p) => {
+                format!("voice: inside Polycarp ({})", p.display())
+            }
             Ok(p) => {
                 let mut line = format!("{}: {}", tool.sub, p.display());
                 if tool.sub == "browser" {

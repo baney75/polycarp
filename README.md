@@ -17,8 +17,11 @@ curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | 
 ```
 
 This downloads the signed app for Apple silicon and opens it; no developer tools are needed. A window walks you
-through the permissions. If you have BaneySpaces or Silas, they go to the Trash, because they can't run beside
-Polycarp, and Polycarp copies their settings, dictionary and models. On an Intel Mac, or with
+through the permissions. If you have BaneySpaces, it goes to the Trash, because it can't run beside Polycarp, and
+Polycarp copies its settings. If you have Silas, it stays installed and working: Polycarp copies its dictionary,
+history and speech models, and takes over dictation only when voice is on and a model is installed. After the first
+dictation that really typed text, Polycarp moves Silas to the Trash itself and tells you once. Turn voice off in
+Settings > Voice and Silas runs freely, untouched. On an Intel Mac, or with
 `POLYCARP_FROM_SOURCE=1`, it builds on your Mac, which needs Apple's command line tools, Rust, Bun and Node.
 
 ## The name
@@ -33,7 +36,7 @@ bears much fruit, for apart from me you can do nothing."
 ```
 polycarp spaces ls          # runs baneyspaces ls
 polycarp browser --version  # runs tabkyra --version
-polycarp voice              # opens Silas
+polycarp voice              # opens Polycarp's Voice settings (Silas only if Polycarp isn't installed)
 polycarp doctor             # shows which tools it found
 polycarp mcp                # serves the theme tools to an agent over MCP (stdio)
 ```
