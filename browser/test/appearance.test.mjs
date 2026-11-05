@@ -371,3 +371,17 @@ const whiteOnWhite = (file) => {
 	dim.surfaces.browser.dark.muted = dim.surfaces.browser.dark.background;
 	assert.match(checkPolycarpTheme(dim).reason, /dark muted on background/);
 });
+
+test("--tk-radius-sm and --tk-radius-lg are read: Tailwind's rounded-sm and rounded-xl and the panel's own small corners use them, and the defaults stay mini-lit's", () => {
+	const css = readFileSync(new URL("../src/app.css", import.meta.url), "utf8");
+	assert.match(css, /--radius-sm:\s*var\(--tk-radius-sm\)/);
+	assert.match(css, /--radius-xl:\s*var\(--tk-radius-lg\)/);
+	assert.match(css, /--tk-radius-sm:\s*calc\(var\(--radius\) - 4px\)/);
+	assert.match(css, /--tk-radius-lg:\s*calc\(var\(--radius\) \+ 4px\)/);
+	assert.equal([...css.matchAll(/border-radius:\s*calc\(var\(--radius\) - 4px\)/g)].length, 0, "small corners go through --tk-radius-sm");
+	assert.ok([...css.matchAll(/border-radius:\s*var\(--tk-radius-sm\)/g)].length >= 3);
+	const vars = appearanceVariables({ preset: "tabkyra" }, false, parsePolycarpTheme(fixtureFile("blocks")));
+	const theme = fixtureFile("blocks").surfaces.browser.shape;
+	assert.equal(vars["--tk-radius-sm"], `${theme.radius_small}px`);
+	assert.equal(vars["--tk-radius-lg"], `${theme.radius_large}px`);
+});
