@@ -2477,9 +2477,9 @@ pub(crate) fn op_create(c: &Ctx, name: &str, base_name: &str, force: bool) -> Re
             },
         ));
     }
+    let _lock = Lock::acquire(&c.cfg)?;
     let base = resolve_name(&c.cfg, base_name)
         .map_err(|ps| bad_theme(&format!("cannot extend {base_name:?}"), &ps))?;
-    let _lock = Lock::acquire(&c.cfg)?;
     let path = c.cfg.theme_path(name);
     if path.exists() && !force {
         return Err(ApiErr::at(
@@ -2531,6 +2531,10 @@ pub(crate) fn op_create(c: &Ctx, name: &str, base_name: &str, force: bool) -> Re
          # [surface.site.light]\n\
          # accent = \"#3f6b6a\"\n",
     );
+    // The new theme must load before anything is recorded or written, so `create` cannot leave
+    // a theme that fails (for example one that extends too deep a chain).
+    resolve_name(&c.cfg.with_overlay(name, &s), name)
+        .map_err(|ps| bad_theme(&format!("theme {name:?} would not load"), &ps))?;
     keep_current_building(c, name, &s)?;
     let mut out = commit(
         c,

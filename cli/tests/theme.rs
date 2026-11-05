@@ -3017,3 +3017,30 @@ fn the_preview_code_sample_uses_only_text_colors_checked_on_sunken() {
         }
     }
 }
+
+#[test]
+fn create_refuses_a_theme_that_would_not_load_such_as_too_deep_an_extends_chain() {
+    let b = Box::new();
+    let mut base = "polycarp".to_string();
+    let mut made = 0;
+    let mut refused = None;
+    for i in 1..=12 {
+        let name = format!("t{i}");
+        let o = b.run(&["theme", "create", &name, "--extends", &base, "--json"]);
+        if code(&o) == 0 {
+            made += 1;
+            base = name;
+        } else {
+            refused = Some((name, serde_json::from_str::<Value>(&out(&o)).unwrap()));
+            break;
+        }
+    }
+    let (name, v) = refused.expect("a chain this long must be refused");
+    assert!(made >= 5, "the limit is generous but exists: {made}");
+    assert_eq!(v["error"]["code"], "invalid_theme", "{v}");
+    assert!(!b.cfg().join("themes").join(format!("{name}.toml")).exists());
+    assert_eq!(b.history_count(), made, "nothing recorded for the refusal");
+    assert!(b.run(&["theme", "list"]).status.success());
+    let list = b.ok(&["list"]);
+    assert!(!list.contains("problem"), "{list}");
+}
