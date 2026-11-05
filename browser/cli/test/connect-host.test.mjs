@@ -1504,3 +1504,8 @@ test("status says why a Polycarp theme file was refused, and says nothing when t
 		assert.equal("polycarp" in result, false);
 	});
 });
+
+test("onlyKeys keeps its own doc comment", () => {
+	const src = readFileSync(new URL("../src/connect-host.ts", import.meta.url), "utf8");
+	assert.match(src, /\/\*\* `params` must hold only these keys\.[^\n]*\*\/\nfunction onlyKeys/);
+});

@@ -50,7 +50,6 @@ export type ParsedConnect = { ok: true; id: number; call: ConnectCall } | { ok: 
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** `params` must hold only these keys. Returns a sentence when it holds another. */
 /** The status field for a Polycarp theme in force; nothing when there is none. */
 function polycarpField(): { polycarp?: Record<string, unknown>; polycarpRefused?: string } {
 	const polycarp = loadPolycarpPayload();
@@ -59,6 +58,7 @@ function polycarpField(): { polycarp?: Record<string, unknown>; polycarpRefused?
 	return polycarpRefused ? { polycarpRefused } : {};
 }
 
+/** `params` must hold only these keys. Returns a sentence when it holds another. */
 function onlyKeys(params: Record<string, unknown>, allowed: string[]): string | undefined {
 	const extra = Object.keys(params).filter((k) => !allowed.includes(k));
 	return extra.length ? `Unexpected field ${JSON.stringify(extra[0].slice(0, 30))}.` : undefined;
