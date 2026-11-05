@@ -1,7 +1,7 @@
 ---
 title: Polycarp documentation
 seo_title: "Polycarp docs: install it, theme it, or let an agent do it"
-description: Install Polycarp, use its one command, choose or build a theme, and let an agent customize it over MCP. Every command, setting and device, in plain words.
+description: Install Polycarp, use its one command, choose or build a theme, and let an agent customize it over MCP. Every command, theme setting and device, in plain words.
 ---
 
 ## Where things stand
@@ -9,8 +9,9 @@ description: Install Polycarp, use its one command, choose or build a theme, and
 Polycarp is being assembled from three apps: BaneySpaces, Silas and Tabkyra. Here is what works today.
 
 - The `polycarp` command reaches all three apps.
-- The theme system is complete. It writes theme files, and this website uses them.
-- The apps keep their own looks and settings until they read those theme files. That is the next step.
+- `polycarp theme` checks, writes, previews and undoes theme files, and agents can do the same over MCP.
+- This website is built from the same six themes, and you can try them here. It doesn't read your own files.
+- The apps keep their own looks and settings until they read your theme files. That is the next step.
 - The apps install separately for now. The old app names still appear on your computer.
 
 The [plan](https://github.com/baney75/polycarp/blob/main/PLAN.md) lists every step and the check that proves it.
@@ -93,7 +94,7 @@ Look at any of them on realistic screens before you choose:
 polycarp theme preview still-water --mode both
 ```
 
-It prints the path of a page you can open in any browser. Previews stay in `previews/` in your settings folder.
+It prints the path of a page you can open in any browser. Previews go in `previews/` in your settings folder unless you choose a file with `--out`. `--surface` previews one product's overrides.
 
 ### Change one thing
 
@@ -114,10 +115,16 @@ polycarp theme get dark.accent
 ```sh
 polycarp theme create mine --extends polycarp
 polycarp theme edit-path mine
-polycarp theme validate ~/.config/polycarp/themes/mine.toml
-polycarp theme set mine
-polycarp theme delete mine
 ```
+
+`edit-path` prints where the file is. Edit it, then check it and switch to it:
+
+```sh
+polycarp theme validate "$(polycarp theme edit-path mine)"
+polycarp theme set mine
+```
+
+To remove a theme later, switch away from it first, then run `polycarp theme delete mine`. `create` won't replace an existing theme unless you add `--force`.
 
 List only what differs from the theme you extend:
 
@@ -141,6 +148,7 @@ Or apply a whole theme in one step, from a file or from input:
 
 ```sh
 polycarp theme apply mine.toml
+polycarp theme apply - < mine.toml
 ```
 
 `--name` saves it under another name, and `--no-activate` saves it without switching to it.
@@ -195,7 +203,7 @@ polycarp theme export json
 polycarp theme show still-water
 ```
 
-CSS uses variables named `--pc-<field>`, such as `--pc-accent` and `--pc-radius-large`.
+CSS variables start with `--pc-`: colors and shape use the field name, such as `--pc-accent` and `--pc-radius-large`; fonts add `font-`, such as `--pc-font-display`; and motion adds `motion-`, such as `--pc-motion-fast`.
 
 ### Where files live
 
@@ -210,7 +218,7 @@ CSS uses variables named `--pc-<field>`, such as `--pc-accent` and `--pc-radius-
 
 ## For agents
 
-Agents can change anything a person can. Every change records who made it.
+Over `polycarp mcp`, agents can change any part of a theme a person can. History records the agent's name. Keys and behavior stay in each app for now.
 
 ### Connect over MCP
 
@@ -287,11 +295,11 @@ export POLYCARP_SPACES_BIN="$HOME/tools/baneyspaces"
 
 ### Not found, but the app is right here
 
-Polycarp won't run a file sitting directly in your current folder. Move to another folder, or use the app's own command.
+Polycarp won't run a file sitting directly in your current folder. Move to another folder. If the app still isn't on your `PATH` or in a usual install folder, set its override to the full path, as above.
 
 ### My theme changed nothing in the apps
 
-The apps don't read theme files yet. Only the files and this website change today.
+The apps don't read theme files yet. Today the command only writes the files. This website doesn't read them either: it has its own theme picker.
 
 ### My accent is refused
 
