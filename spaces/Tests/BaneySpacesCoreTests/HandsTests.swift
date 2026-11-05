@@ -953,7 +953,7 @@ final class HandsSourceTests: XCTestCase {
         XCTAssertTrue(move.contains("SocketPolicy.mayMove(windowPid: h.pidOf(id), startedForAgents: AgentOwned.shared.pids)"))
         XCTAssertTrue(move.contains("needs_lend"))
         XCTAssertTrue(move.range(of: "mayMove")!.lowerBound < move.range(of: "h.move(id, n)")!.lowerBound)
-        XCTAssertTrue(session.contains("AgentOwned.shared.add(app.processIdentifier)"))
+        XCTAssertTrue(session.contains("AgentOwned.shared.add(pid)"), "the helper agent open and agent run share adds the process")
         XCTAssertTrue(session.contains("AgentOwned.shared.add(pid)"), "agent run terminals count")
     }
 
