@@ -142,7 +142,7 @@ export function themeCss(choice?: SavedTheme): string {
 /** The page chrome a Polycarp theme changes beyond color: the font, its size, and the corner radii. */
 function polycarpShapeCss(t: PolycarpTheme): string {
 	const { radius, radiusSmall } = t.shape;
-	return `body{font-family:${t.type.ui};font-size:${t.type.size}px}main{border-radius:${radius}px}fieldset{border-radius:${radiusSmall}px}input.secret,button{border-radius:${radiusSmall}px}code{font-family:${t.type.mono}}h1{font-family:${t.type.display}}`;
+	return `html{font-size:${t.type.size}px}body{font-family:${t.type.ui};font-size:${t.type.size}px}main{border-radius:${radius}px}fieldset{border-radius:${radiusSmall}px}input.secret,button{border-radius:${radiusSmall}px}code{font-family:${t.type.mono}}h1{font-family:${t.type.display}}`;
 }
 
 /** The page chrome every Tabkyra page shares, drawn from the theme variables. */

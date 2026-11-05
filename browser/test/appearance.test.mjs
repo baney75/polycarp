@@ -385,3 +385,10 @@ test("--tk-radius-sm and --tk-radius-lg are read: Tailwind's rounded-sm and roun
 	assert.equal(vars["--tk-radius-sm"], `${theme.radius_small}px`);
 	assert.equal(vars["--tk-radius-lg"], `${theme.radius_large}px`);
 });
+
+test("the base size from a Polycarp theme goes on the root element, so rem text scales; with no theme the root is untouched", () => {
+	const css = readFileSync(new URL("../src/app.css", import.meta.url), "utf8");
+	assert.match(css, /\nhtml \{\s*font-size: var\(--tk-font-size, 100%\);/);
+	assert.match(css, /\nbody \{\s*font-size: var\(--tk-font-size, 16px\);/);
+	assert.equal("--tk-font-size" in appearanceVariables({ preset: "tabkyra" }, false), false);
+});

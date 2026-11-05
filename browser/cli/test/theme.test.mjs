@@ -303,3 +303,10 @@ test("a hand-edited file with white text on white backgrounds is no theme: not l
 		assert.doesNotMatch(poly.themeCss(), /--text:#ffffff/);
 	});
 });
+
+test("a Polycarp theme's base size is set on the root element of the pages, and no theme leaves the root alone", async () => {
+	const file = structuredClone(fixture("calm"));
+	file.surfaces.browser.type.size = 24;
+	await withPolycarp(file, () => assert.match(poly.pageCssDefault(), /html\{font-size:24px\}/));
+	await withPolycarp(null, () => assert.doesNotMatch(poly.pageCssDefault(), /html\{font-size/));
+});

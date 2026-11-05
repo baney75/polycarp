@@ -73,6 +73,11 @@
 	accent-color: var(--tk-brass);
 }
 
+/* A Polycarp theme's base size goes on the root too, so rem text (Tailwind's text-sm and the like) scales with it. No theme: unchanged. */
+html {
+	font-size: var(--tk-font-size, 100%);
+}
+
 body {
 	font-size: var(--tk-font-size, 16px);
 	-webkit-font-smoothing: antialiased;
