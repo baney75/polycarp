@@ -25,7 +25,7 @@ import {
 	textOn,
 	type ThemeChoice,
 } from "../../src/appearance/palettes.ts";
-import { type PolycarpTheme, parsePolycarpTheme, polycarpPayload } from "../../src/appearance/polycarp.ts";
+import { checkPolycarpTheme, type PolycarpTheme, polycarpPayload } from "../../src/appearance/polycarp.ts";
 import { writeJsonPrivate } from "./files.ts";
 import { configDir } from "./oauth.ts";
 
@@ -54,26 +54,54 @@ export const polycarpThemeFile = () => join(polycarpConfigDir(), "current", "the
 /** A real theme.json is a few kilobytes; anything past this is not one. */
 const MAX_POLYCARP_BYTES = 256 * 1024;
 
-/** The parsed file, or undefined when it is missing, too big, not JSON or not a valid theme. Never throws. */
-function readPolycarpFile(): unknown {
+/** What is at the Polycarp theme path: nothing, a file that was read, or a file that is there but cannot be used (with the reason). */
+type PolycarpFile = { absent: true } | { raw: unknown } | { reason: string };
+
+/** Read the file. Missing is absent; too big, not a file, not JSON or unreadable is refused with a reason. Never throws. */
+function readPolycarpFile(): PolycarpFile {
+	const file = polycarpThemeFile();
 	try {
-		const file = polycarpThemeFile();
 		const stat = statSync(file);
-		if (!stat.isFile() || stat.size > MAX_POLYCARP_BYTES) return undefined;
-		return JSON.parse(readFileSync(file, "utf8"));
-	} catch {
-		return undefined;
+		if (!stat.isFile()) return { reason: "theme.json is not a file" };
+		if (stat.size > MAX_POLYCARP_BYTES) return { reason: "theme.json is too big to be a theme" };
+		try {
+			return { raw: JSON.parse(readFileSync(file, "utf8")) };
+		} catch {
+			return { reason: "theme.json is not valid JSON" };
+		}
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		return code === "ENOENT" || code === "ENOTDIR" ? { absent: true } : { reason: "theme.json cannot be read" };
 	}
+}
+
+/** Where the Polycarp theme stands: in force, absent (no file), or present but refused, with the reason in one line. */
+export type PolycarpState = { state: "active"; theme: PolycarpTheme } | { state: "absent" } | { state: "refused"; reason: string };
+
+export function polycarpState(): PolycarpState {
+	const read = readPolycarpFile();
+	if ("absent" in read) return { state: "absent" };
+	if ("reason" in read) return { state: "refused", reason: read.reason };
+	const result = checkPolycarpTheme(read.raw);
+	return "theme" in result ? { state: "active", theme: result.theme } : { state: "refused", reason: result.reason };
 }
 
 /** The Polycarp theme in force: validated, or undefined (no file, unreadable, invalid). It takes priority over the saved choice. */
 export function loadPolycarpTheme(): PolycarpTheme | undefined {
-	return parsePolycarpTheme(readPolycarpFile());
+	const state = polycarpState();
+	return state.state === "active" ? state.theme : undefined;
+}
+
+/** Why a Polycarp theme is present but not used, or undefined when it is in force or there is none. */
+export function polycarpRefusal(): string | undefined {
+	const state = polycarpState();
+	return state.state === "refused" ? state.reason : undefined;
 }
 
 /** The same theme as the JSON the side panel receives (Tabkyra's section only), or undefined. */
 export function loadPolycarpPayload(): Record<string, unknown> | undefined {
-	return polycarpPayload(readPolycarpFile());
+	const read = readPolycarpFile();
+	return "raw" in read ? polycarpPayload(read.raw) : undefined;
 }
 
 /** A mode the pages can be pinned to. "system" (follow prefers-color-scheme) is stored as no mode at all. */
@@ -169,13 +197,16 @@ export function runTheme(args: string[], json: boolean): number {
 	const out = (extra: Record<string, unknown> = {}) => {
 		const choice = loadTheme();
 		const polycarp = loadPolycarpTheme();
-		if (json) console.log(JSON.stringify({ ...choice, ...(polycarp ? { polycarp: { name: polycarp.name, title: polycarp.title, mode: polycarp.mode } } : {}), presets: Object.keys(PRESETS), palettes: PRESETS, resolved: resolveTheme(choice), ...extra }, null, 2));
+		const refused = polycarpRefusal();
+		if (json) console.log(JSON.stringify({ ...choice, ...(polycarp ? { polycarp: { name: polycarp.name, title: polycarp.title, mode: polycarp.mode } } : {}), ...(refused ? { polycarpRefused: refused } : {}), presets: Object.keys(PRESETS), palettes: PRESETS, resolved: resolveTheme(choice), ...extra }, null, 2));
 		return choice;
 	};
 	if (sub === "list") {
 		const choice = out();
 		if (!json) {
 			const polycarp = loadPolycarpTheme();
+			const refused = polycarpRefusal();
+			if (refused) console.log(`The Polycarp theme was refused, so the saved choice below is used: ${refused}.`);
 			if (polycarp) console.log(`A Polycarp theme is in force: ${polycarp.name} (${polycarp.title}). It takes priority over the choice below. Change it with: polycarp theme set <name>`);
 			for (const name of Object.keys(PRESETS)) console.log(`${name === choice.preset ? "*" : " "} ${name}`);
 			console.log(choice.accent ? `accent ${choice.accent}` : "accent from the preset");

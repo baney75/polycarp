@@ -227,3 +227,32 @@ test("a cached payload that no longer parses is ignored: the first paint is toda
 	assert.equal(apply.currentPolycarp(), undefined);
 	assert.equal(page.props.get("--background"), "#f1f5f9");
 });
+
+test("a refused theme keeps the saved preset and the reason is held for the Appearance tab, from the helper or from the panel's own check", async (t) => {
+	const page = setup(t);
+	const apply = await import("../src/appearance/apply.ts?refused");
+	await apply.startAppearance();
+	await page.flush();
+	assert.equal(apply.currentPolycarpRefusal(), undefined);
+
+	page.helper.reply = { ...page.helper.reply, polycarpRefused: "theme.json is not valid JSON" };
+	t.mock.timers.tick(apply.POLYCARP_POLL_MS);
+	await page.flush();
+	assert.equal(apply.currentPolycarpRefusal(), "theme.json is not valid JSON");
+	assert.equal(apply.currentPolycarp(), undefined);
+	assert.equal(page.props.get("--background"), "#f1f5f9", "the saved slate preset stays");
+
+	const bad = payload(fixture("blocks"));
+	for (const mode of ["light", "dark"]) for (const role of Object.keys(bad.surfaces.browser[mode])) bad.surfaces.browser[mode][role] = "#ffffff";
+	page.helper.reply = { ...page.helper.reply, polycarp: bad };
+	delete page.helper.reply.polycarpRefused;
+	t.mock.timers.tick(apply.POLYCARP_POLL_MS);
+	await page.flush();
+	assert.match(apply.currentPolycarpRefusal(), /unreadable/);
+	assert.equal(page.props.get("--background"), "#f1f5f9");
+
+	page.helper.reply = { ...page.helper.reply, polycarp: payload(fixture("blocks")) };
+	t.mock.timers.tick(apply.POLYCARP_POLL_MS);
+	await page.flush();
+	assert.equal(apply.currentPolycarpRefusal(), undefined, "a good theme clears it");
+});

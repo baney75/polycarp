@@ -7,11 +7,12 @@
 import { connectStatus } from "../connect/client.js";
 import { currentMode, pinMode, setMode } from "./mode.js";
 import type { ThemeChoice } from "./palettes.js";
-import { type PolycarpTheme, parsePolycarpTheme } from "./polycarp.js";
+import { checkPolycarpTheme, type PolycarpTheme, parsePolycarpTheme } from "./polycarp.js";
 import { APPEARANCE_KEY, appearanceVariables, parseChoice } from "./tokens.js";
 
 let current: ThemeChoice = { preset: "tabkyra" };
 let polycarp: PolycarpTheme | undefined;
+let refusal: string | undefined;
 let applied: string[] = [];
 const listeners = new Set<(choice: ThemeChoice) => void>();
 const polycarpListeners = new Set<(theme: PolycarpTheme | undefined) => void>();
@@ -38,15 +39,29 @@ export function onPolycarp(listener: (theme: PolycarpTheme | undefined) => void)
 	return () => polycarpListeners.delete(listener);
 }
 
+/** Why a Polycarp theme is present but not in use (the helper's reason, or the panel's own check), or undefined. */
+export function currentPolycarpRefusal(): string | undefined {
+	return refusal;
+}
+
 const same = (a: PolycarpTheme | undefined, b: PolycarpTheme | undefined) => JSON.stringify(a) === JSON.stringify(b);
 
 /**
  * Use this Polycarp theme (or none) now. Nothing happens when it is the one already applied. A theme
  * that fixes light or dark pins the panel to it without saving; "auto" leaves the person's own setting.
+ * `hostRefusal` is the helper's reason when it found a theme file and refused it; a payload this panel
+ * refuses on its own check gives that reason instead. A refused theme leaves the saved preset in use.
  */
-export function applyPolycarp(raw: unknown): void {
-	const next = parsePolycarpTheme(raw);
-	if (same(next, polycarp)) return;
+export function applyPolycarp(raw: unknown, hostRefusal?: string): void {
+	const checked = raw === undefined ? undefined : checkPolycarpTheme(raw);
+	const next = checked && "theme" in checked ? checked.theme : undefined;
+	const reason = checked && "reason" in checked ? checked.reason : hostRefusal;
+	const reasonChanged = reason !== refusal;
+	refusal = reason;
+	if (same(next, polycarp)) {
+		if (reasonChanged) for (const listener of polycarpListeners) listener(next);
+		return;
+	}
 	polycarp = next;
 	pinMode(next && next.mode !== "auto" ? next.mode : undefined);
 	paint();
@@ -112,8 +127,8 @@ export async function refreshPolycarp(): Promise<void> {
 	if (asking) return;
 	asking = true;
 	try {
-		const { polycarp: raw } = await connectStatus();
-		applyPolycarp(raw);
+		const { polycarp: raw, polycarpRefused } = await connectStatus();
+		applyPolycarp(raw, polycarpRefused);
 		await remember(raw);
 	} catch {
 		// Not connected: keep today's behavior.

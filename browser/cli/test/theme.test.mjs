@@ -112,7 +112,7 @@ test("the pages' focus ring and control edges reach 3:1 on the page and the card
 
 // ---------- the Polycarp theme ----------
 
-const poly = await loadTs('export { loadPolycarpTheme, loadPolycarpPayload, polycarpThemeFile, polycarpConfigDir, themeCss, pageCss as pageCssDefault, runTheme, saveTheme } from "@src/theme.ts";');
+const poly = await loadTs('export { polycarpState, loadPolycarpTheme, loadPolycarpPayload, polycarpThemeFile, polycarpConfigDir, themeCss, pageCss as pageCssDefault, runTheme, saveTheme } from "@src/theme.ts";');
 const fixtureDir = new URL("../../test/fixtures/polycarp/", import.meta.url);
 const BUILT_INS = ["polycarp", "still-water", "evening", "parchment", "blocks", "calm"];
 const fixture = (name) => JSON.parse(readFileSync(new URL(`${name}.json`, fixtureDir), "utf8"));
@@ -326,4 +326,28 @@ test("with mode auto the pages follow a saved `tabkyra theme` mode, else the sys
 		poly.saveTheme(undefined, undefined, "system");
 		assert.match(poly.themeCss(), /prefers-color-scheme:dark/);
 	});
+});
+
+test("a file that is there but refused is told apart from no file, with the reason, in the reader and in tabkyra theme list (text and --json)", async () => {
+	await withPolycarp(null, () => {
+		assert.deepEqual(poly.polycarpState(), { state: "absent" });
+		assert.doesNotMatch(say(() => poly.runTheme(["list"], false)), /refused/);
+	});
+	const white = structuredClone(fixture("calm"));
+	for (const mode of ["light", "dark"]) for (const role of Object.keys(white.surfaces.browser[mode])) white.surfaces.browser[mode][role] = "#ffffff";
+	const wrongSchema = { ...fixture("calm"), schema: 2 };
+	const cases = [["{nope", /not valid JSON/], [white, /calm would be unreadable: light foreground on background is 1\.00:1/], [wrongSchema, /not a valid theme\.json for Tabkyra/]];
+	for (const [file, reason] of cases) {
+		await withPolycarp(file, () => {
+			const state = poly.polycarpState();
+			assert.equal(state.state, "refused");
+			assert.match(state.reason, reason);
+			const text = say(() => poly.runTheme(["list"], false));
+			assert.match(text, /The Polycarp theme was refused, so the saved choice below is used: /);
+			assert.match(text, /\* tabkyra/, "the saved preset is still listed");
+			const json = JSON.parse(say(() => poly.runTheme(["list"], true)));
+			assert.match(json.polycarpRefused, reason);
+			assert.equal("polycarp" in json, false);
+		});
+	}
 });

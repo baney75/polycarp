@@ -34,7 +34,7 @@ import { type EnrollHooks, type EnrollResult, enrollDevice, HubCodeError, LinkEr
 import { configDir, DEFAULT_GRANT, mintApprovalCode, passcodeSet } from "./oauth.ts";
 import { SCOPES } from "./remote.ts";
 import { loadRemoteConfig, remoteFile } from "./remote-setup.ts";
-import { isAccent, isMode, loadPolycarpPayload, loadTheme, PRESETS, saveTheme } from "./theme.ts";
+import { isAccent, isMode, loadPolycarpPayload, loadTheme, polycarpRefusal, PRESETS, saveTheme } from "./theme.ts";
 
 // ---------- parsing ----------
 
@@ -52,9 +52,11 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> => type
 
 /** `params` must hold only these keys. Returns a sentence when it holds another. */
 /** The status field for a Polycarp theme in force; nothing when there is none. */
-function polycarpField(): { polycarp?: Record<string, unknown> } {
+function polycarpField(): { polycarp?: Record<string, unknown>; polycarpRefused?: string } {
 	const polycarp = loadPolycarpPayload();
-	return polycarp ? { polycarp } : {};
+	if (polycarp) return { polycarp };
+	const polycarpRefused = polycarpRefusal();
+	return polycarpRefused ? { polycarpRefused } : {};
 }
 
 function onlyKeys(params: Record<string, unknown>, allowed: string[]): string | undefined {

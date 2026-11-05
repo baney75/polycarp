@@ -392,3 +392,9 @@ test("the base size from a Polycarp theme goes on the root element, so rem text 
 	assert.match(css, /\nbody \{\s*font-size: var\(--tk-font-size, 16px\);/);
 	assert.equal("--tk-font-size" in appearanceVariables({ preset: "tabkyra" }, false), false);
 });
+
+test("the Appearance tab shows the reason a Polycarp theme was refused, in one line, only when no theme is in use", () => {
+	const tab = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "dialogs", "AppearanceTab.ts"), "utf8");
+	assert.match(tab, /refused && !polycarp/);
+	assert.match(tab, /data-polycarp-refused>The Polycarp theme was refused, so your saved preset is used: \$\{refused\}/);
+});

@@ -4,6 +4,7 @@ import { customElement, state } from "lit/decorators.js";
 import {
 	currentAppearance,
 	currentPolycarp,
+	currentPolycarpRefusal,
 	onAppearance,
 	onPolycarp,
 	previewAppearance,
@@ -141,6 +142,7 @@ export class AppearanceTab extends SettingsTab {
 		// A Polycarp theme decides the colors; the controls below still save a choice for when it is gone. A theme that fixes light or dark overrides Mode too.
 		const polycarp = currentPolycarp();
 		const overridden = polycarp ? "opacity-60" : "";
+		const refused = currentPolycarpRefusal();
 		const modeOverridden = polycarp !== undefined && polycarp.mode !== "auto";
 		return html`
 			<div class="flex flex-col gap-6">
@@ -149,6 +151,11 @@ export class AppearanceTab extends SettingsTab {
 					<p class="text-sm text-muted-foreground">Colors for this panel and for the approval and hub pages Tabkyra serves from your computer.</p>
 				</div>
 
+				${
+					refused && !polycarp
+						? html`<p class="text-xs text-muted-foreground" role="status" data-polycarp-refused>The Polycarp theme was refused, so your saved preset is used: ${refused}.</p>`
+						: ""
+				}
 				${
 					polycarp
 						? html`<div class="rounded-lg border border-border bg-secondary/60 p-3 space-y-1" role="status" data-polycarp-theme=${polycarp.name}>
