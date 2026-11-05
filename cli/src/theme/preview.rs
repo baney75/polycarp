@@ -209,12 +209,12 @@ p { margin: var(--pc-space-1) 0; }
   box-shadow: 0 1px 2px rgba(0,0,0,var(--pc-shadow)); }
 .split { display: grid; gap: var(--pc-space-3); grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
 
-.dock { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: var(--pc-space-1); }
+.dock { container-type: inline-size; display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: var(--pc-space-1); }
 .tile { position: relative; background: var(--pc-sunken); color: var(--pc-muted); border: var(--pc-border-width) solid var(--pc-border);
-  border-radius: var(--pc-radius); padding: var(--pc-space-2) var(--pc-space-1); text-align: center; min-width: 0;
+  border-radius: var(--pc-radius); padding: var(--pc-space-2) 2px; text-align: center; min-width: 0;
   display: grid; gap: 2px; transition: background var(--pc-motion-fast) var(--pc-motion-easing); }
 .tile .num { font: 600 .9em/1.4 var(--pc-font-mono); color: var(--pc-strong); justify-self: center; }
-.tile .lbl { font-size: .68em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile .lbl { font-size: clamp(6.5px, 1.5cqw, 11px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile.on { background: var(--pc-selection); border-color: var(--pc-accent); color: var(--pc-strong); }
 .tile.st-idle { --pc-status: var(--pc-border); }
 .tile.st-working { --pc-status: var(--pc-working); }

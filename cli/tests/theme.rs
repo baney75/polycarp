@@ -2624,6 +2624,28 @@ fn preview_out_replaces_only_a_file_that_is_a_preview() {
 }
 
 #[test]
+fn dock_labels_scale_with_the_dock_so_all_nine_fit() {
+    // Checked by eye and by measuring in headless Chrome at 700 to 1800 px (nothing truncated);
+    // this keeps the rule that makes it work: the label size follows the dock's own width, and
+    // the tiles keep their side padding small whatever the density.
+    let b = Box::new();
+    let f = b.root.join("p.html");
+    b.ok(&["preview", "calm", "--out", f.to_str().unwrap()]);
+    let html = fs::read_to_string(&f).unwrap();
+    assert!(html.contains(".dock { container-type: inline-size;"));
+    assert!(html.contains(".tile .lbl { font-size: clamp(6.5px, 1.5cqw, 11px);"));
+    assert!(html.contains("padding: var(--pc-space-2) 2px;"));
+    for label in [
+        "Mail", "Code", "Notes", "Browser", "Chat", "Music", "Files", "Terminal", "Agent",
+    ] {
+        assert!(
+            html.contains(&format!("<span class=\"lbl\">{label}</span>")),
+            "{label}"
+        );
+    }
+}
+
+#[test]
 fn every_builtin_previews_in_both_modes() {
     let b = Box::new();
     for name in BUILTINS {
