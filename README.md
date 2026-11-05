@@ -22,6 +22,7 @@ polycarp spaces ls          # runs baneyspaces ls
 polycarp browser --version  # runs tabkyra --version
 polycarp voice              # opens Silas
 polycarp doctor             # shows which tools it found
+polycarp mcp                # serves the theme tools to an agent over MCP (stdio)
 ```
 
 Build it with `cd cli && cargo build`. See [cli/](cli/).

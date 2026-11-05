@@ -1,5 +1,5 @@
 //! `polycarp`: one command that hands off to the existing tools.
-//! Standard library only. Nothing runs through a shell.
+//! Nothing runs through a shell.
 
 use std::env;
 use std::ffi::OsString;
@@ -8,6 +8,9 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+mod mcp;
+mod theme;
 
 struct Tool {
     /// Subcommand name.
@@ -64,6 +67,8 @@ Usage:
   polycarp spaces [args...]    run the BaneySpaces command
   polycarp browser [args...]   run the Tabkyra command
   polycarp voice               open the Silas app
+  polycarp theme <command>     choose and check the theme (polycarp theme --help)
+  polycarp mcp                 serve the theme commands to an agent over MCP (stdio)
   polycarp doctor              show which tools were found
   polycarp --version
   polycarp --help
@@ -86,6 +91,8 @@ fn main() {
         Some("spaces") => handoff(&SPACES, &rest),
         Some("browser") => handoff(&BROWSER, &rest),
         Some("voice") => voice(&rest),
+        Some("theme") => theme::run(&rest),
+        Some("mcp") => mcp::run(&rest),
         Some("doctor") => doctor(),
         Some("--version") | Some("-V") => {
             println!("polycarp {}", env!("CARGO_PKG_VERSION"));

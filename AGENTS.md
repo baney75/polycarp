@@ -22,6 +22,13 @@ Run each from its directory.
 
 `./check.sh` at the root runs all three in order and continues past a failure.
 
+## Themes
+
+Themes live in `themes/` (one TOML file each, built into the `polycarp` command) and must validate:
+`polycarp theme validate themes/<name>.toml`. The `cli/` tests do this for every file. Format and rules are in
+`themes/README.md`. Products take every color, radius, font and duration from the theme, never from a
+hard-coded value. When you test the `theme` command by hand, set `POLYCARP_CONFIG_DIR` to a temp absolute path, never your real config folder.
+
 ## Siblings
 
 `browser/` needs `mini-lit/` and `pi-mono/` beside it. `browser/scripts/setup-siblings.sh` clones
