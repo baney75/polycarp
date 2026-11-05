@@ -2555,7 +2555,17 @@ fn preview_uses_the_surface_the_indicator_and_the_default_path() {
     ]);
     assert_eq!(code(&o), 0, "{}", err(&o));
     let path = PathBuf::from(out(&o).trim());
-    assert!(path.starts_with(b.root.join("tmp")), "{}", path.display());
+    assert_eq!(path.parent().unwrap(), b.cfg().join("previews"));
+    assert!(!b.root.join("tmp").join("polycarp-preview").exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(b.cfg().join("previews"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700);
+    }
     let html = fs::read_to_string(&path).unwrap();
     assert!(html.contains("--pc-accent: #3f6b6a;") && html.contains("product: site"));
     assert!(
@@ -2578,6 +2588,39 @@ fn preview_uses_the_surface_the_indicator_and_the_default_path() {
         assert_eq!(code(&o), 2);
     }
     assert_eq!(code(&b.run(&["theme", "preview", "ghost"])), 1);
+}
+
+#[test]
+fn preview_out_replaces_only_a_file_that_is_a_preview() {
+    let b = Box::new();
+    let f = b.root.join("precious.txt");
+    fs::write(&f, "my notes").unwrap();
+    let (c, v) = b.jrun(&["preview", "calm", "--out", f.to_str().unwrap()]);
+    assert_eq!(c, 1, "{v}");
+    assert_eq!(v["error"]["code"], "exists");
+    assert_eq!(fs::read_to_string(&f).unwrap(), "my notes");
+    // An empty file, a short file and a folder are not previews either.
+    fs::write(&f, "").unwrap();
+    assert_eq!(
+        code(&b.run(&["theme", "preview", "calm", "--out", f.to_str().unwrap()])),
+        1
+    );
+    assert_eq!(fs::read_to_string(&f).unwrap(), "");
+    // A new path works, and so does replacing our own page.
+    let g = b.root.join("page.html");
+    b.ok(&["preview", "calm", "--out", g.to_str().unwrap()]);
+    assert!(fs::read_to_string(&g)
+        .unwrap()
+        .starts_with("<!-- polycarp-theme-preview -->\n"));
+    b.ok(&["preview", "evening", "--out", g.to_str().unwrap()]);
+    assert!(fs::read_to_string(&g).unwrap().contains("(evening)"));
+    // The default folder holds the same rule.
+    let dir = b.cfg().join("previews");
+    fs::create_dir_all(&dir).unwrap();
+    let d = dir.join("calm-both.html");
+    fs::write(&d, "not ours").unwrap();
+    assert_eq!(code(&b.run(&["theme", "preview", "calm"])), 1);
+    assert_eq!(fs::read_to_string(&d).unwrap(), "not ours");
 }
 
 #[test]

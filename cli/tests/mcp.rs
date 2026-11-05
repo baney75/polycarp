@@ -295,16 +295,10 @@ fn a_full_workflow_over_the_real_binary_records_the_agent_by_name() {
     assert_eq!(r["structuredContent"]["data"]["value"], "#8fb37a");
 
     // 3. Preview it.
-    let out = sb.root.join("look.html");
-    let r = s.tool(
-        "theme_preview",
-        json!({"out": out.to_str().unwrap(), "mode": "dark"}),
-    );
+    let r = s.tool("theme_preview", json!({"mode": "dark"}));
     assert_eq!(r["isError"], false, "{r}");
-    assert_eq!(
-        r["structuredContent"]["data"]["path"],
-        out.display().to_string()
-    );
+    let out = PathBuf::from(r["structuredContent"]["data"]["path"].as_str().unwrap());
+    assert_eq!(out.parent().unwrap(), sb.cfg().join("previews"));
     assert!(fs::read_to_string(&out)
         .unwrap()
         .contains("--pc-accent: #8fb37a;"));
@@ -474,6 +468,34 @@ fn apply_refuses_an_empty_or_invalid_effective_name_before_writing() {
         );
     }
     assert!(!sb.cfg().exists(), "nothing was written");
+    assert_eq!(s.finish(), 0);
+}
+
+#[test]
+fn preview_over_mcp_cannot_name_a_file_and_says_what_it_does_to_the_disk() {
+    let sb = Sandbox::new();
+    let mut s = sb.server();
+    s.initialize("t");
+    let victim = sb.root.join("victim.txt");
+    fs::write(&victim, "keep me").unwrap();
+    let r = s.tool("theme_preview", json!({"out": victim.to_str().unwrap()}));
+    assert_eq!(r["isError"], true);
+    assert_eq!(r["structuredContent"]["error"]["code"], "invalid_args");
+    assert_eq!(fs::read_to_string(&victim).unwrap(), "keep me");
+    let v = s.request("tools/list", json!({}));
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let by = |n: &str| tools.iter().find(|t| t["name"] == n).unwrap();
+    let p = by("theme_preview");
+    assert!(p["inputSchema"]["properties"].get("out").is_none());
+    assert_eq!(
+        p["annotations"],
+        json!({"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false})
+    );
+    assert_eq!(by("theme_undo")["annotations"]["idempotentHint"], false);
+    assert_eq!(
+        by("theme_get")["annotations"],
+        json!({"readOnlyHint": true, "openWorldHint": false})
+    );
     assert_eq!(s.finish(), 0);
 }
 

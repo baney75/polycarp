@@ -40,6 +40,10 @@ struct Tool {
     description: &'static str,
     schema: Json,
     read_only: bool,
+    /// For a tool that is not read-only: does it replace or remove something that was there?
+    destructive: bool,
+    /// Does calling it again with the same input change nothing more?
+    idempotent: bool,
 }
 
 fn tools() -> Vec<Tool> {
@@ -54,24 +58,32 @@ fn tools() -> Vec<Tool> {
             description: "Read this first. Returns the JSON Schema (draft 2020-12) for a theme: every field, with a plain description of what it colors or controls and where it shows, its range or choices, the contrast rules, and the path form used by theme_get and theme_change. Use it to learn what you can change before you change anything.",
             schema: obj(json!({}), &[]),
             read_only: true,
+            destructive: false,
+            idempotent: true,
         },
         Tool {
             name: "theme_list",
             description: "List the built-in and user themes and which one is current. Use it to find a theme to start from or to confirm a theme exists.",
             schema: obj(json!({}), &[]),
             read_only: true,
+            destructive: false,
+            idempotent: true,
         },
         Tool {
             name: "theme_current",
             description: "Say which theme, color mode and accent override are in force, and any problem found with the settings. Read this before changing anything, and after, to confirm.",
             schema: obj(json!({}), &[]),
             read_only: true,
+            destructive: false,
+            idempotent: true,
         },
         Tool {
             name: "theme_show",
             description: "The full resolved theme: every value for every product, after extends and per-product overrides. Large. Prefer theme_get for one value.",
             schema: obj(json!({"name": name}), &[]),
             read_only: true,
+            destructive: false,
+            idempotent: true,
         },
         Tool {
             name: "theme_get",
@@ -81,6 +93,8 @@ fn tools() -> Vec<Tool> {
                 "name": name,
             }), &["path"]),
             read_only: true,
+            destructive: false,
+            idempotent: true,
         },
         Tool {
             name: "theme_set",
@@ -90,6 +104,8 @@ fn tools() -> Vec<Tool> {
                 "mode": {"type":"string","enum":["auto","light","dark"],"description":"auto follows the system."},
             }), &["name"]),
             read_only: false,
+            destructive: true,
+            idempotent: true,
         },
         Tool {
             name: "theme_change",
@@ -99,6 +115,8 @@ fn tools() -> Vec<Tool> {
                 "value": {"type":["string","number","boolean"],"description":"The new value. Its type comes from the path: a \"#rrggbb\" string for colors, a number for sizes and durations, text for fonts and choices, true or false for motion.reduced."},
             }), &["path", "value"]),
             read_only: false,
+            destructive: true,
+            idempotent: true,
         },
         Tool {
             name: "theme_apply",
@@ -109,6 +127,8 @@ fn tools() -> Vec<Tool> {
                 "activate": {"type":"boolean","description":"Make it current. Default true. false saves it for later."},
             }), &["theme"]),
             read_only: false,
+            destructive: true,
+            idempotent: true,
         },
         Tool {
             name: "theme_accent",
@@ -119,23 +139,28 @@ fn tools() -> Vec<Tool> {
                 "clear": {"type":"boolean","description":"Remove the accent override."},
             }), &[]),
             read_only: false,
+            destructive: true,
+            idempotent: true,
         },
         Tool {
             name: "theme_validate",
             description: "Check a theme without saving or applying it. Use it to test a draft; the answer lists every problem at once, with paths.",
             schema: obj(json!({"theme": theme_doc}), &["theme"]),
             read_only: true,
+            destructive: false,
+            idempotent: true,
         },
         Tool {
             name: "theme_preview",
-            description: "Write one self-contained HTML page that shows the theme on realistic product UI: the workspace dock, dictation overlay, browser side panel with a chat turn and a permission prompt, a settings form, code, buttons and status text. Returns the file path. Open it in a browser and take a screenshot to show the person. Call it after every change.",
+            description: "Write one self-contained HTML page that shows the theme on realistic product UI: the workspace dock, dictation overlay, browser side panel with a chat turn and a permission prompt, a settings form, code, buttons and status text. Writes only into the previews folder of the config folder, and returns the file path. Open it in a browser and take a screenshot to show the person. Call it after every change.",
             schema: obj(json!({
                 "name": name,
                 "mode": {"type":"string","enum":["light","dark","both"],"description":"Default both, side by side."},
                 "surface": surface,
-                "out": {"type":"string","description":"Where to write the file. Default is a file in the system temp folder."},
             }), &[]),
             read_only: false,
+            destructive: false,
+            idempotent: true,
         },
         Tool {
             name: "theme_export",
@@ -146,26 +171,48 @@ fn tools() -> Vec<Tool> {
                 "surface": surface,
             }), &["format"]),
             read_only: true,
+            destructive: false,
+            idempotent: true,
         },
         Tool {
             name: "theme_undo",
             description: "Step back one change (a theme_change, theme_apply, theme_set, theme_accent or theme_reset), including the theme file it edited. Use it when the person dislikes what you just did. Call it again to go back further.",
             schema: obj(json!({}), &[]),
             read_only: false,
+            destructive: true,
+            idempotent: false,
         },
         Tool {
             name: "theme_history",
             description: "Past changes, newest first, with who made each. Yours show as agent:<your client name>.",
             schema: obj(json!({}), &[]),
             read_only: true,
+            destructive: false,
+            idempotent: true,
         },
         Tool {
             name: "theme_reset",
             description: "Go back to the default theme (polycarp), mode auto, no accent override. Always works, even if a theme file is broken. Your own themes stay on disk.",
             schema: obj(json!({}), &[]),
             read_only: false,
+            destructive: true,
+            idempotent: true,
         },
     ]
+}
+
+/// MCP annotations. The destructive and idempotent hints only mean something for a tool that
+/// writes, so a read-only tool leaves them out.
+fn annotations(t: &Tool) -> Json {
+    if t.read_only {
+        return json!({"readOnlyHint": true, "openWorldHint": false});
+    }
+    json!({
+        "readOnlyHint": false,
+        "destructiveHint": t.destructive,
+        "idempotentHint": t.idempotent,
+        "openWorldHint": false,
+    })
 }
 
 fn tool_list() -> Json {
@@ -177,7 +224,7 @@ fn tool_list() -> Json {
                 "title": t.name.replace('_', " "),
                 "description": t.description,
                 "inputSchema": t.schema,
-                "annotations": {"readOnlyHint": t.read_only, "openWorldHint": false},
+                "annotations": annotations(&t),
             })
         })
         .collect();
@@ -288,7 +335,7 @@ fn call(name: &str, args: Option<&Json>, caller: &str) -> Option<theme::Envelope
                 a.text("name")?,
                 a.text("mode")?,
                 a.text("surface")?,
-                a.text("out")?,
+                None,
             ),
             "theme_export" => {
                 theme::op_export(&c, a.need("format")?, a.text("name")?, a.text("surface")?)

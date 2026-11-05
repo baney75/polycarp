@@ -2,6 +2,10 @@
 //! UI. It has no external requests. Every color, radius, font and duration comes from the same
 //! `--pc-*` variables the exports use; the page never writes a color of its own.
 
+/// The first line of every preview page. A file that does not start with it is not ours, and
+/// `preview --out` will not replace it.
+pub(super) const MARKER: &str = "<!-- polycarp-theme-preview -->";
+
 use super::{color_lines, shared_vars, Full, Resolved};
 
 fn esc(s: &str) -> String {
@@ -48,7 +52,7 @@ pub(super) fn render(full: &Full, surface: Option<&str>, modes: &[&str]) -> Stri
     }
     let title = format!("{} ({})", esc(&full.title), esc(&full.name));
     format!(
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
+        "{MARKER}\n<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <title>Polycarp theme preview: {title}</title>\n<style>\n:root {{\n{vars}}}\n{mode_css}{CSS}{indicator}</style>\n</head>\n\
          <body>\n<header class=\"top\"><h1>{title}</h1><p>{} &middot; {}</p></header>\n\

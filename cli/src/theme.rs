@@ -3150,6 +3150,50 @@ pub(crate) fn op_schema() -> Res {
     Ok(Out::new(json!({"schema": s}), text))
 }
 
+/// Creates `dir` for this user only (0700 on Unix).
+fn private_dir(dir: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("could not secure {}: {e}", dir.display()))
+    }
+    #[cfg(not(unix))]
+    {
+        fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))
+    }
+}
+
+/// A preview may replace only a file that is a preview: one that starts with our marker.
+fn refuse_foreign_file(path: &Path) -> Result<(), ApiErr> {
+    let target = resolve_link(path);
+    let mut f = match fs::File::open(&target) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(io_err(format!("could not read {}: {e}", target.display()))),
+    };
+    let mut head = vec![0u8; preview::MARKER.len()];
+    let ours = f.read_exact(&mut head).is_ok() && head == preview::MARKER.as_bytes();
+    if ours {
+        Ok(())
+    } else {
+        Err(ApiErr::at(
+            "exists",
+            "out",
+            format!(
+                "{} already exists and is not a Polycarp preview, so it was not replaced",
+                path.display()
+            ),
+        )
+        .suggest("Pick a path that does not exist, or delete the file yourself."))
+    }
+}
+
 pub(crate) fn op_preview(
     c: &Ctx,
     name: Option<&str>,
@@ -3175,12 +3219,22 @@ pub(crate) fn op_preview(
     let (full, problems) = resolve_for_view(&c.cfg, name)?;
     let html = preview::render(&full, surface, &modes);
     let path = match out {
-        Some(p) if !p.is_empty() => PathBuf::from(p),
-        _ => env::temp_dir().join("polycarp-preview").join(format!(
-            "{}{}-{mode}.html",
-            full.name,
-            surface.map(|s| format!("-{s}")).unwrap_or_default()
-        )),
+        Some(p) if !p.is_empty() => {
+            let p = PathBuf::from(p);
+            refuse_foreign_file(&p)?;
+            p
+        }
+        _ => {
+            let dir = c.cfg.dir.join("previews");
+            private_dir(&dir).map_err(io_err)?;
+            let p = dir.join(format!(
+                "{}{}-{mode}.html",
+                full.name,
+                surface.map(|s| format!("-{s}")).unwrap_or_default()
+            ));
+            refuse_foreign_file(&p)?;
+            p
+        }
     };
     write_atomic(&path, html.as_bytes()).map_err(io_err)?;
     let shown = path.display().to_string();
