@@ -114,6 +114,7 @@ struct WelcomeView: View {
             VStack(spacing: 8) {
                 ForEach(Welcome.steps, id: \.kind) { row($0) }
                 loginRow
+                BrowserWelcomeRow()
             }
             .padding(.horizontal, 20)
 
@@ -273,4 +274,35 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) { model.stop() }
+}
+
+
+/// Optional, like the login item: it never blocks starting. The Browser tab in Settings does the work.
+private struct BrowserWelcomeRow: View {
+    @ObservedObject var model = BrowserModel.shared
+    var body: some View {
+        if model.available {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: model.status?.extensionConnected == true ? "checkmark.circle.fill" : "globe")
+                    .font(Chrome.font(16))
+                    .foregroundStyle(model.status?.extensionConnected == true ? Chrome.accent : Color.secondary)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        Text("Browser agents").font(Chrome.font(13, .bold))
+                        Text("optional").font(Chrome.font(10, .medium)).foregroundStyle(.secondary)
+                    }
+                    Text("Let Claude Code and Codex use your browser, in their own tab group. Set it up now or later in Settings > Browser.")
+                        .font(Chrome.font(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if let b = model.status?.browsers.first, model.status?.extensionConnected != true {
+                        Button("Connect \(b.name)") { model.connect(b.name) }.disabled(model.busy)
+                    }
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .onAppear { model.startWatching() }
+            .onDisappear { model.stopWatching() }
+        }
+    }
 }
