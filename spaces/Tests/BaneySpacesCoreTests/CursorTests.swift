@@ -98,16 +98,18 @@ final class GlidePlannerTests: XCTestCase {
     }
 
     func testTheDefaultSpringIsLeftAlone() {
+        XCTAssertEqual(GlideSpring.polycarp.clamped, .polycarp)
         XCTAssertEqual(GlideSpring.baneyspaces.clamped, .baneyspaces)
     }
 
     func testPresetsAndSpeedShapeTheSpring() {
+        XCTAssertEqual(GlideSpring.preset("polycarp"), .polycarp)
         XCTAssertEqual(GlideSpring.preset("baneyspaces"), .baneyspaces)
         XCTAssertNil(GlideSpring.preset("nonsense"))
         var s = CursorSettings()
-        XCTAssertEqual(s.spring, .baneyspaces, "the default is the baneyspaces preset")
+        XCTAssertEqual(s.spring, .polycarp, "the default is the polycarp preset")
         s.speed = 2
-        XCTAssertEqual(s.spring.response, GlideSpring.baneyspaces.response / 2, accuracy: 1e-9)
+        XCTAssertEqual(s.spring.response, GlideSpring.polycarp.response / 2, accuracy: 1e-9)
         s.speed = 0
         XCTAssertTrue(s.spring.isInstant, "speed 0 is off")
         s = CursorSettings(); s.preset = "off"
@@ -192,7 +194,7 @@ final class CursorVisibilityTests: XCTestCase {
 
 final class CursorThemeTests: XCTestCase {
     func testTheFourThemesShip() {
-        XCTAssertEqual(CursorTheme.names, ["default", "minimal", "classic", "omarchy"])
+        XCTAssertEqual(CursorTheme.names, ["default", "pointer", "minimal", "classic", "omarchy"])
         XCTAssertEqual(CursorTheme.named("OMARCHY")?.name, "omarchy")
         XCTAssertNil(CursorTheme.named("lottie"))
     }
@@ -231,8 +233,67 @@ final class CursorThemeTests: XCTestCase {
         XCTAssertLessThan(CursorTheme.standard.squish, 1, "a squish on press")
     }
 
+    /// The leaf's point is the hot spot, so it must start exactly at the origin, and nothing may lie above or left of it.
+    func testTheLeafIsTheDefaultAndItsPointIsTheOrigin() {
+        XCTAssertEqual(CursorTheme.standard.glyph, .leaf)
+        XCTAssertEqual(CursorSettings().resolvedTheme, .standard)
+        XCTAssertEqual(CursorSettings().spring, GlideSpring.polycarp)
+        let leaf = CursorGlyphs.path(.leaf, size: 24)
+        XCTAssertEqual(leaf.currentPoint.x, 0, accuracy: 1e-9)
+        XCTAssertEqual(leaf.currentPoint.y, 0, accuracy: 1e-9)
+        let b = leaf.boundingBoxOfPath
+        XCTAssertGreaterThanOrEqual(b.minX, -1e-9); XCTAssertGreaterThanOrEqual(b.minY, -1e-9)
+        XCTAssertNotNil(CursorGlyphs.vein(.leaf, size: 24))
+        for g in [CursorTheme.Glyph.pointer, .classic, .dot, .block] { XCTAssertNil(CursorGlyphs.vein(g, size: 24)) }
+    }
+
+    /// A status name sits in white on its color, and the edge keeps the cursor visible on anything.
+    func testStatusColorsCarryWhiteTextAndTheNewGlyphsHaveAWhiteEdge() {
+        for s in [DockAgent.State.working, .asking, .failed, .done] {
+            XCTAssertGreaterThanOrEqual(CursorPalette.status(s).contrastWithWhite, 4.5, "\(s)")
+        }
+    }
+
+    /// A short hop doesn't lean. A long one leans toward where it's going, within the limit.
+    func testTheCursorLeansOnlyIntoLongMoves() {
+        XCTAssertEqual(CursorMotionLean.radians(dx: 40, distance: 40), 0)
+        XCTAssertGreaterThan(CursorMotionLean.radians(dx: 900, distance: 900), 0)
+        XCTAssertLessThan(CursorMotionLean.radians(dx: -900, distance: 900), 0)
+        XCTAssertEqual(CursorMotionLean.radians(dx: 0, distance: 900), 0)
+        XCTAssertLessThanOrEqual(abs(CursorMotionLean.radians(dx: 5000, distance: 5000)), CursorMotionLean.maxRadians + 1e-9)
+    }
+
+    /// Two colors a person with red-green color blindness may not tell apart by hue have to differ in lightness too, and
+    /// the badge says it in text.
+    func testFailedIsDistinctWithoutColorAndTheBadgeSaysSo() {
+        let working = CursorPalette.status(.working).luminance, failed = CursorPalette.status(.failed).luminance
+        XCTAssertGreaterThanOrEqual((max(working, failed) + 0.05) / (min(working, failed) + 0.05), 1.5)
+        func look(_ s: DockAgent.State) -> CursorLook { CursorLook(name: "Claude", status: s, identity: RGB(r: 1, g: 1, b: 1), theme: .standard) }
+        XCTAssertEqual(look(.working).badgeText, "Claude"); XCTAssertEqual(look(.done).badgeText, "Claude")
+        XCTAssertEqual(look(.asking).badgeText, "? Claude"); XCTAssertEqual(look(.failed).badgeText, "! Claude")
+    }
+
+    func testAnOldThemeSayingArrowStillDecodes() throws {
+        XCTAssertEqual(try JSONDecoder().decode(CursorTheme.Glyph.self, from: Data(#""arrow""#.utf8)), .pointer)
+        XCTAssertEqual(try JSONDecoder().decode(CursorTheme.Glyph.self, from: Data(#""leaf""#.utf8)), .leaf)
+    }
+
+    func testEdgesAreWhiteExceptForTheThemesThatChooseOtherwise() {
+        for g in [CursorTheme.Glyph.leaf, .pointer, .dot] { XCTAssertTrue(CursorGlyphs.hasWhiteEdge(g), "\(g)") }
+        for g in [CursorTheme.Glyph.classic, .block] { XCTAssertFalse(CursorGlyphs.hasWhiteEdge(g), "\(g)") }
+    }
+
+    /// An app the agent started may bring itself forward as it launches. Its window is still the agent's. A window of the
+    /// app you're using stays yours, even with a claim on it: that was Calculator opening on Donovan's screen, 2026-11-05.
+    func testAClaimHoldsForAnAgentStartedAppThatBroughtItselfForward() {
+        XCTAssertTrue(ClaimRule.applies(windowPid: 7, frontPid: 7, agentStartedProcess: true))
+        XCTAssertFalse(ClaimRule.applies(windowPid: 7, frontPid: 7, agentStartedProcess: false))
+        XCTAssertTrue(ClaimRule.applies(windowPid: 7, frontPid: 8, agentStartedProcess: false))
+        XCTAssertTrue(ClaimRule.applies(windowPid: 7, frontPid: nil, agentStartedProcess: false))
+    }
+
     func testGlyphsPutTheirTipOnTheOrigin() {
-        for g in [CursorTheme.Glyph.arrow, .classic, .block] {
+        for g in [CursorTheme.Glyph.leaf, .pointer, .classic, .block] {
             let b = CursorGlyphs.path(g, size: 26).boundingBoxOfPath
             XCTAssertEqual(b.minX, 0, accuracy: 1e-9, "\(g)")
             XCTAssertEqual(b.minY, 0, accuracy: 1e-9, "\(g)")
@@ -393,7 +454,7 @@ final class CursorDirectorTests: XCTestCase {
         d.handsWillAct(event(at: CGPoint(x: 100, y: 100))); drain()
         clock += 1
         d.handsWillAct(event(at: CGPoint(x: 1000, y: 400))); drain()
-        let first = GlidePlan(from: GlideState(position: CGPoint(x: 100, y: 100)), target: CGPoint(x: 1000, y: 400), spring: .baneyspaces)
+        let first = GlidePlan(from: GlideState(position: CGPoint(x: 100, y: 100)), target: CGPoint(x: 1000, y: 400), spring: .polycarp)
         clock += 0.05
         let expected = first.state(at: 0.05)
         d.handsWillAct(event(at: CGPoint(x: 300, y: 800))); drain()
@@ -936,5 +997,64 @@ final class CursorSourceTests: XCTestCase {
         let app = try Self.code("Sources/BaneySpaces/AppDelegate.swift")
         let hook = try XCTUnwrap(HandsSourceTests.block(after: "spaces.onChange = ", in: app))
         XCTAssertTrue(hook.contains("CursorController.shared.environmentChanged()"))
+    }
+}
+
+final class FocusReturnTests: XCTestCase {
+    let now = Date(timeIntervalSince1970: 1000)
+    var later: Date { now.addingTimeInterval(8) }
+
+    func testAnAgentAppThatTookTheKeyboardGivesItBack() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(pid: 20, until: later)
+        XCTAssertEqual(f.activated(pid: 20, bundle: "calc", agentOwned: true, deliberate: false, now: now), .returnTo(10))
+    }
+
+    /// The app can come forward before its pid reaches us, while only the bundle is known.
+    func testItWorksBeforeTheProcessIsKnownAndLeavesYourOwnCopyAlone() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(bundle: "calc", excluding: [30], until: later)
+        XCTAssertEqual(f.activated(pid: 20, bundle: "calc", agentOwned: false, deliberate: false, now: now), .returnTo(10))
+        XCTAssertEqual(f.activated(pid: 30, bundle: "calc", agentOwned: false, deliberate: false, now: now), .none, "a copy already running is yours")
+        XCTAssertEqual(f.lastPerson, 30)
+    }
+
+    func testChoosingTheAppYourselfIsRespected() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(pid: 20, until: later)
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: true, now: now), .personTook(20))
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: false, now: now.addingTimeInterval(1)), .none, "and it stays left alone")
+    }
+
+    /// The target is where you are now, not where you were when the launch began.
+    func testItReturnsToTheAppYouMovedToDuringTheLaunch() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(pid: 20, until: later)
+        _ = f.activated(pid: 11, bundle: nil, agentOwned: false, deliberate: true, now: now)
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: false, now: now.addingTimeInterval(1)), .returnTo(11))
+    }
+
+    /// Two launches at once: neither agent app is ever the place the keyboard goes back to.
+    func testAnAgentAppIsNeverTheReturnTarget() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(pid: 20, until: later); f.watch(pid: 21, until: later)
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: false, now: now), .returnTo(10))
+        XCTAssertEqual(f.activated(pid: 21, bundle: nil, agentOwned: true, deliberate: false, now: now), .returnTo(10))
+        XCTAssertEqual(f.lastPerson, 10)
+        var g = FocusReturn(); g.seed(front: 20, agentOwned: true)
+        XCTAssertNil(g.lastPerson, "an agent's app in front isn't yours")
+    }
+
+    func testTheWatchEnds() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(pid: 20, until: later)
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: false, now: later.addingTimeInterval(1)), .none)
+    }
+
+    func testTypingIsNotChoosingAnApp() {
+        XCTAssertFalse(FocusReturn.isDeliberate(commandHeld: false, sinceModifierChange: 5, sinceMouseDown: 5), "typing away")
+        XCTAssertTrue(FocusReturn.isDeliberate(commandHeld: true, sinceModifierChange: 5, sinceMouseDown: 5))
+        XCTAssertTrue(FocusReturn.isDeliberate(commandHeld: false, sinceModifierChange: 0.1, sinceMouseDown: 5), "⌘-Tab activates on release")
+        XCTAssertTrue(FocusReturn.isDeliberate(commandHeld: false, sinceModifierChange: 5, sinceMouseDown: 0.2), "a click")
     }
 }

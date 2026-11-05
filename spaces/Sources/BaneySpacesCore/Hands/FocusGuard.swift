@@ -114,3 +114,69 @@ public final class AgentActivity: @unchecked Sendable {
         return guardrail.caused(pid: pid, window: window, bundle: bundle, now: clock())
     }
 }
+
+/// Whether a claim on a new window holds. A window of the app you are in is yours, because you may have just pressed
+/// New Window in it. The exception is an app the agent itself just started: some apps bring themselves forward as
+/// they launch, even when asked not to, and that must not put the agent's window on your screen.
+public enum ClaimRule {
+    public static func applies(windowPid: Int32, frontPid: Int32?, agentStartedProcess: Bool) -> Bool {
+        agentStartedProcess || windowPid != frontPid
+    }
+}
+
+/// Keeps your keyboard yours while an agent starts an app. Some apps bring themselves forward as they launch, even when
+/// told not to, and your typing would go to the agent's app. This reacts to each activation: one by a watched app goes
+/// straight back to the app you were last in, unless you switched there yourself. Plain state, so it can be tested.
+public struct FocusReturn: Equatable, Sendable {
+    public enum Decision: Equatable, Sendable {
+        case none
+        /// The agent's app came forward by itself: give the keyboard back to this one.
+        case returnTo(Int32)
+        /// You switched to the agent's app on purpose: leave it, and its claim on new windows ends.
+        case personTook(Int32)
+    }
+
+    private struct BundleWatch: Equatable, Sendable { var until: Date; var excluding: Set<Int32> }
+    /// The app you were last in, never one an agent started.
+    public private(set) var lastPerson: Int32?
+    private var pids: [Int32: Date] = [:]
+    private var bundles: [String: BundleWatch] = [:]
+
+    public init(lastPerson: Int32? = nil) { self.lastPerson = lastPerson }
+
+    public mutating func seed(front: Int32?, agentOwned: Bool) {
+        if lastPerson == nil, !agentOwned { lastPerson = front }
+    }
+
+    public mutating func watch(pid: Int32, until: Date) { pids[pid] = until }
+
+    /// Before the launch's own process is known. Copies already running are yours and aren't watched.
+    public mutating func watch(bundle: String, excluding running: Set<Int32>, until: Date) {
+        bundles[bundle] = BundleWatch(until: until, excluding: running)
+    }
+
+    public mutating func activated(pid: Int32, bundle: String?, agentOwned: Bool, deliberate: Bool, now: Date) -> Decision {
+        pids = pids.filter { $0.value > now }
+        bundles = bundles.filter { $0.value.until > now }
+        let byBundle = bundle.flatMap { bundles[$0] }.map { !$0.excluding.contains(pid) } ?? false
+        guard pids[pid] != nil || byBundle else {
+            if !agentOwned { lastPerson = pid }
+            return .none
+        }
+        if deliberate {
+            pids[pid] = nil
+            if let bundle { bundles[bundle] = nil }
+            lastPerson = pid
+            return .personTook(pid)
+        }
+        guard let target = lastPerson, target != pid else { return .none }
+        return .returnTo(target)
+    }
+
+    /// Whether you switched apps yourself: ⌘ is down or just came up (⌘-Tab activates on release), or you just clicked.
+    /// Typing doesn't count, so your keystrokes never keep the agent's app in front.
+    public static func isDeliberate(commandHeld: Bool, sinceModifierChange: Double, sinceMouseDown: Double) -> Bool {
+        commandHeld || sinceModifierChange < 0.4 || sinceMouseDown < 0.6
+    }
+}
+

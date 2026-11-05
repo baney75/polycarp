@@ -590,6 +590,7 @@ final class SessionController {
             // Until this launch's own process is known, an activation of the bundle by a process that was not
             // already running is the launch's; Donovan's running copies are excluded.
             AgentActivity.shared.markLaunch(bundle: bundle, excluding: before, for: 10)
+            AgentLaunchFocus.shared.watch(bundle: bundle, excluding: before, for: 10)
             var claimed = false
             /// A new window from behind through the app's own New Window command, claimed first.
             func newWindow(_ app: NSRunningApplication) -> Bool {
@@ -613,6 +614,8 @@ final class SessionController {
                 if !separate { AgentAccess.shared.grant(app.processIdentifier) }
                 AgentActivity.shared.markLaunch(pid: app.processIdentifier, for: 8)
                 h.claim(app.processIdentifier, n, true, nil)
+                AgentLaunchFocus.shared.onPersonTook = { h.unclaim($0) }
+                AgentLaunchFocus.shared.watch(pid: app.processIdentifier, for: 8)
                 if files.isEmpty {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                         // The mode may have narrowed in the 1.5 s since the request was let in.

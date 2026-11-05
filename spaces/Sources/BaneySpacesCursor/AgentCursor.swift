@@ -16,8 +16,10 @@ final class AgentCursor {
     /// The cursor itself: its position is the arrow's tip.
     let root = CALayer()
     private let body = CAShapeLayer()
+    private let vein = CAShapeLayer()
     private let badge = CAShapeLayer()
     private let badgeText = CATextLayer()
+    private let badgeDot = CAShapeLayer()
     private let focus = CAShapeLayer()
     private var ripples: [CAShapeLayer] = []
     /// A mark is a container (whose opacity dims it by age) holding the shape (whose opacity is its fade).
@@ -27,7 +29,7 @@ final class AgentCursor {
     private var nextRipple = 0
     private var scale: CGFloat = 2
 
-    static let glideKey = "glide", fadeKey = "fade", squishKey = "squish", focusKey = "focus", rippleKey = "ripple", markKey = "mark"
+    static let tiltKey = "tilt", glideKey = "glide", fadeKey = "fade", squishKey = "squish", focusKey = "focus", rippleKey = "ripple", markKey = "mark"
 
     init(id: String, look: CursorLook) {
         self.id = id
@@ -35,8 +37,10 @@ final class AgentCursor {
         root.bounds = .zero
         root.opacity = 0
         root.addSublayer(body)
+        body.addSublayer(vein)
         root.addSublayer(badge)
         badge.addSublayer(badgeText)
+        badge.addSublayer(badgeDot)
         focus.opacity = 0
         build(count: look.theme.markCount)
         apply(look)
@@ -92,7 +96,7 @@ final class AgentCursor {
     }
 
     private func applyScale() {
-        for l in [body, badge, focus] + ripples + markShapes { l.contentsScale = scale }
+        for l in [body, vein, badge, badgeDot, focus] + ripples + markShapes { l.contentsScale = scale }
         badgeText.contentsScale = scale
     }
 
@@ -138,7 +142,7 @@ final class AgentCursor {
             switch t.fill {
             case .status:
                 body.fillColor = Self.color(new.statusColor)
-                body.strokeColor = Self.color(new.identity)
+                body.strokeColor = CursorGlyphs.hasWhiteEdge(t.glyph) ? CGColor(gray: 1, alpha: 1) : Self.color(new.identity)
                 body.lineWidth = t.ringWidth
             case .light:
                 body.fillColor = Self.color(RGB(r: 1, g: 1, b: 1))
@@ -148,12 +152,22 @@ final class AgentCursor {
             body.shadowColor = CGColor(gray: 0, alpha: 1)
             body.shadowOpacity = Float(t.shadowOpacity)
             body.shadowRadius = t.shadowRadius
-            body.shadowOffset = CGSize(width: 0, height: -1.5)
+            body.shadowOffset = CGSize(width: 0, height: -2)
+            var veinFlip = CGAffineTransform(scaleX: 1, y: -1)
+            vein.path = CursorGlyphs.vein(t.glyph, size: t.size)?.copy(using: &veinFlip)
+            vein.fillColor = nil
+            vein.strokeColor = CGColor(gray: 1, alpha: 0.42)
+            vein.lineWidth = 1.25
+            vein.lineCap = .round
             // The badge: the agent's name on its status color.
             let font = t.badgeMonospaced ? NSFont.monospacedSystemFont(ofSize: t.badgeFontSize, weight: .semibold)
                                          : NSFont.systemFont(ofSize: t.badgeFontSize, weight: .semibold)
-            let textSize = (new.name as NSString).size(withAttributes: [.font: font])
-            let w = ceil(textSize.width) + 14, h = ceil(textSize.height) + 4
+            let text = new.badgeText
+            let textSize = (text as NSString).size(withAttributes: [.font: font])
+            // The dot in the agent's own hue tells apart two agents with the same name and status. A square badge shows
+            // it in its border instead.
+            let dot: CGFloat = t.badgeShape == .pill ? 11 : 0
+            let w = ceil(textSize.width) + 14 + dot, h = ceil(textSize.height) + 4
             let rect = CGRect(x: 0, y: 0, width: w, height: h)
             let r = min(t.badgeRadius, h / 2)
             badge.path = t.badgeShape == .square ? CGPath(rect: rect, transform: nil) : CGPath(roundedRect: rect, cornerWidth: r, cornerHeight: r, transform: nil)
@@ -161,19 +175,24 @@ final class AgentCursor {
             badge.anchorPoint = .zero
             badge.position = CGPoint(x: t.badgeOffsetX, y: -(t.badgeOffsetY + h))
             badge.fillColor = Self.color(new.statusColor, alpha: 0.96)
-            badge.strokeColor = t.badgeShape == .square ? Self.color(new.identity) : CGColor(gray: 1, alpha: 0.55)
+            badge.strokeColor = t.badgeShape == .square ? Self.color(new.identity) : CGColor(gray: 1, alpha: 0.85)
             badge.lineWidth = t.badgeShape == .square ? 2 : 1
             badge.shadowColor = CGColor(gray: 0, alpha: 1)
             badge.shadowOpacity = Float(min(0.3, t.shadowOpacity))
             badge.shadowRadius = max(0, t.shadowRadius - 1)
             badge.shadowOffset = CGSize(width: 0, height: -1)
             badge.shadowPath = badge.path
-            badgeText.string = new.name
+            badgeDot.isHidden = dot == 0
+            badgeDot.path = CGPath(ellipseIn: CGRect(x: 8, y: h / 2 - 3, width: 6, height: 6), transform: nil)
+            badgeDot.fillColor = Self.color(new.identity)
+            badgeDot.strokeColor = CGColor(gray: 1, alpha: 0.7)
+            badgeDot.lineWidth = 0.75
+            badgeText.string = text
             badgeText.font = font
             badgeText.fontSize = t.badgeFontSize
             badgeText.alignmentMode = .center
             badgeText.truncationMode = .end
-            badgeText.frame = CGRect(x: 0, y: (h - textSize.height) / 2, width: w, height: ceil(textSize.height))
+            badgeText.frame = CGRect(x: dot, y: (h - textSize.height) / 2, width: w - dot, height: ceil(textSize.height))
             badgeText.foregroundColor = new.statusColor.contrastWithWhite >= 3 ? CGColor(gray: 1, alpha: 1) : CGColor(gray: 0, alpha: 0.88)
             // The focus box and marks take the status color too.
             focus.strokeColor = Self.color(new.statusColor, alpha: 0.95)
@@ -253,6 +272,25 @@ final class AgentCursor {
         point = m.target
         noActions { root.position = d.local(m.target) }
         root.add(anim, forKey: Self.glideKey)
+        tilt(m)
+    }
+
+    /// The cursor leans a little into a long move and settles as it lands. It turns about its tip, which stays on the
+    /// glide's path, and never with motion off.
+    private func tilt(_ m: CursorMotion) {
+        guard !look.still, let first = m.points.first else { return }
+        let lean = CursorMotionLean.radians(dx: m.target.x - first.x, distance: hypot(m.target.x - first.x, m.target.y - first.y))
+        // A new move picks up from the lean in progress, and a short hop settles it, so nothing snaps.
+        let now = (body.presentation()?.value(forKeyPath: "transform.rotation.z") as? Double) ?? 0
+        guard lean != 0 || now != 0 else { return }
+        let a = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        // Local layers are y up, so a turn toward the right is a negative angle.
+        a.values = [now, -lean, 0]
+        a.keyTimes = [0, 0.35, 1]
+        a.duration = m.duration
+        a.beginTime = layerTime(m.start)
+        a.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
+        body.add(a, forKey: Self.tiltKey)
     }
 
     func hide() {
