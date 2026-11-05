@@ -2,7 +2,7 @@ import Foundation
 
 /// First launch of Polycarp on a Mac that ran Silas: copies the dictation data across. Like `SettingsImport`, it only
 /// COPIES. Silas's folder is read and never written, moved or deleted, so Silas still works and its data stays after
-/// the installer puts the app itself in the Trash.
+/// Polycarp moves the app itself to the Trash (`SilasRetirement`), after its own dictation has typed text.
 ///
 /// Copied: settings, dictionary, history, the device benchmark report, and every downloaded model whose `.complete`
 /// marker is there (a half download is not copied). Models are large, so they are copied with `copyItem`, which on
