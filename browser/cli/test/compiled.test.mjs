@@ -119,11 +119,11 @@ test("the real executable keeps using the existing ~/.config/tabkyra data in pla
 	const { home, env } = sandbox("config");
 	const dir = join(home, ".config", "tabkyra");
 	mkdirSync(join(dir, "library"), { recursive: true });
-	const saved = JSON.stringify({ preset: "evening" });
+	const saved = JSON.stringify({ preset: "forest" });
 	writeFileSync(join(dir, "theme.json"), saved);
 	writeFileSync(join(dir, "library", "keep.txt"), "kept");
 	const out = JSON.parse(execFileSync(exe, ["theme", "--json"], { env, encoding: "utf8" }));
-	assert.equal(out.preset, "evening", "the saved choice was read from where it already was");
+	assert.equal(out.preset, "forest", "the saved choice was read from where it already was");
 	assert.equal(readFileSync(join(dir, "theme.json"), "utf8"), saved);
 	assert.equal(readFileSync(join(dir, "library", "keep.txt"), "utf8"), "kept");
 	assert.equal(existsSync(join(home, ".config", "polycarp-browser")), false, "no second config folder was made");
