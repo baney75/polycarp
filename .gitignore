@@ -9,3 +9,4 @@ node_modules/
 dist/
 dist-chrome/
 .DS_Store
+core/*/target/
