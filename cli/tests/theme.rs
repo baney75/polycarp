@@ -423,6 +423,68 @@ fn unknown_keys_are_refused_with_their_path() {
 }
 
 #[test]
+fn font_values_that_could_break_the_stylesheet_are_refused_with_their_path() {
+    let b = Box::new();
+    let bad = [
+        "Georgia, /* x */ serif",
+        "Georgia */ serif",
+        "Georgia}body{color:red",
+        "url(http://x/f.woff)",
+        "Georgia (serif)",
+        "\"Times New Roman, serif",
+        "'Times New Roman, serif",
+        "\"Times\" \"Roman\"",
+        "\"a/*b\", serif",
+        "\"a\\b\", serif",
+        "\"a</style>\"",
+        "Georgia,",
+        ",Georgia",
+        "Georgia,, serif",
+        "\"\"",
+        "Georgia; color: red",
+        "a\nb",
+    ];
+    for path in [
+        "type.display",
+        "type.ui",
+        "type.mono",
+        "surface.site.type.ui",
+    ] {
+        for value in bad {
+            let before = b.snapshot();
+            let (c, v) = b.jrun(&["change", path, value]);
+            assert_eq!(c, 1, "{path} {value:?}: {v}");
+            assert_eq!(v["error"]["data"]["errors"][0]["path"], path, "{value:?}");
+            assert_eq!(b.snapshot(), before, "{value:?} changed something");
+        }
+    }
+    // The same text in a whole theme names the full path.
+    let p = b.write_theme(
+        "evil",
+        &user_theme("evil", "polycarp", "[type]\nmono = \"a } b\"\n"),
+    );
+    let e = b.refused(&["validate", p.to_str().unwrap()]);
+    assert!(
+        e.contains("type.mono: \"a } b\" is not a font stack"),
+        "{e}"
+    );
+    // Plain names, quoted names with spaces and commas, and the built-in stacks all pass.
+    for good in [
+        "Georgia",
+        "Georgia, serif",
+        "ui-monospace, \"SF Mono\", Menlo, Consolas, monospace",
+        "'Times New Roman', Times_New-2, serif",
+        "\"Name, with comma\", serif",
+    ] {
+        let (c, v) = Box::new().jrun(&["change", "type.mono", good]);
+        assert_eq!(c, 0, "{good}: {v}");
+    }
+    for n in BUILTINS {
+        b.ok(&["show", n]);
+    }
+}
+
+#[test]
 fn bad_hex_range_and_enum_are_refused_together() {
     let b = Box::new();
     let body = "[light]\naccent = \"red\"\nsurface = \"#12345\"\ndone = 7\n\
@@ -445,7 +507,7 @@ fn bad_hex_range_and_enum_are_refused_together() {
         "type.weight: 900 is out of range 300..800",
         "type.line_height: 0.5 is out of range 1.0..2.0",
         "type.display: must not be empty",
-        "type.ui: must not contain",
+        "type.ui: \"a; b\" is not a font stack",
         "motion.fast: 1001 is out of range 0..1000",
         "motion.easing: \"bounce\" is not",
         "motion.scale_from: 0.2 is out of range 0.5..1.0",
@@ -1885,7 +1947,7 @@ fn change_value_types_come_from_the_path() {
         ("dark.accent", "green", "not a color"),
         ("motion.reduced", "yes", "true or false"),
         ("motion.easing", "bounce", "not ease"),
-        ("type.ui", "a;b", "must not contain"),
+        ("type.ui", "a;b", "is not a font stack"),
         ("type.size", "9", "out of range"),
         ("title", "", "not empty"),
     ] {

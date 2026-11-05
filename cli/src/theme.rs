@@ -189,6 +189,65 @@ fn check_easing(s: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A font stack: family names separated by commas. Each is either plain (letters, digits, spaces,
+/// hyphens, underscores) or in matching quotes with no quote, backslash, `<`, control character or
+/// `/*` inside. Anything else could break out of the stylesheet, so it is refused.
+fn check_font(s: &str) -> Result<(), String> {
+    let bad = |why: &str| {
+        Err(format!(
+            "{s:?} is not a font stack: {why}. Use names separated by commas, such as Georgia, \"Times New Roman\", serif"
+        ))
+    };
+    if s.trim().is_empty() {
+        return Err("must not be empty".into());
+    }
+    let mut rest = s;
+    loop {
+        rest = rest.trim_start();
+        let after = if let Some(q) = rest.chars().next().filter(|c| matches!(c, '"' | '\'')) {
+            let body = &rest[1..];
+            let Some(end) = body.find(q) else {
+                return bad("a quote is not closed");
+            };
+            let inner = &body[..end];
+            if inner.trim().is_empty() {
+                return bad("a quoted name is empty");
+            }
+            if inner.contains("/*") {
+                return bad("a quoted name contains /*");
+            }
+            if inner
+                .chars()
+                .any(|c| c.is_control() || matches!(c, '\\' | '"' | '\'' | '<'))
+            {
+                return bad("a quoted name has a backslash, quote, < or control character");
+            }
+            &body[end + 1..]
+        } else {
+            let end = rest.find(',').unwrap_or(rest.len());
+            let name = rest[..end].trim_end();
+            if name.is_empty() {
+                return bad("a name is missing");
+            }
+            if !name
+                .chars()
+                .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+            {
+                return bad(
+                    "a name has a character other than letters, digits, spaces, hyphens and underscores (put it in quotes only if it is a real family name)",
+                );
+            }
+            &rest[end..]
+        };
+        let after = after.trim_start();
+        match after.strip_prefix(',') {
+            Some(next) => rest = next,
+            None if after.is_empty() => return Ok(()),
+            None => return bad("something follows a quoted name that is not a comma"),
+        }
+    }
+}
+
 fn check_value(path: &str, v: &Value, kind: Kind, out: &mut Vec<String>) {
     match kind {
         Kind::Hex => match v.as_str() {
@@ -218,11 +277,11 @@ fn check_value(path: &str, v: &Value, kind: Kind, out: &mut Vec<String>) {
             None => out.push(format!("{path}: must be one of {}", options.join(", "))),
         },
         Kind::Font => match v.as_str() {
-            Some(s) if s.trim().is_empty() => out.push(format!("{path}: must not be empty")),
-            Some(s) if s.chars().any(|c| c.is_control() || ";{}<>\\".contains(c)) => out.push(
-                format!("{path}: must not contain ; {{ }} < > \\ or control characters"),
-            ),
-            Some(_) => {}
+            Some(s) => {
+                if let Err(e) = check_font(s) {
+                    out.push(format!("{path}: {e}"));
+                }
+            }
             None => out.push(format!("{path}: must be a font stack string")),
         },
         Kind::Easing => match v.as_str() {

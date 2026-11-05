@@ -75,7 +75,7 @@ Each color is `"#rrggbb"`.
 
 | Key | Values |
 | --- | --- |
-| `display`, `ui`, `mono` | Font family stacks, as strings. Not empty. No `;`, braces, `<`, `>` or `\` |
+| `display`, `ui`, `mono` | Font family stacks, as strings: names separated by commas. A name is plain (letters, digits, spaces, hyphens, underscores) or in matching single or double quotes, with no quote, `\`, `<` or `/*` inside. Anything else, such as `url(...)`, parentheses, `;` or braces, is refused |
 | `size` | Base size in px, 10 to 24 |
 | `weight` | 300 to 800 |
 | `line_height` | 1.0 to 2.0 |

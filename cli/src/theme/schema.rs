@@ -100,7 +100,7 @@ pub(super) fn needs(kind: Kind) -> String {
         Kind::Int(lo, hi) => format!("a whole number from {lo} to {hi}"),
         Kind::Float(lo, hi) => format!("a number from {lo:?} to {hi:?}"),
         Kind::Enum(o) => format!("one of {}", o.join(", ")),
-        Kind::Font => "a font stack string, not empty, with no ; { } < > or backslash".into(),
+        Kind::Font => "a font stack: names separated by commas; each is plain (letters, digits, spaces, hyphens, underscores) or in matching quotes with no quote, backslash, < or /* inside".into(),
         Kind::Easing => "ease, ease-in, ease-out, ease-in-out, linear or cubic-bezier(a, b, c, d) with a and c between 0 and 1".into(),
         Kind::Bool => "true or false".into(),
     }
@@ -114,7 +114,7 @@ fn kind_schema(kind: Kind) -> Json {
         Kind::Enum(o) => json!({"type":"string","enum":o}),
         Kind::Font => json!({
             "type":"string","minLength":1,
-            "pattern": r"^[^;{}<>\\\x00-\x1f]+$",
+            "pattern": r#"^\s*(?:[\w -]+|"[^"'\\<\x00-\x1f]+"|'[^"'\\<\x00-\x1f]+')(?:\s*,\s*(?:[\w -]+|"[^"'\\<\x00-\x1f]+"|'[^"'\\<\x00-\x1f]+'))*\s*$"#,
             "examples":["Georgia, serif"]
         }),
         Kind::Easing => json!({
