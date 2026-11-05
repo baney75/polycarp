@@ -147,7 +147,7 @@ enum Chrome {
         case .heavy: .heavy
         }
         if let face = face(size, weight) { return face as NSFont }
-        return f.family == "monospace" ? .monospacedSystemFont(ofSize: pt, weight: w) : .systemFont(ofSize: pt, weight: w)
+        return FontFallback.forFamily(f.family) == .monospaced ? .monospacedSystemFont(ofSize: pt, weight: w) : .systemFont(ofSize: pt, weight: w)
     }
 
     static func nsWash(_ opacity: Double = 1) -> NSColor {
@@ -184,7 +184,7 @@ enum Chrome {
             return .system(size: CGFloat(f.size(size)), weight: f.weight(weight).swiftUI, design: rounded ? .rounded : .default)
         }
         if let face = face(size, weight) { return Font(face) }
-        return .system(size: CGFloat(f.size(size)), weight: f.weight(weight).swiftUI, design: f.family == "monospace" ? .monospaced : (rounded ? .rounded : .default))
+        return .system(size: CGFloat(f.size(size)), weight: f.weight(weight).swiftUI, design: FontFallback.forFamily(f.family) == .monospaced ? .monospaced : (rounded ? .rounded : .default))
     }
 
     // MARK: Motion

@@ -51,3 +51,14 @@ public enum FontFace {
         return symbolic & CTFontSymbolicTraits.traitItalic.rawValue != 0
     }
 }
+
+/// What a surface draws in when a theme's own font family is not installed. Every catalog theme keeps
+/// the monospaced system font it always had; only a Polycarp theme's own family key (`PolycarpTheme.fontKey`)
+/// falls back to the proportional one. (The `system-sans` family never gets here: it is the system font.)
+public enum FontFallback: Equatable, Sendable {
+    case proportional, monospaced
+
+    public static func forFamily(_ key: String) -> FontFallback {
+        key == PolycarpTheme.fontKey ? .proportional : .monospaced
+    }
+}

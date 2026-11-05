@@ -192,3 +192,24 @@ final class NoPolycarpThemeTests: XCTestCase {
         "omarchy/white": "a5350d425756e857499df58c11a1231802f863a78079bb559b3c6291317cc650",
     ]
 }
+
+/// The golden hashes above cover `Look`, `ThemeSpec` and `SurfaceStyle`. The font a surface falls back to
+/// when a theme's family isn't installed is decided in the app target (`Chrome`), so no hash could see
+/// it change: the proportional fallback for catalog keys slipped through. The decision is `FontFallback`
+/// now, and these hold it.
+extension NoPolycarpThemeTests {
+    func testEveryCatalogFontKeyKeepsTheMonospacedFallbackAndOnlyThePolycarpKeyIsProportional() {
+        let cat = ThemeCatalog.shared
+        var keys = Set(ThemeID.allCases.map { cat.spec($0).font.family })
+        keys.formUnion(["monospace", "jetbrains-mono", "nerd-mono", "some future key"])
+        keys.remove("system-sans")  // never falls back: it is the system font
+        for key in keys { XCTAssertEqual(FontFallback.forFamily(key), .monospaced, key) }
+        XCTAssertEqual(FontFallback.forFamily(PolycarpTheme.fontKey), .proportional)
+    }
+
+    func testBothDrawingPathsAskFontFallbackAndNeitherHardCodesAFamily() throws {
+        let code = try Repo.code("Sources/BaneySpaces/Theming.swift")
+        XCTAssertEqual(code.components(separatedBy: "FontFallback.forFamily(f.family)").count - 1, 2, "AppKit and SwiftUI")
+        XCTAssertFalse(code.contains("f.family == \"monospace\""))
+    }
+}
