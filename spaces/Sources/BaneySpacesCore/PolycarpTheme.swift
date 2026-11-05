@@ -523,6 +523,14 @@ extension AppearanceSettings {
     }
 }
 
+extension AppearanceSettings {
+    /// The accent to draw: a Polycarp theme's, read from the look already built (no lookup of the system
+    /// appearance on each read), else the one Settings chose.
+    public func accentRGB(look: Look, system: RGB) -> RGB {
+        look.polycarp != nil ? look.color("accent") : accentRGB(system: system)
+    }
+}
+
 extension Look {
     public init(theme: ThemeID, spec: ThemeSpec, palette: Palette, polycarp name: String, families: [String]?) {
         self.theme = theme

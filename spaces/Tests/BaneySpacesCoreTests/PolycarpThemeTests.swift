@@ -560,6 +560,21 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertEqual(seen.themes.last??.name, "still-water")
     }
 
+    func testAccentIsTheThemesWhileOneIsInForceAndComesFromTheLook() throws {
+        var settings = AppearanceSettings()
+        settings.accent = .preset(.red)
+        let system = RGB(r: 0.1, g: 0.2, b: 0.3)
+        let t = try good()
+        for dark in [false, true] {
+            let look = t.look(systemDark: dark)
+            XCTAssertEqual(settings.accentRGB(look: look, system: system), t.accent(systemDark: dark))
+            XCTAssertEqual(settings.accentRGB(look: look, system: system), look.color("accent"))
+        }
+        let own = settings.look(systemAccent: system)
+        XCTAssertEqual(settings.accentRGB(look: own, system: system), settings.accentRGB(system: system), "no theme, no change")
+        XCTAssertNotEqual(settings.accentRGB(system: system), t.accent(systemDark: false))
+    }
+
     func testTheTimerPollsOnItsOwnQueueNotTheMainThread() throws {
         let seen = Seen()
         let ran = expectation(description: "delivered")

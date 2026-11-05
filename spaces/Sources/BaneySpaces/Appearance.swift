@@ -124,7 +124,7 @@ final class Appearance: ObservableObject {
     }
 
     /// A Polycarp theme's accent while one is in force, else the accent chosen in Settings.
-    var accentRGB: RGB { polycarp?.accent(systemDark: Appearance.systemDark) ?? settings.accentRGB(system: Appearance.systemAccent) }
+    var accentRGB: RGB { settings.accentRGB(look: look, system: Appearance.systemAccent) }
     var accent: Color { Appearance.color(accentRGB) }
 
     func workspace(_ n: Int) -> Color {
