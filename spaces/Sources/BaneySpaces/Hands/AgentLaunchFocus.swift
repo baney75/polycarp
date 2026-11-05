@@ -8,8 +8,6 @@ import BaneySpacesCore
 final class AgentLaunchFocus {
     static let shared = AgentLaunchFocus()
     private var state = FocusReturn()
-    /// You chose the agent's app: its claim on the next window ends, so a window you open there stays yours.
-    var onPersonTook: (pid_t) -> Void = { _ in }
 
     private init() {
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
@@ -34,17 +32,10 @@ final class AgentLaunchFocus {
     }
 
     private func activated(_ app: NSRunningApplication) {
-        let source = CGEventSourceStateID.combinedSessionState
-        let deliberate = FocusReturn.isDeliberate(
-            commandHeld: CGEventSource.flagsState(source).contains(.maskCommand),
-            sinceModifierChange: CGEventSource.secondsSinceLastEventType(source, eventType: .flagsChanged),
-            sinceMouseDown: CGEventSource.secondsSinceLastEventType(source, eventType: .leftMouseDown))
         let pid = app.processIdentifier
-        switch state.activated(pid: pid, bundle: app.bundleIdentifier, agentOwned: AgentOwned.shared.pids.contains(pid), deliberate: deliberate, now: Date()) {
+        let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        switch state.activated(pid: pid, bundle: app.bundleIdentifier, agentOwned: AgentOwned.shared.pids.contains(pid), frontNow: front, now: Date()) {
         case .none: break
-        case .personTook(let pid):
-            Trace.log("agent launch focus: you chose \(app.localizedName ?? "the app"), left alone")
-            onPersonTook(pid)
         case .returnTo(let target):
             let result = AXUIElementSetAttributeValue(AXUIElementCreateApplication(target), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
             if result != .success { Trace.log("agent launch focus: couldn't return the keyboard to \(target): \(result.rawValue)") }

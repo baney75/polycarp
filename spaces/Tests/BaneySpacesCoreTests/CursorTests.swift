@@ -269,7 +269,7 @@ final class CursorThemeTests: XCTestCase {
         let working = CursorPalette.status(.working).luminance, failed = CursorPalette.status(.failed).luminance
         XCTAssertGreaterThanOrEqual((max(working, failed) + 0.05) / (min(working, failed) + 0.05), 1.5)
         func look(_ s: DockAgent.State) -> CursorLook { CursorLook(name: "Claude", status: s, identity: RGB(r: 1, g: 1, b: 1), theme: .standard) }
-        XCTAssertEqual(look(.working).badgeText, "Claude"); XCTAssertEqual(look(.done).badgeText, "Claude")
+        XCTAssertEqual(look(.working).badgeText, "Claude"); XCTAssertEqual(look(.done).badgeText, "✓ Claude")
         XCTAssertEqual(look(.asking).badgeText, "? Claude"); XCTAssertEqual(look(.failed).badgeText, "! Claude")
     }
 
@@ -1007,54 +1007,65 @@ final class FocusReturnTests: XCTestCase {
     func testAnAgentAppThatTookTheKeyboardGivesItBack() {
         var f = FocusReturn(lastPerson: 10)
         f.watch(pid: 20, until: later)
-        XCTAssertEqual(f.activated(pid: 20, bundle: "calc", agentOwned: true, deliberate: false, now: now), .returnTo(10))
+        XCTAssertEqual(f.activated(pid: 20, bundle: "calc", agentOwned: true, frontNow: 20, now: now), .returnTo(10))
     }
 
     /// The app can come forward before its pid reaches us, while only the bundle is known.
     func testItWorksBeforeTheProcessIsKnownAndLeavesYourOwnCopyAlone() {
         var f = FocusReturn(lastPerson: 10)
         f.watch(bundle: "calc", excluding: [30], until: later)
-        XCTAssertEqual(f.activated(pid: 20, bundle: "calc", agentOwned: false, deliberate: false, now: now), .returnTo(10))
-        XCTAssertEqual(f.activated(pid: 30, bundle: "calc", agentOwned: false, deliberate: false, now: now), .none, "a copy already running is yours")
+        XCTAssertEqual(f.activated(pid: 20, bundle: "calc", agentOwned: false, frontNow: 20, now: now), .returnTo(10))
+        XCTAssertEqual(f.activated(pid: 30, bundle: "calc", agentOwned: false, frontNow: 30, now: now), .none, "a copy already running is yours")
         XCTAssertEqual(f.lastPerson, 30)
     }
 
-    func testChoosingTheAppYourselfIsRespected() {
+    func testItStopsAfterAFewReturnsSoItCantFightYou() {
         var f = FocusReturn(lastPerson: 10)
         f.watch(pid: 20, until: later)
-        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: true, now: now), .personTook(20))
-        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: false, now: now.addingTimeInterval(1)), .none, "and it stays left alone")
+        for _ in 0..<FocusReturn.maxReturns {
+            XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 20, now: now), .returnTo(10))
+        }
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 20, now: now), .none)
+    }
+
+    /// A late notification: you've moved on, so nothing is pulled back.
+    func testALateNotificationDoesntMoveYou() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(pid: 20, until: later)
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 11, now: now), .none)
     }
 
     /// The target is where you are now, not where you were when the launch began.
     func testItReturnsToTheAppYouMovedToDuringTheLaunch() {
         var f = FocusReturn(lastPerson: 10)
         f.watch(pid: 20, until: later)
-        _ = f.activated(pid: 11, bundle: nil, agentOwned: false, deliberate: true, now: now)
-        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: false, now: now.addingTimeInterval(1)), .returnTo(11))
+        _ = f.activated(pid: 11, bundle: nil, agentOwned: false, frontNow: 11, now: now)
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 20, now: now.addingTimeInterval(1)), .returnTo(11))
     }
 
     /// Two launches at once: neither agent app is ever the place the keyboard goes back to.
     func testAnAgentAppIsNeverTheReturnTarget() {
         var f = FocusReturn(lastPerson: 10)
         f.watch(pid: 20, until: later); f.watch(pid: 21, until: later)
-        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: false, now: now), .returnTo(10))
-        XCTAssertEqual(f.activated(pid: 21, bundle: nil, agentOwned: true, deliberate: false, now: now), .returnTo(10))
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 20, now: now), .returnTo(10))
+        XCTAssertEqual(f.activated(pid: 21, bundle: nil, agentOwned: true, frontNow: 21, now: now), .returnTo(10))
         XCTAssertEqual(f.lastPerson, 10)
         var g = FocusReturn(); g.seed(front: 20, agentOwned: true)
         XCTAssertNil(g.lastPerson, "an agent's app in front isn't yours")
     }
 
+    /// A second launch of the same app doesn't turn the first launch's process into one of yours.
+    func testASecondLaunchKeepsTheFirstLaunchWatched() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(bundle: "calc", excluding: [30], until: later)
+        f.watch(bundle: "calc", excluding: [30, 20], until: later)
+        XCTAssertEqual(f.activated(pid: 20, bundle: "calc", agentOwned: false, frontNow: 20, now: now), .returnTo(10))
+        XCTAssertEqual(f.activated(pid: 30, bundle: "calc", agentOwned: false, frontNow: 30, now: now), .none)
+    }
+
     func testTheWatchEnds() {
         var f = FocusReturn(lastPerson: 10)
         f.watch(pid: 20, until: later)
-        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: false, now: later.addingTimeInterval(1)), .none)
-    }
-
-    func testTypingIsNotChoosingAnApp() {
-        XCTAssertFalse(FocusReturn.isDeliberate(commandHeld: false, sinceModifierChange: 5, sinceMouseDown: 5), "typing away")
-        XCTAssertTrue(FocusReturn.isDeliberate(commandHeld: true, sinceModifierChange: 5, sinceMouseDown: 5))
-        XCTAssertTrue(FocusReturn.isDeliberate(commandHeld: false, sinceModifierChange: 0.1, sinceMouseDown: 5), "⌘-Tab activates on release")
-        XCTAssertTrue(FocusReturn.isDeliberate(commandHeld: false, sinceModifierChange: 5, sinceMouseDown: 0.2), "a click")
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 20, now: later.addingTimeInterval(1)), .none)
     }
 }
