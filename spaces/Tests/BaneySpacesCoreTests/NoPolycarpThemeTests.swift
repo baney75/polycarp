@@ -202,7 +202,9 @@ extension NoPolycarpThemeTests {
         let cat = ThemeCatalog.shared
         var keys = Set(ThemeID.allCases.map { cat.spec($0).font.family })
         keys.formUnion(["monospace", "jetbrains-mono", "nerd-mono", "some future key"])
-        keys.remove("system-sans")  // never falls back: it is the system font
+        // AppKit reaches the fallback for system-sans (`face` returns nil for it), and it has always been the system font.
+        XCTAssertNotNil(keys.remove("system-sans"), "the catalog stopped using system-sans; this pin no longer proves anything")
+        XCTAssertEqual(FontFallback.forFamily("system-sans"), .proportional)
         for key in keys { XCTAssertEqual(FontFallback.forFamily(key), .monospaced, key) }
         XCTAssertEqual(FontFallback.forFamily(PolycarpTheme.fontKey), .proportional)
     }

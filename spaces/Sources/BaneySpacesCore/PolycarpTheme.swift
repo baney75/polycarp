@@ -66,7 +66,11 @@ public struct PolycarpTheme: Equatable, Sendable {
         let named = all.filter { !generic.contains($0.lowercased()) }
         // The first generic name in the stack says what to draw when none of the named fonts is installed.
         let firstGeneric = all.first { generic.contains($0.lowercased()) }?.lowercased()
-        return firstGeneric == "serif" || firstGeneric == "ui-serif" ? named + [FontFace.systemSerif] : named
+        switch firstGeneric {
+        case "serif", "ui-serif": return named + [FontFace.systemSerif]
+        case "monospace", "ui-monospace": return named + [FontFace.systemMonospace]
+        default: return named
+        }
     }
 
     public func look(systemDark: Bool) -> Look {
@@ -102,7 +106,7 @@ public struct PolycarpTheme: Equatable, Sendable {
     }
 
     /// Which `ThemeSpec.Font.family` the UI stack maps to: the system font when the stack starts with
-    /// a system or generic sans name (a serif name is `fontKey`: the named fonts, then the system serif), the monospace key when it starts with a monospace one, else `fontKey`.
+    /// a system or generic sans name (a named font is `fontKey`: the named fonts, then the system serif or monospace if the stack's first generic name asks for it), the monospace key when it starts with a monospace one, else `fontKey`.
     var fontKeyName: String {
         guard let first = PolycarpTheme.parseStack(ui)?.first?.lowercased() else { return "system-sans" }
         let system: Set = ["system-ui", "-apple-system", "blinkmacsystemfont", "ui-sans-serif", "sans-serif", "ui-rounded"]

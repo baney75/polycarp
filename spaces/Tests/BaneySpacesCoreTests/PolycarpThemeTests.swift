@@ -143,6 +143,32 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertEqual(m.lift, 1)
     }
 
+    /// A named font that isn't installed falls to what the stack's first generic name asks for: the
+    /// monospaced system face here, and the resolved face has to be monospaced, not just named so.
+    func testAMissingNamedFontBeforeMonospaceDrawsMonospace() throws {
+        for ui in ["No Such Font 123, monospace", "\"No Such Font 123\", ui-monospace, monospace"] {
+            let t = try parse(edited { var y = $0["type"] as! [String: Any]; y["ui"] = ui; $0["type"] = y }).get()
+            XCTAssertEqual(t.fontFamilies, ["No Such Font 123", FontFace.systemMonospace], ui)
+            let font = try XCTUnwrap(FontFace.resolve(families: try XCTUnwrap(t.fontFamilies), weight: .regular, size: 13), ui)
+            XCTAssertTrue(CTFontGetSymbolicTraits(font).contains(.traitMonoSpace), ui)
+        }
+        // No generic name at all still asks for nothing, so the proportional fallback stays.
+        let bare = try parse(edited { var y = $0["type"] as! [String: Any]; y["ui"] = "No Such Font 123"; $0["type"] = y }).get()
+        XCTAssertEqual(bare.fontFamilies, ["No Such Font 123"])
+        XCTAssertNil(FontFace.resolve(families: ["No Such Font 123"], weight: .regular, size: 13))
+    }
+
+    /// Font family names don't care about case in CSS, so a stack means the same thing here as in a browser.
+    func testFontFamilyNamesMatchWithoutRegardToCase() throws {
+        func family(_ names: [String]) throws -> String {
+            CTFontCopyFamilyName(try XCTUnwrap(FontFace.resolve(families: names, weight: .regular, size: 13))) as String
+        }
+        XCTAssertTrue(FontFace.installedFamilies.contains("Georgia"), "this test needs Georgia, which macOS ships")
+        XCTAssertEqual(try family(["georgia"]), "Georgia")
+        XCTAssertEqual(try family(["GEORGIA", FontFace.systemSerif]), "Georgia")
+        XCTAssertEqual(FontFace.firstAvailable(["Abc"], installed: ["ABC", "Abc"]), "Abc", "an exact match wins")
+    }
+
     func testTypeMapsToSizeWeightAndFamily() throws {
         func theme(_ ui: String, size: Double = 16, weight: Double = 400) throws -> PolycarpTheme {
             try parse(edited { var t = $0["type"] as! [String: Any]; t["ui"] = ui; t["size"] = size; t["weight"] = weight; $0["type"] = t }).get()
