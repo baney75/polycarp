@@ -293,6 +293,15 @@ if [ -L "$tabkyra_link" ]; then
       ;;
   esac
 fi
+# Links the installer repointed on request (install.sh's retire_tabkyra) go back to what they were.
+retired="$HOME/Library/Application Support/Polycarp/tabkyra-retired-links"
+if [ -s "$retired" ]; then
+  while IFS=$'\t' read -r link target; do
+    if [ -L "$link" ]; then
+      case "$(readlink "$link")" in *Polycarp.app/Contents/Resources/browser/polycarp-browser) ln -sf "$target" "$link" ;; esac
+    fi
+  done < "$retired"
+fi
 if [ -n "$LEGACY_APP" ] && [ -x "$LEGACY_APP/Contents/Resources/bin/baneyspaces" ]; then
   # Polycarp took these two names over from BaneySpaces; give them back to it.
   for name in baneyspaces ghostdeck; do
