@@ -9,7 +9,6 @@ use chrono::{Local, Utc};
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::json;
-use tauri::{AppHandle, Emitter, Manager};
 
 use crate::audio::Recording;
 use crate::benchmark::{self, ModelResult, Report, Timed};
@@ -18,6 +17,43 @@ use crate::keys::{EditWatch, Machine, Out, Trigger, Watch};
 use crate::models::{self, Engine};
 use crate::store::{self, HistoryItem, Settings, Stats};
 use crate::typer;
+
+/// What the interface around the engine provides. The engine never names a UI toolkit:
+/// the Tauri app (Windows, Linux, Android) and the native Mac app both implement this.
+///
+/// Calls may come from any thread, including while the engine holds its own short locks,
+/// so an implementation must return quickly and must not call back into [`Core`] methods
+/// that take the status lock (`set_status`).
+pub trait Host: Send + Sync + 'static {
+    /// A named event with a JSON payload: `status`, `transcript`, `learned`,
+    /// `model-progress`, `benchmark-progress`, `benchmark-done`, `benchmark-error`.
+    fn emit(&self, event: &str, payload: serde_json::Value);
+    /// Microphone level in 0..=1, many times a second while recording.
+    fn level(&self, level: f32);
+    /// The status changed. `show_overlay` is the user's setting; whether the overlay is up
+    /// for this status is [`overlay_status`].
+    fn status_changed(&self, status: Status, show_overlay: bool);
+    /// Bring the app's main window forward (a model is needed, or setup is incomplete).
+    fn show_main(&self);
+    /// The key listener came back after the user fixed a permission: refocus the app's
+    /// main window if it is showing.
+    fn listener_returned(&self);
+    /// A fresh install of a nightly build stays on the nightly channel.
+    fn is_nightly(&self) -> bool {
+        false
+    }
+}
+
+/// A host that ignores everything. For tests and headless use.
+pub struct NullHost;
+
+impl Host for NullHost {
+    fn emit(&self, _: &str, _: serde_json::Value) {}
+    fn level(&self, _: f32) {}
+    fn status_changed(&self, _: Status, _: bool) {}
+    fn show_main(&self) {}
+    fn listener_returned(&self) {}
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,7 +68,7 @@ pub enum Status {
 }
 
 pub struct Core {
-    pub app: AppHandle,
+    pub host: Arc<dyn Host>,
     pub settings: Mutex<Settings>,
     pub dict: Mutex<Dictionary>,
     pub history: Mutex<Vec<HistoryItem>>,
@@ -123,7 +159,7 @@ fn key_access_message_for(os: &str) -> String {
 }
 
 impl Core {
-    pub fn new(app: AppHandle) -> Shared {
+    pub fn new(host: Arc<dyn Host>) -> Shared {
         let mut settings: Settings = store::load("settings.json");
         // Settings from before per-device picks have no modelSource. A model other than the
         // default was chosen by the user then, so no benchmark or registry may move them off it.
@@ -140,12 +176,7 @@ impl Core {
         }
         // A fresh nightly install stays on nightly instead of jumping to stable.
         if !store::exists("settings.json")
-            && app
-                .package_info()
-                .version
-                .pre
-                .as_str()
-                .starts_with("nightly")
+            && host.is_nightly()
         {
             settings.update_channel = "nightly".into();
         }
@@ -156,7 +187,7 @@ impl Core {
         let mut history: Vec<HistoryItem> = store::load("history.json");
         history.truncate(store::HISTORY_KEEP);
         Arc::new(Core {
-            app,
+            host,
             dict: Mutex::new(store::load("dictionary.json")),
             history: Mutex::new(history),
             status: Mutex::new((Status::Loading, None)),
@@ -201,11 +232,7 @@ impl Core {
         };
         if ok {
             // The user just flipped the switch in System Settings; bring them back to Silas.
-            if let Some(w) = self.app.get_webview_window("main") {
-                if w.is_visible().unwrap_or(false) {
-                    let _ = w.set_focus();
-                }
-            }
+            self.host.listener_returned();
         }
         if refresh {
             if ok && self.active_model().is_none() {
@@ -241,31 +268,10 @@ impl Core {
             *cur = next.clone();
             next
         };
-        let _ = self
-            .app
+        self.host
             .emit("status", json!({ "status": s, "detail": detail }));
-        crate::tray::refresh(&self.app, s);
-        self.overlay(s);
-    }
-
-    fn overlay(&self, s: Status) {
-        let Some(w) = self.app.get_webview_window("overlay") else {
-            return;
-        };
-        let enabled = self.settings.lock().show_overlay;
-        let show = enabled && overlay_status(s);
-        if show {
-            if let Ok(Some(monitor)) = w.primary_monitor().or_else(|_| w.current_monitor()) {
-                let size = monitor.size();
-                let pos = monitor.position();
-                let scale = monitor.scale_factor();
-                let (ww, wh) = (260.0 * scale, 64.0 * scale);
-                let x = pos.x as f64 + (size.width as f64 - ww) / 2.0;
-                let y = pos.y as f64 + size.height as f64 - wh - 72.0 * scale;
-                let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
-            }
-        }
-        place_overlay(&self.app, w, enabled);
+        let show_overlay = self.settings.lock().show_overlay;
+        self.host.status_changed(s, show_overlay);
     }
 
     // ------------------------------------------------------------ model
@@ -349,17 +355,17 @@ impl Core {
             }
             d.push(id.to_string());
         }
-        let app = self.app.clone();
+        let host = self.host.clone();
         let idc = id.to_string();
         let result = models::download(id, &|downloaded, total, stage| {
-            let _ = app.emit(
+            host.emit(
                 "model-progress",
                 json!({ "id": idc, "downloaded": downloaded, "total": total, "stage": stage }),
             );
         });
         self.downloading.lock().retain(|x| x != id);
         if let Err(e) = &result {
-            let _ = self.app.emit("model-progress", json!({ "id": id, "downloaded": 0, "total": 0, "stage": "error", "message": e.to_string() }));
+            self.host.emit("model-progress", json!({ "id": id, "downloaded": 0, "total": 0, "stage": "error", "message": e.to_string() }));
             return result;
         }
         if self.active_model().is_none() {
@@ -512,12 +518,11 @@ impl Core {
         let result = self.measure(scope);
         match &result {
             Ok(report) => {
-                let _ = self.app.emit("benchmark-done", report);
+                self.host.emit("benchmark-done", json!(report));
                 self.apply_pick(report);
             }
             Err(e) => {
-                let _ = self
-                    .app
+                self.host
                     .emit("benchmark-error", json!({ "message": e.to_string() }));
             }
         }
@@ -544,7 +549,7 @@ impl Core {
             let id = &ids[next];
             next += 1;
             let progress = |clip: usize, clips: usize| {
-                let _ = self.app.emit(
+                self.host.emit(
                     "benchmark-progress",
                     json!({ "model": id, "clip": clip, "clips": clips }),
                 );
@@ -772,7 +777,7 @@ impl Core {
             }
             Status::NeedsModel => {
                 self.machine.lock().reset();
-                crate::show_main(&self.app);
+                self.host.show_main();
                 return;
             }
             _ => {
@@ -796,10 +801,8 @@ impl Core {
         // Note where the keyboard is now, at key-down, without making the mic wait for it.
         let capture = std::thread::spawn(crate::focus::Target::capture);
         let device = self.settings.lock().microphone.clone();
-        let app = self.app.clone();
-        match Recording::start(device.as_deref(), move |lvl| {
-            let _ = app.emit_to("overlay", "level", lvl);
-        }) {
+        let host = self.host.clone();
+        match Recording::start(device.as_deref(), move |lvl| host.level(lvl)) {
             Ok(r) => {
                 // The mic is already running; publish the target before the recording, so a
                 // release can never find a recording without its target.
@@ -952,7 +955,7 @@ impl Core {
             }
             store::save("dictionary.json", &*me.dict.lock());
             *me.last_activity.lock() = Instant::now();
-            let _ = me.app.emit("transcript", &item);
+            me.host.emit("transcript", json!(&item));
             if let Some(e) = typing_error {
                 me.set_status(
                     Status::Error,
@@ -1033,7 +1036,7 @@ impl Core {
         // apps need the toast.
         if !result.is_empty() && !explicit {
             log::info!("learned {:?}", result);
-            let _ = self.app.emit("learned", &result);
+            self.host.emit("learned", json!(&result));
         }
         result
     }
@@ -1070,61 +1073,9 @@ impl Core {
     }
 }
 
-fn overlay_status(s: Status) -> bool {
+/// Whether the overlay is up for this status.
+pub fn overlay_status(s: Status) -> bool {
     matches!(s, Status::Recording | Status::Transcribing | Status::Typing)
-}
-
-/// Shows or hides the overlay on the main thread, deciding there from the current status, not
-/// the one this call was made for: two status changes racing from worker threads can queue
-/// their calls in either order, and the window must end in the state the last status asks for.
-///
-/// On macOS, showing puts it on the Space in front, full-screen apps included. Tao sets "all
-/// Spaces" once at launch, but a hidden window misses Spaces made after that (a window going
-/// full screen) and comes up on its old Space, covered. Clearing and setting the behavior again
-/// before each show puts it back on every Space; full-screen auxiliary lets it sit over a
-/// full-screen app. `orderFrontRegardless` orders it in without making it key or activating
-/// Silas, which runs in the background.
-fn place_overlay(app: &AppHandle, w: tauri::WebviewWindow, enabled: bool) {
-    let app = app.clone();
-    let _ = w.clone().run_on_main_thread(move || {
-        // Only the status lock, held for a copy: no thread holds it while waiting on this one.
-        let show = enabled
-            && app
-                .try_state::<Shared>()
-                .is_some_and(|c| overlay_status(c.status().0));
-        #[cfg(target_os = "macos")]
-        order_overlay(&w, show);
-        #[cfg(not(target_os = "macos"))]
-        let _ = if show { w.show() } else { w.hide() };
-    });
-}
-
-/// Runs on the main thread. The window is looked up here, so it can't be gone by the time
-/// it's used.
-#[cfg(target_os = "macos")]
-fn order_overlay(w: &tauri::WebviewWindow, show: bool) {
-    use objc2::msg_send;
-    use objc2::runtime::AnyObject;
-    // NSWindowCollectionBehavior: CanJoinAllSpaces | Stationary | IgnoresCycle |
-    // FullScreenAuxiliary.
-    const BEHAVIOR: usize = 1 | 1 << 4 | 1 << 6 | 1 << 8;
-    let Ok(ns) = w.ns_window() else { return };
-    let Some(win) = (unsafe { (ns as *mut AnyObject).as_ref() }) else {
-        return;
-    };
-    unsafe {
-        if !show {
-            let _: () = msg_send![win, orderOut: std::ptr::null::<AnyObject>()];
-            return;
-        }
-        // Already up (Recording, then Writing): leave its Spaces alone so it can't blink.
-        let visible: bool = msg_send![win, isVisible];
-        if !visible {
-            let _: () = msg_send![win, setCollectionBehavior: 0usize];
-            let _: () = msg_send![win, setCollectionBehavior: BEHAVIOR];
-        }
-        let _: () = msg_send![win, orderFrontRegardless];
-    }
 }
 
 #[cfg(test)]

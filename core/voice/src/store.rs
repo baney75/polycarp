@@ -5,9 +5,21 @@ use std::path::{Path, PathBuf};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
+static DATA_DIR: parking_lot::RwLock<Option<PathBuf>> = parking_lot::RwLock::new(None);
+
+/// Keep all data under `dir` instead of the default per-user folder. Call before `Core::new`.
+/// Tests and the native Mac app use this; the Tauri app keeps the default.
+pub fn set_data_dir(dir: Option<PathBuf>) {
+    *DATA_DIR.write() = dir;
+}
+
 pub fn data_dir() -> PathBuf {
-    let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
-    let dir = base.join("Silas");
+    let dir = match DATA_DIR.read().clone() {
+        Some(d) => d,
+        None => dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Silas"),
+    };
     let _ = fs::create_dir_all(&dir);
     dir
 }
