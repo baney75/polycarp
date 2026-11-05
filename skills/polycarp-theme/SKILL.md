@@ -24,8 +24,8 @@ One theme file drives every Polycarp product. Change it with the `polycarp theme
 4. **Read refusals, then adjust.** A refusal changes nothing. With `--json`, `error.data.errors` lists each
    `path`, and for contrast the `actual` and `needs` ratios. Pick other colors. Never loosen the rules or
    edit the files in `current/` by hand.
-5. **Preview.** `polycarp theme preview` writes an HTML file (light and dark side by side) and prints its
-   path. Open it and take a screenshot. Show the user.
+5. **Preview.** `polycarp theme preview` writes an HTML file (light and dark side by side) into the config
+   folder's `previews/` and prints its path. Open it and take a screenshot. Show the user.
 6. **Undo.** If they dislike it, `polycarp theme undo` steps back one change, including the theme file.
    `polycarp theme reset` always works. Set `POLYCARP_CALLER=agent:<your name>` so history says it was you.
 

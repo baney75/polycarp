@@ -2646,6 +2646,16 @@ fn dock_labels_scale_with_the_dock_so_all_nine_fit() {
 }
 
 #[test]
+fn agents_md_keeps_the_check_sentence_with_the_done_checks_and_themes_after_it() {
+    let agents = repo_text("AGENTS.md");
+    let check = agents.find("`./check.sh` at the root").unwrap();
+    let themes = agents.find("## Themes").unwrap();
+    let done = agents.find("## Done checks").unwrap();
+    assert!(done < check && check < themes);
+    assert!(agents.contains("POLYCARP_CONFIG_DIR"));
+}
+
+#[test]
 fn every_builtin_previews_in_both_modes() {
     let b = Box::new();
     for name in BUILTINS {

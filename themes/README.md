@@ -186,14 +186,14 @@ density = "compact"
 | `polycarp theme get <path> [name]` | One resolved value, such as `dark.accent` or `surface.site.light.accent` |
 | `polycarp theme change <path> <value>` | Change one value. On a built-in, makes `<name>-custom` first |
 | `polycarp theme apply <file\|-> [--name <n>] [--no-activate]` | Save a whole theme (TOML or JSON) and use it |
-| `polycarp theme preview [name] [--mode light\|dark\|both] [--surface <s>] [--out <file>]` | Write an HTML page showing the theme on product UI |
+| `polycarp theme preview [name] [--mode light\|dark\|both] [--surface <s>] [--out <file>]` | Write an HTML page showing the theme on product UI, by default into `<config>/previews/` (private to you). `--out` will not replace a file that is not itself a preview |
 | `polycarp theme set <name> [--mode auto\|light\|dark]` | Use a theme and write the files |
 | `polycarp theme accent <#rrggbb> [--mode light\|dark]` | Override the accent. `--clear` removes it |
-| `polycarp theme create <name> --extends <base> [--force]` | Write a new user theme |
+| `polycarp theme create <name> --extends <base> [--force]` | Write a new user theme. Not one that extends itself or loops. `undo` removes it or restores the old one |
 | `polycarp theme edit-path <name>` | Print the file's path |
-| `polycarp theme delete <name>` | Delete a user theme. Not the current one |
+| `polycarp theme delete <name>` | Delete a user theme. Not the current one or one it extends. `undo` brings it back |
 | `polycarp theme validate <file>` | Exit 0 if the file is valid, 1 if not. Prints every problem |
-| `polycarp theme export <css\|json> [name] [--surface <name>]` | Print the resolved theme |
+| `polycarp theme export <css\|json> [name] [--surface <name>]` | Print the resolved theme. With no name it is the current one in its forced mode, as in `current/`; JSON has `mode` |
 | `polycarp theme undo` | Step back one change |
 | `polycarp theme history [--json]` | Past changes, newest first |
 | `polycarp theme reset` | Back to `polycarp`, mode `auto`, no accent |
@@ -208,6 +208,11 @@ in both light and dark, so set the two modes one at a time: `accent <color> --mo
 `accent <color> --mode dark`. `set` keeps your accent if it still reads on the new theme. If not, it clears
 it and says so.
 
+An accent from `theme accent` applies to every product, with one exception: a value a theme sets itself
+under `[surface.<product>.<mode>]` wins for that product and mode. So `change surface.browser.light.accent
+<color>` changes only the browser's light accent and leaves your global accent alone. A plain
+`change light.accent` replaces the global override for that mode, and says so.
+
 ## What gets written
 
 `set`, `accent`, `undo` and `reset` write these files in the config folder:
@@ -218,7 +223,14 @@ it and says so.
 
 Products read these files once their adapters land. Until then only the files change.
 
-Files are written to a temporary name and then renamed, so a reader never sees half a file.
+Files are written to a temporary name and then renamed, so a reader never sees half a file. If one of the
+files is a symbolic link, the file it points to is written and the link stays. An existing file keeps its
+mode; a new one is 0644.
+
+Every command that changes something takes a lock first: a `.lock` file in the config folder, made
+exclusively. Another change waits up to 5 seconds, then fails with the code `busy`. A lock more than 10
+seconds old is taken as left by a crash and removed. `reset` still works if it cannot get the lock; it
+warns and goes on. So several programs can change one theme at once and none of the changes is lost.
 
 ## CSS
 
@@ -237,8 +249,16 @@ Before every change, the old `config.toml` is saved in `history/`. The last 50 a
 with the time and who made the change. Set `POLYCARP_CALLER` to name yourself. An agent should use
 `agent:<name>`. The default is `user`.
 
-`undo` restores the newest saved file and removes it from history, so repeating `undo` goes back further.
-`reset` and `undo` work even if a user theme or `config.toml` is broken. If `config.toml` is invalid, the
+`undo` puts back only the `[appearance]` table of the newest saved file, keeps any other table now in
+`config.toml`, and removes that entry from history, so repeating `undo` goes back further. If the file did
+not exist before, `[appearance]` is removed (and the file too, if nothing else is in it). It also puts back
+a theme file that change edited, created or deleted, and says who made the change it undid. If a history
+entry is damaged it says so and changes nothing. `create --force` and `delete` are recorded too, so `undo`
+brings the old theme back.
+`reset` and `undo` work even if a user theme or `config.toml` is broken. Once `config.toml` is safe,
+`reset` turns a history, lock or `current/` failure into a warning.
+`accent` and `change` refuse while the settings in force are broken (the default theme is in use), and list
+the problems, so they never quietly replace your settings. Fix the file, or run `reset`. `set` and `reset` work. If `config.toml` is invalid, the
 products and `polycarp theme current` use the default theme and say what was wrong. Nothing crashes.
 
 ## For agents
@@ -288,7 +308,7 @@ Exit codes: 0 ok, 1 refused or invalid, 2 usage.
 `error.data.errors` is always a list of `{path, message}`, with `actual` and `needs` when there are figures
 (contrast ratios are numbers). For a bad value, `actual` is what was sent and `needs` says what is allowed.
 Codes: `invalid_args` (exit 2), `invalid_theme`, `contrast`, `invalid_value`, `unknown_theme`, `unknown_path`,
-`builtin_read_only`, `exists`, `current_theme`, `nothing_to_undo`, `io_error`, `config_error`. Warnings and notes
+`builtin_read_only`, `exists`, `current_theme`, `nothing_to_undo`, `io_error`, `config_error`, `busy`. Warnings and notes
 (such as "a `-custom` theme was made") come in `data.warnings` and `data.notes`.
 
 ### `polycarp mcp`
@@ -305,6 +325,10 @@ descriptions give the workflow above. Each tool returns the `--json` envelope as
 | `theme_validate` | `validate`, for a draft theme passed in, without saving |
 | `theme_preview`, `theme_export` | `preview`, `export` |
 | `theme_undo`, `theme_history`, `theme_reset` | `undo`, `history`, `reset` |
+
+`theme_preview` takes no `out`: over MCP it writes only into `<config>/previews/`. Its annotations say it
+writes (`readOnlyHint` false), replaces nothing but its own pages (`destructiveHint` false) and repeats safely
+(`idempotentHint` true).
 
 Configure a client with the command `polycarp mcp` and no arguments.
 

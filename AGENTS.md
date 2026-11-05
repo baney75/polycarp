@@ -20,14 +20,14 @@ Run each from its directory.
   `(cd cli && node --test test/skill-lint.test.mjs)`. Do not run `browser/check.sh` (it writes with
   `--write`), `./dev.sh` or `npm run dev`. Build only with `TABKYRA_NO_BUMP=1 TABKYRA_OUT_DIR=<scratch dir>`.
 
+`./check.sh` at the root runs all three in order and continues past a failure.
+
 ## Themes
 
 Themes live in `themes/` (one TOML file each, built into the `polycarp` command) and must validate:
 `polycarp theme validate themes/<name>.toml`. The `cli/` tests do this for every file. Format and rules are in
 `themes/README.md`. Products take every color, radius, font and duration from the theme, never from a
 hard-coded value. When you test the `theme` command by hand, set `POLYCARP_CONFIG_DIR` to a temp absolute path, never your real config folder.
-
-`./check.sh` at the root runs all three in order and continues past a failure.
 
 ## Siblings
 
