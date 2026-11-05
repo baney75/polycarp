@@ -454,6 +454,26 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertEqual(seen.themes.last??.name, "blocks")
     }
 
+    func testRestoringReadPermissionWithoutRewritingTheFileReadsItAgain() throws {
+        let seen = Seen()
+        let w = watcher(seen)
+        try PolycarpFixtures.still_water.write(toFile: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(chmod(file, 0o000), 0)
+        defer { _ = chmod(file, 0o644) }
+        w.tickNow()
+        XCTAssertNil(seen.themes.last!, "unreadable: no theme")
+        let before = seen.themes.count
+        w.tickNow()
+        XCTAssertEqual(seen.themes.count, before, "still unreadable and unchanged: nothing new")
+        XCTAssertEqual(chmod(file, 0o644), 0)
+        w.tickNow()
+        XCTAssertEqual(seen.themes.last??.name, "still-water", "same mtime, size and inode, but the mode changed")
+        // And the other way: a theme in force stops when its file becomes unreadable.
+        XCTAssertEqual(chmod(file, 0o000), 0)
+        w.tickNow()
+        XCTAssertNil(seen.themes.last!)
+    }
+
     func testTheTimerPollsOnItsOwnQueueNotTheMainThread() throws {
         let seen = Seen()
         let ran = expectation(description: "delivered")

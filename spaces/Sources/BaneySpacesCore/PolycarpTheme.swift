@@ -358,15 +358,18 @@ public enum PolycarpThemeFile {
         }
     }
 
-    /// What one stat says about the file: when it changed, how big, which file. Nil when it isn't there.
+    /// What one stat says about the file: when it changed, how big, which file, and its mode and status-change
+    /// time (a `chmod` moves neither mtime, size nor inode, but it changes these two). Nil when it isn't there.
     public struct Stamp: Equatable, Sendable {
         let sec: Int, nsec: Int, size: Int64, inode: UInt64
+        let mode: UInt32, csec: Int, cnsec: Int
     }
 
     public static func stamp(_ path: String) -> Stamp? {
         var st = stat()
         guard stat(path, &st) == 0 else { return nil }
-        return Stamp(sec: Int(st.st_mtimespec.tv_sec), nsec: Int(st.st_mtimespec.tv_nsec), size: Int64(st.st_size), inode: UInt64(st.st_ino))
+        return Stamp(sec: Int(st.st_mtimespec.tv_sec), nsec: Int(st.st_mtimespec.tv_nsec), size: Int64(st.st_size), inode: UInt64(st.st_ino),
+                     mode: UInt32(st.st_mode), csec: Int(st.st_ctimespec.tv_sec), cnsec: Int(st.st_ctimespec.tv_nsec))
     }
 }
 
