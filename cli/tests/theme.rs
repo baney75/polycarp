@@ -3712,18 +3712,10 @@ fn off_names_the_theme_it_kept_and_says_only_what_was_verified() {
     fs::write(b.cfg().join("themes/mine.toml"), "this is [not toml").unwrap();
     let said = b.ok(&["off"]);
     assert!(said.contains("last theme: mine"), "{said}");
-    assert!(
-        said.contains(
-            "The theme files are removed. Apps that read them go back to their own look."
-        ),
-        "{said}"
-    );
+    assert!(said.contains(OFF_TEXT), "{said}");
     let (_, v) = b.jrun(&["off"]);
     assert_eq!(v["data"]["theme"], "mine", "{v}");
-    assert_eq!(
-        v["data"]["note"],
-        "The theme files are removed. Apps that read them go back to their own look."
-    );
+    assert_eq!(v["data"]["note"], OFF_TEXT);
     assert!(!v["data"]["note"]
         .as_str()
         .unwrap()
@@ -3783,4 +3775,127 @@ fn undo_blocked_by_an_unreadable_theme_names_force() {
         "{v}"
     );
     b.ok(&["undo", "--force"]);
+}
+
+const OFF_TEXT: &str = "The theme files are gone from current/. Apps that read them use their own look when they next check.";
+
+/// "removed" is said only for what this run removed.
+#[test]
+fn off_says_removed_only_for_files_this_run_removed() {
+    let b = Box::new();
+    b.ok(&["set", "calm"]);
+    let first = b.ok(&["off"]);
+    assert!(first.contains("removed "), "{first}");
+    let again = b.ok(&["off"]);
+    assert!(!again.contains("removed "), "{again}");
+    assert!(again.contains("no theme files were in current/"), "{again}");
+}
+
+#[cfg(unix)]
+fn running_as_root() -> bool {
+    Command::new("id")
+        .arg("-u")
+        .output()
+        .map(|o| out(&o).trim() == "0")
+        .unwrap_or(false)
+}
+
+/// An unsearchable current/ must not look empty.
+#[cfg(unix)]
+#[test]
+fn off_does_not_take_an_unsearchable_current_folder_for_empty() {
+    use std::os::unix::fs::PermissionsExt;
+    if running_as_root() {
+        return;
+    }
+    let b = Box::new();
+    b.ok(&["set", "calm"]);
+    let cur = b.cfg().join("current");
+    fs::set_permissions(&cur, fs::Permissions::from_mode(0o000)).unwrap();
+    let o = b.run(&["theme", "off"]);
+    fs::set_permissions(&cur, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_ne!(code(&o), 0, "{}", out(&o));
+    let all = format!("{}{}", out(&o), err(&o));
+    assert!(all.contains("theme.json"), "{all}");
+    assert!(
+        !all.contains("no theme files") && !all.contains("gone from current"),
+        "{all}"
+    );
+}
+
+/// A failed `off` still tells the person what already happened.
+#[test]
+fn a_stuck_file_error_keeps_the_notes_and_the_removed_list() {
+    let b = Box::new();
+    b.ok(&["set", "calm"]);
+    fs::write(b.state_file(), "[appearance\ntheme = ").unwrap();
+    let stuck = b.cfg().join("current/theme.json");
+    fs::remove_file(&stuck).unwrap();
+    fs::create_dir(&stuck).unwrap();
+    fs::write(stuck.join("keep"), "x").unwrap();
+    let (c, v) = b.jrun(&["off"]);
+    assert_eq!(c, 1, "{v}");
+    let m = v["error"]["message"].as_str().unwrap();
+    assert!(
+        m.contains("theme.json") && m.contains("Removed:") && m.contains("history"),
+        "{m}"
+    );
+    assert!(m.contains("spaces.css"), "{m}");
+}
+
+#[test]
+fn undo_force_hint_does_not_promise_a_copy_and_delete_does() {
+    let b = Box::new();
+    b.ok(&["create", "base", "--extends", "calm"]);
+    b.write_theme("kid", "extends = [oops");
+    let (_, v) = b.jrun(&["undo"]);
+    let hint = v["error"]["suggestion"].as_str().unwrap();
+    assert!(
+        hint.contains("keeps no copy") && !hint.contains("is kept in history"),
+        "{hint}"
+    );
+    let b = Box::new();
+    b.ok(&["create", "base", "--extends", "calm"]);
+    b.write_theme("kid", "extends = [oops");
+    let (_, v) = b.jrun(&["delete", "base"]);
+    assert!(
+        v["error"]["suggestion"]
+            .as_str()
+            .unwrap()
+            .contains("brings it back"),
+        "{v}"
+    );
+}
+
+/// A theme whose file can't be read is not "unparsable"; it keeps blocking.
+#[cfg(unix)]
+#[test]
+fn an_unreadable_theme_file_still_blocks_a_delete() {
+    use std::os::unix::fs::PermissionsExt;
+    if running_as_root() {
+        return;
+    }
+    let b = Box::new();
+    b.ok(&["create", "base", "--extends", "calm"]);
+    b.write_theme("kid", "extends = [oops");
+    let base = b.cfg().join("themes/base.toml");
+    fs::set_permissions(&base, fs::Permissions::from_mode(0o000)).unwrap();
+    let (c, v) = b.jrun(&["delete", "base"]);
+    fs::set_permissions(&base, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(c, 1, "{v}");
+    assert!(base.exists());
+}
+
+/// Deleting an unparsable theme keeps its bytes in history; undo restores them exactly.
+#[test]
+fn deleting_an_unparsable_theme_keeps_its_exact_bytes() {
+    let b = Box::new();
+    b.write_theme("a", "extends = [oops\n# mine\n");
+    b.write_theme("b", "also [broken");
+    b.ok(&["delete", "a"]);
+    b.ok(&["undo"]);
+    assert_eq!(
+        fs::read_to_string(b.cfg().join("themes/a.toml")).unwrap(),
+        "extends = [oops\n# mine\n"
+    );
 }

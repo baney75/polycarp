@@ -19,9 +19,9 @@ mod edit;
 mod preview;
 mod schema;
 
-/// What `theme off` has verified: the files are gone. What each app does is its own test.
-const OFF_NOTE: &str =
-    "The theme files are removed. Apps that read them go back to their own look.";
+/// What `theme off` can say: the state of the files, which it checked. Whether an app changes,
+/// and when, is up to that app, so the text says only what the apps are expected to do.
+const OFF_NOTE: &str = "The theme files are gone from current/. Apps that read them use their own look when they next check.";
 
 const NOTE: &str =
     "Products read these files once their adapters land. Until then only the files change.";
@@ -924,7 +924,7 @@ struct State {
     mode: String,
     accent_light: Option<String>,
     accent_dark: Option<String>,
-    /// False after `theme off`: the files in `current/` are removed and the apps use their own look.
+    /// False after `theme off`: the files in `current/` are removed.
     enabled: bool,
 }
 
@@ -1310,7 +1310,8 @@ fn remaining_theme_files(cfg: &Cfg) -> Vec<PathBuf> {
     names
         .into_iter()
         .map(|n| dir.join(n))
-        .filter(|p| fs::symlink_metadata(p).is_ok())
+        // Only NotFound means gone. Any other error (no permission to look) counts as remaining.
+        .filter(|p| !matches!(fs::symlink_metadata(p), Err(e) if e.kind() == std::io::ErrorKind::NotFound))
         .collect()
 }
 
@@ -2524,7 +2525,7 @@ fn turn_on(st: &mut State, notes: &mut Vec<String>) {
     }
 }
 
-/// Removes `current/theme.json` and the css files so each app uses its own look. The choice is
+/// Removes `current/theme.json` and the css files. The choice is
 /// kept in `config.toml` as `enabled = false`, recorded in history, so `undo` and `on` restore it.
 /// It works even when the theme or `config.toml` is broken: removing files needs no valid theme.
 pub(crate) fn op_off(c: &Ctx) -> Res {
@@ -2579,13 +2580,30 @@ fn set_enabled(c: &Ctx, want: bool) -> Res {
         st.enabled = want;
         let mut out = commit(c, Some(&st), &format!("theme {word}"), None)?;
         let left = remaining_theme_files(&c.cfg);
-        if !want && !left.is_empty() {
-            return Err(io_err(format!(
-                "the settings now say the theme is off, but these files could not be removed, so apps may still read them: {}",
-                left.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
-            )));
-        }
         out.notes.splice(0..0, notes);
+        if !want && !left.is_empty() {
+            // The settings and history have changed, so say everything that happened.
+            let removed = out.data["removed"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Json::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            let mut said = format!(
+                "the settings now say the theme is off, but these files could not be removed, so apps may still read them: {}.",
+                left.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+            );
+            if !removed.is_empty() {
+                said.push_str(&format!(" Removed: {removed}."));
+            }
+            for n in out.notes.iter().chain(warnings.iter()) {
+                said.push_str(&format!(" Also: {n}."));
+            }
+            return Err(io_err(said));
+        }
         out.with(json!({"changed": true}))
     };
     for w in warnings {
@@ -2936,6 +2954,12 @@ fn dependents_of(cfg: &Cfg, name: &str) -> Result<(Vec<String>, Vec<String>), Ap
     Ok((found, unreadable))
 }
 
+/// True only when the theme's file was read fine and its text does not parse. A file that can't
+/// be read is not this.
+fn unparsable(cfg: &Cfg, name: &str) -> bool {
+    fs::read_to_string(cfg.theme_path(name)).is_ok_and(|text| parse_toml(&text).is_err())
+}
+
 /// Refuses to remove theme `name` while another theme extends it. A theme file that can't be
 /// read might extend it, so that refuses too, unless `force`, or unless `name` is itself
 /// unparsable (then only other unreadable themes are in the way). `hint` is the way out.
@@ -2945,12 +2969,13 @@ fn check_dependents(
     force: bool,
     what: &str,
     hint: &str,
+    safe: &str,
 ) -> Result<(), ApiErr> {
     let (found, unreadable) = dependents_of(cfg, name)?;
     if !found.is_empty() {
         return Err(in_use(name, &found, what));
     }
-    if unreadable.is_empty() || force || load_raw(cfg, name).is_err() {
+    if unreadable.is_empty() || force || unparsable(cfg, name) {
         return Ok(());
     }
     Err(io_err(format!(
@@ -2958,7 +2983,7 @@ fn check_dependents(
         unreadable.join("; ")
     ))
     .suggest(format!(
-        "Fix or delete the unreadable theme, or use `{hint}` to go on anyway. A copy is kept in history."
+        "Fix or delete the unreadable theme, or use `{hint}` to go on anyway. {safe}"
     )))
 }
 
@@ -3016,6 +3041,7 @@ pub(crate) fn op_delete(c: &Ctx, name: &str, force: bool) -> Res {
         force,
         "deleted",
         &format!("polycarp theme delete {name} --force"),
+        "A copy of the theme is kept in history, so `polycarp theme undo` brings it back.",
     )?;
     let mut out = commit(c, None, &format!("theme delete {name}"), Some((name, None)))?;
     out.text = format!("deleted {}\n{}", path.display(), out.text);
@@ -3547,14 +3573,21 @@ pub(crate) fn op_undo(c: &Ctx, force: bool) -> Res {
     // Undoing a create removes the theme file. Refuse if another theme extends it, as `delete` does.
     if let (Some(name), true) = (last.theme_name.as_deref(), last.theme_absent) {
         if !force {
-            check_dependents(&c.cfg, name, false, "undone", "polycarp theme undo --force")
-                .map_err(|e| {
-                    if e.code == "in_use" {
-                        e.suggest("Use `polycarp theme undo --force` to remove it anyway.")
-                    } else {
-                        e
-                    }
-                })?;
+            check_dependents(
+                &c.cfg,
+                name,
+                false,
+                "undone",
+                "polycarp theme undo --force",
+                "Undo keeps no copy of the theme file.",
+            )
+            .map_err(|e| {
+                if e.code == "in_use" {
+                    e.suggest("Use `polycarp theme undo --force` to remove it anyway.")
+                } else {
+                    e
+                }
+            })?;
         }
     }
 

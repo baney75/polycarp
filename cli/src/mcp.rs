@@ -217,7 +217,7 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "theme_off",
-            description: "Turn the theme off. Removes current/theme.json and the css files and records enabled = false; your themes and settings stay on disk. Apps that read those files go back to their own look. Use it when the person wants the apps' own look back. It fails, naming the files left, if any file cannot be removed. theme_on or theme_undo brings the theme back.",
+            description: "Turn the theme off. Removes current/theme.json and the css files and records enabled = false; your themes and settings stay on disk. Apps that read those files use their own look when they next check. Use it when the person wants the apps' own look back. It fails, naming the files left, if any file cannot be removed. theme_on or theme_undo brings the theme back.",
             schema: obj(json!({}), &[]),
             read_only: false,
             destructive: true,
