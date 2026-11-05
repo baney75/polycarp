@@ -470,9 +470,9 @@ final class Engine {
     /// window into its tab group), a second Ghostty started with `-e` shows "Allow Ghostty to
     /// execute?" in the middle of your screen every time, and one started without `-e` opens no
     /// window until it's brought forward. Terminal runs a `.command` script from behind with no
-    /// prompt, in a process that can't stall your terminals. `opened` gets Terminal's pid and the
+    /// prompt, in a process that can't stall your terminals. `opened` gets Terminal's pid, the
     /// script's name, which its window carries in its title, to claim it.
-    func newAgentTerminal(in dir: String?, command: String, opened: @escaping (pid_t, String) -> Void) -> Bool {
+    func newAgentTerminal(in dir: String?, command: String, opened: @escaping (_ pid: pid_t, _ title: String, _ startedNewProcess: Bool) -> Void) -> Bool {
         guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: TerminalChoice.terminal) else { return false }
         let folder = Wire.supportDir.appendingPathComponent("agent-runs")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -483,13 +483,13 @@ final class Engine {
         let body = "#!/bin/zsh -l\n\(cd)\(command)\nexec \"${SHELL:-/bin/zsh}\" -l\n"
         guard FileManager.default.createFile(atPath: script.path, contents: Data(body.utf8), attributes: [.posixPermissions: 0o700]) else { return false }
         let running = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == TerminalChoice.terminal }
-        if let running { opened(running.processIdentifier, name) }
+        if let running { opened(running.processIdentifier, name, false) }
         let cfg = NSWorkspace.OpenConfiguration()
         cfg.activates = false
         cfg.addsToRecentItems = false
         NSWorkspace.shared.open([script], withApplicationAt: terminal, configuration: cfg) { app, _ in
             guard let app, running == nil else { return }
-            DispatchQueue.main.async { opened(app.processIdentifier, name) }
+            DispatchQueue.main.async { opened(app.processIdentifier, name, true) }
         }
         // Terminal has read it by then; the folder doesn't fill up.
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) { try? FileManager.default.removeItem(at: script) }

@@ -99,6 +99,10 @@ public enum SocketClaim {
         return connected == 0
     }
 
+    /// Whether any of `paths` has a process answering: how a client tells "not running" (nothing answers) from "running
+    /// but slow" (something does). A socket file that is merely there proves nothing; a crash leaves one.
+    public static func anyLive(_ paths: [String]) -> Bool { paths.contains { isLive(path: $0) } }
+
     /// Makes `path` ready to bind: leaves a live socket alone, removes a stale file.
     public static func prepare(path: String) -> State {
         guard FileManager.default.fileExists(atPath: path) else { return .free }

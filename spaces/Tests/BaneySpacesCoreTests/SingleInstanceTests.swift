@@ -174,6 +174,17 @@ final class SingleInstanceTests: XCTestCase {
         XCTAssertTrue(SocketClaim.isLive(path: path))
     }
 
+    func testTimeoutVersusNotRunningFollowsWhetherAnythingAnswers() throws {
+        let live = dir.appendingPathComponent("a.sock").path, stale = dir.appendingPathComponent("b.sock").path
+        close(listen(stale))
+        XCTAssertFalse(SocketClaim.anyLive([stale]), "a leftover file is not a running app")
+        let fd = listen(live); defer { close(fd) }
+        XCTAssertTrue(SocketClaim.anyLive([stale, live]))
+        let cli = try Repo.code("Sources/baneyspaces-cli/Agent.swift")
+        XCTAssertTrue(cli.contains("SocketClaim.anyLive(Wire.socketCandidates())"))
+        XCTAssertFalse(cli.contains("fileExists(atPath: $0)"), "a file that is there decides nothing")
+    }
+
     func testALeftoverSocketFileIsRemoved() {
         let path = dir.appendingPathComponent("p.sock").path
         close(listen(path))   // the process is gone, the file stays

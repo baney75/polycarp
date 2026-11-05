@@ -23,12 +23,14 @@ final class AgentLaunchFocus {
 
     func watch(bundle: String, excluding running: Set<pid_t>, for seconds: TimeInterval) {
         seed()
-        state.watch(bundle: bundle, excluding: running, until: Date().addingTimeInterval(seconds))
+        let now = Date()
+        state.watch(bundle: bundle, excluding: running, now: now, until: now.addingTimeInterval(seconds))
     }
 
     func watch(pid: pid_t, for seconds: TimeInterval) {
         seed()
-        state.watch(pid: pid, until: Date().addingTimeInterval(seconds))
+        let now = Date()
+        state.watch(pid: pid, now: now, until: now.addingTimeInterval(seconds))
     }
 
     private func activated(_ app: NSRunningApplication) {

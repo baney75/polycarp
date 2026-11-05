@@ -141,11 +141,13 @@ public struct FocusReturn: Equatable, Sendable {
     public static let maxReturns = 3
 
     private struct BundleWatch: Equatable, Sendable { var until: Date; var excluding: Set<Int32> }
+    /// How many times a process was given the keyboard back, and until when that count matters (its watch's end).
+    private struct Returned: Equatable, Sendable { var count: Int; var until: Date }
     /// The app you were last in, never one an agent started.
     public private(set) var lastPerson: Int32?
     private var pids: [Int32: Date] = [:]
     private var bundles: [String: BundleWatch] = [:]
-    private var returns: [Int32: Int] = [:]
+    private var returns: [Int32: Returned] = [:]
 
     public init(lastPerson: Int32? = nil) { self.lastPerson = lastPerson }
 
@@ -153,11 +155,27 @@ public struct FocusReturn: Equatable, Sendable {
         if lastPerson == nil, !agentOwned { lastPerson = front }
     }
 
-    public mutating func watch(pid: Int32, until: Date) { pids[pid] = until }
+    /// Forgets every watch that has ended, and the return counts that went with them. Done first by every call, with
+    /// the caller's clock, so an old watch can't leak into a new one.
+    private mutating func expire(now: Date) {
+        pids = pids.filter { $0.value > now }
+        bundles = bundles.filter { $0.value.until > now }
+        returns = returns.filter { $0.value.until > now }
+    }
+
+    /// A new watch on a process starts its count again: a process that used up its returns in an earlier launch gets a
+    /// fresh three.
+    public mutating func watch(pid: Int32, now: Date, until: Date) {
+        expire(now: now)
+        pids[pid] = until
+        returns[pid] = nil
+    }
 
     /// Before the launch's own process is known. Copies already running are yours and aren't watched. A second launch
-    /// of the same app keeps the first one's list, so the first launch's process stays watched.
-    public mutating func watch(bundle: String, excluding running: Set<Int32>, until: Date) {
+    /// of the same app keeps the first one's list while that watch is still on, so the first launch's process stays
+    /// watched; one that has ended is not carried over.
+    public mutating func watch(bundle: String, excluding running: Set<Int32>, now: Date, until: Date) {
+        expire(now: now)
         let earlier = bundles[bundle]?.excluding
         bundles[bundle] = BundleWatch(until: until, excluding: earlier.map { $0.intersection(running) } ?? running)
     }
@@ -165,17 +183,18 @@ public struct FocusReturn: Equatable, Sendable {
     /// `frontNow`: what's frontmost as this runs. The notification can arrive late, and if the agent's app has already
     /// lost the front there's nothing to give back.
     public mutating func activated(pid: Int32, bundle: String?, agentOwned: Bool, frontNow: Int32?, now: Date) -> Decision {
-        pids = pids.filter { $0.value > now }
-        bundles = bundles.filter { $0.value.until > now }
-        let byBundle = bundle.flatMap { bundles[$0] }.map { !$0.excluding.contains(pid) } ?? false
+        expire(now: now)
+        let bundleWatch = bundle.flatMap { bundles[$0] }
+        let byBundle = bundleWatch.map { !$0.excluding.contains(pid) } ?? false
         guard pids[pid] != nil || byBundle else {
             if !agentOwned { lastPerson = pid }
             return .none
         }
         guard frontNow == pid, let target = lastPerson, target != pid else { return .none }
-        let count = returns[pid, default: 0]
+        let count = returns[pid]?.count ?? 0
         guard count < Self.maxReturns else { return .none }
-        returns[pid] = count + 1
+        let until = max(pids[pid] ?? .distantPast, byBundle ? (bundleWatch?.until ?? .distantPast) : .distantPast)
+        returns[pid] = Returned(count: count + 1, until: until)
         return .returnTo(target)
     }
 }

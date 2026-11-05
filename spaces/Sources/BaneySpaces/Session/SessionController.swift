@@ -469,6 +469,17 @@ final class SessionController {
         }
     }
 
+    /// An agent just started this process (`agent open` for an app, `agent run` for a Terminal): it is the agent's, its
+    /// first windows go to the agent workspace as a new process's (`newProcess: true`, which holds even if the app
+    /// brings itself forward as it launches), and for a few seconds it can't keep your keyboard (`AgentLaunchFocus`).
+    func adoptAgentStartedProcess(_ pid: pid_t, workspace n: Int, title: String?, host h: AgentHost, grantAccess: Bool) {
+        AgentOwned.shared.add(pid)
+        if grantAccess { AgentAccess.shared.grant(pid) }
+        AgentActivity.shared.markLaunch(pid: pid, for: 8)
+        h.claim(pid, n, true, title)
+        AgentLaunchFocus.shared.watch(pid: pid, for: 8)
+    }
+
     private var notReady: Wire.Reply { .init(ok: false, error: "Polycarp isn't ready for settings yet; try again in a moment") }
 
     private func setting(_ r: Wire.Request) -> Wire.Reply {
@@ -610,11 +621,7 @@ final class SessionController {
                 AgentActivity.shared.clearLaunch(bundle: bundle)
                 // Not a new process (the app ran this launch inside Donovan's): leave it entirely alone.
                 guard !before.contains(app.processIdentifier) else { return }
-                AgentOwned.shared.add(app.processIdentifier)
-                if !separate { AgentAccess.shared.grant(app.processIdentifier) }
-                AgentActivity.shared.markLaunch(pid: app.processIdentifier, for: 8)
-                h.claim(app.processIdentifier, n, true, nil)
-                AgentLaunchFocus.shared.watch(pid: app.processIdentifier, for: 8)
+                adoptAgentStartedProcess(app.processIdentifier, workspace: n, title: nil, host: h, grantAccess: !separate)
                 if files.isEmpty {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                         // The mode may have narrowed in the 1.5 s since the request was let in.
@@ -648,7 +655,16 @@ final class SessionController {
             let cmd = args.drop { $0 != "--" }.dropFirst().joined(separator: " ")
             guard !cmd.isEmpty else { return .init(ok: false, error: "usage: polycarp-spaces agent run [--dir DIR] -- <command>") }
             let dir = args.firstIndex(of: "--dir").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
-            guard engine.newAgentTerminal(in: dir, command: cmd, opened: { pid, name in AgentOwned.shared.add(pid); h.claim(pid, n, false, name) }) else {
+            guard engine.newAgentTerminal(in: dir, command: cmd, opened: { [weak self] pid, name, startedNew in
+                if startedNew {
+                    // A Terminal this run started: the same treatment as an app `agent open` started.
+                    self?.adoptAgentStartedProcess(pid, workspace: n, title: name, host: h, grantAccess: false)
+                } else {
+                    // Your running Terminal: yours, so only its next window is claimed.
+                    AgentOwned.shared.add(pid)
+                    h.claim(pid, n, false, name)
+                }
+            }) else {
                 return .init(ok: false, error: "couldn't start a terminal for it")
             }
             return .init(ok: true, info: ["workspace": "\(n)", "command": cmd])

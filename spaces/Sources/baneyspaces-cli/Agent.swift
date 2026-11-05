@@ -22,8 +22,9 @@ enum HandsCLI {
             return .failure(HandsError(.badArguments, "couldn't encode the request", suggestion: "Check the arguments.", retry: .never))
         }
         guard let reply = Wire.call(Wire.Request(op: .hands, text: text), timeout: timeout) else {
-            // The socket is there but the answer didn't come in time: the action may have landed.
-            if Wire.socketCandidates().contains(where: { FileManager.default.fileExists(atPath: $0) }) {
+            // Something answered the connection but the reply didn't come in time: the action may have landed. A socket
+            // file with nobody behind it (a crash leaves one) is not running.
+            if SocketClaim.anyLive(Wire.socketCandidates()) {
                 let acts = HandsTools.tool(verb: request.verb)?.acts ?? false
                 return .failure(HandsError(.timeout, "Polycarp didn't answer in time", suggestion: acts
                     ? "The action may have landed: read the element back with `polycarp-spaces agent get` before trying again."

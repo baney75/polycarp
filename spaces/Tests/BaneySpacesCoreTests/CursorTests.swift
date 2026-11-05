@@ -1006,14 +1006,14 @@ final class FocusReturnTests: XCTestCase {
 
     func testAnAgentAppThatTookTheKeyboardGivesItBack() {
         var f = FocusReturn(lastPerson: 10)
-        f.watch(pid: 20, until: later)
+        f.watch(pid: 20, now: now, until: later)
         XCTAssertEqual(f.activated(pid: 20, bundle: "calc", agentOwned: true, frontNow: 20, now: now), .returnTo(10))
     }
 
     /// The app can come forward before its pid reaches us, while only the bundle is known.
     func testItWorksBeforeTheProcessIsKnownAndLeavesYourOwnCopyAlone() {
         var f = FocusReturn(lastPerson: 10)
-        f.watch(bundle: "calc", excluding: [30], until: later)
+        f.watch(bundle: "calc", excluding: [30], now: now, until: later)
         XCTAssertEqual(f.activated(pid: 20, bundle: "calc", agentOwned: false, frontNow: 20, now: now), .returnTo(10))
         XCTAssertEqual(f.activated(pid: 30, bundle: "calc", agentOwned: false, frontNow: 30, now: now), .none, "a copy already running is yours")
         XCTAssertEqual(f.lastPerson, 30)
@@ -1021,7 +1021,7 @@ final class FocusReturnTests: XCTestCase {
 
     func testItStopsAfterAFewReturnsSoItCantFightYou() {
         var f = FocusReturn(lastPerson: 10)
-        f.watch(pid: 20, until: later)
+        f.watch(pid: 20, now: now, until: later)
         for _ in 0..<FocusReturn.maxReturns {
             XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 20, now: now), .returnTo(10))
         }
@@ -1031,14 +1031,14 @@ final class FocusReturnTests: XCTestCase {
     /// A late notification: you've moved on, so nothing is pulled back.
     func testALateNotificationDoesntMoveYou() {
         var f = FocusReturn(lastPerson: 10)
-        f.watch(pid: 20, until: later)
+        f.watch(pid: 20, now: now, until: later)
         XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 11, now: now), .none)
     }
 
     /// The target is where you are now, not where you were when the launch began.
     func testItReturnsToTheAppYouMovedToDuringTheLaunch() {
         var f = FocusReturn(lastPerson: 10)
-        f.watch(pid: 20, until: later)
+        f.watch(pid: 20, now: now, until: later)
         _ = f.activated(pid: 11, bundle: nil, agentOwned: false, frontNow: 11, now: now)
         XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 20, now: now.addingTimeInterval(1)), .returnTo(11))
     }
@@ -1046,7 +1046,7 @@ final class FocusReturnTests: XCTestCase {
     /// Two launches at once: neither agent app is ever the place the keyboard goes back to.
     func testAnAgentAppIsNeverTheReturnTarget() {
         var f = FocusReturn(lastPerson: 10)
-        f.watch(pid: 20, until: later); f.watch(pid: 21, until: later)
+        f.watch(pid: 20, now: now, until: later); f.watch(pid: 21, now: now, until: later)
         XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 20, now: now), .returnTo(10))
         XCTAssertEqual(f.activated(pid: 21, bundle: nil, agentOwned: true, frontNow: 21, now: now), .returnTo(10))
         XCTAssertEqual(f.lastPerson, 10)
@@ -1057,15 +1057,49 @@ final class FocusReturnTests: XCTestCase {
     /// A second launch of the same app doesn't turn the first launch's process into one of yours.
     func testASecondLaunchKeepsTheFirstLaunchWatched() {
         var f = FocusReturn(lastPerson: 10)
-        f.watch(bundle: "calc", excluding: [30], until: later)
-        f.watch(bundle: "calc", excluding: [30, 20], until: later)
+        f.watch(bundle: "calc", excluding: [30], now: now, until: later)
+        f.watch(bundle: "calc", excluding: [30, 20], now: now, until: later)
         XCTAssertEqual(f.activated(pid: 20, bundle: "calc", agentOwned: false, frontNow: 20, now: now), .returnTo(10))
         XCTAssertEqual(f.activated(pid: 30, bundle: "calc", agentOwned: false, frontNow: 30, now: now), .none)
     }
 
+    /// Two launches of the same app, the first one's watch over before the second starts, with no activation between:
+    /// the second must not inherit the first's list, or the new process (also on it) would count as yours.
+    func testAnEndedWatchIsNotMergedIntoTheNextLaunch() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(bundle: "calc", excluding: [30], now: now, until: later)
+        // 20 seconds on, nobody activated anything. The second launch ran with 20 and 30 already running.
+        let t2 = now.addingTimeInterval(20)
+        f.watch(bundle: "calc", excluding: [30, 20], now: t2, until: t2.addingTimeInterval(8))
+        XCTAssertEqual(f.activated(pid: 21, bundle: "calc", agentOwned: false, frontNow: 21, now: t2.addingTimeInterval(1)), .returnTo(10))
+        XCTAssertEqual(f.activated(pid: 20, bundle: "calc", agentOwned: false, frontNow: 20, now: t2.addingTimeInterval(1)), .none,
+                       "20 was running when the second launch began: yours")
+    }
+
+    /// A process that used up its returns gets a new count when it is watched again.
+    func testANewWatchStartsTheReturnCountAgain() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(pid: 20, now: now, until: later)
+        for _ in 0..<FocusReturn.maxReturns { _ = f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 20, now: now) }
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 20, now: now), .none)
+        f.watch(pid: 20, now: now.addingTimeInterval(1), until: later.addingTimeInterval(1))
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 20, now: now.addingTimeInterval(2)), .returnTo(10))
+    }
+
+    /// Counts go when their watch ends, so a reused pid isn't held to an old tally.
+    func testCountsGoWhenTheWatchExpires() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(pid: 20, now: now, until: later)
+        for _ in 0..<FocusReturn.maxReturns { _ = f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 20, now: now) }
+        let t = later.addingTimeInterval(5)
+        _ = f.activated(pid: 99, bundle: nil, agentOwned: false, frontNow: 99, now: t)   // expires the old watch and its count
+        f.watch(bundle: "t", excluding: [], now: t, until: t.addingTimeInterval(8))
+        XCTAssertEqual(f.activated(pid: 20, bundle: "t", agentOwned: true, frontNow: 20, now: t.addingTimeInterval(1)), .returnTo(99))
+    }
+
     func testTheWatchEnds() {
         var f = FocusReturn(lastPerson: 10)
-        f.watch(pid: 20, until: later)
+        f.watch(pid: 20, now: now, until: later)
         XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, frontNow: 20, now: later.addingTimeInterval(1)), .none)
     }
 }

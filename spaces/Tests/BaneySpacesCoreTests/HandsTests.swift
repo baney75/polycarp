@@ -1059,15 +1059,33 @@ final class HandsSourceTests: XCTestCase {
 }
 
 /// Regression (2026-10-31): `agent open TextEdit` left the app's launch window on the user's workspace.
+/// `agent run` that starts a new Terminal is an agent-started process like `agent open`'s: one helper does both.
+final class AgentRunLaunchTests: XCTestCase {
+    func testANewTerminalIsClaimedAsANewProcessAndItsFocusWatchedByTheSameHelperAsOpen() throws {
+        let session = try HandsSourceTests.code("Sources/BaneySpaces/Session/SessionController.swift")
+        let helper = try XCTUnwrap(HandsSourceTests.block(after: "func adoptAgentStartedProcess(", in: session))
+        for needed in ["h.claim(pid, n, true, title)", "AgentLaunchFocus.shared.watch(pid: pid, for: 8)", "AgentOwned.shared.add(pid)"] {
+            XCTAssertTrue(helper.contains(needed), needed)
+        }
+        XCTAssertEqual(session.components(separatedBy: "adoptAgentStartedProcess(").count - 1, 3, "the definition, `agent open` and `agent run`")
+        XCTAssertTrue(session.contains("if startedNew {") && session.contains("adoptAgentStartedProcess(pid, workspace: n, title: name"))
+        let engine = try HandsSourceTests.code("Sources/BaneySpaces/Session/Engine.swift")
+        XCTAssertTrue(engine.contains("opened(app.processIdentifier, name, true)") && engine.contains("opened(running.processIdentifier, name, false)"),
+                      "only a Terminal this run started is new")
+    }
+}
+
 final class AgentOpenLaunchTests: XCTestCase {
     func testALaunchedAppsWindowsAreClaimedAtTheFirstSightingOfTheLaunch() throws {
         let src = try HandsSourceTests.code("Sources/BaneySpaces/Session/SessionController.swift")
         let launch = try XCTUnwrap(HandsSourceTests.block(after: "func claimLaunch(", in: src))
         // Old behavior: only a New Window press 1.5 s later, so the app's own launch window stayed put.
-        XCTAssertTrue(launch.contains("h.claim(app.processIdentifier, n, true, nil)"), "every window the launch opens is claimed")
-        XCTAssertTrue(launch.contains("AgentActivity.shared.markLaunch(pid: app.processIdentifier, for: 8)"))
+        XCTAssertTrue(launch.contains("adoptAgentStartedProcess(app.processIdentifier, workspace: n, title: nil, host: h, grantAccess: !separate)"), "every window the launch opens is claimed, by the helper `agent run` shares")
+        let helper = try XCTUnwrap(HandsSourceTests.block(after: "func adoptAgentStartedProcess(", in: src))
+        XCTAssertTrue(helper.contains("h.claim(pid, n, true, title)"))
+        XCTAssertTrue(helper.contains("AgentActivity.shared.markLaunch(pid: pid, for: 8)"))
         XCTAssertTrue(launch.contains("guard !before.contains(app.processIdentifier) else { return }"), "a launch that ran inside Donovan's copy is left alone")
-        let claim = try XCTUnwrap(launch.range(of: "h.claim("))
+        let claim = try XCTUnwrap(launch.range(of: "adoptAgentStartedProcess("))
         let press = try XCTUnwrap(launch.range(of: "newWindow(app)"))
         XCTAssertTrue(claim.lowerBound < press.lowerBound, "claimed before anything else happens")
         XCTAssertTrue(src.contains("AgentActivity.shared.markLaunch(bundle: bundle"), "marked by bundle before there is a pid")
