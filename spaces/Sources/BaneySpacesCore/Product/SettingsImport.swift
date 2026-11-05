@@ -14,8 +14,12 @@ public enum SettingsImport {
     /// Files in the support folder that are the person's settings or layout, and the notes `install-app.sh` and the
     /// app keep so that uninstalling puts back what the person had: AeroSpace's start-at-login and login item, and
     /// the Mission Control record that survives a crash (`DurableRecord`).
-    public static let files = ["bangs.json", "layout.json", "state.json",
+    public static let files = ["bangs.json", "layout.json", "state.json", "frames.json",
                                "aerospace-start-at-login", "aerospace-login-item", DurableRecord.fileName]
+
+    /// Preferences that describe the old app's own setup, not the person's choices. Copied, they'd tell Polycarp its
+    /// login item was already handled, so nothing would start at login once the old app is gone.
+    public static let notImported: Set<String> = ["loginItemOffered", "loginItemChosen", "setupShown"]
 
     /// Names that could not be copied last time, one per line. While it exists the import is not finished.
     public static let pendingName = "import-pending"
@@ -59,7 +63,7 @@ public enum SettingsImport {
 
         // A retry copies only what failed, and never preferences again: the person may have changed them since.
         let retry = pending(in: newDir)
-        let oldPrefs = retry == nil ? (legacyDefaults.persistentDomain(forName: legacyDomain) ?? [:]) : [:]
+        let oldPrefs = retry == nil ? (legacyDefaults.persistentDomain(forName: legacyDomain) ?? [:]).filter { !notImported.contains($0.key) } : [:]
         var present: [String] = []
         for name in retry ?? files where fm.fileExists(atPath: legacyDir.appendingPathComponent(name).path) { present.append(name) }
         if retry == nil && oldPrefs.isEmpty && present.isEmpty { return .nothingToImport }

@@ -44,7 +44,9 @@ let instanceLock: SingleInstance.Lock? = {
                 return alert.runModal() == .alertFirstButtonReturn ? .quitAndContinue : .notNow
             },
             quit: { legacy.forEach { $0.terminate() } },
-            isRunning: { legacy.contains { !$0.isTerminated } })
+            // Asks the system each time: NSRunningApplication's own state only updates as the run loop turns, and
+            // this runs before there is one.
+            isRunning: { legacy.contains { kill($0.processIdentifier, 0) == 0 } })
         if case .exit(let message) = outcome {
             if let message {
                 let alert = NSAlert()

@@ -56,7 +56,7 @@ final class SettingsImportTests: XCTestCase {
         try put("state.json", "state")
         // Things that must never come across.
         try put("baneyspaces.sock", "sock"); try put("trace.log", "log"); try put("crash-ledger.json", "{}")
-        try put("mc-heartbeat", "1"); try put("remote-token", "secret"); try put("frames.json", "{}")
+        try put("mc-heartbeat", "1"); try put("remote-token", "secret")
         try put("Signing/key", "private", in: oldDir)
 
         guard case .imported(let report) = run(old, new) else { return XCTFail("expected an import") }
@@ -65,7 +65,7 @@ final class SettingsImportTests: XCTestCase {
         XCTAssertEqual(new.integer(forKey: "modifierChoice"), 3)
         XCTAssertEqual(new.string(forKey: "look"), "dark")
         XCTAssertEqual(try String(contentsOf: newDir.appendingPathComponent("bangs.json")), #"{"jira":"x"}"#)
-        for skipped in ["baneyspaces.sock", "trace.log", "crash-ledger.json", "mc-heartbeat", "remote-token", "frames.json", "Signing"] {
+        for skipped in ["baneyspaces.sock", "trace.log", "crash-ledger.json", "mc-heartbeat", "remote-token", "Signing"] {
             XCTAssertFalse(FileManager.default.fileExists(atPath: newDir.appendingPathComponent(skipped).path), skipped)
         }
         // Copy, never move: the old app's data is all still there.
@@ -73,6 +73,19 @@ final class SettingsImportTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: oldDir.appendingPathComponent("Signing/key").path))
         XCTAssertEqual(old.0.integer(forKey: "modifierChoice"), 3)
         XCTAssertTrue(FileManager.default.fileExists(atPath: newDir.appendingPathComponent(Product.importedMarker).path))
+    }
+
+    /// Copied, these would tell Polycarp its login item was handled, and with the old app in the Trash nothing would start
+    /// at login. The saved window frames do come across: a crash can leave windows hidden on another workspace.
+    func testTheOldAppsSetupStaysBehindAndSavedFramesComeAcross() throws {
+        let old = suite(), (new, _) = suite()
+        for key in ["loginItemOffered", "loginItemChosen", "setupShown"] { old.0.set(true, forKey: key) }
+        old.0.set(3, forKey: "modifierChoice")
+        try put("frames.json", "{}")
+        guard case .imported = run(old, new) else { return XCTFail("expected an import") }
+        for key in ["loginItemOffered", "loginItemChosen", "setupShown"] { XCTAssertNil(new.object(forKey: key), key) }
+        XCTAssertEqual(new.integer(forKey: "modifierChoice"), 3)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: newDir.appendingPathComponent("frames.json").path))
     }
 
     func testTheSavedDockSettingsCopyWithTheirTypes() throws {

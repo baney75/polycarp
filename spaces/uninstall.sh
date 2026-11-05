@@ -334,6 +334,8 @@ fi
 
 step "Removing its Accessibility permission"
 # A fresh install gets a new signature; an old entry left here would show "on" but not work.
+sys tccutil reset ScreenCapture "$ID" >/dev/null 2>&1 || true
+sys tccutil reset ListenEvent "$ID" >/dev/null 2>&1 || true
 sys tccutil reset Accessibility "$ID" >/dev/null 2>&1 \
   || problem "Polycarp may still be listed in System Settings › Privacy & Security › Accessibility: remove it there."
 

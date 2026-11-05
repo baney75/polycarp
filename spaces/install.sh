@@ -2,7 +2,7 @@
 # Installs Polycarp on macOS:
 #   curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/spaces/install.sh | bash
 # A stable release carries the finished app (a few MB). This downloads it, checks that it is
-# signed with Polycarp' release key (it refuses anything else), and puts it in the folder the
+# signed with Polycarp's release key (it refuses anything else), and puts it in the folder the
 # current copy is in (~/Applications on a first install). No developer tools are needed.
 # It builds from source instead, with Apple's free command line tools, when the release has no
 # ready-made app (the Nightly build, an old release), when BANEYSPACES_FROM_SOURCE=1, or when the
@@ -125,7 +125,7 @@ if [ -n "$ZIP" ] && [ "$FROM_SOURCE" != 1 ]; then
   codesign --verify --strict --deep "$APP" 2>/dev/null \
     || fail "the download's signature is broken, so it was not installed."
   codesign -v -R "=$REQUIREMENT" "$APP" 2>/dev/null \
-    || fail "the download isn't signed with Polycarp' release key, so it was not installed."
+    || fail "the download isn't signed with Polycarp's release key, so it was not installed."
   if [ -n "${BANEYSPACES_COMMIT:-}" ]; then
     # An update pins the exact commit whose notes were shown; a tag that moved since is refused.
     if [ "$(plutil -extract PolycarpCommit raw -o - "$APP/Contents/Info.plist" 2>/dev/null)" != "$BANEYSPACES_COMMIT" ]; then

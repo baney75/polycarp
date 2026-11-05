@@ -62,7 +62,8 @@ final class RootInstallerTests: XCTestCase {
     func testTestModeNeverQuitsOrOpensAnything() throws {
         let t = try installer()
         XCTAssertTrue(t.contains(#"if [ -z "$test_mode" ]; then"#))
-        // Only the copy installed at the retired path is looked for; a BaneySpaces run from elsewhere is left alone.
+        // Test mode leaves out /Applications and skips a real home, so it can't touch a real copy.
+        XCTAssertTrue(t.contains(#"[ -n "$1" ] || printf '%s\n' "/Applications/BaneySpaces.app""#))
         XCTAssertTrue(t.contains(#"pgrep -f "$a/Contents/MacOS/BaneySpaces""#))
         XCTAssertFalse(t.contains("pgrep -x BaneySpaces"))
     }

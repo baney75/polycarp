@@ -36,7 +36,7 @@ final class AgentLaunchFocus {
     private func activated(_ app: NSRunningApplication) {
         let pid = app.processIdentifier
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
-        switch state.activated(pid: pid, bundle: app.bundleIdentifier, agentOwned: AgentOwned.shared.pids.contains(pid), frontNow: front, now: Date()) {
+        switch state.activated(pid: pid, bundle: app.bundleIdentifier, agentOwned: pid == getpid() || AgentOwned.shared.pids.contains(pid), frontNow: front, now: Date()) {
         case .none: break
         case .returnTo(let target):
             let result = AXUIElementSetAttributeValue(AXUIElementCreateApplication(target), kAXFrontmostAttribute as CFString, kCFBooleanTrue)

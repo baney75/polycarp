@@ -24,8 +24,10 @@ main() {
   # BANEYSPACES_DEST_DIR is test mode, as in install-app.sh: nothing outside it changes and nothing opens.
   local test_mode="${BANEYSPACES_DEST_DIR:-}"
 
+  # What a failure says happened. It changes once Polycarp is in place.
+  local HEADING="Polycarp was not installed."
   say()  { printf '%s\n' "$*"; }
-  fail() { printf '\n%sPolycarp was not installed.%s %s\n' "$bold" "$reset" "$1" >&2
+  fail() { printf '\n%s%s%s %s\n' "$bold" "$HEADING" "$reset" "$1" >&2
            [ -s "$LOG" ] && printf '\nThe last lines of the log (%s):\n' "$LOG" >&2 && tail -15 "$LOG" >&2
            exit 1; }
   # step "What it's doing" command...: one calm line, and the output kept in the log. stdin is closed so
@@ -59,7 +61,7 @@ main() {
 
   local BIN="$HOME/.local/bin"
   # 1. Build everything first. Nothing on this Mac changes until all of it has built.
-  step "Building the polycarp command" cargo install --quiet --locked --force --path "$SRC/cli" --root "$HOME/.local"
+  step "Building the polycarp command" cargo build --quiet --release --locked --manifest-path "$SRC/cli/Cargo.toml" --target-dir "$WORK/cli-target"
   # Apple silicon builds for itself, which is much quicker than a universal app.
   if [ "$(uname -m)" = arm64 ]; then export BANEYSPACES_ARM64_ONLY=1; fi
   cd "$SRC/spaces"
@@ -67,12 +69,17 @@ main() {
   step "Building Polycarp (a few minutes the first time)" scripts/bundle.sh
 
   # The old app, if it is installed. Only the copies at these two paths are ours to retire.
+  # Test mode looks only under a temporary home, so it can never quit or move a real copy.
   local OLD_APPS=() a
-  for a in "$HOME/Applications/BaneySpaces.app" "/Applications/BaneySpaces.app"; do [ -d "$a" ] && OLD_APPS+=("$a"); done
-  # 2. Quit it (it puts every window and the Dock back first). Only the copy that is installed here: a
-  # BaneySpaces run from somewhere else is left alone.
+  if [ -z "$test_mode" ] || [ "$HOME" != "$(eval echo "~$(id -un)")" ]; then
+    while IFS= read -r a; do [ -d "$a" ] && OLD_APPS+=("$a"); done < <(old_app_paths "$test_mode")
+  fi
+  # 2. Quit it (it puts every window and the Dock back first). The two can't run together, so the install
+  # step quits any running BaneySpaces too. Never in test mode.
   local running=""
-  for a in ${OLD_APPS[@]+"${OLD_APPS[@]}"}; do pgrep -f "$a/Contents/MacOS/BaneySpaces" >/dev/null && running=1; done
+  if [ -z "$test_mode" ]; then
+    for a in ${OLD_APPS[@]+"${OLD_APPS[@]}"}; do pgrep -f "$a/Contents/MacOS/BaneySpaces" >/dev/null && running=1; done
+  fi
   if [ -n "$running" ]; then
     step "Quitting BaneySpaces" osascript -e 'tell application id "com.baney.baneyspaces" to quit'
     local i
@@ -87,8 +94,13 @@ main() {
 
   # 3. Install, without opening it. If this fails, BaneySpaces is still installed: you have an app to open.
   export BANEYSPACES_NO_LAUNCH=1
-  STEP_FAIL="Polycarp didn't install. BaneySpaces is still installed; open it again from Applications." \
-    step "Installing Polycarp" scripts/install-app.sh "build/Polycarp.app"
+  local install_failed="If Polycarp is running, quit it from its menu, then run this again."
+  [ ${#OLD_APPS[@]} -eq 0 ] || install_failed="BaneySpaces is still installed; open it again from Applications."
+  STEP_FAIL="$install_failed" step "Installing Polycarp" scripts/install-app.sh "build/Polycarp.app"
+  HEADING="Polycarp is installed, but one step didn't finish."
+  # The command goes in only now, so a failed build leaves the one you had.
+  mkdir -p "$BIN"
+  step "Installing the polycarp command" install -m 755 "$WORK/cli-target/release/polycarp" "$BIN/polycarp"
 
   # 4. Only now retire the old app: stop its watchdog and move it to the Trash, where you can put it back.
   # Its settings stay, since Polycarp copies them on first launch.
@@ -97,12 +109,14 @@ main() {
       step "Stopping BaneySpaces' watchdog" retire_watchdog
     fi
     STEP_FAIL="Polycarp is installed, but BaneySpaces could not be moved to the Trash. Drag these to the Trash yourself, then open Polycarp: ${OLD_APPS[*]}" \
-      step "Moving BaneySpaces to the Trash (its settings stay)" retire_apps
+      RETIRE_TEST_MODE="$test_mode" step "Moving BaneySpaces to the Trash (its settings stay)" retire_apps
   fi
 
   # The Polycarp theme, unless you've already chosen something.
   local CFG="${POLYCARP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/polycarp}"
-  [ -e "$CFG/config.toml" ] || step "Setting the Polycarp theme" "$BIN/polycarp" theme set polycarp
+  if [ ! -e "$CFG/config.toml" ] && ! "$BIN/polycarp" theme set polycarp </dev/null >>"$LOG" 2>&1; then
+    say "  ${dim}The theme wasn't set; Polycarp uses its own look. Try: polycarp theme set polycarp${reset}"
+  fi
 
   # 5. Open it, last. (Test mode never opens anything.)
   if [ -z "$test_mode" ]; then
@@ -125,6 +139,12 @@ main() {
   say ""
 }
 
+# Where an old copy can be. Test mode leaves out /Applications, which a temporary home doesn't hide.
+old_app_paths() {
+  printf '%s\n' "$HOME/Applications/BaneySpaces.app"
+  [ -n "$1" ] || printf '%s\n' "/Applications/BaneySpaces.app"
+}
+
 # Stops BaneySpaces' launch agent, which would otherwise start puts-things-back runs for an app that is gone.
 retire_watchdog() {
   local label="com.baney.baneyspaces.mc-watchdog" plist="$HOME/Library/LaunchAgents/com.baney.baneyspaces.mc-watchdog.plist"
@@ -141,12 +161,12 @@ retire_apps() {
   local trash="$HOME/.Trash" app dest n failed=0 stamp
   mkdir -p "$trash" || { echo "could not create $trash" >&2; return 1; }
   stamp=$(date +%Y%m%d-%H%M%S)
-  for app in "$HOME/Applications/BaneySpaces.app" "/Applications/BaneySpaces.app"; do
+  while IFS= read -r app; do
     [ -d "$app" ] || continue
     n=0; dest="$trash/BaneySpaces-$stamp.app"
     while [ -e "$dest" ]; do n=$((n + 1)); dest="$trash/BaneySpaces-$stamp-$n.app"; done
     if ! mv "$app" "$dest"; then echo "could not move $app to the Trash" >&2; failed=1; fi
-  done
+  done < <(old_app_paths "$RETIRE_TEST_MODE")
   return $failed
 }
 
