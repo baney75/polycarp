@@ -3,7 +3,7 @@ import AppKit
 /// Settings' and the menu's Uninstall: runs the same uninstall.sh as the README's curl command,
 /// from the copy inside the app, so what's removed and put back is the same either way.
 enum Uninstaller {
-    static let command = "curl -fsSL https://raw.githubusercontent.com/baney75/baneyspaces/main/uninstall.sh | bash"
+    static let command = "curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/spaces/uninstall.sh | bash"
 
     static let summary = """
         Polycarp quits first, which brings every hidden window and app back. Then it puts back \

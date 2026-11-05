@@ -10,7 +10,7 @@ import BaneySpacesCore
 /// so the Accessibility permission carries over. A copy built here, updated on a Mac without the
 /// tools, gets the ready-made app and macOS asks for the permission once more.
 final class Updater: NSObject {
-    static let releasesURL = URL(string: "https://api.github.com/repos/baney75/baneyspaces/releases?per_page=30")!
+    static let releasesURL = URL(string: "https://api.github.com/repos/baney75/polycarp/releases?per_page=30")!
 
     /// The build on offer, if one is newer than this one.
     private(set) var available: Release?
@@ -132,7 +132,7 @@ final class Updater: NSObject {
     private func firstContainingBuild(_ candidates: [Release], then: @escaping (Release?) -> Void) {
         guard let release = candidates.first else { return then(nil) }
         guard let mine = Self.build.commit, let theirs = release.commit,
-              let url = URL(string: "https://api.github.com/repos/baney75/baneyspaces/compare/\(mine)...\(theirs)") else { return then(release) }
+              let url = URL(string: "https://api.github.com/repos/baney75/polycarp/compare/\(mine)...\(theirs)") else { return then(release) }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Polycarp/\(Self.build.version)", forHTTPHeaderField: "User-Agent")
@@ -241,7 +241,7 @@ final class Updater: NSObject {
         trap 'code=$?; rm -rf "$TMP"; [ $code = 0 ] || echo "Polycarp update failed ($code)"; echo $code > "$BANEYSPACES_STATUS_FILE"; rm -f "$BANEYSPACES_PID_FILE"' EXIT
         set -e
         echo "== $(date) updating to $BANEYSPACES_REF ${BANEYSPACES_COMMIT:-}"
-        curl -fsSL "https://raw.githubusercontent.com/baney75/baneyspaces/${BANEYSPACES_COMMIT:-$BANEYSPACES_REF}/install.sh" -o "$TMP/install.sh"
+        curl -fsSL "https://raw.githubusercontent.com/baney75/polycarp/${BANEYSPACES_COMMIT:-$BANEYSPACES_REF}/spaces/install.sh" -o "$TMP/install.sh"
         bash "$TMP/install.sh"
         """
         let scriptURL = folder.appendingPathComponent("update.sh")

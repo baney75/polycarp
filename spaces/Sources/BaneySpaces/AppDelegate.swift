@@ -490,10 +490,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updater.start()
         // The first launch walks through setup, and so does any launch without permission (an
         // update that macOS no longer trusts). Otherwise it's one click away in the menu.
-        if !UserDefaults.standard.bool(forKey: "setupShown") || !AXIsProcessTrusted()
-            || CommandLine.arguments.contains("--setup") {
-            UserDefaults.standard.set(true, forKey: "setupShown")
+        UserDefaults.standard.set(true, forKey: "setupShown")
+        if CommandLine.arguments.contains("--setup") {
             showSetup()
+        } else if Welcome.shouldShow(hasFinished: UserDefaults.standard.bool(forKey: Welcome.finishedKey), granted: WelcomeModel.read(), forced: false) {
+            showWelcome()
         }
     }
 
@@ -504,6 +505,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func showSetup() { setup.show() }
+    @objc private func showWelcome() { welcome.show() }
+    private lazy var welcome: WelcomeWindowController = {
+        let c = WelcomeWindowController()
+        c.model.modifierSymbol = { [weak self] in self?.setup.model.modifier.symbol ?? "⌘" }
+        c.model.onFixStale = { [weak self] in self?.setup.model.fixPermission() }
+        return c
+    }()
 
     func applicationWillTerminate(_ n: Notification) {
         // The macOS Dock comes back with everything else; the next launch tucks it away again.
@@ -631,7 +639,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         started = false
         registerShortcuts()
         updateIcon()
-        showSetup()
+        showWelcome()
         startWhenTrusted()
         return false
     }
@@ -780,7 +788,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             if !AXIsProcessTrusted() {
                 menu.addItem(withTitle: "Polycarp needs permission to arrange windows", action: nil, keyEquivalent: "")
-                menu.addItem(item("Allow Polycarp…", #selector(showSetup)))
+                menu.addItem(item("Allow Polycarp…", #selector(showWelcome)))
             } else {
                 menu.addItem(item("Settings…", #selector(showSetup)))
             }

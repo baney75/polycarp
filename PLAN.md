@@ -1,7 +1,7 @@
 # Polycarp plan
 
 BaneySpaces, Tabkyra and Silas become one product on Mac, Windows, Linux, iPhone, iPad and Android. Old apps keep
-working until step 5. A box is checked only when its check has passed.
+working, and their repos stay up. A box is checked only when its check has passed.
 
 ## 1. Bring the code together
 - [x] Full history of all three in `spaces/`, `voice/`, `browser/`
@@ -57,9 +57,25 @@ Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all
 - [ ] Old apps get a final release that points to Polycarp
 - [ ] Donovan grants Accessibility and Microphone once on his Mac, since macOS ties them to the app's identity
 
-## 6. Archive
-- [ ] Land or move open PRs (on 2026-11-04: BaneySpaces 10, Silas 2)
-- [ ] Archive `baneyspaces`, `silas`, `tabkyra`. Check: no open PRs, no fleet references outside history, old install links still resolve
+## 6. The old apps
+Decided by Donovan, 2026-11-05: the `baneyspaces`, `silas` and `tabkyra` repos stay up, so people can keep using the independent apps. They are not archived.
+- [ ] Land or move open PRs that belong in Polycarp
+- [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash), then Voice and Browser. Check: dictation and agents' browser work through Polycarp before Silas and Tabkyra go
+
+## Install and permissions
+Asked for by Donovan, 2026-11-05: installation and permissions need to be excellent.
+- [x] One command installs the Mac app and the `polycarp` command. Check: `install.sh` run end to end against a temporary home, with an old app planted
+- [x] One first-run window explains each permission in plain words, with live status. Check: `WelcomeTests`, and renders of the real view in light and dark
+- [ ] First run on a real Mac: each switch updates the window, and Polycarp starts without a restart. Check: Donovan's first install
+- [ ] A ready-made download that needs no developer tools, from a Polycarp release. Check: installs on a Mac with no command line tools
+- [ ] Voice and Browser install from the same command, and share the welcome window
+
+## Agents' computer use
+Asked for by Donovan, 2026-11-05: it has to work better and look much better, with a better cursor.
+- [x] The olive leaf cursor, calm status colors, a glide you can follow. Check: `CursorThemeTests`, and renders of the real layers in every theme on five backgrounds
+- [x] An app an agent starts stays off your screen, and your keyboard stays yours. Check: `FocusReturnTests`
+- [ ] The same on a real Mac. Check: `agent open Calculator` while typing elsewhere: its window lands on the agent workspace, `agent windows` lists it and focus returns
+- [ ] Measure the whole loop (open, read, act, check) on real apps, and lock the gains with a ratchet test
 
 ## Later, with an owner's decision
 - Paid: domains, Apple Developer and Google Play accounts, Windows code signing

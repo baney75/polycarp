@@ -1,6 +1,6 @@
 #!/bin/bash
 # Installs Polycarp on macOS:
-#   curl -fsSL https://raw.githubusercontent.com/baney75/baneyspaces/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/spaces/install.sh | bash
 # A stable release carries the finished app (a few MB). This downloads it, checks that it is
 # signed with Polycarp' release key (it refuses anything else), and puts it in the folder the
 # current copy is in (~/Applications on a first install). No developer tools are needed.
@@ -16,7 +16,7 @@
 # BANEYSPACES_ZIP=/path/to/Polycarp.zip uses that file instead of downloading (for tests; pair
 # it with BANEYSPACES_DEST_DIR so nothing outside that folder changes).
 set -euo pipefail
-REPO_URL="${BANEYSPACES_REPO:-https://github.com/baney75/baneyspaces.git}"
+REPO_URL="${BANEYSPACES_REPO:-https://github.com/baney75/polycarp.git}"
 bold=$(tput bold 2>/dev/null || true); dim=$(tput dim 2>/dev/null || true); reset=$(tput sgr0 2>/dev/null || true)
 step() { printf '%s==>%s %s\n' "$bold" "$reset" "$*"; }
 fail() { printf 'Polycarp install failed: %s\n' "$*" >&2; exit 1; }
@@ -60,7 +60,7 @@ ZIP="${BANEYSPACES_ZIP:-}"
 TAG="${BANEYSPACES_REF:-}"
 SHA_URL=""
 # BANEYSPACES_RELEASES_BASE is for tests: a stand-in for GitHub's releases address.
-BASE="${BANEYSPACES_RELEASES_BASE:-https://github.com/baney75/baneyspaces/releases}"
+BASE="${BANEYSPACES_RELEASES_BASE:-https://github.com/baney75/polycarp/releases}"
 # Prints the HTTP status; a connection that fails prints 000.
 fetch() { curl -sSL -w '%{http_code}' -o "$2" "$1" 2>/dev/null || true; }
 
@@ -181,7 +181,7 @@ fi
 step "Building (about a minute the first time)"
 # The whole build log is kept, so a failure shows its real cause instead of the last few lines.
 LOG="${TMPDIR:-/tmp}/baneyspaces-install.log"
-SRC="$WORK/baneyspaces"
+SRC="$WORK/baneyspaces/spaces"
 if [ -f "$SRC/scripts/install-app.sh" ]; then
   # Build, then place the app with that build's own install step, which knows where to put it.
   if ! { "$SRC/scripts/bundle.sh" && bash "$SRC/build/Polycarp.app/Contents/Resources/install-app.sh" "$SRC/build/Polycarp.app" </dev/null; } >"$LOG" 2>&1; then

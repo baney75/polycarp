@@ -57,8 +57,13 @@ cat > "$PROBE/Contents/Info.plist" <<PLIST
 </dict></plist>
 PLIST
 
-# The Polycarp olive branch (brand/mark.svg), drawn at build time on the cream background.
-swift scripts/make-icon.swift build/$PRODUCT_NAME.iconset ../brand
+# The brand's own macOS icon (brand/export/macos), at every size an .icns needs.
+ICONSET="build/$PRODUCT_NAME.iconset"
+rm -rf "$ICONSET"; mkdir -p "$ICONSET"
+for size in 16 32 128 256 512; do
+  cp "../brand/export/macos/icon-$size.png" "$ICONSET/icon_${size}x${size}.png"
+  cp "../brand/export/macos/icon-$((size * 2)).png" "$ICONSET/icon_${size}x${size}@2x.png"
+done
 iconutil -c icns build/$PRODUCT_NAME.iconset -o "$APP/Contents/Resources/$PRODUCT_NAME.icns"
 # The menu bar's template image: the small mark, black on clear (macOS tints it).
 swift scripts/make-icon.swift --menu-bar "$APP/Contents/Resources" ../brand

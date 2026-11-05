@@ -1,6 +1,6 @@
 #!/bin/bash
 # Removes Polycarp from this Mac and puts back everything it changed:
-#   curl -fsSL https://raw.githubusercontent.com/baney75/baneyspaces/main/uninstall.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/spaces/uninstall.sh | bash
 # Settings > General > Uninstall Polycarp runs this same script.
 # A BaneySpaces app that is still installed is never touched (Polycarp copied its settings, it never moved them).
 # Quitting first brings every hidden window and app back on screen.
