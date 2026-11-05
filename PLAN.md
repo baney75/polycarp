@@ -70,6 +70,11 @@ Asked for by Donovan, 2026-11-05: installation and permissions need to be excell
 - [ ] A ready-made download that needs no developer tools, from a Polycarp release. Check: installs on a Mac with no command line tools
 - [ ] Voice and Browser install from the same command, and share the welcome window
 
+## Omarchy
+Asked for by Donovan, 2026-11-05: on Omarchy, Polycarp matches the system theme.
+- [ ] Polycarp follows Omarchy's current theme, live, when you run `omarchy-theme-set`. Check: on a real Omarchy machine, read back from the theme files after a switch
+- [ ] Polycarp's bar is the existing Waybar, themed by Omarchy, with its own additions easy to remove
+
 ## Agents' computer use
 Asked for by Donovan, 2026-11-05: it has to work better and look much better, with a better cursor.
 - [x] The olive leaf cursor, calm status colors, a glide you can follow. Check: `CursorThemeTests`, and renders of the real layers in every theme on five backgrounds
