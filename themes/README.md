@@ -191,7 +191,7 @@ density = "compact"
 | `polycarp theme accent <#rrggbb> [--mode light\|dark]` | Override the accent. `--clear` removes it |
 | `polycarp theme create <name> --extends <base> [--force]` | Write a new user theme. Not one that extends itself or loops. `undo` removes it or restores the old one |
 | `polycarp theme edit-path <name>` | Print the file's path |
-| `polycarp theme delete <name>` | Delete a user theme. Not the current one or one it extends. `undo` brings it back |
+| `polycarp theme delete <name>` | Delete a user theme. Not the current one, one it extends, or one that another user theme extends (it names them). `undo` brings it back |
 | `polycarp theme validate <file>` | Exit 0 if the file is valid, 1 if not. Prints every problem |
 | `polycarp theme export <css\|json> [name] [--surface <name>]` | Print the resolved theme. With no name it is the current one in its forced mode, as in `current/`; JSON has `mode` |
 | `polycarp theme undo [--force]` | Step back one change. Refuses if the theme file was edited after that change; `--force` saves the edited text in `history/` as a `.bak` copy, then undoes |
@@ -324,7 +324,7 @@ Exit codes: 0 ok, 1 refused or invalid, 2 usage.
 `error.data.errors` is always a list of `{path, message}`, with `actual` and `needs` when there are figures
 (contrast ratios are numbers). For a bad value, `actual` is what was sent and `needs` says what is allowed.
 Codes: `invalid_args` (exit 2), `invalid_theme`, `contrast`, `invalid_value`, `unknown_theme`, `unknown_path`,
-`builtin_read_only`, `exists`, `current_theme`, `nothing_to_undo`, `changed_since`, `io_error`, `config_error`, `busy`. Warnings and notes
+`builtin_read_only`, `exists`, `current_theme`, `in_use`, `nothing_to_undo`, `changed_since`, `io_error`, `config_error`, `busy`. Warnings and notes
 (such as "a `-custom` theme was made") come in `data.warnings` and `data.notes`.
 
 ### `polycarp mcp`

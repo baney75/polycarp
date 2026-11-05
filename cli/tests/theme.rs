@@ -1941,7 +1941,9 @@ fn create_and_delete_refuse_loops_and_the_current_chain() {
     assert!(e.contains("base of the current theme"), "{e}");
     assert_eq!(b.snapshot(), before);
     b.ok(&["set", "calm"]);
-    b.ok(&["delete", "base"].map(|x| x)[..]);
+    // `kid` still extends `base`, so it goes first.
+    b.ok(&["delete", "kid"]);
+    b.ok(&["delete", "base"]);
 }
 
 #[test]
@@ -3446,4 +3448,26 @@ fn off_and_on_take_the_json_envelope() {
     );
     let (c, v) = b.jrun(&["off", "extra"]);
     assert_eq!((c, &v["ok"]), (2, &false.into()));
+}
+
+#[test]
+fn delete_refuses_a_theme_another_user_theme_extends_and_names_it() {
+    let b = Box::new();
+    b.ok(&["create", "base", "--extends", "calm"]);
+    b.ok(&["create", "child-b", "--extends", "base"]);
+    b.ok(&["create", "child-a", "--extends", "base"]);
+    b.ok(&["create", "alone", "--extends", "calm"]);
+    let before = b.snapshot();
+    let (c, v) = b.jrun(&["delete", "base"]);
+    assert_eq!((c, &v["error"]["code"]), (1, &"in_use".into()), "{v}");
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(msg.contains("child-a, child-b"), "{msg}");
+    assert!(b.snapshot() == before, "a refusal changed something");
+    assert!(b.cfg().join("themes/base.toml").is_file());
+    // Once the dependents go, it can be deleted; an unrelated theme never was in the way.
+    b.ok(&["delete", "alone"]);
+    b.ok(&["delete", "child-a"]);
+    b.ok(&["delete", "child-b"]);
+    b.ok(&["delete", "base"]);
+    assert!(!b.cfg().join("themes/base.toml").exists());
 }

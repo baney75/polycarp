@@ -2815,6 +2815,36 @@ pub(crate) fn op_delete(c: &Ctx, name: &str) -> Res {
             ),
         ));
     }
+    // Another user theme that extends this one would stop loading.
+    let mut dependents: Vec<String> = fs::read_dir(c.cfg.themes())
+        .map(|rd| {
+            rd.flatten()
+                .filter_map(|e| {
+                    let file = e.file_name().to_string_lossy().into_owned();
+                    file.strip_suffix(".toml").map(str::to_string)
+                })
+                .filter(|other| other != name && valid_name(other))
+                .filter(|other| {
+                    load_raw(&c.cfg, other)
+                        .ok()
+                        .as_ref()
+                        .and_then(ext_of)
+                        .is_some_and(|base| base == name)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    dependents.sort();
+    if !dependents.is_empty() {
+        return Err(ApiErr::at(
+            "in_use",
+            "name",
+            format!(
+                "{name:?} is extended by {}, which would stop loading; delete or change those first, so nothing was deleted",
+                dependents.join(", ")
+            ),
+        ));
+    }
     let mut out = commit(c, None, &format!("theme delete {name}"), Some((name, None)))?;
     out.text = format!("deleted {}\n{}", path.display(), out.text);
     Ok(out.with(json!({"name": name, "path": path.display().to_string()})))
