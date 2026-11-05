@@ -27,8 +27,25 @@ public enum Product {
         public static let appName = "BaneySpaces.app"
     }
 
+    /// Silas, the dictation app whose voice is now inside Polycarp. Migration code and the old-app notice read these.
+    public enum Silas {
+        public static let name = "Silas"
+        public static let bundleID = "com.baney.silas"
+        public static let supportFolder = "Silas"
+        public static let appName = "Silas.app"
+    }
+
     public static func supportDir(home: URL) -> URL {
         home.appendingPathComponent("Library/Application Support/" + supportFolder, isDirectory: true)
+    }
+
+    /// Where the voice engine keeps its settings, dictionary, history and models.
+    public static func voiceDir(home: URL) -> URL {
+        supportDir(home: home).appendingPathComponent("voice", isDirectory: true)
+    }
+
+    public static func silasSupportDir(home: URL) -> URL {
+        home.appendingPathComponent("Library/Application Support/" + Silas.supportFolder, isDirectory: true)
     }
 
     public static func legacySupportDir(home: URL) -> URL {
