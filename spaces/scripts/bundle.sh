@@ -6,6 +6,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/product.env
 VERSION=$(cat VERSION)
+# The bundle holds the browser helper, which is compiled with Bun from the pinned sibling repos. Say so now, not after
+# the long builds: a build without them would be a Polycarp with no browser piece.
+command -v bun >/dev/null || { echo "bundle: Bun is needed to compile the browser helper (https://bun.sh). Install it, then run this again." >&2; exit 1; }
+[ -d ../mini-lit ] && [ -d ../pi-mono ] && [ -d ../browser/node_modules ] \
+  || { echo "bundle: the browser's sibling repos are missing. Run browser/scripts/setup-siblings.sh once (it needs Node and Bun), then run this again." >&2; exit 1; }
 APP=build/$PRODUCT_NAME.app
 rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources/bin" "$APP/Contents/Resources/skill" "$APP/Contents/Resources/licenses"
 
