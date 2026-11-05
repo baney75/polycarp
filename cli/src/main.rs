@@ -181,15 +181,86 @@ fn is_script(p: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
 }
 
-/// Places under the home folder that stay allowed when the current folder is the home folder
-/// or an ancestor of it: where the installers and the fixed spots put the tools.
-const HOME_ALLOWED: [&str; 3] = [".local/bin", ".config/tabkyra", "Applications/Silas.app"];
+/// Specific places that stay allowed when the current folder is the home folder or an ancestor
+/// of it: where per-user installers put tools and the folders their links lead to. Relative to
+/// the home folder. Whole trees such as `~/.local` are not listed, since a cloned repo can sit
+/// in them.
+const HOME_ALLOWED: [&str; 17] = [
+    ".local/bin",
+    ".local/lib/node_modules",
+    ".local/share/mise",
+    ".cargo/bin",
+    ".bun/bin",
+    ".bun/install/global",
+    ".volta/bin",
+    ".nvm/versions",
+    ".asdf/shims",
+    ".asdf/installs",
+    ".npm-global/bin",
+    ".npm-global/lib/node_modules",
+    ".config/tabkyra",
+    "Library/pnpm",
+    // Windows per-user installs.
+    "AppData/Local/Programs",
+    "scoop/shims",
+    "scoop/apps",
+];
+
+/// Absolute places allowed in the same case, for candidates outside the home folder only.
+/// Tests replace the list with POLYCARP_TEST_SYSTEM_ALLOWED (paths separated like `PATH`).
+fn system_allowed() -> Vec<PathBuf> {
+    match env::var_os("POLYCARP_TEST_SYSTEM_ALLOWED") {
+        Some(v) => env::split_paths(&v).collect(),
+        None => vec![PathBuf::from("/opt"), PathBuf::from("/usr")],
+    }
+}
+
+/// A real app bundle directly in the canonical `~/Applications`: a directory, not a link, with
+/// a `Contents` folder.
+fn is_app_bundle(p: &Path, apps: &Path) -> bool {
+    let Ok(meta) = fs::symlink_metadata(p) else {
+        return false;
+    };
+    meta.is_dir()
+        && p.extension().is_some_and(|e| e == "app")
+        && p.parent().and_then(|d| fs::canonicalize(d).ok()).as_deref() == Some(apps)
+        && fs::metadata(p.join("Contents")).is_ok_and(|m| m.is_dir())
+}
+
+/// True when the resolved path `c` is somewhere a normal per-user or system install lives. The
+/// home folder is looked at first: a home under `/usr` does not open its project folders.
+fn allowed_from_home(c: &Path, home: &Path) -> bool {
+    if !c.starts_with(home) {
+        return system_allowed().iter().any(|a| c.starts_with(a));
+    }
+    if HOME_ALLOWED
+        .iter()
+        .filter_map(|a| fs::canonicalize(home.join(a)).ok())
+        .any(|a| c.starts_with(a))
+    {
+        return true;
+    }
+    // An app bundle in ~/Applications, and inside it only under Contents/.
+    let Ok(apps) = fs::canonicalize(home.join("Applications")) else {
+        return false;
+    };
+    let Ok(rest) = c.strip_prefix(&apps) else {
+        return false;
+    };
+    let mut parts = rest.components();
+    let Some(bundle) = parts.next() else {
+        return false;
+    };
+    is_app_bundle(&apps.join(bundle), &apps)
+        && parts.next().is_none_or(|n| n.as_os_str() == "Contents")
+}
 
 /// Where `p` stands against the current folder. Anything inside the current folder's tree is
-/// refused, through any symlink. Two exceptions: from `/` nothing is refused (everything is
-/// below it, and the system spots must work), and when the current folder is the home folder or
-/// an ancestor of it, a candidate under `HOME_ALLOWED` is still fine. `$HOME/node_modules/.bin`,
-/// a file directly in `~`, or a tool outside `~` but inside the current folder stay refused.
+/// refused. Both the candidate's target and the folder it sits in are judged, so a link can't
+/// carry a tool in or out of an allowed place. Two exceptions: from `/` nothing is refused, and
+/// when the current folder is the home folder or an ancestor of it, `allowed_from_home` places
+/// are still fine. `$HOME/node_modules/.bin`, a file directly in `~`, and anything inside a
+/// project folder stay refused. A real app bundle in `~/Applications` is judged by itself only.
 /// If the current folder or `p` can't be resolved, this fails closed.
 fn against_cwd(p: &Path) -> Result<(), Miss> {
     let Ok(cwd) = env::current_dir().and_then(fs::canonicalize) else {
@@ -198,27 +269,26 @@ fn against_cwd(p: &Path) -> Result<(), Miss> {
     if cwd.parent().is_none() {
         return Ok(());
     }
-    let resolved: Vec<PathBuf> = [
-        fs::canonicalize(p).ok(),
-        p.parent().and_then(|d| fs::canonicalize(d).ok()),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    let home = home().and_then(|h| fs::canonicalize(h).ok());
+    let bundle = home
+        .as_ref()
+        .and_then(|h| fs::canonicalize(h.join("Applications")).ok())
+        .is_some_and(|apps| is_app_bundle(p, &apps));
+    let parent = if bundle {
+        None
+    } else {
+        p.parent().and_then(|d| fs::canonicalize(d).ok())
+    };
+    let resolved: Vec<PathBuf> = [fs::canonicalize(p).ok(), parent]
+        .into_iter()
+        .flatten()
+        .collect();
     if resolved.is_empty() {
         return Err(Miss::NoCwd);
     }
-    let home = home().and_then(|h| fs::canonicalize(h).ok());
     let from_home_or_above = home.as_ref().is_some_and(|h| h.starts_with(&cwd));
-    let allowed = |c: &Path| {
-        from_home_or_above
-            && home.as_ref().is_some_and(|h| {
-                HOME_ALLOWED
-                    .iter()
-                    .filter_map(|a| fs::canonicalize(h.join(a)).ok())
-                    .any(|a| c.starts_with(a))
-            })
-    };
+    let allowed =
+        |c: &Path| from_home_or_above && home.as_ref().is_some_and(|h| allowed_from_home(c, h));
     if resolved.iter().any(|c| c.starts_with(&cwd) && !allowed(c)) {
         return Err(Miss::InCwd(p.to_path_buf()));
     }
@@ -433,7 +503,23 @@ fn voice(args: &[OsString]) -> i32 {
     #[cfg(target_os = "macos")]
     if path.is_dir() {
         // The app bundle: open it without taking focus.
-        return match Command::new("/usr/bin/open").arg("-g").arg(&path).status() {
+        // POLYCARP_OPEN_BIN lets a test stand in for `open`, so no app is launched.
+        // It passes the same gate as every other program, so it can't be a file in the project.
+        let open = match env::var_os("POLYCARP_OPEN_BIN").filter(|v| !v.is_empty()) {
+            Some(v) => {
+                let v = PathBuf::from(v);
+                if check(&v).is_err() {
+                    eprintln!(
+                        "polycarp: POLYCARP_OPEN_BIN {} was refused: it must be an absolute path to a program outside the current folder.",
+                        v.display()
+                    );
+                    return 127;
+                }
+                v
+            }
+            None => PathBuf::from("/usr/bin/open"),
+        };
+        return match Command::new(open).arg("-g").arg(&path).status() {
             Ok(s) => s.code().unwrap_or(1),
             Err(e) => {
                 eprintln!("polycarp: could not run open: {e}");
@@ -494,7 +580,7 @@ fn doctor() -> i32 {
                 line
             }
             Err(Miss::Script(p)) => {
-                ok = false;
+                ok = tool.sub == "voice" && ok;
                 format!(
                     "{}: present but not runnable. {}",
                     tool.sub,

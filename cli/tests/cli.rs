@@ -817,10 +817,318 @@ fn voice_and_doctor_use_the_same_app_path_on_a_mac() {
     assert_eq!(code(&o), 127, "{}", err(&o));
     assert!(err(&o).contains("not found"), "{}", err(&o));
     let app = s.dir("home").join("Applications/Silas.app");
-    fs::create_dir_all(&app).unwrap();
+    fs::create_dir_all(app.join("Contents")).unwrap();
     let o = s.run(&["doctor"]);
     assert!(
         out(&o).contains(&format!("voice: {}", app.display())),
+        "{}",
+        out(&o)
+    );
+}
+
+// ---- Issue #17: the lookup from the home folder ----
+
+/// From `~`, normal per-user installs run: nvm, cargo, bun, volta, asdf, mise, ~/.local, and the
+/// Polycarp app's command.
+#[cfg(unix)]
+#[test]
+fn from_home_per_user_installs_run() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    for rel in [
+        ".nvm/versions/node/v20/bin",
+        ".cargo/bin",
+        ".bun/bin",
+        ".volta/bin",
+        ".asdf/shims",
+        ".local/share/mise/shims",
+        ".local/bin",
+        "Applications/Polycarp.app/Contents/Resources/bin",
+    ] {
+        let d = home.join(rel);
+        fs::create_dir_all(&d).unwrap();
+        stub(&d, "baneyspaces", &format!("echo from {rel}"));
+        let o = s
+            .cmd(&["spaces"])
+            .env("PATH", &d)
+            .current_dir(&home)
+            .output()
+            .unwrap();
+        assert_eq!(out(&o), format!("from {rel}\n"), "{rel}: {}", err(&o));
+        fs::remove_file(d.join("baneyspaces")).unwrap();
+    }
+}
+
+/// An npm prefix of ~/.local: the entry in bin is a link into lib/node_modules.
+#[cfg(unix)]
+#[test]
+fn from_home_an_npm_prefix_link_inside_local_runs() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let real = home.join(".local/lib/node_modules/tabkyra/bin");
+    let bin = home.join(".local/bin");
+    fs::create_dir_all(&real).unwrap();
+    fs::create_dir_all(&bin).unwrap();
+    stub(&real, "tabkyra", "echo npm-prefix");
+    std::os::unix::fs::symlink(real.join("tabkyra"), bin.join("tabkyra")).unwrap();
+    let o = s
+        .cmd(&["browser"])
+        .env("PATH", &bin)
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert_eq!(out(&o), "npm-prefix\n", "{}", err(&o));
+}
+
+/// A link is judged by where it sits and by where it leads.
+#[cfg(unix)]
+#[test]
+fn from_home_a_link_cannot_carry_a_project_tool_in_or_an_allowed_one_out() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let marker = s.dir("ran");
+    let body = format!("echo x > '{}'", marker.display());
+    // Allowed folder, project target.
+    let proj = home.join("proj/node_modules/.bin");
+    let bin = home.join(".local/bin");
+    fs::create_dir_all(&proj).unwrap();
+    fs::create_dir_all(&bin).unwrap();
+    stub(&proj, "baneyspaces", &body);
+    std::os::unix::fs::symlink(proj.join("baneyspaces"), bin.join("baneyspaces")).unwrap();
+    let o = s
+        .cmd(&["spaces"])
+        .env("PATH", &bin)
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 127);
+    // Project folder, allowed target.
+    let cargo = home.join(".cargo/bin");
+    let tools = home.join("proj/bin");
+    fs::create_dir_all(&cargo).unwrap();
+    fs::create_dir_all(&tools).unwrap();
+    stub(&cargo, "tabkyra", &body);
+    std::os::unix::fs::symlink(cargo.join("tabkyra"), tools.join("tabkyra")).unwrap();
+    let o = s
+        .cmd(&["browser"])
+        .env("PATH", &tools)
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 127);
+    assert!(!marker.exists());
+}
+
+/// Still refused from `~`: a project folder, `node_modules/.bin` and a file in `~`.
+#[cfg(unix)]
+#[test]
+fn from_home_project_folders_are_still_refused() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    // "." is the home folder itself: a file directly in `~`.
+    for rel in [
+        ".",
+        "proj/bin",
+        "proj/.cargo/bin",
+        "node_modules/.bin",
+        "Applications/tools",
+        // A repo cloned into a tree that is not itself an install place.
+        ".local/share/nvim/lazy/repo/node_modules/.bin",
+        ".local/src/proj/bin",
+        ".asdf/plugins/node/bin",
+        ".nvm/repo/bin",
+        // A folder named like an app, without Contents/, and one that is not under Contents/.
+        "Applications/proj.app/node_modules/.bin",
+        "Applications/real.app/node_modules/.bin",
+    ] {
+        if rel.starts_with("Applications/real.app") {
+            fs::create_dir_all(home.join("Applications/real.app/Contents")).unwrap();
+        }
+        let d = home.join(rel);
+        fs::create_dir_all(&d).unwrap();
+        stub(&d, "baneyspaces", "echo ran");
+        let o = s
+            .cmd(&["spaces"])
+            .env("PATH", &d)
+            .current_dir(&home)
+            .output()
+            .unwrap();
+        assert_eq!(code(&o), 127, "{rel}");
+        assert!(!out(&o).contains("ran"), "{rel}");
+    }
+}
+
+/// bun's global install: the entry in bin is a link into install/global/node_modules.
+#[cfg(unix)]
+#[test]
+fn from_home_a_bun_global_link_runs_and_so_do_npm_global_and_pnpm() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let real = home.join(".bun/install/global/node_modules/tabkyra/bin");
+    let bin = home.join(".bun/bin");
+    fs::create_dir_all(&real).unwrap();
+    fs::create_dir_all(&bin).unwrap();
+    stub(&real, "tabkyra", "echo bun");
+    std::os::unix::fs::symlink(real.join("tabkyra"), bin.join("tabkyra")).unwrap();
+    let o = s
+        .cmd(&["browser"])
+        .env("PATH", &bin)
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert_eq!(out(&o), "bun\n", "{}", err(&o));
+    for rel in [
+        ".npm-global/bin",
+        "Library/pnpm",
+        "scoop/shims",
+        "AppData/Local/Programs",
+    ] {
+        let d = home.join(rel);
+        fs::create_dir_all(&d).unwrap();
+        stub(&d, "baneyspaces", &format!("echo {rel}"));
+        let o = s
+            .cmd(&["spaces"])
+            .env("PATH", &d)
+            .current_dir(&home)
+            .output()
+            .unwrap();
+        assert_eq!(out(&o), format!("{rel}\n"), "{rel}: {}", err(&o));
+    }
+}
+
+/// A home under an allowed system folder does not open the home's project folders. The list of
+/// system folders is replaced by the sandbox root for this test.
+#[cfg(unix)]
+#[test]
+fn a_home_under_a_system_folder_still_refuses_its_project_folders() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let proj = home.join("proj/node_modules/.bin");
+    fs::create_dir_all(&proj).unwrap();
+    stub(&proj, "baneyspaces", "echo ran");
+    stub(&s.dir("bin"), "baneyspaces", "echo system");
+    for cwd in [&home, &s.root] {
+        let o = s
+            .cmd(&["spaces"])
+            .env("PATH", &proj)
+            .env("POLYCARP_TEST_SYSTEM_ALLOWED", &s.root)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        assert_eq!(code(&o), 127, "from {}", cwd.display());
+        assert!(!out(&o).contains("ran"));
+    }
+    // Outside the home folder, the system folder is allowed.
+    let o = s
+        .cmd(&["spaces"])
+        .env("PATH", s.dir("bin"))
+        .env("POLYCARP_TEST_SYSTEM_ALLOWED", &s.root)
+        .current_dir(&s.root)
+        .output()
+        .unwrap();
+    assert_eq!(out(&o), "system\n", "{}", err(&o));
+}
+
+/// POLYCARP_OPEN_BIN passes the same gate as every other program.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_open_override_cannot_be_a_file_in_the_project_or_a_bare_name() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    fs::create_dir_all(home.join("Applications/Silas.app/Contents")).unwrap();
+    let marker = s.dir("ran");
+    let proj = home.join("proj");
+    fs::create_dir_all(&proj).unwrap();
+    let evil = stub(&proj, "evil", &format!("echo x > '{}'", marker.display()));
+    for open in [evil.as_os_str().to_owned(), "evil".into(), "./evil".into()] {
+        let o = s
+            .cmd(&["voice"])
+            .env("POLYCARP_OPEN_BIN", &open)
+            .current_dir(&home)
+            .output()
+            .unwrap();
+        assert_eq!(code(&o), 127, "{open:?}: {}", err(&o));
+        assert!(err(&o).contains("POLYCARP_OPEN_BIN"), "{}", err(&o));
+    }
+    assert!(!marker.exists());
+}
+
+/// A link named like an app, leading to a folder elsewhere, is not an app bundle.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_linked_app_bundle_is_refused() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    fs::create_dir_all(home.join("Applications")).unwrap();
+    let elsewhere = s.dir("elsewhere/Silas.app");
+    fs::create_dir_all(elsewhere.join("Contents")).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, home.join("Applications/Silas.app")).unwrap();
+    let log = s.dir("open-args");
+    let open = stub(
+        &s.dir("bin"),
+        "fake-open",
+        &format!("echo \"$@\" > '{}'", log.display()),
+    );
+    let o = s
+        .cmd(&["voice"])
+        .env("POLYCARP_OPEN_BIN", &open)
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 127, "{}", err(&o));
+    assert!(!log.exists(), "open was called");
+}
+
+/// `voice` and `doctor` from `~`, with the app only in `~/Applications`. `open` is a stub, so
+/// no app is launched.
+#[cfg(target_os = "macos")]
+#[test]
+fn from_home_voice_and_doctor_find_an_app_only_in_home_applications() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let app = home.join("Applications/Silas.app");
+    fs::create_dir_all(app.join("Contents")).unwrap();
+    let log = s.dir("open-args");
+    let open = stub(
+        &s.dir("bin"),
+        "fake-open",
+        &format!("echo \"$@\" > '{}'", log.display()),
+    );
+    let o = s.cmd(&["doctor"]).current_dir(&home).output().unwrap();
+    assert!(
+        out(&o).contains(&format!("voice: {}", app.display())),
+        "{}",
+        out(&o)
+    );
+    let o = s
+        .cmd(&["voice"])
+        .env("POLYCARP_OPEN_BIN", &open)
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let args = fs::read_to_string(&log).unwrap();
+    assert!(args.contains(app.to_str().unwrap()), "{args}");
+}
+
+/// An optional tool (Silas) with only a script found must not fail `doctor`.
+#[cfg(unix)]
+#[test]
+fn a_voice_script_alone_does_not_fail_doctor() {
+    let s = Sandbox::new();
+    stub(&s.dir("bin"), "baneyspaces", "exit 0");
+    stub(&s.dir("bin"), "tabkyra", "echo tabkyra 1");
+    let shim = stub(&s.dir("bin"), "silas.cmd", "exit 0");
+    let o = s
+        .cmd(&["doctor"])
+        .env("PATH", s.dir("bin"))
+        .env("POLYCARP_SHIM_CHECK", "1")
+        .env("POLYCARP_VOICE_BIN", &shim)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0, "{}", out(&o));
+    assert!(
+        out(&o).contains("voice: present but not runnable"),
         "{}",
         out(&o)
     );
