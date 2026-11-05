@@ -259,6 +259,22 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertTrue(why.hasPrefix("dark: tooltip text is"), why)
     }
 
+    func testSchemaMustBeTheOneKnown() throws {
+        func with(_ schema: Any?) -> Data {
+            var root = json(PolycarpFixtures.still_water)
+            if let schema { root["schema"] = schema } else { root.removeValue(forKey: "schema") }
+            return data(root)
+        }
+        XCTAssertNoThrow(try parse(with(1)).get())
+        let newer = failure(with(2))
+        XCTAssertTrue(newer.contains("schema 2") && newer.contains("update BaneySpaces"), newer)
+        XCTAssertTrue(failure(with(nil)).contains("schema is missing"))
+        XCTAssertTrue(failure(with("1")).contains("schema is missing or not a whole number"))
+        XCTAssertTrue(failure(with(1.5)).contains("not a whole number"))
+        XCTAssertTrue(failure(with(true)).contains("not a whole number"))
+        XCTAssertTrue(failure(with(0)).contains("schema 0"))
+    }
+
     func testNotAnObjectIsRefused() {
         for text in ["", "null", "[]", "42", "\"theme\"", "{", "{\"mode\":\"auto\"}", "\u{0}\u{1}"] {
             XCTAssertFalse(isSuccess(parse(Data(text.utf8))), text)

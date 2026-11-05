@@ -173,7 +173,15 @@ public struct PolycarpTheme: Equatable, Sendable {
     private static let roleNames = ["accent", "background", "border", "done", "foreground", "muted", "on_accent",
                                     "selection", "strong", "sunken", "surface", "urgent", "working"]
 
+    /// The `schema` this reads. A newer file may keep a key and change what it means, so it is refused, not guessed at.
+    public static let schema = 1
+
     private static func build(_ root: [String: Any]) throws -> PolycarpTheme {
+        guard let n = root["schema"] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue == n.doubleValue.rounded() else {
+            throw PolycarpThemeError("schema is missing or not a whole number")
+        }
+        if n.intValue > schema { throw PolycarpThemeError("schema \(n.intValue) is newer than this BaneySpaces reads (schema \(schema)): update BaneySpaces") }
+        guard n.intValue == schema else { throw PolycarpThemeError("schema \(n.intValue) is not one this BaneySpaces reads (schema \(schema))") }
         guard let modeText = root["mode"] as? String, let mode = Mode(rawValue: modeText) else {
             throw PolycarpThemeError("mode is missing or not auto, light or dark")
         }
