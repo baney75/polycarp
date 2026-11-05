@@ -3177,3 +3177,40 @@ fn apply_says_when_it_replaced_invalid_settings() {
         "{v}"
     );
 }
+
+#[test]
+fn title_and_description_refuse_control_characters() {
+    for (key, value) in [
+        ("title", "Two\\nlines"),
+        ("title", "Tab\\there"),
+        ("title", "Esc\\u001b[31m"),
+        ("description", "Line one\\nline two"),
+        ("description", "bell\\u0007"),
+    ] {
+        let b = Box::new();
+        let doc = format!(
+            "name = \"odd\"\nextends = \"polycarp\"\n{}{key} = \"{value}\"\n",
+            if key == "title" {
+                ""
+            } else {
+                "title = \"Odd\"\n"
+            }
+        );
+        let o = b.run_stdin(&["theme", "apply", "-", "--json"], &doc);
+        assert_eq!(code(&o), 1, "{key} {value:?}: {}", out(&o));
+        let v: Value = serde_json::from_str(&out(&o)).unwrap();
+        assert_eq!(v["error"]["data"]["errors"][0]["path"], key, "{v}");
+        assert!(
+            v["error"]["data"]["errors"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("control characters"),
+            "{v}"
+        );
+        assert!(!b.cfg().join("themes").join("odd.toml").exists());
+    }
+    // Ordinary text, including non-ASCII, still works.
+    let b = Box::new();
+    let doc = "name = \"fine\"\ntitle = \"Caf\u{e9} bleu\"\ndescription = \"A calm theme.\"\nextends = \"polycarp\"\n";
+    assert_eq!(code(&b.run_stdin(&["theme", "apply", "-"], doc)), 0);
+}

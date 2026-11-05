@@ -338,14 +338,21 @@ fn check_doc(t: &Table, expected_name: Option<&str>) -> Vec<String> {
             "name" => {}
             "title" => match v.as_str() {
                 Some(s) if s.trim().is_empty() => out.push("title: must not be empty".into()),
+                Some(s) if s.chars().any(char::is_control) => out.push(
+                    "title: must not contain control characters (line breaks, tabs, escapes)"
+                        .into(),
+                ),
                 Some(_) => {}
                 None => out.push("title: must be a string".into()),
             },
-            "description" => {
-                if v.as_str().is_none() {
-                    out.push("description: must be a string".into());
-                }
-            }
+            "description" => match v.as_str() {
+                None => out.push("description: must be a string".into()),
+                Some(s) if s.chars().any(char::is_control) => out.push(
+                    "description: must not contain control characters (line breaks, tabs, escapes)"
+                        .into(),
+                ),
+                Some(_) => {}
+            },
             "extends" => match v.as_str() {
                 Some(s) if valid_name(s) => {}
                 Some(s) => out.push(format!("extends: {s:?} is not a valid theme name")),
