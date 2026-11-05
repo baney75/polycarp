@@ -49,7 +49,8 @@ mkdir -p "$OUT"
 lipo -create "${LIBS[@]}" -output "$OUT/libpolycarp_core.a"
 # A function the app calls but the library lacks would fail at link time; one the header promises and the library lacks, never.
 # (nm's output goes to a variable first: grep -q closing the pipe early would fail it under pipefail.)
-SYMBOLS=$(nm -gU "$OUT/libpolycarp_core.a" 2>/dev/null)
+# nm can exit non-zero on an object inside the archive it can't read, after printing the rest; the check below decides.
+SYMBOLS=$(nm -gU "$OUT/libpolycarp_core.a" 2>/dev/null || true)
 for sym in $(sed -n 's/.*[ *]\(pc_[a-z_]*\)(.*/\1/p' "$CORE/ffi/include/polycarp_core.h" | sort -u); do
   grep -q " _$sym\$" <<<"$SYMBOLS" || { echo "core: the library has no $sym" >&2; exit 1; }
 done
