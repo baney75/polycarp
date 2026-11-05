@@ -26,3 +26,11 @@ test("every allowlist entry says why, and the tree has no color outside tokens a
 	for (const [file, entry] of Object.entries(ALLOWLIST)) assert.ok(entry.why.length > 20, `${file} needs a reason`);
 	assert.deepEqual(check(), []);
 });
+
+test("no test file prints leftover debug output", async () => {
+	const { readdirSync, readFileSync } = await import("node:fs");
+	const dir = new URL("./", import.meta.url);
+	for (const name of readdirSync(dir).filter((n) => n.endsWith(".test.mjs") && n !== "check-theme.test.mjs")) {
+		assert.doesNotMatch(readFileSync(new URL(name, dir), "utf8"), /console\.log\(\s*["']DBG/, name);
+	}
+});

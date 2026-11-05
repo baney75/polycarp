@@ -128,7 +128,6 @@ test("the panel asks when it opens, every 5 s while visible, and not at all whil
 	await page.flush();
 	assert.equal(count(), opened + 3, "nothing while hidden");
 
-	console.log("DBG", count(), page.asked.length);
 	page.doc.visibilityState = "visible";
 	page.handlers.visibilitychange();
 	await page.flush();
