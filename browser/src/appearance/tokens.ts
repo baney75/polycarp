@@ -5,15 +5,47 @@
  */
 
 import { accentInk, controlEdge, mix, type Palette, resolveTheme, type ThemeChoice, textOn } from "./palettes.js";
+import type { PolycarpTheme } from "./polycarp.js";
 
 /** The accent the panel draws in this mode: the custom one, or the preset's own. What the color box and swatches show. */
-export function effectiveAccent(choice: ThemeChoice, dark: boolean): string {
-	return resolveTheme(choice)[dark ? "dark" : "light"].accent;
+export function effectiveAccent(choice: ThemeChoice, dark: boolean, polycarp?: PolycarpTheme): string {
+	return (polycarp?.palettes ?? resolveTheme(choice))[dark ? "dark" : "light"].accent;
 }
 
-/** CSS custom properties for one mode, keyed by name (with the leading dashes). */
-export function appearanceVariables(choice: ThemeChoice, dark: boolean): Record<string, string> {
-	const p: Palette = resolveTheme(choice)[dark ? "dark" : "light"];
+const ms = (n: number, reduced: boolean) => `${reduced ? 0 : n}ms`;
+
+/**
+ * What a Polycarp theme adds beyond color: radii (mini-lit's --radius, the panel's -sm and -lg),
+ * the three font stacks (mini-lit's --font-sans, --font-serif and --font-mono) and base size, and
+ * motion (three durations and the easing; "reduced" makes every duration 0).
+ */
+function polycarpShapeVariables(t: PolycarpTheme): Record<string, string> {
+	return {
+		"--radius": `${t.shape.radius}px`,
+		"--tk-radius-sm": `${t.shape.radiusSmall}px`,
+		"--tk-radius-lg": `${t.shape.radiusLarge}px`,
+		"--font-sans": t.type.ui,
+		"--font-serif": t.type.display,
+		"--font-mono": t.type.mono,
+		"--tk-font-size": `${t.type.size}px`,
+		"--tk-motion-fast": ms(t.motion.fast, t.motion.reduced),
+		"--tk-motion-normal": ms(t.motion.normal, t.motion.reduced),
+		"--tk-motion-slow": ms(t.motion.slow, t.motion.reduced),
+		"--tk-ease": t.motion.easing,
+	};
+}
+
+/**
+ * CSS custom properties for one mode, keyed by name (with the leading dashes). A Polycarp theme, when
+ * given, replaces the choice's palette and adds shape, type and motion; without one the result is
+ * exactly what it was before Polycarp (test/fixtures/appearance-main.snapshot.json).
+ */
+export function appearanceVariables(
+	choice: ThemeChoice,
+	dark: boolean,
+	polycarp?: PolycarpTheme,
+): Record<string, string> {
+	const p: Palette = (polycarp?.palettes ?? resolveTheme(choice))[dark ? "dark" : "light"];
 	const secondary = mix(p.panel, p.text, 0.05);
 	const hover = mix(p.panel, p.text, 0.1);
 	const controlOn = accentInk(p.accent, [p.bg, p.panel], p.text, 3);
@@ -50,6 +82,7 @@ export function appearanceVariables(choice: ThemeChoice, dark: boolean): Record<
 		"--tk-control-on": controlOn,
 		"accent-color": controlOn,
 		"--tk-brass-text": accentInk(p.accent, [p.panel, p.bg, secondary], p.text),
+		...(polycarp ? polycarpShapeVariables(polycarp) : {}),
 	};
 }
 

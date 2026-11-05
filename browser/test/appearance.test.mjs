@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { contrast, mix, PRESETS } from "../src/appearance/palettes.ts";
+import { isEasing, isFontStack, parsePolycarpTheme, polycarpPayload } from "../src/appearance/polycarp.ts";
 import { appearanceVariables, effectiveAccent, parseChoice, SHAPE_PAIRS, TEXT_PAIRS } from "../src/appearance/tokens.ts";
 
 const check = (choice, label) => {
@@ -205,4 +206,135 @@ test("picking a preset when the panel's choice has no accent sends accent: null,
 	const tab = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "dialogs", "AppearanceTab.ts"), "utf8");
 	assert.match(tab, /this\.choose\(name, choice\.accent, !choice\.accent\)/);
 	assert.match(tab, /clearedAccent \? \{ accent: null \}/);
+});
+
+// ---------- Polycarp themes ----------
+
+const BUILT_INS = ["polycarp", "still-water", "evening", "parchment", "blocks", "calm"];
+const fixtureFile = (name) => JSON.parse(readFileSync(new URL(`./fixtures/polycarp/${name}.json`, import.meta.url), "utf8"));
+
+test("with no Polycarp theme, appearanceVariables is byte for byte what origin/main produced, for every preset, accent and mode", () => {
+	const snapshot = JSON.parse(readFileSync(new URL("./fixtures/appearance-main.snapshot.json", import.meta.url), "utf8"));
+	let seen = 0;
+	for (const preset of Object.keys(PRESETS)) {
+		for (const accent of [undefined, "#3b82f6"]) {
+			for (const dark of [false, true]) {
+				const key = `${preset}|${accent ?? "none"}|${dark ? "dark" : "light"}`;
+				const choice = { preset, ...(accent ? { accent } : {}) };
+				assert.equal(JSON.stringify(appearanceVariables(choice, dark)), JSON.stringify(snapshot[key]), key);
+				assert.equal(JSON.stringify(appearanceVariables(choice, dark, undefined)), JSON.stringify(snapshot[key]), `${key} (undefined theme)`);
+				seen++;
+			}
+		}
+	}
+	assert.equal(seen, Object.keys(snapshot).length, "the snapshot covers exactly these");
+});
+
+test("all six built-in Polycarp themes parse, and their roles map to the panel's palette and tokens", () => {
+	for (const name of BUILT_INS) {
+		const file = fixtureFile(name);
+		const theme = parsePolycarpTheme(file);
+		assert.ok(theme, name);
+		assert.equal(theme.name, name);
+		assert.equal(theme.mode, file.mode);
+		for (const dark of [false, true]) {
+			const c = file.surfaces.browser[dark ? "dark" : "light"];
+			const vars = appearanceVariables({ preset: "slate" }, dark, theme);
+			assert.equal(vars["--background"], c.background, `${name} bg`);
+			assert.equal(vars["--card"], c.surface);
+			assert.equal(vars["--popover"], c.surface);
+			assert.equal(vars["--foreground"], c.foreground);
+			assert.equal(vars["--muted-foreground"], c.muted);
+			assert.equal(vars["--border"], c.border);
+			assert.equal(vars["--primary"], c.accent);
+			assert.equal(vars["--primary-foreground"], c.on_accent);
+			assert.equal(vars["--tk-on-brass"], c.on_accent);
+			assert.equal(vars["--destructive"], c.urgent);
+			assert.equal(effectiveAccent({ preset: "slate" }, dark, theme), c.accent);
+			// The saved preset and accent do not matter while a theme is in force.
+			assert.deepEqual(appearanceVariables({ preset: "rose", accent: "#123456" }, dark, theme), vars);
+		}
+		const { shape, type, motion } = file.surfaces.browser;
+		const vars = appearanceVariables({ preset: "tabkyra" }, false, theme);
+		assert.equal(vars["--radius"], `${shape.radius}px`);
+		assert.equal(vars["--tk-radius-sm"], `${shape.radius_small}px`);
+		assert.equal(vars["--tk-radius-lg"], `${shape.radius_large}px`);
+		assert.equal(vars["--font-sans"], type.ui);
+		assert.equal(vars["--font-serif"], type.display);
+		assert.equal(vars["--font-mono"], type.mono);
+		assert.equal(vars["--tk-font-size"], `${type.size}px`);
+		const zero = (n) => `${motion.reduced ? 0 : n}ms`;
+		assert.equal(vars["--tk-motion-fast"], zero(motion.fast));
+		assert.equal(vars["--tk-motion-normal"], zero(motion.normal));
+		assert.equal(vars["--tk-motion-slow"], zero(motion.slow));
+		assert.equal(vars["--tk-ease"], motion.easing);
+	}
+});
+
+test("reduced motion makes every exported duration 0", () => {
+	const file = fixtureFile("still-water");
+	file.surfaces.browser.motion.reduced = true;
+	const vars = appearanceVariables({ preset: "tabkyra" }, false, parsePolycarpTheme(file));
+	assert.deepEqual([vars["--tk-motion-fast"], vars["--tk-motion-normal"], vars["--tk-motion-slow"]], ["0ms", "0ms", "0ms"]);
+});
+
+test("every text pair the panel draws reaches WCAG AA, and every shape 3:1, for all six Polycarp themes in light and dark", () => {
+	for (const name of BUILT_INS) {
+		const theme = parsePolycarpTheme(fixtureFile(name));
+		for (const dark of [false, true]) {
+			const vars = appearanceVariables({ preset: "tabkyra" }, dark, theme);
+			const label = `${name} ${dark ? "dark" : "light"}`;
+			for (const [fg, bg] of TEXT_PAIRS) {
+				const ratio = contrast(vars[fg], vars[bg]);
+				assert.ok(ratio >= 4.5, `${label}: ${fg} ${vars[fg]} on ${bg} ${vars[bg]} is ${ratio.toFixed(2)}:1, below 4.5:1`);
+			}
+			for (const [shape, bg] of SHAPE_PAIRS) {
+				const ratio = contrast(vars[shape], vars[bg]);
+				assert.ok(ratio >= 3, `${label}: ${shape} ${vars[shape]} on ${bg} ${vars[bg]} is ${ratio.toFixed(2)}:1, below 3:1`);
+			}
+		}
+	}
+});
+
+test("the panel refuses a Polycarp theme that is not exactly right", () => {
+	const good = fixtureFile("evening");
+	const edit = (fn) => {
+		const copy = structuredClone(good);
+		fn(copy);
+		return copy;
+	};
+	assert.ok(parsePolycarpTheme(good));
+	for (const [label, bad] of Object.entries({
+		null: null,
+		string: "x",
+		array: [],
+		"schema 2": edit((f) => { f.schema = 2; }),
+		"no browser": edit((f) => { delete f.surfaces.browser; }),
+		"bad color": edit((f) => { f.surfaces.browser.light.muted = "grey"; }),
+		"radius -1": edit((f) => { f.surfaces.browser.shape.radius = -1; }),
+		"size 25": edit((f) => { f.surfaces.browser.type.size = 25; }),
+		"NaN-ish duration": edit((f) => { f.surfaces.browser.motion.fast = null; }),
+		"font url": edit((f) => { f.surfaces.browser.type.mono = "url(x)"; }),
+		"font braces": edit((f) => { f.surfaces.browser.type.ui = "a{b}"; }),
+		"easing text": edit((f) => { f.surfaces.browser.motion.easing = "ease-in; x"; }),
+		"title with newline": edit((f) => { f.title = "a\nb"; }),
+	})) {
+		assert.equal(parsePolycarpTheme(bad), undefined, label);
+	}
+	// The stacks the built-in themes use, and Unicode family names, are fine.
+	assert.equal(isFontStack('Newsreader, "Iowan Old Style", Georgia, serif'), true);
+	assert.equal(isFontStack("Noto Sans JP, Hiragino-Sans, my_font"), true);
+	assert.equal(isFontStack("a,,b"), false);
+	assert.equal(isFontStack("a, 'b\\c'"), false);
+	assert.equal(isEasing("cubic-bezier(0.2, 0, 0, 1)"), true);
+	assert.equal(isEasing("cubic-bezier(0.2, 0, 1.5, 1)"), false);
+	assert.equal(isEasing("cubic-bezier(0.2, 0, 0)"), false);
+});
+
+test("the payload the helper sends carries only Tabkyra's section, and the panel parses it back to the same theme", () => {
+	const file = fixtureFile("blocks");
+	const payload = polycarpPayload(file);
+	assert.deepEqual(Object.keys(payload.surfaces), ["browser"]);
+	assert.deepEqual(parsePolycarpTheme(payload), parsePolycarpTheme(file));
+	assert.equal(polycarpPayload({ ...file, schema: 3 }), undefined);
 });
