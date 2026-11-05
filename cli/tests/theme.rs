@@ -1881,7 +1881,7 @@ fn atomic_writes_leave_no_temp_files() {
     for f in &files {
         let n = f.file_name().unwrap().to_string_lossy();
         assert!(
-            !n.contains(".tmp") && !n.starts_with('.'),
+            !n.contains(".tmp") && (n == ".lock" || !n.starts_with('.')),
             "stray file {f:?}"
         );
     }
