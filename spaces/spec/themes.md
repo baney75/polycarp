@@ -93,8 +93,10 @@ still stores its value while a Polycarp theme is in force; it draws once the fil
 
 **Reading.** Strictly, from one file handle: a regular file of at most 256 KB; colors `#rrggbb`;
 numbers in range and really numbers; known enums; font stacks without CSS; and the pairs the UI
-draws text on at 4.5:1 in both modes (foreground and muted on background and surface, foreground
-on selection, `on_accent` on accent). Anything else, including a missing file, a directory, a pipe
+draws text on at 4.5:1 in both modes: every pair `polycarp theme` checks (foreground, strong and muted
+on background, surface and sunken; foreground and strong on selection; urgent, working, done and
+accent on background and surface; `on_accent` on accent; the status colors on sunken at 3:1), and
+every text pair Spaces draws (`Look.textPairs`: tooltips, tiles, the overview and the accent badge). Anything else, including a missing file, a directory, a pipe
 or an unreadable one, means no Polycarp theme and one log line in `trace.log`
 (`polycarp theme: ignored ...`); the app never fails on it.
 
@@ -106,7 +108,7 @@ with these values:
 
 | Polycarp | Spaces |
 | --- | --- |
-| `light` / `dark` colors | the twelve roles, by `mode` (`on_accent` is the text on the accent) |
+| `light` / `dark` colors | the twelve roles, by `mode` (`on_accent` is checked against the accent but not drawn: the badge text is black or white, whichever reads) |
 | `radius_large`, `radius`, `radius_small` | bar and panels, tiles and list, rows |
 | `border_width` | rest; the focused width is 1.5 times it (0 stays 0); border `border`, focused `accent` |
 | `blur` | on or off: above 0 is the platform blur at 0.92 opacity, else an opaque fill |

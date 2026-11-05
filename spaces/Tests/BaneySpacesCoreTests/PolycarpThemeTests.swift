@@ -236,6 +236,29 @@ final class PolycarpThemeTests: XCTestCase {
         }
     }
 
+    func testEveryPairTheCommandChecksIsCheckedHere() {
+        // The CLI also holds strong and muted on sunken, the status colors on background and surface at 4.5,
+        // and on sunken at 3.
+        for (mode, role, other) in [("dark", "strong", "sunken"), ("light", "muted", "sunken"), ("dark", "done", "surface"),
+                                    ("light", "urgent", "background"), ("dark", "working", "background"), ("light", "accent", "surface")] {
+            let d = edited { var m = $0[mode] as! [String: Any]; m[role] = m[other]; $0[mode] = m }
+            let why = failure(d)
+            XCTAssertTrue(why.hasPrefix("\(mode)."), "\(mode) \(role) on \(other): \(why)")
+        }
+    }
+
+    func testAFileThatPassesTheCommandsPairsButFailsADrawnPairIsRefused() {
+        // Black text on red fills and a green sunken: every pair the command checks holds (4.5 and up on each fill
+        // alone), but the tooltip draws on sunken at 78% over the background, a dark olive that is 4.1:1.
+        let d = edited { var m = $0["dark"] as! [String: Any]
+            for r in ["foreground", "strong", "muted", "urgent", "working", "done", "accent"] { m[r] = "#000000" }
+            for r in ["background", "surface", "selection"] { m[r] = "#ff0000" }
+            m["sunken"] = "#00a000"; m["on_accent"] = "#ffffff"
+            $0["dark"] = m }
+        let why = failure(d)
+        XCTAssertTrue(why.hasPrefix("dark: tooltip text is"), why)
+    }
+
     func testNotAnObjectIsRefused() {
         for text in ["", "null", "[]", "42", "\"theme\"", "{", "{\"mode\":\"auto\"}", "\u{0}\u{1}"] {
             XCTAssertFalse(isSuccess(parse(Data(text.utf8))), text)

@@ -159,6 +159,17 @@ public struct PolycarpTheme: Equatable, Sendable {
         do { return .success(try build(root)) } catch let e as PolycarpThemeError { return .failure(e) } catch { return .failure(.init("\(error)")) }
     }
 
+    /// `pairs()` in cli/src/theme.rs: text on its fills at `minContrast`, and the status colors on `sunken` at 3.0.
+    static let cliPairs: [(String, String, Double)] = {
+        var v: [(String, String, Double)] = []
+        for fg in ["foreground", "strong", "muted"] { for bg in ["background", "surface", "sunken"] { v.append((fg, bg, minContrast)) } }
+        for fg in ["foreground", "strong"] { v.append((fg, "selection", minContrast)) }
+        for fg in ["urgent", "working", "done", "accent"] { for bg in ["background", "surface"] { v.append((fg, bg, minContrast)) } }
+        v.append(("on_accent", "accent", minContrast))
+        for fg in ["urgent", "working", "done", "accent"] { v.append((fg, "sunken", 3.0)) }
+        return v
+    }()
+
     private static let roleNames = ["accent", "background", "border", "done", "foreground", "muted", "on_accent",
                                     "selection", "strong", "sunken", "surface", "urgent", "working"]
 
@@ -183,19 +194,13 @@ public struct PolycarpTheme: Equatable, Sendable {
             }
             let onAccent = roles.removeValue(forKey: "on_accent")!
             let out = Colors(roles: roles, onAccent: onAccent)
-            // The pairs the UI draws text on, and the ones that decide whether it can be read at all.
-            let pairs: [(String, RGB, String, RGB)] = [
-                ("foreground", roles["foreground"]!, "background", roles["background"]!),
-                ("foreground", roles["foreground"]!, "surface", roles["surface"]!),
-                ("foreground", roles["foreground"]!, "selection", roles["selection"]!),
-                ("muted", roles["muted"]!, "background", roles["background"]!),
-                ("muted", roles["muted"]!, "surface", roles["surface"]!),
-                ("on_accent", onAccent, "accent", roles["accent"]!),
-            ]
-            for (fa, a, fb, b) in pairs {
-                let r = a.contrast(with: b)
-                if r < minContrast {
-                    throw PolycarpThemeError("\(key).\(fa) on \(key).\(fb) is \(String(format: "%.2f", r)), needs \(minContrast)")
+            // Every pair the CLI checks (`pairs()` in cli/src/theme.rs), so a file by hand holds to what a built-in does.
+            var all = roles
+            all["on_accent"] = onAccent
+            for (fa, fb, min) in cliPairs {
+                let r = all[fa]!.contrast(with: all[fb]!)
+                if r < min {
+                    throw PolycarpThemeError("\(key).\(fa) on \(key).\(fb) is \(String(format: "%.2f", r)), needs \(min)")
                 }
             }
             return out
@@ -227,7 +232,7 @@ public struct PolycarpTheme: Equatable, Sendable {
         _ = try stack(type, "display"); _ = try stack(type, "mono")
         let name = printable(root["name"], limit: 48) ?? ""
         let title = printable(root["title"], limit: 48) ?? (name.isEmpty ? "Polycarp" : name)
-        return PolycarpTheme(
+        let built = PolycarpTheme(
             name: name, title: title, mode: mode, light: light, dark: dark,
             radiusSmall: try number(shape, "radius_small", 0, 64), radius: try number(shape, "radius", 0, 64),
             radiusLarge: try number(shape, "radius_large", 0, 64),
@@ -237,6 +242,24 @@ public struct PolycarpTheme: Equatable, Sendable {
             ui: try stack(type, "ui"), fontSize: try number(type, "size", 10, 24), fontWeight: try number(type, "weight", 300, 800),
             fast: try number(motion, "fast", 0, 1000), normal: try number(motion, "normal", 0, 1000), slow: try number(motion, "slow", 0, 1000),
             scaleFrom: try number(motion, "scale_from", 0.5, 1), reduced: reduced.boolValue)
+        try built.checkDrawnPairs()
+        return built
+    }
+
+    /// The pairs this look really draws (`Look.textPairs`), in both modes whatever `mode` says. A file can
+    /// pass the CLI's pairs and still fail one of these (on_accent is checked, but the badge text is drawn
+    /// by `Look.text(onAccent:)`).
+    func checkDrawnPairs() throws {
+        for (key, colors, dark) in [("light", light, false), ("dark", dark, true)] {
+            let look = Look(theme: PolycarpTheme.carrier, spec: spec, palette: Palette(name: "polycarp", isDark: dark, colors: colors.roles),
+                            polycarp: name, families: nil)
+            for p in look.textPairs(accent: colors.roles["accent"]!) {
+                let r = p.text.contrast(with: p.fill)
+                if r < PolycarpTheme.minContrast {
+                    throw PolycarpThemeError("\(key): \(p.name) text is \(String(format: "%.2f", r)) on its fill, needs \(PolycarpTheme.minContrast)")
+                }
+            }
+        }
     }
 
     /// Strict `#rrggbb`, either case: nothing shorter, longer or without the hash.
