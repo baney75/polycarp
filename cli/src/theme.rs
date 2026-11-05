@@ -1237,7 +1237,38 @@ struct Hist {
     theme_body: Vec<u8>,
 }
 
+/// The line that ends a history header. A header value is written as a JSON string, so no value
+/// can ever be this exact line.
 const MARK: &[u8] = b"# ---\n";
+
+/// A header value as one safe line. Old files held the raw text; those still read.
+fn unquote(v: &str) -> String {
+    if v.starts_with('"') {
+        if let Ok(s) = serde_json::from_str::<String>(v) {
+            return s;
+        }
+    }
+    v.to_string()
+}
+
+/// Splits a history file at the first line that is exactly `# ---`.
+fn split_header(bytes: &[u8]) -> Option<(Vec<&[u8]>, usize)> {
+    if !bytes.starts_with(b"# polycarp-history") {
+        return None;
+    }
+    let mut lines = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let end = bytes[at..].iter().position(|b| *b == b'\n')? + at;
+        let line = &bytes[at..end];
+        at = end + 1;
+        if line == &MARK[..MARK.len() - 1] {
+            return Some((lines, at));
+        }
+        lines.push(line);
+    }
+    None
+}
 
 fn parse_hist(file: PathBuf, bytes: Vec<u8>) -> Hist {
     let mut h = Hist {
@@ -1252,21 +1283,18 @@ fn parse_hist(file: PathBuf, bytes: Vec<u8>) -> Hist {
         theme_body: Vec::new(),
     };
     let mut theme_bytes = 0usize;
-    let head_len = bytes
-        .windows(MARK.len())
-        .position(|w| w == MARK)
-        .filter(|_| bytes.starts_with(b"# polycarp-history"));
-    let Some(pos) = head_len else {
+    let Some((head, body_at)) = split_header(&bytes) else {
         h.body = bytes;
         return h;
     };
-    for line in String::from_utf8_lossy(&bytes[..pos]).lines() {
+    for raw in head {
+        let line = String::from_utf8_lossy(raw);
         if let Some(v) = line.strip_prefix("# time = ") {
             h.time = v.into();
         } else if let Some(v) = line.strip_prefix("# caller = ") {
-            h.caller = v.into();
+            h.caller = unquote(v);
         } else if let Some(v) = line.strip_prefix("# action = ") {
-            h.action = v.into();
+            h.action = unquote(v);
         } else if line == "# absent = true" {
             h.absent = true;
         } else if let Some(v) = line.strip_prefix("# theme_file = ") {
@@ -1277,7 +1305,7 @@ fn parse_hist(file: PathBuf, bytes: Vec<u8>) -> Hist {
             theme_bytes = v.parse().unwrap_or(0);
         }
     }
-    let mut body = bytes[pos + MARK.len()..].to_vec();
+    let mut body = bytes[body_at..].to_vec();
     if theme_bytes > 0 && theme_bytes <= body.len() {
         h.theme_body = body.split_off(body.len() - theme_bytes);
     }
@@ -1313,9 +1341,12 @@ fn record(cfg: &Cfg, who: &str, action: &str, theme: Option<&str>) -> Result<(),
     let (compact, iso) = stamps();
     let current = fs::read(cfg.file()).ok();
     let action: String = action.chars().filter(|c| !c.is_control()).collect();
-    let mut data =
-        format!("# polycarp-history 1\n# time = {iso}\n# caller = {who}\n# action = {action}\n")
-            .into_bytes();
+    let mut data = format!(
+        "# polycarp-history 1\n# time = {iso}\n# caller = {}\n# action = {}\n",
+        json!(who),
+        json!(action)
+    )
+    .into_bytes();
     if current.is_none() {
         data.extend_from_slice(b"# absent = true\n");
     }

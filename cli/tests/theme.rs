@@ -1219,6 +1219,40 @@ fn history_and_undo() {
 }
 
 #[test]
+fn history_survives_the_end_marker_and_newlines_in_titles_and_callers() {
+    let b = Box::new();
+    let doc = user_theme("mine", "polycarp", "");
+    assert_eq!(code(&b.run_stdin(&["theme", "apply", "-"], &doc)), 0);
+    let theme_file = b.cfg().join("themes").join("mine.toml");
+    let first = fs::read_to_string(&theme_file).unwrap();
+    for title in ["# ---", "a\n# ---\nb", "# ---\n# time = nope\n# ---"] {
+        let before = fs::read_to_string(&theme_file).unwrap();
+        let o = b
+            .cmd(&["theme", "change", "title", title])
+            .env("POLYCARP_CALLER", "# ---\n# caller = evil")
+            .output()
+            .unwrap();
+        assert_eq!(code(&o), 0, "{title:?}: {}", err(&o));
+        let h = b.json(&["history", "--json"]);
+        let e = &h["entries"][0];
+        assert_eq!(e["caller"], "# ---# caller = evil", "{h}");
+        assert!(e["action"]
+            .as_str()
+            .unwrap()
+            .starts_with("theme change title"));
+        let o = b.ok(&["undo"]);
+        assert!(o.contains("undid: theme change title"), "{o}");
+        assert_eq!(
+            fs::read_to_string(&theme_file).unwrap(),
+            before,
+            "{title:?}"
+        );
+    }
+    assert_eq!(fs::read_to_string(&theme_file).unwrap(), first);
+    assert_eq!(b.json(&["current", "--json"])["theme"], "mine");
+}
+
+#[test]
 fn history_keeps_the_last_50() {
     let b = Box::new();
     for i in 0..56 {
