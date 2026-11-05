@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import AVFoundation
 import BaneySpacesCore
 import ServiceManagement
 import SwiftUI
@@ -26,6 +27,7 @@ final class WelcomeModel: ObservableObject {
         if AXIsProcessTrusted() { s.insert(.accessibility) }
         if CGPreflightScreenCaptureAccess() { s.insert(.screenRecording) }
         if CGPreflightListenEventAccess() { s.insert(.inputMonitoring) }
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized { s.insert(.microphone) }
         return s
     }
 
@@ -64,6 +66,17 @@ final class WelcomeModel: ObservableObject {
             _ = AXIsProcessTrustedWithOptions([prompt: true] as CFDictionary)
         case .screenRecording: _ = CGRequestScreenCaptureAccess()
         case .inputMonitoring: _ = CGRequestListenEventAccess()
+        case .microphone:
+            // macOS shows its own box while it has never been asked; the list opens only after a no.
+            let access: Welcome.MicrophoneAccess = switch AVCaptureDevice.authorizationStatus(for: .audio) {
+            case .authorized: .authorized
+            case .notDetermined: .notDetermined
+            default: .denied
+            }
+            if !Welcome.opensSettingsWhenAllowing(microphone: access) {
+                if access == .notDetermined { AVCaptureDevice.requestAccess(for: .audio) { _ in } }
+                return
+            }
         }
         if let url = URL(string: Welcome.step(kind).settingsURL) { NSWorkspace.shared.open(url) }
     }

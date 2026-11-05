@@ -55,12 +55,13 @@ public enum LegacyHandover {
                            isRunning: () -> Bool,
                            now: () -> Date = Date.init,
                            sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
-                           timeout: TimeInterval = quitTimeout) -> Outcome {
+                           timeout: TimeInterval = quitTimeout,
+                           names: [String]? = nil) -> Outcome {
         guard ask() == .quitAndContinue else { return .exit(message: nil) }
         quit()
         let deadline = now().addingTimeInterval(timeout)
         while isRunning() {
-            if now() >= deadline { return .exit(message: didNotQuit) }
+            if now() >= deadline { return .exit(message: names.map(didNotQuit) ?? didNotQuit) }
             sleep(0.25)
         }
         return .carryOn

@@ -11,6 +11,8 @@ rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/
 
 # The hands engine (agent-desktop's library), built from the pinned commit; Polycarp links it.
 scripts/build-engine.sh
+# The voice core (dictation), a static library from ../core; Polycarp links it into its own binary.
+scripts/build-core.sh
 
 ARCHS=(--arch arm64)
 if xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1 && [ "${BANEYSPACES_ARM64_ONLY:-}" != 1 ]; then ARCHS+=(--arch x86_64); fi
@@ -81,7 +83,7 @@ if [ "${BANEYSPACES_ADHOC:-}" != 1 ] && IDENT=$(scripts/signing-identity.sh 2>/d
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.cli" "$APP/Contents/Resources/bin/$CLI_NAME"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.canvasprobe" "$PROBE"
   codesign -dvvv "$PROBE" 2>&1 | sed -n 's/^CDHash=//p' > "$APP/Contents/Resources/probe/CanvasProbe.cdhash"
-  codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID" "$APP"
+  codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID" --entitlements Resources/Polycarp.entitlements "$APP"
 else
   ADHOC_NOTE="note: signed ad-hoc, so macOS will ask for Accessibility again after each update"
   echo "$ADHOC_NOTE" >&2
@@ -89,7 +91,7 @@ else
   codesign --force --sign - --identifier "$BUNDLE_ID.cli" "$APP/Contents/Resources/bin/$CLI_NAME"
   codesign --force --sign - --identifier "$BUNDLE_ID.canvasprobe" "$PROBE"
   codesign -dvvv "$PROBE" 2>&1 | sed -n 's/^CDHash=//p' > "$APP/Contents/Resources/probe/CanvasProbe.cdhash"
-  codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
+  codesign --force --sign - --identifier "$BUNDLE_ID" --entitlements Resources/Polycarp.entitlements "$APP"
 fi
 codesign --verify --deep --strict "$APP"
 # The probe app's recorded hash must be the hash of the signed app inside the sealed bundle.

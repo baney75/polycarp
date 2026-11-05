@@ -486,6 +486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // ⌘Space works with or without Accessibility; Spotlight hands it over first.
         if Launcher.onCmdSpace { setLauncherOnCmdSpace(true) } else { registerShortcuts() }
         legacyWatcher.start()
+        startVoice()
         updater.onChange = { [weak self] in self?.updateIcon() }
         updater.isBusy = { [weak self] in self?.spaces.switching ?? false }
         updater.start()
@@ -507,6 +508,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showSetup() { setup.show() }
     private let legacyWatcher = LegacyWatcher()
+
+    // MARK: Voice (dictation, inside this process)
+
+    private let voiceOverlay = VoiceOverlay()
+
+    private func startVoice() {
+        let voice = VoiceEngine.shared
+        voice.onLevel = { [weak self] level in DispatchQueue.main.async { self?.voiceOverlay.level(level) } }
+        voice.onLearned = { [weak self] from, to in self?.voiceOverlay.learned(from: from, to: to) }
+        voice.onStateChange = { [weak self] in
+            guard let self, let st = voice.state else { return }
+            self.voiceOverlay.status(st.status, enabled: voice.settings?.showOverlay ?? true)
+            self.updateIcon()
+        }
+        legacyWatcher.onSilasQuit = { voice.silasQuit() }
+        legacyWatcher.onSilasStarted = { voice.stop() }
+        voice.start()
+    }
+
+    func showVoiceSettings() {
+        setup.model.tab = .voice
+        setup.show()
+    }
     @objc private func showWelcome() { welcome.show() }
     private lazy var welcome: WelcomeWindowController = {
         let c = WelcomeWindowController()
@@ -718,6 +742,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.title = (n > 0 ? " \(n)" : "") + full
         statusItem.button?.toolTip = full.isEmpty ? nil : "Agents have full access (Settings > Agents)"
         statusItem.button?.imagePosition = .imageLeading
+        // Dictation shows in the menu bar while it listens: the mic beside the mark.
+        if VoiceEngine.shared.state?.status.isLive == true {
+            statusItem.button?.title = " 🎙" + (statusItem.button?.title ?? "")
+            statusItem.button?.toolTip = "Listening"
+        }
     }
 
     private func startSession() {
@@ -797,6 +826,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(.separator())
             menu.addItem(item("Quit Polycarp", #selector(quit), key: "q"))
             return
+        }
+        // Dictation's state, first: the same line the Silas tray showed ("Ready · hold Right ⌘ to speak").
+        if let st = VoiceEngine.shared.state {
+            let line = VoiceEngine.shared.refusal ?? (st.enabled ? st.status.menuLine(hotkeyLabel: st.hotkeyLabel) : "Dictation is paused")
+            menu.addItem(withTitle: line, action: nil, keyEquivalent: "")
+            menu.addItem(.separator())
         }
         spaces.refresh()
         var apps: [Int: [String]] = [:]

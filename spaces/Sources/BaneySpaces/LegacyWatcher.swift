@@ -8,18 +8,35 @@ import UserNotifications
 final class LegacyWatcher {
     private var observer: NSObjectProtocol?
     private var notified = false
+    /// Silas started while Polycarp runs (so the voice must step back), or went away (so it may take over).
+    var onSilasStarted: () -> Void = {}
+    var onSilasQuit: () -> Void = {}
 
     func start() {
         guard observer == nil else { return }
+        watchSilasQuit()
         observer = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] note in
             guard let self, let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             let action = LegacyHandover.onLaunch(bundleID: app.bundleIdentifier, alreadyNotified: self.notified)
+            if app.bundleIdentifier == Product.Silas.bundleID { self.onSilasStarted() }
             if action.quit {
-                Trace.log("legacy: \(Product.Legacy.name) started while \(Product.name) runs; asking it to quit")
+                Trace.log("legacy: \(app.localizedName ?? Product.Legacy.name) started while \(Product.name) runs; asking it to quit")
                 app.terminate()
             }
             if action.notify { self.notified = true; self.tell() }
+        }
+    }
+
+    private var quitObserver: NSObjectProtocol?
+
+    /// Silas quitting hands the dictation key to Polycarp.
+    func watchSilasQuit() {
+        quitObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.bundleIdentifier == Product.Silas.bundleID else { return }
+            self?.onSilasQuit()
         }
     }
 
