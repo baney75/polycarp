@@ -1116,14 +1116,14 @@ fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
 // Lock
 // ---------------------------------------------------------------------------------------------
 
-const LOCK_STALE: std::time::Duration = std::time::Duration::from_secs(10);
 const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// An exclusive lock on the config folder, held while a change is read, checked, recorded and
-/// written. It is a file made with `create_new`; a lock older than 10 seconds is taken as left
-/// behind by a crash and removed. Dropping it removes the file.
+/// written. It is an operating-system advisory lock on a `.lock` file that is never removed, so
+/// nobody can take it from a live holder, and the system frees it when the process ends, even
+/// after a crash. Dropping it (or closing the file) releases it.
 struct Lock {
-    path: PathBuf,
+    _file: fs::File,
 }
 
 impl Lock {
@@ -1131,26 +1131,18 @@ impl Lock {
         fs::create_dir_all(&cfg.dir)
             .map_err(|e| io_err(format!("could not create {}: {e}", cfg.dir.display())))?;
         let path = cfg.dir.join(".lock");
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|e| io_err(format!("could not create the lock {}: {e}", path.display())))?;
         let start = std::time::Instant::now();
         loop {
-            match fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Ok(mut f) => {
-                    let _ = write!(f, "{}", std::process::id());
-                    return Ok(Lock { path });
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let age = fs::metadata(&path)
-                        .and_then(|m| m.modified())
-                        .ok()
-                        .and_then(|t| SystemTime::now().duration_since(t).ok());
-                    if age.is_some_and(|a| a >= LOCK_STALE) {
-                        let _ = fs::remove_file(&path);
-                        continue;
-                    }
+            match file.try_lock() {
+                Ok(()) => return Ok(Lock { _file: file }),
+                Err(fs::TryLockError::WouldBlock) => {
                     if start.elapsed() >= LOCK_WAIT {
                         return Err(ApiErr::new(
                             "busy",
@@ -1162,20 +1154,11 @@ impl Lock {
                     }
                     std::thread::sleep(std::time::Duration::from_millis(20));
                 }
-                Err(e) => {
-                    return Err(io_err(format!(
-                        "could not create the lock {}: {e}",
-                        path.display()
-                    )))
+                Err(fs::TryLockError::Error(e)) => {
+                    return Err(io_err(format!("could not lock {}: {e}", path.display())))
                 }
             }
         }
-    }
-}
-
-impl Drop for Lock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
     }
 }
 
@@ -1741,6 +1724,15 @@ impl ApiErr {
         }
         msg
     }
+    /// The envelope's `retry` value (`spaces/spec/envelope.md`): `after` means nothing was
+    /// written and the same call can be sent again once the wait is over.
+    fn retry(&self) -> &'static str {
+        if self.code == "busy" {
+            "after"
+        } else {
+            "never"
+        }
+    }
     fn suggestion(&self) -> String {
         if let Some(s) = &self.suggestion {
             return s.clone();
@@ -1756,7 +1748,7 @@ impl ApiErr {
             "exists" => "Pick another name, or pass force.",
             "current_theme" => "Run `theme set <other>` first.",
             "nothing_to_undo" => "History is empty. `theme reset` goes back to the default.",
-            "busy" => "Wait a moment and run the command again. If it keeps happening and no polycarp command is running, delete the .lock file in the config folder.",
+            "busy" => "Wait a moment and run the command again. The lock is released when the other polycarp command ends, so there is nothing to delete.",
             "io_error" => "Check that the config folder is writable, then try again.",
             "config_error" => "Set POLYCARP_CONFIG_DIR to an absolute path of a folder you can write.",
             _ => "",
@@ -1792,7 +1784,7 @@ pub(crate) fn envelope_err(e: &ApiErr) -> Json {
     json!({"ok": false, "error": {
         "code": e.code,
         "message": e.message,
-        "retry": "never",
+        "retry": e.retry(),
         "suggestion": e.suggestion(),
         "data": {"errors": e.items},
     }})

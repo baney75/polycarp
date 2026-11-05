@@ -227,10 +227,11 @@ Files are written to a temporary name and then renamed, so a reader never sees h
 files is a symbolic link, the file it points to is written and the link stays. An existing file keeps its
 mode; a new one is 0644.
 
-Every command that changes something takes a lock first: a `.lock` file in the config folder, made
-exclusively. Another change waits up to 5 seconds, then fails with the code `busy`. A lock more than 10
-seconds old is taken as left by a crash and removed. `reset` still works if it cannot get the lock; it
-warns and goes on. So several programs can change one theme at once and none of the changes is lost.
+Every command that changes something takes a lock first: an operating-system lock on a `.lock` file in
+the config folder. The file is never removed, and the system frees the lock when the process ends, even
+after a crash, so a live command's lock is never taken away. Another change waits up to 5 seconds, then
+fails with the code `busy`, whose `retry` is `after`: nothing was written, try again later. `reset` still
+works if it cannot get the lock; it warns and goes on. So several programs can change one theme at once and none of the changes is lost.
 
 ## CSS
 

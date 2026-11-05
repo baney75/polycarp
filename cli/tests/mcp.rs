@@ -375,7 +375,13 @@ fn a_refusal_is_a_tool_error_with_the_same_envelope_as_the_cli() {
     let sb = Sandbox::new();
     let mut s = sb.server();
     s.initialize("t");
-    let before = fs::read_dir(sb.cfg()).map(|r| r.count()).unwrap_or(0);
+    // The empty .lock file is expected; it is never removed.
+    let count = |p: &std::path::Path| {
+        fs::read_dir(p)
+            .map(|r| r.flatten().filter(|e| e.file_name() != ".lock").count())
+            .unwrap_or(0)
+    };
+    let before = count(&sb.cfg());
     let r = s.tool(
         "theme_change",
         json!({"path": "dark.muted", "value": "#444444"}),
@@ -388,11 +394,7 @@ fn a_refusal_is_a_tool_error_with_the_same_envelope_as_the_cli() {
     assert_eq!(e["path"], "dark.muted");
     assert!(e["actual"].is_number() && e["needs"] == 4.5);
     assert!(!env["error"]["suggestion"].as_str().unwrap().is_empty());
-    assert_eq!(
-        fs::read_dir(sb.cfg()).map(|r| r.count()).unwrap_or(0),
-        before,
-        "nothing was written"
-    );
+    assert_eq!(count(&sb.cfg()), before, "nothing was written");
     // Same call on the command line gives the same envelope.
     let cli = sb.cli(&["change", "dark.muted", "#444444"]);
     assert_eq!(&cli, env);

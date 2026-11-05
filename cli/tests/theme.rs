@@ -1472,7 +1472,7 @@ fn reset_works_when_history_and_current_cannot_be_written() {
     fs::write(b.cfg().join("history"), "in the way").unwrap();
     fs::remove_dir_all(b.cfg().join("current")).unwrap();
     fs::write(b.cfg().join("current"), "in the way").unwrap();
-    fs::write(b.cfg().join(".lock"), "1").unwrap();
+    let _held = hold_lock(&b);
     let (c, v) = b.jrun(&["reset"]);
     assert_eq!(c, 0, "{v}");
     let w = v["data"]["warnings"].to_string();
@@ -1635,31 +1635,50 @@ fn several_processes_changing_one_theme_lose_nothing() {
         assert_eq!(b.ok(&["get", path]).trim(), value, "{path} was lost");
     }
     assert_eq!(b.history_count(), changes.len() + 1);
-    assert!(!b.cfg().join(".lock").exists(), "the lock is released");
+    // The lock file stays; the system lock is what is released.
+    let f = fs::File::options()
+        .write(true)
+        .open(b.cfg().join(".lock"))
+        .unwrap();
+    assert!(f.try_lock().is_ok(), "the lock is released");
+}
+
+/// Takes the same operating-system lock the command uses, as another running command would.
+fn hold_lock(b: &Box) -> fs::File {
+    fs::create_dir_all(b.cfg()).unwrap();
+    let f = fs::File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(b.cfg().join(".lock"))
+        .unwrap();
+    f.lock().unwrap();
+    f
 }
 
 #[test]
-fn a_held_lock_is_busy_after_five_seconds_and_a_stale_one_is_taken_over() {
+fn a_live_lock_holder_is_never_displaced_and_busy_says_to_retry() {
     let b = Box::new();
-    fs::create_dir_all(b.cfg()).unwrap();
-    let lock = b.cfg().join(".lock");
-    fs::write(&lock, "999999").unwrap();
+    let held = hold_lock(&b);
+    // Older than the old 10 second stale limit: a live holder keeps it anyway.
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+    held.set_modified(old).unwrap();
     let t = std::time::Instant::now();
     let (c, v) = b.jrun(&["set", "calm"]);
     assert_eq!(c, 1, "{v}");
     assert_eq!(v["error"]["code"], "busy", "{v}");
+    assert_eq!(v["error"]["retry"], "after", "{v}");
     assert!(t.elapsed().as_secs() >= 4, "gave up too early");
     assert!(!b.state_file().exists());
-    // The same file, 20 seconds old, was left by a crash.
-    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(20);
-    fs::File::options()
-        .write(true)
-        .open(&lock)
-        .unwrap()
-        .set_modified(old)
-        .unwrap();
+    assert!(
+        b.cfg().join(".lock").exists(),
+        "the lock file is never removed"
+    );
+    // Once the holder lets go, the same command works and the file stays.
+    drop(held);
     b.ok(&["set", "calm"]);
-    assert!(!lock.exists());
+    assert!(b.cfg().join(".lock").exists());
 }
 
 const PARENT_V2: &str = r##"name = "parent"
