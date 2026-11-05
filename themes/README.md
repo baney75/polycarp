@@ -332,6 +332,7 @@ descriptions give the workflow above. Each tool returns the `--json` envelope as
 | --- | --- |
 | `theme_schema`, `theme_list`, `theme_current`, `theme_show`, `theme_get` | `schema`, `list`, `current`, `show`, `get` |
 | `theme_set`, `theme_accent`, `theme_change`, `theme_apply` | `set`, `accent`, `change`, `apply` (`theme` is a JSON object or a TOML string) |
+| `theme_create`, `theme_delete` | `create`, `delete`, so an agent can clean up the themes it made |
 | `theme_validate` | `validate`, for a draft theme passed in, without saving |
 | `theme_preview`, `theme_export` | `preview`, `export` |
 | `theme_undo`, `theme_history`, `theme_reset` | `undo`, `history`, `reset` |

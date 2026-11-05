@@ -18,7 +18,8 @@ customize them for the person you are helping.
 Workflow:
 1. Read theme_schema (every field, range, enum and contrast rule) and theme_current (what is in force).
 2. Make the smallest change that does it: theme_change for one value, theme_apply for a whole theme \
-(use `extends` and list only what changes), theme_accent for the brand color. Use a [surface.*] section \
+(use `extends` and list only what changes), theme_accent for the brand color. Remove a theme you made \
+and no longer need with theme_delete. Use a [surface.*] section \
 only when one product should differ.
 3. If a call is refused, read error.data.errors (each has a path; contrast errors give actual and needs) \
 and adjust the colors. Do not try to get around the contrast rules.
@@ -129,6 +130,28 @@ fn tools() -> Vec<Tool> {
             read_only: false,
             destructive: true,
             idempotent: true,
+        },
+        Tool {
+            name: "theme_create",
+            description: "Make a new user theme that extends another and start editing it with theme_change. It does not make it current. Refused if the name is taken (pass force true to overwrite your own theme; theme_undo brings the old one back), is a built-in name, or the result would not load. Delete what you made with theme_delete.",
+            schema: obj(json!({
+                "name": {"type":"string","description":"New theme name: lowercase letters, digits and hyphens."},
+                "extends": {"type":"string","description":"The theme to start from, a name from theme_list."},
+                "force": {"type":"boolean","description":"Overwrite a user theme of the same name."},
+            }), &["name", "extends"]),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+        },
+        Tool {
+            name: "theme_delete",
+            description: "Delete a user theme, for example one you made with theme_create or theme_apply and no longer need. Built-in themes, the current theme and a theme the current one extends are refused. theme_undo brings it back.",
+            schema: obj(json!({
+                "name": {"type":"string","description":"The user theme to delete, a name from theme_list."},
+            }), &["name"]),
+            read_only: false,
+            destructive: true,
+            idempotent: false,
         },
         Tool {
             name: "theme_accent",
@@ -316,6 +339,13 @@ fn call(name: &str, args: Option<&Json>, caller: &str) -> Option<theme::Envelope
                 let activate = a.flag("activate")?.unwrap_or(true);
                 theme::op_apply(&c, doc, a.text("name")?, activate)
             }
+            "theme_create" => theme::op_create(
+                &c,
+                a.need("name")?,
+                a.need("extends")?,
+                a.flag("force")?.unwrap_or(false),
+            ),
+            "theme_delete" => theme::op_delete(&c, a.need("name")?),
             "theme_accent" => {
                 if a.flag("clear")?.unwrap_or(false) {
                     if a.text("color")?.is_some() {

@@ -130,7 +130,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 15] = [
+const TOOLS: [&str; 17] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -139,6 +139,8 @@ const TOOLS: [&str; 15] = [
     "theme_set",
     "theme_change",
     "theme_apply",
+    "theme_create",
+    "theme_delete",
     "theme_accent",
     "theme_validate",
     "theme_preview",
@@ -617,4 +619,34 @@ fn mcp_refuses_arguments_and_says_where_it_is_listed() {
     assert_eq!(o.status.code(), Some(2));
     let o = sb.command().arg("--help").output().unwrap();
     assert!(String::from_utf8_lossy(&o.stdout).contains("polycarp mcp"));
+}
+
+#[test]
+fn an_agent_can_create_and_delete_its_own_theme() {
+    let sb = Sandbox::new();
+    let mut s = sb.server();
+    s.initialize("t");
+    let r = s.tool(
+        "theme_create",
+        json!({"name": "scratch", "extends": "calm"}),
+    );
+    assert_eq!(r["structuredContent"]["ok"], true, "{r}");
+    assert!(sb.cfg().join("themes").join("scratch.toml").exists());
+    let r = s.tool(
+        "theme_create",
+        json!({"name": "scratch", "extends": "calm"}),
+    );
+    assert_eq!(r["isError"], true);
+    assert_eq!(r["structuredContent"]["error"]["code"], "exists");
+    let r = s.tool("theme_delete", json!({"name": "calm"}));
+    assert_eq!(
+        r["structuredContent"]["error"]["code"], "builtin_read_only",
+        "{r}"
+    );
+    let r = s.tool("theme_delete", json!({"name": "scratch"}));
+    assert_eq!(r["structuredContent"]["ok"], true, "{r}");
+    assert!(!sb.cfg().join("themes").join("scratch.toml").exists());
+    let r = s.tool("theme_undo", json!({}));
+    assert_eq!(r["structuredContent"]["ok"], true, "{r}");
+    assert!(sb.cfg().join("themes").join("scratch.toml").exists());
 }
