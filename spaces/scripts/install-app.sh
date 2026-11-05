@@ -153,6 +153,8 @@ mkdir -p "$HOME/.local/bin"
 for name in $CLI_NAME $CLI_ALIASES; do
   ln -sf "$DEST/Contents/Resources/bin/$CLI_NAME" "$HOME/.local/bin/$name"
 done
+# The `polycarp` command comes with the app.
+ln -sf "$DEST/Contents/Resources/bin/polycarp" "$HOME/.local/bin/polycarp"
 
 # Runs a command for at most 5 seconds; true only when it exits 0 in time.
 runs_ok() {

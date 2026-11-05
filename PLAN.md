@@ -62,6 +62,15 @@ Decided by Donovan, 2026-11-05: the `baneyspaces`, `silas` and `tabkyra` repos s
 - [ ] Land or move open PRs that belong in Polycarp
 - [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash), then Voice and Browser. Check: dictation and agents' browser work through Polycarp before Silas and Tabkyra go
 
+## One app, everywhere
+Decided by Donovan, 2026-11-05: ALL the apps together as ONE ultrafast app on every device. One Rust core in `core/`; a native Swift interface on Mac, iPhone and iPad; a shared Tauri interface on Windows, Linux and Android. Phones get voice plus control of your computer, since they can't arrange other apps' windows.
+- [x] Voice engine in `core/voice` with a C interface in `core/ffi`, used by the Tauri app and the Swift app. Check: both test suites
+- [x] Mac: voice and browser agents inside `Polycarp.app`, with one Settings window, one welcome window and one install. Check: tests and renders; live check below
+- [ ] Live on a real Mac: dictate into another app, the agents' browser connects, Silas's dictionary and models come across. Check: Donovan's install
+- [ ] Windows and Linux: one Tauri app with voice, workspaces and browser agents. Check: a Windows VM and Omarchy
+- [ ] iPhone, iPad, Android: one app with voice and control of your computer. Check: Simulator, emulator and a real device
+- [ ] Speed: launch, workspace switch, press-to-record and agent tools each have a target in `spaces/spec/speed.json`, and a regression fails. Check: the ratchets, including the two still unmeasured
+
 ## Install and permissions
 Asked for by Donovan, 2026-11-05: installation and permissions need to be excellent.
 - [x] One command installs the Mac app and the `polycarp` command. Check: `install.sh` run end to end against a temporary home, with an old app planted

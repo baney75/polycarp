@@ -2,10 +2,13 @@
 
 # Polycarp
 
-Polycarp is bringing three apps into one: [BaneySpaces](https://github.com/baney75/baneyspaces)
-(`spaces/`), [Tabkyra](https://github.com/baney75/tabkyra) (`browser/`) and
-[Silas](https://github.com/baney75/silas) (`voice/`). Each directory holds the full git history of
-its original repo. Those repos stay up, so you can keep using the independent apps.
+Polycarp is one app for your workspaces, your voice and the browser your agents use. On a Mac they all
+live in `Polycarp.app`, with one Settings window, one set of permissions and one command. The Windows,
+Linux, iPhone, iPad and Android versions share the same Rust core and are on the way; see [the plan](PLAN.md).
+
+It grew from three apps, whose full history is here: [BaneySpaces](https://github.com/baney75/baneyspaces)
+(`spaces/`), [Silas](https://github.com/baney75/silas) (`voice/`) and [Tabkyra](https://github.com/baney75/tabkyra)
+(`browser/`). Those repos stay up, so you can keep using the independent apps. The shared engine is in `core/`.
 
 ## Install on a Mac
 
@@ -13,10 +16,10 @@ its original repo. Those repos stay up, so you can keep using the independent ap
 curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash
 ```
 
-This builds the workspace app and the `polycarp` command on your Mac, which takes a few minutes the
-first time. It needs Apple's free command line tools and [Rust](https://rustup.rs). If BaneySpaces is
-installed, it goes to the Trash, because the two can't run together, and Polycarp imports its settings.
-Voice and Browser are next; until then Silas and Tabkyra keep working alongside it.
+This downloads the signed app for Apple silicon and opens it; no developer tools are needed. A window walks you
+through the permissions. If you have BaneySpaces or Silas, they go to the Trash, because they can't run beside
+Polycarp, and Polycarp copies their settings, dictionary and models. On an Intel Mac, or with
+`POLYCARP_FROM_SOURCE=1`, it builds on your Mac, which needs Apple's command line tools, Rust, Bun and Node.
 
 ## The name
 

@@ -1,7 +1,8 @@
 #!/bin/bash
 # Installs Polycarp on a Mac:
 #   curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash
-# Builds the workspace app and the `polycarp` command from source, on this Mac, then opens the app.
+# Downloads the signed app, which holds workspaces, voice, browser agents and the `polycarp` command, and
+# opens it. No developer tools needed. POLYCARP_FROM_SOURCE=1 builds it on this Mac instead.
 # It asks macOS for nothing itself: Polycarp's welcome window walks you through each permission.
 # Run it again any time to update. POLYCARP_REF picks a branch or tag.
 # POLYCARP_SOURCE=/path/to/checkout builds that checkout instead of downloading.
@@ -14,6 +15,10 @@ main() {
   [ -z "${POLYCARP_INSTALL_FUNCTIONS_ONLY:-}" ] || return 0
   local REPO="https://github.com/baney75/polycarp.git"
   local REF="${POLYCARP_REF:-main}"
+  # Where the ready-made app comes from, and the signature every release has to carry.
+  local RELEASES="${POLYCARP_RELEASES:-https://github.com/baney75/polycarp/releases/download}"
+  local CHANNEL="${POLYCARP_CHANNEL:-preview}"
+  local REQUIREMENT='identifier "com.baney.polycarp" and certificate leaf = H"d1cfbd7446f84f6c625b9db83c5bf96da33b157e"'
   local bold dim reset green
   if [ -t 1 ]; then
     bold=$(tput bold 2>/dev/null || true); dim=$(tput dim 2>/dev/null || true); reset=$(tput sgr0 2>/dev/null || true)
@@ -45,30 +50,63 @@ main() {
 
   [ "$(uname -s)" = Darwin ] || fail "This installer is for a Mac. The polycarp command runs elsewhere: cargo install --git $REPO polycarp"
   [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 13 ] || fail "Polycarp needs macOS 13 Ventura or later."
-  if ! xcode-select -p >/dev/null 2>&1 || ! xcrun --find swift >/dev/null 2>&1; then
-    xcode-select --install >/dev/null 2>&1 </dev/null || true
-    fail "It needs Apple's free command line tools first. A macOS window just opened: click Install, then run this again."
-  fi
-  # rustup's default spot, for a shell that hasn't picked it up yet.
-  [ -x "$HOME/.cargo/bin/cargo" ] && PATH="$HOME/.cargo/bin:$PATH"
-  command -v cargo >/dev/null || fail "It needs Rust to build. Install it from https://rustup.rs, then run this again."
-
-  local SRC
-  if [ -n "${POLYCARP_SOURCE:-}" ]; then
-    SRC=$(cd "$POLYCARP_SOURCE" && pwd)
-  else
-    step "Downloading" git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$REF" "$REPO" "$WORK/polycarp"
-    SRC="$WORK/polycarp"
-  fi
-
   local BIN="$HOME/.local/bin"
-  # 1. Build everything first. Nothing on this Mac changes until all of it has built.
-  step "Building the polycarp command" cargo build --quiet --release --locked --manifest-path "$SRC/cli/Cargo.toml" --target-dir "$WORK/cli-target"
-  # Apple silicon builds for itself, which is much quicker than a universal app.
-  if [ "$(uname -m)" = arm64 ]; then export BANEYSPACES_ARM64_ONLY=1; fi
-  cd "$SRC/spaces"
-  step "Building the hands engine" scripts/build-engine.sh
-  step "Building Polycarp (a few minutes the first time)" scripts/bundle.sh
+  # 1. Get the app. Nothing on this Mac changes until it is here and checked.
+  local NEW_APP="" from_source="${POLYCARP_FROM_SOURCE:-}" ZIP="${POLYCARP_ZIP:-}"
+  [ -z "${POLYCARP_SOURCE:-}" ] || from_source=1
+  # The ready-made app is for Apple silicon for now.
+  [ "$(uname -m)" = arm64 ] || from_source=1
+  if [ "$from_source" != 1 ]; then
+    if [ -z "$ZIP" ]; then
+      ZIP="$WORK/Polycarp.zip"
+      if ! curl -fsSL -o "$ZIP" "$RELEASES/$CHANNEL/Polycarp.zip" </dev/null 2>>"$LOG"; then
+        say "  ${dim}No ready-made app to download right now, so this builds it here.${reset}"
+        ZIP=""; from_source=1
+      fi
+    fi
+  fi
+  if [ "$from_source" != 1 ]; then
+    if [ -z "${POLYCARP_ZIP:-}" ]; then
+      local want
+      want=$(curl -fsSL "$RELEASES/$CHANNEL/Polycarp.zip.sha256" </dev/null 2>>"$LOG" | awk '{print $1}') \
+        || fail "Couldn't fetch the download's checksum. Nothing was changed; try again."
+      [ "$want" = "$(shasum -a 256 "$ZIP" | awk '{print $1}')" ] \
+        || fail "The download doesn't match its checksum. Nothing was changed; try again."
+    fi
+    step "Unpacking" ditto -x -k "$ZIP" "$WORK/app"
+    NEW_APP="$WORK/app/Polycarp.app"
+    [ -d "$NEW_APP" ] || fail "The download didn't contain Polycarp. Nothing was changed."
+    # A release has to carry the release signature. Only a test's own local zip is exempt.
+    if [ -z "$test_mode" ] || [ -z "${POLYCARP_ZIP:-}" ]; then
+      codesign --verify --strict --deep "$NEW_APP" 2>>"$LOG" && codesign -v -R "=$REQUIREMENT" "$NEW_APP" 2>>"$LOG" \
+        || fail "The download isn't signed with Polycarp's release key, so it was not installed."
+    fi
+    xattr -dr com.apple.quarantine "$NEW_APP" 2>/dev/null || true
+  else
+    if ! xcode-select -p >/dev/null 2>&1 || ! xcrun --find swift >/dev/null 2>&1; then
+      xcode-select --install >/dev/null 2>&1 </dev/null || true
+      fail "Building it needs Apple's free command line tools. A macOS window just opened: click Install, then run this again."
+    fi
+    # rustup's default spot, for a shell that hasn't picked it up yet.
+    [ -x "$HOME/.cargo/bin/cargo" ] && PATH="$HOME/.cargo/bin:$PATH"
+    command -v cargo >/dev/null || fail "Building it needs Rust. Install it from https://rustup.rs, then run this again."
+    command -v bun >/dev/null || fail "Building it needs Bun. Install it from https://bun.sh, then run this again."
+    command -v node >/dev/null || fail "Building it needs Node. Install it from https://nodejs.org, then run this again."
+    local SRC
+    if [ -n "${POLYCARP_SOURCE:-}" ]; then
+      SRC=$(cd "$POLYCARP_SOURCE" && pwd)
+    else
+      step "Downloading the source" git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$REF" "$REPO" "$WORK/polycarp"
+      SRC="$WORK/polycarp"
+    fi
+    # Apple silicon builds for itself, which is much quicker than a universal app.
+    if [ "$(uname -m)" = arm64 ]; then export BANEYSPACES_ARM64_ONLY=1; fi
+    step "Getting what the extension builds against" "$SRC/browser/scripts/setup-siblings.sh"
+    cd "$SRC/spaces"
+    step "Building the hands engine" scripts/build-engine.sh
+    step "Building Polycarp (a few minutes the first time)" scripts/bundle.sh
+    NEW_APP="$PWD/build/Polycarp.app"
+  fi
 
   # The old app, if it is installed. Only the copies at these two paths are ours to retire.
   # Test mode looks only under a temporary home, so it can never quit or move a real copy.
@@ -98,11 +136,8 @@ main() {
   export BANEYSPACES_NO_LAUNCH=1
   local install_failed="If Polycarp is running, quit it from its menu, then run this again."
   [ ${#OLD_APPS[@]} -eq 0 ] || install_failed="BaneySpaces is still installed; open it again from Applications."
-  STEP_FAIL="$install_failed" step "Installing Polycarp" scripts/install-app.sh "build/Polycarp.app"
+  STEP_FAIL="$install_failed" step "Installing Polycarp" "$NEW_APP/Contents/Resources/install-app.sh" "$NEW_APP"
   HEADING="Polycarp is installed, but one step didn't finish."
-  # The command goes in only now, so a failed build leaves the one you had.
-  mkdir -p "$BIN"
-  step "Installing the polycarp command" install -m 755 "$WORK/cli-target/release/polycarp" "$BIN/polycarp"
 
   # 4. Only now retire the old app: stop its watchdog and move it to the Trash, where you can put it back.
   # Its settings stay, since Polycarp copies them on first launch.
@@ -124,7 +159,9 @@ main() {
 
   # The Polycarp theme, unless you've already chosen something.
   local CFG="${POLYCARP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/polycarp}"
-  if [ ! -e "$CFG/config.toml" ] && ! "$BIN/polycarp" theme set polycarp </dev/null >>"$LOG" 2>&1; then
+  local installed="${test_mode:-$HOME/Applications}/Polycarp.app"
+  [ -d "$installed" ] || installed="/Applications/Polycarp.app"
+  if [ ! -e "$CFG/config.toml" ] && ! "$installed/Contents/Resources/bin/polycarp" theme set polycarp </dev/null >>"$LOG" 2>&1; then
     say "  ${dim}The theme wasn't set; Polycarp uses its own look. Try: polycarp theme set polycarp${reset}"
   fi
 

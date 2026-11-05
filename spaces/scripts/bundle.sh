@@ -28,6 +28,17 @@ done
 # The session engine's command, polycarp-spaces (baneyspaces and ghostdeck are links to it, made at install).
 # It lives in Resources, not MacOS, so it is never mistaken for the app's own executable.
 cp "$(dirname "$BIN")/baneyspaces-cli" "$APP/Contents/Resources/bin/$CLI_NAME"
+# The `polycarp` command, in the app, so one install gives you everything.
+if [ "${BANEYSPACES_ARM64_ONLY:-}" = 1 ]; then
+  cargo build --quiet --release --locked --manifest-path ../cli/Cargo.toml --target-dir build/cli-target
+  cp build/cli-target/release/polycarp "$APP/Contents/Resources/bin/polycarp"
+else
+  for t in aarch64-apple-darwin x86_64-apple-darwin; do
+    cargo build --quiet --release --locked --target "$t" --manifest-path ../cli/Cargo.toml --target-dir build/cli-target
+  done
+  lipo -create build/cli-target/aarch64-apple-darwin/release/polycarp build/cli-target/x86_64-apple-darwin/release/polycarp \
+    -output "$APP/Contents/Resources/bin/polycarp"
+fi
 cp skill/SKILL.md "$APP/Contents/Resources/skill/SKILL.md"
 cp engine/lib/libagent_desktop_ffi.dylib "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
 cp NOTICE "$APP/Contents/Resources/NOTICE"
@@ -88,6 +99,7 @@ if [ "${BANEYSPACES_ADHOC:-}" != 1 ] && IDENT=$(scripts/signing-identity.sh 2>/d
   # Inside out: the engine's library, then the command, then the app that holds both.
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.engine" "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.cli" "$APP/Contents/Resources/bin/$CLI_NAME"
+  codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.command" "$APP/Contents/Resources/bin/polycarp"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.browser" "$BROWSER_DIR/polycarp-browser"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.canvasprobe" "$PROBE"
   codesign -dvvv "$PROBE" 2>&1 | sed -n 's/^CDHash=//p' > "$APP/Contents/Resources/probe/CanvasProbe.cdhash"
@@ -97,6 +109,7 @@ else
   echo "$ADHOC_NOTE" >&2
   codesign --force --sign - --identifier "$BUNDLE_ID.engine" "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
   codesign --force --sign - --identifier "$BUNDLE_ID.cli" "$APP/Contents/Resources/bin/$CLI_NAME"
+  codesign --force --sign - --identifier "$BUNDLE_ID.command" "$APP/Contents/Resources/bin/polycarp"
   codesign --force --sign - --identifier "$BUNDLE_ID.browser" "$BROWSER_DIR/polycarp-browser"
   codesign --force --sign - --identifier "$BUNDLE_ID.canvasprobe" "$PROBE"
   codesign -dvvv "$PROBE" 2>&1 | sed -n 's/^CDHash=//p' > "$APP/Contents/Resources/probe/CanvasProbe.cdhash"
