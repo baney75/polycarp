@@ -9,7 +9,7 @@ working until step 5. A box is checked only when its check has passed.
 - [x] Every suite in `./check.sh` passes on a Mac and in CI
 
 ## 2. One name, one command
-- [ ] `polycarp spaces`, `polycarp browser`, `polycarp voice`. Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
+- [x] `polycarp spaces`, `polycarp browser`, `polycarp voice`. Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
 - [ ] `polycarp voice` gains commands once baney75/silas#6 lands. Until then it only opens the app
 - [ ] Polycarp MCP server, keeping `tabkyra` and `baneyspaces` as aliases. Check: an agent reaches the same tools under both names
 
@@ -33,10 +33,10 @@ Asked for by Donovan, 2026-11-04.
 Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all hyper themable and customizable.
 - [ ] One theme file drives every product and the site. Check: `polycarp theme set still-water` changes Spaces, Voice, Browser and a local site build, read back from each
 - [ ] Agents can customize everything for their user. Check: from a schema read alone, an agent applies a change over MCP, previews it and undoes it, with its name in the history
-- [ ] The default themes look good, not just pass contrast. Check: `theme preview` of each, both modes, judged on a contact sheet
+- [x] The default themes look good, not just pass contrast. Check: `theme preview` of each, both modes, judged on a contact sheet
 - [ ] Every color, radius, font and duration in every surface comes from the theme. Check: a test fails on a hard-coded value in product UI, with a written allowlist
 - [ ] Any value can be overridden per product. Check: a `[surface.*]` override changes only that product
-- [ ] Unreadable themes are refused. Check: contrast tests on every built-in and surface
+- [x] Unreadable themes are refused. Check: contrast tests on every built-in and surface
 - [ ] Keys, motion and behavior are configurable from one file, by people and by agents, with undo and a recovery key. Check: `spaces/spec/config.md` conformance across products
 - [ ] Site passes on phone and desktop, in every built-in theme and both modes. Check: `design_check.js` plus screenshots at 390 and 1280
 - [ ] Docs cover install, every command, every setting and theming, for each device. Check: every command in `--help` appears in the docs, tested

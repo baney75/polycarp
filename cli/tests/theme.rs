@@ -3088,14 +3088,14 @@ fn docs_and_plan_describe_the_agent_interface() {
         .unwrap()
         .contains("polycarp mcp"));
     let plan = repo_text("PLAN.md");
-    let one = plan.find("- [ ] One theme file drives").unwrap();
+    let one = plan.find("One theme file drives").unwrap();
     let agents = plan
-        .find("- [ ] Agents can customize everything for their user.")
+        .find("Agents can customize everything for their user.")
         .unwrap();
     let looks = plan
-        .find("- [ ] The default themes look good, not just pass contrast.")
+        .find("The default themes look good, not just pass contrast.")
         .unwrap();
-    let next = plan.find("- [ ] Every color, radius, font").unwrap();
+    let next = plan.find("Every color, radius, font").unwrap();
     assert!(one < agents && agents < looks && looks < next);
     let b = Box::new();
     let help = out(&b.run(&["--help"]));
