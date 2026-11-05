@@ -6,7 +6,8 @@
  * file means no Polycarp theme and never a crash.
  */
 
-import type { Palette, Preset } from "./palettes.js";
+import { contrast, DEFAULT_PRESET, type Palette, type Preset } from "./palettes.js";
+import { appearanceVariables, SHAPE_PAIRS, TEXT_PAIRS } from "./tokens.js";
 
 export type PolycarpMode = "auto" | "light" | "dark";
 
@@ -117,8 +118,65 @@ function palette(raw: unknown): Palette | undefined {
 	return { bg, panel, text, muted, border, accent, accentText, danger };
 }
 
-/** The validated theme from the parsed contents of theme.json, or undefined when anything is missing or out of range. */
+/** The result of reading theme.json: the theme, or the one-line reason it was refused. */
+export type PolycarpResult = { theme: PolycarpTheme } | { reason: string };
+
+const REFUSED_SHAPE = "it is not a valid theme.json for Tabkyra (schema, name, mode, colors, shape, type or motion)";
+const TEXT_MIN = 4.5;
+const SHAPE_MIN = 3;
+
+/**
+ * The pairs the Polycarp CLI checks (contrast_on in cli/src/theme.rs), as far as Tabkyra's roles go:
+ * text and the accent as text on the page and the surface, and on_accent on the accent. [text, background, minimum].
+ */
+const ROLE_PAIRS: ReadonlyArray<readonly [keyof Palette, keyof Palette, string, string]> = [
+	["text", "bg", "foreground", "background"],
+	["text", "panel", "foreground", "surface"],
+	["muted", "bg", "muted", "background"],
+	["muted", "panel", "muted", "surface"],
+	["danger", "bg", "urgent", "background"],
+	["danger", "panel", "urgent", "surface"],
+	["accent", "bg", "accent", "background"],
+	["accent", "panel", "accent", "surface"],
+	["accentText", "accent", "on_accent", "accent"],
+];
+
+/** The first pair in either mode that is too hard to read: the Polycarp CLI's pairs, then every pair the panel draws. */
+function unreadable(theme: PolycarpTheme): string | undefined {
+	for (const mode of ["light", "dark"] as const) {
+		const p = theme.palettes[mode];
+		for (const [fg, bg, fgName, bgName] of ROLE_PAIRS) {
+			const ratio = contrast(p[fg], p[bg]);
+			if (ratio < TEXT_MIN) return `${mode} ${fgName} on ${bgName} is ${ratio.toFixed(2)}:1, needs ${TEXT_MIN}:1`;
+		}
+		const vars = appearanceVariables({ preset: DEFAULT_PRESET }, mode === "dark", theme);
+		for (const [fg, bg] of TEXT_PAIRS) {
+			const ratio = contrast(vars[fg], vars[bg]);
+			if (ratio < TEXT_MIN) return `${mode} ${fg} on ${bg} is ${ratio.toFixed(2)}:1, needs ${TEXT_MIN}:1`;
+		}
+		for (const [fg, bg] of SHAPE_PAIRS) {
+			const ratio = contrast(vars[fg], vars[bg]);
+			if (ratio < SHAPE_MIN) return `${mode} ${fg} on ${bg} is ${ratio.toFixed(2)}:1, needs ${SHAPE_MIN}:1`;
+		}
+	}
+	return undefined;
+}
+
+/** The theme from the parsed contents of theme.json, or the reason it was refused. Never throws. */
+export function checkPolycarpTheme(raw: unknown): PolycarpResult {
+	const theme = parseStructure(raw);
+	if (!theme) return { reason: REFUSED_SHAPE };
+	const problem = unreadable(theme);
+	return problem ? { reason: `${theme.name} would be unreadable: ${problem}` } : { theme };
+}
+
+/** The validated theme from the parsed contents of theme.json, or undefined when anything is missing, out of range or unreadable. */
 export function parsePolycarpTheme(raw: unknown): PolycarpTheme | undefined {
+	const result = checkPolycarpTheme(raw);
+	return "theme" in result ? result.theme : undefined;
+}
+
+function parseStructure(raw: unknown): PolycarpTheme | undefined {
 	try {
 		if (!isRecord(raw) || raw.schema !== 1) return undefined;
 		const { name, title, mode } = raw;

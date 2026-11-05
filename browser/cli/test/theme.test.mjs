@@ -291,3 +291,15 @@ test("tabkyra theme list and set say when a Polycarp theme is in force", async (
 		assert.doesNotMatch(say(() => poly.runTheme(["set", "rose"], false)), /Polycarp/);
 	});
 });
+
+test("a hand-edited file with white text on white backgrounds is no theme: not loaded, not sent to the panel", async () => {
+	const file = structuredClone(fixture("calm"));
+	for (const mode of ["light", "dark"]) {
+		for (const role of Object.keys(file.surfaces.browser[mode])) file.surfaces.browser[mode][role] = "#ffffff";
+	}
+	await withPolycarp(file, () => {
+		assert.equal(poly.loadPolycarpTheme(), undefined);
+		assert.equal(poly.loadPolycarpPayload(), undefined);
+		assert.doesNotMatch(poly.themeCss(), /--text:#ffffff/);
+	});
+});

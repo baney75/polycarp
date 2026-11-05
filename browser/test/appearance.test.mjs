@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { contrast, mix, PRESETS } from "../src/appearance/palettes.ts";
-import { isEasing, isFontStack, parsePolycarpTheme, polycarpPayload } from "../src/appearance/polycarp.ts";
+import { checkPolycarpTheme, isEasing, isFontStack, parsePolycarpTheme, polycarpPayload } from "../src/appearance/polycarp.ts";
 import { appearanceVariables, effectiveAccent, parseChoice, SHAPE_PAIRS, TEXT_PAIRS } from "../src/appearance/tokens.ts";
 
 const check = (choice, label) => {
@@ -350,4 +350,24 @@ test("the Appearance tab says which Polycarp theme is in use, how to change it, 
 	assert.match(tab, /id="tk-accent-text"/);
 	assert.match(tab, /name="tk-mode"/);
 	assert.match(tab, /modeOverridden/);
+});
+
+test("a palette that fails contrast is refused, with the pair named: white text on white backgrounds", () => {
+const whiteOnWhite = (file) => {
+	const copy = structuredClone(file);
+	for (const mode of ["light", "dark"]) {
+		for (const role of Object.keys(copy.surfaces.browser[mode])) copy.surfaces.browser[mode][role] = "#ffffff";
+	}
+	return copy;
+};
+	for (const name of BUILT_INS) {
+		assert.equal(parsePolycarpTheme(whiteOnWhite(fixtureFile(name))), undefined, name);
+		assert.equal(polycarpPayload(whiteOnWhite(fixtureFile(name))), undefined, name);
+	}
+	const result = checkPolycarpTheme(whiteOnWhite(fixtureFile("calm")));
+	assert.match(result.reason, /light foreground on background is 1\.00:1, needs 4\.5:1/);
+	// One weak pair in one mode is enough: muted text on the page in dark mode.
+	const dim = fixtureFile("calm");
+	dim.surfaces.browser.dark.muted = dim.surfaces.browser.dark.background;
+	assert.match(checkPolycarpTheme(dim).reason, /dark muted on background/);
 });
