@@ -1095,15 +1095,13 @@ fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
         f.write_all(data)?;
         f.sync_all()?;
         drop(f);
-        match &existing {
-            Some(m) => fs::set_permissions(&tmp, m.permissions())?,
-            None => {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o644))?;
-                }
-            }
+        if let Some(m) = &existing {
+            fs::set_permissions(&tmp, m.permissions())?;
+        }
+        #[cfg(unix)]
+        if existing.is_none() {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&tmp, fs::Permissions::from_mode(0o644))?;
         }
         fs::rename(&tmp, &target)
     })();
