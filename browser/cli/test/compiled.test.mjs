@@ -3,7 +3,7 @@
 // executable and is skipped when Bun is missing. Nothing here touches the real HOME, sockets or browsers.
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
@@ -100,4 +100,31 @@ test("the real executable treats a chrome-extension argument as the native host"
 	const r = spawnSync(exe, ["chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/"], { env, input: Buffer.alloc(0), timeout: 15000 });
 	assert.notEqual(r.signal, "SIGTERM", "the host ended on its own when input closed");
 	assert.doesNotMatch(String(r.stderr), /Unknown command|Usage/);
+});
+
+test("the real executable reads the Polycarp theme from POLYCARP_CONFIG_DIR, and ignores a missing or relative one", { skip: !haveBun && "bun is not installed" }, () => {
+	const { home, env } = sandbox("theme");
+	const run = (extra) => JSON.parse(execFileSync(exe, ["theme", "--json"], { env: { ...env, ...extra }, encoding: "utf8" }));
+	assert.equal(run({}).polycarp, undefined, "no theme file, no Polycarp theme");
+	const dir = join(home, "polycarp", "current");
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, "theme.json"), readFileSync(new URL("../../test/fixtures/polycarp/still-water.json", import.meta.url)));
+	const seen = run({});
+	assert.equal(seen.polycarp?.name, "still-water");
+	// The same file through the config dir the app and `polycarp theme` use; a relative value is skipped.
+	assert.equal(run({ POLYCARP_CONFIG_DIR: "relative/path" }).polycarp, undefined);
+});
+
+test("the real executable keeps using the existing ~/.config/tabkyra data in place", { skip: !haveBun && "bun is not installed" }, () => {
+	const { home, env } = sandbox("config");
+	const dir = join(home, ".config", "tabkyra");
+	mkdirSync(join(dir, "library"), { recursive: true });
+	const saved = JSON.stringify({ preset: "evening" });
+	writeFileSync(join(dir, "theme.json"), saved);
+	writeFileSync(join(dir, "library", "keep.txt"), "kept");
+	const out = JSON.parse(execFileSync(exe, ["theme", "--json"], { env, encoding: "utf8" }));
+	assert.equal(out.preset, "evening", "the saved choice was read from where it already was");
+	assert.equal(readFileSync(join(dir, "theme.json"), "utf8"), saved);
+	assert.equal(readFileSync(join(dir, "library", "keep.txt"), "utf8"), "kept");
+	assert.equal(existsSync(join(home, ".config", "polycarp-browser")), false, "no second config folder was made");
 });
