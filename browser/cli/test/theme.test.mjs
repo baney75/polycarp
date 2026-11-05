@@ -248,12 +248,12 @@ test("a Polycarp theme takes priority over the saved choice on every page, and n
 		assert.doesNotMatch(before, new RegExp(file.surfaces.browser.dark.accent));
 	});
 	await withPolycarp(file, () => {
-		poly.saveTheme("forest", undefined, "dark");
+		poly.saveTheme("forest");
 		const css = poly.pageCssDefault();
 		const { light, dark } = file.surfaces.browser;
 		assert.ok(css.includes(`--bg:${light.background}`) && css.includes(`--accent:${dark.accent}`), "both palettes of the Polycarp theme");
 		assert.doesNotMatch(css, /#7fd39a/, "the saved forest preset is not used");
-		assert.match(css, /@media \(prefers-color-scheme:dark\)/, "auto follows the system, not the saved pinned mode");
+		assert.match(css, /@media \(prefers-color-scheme:dark\)/, "auto with no saved mode follows the system");
 		assert.match(css, /body\{font-family:[^}]*font-size:16px\}main\{border-radius:10px\}/);
 		// An explicit choice still draws that choice (the tests and the panel's own preview rely on it).
 		assert.match(poly.themeCss({ preset: "forest" }), /#7fd39a/);
@@ -309,4 +309,21 @@ test("a Polycarp theme's base size is set on the root element of the pages, and 
 	file.surfaces.browser.type.size = 24;
 	await withPolycarp(file, () => assert.match(poly.pageCssDefault(), /html\{font-size:24px\}/));
 	await withPolycarp(null, () => assert.doesNotMatch(poly.pageCssDefault(), /html\{font-size/));
+});
+
+test("with mode auto the pages follow a saved `tabkyra theme` mode, else the system setting, the way the panel does", async () => {
+	const file = structuredClone(fixture("calm"));
+	file.mode = "auto";
+	await withPolycarp(file, () => {
+		assert.match(poly.themeCss(), /prefers-color-scheme:dark/, "no saved mode: the media query");
+		for (const mode of ["light", "dark"]) {
+			poly.saveTheme(undefined, undefined, mode);
+			const css = poly.themeCss();
+			assert.match(css, new RegExp(`^:root\\{color-scheme:${mode};`));
+			assert.doesNotMatch(css, /prefers-color-scheme/);
+			assert.ok(css.includes(`--bg:${file.surfaces.browser[mode].background}`));
+		}
+		poly.saveTheme(undefined, undefined, "system");
+		assert.match(poly.themeCss(), /prefers-color-scheme:dark/);
+	});
 });

@@ -130,7 +130,9 @@ export function themeCss(choice?: SavedTheme): string {
 	const polycarp = choice ? undefined : loadPolycarpTheme();
 	if (polycarp) {
 		const { light, dark } = polycarp.palettes;
-		if (polycarp.mode === "light" || polycarp.mode === "dark") return `:root{color-scheme:${polycarp.mode};${vars(polycarp.palettes[polycarp.mode])}}`;
+		// "auto" is the panel's rule: the mode `tabkyra theme` saved if there is one, else the system setting.
+		const mode = polycarp.mode === "auto" ? loadTheme().mode : polycarp.mode;
+		if (mode === "light" || mode === "dark") return `:root{color-scheme:${mode};${vars(polycarp.palettes[mode])}}`;
 		return `:root{color-scheme:light dark;${vars(light)}}@media (prefers-color-scheme:dark){:root{${vars(dark)}}}`;
 	}
 	const saved = choice ?? loadTheme();
