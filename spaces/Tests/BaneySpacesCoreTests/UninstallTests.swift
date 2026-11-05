@@ -1,4 +1,5 @@
 import XCTest
+@testable import BaneySpacesCore
 
 /// uninstall.sh against a made-up home folder: everything Polycarp added goes, everything the
 /// person had stays. Commands that would touch this Mac's real settings, permissions or
@@ -236,6 +237,27 @@ final class UninstallTests: XCTestCase {
         let out = try uninstall()
         XCTAssertTrue(try String(contentsOf: path(".aerospace.toml"), encoding: .utf8).contains("start-at-login = true"))
         XCTAssertTrue(out.contains("make login item") && out.contains("AeroSpace.app"), out)
+    }
+
+    /// BaneySpaces had already switched AeroSpace off at login and written that down. Polycarp copies the notes on
+    /// first launch, so uninstalling Polycarp still puts AeroSpace back; BaneySpaces' own notes stay.
+    func testAeroSpaceNotesFromBaneySpacesSurviveMigrationAndUninstall() throws {
+        try write(".aerospace.toml", "after-login-command = []\nstart-at-login = false\n")
+        try write("Applications/AeroSpace.app/Contents/Info.plist", "")
+        try write("Library/Application Support/BaneySpaces/aerospace-start-at-login", "")
+        try write("Library/Application Support/BaneySpaces/aerospace-login-item", path("Applications/AeroSpace.app").path)
+        let suiteName = "com.baney.test.\(UUID().uuidString)"
+        defer { UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName) }
+        let outcome = SettingsImport.run(legacyDir: path("Library/Application Support/BaneySpaces"),
+                                         newDir: path("Library/Application Support/Polycarp"),
+                                         legacyDefaults: UserDefaults(suiteName: suiteName)!, legacyDomain: suiteName,
+                                         newDefaults: UserDefaults(suiteName: suiteName + ".new")!)
+        defer { UserDefaults(suiteName: suiteName + ".new")?.removePersistentDomain(forName: suiteName + ".new") }
+        guard case .imported = outcome else { return XCTFail("\(outcome)") }
+        let out = try uninstall()
+        XCTAssertTrue(try String(contentsOf: path(".aerospace.toml"), encoding: .utf8).contains("start-at-login = true"))
+        XCTAssertTrue(out.contains("make login item") && out.contains("AeroSpace.app"), out)
+        XCTAssertTrue(fm.fileExists(atPath: path("Library/Application Support/BaneySpaces/aerospace-start-at-login").path), "BaneySpaces' notes stay")
     }
 
     /// r4: AeroSpace gone from where it was: said so, not skipped quietly behind "back as they were".

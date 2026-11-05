@@ -67,9 +67,11 @@ let instanceLock: SingleInstance.Lock? = {
 // First launch after BaneySpaces: copy its settings over (copy only, once). Before anything reads a setting.
 if instanceLock != nil {
     let home = FileManager.default.homeDirectoryForCurrentUser
-    SettingsImport.run(legacyDir: Product.legacySupportDir(home: home), newDir: Product.supportDir(home: home),
-                       legacyDefaults: UserDefaults(suiteName: Product.Legacy.bundleID) ?? .standard,
-                       legacyDomain: Product.Legacy.bundleID, newDefaults: .standard)
+    let result = SettingsImport.run(legacyDir: Product.legacySupportDir(home: home), newDir: Product.supportDir(home: home),
+                                    legacyDefaults: UserDefaults(suiteName: Product.Legacy.bundleID) ?? .standard,
+                                    legacyDomain: Product.Legacy.bundleID, newDefaults: .standard)
+    // Not finished: the failed names are tried again at the next launch, and Settings says so (LegacyApp).
+    if case .partial(let report) = result { NSLog("Polycarp: could not import %@ yet", report.failedFiles.joined(separator: ", ")) }
 }
 
 // `Polycarp --render <folder>` draws product images with sample windows, then exits.

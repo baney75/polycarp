@@ -34,6 +34,17 @@ final class LegacyAppTests: XCTestCase {
                        "BaneySpaces is still installed. Polycarp imported its settings.")
     }
 
+    func testTheLineSaysWhichPartIsStillToComeWhenTheImportIsNotFinished() throws {
+        try install(bundleID: "com.baney.baneyspaces")
+        let found = LegacyApp.installed(in: LegacyApp.searchFolders(home: root))
+        let support = root.appendingPathComponent("Polycarp")
+        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        try Data("layout.json\nbangs.json\n".utf8).write(to: support.appendingPathComponent(SettingsImport.pendingName))
+        let line = try XCTUnwrap(LegacyApp.line(installed: found, supportDir: support))
+        XCTAssertTrue(line.contains("layout.json, bangs.json") && line.contains("try again"), line)
+        XCTAssertFalse(line.contains("imported its settings"), line)
+    }
+
     func testAFolderOfThatNameWithAnotherBundleIDDoesNotCount() throws {
         try install(bundleID: "com.example.other")
         XCTAssertNil(LegacyApp.installed(in: LegacyApp.searchFolders(home: root)))

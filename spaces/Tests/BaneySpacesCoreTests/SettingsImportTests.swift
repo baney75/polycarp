@@ -128,14 +128,50 @@ final class SettingsImportTests: XCTestCase {
         try put("bangs.json", "ok")
         try put("layout.json", "locked")
         chmod(oldDir.appendingPathComponent("layout.json").path, 0)
-        guard case .imported(let report) = run(old, new) else { return XCTFail("expected an import") }
+        guard case .partial(let report) = run(old, new) else { return XCTFail("expected a partial import") }
         XCTAssertEqual(report.failedFiles, ["layout.json"])
         XCTAssertEqual(report.copiedFiles, ["bangs.json"])
         XCTAssertEqual(new.integer(forKey: "k"), 7)
         XCTAssertFalse(FileManager.default.fileExists(atPath: newDir.appendingPathComponent("layout.json").path), "no half-written copy")
         XCTAssertFalse(FileManager.default.fileExists(atPath: newDir.appendingPathComponent("layout.json.copying").path))
-        let marker = try String(contentsOf: newDir.appendingPathComponent(Product.importedMarker))
-        XCTAssertTrue(marker.contains("not copied: layout.json"), marker)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: newDir.appendingPathComponent(Product.importedMarker).path), "not finished, so no marker")
+        XCTAssertEqual(SettingsImport.pending(in: newDir), ["layout.json"])
+    }
+
+    func testAFailedNameIsRetriedNextLaunchWithoutOverwritingAnythingEdited() throws {
+        let old = suite(), (new, _) = suite()
+        old.0.set("old", forKey: "k")
+        try put("bangs.json", "from old")
+        try put("layout.json", "locked")
+        chmod(oldDir.appendingPathComponent("layout.json").path, 0)
+        guard case .partial = run(old, new) else { return XCTFail() }
+        // The person edits what did import and changes a preference; the old file becomes readable.
+        try Data("edited".utf8).write(to: newDir.appendingPathComponent("bangs.json"))
+        new.set("changed", forKey: "k")
+        chmod(oldDir.appendingPathComponent("layout.json").path, 0o600)
+        old.0.set("new key", forKey: "later")
+        guard case .imported(let second) = run(old, new) else { return XCTFail("the retry finishes") }
+        XCTAssertEqual(second.copiedFiles, ["layout.json"])
+        XCTAssertEqual(try String(contentsOf: newDir.appendingPathComponent("layout.json")), "locked")
+        XCTAssertEqual(try String(contentsOf: newDir.appendingPathComponent("bangs.json")), "edited")
+        XCTAssertEqual(new.string(forKey: "k"), "changed")
+        XCTAssertNil(new.object(forKey: "later"), "preferences are copied once, not again on a retry")
+        XCTAssertNil(SettingsImport.pending(in: newDir))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: newDir.appendingPathComponent(Product.importedMarker).path))
+        XCTAssertEqual(run(old, new), .alreadyImported)
+    }
+
+    func testTheAeroSpaceAndMissionControlRecordsCopyAndTheOriginalsStay() throws {
+        let old = suite(), (new, _) = suite()
+        try put("aerospace-start-at-login", "")
+        try put("aerospace-login-item", "/Applications/AeroSpace.app")
+        try put(DurableRecord.fileName, "<plist/>")
+        guard case .imported(let r) = run(old, new) else { return XCTFail("files alone import") }
+        XCTAssertEqual(Set(r.copiedFiles), ["aerospace-start-at-login", "aerospace-login-item", DurableRecord.fileName])
+        for n in r.copiedFiles {
+            XCTAssertTrue(FileManager.default.fileExists(atPath: newDir.appendingPathComponent(n).path), n)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: oldDir.appendingPathComponent(n).path), "\(n): the original stays")
+        }
     }
 
     func testAKeyPolycarpAlreadyHasIsKept() {
