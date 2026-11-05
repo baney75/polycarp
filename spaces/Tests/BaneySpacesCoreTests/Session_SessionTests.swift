@@ -267,10 +267,12 @@ final class SessionCompatTests: XCTestCase {
     }
 
     func testSocketCandidatesPreferTheNewNameThenTheOld() {
-        let dir = URL(fileURLWithPath: "/tmp/x")
-        XCTAssertEqual(Wire.socketCandidates(dir: dir), ["/tmp/x/baneyspaces.sock", "/tmp/x/deck.sock"])
+        let dir = URL(fileURLWithPath: "/tmp/x"), old = URL(fileURLWithPath: "/tmp/y")
+        XCTAssertEqual(Wire.socketCandidates(dir: dir, legacyDir: old),
+                       ["/tmp/x/polycarp.sock", "/tmp/y/baneyspaces.sock", "/tmp/y/deck.sock"])
         XCTAssertEqual(Wire.socketCandidates().first, Wire.socketPath)
-        XCTAssertEqual(Wire.socketCandidates().last, Wire.legacySocketPath)
+        XCTAssertTrue(Wire.socketCandidates().last!.hasSuffix("/BaneySpaces/deck.sock"))
+        XCTAssertEqual(Wire.listenPaths(dir: dir), ["/tmp/x/polycarp.sock"], "the app never listens on the old app's sockets")
     }
 }
 

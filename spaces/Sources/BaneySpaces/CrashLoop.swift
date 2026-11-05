@@ -36,7 +36,7 @@ enum CrashLoop {
     static func checkRender() {
         let file = ledger(render: true)
         guard case .stop(let n) = begin(file, mode: .render) else { return }
-        FileHandle.standardError.write(Data("BaneySpaces --render crashed \(n) times in \(CrashLoopReport.minutes(file.policy)); not starting. Delete \(file.url.path) to try again.\n".utf8))
+        FileHandle.standardError.write(Data("Polycarp --render crashed \(n) times in \(CrashLoopReport.minutes(file.policy)); not starting. Delete \(file.url.path) to try again.\n".utf8))
         exit(75)
     }
 
@@ -59,7 +59,7 @@ enum CrashLoop {
         NSApp.setActivationPolicy(.accessory)
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "BaneySpaces crashed \(n) times in \(CrashLoopReport.minutes(file.policy))"
+        alert.messageText = "Polycarp crashed \(n) times in \(CrashLoopReport.minutes(file.policy))"
         alert.informativeText = "So it can't keep crashing, it isn't starting now. Mission Control and the macOS Dock are back as they were. Crash reports are in Console › Crash Reports."
         alert.addButton(withTitle: "Quit")
         alert.addButton(withTitle: "Start Anyway")

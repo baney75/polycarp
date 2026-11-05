@@ -47,7 +47,7 @@ extension HandsRouter {
     }
 
     private func pointArguments(_ usage: String) -> HandsError {
-        HandsError(.badArguments, "the point is missing", suggestion: "usage: baneyspaces agent " + usage, retry: .safe)
+        HandsError(.badArguments, "the point is missing", suggestion: "usage: polycarp-spaces agent " + usage, retry: .safe)
     }
 
     private func pointer(_ req: HandsRequest, path: [CGPoint], drag: Bool, name: String) -> HandsEnvelope {
@@ -82,7 +82,7 @@ extension HandsRouter {
         let scopeCheck = actingCheck(w, ref: ref)
         if let e = scopeCheck() { return .failure(e) }
         guard BackgroundAX.serverWindow(w.id) != nil else {
-            return .failure(HandsError(.windowNotFound, "the window server does not list window \(w.id)", suggestion: "Run `baneyspaces agent windows` and try again.", retry: .safe))
+            return .failure(HandsError(.windowNotFound, "the window server does not list window \(w.id)", suggestion: "Run `polycarp-spaces agent windows` and try again.", retry: .safe))
         }
         let reply = HandsEngine.shared.transaction(window: w, check: scopeCheck) { [self] cancelled in
             transact(w, scope, name: name, kind: kind, ref: ref, chords: chords, path: path, drag: drag, session: session, scopeCheck: scopeCheck, cancelled: cancelled)
@@ -156,7 +156,7 @@ extension HandsRouter {
 
         // Scope and facts again, at the moment of execution; one route or one refusal.
         guard let (facts, frame) = gatherFacts(w, kind: kind, verifier: verifier, path: path) else {
-            return .failed(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `baneyspaces agent windows` and take a new snapshot.", retry: .afterSnapshot))
+            return .failed(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows` and take a new snapshot.", retry: .afterSnapshot))
         }
         let permit: BackgroundPermit
         switch BackgroundPlanner.plan(facts) {

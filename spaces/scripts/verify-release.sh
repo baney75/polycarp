@@ -11,7 +11,7 @@ DIR=$(cd "${1:-build}" && pwd)
 VERSION=$(cat VERSION)
 REQ=$(cat scripts/release-requirement.txt)
 fail() { echo "verify-release.sh: $*" >&2; exit 1; }
-for f in BaneySpaces.zip BaneySpaces.zip.sha256 BaneySpaces.dmg; do [ -f "$DIR/$f" ] || fail "$DIR/$f is missing."; done
+for f in Polycarp.zip Polycarp.zip.sha256 Polycarp.dmg; do [ -f "$DIR/$f" ] || fail "$DIR/$f is missing."; done
 
 TMP=$(mktemp -d)
 MNT="$TMP/mnt"
@@ -20,7 +20,7 @@ trap cleanup EXIT
 
 check_app() {
   local app=$1 what=$2
-  [ -d "$app" ] || fail "$what has no BaneySpaces.app."
+  [ -d "$app" ] || fail "$what has no Polycarp.app."
   codesign --verify --strict --deep "$app" 2>/dev/null || fail "$what: the signature is broken."
   codesign -v -R "=$REQ" "$app" 2>/dev/null || fail "$what isn't signed with the release identity."
   [ "$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")" = "$VERSION" ] \
@@ -28,17 +28,17 @@ check_app() {
   [ -f "$app/Contents/Resources/install-app.sh" ] || fail "$what has no install-app.sh inside."
 }
 
-[ "$(awk '{print $1}' "$DIR/BaneySpaces.zip.sha256")" = "$(shasum -a 256 "$DIR/BaneySpaces.zip" | awk '{print $1}')" ] \
-  || fail "BaneySpaces.zip doesn't match BaneySpaces.zip.sha256."
+[ "$(awk '{print $1}' "$DIR/Polycarp.zip.sha256")" = "$(shasum -a 256 "$DIR/Polycarp.zip" | awk '{print $1}')" ] \
+  || fail "Polycarp.zip doesn't match Polycarp.zip.sha256."
 mkdir "$TMP/zip"
-ditto -x -k "$DIR/BaneySpaces.zip" "$TMP/zip"
-check_app "$TMP/zip/BaneySpaces.app" "BaneySpaces.zip"
+ditto -x -k "$DIR/Polycarp.zip" "$TMP/zip"
+check_app "$TMP/zip/Polycarp.app" "Polycarp.zip"
 mkdir "$MNT"
-hdiutil attach -nobrowse -readonly -quiet -mountpoint "$MNT" "$DIR/BaneySpaces.dmg" >/dev/null 2>&1 || fail "BaneySpaces.dmg won't mount."
-check_app "$MNT/BaneySpaces.app" "BaneySpaces.dmg"
-[ "$(readlink "$MNT/Applications")" = /Applications ] || fail "BaneySpaces.dmg has no Applications link."
+hdiutil attach -nobrowse -readonly -quiet -mountpoint "$MNT" "$DIR/Polycarp.dmg" >/dev/null 2>&1 || fail "Polycarp.dmg won't mount."
+check_app "$MNT/Polycarp.app" "Polycarp.dmg"
+[ "$(readlink "$MNT/Applications")" = /Applications ] || fail "Polycarp.dmg has no Applications link."
 # Both files must hold the same build.
-[ "$(plutil -extract BaneySpacesCommit raw -o - "$MNT/BaneySpaces.app/Contents/Info.plist")" = \
-  "$(plutil -extract BaneySpacesCommit raw -o - "$TMP/zip/BaneySpaces.app/Contents/Info.plist")" ] \
+[ "$(plutil -extract PolycarpCommit raw -o - "$MNT/Polycarp.app/Contents/Info.plist")" = \
+  "$(plutil -extract PolycarpCommit raw -o - "$TMP/zip/Polycarp.app/Contents/Info.plist")" ] \
   || fail "the zip and the disk image hold different builds."
 echo "verified $DIR: signature, release key, version $VERSION, checksum"

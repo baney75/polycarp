@@ -18,11 +18,11 @@ final class CrashLoopReportTests: XCTestCase {
 
     func testTheLaunchLineNamesTheBuildTheModeAndThePid() {
         XCTAssertEqual(CrashLoopReport.launch(build: "0.2.1 (abc1234)", mode: .normal, pid: 412),
-                       "launch: BaneySpaces 0.2.1 (abc1234), normal, pid 412")
+                       "launch: Polycarp 0.2.1 (abc1234), normal, pid 412")
         XCTAssertEqual(CrashLoopReport.launch(build: "0.2.1", mode: .render, pid: 9),
-                       "launch: BaneySpaces 0.2.1, render, pid 9")
+                       "launch: Polycarp 0.2.1, render, pid 9")
         XCTAssertEqual(CrashLoopReport.launch(build: "0.2.1", mode: .setup, pid: 9),
-                       "launch: BaneySpaces 0.2.1, setup, pid 9")
+                       "launch: Polycarp 0.2.1, setup, pid 9")
     }
 
     func testTheDecisionLines() {

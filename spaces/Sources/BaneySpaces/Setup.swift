@@ -271,7 +271,7 @@ final class SetupModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
-            p.arguments = ["reset", "Accessibility", "com.baney.baneyspaces"]
+            p.arguments = ["reset", "Accessibility", "com.baney.polycarp"]
             try? p.run()
             p.waitUntilExit()
             DispatchQueue.main.async {
@@ -391,7 +391,7 @@ final class SetupModel: ObservableObject {
         do {
             try on ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
         } catch {
-            NSLog("BaneySpaces: open at login failed: %@", error.localizedDescription)
+            NSLog("Polycarp: open at login failed: %@", error.localizedDescription)
         }
         reloadOptional()
     }
@@ -480,7 +480,7 @@ struct SetupView: View {
         HStack(spacing: 14) {
             Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 56, height: 56)
             VStack(alignment: .leading, spacing: 2) {
-                Text("BaneySpaces").font(Chrome.font(17, .bold))
+                Text("Polycarp").font(Chrome.font(17, .bold))
                 Text("Nine workspaces. One row of keys.").foregroundStyle(.secondary)
             }
         }
@@ -488,30 +488,30 @@ struct SetupView: View {
         if model.justEnabled && model.ready {
             HStack(spacing: 10) {
                 Image(systemName: "checkmark.seal.fill").font(Chrome.font(17)).foregroundStyle(.green)
-                Text("BaneySpaces is on. Try \(model.modifier.symbol)2.").font(Chrome.font(15, .bold))
+                Text("Polycarp is on. Try \(model.modifier.symbol)2.").font(Chrome.font(15, .bold))
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Chrome.shape(.settingsCallout, continuous: false).fill(Color.green.opacity(0.12)))
         }
 
-        step(done: model.trusted, title: "Let BaneySpaces arrange windows") {
+        step(done: model.trusted, title: "Let Polycarp arrange windows") {
             if model.trusted {
                 Text("Allowed.").foregroundStyle(.secondary)
             } else {
-                Text("Accessibility lets BaneySpaces show, hide and move other apps' windows. It can't read what you type.")
+                Text("Accessibility lets Polycarp show, hide and move other apps' windows. It can't read what you type.")
                     .foregroundStyle(.secondary)
                 Button(action: model.allow) {
-                    Text("Allow BaneySpaces").frame(minWidth: 160)
+                    Text("Allow Polycarp").frame(minWidth: 160)
                 }
                 .controlSize(.large)
                 .buttonStyle(.borderedProminent)
-                Text("macOS opens its settings. Turn on BaneySpaces in the list and come back; this window updates by itself.")
+                Text("macOS opens its settings. Turn on Polycarp in the list and come back; this window updates by itself.")
                     .font(Chrome.font(12)).foregroundStyle(.secondary)
                 if model.staleGrant {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Already switched on and still not working?").font(Chrome.font(12, .bold))
-                        Text("macOS kept an old permission from an earlier copy of BaneySpaces. Fixing it removes the old entry and asks again.")
+                        Text("macOS kept an old permission from an earlier copy of Polycarp. Fixing it removes the old entry and asks again.")
                             .font(Chrome.font(12)).foregroundStyle(.secondary)
                         Button(model.fixing ? "Fixing…" : "Fix Permission", action: model.fixPermission)
                             .disabled(model.fixing)
@@ -524,7 +524,7 @@ struct SetupView: View {
 
         if model.aeroSpaceRunning {
             step(done: false, title: "Quit AeroSpace") {
-                Text("AeroSpace is running and uses the same keys. BaneySpaces starts as soon as it quits.")
+                Text("AeroSpace is running and uses the same keys. Polycarp starts as soon as it quits.")
                     .foregroundStyle(.secondary)
                 Button("Quit AeroSpace", action: model.quitAeroSpace)
             }
@@ -533,7 +533,7 @@ struct SetupView: View {
         if model.desktops > 1 {
             step(done: false, title: "Optional: keep one macOS desktop") {
                 if model.viewerKeys {
-                    Text("You have \(model.desktops) desktops in Mission Control. Windows on the others are out of reach. BaneySpaces' overview has replaced Mission Control, so to close the extra ones, turn off \"Use BaneySpaces' overview instead of Mission Control\" under Keys, open Mission Control, hover each extra desktop at the top and click its close button, then turn the switch back on.")
+                    Text("You have \(model.desktops) desktops in Mission Control. Windows on the others are out of reach. Polycarp's overview has replaced Mission Control, so to close the extra ones, turn off \"Use Polycarp's overview instead of Mission Control\" under Keys, open Mission Control, hover each extra desktop at the top and click its close button, then turn the switch back on.")
                         .foregroundStyle(.secondary)
                 } else {
                     Text("You have \(model.desktops) desktops in Mission Control. Windows on the others are out of reach. Open Mission Control, hover each extra desktop at the top, and click its close button.")
@@ -546,7 +546,7 @@ struct SetupView: View {
         }
 
         step(done: model.openAtLogin, title: "Start with your Mac") {
-            Toggle("Open BaneySpaces at login", isOn: Binding(get: { model.openAtLogin }, set: { model.setOpenAtLogin($0) }))
+            Toggle("Open Polycarp at login", isOn: Binding(get: { model.openAtLogin }, set: { model.setOpenAtLogin($0) }))
             if model.loginNeedsApproval {
                 HStack {
                     Text("macOS needs you to approve it in Login Items.").font(Chrome.font(12)).foregroundStyle(.secondary)
@@ -556,13 +556,20 @@ struct SetupView: View {
             }
         }
 
+        // The old app, if it is still installed: a line, never a removal (see LegacyApp for why there is no button).
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        if let note = LegacyApp.line(installed: LegacyApp.installed(in: LegacyApp.searchFolders(home: home)),
+                                     supportDir: Product.supportDir(home: home)) {
+            Text(note).font(Chrome.font(12)).foregroundStyle(.secondary)
+        }
+
         step(done: true, title: "Uninstall", symbol: "trash") {
             // Text across the full width, the button under it, as the Allow step lays out; side by
             // side, the text wrapped into a narrow four-line column beside a floating button.
-            Text("Puts back your windows, the macOS Dock, the screenshot and Spotlight shortcuts and your Claude Code settings as they were, then removes BaneySpaces.")
+            Text("Puts back your windows, the macOS Dock, the screenshot and Spotlight shortcuts and your Claude Code settings as they were, then removes Polycarp.")
                 .font(Chrome.font(12)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("Uninstall BaneySpaces…") { model.onUninstall?() }
+            Button("Uninstall Polycarp…") { model.onUninstall?() }
         }
     }
 
@@ -598,11 +605,11 @@ struct SetupView: View {
         }
 
         section("See every workspace at once") {
-            Toggle("Use BaneySpaces' overview instead of Mission Control", isOn: Binding(get: { model.viewerKeys }, set: { model.setViewerKeys($0) }))
+            Toggle("Use Polycarp's overview instead of Mission Control", isOn: Binding(get: { model.viewerKeys }, set: { model.setViewerKeys($0) }))
             if model.viewerKeysFailed {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Already switched on and still not working?").font(Chrome.font(12, .bold))
-                    Text("macOS wouldn't let BaneySpaces watch the Mission Control key and ⌃↑, so macOS's Mission Control stays on until it does. Usually macOS kept an old permission from an earlier copy of BaneySpaces. Fixing it removes the old entry and asks again. The overview is always in the menu bar menu (Show All Workspaces).")
+                    Text("macOS wouldn't let Polycarp watch the Mission Control key and ⌃↑, so macOS's Mission Control stays on until it does. Usually macOS kept an old permission from an earlier copy of Polycarp. Fixing it removes the old entry and asks again. The overview is always in the menu bar menu (Show All Workspaces).")
                         .font(Chrome.font(12)).foregroundStyle(.secondary)
                     Button(model.fixing ? "Fixing…" : "Fix Permission", action: model.fixPermission)
                         .disabled(model.fixing)
@@ -610,11 +617,11 @@ struct SetupView: View {
                 .padding(10)
                 .background(Chrome.shape(.settingsCell, continuous: false).fill(Color.orange.opacity(0.12)))
             } else {
-                Text("The Mission Control key, ⌃↑ and any hot corner set to Mission Control open the overview. macOS's Mission Control is switched off in the Dock while BaneySpaces runs, and comes back, with your hot corners as they were, when you turn this off or quit. A Magic Mouse's two-finger double tap opens nothing while this is on.")
+                Text("The Mission Control key, ⌃↑ and any hot corner set to Mission Control open the overview. macOS's Mission Control is switched off in the Dock while Polycarp runs, and comes back, with your hot corners as they were, when you turn this off or quit. A Magic Mouse's two-finger double tap opens nothing while this is on.")
                     .font(Chrome.font(12)).foregroundStyle(.secondary)
             }
             if let problem = model.missionControlFailed {
-                Text("macOS's Mission Control is still on. \(problem) BaneySpaces tries again every few minutes.")
+                Text("macOS's Mission Control is still on. \(problem) Polycarp tries again every few minutes.")
                     .font(Chrome.font(12)).foregroundStyle(.orange)
             }
             Toggle("Dragging a window to the top of the screen opens the overview", isOn: Binding(get: { model.topDrag }, set: { model.setTopDrag($0) }))
@@ -636,7 +643,7 @@ struct SetupView: View {
     @ViewBuilder private var dock: some View {
         section("Workspace Dock") {
             Toggle("Workspace Dock in place of the macOS Dock", isOn: Binding(get: { model.workspaceDock }, set: { model.setWorkspaceDock($0) }))
-            Text("Rest the pointer on the dock's edge of the screen to see your workspaces, each with its apps; click one to go there. At the top it waits a moment longer, so reaching for the menu bar doesn't bring it up. The macOS Dock stays out of sight while this is on and comes back as it was when you turn it off or quit BaneySpaces.")
+            Text("Rest the pointer on the dock's edge of the screen to see your workspaces, each with its apps; click one to go there. At the top it waits a moment longer, so reaching for the menu bar doesn't bring it up. The macOS Dock stays out of sight while this is on and comes back as it was when you turn it off or quit Polycarp.")
                 .font(Chrome.font(12)).foregroundStyle(.secondary)
             Picker("Position on screen", selection: Binding(get: { model.dockEdge }, set: { model.dockEdge = $0; model.onDockEdgeChange?($0) })) {
                 ForEach(DockEdge.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -669,7 +676,7 @@ struct SetupView: View {
             if cursor.themeSetInFile {
                 Text("The look is set in config.toml (behavior.cursor.theme).").font(.callout).foregroundStyle(.secondary)
             }
-            Text("A small cursor with the agent's name glides to what it is working on, so you can follow it. It is drawn only while you look at the agent workspace (or at an app you lent), never moves your pointer and never takes a click or a key. Its colors are its own. Only you turn it off, here; agents can pick its look with baneyspaces agent cursor theme <name>.")
+            Text("A small cursor with the agent's name glides to what it is working on, so you can follow it. It is drawn only while you look at the agent workspace (or at an app you lent), never moves your pointer and never takes a click or a key. Its colors are its own. Only you turn it off, here; agents can pick its look with polycarp-spaces agent cursor theme <name>.")
                 .font(.callout).foregroundStyle(.secondary)
         }
 
@@ -690,13 +697,13 @@ struct SetupView: View {
                     .font(Chrome.font(12)).foregroundStyle(.secondary)
                 Button("Install Claude Code and Grok Hooks", action: model.installHooks)
             } else if model.hooks == .unreadable {
-                Text("~/.claude/settings.json isn't valid JSON, so BaneySpaces leaves it alone. Fix it, then come back here.")
+                Text("~/.claude/settings.json isn't valid JSON, so Polycarp leaves it alone. Fix it, then come back here.")
                     .font(Chrome.font(12)).foregroundStyle(.orange)
             } else if model.hooks == .on {
-                Label("Claude Code and Grok report to BaneySpaces.", systemImage: "checkmark.circle.fill")
+                Label("Claude Code and Grok report to Polycarp.", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             } else {
-                Text("Hooks let Claude Code and Grok say when they start, finish, ask for permission or hit an error. Without them BaneySpaces reads only terminal titles.")
+                Text("Hooks let Claude Code and Grok say when they start, finish, ask for permission or hit an error. Without them Polycarp reads only terminal titles.")
                     .font(Chrome.font(12)).foregroundStyle(.secondary)
                 Button("Install Claude Code and Grok Hooks", action: model.installHooks)
             }
@@ -773,13 +780,13 @@ struct SetupView: View {
             HStack(spacing: 14) {
                 Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 48, height: 48)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("BaneySpaces").font(Chrome.font(15, .bold))
+                    Text("Polycarp").font(Chrome.font(15, .bold))
                     Text("Nine workspaces on one keyboard row.").foregroundStyle(.secondary)
                     Text("\(model.modifier.symbol)1–\(model.modifier.symbol)9 to switch. Add ⇧ to bring the window along.")
                         .font(Chrome.font(12)).foregroundStyle(.secondary)
                 }
             }
-            Button("About BaneySpaces…") { model.onAbout?() }
+            Button("About Polycarp…") { model.onAbout?() }
         }
     }
 
@@ -793,7 +800,7 @@ struct SetupView: View {
             .pickerStyle(.segmented).labelsHidden().fixedSize()
             Text(model.agentAccess.detail).font(.callout).foregroundStyle(model.agentAccess == .full ? .orange : .secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Only you change this, here or in the BaneySpaces menu. More access asks you first; it stays until you change it.")
+            Text("Only you change this, here or in the Polycarp menu. More access asks you first; it stays until you change it.")
                 .font(.callout).foregroundStyle(.secondary)
         }
 
@@ -835,7 +842,7 @@ struct SetupView: View {
     @ViewBuilder private var appearanceTab: some View {
         if let p = appearance.polycarp {
             section("Polycarp theme") {
-                Text("\(p.title) (\(p.mode.rawValue)) is in force. It draws every BaneySpaces surface instead of the theme, palette and accent below, which come back when it is removed.")
+                Text("\(p.title) (\(p.mode.rawValue)) is in force. It draws every Polycarp surface instead of the theme, palette and accent below, which come back when it is removed.")
                     .font(Chrome.font(12)).fixedSize(horizontal: false, vertical: true)
                 Text("Change it in Terminal:  polycarp theme set <name>").font(Chrome.font(12)).foregroundStyle(.secondary).textSelection(.enabled)
                 Text("polycarp theme list shows the names. To go back to your own theme, delete \(PolycarpThemeFile.path().map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "the theme file").")
@@ -933,7 +940,7 @@ struct SetupView: View {
             // Omarchy and Minimal draw one fill of their own, so the style and opacity don't reach them.
             .disabled(!Chrome.spec.fill.adjustable)
             Text(Chrome.spec.fill.adjustable ? "Dock, ⌘Tab, launcher, overview and switch overlay. Solid is always opaque."
-                 : "The \(Chrome.spec.label) theme draws its own fill. Style and opacity apply to the BaneySpaces theme.")
+                 : "The \(Chrome.spec.label) theme draws its own fill. Style and opacity apply to the Polycarp theme.")
                 .font(Chrome.font(12)).foregroundStyle(.secondary)
         }
 
@@ -989,7 +996,7 @@ struct SetupView: View {
 
     @ViewBuilder private var launcher: some View {
         section("Find and install apps") {
-            Toggle("⌘Space opens the BaneySpaces launcher instead of Spotlight", isOn: Binding(get: { model.launcherOnCmdSpace }, set: { model.setLauncher($0) }))
+            Toggle("⌘Space opens the Polycarp launcher instead of Spotlight", isOn: Binding(get: { model.launcherOnCmdSpace }, set: { model.setLauncher($0) }))
             Text("Open apps, install and remove them, find files, terminal tabs and splits, browser tabs and agent windows, search the web and ask an agent, from one box. ⌃⌘K opens it from any app. Off gives ⌘Space back to Spotlight; the launcher stays in the menu bar, the Workspace Dock and ⌃⌘K.")
                 .font(Chrome.font(12)).foregroundStyle(.secondary)
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
@@ -1056,7 +1063,7 @@ struct SetupView: View {
             if let why = model.bangProblem { Text(why).font(Chrome.font(12)).foregroundStyle(.orange) }
             Text(verbatim: "A bang with a built-in's trigger replaces it. Agents and scripts can add them too:")
                 .font(Chrome.font(10)).foregroundStyle(.secondary)
-            Text(verbatim: "~/Applications/BaneySpaces.app/Contents/MacOS/BaneySpaces --bangs add jira Jira 'https://acme.atlassian.net/browse/{q}'")
+            Text(verbatim: "~/Applications/Polycarp.app/Contents/MacOS/Polycarp --bangs add jira Jira 'https://acme.atlassian.net/browse/{q}'")
                 .font(Chrome.font(10).monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1096,7 +1103,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     convenience init() {
         let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: false)
         self.init(window: window)
-        window.title = "BaneySpaces Settings"
+        window.title = "Polycarp Settings"
         window.delegate = self
         model.windowVisible = { [weak window] in window?.isVisible == true }
         let host = NSHostingView(rootView: SetupView(model: model) { [weak window] in window?.close() })

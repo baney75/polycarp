@@ -112,7 +112,7 @@ fn unknown_subcommand_gives_2() {
 fn not_found_gives_127_and_names_the_tool() {
     let s = Sandbox::new();
     for (sub, name, var) in [
-        ("spaces", "baneyspaces", "POLYCARP_SPACES_BIN"),
+        ("spaces", "polycarp-spaces", "POLYCARP_SPACES_BIN"),
         ("browser", "tabkyra", "POLYCARP_BROWSER_BIN"),
     ] {
         let o = s.run(&[sub, "x"]);
@@ -121,6 +121,14 @@ fn not_found_gives_127_and_names_the_tool() {
         assert!(err(&o).contains(var), "{sub}: {}", err(&o));
         assert!(err(&o).contains("Install"), "{sub}: {}", err(&o));
     }
+    // The hint for Spaces points at the Polycarp repo, not at the old BaneySpaces one.
+    let o = s.run(&["spaces", "x"]);
+    assert!(
+        err(&o).contains("https://github.com/baney75/polycarp"),
+        "{}",
+        err(&o)
+    );
+    assert!(!err(&o).contains("baneyspaces"), "{}", err(&o));
 }
 
 #[test]
@@ -516,7 +524,7 @@ fn the_child_sees_its_own_name_as_argv0() {
         .env("POLYCARP_SPACES_BIN", compiled_stub())
         .output()
         .unwrap();
-    assert!(out(&o).contains("argv0:baneyspaces"), "{}", out(&o));
+    assert!(out(&o).contains("argv0:polycarp-spaces"), "{}", out(&o));
 }
 
 #[cfg(unix)]
@@ -533,6 +541,26 @@ fn doctor_says_when_the_browser_tool_is_broken() {
     assert_eq!(code(&o), 1, "{}", out(&o));
     assert!(out(&o).contains("did not work"), "{}", out(&o));
     assert!(!out(&o).contains("oops"), "{}", out(&o));
+}
+
+#[cfg(unix)]
+#[test]
+fn spaces_prefers_the_new_command_name_and_falls_back_to_the_old() {
+    let s = Sandbox::new();
+    stub(&s.dir("bin"), "baneyspaces", "echo old");
+    let o = s
+        .cmd(&["spaces"])
+        .env("PATH", s.dir("bin"))
+        .output()
+        .unwrap();
+    assert_eq!(out(&o), "old\n", "the old name still works alone");
+    stub(&s.dir("bin"), "polycarp-spaces", "echo new");
+    let o = s
+        .cmd(&["spaces"])
+        .env("PATH", s.dir("bin"))
+        .output()
+        .unwrap();
+    assert_eq!(out(&o), "new\n", "the new name wins when both are there");
 }
 
 // ---- Issue #5 follow-ups ----

@@ -8,7 +8,7 @@ final class MissionControlWatchdogTests: XCTestCase {
     private let fm = FileManager.default
     private var home: URL!
     private var bin: URL!
-    private var folder: URL { home.appendingPathComponent("Library/Application Support/BaneySpaces") }
+    private var folder: URL { home.appendingPathComponent("Library/Application Support/Polycarp") }
     private var log: URL { home.appendingPathComponent("calls.log") }
     private let record = "{\n    \"com.apple.dock/wvous-tl-corner\" = 2;\n}\n"
 
@@ -20,7 +20,7 @@ final class MissionControlWatchdogTests: XCTestCase {
         try fake("defaults", """
             echo "defaults $*" >> "$FAKE_LOG"
             case "$*" in
-              "read com.baney.baneyspaces systemMissionControlSaved") [ "$FAKE_IN_DEFAULTS" = 1 ] && [ -f "$FAKE_RECORD" ] && cat "$FAKE_RECORD" || exit 1 ;;
+              "read com.baney.polycarp systemMissionControlSaved") [ "$FAKE_IN_DEFAULTS" = 1 ] && [ -f "$FAKE_RECORD" ] && cat "$FAKE_RECORD" || exit 1 ;;
               "read "*"/mc-record") [ -f "$FAKE_RECORD" ] && cat "$FAKE_RECORD" || exit 1 ;;
               "read com.apple.dock mcx-expose-disabled") echo 1 ;;
               "read com.apple.dock wvous-tl-corner") echo 1 ;;
@@ -30,7 +30,7 @@ final class MissionControlWatchdogTests: XCTestCase {
             """)
         try fake("pgrep", "echo \"pgrep $*\" >> \"$FAKE_LOG\"; [ \"$FAKE_RUNNING\" = 1 ]")
         try fake("ps", "echo \"$FAKE_PS\"")
-        try fake("launchctl", "echo \"launchctl $* plist=$([ -f \"$HOME/Library/LaunchAgents/com.baney.baneyspaces.mc-watchdog.plist\" ] && echo present || echo gone)\" >> \"$FAKE_LOG\"")
+        try fake("launchctl", "echo \"launchctl $* plist=$([ -f \"$HOME/Library/LaunchAgents/com.baney.polycarp.mc-watchdog.plist\" ] && echo present || echo gone)\" >> \"$FAKE_LOG\"")
         try fake("killall", "echo \"killall $*\" >> \"$FAKE_LOG\"")
         try fm.createDirectory(at: home.appendingPathComponent("Library/LaunchAgents"), withIntermediateDirectories: true)
         try "<plist/>".write(to: home.appendingPathComponent("Library/LaunchAgents/\(MissionControlWatchdog.plistName)"), atomically: true, encoding: .utf8)
@@ -90,7 +90,7 @@ final class MissionControlWatchdogTests: XCTestCase {
         XCTAssertTrue(calls.contains("defaults delete com.apple.dock mcx-expose-disabled"), calls)
         XCTAssertTrue(calls.contains("defaults write com.apple.dock wvous-tl-corner -int 2"), calls)
         XCTAssertTrue(calls.contains("killall Dock"), calls)
-        XCTAssertTrue(calls.contains("defaults delete com.baney.baneyspaces systemMissionControlSaved"), "the record goes, so the next launch saves what's there then")
+        XCTAssertTrue(calls.contains("defaults delete com.baney.polycarp systemMissionControlSaved"), "the record goes, so the next launch saves what's there then")
         XCTAssertTrue(calls.contains("launchctl bootout"), "the agent has nothing more to watch")
         XCTAssertFalse(fm.fileExists(atPath: folder.appendingPathComponent(MissionControlWatchdog.heartbeat).path))
     }
@@ -99,7 +99,7 @@ final class MissionControlWatchdogTests: XCTestCase {
     /// whether it runs. Its process id, in the heartbeat, is.
     func testARenamedBundleThatIsRunningIsNeverInterrupted() throws {
         try beat(age: 600, pid: getpid())   // alive: this very test
-        let calls = try tick(running: false, ps: "/Applications/BaneySpaces 2.app/Contents/MacOS/BaneySpaces")
+        let calls = try tick(running: false, ps: "/Applications/Polycarp 2.app/Contents/MacOS/Polycarp")
         XCTAssertFalse(calls.contains("killall"), calls)
         // The process id has been reused by something else: that isn't BaneySpaces.
         try? fm.removeItem(at: log)
@@ -113,7 +113,7 @@ final class MissionControlWatchdogTests: XCTestCase {
         try beat(age: 600)
         let calls = try tick()
         XCTAssertTrue(calls.contains("launchctl bootout"), calls)
-        XCTAssertTrue(calls.contains("bootout gui/\(getuid())/com.baney.baneyspaces.mc-watchdog plist=gone"), calls)
+        XCTAssertTrue(calls.contains("bootout gui/\(getuid())/com.baney.polycarp.mc-watchdog plist=gone"), calls)
         XCTAssertFalse(fm.fileExists(atPath: home.appendingPathComponent("Library/LaunchAgents/\(MissionControlWatchdog.plistName)").path))
     }
 
@@ -124,7 +124,7 @@ final class MissionControlWatchdogTests: XCTestCase {
         XCTAssertTrue(try tick(running: true).contains("killall Dock"), "a BaneySpaces is running, but not that one")
         try? fm.removeItem(at: log)
         try beat(age: 600, pid: getpid(), capable: false)   // the pid is alive, the heartbeat isn't from a build that knows the takeover
-        XCTAssertTrue(try tick(running: true, ps: "/Applications/BaneySpaces.app/Contents/MacOS/BaneySpaces").contains("killall Dock"))
+        XCTAssertTrue(try tick(running: true, ps: "/Applications/Polycarp.app/Contents/MacOS/Polycarp").contains("killall Dock"))
     }
 
     /// The record only reached the disk as a file (the app died before its settings did).
@@ -155,9 +155,9 @@ final class MissionControlWatchdogTests: XCTestCase {
     }
 
     func testThePlistRunsTheScriptOften() {
-        let plist = MissionControlWatchdog.plist(folder: "/Users/x/Library/Application Support/BaneySpaces")
-        XCTAssertTrue(plist.contains("<string>com.baney.baneyspaces.mc-watchdog</string>"))
-        XCTAssertTrue(plist.contains("<string>/Users/x/Library/Application Support/BaneySpaces/mc-watchdog.sh</string>"))
+        let plist = MissionControlWatchdog.plist(folder: "/Users/x/Library/Application Support/Polycarp")
+        XCTAssertTrue(plist.contains("<string>com.baney.polycarp.mc-watchdog</string>"))
+        XCTAssertTrue(plist.contains("<string>/Users/x/Library/Application Support/Polycarp/mc-watchdog.sh</string>"))
         XCTAssertTrue(plist.contains("<key>StartInterval</key><integer>15</integer>"))
         XCTAssertNoThrow(try PropertyListSerialization.propertyList(from: Data(plist.utf8), format: nil))
     }
@@ -253,10 +253,10 @@ final class MissionControlWatchdogTests: XCTestCase {
 
     /// The agent's script looks in the folder the app writes to.
     func testTheAppAndTheScriptShareOneFolder() throws {
-        XCTAssertTrue(MissionControlWatchdog.script.contains("$HOME/Library/Application Support/BaneySpaces\""))
+        XCTAssertTrue(MissionControlWatchdog.script.contains("$HOME/Library/Application Support/Polycarp\""))
         let app = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/BaneySpaces/MissionControlOverride.swift"), encoding: .utf8)
-        XCTAssertTrue(app.contains("folder: Spaces.folder,"), "Spaces.folder is Application Support/BaneySpaces already")
+        XCTAssertTrue(app.contains("folder: Spaces.folder,"), "Spaces.folder is Application Support/Polycarp already")
         XCTAssertFalse(app.contains("Spaces.folder.appendingPathComponent(\"BaneySpaces\")"))
     }
 

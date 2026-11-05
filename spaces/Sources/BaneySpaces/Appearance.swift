@@ -9,7 +9,7 @@ final class Appearance: ObservableObject {
     static let shared = Appearance()
     /// Posted after every change, for AppKit code that can't observe a SwiftUI object (the dock's
     /// panel re-frames itself on it).
-    static let didChange = Notification.Name("BaneySpacesAppearanceDidChange")
+    static let didChange = Notification.Name("PolycarpAppearanceDidChange")
 
     @Published var settings: AppearanceSettings {
         didSet {

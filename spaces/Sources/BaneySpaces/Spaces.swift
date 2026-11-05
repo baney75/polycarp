@@ -80,6 +80,8 @@ final class Spaces {
         let workspace: Int
         let until: Date
         let title: String?
+        /// The agent started this process, so its windows are the agent's even if the app brought itself forward.
+        var newProcess = false
     }
 
     /// The agent workspace (see `AgentWorkspace`), or nil when it's off.
@@ -91,11 +93,11 @@ final class Spaces {
     var onChange: (() -> Void)?
 
     static let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("BaneySpaces")
+        .appendingPathComponent("Polycarp")
     static let framesURL = folder.appendingPathComponent("frames.json")
     static let stateURL = folder.appendingPathComponent("state.json")
     static let layoutURL = folder.appendingPathComponent("layout.json")
-    private static let writer = DispatchQueue(label: "com.baney.baneyspaces.persist", qos: .utility)
+    private static let writer = DispatchQueue(label: "com.baney.polycarp.persist", qos: .utility)
 
     init() {
         saved = SavedFrames.load(from: Spaces.framesURL)
@@ -319,7 +321,7 @@ final class Spaces {
     /// you open in the same app meanwhile stays yours.
     func claimNextWindow(of pid: pid_t, for n: Int, within: TimeInterval = 8, newProcess: Bool = false, title: String? = nil) {
         // Added now, so `cancelClaim` right after always finds it.
-        let claim = Claim(workspace: n, until: Date().addingTimeInterval(within), title: title)
+        let claim = Claim(workspace: n, until: Date().addingTimeInterval(within), title: title, newProcess: newProcess)
         claims[pid, default: []].append(claim)
         look(for: claim, of: pid, within: within, newProcess: newProcess)
     }
@@ -379,7 +381,7 @@ final class Spaces {
     }
 
     /// Claimed windows go straight to their workspace, before the next switch would show them.
-    /// A window of the app you're in is yours (⌘N), whatever was claimed. True when one went
+    /// A window of the app you're in is yours (⌘N), unless the agent started that app (`ClaimRule`). True when one went
     /// somewhere other than here.
     private func placeClaimed(_ added: [WindowID]) -> Bool {
         let now = Date()
@@ -390,10 +392,11 @@ final class Spaces {
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
         var away = false
         for id in added {
-            guard let w = windows[id], w.pid != front,
+            guard let w = windows[id],
                   // A brand-new window may not have its title yet.
                   let c = claims[w.pid]?.first(where: { c in
-                      c.title.map { w.title.isEmpty || w.title.localizedCaseInsensitiveContains($0) } ?? true
+                      ClaimRule.applies(windowPid: w.pid, frontPid: front, agentStartedProcess: c.newProcess)
+                          && (c.title.map { w.title.isEmpty || w.title.localizedCaseInsensitiveContains($0) } ?? true)
                   }) else { continue }
             drop(c, of: w.pid)
             model.assign(id, to: c.workspace, focus: false)
@@ -684,7 +687,7 @@ final class Spaces {
         if switching { return enqueue { [weak self] in self?.moveFocused(to: n) } }
         refresh()
         guard let w = Windows.focused(in: Array(windows.values)) else {
-            NSLog("BaneySpaces: no window to move (focused app pid %d)", Windows.focusedPid() ?? -1)
+            NSLog("Polycarp: no window to move (focused app pid %d)", Windows.focusedPid() ?? -1)
             return NSSound.beep()
         }
         model.assign(w.id, to: n)

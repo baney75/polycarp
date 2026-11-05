@@ -15,7 +15,7 @@ enum SandboxCommand {
         let long = ["up", "reset", "down", "view", "images"].contains(verb)
         let req = Wire.Request(op: .sandbox, text: verb, args: Array(rest.dropFirst()))
         guard let reply = Wire.call(req, timeout: long ? 900 : 60) else {
-            FileHandle.standardError.write(Data("BaneySpaces isn't running, or hasn't finished starting. (--local runs the sandbox without the app.)\n".utf8))
+            FileHandle.standardError.write(Data("Polycarp isn't running, or hasn't finished starting. (--local runs the sandbox without the app.)\n".utf8))
             exit(1)
         }
         finish(reply)
@@ -40,7 +40,7 @@ enum SandboxCommand {
         if verb == "probe" {
             // The app holds the sandbox while it is on in Settings: say so, instead of reporting a sandbox failure.
             do { try service.manager.startupCleanup() } catch let e as SandboxError where e.code == "not_owner" {
-                print("sandbox-probe SKIPPED: BaneySpaces has the sandbox (it is on in Settings > Agents). Turn it off there or quit BaneySpaces, then run the probe again.")
+                print("sandbox-probe SKIPPED: Polycarp has the sandbox (it is on in Settings > Agents). Turn it off there or quit Polycarp, then run the probe again.")
                 exit(2)
             } catch let e as SandboxError where e.code == "busy" {
                 print("sandbox-probe SKIPPED: \(e.message)")

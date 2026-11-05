@@ -70,7 +70,7 @@ public enum HandsTools {
             refParam,
             HandsParam("value", .string, "The new value.", required: true, positional: true, rest: true),
         ], acts: true),
-        HandsTool(verb: "press", summary: "Press keys (Return, cmd+a, \"h i Return\") in a window that is not in front: posted to that one process, never to the session, without activating or raising anything. The ref names the window (and the element you expect to change). Refused unless BaneySpaces started the process, nothing else of its windows could take the key, and the window is where the app's keys go. Answers unverified (retry never) when nothing read back from the window shows the keys landed.", params: [
+        HandsTool(verb: "press", summary: "Press keys (Return, cmd+a, \"h i Return\") in a window that is not in front: posted to that one process, never to the session, without activating or raising anything. The ref names the window (and the element you expect to change). Refused unless Polycarp started the process, nothing else of its windows could take the key, and the window is where the app's keys go. Answers unverified (retry never) when nothing read back from the window shows the keys landed.", params: [
             refParam,
             HandsParam("key", .string, "Key name with optional modifiers, like cmd+shift+z; several keys are separated by spaces (at most 64).", required: true, positional: true, rest: true),
         ], acts: true),
@@ -97,9 +97,9 @@ public enum HandsTools {
             HandsParam("option", .string, "The text of the option to choose.", required: true, positional: true, rest: true),
         ], acts: true),
         HandsTool(verb: "toggle", summary: "Flip a checkbox, switch or disclosure by ref. Prints the state it read back.", params: [refParam], acts: true),
-        HandsTool(verb: "shot", summary: "Capture one window as a PNG, even while it is parked out of view. Needs Screen Recording for BaneySpaces. The file stays on this Mac.", params: [
+        HandsTool(verb: "shot", summary: "Capture one window as a PNG, even while it is parked out of view. Needs Screen Recording for Polycarp. The file stays on this Mac.", params: [
             HandsParam("window", .integer, "Window id.", required: true),
-            HandsParam("out", .string, "A file name (no folder) for the PNG; it is written in BaneySpaces' own shots folder."),
+            HandsParam("out", .string, "A file name (no folder) for the PNG; it is written in Polycarp's own shots folder."),
             HandsParam("cursor", .boolean, "Draw the agent cursor where it last acted in this window, if it did in the last 30 seconds and was on screen. Off by default, so the picture is the app itself."),
         ], acts: true),
         HandsTool(verb: "open", summary: "Open an app, or files from the agent handoff folder in it, on the agent workspace, without switching the user to it. Apps that hold the user's own data (Safari, Notes, Mail, Messages, Calendar, Photos) answer needs_sandbox.", params: [
@@ -137,7 +137,7 @@ public enum HandsParse {
     public static func askedForLend(_ app: String?) -> HandsError {
         let name = app ?? "the app"
         return HandsError(.needsLend, "agents can't lend apps; \(name) is not on the agent workspace",
-                          suggestion: "Ask Donovan to lend it: he runs `baneyspaces agent lend \(name)` in a terminal he types in, or picks it in the BaneySpaces menu under Lend to Agents. Or do the work on the agent workspace with `baneyspaces agent open \(name)` (apps that hold his data go to the sandbox).",
+                          suggestion: "Ask Donovan to lend it: he runs `polycarp-spaces agent lend \(name)` in a terminal he types in, or picks it in the Polycarp menu under Lend to Agents. Or do the work on the agent workspace with `polycarp-spaces agent open \(name)` (apps that hold his data go to the sandbox).",
                           retry: .never)
     }
 
@@ -234,7 +234,7 @@ public enum HandsParse {
     }
 
     public static func usageLine(_ tool: HandsTool) -> String {
-        var parts = ["baneyspaces agent", tool.verb]
+        var parts = ["polycarp-spaces agent", tool.verb]
         for p in tool.params {
             if p.positional { parts.append(p.required ? "<\(p.name)>" : "[\(p.name)\(p.rest ? "…" : "")]") }
             else {

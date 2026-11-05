@@ -2,11 +2,21 @@
 
 # Polycarp
 
-Polycarp is being assembled from three apps: [BaneySpaces](https://github.com/baney75/baneyspaces)
+Polycarp is bringing three apps into one: [BaneySpaces](https://github.com/baney75/baneyspaces)
 (`spaces/`), [Tabkyra](https://github.com/baney75/tabkyra) (`browser/`) and
 [Silas](https://github.com/baney75/silas) (`voice/`). Each directory holds the full git history of
-its original repo. For now those three repos remain the apps to install; this repo does not
-replace them yet.
+its original repo. Those repos stay up, so you can keep using the independent apps.
+
+## Install on a Mac
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash
+```
+
+This builds the workspace app and the `polycarp` command on your Mac, which takes a few minutes the
+first time. It needs Apple's free command line tools and [Rust](https://rustup.rs). If BaneySpaces is
+installed, it goes to the Trash, because the two can't run together, and Polycarp imports its settings.
+Voice and Browser are next; until then Silas and Tabkyra keep working alongside it.
 
 ## The name
 

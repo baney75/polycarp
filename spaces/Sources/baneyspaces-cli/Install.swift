@@ -12,7 +12,10 @@ enum Hooks {
 
     /// The installed command, via the stable symlink so app updates don't break the path.
     static func command(_ agent: String) -> String {
-        let link = home.appendingPathComponent(".local/bin/baneyspaces").path
+        // The new name first; hooks written before the rename point at the old link, which stays.
+        let names = [Product.commandName] + Product.commandAliases
+        let link = names.map { home.appendingPathComponent(".local/bin/" + $0).path }
+            .first { FileManager.default.isExecutableFile(atPath: $0) } ?? home.appendingPathComponent(".local/bin/" + Product.commandName).path
         // Always an absolute path: a relative one would fail silently behind `|| true`.
         let path = FileManager.default.isExecutableFile(atPath: link) ? link
             : (Bundle.main.executableURL?.resolvingSymlinksInPath().path ?? link)
@@ -57,7 +60,7 @@ enum Hooks {
                 lines.append("Grok: ~/.grok/hooks/baneyspaces.json")
             } catch { lines.append("Grok: couldn't write hooks: \(error.localizedDescription)") }
         }
-        return lines.joined(separator: "\n") + "\nNew sessions report to BaneySpaces."
+        return lines.joined(separator: "\n") + "\nNew sessions report to Polycarp."
     }
 
     static func uninstall() -> String {
@@ -66,7 +69,7 @@ enum Hooks {
             do {
                 // No backup: the one worth keeping is from before BaneySpaces, made when it installed.
                 try save(HookSettings.removing(settings), to: claudeURL, backup: false)
-                lines.append("removed BaneySpaces' hooks from ~/.claude/settings.json")
+                lines.append("removed Polycarp's hooks from ~/.claude/settings.json")
             } catch { lines.append("couldn't write settings: \(error.localizedDescription)") }
         }
         if FileManager.default.fileExists(atPath: grokURL.path) {
@@ -85,7 +88,7 @@ enum Hooks {
             parts.append(grok.count == HookSettings.events.count ? "Grok on" : "Grok off")
         }
         let all = !parts.contains { $0.hasSuffix("off") || $0.hasSuffix("partly on") }
-        return parts.joined(separator: ", ") + (all ? "" : " (baneyspaces hooks install)")
+        return parts.joined(separator: ", ") + (all ? "" : " (polycarp-spaces hooks install)")
     }
 }
 
@@ -105,7 +108,7 @@ enum Skill {
 
     static func install() -> String {
         guard let src = source, let data = FileManager.default.contents(atPath: src.path) else {
-            return "couldn't find SKILL.md beside the binary; install BaneySpaces with make install"
+            return "couldn't find SKILL.md beside the binary; install Polycarp with make install"
         }
         do {
             try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)

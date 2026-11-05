@@ -187,8 +187,8 @@ public struct PolycarpTheme: Equatable, Sendable {
         guard let n = root["schema"] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue == n.doubleValue.rounded() else {
             throw PolycarpThemeError("schema is missing or not a whole number")
         }
-        if n.intValue > schema { throw PolycarpThemeError("schema \(n.intValue) is newer than this BaneySpaces reads (schema \(schema)): update BaneySpaces") }
-        guard n.intValue == schema else { throw PolycarpThemeError("schema \(n.intValue) is not one this BaneySpaces reads (schema \(schema))") }
+        if n.intValue > schema { throw PolycarpThemeError("schema \(n.intValue) is newer than this Polycarp reads (schema \(schema)): update Polycarp") }
+        guard n.intValue == schema else { throw PolycarpThemeError("schema \(n.intValue) is not one this Polycarp reads (schema \(schema))") }
         guard let modeText = root["mode"] as? String, let mode = Mode(rawValue: modeText) else {
             throw PolycarpThemeError("mode is missing or not auto, light or dark")
         }
@@ -416,7 +416,7 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
     private var lastName: String?
 
     public init(path: String?, interval: TimeInterval = 1,
-                queue: DispatchQueue = DispatchQueue(label: "com.baney.baneyspaces.polycarp-theme", qos: .utility),
+                queue: DispatchQueue = DispatchQueue(label: "com.baney.polycarp.polycarp-theme", qos: .utility),
                 log: @escaping (String) -> Void = { _ in },
                 load: @escaping (String) -> PolycarpThemeFile.Loaded = { PolycarpThemeFile.load(path: $0) },
                 schedule: @escaping Schedule = PolycarpThemeWatcher.systemTimer,

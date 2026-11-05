@@ -38,11 +38,11 @@ enum WindowShot {
             return .failure(HandsError(.badArguments, "out must be a file name, not a path", suggestion: "Pass just a name like `page.png`; shots are written in \(folder.path).", retry: .safe))
         }
         guard CGPreflightScreenCaptureAccess() else {
-            return .failure(HandsError(.permissionDenied, "BaneySpaces doesn't have Screen Recording access",
-                                       suggestion: "Allow BaneySpaces in System Settings > Privacy & Security > Screen & System Audio Recording, then run the command again.", retry: .safe))
+            return .failure(HandsError(.permissionDenied, "Polycarp doesn't have Screen Recording access",
+                                       suggestion: "Allow Polycarp in System Settings > Privacy & Security > Screen & System Audio Recording, then run the command again.", retry: .safe))
         }
         guard #available(macOS 14, *) else {
-            return .failure(HandsError(.notSupported, "window captures need macOS 14 or later", suggestion: "Use `baneyspaces agent snapshot` to read the window instead.", retry: .never))
+            return .failure(HandsError(.notSupported, "window captures need macOS 14 or later", suggestion: "Use `polycarp-spaces agent snapshot` to read the window instead.", retry: .never))
         }
         return captureWithKit(id, name, cursor, check)
     }
@@ -104,7 +104,7 @@ enum WindowShot {
             do {
                 let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
                 guard let w = content.windows.first(where: { $0.windowID == id }) else {
-                    return outcome.set(.failure(HandsError(.windowNotFound, "window \(id) isn't there", suggestion: "Run `baneyspaces agent windows` for the current ids.", retry: .safe)))
+                    return outcome.set(.failure(HandsError(.windowNotFound, "window \(id) isn't there", suggestion: "Run `polycarp-spaces agent windows` for the current ids.", retry: .safe)))
                 }
                 // Enumerating took time: the window is still in scope, and the caller still waiting, or nothing is captured.
                 if outcome.isCancelled { return }
@@ -144,7 +144,7 @@ enum WindowShot {
                 let hash = SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined()
                 outcome.set(.success(Result(path: file.path, width: picture.width, height: picture.height, sha256: hash, cursorDrawn: drawn, rawSha256: rawHash)))
             } catch {
-                outcome.set(.failure(HandsError(.engineError, "the capture failed: \(error.localizedDescription)", suggestion: "Check Screen Recording access for BaneySpaces.", retry: .safe)))
+                outcome.set(.failure(HandsError(.engineError, "the capture failed: \(error.localizedDescription)", suggestion: "Check Screen Recording access for Polycarp.", retry: .safe)))
             }
         }
         if done.wait(timeout: .now() + budget) == .timedOut {

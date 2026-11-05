@@ -6,7 +6,7 @@ import Foundation
 // Foundation only, no AppKit, so a hook costs a few milliseconds. Talks to the running app over
 // its socket. Also installed as `ghostdeck`, the name of the Ghostdeck app BaneySpaces replaced.
 
-let me = (CommandLine.arguments.first as NSString?)?.lastPathComponent ?? "baneyspaces"
+let me = (CommandLine.arguments.first as NSString?)?.lastPathComponent ?? Product.commandName
 
 let usage = """
 usage: \(me) <command>
@@ -26,9 +26,9 @@ usage: \(me) <command>
                               arguments shows its usage). `agent open` prints one too.
   agent cursor on|theme <name>|status   each agent's cursor on the agent workspace (default, minimal, classic, omarchy); only Settings turns it off
   agent shot --window ID --cursor   draw the agent's cursor into the capture (off by default)
-  agent lend <app|pid> [--for 30m]   asks you, in a sheet in BaneySpaces, whether agents may use an app you have open
+  agent lend <app|pid> [--for 30m]   asks you, in a sheet in Polycarp, whether agents may use an app you have open
                               (only a real click on Lend lends it; running this lends nothing by itself)
-  mcp                         the same commands as a stdio MCP server (claude mcp add baneyspaces -- baneyspaces mcp)
+  mcp                         the same commands as a stdio MCP server (claude mcp add baneyspaces -- polycarp-spaces mcp)
   agent move <id | words>     send a window there (only windows of apps started for an agent)
   sandbox up|down|reset|status|view|guest   a throwaway macOS VM for agent work (sandbox help)
   phone ls|ui|shot|tap|swipe|type|key|shell|mirror   phones for agents (phone help)
@@ -84,15 +84,15 @@ func remoteToken(_ host: String) -> String? {
 func call(_ r: Wire.Request, timeout: Double = 2) -> Wire.Reply {
     if let host = remoteHost {
         guard let token = remoteToken(host) else {
-            fail("no token for \(host): run `baneyspaces remote token` there, then put it in ~/.config/baneyspaces/remotes.json as {\"\(host)\": \"…\"} or in $BANEYSPACES_TOKEN")
+            fail("no token for \(host): run `polycarp-spaces remote token` there, then put it in ~/.config/baneyspaces/remotes.json as {\"\(host)\": \"…\"} or in $BANEYSPACES_TOKEN")
         }
         var r = r
         r.token = token
-        guard let reply = Wire.callRemote(host: host, r, timeout: max(timeout, 5)) else { fail("\(host) didn't answer: is BaneySpaces running there with `baneyspaces remote on`?") }
+        guard let reply = Wire.callRemote(host: host, r, timeout: max(timeout, 5)) else { fail("\(host) didn't answer: is Polycarp running there with `polycarp-spaces remote on`?") }
         if !reply.ok { fail(reply.error ?? "failed") }
         return reply
     }
-    guard let reply = Wire.call(r, timeout: timeout) else { fail("BaneySpaces isn't running, or hasn't finished starting (it needs Accessibility).") }
+    guard let reply = Wire.call(r, timeout: timeout) else { fail("Polycarp isn't running, or hasn't finished starting (it needs Accessibility).") }
     if !reply.ok { fail(reply.error ?? "failed") }
     return reply
 }
@@ -161,7 +161,7 @@ case "notify":
     _ = call(Wire.Request(op: .notify, text: rest.joined(separator: " "), event: ev))
 
 case "state":
-    guard let d = FileManager.default.contents(atPath: Wire.statePath) else { fail("no state yet: is BaneySpaces running?") }
+    guard let d = FileManager.default.contents(atPath: Wire.statePath) else { fail("no state yet: is Polycarp running?") }
     out(String(data: d, encoding: .utf8) ?? "")
 
 case "set", "get":
@@ -215,10 +215,10 @@ case "agent":
     } else if sub == "mode" {
         out("agent access: \(info["title"] ?? info["access"] ?? "?")")
         if let d = info["detail"] { out("  " + d) }
-        out("  Donovan changes it in BaneySpaces Settings > Agents.")
+        out("  Donovan changes it in Polycarp Settings > Agents.")
     } else if sub == "status" || sub == "on" {
         let access = AgentAccessMode(saved: info["access"]).title
-        guard let ws = info["workspace"], ws != "off" else { out("agent workspace: off (baneyspaces agent on [N])\nagent access: \(access)"); break }
+        guard let ws = info["workspace"], ws != "off" else { out("agent workspace: off (polycarp-spaces agent on [N])\nagent access: \(access)"); break }
         out("agent workspace: \(ws) (you're on \(info["current"] ?? "?"))")
         out("agent access: \(access)")
         let wins = info.filter { $0.key.hasPrefix("window.") }.sorted { $0.key < $1.key }.map(\.value)

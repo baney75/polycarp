@@ -4,7 +4,7 @@
 #   scripts/soak-check.sh --arm
 #   scripts/soak-check.sh [--hours N] [--render-iters K] [--ci] [--cmd-tab]
 #   scripts/soak-check.sh --self-test
-# --arm writes Application Support/BaneySpaces/soak-gate.json for the running candidate.
+# --arm writes Application Support/Polycarp/soak-gate.json for the running candidate.
 # Optional env: BANEYSPACES_APP, BANEYSPACES_EXPECT_COMMIT.
 # Exit 0 only when every required check prints PASS. Writes a receipt under build/soak/.
 set -euo pipefail
@@ -220,17 +220,17 @@ if [ "$CI" = 1 ]; then
   exit 1
 fi
 
-APP="${BANEYSPACES_APP:-$HOME/Applications/BaneySpaces.app}"
-BIN="$APP/Contents/MacOS/BaneySpaces"
-SUPPORT="$HOME/Library/Application Support/BaneySpaces"
+APP="${BANEYSPACES_APP:-$HOME/Applications/Polycarp.app}"
+BIN="$APP/Contents/MacOS/Polycarp"
+SUPPORT="$HOME/Library/Application Support/Polycarp"
 EXPECT_COMMIT="${BANEYSPACES_EXPECT_COMMIT:-}"
 GATE="$SUPPORT/soak-gate.json"
 if [ ! -x "$BIN" ]; then echo "BaneySpaces binary missing at $BIN" >&2; exit 1; fi
 
 VER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || echo unknown)
-COMMIT=$(/usr/libexec/PlistBuddy -c 'Print :BaneySpacesCommit' "$APP/Contents/Info.plist" 2>/dev/null || echo unknown)
+COMMIT=$(/usr/libexec/PlistBuddy -c 'Print :PolycarpCommit' "$APP/Contents/Info.plist" 2>/dev/null || echo unknown)
 HASH=$(shasum -a 256 "$BIN" 2>/dev/null | awk '{print $1}')
-PID=$(pgrep -x BaneySpaces | head -1 || true)
+PID=$(pgrep -x Polycarp | head -1 || true)
 REAL_BIN=$(realpath "$BIN" 2>/dev/null || echo "$BIN")
 DISK_INO=$(disk_dev_ino "$BIN" 2>/dev/null || echo "")
 
@@ -356,14 +356,14 @@ SINCE=$(date -v-"${HOURS}"H "+%Y-%m-%d %H:%M:%S" 2>/dev/null || date -d "$HOURS 
 if [ -f "$GATE" ] && [ "${STARTED:-0}" -gt 0 ]; then
   SINCE=$(date -r "$STARTED" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || date -d "@$STARTED" "+%Y-%m-%d %H:%M:%S")
 fi
-CRASHES=$(find "$HOME/Library/Logs/DiagnosticReports" -name "BaneySpaces*" -newermt "$SINCE" 2>/dev/null | wc -l | tr -d " ")
+CRASHES=$(find "$HOME/Library/Logs/DiagnosticReports" -name "Polycarp*" -newermt "$SINCE" 2>/dev/null | wc -l | tr -d " ")
 if [ "${CRASHES:-0}" = "0" ]; then
   pass "DiagnosticReports BaneySpaces crashes since soak start: 0"
 else
   fail "DiagnosticReports BaneySpaces crashes since soak start: $CRASHES"
 fi
 
-if launchctl print "gui/$(id -u)/com.baney.baneyspaces.mc-watchdog" >/dev/null 2>&1; then
+if launchctl print "gui/$(id -u)/com.baney.polycarp.mc-watchdog" >/dev/null 2>&1; then
   pass "mc-watchdog launch agent loaded"
 else
   fail "mc-watchdog launch agent not loaded"

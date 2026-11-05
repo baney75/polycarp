@@ -6,7 +6,7 @@ import Foundation
 /// with the session engine off; an iPhone is driven through its iPhone Mirroring window with `baneyspaces agent`.
 enum PhoneCommand {
     static let usage = """
-    usage: baneyspaces phone <command> [-s SERIAL]
+    usage: polycarp-spaces phone <command> [-s SERIAL]
 
       ls                        connected phones (Android and iPhone)
       ui                        the screen's UI tree as XML (Android): find buttons by text
@@ -19,8 +19,8 @@ enum PhoneCommand {
       shell [command…]          adb shell (Android)
       mirror                    show the phone's screen: scrcpy, or iPhone Mirroring
 
-    An iPhone is driven through its iPhone Mirroring window: `baneyspaces agent open
-    "iPhone Mirroring"` puts it on the agent workspace, then `baneyspaces agent` works it from behind.
+    An iPhone is driven through its iPhone Mirroring window: `polycarp-spaces agent open
+    "iPhone Mirroring"` puts it on the agent workspace, then `polycarp-spaces agent` works it from behind.
     """
 
     static var adb: String? {
@@ -63,16 +63,16 @@ enum PhoneCommand {
             guard png.count > 8, (try? png.write(to: URL(fileURLWithPath: path))) != nil else { fail("no screenshot") }
             print(path)
         case "tap":
-            guard rest.count == 2, rest.allSatisfy({ Int($0) != nil }) else { fail("usage: baneyspaces phone tap X Y", code: 2) }
+            guard rest.count == 2, rest.allSatisfy({ Int($0) != nil }) else { fail("usage: polycarp-spaces phone tap X Y", code: 2) }
             _ = adbRun(["shell", "input", "tap"] + rest)
         case "swipe":
-            guard (4...5).contains(rest.count), rest.allSatisfy({ Int($0) != nil }) else { fail("usage: baneyspaces phone swipe X1 Y1 X2 Y2 [ms]", code: 2) }
+            guard (4...5).contains(rest.count), rest.allSatisfy({ Int($0) != nil }) else { fail("usage: polycarp-spaces phone swipe X1 Y1 X2 Y2 [ms]", code: 2) }
             _ = adbRun(["shell", "input", "swipe"] + rest)
         case "type":
-            guard !rest.isEmpty else { fail("usage: baneyspaces phone type TEXT", code: 2) }
+            guard !rest.isEmpty else { fail("usage: polycarp-spaces phone type TEXT", code: 2) }
             _ = adbRun(["shell", "input", "text", AdbTrack.inputText(rest.joined(separator: " "))])
         case "key":
-            guard let k = rest.first else { fail("usage: baneyspaces phone key home|back|enter|…", code: 2) }
+            guard let k = rest.first else { fail("usage: polycarp-spaces phone key home|back|enter|…", code: 2) }
             let named = ["home": "KEYCODE_HOME", "back": "KEYCODE_BACK", "enter": "KEYCODE_ENTER", "menu": "KEYCODE_MENU",
                          "power": "KEYCODE_POWER", "up": "KEYCODE_DPAD_UP", "down": "KEYCODE_DPAD_DOWN", "tab": "KEYCODE_TAB",
                          "delete": "KEYCODE_DEL", "recents": "KEYCODE_APP_SWITCH", "volup": "KEYCODE_VOLUME_UP", "voldown": "KEYCODE_VOLUME_DOWN"]
@@ -99,7 +99,7 @@ enum PhoneCommand {
             exit(0)
         }
         // The session engine is off: ask adb itself.
-        guard let adb else { fail("BaneySpaces isn't running and adb isn't installed") }
+        guard let adb else { fail("Polycarp isn't running and adb isn't installed") }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: adb)
         p.arguments = ["devices", "-l"]
@@ -112,7 +112,7 @@ enum PhoneCommand {
         let items = Wire.call(Wire.Request(op: .list), timeout: 1)?.items?.filter { $0.kind == .device } ?? []
         let pick = serial.flatMap { s in items.first { $0.id.hasSuffix(":" + s) } } ?? (items.count == 1 ? items.first : nil)
         guard let pick else { fail(items.isEmpty ? "no phones" : "more than one phone: pass -s SERIAL") }
-        guard let r = Wire.call(Wire.Request(op: .focus, target: pick.id), timeout: 2), r.ok else { fail("BaneySpaces didn't answer") }
+        guard let r = Wire.call(Wire.Request(op: .focus, target: pick.id), timeout: 2), r.ok else { fail("Polycarp didn't answer") }
         exit(0)
     }
 

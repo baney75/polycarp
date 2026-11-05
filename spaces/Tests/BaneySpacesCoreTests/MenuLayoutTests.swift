@@ -111,8 +111,8 @@ final class MenuLayoutTests: XCTestCase {
             }
         }
         // `item(` also matches "menuItem(for:" and "updateItem(": only quoted titles are captured.
-        XCTAssertEqual(titles, ["Show All Workspaces", "Find or Install an App…", "Settings…", "Quit BaneySpaces",
-                                "Waiting for AeroSpace to quit", "BaneySpaces needs permission to arrange windows", "Allow BaneySpaces…"])
+        XCTAssertEqual(titles, ["Show All Workspaces", "Find or Install an App…", "Settings…", "Quit Polycarp",
+                                "Waiting for AeroSpace to quit", "Polycarp needs permission to arrange windows", "Allow Polycarp…"])
         XCTAssertEqual(text.components(separatedBy: "NSMenuItem(").count - 1, 1, "only the item(_:_:key:) helper builds one")
         XCTAssertEqual(text.components(separatedBy: ".addItem(withTitle:").count - 1, 2, "only the not-started notices")
         XCTAssertEqual(text.components(separatedBy: "NSMenu()").count - 1, 1, "only the status item's own menu; no submenu built here")
@@ -153,10 +153,10 @@ final class MenuLayoutTests: XCTestCase {
         // Each used to be a menu item; each is now a control in Settings, wired in the app delegate.
         for control in ["Workspace Dock in place of the macOS Dock", "Position on screen",
                         "Show what coding agents are doing on their app icons",
-                        "⌘Space opens the BaneySpaces launcher instead of Spotlight",
-                        "Keep usable by automation", "Bring Every Window Back", "Uninstall BaneySpaces…",
+                        "⌘Space opens the Polycarp launcher instead of Spotlight",
+                        "Keep usable by automation", "Bring Every Window Back", "Uninstall Polycarp…",
                         "Stable: tested releases", "Check for updates daily", "Check for Updates Now…",
-                        "Button(notice.menuTitle)", "About BaneySpaces…", "Finished while you were away"] {
+                        "Button(notice.menuTitle)", "About Polycarp…", "Finished while you were away"] {
             XCTAssertTrue(setup.contains(control), "Settings lacks \"\(control)\"")
         }
         for wire in ["onBringBack", "onAbout", "onToggleParked", "onCheckForUpdates", "onOfferUpdate",

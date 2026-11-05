@@ -259,7 +259,7 @@ final class AgentAccessSurfaceTests: XCTestCase {
         let inUse = try XCTUnwrap(open.range(of: "if UserActivity.shared.inUse(pid) {"))
         XCTAssertTrue(inUse.lowerBound < open.range(of: "h.claim(pid, n, false, nil)")!.lowerBound, "in_use before any claim (sol-F1)")
         XCTAssertTrue(inUse.lowerBound < open.range(of: "AgentActivity.shared.markLaunch(pid: pid, for: 3)")!.lowerBound)
-        XCTAssertTrue(open.contains("AgentAccess.shared.grant(pid)") && open.contains("if !separate { AgentAccess.shared.grant(app.processIdentifier) }"))
+        XCTAssertTrue(open.contains("AgentAccess.shared.grant(pid)") && open.contains("grantAccess: !separate)") && session.contains("if grantAccess { AgentAccess.shared.grant(pid) }"))
         XCTAssertTrue(session.contains("remote: r.caller?.hasPrefix(\"remote \") == true"))
         // Review r2: grants survive a relaunch, reach move and status, and the delayed New Window rechecks the mode.
         let access = try HandsSourceTests.code("Sources/BaneySpaces/Hands/AgentAccess.swift")

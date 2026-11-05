@@ -20,21 +20,25 @@ final class Server {
         listeners = []
     }
 
-    /// Listens on the current socket and on the old `deck.sock`, so a client started before the update still connects.
+    /// Listens on the app's own socket. The old app's sockets are in its own folder and are never touched.
     func start() {
         guard listeners.isEmpty else { return }
         try? FileManager.default.createDirectory(at: Wire.supportDir, withIntermediateDirectories: true)
-        for path in Wire.socketCandidates() { listen(on: path) }
+        for path in Wire.listenPaths() { listen(on: path) }
     }
 
     private func listen(on path: String) {
-        unlink(path)
+        // A socket a live process answers is that process's. Only a leftover file is removed.
+        if SocketClaim.prepare(path: path) == .live {
+            NSLog("Polycarp session: %@ is answered by another process; not taking it", path)
+            return
+        }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0, var addr = Wire.address(path: path) else { return NSLog("BaneySpaces session: no socket") }
+        guard fd >= 0, var addr = Wire.address(path: path) else { return NSLog("Polycarp session: no socket") }
         let bound = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
-        guard bound == 0, Darwin.listen(fd, 16) == 0 else { close(fd); return NSLog("BaneySpaces session: socket bind failed (%d)", errno) }
+        guard bound == 0, Darwin.listen(fd, 16) == 0 else { close(fd); return NSLog("Polycarp session: socket bind failed (%d)", errno) }
         chmod(path, 0o600)
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
         let src = DispatchSource.makeReadSource(fileDescriptor: fd, queue: io)

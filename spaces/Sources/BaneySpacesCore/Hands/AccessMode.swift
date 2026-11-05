@@ -45,7 +45,7 @@ public enum AgentAccessMode: String, CaseIterable, Codable, Sendable {
         case .readOnly:
             return "Agents can list, read and capture the windows they could use in Default, and can't click, type, open apps, run commands, move windows or turn the agent workspace on."
         case .standard:
-            return "Agents work on the agent workspace, in apps BaneySpaces starts for them (TextEdit, Preview, Calculator) and in apps you lend."
+            return "Agents work on the agent workspace, in apps Polycarp starts for them (TextEdit, Preview, Calculator) and in apps you lend."
         case .full:
             return "Agents can read and act on every window on every workspace and start any app. They still work from behind: they never bring an app forward, move your pointer, type into the app in front, touch an app you used in the last 30 seconds, or use an Open or Save panel."
         }
@@ -76,7 +76,7 @@ public enum AgentAccessGate {
 
     static func readOnly(_ what: String) -> HandsError {
         HandsError(.permissionDenied, "agents have read-only access, so \(what) is refused",
-                   suggestion: "You can still list, snapshot, find, get and shot. Donovan sets agent access in BaneySpaces Settings > Agents.",
+                   suggestion: "You can still list, snapshot, find, get and shot. Donovan sets agent access in Polycarp Settings > Agents.",
                    retry: .never)
     }
 }

@@ -81,9 +81,9 @@ enum SystemTopDrag {
         case .retry(let tries):
             d.set(tries, forKey: fillTriesKey)
             d.set(true, forKey: fillPendingKey)
-            return NSLog("BaneySpaces: fill-the-screen didn't turn back on (try \(tries) of \(FillTheScreen.maxTries))")
+            return NSLog("Polycarp: fill-the-screen didn't turn back on (try \(tries) of \(FillTheScreen.maxTries))")
         case .giveUp:
-            NSLog("BaneySpaces: fill-the-screen stays off after \(FillTheScreen.maxTries) tries; something else keeps it off. Leaving it.")
+            NSLog("Polycarp: fill-the-screen stays off after \(FillTheScreen.maxTries) tries; something else keeps it off. Leaving it.")
         case .settled:
             break
         }

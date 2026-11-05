@@ -20,6 +20,8 @@ struct Tool {
     product: &'static str,
     /// Executable name on PATH (without `.exe`).
     exe: &'static str,
+    /// Older names for the same command, tried after `exe` (on PATH, then at the fixed spots).
+    old_exes: &'static [&'static str],
     /// Environment variable that overrides the search.
     env: &'static str,
     /// Fixed install spots; `~` means the home folder.
@@ -29,20 +31,28 @@ struct Tool {
 
 const SPACES: Tool = Tool {
     sub: "spaces",
-    product: "BaneySpaces",
-    exe: "baneyspaces",
+    product: "Polycarp",
+    exe: "polycarp-spaces",
+    // The command's old names, still installed as links by the app and called by agents and hooks.
+    old_exes: &["baneyspaces"],
     env: "POLYCARP_SPACES_BIN",
+    // The Polycarp app first, then BaneySpaces' own copy as the fallback.
     spots: &[
+        "~/.local/bin/polycarp-spaces",
+        "~/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces",
+        "/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces",
         "~/.local/bin/baneyspaces",
+        "~/Applications/BaneySpaces.app/Contents/Resources/bin/baneyspaces",
         "/Applications/BaneySpaces.app/Contents/Resources/bin/baneyspaces",
     ],
-    install: "https://github.com/baney75/baneyspaces",
+    install: "https://github.com/baney75/polycarp",
 };
 
 const BROWSER: Tool = Tool {
     sub: "browser",
     product: "Tabkyra",
     exe: "tabkyra",
+    old_exes: &[],
     env: "POLYCARP_BROWSER_BIN",
     spots: &[
         "~/.config/tabkyra/tabkyra",
@@ -56,16 +66,17 @@ const VOICE: Tool = Tool {
     sub: "voice",
     product: "Silas",
     exe: "silas",
+    old_exes: &[],
     env: "POLYCARP_VOICE_BIN",
     spots: &["/Applications/Silas.app/Contents/MacOS/silas"],
     install: "https://github.com/baney75/silas",
 };
 
 const USAGE: &str = "\
-polycarp: one command for BaneySpaces, Tabkyra and Silas
+polycarp: one command for Polycarp Spaces, Tabkyra and Silas
 
 Usage:
-  polycarp spaces [args...]    run the BaneySpaces command
+  polycarp spaces [args...]    run the Spaces command
   polycarp browser [args...]   run the Tabkyra command
   polycarp voice               open the Silas app
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
@@ -310,18 +321,20 @@ fn find(tool: &Tool) -> Result<PathBuf, Miss> {
             }
         }
     };
-    let file = if cfg!(windows) {
-        format!("{}.exe", tool.exe)
-    } else {
-        tool.exe.to_string()
-    };
     let path = env::var_os("PATH");
     if let Some(path) = &path {
-        for dir in env::split_paths(path) {
-            let cand = dir.join(&file);
-            match check(&cand) {
-                Ok(()) => return Ok(cand),
-                r => note(r),
+        for name in std::iter::once(&tool.exe).chain(tool.old_exes) {
+            let file = if cfg!(windows) {
+                format!("{name}.exe")
+            } else {
+                name.to_string()
+            };
+            for dir in env::split_paths(path) {
+                let cand = dir.join(&file);
+                match check(&cand) {
+                    Ok(()) => return Ok(cand),
+                    r => note(r),
+                }
             }
         }
     }

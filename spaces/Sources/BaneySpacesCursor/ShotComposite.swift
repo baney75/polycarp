@@ -25,7 +25,7 @@ public enum ShotComposite {
         switch t.fill {
         case .status:
             ctx.setFillColor(AgentCursor.color(mark.look.statusColor))
-            ctx.setStrokeColor(AgentCursor.color(mark.look.identity))
+            ctx.setStrokeColor(CursorGlyphs.hasWhiteEdge(t.glyph) ? CGColor(gray: 1, alpha: 1) : AgentCursor.color(mark.look.identity))
             ctx.setLineWidth(max(t.ringWidth, 1))
         case .light:
             ctx.setFillColor(CGColor(gray: 1, alpha: 1))
@@ -34,6 +34,13 @@ public enum ShotComposite {
         }
         ctx.setLineJoin(t.glyph == .block ? .miter : .round)
         ctx.drawPath(using: .fillStroke)
+        if let vein = CursorGlyphs.vein(t.glyph, size: t.size) {
+            ctx.addPath(vein)
+            ctx.setStrokeColor(CGColor(gray: 1, alpha: 0.42))
+            ctx.setLineWidth(1.25)
+            ctx.setLineCap(.round)
+            ctx.strokePath()
+        }
         ctx.restoreGState()
         return ctx.makeImage()
     }
