@@ -474,6 +474,33 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertNil(seen.themes.last!)
     }
 
+    func testAnUnreadableFolderOrASymlinkLoopIsIgnoredOnceAndRecovers() throws {
+        let sub = dir.appendingPathComponent("current").path
+        try FileManager.default.createDirectory(atPath: sub, withIntermediateDirectories: false)
+        let inner = sub + "/theme.json"
+        let seen = Seen()
+        let w = PolycarpThemeWatcher(path: inner, log: seen.addLog, deliver: seen.add)
+        try PolycarpFixtures.still_water.write(toFile: inner, atomically: true, encoding: .utf8)
+        w.tickNow()
+        XCTAssertEqual(seen.themes.last??.name, "still-water")
+        XCTAssertEqual(chmod(sub, 0o000), 0)
+        defer { _ = chmod(sub, 0o755) }
+        for _ in 0..<4 { w.tickNow() }
+        XCTAssertNil(seen.themes.last!, "a folder that can't be searched is no theme")
+        XCTAssertEqual(seen.lines.filter { $0.contains("ignored") }.count, 1, "one line, not one a second: \(seen.lines)")
+        XCTAssertFalse(seen.lines.contains { $0.contains("file removed") }, "it was not removed")
+        XCTAssertEqual(chmod(sub, 0o755), 0)
+        w.tickNow()
+        XCTAssertEqual(seen.themes.last??.name, "still-water", "searchable again")
+
+        try FileManager.default.removeItem(atPath: inner)
+        try FileManager.default.createSymbolicLink(atPath: inner, withDestinationPath: inner)
+        let before = seen.lines.filter { $0.contains("ignored") }.count
+        for _ in 0..<3 { w.tickNow() }
+        XCTAssertNil(seen.themes.last!)
+        XCTAssertEqual(seen.lines.filter { $0.contains("ignored") }.count, before + 1)
+    }
+
     func testTheTimerPollsOnItsOwnQueueNotTheMainThread() throws {
         let seen = Seen()
         let ran = expectation(description: "delivered")

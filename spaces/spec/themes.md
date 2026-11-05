@@ -96,9 +96,10 @@ numbers in range and really numbers; known enums; font stacks without CSS; and t
 draws text on at 4.5:1 in both modes: every pair `polycarp theme` checks (foreground, strong and muted
 on background, surface and sunken; foreground and strong on selection; urgent, working, done and
 accent on background and surface; `on_accent` on accent; the status colors on sunken at 3:1), and
-every text pair Spaces draws (`Look.textPairs`: tooltips, tiles, the overview and the accent badge). Anything else, including a missing file, a directory, a pipe
-or an unreadable one, means no Polycarp theme and one log line in `trace.log`
-(`polycarp theme: ignored ...`); the app never fails on it.
+every text pair Spaces draws (`Look.textPairs`: tooltips, tiles, the overview and the accent badge). Anything else, including a directory, a pipe, a symlink loop
+or an unreadable file or folder, means no Polycarp theme and one log line in `trace.log`
+(`polycarp theme: ignored ...`, once until the reason changes); the app never fails on it. A missing
+file is not a problem and logs nothing (unless a theme was in force: `file removed`).
 
 **Following.** About once a second a background queue stats the file; a change is read there and applied
 on the main queue. A file that changed while it was read is read again on the next tick.

@@ -363,11 +363,17 @@ public enum PolycarpThemeFile {
     public struct Stamp: Equatable, Sendable {
         let sec: Int, nsec: Int, size: Int64, inode: UInt64
         let mode: UInt32, csec: Int, cnsec: Int
+        /// `errno` when the stat itself failed for a reason other than "not there" (a folder with no permission,
+        /// a symlink loop); the rest is zero then. A change from one failure to another is a change.
+        var error: Int32 = 0
     }
 
     public static func stamp(_ path: String) -> Stamp? {
         var st = stat()
-        guard stat(path, &st) == 0 else { return nil }
+        guard stat(path, &st) == 0 else {
+            if errno == ENOENT || errno == ENOTDIR { return nil }
+            return Stamp(sec: 0, nsec: 0, size: 0, inode: 0, mode: 0, csec: 0, cnsec: 0, error: errno)
+        }
         return Stamp(sec: Int(st.st_mtimespec.tv_sec), nsec: Int(st.st_mtimespec.tv_nsec), size: Int64(st.st_size), inode: UInt64(st.st_ino),
                      mode: UInt32(st.st_mode), csec: Int(st.st_ctimespec.tv_sec), cnsec: Int(st.st_ctimespec.tv_nsec))
     }
