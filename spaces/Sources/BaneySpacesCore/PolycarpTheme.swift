@@ -326,29 +326,41 @@ public enum PolycarpThemeFile {
     public enum Loaded: Equatable, Sendable {
         case missing
         case theme(PolycarpTheme)
+        /// Read and refused, or a file that can't be read for good (no permission, a loop): no theme.
         case rejected(String)
+        /// The read itself failed in a way that may pass (out of file handles, an I/O error): the theme in
+        /// force stays and the next tick tries again.
+        case failed(String)
 
         public var theme: PolycarpTheme? { if case .theme(let t) = self { t } else { nil } }
     }
 
+    /// `read(2)`, as a seam for tests that need a read to fail.
+    public typealias ReadCall = (Int32, UnsafeMutableRawPointer, Int) -> Int
+
     /// Reads one file through one handle: opened without blocking (a named pipe cannot hang the read),
     /// checked with `fstat` (a regular file under the size limit), then read up to the limit plus one byte.
     /// The check and the read are the same file, so it cannot be swapped between them.
-    public static func load(path: String) -> Loaded {
-        let fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+    public static func load(path: String, read: ReadCall = { fd, buf, n in Darwin.read(fd, buf, n) }) -> Loaded {
+        var fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        while fd < 0 && errno == EINTR { fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC) }
         if fd < 0 {
-            return errno == ENOENT || errno == ENOTDIR ? .missing : .rejected("unreadable: \(String(cString: strerror(errno)))")
+            let e = errno
+            if e == ENOENT || e == ENOTDIR { return .missing }
+            let why = "unreadable: \(String(cString: strerror(e)))"
+            // Not allowed, a loop, a bad name: the same until something changes (the stamp sees it). The rest may pass.
+            return [EACCES, EPERM, ELOOP, ENAMETOOLONG, EISDIR, ENXIO, EROFS].contains(e) ? .rejected(why) : .failed(why)
         }
         defer { close(fd) }
         var st = stat()
-        guard fstat(fd, &st) == 0 else { return .rejected("unreadable: \(String(cString: strerror(errno)))") }
+        guard fstat(fd, &st) == 0 else { return .failed("unreadable: \(String(cString: strerror(errno)))") }
         guard (st.st_mode & S_IFMT) == S_IFREG else { return .rejected("not a regular file") }
         guard st.st_size <= off_t(PolycarpTheme.maxBytes) else { return .rejected("over \(PolycarpTheme.maxBytes) bytes") }
         var data = Data()
         var buf = [UInt8](repeating: 0, count: 16 * 1024)
         while data.count <= PolycarpTheme.maxBytes {
             let n = read(fd, &buf, buf.count)
-            if n < 0 { if errno == EINTR { continue }; return .rejected("unreadable: \(String(cString: strerror(errno)))") }
+            if n < 0 { if errno == EINTR { continue }; return .failed("unreadable: \(String(cString: strerror(errno)))") }
             if n == 0 { break }
             data.append(buf, count: n)
         }
@@ -390,6 +402,7 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
     private let queue: DispatchQueue
     private let deliver: (PolycarpTheme?) -> Void
     private let log: (String) -> Void
+    private let load: (String) -> PolycarpThemeFile.Loaded
     private var timer: DispatchSourceTimer?
     // Only touched on `queue`.
     private var last: PolycarpThemeFile.Stamp?
@@ -400,8 +413,9 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
     public init(path: String?, interval: TimeInterval = 1,
                 queue: DispatchQueue = DispatchQueue(label: "com.baney.baneyspaces.polycarp-theme", qos: .utility),
                 log: @escaping (String) -> Void = { _ in },
+                load: @escaping (String) -> PolycarpThemeFile.Loaded = { PolycarpThemeFile.load(path: $0) },
                 deliver: @escaping (PolycarpTheme?) -> Void) {
-        self.path = path; self.interval = interval; self.queue = queue; self.log = log; self.deliver = deliver
+        self.path = path; self.interval = interval; self.queue = queue; self.log = log; self.load = load; self.deliver = deliver
     }
 
     public func start() {
@@ -425,11 +439,19 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
         guard let path else { return }
         let before = PolycarpThemeFile.stamp(path)
         if started && before == last { return }
-        let loaded: PolycarpThemeFile.Loaded = before == nil ? .missing : PolycarpThemeFile.load(path: path)
+        let loaded: PolycarpThemeFile.Loaded = before == nil ? .missing : load(path)
         if PolycarpThemeFile.stamp(path) != before { return }
+        if case .failed(let why) = loaded {
+            // A read that failed may pass: keep the theme in force, say so once, and look again next tick
+            // (`last` stays as it was, so the stamp still differs).
+            if why != lastProblem { log("polycarp theme: could not read \(displayPath(path)): \(why); keeping the current theme and trying again") }
+            lastProblem = why
+            return
+        }
         last = before
         started = true
         switch loaded {
+        case .failed: return
         case .rejected(let why):
             if why != lastProblem { log("polycarp theme: ignored \(displayPath(path)): \(why)") }
             lastProblem = why

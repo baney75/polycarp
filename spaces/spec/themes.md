@@ -102,7 +102,9 @@ or an unreadable file or folder, means no Polycarp theme and one log line in `tr
 file is not a problem and logs nothing (unless a theme was in force: `file removed`).
 
 **Following.** About once a second a background queue stats the file; a change is read there and applied
-on the main queue. A file that changed while it was read is read again on the next tick.
+on the main queue. A file that changed while it was read is read again on the next tick, and so is one whose read failed
+for now (out of file handles, an I/O error): the theme in force stays and one line says so. A change of
+mode (`chmod`) counts as a change.
 
 **Mapping.** The look is the `minimal` look (palette colors everywhere, the theme's own widths)
 with these values:

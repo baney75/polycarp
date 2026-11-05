@@ -398,6 +398,11 @@ final class PolycarpThemeTests: XCTestCase {
         var lines: [String] { lock.lock(); defer { lock.unlock() }; return logs }
     }
 
+    private final class Fails: @unchecked Sendable {
+        var left = 0
+        func next() -> Bool { if left > 0 { left -= 1; return true }; return false }
+    }
+
     private func watcher(_ seen: Seen) -> PolycarpThemeWatcher {
         PolycarpThemeWatcher(path: file, log: seen.addLog, deliver: seen.add)
     }
@@ -499,6 +504,31 @@ final class PolycarpThemeTests: XCTestCase {
         for _ in 0..<3 { w.tickNow() }
         XCTAssertNil(seen.themes.last!)
         XCTAssertEqual(seen.lines.filter { $0.contains("ignored") }.count, before + 1)
+    }
+
+    func testAReadThatFailsForNowKeepsTheThemeAndIsRetriedWithoutAChange() throws {
+        let failing: PolycarpThemeFile.ReadCall = { _, _, _ in errno = EIO; return -1 }
+        try PolycarpFixtures.still_water.write(toFile: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(PolycarpThemeFile.load(path: file, read: failing), .failed("unreadable: Input/output error"))
+        XCTAssertEqual(PolycarpThemeFile.load(path: file).theme?.name, "still-water")
+
+        let seen = Seen()
+        let fail = Fails()
+        let w = PolycarpThemeWatcher(path: file, log: seen.addLog, load: { p in
+            fail.next() ? PolycarpThemeFile.load(path: p, read: failing) : PolycarpThemeFile.load(path: p)
+        }, deliver: seen.add)
+        w.tickNow()
+        XCTAssertEqual(seen.themes.last??.name, "still-water")
+        // Rewritten, and the next read fails once (EMFILE, EIO, ...): the theme in force stays, nothing is delivered.
+        try PolycarpFixtures.blocks.write(toFile: file, atomically: true, encoding: .utf8)
+        fail.left = 2
+        let count = seen.themes.count
+        w.tickNow(); w.tickNow()
+        XCTAssertEqual(seen.themes.count, count, "a failed read is not 'no theme'")
+        XCTAssertEqual(seen.lines.filter { $0.contains("could not read") }.count, 1, "one line, not one per tick")
+        // The file did not change in between, and the next tick reads it.
+        w.tickNow()
+        XCTAssertEqual(seen.themes.last??.name, "blocks")
     }
 
     func testTheTimerPollsOnItsOwnQueueNotTheMainThread() throws {
