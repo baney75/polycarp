@@ -5,6 +5,7 @@ import { runDoctor } from "./doctor.ts";
 import { runNativeHost } from "./host.ts";
 import { hostStatus, install, isInstalled } from "./install.ts";
 import { runMcpServer } from "./mcp.ts";
+import { COMPILED } from "./self.ts";
 import { EXTENSION_FILES, extensionDir } from "./paths.ts";
 import { writePiExtension } from "./pi-extension.ts";
 import { parseSetupArgs, parseUpdateArgs } from "./parse-args.ts";
@@ -200,6 +201,9 @@ function checkArgs(command: string, args: string[]): void {
 
 async function main(): Promise<void> {
 	const argv = process.argv.slice(2);
+	// A browser starts a native host as `<path> chrome-extension://<id>/`: the manifest can name the
+	// helper itself, with no launcher script between (install.ts).
+	if (argv[0]?.startsWith("chrome-extension://")) argv.unshift("host");
 	const [command] = argv;
 	const flag = (name: string) => argv.includes(name);
 	/** `--name value` or `--name=value`. */
@@ -229,6 +233,11 @@ async function main(): Promise<void> {
 			const note = recoverCheckoutQuietly(root);
 			if (note) console.error(`${sym.warn} ${note}`);
 		}
+	}
+	// Inside Polycarp the app updates the helper; a release folder here would repoint the host away from the bundle.
+	if (COMPILED && command === "update") {
+		console.log(`${sym.dot} This tabkyra is part of Polycarp. Polycarp updates it; there is nothing to run here.`);
+		return;
 	}
 	switch (command) {
 		case "setup": {

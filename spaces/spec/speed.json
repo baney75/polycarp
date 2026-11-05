@@ -11,5 +11,15 @@
   },
   "transcribeRtf": {
     "baseline": null
+  },
+  "browser": {
+    "versionMs": 53.2,
+    "toolsListMs": 88.8,
+    "tools": 43,
+    "binaryMB": 73.1,
+    "runs": 15,
+    "arch": "arm64",
+    "measuredWith": "scripts/browser-speed.mjs",
+    "toleranceOverRecorded": 0.25
   }
 }

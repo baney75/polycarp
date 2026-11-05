@@ -91,7 +91,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check the install scripts
-        run: bash -n install.sh && bash -n uninstall.sh && bash -n scripts/bundle.sh && bash -n scripts/build-engine.sh && bash -n scripts/build-core.sh
+        run: bash -n install.sh && bash -n uninstall.sh && bash -n scripts/bundle.sh && bash -n scripts/build-engine.sh && bash -n scripts/build-core.sh && bash -n scripts/build-browser.sh
       - name: Build the hands engine
         run: BANEYSPACES_ARM64_ONLY=1 scripts/build-engine.sh
       - name: Build the voice core
@@ -108,6 +108,14 @@ jobs:
         working-directory: spaces
     steps:
       - uses: actions/checkout@v4
+      # The helper is compiled with Bun from the esbuild bundle; the extension needs the pinned siblings.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - name: Check out the browser extension's pinned siblings and install
+        run: ./browser/scripts/setup-siblings.sh
+        working-directory: .
       - name: Bundle the app
         run: BANEYSPACES_ADHOC=1 BANEYSPACES_ARM64_ONLY=1 scripts/bundle.sh
       - name: The licence of ported code and the probe app are in the bundle
@@ -115,6 +123,21 @@ jobs:
           test -s build/Polycarp.app/Contents/Resources/licenses/cua-driver-MIT.txt
           test -s build/Polycarp.app/Contents/Resources/probe/CanvasProbe.cdhash
           codesign --verify --deep --strict build/Polycarp.app/Contents/Resources/probe/CanvasProbe.app
+      - name: The browser helper and the extension are in the bundle, signed, and answer
+        run: |
+          B=build/Polycarp.app/Contents/Resources/browser
+          test -x $B/polycarp-browser
+          test -s $B/extension/manifest.json
+          test -s $B/extension/background.js
+          test -s build/Polycarp.app/Contents/Resources/licenses/polycarp-browser-packages.txt
+          codesign --verify --deep --strict build/Polycarp.app
+          codesign --verify --strict $B/polycarp-browser
+          H=$(mktemp -d)
+          HOME=$H POLYCARP_CONFIG_DIR=$H/pc TABKYRA_SOCKET_DIR=$H/s $B/polycarp-browser --version
+      # Recorded on the owner's Mac; a shared runner is slower, so this reports and does not block. The test that gates is test/speed.test.mjs.
+      - name: The helper's cold start against spec/speed.json (25%)
+        continue-on-error: true
+        run: POLYCARP_SPEED_HELPER=$PWD/build/Polycarp.app/Contents/Resources/browser/polycarp-browser node scripts/browser-speed.mjs $PWD/build/Polycarp.app/Contents/Resources/browser/polycarp-browser --check
 
   voice:
     needs: changes

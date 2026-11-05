@@ -411,7 +411,7 @@ final class SetupModel: ObservableObject {
 /// The settings window's tabs. General comes first: it's where a new Mac starts.
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general = "General", keys = "Keys", dock = "Dock", appearance = "Appearance", launcher = "Launcher",
-         automation = "Automation", updates = "Updates", agents = "Agents", voice = "Voice"
+         automation = "Automation", updates = "Updates", agents = "Agents", voice = "Voice", browser = "Browser"
     var id: Self { self }
 
     var symbol: String {
@@ -425,6 +425,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .updates: "arrow.down.circle"
         case .agents: "cpu"
         case .voice: "mic"
+        case .browser: "globe"
         }
     }
 }
@@ -456,6 +457,7 @@ struct SetupView: View {
                 case .updates: updates
                 case .agents: agents
                 case .voice: VoiceSettingsView()
+                case .browser: BrowserSettingsView()
                 }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)

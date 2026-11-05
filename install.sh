@@ -10,6 +10,8 @@
 set -euo pipefail
 
 main() {
+  # Tests source this file for its functions (retire_tabkyra) and run nothing.
+  [ -z "${POLYCARP_INSTALL_FUNCTIONS_ONLY:-}" ] || return 0
   local REPO="https://github.com/baney75/polycarp.git"
   local REF="${POLYCARP_REF:-main}"
   local bold dim reset green
@@ -112,6 +114,14 @@ main() {
       RETIRE_TEST_MODE="$test_mode" step "Moving BaneySpaces to the Trash (its settings stay)" retire_apps
   fi
 
+  # Only when asked (POLYCARP_TAKE_OVER_TABKYRA=1): point an npm-linked or Homebrew tabkyra at the helper in the app.
+  # Without it, a working tabkyra that is already there is left as it is (install-app.sh).
+  if [ "${POLYCARP_TAKE_OVER_TABKYRA:-}" = 1 ]; then
+    local helper="" d
+    for d in "$HOME/Applications" "/Applications"; do [ -x "$d/Polycarp.app/Contents/Resources/browser/polycarp-browser" ] && { helper="$d/Polycarp.app/Contents/Resources/browser/polycarp-browser"; break; }; done
+    [ -z "$helper" ] || step "Pointing tabkyra at the browser helper in Polycarp" retire_tabkyra "$helper" "$test_mode"
+  fi
+
   # The Polycarp theme, unless you've already chosen something.
   local CFG="${POLYCARP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/polycarp}"
   if [ ! -e "$CFG/config.toml" ] && ! "$BIN/polycarp" theme set polycarp </dev/null >>"$LOG" 2>&1; then
@@ -168,6 +178,36 @@ retire_apps() {
     if ! mv "$app" "$dest"; then echo "could not move $app to the Trash" >&2; failed=1; fi
   done < <(old_app_paths "$RETIRE_TEST_MODE")
   return $failed
+}
+
+# Repoints the tabkyra commands that are provably Tabkyra's at the helper inside Polycarp.app, so one program answers to the
+# name. A command counts only when it is a symlink whose real file is Tabkyra's: it names the native host (ai.tabkyra.bridge)
+# or lives in a tabkyra Homebrew keg or npm package. Nothing is moved or deleted: a link is replaced by a link, the old target
+# is written down in the Polycarp support folder (uninstall.sh puts it back), and the keg or package itself is untouched.
+# A plain file, a link to anything else, or a name that isn't there is left alone. Test mode ($2 not empty) looks only in
+# $HOME/.local/bin, so a temporary home can never reach /opt/homebrew or /usr/local.
+retire_tabkyra() {
+  local helper="$1" test_mode="${2:-}" dir link real note ok=0
+  [ -x "$helper" ] || { echo "no helper at $helper" >&2; return 1; }
+  note="$HOME/Library/Application Support/Polycarp/tabkyra-retired-links"
+  local dirs=("$HOME/.local/bin")
+  [ -n "$test_mode" ] || dirs+=(/opt/homebrew/bin /usr/local/bin)
+  for dir in "${dirs[@]}"; do
+    link="$dir/tabkyra"
+    [ -L "$link" ] || continue
+    real=$(cd "$(dirname "$link")" && cd "$(dirname "$(readlink "$link")")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$(readlink "$link")")") || continue
+    [ -f "$real" ] || continue
+    case "$real" in
+      *Polycarp.app/Contents/Resources/browser/polycarp-browser) continue ;;   # already ours
+    esac
+    if ! { case "$real" in */Cellar/tabkyra/*|*/lib/node_modules/tabkyra/*) true ;; *) false ;; esac || grep -q 'ai\.tabkyra\.bridge' "$real" 2>/dev/null; }; then
+      continue
+    fi
+    mkdir -p "$(dirname "$note")"
+    printf '%s\t%s\n' "$link" "$(readlink "$link")" >> "$note"
+    if ln -sf "$helper" "$link"; then echo "tabkyra at $link now runs $helper"; else echo "could not repoint $link" >&2; ok=1; fi
+  done
+  return $ok
 }
 
 main "$@"

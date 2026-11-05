@@ -32,6 +32,13 @@ cp skill/SKILL.md "$APP/Contents/Resources/skill/SKILL.md"
 cp engine/lib/libagent_desktop_ffi.dylib "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
 cp NOTICE "$APP/Contents/Resources/NOTICE"
 cp LICENSES/* "$APP/Contents/Resources/licenses/"
+# The browser piece: the helper (one executable, no Node on the Mac) and the extension folder it hands to the browser.
+scripts/build-browser.sh
+BROWSER_DIR="$APP/Contents/Resources/browser"
+mkdir -p "$BROWSER_DIR"
+cp build/browser/polycarp-browser "$BROWSER_DIR/polycarp-browser"
+cp -R build/browser/extension "$BROWSER_DIR/extension"
+cp build/browser/licenses/* "$APP/Contents/Resources/licenses/"
 # Settings' Uninstall runs the same script as the README.
 cp uninstall.sh "$APP/Contents/Resources/uninstall.sh"
 # install.sh runs this copy on the prebuilt release, so the installer that fetched the app and the
@@ -81,6 +88,7 @@ if [ "${BANEYSPACES_ADHOC:-}" != 1 ] && IDENT=$(scripts/signing-identity.sh 2>/d
   # Inside out: the engine's library, then the command, then the app that holds both.
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.engine" "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.cli" "$APP/Contents/Resources/bin/$CLI_NAME"
+  codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.browser" "$BROWSER_DIR/polycarp-browser"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.canvasprobe" "$PROBE"
   codesign -dvvv "$PROBE" 2>&1 | sed -n 's/^CDHash=//p' > "$APP/Contents/Resources/probe/CanvasProbe.cdhash"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID" --entitlements Resources/Polycarp.entitlements "$APP"
@@ -89,6 +97,7 @@ else
   echo "$ADHOC_NOTE" >&2
   codesign --force --sign - --identifier "$BUNDLE_ID.engine" "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
   codesign --force --sign - --identifier "$BUNDLE_ID.cli" "$APP/Contents/Resources/bin/$CLI_NAME"
+  codesign --force --sign - --identifier "$BUNDLE_ID.browser" "$BROWSER_DIR/polycarp-browser"
   codesign --force --sign - --identifier "$BUNDLE_ID.canvasprobe" "$PROBE"
   codesign -dvvv "$PROBE" 2>&1 | sed -n 's/^CDHash=//p' > "$APP/Contents/Resources/probe/CanvasProbe.cdhash"
   codesign --force --sign - --identifier "$BUNDLE_ID" --entitlements Resources/Polycarp.entitlements "$APP"
@@ -98,6 +107,10 @@ codesign --verify --deep --strict "$APP"
 [ -s "$APP/Contents/Resources/probe/CanvasProbe.cdhash" ] && [ "$(cat "$APP/Contents/Resources/probe/CanvasProbe.cdhash")" = "$(codesign -dvvv "$PROBE" 2>&1 | sed -n 's/^CDHash=//p')" ] || { echo "bundle: the probe app's code hash is not recorded" >&2; exit 1; }
 # The licence of ported code ships with the app.
 [ -s "$APP/Contents/Resources/licenses/cua-driver-MIT.txt" ] || { echo "bundle: the cua-driver licence is missing from the bundle" >&2; exit 1; }
+# The browser helper and the extension folder are in the sealed bundle, and the helper is signed with the app's identity.
+[ -x "$BROWSER_DIR/polycarp-browser" ] && [ -s "$BROWSER_DIR/extension/manifest.json" ] && [ -s "$BROWSER_DIR/extension/background.js" ] || { echo "bundle: the browser helper or the extension is missing from the bundle" >&2; exit 1; }
+codesign --verify --strict "$BROWSER_DIR/polycarp-browser" || { echo "bundle: the browser helper is not validly signed" >&2; exit 1; }
+[ -s "$APP/Contents/Resources/licenses/polycarp-browser-packages.txt" ] || { echo "bundle: the browser helper's licences are missing from the bundle" >&2; exit 1; }
 # The app must find its library next to itself, not where it was built.
 otool -L "$APP/Contents/MacOS/$EXECUTABLE" | grep -q '@rpath/libagent_desktop_ffi.dylib' || { echo "bundle: Polycarp doesn't link the engine through @rpath" >&2; exit 1; }
 otool -l "$APP/Contents/MacOS/$EXECUTABLE" | grep -A2 LC_RPATH | grep -q '@executable_path/../Frameworks' || { echo "bundle: no @executable_path/../Frameworks rpath" >&2; exit 1; }

@@ -20,6 +20,7 @@ import { checkSkill, listSkills, matchTask, readSkill, removeSkill, skillInfo, s
 import { stageCases } from "./skill-submit.ts";
 import { firecrawlCrawl, firecrawlMap, pageMarkdown } from "./firecrawl.ts";
 import { searxSearch } from "./searx.ts";
+import { selfExec, selfPrefix } from "./self.ts";
 import { VERSION } from "./version.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -882,9 +883,9 @@ const caseSchema = z.object({ task: z.string().min(1).max(500), skill: z.string(
 async function previewSubmission(name: string, note?: string): Promise<string> {
 	const self = fileURLToPath(import.meta.url);
 	const entry = self.endsWith(".ts") ? join(dirname(self), "..", "dist", "index.js") : self;
-	const argv = [entry, "skill", "submit", name, "--json", ...(note ? ["--note", note] : [])];
+	const argv = [...selfPrefix(entry), "skill", "submit", name, "--json", ...(note ? ["--note", note] : [])];
 	const { code, stdout, stderr } = await new Promise<{ code: number | null; stdout: string; stderr: string }>((done) => {
-		const child = spawn(process.execPath, argv, { env: { ...process.env, NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+		const child = spawn(selfExec(), argv, { env: { ...process.env, NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] });
 		let out = "";
 		let err = "";
 		child.stdout.on("data", (d) => {
