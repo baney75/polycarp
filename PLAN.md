@@ -32,6 +32,8 @@ Asked for by Donovan, 2026-11-04.
 ## Quality bar
 Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all hyper themable and customizable.
 - [ ] One theme file drives every product and the site. Check: `polycarp theme set still-water` changes Spaces, Voice, Browser and a local site build, read back from each
+- [ ] Agents can customize everything for their user. Check: from a schema read alone, an agent applies a change over MCP, previews it and undoes it, with its name in the history
+- [ ] The default themes look good, not just pass contrast. Check: `theme preview` of each, both modes, judged on a contact sheet
 - [ ] Every color, radius, font and duration in every surface comes from the theme. Check: a test fails on a hard-coded value in product UI, with a written allowlist
 - [ ] Any value can be overridden per product. Check: a `[surface.*]` override changes only that product
 - [ ] Unreadable themes are refused. Check: contrast tests on every built-in and surface

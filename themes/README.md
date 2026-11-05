@@ -175,6 +175,11 @@ density = "compact"
 | `polycarp theme list [--json]` | Built-in and user themes. The current one is marked |
 | `polycarp theme show [name] [--json]` | The full resolved theme. With no name, the current one with your accent |
 | `polycarp theme current [--json]` | The theme, mode and accent in force, and any problem found |
+| `polycarp theme schema` | The JSON Schema for a theme file, every field described |
+| `polycarp theme get <path> [name]` | One resolved value, such as `dark.accent` or `surface.site.light.accent` |
+| `polycarp theme change <path> <value>` | Change one value. On a built-in, makes `<name>-custom` first |
+| `polycarp theme apply <file\|-> [--name <n>] [--no-activate]` | Save a whole theme (TOML or JSON) and use it |
+| `polycarp theme preview [name] [--mode light\|dark\|both] [--surface <s>] [--out <file>]` | Write an HTML page showing the theme on product UI |
 | `polycarp theme set <name> [--mode auto\|light\|dark]` | Use a theme and write the files |
 | `polycarp theme accent <#rrggbb> [--mode light\|dark]` | Override the accent. `--clear` removes it |
 | `polycarp theme create <name> --extends <base> [--force]` | Write a new user theme |
@@ -185,6 +190,8 @@ density = "compact"
 | `polycarp theme undo` | Step back one change |
 | `polycarp theme history [--json]` | Past changes, newest first |
 | `polycarp theme reset` | Back to `polycarp`, mode `auto`, no accent |
+
+Every `theme` command takes `--json`.
 
 `accent` sets the accent for both modes, or for one with `--mode`. It picks `on_accent` for you: the
 theme's own if it reads on the new accent, else black, else white. If the accent would fail the contrast
@@ -223,3 +230,71 @@ with the time and who made the change. Set `POLYCARP_CALLER` to name yourself. A
 `undo` restores the newest saved file and removes it from history, so repeating `undo` goes back further.
 `reset` and `undo` work even if a user theme or `config.toml` is broken. If `config.toml` is invalid, the
 products and `polycarp theme current` use the default theme and say what was wrong. Nothing crashes.
+
+## For agents
+
+An agent can customize Polycarp for its user in a few calls, with no prior knowledge. Two ways in, with the
+same behavior: the `polycarp theme` command with `--json`, or the `polycarp mcp` server (stdio, MCP
+`2025-06-18`), whose tools call the same code. The `polycarp-theme` skill (`skills/polycarp-theme/`) walks through it.
+
+### The workflow
+
+1. **Read.** `theme schema` (tool `theme_schema`) is a JSON Schema, draft 2020-12. Every field has a plain
+   description of what it colors or controls and where it shows, plus its range or choices and the contrast
+   rules. `theme current` says what is in force. `theme get <path>` reads one value.
+2. **Change the least you can.** `theme change <path> <value>` for one value, such as
+   `polycarp theme change dark.accent '#8fb37a'` or `polycarp theme change shape.radius 0`. The value's type
+   comes from the path. If the current theme is built in, the change goes into a new user theme
+   `<name>-custom` that extends it (or `-custom-2` and so on if that name is taken), and the command says so.
+   Otherwise it edits the current user theme in place and keeps its comments where it can. `theme apply <file|->`
+   takes a whole theme as TOML or JSON, detected by content, from a file or standard input. Use `extends` and
+   list only what changes. `--name` saves it under another name; `--no-activate` saves without using it.
+   `theme accent` sets only the brand color. Use `surface.<product>.<section>.<key>` paths, or `[surface.*]`
+   tables, when only one product should change.
+3. **Read refusals.** Everything is checked first, and a refusal changes nothing. A built-in's name is
+   refused for `apply`. Fix what the errors say; do not look for a way around the contrast rules.
+4. **Preview.** `theme preview` writes one self-contained HTML file with no external requests, and prints its
+   path. It shows the theme on product-shaped UI: the workspace dock (nine tiles, with the theme's indicator
+   style), the dictation overlay, a browser side panel with a chat turn and a permission prompt, a settings
+   form, code, buttons, a delete confirmation and status text. Light and dark go side by side by default.
+   Open it in a browser and take a screenshot to show the person.
+5. **Undo.** `theme undo` steps back one change, including the theme file that change wrote. `theme reset`
+   always works. Set `POLYCARP_CALLER=agent:<name>` on the command line so history shows who changed what.
+   Over MCP the caller is recorded as `agent:<clientInfo.name>`.
+
+### `--json`
+
+Every `theme` command takes `--json` and prints one object on standard output, success or failure.
+Exit codes: 0 ok, 1 refused or invalid, 2 usage.
+
+```json
+{ "ok": true,  "data": { } }
+{ "ok": false, "error": { "code": "contrast", "message": "...", "retry": "never", "suggestion": "...",
+    "data": { "errors": [
+      { "path": "dark.muted", "message": "dark.muted on dark.surface is 3.04, needs 4.5",
+        "actual": 3.04, "needs": 4.5, "on": "dark.surface" } ] } } }
+```
+
+`error.data.errors` is always a list of `{path, message}`, with `actual` and `needs` when there are figures
+(contrast ratios are numbers). For a bad value, `actual` is what was sent and `needs` says what is allowed.
+Codes: `invalid_args` (exit 2), `invalid_theme`, `contrast`, `invalid_value`, `unknown_theme`, `unknown_path`,
+`builtin_read_only`, `exists`, `current_theme`, `nothing_to_undo`, `io_error`, `config_error`. Warnings and notes
+(such as "a `-custom` theme was made") come in `data.warnings` and `data.notes`.
+
+### `polycarp mcp`
+
+JSON-RPC 2.0 over standard input and output, one message per line. It answers `initialize`,
+`notifications/initialized`, `ping`, `tools/list` and `tools/call`. The server `instructions` and the tool
+descriptions give the workflow above. Each tool returns the `--json` envelope as text content and as
+`structuredContent`, with `isError` true on a refusal.
+
+| Tool | Same as |
+| --- | --- |
+| `theme_schema`, `theme_list`, `theme_current`, `theme_show`, `theme_get` | `schema`, `list`, `current`, `show`, `get` |
+| `theme_set`, `theme_accent`, `theme_change`, `theme_apply` | `set`, `accent`, `change`, `apply` (`theme` is a JSON object or a TOML string) |
+| `theme_validate` | `validate`, for a draft theme passed in, without saving |
+| `theme_preview`, `theme_export` | `preview`, `export` |
+| `theme_undo`, `theme_history`, `theme_reset` | `undo`, `history`, `reset` |
+
+Configure a client with the command `polycarp mcp` and no arguments.
+
