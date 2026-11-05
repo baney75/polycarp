@@ -34,3 +34,15 @@ test("no test file prints leftover debug output", async () => {
 		assert.doesNotMatch(readFileSync(new URL(name, dir), "utf8"), /console\.log\(\s*["']DBG/, name);
 	}
 });
+
+test("it finds named colors in color properties, in the panel and in the consent and hub pages' CSS, and skips tokens, var() and comments", async () => {
+	const { findPageColors, namedColors } = await import("../scripts/check-theme.mjs");
+	assert.deepEqual(namedColors("  color: white;"), ["white"]);
+	assert.deepEqual(namedColors("border: 1px solid red;"), ["red"]);
+	assert.deepEqual(namedColors("background: var(--white); color: inherit; fill: currentColor"), []);
+	assert.deepEqual(findColors("x { color: white }").map((f) => f.text), ["white"]);
+	assert.deepEqual(findColors("/* the text color: gray here */").map((f) => f.text), []);
+	const page = "const PAGE_CSS = `:root{--shadow:#0002}main{box-shadow:0 1px 3px #0002;color:white}`;\nconst x = `<style>p{background:#fff}</style><b style=\"color:black\">`;";
+	assert.deepEqual(findPageColors(page).map((f) => f.text).sort(), ["#0002", "#fff", "black", "white"]);
+	assert.deepEqual(findPageColors("const PAGE_CSS = `:root{--shadow:#0002}a{box-shadow:var(--shadow)}`;"), []);
+});
