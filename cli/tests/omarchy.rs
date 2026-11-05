@@ -184,6 +184,63 @@ fn every_bundled_omarchy_theme_becomes_a_theme_that_passes_the_contrast_rules() 
                 "{name}: a nudge is what is written"
             );
         }
+        // An independent copy of the mapping: every role that was not nudged is exactly the first
+        // key Omarchy supplies, and every nudged role was failing before.
+        let indep: [(&str, &[&str]); 12] = [
+            ("background", &["background"]),
+            ("surface", &["lighter_background", "background"]),
+            ("sunken", &["dark_background", "background"]),
+            ("foreground", &["foreground"]),
+            (
+                "strong",
+                &["bright_foreground", "light_foreground", "foreground"],
+            ),
+            ("muted", &["dark_foreground", "muted"]),
+            ("border", &["muted", "dark_foreground"]),
+            ("accent", &["accent", "blue"]),
+            ("selection", &["selection", "lighter_background"]),
+            ("urgent", &["red"]),
+            ("working", &["yellow"]),
+            ("done", &["green"]),
+        ];
+        let want = |role: &str| -> String {
+            let keys = indep.iter().find(|(r, _)| *r == role).unwrap().1;
+            let k = keys
+                .iter()
+                .find(|k| src.get(**k).and_then(|v| v.as_str()).is_some())
+                .unwrap();
+            src[*k].as_str().unwrap().to_lowercase()
+        };
+        let rules: [(&str, &[&str], f64); 7] = [
+            (
+                "foreground",
+                &["background", "surface", "sunken", "selection"],
+                4.5,
+            ),
+            (
+                "strong",
+                &["background", "surface", "sunken", "selection"],
+                4.5,
+            ),
+            ("muted", &["background", "surface", "sunken"], 4.5),
+            ("urgent", &["background", "surface"], 4.5),
+            ("working", &["background", "surface"], 4.5),
+            ("done", &["background", "surface"], 4.5),
+            ("accent", &["background", "surface"], 4.5),
+        ];
+        for (role, _) in &indep {
+            let moved = nudges.iter().any(|n| n["path"] == format!("{mode}.{role}"));
+            let got = s(&colors[*role]);
+            if !moved {
+                assert_eq!(got, want(role), "{name}: {role} is Omarchy's");
+            } else {
+                let (_, bgs, min) = rules.iter().find(|(r, _, _)| r == role).unwrap();
+                let failing = bgs
+                    .iter()
+                    .any(|bg| contrast_of(&want(role), &want(bg)) < *min);
+                assert!(failing, "{name}: {role} was moved but already read well");
+            }
+        }
         // Each nudge is in the notes.
         let notes = v["data"]["notes"].as_array().cloned().unwrap_or_default();
         for n in nudges {
@@ -553,7 +610,7 @@ fn choosing_another_theme_stops_following_and_says_so() {
     );
     // Setting `omarchy` itself keeps following.
     b.json(&["theme", "follow", "omarchy"]);
-    let (_, v) = b.json(&["theme", "set", "omarchy-overrides"]);
+    let (_, v) = b.json(&["theme", "set", "omarchy"]);
     assert!(!v["data"]["notes"].to_string().contains("no longer does"));
     assert!(b.hook().exists());
 }
@@ -951,4 +1008,648 @@ fn status_and_doctor_report_a_hook_that_disagrees_with_the_settings() {
     let (_, st) = b.json(&["theme", "follow"]);
     assert_eq!(st["data"]["hook_agrees"], false);
     assert!(stdout(&b.run(&["doctor"])).contains("hook is missing"));
+}
+
+fn in_dir(b: &Sandbox, dir: &Path, args: &[&str]) -> Output {
+    let mut c = b.cmd(args);
+    c.env("POLYCARP_CONFIG_DIR", dir);
+    c.output().unwrap()
+}
+
+fn light_dark(b: &Sandbox) -> (String, String) {
+    let out = b.exported();
+    (
+        s(&out["mode"]),
+        s(&out["surfaces"]["spaces"][s(&out["mode"])]["background"]),
+    )
+}
+
+#[test]
+fn every_state_writing_command_follows_first_on_a_fresh_omarchy_except_the_choices() {
+    // reset and on follow.
+    for args in [["theme", "reset"], ["theme", "on"]] {
+        let b = Sandbox::new();
+        b.omarchy("tokyo-night", TOKYO);
+        let (ok, v) = b.json(&args);
+        assert!(ok, "{args:?}: {v}");
+        assert!(b.hook().exists(), "{args:?}");
+        let (_, cur) = b.json(&["theme", "current"]);
+        assert_eq!(cur["data"]["theme"], "omarchy-overrides", "{args:?}");
+        assert!(
+            v["data"]["notes"].to_string().contains("by default"),
+            "{args:?}"
+        );
+    }
+    // set, apply and off are choices.
+    for args in [["theme", "set", "calm"], ["theme", "off", ""]] {
+        let b = Sandbox::new();
+        b.omarchy("tokyo-night", TOKYO);
+        let a: Vec<&str> = args.iter().copied().filter(|x| !x.is_empty()).collect();
+        assert!(b.run(&a).status.success());
+        assert!(!b.hook().exists(), "{args:?}");
+    }
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    let file = b.root.join("mine.toml");
+    fs::write(
+        &file,
+        "name = \"mine\"\ntitle = \"Mine\"\nextends = \"calm\"\n",
+    )
+    .unwrap();
+    assert!(b
+        .run(&["theme", "apply", file.to_str().unwrap()])
+        .status
+        .success());
+    assert!(!b.hook().exists());
+}
+
+#[test]
+fn if_fresh_is_for_installers() {
+    // Fresh with Omarchy: starts.
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    let (ok, v) = b.json(&["theme", "follow", "omarchy", "--if-fresh"]);
+    assert!(ok, "{v}");
+    assert_eq!(v["data"]["started"], true);
+    assert!(b.hook().exists());
+    // Again: settings exist, nothing happens, exit 0.
+    let before = fs::read(b.cfg().join("config.toml")).unwrap();
+    let (ok, v) = b.json(&["theme", "follow", "omarchy", "--if-fresh"]);
+    assert!(ok);
+    assert_eq!(v["data"]["started"], false);
+    assert_eq!(fs::read(b.cfg().join("config.toml")).unwrap(), before);
+    // A choice already made.
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.run(&["theme", "set", "calm"]);
+    let o = b.run(&["theme", "follow", "omarchy", "--if-fresh"]);
+    assert_eq!(o.status.code(), Some(0));
+    assert!(!b.hook().exists());
+    // No Omarchy: exit 0, nothing written.
+    let b = Sandbox::new();
+    let o = b.run(&["theme", "follow", "omarchy", "--if-fresh"]);
+    assert_eq!(o.status.code(), Some(0));
+    assert!(!b.cfg().join("config.toml").exists());
+    assert!(!b.home().join(".config").exists());
+}
+
+#[test]
+fn a_refused_first_command_starts_nothing_and_a_late_refusal_carries_the_note() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    for args in [
+        ["theme", "change", "dark.accent", "notacolor"],
+        ["theme", "change", "no.such.path", "x"],
+        ["theme", "accent", "notacolor", ""],
+    ] {
+        let a: Vec<&str> = args.iter().copied().filter(|x| !x.is_empty()).collect();
+        let (ok, _) = b.json(&a);
+        assert!(!ok, "{args:?}");
+        assert!(!b.hook().exists(), "{args:?}");
+        assert!(!b.cfg().join("config.toml").exists(), "{args:?}");
+    }
+    // A refusal that only the engine can make comes after following began: the error says so.
+    let (ok, v) = b.json(&["theme", "change", "dark.accent", "#222233"]);
+    assert!(!ok);
+    assert!(
+        v["error"]["suggestion"]
+            .as_str()
+            .unwrap()
+            .contains("had just started following"),
+        "{v}"
+    );
+}
+
+#[test]
+fn first_use_reports_the_moves_and_warnings_of_the_follow() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    let (ok, v) = b.json(&["theme", "accent", "#ffcc66"]);
+    assert!(ok, "{v}");
+    let notes = v["data"]["notes"].to_string();
+    assert!(
+        notes.contains("dark.muted:"),
+        "the move is reported: {notes}"
+    );
+    assert!(v["data"]["nudges"].to_string().contains("dark.muted"));
+}
+
+#[test]
+fn undo_keeps_hook_and_colors_in_line_after_a_sync() {
+    // change, then Omarchy goes light and a sync runs, then undo.
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    assert!(b.json(&["theme", "change", "shape.radius", "6"]).0);
+    b.omarchy_fixture("white");
+    assert!(b
+        .run(&["theme", "follow", "omarchy", "--sync"])
+        .status
+        .success());
+    assert_eq!(light_dark(&b).0, "light");
+    let (ok, v) = b.json(&["theme", "undo"]);
+    assert!(ok, "no changed_since: {v}");
+    assert_eq!(b.exported()["surfaces"]["spaces"]["shape"]["radius"], 0);
+    assert_eq!(
+        light_dark(&b),
+        ("light".into(), "#ffffff".into()),
+        "the colors are Omarchy's current ones"
+    );
+    assert!(b.hook().exists());
+
+    // follow off, then undo: following again, hook back.
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    b.json(&["theme", "follow", "off"]);
+    assert!(!b.hook().exists());
+    let (ok, v) = b.json(&["theme", "undo"]);
+    assert!(ok, "{v}");
+    assert!(b.hook().exists());
+    let (_, st) = b.json(&["theme", "follow"]);
+    assert_eq!(st["data"]["following"], true, "{st}");
+    assert_eq!(st["data"]["hook_agrees"], true);
+
+    // set, then undo.
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    b.json(&["theme", "set", "calm"]);
+    assert!(!b.hook().exists());
+    let (ok, v) = b.json(&["theme", "undo"]);
+    assert!(ok, "{v}");
+    assert!(b.hook().exists());
+    assert_eq!(b.json(&["theme", "follow"]).1["data"]["following"], true);
+
+    // reset, then undo.
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    b.json(&["theme", "reset"]);
+    assert!(!b.hook().exists());
+    let (ok, v) = b.json(&["theme", "undo"]);
+    assert!(ok, "{v}");
+    assert!(b.hook().exists());
+    assert_eq!(b.json(&["theme", "follow"]).1["data"]["following"], true);
+}
+
+#[test]
+fn a_sync_that_moved_a_color_does_not_block_undo() {
+    let b = Sandbox::new();
+    b.omarchy("dim", "mode = \"dark\"\nbackground = \"#101010\"\nforeground = \"#e0e0e0\"\naccent = \"#4488ff\"\n");
+    b.json(&["theme", "follow", "omarchy"]);
+    assert!(b.json(&["theme", "change", "dark.accent", "#e8b44a"]).0);
+    b.omarchy("pale", "mode = \"dark\"\nbackground = \"#f0f0f0\"\nforeground = \"#101010\"\naccent = \"#4488ff\"\n");
+    assert!(b
+        .run(&["theme", "follow", "omarchy", "--sync"])
+        .status
+        .success());
+    assert_ne!(dark(&b)["accent"], "#e8b44a");
+    let (ok, v) = b.json(&["theme", "undo"]);
+    assert!(ok, "the sync's move must not look like an edit: {v}");
+    assert_eq!(
+        b.exported()["surfaces"]["spaces"]["dark"]["background"],
+        "#f0f0f0"
+    );
+}
+
+#[test]
+fn off_then_a_switch_then_on_brings_the_new_colors() {
+    let b = Sandbox::new();
+    b.omarchy_fixture("tokyo-night");
+    b.json(&["theme", "follow", "omarchy"]);
+    assert!(b.run(&["theme", "off"]).status.success());
+    b.omarchy_fixture("white");
+    let o = b.run(&["theme", "follow", "omarchy", "--sync"]);
+    assert!(o.status.success());
+    assert!(
+        !b.cfg().join("current/theme.json").exists(),
+        "off stays off"
+    );
+    let (ok, v) = b.json(&["theme", "on"]);
+    assert!(ok, "{v}");
+    assert_eq!(light_dark(&b), ("light".into(), "#ffffff".into()));
+}
+
+#[test]
+fn a_moved_color_is_put_back_before_following_stops() {
+    let b = Sandbox::new();
+    b.omarchy("dim", "mode = \"dark\"\nbackground = \"#101010\"\nforeground = \"#e0e0e0\"\naccent = \"#4488ff\"\n");
+    b.json(&["theme", "follow", "omarchy"]);
+    b.json(&["theme", "change", "dark.accent", "#e8b44a"]);
+    b.json(&["theme", "accent", "#e8b44a", "--mode", "light"]);
+    b.omarchy("pale", "mode = \"dark\"\nbackground = \"#f0f0f0\"\nforeground = \"#101010\"\naccent = \"#4488ff\"\n");
+    assert!(b
+        .run(&["theme", "follow", "omarchy", "--sync"])
+        .status
+        .success());
+    assert_ne!(dark(&b)["accent"], "#e8b44a");
+    for stop in [vec!["theme", "set", "calm"], vec!["theme", "follow", "off"]] {
+        let t = fs::read_to_string(b.cfg().join("themes/omarchy-overrides.toml")).unwrap();
+        let (ok, v) = b.json(&stop);
+        assert!(ok, "{v}");
+        let after = fs::read_to_string(b.cfg().join("themes/omarchy-overrides.toml")).unwrap();
+        assert!(
+            after.contains("#e8b44a"),
+            "yours is back in the file: {after}\n(was {t})"
+        );
+        b.omarchy("dim", "mode = \"dark\"\nbackground = \"#101010\"\nforeground = \"#e0e0e0\"\naccent = \"#4488ff\"\n");
+        assert!(b.json(&["theme", "follow", "omarchy"]).0);
+        assert_eq!(dark(&b)["accent"], "#e8b44a");
+        b.omarchy("pale", "mode = \"dark\"\nbackground = \"#f0f0f0\"\nforeground = \"#101010\"\naccent = \"#4488ff\"\n");
+        assert!(b
+            .run(&["theme", "follow", "omarchy", "--sync"])
+            .status
+            .success());
+    }
+}
+
+#[test]
+fn accents_from_before_come_back_and_following_starts_from_omarchys_accent() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.run(&["theme", "set", "evening"]);
+    assert!(b
+        .run(&["theme", "accent", "#8fb3ff", "--mode", "dark"])
+        .status
+        .success());
+    let (ok, v) = b.json(&["theme", "follow", "omarchy"]);
+    assert!(ok, "{v}");
+    assert_eq!(
+        dark(&b)["accent"],
+        "#7aa2f7",
+        "starts from Omarchy's own accent"
+    );
+    assert!(v["data"]["notes"].to_string().contains("put aside"));
+    assert!(b
+        .run(&["theme", "accent", "#ffcc66", "--mode", "dark"])
+        .status
+        .success());
+    let (_, v) = b.json(&["theme", "follow", "off"]);
+    assert_eq!(v["data"]["theme"], "evening");
+    assert_eq!(v["data"]["accent_dark"], "#8fb3ff", "{v}");
+    // The accent set while following is kept as a change on top.
+    let t = fs::read_to_string(b.cfg().join("themes/omarchy-overrides.toml")).unwrap();
+    assert!(t.contains("#ffcc66"), "{t}");
+}
+
+#[test]
+fn the_hook_logs_a_missing_program_and_a_failed_sync_and_status_says_so() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    let text = fs::read_to_string(b.hook()).unwrap();
+    let exe = fs::canonicalize(env!("CARGO_BIN_EXE_polycarp")).unwrap();
+    fs::write(
+        b.hook(),
+        text.replace(&exe.display().to_string(), "/nonexistent/polycarp"),
+    )
+    .unwrap();
+    let run = || {
+        Command::new("bash")
+            .arg(b.hook())
+            .arg("x")
+            .env_clear()
+            .env("HOME", b.home())
+            .output()
+            .unwrap()
+    };
+    let o = run();
+    assert_eq!(o.status.code(), Some(0));
+    assert!(o.stdout.is_empty() && o.stderr.is_empty());
+    let log = fs::read_to_string(b.cfg().join("follow.log")).unwrap();
+    assert!(
+        log.contains("FAILED") && log.contains("is missing"),
+        "{log}"
+    );
+    let (_, st) = b.json(&["theme", "follow"]);
+    assert_eq!(st["data"]["hook_exe_exists"], false);
+    assert!(st["data"]["last_failure"]
+        .as_str()
+        .unwrap()
+        .contains("missing"));
+    let d = stdout(&b.run(&["doctor"]));
+    assert!(
+        d.contains("which does not exist") && d.contains("last sync problem"),
+        "{d}"
+    );
+    // A failed sync inside the program is logged too.
+    fs::write(b.hook(), text).unwrap();
+    fs::remove_file(b.state().join("current/theme/colors.toml")).unwrap();
+    assert_eq!(run().status.code(), Some(0));
+    let log = fs::read_to_string(b.cfg().join("follow.log")).unwrap();
+    assert!(log.lines().last().unwrap().contains("FAILED"), "{log}");
+}
+
+#[test]
+fn the_hook_cannot_stall_a_switch() {
+    // Only where `timeout` exists.
+    let has = Command::new("bash")
+        .args(["-c", "command -v timeout"])
+        .output()
+        .unwrap()
+        .status
+        .success();
+    if !has {
+        eprintln!("no timeout command here; skipped");
+        return;
+    }
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    let slow = b.root.join("slow");
+    fs::write(&slow, "#!/bin/bash\nsleep 30\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&slow, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let text = fs::read_to_string(b.hook()).unwrap();
+    let exe = fs::canonicalize(env!("CARGO_BIN_EXE_polycarp")).unwrap();
+    fs::write(
+        b.hook(),
+        text.replace(&exe.display().to_string(), &slow.display().to_string()),
+    )
+    .unwrap();
+    let t = std::time::Instant::now();
+    let o = Command::new("bash")
+        .arg(b.hook())
+        .env_clear()
+        .env("HOME", b.home())
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(0));
+    assert!(t.elapsed().as_secs() < 15, "{:?}", t.elapsed());
+}
+
+#[test]
+fn a_palette_no_single_text_color_can_serve_moves_a_surface_never_the_background() {
+    let b = Sandbox::new();
+    b.omarchy(
+        "gray",
+        "mode = \"dark\"\nbackground = \"#777777\"\nlighter_background = \"#a0a0a0\"\ndark_background = \"#404040\"\nforeground = \"#eeeeee\"\naccent = \"#4488ff\"\nred = \"#ff0000\"\nyellow = \"#ffff00\"\ngreen = \"#00ff00\"\nselection = \"#555555\"\n",
+    );
+    let (ok, v) = b.json(&["theme", "follow", "omarchy"]);
+    assert!(ok, "never refused: {v}");
+    let d = dark(&b);
+    assert_eq!(d["background"], "#777777");
+    let moved: Vec<String> = v["data"]["nudges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| s(&n["path"]))
+        .collect();
+    assert!(
+        moved
+            .iter()
+            .any(|p| p == "dark.surface" || p == "dark.sunken"),
+        "{moved:?}"
+    );
+    assert!(!moved.iter().any(|p| p == "dark.background"));
+    for bg in ["background", "surface", "sunken", "selection"] {
+        assert!(contrast_of(&s(&d["foreground"]), &s(&d[bg])) >= 4.5, "{bg}");
+    }
+}
+
+#[test]
+fn status_shows_what_is_in_force_not_what_was_moved() {
+    let b = Sandbox::new();
+    b.omarchy("dim", "mode = \"dark\"\nbackground = \"#101010\"\nforeground = \"#e0e0e0\"\naccent = \"#4488ff\"\n");
+    b.json(&["theme", "follow", "omarchy"]);
+    b.json(&["theme", "change", "dark.accent", "#e8b44a"]);
+    b.omarchy("pale", "mode = \"dark\"\nbackground = \"#f0f0f0\"\nforeground = \"#101010\"\naccent = \"#4488ff\"\n");
+    b.run(&["theme", "follow", "omarchy", "--sync"]);
+    // The person sets a new value before the next sync.
+    b.json(&["theme", "change", "dark.accent", "#0a3d62"]);
+    let (_, st) = b.json(&["theme", "follow"]);
+    let o = st["data"]["overrides"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["path"] == "dark.accent")
+        .unwrap()
+        .clone();
+    assert_eq!(o["value"], "#0a3d62", "{o}");
+    assert_eq!(o["adjusted"], false);
+}
+
+#[test]
+fn comments_in_the_overrides_file_survive_a_fit_and_its_reversal() {
+    let b = Sandbox::new();
+    b.omarchy("dim", "mode = \"dark\"\nbackground = \"#101010\"\nforeground = \"#e0e0e0\"\naccent = \"#4488ff\"\n");
+    b.json(&["theme", "follow", "omarchy"]);
+    b.json(&["theme", "change", "shape.radius", "5"]);
+    let path = b.cfg().join("themes/omarchy-overrides.toml");
+    let mut t = fs::read_to_string(&path).unwrap();
+    t.push_str("\n# my note about the corners\n");
+    fs::write(&path, &t).unwrap();
+    b.json(&["theme", "change", "dark.accent", "#e8b44a"]);
+    let before = fs::read_to_string(&path).unwrap();
+    b.omarchy("pale", "mode = \"dark\"\nbackground = \"#f0f0f0\"\nforeground = \"#101010\"\naccent = \"#4488ff\"\nred = \"#aa0000\"\n");
+    assert!(b
+        .run(&["theme", "follow", "omarchy", "--sync"])
+        .status
+        .success());
+    assert!(fs::read_to_string(&path)
+        .unwrap()
+        .contains("# my note about the corners"));
+    b.omarchy("dim", "mode = \"dark\"\nbackground = \"#101010\"\nforeground = \"#e0e0e0\"\naccent = \"#4488ff\"\n");
+    assert!(b
+        .run(&["theme", "follow", "omarchy", "--sync"])
+        .status
+        .success());
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        before,
+        "back to exactly what the person wrote"
+    );
+}
+
+#[test]
+fn a_hook_for_another_config_folder_is_never_replaced_or_removed() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    let before = fs::read_to_string(b.hook()).unwrap();
+    let other = b.root.join("other-cfg");
+    // A first command in another config folder warns and does not take the hook.
+    let o = in_dir(&b, &other, &["theme", "accent", "#ffcc66", "--json"]);
+    assert!(o.status.success(), "{}", stdout(&o));
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert!(
+        v["data"]["warnings"]
+            .to_string()
+            .contains("another config folder"),
+        "{v}"
+    );
+    assert_eq!(fs::read_to_string(b.hook()).unwrap(), before);
+    // off, set and undo there leave it too.
+    for args in [
+        vec!["theme", "follow", "off"],
+        vec!["theme", "set", "calm"],
+        vec!["theme", "reset"],
+        vec!["theme", "undo"],
+    ] {
+        in_dir(&b, &other, &args);
+        assert_eq!(fs::read_to_string(b.hook()).unwrap(), before, "{args:?}");
+    }
+    // The real config still follows.
+    assert_eq!(b.json(&["theme", "follow"]).1["data"]["following"], true);
+}
+
+#[test]
+fn modes_are_inferred_and_matched_in_any_case() {
+    let b = Sandbox::new();
+    b.omarchy(
+        "pale",
+        "background = \"#fafafa\"\nforeground = \"#222222\"\naccent = \"#1d4ed8\"\n",
+    );
+    let (ok, v) = b.json(&["theme", "follow", "omarchy"]);
+    assert!(ok, "{v}");
+    assert_eq!(v["data"]["mode"], "light");
+    assert_eq!(
+        b.exported()["surfaces"]["spaces"]["light"]["background"],
+        "#fafafa"
+    );
+    let b = Sandbox::new();
+    b.omarchy("pale", "mode = \"Light\"\nbackground = \"#fafafa\"\nforeground = \"#222222\"\naccent = \"#1d4ed8\"\n");
+    assert_eq!(
+        b.json(&["theme", "follow", "omarchy"]).1["data"]["mode"],
+        "light"
+    );
+    let b = Sandbox::new();
+    b.omarchy("odd", "mode = \"???\"\nbackground = \"#101010\"\nforeground = \"#e0e0e0\"\naccent = \"#4488ff\"\n");
+    assert_eq!(
+        b.json(&["theme", "follow", "omarchy"]).1["data"]["mode"],
+        "dark"
+    );
+}
+
+#[test]
+fn reset_works_on_a_broken_overrides_file_and_undo_brings_it_back() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    b.json(&["theme", "change", "shape.radius", "5"]);
+    let path = b.cfg().join("themes/omarchy-overrides.toml");
+    fs::write(&path, "this is [[ not toml").unwrap();
+    // A sync says what is wrong, in its own words, and logs it.
+    let o = b.run(&["theme", "follow", "omarchy", "--sync"]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("not valid TOML"),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(fs::read_to_string(b.cfg().join("follow.log"))
+        .unwrap()
+        .contains("FAILED"));
+    let (ok, v) = b.json(&["theme", "follow", "reset"]);
+    assert!(ok, "{v}");
+    assert!(fs::read_to_string(&path)
+        .unwrap()
+        .contains("extends = \"omarchy\""));
+    // A file with no extends is replaced too.
+    fs::write(&path, "name = \"omarchy-overrides\"\ntitle = \"x\"\n").unwrap();
+    let (ok, v) = b.json(&["theme", "follow", "reset"]);
+    assert!(ok, "{v}");
+}
+
+#[test]
+fn set_omarchy_while_following_means_the_overrides_layer_and_keeps_following() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    let (ok, v) = b.json(&["theme", "set", "omarchy"]);
+    assert!(ok, "{v}");
+    assert!(
+        v["data"]["notes"].to_string().contains("generated base"),
+        "{v}"
+    );
+    assert!(b.hook().exists());
+    assert_eq!(b.json(&["theme", "follow"]).1["data"]["following"], true);
+}
+
+#[test]
+fn a_mode_chosen_while_following_survives_every_switch_until_reset() {
+    let b = Sandbox::new();
+    b.omarchy_fixture("tokyo-night");
+    b.json(&["theme", "follow", "omarchy"]);
+    let (ok, v) = b.json(&["theme", "set", "omarchy-overrides", "--mode", "light"]);
+    assert!(ok, "{v}");
+    assert_eq!(b.exported()["mode"], "light");
+    b.omarchy_fixture("nord");
+    assert!(b
+        .run(&["theme", "follow", "omarchy", "--sync"])
+        .status
+        .success());
+    assert_eq!(
+        b.exported()["mode"],
+        "light",
+        "dark Omarchy theme, light kept"
+    );
+    let (_, st) = b.json(&["theme", "follow"]);
+    assert!(st["data"]["overrides"].to_string().contains("\"mode\""));
+    assert!(b.json(&["theme", "follow", "reset"]).0);
+    assert_eq!(b.exported()["mode"], "dark");
+}
+
+#[test]
+fn bad_colors_in_the_overrides_file_are_a_clean_error_not_a_panic() {
+    for bad in ["red", "#abc", "#12345g"] {
+        let b = Sandbox::new();
+        b.omarchy("tokyo-night", TOKYO);
+        b.json(&["theme", "follow", "omarchy"]);
+        let path = b.cfg().join("themes/omarchy-overrides.toml");
+        let mut t = fs::read_to_string(&path).unwrap();
+        t.push_str(&format!("\n[dark]\naccent = \"{bad}\"\n"));
+        fs::write(&path, t).unwrap();
+        for args in [
+            vec!["theme", "follow", "omarchy", "--sync"],
+            vec!["theme", "follow", "omarchy"],
+        ] {
+            let o = b.run(&args);
+            assert_ne!(
+                o.status.code(),
+                Some(101),
+                "{bad}: panic: {}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+            assert!(
+                !String::from_utf8_lossy(&o.stderr).contains("panicked"),
+                "{bad}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_foreign_file_at_the_hook_place_while_following_is_a_disagreement() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    fs::write(b.hook(), "#!/bin/bash\necho mine\n").unwrap();
+    let (_, st) = b.json(&["theme", "follow"]);
+    assert_eq!(st["data"]["hook_agrees"], false);
+    assert_eq!(st["data"]["hook_foreign"], true);
+    assert!(stdout(&b.run(&["theme", "follow"])).contains("not this config's hook"));
+    let d = stdout(&b.run(&["doctor"]));
+    assert!(d.contains("not this config's hook"), "{d}");
+}
+
+#[test]
+fn reset_and_set_remove_our_hook_even_when_the_settings_file_is_broken() {
+    for args in [vec!["theme", "reset"], vec!["theme", "set", "calm"]] {
+        let b = Sandbox::new();
+        b.omarchy("tokyo-night", TOKYO);
+        b.json(&["theme", "follow", "omarchy"]);
+        fs::write(b.cfg().join("config.toml"), "this is [[ broken").unwrap();
+        let o = b.run(&args);
+        assert!(
+            o.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        assert!(!b.hook().exists(), "{args:?}");
+    }
 }

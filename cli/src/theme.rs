@@ -2800,6 +2800,16 @@ pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
 }
 
 pub(crate) fn op_accent(c: &Ctx, color: Option<&str>, mode: Option<&str>) -> Res {
+    if !matches!(mode, None | Some("auto" | "both" | "light" | "dark")) {
+        return Err(ApiErr::usage("--mode must be light or dark"));
+    }
+    if let Some(col) = color.filter(|x| !is_hex(x)) {
+        return Err(ApiErr::at(
+            "invalid_value",
+            "color",
+            format!("{col:?} is not a color like #rrggbb"),
+        ));
+    }
     omarchy::with_default(c, || accent_inner(c, color, mode))
 }
 

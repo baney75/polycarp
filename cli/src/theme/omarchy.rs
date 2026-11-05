@@ -295,27 +295,31 @@ fn settle_all(mode: &str, mapped: &Colors) -> (Colors, Vec<Nudge>) {
             })
         })
         .collect();
-    for step in 1..=20 {
-        let t = f64::from(step) * 0.05;
-        let mut c2 = mapped.clone();
-        let mut n2 = Vec::new();
-        for r in &bad {
-            if let Some(from) = mapped.get(*r) {
-                let to = mix(from, &bg, t);
-                if to != *from {
-                    n2.push(Nudge {
-                        path: format!("{mode}.{r}"),
-                        from: from.clone(),
-                        to: to.clone(),
-                        reason: "leaves no text color that reads on it together with the other surfaces, so it moved toward the background".into(),
-                    });
-                    c2.insert((*r).to_string(), to);
+    // First only the surfaces that fail; then all three, since text that reads on a failing one
+    // can still be unable to read on a surface that passes only because of that text.
+    for set in [bad.clone(), vec!["surface", "sunken", "selection"]] {
+        for step in 1..=20 {
+            let t = f64::from(step) * 0.05;
+            let mut c2 = mapped.clone();
+            let mut n2 = Vec::new();
+            for r in &set {
+                if let Some(from) = mapped.get(*r) {
+                    let to = mix(from, &bg, t);
+                    if to != *from {
+                        n2.push(Nudge {
+                            path: format!("{mode}.{r}"),
+                            from: from.clone(),
+                            to: to.clone(),
+                            reason: "leaves no text color that reads on it together with the other surfaces, so it moved toward the background".into(),
+                        });
+                        c2.insert((*r).to_string(), to);
+                    }
                 }
             }
-        }
-        run(&mut c2, &mut n2);
-        if !any_fail(&c2) {
-            return (c2, n2);
+            run(&mut c2, &mut n2);
+            if !any_fail(&c2) {
+                return (c2, n2);
+            }
         }
     }
     (c, n)
@@ -1873,6 +1877,30 @@ mod tests {
         let (h, s, _) = to_hsl(&moved);
         assert!(!passes(&from_hsl(h, s, l1 - STEP), &cons));
         assert!(l1 > l0);
+    }
+
+    #[test]
+    fn a_gray_palette_settles_by_moving_surfaces_not_the_background() {
+        let c: Colors = [
+            ("background", "#777777"),
+            ("surface", "#a0a0a0"),
+            ("sunken", "#404040"),
+            ("foreground", "#eeeeee"),
+            ("strong", "#eeeeee"),
+            ("muted", "#eeeeee"),
+            ("accent", "#4488ff"),
+            ("selection", "#555555"),
+            ("urgent", "#ff0000"),
+            ("working", "#ffff00"),
+            ("done", "#00ff00"),
+        ]
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+        let (out, n) = settle_all("dark", &c);
+        assert!(!any_fail(&out));
+        assert_eq!(out["background"], "#777777");
+        assert!(n.iter().all(|x| !x.path.ends_with("background")));
     }
 
     #[test]
