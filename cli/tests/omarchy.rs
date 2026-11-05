@@ -1293,6 +1293,7 @@ fn accents_from_before_come_back_and_following_starts_from_omarchys_accent() {
     assert!(t.contains("#ffcc66"), "{t}");
 }
 
+#[cfg(unix)]
 #[test]
 fn the_hook_logs_a_missing_program_and_a_failed_sync_and_status_says_so() {
     let b = Sandbox::new();
