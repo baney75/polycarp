@@ -472,8 +472,8 @@ final class HandsRouter {
         // process: an app that ran the launch inside Donovan's copy is not an agent's window.
         let separate = AgentAppPolicy.needsSeparateInstance(bundle: bundle)
         var window: HandsWindow?
-        // As long as the claim on its window lasts (`claimNextWindow`): an app that takes a while still gets its id returned.
-        let deadline = Date().addingTimeInterval(8)
+        // Inside the 8 s claim on its window (`claimNextWindow`), so a window seen here was placed by that claim.
+        let deadline = Date().addingTimeInterval(7.5)
         while window == nil, Date() < deadline {
             let (all, agent) = listWindows(fresh: true)
             window = all.filter { matches($0, reply.info?["app"] ?? display) && !known.contains($0.id) && $0.workspace == agent && (!separate || !pidsBefore.contains($0.pid)) }.max { $0.id < $1.id }

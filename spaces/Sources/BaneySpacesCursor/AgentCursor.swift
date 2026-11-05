@@ -19,6 +19,7 @@ final class AgentCursor {
     private let vein = CAShapeLayer()
     private let badge = CAShapeLayer()
     private let badgeText = CATextLayer()
+    private let badgeDot = CAShapeLayer()
     private let focus = CAShapeLayer()
     private var ripples: [CAShapeLayer] = []
     /// A mark is a container (whose opacity dims it by age) holding the shape (whose opacity is its fade).
@@ -39,6 +40,7 @@ final class AgentCursor {
         body.addSublayer(vein)
         root.addSublayer(badge)
         badge.addSublayer(badgeText)
+        badge.addSublayer(badgeDot)
         focus.opacity = 0
         build(count: look.theme.markCount)
         apply(look)
@@ -94,7 +96,7 @@ final class AgentCursor {
     }
 
     private func applyScale() {
-        for l in [body, vein, badge, focus] + ripples + markShapes { l.contentsScale = scale }
+        for l in [body, vein, badge, badgeDot, focus] + ripples + markShapes { l.contentsScale = scale }
         badgeText.contentsScale = scale
     }
 
@@ -160,8 +162,12 @@ final class AgentCursor {
             // The badge: the agent's name on its status color.
             let font = t.badgeMonospaced ? NSFont.monospacedSystemFont(ofSize: t.badgeFontSize, weight: .semibold)
                                          : NSFont.systemFont(ofSize: t.badgeFontSize, weight: .semibold)
-            let textSize = (new.name as NSString).size(withAttributes: [.font: font])
-            let w = ceil(textSize.width) + 14, h = ceil(textSize.height) + 4
+            let text = new.badgeText
+            let textSize = (text as NSString).size(withAttributes: [.font: font])
+            // The dot in the agent's own hue tells apart two agents with the same name and status. A square badge shows
+            // it in its border instead.
+            let dot: CGFloat = t.badgeShape == .pill ? 11 : 0
+            let w = ceil(textSize.width) + 14 + dot, h = ceil(textSize.height) + 4
             let rect = CGRect(x: 0, y: 0, width: w, height: h)
             let r = min(t.badgeRadius, h / 2)
             badge.path = t.badgeShape == .square ? CGPath(rect: rect, transform: nil) : CGPath(roundedRect: rect, cornerWidth: r, cornerHeight: r, transform: nil)
@@ -176,12 +182,17 @@ final class AgentCursor {
             badge.shadowRadius = max(0, t.shadowRadius - 1)
             badge.shadowOffset = CGSize(width: 0, height: -1)
             badge.shadowPath = badge.path
-            badgeText.string = new.name
+            badgeDot.isHidden = dot == 0
+            badgeDot.path = CGPath(ellipseIn: CGRect(x: 8, y: h / 2 - 3, width: 6, height: 6), transform: nil)
+            badgeDot.fillColor = Self.color(new.identity)
+            badgeDot.strokeColor = CGColor(gray: 1, alpha: 0.7)
+            badgeDot.lineWidth = 0.75
+            badgeText.string = text
             badgeText.font = font
             badgeText.fontSize = t.badgeFontSize
             badgeText.alignmentMode = .center
             badgeText.truncationMode = .end
-            badgeText.frame = CGRect(x: 0, y: (h - textSize.height) / 2, width: w, height: ceil(textSize.height))
+            badgeText.frame = CGRect(x: dot, y: (h - textSize.height) / 2, width: w - dot, height: ceil(textSize.height))
             badgeText.foregroundColor = new.statusColor.contrastWithWhite >= 3 ? CGColor(gray: 1, alpha: 1) : CGColor(gray: 0, alpha: 0.88)
             // The focus box and marks take the status color too.
             focus.strokeColor = Self.color(new.statusColor, alpha: 0.95)
@@ -269,10 +280,12 @@ final class AgentCursor {
     private func tilt(_ m: CursorMotion) {
         guard !look.still, let first = m.points.first else { return }
         let lean = CursorMotionLean.radians(dx: m.target.x - first.x, distance: hypot(m.target.x - first.x, m.target.y - first.y))
-        guard lean != 0 else { return }
+        // A new move picks up from the lean in progress, and a short hop settles it, so nothing snaps.
+        let now = (body.presentation()?.value(forKeyPath: "transform.rotation.z") as? Double) ?? 0
+        guard lean != 0 || now != 0 else { return }
         let a = CAKeyframeAnimation(keyPath: "transform.rotation.z")
         // Local layers are y up, so a turn toward the right is a negative angle.
-        a.values = [0, -lean, 0]
+        a.values = [now, -lean, 0]
         a.keyTimes = [0, 0.35, 1]
         a.duration = m.duration
         a.beginTime = layerTime(m.start)

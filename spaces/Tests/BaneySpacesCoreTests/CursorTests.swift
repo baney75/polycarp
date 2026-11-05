@@ -252,8 +252,6 @@ final class CursorThemeTests: XCTestCase {
         for s in [DockAgent.State.working, .asking, .failed, .done] {
             XCTAssertGreaterThanOrEqual(CursorPalette.status(s).contrastWithWhite, 4.5, "\(s)")
         }
-        XCTAssertTrue(CursorGlyphs.hasWhiteEdge(.leaf)); XCTAssertTrue(CursorGlyphs.hasWhiteEdge(.pointer))
-        XCTAssertFalse(CursorGlyphs.hasWhiteEdge(.block))
     }
 
     /// A short hop doesn't lean. A long one leans toward where it's going, within the limit.
@@ -263,6 +261,26 @@ final class CursorThemeTests: XCTestCase {
         XCTAssertLessThan(CursorMotionLean.radians(dx: -900, distance: 900), 0)
         XCTAssertEqual(CursorMotionLean.radians(dx: 0, distance: 900), 0)
         XCTAssertLessThanOrEqual(abs(CursorMotionLean.radians(dx: 5000, distance: 5000)), CursorMotionLean.maxRadians + 1e-9)
+    }
+
+    /// Two colors a person with red-green color blindness may not tell apart by hue have to differ in lightness too, and
+    /// the badge says it in text.
+    func testFailedIsDistinctWithoutColorAndTheBadgeSaysSo() {
+        let working = CursorPalette.status(.working).luminance, failed = CursorPalette.status(.failed).luminance
+        XCTAssertGreaterThanOrEqual((max(working, failed) + 0.05) / (min(working, failed) + 0.05), 1.5)
+        func look(_ s: DockAgent.State) -> CursorLook { CursorLook(name: "Claude", status: s, identity: RGB(r: 1, g: 1, b: 1), theme: .standard) }
+        XCTAssertEqual(look(.working).badgeText, "Claude"); XCTAssertEqual(look(.done).badgeText, "Claude")
+        XCTAssertEqual(look(.asking).badgeText, "? Claude"); XCTAssertEqual(look(.failed).badgeText, "! Claude")
+    }
+
+    func testAnOldThemeSayingArrowStillDecodes() throws {
+        XCTAssertEqual(try JSONDecoder().decode(CursorTheme.Glyph.self, from: Data(#""arrow""#.utf8)), .pointer)
+        XCTAssertEqual(try JSONDecoder().decode(CursorTheme.Glyph.self, from: Data(#""leaf""#.utf8)), .leaf)
+    }
+
+    func testEdgesAreWhiteExceptForTheThemesThatChooseOtherwise() {
+        for g in [CursorTheme.Glyph.leaf, .pointer, .dot] { XCTAssertTrue(CursorGlyphs.hasWhiteEdge(g), "\(g)") }
+        for g in [CursorTheme.Glyph.classic, .block] { XCTAssertFalse(CursorGlyphs.hasWhiteEdge(g), "\(g)") }
     }
 
     /// An app the agent started may bring itself forward as it launches. Its window is still the agent's. A window of the
@@ -979,5 +997,64 @@ final class CursorSourceTests: XCTestCase {
         let app = try Self.code("Sources/BaneySpaces/AppDelegate.swift")
         let hook = try XCTUnwrap(HandsSourceTests.block(after: "spaces.onChange = ", in: app))
         XCTAssertTrue(hook.contains("CursorController.shared.environmentChanged()"))
+    }
+}
+
+final class FocusReturnTests: XCTestCase {
+    let now = Date(timeIntervalSince1970: 1000)
+    var later: Date { now.addingTimeInterval(8) }
+
+    func testAnAgentAppThatTookTheKeyboardGivesItBack() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(pid: 20, until: later)
+        XCTAssertEqual(f.activated(pid: 20, bundle: "calc", agentOwned: true, deliberate: false, now: now), .returnTo(10))
+    }
+
+    /// The app can come forward before its pid reaches us, while only the bundle is known.
+    func testItWorksBeforeTheProcessIsKnownAndLeavesYourOwnCopyAlone() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(bundle: "calc", excluding: [30], until: later)
+        XCTAssertEqual(f.activated(pid: 20, bundle: "calc", agentOwned: false, deliberate: false, now: now), .returnTo(10))
+        XCTAssertEqual(f.activated(pid: 30, bundle: "calc", agentOwned: false, deliberate: false, now: now), .none, "a copy already running is yours")
+        XCTAssertEqual(f.lastPerson, 30)
+    }
+
+    func testChoosingTheAppYourselfIsRespected() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(pid: 20, until: later)
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: true, now: now), .personTook(20))
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: false, now: now.addingTimeInterval(1)), .none, "and it stays left alone")
+    }
+
+    /// The target is where you are now, not where you were when the launch began.
+    func testItReturnsToTheAppYouMovedToDuringTheLaunch() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(pid: 20, until: later)
+        _ = f.activated(pid: 11, bundle: nil, agentOwned: false, deliberate: true, now: now)
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: false, now: now.addingTimeInterval(1)), .returnTo(11))
+    }
+
+    /// Two launches at once: neither agent app is ever the place the keyboard goes back to.
+    func testAnAgentAppIsNeverTheReturnTarget() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(pid: 20, until: later); f.watch(pid: 21, until: later)
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: false, now: now), .returnTo(10))
+        XCTAssertEqual(f.activated(pid: 21, bundle: nil, agentOwned: true, deliberate: false, now: now), .returnTo(10))
+        XCTAssertEqual(f.lastPerson, 10)
+        var g = FocusReturn(); g.seed(front: 20, agentOwned: true)
+        XCTAssertNil(g.lastPerson, "an agent's app in front isn't yours")
+    }
+
+    func testTheWatchEnds() {
+        var f = FocusReturn(lastPerson: 10)
+        f.watch(pid: 20, until: later)
+        XCTAssertEqual(f.activated(pid: 20, bundle: nil, agentOwned: true, deliberate: false, now: later.addingTimeInterval(1)), .none)
+    }
+
+    func testTypingIsNotChoosingAnApp() {
+        XCTAssertFalse(FocusReturn.isDeliberate(commandHeld: false, sinceModifierChange: 5, sinceMouseDown: 5), "typing away")
+        XCTAssertTrue(FocusReturn.isDeliberate(commandHeld: true, sinceModifierChange: 5, sinceMouseDown: 5))
+        XCTAssertTrue(FocusReturn.isDeliberate(commandHeld: false, sinceModifierChange: 0.1, sinceMouseDown: 5), "⌘-Tab activates on release")
+        XCTAssertTrue(FocusReturn.isDeliberate(commandHeld: false, sinceModifierChange: 5, sinceMouseDown: 0.2), "a click")
     }
 }

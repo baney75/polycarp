@@ -5,7 +5,15 @@ import Foundation
 /// (no Lottie, no images). Colors are the cursor's own and never the palette's, so agent activity is never
 /// mistaken for yours (spec/themes.md): the glyph takes its agent's status color.
 public struct CursorTheme: Equatable, Codable, Sendable {
-    public enum Glyph: String, Codable, Sendable { case leaf, pointer, classic, dot, block }
+    public enum Glyph: String, Codable, Sendable {
+        case leaf, pointer, classic, dot, block
+
+        /// `arrow` was the default glyph's name before the leaf; a theme that still says it gets the pointer.
+        public init(from decoder: Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = raw == "arrow" ? .pointer : (Glyph(rawValue: raw) ?? .leaf)
+        }
+    }
     public enum BadgeShape: String, Codable, Sendable { case pill, square }
     public enum Fill: String, Codable, Sendable {
         /// The agent's status color.
@@ -91,21 +99,22 @@ public struct CursorTheme: Equatable, Codable, Sendable {
 
 /// The cursor's colors. Fixed, so nothing the person picks for the dock or the palette recolors an agent.
 public enum CursorPalette {
-    /// Status colors from the Polycarp brand: working vine, asking amber, failed clay, finished still water. White text
-    /// reads on each at 4.5:1 or better, and the cursor's white edge keeps them visible on any background.
+    /// Status colors from the Polycarp brand: working vine, asking amber, failed deep clay, finished still water. White text
+    /// reads on each at 4.5:1 or better, and the white edge keeps them visible on any background. Failed is darker than
+    /// working, not only redder, so they differ for red-green color blindness; the badge also says it in text.
     public static func status(_ s: DockAgent.State) -> RGB {
         switch s {
         case .working: return RGB(r: 0x4F / 255, g: 0x6B / 255, b: 0x3A / 255)
         case .asking: return RGB(r: 0x85 / 255, g: 0x6A / 255, b: 0x29 / 255)
-        case .failed: return RGB(r: 0xA8 / 255, g: 0x47 / 255, b: 0x3A / 255)
+        case .failed: return RGB(r: 0x7F / 255, g: 0x26 / 255, b: 0x22 / 255)
         case .done: return RGB(r: 0x3F / 255, g: 0x6B / 255, b: 0x6A / 255)
         }
     }
 
-    /// Eight hues for telling two agents with the same status apart.
+    /// Eight calm hues for telling two agents with the same status apart: the dot in the name badge.
     public static let identity: [RGB] = [
-        RGB(r: 1, g: 1, b: 1), RGB(r: 0.15, g: 0.15, b: 0.17), RGB(r: 0.64, g: 0.37, b: 0.87), RGB(r: 0.19, g: 0.69, b: 0.71),
-        RGB(r: 0.94, g: 0.36, b: 0.62), RGB(r: 0.20, g: 0.74, b: 0.36), RGB(r: 0.55, g: 0.57, b: 0.60), RGB(r: 0.96, g: 0.78, b: 0.20),
+        RGB(r: 1, g: 1, b: 1), RGB(r: 0.17, g: 0.18, b: 0.15), RGB(r: 0.52, g: 0.40, b: 0.62), RGB(r: 0.45, g: 0.72, b: 0.72),
+        RGB(r: 0.82, g: 0.56, b: 0.60), RGB(r: 0.66, g: 0.76, b: 0.52), RGB(r: 0.62, g: 0.61, b: 0.56), RGB(r: 0.90, g: 0.76, b: 0.42),
     ]
 
     /// The same agent always gets the same hue (FNV-1a, not Swift's per-launch hash).
@@ -132,6 +141,14 @@ public struct CursorLook: Equatable, Sendable {
         self.theme = t
     }
     public var statusColor: RGB { CursorPalette.status(status) }
+    /// The badge's words. Asking and failed say so in a mark too, because a color alone isn't enough for everyone.
+    public var badgeText: String {
+        switch status {
+        case .asking: return "? " + name
+        case .failed: return "! " + name
+        case .working, .done: return name
+        }
+    }
 }
 
 /// The glyph outlines, tip at the origin, y pointing down (the renderer flips them for AppKit).
@@ -139,10 +156,10 @@ public enum CursorGlyphs {
     public static func path(_ glyph: CursorTheme.Glyph, size s: Double) -> CGPath {
         switch glyph {
         case .leaf: return leaf(s)
-        case .pointer: return rounded([(0, 0), (0.25, 0.93), (0.40, 0.54), (0.90, 0.36)], radii: [0.045, 0.09, 0.05, 0.09], size: s)
+        case .pointer: return rounded([(0, 0), (0.25, 0.93), (0.40, 0.54), (0.90, 0.36)], radii: [0, 0.09, 0.05, 0.09], size: s)
         case .classic:
             return rounded([(0, 0), (0, 0.84), (0.19, 0.66), (0.31, 0.95), (0.43, 0.89), (0.31, 0.62), (0.56, 0.62)],
-                           radii: [0.015, 0.03, 0.03, 0.03, 0.03, 0.03, 0.03], size: s)
+                           radii: [0, 0.03, 0.03, 0.03, 0.03, 0.03, 0.03], size: s)
         case .block:
             let p = CGMutablePath()
             let pts = [(0.0, 0.0), (0, 1.0), (0.30, 0.72), (0.52, 1.0), (0.66, 0.92), (0.44, 0.64), (0.74, 0.64)]
@@ -189,14 +206,14 @@ public enum CursorGlyphs {
         return p.copy(using: &t) ?? p
     }
 
-    /// A polygon with rounded corners.
+    /// A polygon with rounded corners. The tip (the first point) has no radius: it is the action point, and the
+    /// glyph's round line join softens it on screen.
     private static func rounded(_ pts: [(Double, Double)], radii: [Double], size s: Double) -> CGPath {
         let q = pts.map { CGPoint(x: $0.0 * s, y: $0.1 * s) }
         let p = CGMutablePath()
-        p.move(to: CGPoint(x: (q[0].x + q[1].x) / 2, y: (q[0].y + q[1].y) / 2))
-        for i in 1...q.count {
-            let corner = q[i % q.count], next = q[(i + 1) % q.count]
-            p.addArc(tangent1End: corner, tangent2End: next, radius: radii[i % q.count] * s)
+        p.move(to: q[0])
+        for i in 1..<q.count {
+            p.addArc(tangent1End: q[i], tangent2End: q[(i + 1) % q.count], radius: radii[i] * s)
         }
         p.closeSubpath()
         return fitted(p, size: s)

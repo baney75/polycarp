@@ -548,7 +548,6 @@ final class SessionController {
             case .success(let paths): files = paths.map { URL(fileURLWithPath: $0) }
             }
             let before = Set(NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundle }.map(\.processIdentifier))
-            let inFront = NSWorkspace.shared.frontmostApplication
             let cfg = NSWorkspace.OpenConfiguration()
             cfg.activates = false
             cfg.addsToRecentItems = false
@@ -591,6 +590,7 @@ final class SessionController {
             // Until this launch's own process is known, an activation of the bundle by a process that was not
             // already running is the launch's; Donovan's running copies are excluded.
             AgentActivity.shared.markLaunch(bundle: bundle, excluding: before, for: 10)
+            AgentLaunchFocus.shared.watch(bundle: bundle, excluding: before, for: 10)
             var claimed = false
             /// A new window from behind through the app's own New Window command, claimed first.
             func newWindow(_ app: NSRunningApplication) -> Bool {
@@ -614,15 +614,8 @@ final class SessionController {
                 if !separate { AgentAccess.shared.grant(app.processIdentifier) }
                 AgentActivity.shared.markLaunch(pid: app.processIdentifier, for: 8)
                 h.claim(app.processIdentifier, n, true, nil)
-                // Some apps bring themselves forward as they launch even when told not to. Your keyboard goes back
-                // to the app you were in; the agent's app has no business holding it.
-                for wait in [0.4, 1.2, 2.5] {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
-                        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier,
-                              let inFront, !inFront.isTerminated, inFront.processIdentifier != app.processIdentifier else { return }
-                        inFront.activate()
-                    }
-                }
+                AgentLaunchFocus.shared.onPersonTook = { h.unclaim($0) }
+                AgentLaunchFocus.shared.watch(pid: app.processIdentifier, for: 8)
                 if files.isEmpty {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                         // The mode may have narrowed in the 1.5 s since the request was let in.
