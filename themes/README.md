@@ -209,7 +209,8 @@ where it doesn't and tells you what it chose. With `--mode`, it takes the color 
 it and says so.
 
 An accent from `theme accent` applies to every product, with one exception: a value a theme sets itself
-under `[surface.<product>.<mode>]` wins for that product and mode. So `change surface.browser.light.accent
+under `[surface.<product>.<mode>]` wins for that product and mode. That holds for its own `accent` and
+for its own `on_accent`: setting either one keeps the product's accent pair as the theme wrote it. So `change surface.browser.light.accent
 <color>` changes only the browser's light accent and leaves your global accent alone. A plain
 `change light.accent` replaces the global override for that mode, and says so.
 

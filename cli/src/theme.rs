@@ -571,8 +571,8 @@ struct Full {
     description: Option<String>,
     base: Resolved,
     surfaces: BTreeMap<String, Resolved>,
-    /// "<surface>.<mode>" for each surface that sets its own `accent` in that mode. An accent
-    /// override from `theme accent` does not replace those.
+    /// "<surface>.<mode>" for each surface that sets its own `accent` or `on_accent` in that mode.
+    /// An accent override from `theme accent` does not replace those.
     pinned: BTreeSet<String>,
 }
 
@@ -853,11 +853,8 @@ fn resolve_doc(cfg: &Cfg, start: Table, expect: Option<&str>) -> Result<Full, Ve
     let mut pinned = BTreeSet::new();
     for s in SURFACES {
         for m in MODES {
-            let own = surface_t
-                .get(s)
-                .and_then(|v| v.get(m))
-                .and_then(|v| v.get("accent"));
-            if own.is_some() {
+            let own = surface_t.get(s).and_then(|v| v.get(m));
+            if own.is_some_and(|t| t.get("accent").is_some() || t.get("on_accent").is_some()) {
                 pinned.insert(format!("{s}.{m}"));
             }
         }

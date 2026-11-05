@@ -3268,3 +3268,26 @@ fn a_change_that_changes_nothing_is_not_recorded_or_written() {
     b.ok(&["undo"]);
     assert_eq!(b.json(&["current", "--json"])["theme"], "evening");
 }
+
+#[test]
+fn a_surfaces_own_on_accent_is_pinned_like_its_own_accent() {
+    let b = Box::new();
+    let doc = user_theme(
+        "pin",
+        "polycarp",
+        "[surface.spaces.light]\non_accent = \"#ffffff\"",
+    );
+    assert_eq!(code(&b.run_stdin(&["theme", "apply", "-"], &doc)), 0);
+    let before = b.json(&["export", "json"])["surfaces"]["spaces"]["light"].clone();
+    b.ok(&["accent", GREEN_L, "--mode", "light"]);
+    let v = b.json(&["export", "json"]);
+    assert_eq!(
+        v["surfaces"]["spaces"]["light"]["accent"], before["accent"],
+        "{v}"
+    );
+    assert_eq!(v["surfaces"]["spaces"]["light"]["on_accent"], "#ffffff");
+    assert_eq!(
+        v["surfaces"]["site"]["light"]["accent"], GREEN_L,
+        "others take the override"
+    );
+}
