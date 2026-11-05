@@ -17,6 +17,10 @@
 # BANEYSPACES_DEST_DIR: test mode. Install into this folder and change nothing else: the running
 # copy, AeroSpace, Ghostdeck, Launch Services and ~/.local/bin are left alone and the app isn't
 # opened. (With --in-place, test mode leaves AeroSpace and Ghostdeck alone but makes the links.)
+# The browser command: the app carries the browser helper (Contents/Resources/browser/polycarp-browser), which `polycarp browser`
+# runs and `tabkyra` has always been. ~/.local/bin/tabkyra links to it only when no working tabkyra of someone else's
+# (npm link, Homebrew, a release checkout) is already there; POLYCARP_TAKE_OVER_TABKYRA=1 takes the name over anyway (the old
+# link is written down so uninstall.sh can put it back). Agents on other machines call `tabkyra`, so the name never goes missing.
 # BANEYSPACES_NO_LAUNCH=1: install as usual but don't open the app.
 # The app's name, identifier and command names come from product.env, which sits beside this script
 # (scripts/ in the repo, Contents/Resources in the app).
@@ -129,5 +133,38 @@ mkdir -p "$HOME/.local/bin"
 for name in $CLI_NAME $CLI_ALIASES; do
   ln -sf "$DEST/Contents/Resources/bin/$CLI_NAME" "$HOME/.local/bin/$name"
 done
+
+# Runs a command for at most 5 seconds; true only when it exits 0 in time.
+runs_ok() {
+  "$@" >/dev/null 2>&1 &
+  local pid=$! rc=0
+  ( sleep 5; kill "$pid" 2>/dev/null ) >/dev/null 2>&1 &
+  local watcher=$!
+  wait "$pid" || rc=$?
+  kill "$watcher" 2>/dev/null || true
+  return "$rc"
+}
+HELPER="$DEST/Contents/Resources/browser/polycarp-browser"
+TABKYRA_LINK="$HOME/.local/bin/tabkyra"
+if [ -x "$HELPER" ]; then
+  if [ -L "$TABKYRA_LINK" ] && case "$(readlink "$TABKYRA_LINK")" in *Polycarp.app/Contents/Resources/browser/polycarp-browser) true ;; *) false ;; esac; then
+    ln -sf "$HELPER" "$TABKYRA_LINK"   # ours already: follow the app to where it is now
+  elif [ ! -e "$TABKYRA_LINK" ] && [ ! -L "$TABKYRA_LINK" ]; then
+    ln -s "$HELPER" "$TABKYRA_LINK"
+  elif [ "${POLYCARP_TAKE_OVER_TABKYRA:-}" = 1 ]; then
+    if [ -L "$TABKYRA_LINK" ]; then
+      mkdir -p "$HOME/Library/Application Support/$SUPPORT_FOLDER"
+      readlink "$TABKYRA_LINK" > "$HOME/Library/Application Support/$SUPPORT_FOLDER/tabkyra-previous-link"
+      ln -sf "$HELPER" "$TABKYRA_LINK"
+    else
+      echo "note: $TABKYRA_LINK is a file, not a link, so it was left alone; \`polycarp browser\` runs the same helper." >&2
+    fi
+  elif ! runs_ok "$TABKYRA_LINK" --version; then
+    # Dangling or broken: nothing of anyone's works there, so the name is free.
+    ln -sf "$HELPER" "$TABKYRA_LINK" 2>/dev/null || echo "note: $TABKYRA_LINK doesn't work and is not a link, so it was left alone." >&2
+  else
+    echo "note: a working tabkyra is already at $TABKYRA_LINK, so it was left alone; \`polycarp browser\` runs the helper in this app. POLYCARP_TAKE_OVER_TABKYRA=1 scripts/install-app.sh takes the name over." >&2
+  fi
+fi
 if [ "$IN_PLACE" = 0 ] && [ "${BANEYSPACES_NO_LAUNCH:-}" != 1 ]; then open "$DEST"; fi
 echo "installed $DEST and ~/.local/bin/$CLI_NAME"

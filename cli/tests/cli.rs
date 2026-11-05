@@ -1141,3 +1141,56 @@ fn a_voice_script_alone_does_not_fail_doctor() {
         out(&o)
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn browser_finds_the_copy_inside_the_app_before_path() {
+    let s = Sandbox::new();
+    let app = s
+        .dir("home")
+        .join("Applications/Polycarp.app/Contents/Resources/browser");
+    fs::create_dir_all(&app).unwrap();
+    stub(&app, "polycarp-browser", "echo bundled \"$@\"");
+    let on_path = s.dir("a");
+    fs::create_dir_all(&on_path).unwrap();
+    stub(&on_path, "tabkyra", "echo from-path");
+    let o = s
+        .cmd(&["browser", "mcp"])
+        .env("PATH", &on_path)
+        .output()
+        .unwrap();
+    assert_eq!(out(&o), "bundled mcp\n");
+    // The override still wins over the app's copy.
+    let mine = stub(&on_path, "mine", "echo override");
+    let o = s
+        .cmd(&["browser"])
+        .env("POLYCARP_BROWSER_BIN", &mine)
+        .output()
+        .unwrap();
+    assert_eq!(out(&o), "override\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_falls_back_to_path_without_the_app() {
+    let s = Sandbox::new();
+    let on_path = s.dir("a");
+    fs::create_dir_all(&on_path).unwrap();
+    stub(&on_path, "tabkyra", "echo from-path");
+    let o = s.cmd(&["browser"]).env("PATH", &on_path).output().unwrap();
+    assert_eq!(out(&o), "from-path\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_shows_the_bundled_browser_helper_and_its_version() {
+    let s = Sandbox::new();
+    let app = s
+        .dir("home")
+        .join("Applications/Polycarp.app/Contents/Resources/browser");
+    fs::create_dir_all(&app).unwrap();
+    stub(&app, "polycarp-browser", "echo 1.2.3");
+    let o = s.run(&["doctor"]);
+    let t = out(&o);
+    assert!(t.contains("polycarp-browser (1.2.3)"), "{t}");
+}
