@@ -993,26 +993,24 @@ fn accent_picks_on_accent_by_the_same_rule_the_checker_uses() {
 }
 
 #[test]
-fn one_accent_cannot_serve_light_and_dark_so_both_modes_are_refused_with_the_way_out() {
+fn one_accent_with_no_mode_stays_where_it_reads_and_moves_where_it_does_not() {
     let b = Box::new();
     let (c, v) = b.jrun(&["accent", GREEN_L]);
-    assert_eq!(c, 1, "{v}");
-    assert_eq!(v["error"]["code"], "contrast");
-    let paths: Vec<String> = v["error"]["data"]["errors"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|e| e["path"].as_str().unwrap().to_string())
-        .collect();
-    assert!(paths.contains(&"dark.accent".to_string()), "{paths:?}");
-    assert!(
-        v["error"]["suggestion"]
-            .as_str()
-            .unwrap()
-            .contains("--mode"),
-        "{v}"
+    assert_eq!(c, 0, "{v}");
+    assert_eq!(v["data"]["accent_light"], GREEN_L.to_lowercase(), "{v}");
+    let dark = v["data"]["accent_dark"].as_str().unwrap().to_string();
+    assert_ne!(dark, GREEN_L.to_lowercase(), "dark needs a lighter color");
+    let notes = v["data"]["notes"].to_string();
+    assert!(notes.contains(&format!("dark uses {dark}")), "{notes}");
+    // What it chose is a real, readable theme, and undo takes it all back.
+    let t = b.json(&["show", "--json"]);
+    assert_eq!(
+        t["surfaces"]["site"]["dark"]["accent"],
+        dark.as_str(),
+        "{t}"
     );
-    assert!(!b.state_file().exists());
+    b.ok(&["undo"]);
+    assert!(b.json(&["current", "--json"])["accent_dark"].is_null());
 }
 
 #[test]
@@ -1022,8 +1020,8 @@ fn accent_that_fails_contrast_is_refused_and_state_is_unchanged() {
     let before = fs::read(b.state_file()).unwrap();
     let outputs_before = fs::read(b.cfg().join("current/theme.json")).unwrap();
     let hist = b.history_count();
-    // Fine in light mode, too dark against the dark background.
-    let e = b.refused(&["accent", "#2255aa"]);
+    // With --mode the color is taken exactly or refused, never moved.
+    let e = b.refused(&["accent", "#2255aa", "--mode", "dark"]);
     assert!(
         e.contains("dark.accent on dark.background is 1.93, needs 4.5"),
         "{e}"
@@ -2701,7 +2699,7 @@ fn every_failure_in_json_parses_and_carries_paths() {
         (vec!["change", "shape.radius", "x"], 1, "invalid_value"),
         (vec!["change", "nope", "1"], 1, "unknown_path"),
         (vec!["accent", "blue"], 1, "invalid_value"),
-        (vec!["accent", "#2255aa"], 1, "contrast"),
+        (vec!["accent", "#2255aa", "--mode", "dark"], 1, "contrast"),
         (
             vec!["create", "calm", "--extends", "polycarp"],
             1,

@@ -32,7 +32,7 @@ Tagline: **Bear much fruit.** When a line must explain the product: **Speak it. 
 | --- | --- | --- |
 | Vine green, primary | `#59693F` | 5.37 with Cream |
 | Still water, secondary | `#3F6B6A` | 5.37 with Cream |
-| Old gold, accent | `#8A6F2E` | 4.30 on Cream: large text and icons only |
+| Old gold, working | `#856A29` | 4.62 on Cream |
 | Ink, dark neutral | `#2B2E26` | 12.42 with Cream |
 | Cream, light neutral | `#F6F3E8` | |
 | On dark: Vine, Water, Gold | `#A9BB8A`, `#8EBDB9`, `#C7B07A` | 6.68, 6.66, 6.52 on Ink |

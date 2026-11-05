@@ -132,10 +132,10 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "theme_accent",
-            description: "Set the brand color for the current theme, in light mode, dark mode or both. It picks a readable on_accent for you. Use it when the person only wants a different main color. The accent is also used as text, so it needs 4.5 contrast on the background and surface of each mode it is set for. One color almost never does that in both light and dark: call this once with mode light and once with mode dark. Refused, with nothing changed, if the color would be hard to read. Pass clear true to remove the override.",
+            description: "Set the brand color for the current theme. With no mode, the color is kept where it reads and moved the smallest step where it does not, and the result says what it chose. With a mode, it is taken exactly or refused. It picks a readable on_accent. A surface that sets its own accent keeps it.",
             schema: obj(json!({
                 "color": {"type":"string","description":"\"#rrggbb\". Leave out when clear is true."},
-                "mode": {"type":"string","enum":["light","dark"],"description":"One mode. Leave out for both."},
+                "mode": {"type":"string","enum":["light","dark"],"description":"Take the color exactly for this one mode. Leave out to use it everywhere, adjusted as needed."},
                 "clear": {"type":"boolean","description":"Remove the accent override."},
             }), &[]),
             read_only: false,

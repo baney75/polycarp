@@ -202,10 +202,10 @@ Every `theme` command takes `--json`.
 
 `accent` sets the accent for both modes, or for one with `--mode`. It picks `on_accent` for you by the same
 rule the check uses (at least 4.5 on the accent): the theme's own if it reads on the new accent, else black,
-else white. If the accent would fail the contrast check, it is refused and nothing changes. The accent is
-also drawn as text, so it needs 4.5 on `background` and `surface`. That means one color almost never works
-in both light and dark, so set the two modes one at a time: `accent <color> --mode light`, then
-`accent <color> --mode dark`. `set` keeps your accent if it still reads on the new theme. If not, it clears
+else white. With `--mode`, an accent that fails the contrast check is refused and nothing changes. The accent is
+also drawn as text, so it needs 4.5 on `background` and `surface`, and one color almost never does that in
+both light and dark. With no `--mode`, Polycarp keeps your color where it reads, moves it the smallest step
+where it doesn't and tells you what it chose. With `--mode`, it takes the color exactly or refuses it. `set` keeps your accent if it still reads on the new theme. If not, it clears
 it and says so.
 
 An accent from `theme accent` applies to every product, with one exception: a value a theme sets itself

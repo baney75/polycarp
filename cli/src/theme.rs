@@ -2337,32 +2337,77 @@ pub(crate) fn op_accent(c: &Ctx, color: Option<&str>, mode: Option<&str>) -> Res
     let eff = effective(&c.cfg);
     require_healthy(&eff)?;
     let mut st = eff.state.clone();
+    let mut adjusted = serde_json::Map::new();
     for m in &modes {
-        if *m == "light" {
-            st.accent_light = new.clone();
-        } else {
-            st.accent_dark = new.clone();
+        let set = |st: &mut State, value: Option<String>| {
+            if *m == "light" {
+                st.accent_light = value;
+            } else {
+                st.accent_dark = value;
+            }
+        };
+        set(&mut st, new.clone());
+        // One color seldom reads on both a light and a dark background. With no --mode, keep the
+        // color where it reads and move it the smallest step toward readable where it doesn't.
+        if let (Some(color), true) = (&new, modes.len() == 2) {
+            if build_full(&c.cfg, &st).is_err() {
+                let target = if *m == "light" { "#000000" } else { "#ffffff" };
+                let found = (1..=50)
+                    .map(|step| mix(color, target, f64::from(step) * 0.02))
+                    .find(|candidate| {
+                        let mut trial = st.clone();
+                        if *m == "light" {
+                            trial.accent_light = Some(candidate.clone());
+                        } else {
+                            trial.accent_dark = Some(candidate.clone());
+                        }
+                        build_full(&c.cfg, &trial).is_ok()
+                    });
+                if let Some(found) = found {
+                    adjusted.insert((*m).to_string(), json!(found));
+                    set(&mut st, Some(found));
+                }
+            }
         }
     }
     build_full(&c.cfg, &st).map_err(|ps| {
-        let e = bad_theme(
+        bad_theme(
             &format!(
                 "accent {} is refused, nothing changed",
                 new.as_deref().unwrap_or("")
             ),
             &ps,
-        );
-        if modes.len() == 2 {
-            e.suggest("One color seldom reads on both a light and a dark background. Set each mode on its own: `theme accent <color> --mode light`, then `--mode dark`.")
-        } else {
-            e
-        }
+        )
     })?;
     let action = match &new {
         Some(c) => format!("theme accent {c}"),
         None => "theme accent --clear".to_string(),
     };
-    commit(c, Some(&st), &action, None)
+    let mut done = commit(c, Some(&st), &action, None)?;
+    if !adjusted.is_empty() {
+        let says = adjusted
+            .iter()
+            .map(|(mode, color)| {
+                format!(
+                    "{mode} uses {} to stay readable",
+                    color.as_str().unwrap_or_default()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        done.notes.push(says);
+    }
+    Ok(done)
+}
+
+/// Blends `from` toward `to` in sRGB. `amount` 0.0 keeps `from`, 1.0 gives `to`.
+fn mix(from: &str, to: &str, amount: f64) -> String {
+    let channel =
+        |hex: &str, at: usize| f64::from(u8::from_str_radix(&hex[at..at + 2], 16).unwrap_or(0));
+    let blend = |at: usize| {
+        (channel(from, at) + (channel(to, at) - channel(from, at)) * amount).round() as u8
+    };
+    format!("#{:02x}{:02x}{:02x}", blend(1), blend(3), blend(5))
 }
 
 fn title_case(name: &str) -> String {
