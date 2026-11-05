@@ -3427,7 +3427,7 @@ fn reset_says_it_turns_the_theme_on_with_the_default() {
     b.ok(&["set", "evening"]);
     b.ok(&["off"]);
     let said = b.ok(&["reset"]);
-    assert!(said.contains("turns the theme on"), "{said}");
+    assert!(said.contains("turned the theme on"), "{said}");
     assert_eq!(b.json(&["current", "--json"])["enabled"], true);
     assert_eq!(b.json(&["current", "--json"])["theme"], "polycarp");
     assert_eq!(current_files(&b).len(), 5);
@@ -3469,5 +3469,183 @@ fn delete_refuses_a_theme_another_user_theme_extends_and_names_it() {
     b.ok(&["delete", "child-a"]);
     b.ok(&["delete", "child-b"]);
     b.ok(&["delete", "base"]);
+    assert!(!b.cfg().join("themes/base.toml").exists());
+}
+
+#[test]
+fn off_and_on_bring_current_into_line_even_when_the_state_is_unchanged() {
+    let b = Box::new();
+    b.ok(&["set", "calm"]);
+    b.ok(&["off"]);
+    let n = b.history_count();
+    // A file comes back while the theme is off; off again removes it and reports it.
+    let stray = b.cfg().join("current/theme.json");
+    fs::write(&stray, "{}").unwrap();
+    let said = b.ok(&["off"]);
+    assert!(!stray.exists());
+    assert!(
+        said.contains("already off") && said.contains("removed"),
+        "{said}"
+    );
+    // A no-op claims no write of the settings, and says what to do next.
+    assert!(!said.contains("config.toml"), "{said}");
+    let (_, v) = b.jrun(&["off"]);
+    assert!(
+        v["data"]["next"].as_str().unwrap().contains("theme on"),
+        "{v}"
+    );
+    assert_eq!(b.history_count(), n, "an unchanged off is not recorded");
+    // On, then the folder is deleted: on again writes all five files.
+    b.ok(&["on"]);
+    fs::remove_dir_all(b.cfg().join("current")).unwrap();
+    let n = b.history_count();
+    let said = b.ok(&["on"]);
+    assert!(said.contains("already on"), "{said}");
+    assert_eq!(current_files(&b).len(), 5);
+    assert!(!said.contains("config.toml"), "{said}");
+    assert_eq!(b.history_count(), n);
+}
+
+#[test]
+fn off_works_when_the_theme_or_the_settings_are_broken_and_keeps_what_it_replaced() {
+    let b = Box::new();
+    b.ok(&["create", "mine", "--extends", "evening"]);
+    b.ok(&["set", "mine"]);
+    // A hand edit breaks the theme file.
+    fs::write(b.cfg().join("themes/mine.toml"), "this is [not toml").unwrap();
+    b.ok(&["off"]);
+    assert!(current_files(&b).is_empty());
+    let state = fs::read_to_string(b.state_file()).unwrap();
+    assert!(
+        state.contains("enabled = false") && state.contains("theme = \"mine\""),
+        "{state}"
+    );
+    // The settings file is broken too.
+    let b = Box::new();
+    b.ok(&["set", "evening"]);
+    fs::write(b.state_file(), "[appearance\ntheme = ").unwrap();
+    let n = b.history_count();
+    b.ok(&["off"]);
+    assert!(current_files(&b).is_empty());
+    assert!(fs::read_to_string(b.state_file())
+        .unwrap()
+        .contains("enabled = false"));
+    assert_eq!(b.history_count(), n + 1);
+    let kept = fs::read_dir(b.cfg().join("history"))
+        .unwrap()
+        .flatten()
+        .map(|e| fs::read_to_string(e.path()).unwrap())
+        .any(|t| t.contains("[appearance\ntheme = "));
+    assert!(kept, "the broken file is kept in history");
+    // A folder where config.toml should be is moved aside, as reset does.
+    let b = Box::new();
+    b.ok(&["set", "evening"]);
+    fs::remove_file(b.state_file()).unwrap();
+    fs::create_dir(b.state_file()).unwrap();
+    let (c, v) = b.jrun(&["off"]);
+    assert_eq!(c, 0, "{v}");
+    assert!(
+        v["data"]["warnings"].to_string().contains("moved to"),
+        "{v}"
+    );
+    assert!(b.state_file().is_file());
+}
+
+#[cfg(unix)]
+#[test]
+fn off_removes_a_linked_file_and_on_writes_a_plain_one() {
+    let b = Box::new();
+    b.ok(&["set", "calm"]);
+    let target = b.root.join("dotfiles-theme.json");
+    fs::write(&target, "mine").unwrap();
+    let link = b.cfg().join("current/theme.json");
+    fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    b.ok(&["off"]);
+    assert!(fs::symlink_metadata(&link).is_err(), "the link is removed");
+    assert_eq!(
+        fs::read_to_string(&target).unwrap(),
+        "mine",
+        "its target is left alone"
+    );
+    b.ok(&["on"]);
+    let meta = fs::symlink_metadata(&link).unwrap();
+    assert!(
+        meta.is_file() && !meta.file_type().is_symlink(),
+        "on writes a plain file"
+    );
+    assert_eq!(fs::read_to_string(&target).unwrap(), "mine");
+}
+
+#[test]
+fn only_an_activating_apply_and_a_change_on_a_user_theme_turn_the_theme_on() {
+    let b = Box::new();
+    b.ok(&["create", "mine", "--extends", "calm"]);
+    b.ok(&["set", "mine"]);
+    // change on a user theme (the built-in path is covered above)
+    b.ok(&["off"]);
+    let (c, v) = b.jrun(&["change", "shape.radius", "3"]);
+    assert_eq!(c, 0, "{v}");
+    assert!(v["data"]["notes"].to_string().contains("was off"), "{v}");
+    assert_eq!(v["data"]["theme"], "mine");
+    assert_eq!(b.json(&["current", "--json"])["enabled"], true);
+    // apply without activating leaves it off
+    b.ok(&["off"]);
+    let doc = user_theme("other", "calm", "");
+    let o = b.run_stdin(&["theme", "apply", "-", "--no-activate"], &doc);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(b.json(&["current", "--json"])["enabled"], false);
+    assert!(current_files(&b).is_empty());
+    // apply that activates turns it on and says so
+    let o = b.run_stdin(&["theme", "apply", "-", "--json"], &doc);
+    let v: Value = serde_json::from_str(&out(&o)).unwrap();
+    assert!(v["data"]["notes"].to_string().contains("was off"), "{v}");
+    assert_eq!(b.json(&["current", "--json"])["enabled"], true);
+    assert_eq!(current_files(&b).len(), 5);
+}
+
+#[test]
+fn reset_over_json_notes_that_it_turned_the_theme_on_only_when_it_was_off() {
+    let b = Box::new();
+    b.ok(&["set", "evening"]);
+    let (_, v) = b.jrun(&["reset"]);
+    assert!(!v["data"]["notes"].to_string().contains("was off"), "{v}");
+    assert!(!v["data"]["next"].is_null());
+    b.ok(&["off"]);
+    let (_, v) = b.jrun(&["reset"]);
+    assert!(v["data"]["notes"].to_string().contains("was off"), "{v}");
+}
+
+#[test]
+fn delete_fails_closed_on_a_theme_it_cannot_read() {
+    let b = Box::new();
+    b.ok(&["create", "base", "--extends", "calm"]);
+    b.ok(&["create", "kid", "--extends", "base"]);
+    fs::write(b.cfg().join("themes/kid.toml"), "extends = [oops").unwrap();
+    let before = b.snapshot();
+    let (c, v) = b.jrun(&["delete", "base"]);
+    assert_eq!((c, &v["error"]["code"]), (1, &"io_error".into()), "{v}");
+    assert!(
+        v["error"]["message"].as_str().unwrap().contains("kid.toml"),
+        "{v}"
+    );
+    assert!(b.snapshot() == before && b.cfg().join("themes/base.toml").exists());
+}
+
+#[test]
+fn undo_of_a_create_refuses_while_another_theme_extends_it_unless_forced() {
+    let b = Box::new();
+    b.ok(&["create", "base", "--extends", "calm"]);
+    // Written by hand afterwards, as the guide's edit-path flow does.
+    b.write_theme("kid", &user_theme("kid", "base", ""));
+    let before = b.snapshot();
+    let (c, v) = b.jrun(&["undo"]);
+    assert_eq!((c, &v["error"]["code"]), (1, &"in_use".into()), "{v}");
+    assert!(
+        v["error"]["message"].as_str().unwrap().contains("kid"),
+        "{v}"
+    );
+    assert!(b.snapshot() == before, "a refusal changed something");
+    b.ok(&["undo", "--force"]);
     assert!(!b.cfg().join("themes/base.toml").exists());
 }
