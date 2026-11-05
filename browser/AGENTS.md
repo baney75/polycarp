@@ -18,6 +18,7 @@ your change touches before you say it works:
 ```bash
 npx biome check .                       # format and lint (./check.sh runs it with --write)
 npx tsc --noEmit                        # extension types
+node scripts/check-theme.mjs            # no hard-coded colors outside tokens and its allowlist
 node --import tsx --test test/*.test.mjs  # extension tests
 (cd cli && npx tsc --noEmit && npm test)  # CLI build and tests (npm test rebuilds cli/dist first)
 node cli/dist/index.js skill lint skills  # the skill gate
@@ -29,6 +30,11 @@ throwaway headless Chromium. It is not in CI; run it after bridge or MCP changes
 time: `cd cli && npx playwright-core install chromium`).
 
 A test that passed proves the logic, not what the user sees. Say which one you ran.
+
+## Polycarp theme: what is not themed
+`type.display` is read and sent as `--font-serif`, but the panel draws no display headings (nothing
+uses `font-serif`), so only `type.ui`, `type.mono` and `type.size` show. If a heading starts using
+`font-serif`, delete this note. `shape.density` is not applied anywhere.
 
 ## Code Quality
 - No `any` types unless absolutely necessary

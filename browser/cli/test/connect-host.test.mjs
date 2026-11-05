@@ -40,13 +40,19 @@ const { ConnectService, parseConnect, safeMessage, setLinkBusyAsync, HubCodeErro
 async function inConfig(name, fn) {
 	const dir = join(root, name);
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
-	const before = process.env.TABKYRA_CONFIG_DIR;
+	// An empty Polycarp config folder, so a developer's own Polycarp theme never changes what status says.
+	const polycarp = join(dir, "polycarp-config");
+	mkdirSync(polycarp, { recursive: true });
+	const before = { t: process.env.TABKYRA_CONFIG_DIR, p: process.env.POLYCARP_CONFIG_DIR };
 	process.env.TABKYRA_CONFIG_DIR = dir;
+	process.env.POLYCARP_CONFIG_DIR = polycarp;
 	try {
 		return await fn(dir);
 	} finally {
-		if (before === undefined) delete process.env.TABKYRA_CONFIG_DIR;
-		else process.env.TABKYRA_CONFIG_DIR = before;
+		for (const [k, v] of [["TABKYRA_CONFIG_DIR", before.t], ["POLYCARP_CONFIG_DIR", before.p]]) {
+			if (v === undefined) delete process.env[k];
+			else process.env[k] = v;
+		}
 	}
 }
 
@@ -1483,4 +1489,23 @@ test("a method that is not a string is bad_params, never coerced, and the host k
 	assert.equal(host.proc.exitCode, null, "the host exited");
 	assert.doesNotMatch(host.stderr(), /TypeError|Unhandled/);
 	host.proc.stdin.end();
+});
+
+test("status says why a Polycarp theme file was refused, and says nothing when there is no file", async () => {
+	await inConfig("polycarp-refused", async (dir) => {
+		const service = new ConnectService();
+		let { result } = await ask(service, "status");
+		assert.equal("polycarpRefused" in result, false, "no file: nothing to say");
+		assert.equal("polycarp" in result, false);
+		mkdirSync(join(dir, "polycarp-config", "current"), { recursive: true });
+		writeFileSync(join(dir, "polycarp-config", "current", "theme.json"), "{nope");
+		({ result } = await ask(service, "status"));
+		assert.equal(result.polycarpRefused, "theme.json is not valid JSON");
+		assert.equal("polycarp" in result, false);
+	});
+});
+
+test("onlyKeys keeps its own doc comment", () => {
+	const src = readFileSync(new URL("../src/connect-host.ts", import.meta.url), "utf8");
+	assert.match(src, /\/\*\* `params` must hold only these keys\.[^\n]*\*\/\nfunction onlyKeys/);
 });

@@ -209,5 +209,6 @@ jobs:
         run: |
           npx biome check .
           npx tsc --noEmit
+          node scripts/check-theme.mjs
           node --import tsx --test test/*.test.mjs
           (cd cli && npx tsc --noEmit && npm test)

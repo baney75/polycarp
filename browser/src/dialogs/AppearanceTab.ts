@@ -1,7 +1,15 @@
 import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { currentAppearance, onAppearance, previewAppearance, setAppearance } from "../appearance/apply.js";
+import {
+	currentAppearance,
+	currentPolycarp,
+	currentPolycarpRefusal,
+	onAppearance,
+	onPolycarp,
+	previewAppearance,
+	setAppearance,
+} from "../appearance/apply.js";
 import { currentMode, type Mode, setMode } from "../appearance/mode.js";
 import { PRESETS, textOn } from "../appearance/palettes.js";
 import { effectiveAccent } from "../appearance/tokens.js";
@@ -42,6 +50,7 @@ export class AppearanceTab extends SettingsTab {
 	@state() private accentError?: string;
 	@state() private shared = true;
 	private off?: () => void;
+	private offPolycarp?: () => void;
 
 	getTabName(): string {
 		return "Appearance";
@@ -54,11 +63,13 @@ export class AppearanceTab extends SettingsTab {
 			this.accentError = undefined;
 			this.requestUpdate();
 		});
+		this.offPolycarp = onPolycarp(() => this.requestUpdate());
 	}
 
 	override disconnectedCallback(): void {
 		super.disconnectedCallback();
 		this.off?.();
+		this.offPolycarp?.();
 	}
 
 	/** `clearedAccent` is true only when the person went back to the preset's own accent; otherwise the helper's saved accent is left alone. */
@@ -97,7 +108,7 @@ export class AppearanceTab extends SettingsTab {
 		this.accentError = undefined;
 		this.draft = undefined;
 		// Typing the accent already in use changes nothing, and must not turn the preset's into a custom one.
-		if (hex === effectiveAccent(choice, this.isDark())) return;
+		if (hex === effectiveAccent(choice, this.isDark(), currentPolycarp())) return;
 		void this.choose(choice.preset, hex);
 	}
 
@@ -125,9 +136,14 @@ export class AppearanceTab extends SettingsTab {
 
 	render(): TemplateResult {
 		const choice = currentAppearance();
-		const inUse = effectiveAccent(choice, this.isDark());
+		const inUse = effectiveAccent(choice, this.isDark(), currentPolycarp());
 		const shown = this.draft ?? inUse;
 		const hex = HEX.test(normalizeHex(shown)) ? normalizeHex(shown) : inUse;
+		// A Polycarp theme decides the colors; the controls below still save a choice for when it is gone. A theme that fixes light or dark overrides Mode too.
+		const polycarp = currentPolycarp();
+		const overridden = polycarp ? "opacity-60" : "";
+		const refused = currentPolycarpRefusal();
+		const modeOverridden = polycarp !== undefined && polycarp.mode !== "auto";
 		return html`
 			<div class="flex flex-col gap-6">
 				<div class="space-y-1">
@@ -135,12 +151,28 @@ export class AppearanceTab extends SettingsTab {
 					<p class="text-sm text-muted-foreground">Colors for this panel and for the approval and hub pages Tabkyra serves from your computer.</p>
 				</div>
 
-				<div class="space-y-2" role="group" aria-label="Color preset">
+				${
+					refused && !polycarp
+						? html`<p class="text-xs text-muted-foreground" role="status" data-polycarp-refused>The Polycarp theme was refused, so your saved preset is used: ${refused}.</p>`
+						: ""
+				}
+				${
+					polycarp
+						? html`<div class="rounded-lg border border-border bg-secondary/60 p-3 space-y-1" role="status" data-polycarp-theme=${polycarp.name}>
+								<div class="text-sm font-medium text-foreground">Polycarp theme in use: ${polycarp.title}</div>
+								<p class="text-xs text-muted-foreground">
+									It sets this panel's colors, corners, fonts and motion${modeOverridden ? `, and keeps it ${polycarp.mode}` : ""}, so the controls below are overridden. They still save, for when the theme is gone. To change it, run <code class="font-mono">polycarp theme set &lt;name&gt;</code>.
+								</p>
+							</div>`
+						: ""
+				}
+
+				<div class="space-y-2 ${overridden}" role="group" aria-label="Color preset">
 					<div class="text-sm font-medium text-foreground">Colors</div>
 					<div class="grid grid-cols-2 gap-2">${Object.keys(PRESETS).map((name) => this.swatch(name))}</div>
 				</div>
 
-				<div class="space-y-2">
+				<div class="space-y-2 ${overridden}">
 					<label for="tk-accent-text" class="text-sm font-medium text-foreground">Custom accent</label>
 					<div class="flex items-center gap-2">
 						<input
@@ -202,7 +234,7 @@ export class AppearanceTab extends SettingsTab {
 					</p>
 				</div>
 
-				<div class="space-y-2" role="radiogroup" aria-label="Light or dark">
+				<div class="space-y-2 ${modeOverridden ? "opacity-60" : ""}" role="radiogroup" aria-label="Light or dark">
 					<div class="text-sm font-medium text-foreground">Mode</div>
 					${MODES.map(
 						([

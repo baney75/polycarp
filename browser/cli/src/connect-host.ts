@@ -34,7 +34,7 @@ import { type EnrollHooks, type EnrollResult, enrollDevice, HubCodeError, LinkEr
 import { configDir, DEFAULT_GRANT, mintApprovalCode, passcodeSet } from "./oauth.ts";
 import { SCOPES } from "./remote.ts";
 import { loadRemoteConfig, remoteFile } from "./remote-setup.ts";
-import { isAccent, isMode, loadTheme, PRESETS, saveTheme } from "./theme.ts";
+import { isAccent, isMode, loadPolycarpPayload, loadTheme, polycarpRefusal, PRESETS, saveTheme } from "./theme.ts";
 
 // ---------- parsing ----------
 
@@ -49,6 +49,14 @@ export type ConnectCall =
 export type ParsedConnect = { ok: true; id: number; call: ConnectCall } | { ok: false; id?: number; message: string };
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** The status field for a Polycarp theme in force; nothing when there is none. */
+function polycarpField(): { polycarp?: Record<string, unknown>; polycarpRefused?: string } {
+	const polycarp = loadPolycarpPayload();
+	if (polycarp) return { polycarp };
+	const polycarpRefused = polycarpRefusal();
+	return polycarpRefused ? { polycarpRefused } : {};
+}
 
 /** `params` must hold only these keys. Returns a sentence when it holds another. */
 function onlyKeys(params: Record<string, unknown>, allowed: string[]): string | undefined {
@@ -276,6 +284,7 @@ export class ConnectService {
 			...(link ? { link: { hubUrl: link.hubUrl, name: link.name, online: linkOnline(readLinkLive(), this.now()), busy: link.busy === true, manage: link.manage } } : {}),
 			...(devices ? { hub: { devices } } : {}),
 			theme: loadTheme(),
+			...polycarpField(),
 			...(route === "none" && !problems.length ? { joinScopes: DEFAULT_GRANT.map((id) => ({ id, what: SCOPES[id]?.what ?? id })) } : {}),
 			...(problems.length ? { problem: problems[0] } : {}),
 		};

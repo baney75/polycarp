@@ -50,7 +50,11 @@ export class Toast extends LitElement {
 					? html`<span class="inline-flex shrink-0 text-destructive">${icon(AlertCircle, "sm")}</span>`
 					: html`<span class="inline-flex shrink-0 text-[var(--tk-brass-text)]">${icon(Info, "sm")}</span>`;
 		const accent =
-			this.type === "success" ? "#16a34a" : this.type === "error" ? "var(--color-destructive)" : "var(--tk-brass)";
+			this.type === "success"
+				? "var(--tk-success)"
+				: this.type === "error"
+					? "var(--color-destructive)"
+					: "var(--tk-brass)";
 
 		// Below the header and inside the panel: the old fixed 300 px box sat on the header's
 		// buttons in a narrow panel, and its white text on the light theme's muted gray was unreadable.

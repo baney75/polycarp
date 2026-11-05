@@ -25,6 +25,10 @@ export interface ConnectStatus {
 	link?: { hubUrl: string; name: string; online: boolean; busy: boolean; manage: boolean };
 	hub?: { devices: ConnectDevice[] };
 	theme: { preset: string; accent?: string; mode?: "light" | "dark" };
+	/** The Polycarp theme in force (Tabkyra's section of theme.json), checked by the helper; the panel checks it again with parsePolycarpTheme. Absent when there is none. */
+	polycarp?: Record<string, unknown>;
+	/** Why a Polycarp theme file is there but not in use: one line. Absent when it is in force or there is no file. */
+	polycarpRefused?: string;
 	/** What joining a hub would let the hub's owner do here (the scopes a new link allows). Present when the route is none. */
 	joinScopes?: JoinScope[];
 	/** A config file that is present but unreadable, in a sentence; the route reads as none until it is fixed. */

@@ -57,7 +57,7 @@ export class WelcomeMessageElement extends LitElement {
 		return html`
 			<div class="welcome-container my-8 flex flex-col items-center justify-center">
 				<div class="flex flex-col items-center text-center mb-6 px-6">
-					${helmMark(64, "tile", "mb-4 rounded-[15px] shadow-[0_10px_30px_-12px_rgba(227,169,59,0.55)]")}
+					${helmMark(64, "tile", "mb-4 rounded-[15px] shadow-[0_10px_30px_-12px_color-mix(in_srgb,var(--tk-brass)_55%,transparent)]")}
 					<h1 class="text-2xl font-semibold tracking-tight mb-1.5">Tabkyra</h1>
 					<p class="text-sm text-muted-foreground max-w-xs">${i18n("You steer. Tabkyra works the tabs.")}</p>
 				</div>
