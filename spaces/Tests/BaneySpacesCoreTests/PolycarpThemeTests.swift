@@ -798,7 +798,7 @@ final class PolycarpThemeTests: XCTestCase {
 final class PolycarpWiringTests: XCTestCase {
     func testAppearanceKeepsTheStoredChoiceAndLetsPolycarpWin() throws {
         let code = try Repo.code("Sources/BaneySpaces/Appearance.swift")
-        XCTAssertTrue(code.contains("settings.look(systemAccent: Appearance.systemAccent, polycarp: polycarp, systemDark: Appearance.systemDark)"))
+        XCTAssertTrue(code.contains("settings.look(systemAccent: Appearance.systemAccent, polycarp: polycarp, systemDark: dark)"))
         XCTAssertTrue(code.contains("ThemeCenter.use(settings.theme, polycarp: polycarp)"))
         XCTAssertFalse(code.contains("settings.theme = polycarp"), "a Polycarp theme never writes the stored theme")
         XCTAssertFalse(code.contains("colorPalette = "), "…or the stored palette")
