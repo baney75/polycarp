@@ -28,6 +28,7 @@ const run = (cmd, args, env = {}) => {
 	}
 };
 run(process.execPath, ["scripts/build.mjs"], { TABKYRA_CLI_COMPILED: "1", TABKYRA_CLI_OUT_DIR: work });
-run("bun", ["build", "--compile", "--bytecode", `--target=bun-darwin-${arch}`, join(work, "index.js"), "--outfile", out]);
+run("bun", ["build", "--compile", "--bytecode", `--target=bun-darwin-${arch === "x64" ? "x64-baseline" : arch}`, join(work, "index.js"), "--outfile", out]);
+// The x86_64 build is the baseline one: it runs on every Intel Mac and under Rosetta (which has no AVX).
 chmodSync(out, 0o755);
 if (!arg("--work")) rmSync(work, { recursive: true, force: true });
