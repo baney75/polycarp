@@ -153,3 +153,18 @@ final class VoiceTests: XCTestCase {
 extension VoiceStatus {
     static let allCases_overlay: [VoiceStatus] = [.loading, .needsModel, .ready, .recording, .transcribing, .typing, .error].filter(\.showsOverlay)
 }
+
+final class VoiceSpeedRatchetTests: XCTestCase {
+    func testTheBaselinesAreThere_andTheLimitIsTwentyFivePercent() throws {
+        let data = try Data(contentsOf: Repo.root.appendingPathComponent("spec/speed.json"))
+        let j = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(j["regressionLimit"] as? Double, 1.25)
+        let start = try XCTUnwrap((j["startToReadyMs"] as? [String: Any])?["baseline"] as? Double)
+        XCTAssertGreaterThan(start, 0)
+        XCTAssertNotNil(j["transcribeRtf"], "the key stays so a measured RTF has a place")
+        let rust = try Repo.text("../core/ffi/tests/speed.rs")
+        XCTAssertTrue(rust.contains("fn fast_path_has_not_regressed"), "the test that enforces the baseline")
+        XCTAssertTrue(rust.contains("const LIMIT: f64 = 1.25;"))
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: Repo.root.appendingPathComponent("scripts/bench-voice").path))
+    }
+}
