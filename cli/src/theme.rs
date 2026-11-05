@@ -1997,12 +1997,13 @@ pub(crate) fn op_current(c: &Ctx) -> Res {
         "user"
     };
     let text = format!(
-        "theme: {} ({source})\nmode: {}\naccent_light: {}\naccent_dark: {}\nconfig: {}\n",
+        "theme: {} ({source})\nmode: {}\naccent_light: {}\naccent_dark: {}\nconfig: {}\nfolder: {}\n",
         eff.state.theme,
         eff.state.mode,
         eff.state.accent_light.as_deref().unwrap_or("none"),
         eff.state.accent_dark.as_deref().unwrap_or("none"),
-        c.cfg.file().display()
+        c.cfg.file().display(),
+        c.cfg.dir.display()
     );
     let data = json!({
         "theme": eff.state.theme,
@@ -2012,6 +2013,7 @@ pub(crate) fn op_current(c: &Ctx) -> Res {
         "accent_light": eff.state.accent_light,
         "accent_dark": eff.state.accent_dark,
         "config": c.cfg.file().display().to_string(),
+        "folder": c.cfg.dir.display().to_string(),
         "problems": eff.problems,
         "fell_back": !eff.problems.is_empty(),
     });

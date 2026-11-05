@@ -726,6 +726,15 @@ fn set_refuses_an_invalid_theme_and_changes_nothing() {
 // --- set, outputs, export ----------------------------------------------------------------------
 
 #[test]
+fn current_prints_the_folder_products_read() {
+    let b = Box::new();
+    let dir = b.cfg().display().to_string();
+    let text = b.ok(&["current"]);
+    assert!(text.contains(&format!("folder: {dir}\n")), "{text}");
+    assert_eq!(b.json(&["current", "--json"])["folder"], dir.as_str());
+}
+
+#[test]
 fn set_writes_all_files_and_they_parse() {
     let b = Box::new();
     let o = b.ok(&["set", "still-water", "--mode", "dark"]);

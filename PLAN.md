@@ -39,6 +39,7 @@ Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all
 - [ ] Any value can be overridden per product. Check: a `[surface.*]` override changes only that product
 - [x] Unreadable themes are refused. Check: contrast tests on every built-in and surface
 - [ ] Keys, motion and behavior are configurable from one file, by people and by agents, with undo and a recovery key. Check: `spaces/spec/config.md` conformance across products
+- [ ] Voice reads the theme. Check: `polycarp theme set still-water` changes the installed app within 2 seconds, read back on a real Mac
 - [ ] Site passes on phone and desktop, in every built-in theme and both modes. Check: `design_check.js` plus screenshots at 390 and 1280
 - [ ] Docs cover install, every command, every setting and theming, for each device. Check: every command in `--help` appears in the docs, tested
 - [ ] Accessibility: keyboard, screen reader, reduced motion and text size on each surface. Check: per-surface checklist with evidence
