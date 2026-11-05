@@ -34,7 +34,7 @@ import { type EnrollHooks, type EnrollResult, enrollDevice, HubCodeError, LinkEr
 import { configDir, DEFAULT_GRANT, mintApprovalCode, passcodeSet } from "./oauth.ts";
 import { SCOPES } from "./remote.ts";
 import { loadRemoteConfig, remoteFile } from "./remote-setup.ts";
-import { isAccent, isMode, loadTheme, PRESETS, saveTheme } from "./theme.ts";
+import { isAccent, isMode, loadPolycarpPayload, loadTheme, PRESETS, saveTheme } from "./theme.ts";
 
 // ---------- parsing ----------
 
@@ -51,6 +51,12 @@ export type ParsedConnect = { ok: true; id: number; call: ConnectCall } | { ok: 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** `params` must hold only these keys. Returns a sentence when it holds another. */
+/** The status field for a Polycarp theme in force; nothing when there is none. */
+function polycarpField(): { polycarp?: Record<string, unknown> } {
+	const polycarp = loadPolycarpPayload();
+	return polycarp ? { polycarp } : {};
+}
+
 function onlyKeys(params: Record<string, unknown>, allowed: string[]): string | undefined {
 	const extra = Object.keys(params).filter((k) => !allowed.includes(k));
 	return extra.length ? `Unexpected field ${JSON.stringify(extra[0].slice(0, 30))}.` : undefined;
@@ -276,6 +282,7 @@ export class ConnectService {
 			...(link ? { link: { hubUrl: link.hubUrl, name: link.name, online: linkOnline(readLinkLive(), this.now()), busy: link.busy === true, manage: link.manage } } : {}),
 			...(devices ? { hub: { devices } } : {}),
 			theme: loadTheme(),
+			...polycarpField(),
 			...(route === "none" && !problems.length ? { joinScopes: DEFAULT_GRANT.map((id) => ({ id, what: SCOPES[id]?.what ?? id })) } : {}),
 			...(problems.length ? { problem: problems[0] } : {}),
 		};

@@ -109,3 +109,185 @@ test("the pages' focus ring and control edges reach 3:1 on the page and the card
 		}
 	}
 });
+
+// ---------- the Polycarp theme ----------
+
+const poly = await loadTs('export { loadPolycarpTheme, loadPolycarpPayload, polycarpThemeFile, polycarpConfigDir, themeCss, pageCss as pageCssDefault, runTheme, saveTheme } from "@src/theme.ts";');
+const fixtureDir = new URL("../../test/fixtures/polycarp/", import.meta.url);
+const BUILT_INS = ["polycarp", "still-water", "evening", "parchment", "blocks", "calm"];
+const fixture = (name) => JSON.parse(readFileSync(new URL(`${name}.json`, fixtureDir), "utf8"));
+
+/** Run `fn` with the Polycarp and Tabkyra config folders pointed at fresh temp folders; `file` is the theme.json text, or null for none. */
+async function withPolycarp(file, fn) {
+	const { mkdirSync, writeFileSync } = await import("node:fs");
+	const dir = tempRoot("tabkyra-polycarp-");
+	const saved = { p: process.env.POLYCARP_CONFIG_DIR, t: process.env.TABKYRA_CONFIG_DIR };
+	process.env.POLYCARP_CONFIG_DIR = `${dir}/polycarp`;
+	process.env.TABKYRA_CONFIG_DIR = `${dir}/tabkyra`;
+	if (file !== null) {
+		mkdirSync(`${dir}/polycarp/current`, { recursive: true });
+		writeFileSync(`${dir}/polycarp/current/theme.json`, typeof file === "string" ? file : JSON.stringify(file));
+	}
+	try {
+		return await fn(dir);
+	} finally {
+		for (const [k, v] of [["POLYCARP_CONFIG_DIR", saved.p], ["TABKYRA_CONFIG_DIR", saved.t]]) {
+			if (v === undefined) delete process.env[k];
+			else process.env[k] = v;
+		}
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+function say(fn) {
+	const lines = [];
+	const log = console.log;
+	console.log = (...a) => lines.push(a.join(" "));
+	try {
+		fn();
+	} finally {
+		console.log = log;
+	}
+	return lines.join("\n");
+}
+
+test("all six built-in Polycarp themes load and map their roles to the palette", async () => {
+	for (const name of BUILT_INS) {
+		const file = fixture(name);
+		await withPolycarp(file, () => {
+			const t = poly.loadPolycarpTheme();
+			assert.ok(t, name);
+			assert.equal(t.name, name);
+			for (const mode of ["light", "dark"]) {
+				const c = file.surfaces.browser[mode];
+				assert.deepEqual(t.palettes[mode], { bg: c.background, panel: c.surface, text: c.foreground, muted: c.muted, border: c.border, accent: c.accent, accentText: c.on_accent, danger: c.urgent });
+			}
+		});
+	}
+});
+
+test("the config folder is POLYCARP_CONFIG_DIR when absolute, else XDG_CONFIG_HOME/polycarp when absolute, else ~/.config/polycarp", () => {
+	const keep = { p: process.env.POLYCARP_CONFIG_DIR, x: process.env.XDG_CONFIG_HOME };
+	try {
+		process.env.POLYCARP_CONFIG_DIR = "/abs/poly";
+		assert.equal(poly.polycarpConfigDir(), "/abs/poly");
+		process.env.POLYCARP_CONFIG_DIR = "relative/poly";
+		process.env.XDG_CONFIG_HOME = "/abs/xdg";
+		assert.equal(poly.polycarpConfigDir(), "/abs/xdg/polycarp");
+		process.env.XDG_CONFIG_HOME = "rel-xdg";
+		assert.match(poly.polycarpConfigDir(), /[\\/]\.config[\\/]polycarp$|Polycarp$/);
+		assert.match(poly.polycarpThemeFile(), /current[\\/]theme\.json$/);
+	} finally {
+		for (const [k, v] of [["POLYCARP_CONFIG_DIR", keep.p], ["XDG_CONFIG_HOME", keep.x]]) {
+			if (v === undefined) delete process.env[k];
+			else process.env[k] = v;
+		}
+	}
+});
+
+test("a missing or invalid Polycarp file means no theme, never a crash", async () => {
+	const good = fixture("still-water");
+	const edit = (fn) => {
+		const copy = structuredClone(good);
+		fn(copy);
+		return copy;
+	};
+	const bad = {
+		"no file": null,
+		"not json": "{nope",
+		"empty file": "",
+		"an array": "[]",
+		"wrong schema": edit((f) => { f.schema = 2; }),
+		"no browser section": edit((f) => { delete f.surfaces.browser; }),
+		"bad color": edit((f) => { f.surfaces.browser.light.accent = "teal"; }),
+		"short color": edit((f) => { f.surfaces.browser.dark.border = "#fff"; }),
+		"missing color": edit((f) => { delete f.surfaces.browser.dark.urgent; }),
+		"radius too big": edit((f) => { f.surfaces.browser.shape.radius = 65; }),
+		"radius fraction": edit((f) => { f.surfaces.browser.shape.radius = 4.5; }),
+		"size too small": edit((f) => { f.surfaces.browser.type.size = 9; }),
+		"duration too long": edit((f) => { f.surfaces.browser.motion.slow = 1001; }),
+		"duration as text": edit((f) => { f.surfaces.browser.motion.fast = "120"; }),
+		"reduced as text": edit((f) => { f.surfaces.browser.motion.reduced = "true"; }),
+		"bad mode": edit((f) => { f.mode = "sepia"; }),
+		"bad name": edit((f) => { f.name = "Still Water"; }),
+		"font with url": edit((f) => { f.surfaces.browser.type.ui = "url(https://evil.example/x)"; }),
+		"font with brace": edit((f) => { f.surfaces.browser.type.display = "Georgia}body{display:none"; }),
+		"font with semicolon": edit((f) => { f.surfaces.browser.type.mono = "monospace; color:red"; }),
+		"font with tag in quotes": edit((f) => { f.surfaces.browser.type.ui = '"</style>", serif'; }),
+		"font with comment": edit((f) => { f.surfaces.browser.type.ui = '"a/*b", serif'; }),
+		"font unclosed quote": edit((f) => { f.surfaces.browser.type.ui = '"Georgia, serif'; }),
+		"font empty": edit((f) => { f.surfaces.browser.type.ui = ""; }),
+		"easing script": edit((f) => { f.surfaces.browser.motion.easing = "ease; x"; }),
+		"easing out of range": edit((f) => { f.surfaces.browser.motion.easing = "cubic-bezier(2, 0, 0, 1)"; }),
+	};
+	for (const [label, file] of Object.entries(bad)) {
+		await withPolycarp(file, () => {
+			assert.equal(poly.loadPolycarpTheme(), undefined, label);
+			assert.equal(poly.loadPolycarpPayload(), undefined, label);
+			assert.doesNotMatch(poly.pageCssDefault(), /evil|undefined/, label);
+		});
+	}
+	await withPolycarp(good, () => assert.ok(poly.loadPolycarpTheme(), "the unedited file is valid"));
+});
+
+test("a directory or an oversized file at the theme path means no theme", async () => {
+	await withPolycarp("x".repeat(300_000), () => assert.equal(poly.loadPolycarpTheme(), undefined));
+	await withPolycarp(null, async (dir) => {
+		const { mkdirSync } = await import("node:fs");
+		mkdirSync(`${dir}/polycarp/current/theme.json`, { recursive: true });
+		assert.equal(poly.loadPolycarpTheme(), undefined);
+	});
+});
+
+test("a Polycarp theme takes priority over the saved choice on every page, and no file leaves the saved choice alone", async () => {
+	const file = fixture("evening");
+	await withPolycarp(null, () => {
+		poly.saveTheme("forest", undefined, "dark");
+		const before = poly.pageCssDefault();
+		assert.match(before, /--accent:#7fd39a/);
+		assert.doesNotMatch(before, new RegExp(file.surfaces.browser.dark.accent));
+	});
+	await withPolycarp(file, () => {
+		poly.saveTheme("forest", undefined, "dark");
+		const css = poly.pageCssDefault();
+		const { light, dark } = file.surfaces.browser;
+		assert.ok(css.includes(`--bg:${light.background}`) && css.includes(`--accent:${dark.accent}`), "both palettes of the Polycarp theme");
+		assert.doesNotMatch(css, /#7fd39a/, "the saved forest preset is not used");
+		assert.match(css, /@media \(prefers-color-scheme:dark\)/, "auto follows the system, not the saved pinned mode");
+		assert.match(css, /body\{font-family:[^}]*font-size:16px\}main\{border-radius:10px\}/);
+		// An explicit choice still draws that choice (the tests and the panel's own preview rely on it).
+		assert.match(poly.themeCss({ preset: "forest" }), /#7fd39a/);
+	});
+});
+
+test("a theme whose mode is light or dark pins the pages", async () => {
+	for (const mode of ["light", "dark"]) {
+		const file = fixture("calm");
+		file.mode = mode;
+		await withPolycarp(file, () => {
+			const css = poly.themeCss();
+			assert.match(css, new RegExp(`^:root\\{color-scheme:${mode};`));
+			assert.doesNotMatch(css, /prefers-color-scheme/);
+			assert.ok(css.includes(`--bg:${file.surfaces.browser[mode].background}`));
+		});
+	}
+});
+
+test("tabkyra theme list and set say when a Polycarp theme is in force", async () => {
+	await withPolycarp(fixture("parchment"), () => {
+		const list = say(() => assert.equal(poly.runTheme(["list"], false), 0));
+		assert.match(list, /Polycarp theme is in force: parchment/);
+		assert.match(list, /polycarp theme set/);
+		const set = say(() => assert.equal(poly.runTheme(["set", "rose"], false), 0));
+		assert.match(set, /Theme is rose/);
+		assert.match(set, /Polycarp theme parchment is in force and takes priority/);
+		const json = JSON.parse(say(() => poly.runTheme(["list"], true)));
+		assert.deepEqual(json.polycarp, { name: "parchment", title: "Parchment", mode: "auto" });
+		assert.equal(json.preset, "rose", "the saved choice is kept");
+	});
+	await withPolycarp(null, () => {
+		const list = say(() => poly.runTheme(["list"], false));
+		assert.doesNotMatch(list, /Polycarp/);
+		assert.doesNotMatch(say(() => poly.runTheme(["set", "rose"], false)), /Polycarp/);
+	});
+});
