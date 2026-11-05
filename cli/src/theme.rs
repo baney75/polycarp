@@ -1512,6 +1512,8 @@ pub(crate) struct Out {
     data: Json,
     text: String,
     warnings: Vec<String>,
+    /// True when the warnings say the default theme is being used instead.
+    fallback: bool,
     notes: Vec<String>,
 }
 
@@ -1521,11 +1523,18 @@ impl Out {
             data,
             text: text.into(),
             warnings: Vec::new(),
+            fallback: false,
             notes: Vec::new(),
         }
     }
     fn warn(mut self, w: Vec<String>) -> Out {
+        self.fallback |= !w.is_empty();
         self.warnings.extend(w);
+        self
+    }
+    /// A warning that is not about falling back to the default theme.
+    fn caution(mut self, w: String) -> Out {
+        self.warnings.push(w);
         self
     }
     fn with(mut self, extra: Json) -> Out {
@@ -2123,8 +2132,23 @@ pub(crate) fn op_get(c: &Ctx, path: &str, name: Option<&str>) -> Res {
 
 /// Writes the files for whatever state is now in force, and says what is in force.
 fn finish(cfg: &Cfg) -> Res {
+    finish_with(cfg, false)
+}
+
+/// With `soft`, a failure to write the files in `current/` is a warning, not an error.
+fn finish_with(cfg: &Cfg, soft: bool) -> Res {
     let eff = effective(cfg);
-    let wrote = write_outputs(cfg, &eff).map_err(io_err)?;
+    let mut late = None;
+    let wrote = match write_outputs(cfg, &eff) {
+        Ok(w) => w,
+        Err(e) if soft => {
+            late = Some(format!(
+                "the settings are saved, but the files in current/ were not refreshed: {e}"
+            ));
+            Vec::new()
+        }
+        Err(e) => return Err(io_err(e)),
+    };
     let mut text = format!("theme: {}\nmode: {}\n", eff.state.theme, eff.state.mode);
     if eff.state.accent_light.is_some() || eff.state.accent_dark.is_some() {
         text.push_str(&format!(
@@ -2149,7 +2173,11 @@ fn finish(cfg: &Cfg) -> Res {
         "note": NOTE,
         "next": "Look at it with theme preview. If the person dislikes it, run theme undo.",
     });
-    Ok(Out::new(data, text).warn(eff.problems))
+    let out = Out::new(data, text).warn(eff.problems);
+    Ok(match late {
+        Some(w) => out.caution(w),
+        None => out,
+    })
 }
 
 /// Records the old files for undo, writes a theme file if given, writes the state if given,
@@ -2954,8 +2982,32 @@ pub(crate) fn op_history(c: &Ctx) -> Res {
     Ok(Out::new(json!({"entries": entries}), text))
 }
 
+/// Always gets back to the defaults. Once `config.toml` is written, a lock, history or output
+/// failure is a warning: recovery must not depend on any of them.
 pub(crate) fn op_reset(c: &Ctx) -> Res {
-    commit(c, Some(&State::default_state()), "theme reset", None)
+    let mut warnings = Vec::new();
+    let _lock = match Lock::acquire(&c.cfg) {
+        Ok(l) => Some(l),
+        Err(e) => {
+            warnings.push(format!(
+                "could not take the lock, so another change may be running: {}",
+                e.message
+            ));
+            None
+        }
+    };
+    if let Err(e) = record(&c.cfg, &c.caller, "theme reset", None) {
+        warnings.push(format!(
+            "this reset was not recorded in history, so undo cannot bring it back: {e}"
+        ));
+    }
+    let st = State::default_state();
+    write_atomic(&c.cfg.file(), state_table(&c.cfg, &st).as_bytes()).map_err(io_err)?;
+    let mut out = finish_with(&c.cfg, true)?;
+    for w in warnings {
+        out = out.caution(w);
+    }
+    Ok(out)
 }
 
 pub(crate) fn op_schema() -> Res {
@@ -3266,7 +3318,7 @@ fn present(r: Res, json: bool) -> i32 {
             for p in &out.warnings {
                 eprintln!("polycarp: warning: {p}");
             }
-            if !out.warnings.is_empty() {
+            if out.fallback {
                 eprintln!(
                     "polycarp: warning: using the default theme (polycarp, auto, no accent) instead"
                 );

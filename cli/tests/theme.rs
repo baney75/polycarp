@@ -1466,6 +1466,31 @@ fn reset_and_undo_work_with_a_corrupt_user_theme_and_corrupt_state() {
 }
 
 #[test]
+fn reset_works_when_history_and_current_cannot_be_written() {
+    let b = Box::new();
+    b.ok(&["set", "evening"]);
+    // A plain file where each folder should be, and a lock someone else holds.
+    fs::remove_dir_all(b.cfg().join("history")).unwrap();
+    fs::write(b.cfg().join("history"), "in the way").unwrap();
+    fs::remove_dir_all(b.cfg().join("current")).unwrap();
+    fs::write(b.cfg().join("current"), "in the way").unwrap();
+    fs::write(b.cfg().join(".lock"), "1").unwrap();
+    let (c, v) = b.jrun(&["reset"]);
+    assert_eq!(c, 0, "{v}");
+    let w = v["data"]["warnings"].to_string();
+    assert!(w.contains("not recorded in history"), "{w}");
+    assert!(w.contains("not refreshed"), "{w}");
+    assert!(w.contains("could not take the lock"), "{w}");
+    assert_eq!(b.json(&["current", "--json"])["theme"], "polycarp");
+    let text = fs::read_to_string(b.state_file()).unwrap();
+    assert!(text.contains("theme = \"polycarp\""), "{text}");
+    // On a terminal the warnings do not claim the default theme was swapped in.
+    let o = b.run(&["theme", "reset"]);
+    assert_eq!(code(&o), 0);
+    assert!(!err(&o).contains("using the default theme"), "{}", err(&o));
+}
+
+#[test]
 fn set_replaces_a_broken_state_file_and_says_so() {
     let b = Box::new();
     fs::create_dir_all(b.cfg()).unwrap();
