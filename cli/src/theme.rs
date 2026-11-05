@@ -3102,7 +3102,7 @@ pub(crate) fn op_undo(c: &Ctx) -> Res {
         io_err(format!("{why}. Nothing was undone"))
     };
     match &new_config {
-        Some(b) => write_atomic(&c.cfg.file(), b).map_err(&rollback)?,
+        Some(b) => write_atomic(&c.cfg.file(), b).map_err(rollback)?,
         None => match fs::remove_file(c.cfg.file()) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
                 return Err(rollback(format!(
