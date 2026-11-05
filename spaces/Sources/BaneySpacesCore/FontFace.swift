@@ -26,13 +26,26 @@ public enum FontFace {
     /// nearest `weight`. Nil when none is installed.
     public static func resolve(families: [String], weight: TextWeight, size: Double) -> CTFont? {
         let have = installedFamilies
-        guard let family = families.first(where: have.contains) else { return nil }
+        guard let family = families.first(where: { $0 == systemSerif || have.contains($0) }) else { return nil }
+        if family == systemSerif { return systemSerifFace(weight: weight, size: size) }
         let query = CTFontDescriptorCreateWithAttributes([kCTFontFamilyNameAttribute: family] as CFDictionary)
         guard let faces = CTFontDescriptorCreateMatchingFontDescriptors(query, nil) as? [CTFontDescriptor] else { return nil }
         let upright = faces.filter { !isItalic($0) }
         let want = trait(weight)
         let best = (upright.isEmpty ? faces : upright).min { abs(weightTrait($0) - want) < abs(weightTrait($1) - want) }
         return best.map { CTFontCreateWithFontDescriptor($0, CGFloat(size), nil) }
+    }
+
+    /// A stand-in family name in a list for "the system's serif face" (New York), which is no installed family
+    /// and has no name Core Text lists. It always resolves, so a stack ending in `serif` draws serif.
+    public static let systemSerif = ".AppleSystemUIFontSerif"
+
+    /// The system font in its serif design, at the weight nearest `weight`.
+    public static func systemSerifFace(weight: TextWeight, size: Double) -> CTFont? {
+        guard let ui = CTFontCreateUIFontForLanguage(.system, CGFloat(size), nil) else { return nil }
+        let traits: [CFString: Any] = ["NSCTFontUIFontDesignTrait" as CFString: "NSCTFontUIFontDesignSerif", kCTFontWeightTrait: trait(weight)]
+        let d = CTFontDescriptorCreateCopyWithAttributes(CTFontCopyFontDescriptor(ui), [kCTFontTraitsAttribute: traits] as CFDictionary)
+        return CTFontCreateWithFontDescriptor(d, CGFloat(size), nil)
     }
 
     /// A face's weight on Core Text's scale.

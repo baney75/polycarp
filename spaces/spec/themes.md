@@ -115,7 +115,7 @@ with these values:
 | `shadow` | opacity of BaneySpaces' own shadow (24 radius, 10 down); 0 is none |
 | `density` | gap, padding, tile: compact 6/8/56, regular 8/10/64, spacious 10/12/72 |
 | `indicator` | `dot`, `bar`, `number-block` |
-| `type.ui`, `size`, `weight` | family (the system font when the stack starts with a system or sans name, the monospace font when it starts with a monospace one, else the first installed name); base size is `size` x 0.75 (16 draws 12); `weight` 500 and up draws medium and semibold as asked, below that regular |
+| `type.ui`, `size`, `weight` | family (the system font when the stack starts with a system or sans name, the monospace font when it starts with a monospace one, else the first installed name; when none is installed, the system serif if the first generic name in the stack is `serif` or `ui-serif`, so a stack of only `serif` draws the system serif); base size is `size` x 0.75 (16 draws 12); `weight` 500 and up draws medium and semibold as asked, below that regular |
 | `motion.normal`, `fast` | panel and list in, and out, row hover |
 | `motion.scale_from` | dock and list scale; 1.0 means fades only and no lift |
 | `motion.reduced` | every duration 0 and no scaling |

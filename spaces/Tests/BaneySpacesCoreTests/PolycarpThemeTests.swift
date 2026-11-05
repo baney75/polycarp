@@ -151,9 +151,28 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertEqual(try theme("ui-monospace, Menlo").spec.font.family, "monospace")
         let own = try theme("\"Iowan Old Style\", Georgia, serif", size: 20, weight: 600)
         XCTAssertEqual(own.spec.font, .init(family: PolycarpTheme.fontKey, size: 15, weight: "medium"))
-        XCTAssertEqual(own.look(systemDark: true).families(for: PolycarpTheme.fontKey), ["Iowan Old Style", "Georgia"])
+        XCTAssertEqual(own.look(systemDark: true).families(for: PolycarpTheme.fontKey), ["Iowan Old Style", "Georgia", FontFace.systemSerif])
         XCTAssertEqual(own.look(systemDark: true).families(for: "monospace"), ThemeCatalog.shared.fontFamilies("monospace"))
         XCTAssertNil(try theme("system-ui").fontFamilies)
+    }
+
+    func testASerifStackResolvesToANativeSerifFont() throws {
+        func resolved(_ ui: String) throws -> String {
+            let t = try parse(edited { var t = $0["type"] as! [String: Any]; t["ui"] = ui; $0["type"] = t }).get()
+            XCTAssertEqual(t.spec.font.family, PolycarpTheme.fontKey, ui)
+            let font = try XCTUnwrap(FontFace.resolve(families: t.look(systemDark: false).families(for: PolycarpTheme.fontKey), weight: .regular, size: 13), ui)
+            return CTFontCopyFamilyName(font) as String
+        }
+        // The resolved font, not the key: New York is the system's serif; sans resolves to something else.
+        for ui in ["serif", "ui-serif", "ui-serif, serif", "No Such Font 123, serif"] {
+            XCTAssertEqual(try resolved(ui), FontFace.systemSerif, ui)
+        }
+        XCTAssertNotEqual(FontFace.systemSerif, CTFontCopyFamilyName(try XCTUnwrap(CTFontCreateUIFontForLanguage(.system, 13, nil))) as String)
+        XCTAssertEqual(try resolved("ui-serif, Georgia, serif"), "Georgia")
+        // Only a serif first generic name asks for it: a sans stack that merely ends in serif's cousin does not.
+        let sans = try parse(edited { var t = $0["type"] as! [String: Any]; t["ui"] = "Nope Nope, sans-serif, serif"; $0["type"] = t }).get()
+        XCTAssertEqual(sans.fontFamilies, ["Nope Nope"])
+        XCTAssertEqual(try parse(edited { var t = $0["type"] as! [String: Any]; t["ui"] = "system-ui, serif"; $0["type"] = t }).get().spec.font.family, "system-sans")
     }
 
     // MARK: Strict checking
