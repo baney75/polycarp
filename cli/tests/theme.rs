@@ -1274,6 +1274,96 @@ fn history_survives_the_end_marker_and_newlines_in_titles_and_callers() {
 }
 
 #[test]
+fn undo_puts_back_only_appearance_and_keeps_other_tables() {
+    let b = Box::new();
+    // The file starts with another table and no [appearance].
+    fs::create_dir_all(b.cfg()).unwrap();
+    fs::write(b.state_file(), "[other]\nkeep = \"me\"\n").unwrap();
+    b.ok(&["set", "evening"]);
+    // Something else adds a table between the change and the undo.
+    let mut live = fs::read_to_string(b.state_file()).unwrap();
+    live.push_str("\n[extra]\nx = 2\n");
+    fs::write(b.state_file(), live).unwrap();
+    b.ok(&["set", "calm"]);
+    b.ok(&["undo"]);
+    let t: toml::Table = fs::read_to_string(b.state_file()).unwrap().parse().unwrap();
+    assert_eq!(t["appearance"]["theme"].as_str(), Some("evening"));
+    assert_eq!(t["other"]["keep"].as_str(), Some("me"));
+    assert_eq!(t["extra"]["x"].as_integer(), Some(2));
+    // Undoing the first change removes [appearance] and nothing else.
+    b.ok(&["undo"]);
+    let t: toml::Table = fs::read_to_string(b.state_file()).unwrap().parse().unwrap();
+    assert!(t.get("appearance").is_none(), "{t:?}");
+    assert_eq!(t["other"]["keep"].as_str(), Some("me"));
+    assert_eq!(t["extra"]["x"].as_integer(), Some(2));
+}
+
+#[test]
+fn undo_of_a_first_change_removes_appearance_not_other_tables() {
+    let b = Box::new();
+    b.ok(&["set", "evening"]);
+    assert!(b.history_count() == 1);
+    let mut live = fs::read_to_string(b.state_file()).unwrap();
+    live.push_str("\n[extra]\nx = 2\n");
+    fs::write(b.state_file(), live).unwrap();
+    b.ok(&["undo"]);
+    let t: toml::Table = fs::read_to_string(b.state_file()).unwrap().parse().unwrap();
+    assert!(t.get("appearance").is_none());
+    assert_eq!(t["extra"]["x"].as_integer(), Some(2));
+}
+
+#[test]
+fn an_unreadable_config_is_an_io_error_not_an_absent_file() {
+    let b = Box::new();
+    // A folder where the file should be: reading it fails, and it does not simply "not exist".
+    fs::create_dir_all(b.state_file()).unwrap();
+    let (c, v) = b.jrun(&["set", "evening"]);
+    assert_eq!(c, 1, "{v}");
+    assert_eq!(v["error"]["code"], "io_error", "{v}");
+    assert_eq!(b.history_count(), 0, "nothing may be recorded as absent");
+}
+
+#[test]
+fn undo_refuses_a_damaged_history_entry_and_changes_nothing() {
+    let b = Box::new();
+    b.ok(&["set", "evening"]);
+    b.ok(&["set", "calm"]);
+    let newest = b.json(&["history", "--json"])["entries"][0]["file"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let before = fs::read(b.state_file()).unwrap();
+    for bad in [
+        "not a history file at all\n".to_string(),
+        // The header promises theme bytes that are not there.
+        "# polycarp-history 1\n# time = t\n# caller = \"user\"\n# action = \"x\"\n# theme_file = mine\n# theme_bytes = 500\n# ---\n[appearance]\n".to_string(),
+    ] {
+        fs::write(&newest, bad).unwrap();
+        let (c, v) = b.jrun(&["undo"]);
+        assert_eq!(c, 1, "{v}");
+        assert_eq!(v["error"]["code"], "io_error", "{v}");
+        assert!(v["error"]["message"].as_str().unwrap().contains("damaged"), "{v}");
+        assert_eq!(fs::read(b.state_file()).unwrap(), before);
+        assert!(!b.cfg().join("themes").join("mine.toml").exists());
+    }
+}
+
+#[test]
+fn undo_says_who_made_the_change_it_undid() {
+    let b = Box::new();
+    let o = b.run_as("agent:claude-code", &["theme", "set", "evening"]);
+    assert_eq!(code(&o), 0);
+    let text = b.ok(&["undo"]);
+    assert!(
+        text.starts_with("undid: theme set evening (made by agent:claude-code, "),
+        "{text}"
+    );
+    b.run_as("agent:other", &["theme", "set", "calm"]);
+    let v = b.json(&["undo", "--json"]);
+    assert_eq!(v["undid"]["caller"], "agent:other");
+}
+
+#[test]
 fn history_keeps_the_last_50() {
     let b = Box::new();
     for i in 0..56 {

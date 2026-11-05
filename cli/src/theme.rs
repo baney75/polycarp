@@ -1256,6 +1256,8 @@ pub(crate) fn clean_caller(raw: &str) -> String {
 
 struct Hist {
     file: PathBuf,
+    /// False when the file has no readable header, or its theme part is cut short.
+    valid: bool,
     time: String,
     caller: String,
     action: String,
@@ -1303,6 +1305,7 @@ fn split_header(bytes: &[u8]) -> Option<(Vec<&[u8]>, usize)> {
 fn parse_hist(file: PathBuf, bytes: Vec<u8>) -> Hist {
     let mut h = Hist {
         file,
+        valid: false,
         time: String::new(),
         caller: String::new(),
         action: String::new(),
@@ -1336,7 +1339,8 @@ fn parse_hist(file: PathBuf, bytes: Vec<u8>) -> Hist {
         }
     }
     let mut body = bytes[body_at..].to_vec();
-    if theme_bytes > 0 && theme_bytes <= body.len() {
+    h.valid = theme_bytes <= body.len() && (h.theme_name.is_some() || theme_bytes == 0);
+    if theme_bytes > 0 && h.valid {
         h.theme_body = body.split_off(body.len() - theme_bytes);
     }
     h.body = body;
@@ -1365,11 +1369,21 @@ fn read_history(cfg: &Cfg) -> Vec<Hist> {
         .collect()
 }
 
+/// The file's bytes, None only when it does not exist. Any other failure is an error, so a
+/// file that could not be read is never taken for one that was not there.
+fn read_or_absent(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    match fs::read(path) {
+        Ok(b) => Ok(Some(b)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("could not read {}: {e}", path.display())),
+    }
+}
+
 /// Keeps the current `config.toml` in `history/` before a change, and trims to the last 50.
 /// With `theme`, the user theme file of that name is kept too, so undo can put it back.
 fn record(cfg: &Cfg, who: &str, action: &str, theme: Option<&str>) -> Result<(), String> {
     let (compact, iso) = stamps();
-    let current = fs::read(cfg.file()).ok();
+    let current = read_or_absent(&cfg.file())?;
     let action: String = action.chars().filter(|c| !c.is_control()).collect();
     let mut data = format!(
         "# polycarp-history 1\n# time = {iso}\n# caller = {}\n# action = {}\n",
@@ -1383,12 +1397,12 @@ fn record(cfg: &Cfg, who: &str, action: &str, theme: Option<&str>) -> Result<(),
     let mut theme_body = Vec::new();
     if let Some(name) = theme {
         data.extend_from_slice(format!("# theme_file = {name}\n").as_bytes());
-        match fs::read(cfg.theme_path(name)) {
-            Ok(b) => {
+        match read_or_absent(&cfg.theme_path(name))? {
+            Some(b) => {
                 data.extend_from_slice(format!("# theme_bytes = {}\n", b.len()).as_bytes());
                 theme_body = b;
             }
-            Err(_) => data.extend_from_slice(b"# theme_file_absent = true\n"),
+            None => data.extend_from_slice(b"# theme_file_absent = true\n"),
         }
     }
     data.extend_from_slice(MARK);
@@ -2713,46 +2727,127 @@ pub(crate) fn op_export(c: &Ctx, format: &str, name: Option<&str>, surface: Opti
     Ok(out.warn(problems))
 }
 
+/// The bytes `config.toml` should hold after undoing `last`: the live file with only its
+/// `[appearance]` table put back as it was. None means the file should not exist.
+fn undone_config(live: Option<&[u8]>, last: &Hist) -> Option<Vec<u8>> {
+    let parse = |b: &[u8]| {
+        std::str::from_utf8(b)
+            .ok()
+            .and_then(|t| t.parse::<Table>().ok())
+    };
+    let live_table = match live {
+        None => Table::new(),
+        Some(b) => match parse(b) {
+            Some(t) => t,
+            // The live file is not TOML: there is nothing in it to keep.
+            None => return (!last.absent).then(|| last.body.clone()),
+        },
+    };
+    let mut others = live_table;
+    others.remove("appearance");
+    let snapshot = if last.absent {
+        Some(Table::new())
+    } else {
+        parse(&last.body)
+    };
+    let Some(snap) = snapshot else {
+        // The old file was not TOML either; put its bytes back as they were.
+        return Some(last.body.clone());
+    };
+    if others.is_empty() {
+        // Only [appearance] was there, so the old file comes back byte for byte.
+        return (!last.absent).then(|| last.body.clone());
+    }
+    if let Some(app) = snap.get("appearance") {
+        others.insert("appearance".into(), app.clone());
+    }
+    Some(toml::to_string(&others).unwrap_or_default().into_bytes())
+}
+
+/// Puts one file back to what it held, for a rollback. Best effort.
+fn put_back(path: &Path, was: &Option<Vec<u8>>) {
+    match was {
+        Some(b) => {
+            let _ = write_atomic(path, b);
+        }
+        None => {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 pub(crate) fn op_undo(c: &Ctx) -> Res {
     let hist = read_history(&c.cfg);
     let Some(last) = hist.first() else {
         return Err(ApiErr::new("nothing_to_undo", "nothing to undo"));
     };
+    if !last.valid {
+        return Err(io_err(format!(
+            "the newest history entry {} is damaged, so nothing was undone. Delete that file to \
+             go back further, or run `polycarp theme reset`",
+            last.file.display()
+        )));
+    }
+    let live = read_or_absent(&c.cfg.file()).map_err(io_err)?;
+    let new_config = undone_config(live.as_deref(), last);
+
+    // Everything is worked out. Now write; if a later step fails, the earlier ones are undone,
+    // so the folder is never left half-way.
+    let mut theme_was: Option<(PathBuf, Option<Vec<u8>>)> = None;
     if let Some(name) = last
         .theme_name
         .as_deref()
         .filter(|n| valid_name(n) && !is_builtin(n))
     {
         let p = c.cfg.theme_path(name);
-        if last.theme_absent {
+        let was = read_or_absent(&p).map_err(io_err)?;
+        let r = if last.theme_absent {
             match fs::remove_file(&p) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(io_err(format!("could not remove {}: {e}", p.display()))),
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                    Err(format!("could not remove {}: {e}", p.display()))
+                }
+                _ => Ok(()),
             }
         } else {
-            write_atomic(&p, &last.theme_body).map_err(io_err)?;
-        }
+            write_atomic(&p, &last.theme_body)
+        };
+        r.map_err(|e| io_err(format!("{e}. Nothing was undone")))?;
+        theme_was = Some((p, was));
     }
-    if last.absent {
-        match fs::remove_file(c.cfg.file()) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                return Err(io_err(format!(
+    let rollback = |why: String| {
+        if let Some((p, was)) = &theme_was {
+            put_back(p, was);
+        }
+        put_back(&c.cfg.file(), &live);
+        io_err(format!("{why}. Nothing was undone"))
+    };
+    match &new_config {
+        Some(b) => write_atomic(&c.cfg.file(), b).map_err(&rollback)?,
+        None => match fs::remove_file(c.cfg.file()) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(rollback(format!(
                     "could not remove {}: {e}",
                     c.cfg.file().display()
                 )))
             }
-        }
-    } else {
-        write_atomic(&c.cfg.file(), &last.body).map_err(io_err)?;
+            _ => {}
+        },
     }
-    fs::remove_file(&last.file)
-        .map_err(|e| io_err(format!("could not remove {}: {e}", last.file.display())))?;
-    let mut out = finish(&c.cfg)?;
+    if let Err(e) = fs::remove_file(&last.file) {
+        return Err(rollback(format!(
+            "could not remove {}: {e}",
+            last.file.display()
+        )));
+    }
+    let mut out = finish(&c.cfg).map_err(|mut e| {
+        e.message = format!(
+            "the change was undone, but the files in current/ could not be refreshed: {}",
+            e.message
+        );
+        e
+    })?;
     out.text = format!(
-        "undid: {} ({}, {})\n{}",
+        "undid: {} (made by {}, {})\n{}",
         last.action, last.caller, last.time, out.text
     );
     Ok(out.with(json!({"undid": {
