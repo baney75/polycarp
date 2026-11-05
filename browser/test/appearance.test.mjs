@@ -338,3 +338,16 @@ test("the payload the helper sends carries only Tabkyra's section, and the panel
 	assert.deepEqual(parsePolycarpTheme(payload), parsePolycarpTheme(file));
 	assert.equal(polycarpPayload({ ...file, schema: 3 }), undefined);
 });
+
+test("the Appearance tab says which Polycarp theme is in use, how to change it, and keeps every control", () => {
+	const tab = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "dialogs", "AppearanceTab.ts"), "utf8");
+	assert.match(tab, /Polycarp theme in use: \$\{polycarp\.title\}/);
+	assert.match(tab, /data-polycarp-theme=\$\{polycarp\.name\}/);
+	assert.match(tab, /polycarp theme set &lt;name&gt;/);
+	assert.match(tab, /onPolycarp\(\(\) => this\.requestUpdate\(\)\)/, "the tab redraws when the theme changes");
+	// Dimmed, not removed: the presets, the accent box and the mode radios are all still drawn.
+	assert.match(tab, /class="space-y-2 \$\{overridden\}" role="group" aria-label="Color preset"/);
+	assert.match(tab, /id="tk-accent-text"/);
+	assert.match(tab, /name="tk-mode"/);
+	assert.match(tab, /modeOverridden/);
+});
