@@ -4,6 +4,8 @@ This repo holds three apps and one small command (`cli/`) with their full histor
 rules; read the one for the directory you touch before you change it. No renaming of the products
 yet.
 
+`cli/` has its own rules in `cli/AGENTS.md`.
+
 ## Done checks
 
 Run each from its directory.

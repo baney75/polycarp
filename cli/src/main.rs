@@ -4,8 +4,10 @@
 use std::env;
 use std::ffi::OsString;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 struct Tool {
     /// Subcommand name.
@@ -135,8 +137,21 @@ fn is_self(p: &Path) -> bool {
     fs::canonicalize(p).map(|c| c == me).unwrap_or(false)
 }
 
+/// True when `p` sits directly in the current folder, through any symlink.
+fn in_current_folder(p: &Path) -> bool {
+    let Ok(cwd) = env::current_dir().and_then(fs::canonicalize) else {
+        return false;
+    };
+    let parent = fs::canonicalize(p)
+        .ok()
+        .and_then(|c| c.parent().map(Path::to_path_buf));
+    let named_parent = p.parent().and_then(|d| fs::canonicalize(d).ok());
+    parent.as_deref() == Some(cwd.as_path()) || named_parent.as_deref() == Some(cwd.as_path())
+}
+
+/// The one gate every candidate passes, from an override, PATH or a fixed spot.
 fn usable(p: &Path) -> bool {
-    is_executable_file(p) && !is_self(p)
+    p.is_absolute() && is_executable_file(p) && !is_self(p) && !in_current_folder(p)
 }
 
 /// First match wins: environment override, PATH, fixed spots.
@@ -152,10 +167,6 @@ fn find(tool: &Tool) -> Option<PathBuf> {
     };
     if let Some(path) = env::var_os("PATH") {
         for dir in env::split_paths(&path) {
-            // Empty and relative entries would run files from the current folder.
-            if dir.as_os_str().is_empty() || !dir.is_absolute() {
-                continue;
-            }
             let cand = dir.join(&file);
             if usable(&cand) {
                 return Some(cand);
@@ -165,6 +176,7 @@ fn find(tool: &Tool) -> Option<PathBuf> {
     for spot in tool.spots {
         let cand = match spot.strip_prefix("~/") {
             Some(rest) => match home() {
+                Some(h) if cfg!(windows) => h.join(format!("{rest}.exe")),
                 Some(h) => h.join(rest),
                 None => continue,
             },
@@ -195,8 +207,31 @@ fn run(mut cmd: Command) -> i32 {
     126
 }
 
+#[cfg(windows)]
+mod console {
+    extern "system" {
+        fn SetConsoleCtrlHandler(
+            handler: Option<unsafe extern "system" fn(u32) -> i32>,
+            add: i32,
+        ) -> i32;
+    }
+    unsafe extern "system" fn leave_it_to_the_child(_event: u32) -> i32 {
+        1
+    }
+    /// Ctrl-C reaches both processes. Stay alive so the child decides and its exit code comes back.
+    /// A real handler, not NULL: NULL's ignore flag would be inherited by the child.
+    pub fn outlive_ctrl_c() {
+        // SAFETY: registers a handler with no captures that touches nothing.
+        unsafe {
+            SetConsoleCtrlHandler(Some(leave_it_to_the_child), 1);
+        }
+    }
+}
+
 #[cfg(not(unix))]
 fn run(mut cmd: Command) -> i32 {
+    #[cfg(windows)]
+    console::outlive_ctrl_c();
     match cmd.status() {
         Ok(s) => s.code().unwrap_or(1),
         Err(err) => {
@@ -212,6 +247,12 @@ fn handoff(tool: &Tool, args: &[OsString]) -> i32 {
     };
     let mut cmd = Command::new(path);
     cmd.args(args);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // What a shell would pass, so usage text and errors read the same.
+        cmd.arg0(tool.exe);
+    }
     run(cmd)
 }
 
@@ -272,8 +313,12 @@ fn doctor() -> i32 {
             Some(p) => {
                 let mut line = format!("{}: {}", tool.sub, p.display());
                 if tool.sub == "browser" {
-                    if let Some(v) = first_version_line(&p) {
-                        line.push_str(&format!(" ({v})"));
+                    match first_version_line(&p) {
+                        Some(v) => line.push_str(&format!(" ({v})")),
+                        None => {
+                            line.push_str(" (found, but --version did not work)");
+                            ok = false;
+                        }
                     }
                 }
                 println!("{line}");
@@ -293,15 +338,31 @@ fn doctor() -> i32 {
     }
 }
 
+/// The tool's version, or None if it can't start, fails, prints nothing or hangs past 10 seconds.
 fn first_version_line(p: &Path) -> Option<String> {
-    let out = Command::new(p)
+    let mut child = Command::new(p)
         .arg("--version")
         .stdin(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .output()
+        .spawn()
         .ok()?;
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
+    let started = Instant::now();
+    loop {
+        match child.try_wait().ok()? {
+            Some(status) if status.success() => break,
+            Some(_) => return None,
+            None if started.elapsed() > Duration::from_secs(10) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+    let mut text = String::new();
+    child.stdout.take()?.read_to_string(&mut text).ok()?;
+    text.lines()
         .next()
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty())

@@ -415,3 +415,122 @@ fn doctor_exits_1_when_one_required_tool_is_missing() {
     assert_eq!(code(&o), 1);
     assert!(out(&o).contains("spaces: not found"));
 }
+
+/// A real compiled stub, so handoff is proven on every system, Windows included.
+fn compiled_stub() -> PathBuf {
+    static STUB: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    STUB.get_or_init(|| {
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("stub");
+        fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join(format!("stub{}", std::env::consts::EXE_SUFFIX));
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/stub.rs");
+        let done = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+            .arg(&src)
+            .arg("-o")
+            .arg(&exe)
+            .status()
+            .unwrap();
+        assert!(done.success(), "the stub must compile");
+        exe
+    })
+    .clone()
+}
+
+#[test]
+fn compiled_stub_gets_exact_args_stdin_and_exit_code() {
+    use std::io::Write as _;
+    let s = Sandbox::new();
+    let mut child = s
+        .cmd(&["spaces", "a b", "say \"hi\"", "", "--flag=1"])
+        .env("POLYCARP_SPACES_BIN", compiled_stub())
+        .env("STUB_EXIT", "37")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"from stdin")
+        .unwrap();
+    let o = child.wait_with_output().unwrap();
+    assert_eq!(code(&o), 37);
+    let text = out(&o);
+    assert!(text.contains("[a b]"), "{text}");
+    assert!(text.contains("[say \"hi\"]"), "{text}");
+    assert!(text.contains("[]"), "{text}");
+    assert!(text.contains("[--flag=1]"), "{text}");
+    assert!(text.contains("stdin:from stdin"), "{text}");
+}
+
+#[test]
+fn relative_override_is_never_run() {
+    let s = Sandbox::new();
+    let name = format!("planted{}", std::env::consts::EXE_SUFFIX);
+    fs::copy(compiled_stub(), s.dir("cwd").join(&name)).unwrap();
+    for value in [format!("./{name}"), name.clone()] {
+        let o = s
+            .cmd(&["spaces", "x"])
+            .env("POLYCARP_SPACES_BIN", &value)
+            .output()
+            .unwrap();
+        assert_eq!(code(&o), 127, "{value}: {}", out(&o));
+        assert!(!out(&o).contains("[x]"), "{value} ran");
+    }
+}
+
+#[test]
+fn absolute_path_to_the_current_folder_is_never_run() {
+    let s = Sandbox::new();
+    let name = format!("baneyspaces{}", std::env::consts::EXE_SUFFIX);
+    fs::copy(compiled_stub(), s.dir("cwd").join(&name)).unwrap();
+    let path = std::env::join_paths([s.dir("cwd")]).unwrap();
+    let o = s.cmd(&["spaces", "x"]).env("PATH", path).output().unwrap();
+    assert_eq!(code(&o), 127, "{}", out(&o));
+    let o = s
+        .cmd(&["spaces", "x"])
+        .env("POLYCARP_SPACES_BIN", s.dir("cwd").join(&name))
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 127, "{}", out(&o));
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_to_the_current_folder_is_never_run() {
+    let s = Sandbox::new();
+    fs::copy(compiled_stub(), s.dir("cwd").join("baneyspaces")).unwrap();
+    let link = s.dir("bin").join("here");
+    std::os::unix::fs::symlink(s.dir("cwd"), &link).unwrap();
+    let o = s.cmd(&["spaces", "x"]).env("PATH", &link).output().unwrap();
+    assert_eq!(code(&o), 127, "{}", out(&o));
+}
+
+#[cfg(unix)]
+#[test]
+fn the_child_sees_its_own_name_as_argv0() {
+    let s = Sandbox::new();
+    let o = s
+        .cmd(&["spaces"])
+        .env("POLYCARP_SPACES_BIN", compiled_stub())
+        .output()
+        .unwrap();
+    assert!(out(&o).contains("argv0:baneyspaces"), "{}", out(&o));
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_says_when_the_browser_tool_is_broken() {
+    let s = Sandbox::new();
+    stub(&s.dir("bin"), "baneyspaces", "exit 0");
+    stub(&s.dir("bin"), "tabkyra", "echo oops; exit 3");
+    let o = s
+        .cmd(&["doctor"])
+        .env("PATH", s.dir("bin"))
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 1, "{}", out(&o));
+    assert!(out(&o).contains("did not work"), "{}", out(&o));
+    assert!(!out(&o).contains("oops"), "{}", out(&o));
+}

@@ -15,7 +15,7 @@ bears much fruit, for apart from me you can do nothing."
 
 ## The command
 
-`polycarp` is one command that hands off to the three apps. The apps must already be installed.
+`polycarp` is one command that hands off to the three apps. The apps must already be installed. Install it with `cargo install --path cli`.
 
 ```
 polycarp spaces ls          # runs baneyspaces ls
