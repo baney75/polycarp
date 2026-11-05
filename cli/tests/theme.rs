@@ -47,7 +47,7 @@ impl Box {
             n
         ));
         let _ = fs::remove_dir_all(&root);
-        for d in ["home", "xdg", "appdata", "cwd"] {
+        for d in ["home", "xdg", "appdata", "cwd", "tmp"] {
             fs::create_dir_all(root.join(d)).unwrap();
         }
         Box { root }
@@ -67,6 +67,9 @@ impl Box {
             .env("USERPROFILE", self.root.join("home"))
             .env("XDG_CONFIG_HOME", self.root.join("xdg"))
             .env("APPDATA", self.root.join("appdata"))
+            .env("TMPDIR", self.root.join("tmp"))
+            .env("TEMP", self.root.join("tmp"))
+            .env("TMP", self.root.join("tmp"))
             .current_dir(self.root.join("cwd"))
             .args(args);
         if let Some(r) = std::env::var_os("SystemRoot") {
@@ -76,6 +79,53 @@ impl Box {
     }
     fn run(&self, args: &[&str]) -> Output {
         self.cmd(args).output().unwrap()
+    }
+    /// Runs with `input` on standard input.
+    fn run_stdin(&self, args: &[&str], input: &str) -> Output {
+        use std::io::Write;
+        use std::process::Stdio;
+        let mut child = self
+            .cmd(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    }
+    /// Runs `polycarp theme <args> --json`; returns (exit code, parsed stdout).
+    fn jrun(&self, args: &[&str]) -> (i32, Value) {
+        let mut a = vec!["theme"];
+        a.extend_from_slice(args);
+        a.push("--json");
+        let o = self.run(&a);
+        let v: Value = serde_json::from_str(&out(&o))
+            .unwrap_or_else(|e| panic!("{args:?}: stdout is not JSON ({e}): {}", out(&o)));
+        (code(&o), v)
+    }
+    /// Everything a refusal must not change: state file, user themes, history count.
+    fn snapshot(&self) -> (Option<String>, Vec<(String, String)>, usize) {
+        let mut themes = Vec::new();
+        if let Ok(rd) = fs::read_dir(self.cfg().join("themes")) {
+            for e in rd.flatten() {
+                themes.push((
+                    e.file_name().to_string_lossy().into_owned(),
+                    fs::read_to_string(e.path()).unwrap(),
+                ));
+            }
+        }
+        themes.sort();
+        (
+            fs::read_to_string(self.state_file()).ok(),
+            themes,
+            self.history_count(),
+        )
     }
     fn run_as(&self, who: &str, args: &[&str]) -> Output {
         self.cmd(args).env("POLYCARP_CALLER", who).output().unwrap()
@@ -96,8 +146,13 @@ impl Box {
         assert_eq!(code(&o), 1, "args {args:?}\nstdout: {}", out(&o));
         err(&o)
     }
+    /// Parses stdout. An `--json` envelope is unwrapped to its `data`; raw JSON is returned as is.
     fn json(&self, args: &[&str]) -> Value {
-        serde_json::from_str(&self.ok(args)).unwrap()
+        let v: Value = serde_json::from_str(&self.ok(args)).unwrap();
+        match (v.get("ok"), v.get("data")) {
+            (Some(Value::Bool(true)), Some(d)) => d.clone(),
+            _ => v,
+        }
     }
     fn write_theme(&self, name: &str, text: &str) -> PathBuf {
         let dir = self.cfg().join("themes");
@@ -723,7 +778,7 @@ fn list_marks_the_current_theme() {
     }
     assert!(text.contains("mine") && text.contains("user"));
     assert!(text.contains("polycarp-copy") && text.contains("invalid"));
-    let j = b.json(&["list", "--json"]);
+    let j = b.json(&["list", "--json"])["themes"].clone();
     let arr = j.as_array().unwrap();
     let by = |n: &str| arr.iter().find(|e| e["name"] == n).unwrap().clone();
     assert_eq!(by("evening")["current"], true);
@@ -741,7 +796,7 @@ fn a_user_file_cannot_shadow_a_builtin() {
     );
     let j = b.json(&["export", "json", "calm", "--surface", "site"]);
     assert_eq!(j["shape"]["radius"], 10);
-    let j = b.json(&["list", "--json"]);
+    let j = b.json(&["list", "--json"])["themes"].clone();
     let calm: Vec<&Value> = j
         .as_array()
         .unwrap()
@@ -959,7 +1014,7 @@ fn history_and_undo() {
     b.ok(&["set", "still-water"]);
     b.ok(&["accent", "#3a8f6b"]);
 
-    let h = b.json(&["history", "--json"]);
+    let h = b.json(&["history", "--json"])["entries"].clone();
     let h = h.as_array().unwrap();
     assert_eq!(h.len(), 3);
     assert_eq!(h[0]["action"], "theme accent #3a8f6b");
@@ -1010,7 +1065,7 @@ fn history_keeps_the_last_50() {
         b.ok(&["set", name]);
     }
     assert_eq!(b.history_count(), 50);
-    let h = b.json(&["history", "--json"]);
+    let h = b.json(&["history", "--json"])["entries"].clone();
     assert_eq!(h.as_array().unwrap().len(), 50);
     // Newest first, and sorted by time.
     let times: Vec<&str> = h
@@ -1030,11 +1085,14 @@ fn caller_is_cleaned() {
     let b = Box::new();
     let o = b.run_as("agent:x\nmalicious = 1", &["theme", "set", "evening"]);
     assert_eq!(code(&o), 0);
-    let h = b.json(&["history", "--json"]);
+    let h = b.json(&["history", "--json"])["entries"].clone();
     assert_eq!(h[0]["caller"], "agent:xmalicious = 1");
     let o = b.run_as("   ", &["theme", "set", "calm"]);
     assert_eq!(code(&o), 0);
-    assert_eq!(b.json(&["history", "--json"])[0]["caller"], "user");
+    assert_eq!(
+        b.json(&["history", "--json"])["entries"][0]["caller"],
+        "user"
+    );
 }
 
 #[test]
@@ -1048,7 +1106,10 @@ fn reset_goes_back_to_defaults_and_is_recorded() {
     assert_eq!(cur["theme"], "polycarp");
     assert_eq!(cur["mode"], "auto");
     assert!(cur["accent_light"].is_null() && cur["accent_dark"].is_null());
-    assert_eq!(b.json(&["history", "--json"])[0]["action"], "theme reset");
+    assert_eq!(
+        b.json(&["history", "--json"])["entries"][0]["action"],
+        "theme reset"
+    );
     // And it can be undone.
     b.ok(&["undo"]);
     assert_eq!(b.json(&["current", "--json"])["theme"], "blocks");
@@ -1064,7 +1125,7 @@ fn reset_and_undo_work_with_a_corrupt_user_theme_and_corrupt_state() {
     fs::write(b.cfg().join("themes/mine.toml"), "this is [not toml").unwrap();
     let cur = b.run(&["theme", "current", "--json"]);
     assert_eq!(code(&cur), 0, "{}", err(&cur));
-    let v: Value = serde_json::from_str(&out(&cur)).unwrap();
+    let v: Value = serde_json::from_str::<Value>(&out(&cur)).unwrap()["data"].clone();
     assert_eq!(v["theme"], "polycarp");
     assert_eq!(v["fell_back"], true);
     assert!(v["problems"][0].as_str().unwrap().contains("mine"), "{v}");
@@ -1137,7 +1198,7 @@ fn broken_state_falls_back_and_current_reports_it() {
         fs::write(b.state_file(), text).unwrap();
         let o = b.run(&["theme", "current", "--json"]);
         assert_eq!(code(&o), 0, "{text}: {}", err(&o));
-        let v: Value = serde_json::from_str(&out(&o)).unwrap();
+        let v: Value = serde_json::from_str::<Value>(&out(&o)).unwrap()["data"].clone();
         assert_eq!(v["theme"], "polycarp", "{text}");
         assert_eq!(v["mode"], "auto", "{text}");
         assert_eq!(v["fell_back"], true, "{text}");
@@ -1275,4 +1336,835 @@ fn readme_example_is_valid() {
     assert_eq!(v["surfaces"]["spaces"]["shape"]["radius"], 14);
     assert_eq!(v["surfaces"]["spaces"]["shape"]["density"], "compact");
     assert_eq!(v["surfaces"]["voice"]["shape"]["density"], "regular");
+}
+
+// --- agent interface ---------------------------------------------------------------------------
+
+fn repo_file(rel: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(rel)
+}
+
+/// A schema node's properties, following a `$ref` into `$defs`.
+fn props<'a>(schema: &'a Value, node: &'a Value) -> &'a serde_json::Map<String, Value> {
+    let node = match node.get("$ref").and_then(Value::as_str) {
+        Some(r) => &schema["$defs"][r.trim_start_matches("#/$defs/")],
+        None => node,
+    };
+    node["properties"]
+        .as_object()
+        .unwrap_or_else(|| panic!("no properties in {node}"))
+}
+
+fn described(node: &Value) -> bool {
+    node["description"]
+        .as_str()
+        .is_some_and(|d| d.trim().len() > 12)
+}
+
+/// Every key in a built-in theme file is a schema field with a description.
+fn check_fields(schema: &Value, node: &Value, doc: &toml::Table, at: &str) {
+    let ps = props(schema, node);
+    for (k, v) in doc {
+        let field = ps
+            .get(k)
+            .unwrap_or_else(|| panic!("{at}{k} is in a theme but not in the schema"));
+        assert!(described(field), "{at}{k} has no description");
+        if let toml::Value::Table(t) = v {
+            check_fields(schema, field, t, &format!("{at}{k}."));
+        }
+    }
+}
+
+fn every_property_is_described(schema: &Value, node: &Value, at: &str) {
+    let ps = props(schema, node);
+    for (k, f) in ps {
+        assert!(described(f), "{at}{k} has no description");
+        if f.get("$ref").is_some() || f.get("properties").is_some() {
+            every_property_is_described(schema, f, &format!("{at}{k}."));
+        }
+    }
+}
+
+#[test]
+fn schema_describes_every_field_of_every_builtin() {
+    let b = Box::new();
+    let o = b.run(&["theme", "schema"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let plain: Value = serde_json::from_str(&out(&o)).unwrap();
+    let (c, env) = b.jrun(&["schema"]);
+    assert_eq!(c, 0);
+    let schema = &env["data"]["schema"];
+    assert_eq!(&plain, schema, "plain output is the schema itself");
+    assert_eq!(
+        schema["$schema"],
+        "https://json-schema.org/draft/2020-12/schema"
+    );
+    assert!(described(schema), "the root needs a description");
+    every_property_is_described(schema, schema, "");
+    for name in BUILTINS {
+        let text = fs::read_to_string(repo_theme(name)).unwrap();
+        let doc: toml::Table = text.parse().unwrap();
+        check_fields(schema, schema, &doc, &format!("{name}: "));
+    }
+    // A product override may hold any section, with the same fields.
+    let site = &props(schema, &schema["properties"]["surface"])["site"];
+    for sec in ["light", "dark", "shape", "type", "motion"] {
+        assert!(props(schema, site).contains_key(sec), "{sec}");
+    }
+    // Ranges, choices and the rules are in the text.
+    let shape = &schema["$defs"]["shape"]["properties"];
+    assert_eq!(shape["radius"]["minimum"], 0);
+    assert_eq!(shape["radius"]["maximum"], 64);
+    assert_eq!(shape["indicator"]["enum"][2], "number-block");
+    assert_eq!(
+        schema["$defs"]["motion"]["properties"]["scale_from"]["minimum"],
+        0.5
+    );
+    let root = schema["description"].as_str().unwrap();
+    assert!(root.contains("4.5") && root.contains("3.0"), "{root}");
+    assert_eq!(schema["x-contrast"].as_array().unwrap().len(), 11);
+}
+
+#[test]
+fn schema_example_is_a_real_theme() {
+    let b = Box::new();
+    let (_, env) = b.jrun(&["schema"]);
+    let ex = env["data"]["schema"]["examples"][0].to_string();
+    let o = b.run_stdin(&["theme", "apply", "-"], &ex);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(b.json(&["current", "--json"])["theme"], "warmer");
+}
+
+const MINE: &str = "# my notes\nname = \"mine\"\ntitle = \"Mine\"\nextends = \"evening\"\n\n[light]\naccent = \"#2f6b55\" # green\non_accent = \"#f8f9fb\"\n";
+
+#[test]
+fn apply_from_a_toml_file_keeps_its_comments_and_makes_it_current() {
+    let b = Box::new();
+    let f = b.root.join("cwd").join("mine.toml");
+    fs::write(&f, MINE).unwrap();
+    let o = b.run(&["theme", "apply", f.to_str().unwrap()]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(
+        fs::read_to_string(b.cfg().join("themes/mine.toml")).unwrap(),
+        MINE
+    );
+    let cur = b.json(&["current", "--json"]);
+    assert_eq!(cur["theme"], "mine");
+    assert_eq!(
+        b.json(&["get", "light.accent", "--json"])["value"],
+        "#2f6b55"
+    );
+    assert!(b.cfg().join("current/theme.json").exists());
+    assert!(b.ok(&["history"]).contains("theme apply mine"));
+}
+
+#[test]
+fn apply_from_stdin_toml_and_json_detects_the_format_by_content() {
+    let b = Box::new();
+    let o = b.run_stdin(&["theme", "apply", "-"], MINE);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(b.json(&["current", "--json"])["theme"], "mine");
+    let doc = r##"  {"name":"jay","title":"Jay","extends":"calm","shape":{"radius":3,"shadow":1},"light":{"accent":"#2f6b55"}}"##;
+    let o = b.run_stdin(&["theme", "apply", "-"], doc);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(b.json(&["current", "--json"])["theme"], "jay");
+    assert_eq!(b.json(&["get", "shape.radius", "--json"])["value"], 3);
+    assert_eq!(b.json(&["get", "shape.shadow", "--json"])["value"], 1.0);
+    // A JSON file works the same way, and the saved copy is TOML.
+    let f = b.root.join("cwd").join("t.json");
+    fs::write(&f, doc.replace("jay", "kay")).unwrap();
+    let o = b.run(&["theme", "apply", f.to_str().unwrap()]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let saved = fs::read_to_string(b.cfg().join("themes/kay.toml")).unwrap();
+    assert!(saved.parse::<toml::Table>().is_ok() && saved.contains("name = \"kay\""));
+}
+
+#[test]
+fn apply_name_flag_and_no_activate() {
+    let b = Box::new();
+    let o = b.run_stdin(
+        &["theme", "apply", "-", "--name", "renamed", "--no-activate"],
+        MINE,
+    );
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(b.cfg().join("themes/renamed.toml").exists());
+    assert!(!b.cfg().join("themes/mine.toml").exists());
+    let saved = fs::read_to_string(b.cfg().join("themes/renamed.toml")).unwrap();
+    assert!(
+        saved.contains("# my notes") && saved.contains("name = \"renamed\""),
+        "{saved}"
+    );
+    assert_eq!(b.json(&["current", "--json"])["theme"], "polycarp");
+    let list = b.json(&["list", "--json"])["themes"].to_string();
+    assert!(list.contains("renamed"));
+}
+
+#[test]
+fn apply_failure_changes_nothing() {
+    let b = Box::new();
+    b.run_stdin(&["theme", "apply", "-"], MINE);
+    let before = b.snapshot();
+    let outs_before = fs::read_to_string(b.cfg().join("current/theme.json")).unwrap();
+    let bad: [(&str, &str, &str); 6] = [
+        (
+            "contrast",
+            "name = \"x1\"\ntitle = \"x\"\nextends = \"calm\"\n[dark]\nmuted = \"#444444\"\n",
+            "contrast",
+        ),
+        (
+            "range",
+            "{\"name\":\"x2\",\"title\":\"x\",\"extends\":\"calm\",\"shape\":{\"radius\":99}}",
+            "invalid_theme",
+        ),
+        (
+            "unknown key",
+            "name = \"x3\"\ntitle = \"x\"\nextends = \"calm\"\n[light]\nacent = \"#112233\"\n",
+            "invalid_theme",
+        ),
+        ("syntax", "name = [oops", "invalid_theme"),
+        ("json syntax", "{\"name\": ", "invalid_theme"),
+        (
+            "no base",
+            "name = \"x6\"\ntitle = \"x\"\nextends = \"nowhere\"\n",
+            "invalid_theme",
+        ),
+    ];
+    for (label, doc, want) in bad {
+        let o = b.run_stdin(&["theme", "apply", "-", "--json"], doc);
+        assert_eq!(code(&o), 1, "{label}: {}", out(&o));
+        let v: Value = serde_json::from_str(&out(&o)).unwrap();
+        assert_eq!(v["error"]["code"], want, "{label}: {v}");
+        assert_eq!(b.snapshot(), before, "{label} changed something");
+    }
+    assert_eq!(
+        fs::read_to_string(b.cfg().join("current/theme.json")).unwrap(),
+        outs_before
+    );
+    // A document with no name at all.
+    let o = b.run_stdin(&["theme", "apply", "-", "--json"], "title = \"x\"\n");
+    assert_eq!(code(&o), 1);
+    assert_eq!(b.snapshot(), before);
+}
+
+#[test]
+fn apply_refuses_a_builtin_name_even_with_the_flag() {
+    let b = Box::new();
+    let doc = "name = \"fresh\"\ntitle = \"F\"\nextends = \"calm\"\n";
+    let o = b.run_stdin(
+        &["theme", "apply", "-", "--json"],
+        &doc.replace("fresh", "calm"),
+    );
+    assert_eq!(code(&o), 1);
+    let v: Value = serde_json::from_str(&out(&o)).unwrap();
+    assert_eq!(v["error"]["code"], "builtin_read_only");
+    assert_eq!(v["error"]["data"]["errors"][0]["path"], "name");
+    let o = b.run_stdin(&["theme", "apply", "-", "--name", "evening", "--json"], doc);
+    assert_eq!(code(&o), 1);
+    let v: Value = serde_json::from_str(&out(&o)).unwrap();
+    assert_eq!(v["error"]["code"], "builtin_read_only");
+    assert!(
+        !b.cfg().join("themes").exists()
+            || fs::read_dir(b.cfg().join("themes")).unwrap().count() == 0
+    );
+    assert_eq!(b.history_count(), 0);
+}
+
+#[test]
+fn apply_over_an_existing_theme_is_undone_by_undo() {
+    let b = Box::new();
+    b.run_stdin(&["theme", "apply", "-"], MINE);
+    let newer = MINE.replace("#2f6b55", "#3a6b4f");
+    b.run_stdin(&["theme", "apply", "-"], &newer);
+    assert!(fs::read_to_string(b.cfg().join("themes/mine.toml"))
+        .unwrap()
+        .contains("#3a6b4f"));
+    b.ok(&["undo"]);
+    assert_eq!(
+        fs::read_to_string(b.cfg().join("themes/mine.toml")).unwrap(),
+        MINE
+    );
+    b.ok(&["undo"]);
+    assert!(!b.cfg().join("themes/mine.toml").exists());
+    assert_eq!(b.json(&["current", "--json"])["theme"], "polycarp");
+}
+
+#[test]
+fn get_reads_resolved_values() {
+    let b = Box::new();
+    assert_eq!(b.ok(&["get", "dark.accent"]), "#a9bb8a\n");
+    assert_eq!(b.ok(&["get", "shape.radius"]), "10\n");
+    assert_eq!(b.ok(&["get", "shape.radius", "blocks"]), "0\n");
+    assert_eq!(b.ok(&["get", "title"]), "Polycarp\n");
+    let v = b.json(&["get", "motion.reduced", "--json"]);
+    assert_eq!(
+        (v["value"].clone(), v["theme"].clone()),
+        (Value::Bool(false), "polycarp".into())
+    );
+    assert!(v["needs"].as_str().unwrap().contains("true or false"));
+    let section = b.json(&["get", "light", "--json"]);
+    assert_eq!(section["value"]["accent"], "#59693f");
+    // Product values come from the merged product, not the base.
+    b.write_theme(
+        "mine",
+        &user_theme(
+            "mine",
+            "evening",
+            "[surface.site.light]\naccent = \"#3f6b6a\"\n",
+        ),
+    );
+    assert_eq!(
+        b.ok(&["get", "surface.site.light.accent", "mine"]),
+        "#3f6b6a\n"
+    );
+    assert_ne!(
+        b.ok(&["get", "surface.spaces.light.accent", "mine"]),
+        "#3f6b6a\n"
+    );
+    // Current theme with an accent override.
+    b.ok(&["accent", "#3a8f6b"]);
+    assert_eq!(b.ok(&["get", "light.accent"]), "#3a8f6b\n");
+    let (c, v) = b.jrun(&["get", "shape.radus"]);
+    assert_eq!(c, 1);
+    assert_eq!(v["error"]["code"], "unknown_path");
+    assert!(v["error"]["suggestion"]
+        .as_str()
+        .unwrap()
+        .contains("radius"));
+    let (c, v) = b.jrun(&["get", "dark.accent", "ghost"]);
+    assert_eq!((c, v["error"]["code"].clone()), (1, "unknown_theme".into()));
+}
+
+#[test]
+fn change_on_a_builtin_makes_a_custom_theme_and_says_so() {
+    let b = Box::new();
+    let o = b.run(&["theme", "change", "dark.accent", "#8fb37a"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let t = out(&o);
+    assert!(
+        t.contains("polycarp is built in") && t.contains("polycarp-custom"),
+        "{t}"
+    );
+    let file = fs::read_to_string(b.cfg().join("themes/polycarp-custom.toml")).unwrap();
+    assert!(
+        file.contains("extends = \"polycarp\"") && file.contains("accent = \"#8fb37a\""),
+        "{file}"
+    );
+    assert_eq!(b.json(&["current", "--json"])["theme"], "polycarp-custom");
+    assert_eq!(b.ok(&["get", "dark.accent"]), "#8fb37a\n");
+    assert_eq!(
+        b.ok(&["get", "light.accent"]),
+        "#59693f\n",
+        "the rest is inherited"
+    );
+    // The built-in is untouched.
+    assert_eq!(b.ok(&["get", "dark.accent", "polycarp"]), "#a9bb8a\n");
+    let v = b.json(&["change", "shape.radius", "0", "--json"]);
+    assert_eq!(v["created"], false, "second change edits the same file");
+    assert_eq!(v["previous"], 10);
+    assert_eq!(v["value"], 0);
+    // Another built-in gets its own.
+    b.ok(&["set", "calm"]);
+    b.ok(&["change", "shape.radius", "4"]);
+    assert!(b.cfg().join("themes/calm-custom.toml").exists());
+    // A taken name is not overwritten.
+    b.ok(&["set", "calm"]);
+    let v = b.json(&["change", "shape.radius", "5", "--json"]);
+    assert_eq!(v["theme"], "calm-custom-2");
+    assert!(fs::read_to_string(b.cfg().join("themes/calm-custom.toml"))
+        .unwrap()
+        .contains("radius = 4"));
+}
+
+#[test]
+fn change_on_a_user_theme_edits_it_in_place_and_keeps_comments() {
+    let b = Box::new();
+    b.run_stdin(&["theme", "apply", "-"], MINE);
+    let v = b.json(&["change", "light.accent", "#2a6b50", "--json"]);
+    assert_eq!(
+        (v["created"].clone(), v["comments_kept"].clone()),
+        (false.into(), true.into())
+    );
+    let f = fs::read_to_string(b.cfg().join("themes/mine.toml")).unwrap();
+    assert_eq!(f, MINE.replace("#2f6b55\" # green", "#2a6b50\" # green"));
+    b.ok(&["change", "motion.fast", "90"]);
+    b.ok(&["change", "motion.easing", "ease-out"]);
+    b.ok(&["change", "motion.reduced", "true"]);
+    b.ok(&["change", "shape.density", "compact"]);
+    b.ok(&["change", "shape.shadow", "0.3"]);
+    b.ok(&["change", "type.mono", "Menlo, monospace"]);
+    b.ok(&["change", "title", "My Own"]);
+    b.ok(&["change", "surface.site.dark.accent", "#a9d0bc"]);
+    let f = fs::read_to_string(b.cfg().join("themes/mine.toml")).unwrap();
+    assert!(
+        f.starts_with("# my notes\n") && f.contains("# green"),
+        "{f}"
+    );
+    let t: toml::Table = f.parse().unwrap();
+    assert_eq!(t["motion"]["fast"].as_integer(), Some(90));
+    assert_eq!(t["motion"]["reduced"].as_bool(), Some(true));
+    assert_eq!(t["shape"]["shadow"].as_float(), Some(0.3));
+    assert_eq!(
+        t["surface"]["site"]["dark"]["accent"].as_str(),
+        Some("#a9d0bc")
+    );
+    assert_eq!(t["title"].as_str(), Some("My Own"));
+    assert_eq!(b.json(&["current", "--json"])["theme"], "mine");
+    // Undo puts the file back, not only the choice of theme.
+    b.ok(&["undo"]);
+    let g = fs::read_to_string(b.cfg().join("themes/mine.toml")).unwrap();
+    assert!(!g.contains("#a9d0bc") && g.contains("My Own"));
+    for _ in 0..7 {
+        b.ok(&["undo"]);
+    }
+    assert!(fs::read_to_string(b.cfg().join("themes/mine.toml"))
+        .unwrap()
+        .contains("#2a6b50"));
+    b.ok(&["undo"]);
+    assert_eq!(
+        fs::read_to_string(b.cfg().join("themes/mine.toml")).unwrap(),
+        MINE
+    );
+}
+
+#[test]
+fn change_value_types_come_from_the_path() {
+    let b = Box::new();
+    for (path, value, why) in [
+        ("shape.radius", "round", "whole number"),
+        ("shape.radius", "2.5", "whole number"),
+        ("shape.radius", "99", "out of range"),
+        ("shape.shadow", "2", "out of range"),
+        ("shape.density", "tiny", "not one of"),
+        ("dark.accent", "green", "not a color"),
+        ("motion.reduced", "yes", "true or false"),
+        ("motion.easing", "bounce", "not ease"),
+        ("type.ui", "a;b", "must not contain"),
+        ("type.size", "9", "out of range"),
+        ("title", "", "not empty"),
+    ] {
+        let before = b.snapshot();
+        let (c, v) = b.jrun(&["change", path, value]);
+        assert_eq!(c, 1, "{path} {value}");
+        assert_eq!(v["error"]["code"], "invalid_value", "{path} {value}: {v}");
+        let e = &v["error"]["data"]["errors"][0];
+        assert_eq!(e["path"], path);
+        assert!(e["needs"].is_string() && !e["actual"].is_null(), "{e}");
+        assert!(
+            e["message"].as_str().unwrap().contains(why)
+                || e["needs"].as_str().unwrap().contains(why),
+            "{path} {value}: {e}"
+        );
+        assert_eq!(b.snapshot(), before, "{path} {value} changed something");
+    }
+    let (c, v) = b.jrun(&["change", "shape.nope", "1"]);
+    assert_eq!((c, v["error"]["code"].clone()), (1, "unknown_path".into()));
+    let (c, v) = b.jrun(&["change", "surface.moon.light.accent", "#112233"]);
+    assert_eq!((c, v["error"]["code"].clone()), (1, "unknown_path".into()));
+    assert_eq!(b.history_count(), 0);
+}
+
+#[test]
+fn change_refused_for_contrast_leaves_everything_unchanged() {
+    let b = Box::new();
+    b.ok(&["change", "dark.accent", "#8fb37a"]);
+    let before = b.snapshot();
+    let (c, v) = b.jrun(&["change", "dark.muted", "#444444"]);
+    assert_eq!(c, 1);
+    assert_eq!(v["error"]["code"], "contrast");
+    let errs = v["error"]["data"]["errors"].as_array().unwrap();
+    assert!(errs.len() >= 2);
+    for e in errs {
+        assert_eq!(e["path"], "dark.muted");
+        assert!(e["actual"].as_f64().unwrap() < e["needs"].as_f64().unwrap());
+        assert_eq!(e["needs"], 4.5);
+    }
+    assert_eq!(b.snapshot(), before);
+    // A product value that fails only in that product is refused too.
+    let (c, v) = b.jrun(&["change", "surface.site.dark.muted", "#444444"]);
+    assert_eq!(c, 1, "{v}");
+    assert_eq!(
+        v["error"]["data"]["errors"][0]["path"],
+        "surface.site.dark.muted"
+    );
+    assert_eq!(b.snapshot(), before);
+    // The same refusal on a built-in does not leave a -custom file behind.
+    let b2 = Box::new();
+    let (c, _) = b2.jrun(&["change", "light.accent", "#f0f0a0"]);
+    assert_eq!(c, 1);
+    assert!(!b2.cfg().join("themes").exists());
+    assert_eq!(b2.history_count(), 0);
+    assert!(!b2.state_file().exists());
+}
+
+#[test]
+fn change_of_an_accent_clears_a_matching_override() {
+    let b = Box::new();
+    b.ok(&["accent", "#3a8f6b"]);
+    let v = b.json(&["change", "dark.accent", "#a9d0bc", "--json"]);
+    assert!(v["notes"].to_string().contains("override for dark"), "{v}");
+    assert_eq!(b.ok(&["get", "dark.accent"]), "#a9d0bc\n");
+    assert_eq!(b.json(&["current", "--json"])["accent_light"], "#3a8f6b");
+}
+
+#[test]
+fn preview_writes_one_self_contained_page() {
+    let b = Box::new();
+    let f = b.root.join("p.html");
+    let o = b.run(&["theme", "preview", "evening", "--out", f.to_str().unwrap()]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(out(&o).trim(), f.display().to_string());
+    let html = fs::read_to_string(&f).unwrap();
+    for bad in [
+        "http://", "https://", "url(", "@import", "<script", "<link", "<img", "src=",
+    ] {
+        assert!(!html.contains(bad), "page contains {bad}");
+    }
+    assert!(!html.contains("http"), "no http at all");
+    for role in ROLES {
+        let var = format!("var(--pc-{})", role.replace('_', "-"));
+        assert!(html.contains(&var), "{var} is never used");
+    }
+    for want in [
+        "pc-light",
+        "pc-dark",
+        "Workspaces",
+        "Listening",
+        "Allow once",
+        "Delete",
+        "Needs you",
+        "Working",
+        "Done",
+        "Disabled",
+        "Dictation",
+    ] {
+        assert!(html.contains(want), "{want}");
+    }
+    assert_eq!(
+        html.matches("class=\"tile ").count(),
+        18,
+        "nine tiles in each of two modes"
+    );
+    // Every color in the CSS is a variable except those that define the variables.
+    let style = &html[html.find("<style>").unwrap()..html.find("</style>").unwrap()];
+    let body_css = &style[style.find("* {").unwrap()..];
+    assert!(!body_css.contains('#'), "hard-coded color in the page CSS");
+    // Light only, dark only.
+    let o = b.run(&[
+        "theme",
+        "preview",
+        "evening",
+        "--mode",
+        "dark",
+        "--out",
+        f.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&o), 0);
+    let dark = fs::read_to_string(&f).unwrap();
+    assert!(dark.contains(".pc-dark {") && !dark.contains(".pc-light {"));
+    assert_eq!(dark.matches("class=\"tile ").count(), 9);
+}
+
+#[test]
+fn preview_uses_the_surface_the_indicator_and_the_default_path() {
+    let b = Box::new();
+    b.write_theme(
+        "mine",
+        &user_theme(
+            "mine",
+            "blocks",
+            "[surface.site.light]\naccent = \"#3f6b6a\"\n",
+        ),
+    );
+    let o = b.run(&[
+        "theme",
+        "preview",
+        "mine",
+        "--surface",
+        "site",
+        "--mode",
+        "light",
+    ]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let path = PathBuf::from(out(&o).trim());
+    assert!(path.starts_with(b.root.join("tmp")), "{}", path.display());
+    let html = fs::read_to_string(&path).unwrap();
+    assert!(html.contains("--pc-accent: #3f6b6a;") && html.contains("product: site"));
+    assert!(
+        html.contains(".tile .num { background: var(--pc-status)"),
+        "blocks uses number-block"
+    );
+    let o = b.run(&["theme", "preview", "polycarp", "--mode", "light"]);
+    let dot = fs::read_to_string(out(&o).trim()).unwrap();
+    assert!(dot.contains("border-radius: 50%; background: var(--pc-status)"));
+    let o = b.run(&["theme", "preview", "still-water", "--mode", "dark"]);
+    assert_eq!(code(&o), 0);
+    // The current theme with its accent override is what you see when no name is given.
+    b.ok(&["accent", "#3a8f6b"]);
+    let o = b.run(&["theme", "preview", "--mode", "light"]);
+    assert!(fs::read_to_string(out(&o).trim())
+        .unwrap()
+        .contains("--pc-accent: #3a8f6b;"));
+    for bad in [["--mode", "sepia"], ["--surface", "moon"]] {
+        let o = b.run(&["theme", "preview", bad[0], bad[1]]);
+        assert_eq!(code(&o), 2);
+    }
+    assert_eq!(code(&b.run(&["theme", "preview", "ghost"])), 1);
+}
+
+#[test]
+fn every_builtin_previews_in_both_modes() {
+    let b = Box::new();
+    for name in BUILTINS {
+        let f = b.root.join(format!("{name}.html"));
+        let o = b.run(&["theme", "preview", name, "--out", f.to_str().unwrap()]);
+        assert_eq!(code(&o), 0, "{name}: {}", err(&o));
+        let html = fs::read_to_string(&f).unwrap();
+        assert!(
+            html.contains("pc-light") && html.contains("pc-dark"),
+            "{name}"
+        );
+        assert!(html.contains(&format!("({name})")), "{name}");
+    }
+}
+
+#[test]
+fn every_failure_in_json_parses_and_carries_paths() {
+    let b = Box::new();
+    b.write_theme(
+        "dim",
+        &user_theme("dim", "evening", "[dark]\nmuted = \"#555a50\"\n"),
+    );
+    b.write_theme("broken", "this is [not toml");
+    let ok_theme = b.root.join("cwd").join("ok.toml");
+    fs::write(&ok_theme, user_theme("ok", "calm", "")).unwrap();
+    let bad_theme = b.root.join("cwd").join("bad.toml");
+    fs::write(
+        &bad_theme,
+        user_theme(
+            "bad",
+            "calm",
+            "[shape]\nradius = 500\n[light]\nacent = \"#fff000\"\n",
+        ),
+    )
+    .unwrap();
+    let cases: Vec<(Vec<&str>, i32, &str)> = vec![
+        (vec!["set", "ghost"], 1, "unknown_theme"),
+        (vec!["set", "dim"], 1, "contrast"),
+        (vec!["set", "broken"], 1, "invalid_theme"),
+        (vec!["show", "ghost"], 1, "unknown_theme"),
+        (vec!["get", "light.nope"], 1, "unknown_path"),
+        (vec!["get", "dark.accent", "ghost"], 1, "unknown_theme"),
+        (vec!["change", "shape.radius", "x"], 1, "invalid_value"),
+        (vec!["change", "nope", "1"], 1, "unknown_path"),
+        (vec!["accent", "blue"], 1, "invalid_value"),
+        (vec!["accent", "#2255aa"], 1, "contrast"),
+        (
+            vec!["create", "calm", "--extends", "polycarp"],
+            1,
+            "builtin_read_only",
+        ),
+        (vec!["create", "dim", "--extends", "polycarp"], 1, "exists"),
+        (
+            vec!["create", "x", "--extends", "ghost"],
+            1,
+            "unknown_theme",
+        ),
+        (vec!["edit-path", "calm"], 1, "builtin_read_only"),
+        (vec!["delete", "calm"], 1, "builtin_read_only"),
+        (vec!["delete", "ghost"], 1, "unknown_theme"),
+        (vec!["undo"], 1, "nothing_to_undo"),
+        (vec!["validate", "/no/such/file.toml"], 1, "io_error"),
+        (vec!["export", "css", "ghost"], 1, "unknown_theme"),
+        (vec!["preview", "ghost"], 1, "unknown_theme"),
+        (vec!["frobnicate"], 2, "invalid_args"),
+        (vec!["set"], 2, "invalid_args"),
+        (vec!["set", "calm", "--bogus"], 2, "invalid_args"),
+        (vec!["change", "only-one"], 2, "invalid_args"),
+        (vec!["export", "pdf"], 2, "invalid_args"),
+        (vec!["preview", "--mode", "sepia"], 2, "invalid_args"),
+    ];
+    for (args, want_exit, want_code) in cases {
+        let (c, v) = b.jrun(&args);
+        assert_eq!(c, want_exit, "{args:?}: {v}");
+        assert_eq!(v["ok"], false, "{args:?}");
+        assert!(v.get("data").is_none(), "{args:?}");
+        assert_eq!(v["error"]["code"], want_code, "{args:?}: {v}");
+        assert!(!v["error"]["message"].as_str().unwrap().is_empty());
+        assert!(
+            !v["error"]["suggestion"].as_str().unwrap().is_empty(),
+            "{args:?}"
+        );
+        assert!(v["error"]["retry"].is_string());
+        let errs = v["error"]["data"]["errors"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{args:?}: {v}"));
+        assert!(!errs.is_empty(), "{args:?}");
+        for e in errs {
+            assert!(
+                e["path"].is_string() && e["message"].is_string(),
+                "{args:?}: {e}"
+            );
+        }
+    }
+    // Validation lists every problem with its path, and contrast carries numbers.
+    let (c, v) = b.jrun(&["validate", bad_theme.to_str().unwrap()]);
+    assert_eq!(c, 1);
+    let paths: Vec<&str> = v["error"]["data"]["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["path"].as_str().unwrap())
+        .collect();
+    assert!(
+        paths.contains(&"shape.radius") && paths.contains(&"light.acent"),
+        "{paths:?}"
+    );
+    let (c, v) = b.jrun(&["set", "dim"]);
+    assert_eq!(c, 1);
+    let e = &v["error"]["data"]["errors"][0];
+    assert_eq!(e["path"], "dark.muted");
+    assert!(e["actual"].is_number() && e["needs"] == 4.5, "{e}");
+    // The same successes are envelopes too.
+    let (c, v) = b.jrun(&["validate", ok_theme.to_str().unwrap()]);
+    assert_eq!(
+        (c, v["ok"].clone(), v["data"]["valid"].clone()),
+        (0, true.into(), true.into())
+    );
+    for args in [
+        vec!["list"],
+        vec!["current"],
+        vec!["history"],
+        vec!["show"],
+        vec!["schema"],
+        vec!["export", "css"],
+        vec!["export", "json"],
+        vec!["set", "calm"],
+        vec!["accent", "#3a8f6b"],
+        vec!["reset"],
+        vec!["--help"],
+    ] {
+        let (c, v) = b.jrun(&args);
+        assert_eq!((c, v["ok"].clone()), (0, true.into()), "{args:?}: {v}");
+        assert!(v["data"].is_object(), "{args:?}");
+    }
+    // Refusals under --json write nothing to stderr.
+    let o = b.run(&["theme", "set", "ghost", "--json"]);
+    assert!(err(&o).is_empty(), "{}", err(&o));
+}
+
+#[test]
+fn skill_is_short_and_its_examples_work() {
+    let skill = fs::read_to_string(repo_file("skills/polycarp-theme/SKILL.md")).unwrap();
+    assert!(
+        skill.lines().count() < 100,
+        "{} lines",
+        skill.lines().count()
+    );
+    let mut lines = skill.lines();
+    assert_eq!(lines.next(), Some("---"));
+    assert_eq!(lines.next(), Some("name: polycarp-theme"));
+    let desc = lines.next().unwrap();
+    assert!(desc.starts_with("description: Use when"), "{desc}");
+    assert_eq!(lines.next(), Some("---"));
+
+    // "warmer": the TOML block in the skill is applied as it stands.
+    let b = Box::new();
+    let start = skill.find("<<'EOF'\n").unwrap() + "<<'EOF'\n".len();
+    let doc = &skill[start..start + skill[start..].find("\nEOF").unwrap() + 1];
+    let o = b.run_stdin(&["theme", "apply", "-"], doc);
+    assert_eq!(code(&o), 0, "warmer: {}{}", err(&o), out(&o));
+    assert_eq!(b.ok(&["get", "light.accent"]), "#a4502a\n");
+    assert_eq!(b.ok(&["get", "dark.background"]), "#2f2822\n");
+    assert_eq!(
+        b.ok(&["get", "shape.radius"]),
+        "10\n",
+        "the rest comes from polycarp"
+    );
+
+    // The commands in the other two examples are the ones run here.
+    let cmds: Vec<Vec<String>> = skill
+        .lines()
+        .filter(|l| l.starts_with("polycarp theme change "))
+        .map(|l| {
+            let rest = &l["polycarp theme change ".len()..];
+            let (path, value) = rest.split_once(' ').unwrap();
+            let value = value.trim_matches('\'').to_string();
+            vec![path.to_string(), value]
+        })
+        .collect();
+    assert_eq!(cmds.len(), 7, "{cmds:?}");
+    let mono = r#"ui-monospace, "SF Mono", Menlo, Consolas, monospace"#;
+    let square = Box::new();
+    for c in &cmds[..5] {
+        square.ok(&["change", &c[0], &c[1]]);
+    }
+    assert_eq!(square.ok(&["get", "shape.radius_large"]), "0\n");
+    assert_eq!(square.ok(&["get", "type.ui"]), format!("{mono}\n"));
+    assert_eq!(square.ok(&["get", "type.display"]), format!("{mono}\n"));
+    assert_eq!(
+        square.json(&["current", "--json"])["theme"],
+        "polycarp-custom"
+    );
+
+    let green = Box::new();
+    for c in &cmds[5..] {
+        green.ok(&["change", &c[0], &c[1]]);
+    }
+    assert_eq!(
+        green.ok(&["get", "surface.browser.light.accent"]),
+        "#2f6b3a\n"
+    );
+    assert_eq!(
+        green.ok(&["get", "surface.browser.dark.accent"]),
+        "#8fcf9a\n"
+    );
+    for other in ["spaces", "voice", "site"] {
+        assert_eq!(
+            green.ok(&["get", &format!("surface.{other}.light.accent")]),
+            "#59693f\n",
+            "{other}"
+        );
+    }
+    let o = green.run(&["theme", "preview", "--surface", "browser", "--mode", "dark"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(fs::read_to_string(out(&o).trim())
+        .unwrap()
+        .contains("--pc-accent: #8fcf9a;"));
+}
+
+#[test]
+fn docs_and_plan_describe_the_agent_interface() {
+    let themes = fs::read_to_string(repo_file("themes/README.md")).unwrap();
+    assert!(themes.contains("## For agents"));
+    for w in [
+        "theme schema",
+        "theme change",
+        "theme apply",
+        "theme preview",
+        "polycarp mcp",
+        "theme_undo",
+        "agent:",
+    ] {
+        assert!(themes.contains(w), "themes/README.md lacks {w}");
+    }
+    assert!(fs::read_to_string(repo_file("README.md"))
+        .unwrap()
+        .contains("polycarp mcp"));
+    let plan = fs::read_to_string(repo_file("PLAN.md")).unwrap();
+    let one = plan.find("- [ ] One theme file drives").unwrap();
+    let agents = plan
+        .find("- [ ] Agents can customize everything for their user.")
+        .unwrap();
+    let looks = plan
+        .find("- [ ] The default themes look good, not just pass contrast.")
+        .unwrap();
+    let next = plan.find("- [ ] Every color, radius, font").unwrap();
+    assert!(one < agents && agents < looks && looks < next);
+    let b = Box::new();
+    let help = out(&b.run(&["--help"]));
+    assert!(help.contains("polycarp mcp"), "{help}");
+    let t = out(&b.run(&["theme", "--help"]));
+    for sub in ["schema", "get", "change", "apply", "preview"] {
+        assert!(t.contains(&format!("polycarp theme {sub}")), "{sub}");
+    }
 }

@@ -9,11 +9,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use toml::{Table, Value};
+
+mod edit;
+mod preview;
+mod schema;
 
 const NOTE: &str =
     "Products read these files once their adapters land. Until then only the files change.";
@@ -25,8 +29,13 @@ Usage:
   polycarp theme list [--json]
   polycarp theme show [name] [--json]
   polycarp theme current [--json]
+  polycarp theme schema [--json]
+  polycarp theme get <path> [name] [--json]
   polycarp theme set <name> [--mode auto|light|dark]
   polycarp theme accent <#rrggbb> [--mode light|dark] | --clear [--mode light|dark]
+  polycarp theme change <path> <value> [--json]
+  polycarp theme apply <file|-> [--name <name>] [--no-activate] [--json]
+  polycarp theme preview [name] [--mode light|dark|both] [--surface <s>] [--out <file>] [--json]
   polycarp theme create <name> --extends <base> [--force]
   polycarp theme edit-path <name>
   polycarp theme delete <name>
@@ -35,6 +44,10 @@ Usage:
   polycarp theme undo
   polycarp theme history [--json]
   polycarp theme reset
+
+Every command takes --json and then prints the envelope {ok, data} or {ok:false, error}.
+Exit codes: 0 ok, 1 refused or invalid, 2 usage. Agents: `polycarp mcp` serves the same
+commands as MCP tools, and `polycarp theme schema` lists every field.
 
 Built-in themes: polycarp (default), still-water, evening, parchment, blocks, calm.
 Your own themes live in <config>/themes/<name>.toml. The config folder is
@@ -1114,8 +1127,8 @@ fn stamps() -> (String, String) {
     )
 }
 
-fn caller() -> String {
-    let raw = env::var("POLYCARP_CALLER").unwrap_or_default();
+/// A caller name with control characters removed, trimmed and cut to 64 characters.
+pub(crate) fn clean_caller(raw: &str) -> String {
     let clean: String = raw
         .chars()
         .filter(|c| !c.is_control())
@@ -1137,6 +1150,10 @@ struct Hist {
     action: String,
     absent: bool,
     body: Vec<u8>,
+    /// A user theme file this change also touched, with what it held before.
+    theme_name: Option<String>,
+    theme_absent: bool,
+    theme_body: Vec<u8>,
 }
 
 const MARK: &[u8] = b"# ---\n";
@@ -1149,7 +1166,11 @@ fn parse_hist(file: PathBuf, bytes: Vec<u8>) -> Hist {
         action: String::new(),
         absent: false,
         body: Vec::new(),
+        theme_name: None,
+        theme_absent: false,
+        theme_body: Vec::new(),
     };
+    let mut theme_bytes = 0usize;
     let head_len = bytes
         .windows(MARK.len())
         .position(|w| w == MARK)
@@ -1167,9 +1188,19 @@ fn parse_hist(file: PathBuf, bytes: Vec<u8>) -> Hist {
             h.action = v.into();
         } else if line == "# absent = true" {
             h.absent = true;
+        } else if let Some(v) = line.strip_prefix("# theme_file = ") {
+            h.theme_name = Some(v.into());
+        } else if line == "# theme_file_absent = true" {
+            h.theme_absent = true;
+        } else if let Some(v) = line.strip_prefix("# theme_bytes = ") {
+            theme_bytes = v.parse().unwrap_or(0);
         }
     }
-    h.body = bytes[pos + MARK.len()..].to_vec();
+    let mut body = bytes[pos + MARK.len()..].to_vec();
+    if theme_bytes > 0 && theme_bytes <= body.len() {
+        h.theme_body = body.split_off(body.len() - theme_bytes);
+    }
+    h.body = body;
     h
 }
 
@@ -1196,18 +1227,31 @@ fn read_history(cfg: &Cfg) -> Vec<Hist> {
 }
 
 /// Keeps the current `config.toml` in `history/` before a change, and trims to the last 50.
-fn record(cfg: &Cfg, action: &str) -> Result<(), String> {
+/// With `theme`, the user theme file of that name is kept too, so undo can put it back.
+fn record(cfg: &Cfg, who: &str, action: &str, theme: Option<&str>) -> Result<(), String> {
     let (compact, iso) = stamps();
-    let who = caller();
     let current = fs::read(cfg.file()).ok();
+    let action: String = action.chars().filter(|c| !c.is_control()).collect();
     let mut data =
         format!("# polycarp-history 1\n# time = {iso}\n# caller = {who}\n# action = {action}\n")
             .into_bytes();
     if current.is_none() {
         data.extend_from_slice(b"# absent = true\n");
     }
+    let mut theme_body = Vec::new();
+    if let Some(name) = theme {
+        data.extend_from_slice(format!("# theme_file = {name}\n").as_bytes());
+        match fs::read(cfg.theme_path(name)) {
+            Ok(b) => {
+                data.extend_from_slice(format!("# theme_bytes = {}\n", b.len()).as_bytes());
+                theme_body = b;
+            }
+            Err(_) => data.extend_from_slice(b"# theme_file_absent = true\n"),
+        }
+    }
     data.extend_from_slice(MARK);
     data.extend_from_slice(current.as_deref().unwrap_or(b""));
+    data.extend_from_slice(&theme_body);
 
     let dir = cfg.history();
     fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
@@ -1236,42 +1280,1417 @@ fn record(cfg: &Cfg, action: &str) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Commands
+// Results and errors. The command line and `polycarp mcp` both call the `op_*` functions below
+// and get the same data back, so they cannot drift.
 // ---------------------------------------------------------------------------------------------
 
-struct Fail {
-    code: i32,
-    msg: String,
+/// What an operation returns: data for `--json` and MCP, text for a person.
+pub(crate) struct Out {
+    data: Json,
+    text: String,
+    warnings: Vec<String>,
+    notes: Vec<String>,
 }
 
-fn fail(msg: impl Into<String>) -> Fail {
-    Fail {
-        code: 1,
-        msg: format!("polycarp: {}", msg.into()),
+impl Out {
+    fn new(data: Json, text: impl Into<String>) -> Out {
+        Out {
+            data,
+            text: text.into(),
+            warnings: Vec::new(),
+            notes: Vec::new(),
+        }
+    }
+    fn warn(mut self, w: Vec<String>) -> Out {
+        self.warnings.extend(w);
+        self
+    }
+    fn with(mut self, extra: Json) -> Out {
+        if let (Some(d), Some(e)) = (self.data.as_object_mut(), extra.as_object()) {
+            for (k, v) in e {
+                d.insert(k.clone(), v.clone());
+            }
+        }
+        self
     }
 }
-fn usage_fail(msg: impl Into<String>) -> Fail {
-    Fail {
-        code: 2,
-        msg: format!(
-            "polycarp: theme: {}\nRun `polycarp theme --help`.",
-            msg.into()
+
+/// A refusal. `items` is what `--json` and MCP carry as `error.data.errors`.
+pub(crate) struct ApiErr {
+    exit: i32,
+    code: &'static str,
+    message: String,
+    suggestion: Option<String>,
+    items: Vec<Json>,
+    lines: Vec<String>,
+    usage: bool,
+}
+
+pub(crate) type Res = Result<Out, ApiErr>;
+/// An envelope and whether it is a success.
+pub(crate) type Envelope = (Json, bool);
+
+fn item(path: &str, message: &str) -> Json {
+    json!({"path": path, "message": message})
+}
+
+fn path_like(s: &str) -> bool {
+    !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+/// Turns one problem string from the checker into `{path, message, actual?, needs?}`.
+fn item_of(p: &str) -> Json {
+    let mut rest = p;
+    let mut surface: Option<String> = None;
+    let mut within: Option<String> = None;
+    loop {
+        if let Some(r) = rest.strip_prefix("in ") {
+            if let Some((ext, tail)) = r.split_once(": ") {
+                if valid_name(ext) {
+                    within = Some(ext.to_string());
+                    rest = tail;
+                    continue;
+                }
+            }
+        }
+        if let Some(r) = rest.strip_prefix("surface.") {
+            if let Some((s, tail)) = r.split_once(": ") {
+                if SURFACES.contains(&s) {
+                    surface = Some(s.to_string());
+                    rest = tail;
+                    continue;
+                }
+            }
+        }
+        break;
+    }
+    let scoped = |path: &str| match &surface {
+        Some(s) => format!("surface.{s}.{path}"),
+        None => path.to_string(),
+    };
+    let contrast_item = || -> Option<Json> {
+        let (fg, r) = rest.split_once(" on ")?;
+        let (bg, r) = r.split_once(" is ")?;
+        let (actual, needs) = r.split_once(", needs ")?;
+        if !path_like(fg) || !path_like(bg) {
+            return None;
+        }
+        Some(json!({
+            "path": scoped(fg),
+            "message": rest,
+            "actual": actual.parse::<f64>().ok()?,
+            "needs": needs.parse::<f64>().ok()?,
+            "on": scoped(bg),
+        }))
+    };
+    let mut it = if let Some(c) = contrast_item() {
+        c
+    } else if rest.starts_with("no theme named")
+        || (rest.starts_with('"') && rest.contains(" is not a valid theme name"))
+    {
+        item("name", rest)
+    } else if let Some((head, tail)) = rest.split_once(": ").filter(|(h, _)| path_like(h)) {
+        item(&scoped(head), tail)
+    } else {
+        item("$", rest)
+    };
+    if let (Some(ext), Some(o)) = (within, it.as_object_mut()) {
+        o.insert("in".into(), json!(ext));
+    }
+    it
+}
+
+fn is_contrast_item(i: &Json) -> bool {
+    i.get("actual").is_some() && i.get("needs").is_some()
+}
+
+impl ApiErr {
+    fn new(code: &'static str, message: impl Into<String>) -> ApiErr {
+        let message = message.into();
+        ApiErr {
+            exit: 1,
+            code,
+            items: vec![item("$", &message)],
+            message,
+            suggestion: None,
+            lines: Vec::new(),
+            usage: false,
+        }
+    }
+    /// A refusal that points at one path.
+    fn at(code: &'static str, path: &str, message: impl Into<String>) -> ApiErr {
+        let message = message.into();
+        let mut e = ApiErr::new(code, message.clone());
+        e.items = vec![item(path, &message)];
+        e
+    }
+    pub(crate) fn usage(msg: impl Into<String>) -> ApiErr {
+        let mut e = ApiErr::new("invalid_args", msg);
+        e.exit = 2;
+        e.usage = true;
+        e
+    }
+    fn suggest(mut self, s: impl Into<String>) -> ApiErr {
+        self.suggestion = Some(s.into());
+        self
+    }
+    /// A list of problems from the checker. The code says what kind they are.
+    fn problems(what: &str, problems: &[String]) -> ApiErr {
+        let items: Vec<Json> = problems.iter().map(|p| item_of(p)).collect();
+        let code = if !items.is_empty() && items.iter().all(is_contrast_item) {
+            "contrast"
+        } else if problems.len() == 1 && problems[0].starts_with("no theme named") {
+            "unknown_theme"
+        } else {
+            "invalid_theme"
+        };
+        ApiErr {
+            exit: 1,
+            code,
+            message: what.to_string(),
+            suggestion: None,
+            items,
+            lines: problems.to_vec(),
+            usage: false,
+        }
+    }
+    fn human(&self) -> String {
+        if self.usage {
+            return format!(
+                "polycarp: theme: {}\nRun `polycarp theme --help`.",
+                self.message
+            );
+        }
+        if self.lines.is_empty() {
+            return format!("polycarp: {}", self.message);
+        }
+        let n = self.lines.len();
+        let mut msg = format!(
+            "polycarp: {} ({n} problem{}):",
+            self.message,
+            if n == 1 { "" } else { "s" }
+        );
+        for p in &self.lines {
+            msg.push_str(&format!("\n  {p}"));
+        }
+        msg
+    }
+    fn suggestion(&self) -> String {
+        if let Some(s) = &self.suggestion {
+            return s.clone();
+        }
+        match self.code {
+            "invalid_args" => "Check the arguments against `polycarp theme --help` or the tool's input schema.",
+            "invalid_theme" => "Fix each path in `errors` and send the whole theme again. `theme schema` lists every field, range and enum.",
+            "contrast" => "Pick colors that read better. Each error gives `actual` and `needs`. Do not try to get around the rule.",
+            "unknown_theme" => "Run `theme list` for the names you can use.",
+            "builtin_read_only" => "Built-in themes cannot be replaced. Use `theme change` (it makes a -custom copy), or apply under a new name.",
+            "unknown_path" => "Run `theme schema` and read x-paths for the valid paths.",
+            "invalid_value" => "Send a value of the type in `needs`.",
+            "exists" => "Pick another name, or pass force.",
+            "current_theme" => "Run `theme set <other>` first.",
+            "nothing_to_undo" => "History is empty. `theme reset` goes back to the default.",
+            "io_error" => "Check that the config folder is writable, then try again.",
+            "config_error" => "Set XDG_CONFIG_HOME (or APPDATA on Windows) to a folder you can write.",
+            _ => "",
+        }
+        .to_string()
+    }
+}
+
+fn io_err(msg: String) -> ApiErr {
+    ApiErr::new("io_error", msg)
+}
+
+fn pretty(v: &Json) -> String {
+    serde_json::to_string_pretty(v).unwrap_or_default()
+}
+
+/// The envelope in `spaces/spec/envelope.md`, for a success.
+pub(crate) fn envelope_ok(out: &Out) -> Json {
+    let mut data = out.data.clone();
+    if let Some(o) = data.as_object_mut() {
+        if !out.warnings.is_empty() {
+            o.insert("warnings".into(), json!(out.warnings));
+        }
+        if !out.notes.is_empty() {
+            o.insert("notes".into(), json!(out.notes));
+        }
+    }
+    json!({"ok": true, "data": data})
+}
+
+/// The envelope for a refusal. `error.data.errors` is `[{path, message, actual?, needs?}]`.
+pub(crate) fn envelope_err(e: &ApiErr) -> Json {
+    json!({"ok": false, "error": {
+        "code": e.code,
+        "message": e.message,
+        "retry": "never",
+        "suggestion": e.suggestion(),
+        "data": {"errors": e.items},
+    }})
+}
+
+/// Either result as an envelope, and whether it was a success.
+pub(crate) fn envelope(r: &Res) -> Envelope {
+    match r {
+        Ok(o) => (envelope_ok(o), true),
+        Err(e) => (envelope_err(e), false),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Operations
+// ---------------------------------------------------------------------------------------------
+
+pub(crate) struct Ctx {
+    cfg: Cfg,
+    caller: String,
+}
+
+impl Ctx {
+    pub(crate) fn new(caller: &str) -> Result<Ctx, ApiErr> {
+        let cfg = Cfg::from_env().map_err(|e| ApiErr::new("config_error", e))?;
+        Ok(Ctx {
+            cfg,
+            caller: clean_caller(caller),
+        })
+    }
+}
+
+fn mode_ok(m: &str) -> bool {
+    matches!(m, "auto" | "light" | "dark")
+}
+
+fn bad_theme(what: &str, ps: &[String]) -> ApiErr {
+    ApiErr::problems(what, ps)
+}
+
+pub(crate) fn op_list(c: &Ctx) -> Res {
+    let eff = effective(&c.cfg);
+    let list = entries(&c.cfg);
+    let mut text = String::new();
+    let mut arr = Vec::new();
+    for e in &list {
+        let cur = e.name == eff.state.theme;
+        let mark = if cur { "*" } else { " " };
+        let tail = match &e.title {
+            Some(t) => t.clone(),
+            None => format!(
+                "(invalid: {} problem(s); run `polycarp theme validate`)",
+                e.problems.len()
+            ),
+        };
+        text.push_str(&format!("{mark} {:<16} {:<9} {tail}\n", e.name, e.source));
+        arr.push(json!({
+            "name": e.name,
+            "source": e.source,
+            "title": e.title,
+            "current": cur,
+            "valid": e.problems.is_empty(),
+            "problems": e.problems,
+        }));
+    }
+    Ok(Out::new(json!({"themes": arr, "current": eff.state.theme}), text).warn(eff.problems))
+}
+
+fn resolve_for_view(cfg: &Cfg, name: Option<&str>) -> Result<(Full, Vec<String>), ApiErr> {
+    match name {
+        Some(n) => {
+            let f = resolve_name(cfg, n)
+                .map_err(|p| bad_theme(&format!("theme {n:?} cannot be used"), &p))?;
+            Ok((f, vec![]))
+        }
+        None => {
+            let eff = effective(cfg);
+            Ok((eff.full, eff.problems))
+        }
+    }
+}
+
+pub(crate) fn op_show(c: &Ctx, name: Option<&str>) -> Res {
+    let (full, problems) = resolve_for_view(&c.cfg, name)?;
+    // As authored here: durations are not zeroed; the exports zero them.
+    let mut v = theme_json(&full, None);
+    if let Some(o) = v.as_object_mut() {
+        let mut s = serde_json::Map::new();
+        for n in SURFACES {
+            s.insert(
+                n.to_string(),
+                serde_json::to_value(full.surface(n)).unwrap_or(Json::Null),
+            );
+        }
+        o.insert("surfaces".into(), Json::Object(s));
+    }
+    let mut t = Value::try_from(&full.base)
+        .ok()
+        .and_then(|v| v.as_table().cloned())
+        .unwrap_or_default();
+    t.insert("name".into(), Value::String(full.name.clone()));
+    t.insert("title".into(), Value::String(full.title.clone()));
+    if let Some(d) = &full.description {
+        t.insert("description".into(), Value::String(d.clone()));
+    }
+    let mut text = toml::to_string(&t).unwrap_or_default();
+    for s in SURFACES {
+        if full.surface(s) != &full.base {
+            text.push_str(&format!(
+                "# surface {s} overrides some of the values above\n"
+            ));
+        }
+    }
+    Ok(Out::new(v, text).warn(problems))
+}
+
+pub(crate) fn op_current(c: &Ctx) -> Res {
+    let eff = effective(&c.cfg);
+    let source = if is_builtin(&eff.state.theme) {
+        "built-in"
+    } else {
+        "user"
+    };
+    let text = format!(
+        "theme: {} ({source})\nmode: {}\naccent_light: {}\naccent_dark: {}\nconfig: {}\n",
+        eff.state.theme,
+        eff.state.mode,
+        eff.state.accent_light.as_deref().unwrap_or("none"),
+        eff.state.accent_dark.as_deref().unwrap_or("none"),
+        c.cfg.file().display()
+    );
+    let data = json!({
+        "theme": eff.state.theme,
+        "title": eff.full.title,
+        "source": source,
+        "mode": eff.state.mode,
+        "accent_light": eff.state.accent_light,
+        "accent_dark": eff.state.accent_dark,
+        "config": c.cfg.file().display().to_string(),
+        "problems": eff.problems,
+        "fell_back": !eff.problems.is_empty(),
+    });
+    Ok(Out::new(data, text).warn(eff.problems))
+}
+
+// --- paths ----------------------------------------------------------------------------------
+
+enum Target {
+    Meta(&'static str),
+    Field {
+        surface: Option<String>,
+        section: &'static str,
+        key: &'static str,
+        kind: Kind,
+    },
+}
+
+fn path_hint(section: Option<&str>) -> String {
+    match section {
+        Some(s) => format!(
+            "valid keys in {s}: {}",
+            fields(s)
+                .iter()
+                .map(|(k, _)| *k)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        None => format!(
+            "valid paths look like {}, {}, surface.<{}>.<section>.<key>, or title, description; sections: {}",
+            "dark.accent",
+            "shape.radius",
+            SURFACES.join("|"),
+            SECTIONS.join(", ")
         ),
     }
 }
-fn problems_fail(what: &str, problems: &[String]) -> Fail {
-    let n = problems.len();
-    let mut msg = format!(
-        "polycarp: {what} ({n} problem{}):",
-        if n == 1 { "" } else { "s" }
-    );
-    for p in problems {
-        msg.push_str(&format!("\n  {p}"));
+
+fn parse_target(path: &str) -> Result<Target, ApiErr> {
+    let segs: Vec<&str> = path.split('.').collect();
+    let unknown = |msg: String, hint: String| ApiErr::at("unknown_path", path, msg).suggest(hint);
+    let (surface, rest): (Option<String>, &[&str]) = if segs.first() == Some(&"surface") {
+        match segs.get(1) {
+            Some(s) if SURFACES.contains(s) => (Some((*s).to_string()), &segs[2..]),
+            _ => {
+                return Err(unknown(
+                    format!(
+                        "{path}: needs a product after surface (one of {})",
+                        SURFACES.join(", ")
+                    ),
+                    path_hint(None),
+                ))
+            }
+        }
+    } else {
+        (None, &segs[..])
+    };
+    match rest {
+        ["title"] if surface.is_none() => Ok(Target::Meta("title")),
+        ["description"] if surface.is_none() => Ok(Target::Meta("description")),
+        [sec, key] => {
+            let Some(section) = SECTIONS.iter().find(|s| *s == sec) else {
+                return Err(unknown(
+                    format!("{path}: {sec:?} is not a section"),
+                    path_hint(None),
+                ));
+            };
+            match fields(section).into_iter().find(|(k, _)| k == key) {
+                Some((k, kind)) => Ok(Target::Field {
+                    surface,
+                    section,
+                    key: k,
+                    kind,
+                }),
+                None => Err(unknown(
+                    format!("{path}: {key:?} is not a field of {section}"),
+                    path_hint(Some(section)),
+                )),
+            }
+        }
+        _ => Err(unknown(
+            format!("{path}: does not name one value"),
+            path_hint(None),
+        )),
     }
-    Fail { code: 1, msg }
 }
 
-type R = Result<(), Fail>;
+/// Turns what the caller sent into the TOML value the path needs, or says what was wrong.
+fn coerce(path: &str, target: &Target, v: &Json) -> Result<Value, ApiErr> {
+    let bad = |needs: String| {
+        let mut e = ApiErr::at(
+            "invalid_value",
+            path,
+            format!("{path}: {} is not {needs}", compact(v)),
+        );
+        e.items = vec![json!({"path": path, "message": e.message, "actual": v, "needs": needs})];
+        e
+    };
+    let text_of = |v: &Json| v.as_str().map(str::to_string);
+    match target {
+        Target::Meta(which) => match text_of(v) {
+            Some(s) if *which == "title" && s.trim().is_empty() => {
+                Err(bad("a title that is not empty".into()))
+            }
+            Some(s) => Ok(Value::String(s)),
+            None => Err(bad("text".into())),
+        },
+        Target::Field { kind, .. } => {
+            let needs = schema::needs(*kind);
+            match kind {
+                Kind::Hex | Kind::Enum(_) | Kind::Font | Kind::Easing => match text_of(v) {
+                    Some(s) => Ok(Value::String(if matches!(kind, Kind::Hex) {
+                        s.to_lowercase()
+                    } else {
+                        s
+                    })),
+                    None => Err(bad(needs)),
+                },
+                Kind::Int(..) => match v {
+                    Json::Number(n) => n.as_i64().map(Value::Integer).ok_or_else(|| bad(needs)),
+                    Json::String(s) => s
+                        .trim()
+                        .parse::<i64>()
+                        .map(Value::Integer)
+                        .map_err(|_| bad(needs)),
+                    _ => Err(bad(needs)),
+                },
+                Kind::Float(..) => match v {
+                    Json::Number(n) => n.as_f64().map(Value::Float).ok_or_else(|| bad(needs)),
+                    Json::String(s) => s
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|f| f.is_finite())
+                        .map(Value::Float)
+                        .ok_or_else(|| bad(needs)),
+                    _ => Err(bad(needs)),
+                },
+                Kind::Bool => match v {
+                    Json::Bool(b) => Ok(Value::Boolean(*b)),
+                    Json::String(s) if s == "true" || s == "false" => {
+                        Ok(Value::Boolean(s == "true"))
+                    }
+                    _ => Err(bad(needs)),
+                },
+            }
+        }
+    }
+}
+
+fn compact(v: &Json) -> String {
+    serde_json::to_string(v).unwrap_or_default()
+}
+
+/// The value at a dotted path in a resolved theme, as JSON.
+fn lookup(full: &Full, path: &str) -> Result<Json, ApiErr> {
+    match path {
+        "name" => return Ok(json!(full.name)),
+        "title" => return Ok(json!(full.title)),
+        "description" => return Ok(json!(full.description)),
+        _ => {}
+    }
+    let segs: Vec<&str> = path.split('.').collect();
+    let (resolved, rest): (&Resolved, &[&str]) = if segs.first() == Some(&"surface") {
+        match segs.get(1) {
+            Some(s) if SURFACES.contains(s) => (full.surface(s), &segs[2..]),
+            _ => {
+                return Err(ApiErr::at(
+                    "unknown_path",
+                    path,
+                    format!(
+                        "{path}: needs a product after surface (one of {})",
+                        SURFACES.join(", ")
+                    ),
+                )
+                .suggest(path_hint(None)))
+            }
+        }
+    } else {
+        (&full.base, &segs[..])
+    };
+    let mut v = serde_json::to_value(resolved).unwrap_or(Json::Null);
+    let mut at = String::new();
+    for seg in rest {
+        let next = v.get(*seg).cloned();
+        match next {
+            Some(n) => {
+                v = n;
+                at = if at.is_empty() {
+                    seg.to_string()
+                } else {
+                    format!("{at}.{seg}")
+                };
+            }
+            None => {
+                let sec = at.split('.').next().filter(|s| SECTIONS.contains(s));
+                return Err(ApiErr::at(
+                    "unknown_path",
+                    path,
+                    format!("{path}: {seg:?} is not a field here"),
+                )
+                .suggest(path_hint(if at.is_empty() { None } else { sec })));
+            }
+        }
+    }
+    Ok(v)
+}
+
+pub(crate) fn op_get(c: &Ctx, path: &str, name: Option<&str>) -> Res {
+    let (full, problems) = resolve_for_view(&c.cfg, name)?;
+    let value = lookup(&full, path)?;
+    let text = match &value {
+        Json::String(s) => format!("{s}\n"),
+        Json::Null => "null\n".to_string(),
+        Json::Object(_) | Json::Array(_) => format!("{}\n", pretty(&value)),
+        other => format!("{other}\n"),
+    };
+    let needs = match parse_target(path) {
+        Ok(Target::Field { kind, .. }) => json!(schema::needs(kind)),
+        _ => Json::Null,
+    };
+    Ok(Out::new(
+        json!({"path": path, "value": value, "theme": full.name, "needs": needs}),
+        text,
+    )
+    .warn(problems))
+}
+
+// --- state changes --------------------------------------------------------------------------
+
+/// Writes the files for whatever state is now in force, and says what is in force.
+fn finish(cfg: &Cfg) -> Res {
+    let eff = effective(cfg);
+    let wrote = write_outputs(cfg, &eff).map_err(io_err)?;
+    let mut text = format!("theme: {}\nmode: {}\n", eff.state.theme, eff.state.mode);
+    if eff.state.accent_light.is_some() || eff.state.accent_dark.is_some() {
+        text.push_str(&format!(
+            "accent: light {}, dark {}\n",
+            eff.state.accent_light.as_deref().unwrap_or("theme's own"),
+            eff.state.accent_dark.as_deref().unwrap_or("theme's own")
+        ));
+    }
+    text.push_str(&format!("wrote {}\n", cfg.file().display()));
+    for w in &wrote {
+        text.push_str(&format!("wrote {}\n", w.display()));
+    }
+    text.push_str(NOTE);
+    text.push('\n');
+    let data = json!({
+        "theme": eff.state.theme,
+        "mode": eff.state.mode,
+        "accent_light": eff.state.accent_light,
+        "accent_dark": eff.state.accent_dark,
+        "config": cfg.file().display().to_string(),
+        "wrote": wrote.iter().map(|w| w.display().to_string()).collect::<Vec<_>>(),
+        "note": NOTE,
+        "next": "Look at it with theme preview. If the person dislikes it, run theme undo.",
+    });
+    Ok(Out::new(data, text).warn(eff.problems))
+}
+
+/// Records the old files for undo, writes a theme file if given, writes the state if given,
+/// then writes the outputs. `file` is (theme name, full text).
+fn commit(c: &Ctx, st: Option<&State>, action: &str, file: Option<(&str, &str)>) -> Res {
+    record(&c.cfg, &c.caller, action, file.map(|f| f.0)).map_err(io_err)?;
+    if let Some((name, text)) = file {
+        write_atomic(&c.cfg.theme_path(name), text.as_bytes()).map_err(io_err)?;
+    }
+    if let Some(st) = st {
+        write_atomic(&c.cfg.file(), state_table(&c.cfg, st).as_bytes()).map_err(io_err)?;
+    }
+    finish(&c.cfg)
+}
+
+pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
+    if let Some(m) = mode {
+        if !mode_ok(m) {
+            return Err(ApiErr::usage("--mode must be auto, light or dark"));
+        }
+    }
+    let full = resolve_name(&c.cfg, name)
+        .map_err(|ps| bad_theme(&format!("theme {name:?} cannot be used"), &ps))?;
+    let (mut st, old_problems) = load_state(&c.cfg);
+    let mut notes = Vec::new();
+    if !old_problems.is_empty() {
+        notes.push(format!(
+            "the old settings were invalid and are replaced: {}",
+            old_problems.join("; ")
+        ));
+    }
+    if let Some(m) = mode {
+        st.mode = m.to_string();
+    }
+    st.theme = name.to_string();
+    if apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref()).is_err() {
+        notes.push(format!(
+            "your accent override does not read well on {name}, so it is cleared"
+        ));
+        st.accent_light = None;
+        st.accent_dark = None;
+    }
+    let mut out = commit(c, Some(&st), &format!("theme set {name}"), None)?;
+    out.notes.splice(0..0, notes);
+    Ok(out)
+}
+
+pub(crate) fn op_accent(c: &Ctx, color: Option<&str>, mode: Option<&str>) -> Res {
+    let both = ["light", "dark"];
+    let modes: Vec<&str> = match mode {
+        None | Some("auto") | Some("both") => both.to_vec(),
+        Some("light") => vec!["light"],
+        Some("dark") => vec!["dark"],
+        Some(_) => return Err(ApiErr::usage("--mode must be light or dark")),
+    };
+    let new = match color {
+        None => None,
+        Some(c) if is_hex(c) => Some(c.to_lowercase()),
+        Some(c) => {
+            return Err(ApiErr::at(
+                "invalid_value",
+                "color",
+                format!("{c:?} is not a color like #rrggbb"),
+            ))
+        }
+    };
+    let eff = effective(&c.cfg);
+    let mut st = eff.state.clone();
+    for m in &modes {
+        if *m == "light" {
+            st.accent_light = new.clone();
+        } else {
+            st.accent_dark = new.clone();
+        }
+    }
+    build_full(&c.cfg, &st).map_err(|ps| {
+        bad_theme(
+            &format!(
+                "accent {} is refused, nothing changed",
+                new.as_deref().unwrap_or("")
+            ),
+            &ps,
+        )
+    })?;
+    let action = match &new {
+        Some(c) => format!("theme accent {c}"),
+        None => "theme accent --clear".to_string(),
+    };
+    commit(c, Some(&st), &action, None)
+}
+
+fn title_case(name: &str) -> String {
+    name.split('-')
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub(crate) fn op_create(c: &Ctx, name: &str, base_name: &str, force: bool) -> Res {
+    if !valid_name(name) {
+        return Err(ApiErr::at(
+            "invalid_theme",
+            "name",
+            format!("{name:?} is not a valid theme name (lowercase letters, digits and hyphens)"),
+        ));
+    }
+    if is_builtin(name) {
+        return Err(ApiErr::at(
+            "builtin_read_only",
+            "name",
+            format!("{name:?} is a built-in theme name; pick another"),
+        ));
+    }
+    let base = resolve_name(&c.cfg, base_name)
+        .map_err(|ps| bad_theme(&format!("cannot extend {base_name:?}"), &ps))?;
+    let path = c.cfg.theme_path(name);
+    if path.exists() && !force {
+        return Err(ApiErr::at(
+            "exists",
+            "name",
+            format!(
+                "{} already exists; use --force to overwrite it",
+                path.display()
+            ),
+        ));
+    }
+    let mut s = format!(
+        "# Polycarp theme {name:?}. It starts from {base_name:?}.\n\
+         # Uncomment a line and change it to override that value.\n\
+         # Check it with `polycarp theme validate {name}.toml`, then use `polycarp theme set {name}`.\n\
+         name = {}\n\
+         title = {}\n\
+         extends = {}\n\
+         # description = \"One line about this theme.\"\n\n",
+        json!(name),
+        json!(title_case(name)),
+        json!(base_name),
+    );
+    let notes = [
+        ("light", "Colors for light mode. Each is \"#rrggbb\". Text colors need contrast 4.5 on background and surface."),
+        ("dark", "Colors for dark mode. Same rules as light."),
+        ("shape", "Corners and borders in px, shadow as 0.0 to 1.0, density compact|regular|spacious, indicator dot|bar|number-block."),
+        ("type", "Font stacks, base size in px (10 to 24), weight (300 to 800), line_height (1.0 to 2.0)."),
+        ("motion", "Durations in ms (0 to 1000), easing as a CSS string, scale_from 0.5 to 1.0. reduced = true makes every duration 0."),
+    ];
+    let table = Value::try_from(&base.base)
+        .ok()
+        .and_then(|v| v.as_table().cloned())
+        .unwrap_or_default();
+    for (sec, note) in notes {
+        s.push_str(&format!("# {note}\n# [{sec}]\n"));
+        if let Some(Value::Table(t)) = table.get(sec) {
+            for (f, _) in fields(sec) {
+                if let Some(v) = t.get(f) {
+                    s.push_str(&format!("# {f} = {v}\n"));
+                }
+            }
+        }
+        s.push('\n');
+    }
+    s.push_str(
+        "# Overrides for one product only: spaces, voice, browser or site.\n\
+         # Any section above works inside a surface, for example:\n\
+         # [surface.site.light]\n\
+         # accent = \"#3f6b6a\"\n",
+    );
+    write_atomic(&path, s.as_bytes()).map_err(io_err)?;
+    let text = format!(
+        "created {}\nIt extends {base_name}. Edit it, then run `polycarp theme validate` on it.\n",
+        path.display()
+    );
+    Ok(Out::new(
+        json!({"name": name, "extends": base_name, "path": path.display().to_string()}),
+        text,
+    ))
+}
+
+fn user_theme_name(name: &str) -> Result<(), ApiErr> {
+    if !valid_name(name) {
+        return Err(ApiErr::at(
+            "invalid_theme",
+            "name",
+            format!("{name:?} is not a valid theme name"),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn op_edit_path(c: &Ctx, name: &str) -> Res {
+    user_theme_name(name)?;
+    if is_builtin(name) {
+        return Err(ApiErr::at(
+            "builtin_read_only",
+            "name",
+            format!(
+                "{name:?} is built in and cannot be edited; run `polycarp theme create <name> --extends {name}`"
+            ),
+        ));
+    }
+    let p = c.cfg.theme_path(name).display().to_string();
+    Ok(Out::new(json!({"name": name, "path": p}), format!("{p}\n")))
+}
+
+/// The theme name in `config.toml` even when the rest of the file is bad.
+fn current_name_lenient(cfg: &Cfg) -> Option<String> {
+    let t = fs::read_to_string(cfg.file()).ok()?.parse::<Table>().ok()?;
+    t.get("appearance")?
+        .as_table()?
+        .get("theme")?
+        .as_str()
+        .map(str::to_string)
+}
+
+pub(crate) fn op_delete(c: &Ctx, name: &str) -> Res {
+    user_theme_name(name)?;
+    if is_builtin(name) {
+        return Err(ApiErr::at(
+            "builtin_read_only",
+            "name",
+            format!("{name:?} is built in and cannot be deleted"),
+        ));
+    }
+    let path = c.cfg.theme_path(name);
+    if !path.is_file() {
+        return Err(ApiErr::at(
+            "unknown_theme",
+            "name",
+            format!("no user theme named {name:?}"),
+        ));
+    }
+    let eff = effective(&c.cfg);
+    if eff.state.theme == name || current_name_lenient(&c.cfg).as_deref() == Some(name) {
+        return Err(ApiErr::at(
+            "current_theme",
+            "name",
+            format!("{name:?} is the current theme; run `polycarp theme set <other>` first"),
+        ));
+    }
+    fs::remove_file(&path)
+        .map_err(|e| io_err(format!("could not delete {}: {e}", path.display())))?;
+    Ok(Out::new(
+        json!({"name": name, "path": path.display().to_string()}),
+        format!("deleted {}\n", path.display()),
+    ))
+}
+
+// --- whole documents ------------------------------------------------------------------------
+
+fn json_to_toml(v: &Json, at: &str) -> Result<Value, String> {
+    Ok(match v {
+        Json::Null => {
+            return Err(format!(
+                "{at}: null has no TOML equivalent; leave the key out"
+            ))
+        }
+        Json::Bool(b) => Value::Boolean(*b),
+        Json::Number(n) => match n.as_i64() {
+            Some(i) => Value::Integer(i),
+            None => Value::Float(n.as_f64().ok_or(format!("{at}: number out of range"))?),
+        },
+        Json::String(s) => Value::String(s.clone()),
+        Json::Array(a) => Value::Array(
+            a.iter()
+                .enumerate()
+                .map(|(i, x)| json_to_toml(x, &format!("{at}[{i}]")))
+                .collect::<Result<_, _>>()?,
+        ),
+        Json::Object(o) => {
+            let mut t = Table::new();
+            for (k, x) in o {
+                let p = if at.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{at}.{k}")
+                };
+                t.insert(k.clone(), json_to_toml(x, &p)?);
+            }
+            Value::Table(t)
+        }
+    })
+}
+
+/// A theme document and, when it came as TOML, its original text (so comments survive).
+pub(crate) struct Doc {
+    table: Table,
+    toml_text: Option<String>,
+}
+
+/// Reads a theme given as TOML or JSON. The format is decided by the content: JSON starts
+/// with `{`.
+pub(crate) fn parse_doc(text: &str) -> Result<Doc, ApiErr> {
+    if text.trim_start().starts_with('{') {
+        let v: Json = serde_json::from_str(text).map_err(|e| {
+            ApiErr::problems(
+                "the theme is not valid",
+                &[format!(
+                    "could not read the text as JSON (line {}, column {}): {e}",
+                    e.line(),
+                    e.column()
+                )],
+            )
+        })?;
+        match json_to_toml(&v, "") {
+            Ok(Value::Table(table)) => Ok(Doc {
+                table,
+                toml_text: None,
+            }),
+            Ok(_) => Err(ApiErr::at(
+                "invalid_theme",
+                "$",
+                "a theme must be an object",
+            )),
+            Err(e) => Err(ApiErr::problems("the theme is not valid", &[e])),
+        }
+    } else {
+        let table =
+            parse_toml(text).map_err(|e| ApiErr::problems("the theme is not valid", &[e]))?;
+        Ok(Doc {
+            table,
+            toml_text: Some(text.to_string()),
+        })
+    }
+}
+
+/// A theme given inside a tool call: an object, or a string of TOML or JSON.
+pub(crate) fn doc_from_json(v: &Json) -> Result<Doc, ApiErr> {
+    match v {
+        Json::String(s) => parse_doc(s),
+        Json::Object(_) => match json_to_toml(v, "") {
+            Ok(Value::Table(table)) => Ok(Doc {
+                table,
+                toml_text: None,
+            }),
+            Ok(_) => Err(ApiErr::at(
+                "invalid_theme",
+                "$",
+                "a theme must be an object",
+            )),
+            Err(e) => Err(ApiErr::problems("the theme is not valid", &[e])),
+        },
+        _ => Err(ApiErr::usage(
+            "theme must be a JSON object or a string of TOML or JSON",
+        )),
+    }
+}
+
+pub(crate) fn op_validate(c: &Ctx, doc: &Doc, expect: Option<&str>, label: &str) -> Res {
+    match resolve_doc(&c.cfg, doc.table.clone(), expect) {
+        Ok(full) => Ok(Out::new(
+            json!({
+                "valid": true,
+                "name": full.name,
+                "title": full.title,
+                "surfaces": SURFACES,
+                "modes": MODES,
+            }),
+            format!(
+                "ok: {label} ({}) is valid in all {} surfaces, light and dark\n",
+                full.name,
+                SURFACES.len()
+            ),
+        )),
+        Err(ps) => Err(bad_theme(&format!("{label} is not valid"), &ps)),
+    }
+}
+
+pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) -> Res {
+    let Doc {
+        mut table,
+        toml_text,
+    } = doc;
+    let doc_name = table
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let name = match name {
+        Some(n) => n.to_string(),
+        None => doc_name.clone().unwrap_or_default(),
+    };
+    if is_builtin(&name) {
+        return Err(ApiErr::at(
+            "builtin_read_only",
+            "name",
+            format!(
+                "{name:?} is a built-in theme and cannot be replaced; apply it under another name"
+            ),
+        ));
+    }
+    if !name.is_empty() {
+        table.insert("name".into(), Value::String(name.clone()));
+    }
+    let full = resolve_doc(
+        &c.cfg,
+        table.clone(),
+        Some(name.as_str()).filter(|n| !n.is_empty()),
+    )
+    .map_err(|ps| bad_theme("the theme is refused, nothing changed", &ps))?;
+
+    // The text to save. TOML keeps its comments; JSON is written as TOML.
+    let saved = match toml_text {
+        Some(t) if doc_name.as_deref() == Some(name.as_str()) => t,
+        Some(t) => edit::set(&t, &[], "name", &Value::String(name.clone()))
+            .map(|e| e.text)
+            .map_err(|e| ApiErr::at("invalid_theme", "name", e))?,
+        None => format!(
+            "# Saved by `polycarp theme apply`.\n{}",
+            toml::to_string(&table).map_err(|e| io_err(e.to_string()))?
+        ),
+    };
+    let path = c.cfg.theme_path(&name);
+    let replaced = path.exists();
+
+    let mut notes = Vec::new();
+    let st_opt = if activate {
+        let mut st = effective(&c.cfg).state;
+        st.theme = name.clone();
+        if apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref()).is_err() {
+            notes.push(format!(
+                "your accent override does not read well on {name}, so it is cleared"
+            ));
+            st.accent_light = None;
+            st.accent_dark = None;
+        }
+        Some(st)
+    } else {
+        None
+    };
+    let mut out = commit(
+        c,
+        st_opt.as_ref(),
+        &format!("theme apply {name}"),
+        Some((&name, &saved)),
+    )?;
+    out.notes.splice(0..0, notes);
+    let mut text = format!("saved {}\n", path.display());
+    if !activate {
+        text.push_str(&format!(
+            "not made current; run `polycarp theme set {name}` to use it\n"
+        ));
+    }
+    text.push_str(&out.text);
+    out.text = text;
+    Ok(out.with(json!({
+        "name": name,
+        "title": full.title,
+        "saved": path.display().to_string(),
+        "replaced": replaced,
+        "activated": activate,
+    })))
+}
+
+/// `<builtin>-custom`, or the first free `<builtin>-custom-2`, `-3`, ...
+fn free_custom_name(cfg: &Cfg, base: &str) -> String {
+    let first = format!("{base}-custom");
+    if !cfg.theme_path(&first).exists() {
+        return first;
+    }
+    (2..)
+        .map(|n| format!("{first}-{n}"))
+        .find(|n| !cfg.theme_path(n).exists())
+        .unwrap_or(first)
+}
+
+pub(crate) fn op_change(c: &Ctx, path: &str, value: &Json) -> Res {
+    let target = parse_target(path)?;
+    let new = coerce(path, &target, value)?;
+    // The value alone, so a bad range is reported as the value's problem.
+    if let Target::Field { kind, .. } = &target {
+        let mut probs = Vec::new();
+        check_value(path, &new, *kind, &mut probs);
+        if !probs.is_empty() {
+            let mut e = ApiErr::problems("the value is refused, nothing changed", &probs);
+            e.code = "invalid_value";
+            e.items = vec![json!({
+                "path": path,
+                "message": probs[0].split_once(": ").map_or(probs[0].as_str(), |x| x.1),
+                "actual": serde_json::to_value(&new).unwrap_or(Json::Null),
+                "needs": schema::needs(*kind),
+            })];
+            return Err(e);
+        }
+    }
+
+    let eff = effective(&c.cfg);
+    let previous = lookup(&eff.full, path).ok();
+    let current = eff.state.theme.clone();
+    let mut st = eff.state.clone();
+
+    let (name, base_text, created) = if is_builtin(&current) {
+        let name = free_custom_name(&c.cfg, &current);
+        let text = format!(
+            "# Polycarp theme {name:?}. It extends the built-in {current:?}.\n\
+             # Made by `polycarp theme change`. Only the values you changed are listed.\n\
+             name = {}\n\
+             title = {}\n\
+             description = {}\n\
+             extends = {}\n",
+            json!(name),
+            json!(title_case(&name)),
+            json!(format!("{} with your changes.", title_case(&current))),
+            json!(current),
+        );
+        (name, text, true)
+    } else {
+        let p = c.cfg.theme_path(&current);
+        let text = fs::read_to_string(&p)
+            .map_err(|e| io_err(format!("could not read {}: {e}", p.display())))?;
+        (current.clone(), text, false)
+    };
+
+    let (section, key): (Vec<&str>, &str) = match &target {
+        Target::Meta(k) => (vec![], k),
+        Target::Field {
+            surface,
+            section,
+            key,
+            ..
+        } => match surface {
+            Some(s) => (vec!["surface", s.as_str(), section], key),
+            None => (vec![section], key),
+        },
+    };
+    let edited = edit::set(&base_text, &section, key, &new).map_err(|e| {
+        ApiErr::at(
+            "invalid_theme",
+            path,
+            format!("{}: {e}", c.cfg.theme_path(&name).display()),
+        )
+    })?;
+    let doc =
+        parse_toml(&edited.text).map_err(|e| ApiErr::problems("the edit is not valid", &[e]))?;
+    let full = resolve_doc(&c.cfg, doc, Some(&name))
+        .map_err(|ps| bad_theme("the change is refused, nothing changed", &ps))?;
+
+    // An explicit accent change replaces a `theme accent` override for that mode.
+    let mut notes = Vec::new();
+    if let Target::Field {
+        section: sec,
+        key: k,
+        ..
+    } = &target
+    {
+        if MODES.contains(sec) && (*k == "accent" || *k == "on_accent") {
+            let slot = if *sec == "light" {
+                &mut st.accent_light
+            } else {
+                &mut st.accent_dark
+            };
+            if slot.take().is_some() {
+                notes.push(format!(
+                    "the accent override for {sec} mode was cleared, because it would hide {path}"
+                ));
+            }
+        }
+    }
+    st.theme = name.clone();
+    apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref())
+        .map_err(|ps| bad_theme("the change is refused, nothing changed", &ps))?;
+
+    let mut out = commit(
+        c,
+        Some(&st),
+        &format!("theme change {path} {}", compact(value).trim_matches('"')),
+        Some((&name, &edited.text)),
+    )?;
+    let mut text = String::new();
+    if created {
+        let n = format!(
+            "{current} is built in, so the change went into a new theme {name} that extends it, now current"
+        );
+        text.push_str(&format!("{n}\n"));
+        notes.push(n);
+    }
+    text.push_str(&format!("changed {path}\n"));
+    text.push_str(&out.text);
+    out.text = text;
+    out.notes.splice(0..0, notes);
+    let file = c.cfg.theme_path(&name).display().to_string();
+    Ok(out.with(json!({
+        "path": path,
+        "value": serde_json::to_value(&new).unwrap_or(Json::Null),
+        "previous": previous,
+        "theme": name,
+        "created": created,
+        "extends": created.then_some(current),
+        "file": file,
+        "comments_kept": edited.kept_comments,
+    })))
+}
+
+pub(crate) fn op_export(c: &Ctx, format: &str, name: Option<&str>, surface: Option<&str>) -> Res {
+    if !matches!(format, "css" | "json") {
+        return Err(ApiErr::usage("export format must be css or json"));
+    }
+    if let Some(s) = surface {
+        if !SURFACES.contains(&s) {
+            return Err(ApiErr::usage(format!(
+                "--surface must be one of {}",
+                SURFACES.join(", ")
+            )));
+        }
+    }
+    let (full, problems) = resolve_for_view(&c.cfg, name)?;
+    let out = if format == "css" {
+        let css = css(&full, surface, None);
+        Out::new(
+            json!({"format": "css", "theme": full.name, "surface": surface, "css": css}),
+            css,
+        )
+    } else if let Some(s) = surface {
+        let mut v = resolved_json(full.surface(s));
+        if let Some(o) = v.as_object_mut() {
+            o.insert("name".into(), json!(full.name));
+            o.insert("title".into(), json!(full.title));
+            o.insert("surface".into(), json!(s));
+        }
+        let text = format!("{}\n", pretty(&v));
+        Out::new(v, text)
+    } else {
+        let v = theme_json(&full, None);
+        let text = format!("{}\n", pretty(&v));
+        Out::new(v, text)
+    };
+    Ok(out.warn(problems))
+}
+
+pub(crate) fn op_undo(c: &Ctx) -> Res {
+    let hist = read_history(&c.cfg);
+    let Some(last) = hist.first() else {
+        return Err(ApiErr::new("nothing_to_undo", "nothing to undo"));
+    };
+    if let Some(name) = last
+        .theme_name
+        .as_deref()
+        .filter(|n| valid_name(n) && !is_builtin(n))
+    {
+        let p = c.cfg.theme_path(name);
+        if last.theme_absent {
+            match fs::remove_file(&p) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(io_err(format!("could not remove {}: {e}", p.display()))),
+            }
+        } else {
+            write_atomic(&p, &last.theme_body).map_err(io_err)?;
+        }
+    }
+    if last.absent {
+        match fs::remove_file(c.cfg.file()) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(io_err(format!(
+                    "could not remove {}: {e}",
+                    c.cfg.file().display()
+                )))
+            }
+        }
+    } else {
+        write_atomic(&c.cfg.file(), &last.body).map_err(io_err)?;
+    }
+    fs::remove_file(&last.file)
+        .map_err(|e| io_err(format!("could not remove {}: {e}", last.file.display())))?;
+    let mut out = finish(&c.cfg)?;
+    out.text = format!(
+        "undid: {} ({}, {})\n{}",
+        last.action, last.caller, last.time, out.text
+    );
+    Ok(out.with(json!({"undid": {
+        "action": last.action, "caller": last.caller, "time": last.time
+    }})))
+}
+
+pub(crate) fn op_history(c: &Ctx) -> Res {
+    let hist = read_history(&c.cfg);
+    let entries: Vec<Json> = hist
+        .iter()
+        .map(|h| {
+            json!({
+                "time": h.time,
+                "caller": h.caller,
+                "action": h.action,
+                "file": h.file.display().to_string(),
+            })
+        })
+        .collect();
+    let text = if hist.is_empty() {
+        "no history yet\n".to_string()
+    } else {
+        hist.iter()
+            .enumerate()
+            .map(|(i, h)| format!("{:>2}  {}  {:<16} {}\n", i + 1, h.time, h.caller, h.action))
+            .collect()
+    };
+    Ok(Out::new(json!({"entries": entries}), text))
+}
+
+pub(crate) fn op_reset(c: &Ctx) -> Res {
+    commit(c, Some(&State::default_state()), "theme reset", None)
+}
+
+pub(crate) fn op_schema() -> Res {
+    let s = schema::schema();
+    let text = format!("{}\n", pretty(&s));
+    Ok(Out::new(json!({"schema": s}), text))
+}
+
+pub(crate) fn op_preview(
+    c: &Ctx,
+    name: Option<&str>,
+    mode: Option<&str>,
+    surface: Option<&str>,
+    out: Option<&str>,
+) -> Res {
+    let mode = mode.unwrap_or("both");
+    let modes: Vec<&str> = match mode {
+        "both" => vec!["light", "dark"],
+        "light" => vec!["light"],
+        "dark" => vec!["dark"],
+        _ => return Err(ApiErr::usage("--mode must be light, dark or both")),
+    };
+    if let Some(s) = surface {
+        if !SURFACES.contains(&s) {
+            return Err(ApiErr::usage(format!(
+                "--surface must be one of {}",
+                SURFACES.join(", ")
+            )));
+        }
+    }
+    let (full, problems) = resolve_for_view(&c.cfg, name)?;
+    let html = preview::render(&full, surface, &modes);
+    let path = match out {
+        Some(p) if !p.is_empty() => PathBuf::from(p),
+        _ => env::temp_dir().join("polycarp-preview").join(format!(
+            "{}{}-{mode}.html",
+            full.name,
+            surface.map(|s| format!("-{s}")).unwrap_or_default()
+        )),
+    };
+    write_atomic(&path, html.as_bytes()).map_err(io_err)?;
+    let shown = path.display().to_string();
+    Ok(Out::new(
+        json!({
+            "path": shown,
+            "theme": full.name,
+            "mode": mode,
+            "surface": surface,
+            "bytes": html.len(),
+            "how_to_view": "Open the file in a browser and take a screenshot. It has no external requests.",
+        }),
+        format!("{shown}\n"),
+    )
+    .warn(problems))
+}
+
+// ---------------------------------------------------------------------------------------------
+// The command line
+// ---------------------------------------------------------------------------------------------
 
 struct Parsed {
     pos: Vec<String>,
@@ -1288,7 +2707,7 @@ impl Parsed {
     }
 }
 
-fn parse_args(args: &[String], valued: &[&str], bools: &[&str]) -> Result<Parsed, Fail> {
+fn parse_args(args: &[String], valued: &[&str], bools: &[&str]) -> Result<Parsed, ApiErr> {
     let mut p = Parsed {
         pos: Vec::new(),
         vals: BTreeMap::new(),
@@ -1298,6 +2717,7 @@ fn parse_args(args: &[String], valued: &[&str], bools: &[&str]) -> Result<Parsed
     while i < args.len() {
         let a = &args[i];
         i += 1;
+        // A lone `-` is a positional (stdin); `--` plus a name is an option.
         if let Some(rest) = a.strip_prefix("--").filter(|r| !r.is_empty()) {
             let (key, inline) = match rest.split_once('=') {
                 Some((k, v)) => (k, Some(v.to_string())),
@@ -1309,7 +2729,7 @@ fn parse_args(args: &[String], valued: &[&str], bools: &[&str]) -> Result<Parsed
                     None => {
                         let v = args
                             .get(i)
-                            .ok_or_else(|| usage_fail(format!("--{key} needs a value")))?;
+                            .ok_or_else(|| ApiErr::usage(format!("--{key} needs a value")))?;
                         i += 1;
                         v.clone()
                     }
@@ -1318,7 +2738,7 @@ fn parse_args(args: &[String], valued: &[&str], bools: &[&str]) -> Result<Parsed
             } else if bools.contains(&key) && inline.is_none() {
                 p.flags.insert(key.to_string());
             } else {
-                return Err(usage_fail(format!("unknown option --{key}")));
+                return Err(ApiErr::usage(format!("unknown option --{key}")));
             }
         } else {
             p.pos.push(a.clone());
@@ -1327,29 +2747,20 @@ fn parse_args(args: &[String], valued: &[&str], bools: &[&str]) -> Result<Parsed
     Ok(p)
 }
 
-fn exactly(p: &Parsed, n: usize, what: &str) -> Result<(), Fail> {
+fn exactly(p: &Parsed, n: usize, what: &str) -> Result<(), ApiErr> {
     if p.pos.len() == n {
         Ok(())
     } else {
-        Err(usage_fail(format!("expected {what}")))
+        Err(ApiErr::usage(format!("expected {what}")))
     }
 }
 
-fn cfg() -> Result<Cfg, Fail> {
-    Cfg::from_env().map_err(fail)
+fn ctx() -> Result<Ctx, ApiErr> {
+    Ctx::new(&env::var("POLYCARP_CALLER").unwrap_or_default())
 }
 
-fn warn(problems: &[String]) {
-    for p in problems {
-        eprintln!("polycarp: warning: {p}");
-    }
-    if !problems.is_empty() {
-        eprintln!("polycarp: warning: using the default theme (polycarp, auto, no accent) instead");
-    }
-}
-
-fn print_json(v: &Json) {
-    println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
+fn first(p: &Parsed) -> Option<&str> {
+    p.pos.first().map(String::as_str)
 }
 
 pub fn run(args: &[OsString]) -> i32 {
@@ -1361,35 +2772,190 @@ pub fn run(args: &[OsString]) -> i32 {
         eprintln!("polycarp: theme: arguments must be valid text");
         return 2;
     };
+    // `--json` works on every subcommand, so it is taken out before the rest is read.
+    let json = args.iter().any(|a| a == "--json");
+    let args: Vec<String> = args.into_iter().filter(|a| a != "--json").collect();
     let Some((sub, rest)) = args.split_first() else {
+        if json {
+            return present(Err(ApiErr::usage("expected a command")), true);
+        }
         eprint!("{USAGE}");
         return 2;
     };
     let r = match sub.as_str() {
-        "list" => cmd_list(rest),
-        "show" => cmd_show(rest),
-        "current" => cmd_current(rest),
-        "set" => cmd_set(rest),
-        "accent" => cmd_accent(rest),
-        "create" => cmd_create(rest),
-        "edit-path" => cmd_edit_path(rest),
-        "delete" => cmd_delete(rest),
-        "validate" => cmd_validate(rest),
-        "export" => cmd_export(rest),
-        "undo" => cmd_undo(rest),
-        "history" => cmd_history(rest),
-        "reset" => cmd_reset(rest),
-        "--help" | "-h" | "help" => {
-            print!("{USAGE}");
-            Ok(())
-        }
-        other => Err(usage_fail(format!("unknown command {other}"))),
+        "list" => cmd(rest, &[], &[], |c, p| {
+            exactly(p, 0, "no arguments")?;
+            op_list(c)
+        }),
+        "show" => cmd(rest, &[], &[], |c, p| {
+            if p.pos.len() > 1 {
+                return Err(ApiErr::usage("expected at most one theme name"));
+            }
+            op_show(c, first(p))
+        }),
+        "current" => cmd(rest, &[], &[], |c, p| {
+            exactly(p, 0, "no arguments")?;
+            op_current(c)
+        }),
+        "get" => cmd(rest, &[], &[], |c, p| {
+            if p.pos.is_empty() || p.pos.len() > 2 {
+                return Err(ApiErr::usage("expected `get <path> [name]`"));
+            }
+            op_get(c, &p.pos[0], p.pos.get(1).map(String::as_str))
+        }),
+        "set" => cmd(rest, &["mode"], &[], |c, p| {
+            exactly(p, 1, "one theme name")?;
+            op_set(c, &p.pos[0], p.val("mode"))
+        }),
+        "accent" => cmd(rest, &["mode"], &["clear"], |c, p| {
+            if p.flag("clear") {
+                exactly(p, 0, "--clear alone")?;
+                op_accent(c, None, p.val("mode"))
+            } else {
+                exactly(p, 1, "a color like #rrggbb, or --clear")?;
+                op_accent(c, Some(&p.pos[0]), p.val("mode"))
+            }
+        }),
+        "change" => cmd(rest, &[], &[], |c, p| {
+            exactly(p, 2, "`change <path> <value>`")?;
+            op_change(c, &p.pos[0], &Json::String(p.pos[1].clone()))
+        }),
+        "apply" => cmd(rest, &["name"], &["no-activate"], |c, p| {
+            exactly(p, 1, "a file, or - for standard input")?;
+            let text = read_input(&p.pos[0])?;
+            let doc = parse_doc(&text)?;
+            op_apply(c, doc, p.val("name"), !p.flag("no-activate"))
+        }),
+        "create" => cmd(rest, &["extends"], &["force"], |c, p| {
+            exactly(p, 1, "one theme name")?;
+            let Some(base) = p.val("extends") else {
+                return Err(ApiErr::usage("create needs --extends <base>"));
+            };
+            op_create(c, &p.pos[0], base, p.flag("force"))
+        }),
+        "edit-path" => cmd(rest, &[], &[], |c, p| {
+            exactly(p, 1, "one theme name")?;
+            op_edit_path(c, &p.pos[0])
+        }),
+        "delete" => cmd(rest, &[], &[], |c, p| {
+            exactly(p, 1, "one theme name")?;
+            op_delete(c, &p.pos[0])
+        }),
+        "validate" => cmd(rest, &[], &[], |c, p| {
+            exactly(p, 1, "one file")?;
+            let file = Path::new(&p.pos[0]);
+            let src = fs::read_to_string(file).map_err(|e| {
+                ApiErr::new(
+                    "io_error",
+                    format!("could not read {}: {e}", file.display()),
+                )
+            })?;
+            let stem = file
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let label = file.display().to_string();
+            let doc = parse_doc(&src).map_err(|mut e| {
+                e.message = format!("{label} is not valid");
+                e
+            })?;
+            op_validate(c, &doc, Some(&stem), &label)
+        }),
+        "export" => cmd(rest, &["surface"], &[], |c, p| {
+            if p.pos.is_empty() || p.pos.len() > 2 {
+                return Err(ApiErr::usage("expected `export <css|json> [name]`"));
+            }
+            op_export(
+                c,
+                &p.pos[0],
+                p.pos.get(1).map(String::as_str),
+                p.val("surface"),
+            )
+        }),
+        "undo" => cmd(rest, &[], &[], |c, p| {
+            exactly(p, 0, "no arguments")?;
+            op_undo(c)
+        }),
+        "history" => cmd(rest, &[], &[], |c, p| {
+            exactly(p, 0, "no arguments")?;
+            op_history(c)
+        }),
+        "reset" => cmd(rest, &[], &[], |c, p| {
+            exactly(p, 0, "no arguments")?;
+            op_reset(c)
+        }),
+        "schema" => parse_args(rest, &[], &[]).and_then(|p| {
+            exactly(&p, 0, "no arguments")?;
+            op_schema()
+        }),
+        "preview" => cmd(rest, &["mode", "surface", "out"], &[], |c, p| {
+            if p.pos.len() > 1 {
+                return Err(ApiErr::usage("expected at most one theme name"));
+            }
+            op_preview(c, first(p), p.val("mode"), p.val("surface"), p.val("out"))
+        }),
+        "--help" | "-h" | "help" => Ok(Out::new(json!({"usage": USAGE}), USAGE)),
+        other => Err(ApiErr::usage(format!("unknown command {other}"))),
     };
+    present(r, json)
+}
+
+/// Reads the arguments, finds the config folder, and runs one operation.
+fn cmd(
+    args: &[String],
+    valued: &[&str],
+    bools: &[&str],
+    f: impl FnOnce(&Ctx, &Parsed) -> Res,
+) -> Res {
+    let p = parse_args(args, valued, bools)?;
+    f(&ctx()?, &p)
+}
+
+fn read_input(arg: &str) -> Result<String, ApiErr> {
+    if arg == "-" {
+        let mut s = String::new();
+        std::io::stdin()
+            .read_to_string(&mut s)
+            .map_err(|e| ApiErr::new("io_error", format!("could not read standard input: {e}")))?;
+        Ok(s)
+    } else {
+        fs::read_to_string(arg)
+            .map_err(|e| ApiErr::new("io_error", format!("could not read {arg}: {e}")))
+    }
+}
+
+/// Prints a result as a person or a program wants it, and returns the exit code.
+fn present(r: Res, json: bool) -> i32 {
+    if json {
+        let (env, ok) = envelope(&r);
+        println!("{}", pretty(&env));
+        return match r {
+            Ok(_) => 0,
+            Err(e) => {
+                debug_assert!(!ok);
+                e.exit
+            }
+        };
+    }
     match r {
-        Ok(()) => 0,
-        Err(f) => {
-            eprintln!("{}", f.msg);
-            f.code
+        Ok(out) => {
+            for p in &out.warnings {
+                eprintln!("polycarp: warning: {p}");
+            }
+            if !out.warnings.is_empty() {
+                eprintln!(
+                    "polycarp: warning: using the default theme (polycarp, auto, no accent) instead"
+                );
+            }
+            for n in out.notes.iter().filter(|n| !out.text.contains(n.as_str())) {
+                eprintln!("polycarp: note: {n}");
+            }
+            print!("{}", out.text);
+            0
+        }
+        Err(e) => {
+            eprintln!("{}", e.human());
+            e.exit
         }
     }
 }
@@ -1457,522 +3023,6 @@ fn entries(cfg: &Cfg) -> Vec<Entry> {
     out
 }
 
-fn cmd_list(args: &[String]) -> R {
-    let p = parse_args(args, &[], &["json"])?;
-    exactly(&p, 0, "no arguments")?;
-    let cfg = cfg()?;
-    let eff = effective(&cfg);
-    let list = entries(&cfg);
-    if p.flag("json") {
-        let arr: Vec<Json> = list
-            .iter()
-            .map(|e| {
-                json!({
-                    "name": e.name,
-                    "source": e.source,
-                    "title": e.title,
-                    "current": e.name == eff.state.theme,
-                    "valid": e.problems.is_empty(),
-                    "problems": e.problems,
-                })
-            })
-            .collect();
-        print_json(&Json::Array(arr));
-    } else {
-        for e in &list {
-            let mark = if e.name == eff.state.theme { "*" } else { " " };
-            let tail = match &e.title {
-                Some(t) => t.clone(),
-                None => format!(
-                    "(invalid: {} problem(s); run `polycarp theme validate`)",
-                    e.problems.len()
-                ),
-            };
-            println!("{mark} {:<16} {:<9} {tail}", e.name, e.source);
-        }
-    }
-    warn(&eff.problems);
-    Ok(())
-}
-
-fn view_json(full: &Full) -> Json {
-    theme_json(full, None)
-}
-
-fn resolve_for_view(cfg: &Cfg, name: Option<&str>) -> Result<(Full, Vec<String>), Fail> {
-    match name {
-        Some(n) => {
-            let f = resolve_name(cfg, n)
-                .map_err(|p| problems_fail(&format!("theme {n:?} cannot be used"), &p))?;
-            Ok((f, vec![]))
-        }
-        None => {
-            let eff = effective(cfg);
-            Ok((eff.full, eff.problems))
-        }
-    }
-}
-
-fn cmd_show(args: &[String]) -> R {
-    let p = parse_args(args, &[], &["json"])?;
-    if p.pos.len() > 1 {
-        return Err(usage_fail("expected at most one theme name"));
-    }
-    let cfg = cfg()?;
-    let (full, problems) = resolve_for_view(&cfg, p.pos.first().map(String::as_str))?;
-    if p.flag("json") {
-        // As authored here: durations are not zeroed; the exports zero them.
-        let mut v = view_json(&full);
-        if let Some(o) = v.as_object_mut() {
-            let mut s = serde_json::Map::new();
-            for n in SURFACES {
-                s.insert(
-                    n.to_string(),
-                    serde_json::to_value(full.surface(n)).unwrap_or(Json::Null),
-                );
-            }
-            o.insert("surfaces".into(), Json::Object(s));
-        }
-        print_json(&v);
-    } else {
-        let mut t = Value::try_from(&full.base)
-            .ok()
-            .and_then(|v| v.as_table().cloned())
-            .unwrap_or_default();
-        t.insert("name".into(), Value::String(full.name.clone()));
-        t.insert("title".into(), Value::String(full.title.clone()));
-        if let Some(d) = &full.description {
-            t.insert("description".into(), Value::String(d.clone()));
-        }
-        print!("{}", toml::to_string(&t).unwrap_or_default());
-        for s in SURFACES {
-            if full.surface(s) != &full.base {
-                println!("# surface {s} overrides some of the values above");
-            }
-        }
-    }
-    warn(&problems);
-    Ok(())
-}
-
-fn cmd_current(args: &[String]) -> R {
-    let p = parse_args(args, &[], &["json"])?;
-    exactly(&p, 0, "no arguments")?;
-    let cfg = cfg()?;
-    let eff = effective(&cfg);
-    let source = if is_builtin(&eff.state.theme) {
-        "built-in"
-    } else {
-        "user"
-    };
-    if p.flag("json") {
-        print_json(&json!({
-            "theme": eff.state.theme,
-            "source": source,
-            "mode": eff.state.mode,
-            "accent_light": eff.state.accent_light,
-            "accent_dark": eff.state.accent_dark,
-            "config": cfg.file().display().to_string(),
-            "problems": eff.problems,
-            "fell_back": !eff.problems.is_empty(),
-        }));
-    } else {
-        println!("theme: {} ({source})", eff.state.theme);
-        println!("mode: {}", eff.state.mode);
-        println!(
-            "accent_light: {}",
-            eff.state.accent_light.as_deref().unwrap_or("none")
-        );
-        println!(
-            "accent_dark: {}",
-            eff.state.accent_dark.as_deref().unwrap_or("none")
-        );
-        println!("config: {}", cfg.file().display());
-        warn(&eff.problems);
-    }
-    Ok(())
-}
-
-/// Writes the state, then the outputs, and says what it did.
-fn commit(cfg: &Cfg, st: &State, action: &str) -> R {
-    record(cfg, action).map_err(fail)?;
-    let text = state_table(cfg, st);
-    write_atomic(&cfg.file(), text.as_bytes()).map_err(fail)?;
-    finish(cfg)
-}
-
-/// Writes the outputs for whatever state is now in force, and prints what changed.
-fn finish(cfg: &Cfg) -> R {
-    let eff = effective(cfg);
-    warn(&eff.problems);
-    let wrote = write_outputs(cfg, &eff).map_err(fail)?;
-    println!("theme: {}", eff.state.theme);
-    println!("mode: {}", eff.state.mode);
-    if eff.state.accent_light.is_some() || eff.state.accent_dark.is_some() {
-        println!(
-            "accent: light {}, dark {}",
-            eff.state.accent_light.as_deref().unwrap_or("theme's own"),
-            eff.state.accent_dark.as_deref().unwrap_or("theme's own")
-        );
-    }
-    println!("wrote {}", cfg.file().display());
-    for w in wrote {
-        println!("wrote {}", w.display());
-    }
-    println!("{NOTE}");
-    Ok(())
-}
-
-fn cmd_set(args: &[String]) -> R {
-    let p = parse_args(args, &["mode"], &[])?;
-    exactly(&p, 1, "one theme name")?;
-    let name = &p.pos[0];
-    let cfg = cfg()?;
-    let full = resolve_name(&cfg, name)
-        .map_err(|ps| problems_fail(&format!("theme {name:?} cannot be used"), &ps))?;
-    let (mut st, old_problems) = load_state(&cfg);
-    if !old_problems.is_empty() {
-        eprintln!("polycarp: warning: the old settings were invalid and are replaced:");
-        for o in &old_problems {
-            eprintln!("  {o}");
-        }
-    }
-    if let Some(m) = p.val("mode") {
-        if !matches!(m, "auto" | "light" | "dark") {
-            return Err(usage_fail("--mode must be auto, light or dark"));
-        }
-        st.mode = m.to_string();
-    }
-    st.theme = name.clone();
-    if apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref()).is_err() {
-        eprintln!(
-            "polycarp: note: your accent override does not read well on {name}, so it is cleared"
-        );
-        st.accent_light = None;
-        st.accent_dark = None;
-    }
-    commit(&cfg, &st, &format!("theme set {name}"))
-}
-
-fn cmd_accent(args: &[String]) -> R {
-    let p = parse_args(args, &["mode"], &["clear"])?;
-    let both = ["light", "dark"];
-    let modes: Vec<&str> = match p.val("mode") {
-        None | Some("auto") | Some("both") => both.to_vec(),
-        Some("light") => vec!["light"],
-        Some("dark") => vec!["dark"],
-        Some(_) => return Err(usage_fail("--mode must be light or dark")),
-    };
-    let new = if p.flag("clear") {
-        exactly(&p, 0, "--clear alone")?;
-        None
-    } else {
-        exactly(&p, 1, "a color like #rrggbb, or --clear")?;
-        let c = &p.pos[0];
-        if !is_hex(c) {
-            return Err(fail(format!("{c:?} is not a color like #rrggbb")));
-        }
-        Some(c.to_lowercase())
-    };
-    let cfg = cfg()?;
-    let eff = effective(&cfg);
-    let mut st = eff.state.clone();
-    for m in &modes {
-        if *m == "light" {
-            st.accent_light = new.clone();
-        } else {
-            st.accent_dark = new.clone();
-        }
-    }
-    let full = build_full(&cfg, &st).map_err(|ps| {
-        problems_fail(
-            &format!(
-                "accent {} is refused, nothing changed",
-                new.as_deref().unwrap_or("")
-            ),
-            &ps,
-        )
-    })?;
-    drop(full);
-    let action = match &new {
-        Some(c) => format!("theme accent {c}"),
-        None => "theme accent --clear".to_string(),
-    };
-    commit(&cfg, &st, &action)
-}
-
-fn title_case(name: &str) -> String {
-    name.split('-')
-        .filter(|w| !w.is_empty())
-        .map(|w| {
-            let mut c = w.chars();
-            match c.next() {
-                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn cmd_create(args: &[String]) -> R {
-    let p = parse_args(args, &["extends"], &["force"])?;
-    exactly(&p, 1, "one theme name")?;
-    let name = &p.pos[0];
-    let Some(base_name) = p.val("extends") else {
-        return Err(usage_fail("create needs --extends <base>"));
-    };
-    if !valid_name(name) {
-        return Err(fail(format!(
-            "{name:?} is not a valid theme name (lowercase letters, digits and hyphens)"
-        )));
-    }
-    if is_builtin(name) {
-        return Err(fail(format!(
-            "{name:?} is a built-in theme name; pick another"
-        )));
-    }
-    let cfg = cfg()?;
-    let base = resolve_name(&cfg, base_name)
-        .map_err(|ps| problems_fail(&format!("cannot extend {base_name:?}"), &ps))?;
-    let path = cfg.theme_path(name);
-    if path.exists() && !p.flag("force") {
-        return Err(fail(format!(
-            "{} already exists; use --force to overwrite it",
-            path.display()
-        )));
-    }
-    let mut s = format!(
-        "# Polycarp theme {name:?}. It starts from {base_name:?}.\n\
-         # Uncomment a line and change it to override that value.\n\
-         # Check it with `polycarp theme validate {name}.toml`, then use `polycarp theme set {name}`.\n\
-         name = {}\n\
-         title = {}\n\
-         extends = {}\n\
-         # description = \"One line about this theme.\"\n\n",
-        json!(name),
-        json!(title_case(name)),
-        json!(base_name),
-    );
-    let notes = [
-        ("light", "Colors for light mode. Each is \"#rrggbb\". Text colors need contrast 4.5 on background and surface."),
-        ("dark", "Colors for dark mode. Same rules as light."),
-        ("shape", "Corners and borders in px, shadow as 0.0 to 1.0, density compact|regular|spacious, indicator dot|bar|number-block."),
-        ("type", "Font stacks, base size in px (10 to 24), weight (300 to 800), line_height (1.0 to 2.0)."),
-        ("motion", "Durations in ms (0 to 1000), easing as a CSS string, scale_from 0.5 to 1.0. reduced = true makes every duration 0."),
-    ];
-    let table = Value::try_from(&base.base)
-        .ok()
-        .and_then(|v| v.as_table().cloned())
-        .unwrap_or_default();
-    for (sec, note) in notes {
-        s.push_str(&format!("# {note}\n# [{sec}]\n"));
-        if let Some(Value::Table(t)) = table.get(sec) {
-            for (f, _) in fields(sec) {
-                if let Some(v) = t.get(f) {
-                    s.push_str(&format!("# {f} = {v}\n"));
-                }
-            }
-        }
-        s.push('\n');
-    }
-    s.push_str(
-        "# Overrides for one product only: spaces, voice, browser or site.\n\
-         # Any section above works inside a surface, for example:\n\
-         # [surface.site.light]\n\
-         # accent = \"#3f6b6a\"\n",
-    );
-    write_atomic(&path, s.as_bytes()).map_err(fail)?;
-    println!("created {}", path.display());
-    println!("It extends {base_name}. Edit it, then run `polycarp theme validate` on it.");
-    Ok(())
-}
-
-fn cmd_edit_path(args: &[String]) -> R {
-    let p = parse_args(args, &[], &[])?;
-    exactly(&p, 1, "one theme name")?;
-    let name = &p.pos[0];
-    if !valid_name(name) {
-        return Err(fail(format!("{name:?} is not a valid theme name")));
-    }
-    if is_builtin(name) {
-        return Err(fail(format!(
-            "{name:?} is built in and cannot be edited; run `polycarp theme create <name> --extends {name}`"
-        )));
-    }
-    let cfg = cfg()?;
-    println!("{}", cfg.theme_path(name).display());
-    Ok(())
-}
-
-/// The theme name in `config.toml` even when the rest of the file is bad.
-fn current_name_lenient(cfg: &Cfg) -> Option<String> {
-    let t = fs::read_to_string(cfg.file()).ok()?.parse::<Table>().ok()?;
-    t.get("appearance")?
-        .as_table()?
-        .get("theme")?
-        .as_str()
-        .map(str::to_string)
-}
-
-fn cmd_delete(args: &[String]) -> R {
-    let p = parse_args(args, &[], &[])?;
-    exactly(&p, 1, "one theme name")?;
-    let name = &p.pos[0];
-    if !valid_name(name) {
-        return Err(fail(format!("{name:?} is not a valid theme name")));
-    }
-    if is_builtin(name) {
-        return Err(fail(format!("{name:?} is built in and cannot be deleted")));
-    }
-    let cfg = cfg()?;
-    let path = cfg.theme_path(name);
-    if !path.is_file() {
-        return Err(fail(format!("no user theme named {name:?}")));
-    }
-    let eff = effective(&cfg);
-    if eff.state.theme == *name || current_name_lenient(&cfg).as_deref() == Some(name.as_str()) {
-        return Err(fail(format!(
-            "{name:?} is the current theme; run `polycarp theme set <other>` first"
-        )));
-    }
-    fs::remove_file(&path)
-        .map_err(|e| fail(format!("could not delete {}: {e}", path.display())))?;
-    println!("deleted {}", path.display());
-    Ok(())
-}
-
-fn cmd_validate(args: &[String]) -> R {
-    let p = parse_args(args, &[], &[])?;
-    exactly(&p, 1, "one file")?;
-    let file = Path::new(&p.pos[0]);
-    let cfg = cfg()?;
-    let src = fs::read_to_string(file)
-        .map_err(|e| fail(format!("could not read {}: {e}", file.display())))?;
-    let stem = file
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let table = parse_toml(&src)
-        .map_err(|e| problems_fail(&format!("{} is not valid", file.display()), &[e]))?;
-    match resolve_doc(&cfg, table, Some(&stem)) {
-        Ok(full) => {
-            println!(
-                "ok: {} ({}) is valid in all {} surfaces, light and dark",
-                file.display(),
-                full.name,
-                SURFACES.len()
-            );
-            Ok(())
-        }
-        Err(ps) => Err(problems_fail(
-            &format!("{} is not valid", file.display()),
-            &ps,
-        )),
-    }
-}
-
-fn cmd_export(args: &[String]) -> R {
-    let p = parse_args(args, &["surface"], &[])?;
-    if p.pos.is_empty() || p.pos.len() > 2 {
-        return Err(usage_fail("expected `export <css|json> [name]`"));
-    }
-    let format = p.pos[0].as_str();
-    if !matches!(format, "css" | "json") {
-        return Err(usage_fail("export format must be css or json"));
-    }
-    let surface = match p.val("surface") {
-        None => None,
-        Some(s) if SURFACES.contains(&s) => Some(s),
-        Some(_) => {
-            return Err(usage_fail(format!(
-                "--surface must be one of {}",
-                SURFACES.join(", ")
-            )))
-        }
-    };
-    let cfg = cfg()?;
-    let (full, problems) = resolve_for_view(&cfg, p.pos.get(1).map(String::as_str))?;
-    if format == "css" {
-        print!("{}", css(&full, surface, None));
-    } else if let Some(s) = surface {
-        let mut v = resolved_json(full.surface(s));
-        if let Some(o) = v.as_object_mut() {
-            o.insert("name".into(), json!(full.name));
-            o.insert("title".into(), json!(full.title));
-            o.insert("surface".into(), json!(s));
-        }
-        print_json(&v);
-    } else {
-        print_json(&theme_json(&full, None));
-    }
-    warn(&problems);
-    Ok(())
-}
-
-fn cmd_undo(args: &[String]) -> R {
-    let p = parse_args(args, &[], &[])?;
-    exactly(&p, 0, "no arguments")?;
-    let cfg = cfg()?;
-    let hist = read_history(&cfg);
-    let Some(last) = hist.first() else {
-        return Err(fail("nothing to undo"));
-    };
-    if last.absent {
-        match fs::remove_file(cfg.file()) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                return Err(fail(format!(
-                    "could not remove {}: {e}",
-                    cfg.file().display()
-                )))
-            }
-        }
-    } else {
-        write_atomic(&cfg.file(), &last.body).map_err(fail)?;
-    }
-    fs::remove_file(&last.file)
-        .map_err(|e| fail(format!("could not remove {}: {e}", last.file.display())))?;
-    println!("undid: {} ({}, {})", last.action, last.caller, last.time);
-    finish(&cfg)
-}
-
-fn cmd_history(args: &[String]) -> R {
-    let p = parse_args(args, &[], &["json"])?;
-    exactly(&p, 0, "no arguments")?;
-    let cfg = cfg()?;
-    let hist = read_history(&cfg);
-    if p.flag("json") {
-        let arr: Vec<Json> = hist
-            .iter()
-            .map(|h| {
-                json!({
-                    "time": h.time,
-                    "caller": h.caller,
-                    "action": h.action,
-                    "file": h.file.display().to_string(),
-                })
-            })
-            .collect();
-        print_json(&Json::Array(arr));
-    } else if hist.is_empty() {
-        println!("no history yet");
-    } else {
-        for (i, h) in hist.iter().enumerate() {
-            println!("{:>2}  {}  {:<16} {}", i + 1, h.time, h.caller, h.action);
-        }
-    }
-    Ok(())
-}
-
-fn cmd_reset(args: &[String]) -> R {
-    let p = parse_args(args, &[], &[])?;
-    exactly(&p, 0, "no arguments")?;
-    let cfg = cfg()?;
-    commit(&cfg, &State::default_state(), "theme reset")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1995,5 +3045,45 @@ mod tests {
         assert!(!valid_name("../x"));
         assert!(!valid_name("-x"));
         assert!(!valid_name(""));
+    }
+
+    #[test]
+    fn every_field_in_the_code_has_a_description() {
+        for path in schema::described_paths() {
+            assert!(
+                !schema::describe(&path).trim().is_empty(),
+                "{path} has no description in schema::describe"
+            );
+        }
+        for sec in SECTIONS {
+            for (k, _) in fields(sec) {
+                let path = if MODES.contains(&sec) {
+                    format!("color.{k}")
+                } else {
+                    format!("{sec}.{k}")
+                };
+                assert!(!schema::describe(&path).is_empty(), "{path}");
+            }
+        }
+    }
+
+    #[test]
+    fn problems_become_paths_with_numbers() {
+        let i = item_of("surface.site: dark.muted on dark.surface is 3.04, needs 4.5");
+        assert_eq!(i["path"], "surface.site.dark.muted");
+        assert_eq!(i["actual"], 3.04);
+        assert_eq!(i["needs"], 4.5);
+        assert_eq!(i["on"], "surface.site.dark.surface");
+        let i = item_of("shape.radius: 99 is out of range 0..64");
+        assert_eq!(i["path"], "shape.radius");
+        let i = item_of("in evening: light.accent: \"x\" is not a color like \"#rrggbb\"");
+        assert_eq!(
+            (i["path"].as_str(), i["in"].as_str()),
+            (Some("light.accent"), Some("evening"))
+        );
+        assert_eq!(
+            item_of("could not read the file as TOML (line 2): x")["path"],
+            "$"
+        );
     }
 }
