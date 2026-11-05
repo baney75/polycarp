@@ -915,7 +915,7 @@ fn accent_is_kept_by_set_when_it_reads_and_cleared_when_it_does_not() {
 fn create_writes_a_valid_commented_theme_and_never_overwrites() {
     let b = Box::new();
     let o = b.ok(&["create", "my-theme", "--extends", "parchment"]);
-    let path = b.cfg().join("themes/my-theme.toml");
+    let path = b.cfg().join("themes").join("my-theme.toml");
     assert!(o.contains(path.to_str().unwrap()), "{o}");
     let text = fs::read_to_string(&path).unwrap();
     assert!(text.contains("name = \"my-theme\""));
@@ -968,7 +968,10 @@ fn create_refuses_reserved_and_bad_names_and_missing_bases() {
 fn edit_path_prints_the_path() {
     let b = Box::new();
     let p = b.ok(&["edit-path", "mine"]);
-    assert_eq!(p.trim(), b.cfg().join("themes/mine.toml").to_str().unwrap());
+    assert_eq!(
+        p.trim(),
+        b.cfg().join("themes").join("mine.toml").to_str().unwrap()
+    );
     let e = b.refused(&["edit-path", "calm"]);
     assert!(e.contains("built in"), "{e}");
 }
@@ -1342,6 +1345,13 @@ fn readme_example_is_valid() {
 
 fn repo_file(rel: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(rel)
+}
+
+/// A repo text file with line endings as LF, because a Windows checkout may convert them.
+fn repo_text(rel: &str) -> String {
+    fs::read_to_string(repo_file(rel))
+        .unwrap()
+        .replace("\r\n", "\n")
 }
 
 /// A schema node's properties, following a `$ref` into `$defs`.
@@ -2054,7 +2064,7 @@ fn every_failure_in_json_parses_and_carries_paths() {
 
 #[test]
 fn skill_is_short_and_its_examples_work() {
-    let skill = fs::read_to_string(repo_file("skills/polycarp-theme/SKILL.md")).unwrap();
+    let skill = repo_text("skills/polycarp-theme/SKILL.md");
     assert!(
         skill.lines().count() < 100,
         "{} lines",
@@ -2134,7 +2144,7 @@ fn skill_is_short_and_its_examples_work() {
 
 #[test]
 fn docs_and_plan_describe_the_agent_interface() {
-    let themes = fs::read_to_string(repo_file("themes/README.md")).unwrap();
+    let themes = repo_text("themes/README.md");
     assert!(themes.contains("## For agents"));
     for w in [
         "theme schema",
@@ -2150,7 +2160,7 @@ fn docs_and_plan_describe_the_agent_interface() {
     assert!(fs::read_to_string(repo_file("README.md"))
         .unwrap()
         .contains("polycarp mcp"));
-    let plan = fs::read_to_string(repo_file("PLAN.md")).unwrap();
+    let plan = repo_text("PLAN.md");
     let one = plan.find("- [ ] One theme file drives").unwrap();
     let agents = plan
         .find("- [ ] Agents can customize everything for their user.")
