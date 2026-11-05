@@ -147,7 +147,7 @@ enum Chrome {
         case .heavy: .heavy
         }
         if let face = face(size, weight) { return face as NSFont }
-        return f.family == "system-sans" ? .systemFont(ofSize: pt, weight: w) : .monospacedSystemFont(ofSize: pt, weight: w)
+        return f.family == "monospace" ? .monospacedSystemFont(ofSize: pt, weight: w) : .systemFont(ofSize: pt, weight: w)
     }
 
     static func nsWash(_ opacity: Double = 1) -> NSColor {
@@ -170,9 +170,9 @@ enum Chrome {
         let f = look.spec.font
         guard f.family != "system-sans" else { return nil }
         let pt = f.size(size), w = f.weight(weight)
-        let key = "\(f.family)|\(w)|\(pt)"
+        let key = "\(f.family)|\((look.fontFamilies ?? []).joined(separator: ","))|\(w)|\(pt)"
         if let cached = faces[key] { return cached }
-        let face = FontFace.resolve(families: ThemeCatalog.shared.fontFamilies(f.family), weight: w, size: pt)
+        let face = FontFace.resolve(families: look.families(for: f.family), weight: w, size: pt)
         faces[key] = .some(face)
         return face
     }
@@ -184,7 +184,7 @@ enum Chrome {
             return .system(size: CGFloat(f.size(size)), weight: f.weight(weight).swiftUI, design: rounded ? .rounded : .default)
         }
         if let face = face(size, weight) { return Font(face) }
-        return .system(size: CGFloat(f.size(size)), weight: f.weight(weight).swiftUI, design: .monospaced)
+        return .system(size: CGFloat(f.size(size)), weight: f.weight(weight).swiftUI, design: f.family == "monospace" ? .monospaced : (rounded ? .rounded : .default))
     }
 
     // MARK: Motion

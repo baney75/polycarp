@@ -351,6 +351,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    private var polycarpWatcher: PolycarpThemeWatcher?
+
     func applicationDidFinishLaunching(_ n: Notification) {
         // `BaneySpaces --restore-shortcuts`: the uninstaller's way to turn macOS's screenshot
         // shortcuts back on before the app's settings are deleted.
@@ -406,6 +408,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // only store a choice then; the dock starts with the rest once BaneySpaces does.
         session.readSetting = { [weak self] in self?.settingValue($0) }
         session.writeSetting = { [weak self] k, v in self?.applySetting(k, v) ?? false }
+        // A Polycarp theme (`polycarp theme set ...`) draws instead of Settings' theme and palette while its
+        // file is there. The file is looked at about once a second on a background queue (a stat); a change
+        // is applied here, on the main queue, the way Settings applies one. Normal launches only: the
+        // modes above exit before this, and `--render` never gets here.
+        let watcher = PolycarpThemeWatcher(path: PolycarpThemeFile.path(), log: { Trace.log($0) }) { theme in
+            DispatchQueue.main.async { Appearance.shared.usePolycarp(theme) }
+        }
+        polycarpWatcher = watcher
+        watcher.start()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         let menu = NSMenu()
         menu.delegate = self

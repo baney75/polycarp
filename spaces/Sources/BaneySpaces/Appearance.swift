@@ -15,7 +15,8 @@ final class Appearance: ObservableObject {
         didSet {
             guard settings != oldValue else { return }
             cachedLook = nil
-            if settings.theme != oldValue.theme { ThemeCenter.use(settings.theme) }
+            // A Polycarp theme in force keeps ThemeCenter; the stored choice is only remembered.
+            if settings.theme != oldValue.theme { ThemeCenter.use(settings.theme, polycarp: polycarp) }
             if persists { scheduleSave() }
             // A theme sets the tile size, gap and padding as well as the dock's size, so it re-frames the dock too.
             NotificationCenter.default.post(name: Appearance.didChange, object: nil,
@@ -23,11 +24,33 @@ final class Appearance: ObservableObject {
         }
     }
 
+    /// The Polycarp theme in force (`polycarp theme set ...`, read from its file by `PolycarpThemeWatcher`), or nil.
+    /// While there is one it draws instead of `settings.theme` and `settings.colorPalette`, which are never
+    /// changed by it: remove the file and the person's own choice is back.
+    @Published private(set) var polycarp: PolycarpTheme? {
+        didSet {
+            guard polycarp != oldValue else { return }
+            cachedLook = nil
+            ThemeCenter.use(settings.theme, polycarp: polycarp)
+            // The theme sets the tile size, gap and padding as well, so the dock re-frames.
+            NotificationCenter.default.post(name: Appearance.didChange, object: nil, userInfo: [Appearance.dockSizeChangedKey: true])
+        }
+    }
+
+    /// Apply a theme read from the file (or nil when it is gone or unusable). Main thread only.
+    func usePolycarp(_ theme: PolycarpTheme?) {
+        precondition(Thread.isMainThread)
+        polycarp = theme
+    }
+
+    /// Dark Mode, for a Polycarp theme whose mode is `auto`.
+    static var systemDark: Bool { UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark" }
+
     /// The theme and palette every surface draws from, kept until the settings or the system accent change.
     private var cachedLook: Look?
     var look: Look {
         if let cachedLook { return cachedLook }
-        let l = settings.look(systemAccent: Appearance.systemAccent)
+        let l = settings.look(systemAccent: Appearance.systemAccent, polycarp: polycarp, systemDark: Appearance.systemDark)
         cachedLook = l
         return l
     }
@@ -48,6 +71,7 @@ final class Appearance: ObservableObject {
     /// Off for `--render`, whose shots must show the default look and never touch saved settings.
     private var persists = true
     private var systemObserver: NSObjectProtocol?
+    private var darkObserver: NSObjectProtocol?
 
     /// A change still waiting to be saved is written as BaneySpaces quits.
     private var quitObserver: NSObjectProtocol?
@@ -74,6 +98,14 @@ final class Appearance: ObservableObject {
             self.objectWillChange.send()
             if case .system = self.settings.accent { NotificationCenter.default.post(name: Appearance.didChange, object: nil) }
         }
+        // A Polycarp theme in `auto` follows Dark Mode.
+        darkObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("AppleInterfaceThemeChangedNotification"), object: nil, queue: .main) { [weak self] _ in
+            guard let self, let p = self.polycarp, p.mode == .auto else { return }
+            self.cachedLook = nil
+            self.objectWillChange.send()
+            NotificationCenter.default.post(name: Appearance.didChange, object: nil)
+        }
     }
 
     /// The default look for this run only, saved nowhere.
@@ -91,7 +123,8 @@ final class Appearance: ObservableObject {
         return RGB(r: Double(c.redComponent), g: Double(c.greenComponent), b: Double(c.blueComponent))
     }
 
-    var accentRGB: RGB { settings.accentRGB(system: Appearance.systemAccent) }
+    /// A Polycarp theme's accent while one is in force, else the accent chosen in Settings.
+    var accentRGB: RGB { polycarp?.accent(systemDark: Appearance.systemDark) ?? settings.accentRGB(system: Appearance.systemAccent) }
     var accent: Color { Appearance.color(accentRGB) }
 
     func workspace(_ n: Int) -> Color {
