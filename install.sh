@@ -10,6 +10,8 @@
 set -euo pipefail
 
 main() {
+  # Tests source this file for its functions (retire_tabkyra) and run nothing.
+  [ -z "${POLYCARP_INSTALL_FUNCTIONS_ONLY:-}" ] || return 0
   local REPO="https://github.com/baney75/polycarp.git"
   local REF="${POLYCARP_REF:-main}"
   local bold dim reset green
@@ -208,4 +210,4 @@ retire_tabkyra() {
   return $ok
 }
 
-[ -n "${POLYCARP_INSTALL_FUNCTIONS_ONLY:-}" ] || main "$@"
+main "$@"
