@@ -215,6 +215,24 @@ polycarp theme show still-water
 
 CSS variables start with `--pc-`: colors and shape use the field name, such as `--pc-accent` and `--pc-radius-large`; fonts add `font-`, such as `--pc-font-display`; and motion adds `motion-`, such as `--pc-motion-fast`.
 
+### On Omarchy
+
+On [Omarchy](https://github.com/basecamp/omarchy), Polycarp can match the system theme and change with it.
+
+```sh
+polycarp theme follow omarchy
+polycarp theme follow
+polycarp theme follow off
+```
+
+`follow omarchy` reads the colors of the theme Omarchy is using now, builds a theme named `omarchy` on top of `blocks` (square corners and a monospace face, Omarchy's own look), makes it current in the mode Omarchy's theme has, and adds a small hook file at `~/.config/omarchy/hooks/theme-set.d/polycarp`. Omarchy runs that hook after every theme switch, and Polycarp updates its colors. The hook prints nothing, asks nothing and always exits 0, so it cannot break Omarchy's switch. It will not replace a hook file there that Polycarp did not write; it refuses and names the file.
+
+Omarchy's colors are kept exactly wherever they already read well. If one would fail the contrast rules (for example a muted gray on a dark background), only that color moves, by the smallest change in lightness that passes, and the command lists each move in `notes`. Your accent override is cleared, so the accent is Omarchy's. The other mode (the one Omarchy's theme is not in) keeps the base colors with Omarchy's accent adjusted to read on them.
+
+`follow off` removes only Polycarp's own hook and goes back to the theme and mode you had before. `follow` with nothing after it says whether Polycarp is following. Choosing another theme with `set` also stops following, and says so. `polycarp doctor` mentions Omarchy when it finds it. On a machine without Omarchy, `follow omarchy` exits with an error and changes nothing.
+
+What is verified: the mapping and the readability rule hold for all 22 themes that ship with Omarchy 4.0.4 (their `colors.toml` files are test data), and the hook runs correctly when started the way Omarchy's `omarchy-hook` starts it (`bash <file> <theme name>`). Not yet run on a live Omarchy machine.
+
 ### Where files live
 
 | What | Where |
@@ -253,6 +271,7 @@ Any other MCP client can start the same command.
 | `theme_export` | Get CSS or JSON |
 | `theme_create`, `theme_delete` | Start a new theme file, or clean one up |
 | `theme_off`, `theme_on` | Remove the theme files so apps that read them use their own look, or bring the theme back |
+| `theme_follow` | On Omarchy, match the system theme and follow it (`target` omarchy, off, or leave out to see the state) |
 | `theme_history`, `theme_undo`, `theme_reset` | See changes and go back |
 
 ### The workflow

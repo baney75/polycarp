@@ -42,7 +42,10 @@ const MAP: &[(&str, &[&str])] = &[
 // ---------------------------------------------------------------------------------------------
 
 fn home() -> Result<PathBuf, ApiErr> {
-    match env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from) {
+    match env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+    {
         Some(h) if h.is_absolute() => Ok(h),
         _ => Err(ApiErr::new(
             "config_error",
@@ -164,11 +167,7 @@ fn constraints(colors: &Colors, role: &str) -> Vec<(String, String, f64)> {
     pairs()
         .into_iter()
         .filter(|(fg, _, _)| *fg == role)
-        .filter_map(|(_, bg, min)| {
-            colors
-                .get(bg)
-                .map(|c| (bg.to_string(), c.clone(), min))
-        })
+        .filter_map(|(_, bg, min)| colors.get(bg).map(|c| (bg.to_string(), c.clone(), min)))
         .collect()
 }
 
@@ -178,12 +177,20 @@ fn passes(color: &str, cons: &[(String, String, f64)]) -> bool {
 
 /// The color nearest `color` in lightness (same hue and saturation) that passes every constraint.
 /// On a tie the direction of the mode wins: lighter on dark, darker on light.
-fn nearest_passing(color: &str, cons: &[(String, String, f64)], lighter_first: bool) -> Option<String> {
+fn nearest_passing(
+    color: &str,
+    cons: &[(String, String, f64)],
+    lighter_first: bool,
+) -> Option<String> {
     if passes(color, cons) {
         return Some(color.to_string());
     }
     let (h, s, l) = to_hsl(color);
-    let dirs = if lighter_first { [1.0, -1.0] } else { [-1.0, 1.0] };
+    let dirs = if lighter_first {
+        [1.0, -1.0]
+    } else {
+        [-1.0, 1.0]
+    };
     for k in 1..=((1.0 / STEP) as usize) {
         for dir in dirs {
             let nl = l + dir * STEP * k as f64;
@@ -341,7 +348,8 @@ fn build(cfg: &Cfg, home: &Path) -> Result<Built, ApiErr> {
     let table = parse_toml(&src)
         .map_err(|e| ApiErr::new("invalid_theme", format!("{}: {e}", path.display())))?;
 
-    let base = resolve_name(cfg, BASE_THEME).map_err(|ps| bad_theme("the base theme is broken", &ps))?;
+    let base =
+        resolve_name(cfg, BASE_THEME).map_err(|ps| bad_theme("the base theme is broken", &ps))?;
     let Mapped {
         mode,
         mut colors,
@@ -468,8 +476,8 @@ fn hook_state(path: &Path) -> Result<Hook, ApiErr> {
     if !meta.is_file() {
         return Ok(Hook::Foreign);
     }
-    let bytes = fs::read(path)
-        .map_err(|e| io_err(format!("could not read {}: {e}", path.display())))?;
+    let bytes =
+        fs::read(path).map_err(|e| io_err(format!("could not read {}: {e}", path.display())))?;
     let text = String::from_utf8_lossy(&bytes);
     let second = text.lines().nth(1).unwrap_or("");
     Ok(if second.starts_with(HOOK_MARK) {
@@ -506,9 +514,10 @@ fn hook_text(exe: &Path, config_dir: Option<&Path>) -> Result<String, ApiErr> {
     })?;
     let env_part = match config_dir {
         Some(d) => {
-            let d = d.to_str().filter(|s| !s.contains('\n')).ok_or_else(|| {
-                ApiErr::new("io_error", "POLYCARP_CONFIG_DIR is not plain text")
-            })?;
+            let d = d
+                .to_str()
+                .filter(|s| !s.contains('\n'))
+                .ok_or_else(|| ApiErr::new("io_error", "POLYCARP_CONFIG_DIR is not plain text"))?;
             format!("POLYCARP_CONFIG_DIR={} ", sh_quote(d))
         }
         None => String::new(),
@@ -720,9 +729,7 @@ fn follow_on(c: &Ctx) -> Res {
     if st.accent_light.is_some() || st.accent_dark.is_some() {
         st.accent_light = None;
         st.accent_dark = None;
-        notes.push(
-            "your accent override is cleared, so the accent is Omarchy's".into(),
-        );
+        notes.push("your accent override is cleared, so the accent is Omarchy's".into());
     }
 
     write_hook(&hook, &script)?;
@@ -809,8 +816,7 @@ fn follow_off(c: &Ctx) -> Res {
                 "Polycarp was not following Omarchy; no theme setting was changed\n",
             )
             .warn(problems);
-            o.notes
-                .push("no theme setting was changed".into());
+            o.notes.push("no theme setting was changed".into());
             o
         }
     };
@@ -910,7 +916,9 @@ mod tests {
 
     #[test]
     fn hsl_round_trips() {
-        for c in ["#1a1b26", "#7aa2f7", "#ffffff", "#000000", "#808080", "#ff0000"] {
+        for c in [
+            "#1a1b26", "#7aa2f7", "#ffffff", "#000000", "#808080", "#ff0000",
+        ] {
             let (h, s, l) = to_hsl(c);
             assert_eq!(from_hsl(h, s, l), c);
         }

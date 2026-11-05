@@ -198,6 +198,7 @@ density = "compact"
 | `polycarp theme history [--json]` | Past changes, newest first |
 | `polycarp theme off` | Turn the theme off: remove `current/theme.json` and `current/<surface>.css`; apps that read them use their own look when they next check. If a file can't be removed it exits 1 and names what remains. Records `enabled = false` in `[appearance]` and in history, so `undo` brings it back. Your themes stay |
 | `polycarp theme on` | Turn the last theme back on and write `current/` again. `set`, `accent` and `change` also turn it on, and say so; `apply` does too, but only when it activates the theme (not with `--no-activate`). `off` works even when the settings or a theme file are broken, and both bring `current/` into line when the setting is already so |
+| `polycarp theme follow [omarchy [--sync] \| off]` | On Omarchy, match its theme and follow it (see below). With no argument, report the state. `--sync` is what the hook runs |
 | `polycarp theme reset` | Back to `polycarp`, mode `auto`, no accent. Also turns the theme on |
 
 Every `theme` command takes `--json`.
@@ -277,6 +278,20 @@ folder to `config.toml.moved-<time>-<n>` and warns.
 the problems, so they never quietly replace your settings. Fix the file, or run `reset`. `set` and `reset` work. If `config.toml` is invalid, the
 products and `polycarp theme current` use the default theme and say what was wrong. Nothing crashes.
 
+## On Omarchy
+
+`polycarp theme follow omarchy` makes a user theme named `omarchy` from the Omarchy theme in use and keeps it current.
+
+- It extends `blocks` and fills the 13 colors for the mode Omarchy's theme has. The mapping is the one in `spaces/scripts/gen-palettes.py`: `background`, `surface` (Omarchy's `lighter_background`), `sunken` (`dark_background`), `foreground`, `strong` (`bright_foreground`), `muted` (`dark_foreground`), `border`, `accent`, `selection`, `urgent` (`red`), `working` (`yellow`) and `done` (`green`). A key an older theme lacks falls back to the next one in a short list, then to the base theme's value, and a note says which. `on_accent` is Omarchy's background if it reads on the accent, else black or white.
+- The mode is Omarchy's `mode`, not `auto`. The other mode lists only an accent pair, with the accent moved as little as it needs to read on the base colors.
+- Colors are never refused. A color that fails the rules above is moved in lightness, by the smallest step that passes (in steps of 0.2% lightness, the direction of the mode on a tie), and listed in `notes` and `data.nudges`. Backgrounds are never moved, so `background`, `surface`, `sunken` and `selection` are Omarchy's; text and status colors move when they must, and the accent when it fails.
+- The file `themes/omarchy.toml` is rewritten on every switch and begins with a comment saying so. A theme named `omarchy` without that comment is not replaced.
+- A switch writes the theme files only if the colors or mode changed, adds nothing to `history/` and one line to `follow.log` in the config folder (the last 50 are kept). `follow omarchy` itself is recorded, so `undo` goes back.
+- `follow off` removes `~/.config/omarchy/hooks/theme-set.d/polycarp` if it carries Polycarp's mark on its second line, and goes back to the theme set before following, which is kept in `[omarchy]` in `config.toml`.
+- A new error code, `no_omarchy`, means `~/.local/state/omarchy` does not exist.
+
+Verified: all 22 bundled Omarchy 4.0.4 themes produce a theme that passes the contrast rules (`cli/tests/omarchy.rs`, with their `colors.toml` in `cli/tests/fixtures/omarchy/`), and the hook works when started as `omarchy-hook` starts it. Omarchy runs hooks with `bash <file> <theme name>`, so the file needs no executable bit. Not yet run on a live Omarchy machine.
+
 ## For agents
 
 An agent can customize Polycarp for its user in a few calls, with no prior knowledge. Two ways in, with the
@@ -324,7 +339,7 @@ Exit codes: 0 ok, 1 refused or invalid, 2 usage.
 `error.data.errors` is always a list of `{path, message}`, with `actual` and `needs` when there are figures
 (contrast ratios are numbers). For a bad value, `actual` is what was sent and `needs` says what is allowed.
 Codes: `invalid_args` (exit 2), `invalid_theme`, `contrast`, `invalid_value`, `unknown_theme`, `unknown_path`,
-`builtin_read_only`, `exists`, `current_theme`, `in_use`, `nothing_to_undo`, `changed_since`, `io_error`, `config_error`, `busy`. Warnings and notes
+`builtin_read_only`, `exists`, `current_theme`, `in_use`, `nothing_to_undo`, `changed_since`, `io_error`, `config_error`, `busy`, `no_omarchy`. Warnings and notes
 (such as "a `-custom` theme was made") come in `data.warnings` and `data.notes`.
 
 ### `polycarp mcp`
@@ -341,6 +356,7 @@ descriptions give the workflow above. Each tool returns the `--json` envelope as
 | `theme_create`, `theme_delete` | `create`, `delete`, so an agent can clean up the themes it made |
 | `theme_validate` | `validate`, for a draft theme passed in, without saving |
 | `theme_preview`, `theme_export` | `preview`, `export` |
+| `theme_follow` | `follow` (`target`: `omarchy`, `off` or `status`). It changes the active theme, one theme file and Omarchy's hook folder, so its `destructiveHint` is true |
 | `theme_off`, `theme_on` | `off`, `on`. `theme_off` removes files, so its `destructiveHint` is true; `theme_on` only writes them |
 | `theme_undo`, `theme_history`, `theme_reset` | `undo`, `history`, `reset` |
 

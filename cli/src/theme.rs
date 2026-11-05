@@ -958,14 +958,14 @@ impl State {
 fn read_follow(cfg: &Cfg) -> Option<Follow> {
     let table = parse_toml(&fs::read_to_string(cfg.file()).ok()?).ok()?;
     let t = table.get("omarchy")?.as_table()?;
-    if t.get("following")?.as_bool()? != true {
+    if !t.get("following")?.as_bool()? {
         return None;
     }
-    let theme = t.get("previous_theme")?.as_str().filter(|s| valid_name(s))?;
-    let mode = t
-        .get("previous_mode")?
+    let theme = t
+        .get("previous_theme")?
         .as_str()
-        .filter(|m| mode_ok(m))?;
+        .filter(|s| valid_name(s))?;
+    let mode = t.get("previous_mode")?.as_str().filter(|m| mode_ok(m))?;
     Some(Follow {
         previous_theme: theme.to_string(),
         previous_mode: mode.to_string(),
@@ -1122,8 +1122,14 @@ fn state_table(cfg: &Cfg, st: &State) -> String {
         Some(f) => {
             let mut o = Table::new();
             o.insert("following".into(), Value::Boolean(true));
-            o.insert("previous_theme".into(), Value::String(f.previous_theme.clone()));
-            o.insert("previous_mode".into(), Value::String(f.previous_mode.clone()));
+            o.insert(
+                "previous_theme".into(),
+                Value::String(f.previous_theme.clone()),
+            );
+            o.insert(
+                "previous_mode".into(),
+                Value::String(f.previous_mode.clone()),
+            );
             table.insert("omarchy".into(), Value::Table(o));
         }
         None => {
@@ -4126,7 +4132,9 @@ pub fn run(args: &[OsString]) -> i32 {
         }),
         "follow" => cmd(rest, &[], &["sync"], |c, p| {
             if p.pos.len() > 1 {
-                return Err(ApiErr::usage("expected `follow`, `follow omarchy` or `follow off`"));
+                return Err(ApiErr::usage(
+                    "expected `follow`, `follow omarchy` or `follow off`",
+                ));
             }
             op_follow(c, first(p), p.flag("sync"))
         }),

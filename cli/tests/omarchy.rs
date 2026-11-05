@@ -18,7 +18,10 @@ fn fixture_names() -> Vec<String> {
         .unwrap()
         .filter_map(|e| {
             let e = e.unwrap();
-            e.path().join("colors.toml").is_file().then(|| e.file_name().to_string_lossy().into_owned())
+            e.path()
+                .join("colors.toml")
+                .is_file()
+                .then(|| e.file_name().to_string_lossy().into_owned())
         })
         .collect();
     v.sort();
@@ -50,7 +53,8 @@ impl Sandbox {
         self.home().join(".local/state/omarchy")
     }
     fn hook(&self) -> PathBuf {
-        self.home().join(".config/omarchy/hooks/theme-set.d/polycarp")
+        self.home()
+            .join(".config/omarchy/hooks/theme-set.d/polycarp")
     }
     /// Makes this an Omarchy machine whose current theme has these colors.
     fn omarchy(&self, name: &str, colors: &str) {
@@ -139,7 +143,10 @@ fn every_bundled_omarchy_theme_becomes_a_theme_that_passes_the_contrast_rules() 
             .parse()
             .unwrap();
         let mode = src.get("mode").and_then(|m| m.as_str()).unwrap_or("dark");
-        assert_eq!(v["data"]["mode"], mode, "{name}: the mode is Omarchy's, not auto");
+        assert_eq!(
+            v["data"]["mode"], mode,
+            "{name}: the mode is Omarchy's, not auto"
+        );
         assert_eq!(v["data"]["theme"], "omarchy");
         // The engine's own check agrees.
         let theme = b.theme_file();
@@ -150,7 +157,11 @@ fn every_bundled_omarchy_theme_becomes_a_theme_that_passes_the_contrast_rules() 
         // Background is never moved. The accent is Omarchy's unless the notes say it was moved.
         let out = b.exported();
         let colors = &out["surfaces"]["spaces"][mode];
-        assert_eq!(s(&colors["background"]), src["background"].as_str().unwrap().to_lowercase(), "{name}");
+        assert_eq!(
+            s(&colors["background"]),
+            src["background"].as_str().unwrap().to_lowercase(),
+            "{name}"
+        );
         let nudges = v["data"]["nudges"].as_array().unwrap();
         let accent_moved = nudges.iter().any(|n| n["path"] == format!("{mode}.accent"));
         if !accent_moved {
@@ -163,7 +174,10 @@ fn every_bundled_omarchy_theme_becomes_a_theme_that_passes_the_contrast_rules() 
             assert_eq!(s(&colors["accent"]), want, "{name}");
         }
         // Every role Omarchy supplies and that passed is exactly Omarchy's.
-        for n in nudges.iter().filter(|n| s(&n["path"]).starts_with(&format!("{mode}."))) {
+        for n in nudges
+            .iter()
+            .filter(|n| s(&n["path"]).starts_with(&format!("{mode}.")))
+        {
             assert_eq!(
                 s(&colors[s(&n["path"]).split('.').nth(1).unwrap()]),
                 s(&n["to"]).as_str().to_string(),
@@ -175,7 +189,9 @@ fn every_bundled_omarchy_theme_becomes_a_theme_that_passes_the_contrast_rules() 
         for n in nudges {
             let p = s(&n["path"]);
             assert!(
-                notes.iter().any(|x| x.as_str().unwrap().starts_with(&format!("{p}:"))),
+                notes
+                    .iter()
+                    .any(|x| x.as_str().unwrap().starts_with(&format!("{p}:"))),
                 "{name}: no note for {p}"
             );
             moved.push(format!("{name}: {p} {} -> {}", s(&n["from"]), s(&n["to"])));
@@ -204,7 +220,10 @@ fn a_passing_palette_is_kept_exactly() {
     // Omarchy's dark_foreground (#565f89) reads under 4.5 on its own background, so it moves; the
     // others stay.
     let nudges = v["data"]["nudges"].as_array().unwrap();
-    assert!(nudges.iter().any(|n| n["path"] == "dark.muted"), "{nudges:?}");
+    assert!(
+        nudges.iter().any(|n| n["path"] == "dark.muted"),
+        "{nudges:?}"
+    );
     assert!(!nudges.iter().any(|n| n["path"] == "dark.accent"));
     assert_eq!(out["mode"], "dark");
     // The shape is Omarchy's own look: the blocks theme.
@@ -232,7 +251,11 @@ fn a_nudge_is_the_smallest_lightness_step() {
     let lum = |h: &str| {
         let c = |i: usize| {
             let v = f64::from(u8::from_str_radix(&h[i..i + 2], 16).unwrap()) / 255.0;
-            if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
         };
         0.2126 * c(1) + 0.7152 * c(3) + 0.0722 * c(5)
     };
@@ -263,7 +286,10 @@ fn older_themes_with_missing_keys_still_follow() {
     assert_eq!(d["foreground"], "#e0e0e0");
     assert_eq!(d["accent"], "#ff8800");
     let notes = v["data"]["notes"].to_string();
-    assert!(notes.contains("dark.urgent: this Omarchy theme has none of"), "{notes}");
+    assert!(
+        notes.contains("dark.urgent: this Omarchy theme has none of"),
+        "{notes}"
+    );
     // Colors may be written in other shapes.
     let b = Sandbox::new();
     b.omarchy(
@@ -302,10 +328,13 @@ fn no_omarchy_means_a_clear_error_and_no_change() {
     let (ok, v) = b.json(&["theme", "follow", "omarchy"]);
     assert!(!ok);
     assert_eq!(v["error"]["code"], "no_omarchy");
-    assert!(!b.cfg().exists() || fs::read_dir(b.cfg()).unwrap().all(|e| {
-        let n = e.unwrap().file_name();
-        n == ".lock"
-    }));
+    assert!(
+        !b.cfg().exists()
+            || fs::read_dir(b.cfg()).unwrap().all(|e| {
+                let n = e.unwrap().file_name();
+                n == ".lock"
+            })
+    );
     assert!(!b.home().join(".config").exists());
     let out = b.run(&["theme", "follow", "omarchy"]);
     assert_eq!(out.status.code(), Some(1));
@@ -326,15 +355,25 @@ fn the_hook_is_marked_runs_the_binary_by_absolute_path_and_always_exits_zero() {
     let text = fs::read_to_string(b.hook()).unwrap();
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[0], "#!/bin/bash");
-    assert!(lines[1].starts_with("# polycarp-managed-hook"), "{}", lines[1]);
+    assert!(
+        lines[1].starts_with("# polycarp-managed-hook"),
+        "{}",
+        lines[1]
+    );
     let exe = fs::canonicalize(env!("CARGO_BIN_EXE_polycarp")).unwrap();
     assert!(text.contains(&format!("'{}' theme follow omarchy --sync", exe.display())));
     assert!(text.trim_end().ends_with("exit 0"));
-    assert!(text.contains("POLYCARP_CONFIG_DIR="), "the hook keeps the config folder");
+    assert!(
+        text.contains("POLYCARP_CONFIG_DIR="),
+        "the hook keeps the config folder"
+    );
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(fs::metadata(b.hook()).unwrap().permissions().mode() & 0o777, 0o755);
+        assert_eq!(
+            fs::metadata(b.hook()).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
     }
     // Run it the way Omarchy does: `bash <file> <theme name>`, with no terminal and no input.
     #[cfg(unix)]
@@ -363,8 +402,17 @@ fn the_hook_is_marked_runs_the_binary_by_absolute_path_and_always_exits_zero() {
         // Colors unchanged: the hook changes nothing and logs nothing more.
         let before = fs::read(b.cfg().join("current/theme.json")).unwrap();
         run(&b);
-        assert_eq!(fs::read(b.cfg().join("current/theme.json")).unwrap(), before);
-        assert_eq!(fs::read_to_string(b.cfg().join("follow.log")).unwrap().lines().count(), 1);
+        assert_eq!(
+            fs::read(b.cfg().join("current/theme.json")).unwrap(),
+            before
+        );
+        assert_eq!(
+            fs::read_to_string(b.cfg().join("follow.log"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
         // Even with Omarchy's colors gone and the binary unreachable, the hook exits 0.
         fs::remove_file(b.state().join("current/theme/colors.toml")).unwrap();
         assert_eq!(run(&b).status.code(), Some(0));
@@ -384,7 +432,11 @@ fn history_gets_nothing_from_a_sync() {
     let b = Sandbox::new();
     b.omarchy_fixture("tokyo-night");
     b.json(&["theme", "follow", "omarchy"]);
-    let n = |b: &Sandbox| fs::read_dir(b.cfg().join("history")).map(|d| d.count()).unwrap_or(0);
+    let n = |b: &Sandbox| {
+        fs::read_dir(b.cfg().join("history"))
+            .map(|d| d.count())
+            .unwrap_or(0)
+    };
     let before = n(&b);
     for t in ["white", "nord", "white"] {
         b.omarchy_fixture(t);
@@ -392,7 +444,13 @@ fn history_gets_nothing_from_a_sync() {
         assert!(o.status.success(), "{}", stdout(&o));
     }
     assert_eq!(n(&b), before);
-    assert_eq!(fs::read_to_string(b.cfg().join("follow.log")).unwrap().lines().count(), 3);
+    assert_eq!(
+        fs::read_to_string(b.cfg().join("follow.log"))
+            .unwrap()
+            .lines()
+            .count(),
+        3
+    );
 }
 
 #[test]
@@ -405,13 +463,19 @@ fn a_hook_that_is_not_ours_is_never_overwritten_or_removed() {
     assert!(!ok);
     assert_eq!(v["error"]["code"], "exists");
     assert!(v["error"]["message"].as_str().unwrap().contains("polycarp"));
-    assert_eq!(fs::read_to_string(b.hook()).unwrap(), "#!/bin/bash\necho mine\n");
+    assert_eq!(
+        fs::read_to_string(b.hook()).unwrap(),
+        "#!/bin/bash\necho mine\n"
+    );
     assert!(!b.cfg().join("themes").exists(), "nothing was written");
     assert!(!b.cfg().join("config.toml").exists());
     // off leaves it too.
     let (ok, v) = b.json(&["theme", "follow", "off"]);
     assert!(ok, "{v}");
-    assert_eq!(fs::read_to_string(b.hook()).unwrap(), "#!/bin/bash\necho mine\n");
+    assert_eq!(
+        fs::read_to_string(b.hook()).unwrap(),
+        "#!/bin/bash\necho mine\n"
+    );
     assert!(v.to_string().contains("not Polycarp's"));
 }
 
@@ -422,7 +486,10 @@ fn off_removes_only_our_hook_and_goes_back_to_the_theme_from_before() {
     let sibling = b.hook().parent().unwrap().join("other");
     fs::create_dir_all(sibling.parent().unwrap()).unwrap();
     fs::write(&sibling, "#!/bin/bash\n").unwrap();
-    assert!(b.run(&["theme", "set", "evening", "--mode", "light"]).status.success());
+    assert!(b
+        .run(&["theme", "set", "evening", "--mode", "light"])
+        .status
+        .success());
     let (ok, v) = b.json(&["theme", "follow", "omarchy"]);
     assert!(ok, "{v}");
     assert_eq!(v["data"]["theme"], "omarchy");
@@ -431,7 +498,11 @@ fn off_removes_only_our_hook_and_goes_back_to_the_theme_from_before() {
     assert_eq!(st["data"]["previous_theme"], "evening");
     assert_eq!(st["data"]["hook_installed"], true);
     let doctor = b.run(&["doctor"]);
-    assert!(stdout(&doctor).contains("omarchy: found, and Polycarp is following"), "{}", stdout(&doctor));
+    assert!(
+        stdout(&doctor).contains("omarchy: found, and Polycarp is following"),
+        "{}",
+        stdout(&doctor)
+    );
 
     let (ok, v) = b.json(&["theme", "follow", "off"]);
     assert!(ok, "{v}");
@@ -450,7 +521,11 @@ fn off_removes_only_our_hook_and_goes_back_to_the_theme_from_before() {
     assert_eq!(v["data"]["was_following"], false);
     assert_eq!(fs::read(b.cfg().join("config.toml")).unwrap(), before);
     let doctor = b.run(&["doctor"]);
-    assert!(stdout(&doctor).contains("not following"), "{}", stdout(&doctor));
+    assert!(
+        stdout(&doctor).contains("not following"),
+        "{}",
+        stdout(&doctor)
+    );
 }
 
 #[test]
@@ -470,7 +545,10 @@ fn choosing_another_theme_stops_following_and_says_so() {
     b.omarchy_fixture("white");
     let before = fs::read(b.cfg().join("current/theme.json")).unwrap();
     b.run(&["theme", "follow", "omarchy", "--sync"]);
-    assert_eq!(fs::read(b.cfg().join("current/theme.json")).unwrap(), before);
+    assert_eq!(
+        fs::read(b.cfg().join("current/theme.json")).unwrap(),
+        before
+    );
     // Setting `omarchy` itself keeps following.
     b.json(&["theme", "follow", "omarchy"]);
     let (_, v) = b.json(&["theme", "set", "omarchy"]);
@@ -514,8 +592,13 @@ fn an_accent_override_is_cleared_so_the_accent_is_omarchys() {
     assert!(b.run(&["theme", "accent", "#7090ff"]).status.success());
     let (ok, v) = b.json(&["theme", "follow", "omarchy"]);
     assert!(ok, "{v}");
-    assert!(v["data"]["notes"].to_string().contains("accent override is cleared"));
-    assert_eq!(b.exported()["surfaces"]["spaces"]["dark"]["accent"], "#7aa2f7");
+    assert!(v["data"]["notes"]
+        .to_string()
+        .contains("accent override is cleared"));
+    assert_eq!(
+        b.exported()["surfaces"]["spaces"]["dark"]["accent"],
+        "#7aa2f7"
+    );
 }
 
 #[test]
