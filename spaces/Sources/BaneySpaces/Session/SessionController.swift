@@ -393,6 +393,12 @@ final class SessionController {
         return hands.handleWire(r)
     }
 
+    /// `doctor`'s line for a Polycarp theme: in force (it draws instead of appearance.theme and appearance.palette) or none.
+    static func polycarpThemeStatus() -> String {
+        guard let p = Appearance.shared.polycarp else { return "none (appearance.theme and appearance.palette draw)" }
+        return "in force: \(p.title) (\(p.name), mode \(p.mode.rawValue)); it overrides appearance.theme and appearance.palette, which are kept"
+    }
+
     func handle(_ r: Wire.Request) -> Wire.Reply {
         // Looks and the dock switch need no Accessibility, so they answer before the session engine has started.
         if r.op == .setting { return setting(r) }
@@ -404,6 +410,7 @@ final class SessionController {
             info["hands"] = AXIsProcessTrusted() ? "ready" : "needs Accessibility"
             info["lent"] = HandsLends.shared.current().active(now: Date()).map(\.app).joined(separator: ", ")
             info["version"] = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+            info["polycarp_theme"] = Self.polycarpThemeStatus()
             return .init(ok: true, info: info)
         case .list:
             return .init(ok: true, items: engine.items)

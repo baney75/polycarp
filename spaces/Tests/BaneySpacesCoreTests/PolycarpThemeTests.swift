@@ -560,3 +560,34 @@ final class PolycarpThemeTests: XCTestCase {
         }
     }
 }
+
+/// The app's wiring, as source checks (the app target has no unit tests): a Polycarp theme wins in
+/// `Appearance` without rewriting the stored settings, the watcher applies on the main queue, Settings
+/// says so, and `doctor` reports it. The behavior itself is held by the tests above.
+final class PolycarpWiringTests: XCTestCase {
+    func testAppearanceKeepsTheStoredChoiceAndLetsPolycarpWin() throws {
+        let code = try Repo.code("Sources/BaneySpaces/Appearance.swift")
+        XCTAssertTrue(code.contains("settings.look(systemAccent: Appearance.systemAccent, polycarp: polycarp, systemDark: Appearance.systemDark)"))
+        XCTAssertTrue(code.contains("ThemeCenter.use(settings.theme, polycarp: polycarp)"))
+        XCTAssertFalse(code.contains("settings.theme = polycarp"), "a Polycarp theme never writes the stored theme")
+        XCTAssertFalse(code.contains("colorPalette = "), "…or the stored palette")
+        XCTAssertFalse(code.contains("ThemeCenter.use(settings.theme)\n            if persists") , "the settings observer must keep ThemeCenter's Polycarp spec")
+    }
+
+    func testTheWatcherAppliesOnTheMainQueueAndNeverPollsThere() throws {
+        let app = try Repo.code("Sources/BaneySpaces/AppDelegate.swift")
+        XCTAssertTrue(app.contains("PolycarpThemeWatcher(path: PolycarpThemeFile.path()"))
+        XCTAssertTrue(app.contains("DispatchQueue.main.async { Appearance.shared.usePolycarp(theme) }"))
+        let core = try Repo.code("Sources/BaneySpacesCore/PolycarpTheme.swift")
+        XCTAssertFalse(core.contains("DispatchQueue.main"), "the watcher's queue is its own")
+        XCTAssertFalse(core.contains("FileManager"), "a poll is one stat")
+    }
+
+    func testSettingsAndDoctorReportIt() throws {
+        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Setup.swift").contains("section(\"Polycarp theme\")"))
+        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Setup.swift").contains("polycarp theme set <name>"))
+        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Session/SessionController.swift").contains("info[\"polycarp_theme\"]"))
+        XCTAssertTrue(try Repo.text("spec/themes.md").contains("## Polycarp themes"))
+        XCTAssertTrue(try Repo.text("spec/cli.md").contains("polycarp_theme"))
+    }
+}
