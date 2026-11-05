@@ -89,6 +89,10 @@ impl Host for FfiHost {
     fn listener_returned(&self) {
         self.emit("listener-returned", json!({}));
     }
+    // Messages the engine writes ("Polycarp can't hear your key yet…") name this app.
+    fn product_name(&self) -> String {
+        "Polycarp".into()
+    }
 }
 
 /// Opaque to C.
@@ -674,6 +678,21 @@ mod tests {
             assert_eq!(pc_start(std::ptr::null()), PC_ERR_ARG);
         }
         assert!(EVENTS.lock().iter().any(|(e, _)| e == "status"));
+    }
+
+    #[test]
+    fn messages_name_polycarp_not_silas() {
+        let h = FfiHost(Callbacks { event: None, level: None, user: std::ptr::null_mut() });
+        assert_eq!(h.product_name(), "Polycarp");
+        let o = open();
+        unsafe {
+            let mut s = json(pc_settings_get(o.core));
+            s["hotkey"] = json!("NotAKey");
+            let j = c(&s.to_string());
+            assert!(pc_settings_set(o.core, j.as_ptr()).is_null());
+        }
+        let e = last_error();
+        assert!(e.contains("Polycarp") && !e.contains("Silas"), "{e}");
     }
 
     #[test]
