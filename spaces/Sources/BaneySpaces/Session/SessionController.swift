@@ -614,7 +614,6 @@ final class SessionController {
                 if !separate { AgentAccess.shared.grant(app.processIdentifier) }
                 AgentActivity.shared.markLaunch(pid: app.processIdentifier, for: 8)
                 h.claim(app.processIdentifier, n, true, nil)
-                AgentLaunchFocus.shared.onPersonTook = { h.unclaim($0) }
                 AgentLaunchFocus.shared.watch(pid: app.processIdentifier, for: 8)
                 if files.isEmpty {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {

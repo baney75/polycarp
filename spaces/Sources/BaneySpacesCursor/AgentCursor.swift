@@ -202,6 +202,13 @@ final class AgentCursor {
                 m.strokeColor = Self.color(new.statusColor, alpha: 0.95)
                 m.lineWidth = t.glyph == .dot ? 1.5 : 2
             }
+            // A thin light halo, because the status colors are dark: they have to show on a dark window too.
+            for l in [focus] + ripples + markShapes {
+                l.shadowColor = CGColor(gray: 1, alpha: 1)
+                l.shadowOpacity = 0.9
+                l.shadowRadius = 1
+                l.shadowOffset = .zero
+            }
             for m in markShapes {
                 m.fillColor = Self.color(new.statusColor, alpha: 0.95)
                 m.strokeColor = CGColor(gray: 1, alpha: 0.9)

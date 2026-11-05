@@ -141,12 +141,13 @@ public struct CursorLook: Equatable, Sendable {
         self.theme = t
     }
     public var statusColor: RGB { CursorPalette.status(status) }
-    /// The badge's words. Asking and failed say so in a mark too, because a color alone isn't enough for everyone.
+    /// The badge's words. Every status but working has a mark too, because a color alone isn't enough for everyone.
     public var badgeText: String {
         switch status {
         case .asking: return "? " + name
         case .failed: return "! " + name
-        case .working, .done: return name
+        case .done: return "✓ " + name
+        case .working: return name
         }
     }
 }
