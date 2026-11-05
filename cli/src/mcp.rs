@@ -232,6 +232,16 @@ fn tools() -> Vec<Tool> {
             idempotent: true,
         },
         Tool {
+            name: "theme_follow",
+            description: "Match the Omarchy system theme and follow it when the person switches themes. target \"omarchy\" builds a theme named omarchy from Omarchy's current colors (square corners, monospace), makes it current in Omarchy's mode and installs Polycarp's hook in ~/.config/omarchy/hooks/theme-set.d/. Omarchy's colors are kept exactly where they read well; a color that would fail the contrast rules is moved the smallest step that passes, and each move is listed in notes and data.nudges. It refuses on a machine with no Omarchy (code no_omarchy) and never replaces a hook that is not Polycarp's. target \"off\" removes only Polycarp's hook and goes back to the theme set before following. Leave target out to see the state. theme_set with another theme also stops following.",
+            schema: obj(json!({
+                "target": {"type":"string","enum":["omarchy","off","status"],"description":"omarchy starts following, off stops, status (the default) only reports."},
+            }), &[]),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        Tool {
             name: "theme_reset",
             description: "Go back to the default theme (polycarp), mode auto, no accent override, and turn the theme on. Always works, even if a theme file is broken. Your own themes stay on disk.",
             schema: obj(json!({}), &[]),
@@ -394,6 +404,7 @@ fn call(name: &str, args: Option<&Json>, caller: &str) -> Option<theme::Envelope
             "theme_history" => theme::op_history(&c),
             "theme_off" => theme::op_off(&c),
             "theme_on" => theme::op_on(&c),
+            "theme_follow" => theme::op_follow(&c, a.text("target")?, false),
             "theme_reset" => theme::op_reset(&c),
             _ => Err(ApiErr::usage("unknown tool")),
         }

@@ -15,7 +15,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use toml::{Table, Value};
 
+pub(crate) use omarchy::{doctor_line, op_follow};
+
 mod edit;
+mod omarchy;
 mod preview;
 mod schema;
 
@@ -47,6 +50,7 @@ Usage:
   polycarp theme export <css|json> [name] [--surface spaces|voice|browser|site]
   polycarp theme undo [--force]
   polycarp theme history [--json]
+  polycarp theme follow [omarchy [--sync] | off] [--json]
   polycarp theme off
   polycarp theme on
   polycarp theme reset
@@ -926,6 +930,15 @@ struct State {
     accent_dark: Option<String>,
     /// False after `theme off`: the files in `current/` are removed.
     enabled: bool,
+    /// Set while Polycarp follows the Omarchy theme: what to go back to when it stops.
+    follow: Option<Follow>,
+}
+
+/// The `[omarchy]` table in `config.toml`.
+#[derive(Clone, PartialEq, Debug)]
+struct Follow {
+    previous_theme: String,
+    previous_mode: String,
 }
 
 impl State {
@@ -936,12 +949,39 @@ impl State {
             accent_light: None,
             accent_dark: None,
             enabled: true,
+            follow: None,
         }
     }
 }
 
+/// The `[omarchy]` table, if it is complete and valid. Anything else counts as not following.
+fn read_follow(cfg: &Cfg) -> Option<Follow> {
+    let table = parse_toml(&fs::read_to_string(cfg.file()).ok()?).ok()?;
+    let t = table.get("omarchy")?.as_table()?;
+    if t.get("following")?.as_bool()? != true {
+        return None;
+    }
+    let theme = t.get("previous_theme")?.as_str().filter(|s| valid_name(s))?;
+    let mode = t
+        .get("previous_mode")?
+        .as_str()
+        .filter(|m| mode_ok(m))?;
+    Some(Follow {
+        previous_theme: theme.to_string(),
+        previous_mode: mode.to_string(),
+    })
+}
+
 /// Reads `config.toml`. Anything wrong is reported and the defaults are used.
 fn load_state(cfg: &Cfg) -> (State, Vec<String>) {
+    let (mut st, problems) = load_appearance(cfg);
+    if problems.is_empty() {
+        st.follow = read_follow(cfg);
+    }
+    (st, problems)
+}
+
+fn load_appearance(cfg: &Cfg) -> (State, Vec<String>) {
     let bytes = match fs::read(cfg.file()) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -1078,6 +1118,18 @@ fn state_table(cfg: &Cfg, st: &State) -> String {
         app.insert("accent_dark".into(), Value::String(a.clone()));
     }
     table.insert("appearance".into(), Value::Table(app));
+    match &st.follow {
+        Some(f) => {
+            let mut o = Table::new();
+            o.insert("following".into(), Value::Boolean(true));
+            o.insert("previous_theme".into(), Value::String(f.previous_theme.clone()));
+            o.insert("previous_mode".into(), Value::String(f.previous_mode.clone()));
+            table.insert("omarchy".into(), Value::Table(o));
+        }
+        None => {
+            table.remove("omarchy");
+        }
+    }
     toml::to_string(&table).unwrap_or_default()
 }
 
@@ -2657,6 +2709,7 @@ pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
         st.mode = m.to_string();
     }
     st.theme = name.to_string();
+    let stopped = omarchy::stop_for_switch(&mut st, name, &mut notes);
     turn_on(&mut st, &mut notes);
     if apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref()).is_err() {
         notes.push(format!(
@@ -2667,6 +2720,9 @@ pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
     }
     let mut out = commit(c, Some(&st), &format!("theme set {name}"), None)?;
     out.notes.splice(0..0, notes);
+    if stopped {
+        out = omarchy::drop_hook(out);
+    }
     Ok(out)
 }
 
@@ -3226,6 +3282,7 @@ pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) ->
     }
 
     let mut notes = Vec::new();
+    let mut stopped = false;
     let st_opt = if activate {
         // Like `set`: keep the mode and accents when only the theme was broken.
         let (mut st, old_problems) = load_state(&c.cfg);
@@ -3236,6 +3293,7 @@ pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) ->
             ));
         }
         st.theme = name.clone();
+        stopped = omarchy::stop_for_switch(&mut st, &name, &mut notes);
         turn_on(&mut st, &mut notes);
         if apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref()).is_err() {
             notes.push(format!(
@@ -3255,6 +3313,9 @@ pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) ->
         Some((&name, Some(&saved))),
     )?;
     out.notes.splice(0..0, notes);
+    if stopped {
+        out = omarchy::drop_hook(out);
+    }
     let mut text = format!("saved {}\n", path.display());
     if !activate {
         text.push_str(&format!(
@@ -3690,7 +3751,9 @@ pub(crate) fn op_history(c: &Ctx) -> Res {
 /// failure is a warning: recovery must not depend on any of them.
 pub(crate) fn op_reset(c: &Ctx) -> Res {
     let mut warnings = Vec::new();
-    let was_off = !load_state(&c.cfg).0.enabled;
+    let (before, _) = load_state(&c.cfg);
+    let was_off = !before.enabled;
+    let was_following = before.follow.is_some();
     let _lock = match Lock::acquire(&c.cfg) {
         Ok(l) => Some(l),
         Err(e) => {
@@ -3741,6 +3804,11 @@ pub(crate) fn op_reset(c: &Ctx) -> Res {
     if was_off {
         out.notes
             .push("the theme was off; reset turned it on, with the default theme".to_string());
+    }
+    if was_following {
+        out.notes
+            .push("Polycarp was following Omarchy's theme; it no longer does".to_string());
+        out = omarchy::drop_hook(out);
     }
     for w in warnings {
         out = out.caution(w);
@@ -4055,6 +4123,12 @@ pub fn run(args: &[OsString]) -> i32 {
         "on" => cmd(rest, &[], &[], |c, p| {
             exactly(p, 0, "no arguments")?;
             op_on(c)
+        }),
+        "follow" => cmd(rest, &[], &["sync"], |c, p| {
+            if p.pos.len() > 1 {
+                return Err(ApiErr::usage("expected `follow`, `follow omarchy` or `follow off`"));
+            }
+            op_follow(c, first(p), p.flag("sync"))
         }),
         "reset" => cmd(rest, &[], &[], |c, p| {
             exactly(p, 0, "no arguments")?;
