@@ -170,30 +170,45 @@ fn is_script(p: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
 }
 
-/// Where `p` stands against the current folder. Inside means anywhere in its tree, through any
-/// symlink, unless the current folder is the home folder or one of its ancestors: from `$HOME`
-/// or `/`, `~/.local/bin` is still fine. If the current folder or `p` can't be resolved, this
-/// fails closed.
+/// Places under the home folder that stay allowed when the current folder is the home folder
+/// or an ancestor of it: where the installers and the fixed spots put the tools.
+const HOME_ALLOWED: [&str; 3] = [".local/bin", ".config/tabkyra", "Applications/Silas.app"];
+
+/// Where `p` stands against the current folder. Anything inside the current folder's tree is
+/// refused, through any symlink. Two exceptions: from `/` nothing is refused (everything is
+/// below it, and the system spots must work), and when the current folder is the home folder or
+/// an ancestor of it, a candidate under `HOME_ALLOWED` is still fine. `$HOME/node_modules/.bin`,
+/// a file directly in `~`, or a tool outside `~` but inside the current folder stay refused.
+/// If the current folder or `p` can't be resolved, this fails closed.
 fn against_cwd(p: &Path) -> Result<(), Miss> {
     let Ok(cwd) = env::current_dir().and_then(fs::canonicalize) else {
         return Err(Miss::NoCwd);
     };
-    if home()
-        .and_then(|h| fs::canonicalize(h).ok())
-        .is_some_and(|h| h.starts_with(&cwd))
-    {
+    if cwd.parent().is_none() {
         return Ok(());
     }
-    let real = fs::canonicalize(p).ok();
-    let named_parent = p.parent().and_then(|d| fs::canonicalize(d).ok());
-    if real.is_none() && named_parent.is_none() {
+    let resolved: Vec<PathBuf> = [
+        fs::canonicalize(p).ok(),
+        p.parent().and_then(|d| fs::canonicalize(d).ok()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if resolved.is_empty() {
         return Err(Miss::NoCwd);
     }
-    if [real, named_parent]
-        .iter()
-        .flatten()
-        .any(|c| c.starts_with(&cwd))
-    {
+    let home = home().and_then(|h| fs::canonicalize(h).ok());
+    let from_home_or_above = home.as_ref().is_some_and(|h| h.starts_with(&cwd));
+    let allowed = |c: &Path| {
+        from_home_or_above
+            && home.as_ref().is_some_and(|h| {
+                HOME_ALLOWED
+                    .iter()
+                    .filter_map(|a| fs::canonicalize(h.join(a)).ok())
+                    .any(|a| c.starts_with(a))
+            })
+    };
+    if resolved.iter().any(|c| c.starts_with(&cwd) && !allowed(c)) {
         return Err(Miss::InCwd(p.to_path_buf()));
     }
     Ok(())
@@ -448,6 +463,7 @@ fn doctor_limit() -> Duration {
 fn doctor() -> i32 {
     // A locked handle, and a closed pipe (`polycarp doctor | head -1`) is a quiet end, not a panic.
     let mut out = std::io::stdout().lock();
+    let mut printing = true;
     let mut ok = true;
     for tool in [&SPACES, &BROWSER, &VOICE] {
         let line = match locate(tool) {
@@ -494,8 +510,9 @@ fn doctor() -> i32 {
                 format!("{}: not found", tool.sub)
             }
         };
-        if writeln!(out, "{line}").is_err() {
-            break;
+        // Stop printing after a write error, but finish the checks, so the exit code stays true.
+        if printing && writeln!(out, "{line}").is_err() {
+            printing = false;
         }
     }
     let _ = out.flush();

@@ -562,7 +562,7 @@ fn a_path_entry_below_the_current_folder_is_refused_and_named() {
     assert!(!e.contains("Install"), "{e}");
 }
 
-/// From the home folder, or from `/`, a tool in `~/.local/bin` is fine: the rule has an exception.
+/// From the home folder, an ancestor of it, or `/`, a tool in `~/.local/bin` is fine.
 #[cfg(unix)]
 #[test]
 fn from_home_or_an_ancestor_of_home_a_tool_under_home_still_runs() {
@@ -585,7 +585,7 @@ fn from_home_or_an_ancestor_of_home_a_tool_under_home_still_runs() {
             err(&o)
         );
     }
-    // A sibling folder of home is not an ancestor, so the same tool below it is refused.
+    // `.local/bin` is neither home nor an ancestor of it, so as the current folder it is refused.
     let o = s
         .cmd(&["spaces"])
         .env("PATH", &d)
@@ -593,6 +593,63 @@ fn from_home_or_an_ancestor_of_home_a_tool_under_home_still_runs() {
         .output()
         .unwrap();
     assert_eq!(code(&o), 127);
+}
+
+/// The exception is narrow: from `~`, a file in `~` and `~/node_modules/.bin` are still refused.
+#[cfg(unix)]
+#[test]
+fn from_home_only_the_allowed_places_under_home_run() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let nm = home.join("node_modules/.bin");
+    fs::create_dir_all(&nm).unwrap();
+    let marker = s.dir("ran");
+    let body = format!("echo x > '{}'", marker.display());
+    stub(&nm, "baneyspaces", &body);
+    stub(&home, "baneyspaces", &body);
+    for dir in [&nm, &home] {
+        let o = s
+            .cmd(&["spaces"])
+            .env("PATH", dir)
+            .current_dir(&home)
+            .output()
+            .unwrap();
+        assert_eq!(code(&o), 127, "{}", dir.display());
+        assert!(err(&o).contains("current folder"), "{}", err(&o));
+    }
+    assert!(!marker.exists());
+}
+
+/// HOME inside a checkout, with the checkout as the current folder: a tool outside HOME but
+/// inside the checkout is refused, and the one under HOME's .local/bin is not.
+#[cfg(unix)]
+#[test]
+fn home_inside_the_current_folder_does_not_open_the_whole_folder() {
+    let s = Sandbox::new();
+    let marker = s.dir("ran");
+    stub(
+        &s.dir("bin"),
+        "baneyspaces",
+        &format!("echo x > '{}'", marker.display()),
+    );
+    let o = s
+        .cmd(&["spaces"])
+        .env("PATH", s.dir("bin"))
+        .current_dir(&s.root)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 127, "{}", err(&o));
+    assert!(!marker.exists());
+    let local = s.dir("home").join(".local/bin");
+    fs::create_dir_all(&local).unwrap();
+    stub(&local, "baneyspaces", "echo ok");
+    let o = s
+        .cmd(&["spaces"])
+        .env("PATH", &local)
+        .current_dir(&s.root)
+        .output()
+        .unwrap();
+    assert_eq!(out(&o), "ok\n");
 }
 
 /// With no current folder to compare against, nothing runs.
@@ -658,6 +715,25 @@ fn doctor_piped_to_a_closed_reader_ends_quietly() {
     let o = child.wait_with_output().unwrap();
     assert!(!err(&o).contains("panicked"), "{}", err(&o));
     assert_ne!(code(&o), 101);
+}
+
+/// A closed reader must not make a failing check look healthy.
+#[cfg(unix)]
+#[test]
+fn doctor_with_a_closed_reader_still_reports_a_missing_tool_in_its_exit_code() {
+    let s = Sandbox::new();
+    stub(&s.dir("bin"), "baneyspaces", "exit 0");
+    let mut child = s
+        .cmd(&["doctor"])
+        .env("PATH", s.dir("bin"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let o = child.wait_with_output().unwrap();
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(!err(&o).contains("panicked"));
 }
 
 #[cfg(unix)]

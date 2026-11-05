@@ -63,7 +63,7 @@ It uses the first match:
 2. Your `PATH`.
 3. The usual install folders.
 
-It only runs absolute paths, and never a file sitting directly in your current folder. If an app isn't found, it exits with code 127 and tells you where to get it.
+It only runs absolute paths, and never a file inside your current folder or below it. If an app isn't found, it exits with code 127 and tells you where to get it.
 
 ## Themes
 
@@ -307,7 +307,7 @@ export POLYCARP_SPACES_BIN="$HOME/tools/baneyspaces"
 
 ### Not found, but the app is right here
 
-Polycarp won't run a file sitting directly in your current folder. Move to another folder. If the app still isn't on your `PATH` or in a usual install folder, set its override to the full path, as above.
+Polycarp won't run a tool inside your current folder, including `node_modules/.bin` below it, because a project could plant one there. Move to another folder. The exceptions are `/`, and, when you are in your home folder or above it, tools under `~/.local/bin`. If the app still isn't on your `PATH` or in a usual install folder, set its override to the full path, as above.
 
 ### My theme changed nothing in the apps
 
