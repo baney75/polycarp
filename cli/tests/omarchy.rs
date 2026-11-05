@@ -147,7 +147,7 @@ fn every_bundled_omarchy_theme_becomes_a_theme_that_passes_the_contrast_rules() 
             v["data"]["mode"], mode,
             "{name}: the mode is Omarchy's, not auto"
         );
-        assert_eq!(v["data"]["theme"], "omarchy");
+        assert_eq!(v["data"]["theme"], "omarchy-overrides");
         // The engine's own check agrees.
         let theme = b.theme_file();
         let file = b.root.join("omarchy.toml");
@@ -492,7 +492,7 @@ fn off_removes_only_our_hook_and_goes_back_to_the_theme_from_before() {
         .success());
     let (ok, v) = b.json(&["theme", "follow", "omarchy"]);
     assert!(ok, "{v}");
-    assert_eq!(v["data"]["theme"], "omarchy");
+    assert_eq!(v["data"]["theme"], "omarchy-overrides");
     let (_, st) = b.json(&["theme", "follow"]);
     assert_eq!(st["data"]["following"], true);
     assert_eq!(st["data"]["previous_theme"], "evening");
@@ -551,7 +551,7 @@ fn choosing_another_theme_stops_following_and_says_so() {
     );
     // Setting `omarchy` itself keeps following.
     b.json(&["theme", "follow", "omarchy"]);
-    let (_, v) = b.json(&["theme", "set", "omarchy"]);
+    let (_, v) = b.json(&["theme", "set", "omarchy-overrides"]);
     assert!(!v["data"]["notes"].to_string().contains("no longer does"));
     assert!(b.hook().exists());
 }
@@ -586,22 +586,6 @@ fn a_user_theme_called_omarchy_that_is_not_ours_is_not_replaced() {
 }
 
 #[test]
-fn an_accent_override_is_cleared_so_the_accent_is_omarchys() {
-    let b = Sandbox::new();
-    b.omarchy("tokyo-night", TOKYO);
-    assert!(b.run(&["theme", "accent", "#7090ff"]).status.success());
-    let (ok, v) = b.json(&["theme", "follow", "omarchy"]);
-    assert!(ok, "{v}");
-    assert!(v["data"]["notes"]
-        .to_string()
-        .contains("accent override is cleared"));
-    assert_eq!(
-        b.exported()["surfaces"]["spaces"]["dark"]["accent"],
-        "#7aa2f7"
-    );
-}
-
-#[test]
 fn undo_steps_back_over_a_follow() {
     let b = Sandbox::new();
     b.omarchy("tokyo-night", TOKYO);
@@ -611,6 +595,21 @@ fn undo_steps_back_over_a_follow() {
     assert!(ok, "{v}");
     let (_, cur) = b.json(&["theme", "current"]);
     assert_eq!(cur["data"]["theme"], "evening");
+    // State and hook agree: no longer following, so no hook.
+    assert!(!b.hook().exists());
+    let (_, st) = b.json(&["theme", "follow"]);
+    assert_eq!(st["data"]["following"], false);
+    assert_eq!(st["data"]["hook_agrees"], true);
+    // A first-time follow that is undone leaves nothing behind either.
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    assert!(b.hook().exists());
+    let (ok, _) = b.json(&["theme", "undo"]);
+    assert!(ok);
+    assert!(!b.hook().exists());
+    let (_, st) = b.json(&["theme", "follow"]);
+    assert_eq!(st["data"]["following"], false);
 }
 
 #[test]
@@ -647,7 +646,10 @@ fn mcp_theme_follow_has_the_same_envelope() {
     let on = by(3);
     assert_eq!(on["isError"], false);
     assert_eq!(on["structuredContent"]["ok"], true);
-    assert_eq!(on["structuredContent"]["data"]["theme"], "omarchy");
+    assert_eq!(
+        on["structuredContent"]["data"]["theme"],
+        "omarchy-overrides"
+    );
     assert!(on["structuredContent"]["data"]["notes"].is_array());
     assert_eq!(by(4)["structuredContent"]["data"]["following"], false);
     assert!(!b.hook().exists());
@@ -659,4 +661,292 @@ fn doctor_says_nothing_about_omarchy_where_there_is_none() {
     let b = Sandbox::new();
     let o = b.run(&["doctor"]);
     assert!(!stdout(&o).contains("omarchy"));
+}
+
+fn contrast_of(a: &str, b: &str) -> f64 {
+    let lum = |h: &str| {
+        let c = |i: usize| {
+            let v = f64::from(u8::from_str_radix(&h[i..i + 2], 16).unwrap()) / 255.0;
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * c(1) + 0.7152 * c(3) + 0.0722 * c(5)
+    };
+    let (x, y) = (lum(a), lum(b));
+    (x.max(y) + 0.05) / (x.min(y) + 0.05)
+}
+
+fn dark(b: &Sandbox) -> Value {
+    b.exported()["surfaces"]["spaces"]["dark"].clone()
+}
+
+#[test]
+fn changes_on_top_survive_every_theme_switch() {
+    let b = Sandbox::new();
+    b.omarchy_fixture("tokyo-night");
+    assert!(b.json(&["theme", "follow", "omarchy"]).0);
+    for args in [
+        ["theme", "change", "dark.accent", "#ffcc66"],
+        ["theme", "change", "shape.radius", "6"],
+        ["theme", "change", "type.ui", "Georgia, serif"],
+        [
+            "theme",
+            "change",
+            "surface.browser.dark.selection",
+            "#334466",
+        ],
+    ] {
+        let (ok, v) = b.json(&args);
+        assert!(ok, "{args:?}: {v}");
+        // A change never stops following.
+        assert!(b.hook().exists());
+    }
+    let mut seen = Vec::new();
+    for t in ["nord", "gruvbox", "kanagawa"] {
+        b.omarchy_fixture(t);
+        let o = b.run(&["theme", "follow", "omarchy", "--sync"]);
+        assert!(
+            o.status.success(),
+            "{t}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        let out = b.exported();
+        let d = &out["surfaces"]["spaces"]["dark"];
+        assert_eq!(d["accent"], "#ffcc66", "{t}: the accent override wins");
+        seen.push(s(&d["background"]));
+        assert_eq!(out["surfaces"]["spaces"]["shape"]["radius"], 6, "{t}");
+        assert!(
+            s(&out["surfaces"]["spaces"]["type"]["ui"]).contains("Georgia"),
+            "{t}"
+        );
+        assert_eq!(
+            out["surfaces"]["browser"]["dark"]["selection"], "#334466",
+            "{t}"
+        );
+        let (_, cur) = b.json(&["theme", "current"]);
+        assert_eq!(cur["data"]["theme"], "omarchy-overrides");
+    }
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen.len(), 3, "the backgrounds changed: {seen:?}");
+    // The status lists what is in force.
+    let (_, st) = b.json(&["theme", "follow"]);
+    let paths: Vec<String> = st["data"]["overrides"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| s(&o["path"]))
+        .collect();
+    assert!(paths.contains(&"dark.accent".to_string()), "{paths:?}");
+    assert!(paths.contains(&"shape.radius".to_string()), "{paths:?}");
+    let human = stdout(&b.run(&["theme", "follow"]));
+    assert!(human.contains("dark.accent = #ffcc66"), "{human}");
+}
+
+#[test]
+fn accent_command_is_an_override_too() {
+    let b = Sandbox::new();
+    b.omarchy_fixture("tokyo-night");
+    b.json(&["theme", "follow", "omarchy"]);
+    let (ok, v) = b.json(&["theme", "accent", "#ffcc66", "--mode", "dark"]);
+    assert!(ok, "{v}");
+    assert!(b.hook().exists());
+    for t in ["nord", "kanagawa", "gruvbox"] {
+        b.omarchy_fixture(t);
+        assert!(b
+            .run(&["theme", "follow", "omarchy", "--sync"])
+            .status
+            .success());
+        assert_eq!(dark(&b)["accent"], "#ffcc66", "{t}");
+    }
+    // Reset clears it, and undo brings it back.
+    let (ok, v) = b.json(&["theme", "follow", "reset"]);
+    assert!(ok, "{v}");
+    assert_ne!(dark(&b)["accent"], "#ffcc66");
+    assert!(b.hook().exists());
+    let (_, st) = b.json(&["theme", "follow"]);
+    assert_eq!(st["data"]["following"], true);
+    assert!(st["data"]["overrides"].as_array().unwrap().is_empty());
+    let (ok, v) = b.json(&["theme", "undo"]);
+    assert!(ok, "{v}");
+    assert_eq!(dark(&b)["accent"], "#ffcc66");
+}
+
+#[test]
+fn reset_returns_to_pure_omarchy_and_undo_reverses_a_change() {
+    let b = Sandbox::new();
+    b.omarchy_fixture("tokyo-night");
+    b.json(&["theme", "follow", "omarchy"]);
+    let pure = b.exported();
+    b.json(&["theme", "change", "dark.accent", "#ffcc66"]);
+    b.json(&["theme", "change", "shape.radius", "9"]);
+    assert_ne!(b.exported(), pure);
+    // undo reverses one change as usual.
+    assert!(b.json(&["theme", "undo"]).0);
+    assert_eq!(b.exported()["surfaces"]["spaces"]["shape"]["radius"], 0);
+    assert_eq!(dark(&b)["accent"], "#ffcc66");
+    let (ok, v) = b.json(&["theme", "follow", "reset"]);
+    assert!(ok, "{v}");
+    assert_eq!(b.exported(), pure);
+    // Not following: reset says so and changes nothing.
+    b.json(&["theme", "follow", "off"]);
+    let (ok, v) = b.json(&["theme", "follow", "reset"]);
+    assert!(!ok);
+    assert_eq!(v["error"]["code"], "not_following");
+}
+
+#[test]
+fn an_override_that_fails_on_a_later_theme_is_nudged_noted_and_restored() {
+    let b = Sandbox::new();
+    b.omarchy("dim", "mode = \"dark\"\nbackground = \"#101010\"\nforeground = \"#e0e0e0\"\naccent = \"#4488ff\"\n");
+    b.json(&["theme", "follow", "omarchy"]);
+    let (ok, v) = b.json(&["theme", "change", "dark.accent", "#e8b44a"]);
+    assert!(ok, "{v}");
+    // A pale "dark" theme: the yellow no longer reads on it.
+    b.omarchy("pale", "mode = \"dark\"\nbackground = \"#f0f0f0\"\nforeground = \"#101010\"\naccent = \"#4488ff\"\n");
+    let (ok, v) = b.json(&["theme", "follow", "omarchy", "--sync"]);
+    assert!(ok, "the switch is never failed: {v}");
+    let d = dark(&b);
+    assert_ne!(d["accent"], "#e8b44a");
+    assert!(contrast_of(&s(&d["accent"]), &s(&d["background"])) >= 4.5);
+    assert!(contrast_of(&s(&d["accent"]), &s(&d["surface"])) >= 4.5);
+    let notes = v["data"]["notes"].to_string();
+    assert!(
+        notes.contains("dark.accent: #e8b44a with your changes"),
+        "{notes}"
+    );
+    let (_, st) = b.json(&["theme", "follow"]);
+    let o = st["data"]["overrides"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["path"] == "dark.accent")
+        .unwrap()
+        .clone();
+    assert_eq!(o["adjusted"], true);
+    assert_eq!(o["yours"], "#e8b44a");
+    // Back on a theme where it reads: the exact color is back.
+    b.omarchy("dim", "mode = \"dark\"\nbackground = \"#101010\"\nforeground = \"#e0e0e0\"\naccent = \"#4488ff\"\n");
+    assert!(b
+        .run(&["theme", "follow", "omarchy", "--sync"])
+        .status
+        .success());
+    assert_eq!(dark(&b)["accent"], "#e8b44a");
+    // The same through the accent command.
+    b.json(&["theme", "follow", "reset"]);
+    let (ok, v) = b.json(&["theme", "accent", "#e8b44a", "--mode", "dark"]);
+    assert!(ok, "{v}");
+    b.omarchy("pale", "mode = \"dark\"\nbackground = \"#f0f0f0\"\nforeground = \"#101010\"\naccent = \"#4488ff\"\n");
+    let (ok, v) = b.json(&["theme", "follow", "omarchy", "--sync"]);
+    assert!(ok, "{v}");
+    assert!(contrast_of(&s(&dark(&b)["accent"]), "#f0f0f0") >= 4.5);
+    b.omarchy("dim", "mode = \"dark\"\nbackground = \"#101010\"\nforeground = \"#e0e0e0\"\naccent = \"#4488ff\"\n");
+    assert!(b
+        .run(&["theme", "follow", "omarchy", "--sync"])
+        .status
+        .success());
+    assert_eq!(dark(&b)["accent"], "#e8b44a");
+}
+
+#[test]
+fn choosing_something_else_then_following_again_keeps_the_changes() {
+    let b = Sandbox::new();
+    b.omarchy_fixture("tokyo-night");
+    b.json(&["theme", "follow", "omarchy"]);
+    b.json(&["theme", "change", "dark.accent", "#ffcc66"]);
+    let (ok, _) = b.json(&["theme", "set", "calm"]);
+    assert!(ok);
+    assert!(!b.hook().exists());
+    b.omarchy_fixture("nord");
+    let (ok, v) = b.json(&["theme", "follow", "omarchy"]);
+    assert!(ok, "{v}");
+    assert!(v["data"]["notes"].to_string().contains("earlier changes"));
+    assert_eq!(dark(&b)["accent"], "#ffcc66");
+    assert_eq!(dark(&b)["background"], "#2e3440");
+    let (_, v) = b.json(&["theme", "follow", "off"]);
+    assert_eq!(v["data"]["theme"], "calm");
+}
+
+#[test]
+fn first_use_on_omarchy_follows_by_default_and_says_so() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    assert!(!b.cfg().join("config.toml").exists());
+    let (_, st) = b.json(&["theme", "follow"]);
+    assert_eq!(st["data"]["following"], false);
+    let (ok, v) = b.json(&["theme", "accent", "#ffcc66"]);
+    assert!(ok, "{v}");
+    let notes = v["data"]["notes"].to_string();
+    assert!(
+        notes.contains("follows Omarchy's theme by default"),
+        "{notes}"
+    );
+    assert!(notes.contains("follow off"), "{notes}");
+    assert!(b.hook().exists());
+    let (_, cur) = b.json(&["theme", "current"]);
+    assert_eq!(cur["data"]["theme"], "omarchy-overrides");
+    let d = dark(&b);
+    assert_eq!(d["background"], "#1a1b26");
+    assert_eq!(d["accent"], "#ffcc66");
+    // `change` starts it the same way.
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    let (ok, v) = b.json(&["theme", "change", "shape.radius", "4"]);
+    assert!(ok, "{v}");
+    assert!(v["data"]["notes"].to_string().contains("by default"));
+    assert!(b.hook().exists());
+}
+
+#[test]
+fn an_existing_choice_is_never_overridden_and_no_omarchy_means_no_change() {
+    // A choice already made.
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    assert!(b.run(&["theme", "set", "evening"]).status.success());
+    let (ok, v) = b.json(&["theme", "change", "shape.radius", "4"]);
+    assert!(ok, "{v}");
+    assert!(!v["data"]["notes"].to_string().contains("by default"));
+    assert!(!b.hook().exists());
+    let (_, cur) = b.json(&["theme", "current"]);
+    assert_eq!(cur["data"]["theme"], "evening-custom");
+    // Choosing a theme is a choice too.
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    assert!(b.run(&["theme", "set", "calm"]).status.success());
+    assert!(!b.hook().exists());
+    // No Omarchy: nothing changes.
+    let b = Sandbox::new();
+    let (ok, v) = b.json(&["theme", "accent", "#ffcc66"]);
+    assert!(ok, "{v}");
+    assert!(!v.to_string().contains("Omarchy"));
+    assert!(!b.home().join(".config").exists());
+    let (_, cur) = b.json(&["theme", "current"]);
+    assert_eq!(cur["data"]["theme"], "polycarp");
+}
+
+#[test]
+fn status_and_doctor_report_a_hook_that_disagrees_with_the_settings() {
+    let b = Sandbox::new();
+    b.omarchy("tokyo-night", TOKYO);
+    b.json(&["theme", "follow", "omarchy"]);
+    // Settings changed behind our back; the hook stays.
+    fs::write(
+        b.cfg().join("config.toml"),
+        "[appearance]\ntheme = \"calm\"\nmode = \"auto\"\n",
+    )
+    .unwrap();
+    let (_, st) = b.json(&["theme", "follow"]);
+    assert_eq!(st["data"]["hook_agrees"], false);
+    assert!(stdout(&b.run(&["theme", "follow"]))
+        .contains("hook is installed but Polycarp is not following"));
+    assert!(stdout(&b.run(&["doctor"])).contains("a Polycarp hook is installed"));
+    // And the other way: following, hook gone.
+    b.json(&["theme", "follow", "omarchy"]);
+    fs::remove_file(b.hook()).unwrap();
+    let (_, st) = b.json(&["theme", "follow"]);
+    assert_eq!(st["data"]["hook_agrees"], false);
+    assert!(stdout(&b.run(&["doctor"])).contains("hook is missing"));
 }

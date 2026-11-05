@@ -217,21 +217,26 @@ CSS variables start with `--pc-`: colors and shape use the field name, such as `
 
 ### On Omarchy
 
-On [Omarchy](https://github.com/basecamp/omarchy), Polycarp can match the system theme and change with it.
+On [Omarchy](https://github.com/basecamp/omarchy), Polycarp matches the system theme by default and changes with it. You can still change anything.
 
 ```sh
-polycarp theme follow omarchy
 polycarp theme follow
+polycarp theme follow omarchy
+polycarp theme follow reset
 polycarp theme follow off
 ```
 
-`follow omarchy` reads the colors of the theme Omarchy is using now, builds a theme named `omarchy` on top of `blocks` (square corners and a monospace face, Omarchy's own look), makes it current in the mode Omarchy's theme has, and adds a small hook file at `~/.config/omarchy/hooks/theme-set.d/polycarp`. Omarchy runs that hook after every theme switch, and Polycarp updates its colors. The hook prints nothing, asks nothing and always exits 0, so it cannot break Omarchy's switch. It will not replace a hook file there that Polycarp did not write; it refuses and names the file.
+**By default.** On a machine with Omarchy and no Polycarp settings yet, the first `theme change` or `theme accent` starts following Omarchy and says so in its notes. If settings already exist, nothing is switched for you. Choosing a theme yourself (`theme set`, `apply`, `reset`) is a choice and is respected.
 
-Omarchy's colors are kept exactly wherever they already read well. If one would fail the contrast rules (for example a muted gray on a dark background), only that color moves, by the smallest change in lightness that passes, and the command lists each move in `notes`. Your accent override is cleared, so the accent is Omarchy's. The other mode (the one Omarchy's theme is not in) keeps the base colors with Omarchy's accent adjusted to read on them.
+**What following does.** `follow omarchy` reads the colors of the theme Omarchy is using, builds a theme named `omarchy` on top of `blocks` (square corners, a monospace face: Omarchy's own look), and makes `omarchy-overrides` current, in the mode Omarchy's theme has. It adds a small hook at `~/.config/omarchy/hooks/theme-set.d/polycarp`; Omarchy runs it after every theme switch and Polycarp updates the colors. The hook prints nothing, asks nothing and always exits 0, so it cannot break Omarchy's switch. It will not replace a hook file there that Polycarp did not write; it refuses and names the file.
 
-`follow off` removes only Polycarp's own hook and goes back to the theme and mode you had before. `follow` with nothing after it says whether Polycarp is following. Choosing another theme with `set` also stops following, and says so. `polycarp doctor` mentions Omarchy when it finds it. On a machine without Omarchy, `follow omarchy` exits with an error and changes nothing.
+**Change anything on top.** While following, use the usual commands: `theme change dark.accent '#ffcc66'`, `theme accent`, a font, corners, a `surface.<product>` override. They go into `omarchy-overrides.toml` (and the accent setting), which a switch of Omarchy's theme never rewrites. Your change wins over every later Omarchy theme, and changing something never stops following. `polycarp theme follow` lists the changes in force. `polycarp theme follow reset` clears them and returns to Omarchy's own colors; `undo` reverses one change, or the reset.
 
-What is verified: the mapping and the readability rule hold for all 22 themes that ship with Omarchy 4.0.4 (their `colors.toml` files are test data), and the hook runs correctly when started the way Omarchy's `omarchy-hook` starts it (`bash <file> <theme name>`). Not yet run on a live Omarchy machine.
+**Readable by rule.** Omarchy's colors are kept exactly wherever they already read well. If one would fail the contrast rules (a muted gray on a dark background, say), only that color moves, by the smallest change in lightness that passes, and the command lists each move in `notes`. Your changes are checked when you make them. If a later Omarchy theme makes one unreadable, the switch still goes through: that color is moved the smallest step, the note says so, and `follow` shows your color and the adjusted one. When a theme where your color reads comes back, your exact color is back.
+
+**Stopping.** `follow off` removes only Polycarp's own hook and goes back to the theme and mode you had before. `theme set <other>` does the same and says so. Your changes stay in `omarchy-overrides.toml`; `follow omarchy` picks them up again. `undo` and `reset` keep the hook and the settings in agreement, and `polycarp doctor` and `follow` say when they disagree. On a machine without Omarchy, `follow omarchy` exits with an error and changes nothing, and no command behaves differently.
+
+What is verified: the mapping and the readability rule hold for all 22 themes that ship with Omarchy 4.0.4 (their `colors.toml` files are test data), changes survive switches between several of them, and the hook runs correctly when started the way Omarchy's `omarchy-hook` starts it (`bash <file> <theme name>`). Not yet run on a live Omarchy machine.
 
 ### Where files live
 
@@ -271,7 +276,7 @@ Any other MCP client can start the same command.
 | `theme_export` | Get CSS or JSON |
 | `theme_create`, `theme_delete` | Start a new theme file, or clean one up |
 | `theme_off`, `theme_on` | Remove the theme files so apps that read them use their own look, or bring the theme back |
-| `theme_follow` | On Omarchy, match the system theme and follow it (`target` omarchy, off, or leave out to see the state) |
+| `theme_follow` | On Omarchy, match the system theme and follow it, keeping your changes on top (`target` omarchy, reset, off, or leave out to see the state and the changes) |
 | `theme_history`, `theme_undo`, `theme_reset` | See changes and go back |
 
 ### The workflow

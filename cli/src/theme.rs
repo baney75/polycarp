@@ -50,7 +50,7 @@ Usage:
   polycarp theme export <css|json> [name] [--surface spaces|voice|browser|site]
   polycarp theme undo [--force]
   polycarp theme history [--json]
-  polycarp theme follow [omarchy [--sync] | off] [--json]
+  polycarp theme follow [omarchy [--sync] | reset | off] [--json]
   polycarp theme off
   polycarp theme on
   polycarp theme reset
@@ -664,7 +664,7 @@ fn is_builtin(name: &str) -> bool {
 struct Cfg {
     dir: PathBuf,
     /// A theme file that is not on disk yet: (name, TOML text). Lets a change be tried first.
-    overlay: Option<(String, String)>,
+    overlay: Vec<(String, String)>,
 }
 
 impl Cfg {
@@ -690,13 +690,22 @@ impl Cfg {
                 .join(".config")
                 .join("polycarp")
         };
-        Ok(Cfg { dir, overlay: None })
+        Ok(Cfg {
+            dir,
+            overlay: Vec::new(),
+        })
     }
     fn with_overlay(&self, name: &str, text: &str) -> Cfg {
-        Cfg {
-            overlay: Some((name.to_string(), text.to_string())),
-            ..self.clone()
-        }
+        let mut c = self.clone();
+        c.overlay.retain(|(n, _)| n != name);
+        c.overlay.push((name.to_string(), text.to_string()));
+        c
+    }
+    /// Several theme files that are not on disk yet.
+    fn with_overlays(&self, files: &[(&str, &str)]) -> Cfg {
+        files
+            .iter()
+            .fold(self.clone(), |c, (n, t)| c.with_overlay(n, t))
     }
     fn file(&self) -> PathBuf {
         self.dir.join("config.toml")
@@ -726,10 +735,8 @@ fn load_raw(cfg: &Cfg, name: &str) -> Result<Table, String> {
     if let Some((_, src)) = BUILTINS.iter().find(|(n, _)| *n == name) {
         return parse_toml(src);
     }
-    if let Some((n, text)) = &cfg.overlay {
-        if n == name {
-            return parse_toml(text);
-        }
+    if let Some((_, text)) = cfg.overlay.iter().find(|(n, _)| n == name) {
+        return parse_toml(text);
     }
     let path = cfg.theme_path(name);
     match fs::read_to_string(&path) {
@@ -939,6 +946,9 @@ struct State {
 struct Follow {
     previous_theme: String,
     previous_mode: String,
+    /// Overrides that were moved to read on the current Omarchy theme: path -> (what the person
+    /// set, or "" if nothing; what is written now). A sync puts the first back before it checks.
+    fits: BTreeMap<String, (String, String)>,
 }
 
 impl State {
@@ -966,9 +976,22 @@ fn read_follow(cfg: &Cfg) -> Option<Follow> {
         .as_str()
         .filter(|s| valid_name(s))?;
     let mode = t.get("previous_mode")?.as_str().filter(|m| mode_ok(m))?;
+    let mut fits = BTreeMap::new();
+    if let Some(f) = t.get("fits").and_then(Value::as_table) {
+        for (k, v) in f {
+            let pair = v.as_array().and_then(|a| match a.as_slice() {
+                [Value::String(x), Value::String(y)] => Some((x.clone(), y.clone())),
+                _ => None,
+            });
+            if let Some(pair) = pair {
+                fits.insert(k.clone(), pair);
+            }
+        }
+    }
     Some(Follow {
         previous_theme: theme.to_string(),
         previous_mode: mode.to_string(),
+        fits,
     })
 }
 
@@ -1130,6 +1153,16 @@ fn state_table(cfg: &Cfg, st: &State) -> String {
                 "previous_mode".into(),
                 Value::String(f.previous_mode.clone()),
             );
+            if !f.fits.is_empty() {
+                let mut fits = Table::new();
+                for (k, (a, b)) in &f.fits {
+                    fits.insert(
+                        k.clone(),
+                        Value::Array(vec![Value::String(a.clone()), Value::String(b.clone())]),
+                    );
+                }
+                o.insert("fits".into(), Value::Table(fits));
+            }
             table.insert("omarchy".into(), Value::Table(o));
         }
         None => {
@@ -2733,6 +2766,10 @@ pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
 }
 
 pub(crate) fn op_accent(c: &Ctx, color: Option<&str>, mode: Option<&str>) -> Res {
+    omarchy::with_default(c, || accent_inner(c, color, mode))
+}
+
+fn accent_inner(c: &Ctx, color: Option<&str>, mode: Option<&str>) -> Res {
     let both = ["light", "dark"];
     let modes: Vec<&str> = match mode {
         None | Some("auto") | Some("both") => both.to_vec(),
@@ -3352,6 +3389,10 @@ fn free_custom_name(cfg: &Cfg, base: &str) -> String {
 }
 
 pub(crate) fn op_change(c: &Ctx, path: &str, value: &Json) -> Res {
+    omarchy::with_default(c, || change_inner(c, path, value))
+}
+
+fn change_inner(c: &Ctx, path: &str, value: &Json) -> Res {
     let target = parse_target(path)?;
     let new = coerce(path, &target, value)?;
     // The value alone, so a bad range is reported as the value's problem.
@@ -3584,6 +3625,11 @@ fn put_back(path: &Path, was: &Option<Vec<u8>>) {
 }
 
 pub(crate) fn op_undo(c: &Ctx, force: bool) -> Res {
+    let out = undo_inner(c, force)?;
+    Ok(omarchy::reconcile(c, out))
+}
+
+fn undo_inner(c: &Ctx, force: bool) -> Res {
     let _lock = Lock::acquire(&c.cfg)?;
     let hist = read_history(&c.cfg);
     let Some(last) = hist.first() else {
