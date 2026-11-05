@@ -28,7 +28,7 @@ One theme file drives every Polycarp product. Change it with the `polycarp theme
 6. **Undo.** If they dislike it, `polycarp theme undo` steps back one change, including the theme file.
    `polycarp theme reset` always works. Set `POLYCARP_CALLER=agent:<your name>` so history says it was you.
 
-Use a temporary `XDG_CONFIG_HOME` when you test. Never edit the user's real config to experiment.
+Set `POLYCARP_CONFIG_DIR` to a temporary absolute folder when you test. Never edit the user's real config to experiment.
 
 ## Example: "warmer"
 

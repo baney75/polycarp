@@ -1,5 +1,5 @@
 //! Integration tests for `polycarp mcp`, run against the real binary over stdin and stdout.
-//! Every run gets its own config folder through XDG_CONFIG_HOME and APPDATA.
+//! Every run gets its own config folder through POLYCARP_CONFIG_DIR.
 
 use serde_json::{json, Value};
 use std::fs;
@@ -29,19 +29,14 @@ impl Sandbox {
         Sandbox { root }
     }
     fn cfg(&self) -> PathBuf {
-        if cfg!(windows) {
-            self.root.join("appdata").join("Polycarp")
-        } else {
-            self.root.join("xdg").join("polycarp")
-        }
+        self.root.join("cfg")
     }
     fn command(&self) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_polycarp"));
         c.env_clear()
             .env("HOME", self.root.join("home"))
             .env("USERPROFILE", self.root.join("home"))
-            .env("XDG_CONFIG_HOME", self.root.join("xdg"))
-            .env("APPDATA", self.root.join("appdata"))
+            .env("POLYCARP_CONFIG_DIR", self.root.join("cfg"))
             .env("TMPDIR", self.root.join("tmp"))
             .env("TEMP", self.root.join("tmp"))
             .env("TMP", self.root.join("tmp"));

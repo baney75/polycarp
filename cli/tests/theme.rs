@@ -1,5 +1,5 @@
 //! Integration tests for `polycarp theme`. Every run gets its own config folder through
-//! XDG_CONFIG_HOME and APPDATA, so nothing real is touched.
+//! POLYCARP_CONFIG_DIR, so nothing real is touched.
 
 use serde_json::Value;
 use std::fs;
@@ -54,19 +54,14 @@ impl Box {
     }
     /// The folder the command should use for its files.
     fn cfg(&self) -> PathBuf {
-        if cfg!(windows) {
-            self.root.join("appdata").join("Polycarp")
-        } else {
-            self.root.join("xdg").join("polycarp")
-        }
+        self.root.join("cfg")
     }
     fn cmd(&self, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_polycarp"));
         c.env_clear()
             .env("HOME", self.root.join("home"))
             .env("USERPROFILE", self.root.join("home"))
-            .env("XDG_CONFIG_HOME", self.root.join("xdg"))
-            .env("APPDATA", self.root.join("appdata"))
+            .env("POLYCARP_CONFIG_DIR", self.root.join("cfg"))
             .env("TMPDIR", self.root.join("tmp"))
             .env("TEMP", self.root.join("tmp"))
             .env("TMP", self.root.join("tmp"))
@@ -1312,10 +1307,51 @@ fn validate_reports_ok_and_missing_files() {
 }
 
 #[test]
+fn config_folder_comes_from_polycarp_config_dir_then_the_system_variables() {
+    let b = Box::new();
+    // A relative folder is refused, with the variable named.
+    let mut c = b.cmd(&["theme", "set", "calm", "--json"]);
+    c.env("POLYCARP_CONFIG_DIR", "relative/dir");
+    let o = c.output().unwrap();
+    assert_eq!(code(&o), 1);
+    let v: Value = serde_json::from_str(&out(&o)).unwrap();
+    assert_eq!(v["error"]["code"], "config_error");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("POLYCARP_CONFIG_DIR must be an absolute path"),
+        "{v}"
+    );
+    assert!(!b.root.join("cwd").join("relative").exists());
+
+    // Without it, XDG_CONFIG_HOME (or APPDATA on Windows) still picks the folder.
+    let mut c = b.cmd(&["theme", "set", "calm"]);
+    c.env_remove("POLYCARP_CONFIG_DIR")
+        .env("XDG_CONFIG_HOME", b.root.join("xdg"))
+        .env("APPDATA", b.root.join("appdata"));
+    assert_eq!(code(&c.output().unwrap()), 0);
+    let legacy = if cfg!(windows) {
+        b.root.join("appdata").join("Polycarp")
+    } else {
+        b.root.join("xdg").join("polycarp")
+    };
+    assert!(legacy.join("config.toml").exists());
+    assert!(!b.cfg().join("config.toml").exists());
+
+    // The override wins when both are set.
+    let mut c = b.cmd(&["theme", "set", "evening"]);
+    c.env("XDG_CONFIG_HOME", b.root.join("xdg"))
+        .env("APPDATA", b.root.join("appdata"));
+    assert_eq!(code(&c.output().unwrap()), 0);
+    assert!(b.cfg().join("config.toml").exists());
+}
+
+#[test]
 fn nothing_is_written_outside_the_temp_config() {
     let b = Box::new();
     b.ok(&["set", "evening"]);
-    // The fake home stays empty: only XDG_CONFIG_HOME / APPDATA were used.
+    // The fake home stays empty: only POLYCARP_CONFIG_DIR was used.
     let home: Vec<_> = fs::read_dir(b.root.join("home")).unwrap().collect();
     assert!(home.is_empty());
     let cwd: Vec<_> = fs::read_dir(b.root.join("cwd")).unwrap().collect();
@@ -1325,7 +1361,7 @@ fn nothing_is_written_outside_the_temp_config() {
 #[test]
 fn readme_example_is_valid() {
     let b = Box::new();
-    let readme = fs::read_to_string(repo_theme("polycarp").with_file_name("README.md")).unwrap();
+    let readme = repo_text("themes/README.md");
     let start = readme
         .find("# ~/.config/polycarp/themes/mine.toml")
         .unwrap();

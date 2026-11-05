@@ -51,7 +51,8 @@ commands as MCP tools, and `polycarp theme schema` lists every field.
 
 Built-in themes: polycarp (default), still-water, evening, parchment, blocks, calm.
 Your own themes live in <config>/themes/<name>.toml. The config folder is
-$XDG_CONFIG_HOME/polycarp (default ~/.config/polycarp), or %APPDATA%\\Polycarp on Windows.
+$POLYCARP_CONFIG_DIR if set (an absolute path), else $XDG_CONFIG_HOME/polycarp (default
+~/.config/polycarp), or %APPDATA%\\Polycarp on Windows.
 Set POLYCARP_CALLER to record who made a change (default: user).
 
 Products read the files in <config>/current/ once their adapters land.
@@ -563,7 +564,15 @@ struct Cfg {
 impl Cfg {
     fn from_env() -> Result<Cfg, String> {
         let nonempty = |k: &str| env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-        let dir = if cfg!(windows) {
+        let dir = if let Some(d) = nonempty("POLYCARP_CONFIG_DIR") {
+            if !d.is_absolute() {
+                return Err(format!(
+                    "POLYCARP_CONFIG_DIR must be an absolute path, but it is {}",
+                    d.display()
+                ));
+            }
+            d
+        } else if cfg!(windows) {
             nonempty("APPDATA")
                 .ok_or("APPDATA is not set, so there is no place for the theme files")?
                 .join("Polycarp")
@@ -1493,7 +1502,7 @@ impl ApiErr {
             "current_theme" => "Run `theme set <other>` first.",
             "nothing_to_undo" => "History is empty. `theme reset` goes back to the default.",
             "io_error" => "Check that the config folder is writable, then try again.",
-            "config_error" => "Set XDG_CONFIG_HOME (or APPDATA on Windows) to a folder you can write.",
+            "config_error" => "Set POLYCARP_CONFIG_DIR to an absolute path of a folder you can write.",
             _ => "",
         }
         .to_string()

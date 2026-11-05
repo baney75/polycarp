@@ -12,6 +12,8 @@ Every theme in this folder must validate. Run `polycarp theme validate themes/<n
 
 Put a file at `themes/<name>.toml` inside your config folder:
 
+- Anywhere: `$POLYCARP_CONFIG_DIR/`, if you set it. It must be an absolute path, or the command refuses it.
+  Use it to try things in a temporary folder.
 - macOS and Linux: `$XDG_CONFIG_HOME/polycarp/` (default `~/.config/polycarp/`)
 - Windows: `%APPDATA%\Polycarp\`
 
