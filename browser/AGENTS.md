@@ -31,6 +31,13 @@ time: `cd cli && npx playwright-core install chromium`).
 
 A test that passed proves the logic, not what the user sees. Say which one you ran.
 
+## Inside Polycarp (single executable)
+`cli/scripts/compile.mjs` builds `polycarp-browser` (Bun, bytecode) from the esbuild bundle with `TABKYRA_CLI_COMPILED=1`;
+`cli/src/self.ts` is the one place that knows whether the program is compiled. In that mode launchers and the native host
+manifest run the executable itself, the extension is read from `extension/` beside it, and `tabkyra update` is Polycarp's job.
+`spaces/scripts/build-browser.sh` builds both pieces and `bundle.sh` seals them in `Contents/Resources/browser`. Run
+`cd cli && node --test test/compiled.test.mjs` after touching launchers, `install.ts`, `paths.ts` or the entry point.
+
 ## Polycarp theme: what is not themed
 `type.display` is read and sent as `--font-serif`, but the panel draws no display headings (nothing
 uses `font-serif`), so only `type.ui`, `type.mono` and `type.size` show. If a heading starts using
