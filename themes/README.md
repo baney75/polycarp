@@ -256,6 +256,9 @@ not exist before, `[appearance]` is removed (and the file too, if nothing else i
 a theme file that change edited, created or deleted, and says who made the change it undid. If a history
 entry is damaged it says so and changes nothing. `create --force` and `delete` are recorded too, so `undo`
 brings the old theme back.
+If a theme file or `config.toml` cannot be written, the change is put back, its history entry is dropped
+and the command fails. If only a file in `current/` cannot be written, the settings stay saved and the
+command succeeds with a warning that names the files it could not write.
 `reset` and `undo` work even if a user theme or `config.toml` is broken. Once `config.toml` is safe,
 `reset` turns a history, lock or `current/` failure into a warning.
 `accent` and `change` refuse while the settings in force are broken (the default theme is in use), and list

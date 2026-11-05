@@ -1270,21 +1270,33 @@ fn theme_json(full: &Full, state: Option<&State>) -> Json {
     v
 }
 
-fn write_outputs(cfg: &Cfg, eff: &Eff) -> Result<Vec<PathBuf>, String> {
+/// Writes every file in `current/`, trying each one even if another fails. Returns the files
+/// written and one message per file that could not be.
+fn write_outputs(cfg: &Cfg, eff: &Eff) -> (Vec<PathBuf>, Vec<String>) {
     let dir = cfg.current();
     let mut wrote = Vec::new();
-    let json = serde_json::to_string_pretty(&theme_json(&eff.full, Some(&eff.state)))
-        .map_err(|e| e.to_string())?;
-    let p = dir.join("theme.json");
-    write_atomic(&p, format!("{json}\n").as_bytes())?;
-    wrote.push(p);
+    let mut failed = Vec::new();
+    // A Value always serializes, so the fallback is never used.
+    let json =
+        serde_json::to_string_pretty(&theme_json(&eff.full, Some(&eff.state))).unwrap_or_default();
+    let mut files = vec![(dir.join("theme.json"), format!("{json}\n"))];
     let forced = (eff.state.mode != "auto").then_some(eff.state.mode.as_str());
     for s in SURFACES {
-        let p = dir.join(format!("{s}.css"));
-        write_atomic(&p, css(&eff.full, Some(s), forced).as_bytes())?;
-        wrote.push(p);
+        files.push((
+            dir.join(format!("{s}.css")),
+            css(&eff.full, Some(s), forced),
+        ));
     }
-    Ok(wrote)
+    for (p, data) in files {
+        match write_atomic(&p, data.as_bytes()) {
+            Ok(()) => wrote.push(p),
+            Err(e) => failed.push(format!(
+                "{}: {e}",
+                p.file_name().unwrap_or_default().to_string_lossy()
+            )),
+        }
+    }
+    (wrote, failed)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1463,7 +1475,7 @@ fn read_or_absent(path: &Path) -> Result<Option<Vec<u8>>, String> {
 
 /// Keeps the current `config.toml` in `history/` before a change, and trims to the last 50.
 /// With `theme`, the user theme file of that name is kept too, so undo can put it back.
-fn record(cfg: &Cfg, who: &str, action: &str, theme: Option<&str>) -> Result<(), String> {
+fn record(cfg: &Cfg, who: &str, action: &str, theme: Option<&str>) -> Result<PathBuf, String> {
     let (compact, iso) = stamps();
     let current = read_or_absent(&cfg.file())?;
     let action: String = action.chars().filter(|c| !c.is_control()).collect();
@@ -1510,11 +1522,12 @@ fn record(cfg: &Cfg, who: &str, action: &str, theme: Option<&str>) -> Result<(),
             }
         })
         .collect();
-    write_atomic(&dir.join(format!("{compact}-{same:03}-{safe}.toml")), &data)?;
+    let kept = dir.join(format!("{compact}-{same:03}-{safe}.toml"));
+    write_atomic(&kept, &data)?;
     for old in read_history(cfg).into_iter().skip(HISTORY_KEEP) {
         let _ = fs::remove_file(old.file);
     }
-    Ok(())
+    Ok(kept)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2163,16 +2176,17 @@ fn finish(cfg: &Cfg) -> Res {
 fn finish_with(cfg: &Cfg, soft: bool) -> Res {
     let eff = effective(cfg);
     let mut late = None;
-    let wrote = match write_outputs(cfg, &eff) {
-        Ok(w) => w,
-        Err(e) if soft => {
+    let (wrote, failed) = write_outputs(cfg, &eff);
+    if !failed.is_empty() {
+        if soft {
             late = Some(format!(
-                "the settings are saved, but the files in current/ were not refreshed: {e}"
+                "the settings are saved, but the files in current/ were not refreshed: {}",
+                failed.join("; ")
             ));
-            Vec::new()
+        } else {
+            return Err(io_err(failed.join("; ")));
         }
-        Err(e) => return Err(io_err(e)),
-    };
+    }
     let mut text = format!("theme: {}\nmode: {}\n", eff.state.theme, eff.state.mode);
     if eff.state.accent_light.is_some() || eff.state.accent_dark.is_some() {
         text.push_str(&format!(
@@ -2254,23 +2268,44 @@ fn require_healthy(eff: &Eff) -> Result<(), ApiErr> {
 
 /// Records the old files for undo, writes a theme file if given, writes the state if given,
 /// then writes the outputs. `file` is (theme name, full text), or (theme name, None) to delete it.
+///
+/// If the theme file or `config.toml` cannot be written, whatever was changed is put back, the
+/// history entry is dropped and the error is returned. Once the settings are saved, a failure in
+/// `current/` is only a warning that says which files were not written.
 fn commit(c: &Ctx, st: Option<&State>, action: &str, file: Option<(&str, Option<&str>)>) -> Res {
-    record(&c.cfg, &c.caller, action, file.map(|f| f.0)).map_err(io_err)?;
+    let theme_was = match file {
+        Some((name, _)) => {
+            let p = c.cfg.theme_path(name);
+            let was = read_or_absent(&p).map_err(io_err)?;
+            Some((p, was))
+        }
+        None => None,
+    };
+    let config_was = read_or_absent(&c.cfg.file()).map_err(io_err)?;
+    let kept = record(&c.cfg, &c.caller, action, file.map(|f| f.0)).map_err(io_err)?;
+    let undo_all = |why: String| {
+        if let Some((p, was)) = &theme_was {
+            put_back(p, was);
+        }
+        put_back(&c.cfg.file(), &config_was);
+        let _ = fs::remove_file(&kept);
+        io_err(format!("{why}. Nothing was changed"))
+    };
     match file {
         Some((name, Some(text))) => {
-            write_atomic(&c.cfg.theme_path(name), text.as_bytes()).map_err(io_err)?
+            write_atomic(&c.cfg.theme_path(name), text.as_bytes()).map_err(undo_all)?
         }
         Some((name, None)) => {
             let p = c.cfg.theme_path(name);
             fs::remove_file(&p)
-                .map_err(|e| io_err(format!("could not delete {}: {e}", p.display())))?;
+                .map_err(|e| undo_all(format!("could not delete {}: {e}", p.display())))?;
         }
         None => {}
     }
     if let Some(st) = st {
-        write_atomic(&c.cfg.file(), state_table(&c.cfg, st).as_bytes()).map_err(io_err)?;
+        write_atomic(&c.cfg.file(), state_table(&c.cfg, st).as_bytes()).map_err(undo_all)?;
     }
-    finish(&c.cfg)
+    finish_with(&c.cfg, true)
 }
 
 pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {

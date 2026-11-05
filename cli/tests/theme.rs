@@ -1463,6 +1463,78 @@ fn reset_and_undo_work_with_a_corrupt_user_theme_and_corrupt_state() {
         .contains("theme = \"polycarp\""));
 }
 
+/// Breaks the outputs two ways, runs `args`, and checks the settings are saved with a warning that
+/// names the files, for both a directory in a file's place and a plain file in `current`'s place.
+fn outputs_fail_but_settings_are_saved(args: &[&str], expect_theme: &str) {
+    for case in ["dir-at-site-css", "file-at-current"] {
+        let b = Box::new();
+        b.ok(&["set", "evening"]);
+        let current = b.cfg().join("current");
+        if case == "dir-at-site-css" {
+            fs::remove_file(current.join("site.css")).unwrap();
+            fs::create_dir(current.join("site.css")).unwrap();
+        } else {
+            fs::remove_dir_all(&current).unwrap();
+            fs::write(&current, "in the way").unwrap();
+        }
+        let (c, v) = b.jrun(args);
+        assert_eq!(c, 0, "{case} {args:?}: {v}");
+        let w = v["data"]["warnings"].to_string();
+        assert!(w.contains("the settings are saved"), "{case}: {w}");
+        assert!(w.contains("site.css"), "{case}: {w}");
+        if case == "file-at-current" {
+            assert!(w.contains("theme.json") && w.contains("spaces.css"), "{w}");
+        }
+        let text = fs::read_to_string(b.state_file()).unwrap();
+        assert!(text.contains(expect_theme), "{case}: {text}");
+        assert_eq!(b.history_count(), 2, "{case}: the change is recorded once");
+    }
+}
+
+#[test]
+fn set_and_change_keep_saved_settings_when_an_output_cannot_be_written() {
+    outputs_fail_but_settings_are_saved(&["set", "calm"], "theme = \"calm\"");
+    outputs_fail_but_settings_are_saved(
+        &["change", "shape.radius", "3"],
+        "theme = \"evening-custom\"",
+    );
+}
+
+#[test]
+fn a_failed_theme_or_config_write_is_put_back_and_reported() {
+    // The themes folder is a plain file, so the theme file for `change` cannot be written.
+    let b = Box::new();
+    b.ok(&["set", "evening"]);
+    let before = fs::read_to_string(b.state_file()).unwrap();
+    let hist = b.history_count();
+    fs::write(b.cfg().join("themes"), "in the way").unwrap();
+    let (c, v) = b.jrun(&["change", "shape.radius", "3"]);
+    assert_eq!(c, 1, "{v}");
+    assert_eq!(v["error"]["code"], "io_error", "{v}");
+    assert_eq!(fs::read_to_string(b.state_file()).unwrap(), before);
+    assert_eq!(
+        b.history_count(),
+        hist,
+        "no entry for a change that did not happen"
+    );
+    // config.toml is a directory, so the state cannot be written; the theme file is put back.
+    let b = Box::new();
+    let first = user_theme("mine", "calm", "[shape]\nradius = 2");
+    assert_eq!(
+        code(&b.run_stdin(&["theme", "apply", "-", "--no-activate"], &first)),
+        0
+    );
+    let theme_file = b.cfg().join("themes").join("mine.toml");
+    let text = fs::read_to_string(&theme_file).unwrap();
+    let hist = b.history_count();
+    fs::create_dir_all(b.state_file()).unwrap();
+    let second = user_theme("mine", "calm", "[shape]\nradius = 9");
+    let o = b.run_stdin(&["theme", "apply", "-"], &second);
+    assert_eq!(code(&o), 1, "{}{}", err(&o), out(&o));
+    assert_eq!(fs::read_to_string(&theme_file).unwrap(), text);
+    assert_eq!(b.history_count(), hist);
+}
+
 #[test]
 fn reset_works_when_history_and_current_cannot_be_written() {
     let b = Box::new();
