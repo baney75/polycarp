@@ -106,7 +106,7 @@ pub(super) fn needs(kind: Kind) -> String {
     }
 }
 
-fn kind_schema(kind: Kind) -> Json {
+pub(super) fn kind_schema(kind: Kind) -> Json {
     match kind {
         Kind::Hex => json!({"type":"string","pattern":"^#[0-9a-fA-F]{6}$","examples":["#59693f"]}),
         Kind::Int(lo, hi) => json!({"type":"integer","minimum":lo,"maximum":hi}),
@@ -114,12 +114,14 @@ fn kind_schema(kind: Kind) -> Json {
         Kind::Enum(o) => json!({"type":"string","enum":o}),
         Kind::Font => json!({
             "type":"string","minLength":1,
-            "pattern": r#"^\s*(?:[\w -]+|"[^"'\\<\x00-\x1f]+"|'[^"'\\<\x00-\x1f]+')(?:\s*,\s*(?:[\w -]+|"[^"'\\<\x00-\x1f]+"|'[^"'\\<\x00-\x1f]+'))*\s*$"#,
+            // Kept in step with `check_font` in theme.rs; a test runs samples through both.
+            "pattern": r#"^(?!.*/\*)\s*(?:[\p{L}\p{N}_-][\p{L}\p{N} _-]*|"[^"'\\<\p{Cc}]*[^"'\\<\p{Cc}\s][^"'\\<\p{Cc}]*"|'[^"'\\<\p{Cc}]*[^"'\\<\p{Cc}\s][^"'\\<\p{Cc}]*')(?:\s*,\s*(?:[\p{L}\p{N}_-][\p{L}\p{N} _-]*|"[^"'\\<\p{Cc}]*[^"'\\<\p{Cc}\s][^"'\\<\p{Cc}]*"|'[^"'\\<\p{Cc}]*[^"'\\<\p{Cc}\s][^"'\\<\p{Cc}]*'))*\s*$"#,
             "examples":["Georgia, serif"]
         }),
         Kind::Easing => json!({
             "type":"string",
-            "pattern": r"^(ease|ease-in|ease-out|ease-in-out|linear|cubic-bezier\([^(),]+,[^(),]+,[^(),]+,[^(),]+\))$",
+            // Kept in step with `check_easing` in theme.rs (which also limits the x values to 0..1).
+            "pattern": r"^(?:ease|ease-in|ease-out|ease-in-out|linear|cubic-bezier\(\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*,\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*,\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*,\s*[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?\s*\))$",
             "examples":["ease-out","cubic-bezier(0.3, 0, 0.2, 1)"]
         }),
         Kind::Bool => json!({"type":"boolean"}),
