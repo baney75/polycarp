@@ -82,7 +82,7 @@ export function appearanceVariables(
 		"--tk-control-on": controlOn,
 		"accent-color": controlOn,
 		"--tk-brass-text": accentInk(p.accent, [p.panel, p.bg, secondary], p.text),
-		...(polycarp ? polycarpShapeVariables(polycarp) : {}),
+		...(polycarp ? { ...polycarpShapeVariables(polycarp), "--tk-brass-edge": mix(p.accent, p.text, 0.25) } : {}),
 	};
 }
 

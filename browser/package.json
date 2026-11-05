@@ -11,7 +11,7 @@
 		"build": "npm run build:chrome",
 		"dev": "concurrently -n \"build,css,server\" -c \"blue,green,yellow\" \"node ./scripts/build.mjs --watch\" \"tailwindcss -i ./src/app.css -o ./dist-chrome/app.css --watch\" \"node ./scripts/dev-server.mjs\"",
 		"typecheck": "tsc --noEmit",
-		"check": "biome check --write . && tsc --noEmit && node --import tsx --test test/*.test.mjs && cd site && npm run check",
+		"check": "biome check --write . && tsc --noEmit && node scripts/check-theme.mjs && node --import tsx --test test/*.test.mjs && cd site && npm run check",
 		"prepare": "husky"
 	},
 	"dependencies": {

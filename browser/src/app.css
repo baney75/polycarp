@@ -24,6 +24,15 @@
 	/* Text and glyphs drawn on --tk-brass. Appearance (src/appearance/tokens.ts) pairs it with the accent per preset. */
 	--tk-on-brass: var(--tk-ink);
 	--tk-tide: #43b3a0;
+	/* The darker stop of the brass gradients. A Polycarp theme sets it from its accent. */
+	--tk-brass-edge: #a8761c;
+	/* Fixed colors: the recording pill, switch thumbs and their shadow, the success mark. */
+	--tk-on-rec: #fff;
+	--tk-rec: #c42b2b;
+	--tk-rec-hover: #a82222;
+	--tk-thumb: #fff;
+	--tk-thumb-shadow: rgb(0 0 0 / 0.3);
+	--tk-success: #16a34a;
 	--ring: var(--tk-brass-deep);
 	/* The selected Settings chip. Appearance (src/appearance/tokens.ts) sets the same names per preset. */
 	--tk-selected: var(--foreground);
@@ -53,7 +62,7 @@
 }
 
 body {
-	font-size: 16px;
+	font-size: var(--tk-font-size, 16px);
 	-webkit-font-smoothing: antialiased;
 }
 
@@ -62,16 +71,16 @@ body {
 *::before,
 *::after {
 	transition:
-		background-color 0.3s ease,
-		color 0.3s ease,
-		border-color 0.3s ease,
-		fill 0.3s ease,
-		stroke 0.3s ease;
+		background-color var(--tk-motion-slow, 0.3s) var(--tk-ease, ease),
+		color var(--tk-motion-slow, 0.3s) var(--tk-ease, ease),
+		border-color var(--tk-motion-slow, 0.3s) var(--tk-ease, ease),
+		fill var(--tk-motion-slow, 0.3s) var(--tk-ease, ease),
+		stroke var(--tk-motion-slow, 0.3s) var(--tk-ease, ease);
 }
 
 * {
 	scrollbar-width: thin;
-	scrollbar-color: var(--color-border) rgba(0, 0, 0, 0);
+	scrollbar-color: var(--color-border) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -89,7 +98,7 @@ body {
 }
 
 *::-webkit-scrollbar-thumb:hover {
-	background-color: rgba(0, 0, 0, 0);
+	background-color: transparent;
 }
 
 /* Welcome message animations */
@@ -119,11 +128,16 @@ body {
 }
 
 .tutorial-pill {
-	transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+	transition: all var(--tk-motion-slow, 0.3s) var(--tk-ease, cubic-bezier(0.4, 0, 0.2, 1));
 	position: relative;
 	overflow: hidden;
-	background: linear-gradient(135deg, rgba(227, 169, 59, 0.15), rgba(227, 169, 59, 0.15), rgba(168, 118, 28, 0.15));
-	border: 1px solid rgba(227, 169, 59, 0.3);
+	background: linear-gradient(
+		135deg,
+		color-mix(in srgb, var(--tk-brass) 15%, transparent),
+		color-mix(in srgb, var(--tk-brass) 15%, transparent),
+		color-mix(in srgb, var(--tk-brass-edge) 15%, transparent)
+	);
+	border: 1px solid color-mix(in srgb, var(--tk-brass) 30%, transparent);
 	backdrop-filter: blur(10px);
 }
 
@@ -134,11 +148,11 @@ body {
 	left: 0;
 	right: 0;
 	bottom: 0;
-	background: linear-gradient(90deg, transparent, rgba(227, 169, 59, 0.4), transparent);
+	background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--tk-brass) 40%, transparent), transparent);
 	background-size: 200% 100%;
 	animation: shimmer 3s ease-in-out infinite;
 	opacity: 0;
-	transition: opacity 0.3s;
+	transition: opacity var(--tk-motion-slow, 0.3s);
 }
 
 .tutorial-pill:hover::before {
@@ -147,9 +161,14 @@ body {
 
 .tutorial-pill:hover {
 	transform: translateY(-1px);
-	background: linear-gradient(135deg, rgba(227, 169, 59, 0.22), rgba(227, 169, 59, 0.22), rgba(168, 118, 28, 0.22));
-	box-shadow: 0 6px 16px -6px rgba(227, 169, 59, 0.45);
-	border-color: rgba(227, 169, 59, 0.55);
+	background: linear-gradient(
+		135deg,
+		color-mix(in srgb, var(--tk-brass) 22%, transparent),
+		color-mix(in srgb, var(--tk-brass) 22%, transparent),
+		color-mix(in srgb, var(--tk-brass-edge) 22%, transparent)
+	);
+	box-shadow: 0 6px 16px -6px color-mix(in srgb, var(--tk-brass) 45%, transparent);
+	border-color: color-mix(in srgb, var(--tk-brass) 55%, transparent);
 }
 
 .tutorial-pill:active {
@@ -167,10 +186,15 @@ body {
 
 /* User message with fancy pill styling */
 .user-message-container {
-	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+	transition: all var(--tk-motion-normal, 0.2s) var(--tk-ease, cubic-bezier(0.4, 0, 0.2, 1));
 	position: relative;
-	background: linear-gradient(135deg, rgba(227, 169, 59, 0.12), rgba(227, 169, 59, 0.12), rgba(168, 118, 28, 0.12));
-	border: 1px solid rgba(227, 169, 59, 0.25);
+	background: linear-gradient(
+		135deg,
+		color-mix(in srgb, var(--tk-brass) 12%, transparent),
+		color-mix(in srgb, var(--tk-brass) 12%, transparent),
+		color-mix(in srgb, var(--tk-brass-edge) 12%, transparent)
+	);
+	border: 1px solid color-mix(in srgb, var(--tk-brass) 25%, transparent);
 	backdrop-filter: blur(10px);
 	max-width: 100%;
 }
@@ -220,12 +244,12 @@ body {
 	padding: 0.0625rem 0.4375rem;
 	border-radius: 999px;
 	color: var(--tk-brass-deep);
-	background: rgba(227, 169, 59, 0.14);
+	background: color-mix(in srgb, var(--tk-brass) 14%, transparent);
 }
 
 .dark .tk-ask-chip {
 	color: var(--tk-brass);
-	background: rgba(227, 169, 59, 0.12);
+	background: color-mix(in srgb, var(--tk-brass) 12%, transparent);
 }
 
 .tk-ask-option {
@@ -242,7 +266,7 @@ body {
 }
 
 .tk-ask-option:hover:not(:disabled) {
-	border-color: rgba(227, 169, 59, 0.55);
+	border-color: color-mix(in srgb, var(--tk-brass) 55%, transparent);
 }
 
 .tk-ask-option:focus-visible,
@@ -253,7 +277,7 @@ body {
 
 .tk-ask-option[aria-checked="true"] {
 	border-color: var(--tk-brass);
-	background: rgba(227, 169, 59, 0.1);
+	background: color-mix(in srgb, var(--tk-brass) 10%, transparent);
 }
 
 .tk-ask-other {
@@ -300,7 +324,7 @@ body {
 	padding: 0.125rem 0.5rem;
 	border-radius: calc(var(--radius) - 4px);
 	color: var(--color-foreground);
-	background: rgba(227, 169, 59, 0.12);
+	background: color-mix(in srgb, var(--tk-brass) 12%, transparent);
 	overflow-wrap: anywhere;
 }
 
@@ -342,7 +366,7 @@ body {
 .tk-ask-card *,
 .tk-ask-card *::before,
 .tk-ask-card *::after {
-	transition-duration: 0.08s;
+	transition-duration: var(--tk-motion-fast, 0.08s);
 }
 
 /* ---- Side panel header (src/sidepanel.ts, src/components/HeaderMenu.ts) ---- */
@@ -398,8 +422,8 @@ body {
 	visibility: hidden;
 	pointer-events: none;
 	transition:
-		opacity 0.12s ease,
-		visibility 0s linear 0.12s;
+		opacity var(--tk-motion-fast, 0.12s) ease,
+		visibility 0s linear var(--tk-motion-fast, 0.12s);
 }
 
 [data-tip]:hover::after {
@@ -473,19 +497,19 @@ body {
 }
 
 .tk-rec-pill {
-	color: #fff;
-	background: #c42b2b;
+	color: var(--tk-on-rec);
+	background: var(--tk-rec);
 }
 
 .tk-rec-pill:hover {
-	background: #a82222;
+	background: var(--tk-rec-hover);
 }
 
 .tk-rec-dot {
 	width: 0.5rem;
 	height: 0.5rem;
 	border-radius: 999px;
-	background: #fff;
+	background: var(--tk-on-rec);
 	animation: tk-rec-blink 1.2s ease-in-out infinite;
 }
 
@@ -522,7 +546,7 @@ button[role="switch"] {
 	border-radius: 9999px;
 	background: var(--tk-control-off);
 	cursor: pointer;
-	transition: background-color 0.15s ease;
+	transition: background-color var(--tk-motion-fast, 0.15s) ease;
 }
 input[type="checkbox"].tk-switch {
 	margin: 0;
@@ -535,9 +559,9 @@ input[type="checkbox"].tk-switch::before {
 	width: 1.25rem;
 	height: 1.25rem;
 	border-radius: 9999px;
-	background: #fff;
-	box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
-	transition: transform 0.15s ease;
+	background: var(--tk-thumb);
+	box-shadow: 0 1px 2px var(--tk-thumb-shadow);
+	transition: transform var(--tk-motion-fast, 0.15s) ease;
 }
 input[type="checkbox"].tk-switch:checked,
 button[role="switch"][data-state="checked"] {
@@ -548,7 +572,7 @@ input[type="checkbox"].tk-switch:checked::before {
 }
 /* mini-lit's switch (the CORS proxy) draws its own thumb; only its track colour is set above. */
 button[role="switch"] > span {
-	background: #fff;
+	background: var(--tk-thumb);
 	margin-left: 0.125rem;
 }
 
@@ -588,7 +612,7 @@ input[type="checkbox"]:not(.tk-switch):checked::before {
 	content: "";
 	width: 0.75rem;
 	height: 0.75rem;
-	background: #fff;
+	background: var(--tk-thumb);
 	mask:
 		url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2 5 8.7 9.6 3.6' fill='none' stroke='%23000' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
 		center / contain no-repeat;
@@ -687,4 +711,14 @@ button[role="switch"]:disabled {
 		transition-delay: 0.45s;
 		transition-duration: 0s;
 	}
+}
+
+/* A Polycarp theme with reduced motion: the same as the system setting. Durations are already 0 through the tokens; this stops the looping animations too. */
+[data-tk-reduced-motion] .welcome-container,
+[data-tk-reduced-motion] .tutorial-pill::before,
+[data-tk-reduced-motion] .tk-rec-dot {
+	animation: none;
+}
+[data-tk-reduced-motion] .tutorial-pill:hover {
+	transform: none;
 }

@@ -18,6 +18,7 @@ your change touches before you say it works:
 ```bash
 npx biome check .                       # format and lint (./check.sh runs it with --write)
 npx tsc --noEmit                        # extension types
+node scripts/check-theme.mjs            # no hard-coded colors outside tokens and its allowlist
 node --import tsx --test test/*.test.mjs  # extension tests
 (cd cli && npx tsc --noEmit && npm test)  # CLI build and tests (npm test rebuilds cli/dist first)
 node cli/dist/index.js skill lint skills  # the skill gate
