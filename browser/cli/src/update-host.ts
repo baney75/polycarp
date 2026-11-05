@@ -29,6 +29,7 @@ import {
 	toolEnv,
 } from "./checkout.ts";
 import { type HostRunAction, type ProgressEvent, type ProgressRecord, readProgressRecord, writeProgressRecord } from "./update-progress.ts";
+import { selfExec, selfPrefix } from "./self.ts";
 import {
 	CHECK_INTERVAL_MS,
 	checkForUpdate,
@@ -371,7 +372,7 @@ function forward(
  * finishes, and the next host follows it through its progress file (startUp).
  */
 function runChild(action: HostRunAction, send: Send): void {
-	const child = spawn(process.execPath, [cliEntry(), ...UPDATE_COMMANDS[action]], {
+	const child = spawn(selfExec(), [...selfPrefix(cliEntry()), ...UPDATE_COMMANDS[action]], {
 		env: toolEnv(),
 		stdio: ["ignore", "pipe", "pipe"],
 		shell: false,
