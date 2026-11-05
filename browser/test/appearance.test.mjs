@@ -77,7 +77,7 @@ test("the accent in use is the custom one, else the preset's own in this mode, n
 
 test("the Appearance tab binds the color box and the hex box to the accent in use, with a hint rather than a value as placeholder", () => {
 	const text = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "dialogs", "AppearanceTab.ts"), "utf8");
-	assert.match(text, /effectiveAccent\(choice, this\.isDark\(\)\)/);
+	assert.match(text, /effectiveAccent\(choice, this\.isDark\(\), currentPolycarp\(\)\)/);
 	assert.match(text, /type="color"[\s\S]{0,200}\.value=\$\{hex\}/);
 	assert.match(text, /\.value=\$\{shown\}/);
 	assert.doesNotMatch(text, /\?\? "#000000"/);

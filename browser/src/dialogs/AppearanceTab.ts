@@ -108,7 +108,7 @@ export class AppearanceTab extends SettingsTab {
 		this.accentError = undefined;
 		this.draft = undefined;
 		// Typing the accent already in use changes nothing, and must not turn the preset's into a custom one.
-		if (hex === effectiveAccent(choice, this.isDark())) return;
+		if (hex === effectiveAccent(choice, this.isDark(), currentPolycarp())) return;
 		void this.choose(choice.preset, hex);
 	}
 
@@ -136,7 +136,7 @@ export class AppearanceTab extends SettingsTab {
 
 	render(): TemplateResult {
 		const choice = currentAppearance();
-		const inUse = effectiveAccent(choice, this.isDark());
+		const inUse = effectiveAccent(choice, this.isDark(), currentPolycarp());
 		const shown = this.draft ?? inUse;
 		const hex = HEX.test(normalizeHex(shown)) ? normalizeHex(shown) : inUse;
 		// A Polycarp theme decides the colors; the controls below still save a choice for when it is gone. A theme that fixes light or dark overrides Mode too.
