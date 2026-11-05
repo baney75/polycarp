@@ -533,7 +533,7 @@ struct SetupView: View {
         if model.desktops > 1 {
             step(done: false, title: "Optional: keep one macOS desktop") {
                 if model.viewerKeys {
-                    Text("You have \(model.desktops) desktops in Mission Control. Windows on the others are out of reach. Polycarp' overview has replaced Mission Control, so to close the extra ones, turn off \"Use Polycarp' overview instead of Mission Control\" under Keys, open Mission Control, hover each extra desktop at the top and click its close button, then turn the switch back on.")
+                    Text("You have \(model.desktops) desktops in Mission Control. Windows on the others are out of reach. Polycarp's overview has replaced Mission Control, so to close the extra ones, turn off \"Use Polycarp's overview instead of Mission Control\" under Keys, open Mission Control, hover each extra desktop at the top and click its close button, then turn the switch back on.")
                         .foregroundStyle(.secondary)
                 } else {
                     Text("You have \(model.desktops) desktops in Mission Control. Windows on the others are out of reach. Open Mission Control, hover each extra desktop at the top, and click its close button.")
@@ -605,7 +605,7 @@ struct SetupView: View {
         }
 
         section("See every workspace at once") {
-            Toggle("Use Polycarp' overview instead of Mission Control", isOn: Binding(get: { model.viewerKeys }, set: { model.setViewerKeys($0) }))
+            Toggle("Use Polycarp's overview instead of Mission Control", isOn: Binding(get: { model.viewerKeys }, set: { model.setViewerKeys($0) }))
             if model.viewerKeysFailed {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Already switched on and still not working?").font(Chrome.font(12, .bold))

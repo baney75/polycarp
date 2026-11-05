@@ -90,6 +90,18 @@ final class ProductNameTests: XCTestCase {
         XCTAssertEqual(hits, [], "A person would read these as the product name. Say Polycarp (or add the file to ProductNameTests.allowed with a reason).")
     }
 
+    /// "Polycarp' overview" read as a typo. The possessive is Polycarp's.
+    func testNoStringSaysPolycarpWithABareApostrophe() throws {
+        var hits: [String] = []
+        for file in swiftFiles() {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            for lit in Self.literals(in: text) where lit.range(of: #"Polycarp'(?![A-Za-z])"#, options: .regularExpression) != nil {
+                hits.append("\(file.lastPathComponent): \(lit.prefix(90))")
+            }
+        }
+        XCTAssertEqual(hits, [], "Polycarp' should be Polycarp's")
+    }
+
     func testTheScannerSeesStringsAndSkipsComments() {
         let src = ##"""
         // "BaneySpaces" in a comment

@@ -24,7 +24,7 @@ public enum Welcome {
         PermissionStep(
             kind: .accessibility,
             title: "Arrange your windows",
-            why: "Polycarp shows, hides and moves other apps' windows. This is the one permission it can't run without. It can't read what you type.",
+            why: "Polycarp shows, hides and moves other apps' windows. Agents you allow can read and act in the windows they're allowed to use. It is the one permission Polycarp can't run without.",
             isRequired: true,
             settingsName: "Accessibility",
             settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
@@ -32,7 +32,7 @@ public enum Welcome {
         PermissionStep(
             kind: .screenRecording,
             title: "Let agents see their own work",
-            why: "An agent can take a picture of a window on its own workspace, or one you've lent it, to check what it did. Those pictures go to the agent you're using. Nothing else is captured.",
+            why: "An agent can take a picture of a window on its own workspace, or one you've lent it, to check its work. With Full Access it can capture any window. Pictures go only to that agent.",
             isRequired: false,
             settingsName: "Screen & System Audio Recording",
             settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
@@ -46,6 +46,27 @@ public enum Welcome {
             settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
             after: "Turn on Polycarp in the list. This window updates by itself."),
     ]
+
+    /// The last row: not a permission, so it never blocks starting and is never "current". On by default.
+    public enum StartAtLogin {
+        public static let title = "Start with your Mac"
+        public static let why = "Polycarp opens when you log in, so your workspaces are there each day."
+        /// Shown only when macOS wants the person to approve the login item.
+        public static let approval = "macOS needs you to approve it in Login Items."
+        public static let approvalButton = "Approve in Login Items"
+
+        /// Whether to register the login item as the welcome window opens: on unless the person already decided
+        /// (Settings, or 0.1's "offered"), and not again for one macOS already knows about.
+        public static func shouldRegister(chosen: Bool, offered: Bool, registered: Bool) -> Bool { !chosen && !offered && !registered }
+    }
+
+    /// The button that is the default action (Return) now: the current permission's Allow button while one is left, so
+    /// the walk is press, flip, press, flip; the finish button only when nothing is left to ask. Nil when neither shows.
+    public enum DefaultAction: Equatable { case allow(PermissionKind), finish }
+    public static func defaultAction(granted: Set<PermissionKind>, skipped: Set<PermissionKind>) -> DefaultAction? {
+        if let k = next(granted: granted, skipped: skipped) { return .allow(k) }
+        return canStart(granted: granted) ? .finish : nil
+    }
 
     public static func step(_ kind: PermissionKind) -> PermissionStep { steps.first { $0.kind == kind }! }
 

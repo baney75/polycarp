@@ -177,16 +177,25 @@ public enum CursorGlyphs {
     /// The center line drawn on a glyph that has one (the leaf's vein).
     public static func vein(_ glyph: CursorTheme.Glyph, size s: Double) -> CGPath? {
         guard glyph == .leaf else { return nil }
+        // Drawn in the leaf's own unfitted coordinates and then moved and scaled by the very transform the leaf gets,
+        // so the vein stays on the leaf's axis whatever the size.
         let p = CGMutablePath()
         p.move(to: CGPoint(x: 0.17 * s, y: 0.17 * s))
         p.addLine(to: CGPoint(x: 0.60 * s, y: 0.60 * s))
-        return p
+        var t = leafFit(size: s)
+        return p.copy(using: &t) ?? p
     }
+
+    /// The move and scale that fit the leaf to `size`: what `leaf` applies, shared with the vein.
+    public static func leafFit(size s: Double) -> CGAffineTransform { fit(of: leafOutline(s), size: s) }
 
     /// Whether the glyph has a white edge, so it shows on any background, instead of an edge in the agent's identity color.
     public static func hasWhiteEdge(_ glyph: CursorTheme.Glyph) -> Bool { glyph != .block && glyph != .classic }
 
-    private static func leaf(_ s: Double) -> CGPath {
+    private static func leaf(_ s: Double) -> CGPath { fitted(leafOutline(s), size: s) }
+
+    /// The leaf before it is fitted.
+    private static func leafOutline(_ s: Double) -> CGPath {
         func at(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: x * s, y: y * s) }
         let p = CGMutablePath()
         p.move(to: .zero)
@@ -194,17 +203,21 @@ public enum CursorGlyphs {
         p.addCurve(to: at(0.92, 0.62), control1: at(0.82, 0.93), control2: at(0.93, 0.82))
         p.addCurve(to: .zero, control1: at(0.90, 0.22), control2: at(0.52, 0.02))
         p.closeSubpath()
-        return fitted(p, size: s)
+        return p
     }
 
     /// Moved so the tip sits exactly on the origin (the point an agent acts on is where the cursor's tip is), and scaled
     /// so the glyph is `size` tall, as `CursorTheme.size` says.
     private static func fitted(_ p: CGPath, size s: Double) -> CGPath {
-        let box = p.boundingBoxOfPath
-        guard box.height > 0 else { return p }
-        let k = CGFloat(s) / box.height
-        var t = CGAffineTransform(scaleX: k, y: k).translatedBy(x: -box.minX, y: -box.minY)
+        var t = fit(of: p, size: s)
         return p.copy(using: &t) ?? p
+    }
+
+    private static func fit(of p: CGPath, size s: Double) -> CGAffineTransform {
+        let box = p.boundingBoxOfPath
+        guard box.height > 0 else { return .identity }
+        let k = CGFloat(s) / box.height
+        return CGAffineTransform(scaleX: k, y: k).translatedBy(x: -box.minX, y: -box.minY)
     }
 
     /// A polygon with rounded corners. The tip (the first point) has no radius: it is the action point, and the

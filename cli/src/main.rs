@@ -45,7 +45,7 @@ const SPACES: Tool = Tool {
         "~/Applications/BaneySpaces.app/Contents/Resources/bin/baneyspaces",
         "/Applications/BaneySpaces.app/Contents/Resources/bin/baneyspaces",
     ],
-    install: "https://github.com/baney75/baneyspaces",
+    install: "https://github.com/baney75/polycarp",
 };
 
 const BROWSER: Tool = Tool {

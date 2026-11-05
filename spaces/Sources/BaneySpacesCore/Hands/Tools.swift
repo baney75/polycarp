@@ -99,7 +99,7 @@ public enum HandsTools {
         HandsTool(verb: "toggle", summary: "Flip a checkbox, switch or disclosure by ref. Prints the state it read back.", params: [refParam], acts: true),
         HandsTool(verb: "shot", summary: "Capture one window as a PNG, even while it is parked out of view. Needs Screen Recording for Polycarp. The file stays on this Mac.", params: [
             HandsParam("window", .integer, "Window id.", required: true),
-            HandsParam("out", .string, "A file name (no folder) for the PNG; it is written in Polycarp' own shots folder."),
+            HandsParam("out", .string, "A file name (no folder) for the PNG; it is written in Polycarp's own shots folder."),
             HandsParam("cursor", .boolean, "Draw the agent cursor where it last acted in this window, if it did in the last 30 seconds and was on screen. Off by default, so the picture is the app itself."),
         ], acts: true),
         HandsTool(verb: "open", summary: "Open an app, or files from the agent handoff folder in it, on the agent workspace, without switching the user to it. Apps that hold the user's own data (Safari, Notes, Mail, Messages, Calendar, Photos) answer needs_sandbox.", params: [

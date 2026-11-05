@@ -69,7 +69,7 @@ enum Hooks {
             do {
                 // No backup: the one worth keeping is from before BaneySpaces, made when it installed.
                 try save(HookSettings.removing(settings), to: claudeURL, backup: false)
-                lines.append("removed Polycarp' hooks from ~/.claude/settings.json")
+                lines.append("removed Polycarp's hooks from ~/.claude/settings.json")
             } catch { lines.append("couldn't write settings: \(error.localizedDescription)") }
         }
         if FileManager.default.fileExists(atPath: grokURL.path) {

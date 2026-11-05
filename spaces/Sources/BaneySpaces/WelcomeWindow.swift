@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import BaneySpacesCore
+import ServiceManagement
 import SwiftUI
 
 /// Live permission state for the welcome window. It reads four times a second while open, so flipping a switch in System
@@ -12,6 +13,11 @@ final class WelcomeModel: ObservableObject {
     var onFinish: () -> Void = {}
     var modifierSymbol: () -> String = { "⌘" }
     var onFixStale: () -> Void = {}
+    /// A permission was just granted: the window comes forward so the next button is under the pointer.
+    var onGained: () -> Void = {}
+    /// The login item, as macOS has it. On unless the person turned it off.
+    @Published var startAtLogin = false
+    @Published var loginNeedsApproval = false
     @Published var askedAccessibilityAt: Date?
     private var timer: Timer?
 
@@ -39,9 +45,10 @@ final class WelcomeModel: ObservableObject {
             if now != self.granted {
                 let gained = now.subtracting(self.granted)
                 self.granted = now
-                if !gained.isEmpty { NSApp.activate(ignoringOtherApps: true) }
+                if !gained.isEmpty { NSApp.activate(ignoringOtherApps: true); self.onGained() }
             }
             if self.looksStale { self.objectWillChange.send() }
+            self.readLoginItem()
         }
     }
 
@@ -59,6 +66,31 @@ final class WelcomeModel: ObservableObject {
         case .inputMonitoring: _ = CGRequestListenEventAccess()
         }
         if let url = URL(string: Welcome.step(kind).settingsURL) { NSWorkspace.shared.open(url) }
+    }
+
+    /// Reads the login item and, on the first look, turns it on unless the person already decided (Setup's rule, shared).
+    func settleLoginItem() {
+        let d = UserDefaults.standard
+        let status = SMAppService.mainApp.status
+        if Welcome.StartAtLogin.shouldRegister(chosen: d.bool(forKey: "loginItemChosen"), offered: d.bool(forKey: "loginItemOffered"),
+                                                registered: status != .notRegistered) {
+            d.set(true, forKey: "loginItemChosen")
+            try? SMAppService.mainApp.register()
+        }
+        readLoginItem()
+    }
+
+    func readLoginItem() {
+        let status = SMAppService.mainApp.status
+        startAtLogin = status == .enabled || status == .requiresApproval
+        loginNeedsApproval = status == .requiresApproval
+    }
+
+    func setStartAtLogin(_ on: Bool) {
+        UserDefaults.standard.set(true, forKey: "loginItemChosen")
+        do { try on ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister() }
+        catch { NSLog("Polycarp: open at login failed: %@", error.localizedDescription) }
+        readLoginItem()
     }
 
     func skip(_ kind: PermissionKind) { if Welcome.canSkip(kind) { skipped.insert(kind) } }
@@ -81,6 +113,7 @@ struct WelcomeView: View {
 
             VStack(spacing: 8) {
                 ForEach(Welcome.steps, id: \.kind) { row($0) }
+                loginRow
             }
             .padding(.horizontal, 20)
 
@@ -98,7 +131,8 @@ struct WelcomeView: View {
                 Text("You can change any of this in Settings.").font(Chrome.font(11)).foregroundStyle(.secondary)
                 Spacer()
                 Button(model.canStart ? "Start using Polycarp" : "Waiting for Accessibility") { model.onFinish() }
-                    .keyboardShortcut(.defaultAction)
+                    // Return presses the current permission's button while one is left; this only when none is.
+                    .keyboardShortcut(Welcome.defaultAction(granted: model.granted, skipped: model.skipped) == .finish ? KeyboardShortcut.defaultAction : nil)
                     .disabled(!model.canStart)
                     .buttonStyle(WelcomeButtonStyle(large: true))
             }
@@ -135,6 +169,7 @@ struct WelcomeView: View {
                 if !done, isCurrent {
                     HStack(spacing: 10) {
                         Button("Allow in \(s.settingsName)") { model.allow(s.kind) }
+                            .keyboardShortcut(.defaultAction)
                             .buttonStyle(WelcomeButtonStyle(large: false))
                         if Welcome.canSkip(s.kind) { Button("Not now") { model.skip(s.kind) } }
                     }
@@ -156,6 +191,31 @@ struct WelcomeView: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Chrome.shape(.settingsCell, continuous: false).fill(isCurrent ? Chrome.cell(0.08) : Color.clear))
+    }
+
+    /// Not a permission: a switch, on by default, that never blocks starting.
+    private var loginRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: model.startAtLogin ? "checkmark.circle.fill" : "circle")
+                .font(Chrome.font(16))
+                .foregroundStyle(model.startAtLogin ? Chrome.accent : Color.secondary)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 7) {
+                Toggle(isOn: Binding(get: { model.startAtLogin }, set: { model.setStartAtLogin($0) })) {
+                    Text(Welcome.StartAtLogin.title).font(Chrome.font(13, .bold))
+                }
+                Text(Welcome.StartAtLogin.why).font(Chrome.font(12)).foregroundStyle(.secondary)
+                if model.loginNeedsApproval {
+                    HStack {
+                        Text(Welcome.StartAtLogin.approval).font(Chrome.font(11)).foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                        Button(Welcome.StartAtLogin.approvalButton) { SMAppService.openSystemSettingsLoginItems() }
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func tag(_ s: String) -> some View {
@@ -197,6 +257,7 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
         window.contentView = host
         window.setContentSize(host.fittingSize)
         window.center()
+        model.onGained = { [weak self] in self?.window?.makeKeyAndOrderFront(nil) }
         model.onFinish = { [weak self] in
             UserDefaults.standard.set(true, forKey: Welcome.finishedKey)
             self?.window?.close()
@@ -205,6 +266,7 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
 
     func show() {
         model.granted = WelcomeModel.read()
+        model.settleLoginItem()
         model.start()
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)

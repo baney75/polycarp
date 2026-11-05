@@ -127,8 +127,8 @@ public enum ScopeGuard {
                              mode: AgentAccessMode = .standard, selfPid: Int32? = nil) -> ScopeDecision {
         // BaneySpaces' own windows (Settings, the consent sheets) are never an agent's, in any mode.
         if let me = selfPid, w.pid == me {
-            return .denied(HandsError(.permissionDenied, "window \(w.id) is Polycarp' own",
-                                      suggestion: "Agents never use Polycarp' windows; its settings are Donovan's.", retry: .never))
+            return .denied(HandsError(.permissionDenied, "window \(w.id) is Polycarp's own",
+                                      suggestion: "Agents never use Polycarp's windows; its settings are Donovan's.", retry: .never))
         }
         if let agent = agentWorkspace, w.workspace == agent {
             // His hands are on this app (in front, or used in the last 30 s): the agent waits, even here.

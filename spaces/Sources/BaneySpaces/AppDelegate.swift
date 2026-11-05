@@ -271,7 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             mcBackAtDock += 1
             if mcBackAtDock >= 2 {
                 mcBackAtDock = 0
-                Trace.log("mission control: turned back on at the Dock; Polycarp' overview switched off")
+                Trace.log("mission control: turned back on at the Dock; Polycarp's overview switched off")
                 return setup.model.setViewerKeys(false)
             }
         }

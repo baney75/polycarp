@@ -547,7 +547,7 @@ public enum PostGuard {
             case .moved(let f, let t): return BackgroundRefusal.pointerMoved(from: f, to: t)
             case .leaked(let n):
                 return HandsError(.actionFailed, "\(n) event(s) posted by Polycarp reached the session instead of one process",
-                                  suggestion: "Read the element back before doing anything else. This is a bug in Polycarp' posting; report it.", retry: .never)
+                                  suggestion: "Read the element back before doing anything else. This is a bug in Polycarp's posting; report it.", retry: .never)
             default: return nil
             }
         }

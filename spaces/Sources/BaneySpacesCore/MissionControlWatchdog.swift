@@ -33,7 +33,7 @@ public enum MissionControlWatchdog {
         # Polycarp: puts macOS's Mission Control back if Polycarp has stopped running without doing it.
         D="$HOME/Library/Application Support/Polycarp"
         [ -f "$D/\(heartbeat)" ] || exit 0
-        # The record is in Polycarp' settings, or in a file of its own if a crash kept it from them.
+        # The record is in Polycarp's settings, or in a file of its own if a crash kept it from them.
         { defaults read com.baney.polycarp systemMissionControlSaved >/dev/null 2>&1 || [ -f "$D/\(DurableRecord.fileName)" ]; } || exit 0
         beat=$(stat -f %m "$D/\(heartbeat)" 2>/dev/null) || exit 0
         limit=\(limit)
@@ -122,7 +122,7 @@ public struct WatchdogInstaller {
     private func installFiles(pid: Int32) -> String? {
         let fm = FileManager.default
         guard let source = restoreSource, let restore = try? Data(contentsOf: source) else {
-            return "Polycarp' uninstaller is missing from the app, and it is what puts Mission Control back if Polycarp stops."
+            return "Polycarp's uninstaller is missing from the app, and it is what puts Mission Control back if Polycarp stops."
         }
         do {
             try fm.createDirectory(at: folder, withIntermediateDirectories: true)

@@ -121,6 +121,14 @@ fn not_found_gives_127_and_names_the_tool() {
         assert!(err(&o).contains(var), "{sub}: {}", err(&o));
         assert!(err(&o).contains("Install"), "{sub}: {}", err(&o));
     }
+    // The hint for Spaces points at the Polycarp repo, not at the old BaneySpaces one.
+    let o = s.run(&["spaces", "x"]);
+    assert!(
+        err(&o).contains("https://github.com/baney75/polycarp"),
+        "{}",
+        err(&o)
+    );
+    assert!(!err(&o).contains("baneyspaces"), "{}", err(&o));
 }
 
 #[test]
