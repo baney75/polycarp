@@ -587,6 +587,44 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertFalse(SystemDark.isDark(onMain: true, effective: { nil }, defaults: { nil }))
     }
 
+    func testTheFileReachesThemeCenterThroughTheWatcherOnAFakeClock() throws {
+        let q = DispatchQueue(label: "fake-clock-watcher")
+        var fire: (() -> Void)?
+        var scheduled: (interval: TimeInterval, first: TimeInterval)?
+        let w = PolycarpThemeWatcher(path: file, interval: 1, queue: q, schedule: { _, interval, first, f in
+            scheduled = (interval, first); fire = f; return { fire = nil }
+        }, deliver: { ThemeCenter.use(.omarchy, polycarp: $0) })
+        w.start()
+        q.sync {}
+        XCTAssertEqual(scheduled?.interval, 1)
+        let tick = { q.sync { fire?() } }
+        let own = ThemeCatalog.shared.spec(.omarchy)
+
+        tick()
+        XCTAssertEqual(ThemeCenter.spec, own, "no file: the stored theme")
+        XCTAssertNil(ThemeCenter.polycarp)
+
+        try PolycarpFixtures.still_water.write(toFile: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(ThemeCenter.spec, own, "nothing changes until the clock ticks")
+        tick()
+        XCTAssertEqual(ThemeCenter.polycarp, "still-water")
+        XCTAssertEqual(ThemeCenter.spec, try good().spec)
+
+        try PolycarpFixtures.blocks.write(toFile: file, atomically: true, encoding: .utf8)
+        tick()
+        XCTAssertEqual(ThemeCenter.polycarp, "blocks")
+        XCTAssertEqual(ThemeCenter.spec, try good(PolycarpFixtures.blocks).spec)
+
+        try FileManager.default.removeItem(atPath: file)
+        tick()
+        XCTAssertNil(ThemeCenter.polycarp)
+        XCTAssertEqual(ThemeCenter.spec, own, "the file is gone: the stored theme is back")
+
+        w.stop()
+        q.sync {}
+        XCTAssertNil(fire, "stop cancels the clock")
+    }
+
     func testTheTimerPollsOnItsOwnQueueNotTheMainThread() throws {
         let seen = Seen()
         let ran = expectation(description: "delivered")
@@ -752,7 +790,9 @@ final class PolycarpThemeTests: XCTestCase {
     }
 }
 
-/// The app's wiring, as source checks (the app target has no unit tests): a Polycarp theme wins in
+/// The app's wiring, as source checks: smoke checks only (the app target has no unit tests, and a rename can break
+/// them without changing behavior). The path from the file to `ThemeCenter` is held by
+/// `testTheFileReachesThemeCenterThroughTheWatcherOnAFakeClock`. Source checks: a Polycarp theme wins in
 /// `Appearance` without rewriting the stored settings, the watcher applies on the main queue, Settings
 /// says so, and `doctor` reports it. The behavior itself is held by the tests above.
 final class PolycarpWiringTests: XCTestCase {

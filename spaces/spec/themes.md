@@ -85,6 +85,13 @@ working and done. Regenerate it with `scripts/gen-palettes.py`; never edit it by
 `$XDG_CONFIG_HOME/polycarp` if absolute, else `~/.config/polycarp`; on Windows `%APPDATA%\Polycarp`.
 macOS reads `surfaces.spaces` and the top-level `mode` (`auto` follows Dark Mode).
 
+A Mac app opened from Finder or at login does not see variables exported in a shell profile. So
+`POLYCARP_CONFIG_DIR` or `XDG_CONFIG_HOME` may be set for `polycarp` in a terminal and missing for
+BaneySpaces, and then BaneySpaces reads the default `~/.config/polycarp` while the command wrote somewhere
+else. BaneySpaces reads the default path unless the variable reaches it (set it for the app with
+`launchctl setenv`, or leave it unset for both). `polycarp theme current` prints `folder:`, the folder the
+command writes; BaneySpaces reads `<folder>/current/theme.json`.
+
 **Precedence.** While the file holds a valid theme it is the theme in force. It draws every surface
 instead of `appearance.theme`, `appearance.palette` and the accent, and it takes the next frame like
 any Settings change. It never rewrites those stored values: delete the file (or write one that is

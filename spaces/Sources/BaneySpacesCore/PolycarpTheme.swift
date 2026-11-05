@@ -403,7 +403,8 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
     private let deliver: (PolycarpTheme?) -> Void
     private let log: (String) -> Void
     private let load: (String) -> PolycarpThemeFile.Loaded
-    private var timer: DispatchSourceTimer?
+    private let schedule: Schedule
+    private var cancel: (() -> Void)?
     // Only touched on `queue`.
     private var last: PolycarpThemeFile.Stamp?
     private var started = false
@@ -414,8 +415,21 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
                 queue: DispatchQueue = DispatchQueue(label: "com.baney.baneyspaces.polycarp-theme", qos: .utility),
                 log: @escaping (String) -> Void = { _ in },
                 load: @escaping (String) -> PolycarpThemeFile.Loaded = { PolycarpThemeFile.load(path: $0) },
+                schedule: @escaping Schedule = PolycarpThemeWatcher.systemTimer,
                 deliver: @escaping (PolycarpTheme?) -> Void) {
-        self.path = path; self.interval = interval; self.queue = queue; self.log = log; self.load = load; self.deliver = deliver
+        self.path = path; self.interval = interval; self.queue = queue; self.log = log; self.load = load; self.schedule = schedule; self.deliver = deliver
+    }
+
+    /// Calls `fire` on `queue` after `first` seconds and then every `interval`; returns what stops it. Tests pass their own
+    /// to stand in for the clock.
+    public typealias Schedule = (_ queue: DispatchQueue, _ interval: TimeInterval, _ first: TimeInterval, _ fire: @escaping () -> Void) -> () -> Void
+
+    public static let systemTimer: Schedule = { queue, interval, first, fire in
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        t.schedule(deadline: .now() + first, repeating: interval, leeway: .milliseconds(100))
+        t.setEventHandler(handler: fire)
+        t.resume()
+        return { t.cancel() }
     }
 
     public func start() { _ = start(firstLookWithin: 0) }
@@ -445,18 +459,14 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
         let sem = DispatchSemaphore(value: 0)
         queue.async { [self] in
             defer { sem.signal() }
-            guard timer == nil, path != nil else { first.lock.lock(); first.settled = true; first.lock.unlock(); return }
+            guard cancel == nil, path != nil else { first.lock.lock(); first.settled = true; first.lock.unlock(); return }
             if timeout > 0 {
                 tick { t in
                     first.lock.lock()
                     if first.abandoned { first.lock.unlock(); self.deliver(t) } else { first.theme = t; first.settled = true; first.lock.unlock() }
                 }
             }
-            let t = DispatchSource.makeTimerSource(queue: queue)
-            t.schedule(deadline: .now() + (timeout > 0 ? interval : 0), repeating: interval, leeway: .milliseconds(100))
-            t.setEventHandler { [weak self] in self?.tick() }
-            timer = t
-            t.resume()
+            cancel = schedule(queue, interval, timeout > 0 ? interval : 0) { [weak self] in self?.tick() }
         }
         guard timeout > 0 else { return .pending }
         _ = sem.wait(timeout: .now() + timeout)
@@ -466,7 +476,7 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
     }
 
     public func stop() {
-        queue.async { [self] in timer?.cancel(); timer = nil }
+        queue.async { [self] in cancel?(); cancel = nil }
     }
 
     /// One look. Stat, read if it changed, stat again: a file that moved while being read is tried again on
