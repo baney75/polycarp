@@ -218,7 +218,7 @@ under `[surface.<product>.<mode>]` wins for that product and mode. So `change su
 `set`, `accent`, `undo` and `reset` write these files in the config folder:
 
 - `config.toml`: your choices. `[appearance]` holds `theme`, `mode`, `accent_light` and `accent_dark`.
-- `current/theme.json`: the resolved theme for every product.
+- `current/theme.json`: the resolved theme for every product. Whether motion is reduced is in `surfaces.<surface>.motion.reduced`; there is no top-level `reduced_motion`.
 - `current/spaces.css`, `voice.css`, `browser.css`, `site.css`: the same, as CSS variables.
 
 Products read these files once their adapters land. Until then only the files change.

@@ -1898,14 +1898,23 @@ fn create_force_over_the_current_theme_refreshes_the_files() {
     let b = Box::new();
     b.ok(&["create", "mine", "--extends", "calm"]);
     b.ok(&["set", "mine"]);
-    let reduced = |b: &Box| b.json(&["export", "json"])["reduced_motion"].clone();
+    let reduced =
+        |b: &Box| b.json(&["export", "json"])["surfaces"]["site"]["motion"]["reduced"].clone();
     assert_eq!(reduced(&b), true);
     b.ok(&["create", "mine", "--extends", "blocks", "--force"]);
     let on_disk: Value = serde_json::from_str(
         &fs::read_to_string(b.cfg().join("current").join("theme.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(on_disk["reduced_motion"], false, "current/ is stale");
+    assert_eq!(
+        on_disk["surfaces"]["site"]["motion"]["reduced"], false,
+        "current/ is stale"
+    );
+    assert!(
+        on_disk.get("reduced_motion").is_none(),
+        "the top-level copy is gone"
+    );
+    assert!(b.json(&["export", "json"]).get("reduced_motion").is_none());
 }
 
 #[test]

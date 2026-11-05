@@ -1277,7 +1277,6 @@ fn theme_json(full: &Full, state: Option<&State>) -> Json {
         "name": full.name,
         "title": full.title,
         "description": full.description,
-        "reduced_motion": full.base.motion.reduced,
         "surfaces": surfaces,
     });
     if let (Some(st), Some(o)) = (state, v.as_object_mut()) {
