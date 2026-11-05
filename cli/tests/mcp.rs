@@ -439,6 +439,45 @@ fn a_refusal_is_a_tool_error_with_the_same_envelope_as_the_cli() {
 }
 
 #[test]
+fn apply_refuses_an_empty_or_invalid_effective_name_before_writing() {
+    let sb = Sandbox::new();
+    let mut s = sb.server();
+    s.initialize("t");
+    for (name, theme) in [
+        (
+            json!(""),
+            json!({"name": "ok-name", "title": "T", "extends": "calm"}),
+        ),
+        (json!(""), json!({"title": "T", "extends": "calm"})),
+        (
+            json!("Bad Name"),
+            json!({"name": "ok-name", "title": "T", "extends": "calm"}),
+        ),
+        (
+            Value::Null,
+            json!({"name": "", "title": "T", "extends": "calm"}),
+        ),
+    ] {
+        let mut args = json!({"theme": theme});
+        if !name.is_null() {
+            args["name"] = name.clone();
+        }
+        let r = s.tool("theme_apply", args.clone());
+        assert_eq!(r["isError"], true, "{args}");
+        assert_eq!(
+            r["structuredContent"]["error"]["code"], "invalid_theme",
+            "{args}"
+        );
+        assert_eq!(
+            r["structuredContent"]["error"]["data"]["errors"][0]["path"],
+            "name"
+        );
+    }
+    assert!(!sb.cfg().exists(), "nothing was written");
+    assert_eq!(s.finish(), 0);
+}
+
+#[test]
 fn bad_requests_get_json_rpc_errors_and_the_server_keeps_going() {
     let sb = Sandbox::new();
     let mut s = sb.server();

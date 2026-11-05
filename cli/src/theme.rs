@@ -2429,6 +2429,19 @@ pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) ->
         Some(n) => n.to_string(),
         None => doc_name.clone().unwrap_or_default(),
     };
+    if !valid_name(&name) {
+        return Err(ApiErr::at(
+            "invalid_theme",
+            "name",
+            if name.is_empty() {
+                "the theme has no name; set `name` in the theme or pass --name".to_string()
+            } else {
+                format!(
+                    "{name:?} is not a valid theme name (lowercase letters, digits and hyphens)"
+                )
+            },
+        ));
+    }
     if is_builtin(&name) {
         return Err(ApiErr::at(
             "builtin_read_only",
@@ -2438,15 +2451,9 @@ pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) ->
             ),
         ));
     }
-    if !name.is_empty() {
-        table.insert("name".into(), Value::String(name.clone()));
-    }
-    let full = resolve_doc(
-        &c.cfg,
-        table.clone(),
-        Some(name.as_str()).filter(|n| !n.is_empty()),
-    )
-    .map_err(|ps| bad_theme("the theme is refused, nothing changed", &ps))?;
+    table.insert("name".into(), Value::String(name.clone()));
+    let full = resolve_doc(&c.cfg, table.clone(), Some(name.as_str()))
+        .map_err(|ps| bad_theme("the theme is refused, nothing changed", &ps))?;
 
     // The text to save. TOML keeps its comments; JSON is written as TOML.
     let saved = match toml_text {

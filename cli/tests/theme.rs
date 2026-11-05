@@ -1104,6 +1104,27 @@ fn create_writes_a_valid_commented_theme_and_never_overwrites() {
 }
 
 #[test]
+fn apply_refuses_an_empty_effective_name_before_writing() {
+    let b = Box::new();
+    let doc = user_theme("mine", "polycarp", "");
+    let before = b.snapshot();
+    for args in [
+        vec!["apply", "-", "--name", ""],
+        vec!["apply", "-", "--name", "Bad Name"],
+    ] {
+        let mut a = vec!["theme"];
+        a.extend(args.iter());
+        a.push("--json");
+        let o = b.run_stdin(&a, &doc);
+        assert_eq!(code(&o), 1, "{args:?}: {}", out(&o));
+        let v: Value = serde_json::from_str(&out(&o)).unwrap();
+        assert_eq!(v["error"]["data"]["errors"][0]["path"], "name");
+    }
+    assert!(!b.cfg().join("themes").join(".toml").exists());
+    assert_eq!(b.snapshot(), before);
+}
+
+#[test]
 fn create_refuses_reserved_and_bad_names_and_missing_bases() {
     let b = Box::new();
     for n in BUILTINS {
