@@ -805,3 +805,177 @@ fn voice_and_doctor_use_the_same_app_path_on_a_mac() {
         out(&o)
     );
 }
+
+// ---- Issue #17: the lookup from the home folder ----
+
+/// From `~`, normal per-user installs run: nvm, cargo, bun, volta, asdf, mise, ~/.local, and the
+/// Polycarp app's command.
+#[cfg(unix)]
+#[test]
+fn from_home_per_user_installs_run() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    for rel in [
+        ".nvm/versions/node/v20/bin",
+        ".cargo/bin",
+        ".bun/bin",
+        ".volta/bin",
+        ".asdf/shims",
+        ".local/share/mise/shims",
+        ".local/bin",
+        "Applications/Polycarp.app/Contents/Resources/bin",
+    ] {
+        let d = home.join(rel);
+        fs::create_dir_all(&d).unwrap();
+        stub(&d, "baneyspaces", &format!("echo from {rel}"));
+        let o = s
+            .cmd(&["spaces"])
+            .env("PATH", &d)
+            .current_dir(&home)
+            .output()
+            .unwrap();
+        assert_eq!(out(&o), format!("from {rel}\n"), "{rel}: {}", err(&o));
+        fs::remove_file(d.join("baneyspaces")).unwrap();
+    }
+}
+
+/// An npm prefix of ~/.local: the entry in bin is a link into lib/node_modules.
+#[cfg(unix)]
+#[test]
+fn from_home_an_npm_prefix_link_inside_local_runs() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let real = home.join(".local/lib/node_modules/tabkyra/bin");
+    let bin = home.join(".local/bin");
+    fs::create_dir_all(&real).unwrap();
+    fs::create_dir_all(&bin).unwrap();
+    stub(&real, "tabkyra", "echo npm-prefix");
+    std::os::unix::fs::symlink(real.join("tabkyra"), bin.join("tabkyra")).unwrap();
+    let o = s
+        .cmd(&["browser"])
+        .env("PATH", &bin)
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert_eq!(out(&o), "npm-prefix\n", "{}", err(&o));
+}
+
+/// A link is judged by where it sits and by where it leads.
+#[cfg(unix)]
+#[test]
+fn from_home_a_link_cannot_carry_a_project_tool_in_or_an_allowed_one_out() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let marker = s.dir("ran");
+    let body = format!("echo x > '{}'", marker.display());
+    // Allowed folder, project target.
+    let proj = home.join("proj/node_modules/.bin");
+    let bin = home.join(".local/bin");
+    fs::create_dir_all(&proj).unwrap();
+    fs::create_dir_all(&bin).unwrap();
+    stub(&proj, "baneyspaces", &body);
+    std::os::unix::fs::symlink(proj.join("baneyspaces"), bin.join("baneyspaces")).unwrap();
+    let o = s
+        .cmd(&["spaces"])
+        .env("PATH", &bin)
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 127);
+    // Project folder, allowed target.
+    let cargo = home.join(".cargo/bin");
+    let tools = home.join("proj/bin");
+    fs::create_dir_all(&cargo).unwrap();
+    fs::create_dir_all(&tools).unwrap();
+    stub(&cargo, "tabkyra", &body);
+    std::os::unix::fs::symlink(cargo.join("tabkyra"), tools.join("tabkyra")).unwrap();
+    let o = s
+        .cmd(&["browser"])
+        .env("PATH", &tools)
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 127);
+    assert!(!marker.exists());
+}
+
+/// Still refused from `~`: a project folder, `node_modules/.bin` and a file in `~`.
+#[cfg(unix)]
+#[test]
+fn from_home_project_folders_are_still_refused() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    for rel in [
+        "proj/bin",
+        "proj/.cargo/bin",
+        "node_modules/.bin",
+        "Applications/tools",
+    ] {
+        let d = home.join(rel);
+        fs::create_dir_all(&d).unwrap();
+        stub(&d, "baneyspaces", "echo ran");
+        let o = s
+            .cmd(&["spaces"])
+            .env("PATH", &d)
+            .current_dir(&home)
+            .output()
+            .unwrap();
+        assert_eq!(code(&o), 127, "{rel}");
+        assert!(!out(&o).contains("ran"), "{rel}");
+    }
+}
+
+/// `voice` and `doctor` from `~`, with the app only in `~/Applications`. `open` is a stub, so
+/// no app is launched.
+#[cfg(target_os = "macos")]
+#[test]
+fn from_home_voice_and_doctor_find_an_app_only_in_home_applications() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let app = home.join("Applications/Silas.app");
+    fs::create_dir_all(&app).unwrap();
+    let log = s.dir("open-args");
+    let open = stub(
+        &s.dir("bin"),
+        "fake-open",
+        &format!("echo \"$@\" > '{}'", log.display()),
+    );
+    let o = s.cmd(&["doctor"]).current_dir(&home).output().unwrap();
+    assert!(
+        out(&o).contains(&format!("voice: {}", app.display())),
+        "{}",
+        out(&o)
+    );
+    let o = s
+        .cmd(&["voice"])
+        .env("POLYCARP_OPEN_BIN", &open)
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let args = fs::read_to_string(&log).unwrap();
+    assert!(args.contains(app.to_str().unwrap()), "{args}");
+}
+
+/// An optional tool (Silas) with only a script found must not fail `doctor`.
+#[cfg(unix)]
+#[test]
+fn a_voice_script_alone_does_not_fail_doctor() {
+    let s = Sandbox::new();
+    stub(&s.dir("bin"), "baneyspaces", "exit 0");
+    stub(&s.dir("bin"), "tabkyra", "echo tabkyra 1");
+    let shim = stub(&s.dir("bin"), "silas.cmd", "exit 0");
+    let o = s
+        .cmd(&["doctor"])
+        .env("PATH", s.dir("bin"))
+        .env("POLYCARP_SHIM_CHECK", "1")
+        .env("POLYCARP_VOICE_BIN", &shim)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0, "{}", out(&o));
+    assert!(
+        out(&o).contains("voice: present but not runnable"),
+        "{}",
+        out(&o)
+    );
+}
