@@ -114,3 +114,12 @@ public final class AgentActivity: @unchecked Sendable {
         return guardrail.caused(pid: pid, window: window, bundle: bundle, now: clock())
     }
 }
+
+/// Whether a claim on a new window holds. A window of the app you are in is yours, because you may have just pressed
+/// New Window in it. The exception is an app the agent itself just started: some apps bring themselves forward as
+/// they launch, even when asked not to, and that must not put the agent's window on your screen.
+public enum ClaimRule {
+    public static func applies(windowPid: Int32, frontPid: Int32?, agentStartedProcess: Bool) -> Bool {
+        agentStartedProcess || windowPid != frontPid
+    }
+}

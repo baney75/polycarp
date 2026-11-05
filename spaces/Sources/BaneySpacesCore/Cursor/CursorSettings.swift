@@ -13,7 +13,7 @@ import Foundation
 public struct CursorSettings: Codable, Equatable, Sendable {
     public var enabled = true
     public var theme = CursorTheme.defaultName
-    public var preset = "baneyspaces"
+    public var preset = "polycarp"
     public var speed = 1.0
     public var respectReduceMotion = true
     public var response: Double?
@@ -54,7 +54,7 @@ public struct CursorSettings: Codable, Equatable, Sendable {
     /// The glide's spring: the preset (or the keys that override it), with `speed` making it quicker or slower.
     public var spring: GlideSpring {
         if speed <= 0 { return .instant }
-        let base = GlideSpring.preset(preset) ?? .baneyspaces
+        let base = GlideSpring.preset(preset) ?? .polycarp
         if base.isInstant { return .instant }
         let s = GlideSpring(response: (response ?? base.response) / speed, damping: damping ?? base.damping)
         return s.clamped

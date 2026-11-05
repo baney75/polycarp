@@ -16,6 +16,7 @@ final class AgentCursor {
     /// The cursor itself: its position is the arrow's tip.
     let root = CALayer()
     private let body = CAShapeLayer()
+    private let vein = CAShapeLayer()
     private let badge = CAShapeLayer()
     private let badgeText = CATextLayer()
     private let focus = CAShapeLayer()
@@ -27,7 +28,7 @@ final class AgentCursor {
     private var nextRipple = 0
     private var scale: CGFloat = 2
 
-    static let glideKey = "glide", fadeKey = "fade", squishKey = "squish", focusKey = "focus", rippleKey = "ripple", markKey = "mark"
+    static let tiltKey = "tilt", glideKey = "glide", fadeKey = "fade", squishKey = "squish", focusKey = "focus", rippleKey = "ripple", markKey = "mark"
 
     init(id: String, look: CursorLook) {
         self.id = id
@@ -35,6 +36,7 @@ final class AgentCursor {
         root.bounds = .zero
         root.opacity = 0
         root.addSublayer(body)
+        body.addSublayer(vein)
         root.addSublayer(badge)
         badge.addSublayer(badgeText)
         focus.opacity = 0
@@ -92,7 +94,7 @@ final class AgentCursor {
     }
 
     private func applyScale() {
-        for l in [body, badge, focus] + ripples + markShapes { l.contentsScale = scale }
+        for l in [body, vein, badge, focus] + ripples + markShapes { l.contentsScale = scale }
         badgeText.contentsScale = scale
     }
 
@@ -138,7 +140,7 @@ final class AgentCursor {
             switch t.fill {
             case .status:
                 body.fillColor = Self.color(new.statusColor)
-                body.strokeColor = Self.color(new.identity)
+                body.strokeColor = CursorGlyphs.hasWhiteEdge(t.glyph) ? CGColor(gray: 1, alpha: 1) : Self.color(new.identity)
                 body.lineWidth = t.ringWidth
             case .light:
                 body.fillColor = Self.color(RGB(r: 1, g: 1, b: 1))
@@ -148,7 +150,13 @@ final class AgentCursor {
             body.shadowColor = CGColor(gray: 0, alpha: 1)
             body.shadowOpacity = Float(t.shadowOpacity)
             body.shadowRadius = t.shadowRadius
-            body.shadowOffset = CGSize(width: 0, height: -1.5)
+            body.shadowOffset = CGSize(width: 0, height: -2)
+            var veinFlip = CGAffineTransform(scaleX: 1, y: -1)
+            vein.path = CursorGlyphs.vein(t.glyph, size: t.size)?.copy(using: &veinFlip)
+            vein.fillColor = nil
+            vein.strokeColor = CGColor(gray: 1, alpha: 0.42)
+            vein.lineWidth = 1.25
+            vein.lineCap = .round
             // The badge: the agent's name on its status color.
             let font = t.badgeMonospaced ? NSFont.monospacedSystemFont(ofSize: t.badgeFontSize, weight: .semibold)
                                          : NSFont.systemFont(ofSize: t.badgeFontSize, weight: .semibold)
@@ -161,7 +169,7 @@ final class AgentCursor {
             badge.anchorPoint = .zero
             badge.position = CGPoint(x: t.badgeOffsetX, y: -(t.badgeOffsetY + h))
             badge.fillColor = Self.color(new.statusColor, alpha: 0.96)
-            badge.strokeColor = t.badgeShape == .square ? Self.color(new.identity) : CGColor(gray: 1, alpha: 0.55)
+            badge.strokeColor = t.badgeShape == .square ? Self.color(new.identity) : CGColor(gray: 1, alpha: 0.85)
             badge.lineWidth = t.badgeShape == .square ? 2 : 1
             badge.shadowColor = CGColor(gray: 0, alpha: 1)
             badge.shadowOpacity = Float(min(0.3, t.shadowOpacity))
@@ -253,6 +261,23 @@ final class AgentCursor {
         point = m.target
         noActions { root.position = d.local(m.target) }
         root.add(anim, forKey: Self.glideKey)
+        tilt(m)
+    }
+
+    /// The cursor leans a little into a long move and settles as it lands. It turns about its tip, which stays on the
+    /// glide's path, and never with motion off.
+    private func tilt(_ m: CursorMotion) {
+        guard !look.still, let first = m.points.first else { return }
+        let lean = CursorMotionLean.radians(dx: m.target.x - first.x, distance: hypot(m.target.x - first.x, m.target.y - first.y))
+        guard lean != 0 else { return }
+        let a = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        // Local layers are y up, so a turn toward the right is a negative angle.
+        a.values = [0, -lean, 0]
+        a.keyTimes = [0, 0.35, 1]
+        a.duration = m.duration
+        a.beginTime = layerTime(m.start)
+        a.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
+        body.add(a, forKey: Self.tiltKey)
     }
 
     func hide() {

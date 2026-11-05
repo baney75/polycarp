@@ -3,9 +3,9 @@ import Foundation
 
 /// How an agent's cursor looks and moves. A theme is shape, size and motion, drawn with Core Animation layers
 /// (no Lottie, no images). Colors are the cursor's own and never the palette's, so agent activity is never
-/// mistaken for yours (spec/themes.md): the arrow takes its agent's status color from the session engine.
+/// mistaken for yours (spec/themes.md): the glyph takes its agent's status color.
 public struct CursorTheme: Equatable, Codable, Sendable {
-    public enum Glyph: String, Codable, Sendable { case arrow, classic, dot, block }
+    public enum Glyph: String, Codable, Sendable { case leaf, pointer, classic, dot, block }
     public enum BadgeShape: String, Codable, Sendable { case pill, square }
     public enum Fill: String, Codable, Sendable {
         /// The agent's status color.
@@ -45,11 +45,18 @@ public struct CursorTheme: Equatable, Codable, Sendable {
 
     public static let defaultName = "default"
 
-    /// The friendly arrow.
+    /// The olive leaf: Polycarp's own cursor, with its point at the target.
     public static let standard = CursorTheme(
-        name: "default", glyph: .arrow, fill: .status, size: 26, ringWidth: 1.5, shadowRadius: 4, shadowOpacity: 0.35,
-        badgeShape: .pill, badgeRadius: 8, badgeFontSize: 11, badgeMonospaced: false, badgeOffsetX: 16, badgeOffsetY: 24,
-        rippleRadius: 30, rippleDuration: 0.45, rippleSquare: false, squish: 0.8, appearScale: 0.6,
+        name: "default", glyph: .leaf, fill: .status, size: 22, ringWidth: 2, shadowRadius: 6, shadowOpacity: 0.32,
+        badgeShape: .pill, badgeRadius: 11, badgeFontSize: 11.5, badgeMonospaced: false, badgeOffsetX: 20, badgeOffsetY: 22,
+        rippleRadius: 28, rippleDuration: 0.5, rippleSquare: false, squish: 0.82, appearScale: 0.6,
+        focusRadius: 6, focusWidth: 2, markCount: 3, markLife: 1.6)
+
+    /// A soft rounded pointer.
+    public static let pointer = CursorTheme(
+        name: "pointer", glyph: .pointer, fill: .status, size: 22, ringWidth: 2, shadowRadius: 6, shadowOpacity: 0.32,
+        badgeShape: .pill, badgeRadius: 11, badgeFontSize: 11.5, badgeMonospaced: false, badgeOffsetX: 18, badgeOffsetY: 24,
+        rippleRadius: 28, rippleDuration: 0.5, rippleSquare: false, squish: 0.82, appearScale: 0.6,
         focusRadius: 6, focusWidth: 2, markCount: 3, markLife: 1.6)
 
     /// A small dot and its badge.
@@ -73,7 +80,7 @@ public struct CursorTheme: Equatable, Codable, Sendable {
         rippleRadius: 24, rippleDuration: 0.3, rippleSquare: true, squish: 1, appearScale: 1,
         focusRadius: 0, focusWidth: 2, markCount: 3, markLife: 1.2)
 
-    public static let builtIn: [CursorTheme] = [standard, minimal, classic, omarchy]
+    public static let builtIn: [CursorTheme] = [standard, pointer, minimal, classic, omarchy]
     public static var names: [String] { builtIn.map(\.name) }
 
     /// A built-in theme by name, ignoring case; nil for an unknown name.
@@ -84,13 +91,14 @@ public struct CursorTheme: Equatable, Codable, Sendable {
 
 /// The cursor's colors. Fixed, so nothing the person picks for the dock or the palette recolors an agent.
 public enum CursorPalette {
-    /// The session engine's status colors (working blue, asking yellow, failed red, finished orange).
+    /// Status colors from the Polycarp brand: working vine, asking amber, failed clay, finished still water. White text
+    /// reads on each at 4.5:1 or better, and the cursor's white edge keeps them visible on any background.
     public static func status(_ s: DockAgent.State) -> RGB {
         switch s {
-        case .working: return RGB(r: 0.20, g: 0.51, b: 0.97)
-        case .asking: return RGB(r: 0.98, g: 0.80, b: 0.15)
-        case .failed: return RGB(r: 0.93, g: 0.27, b: 0.27)
-        case .done: return RGB(r: 0.96, g: 0.55, b: 0.18)
+        case .working: return RGB(r: 0x4F / 255, g: 0x6B / 255, b: 0x3A / 255)
+        case .asking: return RGB(r: 0x85 / 255, g: 0x6A / 255, b: 0x29 / 255)
+        case .failed: return RGB(r: 0xA8 / 255, g: 0x47 / 255, b: 0x3A / 255)
+        case .done: return RGB(r: 0x3F / 255, g: 0x6B / 255, b: 0x6A / 255)
         }
     }
 
@@ -129,18 +137,68 @@ public struct CursorLook: Equatable, Sendable {
 /// The glyph outlines, tip at the origin, y pointing down (the renderer flips them for AppKit).
 public enum CursorGlyphs {
     public static func path(_ glyph: CursorTheme.Glyph, size s: Double) -> CGPath {
-        let p = CGMutablePath()
-        func poly(_ pts: [(Double, Double)]) {
-            p.move(to: CGPoint(x: pts[0].0 * s, y: pts[0].1 * s))
-            for q in pts.dropFirst() { p.addLine(to: CGPoint(x: q.0 * s, y: q.1 * s)) }
-            p.closeSubpath()
-        }
         switch glyph {
-        case .arrow: poly([(0, 0), (0, 0.92), (0.22, 0.72), (0.36, 1.0), (0.50, 0.93), (0.36, 0.66), (0.64, 0.66)])
-        case .classic: poly([(0, 0), (0, 0.84), (0.19, 0.66), (0.31, 0.95), (0.43, 0.89), (0.31, 0.62), (0.56, 0.62)])
-        case .block: poly([(0, 0), (0, 1.0), (0.30, 0.72), (0.52, 1.0), (0.66, 0.92), (0.44, 0.64), (0.74, 0.64)])
-        case .dot: p.addEllipse(in: CGRect(x: -s / 2, y: -s / 2, width: s, height: s))
+        case .leaf: return leaf(s)
+        case .pointer: return rounded([(0, 0), (0.25, 0.93), (0.40, 0.54), (0.90, 0.36)], radii: [0.045, 0.09, 0.05, 0.09], size: s)
+        case .classic:
+            return rounded([(0, 0), (0, 0.84), (0.19, 0.66), (0.31, 0.95), (0.43, 0.89), (0.31, 0.62), (0.56, 0.62)],
+                           radii: [0.015, 0.03, 0.03, 0.03, 0.03, 0.03, 0.03], size: s)
+        case .block:
+            let p = CGMutablePath()
+            let pts = [(0.0, 0.0), (0, 1.0), (0.30, 0.72), (0.52, 1.0), (0.66, 0.92), (0.44, 0.64), (0.74, 0.64)]
+            p.addLines(between: pts.map { CGPoint(x: $0.0 * s, y: $0.1 * s) })
+            p.closeSubpath()
+            return p
+        case .dot:
+            let p = CGMutablePath()
+            p.addEllipse(in: CGRect(x: -s / 2, y: -s / 2, width: s, height: s))
+            return p
         }
+    }
+
+    /// The center line drawn on a glyph that has one (the leaf's vein).
+    public static func vein(_ glyph: CursorTheme.Glyph, size s: Double) -> CGPath? {
+        guard glyph == .leaf else { return nil }
+        let p = CGMutablePath()
+        p.move(to: CGPoint(x: 0.17 * s, y: 0.17 * s))
+        p.addLine(to: CGPoint(x: 0.60 * s, y: 0.60 * s))
         return p
+    }
+
+    /// Whether the glyph has a white edge, so it shows on any background, instead of an edge in the agent's identity color.
+    public static func hasWhiteEdge(_ glyph: CursorTheme.Glyph) -> Bool { glyph != .block && glyph != .classic }
+
+    private static func leaf(_ s: Double) -> CGPath {
+        func at(_ x: Double, _ y: Double) -> CGPoint { CGPoint(x: x * s, y: y * s) }
+        let p = CGMutablePath()
+        p.move(to: .zero)
+        p.addCurve(to: at(0.62, 0.92), control1: at(0.02, 0.52), control2: at(0.22, 0.90))
+        p.addCurve(to: at(0.92, 0.62), control1: at(0.82, 0.93), control2: at(0.93, 0.82))
+        p.addCurve(to: .zero, control1: at(0.90, 0.22), control2: at(0.52, 0.02))
+        p.closeSubpath()
+        return fitted(p, size: s)
+    }
+
+    /// Moved so the tip sits exactly on the origin (the point an agent acts on is where the cursor's tip is), and scaled
+    /// so the glyph is `size` tall, as `CursorTheme.size` says.
+    private static func fitted(_ p: CGPath, size s: Double) -> CGPath {
+        let box = p.boundingBoxOfPath
+        guard box.height > 0 else { return p }
+        let k = CGFloat(s) / box.height
+        var t = CGAffineTransform(scaleX: k, y: k).translatedBy(x: -box.minX, y: -box.minY)
+        return p.copy(using: &t) ?? p
+    }
+
+    /// A polygon with rounded corners.
+    private static func rounded(_ pts: [(Double, Double)], radii: [Double], size s: Double) -> CGPath {
+        let q = pts.map { CGPoint(x: $0.0 * s, y: $0.1 * s) }
+        let p = CGMutablePath()
+        p.move(to: CGPoint(x: (q[0].x + q[1].x) / 2, y: (q[0].y + q[1].y) / 2))
+        for i in 1...q.count {
+            let corner = q[i % q.count], next = q[(i + 1) % q.count]
+            p.addArc(tangent1End: corner, tangent2End: next, radius: radii[i % q.count] * s)
+        }
+        p.closeSubpath()
+        return fitted(p, size: s)
     }
 }

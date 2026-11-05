@@ -98,16 +98,18 @@ final class GlidePlannerTests: XCTestCase {
     }
 
     func testTheDefaultSpringIsLeftAlone() {
+        XCTAssertEqual(GlideSpring.polycarp.clamped, .polycarp)
         XCTAssertEqual(GlideSpring.baneyspaces.clamped, .baneyspaces)
     }
 
     func testPresetsAndSpeedShapeTheSpring() {
+        XCTAssertEqual(GlideSpring.preset("polycarp"), .polycarp)
         XCTAssertEqual(GlideSpring.preset("baneyspaces"), .baneyspaces)
         XCTAssertNil(GlideSpring.preset("nonsense"))
         var s = CursorSettings()
-        XCTAssertEqual(s.spring, .baneyspaces, "the default is the baneyspaces preset")
+        XCTAssertEqual(s.spring, .polycarp, "the default is the polycarp preset")
         s.speed = 2
-        XCTAssertEqual(s.spring.response, GlideSpring.baneyspaces.response / 2, accuracy: 1e-9)
+        XCTAssertEqual(s.spring.response, GlideSpring.polycarp.response / 2, accuracy: 1e-9)
         s.speed = 0
         XCTAssertTrue(s.spring.isInstant, "speed 0 is off")
         s = CursorSettings(); s.preset = "off"
@@ -192,7 +194,7 @@ final class CursorVisibilityTests: XCTestCase {
 
 final class CursorThemeTests: XCTestCase {
     func testTheFourThemesShip() {
-        XCTAssertEqual(CursorTheme.names, ["default", "minimal", "classic", "omarchy"])
+        XCTAssertEqual(CursorTheme.names, ["default", "pointer", "minimal", "classic", "omarchy"])
         XCTAssertEqual(CursorTheme.named("OMARCHY")?.name, "omarchy")
         XCTAssertNil(CursorTheme.named("lottie"))
     }
@@ -231,8 +233,49 @@ final class CursorThemeTests: XCTestCase {
         XCTAssertLessThan(CursorTheme.standard.squish, 1, "a squish on press")
     }
 
+    /// The leaf's point is the hot spot, so it must start exactly at the origin, and nothing may lie above or left of it.
+    func testTheLeafIsTheDefaultAndItsPointIsTheOrigin() {
+        XCTAssertEqual(CursorTheme.standard.glyph, .leaf)
+        XCTAssertEqual(CursorSettings().resolvedTheme, .standard)
+        XCTAssertEqual(CursorSettings().spring, GlideSpring.polycarp)
+        let leaf = CursorGlyphs.path(.leaf, size: 24)
+        XCTAssertEqual(leaf.currentPoint.x, 0, accuracy: 1e-9)
+        XCTAssertEqual(leaf.currentPoint.y, 0, accuracy: 1e-9)
+        let b = leaf.boundingBoxOfPath
+        XCTAssertGreaterThanOrEqual(b.minX, -1e-9); XCTAssertGreaterThanOrEqual(b.minY, -1e-9)
+        XCTAssertNotNil(CursorGlyphs.vein(.leaf, size: 24))
+        for g in [CursorTheme.Glyph.pointer, .classic, .dot, .block] { XCTAssertNil(CursorGlyphs.vein(g, size: 24)) }
+    }
+
+    /// A status name sits in white on its color, and the edge keeps the cursor visible on anything.
+    func testStatusColorsCarryWhiteTextAndTheNewGlyphsHaveAWhiteEdge() {
+        for s in [DockAgent.State.working, .asking, .failed, .done] {
+            XCTAssertGreaterThanOrEqual(CursorPalette.status(s).contrastWithWhite, 4.5, "\(s)")
+        }
+        XCTAssertTrue(CursorGlyphs.hasWhiteEdge(.leaf)); XCTAssertTrue(CursorGlyphs.hasWhiteEdge(.pointer))
+        XCTAssertFalse(CursorGlyphs.hasWhiteEdge(.block))
+    }
+
+    /// A short hop doesn't lean. A long one leans toward where it's going, within the limit.
+    func testTheCursorLeansOnlyIntoLongMoves() {
+        XCTAssertEqual(CursorMotionLean.radians(dx: 40, distance: 40), 0)
+        XCTAssertGreaterThan(CursorMotionLean.radians(dx: 900, distance: 900), 0)
+        XCTAssertLessThan(CursorMotionLean.radians(dx: -900, distance: 900), 0)
+        XCTAssertEqual(CursorMotionLean.radians(dx: 0, distance: 900), 0)
+        XCTAssertLessThanOrEqual(abs(CursorMotionLean.radians(dx: 5000, distance: 5000)), CursorMotionLean.maxRadians + 1e-9)
+    }
+
+    /// An app the agent started may bring itself forward as it launches. Its window is still the agent's. A window of the
+    /// app you're using stays yours, even with a claim on it: that was Calculator opening on Donovan's screen, 2026-11-05.
+    func testAClaimHoldsForAnAgentStartedAppThatBroughtItselfForward() {
+        XCTAssertTrue(ClaimRule.applies(windowPid: 7, frontPid: 7, agentStartedProcess: true))
+        XCTAssertFalse(ClaimRule.applies(windowPid: 7, frontPid: 7, agentStartedProcess: false))
+        XCTAssertTrue(ClaimRule.applies(windowPid: 7, frontPid: 8, agentStartedProcess: false))
+        XCTAssertTrue(ClaimRule.applies(windowPid: 7, frontPid: nil, agentStartedProcess: false))
+    }
+
     func testGlyphsPutTheirTipOnTheOrigin() {
-        for g in [CursorTheme.Glyph.arrow, .classic, .block] {
+        for g in [CursorTheme.Glyph.leaf, .pointer, .classic, .block] {
             let b = CursorGlyphs.path(g, size: 26).boundingBoxOfPath
             XCTAssertEqual(b.minX, 0, accuracy: 1e-9, "\(g)")
             XCTAssertEqual(b.minY, 0, accuracy: 1e-9, "\(g)")
@@ -393,7 +436,7 @@ final class CursorDirectorTests: XCTestCase {
         d.handsWillAct(event(at: CGPoint(x: 100, y: 100))); drain()
         clock += 1
         d.handsWillAct(event(at: CGPoint(x: 1000, y: 400))); drain()
-        let first = GlidePlan(from: GlideState(position: CGPoint(x: 100, y: 100)), target: CGPoint(x: 1000, y: 400), spring: .baneyspaces)
+        let first = GlidePlan(from: GlideState(position: CGPoint(x: 100, y: 100)), target: CGPoint(x: 1000, y: 400), spring: .polycarp)
         clock += 0.05
         let expected = first.state(at: 0.05)
         d.handsWillAct(event(at: CGPoint(x: 300, y: 800))); drain()
