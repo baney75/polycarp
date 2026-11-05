@@ -833,6 +833,15 @@ struct SetupView: View {
     // MARK: Appearance
 
     @ViewBuilder private var appearanceTab: some View {
+        if let p = appearance.polycarp {
+            section("Polycarp theme") {
+                Text("\(p.title) (\(p.mode.rawValue)) is in force. It draws every BaneySpaces surface instead of the theme, palette and accent below, which come back when it is removed.")
+                    .font(Chrome.font(12)).fixedSize(horizontal: false, vertical: true)
+                Text("Change it in Terminal:  polycarp theme set <name>").font(Chrome.font(12)).foregroundStyle(.secondary).textSelection(.enabled)
+                Text("polycarp theme list shows the names. To go back to your own theme, delete \(PolycarpThemeFile.path().map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "the theme file").")
+                    .font(Chrome.font(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
         section("Theme") {
             HStack(spacing: 10) {
                 ForEach(ThemeID.allCases, id: \.self) { t in
