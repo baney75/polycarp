@@ -1347,6 +1347,104 @@ fn undo_refuses_a_damaged_history_entry_and_changes_nothing() {
 }
 
 #[test]
+fn undo_rejects_malformed_history_metadata_before_any_write() {
+    let head = "# polycarp-history 1\n# time = t\n# caller = \"user\"\n# action = \"x\"\n";
+    let cases = [
+        // Not a number, a sign, and a length with trailing text.
+        format!("{head}# theme_file = mine\n# theme_bytes = abc\n# theme_after = absent\n# ---\n[appearance]\n"),
+        format!("{head}# theme_file = mine\n# theme_bytes = -3\n# theme_after = absent\n# ---\n[appearance]\n"),
+        format!("{head}# theme_file = mine\n# theme_bytes = 3x\n# theme_after = absent\n# ---\n[appearance]\n"),
+        // Both "was there" and "was not there".
+        format!("{head}# theme_file = mine\n# theme_bytes = 0\n# theme_file_absent = true\n# theme_after = absent\n# ---\n"),
+        // Neither.
+        format!("{head}# theme_file = mine\n# theme_after = absent\n# ---\n"),
+        // No record of what the change left behind.
+        format!("{head}# theme_file = mine\n# theme_file_absent = true\n# ---\n"),
+        // A length with no theme file named.
+        format!("{head}# theme_bytes = 4\n# ---\n[appearance]\n"),
+        // A name that is not a theme name.
+        format!("{head}# theme_file = ../config\n# theme_file_absent = true\n# theme_after = absent\n# ---\n"),
+        // No time, caller or action.
+        "# polycarp-history 1\n# ---\n".to_string(),
+    ];
+    for bad in cases {
+        let b = Box::new();
+        b.ok(&["create", "mine", "--extends", "calm"]);
+        b.ok(&["set", "evening"]);
+        let newest = b.json(&["history", "--json"])["entries"][0]["file"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        fs::write(&newest, &bad).unwrap();
+        let theme_file = b.cfg().join("themes").join("mine.toml");
+        let theme = fs::read(&theme_file).unwrap();
+        let state = fs::read(b.state_file()).unwrap();
+        let (c, v) = b.jrun(&["undo"]);
+        assert_eq!(c, 1, "{bad:?}: {v}");
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains("damaged"),
+            "{bad:?}: {v}"
+        );
+        assert_eq!(fs::read(&theme_file).unwrap(), theme, "{bad:?}");
+        assert_eq!(fs::read(b.state_file()).unwrap(), state, "{bad:?}");
+    }
+}
+
+#[test]
+fn undo_will_not_overwrite_a_hand_edited_theme_unless_forced() {
+    let b = Box::new();
+    b.ok(&["create", "mine", "--extends", "calm"]);
+    let theme_file = b.cfg().join("themes").join("mine.toml");
+    let edited = format!(
+        "{}\n# my note\n[shape]\nradius = 11\n",
+        fs::read_to_string(&theme_file).unwrap()
+    );
+    fs::write(&theme_file, &edited).unwrap();
+    b.ok(&["set", "evening"]);
+    // Undoing the set touches no theme file, so it goes through.
+    b.ok(&["undo"]);
+    let hist = b.history_count();
+    // Undoing the create would delete the hand-edited file.
+    let (c, v) = b.jrun(&["undo"]);
+    assert_eq!(c, 1, "{v}");
+    assert_eq!(v["error"]["code"], "changed_since", "{v}");
+    let m = v["error"]["message"].as_str().unwrap();
+    assert!(m.contains("mine.toml") && m.contains("edited"), "{m}");
+    assert!(
+        v["error"]["suggestion"]
+            .as_str()
+            .unwrap()
+            .contains("--force"),
+        "{v}"
+    );
+    assert_eq!(fs::read_to_string(&theme_file).unwrap(), edited);
+    assert_eq!(b.history_count(), hist, "nothing was undone");
+    // With force, the edited text is kept in history/ and the create is undone.
+    let v = b.json(&["undo", "--force", "--json"]);
+    let copy = v["undid"]["saved_copy"]
+        .as_str()
+        .expect("a saved copy is named");
+    assert_eq!(fs::read_to_string(copy).unwrap(), edited);
+    assert!(Path::new(copy).starts_with(b.cfg().join("history")));
+    assert!(!theme_file.exists());
+    assert_eq!(
+        b.history_count(),
+        hist,
+        "the entry is gone, the copy stays"
+    );
+}
+
+#[test]
+fn undo_of_an_unedited_theme_change_needs_no_force() {
+    let b = Box::new();
+    b.ok(&["create", "mine", "--extends", "calm"]);
+    b.ok(&["change", "shape.radius", "7"]);
+    b.ok(&["undo"]);
+    b.ok(&["undo"]);
+    assert!(!b.cfg().join("themes").join("mine.toml").exists());
+}
+
+#[test]
 fn undo_says_who_made_the_change_it_undid() {
     let b = Box::new();
     let o = b.run_as("agent:claude-code", &["theme", "set", "evening"]);

@@ -194,7 +194,7 @@ density = "compact"
 | `polycarp theme delete <name>` | Delete a user theme. Not the current one or one it extends. `undo` brings it back |
 | `polycarp theme validate <file>` | Exit 0 if the file is valid, 1 if not. Prints every problem |
 | `polycarp theme export <css\|json> [name] [--surface <name>]` | Print the resolved theme. With no name it is the current one in its forced mode, as in `current/`; JSON has `mode` |
-| `polycarp theme undo` | Step back one change |
+| `polycarp theme undo [--force]` | Step back one change. Refuses if the theme file was edited after that change; `--force` saves the edited text in `history/` as a `.bak` copy, then undoes |
 | `polycarp theme history [--json]` | Past changes, newest first |
 | `polycarp theme reset` | Back to `polycarp`, mode `auto`, no accent |
 
@@ -254,7 +254,10 @@ with the time and who made the change. Set `POLYCARP_CALLER` to name yourself. A
 `config.toml`, and removes that entry from history, so repeating `undo` goes back further. If the file did
 not exist before, `[appearance]` is removed (and the file too, if nothing else is in it). It also puts back
 a theme file that change edited, created or deleted, and says who made the change it undid. If a history
-entry is damaged it says so and changes nothing. `create --force` and `delete` are recorded too, so `undo`
+entry is damaged (a length that is not a number, a missing or contradictory field, a bad theme name) it
+says so and changes nothing. Each entry records a hash of the theme text the change wrote. If the file no
+longer matches, someone edited it since, and `undo` refuses with the code `changed_since` instead of
+overwriting or deleting that work. `undo --force` first keeps the edited text in `history/` and then goes on. `create --force` and `delete` are recorded too, so `undo`
 brings the old theme back.
 If a theme file or `config.toml` cannot be written, the change is put back, its history entry is dropped
 and the command fails. If only a file in `current/` cannot be written, the settings stay saved and the
@@ -312,7 +315,7 @@ Exit codes: 0 ok, 1 refused or invalid, 2 usage.
 `error.data.errors` is always a list of `{path, message}`, with `actual` and `needs` when there are figures
 (contrast ratios are numbers). For a bad value, `actual` is what was sent and `needs` says what is allowed.
 Codes: `invalid_args` (exit 2), `invalid_theme`, `contrast`, `invalid_value`, `unknown_theme`, `unknown_path`,
-`builtin_read_only`, `exists`, `current_theme`, `nothing_to_undo`, `io_error`, `config_error`, `busy`. Warnings and notes
+`builtin_read_only`, `exists`, `current_theme`, `nothing_to_undo`, `changed_since`, `io_error`, `config_error`, `busy`. Warnings and notes
 (such as "a `-custom` theme was made") come in `data.warnings` and `data.notes`.
 
 ### `polycarp mcp`

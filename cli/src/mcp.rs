@@ -176,8 +176,8 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "theme_undo",
-            description: "Step back one change (a theme_change, theme_apply, theme_set, theme_accent or theme_reset), including the theme file it edited. Use it when the person dislikes what you just did. Call it again to go back further.",
-            schema: obj(json!({}), &[]),
+            description: "Step back one change (a theme_change, theme_apply, theme_set, theme_accent or theme_reset), including the theme file it edited. Use it when the person dislikes what you just did. Call it again to go back further. If the theme file was edited by hand after that change, it refuses; pass force true only if the person agrees, and the edited text is first saved in history/.",
+            schema: obj(json!({"force": {"type": "boolean", "description": "Undo even though the theme file was edited after the change. The edited text is saved in history/ first."}}), &[]),
             read_only: false,
             destructive: true,
             idempotent: false,
@@ -340,7 +340,7 @@ fn call(name: &str, args: Option<&Json>, caller: &str) -> Option<theme::Envelope
             "theme_export" => {
                 theme::op_export(&c, a.need("format")?, a.text("name")?, a.text("surface")?)
             }
-            "theme_undo" => theme::op_undo(&c),
+            "theme_undo" => theme::op_undo(&c, a.flag("force")?.unwrap_or(false)),
             "theme_history" => theme::op_history(&c),
             "theme_reset" => theme::op_reset(&c),
             _ => Err(ApiErr::usage("unknown tool")),

@@ -41,7 +41,7 @@ Usage:
   polycarp theme delete <name>
   polycarp theme validate <file>
   polycarp theme export <css|json> [name] [--surface spaces|voice|browser|site]
-  polycarp theme undo
+  polycarp theme undo [--force]
   polycarp theme history [--json]
   polycarp theme reset
 
@@ -1361,6 +1361,19 @@ struct Hist {
     theme_name: Option<String>,
     theme_absent: bool,
     theme_body: Vec<u8>,
+    /// What the change left the theme file as: `absent`, or a hash of the text it wrote.
+    theme_after: Option<String>,
+}
+
+/// A short hash of file bytes, to tell whether a file is still what a change wrote. It is for
+/// spotting edits, not for security (FNV-1a, 64 bits).
+fn text_hash(b: &[u8]) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in b {
+        h ^= u64::from(*byte);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:016x}")
 }
 
 /// The line that ends a history header. A header value is written as a JSON string, so no value
@@ -1408,37 +1421,75 @@ fn parse_hist(file: PathBuf, bytes: Vec<u8>) -> Hist {
         theme_name: None,
         theme_absent: false,
         theme_body: Vec::new(),
+        theme_after: None,
     };
-    let mut theme_bytes = 0usize;
     let Some((head, body_at)) = split_header(&bytes) else {
         h.body = bytes;
         return h;
     };
+    let (mut has_time, mut has_caller, mut has_action) = (false, false, false);
+    let mut theme_bytes: Option<usize> = None;
+    let mut sound = true;
     for raw in head {
         let line = String::from_utf8_lossy(raw);
         if let Some(v) = line.strip_prefix("# time = ") {
+            has_time = true;
             h.time = v.into();
         } else if let Some(v) = line.strip_prefix("# caller = ") {
+            has_caller = true;
             h.caller = unquote(v);
         } else if let Some(v) = line.strip_prefix("# action = ") {
+            has_action = true;
             h.action = unquote(v);
         } else if line == "# absent = true" {
             h.absent = true;
         } else if let Some(v) = line.strip_prefix("# theme_file = ") {
+            sound &= h.theme_name.is_none();
             h.theme_name = Some(v.into());
         } else if line == "# theme_file_absent = true" {
             h.theme_absent = true;
         } else if let Some(v) = line.strip_prefix("# theme_bytes = ") {
-            theme_bytes = v.parse().unwrap_or(0);
+            // Digits only: a length that does not parse is damage, not zero.
+            match v.parse::<usize>() {
+                Ok(n) if theme_bytes.is_none() => theme_bytes = Some(n),
+                _ => sound = false,
+            }
+        } else if let Some(v) = line.strip_prefix("# theme_after = ") {
+            sound &= h.theme_after.is_none();
+            h.theme_after = Some(v.into());
         }
     }
     let mut body = bytes[body_at..].to_vec();
-    h.valid = theme_bytes <= body.len() && (h.theme_name.is_some() || theme_bytes == 0);
-    if theme_bytes > 0 && h.valid {
-        h.theme_body = body.split_off(body.len() - theme_bytes);
+    // A theme part needs a safe name, exactly one of "was there (with its length)" and "was not
+    // there", and what the change left behind. Without a theme part none of those may appear.
+    let theme_ok = match &h.theme_name {
+        Some(name) => {
+            valid_name(name)
+                && !is_builtin(name)
+                && h.theme_absent == theme_bytes.is_none()
+                && h.theme_after
+                    .as_deref()
+                    .is_some_and(|a| a == "absent" || (a.len() == 16 && is_lower_hex(a)))
+        }
+        None => !h.theme_absent && theme_bytes.is_none() && h.theme_after.is_none(),
+    };
+    h.valid = sound
+        && has_time
+        && has_caller
+        && has_action
+        && theme_ok
+        && theme_bytes.unwrap_or(0) <= body.len();
+    if h.valid {
+        if let Some(n) = theme_bytes {
+            h.theme_body = body.split_off(body.len() - n);
+        }
     }
     h.body = body;
     h
+}
+
+fn is_lower_hex(s: &str) -> bool {
+    s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Newest first.
@@ -1474,8 +1525,15 @@ fn read_or_absent(path: &Path) -> Result<Option<Vec<u8>>, String> {
 }
 
 /// Keeps the current `config.toml` in `history/` before a change, and trims to the last 50.
-/// With `theme`, the user theme file of that name is kept too, so undo can put it back.
-fn record(cfg: &Cfg, who: &str, action: &str, theme: Option<&str>) -> Result<PathBuf, String> {
+/// With `theme` (name, and the text the change will write, or None if it deletes the file), the
+/// user theme file of that name is kept too, so undo can put it back. A hash of the text written
+/// is kept as well, so undo can tell if someone edited the file afterwards.
+fn record(
+    cfg: &Cfg,
+    who: &str,
+    action: &str,
+    theme: Option<(&str, Option<&str>)>,
+) -> Result<PathBuf, String> {
     let (compact, iso) = stamps();
     let current = read_or_absent(&cfg.file())?;
     let action: String = action.chars().filter(|c| !c.is_control()).collect();
@@ -1489,8 +1547,10 @@ fn record(cfg: &Cfg, who: &str, action: &str, theme: Option<&str>) -> Result<Pat
         data.extend_from_slice(b"# absent = true\n");
     }
     let mut theme_body = Vec::new();
-    if let Some(name) = theme {
+    if let Some((name, after)) = theme {
         data.extend_from_slice(format!("# theme_file = {name}\n").as_bytes());
+        let after = after.map_or("absent".to_string(), |t| text_hash(t.as_bytes()));
+        data.extend_from_slice(format!("# theme_after = {after}\n").as_bytes());
         match read_or_absent(&cfg.theme_path(name))? {
             Some(b) => {
                 data.extend_from_slice(format!("# theme_bytes = {}\n", b.len()).as_bytes());
@@ -1760,6 +1820,7 @@ impl ApiErr {
             "invalid_value" => "Send a value of the type in `needs`.",
             "exists" => "Pick another name, or pass force.",
             "current_theme" => "Run `theme set <other>` first.",
+            "changed_since" => "Look at the theme file named in the message. To undo anyway, run `theme undo --force` (MCP: theme_undo with force true); the text now in the file is first saved in history/ as a .bak copy. Or leave it as it is.",
             "nothing_to_undo" => "History is empty. `theme reset` goes back to the default.",
             "busy" => "Wait a moment and run the command again. The lock is released when the other polycarp command ends, so there is nothing to delete.",
             "io_error" => "Check that the config folder is writable, then try again.",
@@ -2282,7 +2343,7 @@ fn commit(c: &Ctx, st: Option<&State>, action: &str, file: Option<(&str, Option<
         None => None,
     };
     let config_was = read_or_absent(&c.cfg.file()).map_err(io_err)?;
-    let kept = record(&c.cfg, &c.caller, action, file.map(|f| f.0)).map_err(io_err)?;
+    let kept = record(&c.cfg, &c.caller, action, file).map_err(io_err)?;
     let undo_all = |why: String| {
         if let Some((p, was)) = &theme_was {
             put_back(p, was);
@@ -3086,7 +3147,7 @@ fn put_back(path: &Path, was: &Option<Vec<u8>>) {
     }
 }
 
-pub(crate) fn op_undo(c: &Ctx) -> Res {
+pub(crate) fn op_undo(c: &Ctx, force: bool) -> Res {
     let _lock = Lock::acquire(&c.cfg)?;
     let hist = read_history(&c.cfg);
     let Some(last) = hist.first() else {
@@ -3101,6 +3162,44 @@ pub(crate) fn op_undo(c: &Ctx) -> Res {
     }
     let live = read_or_absent(&c.cfg.file()).map_err(io_err)?;
     let new_config = undone_config(live.as_deref(), last);
+
+    // If someone edited the theme file after the change wrote it, undoing would overwrite or
+    // delete their work. Refuse, unless `force`, which first keeps their text in history/.
+    let mut kept_copy = None;
+    if let (Some(name), Some(after)) = (last.theme_name.as_deref(), last.theme_after.as_deref()) {
+        let now = read_or_absent(&c.cfg.theme_path(name)).map_err(io_err)?;
+        let unchanged = match &now {
+            None => after == "absent",
+            Some(b) => text_hash(b) == after,
+        };
+        if !unchanged {
+            if !force {
+                return Err(ApiErr::new(
+                    "changed_since",
+                    format!(
+                        "the theme file {} was edited after the change you are undoing, so nothing was undone (undoing would overwrite or delete those edits)",
+                        c.cfg.theme_path(name).display()
+                    ),
+                ));
+            }
+            if let Some(b) = now {
+                let (compact, _) = stamps();
+                let dir = c.cfg.history();
+                fs::create_dir_all(&dir)
+                    .map_err(|e| io_err(format!("could not create {}: {e}", dir.display())))?;
+                let mut n = 0;
+                let copy = loop {
+                    let f = dir.join(format!("{compact}-forced-{name}-{n}.toml.bak"));
+                    if !f.exists() {
+                        break f;
+                    }
+                    n += 1;
+                };
+                write_atomic(&copy, &b).map_err(|e| io_err(format!("{e}. Nothing was undone")))?;
+                kept_copy = Some(copy);
+            }
+        }
+    }
 
     // Everything is worked out. Now write; if a later step fails, the earlier ones are undone,
     // so the folder is never left half-way.
@@ -3161,8 +3260,15 @@ pub(crate) fn op_undo(c: &Ctx) -> Res {
         "undid: {} (made by {}, {})\n{}",
         last.action, last.caller, last.time, out.text
     );
+    if let Some(copy) = &kept_copy {
+        out.notes.push(format!(
+            "the edited theme text was kept in {}",
+            copy.display()
+        ));
+    }
     Ok(out.with(json!({"undid": {
-        "action": last.action, "caller": last.caller, "time": last.time
+        "action": last.action, "caller": last.caller, "time": last.time,
+        "saved_copy": kept_copy.as_ref().map(|c| c.display().to_string()),
     }})))
 }
 
@@ -3510,9 +3616,9 @@ pub fn run(args: &[OsString]) -> i32 {
                 p.val("surface"),
             )
         }),
-        "undo" => cmd(rest, &[], &[], |c, p| {
+        "undo" => cmd(rest, &[], &["force"], |c, p| {
             exactly(p, 0, "no arguments")?;
-            op_undo(c)
+            op_undo(c, p.flag("force"))
         }),
         "history" => cmd(rest, &[], &[], |c, p| {
             exactly(p, 0, "no arguments")?;

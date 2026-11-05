@@ -26,7 +26,7 @@ One theme file drives every Polycarp product. Change it with the `polycarp theme
    edit the files in `current/` by hand.
 5. **Preview.** `polycarp theme preview` writes an HTML file (light and dark side by side) into the config
    folder's `previews/` and prints its path. Open it and take a screenshot. Show the user.
-6. **Undo.** If they dislike it, `polycarp theme undo` steps back one change, including the theme file.
+6. **Undo.** If they dislike it, `polycarp theme undo` steps back one change, including the theme file. If someone hand-edited that file since, it refuses (`changed_since`); use `--force` (MCP `force`) only if the person agrees. The edited text is saved in `history/` first.
    `polycarp theme reset` always works. Set `POLYCARP_CALLER=agent:<your name>` so history says it was you.
 
 Set `POLYCARP_CONFIG_DIR` to a temporary absolute folder when you test. Never edit the user's real config to experiment.
