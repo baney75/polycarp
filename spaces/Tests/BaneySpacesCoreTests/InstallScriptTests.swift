@@ -246,6 +246,23 @@ final class InstallScriptTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent("Library/Polycarp Release Signing").path))
     }
 
+    /// BaneySpaces' own uninstaller kept the release key as "BaneySpaces Release Signing" with its own file name.
+    func testSigningRestoresTheKeyBaneySpacesKept() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("bs-sign-\(UUID().uuidString)").resolvingSymlinksInPath()
+        defer { try? fm.removeItem(at: home) }
+        for (folder, key) in ["BaneySpaces Release Signing 20261030-101010": "old", "BaneySpaces Release Signing 20261031-090000": "new"] {
+            let dir = home.appendingPathComponent("Library/\(folder)")
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            try key.write(to: dir.appendingPathComponent("baneyspaces-signing.keychain-db"), atomically: true, encoding: .utf8)
+        }
+        let out = try runSigningRestore(home: home)
+        XCTAssertTrue(out.contains("restored the BaneySpaces release signing key"), out)
+        let legacy = home.appendingPathComponent("Library/Application Support/BaneySpaces/Signing/baneyspaces-signing.keychain-db")
+        XCTAssertEqual(try String(contentsOf: legacy, encoding: .utf8), "new", "the newest dated folder, back under the old names")
+        XCTAssertFalse(fm.fileExists(atPath: home.appendingPathComponent("Library/Application Support/Polycarp/Signing").path), "no second key is made")
+    }
+
     func testSigningRestoresIntoAnExistingEmptyFolder() throws {
         let home = try signingSandbox(kept: ["Polycarp Release Signing": "key"], existingDir: true)
         defer { try? FileManager.default.removeItem(at: home) }

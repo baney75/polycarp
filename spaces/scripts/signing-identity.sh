@@ -35,34 +35,42 @@ healthy() {
 # deleting it (uninstall.sh). Bring it back before anything decides the key is gone: a new key
 # wouldn't match the requirement every release is checked against. The folder is "Polycarp
 # Release Signing", or the newest "Polycarp Release Signing <date>" when that name was taken.
-KEPT="$HOME/Library/Polycarp Release Signing"
-restore_kept() {
-  local src="" d
-  if [ -f "$KEPT/polycarp-signing.keychain-db" ]; then
-    src=$KEPT
+# BaneySpaces' own uninstaller kept its key the same way, under its own names ("BaneySpaces Release
+# Signing", baneyspaces-signing.keychain-db); that one goes back to the legacy folder, where the key keeps working.
+# restore_from <kept folder base> <keychain file name> <where it goes> <label>
+restore_from() {
+  local kept=$1 file=$2 dir=$3 label=$4 src="" d
+  if [ -f "$kept/$file" ]; then
+    src=$kept
   else
-    for d in "$KEPT "*; do   # the dates sort oldest first, so the last one is the newest
-      if [ -f "$d/polycarp-signing.keychain-db" ]; then src=$d; fi
+    for d in "$kept "*; do   # the dates sort oldest first, so the last one is the newest
+      if [ -f "$d/$file" ]; then src=$d; fi
     done
   fi
-  [ -n "$src" ] || return 0
-  rmdir "$DIR" 2>/dev/null || true   # an empty folder is in the way of moving the whole one
-  if [ ! -e "$DIR" ]; then
-    mkdir -p "$(dirname "$DIR")"
-    mv "$src" "$DIR"
+  [ -n "$src" ] || return 1
+  rmdir "$dir" 2>/dev/null || true   # an empty folder is in the way of moving the whole one
+  if [ ! -e "$dir" ]; then
+    mkdir -p "$(dirname "$dir")"
+    mv "$src" "$dir"
   else
     # Something is already there: move the contents over, dotfiles included.
     local f
     for f in "$src"/* "$src"/.[!.]*; do
       [ -e "$f" ] || continue
-      mv "$f" "$DIR"/
+      mv "$f" "$dir"/
     done
     rmdir "$src" 2>/dev/null || true
   fi
-  chmod 700 "$DIR"
-  echo "note: restored the Polycarp release signing key from $src" >&2
+  chmod 700 "$dir"
+  echo "note: restored the $label release signing key from $src" >&2
 }
-if [ ! -f "$KC" ] && [ ! -s "$PASS_FILE" ]; then restore_kept; fi
+if [ ! -f "$KC" ] && [ ! -s "$PASS_FILE" ]; then
+  if ! restore_from "$HOME/Library/Polycarp Release Signing" polycarp-signing.keychain-db "$DIR" Polycarp \
+     && [ ! -f "$LEGACY_DIR/baneyspaces-signing.keychain-db" ] \
+     && restore_from "$HOME/Library/BaneySpaces Release Signing" baneyspaces-signing.keychain-db "$LEGACY_DIR" BaneySpaces; then
+    NAME="BaneySpaces Local Signing"; DIR="$LEGACY_DIR"; KC="$DIR/baneyspaces-signing.keychain-db"; PASS_FILE="$DIR/keychain-password"
+  fi
+fi
 # For the test: stop after the restore, before anything touches a keychain.
 [ -z "${BANEYSPACES_SIGNING_RESTORE_ONLY:-}" ] || exit 0
 

@@ -217,8 +217,21 @@ CLAUDE="$HOME/.claude/settings.json"
 ours="(ghostdeck|baneyspaces|polycarp-spaces)(\\\\?['\"])? +hook +(claude|grok)"
 # The hooks, the agent skill and the command links are shared with a BaneySpaces that is still
 # installed, which keeps working on them; they go only when it is not there.
+# Hooks Polycarp wrote name its command, polycarp-spaces, which is going. For BaneySpaces to keep reporting they must
+# name its command, the baneyspaces link, instead. Written in place (cat into the file), so a symlinked settings file
+# and its permissions stay.
+rewrite_hooks() {  # file
+  [ -f "$1" ] || return 0
+  local q="'" tmp
+  grep -Eq "polycarp-spaces([${q}\"\\\\]*) +hook" "$1" || return 0
+  tmp=$(mktemp) || return 1
+  sed -E "s#polycarp-spaces([${q}\"\\\\]*) +hook#baneyspaces\\1 hook#g" "$1" > "$tmp" && cat "$tmp" > "$1" || problem "Couldn't point the hooks in $1 at BaneySpaces' command: change 'polycarp-spaces hook' to 'baneyspaces hook' there."
+  rm -f "$tmp"
+}
 if [ -n "$LEGACY_APP" ]; then
-  step "Leaving the agent hooks and skill for BaneySpaces, which is still installed"
+  step "Leaving the agent hooks and skill for BaneySpaces, which is still installed (its command name goes into them)"
+  rewrite_hooks "$CLAUDE"
+  rewrite_hooks "$HOME/.grok/hooks/baneyspaces.json"
 elif [ -f "$CLAUDE" ] && grep -Eq "$ours" "$CLAUDE"; then
   step "Removing its hooks from Claude Code's settings (your own hooks stay)"
   had_backup=""; [ -f "$CLAUDE.baneyspaces-backup" ] && had_backup=1
@@ -335,7 +348,9 @@ echo
 if [ ${#problems[@]} -eq 0 ]; then
   printf '%sPolycarp is removed.%s\n' "$bold" "$reset"
   echo "Your windows, Dock, shortcuts and agent settings are back as they were."
-  echo "Its permission, settings, login item and command are gone too."
+  echo "Its permission, settings and login item are gone too."
+  echo "The polycarp command and your theme files stay on purpose: Voice and Browser use them too."
+  echo "To remove the command as well: cargo uninstall --root ~/.local polycarp"
   exit 0
 fi
 printf '%sPolycarp is removed, but some things need a hand:%s\n' "$bold" "$reset"

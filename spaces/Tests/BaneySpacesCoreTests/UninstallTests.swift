@@ -293,9 +293,17 @@ final class UninstallTests: XCTestCase {
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path("\(old)/Contents/MacOS/BaneySpaces").path)
         try write("\(old)/Contents/Resources/bin/baneyspaces", "cli")
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path("\(old)/Contents/Resources/bin/baneyspaces").path)
-        let hook = "'/Users/x/.local/bin/baneyspaces' hook claude 2>/dev/null || true"
-        let settings: [String: Any] = ["hooks": ["Stop": [["hooks": [["type": "command", "command": hook]]]]]]
+        // What Polycarp's own `hooks install` writes (the new command name), next to one written by BaneySpaces.
+        let mine = "'/Users/x/.local/bin/polycarp-spaces' hook claude 2>/dev/null || true"
+        let quoted = "\"/Users/x/.local/bin/polycarp-spaces\" hook claude"
+        let theirs = "'/Users/x/.local/bin/baneyspaces' hook claude 2>/dev/null || true"
+        let settings: [String: Any] = ["hooks": [
+            "Stop": [["hooks": [["type": "command", "command": theirs]]]],
+            "SessionStart": [["hooks": [["type": "command", "command": mine]]]],
+            "SessionEnd": [["hooks": [["type": "command", "command": quoted]]]]]]
         try write(".claude/settings.json", String(decoding: try JSONSerialization.data(withJSONObject: settings), as: UTF8.self))
+        let grok: [String: Any] = ["hooks": ["Stop": [["hooks": [["type": "command", "command": "'/Users/x/.local/bin/polycarp-spaces' hook grok 2>/dev/null || true"]]]]]]
+        try write(".grok/hooks/baneyspaces.json", String(decoding: try JSONSerialization.data(withJSONObject: grok), as: UTF8.self))
         try write(".claude/skills/baneyspaces/SKILL.md", "skill")
         try write("Library/Application Support/BaneySpaces/state.json", "{}")
         let app = "Applications/Polycarp.app"
@@ -310,7 +318,14 @@ final class UninstallTests: XCTestCase {
         XCTAssertFalse(fm.fileExists(atPath: path(app).path), "Polycarp itself goes")
         XCTAssertTrue(fm.fileExists(atPath: path(old).path), "BaneySpaces is never removed")
         XCTAssertTrue(fm.fileExists(atPath: path("Library/Application Support/BaneySpaces/state.json").path), "its data stays")
-        XCTAssertTrue(try String(contentsOf: path(".claude/settings.json"), encoding: .utf8).contains("baneyspaces' hook claude"), "its hooks stay")
+        let claude = try String(contentsOf: path(".claude/settings.json"), encoding: .utf8)
+        XCTAssertTrue(claude.contains("baneyspaces' hook claude"), "its hooks stay")
+        XCTAssertFalse(claude.contains("polycarp-spaces"), "hooks Polycarp wrote now name BaneySpaces' command: \(claude)")
+        XCTAssertEqual(claude.components(separatedBy: "baneyspaces").count - 1, 3, "all three hooks (single and double quoted) point at the link that stays")
+        let grokText = try String(contentsOf: path(".grok/hooks/baneyspaces.json"), encoding: .utf8)
+        XCTAssertTrue(grokText.contains("baneyspaces' hook grok") && !grokText.contains("polycarp-spaces"), grokText)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: path(".claude/settings.json"))) as? [String: Any], "still valid JSON")
+        XCTAssertNotNil(json["hooks"])
         XCTAssertTrue(fm.fileExists(atPath: path(".claude/skills/baneyspaces/SKILL.md").path))
         XCTAssertFalse(fm.fileExists(atPath: path(".local/bin/polycarp-spaces").path))
         for name in ["baneyspaces", "ghostdeck"] {
@@ -352,6 +367,8 @@ final class UninstallTests: XCTestCase {
     func testRunsOnAnEmptyHome() throws {
         let out = try uninstall()
         XCTAssertTrue(out.contains("Polycarp is removed."), out)
+        XCTAssertTrue(out.contains("The polycarp command and your theme files stay on purpose"), "it says what it leaves, not that everything is gone: \(out)")
+        XCTAssertFalse(out.contains("and command are gone"), out)
     }
 
     /// A stand-in `security` that reports the certificate's SHA-1 and nothing else; no real key is read.
