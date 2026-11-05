@@ -1244,7 +1244,8 @@ fn history_survives_the_end_marker_and_newlines_in_titles_and_callers() {
     assert_eq!(code(&b.run_stdin(&["theme", "apply", "-"], &doc)), 0);
     let theme_file = b.cfg().join("themes").join("mine.toml");
     let first = fs::read_to_string(&theme_file).unwrap();
-    for title in ["# ---", "a\n# ---\nb", "# ---\n# time = nope\n# ---"] {
+    // Titles can no longer hold line breaks; the marker text itself is still harmless.
+    for title in ["# ---", "a # --- b", "# --- # time = nope # ---"] {
         let before = fs::read_to_string(&theme_file).unwrap();
         let o = b
             .cmd(&["theme", "change", "title", title])
@@ -3213,4 +3214,17 @@ fn title_and_description_refuse_control_characters() {
     let b = Box::new();
     let doc = "name = \"fine\"\ntitle = \"Caf\u{e9} bleu\"\ndescription = \"A calm theme.\"\nextends = \"polycarp\"\n";
     assert_eq!(code(&b.run_stdin(&["theme", "apply", "-"], doc)), 0);
+}
+
+#[test]
+fn windows_reserved_names_are_refused_everywhere() {
+    for name in ["con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9"] {
+        let b = Box::new();
+        let (c, v) = b.jrun(&["create", name, "--extends", "polycarp"]);
+        assert_eq!(c, 1, "{name}: {v}");
+        assert_eq!(v["error"]["code"], "invalid_theme", "{name}: {v}");
+        assert!(!b.cfg().join("themes").join(format!("{name}.toml")).exists());
+    }
+    let b = Box::new();
+    b.ok(&["create", "com10", "--extends", "polycarp"]);
 }

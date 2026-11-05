@@ -32,8 +32,8 @@ A user theme cannot use the name of a built-in theme.
 ## The format
 
 ```toml
-name = "mine"            # required. Lowercase letters, digits and hyphens. Must match the file name.
-title = "Mine"           # required, unless a theme it extends has one
+name = "mine"            # required. Lowercase letters, digits and hyphens, up to 48, not starting with a hyphen. Must match the file name. The Windows reserved names (con, prn, aux, nul, com1 to com9, lpt1 to lpt9) are refused on every system.
+title = "Mine"           # required, unless a theme it extends has one. No control characters, same for description
 description = "..."      # optional
 extends = "evening"      # optional. One theme. Up to 8 deep. No loops.
 ```

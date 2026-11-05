@@ -142,8 +142,19 @@ fn fields(section: &str) -> Vec<(&'static str, Kind)> {
     }
 }
 
+/// Names Windows will not use for a file, whatever the extension. Refused on every system so a
+/// theme made on one machine works on all of them.
+fn is_reserved_name(n: &str) -> bool {
+    matches!(n, "con" | "prn" | "aux" | "nul")
+        || ["com", "lpt"].iter().any(|p| {
+            n.strip_prefix(p)
+                .is_some_and(|d| matches!(d.as_bytes(), [b'1'..=b'9']))
+        })
+}
+
 pub fn valid_name(n: &str) -> bool {
     !n.is_empty()
+        && !is_reserved_name(n)
         && n.len() <= 48
         && !n.starts_with('-')
         && n.bytes()
@@ -3803,6 +3814,12 @@ mod tests {
         assert!(!valid_name("../x"));
         assert!(!valid_name("-x"));
         assert!(!valid_name(""));
+        for r in ["con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9"] {
+            assert!(!valid_name(r), "{r}");
+        }
+        for ok in ["com", "com0", "com10", "lpt", "console", "my-con", "aux2"] {
+            assert!(valid_name(ok), "{ok}");
+        }
     }
 
     #[test]
