@@ -1427,11 +1427,7 @@ fn undo_will_not_overwrite_a_hand_edited_theme_unless_forced() {
     assert_eq!(fs::read_to_string(copy).unwrap(), edited);
     assert!(Path::new(copy).starts_with(b.cfg().join("history")));
     assert!(!theme_file.exists());
-    assert_eq!(
-        b.history_count(),
-        hist,
-        "the entry is gone, the copy stays"
-    );
+    assert_eq!(b.history_count(), hist, "the entry is gone, the copy stays");
 }
 
 #[test]
@@ -3141,4 +3137,43 @@ fn create_refuses_a_theme_that_would_not_load_such_as_too_deep_an_extends_chain(
     assert!(b.run(&["theme", "list"]).status.success());
     let list = b.ok(&["list"]);
     assert!(!list.contains("problem"), "{list}");
+}
+
+#[test]
+fn apply_keeps_mode_and_accents_when_only_the_old_theme_was_broken() {
+    let b = Box::new();
+    let mine = user_theme("mine", "polycarp", "");
+    assert_eq!(code(&b.run_stdin(&["theme", "apply", "-"], &mine)), 0);
+    b.ok(&["set", "mine", "--mode", "dark"]);
+    b.ok(&["accent", GREEN_L, "--mode", "light"]);
+    // Break the theme that is in force. config.toml is still fine.
+    fs::write(
+        b.cfg().join("themes").join("mine.toml"),
+        "this is = not [valid",
+    )
+    .unwrap();
+    let other = user_theme("other", "calm", "");
+    let o = b.run_stdin(&["theme", "apply", "-", "--json"], &other);
+    assert_eq!(code(&o), 0, "{}{}", err(&o), out(&o));
+    let cur = b.json(&["current", "--json"]);
+    assert_eq!(cur["theme"], "other", "{cur}");
+    assert_eq!(cur["mode"], "dark", "{cur}");
+    assert_eq!(cur["accent_light"], GREEN_L, "{cur}");
+}
+
+#[test]
+fn apply_says_when_it_replaced_invalid_settings() {
+    let b = Box::new();
+    fs::create_dir_all(b.cfg()).unwrap();
+    fs::write(b.state_file(), "[appearance]\nmode = \"sideways\"\n").unwrap();
+    let doc = user_theme("other", "calm", "");
+    let o = b.run_stdin(&["theme", "apply", "-", "--json"], &doc);
+    assert_eq!(code(&o), 0, "{}{}", err(&o), out(&o));
+    let v: Value = serde_json::from_str(&out(&o)).unwrap();
+    assert!(
+        v["data"]["notes"]
+            .to_string()
+            .contains("old settings were invalid"),
+        "{v}"
+    );
 }

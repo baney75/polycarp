@@ -2867,7 +2867,14 @@ pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) ->
 
     let mut notes = Vec::new();
     let st_opt = if activate {
-        let mut st = effective(&c.cfg).state;
+        // Like `set`: keep the mode and accents when only the theme was broken.
+        let (mut st, old_problems) = load_state(&c.cfg);
+        if !old_problems.is_empty() {
+            notes.push(format!(
+                "the old settings were invalid and are replaced: {}",
+                old_problems.join("; ")
+            ));
+        }
         st.theme = name.clone();
         if apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref()).is_err() {
             notes.push(format!(
