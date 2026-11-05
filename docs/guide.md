@@ -125,7 +125,7 @@ polycarp theme validate "$(polycarp theme edit-path mine)"
 polycarp theme set mine
 ```
 
-To remove a theme later, switch away from it first, then run `polycarp theme delete mine`. `create` won't replace an existing theme unless you add `--force`.
+To remove a theme later, switch away from it first, then run `polycarp theme delete mine`. `delete` refuses a theme that another of your themes extends, and names them. `create` won't replace an existing theme unless you add `--force`.
 
 List only what differs from the theme you extend:
 
