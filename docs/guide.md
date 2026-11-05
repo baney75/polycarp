@@ -12,7 +12,7 @@ Polycarp is being assembled from three apps: BaneySpaces, Silas and Tabkyra. Her
 - `polycarp theme` checks, writes, previews and undoes theme files, and agents can do the same over MCP.
 - This website is built from the same six themes, and you can try them here. It doesn't read your own files.
 - Voice and Browser can read your theme files. That support is merged but not released yet. Spaces' is coming. Until an app is updated, it keeps its own look and settings.
-- `polycarp theme off` returns every app to its own look, and `polycarp theme on` brings your theme back.
+- `polycarp theme off` removes the theme files, so apps that read them go back to their own look. `polycarp theme on` brings your theme back.
 - The apps install separately for now. The old app names still appear on your computer.
 
 The [plan](https://github.com/baney75/polycarp/blob/main/PLAN.md) lists every step and the check that proves it.
@@ -125,7 +125,7 @@ polycarp theme validate "$(polycarp theme edit-path mine)"
 polycarp theme set mine
 ```
 
-To remove a theme later, switch away from it first, then run `polycarp theme delete mine`. `delete` refuses a theme that another of your themes extends, and names them. `create` won't replace an existing theme unless you add `--force`.
+To remove a theme later, switch away from it first, then run `polycarp theme delete mine`. `delete` refuses a theme that another of your themes extends, and names them. It also refuses while a theme file can't be read, since that file might extend it; `delete <name> --force` goes on anyway and keeps a copy in `history/`, and an unreadable theme can itself be deleted when only other unreadable themes are in the way. `create` won't replace an existing theme unless you add `--force`.
 
 List only what differs from the theme you extend:
 
@@ -203,7 +203,7 @@ polycarp theme off
 polycarp theme on
 ```
 
-`off` removes `current/theme.json` and the `current/<product>.css` files, so each app goes back to its own look. It keeps your settings and themes, records the change in `history/`, and says what it removed. `undo` brings the theme back, and so does `polycarp theme on`. `set`, `accent` and `change` also turn the theme on, and tell you so. So does `apply`, unless you add `--no-activate`. `off` and `on` also tidy `current/` if the setting was already that way, and `off` works even if a theme or settings file is broken. If one of the files is a link, `off` removes the link (not what it points to) and `on` writes a plain file. `polycarp theme current` shows whether it is on or off.
+`off` removes `current/theme.json` and the `current/<product>.css` files. Apps that read them go back to their own look. It keeps your settings and themes, records the change in `history/`, and says what it removed. `undo` brings the theme back, and so does `polycarp theme on`. `set`, `accent` and `change` also turn the theme on, and tell you so. So does `apply`, unless you add `--no-activate`. `off` and `on` also tidy `current/` if the setting was already that way, and `off` works even if a theme or settings file is broken. If one of the files is a link, `off` removes the link (not what it points to) and `on` writes a plain file. `polycarp theme current` shows whether it is on or off.
 
 ### Use a theme elsewhere
 
@@ -252,7 +252,7 @@ Any other MCP client can start the same command.
 | `theme_preview` | Write a page to show the person, always in the private previews folder |
 | `theme_export` | Get CSS or JSON |
 | `theme_create`, `theme_delete` | Start a new theme file, or clean one up |
-| `theme_off`, `theme_on` | Return the apps to their own look, or bring the theme back |
+| `theme_off`, `theme_on` | Remove the theme files so apps that read them use their own look, or bring the theme back |
 | `theme_history`, `theme_undo`, `theme_reset` | See changes and go back |
 
 ### The workflow
@@ -307,13 +307,13 @@ export POLYCARP_SPACES_BIN="$HOME/tools/baneyspaces"
 
 ### Not found, but the app is right here
 
-Polycarp won't run a tool inside your current folder, including `node_modules/.bin` below it, because a project could plant one there. Move to another folder. The exceptions are `/`, and, when you are in your home folder or above it, tools under `~/.local/bin`. If the app still isn't on your `PATH` or in a usual install folder, set its override to the full path, as above.
+Polycarp won't run a tool inside your current folder, including `node_modules/.bin` below it, because a project could plant one there. Move to another folder. The exceptions are `/`, and, when you are in your home folder or above it, normal per-user installs: anything under `~/.local`, `~/.cargo/bin`, `~/.bun/bin`, `~/.volta/bin`, `~/.nvm`, `~/.asdf`, `~/.config/tabkyra`, any `~/Applications/*.app`, and `/opt` and `/usr`. A project folder, `~/node_modules/.bin` and a file directly in `~` stay refused, and a link is judged by where it sits and where it leads. If the app still isn't on your `PATH` or in a usual install folder, set its override to the full path, as above.
 
 ### My theme changed nothing in the apps
 
 Voice and Browser support for theme files is merged but not released, so the versions you can install today may not read them yet. Spaces' support is coming. This website doesn't read your files either: it has its own theme picker.
 
-If you want an app to show its own look, run `polycarp theme off`.
+If you want apps to show their own look, run `polycarp theme off`. It removes the theme files; an app that reads them then goes back to its own look. If a file can't be removed, `off` fails and names it.
 
 ### My accent is refused
 

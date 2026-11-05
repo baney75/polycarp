@@ -19,6 +19,10 @@ mod edit;
 mod preview;
 mod schema;
 
+/// What `theme off` has verified: the files are gone. What each app does is its own test.
+const OFF_NOTE: &str =
+    "The theme files are removed. Apps that read them go back to their own look.";
+
 const NOTE: &str =
     "Products read these files once their adapters land. Until then only the files change.";
 
@@ -38,7 +42,7 @@ Usage:
   polycarp theme preview [name] [--mode light|dark|both] [--surface <s>] [--out <file>] [--json]
   polycarp theme create <name> --extends <base> [--force]
   polycarp theme edit-path <name>
-  polycarp theme delete <name>
+  polycarp theme delete <name> [--force]
   polycarp theme validate <file>
   polycarp theme export <css|json> [name] [--surface spaces|voice|browser|site]
   polycarp theme undo [--force]
@@ -1298,6 +1302,18 @@ fn theme_json(full: &Full, state: Option<&State>) -> Json {
     v
 }
 
+/// The files in `current/` that are still there, so a claim that they are gone can be checked.
+fn remaining_theme_files(cfg: &Cfg) -> Vec<PathBuf> {
+    let dir = cfg.current();
+    let mut names = vec!["theme.json".to_string()];
+    names.extend(SURFACES.iter().map(|s| format!("{s}.css")));
+    names
+        .into_iter()
+        .map(|n| dir.join(n))
+        .filter(|p| fs::symlink_metadata(p).is_ok())
+        .collect()
+}
+
 /// Writes every file in `current/`, trying each one even if another fails. Returns the files
 /// written and one message per file that could not be.
 fn write_outputs(cfg: &Cfg, eff: &Eff) -> (Vec<PathBuf>, Vec<String>) {
@@ -2311,10 +2327,31 @@ fn summary_with(
     config_written: bool,
 ) -> Out {
     let off = !eff.state.enabled;
-    let mut text = if off {
+    // Off keeps the chosen theme even if it can't be built now, so show the settings' own.
+    let shown = if off {
+        match load_state(cfg) {
+            (st, p) if p.is_empty() => st,
+            _ => eff.state.clone(),
+        }
+    } else {
+        eff.state.clone()
+    };
+    let left = if off {
+        remaining_theme_files(cfg)
+    } else {
+        Vec::new()
+    };
+    let mut text = if off && !left.is_empty() {
         format!(
-            "the theme is off; the apps use their own look\nlast theme: {}\nmode: {}\n",
-            eff.state.theme, eff.state.mode
+            "the theme is off in the settings, but these files remain and apps may still read them: {}\nlast theme: {}\nmode: {}\n",
+            left.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "),
+            shown.theme,
+            shown.mode
+        )
+    } else if off {
+        format!(
+            "the theme is off\n{OFF_NOTE}\nlast theme: {}\nmode: {}\n",
+            shown.theme, shown.mode
         )
     } else {
         format!("theme: {}\nmode: {}\n", eff.state.theme, eff.state.mode)
@@ -2329,7 +2366,7 @@ fn summary_with(
     if config_written {
         text.push_str(&format!("wrote {}\n", cfg.file().display()));
     }
-    if off && wrote.is_empty() {
+    if off && wrote.is_empty() && left.is_empty() {
         text.push_str("no theme files were in current/\n");
     }
     for w in &wrote {
@@ -2347,16 +2384,17 @@ fn summary_with(
     }
     let data = json!({
         "enabled": eff.state.enabled,
-        "theme": eff.state.theme,
-        "mode": eff.state.mode,
-        "accent_light": eff.state.accent_light,
-        "accent_dark": eff.state.accent_dark,
+        "theme": shown.theme,
+        "mode": shown.mode,
+        "accent_light": shown.accent_light,
+        "accent_dark": shown.accent_dark,
+        "remaining": left.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
         "config": cfg.file().display().to_string(),
         "wrote": if off { Vec::new() } else { wrote.iter().map(|w| w.display().to_string()).collect::<Vec<_>>() },
         "removed": if off { wrote.iter().map(|w| w.display().to_string()).collect::<Vec<_>>() } else { Vec::new() },
-        "note": NOTE,
+        "note": if off { OFF_NOTE } else { NOTE },
         "next": if off {
-            "The apps use their own look. Run theme on, or theme undo, to bring the theme back."
+            "Run theme on, or theme undo, to bring the theme back."
         } else {
             "Look at it with theme preview. If the person dislikes it, run theme undo."
         },
@@ -2540,6 +2578,13 @@ fn set_enabled(c: &Ctx, want: bool) -> Res {
         }
         st.enabled = want;
         let mut out = commit(c, Some(&st), &format!("theme {word}"), None)?;
+        let left = remaining_theme_files(&c.cfg);
+        if !want && !left.is_empty() {
+            return Err(io_err(format!(
+                "the settings now say the theme is off, but these files could not be removed, so apps may still read them: {}",
+                left.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+            )));
+        }
         out.notes.splice(0..0, notes);
         out.with(json!({"changed": true}))
     };
@@ -2855,28 +2900,24 @@ fn current_name_lenient(cfg: &Cfg) -> Option<String> {
         .map(str::to_string)
 }
 
-/// The user themes that extend `name`. Fails closed: a theme file or folder that can't be read
-/// or parsed might extend it, so it is an error that names the file.
-fn dependents_of(cfg: &Cfg, name: &str) -> Result<Vec<String>, ApiErr> {
+/// The user themes that extend `name`, and the theme files that could not be read or parsed
+/// (they might extend it). Only a folder that can't be listed is an error.
+fn dependents_of(cfg: &Cfg, name: &str) -> Result<(Vec<String>, Vec<String>), ApiErr> {
     let dir = cfg.themes();
+    let no_list = |e: std::io::Error| {
+        io_err(format!(
+            "could not read {}, so it is not known whether another theme extends {name:?}: {e}",
+            dir.display()
+        ))
+    };
     let rd = match fs::read_dir(&dir) {
         Ok(rd) => rd,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => {
-            return Err(io_err(format!(
-                "could not read {}, so it is not known whether another theme extends {name:?}: {e}",
-                dir.display()
-            )))
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((Vec::new(), Vec::new())),
+        Err(e) => return Err(no_list(e)),
     };
-    let mut found = Vec::new();
+    let (mut found, mut unreadable) = (Vec::new(), Vec::new());
     for entry in rd {
-        let entry = entry.map_err(|e| {
-            io_err(format!(
-                "could not read {}, so it is not known whether another theme extends {name:?}: {e}",
-                dir.display()
-            ))
-        })?;
+        let entry = entry.map_err(no_list)?;
         let file = entry.file_name().to_string_lossy().into_owned();
         let Some(other) = file.strip_suffix(".toml") else {
             continue;
@@ -2887,16 +2928,38 @@ fn dependents_of(cfg: &Cfg, name: &str) -> Result<Vec<String>, ApiErr> {
         match load_raw(cfg, other) {
             Ok(t) if ext_of(&t).as_deref() == Some(name) => found.push(other.to_string()),
             Ok(_) => {}
-            Err(e) => {
-                return Err(io_err(format!(
-                    "could not read {}, so it is not known whether it extends {name:?}: {e}",
-                    entry.path().display()
-                )))
-            }
+            Err(e) => unreadable.push(format!("{} ({e})", entry.path().display())),
         }
     }
     found.sort();
-    Ok(found)
+    unreadable.sort();
+    Ok((found, unreadable))
+}
+
+/// Refuses to remove theme `name` while another theme extends it. A theme file that can't be
+/// read might extend it, so that refuses too, unless `force`, or unless `name` is itself
+/// unparsable (then only other unreadable themes are in the way). `hint` is the way out.
+fn check_dependents(
+    cfg: &Cfg,
+    name: &str,
+    force: bool,
+    what: &str,
+    hint: &str,
+) -> Result<(), ApiErr> {
+    let (found, unreadable) = dependents_of(cfg, name)?;
+    if !found.is_empty() {
+        return Err(in_use(name, &found, what));
+    }
+    if unreadable.is_empty() || force || load_raw(cfg, name).is_err() {
+        return Ok(());
+    }
+    Err(io_err(format!(
+        "could not read {}, so it is not known whether it extends {name:?}; nothing was {what}",
+        unreadable.join("; ")
+    ))
+    .suggest(format!(
+        "Fix or delete the unreadable theme, or use `{hint}` to go on anyway. A copy is kept in history."
+    )))
 }
 
 fn in_use(name: &str, dependents: &[String], what: &str) -> ApiErr {
@@ -2910,7 +2973,7 @@ fn in_use(name: &str, dependents: &[String], what: &str) -> ApiErr {
     )
 }
 
-pub(crate) fn op_delete(c: &Ctx, name: &str) -> Res {
+pub(crate) fn op_delete(c: &Ctx, name: &str, force: bool) -> Res {
     user_theme_name(name)?;
     if is_builtin(name) {
         return Err(ApiErr::at(
@@ -2947,10 +3010,13 @@ pub(crate) fn op_delete(c: &Ctx, name: &str) -> Res {
         ));
     }
     // Another user theme that extends this one would stop loading.
-    let dependents = dependents_of(&c.cfg, name)?;
-    if !dependents.is_empty() {
-        return Err(in_use(name, &dependents, "deleted"));
-    }
+    check_dependents(
+        &c.cfg,
+        name,
+        force,
+        "deleted",
+        &format!("polycarp theme delete {name} --force"),
+    )?;
     let mut out = commit(c, None, &format!("theme delete {name}"), Some((name, None)))?;
     out.text = format!("deleted {}\n{}", path.display(), out.text);
     Ok(out.with(json!({"name": name, "path": path.display().to_string()})))
@@ -3481,11 +3547,14 @@ pub(crate) fn op_undo(c: &Ctx, force: bool) -> Res {
     // Undoing a create removes the theme file. Refuse if another theme extends it, as `delete` does.
     if let (Some(name), true) = (last.theme_name.as_deref(), last.theme_absent) {
         if !force {
-            let dependents = dependents_of(&c.cfg, name)?;
-            if !dependents.is_empty() {
-                return Err(in_use(name, &dependents, "undone")
-                    .suggest("Use `polycarp theme undo --force` to remove it anyway."));
-            }
+            check_dependents(&c.cfg, name, false, "undone", "polycarp theme undo --force")
+                .map_err(|e| {
+                    if e.code == "in_use" {
+                        e.suggest("Use `polycarp theme undo --force` to remove it anyway.")
+                    } else {
+                        e
+                    }
+                })?;
         }
     }
 
@@ -3637,10 +3706,6 @@ pub(crate) fn op_reset(c: &Ctx) -> Res {
     }
     let mut out = finish_with(&c.cfg, true)?;
     if was_off {
-        out.text = format!(
-            "reset turned the theme on, with the default theme\n{}",
-            out.text
-        );
         out.notes
             .push("the theme was off; reset turned it on, with the default theme".to_string());
     }
@@ -3907,9 +3972,9 @@ pub fn run(args: &[OsString]) -> i32 {
             exactly(p, 1, "one theme name")?;
             op_edit_path(c, &p.pos[0])
         }),
-        "delete" => cmd(rest, &[], &[], |c, p| {
+        "delete" => cmd(rest, &[], &["force"], |c, p| {
             exactly(p, 1, "one theme name")?;
-            op_delete(c, &p.pos[0])
+            op_delete(c, &p.pos[0], p.flag("force"))
         }),
         "validate" => cmd(rest, &[], &[], |c, p| {
             exactly(p, 1, "one file")?;

@@ -3426,8 +3426,9 @@ fn reset_says_it_turns_the_theme_on_with_the_default() {
     let b = Box::new();
     b.ok(&["set", "evening"]);
     b.ok(&["off"]);
-    let said = b.ok(&["reset"]);
-    assert!(said.contains("turned the theme on"), "{said}");
+    let o = b.run(&["theme", "reset"]);
+    let said = format!("{}{}", out(&o), err(&o));
+    assert!(said.contains("turned it on"), "{said}");
     assert_eq!(b.json(&["current", "--json"])["enabled"], true);
     assert_eq!(b.json(&["current", "--json"])["theme"], "polycarp");
     assert_eq!(current_files(&b).len(), 5);
@@ -3648,4 +3649,138 @@ fn undo_of_a_create_refuses_while_another_theme_extends_it_unless_forced() {
     assert!(b.snapshot() == before, "a refusal changed something");
     b.ok(&["undo", "--force"]);
     assert!(!b.cfg().join("themes/base.toml").exists());
+}
+
+/// The "was off" message reaches a person exactly once, whichever command turned the theme on.
+#[test]
+fn the_turned_on_message_appears_exactly_once_in_plain_text() {
+    let doc = user_theme("other", "calm", "");
+    let cases: [(&[&str], Option<&str>); 5] = [
+        (&["set", "calm"], None),
+        (&["accent", "#2f6b55", "--mode", "light"], None),
+        (&["change", "shape.radius", "3"], None),
+        (&["apply", "-"], Some(doc.as_str())),
+        (&["reset"], None),
+    ];
+    for (args, stdin) in cases {
+        let b = Box::new();
+        b.ok(&["set", "evening"]);
+        b.ok(&["off"]);
+        let mut a = vec!["theme"];
+        a.extend_from_slice(args);
+        let o = match stdin {
+            Some(t) => b.run_stdin(&a, t),
+            None => b.run(&a),
+        };
+        assert_eq!(code(&o), 0, "{args:?}: {}", err(&o));
+        let all = format!("{}{}", out(&o), err(&o));
+        assert_eq!(all.matches("was off").count(), 1, "{args:?}:\n{all}");
+    }
+}
+
+#[test]
+fn off_that_leaves_a_file_fails_and_names_it_without_claiming_success() {
+    let b = Box::new();
+    b.ok(&["set", "calm"]);
+    let stuck = b.cfg().join("current/theme.json");
+    fs::remove_file(&stuck).unwrap();
+    fs::create_dir(&stuck).unwrap();
+    fs::write(stuck.join("keep"), "x").unwrap();
+    let o = b.run(&["theme", "off"]);
+    assert_ne!(code(&o), 0);
+    let all = format!("{}{}", out(&o), err(&o));
+    assert!(all.contains("theme.json"), "{all}");
+    assert!(
+        !all.contains("own look") && !all.contains("no theme files"),
+        "{all}"
+    );
+    // Again, when the settings already say off: still an error, still no claim.
+    let o = b.run(&["theme", "off"]);
+    assert_ne!(code(&o), 0);
+    let all = format!("{}{}", out(&o), err(&o));
+    assert!(
+        !all.contains("own look") && !all.contains("no theme files"),
+        "{all}"
+    );
+}
+
+#[test]
+fn off_names_the_theme_it_kept_and_says_only_what_was_verified() {
+    let b = Box::new();
+    b.ok(&["create", "mine", "--extends", "evening"]);
+    b.ok(&["set", "mine"]);
+    fs::write(b.cfg().join("themes/mine.toml"), "this is [not toml").unwrap();
+    let said = b.ok(&["off"]);
+    assert!(said.contains("last theme: mine"), "{said}");
+    assert!(
+        said.contains(
+            "The theme files are removed. Apps that read them go back to their own look."
+        ),
+        "{said}"
+    );
+    let (_, v) = b.jrun(&["off"]);
+    assert_eq!(v["data"]["theme"], "mine", "{v}");
+    assert_eq!(
+        v["data"]["note"],
+        "The theme files are removed. Apps that read them go back to their own look."
+    );
+    assert!(!v["data"]["note"]
+        .as_str()
+        .unwrap()
+        .contains("Products read"));
+}
+
+#[test]
+fn delete_force_goes_past_an_unreadable_theme_and_keeps_a_copy() {
+    let b = Box::new();
+    b.ok(&["create", "base", "--extends", "calm"]);
+    b.ok(&["create", "kid", "--extends", "base"]);
+    fs::write(b.cfg().join("themes/kid.toml"), "extends = [oops").unwrap();
+    let (c, v) = b.jrun(&["delete", "base"]);
+    assert_eq!(c, 1, "{v}");
+    assert!(
+        v["error"]["suggestion"]
+            .as_str()
+            .unwrap()
+            .contains("--force"),
+        "{v}"
+    );
+    let (c, v) = b.jrun(&["delete", "base", "--force"]);
+    assert_eq!(c, 0, "{v}");
+    assert!(!b.cfg().join("themes/base.toml").exists());
+    // The copy is in history: undo brings the theme back.
+    b.ok(&["undo"]);
+    assert!(b.cfg().join("themes/base.toml").is_file());
+    // --force never overrides a theme that is known to extend it.
+    b.write_theme("kid", &user_theme("kid", "base", ""));
+    let (c, v) = b.jrun(&["delete", "base", "--force"]);
+    assert_eq!((c, &v["error"]["code"]), (1, &"in_use".into()), "{v}");
+}
+
+#[test]
+fn two_unreadable_themes_can_each_be_deleted() {
+    let b = Box::new();
+    b.write_theme("a", "extends = [oops");
+    b.write_theme("b", "also [broken");
+    b.ok(&["delete", "a"]);
+    b.ok(&["delete", "b"]);
+    assert!(!b.cfg().join("themes/a.toml").exists());
+    assert!(!b.cfg().join("themes/b.toml").exists());
+}
+
+#[test]
+fn undo_blocked_by_an_unreadable_theme_names_force() {
+    let b = Box::new();
+    b.ok(&["create", "base", "--extends", "calm"]);
+    b.write_theme("kid", "extends = [oops");
+    let (c, v) = b.jrun(&["undo"]);
+    assert_eq!(c, 1, "{v}");
+    assert!(
+        v["error"]["suggestion"]
+            .as_str()
+            .unwrap()
+            .contains("undo --force"),
+        "{v}"
+    );
+    b.ok(&["undo", "--force"]);
 }

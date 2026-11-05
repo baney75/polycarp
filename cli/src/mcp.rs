@@ -146,9 +146,10 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "theme_delete",
-            description: "Delete a user theme, for example one you made with theme_create or theme_apply and no longer need. Built-in themes, the current theme and a theme the current one extends are refused. theme_undo brings it back.",
+            description: "Delete a user theme, for example one you made with theme_create or theme_apply and no longer need. Built-in themes, the current theme, a theme the current one extends and a theme another user theme extends are refused. An unreadable theme file also blocks it unless force is true. theme_undo brings it back.",
             schema: obj(json!({
                 "name": {"type":"string","description":"The user theme to delete, a name from theme_list."},
+                "force": {"type":"boolean","description":"Delete even though a theme file could not be read, so it is unknown whether it extends this one. A copy is kept in history. A theme that is known to extend it still blocks."},
             }), &["name"]),
             read_only: false,
             destructive: true,
@@ -216,7 +217,7 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "theme_off",
-            description: "Turn the theme off so every app goes back to its own look. Removes current/theme.json and the css files and records enabled = false; your themes and settings stay on disk. Use it when the person wants the apps' own look back. theme_on or theme_undo brings the theme back.",
+            description: "Turn the theme off. Removes current/theme.json and the css files and records enabled = false; your themes and settings stay on disk. Apps that read those files go back to their own look. Use it when the person wants the apps' own look back. It fails, naming the files left, if any file cannot be removed. theme_on or theme_undo brings the theme back.",
             schema: obj(json!({}), &[]),
             read_only: false,
             destructive: true,
@@ -362,7 +363,9 @@ fn call(name: &str, args: Option<&Json>, caller: &str) -> Option<theme::Envelope
                 a.need("extends")?,
                 a.flag("force")?.unwrap_or(false),
             ),
-            "theme_delete" => theme::op_delete(&c, a.need("name")?),
+            "theme_delete" => {
+                theme::op_delete(&c, a.need("name")?, a.flag("force")?.unwrap_or(false))
+            }
             "theme_accent" => {
                 if a.flag("clear")?.unwrap_or(false) {
                     if a.text("color")?.is_some() {
