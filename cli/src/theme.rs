@@ -553,6 +553,9 @@ struct Full {
     description: Option<String>,
     base: Resolved,
     surfaces: BTreeMap<String, Resolved>,
+    /// "<surface>.<mode>" for each surface that sets its own `accent` in that mode. An accent
+    /// override from `theme accent` does not replace those.
+    pinned: BTreeSet<String>,
 }
 
 impl Full {
@@ -629,8 +632,11 @@ fn is_builtin(name: &str) -> bool {
 // Where things live
 // ---------------------------------------------------------------------------------------------
 
+#[derive(Clone)]
 struct Cfg {
     dir: PathBuf,
+    /// A theme file that is not on disk yet: (name, TOML text). Lets a change be tried first.
+    overlay: Option<(String, String)>,
 }
 
 impl Cfg {
@@ -656,7 +662,13 @@ impl Cfg {
                 .join(".config")
                 .join("polycarp")
         };
-        Ok(Cfg { dir })
+        Ok(Cfg { dir, overlay: None })
+    }
+    fn with_overlay(&self, name: &str, text: &str) -> Cfg {
+        Cfg {
+            overlay: Some((name.to_string(), text.to_string())),
+            ..self.clone()
+        }
     }
     fn file(&self) -> PathBuf {
         self.dir.join("config.toml")
@@ -685,6 +697,11 @@ fn load_raw(cfg: &Cfg, name: &str) -> Result<Table, String> {
     }
     if let Some((_, src)) = BUILTINS.iter().find(|(n, _)| *n == name) {
         return parse_toml(src);
+    }
+    if let Some((n, text)) = &cfg.overlay {
+        if n == name {
+            return parse_toml(text);
+        }
     }
     let path = cfg.theme_path(name);
     match fs::read_to_string(&path) {
@@ -815,8 +832,21 @@ fn resolve_doc(cfg: &Cfg, start: Table, expect: Option<&str>) -> Result<Full, Ve
         };
         surfaces.insert(s.to_string(), r);
     }
+    let mut pinned = BTreeSet::new();
+    for s in SURFACES {
+        for m in MODES {
+            let own = surface_t
+                .get(s)
+                .and_then(|v| v.get(m))
+                .and_then(|v| v.get("accent"));
+            if own.is_some() {
+                pinned.insert(format!("{s}.{m}"));
+            }
+        }
+    }
     let text = |k: &str| merged.get(k).and_then(Value::as_str).map(str::to_string);
     Ok(Full {
+        pinned,
         name: text("name").unwrap_or_default(),
         title: text("title").unwrap_or_default(),
         description: text("description"),
@@ -833,9 +863,13 @@ fn apply_accents(
     dark: Option<&str>,
 ) -> Result<Full, Vec<String>> {
     let mut out = full.clone();
-    let apply = |r: &mut Resolved| {
+    let apply = |r: &mut Resolved, surface: Option<&str>| {
         for (mode, accent) in [("light", light), ("dark", dark)] {
             let Some(a) = accent else { continue };
+            // A value the theme sets for this product itself wins over the override.
+            if surface.is_some_and(|s| full.pinned.contains(&format!("{s}.{mode}"))) {
+                continue;
+            }
             let c = r.colors_mut(mode);
             let own = c.get("on_accent").cloned().unwrap_or_default();
             let pick = [own.as_str(), "#000000", "#ffffff"]
@@ -847,9 +881,9 @@ fn apply_accents(
             c.insert("on_accent".into(), pick);
         }
     };
-    apply(&mut out.base);
-    for r in out.surfaces.values_mut() {
-        apply(r);
+    apply(&mut out.base, None);
+    for (name, r) in out.surfaces.iter_mut() {
+        apply(r, Some(name.as_str()));
     }
     let probs = out.contrast_problems();
     if probs.is_empty() {
@@ -2180,12 +2214,68 @@ fn finish_with(cfg: &Cfg, soft: bool) -> Res {
     })
 }
 
+/// A theme and the themes it extends, nearest first. Stops quietly at anything unreadable.
+fn chain_names(cfg: &Cfg, start: &str) -> Vec<String> {
+    let mut out = vec![start.to_string()];
+    let mut at = start.to_string();
+    while out.len() <= MAX_DEPTH {
+        let Some(next) = load_raw(cfg, &at).ok().as_ref().and_then(ext_of) else {
+            break;
+        };
+        if out.contains(&next) {
+            break;
+        }
+        out.push(next.clone());
+        at = next;
+    }
+    out
+}
+
+/// Refuses a change to theme `name` (new text `text`) if the current settings use it, directly
+/// or as a parent, and would stop building with the new text.
+fn keep_current_building(c: &Ctx, name: &str, text: &str) -> Result<(), ApiErr> {
+    let (st, problems) = load_state(&c.cfg);
+    if !problems.is_empty() || !chain_names(&c.cfg, &st.theme).iter().any(|n| n == name) {
+        return Ok(());
+    }
+    build_full(&c.cfg.with_overlay(name, text), &st).map(|_| ()).map_err(|ps| {
+        bad_theme(
+            &format!(
+                "{name:?} is part of the current theme {:?}, which would stop working with this change, so nothing changed",
+                st.theme
+            ),
+            &ps,
+        )
+    })
+}
+
+/// Refuses to go on when the settings in force are not the ones in the files, so a change would
+/// quietly replace them with the default theme.
+fn require_healthy(eff: &Eff) -> Result<(), ApiErr> {
+    if eff.problems.is_empty() {
+        return Ok(());
+    }
+    Err(bad_theme(
+        "the current settings are broken, so nothing was changed (the default theme is in use)",
+        &eff.problems,
+    )
+    .suggest("Fix the file named in the errors, or run `polycarp theme reset` to start again from the default. `theme set <name>` also works."))
+}
+
 /// Records the old files for undo, writes a theme file if given, writes the state if given,
-/// then writes the outputs. `file` is (theme name, full text).
-fn commit(c: &Ctx, st: Option<&State>, action: &str, file: Option<(&str, &str)>) -> Res {
+/// then writes the outputs. `file` is (theme name, full text), or (theme name, None) to delete it.
+fn commit(c: &Ctx, st: Option<&State>, action: &str, file: Option<(&str, Option<&str>)>) -> Res {
     record(&c.cfg, &c.caller, action, file.map(|f| f.0)).map_err(io_err)?;
-    if let Some((name, text)) = file {
-        write_atomic(&c.cfg.theme_path(name), text.as_bytes()).map_err(io_err)?;
+    match file {
+        Some((name, Some(text))) => {
+            write_atomic(&c.cfg.theme_path(name), text.as_bytes()).map_err(io_err)?
+        }
+        Some((name, None)) => {
+            let p = c.cfg.theme_path(name);
+            fs::remove_file(&p)
+                .map_err(|e| io_err(format!("could not delete {}: {e}", p.display())))?;
+        }
+        None => {}
     }
     if let Some(st) = st {
         write_atomic(&c.cfg.file(), state_table(&c.cfg, st).as_bytes()).map_err(io_err)?;
@@ -2247,6 +2337,7 @@ pub(crate) fn op_accent(c: &Ctx, color: Option<&str>, mode: Option<&str>) -> Res
     };
     let _lock = Lock::acquire(&c.cfg)?;
     let eff = effective(&c.cfg);
+    require_healthy(&eff)?;
     let mut st = eff.state.clone();
     for m in &modes {
         if *m == "light" {
@@ -2305,6 +2396,17 @@ pub(crate) fn op_create(c: &Ctx, name: &str, base_name: &str, force: bool) -> Re
             format!("{name:?} is a built-in theme name; pick another"),
         ));
     }
+    if chain_names(&c.cfg, base_name).iter().any(|n| n == name) {
+        return Err(ApiErr::at(
+            "invalid_theme",
+            "extends",
+            if base_name == name {
+                format!("{name:?} cannot extend itself")
+            } else {
+                format!("{base_name:?} already extends {name:?}, so {name:?} cannot extend it back")
+            },
+        ));
+    }
     let base = resolve_name(&c.cfg, base_name)
         .map_err(|ps| bad_theme(&format!("cannot extend {base_name:?}"), &ps))?;
     let _lock = Lock::acquire(&c.cfg)?;
@@ -2359,15 +2461,19 @@ pub(crate) fn op_create(c: &Ctx, name: &str, base_name: &str, force: bool) -> Re
          # [surface.site.light]\n\
          # accent = \"#3f6b6a\"\n",
     );
-    write_atomic(&path, s.as_bytes()).map_err(io_err)?;
-    let text = format!(
-        "created {}\nIt extends {base_name}. Edit it, then run `polycarp theme validate` on it.\n",
-        path.display()
+    keep_current_building(c, name, &s)?;
+    let mut out = commit(
+        c,
+        None,
+        &format!("theme create {name}"),
+        Some((name, Some(&s))),
+    )?;
+    out.text = format!(
+        "created {}\nIt extends {base_name}. Edit it, then run `polycarp theme validate` on it.\n{}",
+        path.display(),
+        out.text
     );
-    Ok(Out::new(
-        json!({"name": name, "extends": base_name, "path": path.display().to_string()}),
-        text,
-    ))
+    Ok(out.with(json!({"name": name, "extends": base_name, "path": path.display().to_string()})))
 }
 
 fn user_theme_name(name: &str) -> Result<(), ApiErr> {
@@ -2425,19 +2531,26 @@ pub(crate) fn op_delete(c: &Ctx, name: &str) -> Res {
         ));
     }
     let eff = effective(&c.cfg);
-    if eff.state.theme == name || current_name_lenient(&c.cfg).as_deref() == Some(name) {
+    let current = current_name_lenient(&c.cfg).unwrap_or_else(|| eff.state.theme.clone());
+    if eff.state.theme == name || current == name {
         return Err(ApiErr::at(
             "current_theme",
             "name",
             format!("{name:?} is the current theme; run `polycarp theme set <other>` first"),
         ));
     }
-    fs::remove_file(&path)
-        .map_err(|e| io_err(format!("could not delete {}: {e}", path.display())))?;
-    Ok(Out::new(
-        json!({"name": name, "path": path.display().to_string()}),
-        format!("deleted {}\n", path.display()),
-    ))
+    if chain_names(&c.cfg, &current).iter().any(|n| n == name) {
+        return Err(ApiErr::at(
+            "current_theme",
+            "name",
+            format!(
+                "{name:?} is a base of the current theme {current:?}; run `polycarp theme set <other>` first"
+            ),
+        ));
+    }
+    let mut out = commit(c, None, &format!("theme delete {name}"), Some((name, None)))?;
+    out.text = format!("deleted {}\n{}", path.display(), out.text);
+    Ok(out.with(json!({"name": name, "path": path.display().to_string()})))
 }
 
 // --- whole documents ------------------------------------------------------------------------
@@ -2613,6 +2726,9 @@ pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) ->
     };
     let path = c.cfg.theme_path(&name);
     let replaced = path.exists();
+    if !activate {
+        keep_current_building(c, &name, &saved)?;
+    }
 
     let mut notes = Vec::new();
     let st_opt = if activate {
@@ -2633,7 +2749,7 @@ pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) ->
         c,
         st_opt.as_ref(),
         &format!("theme apply {name}"),
-        Some((&name, &saved)),
+        Some((&name, Some(&saved))),
     )?;
     out.notes.splice(0..0, notes);
     let mut text = format!("saved {}\n", path.display());
@@ -2687,6 +2803,7 @@ pub(crate) fn op_change(c: &Ctx, path: &str, value: &Json) -> Res {
 
     let _lock = Lock::acquire(&c.cfg)?;
     let eff = effective(&c.cfg);
+    require_healthy(&eff)?;
     let previous = lookup(&eff.full, path).ok();
     let current = eff.state.theme.clone();
     let mut st = eff.state.clone();
@@ -2740,6 +2857,7 @@ pub(crate) fn op_change(c: &Ctx, path: &str, value: &Json) -> Res {
     // An explicit accent change replaces a `theme accent` override for that mode.
     let mut notes = Vec::new();
     if let Target::Field {
+        surface: None,
         section: sec,
         key: k,
         ..
@@ -2766,7 +2884,7 @@ pub(crate) fn op_change(c: &Ctx, path: &str, value: &Json) -> Res {
         c,
         Some(&st),
         &format!("theme change {path} {}", compact(value).trim_matches('"')),
-        Some((&name, &edited.text)),
+        Some((&name, Some(&edited.text))),
     )?;
     let mut text = String::new();
     if created {

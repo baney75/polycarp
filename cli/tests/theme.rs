@@ -1664,6 +1664,163 @@ fn a_held_lock_is_busy_after_five_seconds_and_a_stale_one_is_taken_over() {
     assert!(!lock.exists());
 }
 
+const PARENT_V2: &str = r##"name = "parent"
+title = "Parent"
+extends = "polycarp"
+[dark]
+background = "#f0f0f0"
+surface = "#fafafa"
+sunken = "#e0e0e0"
+foreground = "#101010"
+strong = "#000000"
+muted = "#404040"
+selection = "#d0d0d0"
+accent = "#2f4a1a"
+on_accent = "#ffffff"
+urgent = "#8a1f10"
+working = "#6a5000"
+done = "#1f4f4a"
+"##;
+
+#[test]
+fn create_force_and_delete_are_recorded_and_undo_restores_them() {
+    let b = Box::new();
+    b.ok(&["create", "mine", "--extends", "calm"]);
+    let first = fs::read_to_string(b.cfg().join("themes").join("mine.toml")).unwrap();
+    b.ok(&["create", "mine", "--extends", "evening", "--force"]);
+    let second = fs::read_to_string(b.cfg().join("themes").join("mine.toml")).unwrap();
+    assert_ne!(first, second);
+    b.ok(&["undo"]);
+    assert_eq!(
+        fs::read_to_string(b.cfg().join("themes").join("mine.toml")).unwrap(),
+        first
+    );
+    b.ok(&["delete", "mine"]);
+    assert!(!b.cfg().join("themes").join("mine.toml").exists());
+    let h = b.json(&["history", "--json"]);
+    assert_eq!(h["entries"][0]["action"], "theme delete mine");
+    b.ok(&["undo"]);
+    assert_eq!(
+        fs::read_to_string(b.cfg().join("themes").join("mine.toml")).unwrap(),
+        first
+    );
+    // Undoing the first create removes the file again.
+    b.ok(&["undo"]);
+    assert!(!b.cfg().join("themes").join("mine.toml").exists());
+}
+
+#[test]
+fn create_force_over_the_current_theme_refreshes_the_files() {
+    let b = Box::new();
+    b.ok(&["create", "mine", "--extends", "calm"]);
+    b.ok(&["set", "mine"]);
+    let reduced = |b: &Box| b.json(&["export", "json"])["reduced_motion"].clone();
+    assert_eq!(reduced(&b), true);
+    b.ok(&["create", "mine", "--extends", "blocks", "--force"]);
+    let on_disk: Value = serde_json::from_str(
+        &fs::read_to_string(b.cfg().join("current").join("theme.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(on_disk["reduced_motion"], false, "current/ is stale");
+}
+
+#[test]
+fn create_and_delete_refuse_loops_and_the_current_chain() {
+    let b = Box::new();
+    let e = b.refused(&["create", "mine", "--extends", "mine"]);
+    assert!(e.contains("cannot extend itself"), "{e}");
+    b.ok(&["create", "base", "--extends", "calm"]);
+    b.ok(&["create", "kid", "--extends", "base"]);
+    let e = b.refused(&["create", "base", "--extends", "kid", "--force"]);
+    assert!(e.contains("already extends"), "{e}");
+    b.ok(&["set", "kid"]);
+    let before = b.snapshot();
+    let e = b.refused(&["delete", "base"]);
+    assert!(e.contains("base of the current theme"), "{e}");
+    assert_eq!(b.snapshot(), before);
+    b.ok(&["set", "calm"]);
+    b.ok(&["delete", "base"].map(|x| x)[..]);
+}
+
+#[test]
+fn apply_no_activate_refuses_to_break_the_current_theme_or_its_parent() {
+    let b = Box::new();
+    let parent = user_theme("parent", "polycarp", "");
+    assert_eq!(code(&b.run_stdin(&["theme", "apply", "-"], &parent)), 0);
+    let child = user_theme("child", "parent", "[dark]\nforeground = \"#f6f3e8\"");
+    assert_eq!(code(&b.run_stdin(&["theme", "apply", "-"], &child)), 0);
+    let before = b.snapshot();
+    let o = b.run_stdin(&["theme", "apply", "-", "--no-activate"], PARENT_V2);
+    assert_eq!(code(&o), 1, "{}", out(&o));
+    assert!(err(&o).contains("would stop working"), "{}", err(&o));
+    assert_eq!(b.snapshot(), before);
+    // The same text is fine when the current theme does not use it.
+    b.ok(&["set", "calm"]);
+    let o = b.run_stdin(&["theme", "apply", "-", "--no-activate"], PARENT_V2);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+}
+
+#[test]
+fn a_hand_broken_current_theme_is_not_silently_replaced() {
+    let b = Box::new();
+    b.ok(&["create", "mine", "--extends", "evening"]);
+    b.ok(&["set", "mine"]);
+    fs::write(
+        b.cfg().join("themes").join("mine.toml"),
+        "this is [not toml",
+    )
+    .unwrap();
+    let before = b.snapshot();
+    for args in [
+        vec!["accent", GREEN_L, "--mode", "light"],
+        vec!["change", "shape.radius", "3"],
+    ] {
+        let (c, v) = b.jrun(&args);
+        assert_eq!(c, 1, "{args:?}: {v}");
+        let msg = v["error"]["message"].as_str().unwrap();
+        assert!(msg.contains("current settings are broken"), "{msg}");
+        assert!(v["error"]["suggestion"]
+            .as_str()
+            .unwrap()
+            .contains("theme reset"));
+        assert!(!v["error"]["data"]["errors"].as_array().unwrap().is_empty());
+        assert_eq!(b.snapshot(), before);
+    }
+    assert!(!b.cfg().join("themes").join("polycarp-custom.toml").exists());
+    // The ways out still work.
+    b.ok(&["set", "calm"]);
+    b.ok(&["reset"]);
+}
+
+#[test]
+fn a_surface_value_beats_the_global_accent_and_editing_it_keeps_the_global_one() {
+    let b = Box::new();
+    b.ok(&["accent", GREEN_L, "--mode", "light"]);
+    let browser = "#1d5a40";
+    let v = b.json(&["change", "surface.browser.light.accent", browser, "--json"]);
+    assert!(!v["notes"].to_string().contains("cleared"), "{v}");
+    let cur = b.json(&["current", "--json"]);
+    assert_eq!(
+        cur["accent_light"], GREEN_L,
+        "the global accent was cleared"
+    );
+    let ex = b.json(&["export", "json"]);
+    assert_eq!(ex["surfaces"]["browser"]["light"]["accent"], browser);
+    for s in ["spaces", "voice", "site"] {
+        assert_eq!(ex["surfaces"][s]["light"]["accent"], GREEN_L, "{s}");
+    }
+    // Only that surface and mode changed; dark is the theme's own everywhere.
+    for s in SURFACES {
+        assert_eq!(ex["surfaces"][s]["dark"]["accent"], "#a9bb8a", "{s}");
+    }
+    // A later global accent does not overwrite the surface's own value.
+    let other = "#2a5f46";
+    b.ok(&["accent", other, "--mode", "light"]);
+    let ex = b.json(&["export", "json"]);
+    assert_eq!(ex["surfaces"]["browser"]["light"]["accent"], browser);
+    assert_eq!(ex["surfaces"]["site"]["light"]["accent"], other);
+}
+
 #[test]
 fn atomic_writes_leave_no_temp_files() {
     let b = Box::new();
