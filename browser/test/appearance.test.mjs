@@ -2,7 +2,7 @@
 // text on a background the panel draws reaches WCAG AA (4.5:1) for every preset, in light and dark,
 // and for custom accents, computed from the CSS variables the panel actually sets.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -397,4 +397,19 @@ test("the Appearance tab shows the reason a Polycarp theme was refused, in one l
 	const tab = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "dialogs", "AppearanceTab.ts"), "utf8");
 	assert.match(tab, /refused && !polycarp/);
 	assert.match(tab, /data-polycarp-refused>The Polycarp theme was refused, so your saved preset is used: \$\{refused\}/);
+});
+
+test("type.display reaches no panel heading, and browser/AGENTS.md says so; the day something uses font-serif, the note goes", () => {
+	const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+	const note = /`type\.display` is read and sent as `--font-serif`, but the panel draws no display headings/;
+	const uses = (dir) =>
+		readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+			const path = join(dir, e.name);
+			if (e.isDirectory()) return uses(path);
+			return /\.(ts|css)$/.test(e.name) && !path.endsWith(join("appearance", "tokens.ts")) && /font-serif|var\(--font-serif\)/.test(readFileSync(path, "utf8")) ? [path] : [];
+		});
+	const used = uses(join(root, "src"));
+	const text = readFileSync(join(root, "AGENTS.md"), "utf8");
+	assert.equal(note.test(text), used.length === 0, used.length ? `${used.join(", ")} uses font-serif: delete the note` : "AGENTS.md must note that type.display is not used");
+	assert.match(text, /`shape\.density` is not applied/);
 });

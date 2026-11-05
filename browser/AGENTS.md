@@ -31,6 +31,11 @@ time: `cd cli && npx playwright-core install chromium`).
 
 A test that passed proves the logic, not what the user sees. Say which one you ran.
 
+## Polycarp theme: what is not themed
+`type.display` is read and sent as `--font-serif`, but the panel draws no display headings (nothing
+uses `font-serif`), so only `type.ui`, `type.mono` and `type.size` show. If a heading starts using
+`font-serif`, delete this note. `shape.density` is not applied anywhere.
+
 ## Code Quality
 - No `any` types unless absolutely necessary
 - Check node_modules for external API type definitions instead of guessing
