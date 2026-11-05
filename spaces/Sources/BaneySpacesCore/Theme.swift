@@ -173,6 +173,10 @@ public struct Look: Equatable, Sendable {
     public var palette: Palette
     /// The palette is `auto`.
     public var isAuto: Bool
+    /// The name of the Polycarp theme this look comes from (`PolycarpTheme`), nil for the person's own.
+    public var polycarp: String?
+    /// The font names to try for a Polycarp theme's own UI font (`Look.families(for:)`).
+    public var fontFamilies: [String]?
 
     public init(theme: ThemeID, palette name: String, accent: RGB) {
         self.theme = theme
@@ -270,13 +274,24 @@ public enum ThemeCenter {
     private static let lock = NSLock()
     private static var currentID: ThemeID = .macDefault
     private static var currentSpec = ThemeCatalog.shared.spec(.macDefault)
+    private static var currentPolycarp: String?
 
     public static var id: ThemeID { lock.lock(); defer { lock.unlock() }; return currentID }
     public static var spec: ThemeSpec { lock.lock(); defer { lock.unlock() }; return currentSpec }
+    /// The name of the Polycarp theme in force, or nil when the person's own theme draws.
+    public static var polycarp: String? { lock.lock(); defer { lock.unlock() }; return currentPolycarp }
 
-    public static func use(_ id: ThemeID) {
+    /// Uses a catalog theme, or a Polycarp theme's shape, type and motion when `polycarp` is given.
+    public static func use(_ id: ThemeID, polycarp: PolycarpTheme? = nil) {
         lock.lock(); defer { lock.unlock() }
-        currentID = id
-        currentSpec = ThemeCatalog.shared.spec(id)
+        if let polycarp {
+            currentID = PolycarpTheme.carrier
+            currentSpec = polycarp.spec
+            currentPolycarp = polycarp.name
+        } else {
+            currentID = id
+            currentSpec = ThemeCatalog.shared.spec(id)
+            currentPolycarp = nil
+        }
     }
 }
