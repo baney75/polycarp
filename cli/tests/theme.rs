@@ -3291,3 +3291,54 @@ fn a_surfaces_own_on_accent_is_pinned_like_its_own_accent() {
         "others take the override"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn reset_leaves_config_readable_and_writable_by_its_owner() {
+    use std::os::unix::fs::PermissionsExt;
+    for mode in [0o400, 0o000, 0o200, 0o444] {
+        let b = Box::new();
+        b.ok(&["set", "evening"]);
+        fs::set_permissions(b.state_file(), fs::Permissions::from_mode(mode)).unwrap();
+        let (c, v) = b.jrun(&["reset"]);
+        assert_eq!(c, 0, "{mode:o}: {v}");
+        let now = fs::metadata(b.state_file()).unwrap().permissions().mode();
+        assert_eq!(now & 0o600, 0o600, "{mode:o} became {now:o}");
+        assert!(fs::read_to_string(b.state_file())
+            .unwrap()
+            .contains("theme = \"polycarp\""));
+        assert_eq!(b.json(&["current", "--json"])["theme"], "polycarp");
+    }
+}
+
+#[test]
+fn reset_moves_a_folder_at_the_config_path_aside_and_says_so() {
+    let b = Box::new();
+    b.ok(&["set", "evening"]);
+    fs::remove_file(b.state_file()).unwrap();
+    fs::create_dir(b.state_file()).unwrap();
+    fs::write(b.state_file().join("keep.txt"), "mine").unwrap();
+    let (c, v) = b.jrun(&["reset"]);
+    assert_eq!(c, 0, "{v}");
+    let w = v["data"]["warnings"].to_string();
+    assert!(
+        w.contains("was a folder") && w.contains("config.toml.moved-"),
+        "{w}"
+    );
+    assert!(b.state_file().is_file());
+    let moved: Vec<_> = fs::read_dir(b.cfg())
+        .unwrap()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("config.toml.moved-")
+        })
+        .collect();
+    assert_eq!(moved.len(), 1);
+    assert_eq!(
+        fs::read_to_string(moved[0].path().join("keep.txt")).unwrap(),
+        "mine"
+    );
+    assert_eq!(b.json(&["current", "--json"])["theme"], "polycarp");
+}

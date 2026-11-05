@@ -266,7 +266,9 @@ If a theme file or `config.toml` cannot be written, the change is put back, its 
 and the command fails. If only a file in `current/` cannot be written, the settings stay saved and the
 command succeeds with a warning that names the files it could not write.
 `reset` and `undo` work even if a user theme or `config.toml` is broken. Once `config.toml` is safe,
-`reset` turns a history, lock or `current/` failure into a warning.
+`reset` turns a history, lock or `current/` failure into a warning. It leaves `config.toml` readable and
+writable by its owner whatever mode the old file had, and if a folder is in the file's place it moves the
+folder to `config.toml.moved-<time>-<n>` and warns.
 `accent` and `change` refuse while the settings in force are broken (the default theme is in use), and list
 the problems, so they never quietly replace your settings. Fix the file, or run `reset`. `set` and `reset` work. If `config.toml` is invalid, the
 products and `polycarp theme current` use the default theme and say what was wrong. Nothing crashes.

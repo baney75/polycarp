@@ -3360,7 +3360,52 @@ pub(crate) fn op_reset(c: &Ctx) -> Res {
         ));
     }
     let st = State::default_state();
-    write_atomic(&c.cfg.file(), state_table(&c.cfg, &st).as_bytes()).map_err(io_err)?;
+    let cfg_file = c.cfg.file();
+    // A folder where config.toml should be is moved aside, not deleted, so reset can write it.
+    if fs::metadata(&cfg_file).is_ok_and(|m| m.is_dir()) {
+        let (compact, _) = stamps();
+        let mut n = 0;
+        let aside = loop {
+            let name = format!("config.toml.moved-{compact}-{n}");
+            let p = c.cfg.dir.join(name);
+            if fs::symlink_metadata(&p).is_err() {
+                break p;
+            }
+            n += 1;
+        };
+        fs::rename(&cfg_file, &aside).map_err(|e| {
+            io_err(format!(
+                "{} is a folder and could not be moved aside: {e}",
+                cfg_file.display()
+            ))
+        })?;
+        warnings.push(format!(
+            "{} was a folder, not a file. It was moved to {}",
+            cfg_file.display(),
+            aside.display()
+        ));
+    }
+    write_atomic(&cfg_file, state_table(&c.cfg, &st).as_bytes()).map_err(io_err)?;
+    // An old read-only or locked-down mode is kept by write_atomic; reset must leave a file its
+    // owner can read and change.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let target = resolve_link(&cfg_file);
+        if let Ok(m) = fs::metadata(&target) {
+            let mode = m.permissions().mode();
+            if mode & 0o600 != 0o600 {
+                if let Err(e) =
+                    fs::set_permissions(&target, fs::Permissions::from_mode(mode | 0o600))
+                {
+                    warnings.push(format!(
+                        "could not make {} readable and writable by you: {e}",
+                        target.display()
+                    ));
+                }
+            }
+        }
+    }
     let mut out = finish_with(&c.cfg, true)?;
     for w in warnings {
         out = out.caution(w);
