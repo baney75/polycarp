@@ -24,7 +24,8 @@ only when one product should differ.
 3. If a call is refused, read error.data.errors (each has a path; contrast errors give actual and needs) \
 and adjust the colors. Do not try to get around the contrast rules.
 4. Call theme_preview and show the person the HTML file (open it and take a screenshot).
-5. If they dislike it, call theme_undo. theme_reset always works.
+5. If they dislike it, call theme_undo. theme_reset always works (it also turns the theme on, with the default). \
+Also: if the person wants the apps' own look back, use `theme_off`.
 Every result is {ok, data} or {ok:false, error:{code, message, suggestion, data:{errors}}}.";
 
 fn obj(props: Json, required: &[&str]) -> Json {
@@ -199,7 +200,7 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "theme_undo",
-            description: "Step back one change (a theme_change, theme_apply, theme_set, theme_accent or theme_reset), including the theme file it edited. Use it when the person dislikes what you just did. Call it again to go back further. If the theme file was edited by hand after that change, it refuses; pass force true only if the person agrees, and the edited text is first saved in history/.",
+            description: "Step back one change (a theme_change, theme_apply, theme_set, theme_accent, theme_off, theme_on or theme_reset), including the theme file it edited. Use it when the person dislikes what you just did. Call it again to go back further. If the theme file was edited by hand after that change, it refuses; pass force true only if the person agrees, and the edited text is first saved in history/.",
             schema: obj(json!({"force": {"type": "boolean", "description": "Undo even though the theme file was edited after the change. The edited text is saved in history/ first."}}), &[]),
             read_only: false,
             destructive: true,
@@ -214,8 +215,24 @@ fn tools() -> Vec<Tool> {
             idempotent: true,
         },
         Tool {
+            name: "theme_off",
+            description: "Turn the theme off so every app goes back to its own look. Removes current/theme.json and the css files and records enabled = false; your themes and settings stay on disk. Use it when the person wants the apps' own look back. theme_on or theme_undo brings the theme back.",
+            schema: obj(json!({}), &[]),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        Tool {
+            name: "theme_on",
+            description: "Turn the last theme back on after theme_off and write the files in current/ again. theme_set, theme_accent, theme_change and theme_apply also turn it on.",
+            schema: obj(json!({}), &[]),
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
             name: "theme_reset",
-            description: "Go back to the default theme (polycarp), mode auto, no accent override. Always works, even if a theme file is broken. Your own themes stay on disk.",
+            description: "Go back to the default theme (polycarp), mode auto, no accent override, and turn the theme on. Always works, even if a theme file is broken. Your own themes stay on disk.",
             schema: obj(json!({}), &[]),
             read_only: false,
             destructive: true,
@@ -372,6 +389,8 @@ fn call(name: &str, args: Option<&Json>, caller: &str) -> Option<theme::Envelope
             }
             "theme_undo" => theme::op_undo(&c, a.flag("force")?.unwrap_or(false)),
             "theme_history" => theme::op_history(&c),
+            "theme_off" => theme::op_off(&c),
+            "theme_on" => theme::op_on(&c),
             "theme_reset" => theme::op_reset(&c),
             _ => Err(ApiErr::usage("unknown tool")),
         }

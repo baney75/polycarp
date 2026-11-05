@@ -3351,3 +3351,99 @@ fn reset_moves_a_folder_at_the_config_path_aside_and_says_so() {
     );
     assert_eq!(b.json(&["current", "--json"])["theme"], "polycarp");
 }
+
+// --- theme off and on --------------------------------------------------------------------------
+
+fn current_files(b: &Box) -> Vec<String> {
+    let mut v: Vec<String> = fs::read_dir(b.cfg().join("current"))
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default();
+    v.sort();
+    v
+}
+
+#[test]
+fn off_removes_the_files_records_it_and_undo_brings_them_back() {
+    let b = Box::new();
+    b.ok(&["set", "still-water"]);
+    assert!(b.cfg().join("current/theme.json").is_file());
+    let said = b.ok(&["off"]);
+    assert!(said.contains("the theme is off"), "{said}");
+    assert!(said.contains("removed"), "{said}");
+    assert!(current_files(&b).is_empty(), "{:?}", current_files(&b));
+    let state = fs::read_to_string(b.state_file()).unwrap();
+    assert!(state.contains("enabled = false"), "{state}");
+    assert!(state.contains("theme = \"still-water\""), "{state}");
+    let cur = b.json(&["current", "--json"]);
+    assert_eq!(cur["enabled"], false);
+    assert!(b.ok(&["current"]).contains("state: off"));
+    assert!(b.ok(&["history"]).contains("theme off"));
+    // Off twice changes and records nothing.
+    let n = b.history_count();
+    assert!(b.ok(&["off"]).contains("already off"));
+    assert_eq!(b.history_count(), n);
+    // Undo puts the theme back, files included.
+    b.ok(&["undo"]);
+    assert_eq!(b.json(&["current", "--json"])["enabled"], true);
+    assert!(b.cfg().join("current/theme.json").is_file());
+    assert!(b.cfg().join("current/site.css").is_file());
+}
+
+#[test]
+fn on_brings_the_last_theme_back_and_set_accent_change_turn_it_on_and_say_so() {
+    let b = Box::new();
+    b.ok(&["set", "evening"]);
+    b.ok(&["off"]);
+    assert!(b.ok(&["on"]).contains("theme: evening"));
+    assert_eq!(current_files(&b).len(), 5);
+    assert!(b.ok(&["on"]).contains("already on"));
+    assert!(!fs::read_to_string(b.state_file())
+        .unwrap()
+        .contains("enabled"));
+    for args in [
+        &["set", "calm"][..],
+        &["accent", "#2f6b55", "--mode", "light"],
+        &["change", "shape.radius", "4"],
+    ] {
+        b.ok(&["off"]);
+        assert!(current_files(&b).is_empty());
+        let (c, v) = b.jrun(args);
+        assert_eq!(c, 0, "{args:?} {v}");
+        assert!(v["data"]["notes"].to_string().contains("was off"), "{v}");
+        assert_eq!(b.json(&["current", "--json"])["enabled"], true, "{args:?}");
+        assert_eq!(current_files(&b).len(), 5, "{args:?}");
+    }
+}
+
+#[test]
+fn reset_says_it_turns_the_theme_on_with_the_default() {
+    let b = Box::new();
+    b.ok(&["set", "evening"]);
+    b.ok(&["off"]);
+    let said = b.ok(&["reset"]);
+    assert!(said.contains("turns the theme on"), "{said}");
+    assert_eq!(b.json(&["current", "--json"])["enabled"], true);
+    assert_eq!(b.json(&["current", "--json"])["theme"], "polycarp");
+    assert_eq!(current_files(&b).len(), 5);
+}
+
+#[test]
+fn off_and_on_take_the_json_envelope() {
+    let b = Box::new();
+    let (c, v) = b.jrun(&["off"]);
+    assert_eq!(
+        (c, &v["ok"], &v["data"]["enabled"]),
+        (0, &true.into(), &false.into())
+    );
+    let (c, v) = b.jrun(&["on"]);
+    assert_eq!(
+        (c, &v["ok"], &v["data"]["enabled"]),
+        (0, &true.into(), &true.into())
+    );
+    let (c, v) = b.jrun(&["off", "extra"]);
+    assert_eq!((c, &v["ok"]), (2, &false.into()));
+}

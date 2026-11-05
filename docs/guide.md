@@ -11,7 +11,8 @@ Polycarp is being assembled from three apps: BaneySpaces, Silas and Tabkyra. Her
 - The `polycarp` command reaches all three apps.
 - `polycarp theme` checks, writes, previews and undoes theme files, and agents can do the same over MCP.
 - This website is built from the same six themes, and you can try them here. It doesn't read your own files.
-- The apps keep their own looks and settings until they read your theme files. That is the next step.
+- Voice and Browser can read your theme files. That support is merged but not released yet. Spaces' is coming. Until an app is updated, it keeps its own look and settings.
+- `polycarp theme off` returns every app to its own look, and `polycarp theme on` brings your theme back.
 - The apps install separately for now. The old app names still appear on your computer.
 
 The [plan](https://github.com/baney75/polycarp/blob/main/PLAN.md) lists every step and the check that proves it.
@@ -85,7 +86,7 @@ polycarp theme current
 | `still-water` | Quiet. Cool greys with a deep teal accent |
 | `evening` | Muted slate and dusk blues |
 | `parchment` | Warm paper with small corners and serif text everywhere |
-| `blocks` | Square, flat and monospace. Workspaces show as numbered blocks |
+| `blocks` | Square and flat, with monospace interface text. Workspaces show as numbered blocks |
 | `calm` | Nothing moves. Extra room and no shadows |
 
 Look at any of them on realistic screens before you choose:
@@ -193,7 +194,16 @@ polycarp theme undo
 polycarp theme reset
 ```
 
-`undo` steps back through the last 50 changes and says who made each one. If you edited a theme file by hand after a change, `undo` won't overwrite it unless you add `--force`, which saves your text to `history/` first. `reset` returns to `polycarp`, auto mode and no accent, and always works, even if a theme or settings file is broken. A broken settings file never stops anything: Polycarp warns you and uses the default. Until you fix it or reset, commands that would overwrite your broken theme refuse and tell you why.
+`undo` steps back through the last 50 changes and says who made each one. If you edited a theme file by hand after a change, `undo` won't overwrite it unless you add `--force`, which saves your text to `history/` first. `reset` returns to `polycarp`, auto mode and no accent, turns the theme on, and always works, even if a theme or settings file is broken. A broken settings file never stops anything: Polycarp warns you and uses the default. Until you fix it or reset, commands that would overwrite your broken theme refuse and tell you why.
+
+### Turn the theme off
+
+```sh
+polycarp theme off
+polycarp theme on
+```
+
+`off` removes `current/theme.json` and the `current/<product>.css` files, so each app goes back to its own look. It keeps your settings and themes, records the change in `history/`, and says what it removed. `undo` brings the theme back, and so does `polycarp theme on`. `set`, `accent` and `change` also turn the theme on, and tell you so. `polycarp theme current` shows whether it is on or off.
 
 ### Use a theme elsewhere
 
@@ -212,7 +222,7 @@ CSS variables start with `--pc-`: colors and shape use the field name, such as `
 | Settings | `~/.config/polycarp/config.toml`, or `%APPDATA%\Polycarp\config.toml` on Windows |
 | Your themes | `themes/<name>.toml` in that folder |
 | Past versions | `history/` in that folder |
-| What the apps will read | `current/theme.json` and `current/<product>.css` in that folder |
+| What the apps read | `current/theme.json` and `current/<product>.css` in that folder. They are gone while the theme is off |
 
 `POLYCARP_CONFIG_DIR` moves the folder on any system, and must be an absolute path. `XDG_CONFIG_HOME` also moves it on Mac and Linux.
 
@@ -242,6 +252,7 @@ Any other MCP client can start the same command.
 | `theme_preview` | Write a page to show the person, always in the private previews folder |
 | `theme_export` | Get CSS or JSON |
 | `theme_create`, `theme_delete` | Start a new theme file, or clean one up |
+| `theme_off`, `theme_on` | Return the apps to their own look, or bring the theme back |
 | `theme_history`, `theme_undo`, `theme_reset` | See changes and go back |
 
 ### The workflow
@@ -251,6 +262,7 @@ Any other MCP client can start the same command.
 3. If it's refused, read the numbers and pick a better value. Don't work around the rule.
 4. Call `theme_preview` and show the person.
 5. Call `theme_undo` if they don't like it.
+6. If the person wants the apps' own look back, use `theme_off`.
 
 ### Without MCP
 
@@ -299,7 +311,9 @@ Polycarp won't run a file sitting directly in your current folder. Move to anoth
 
 ### My theme changed nothing in the apps
 
-The apps don't read theme files yet. Today the command only writes the files. This website doesn't read them either: it has its own theme picker.
+Voice and Browser support for theme files is merged but not released, so the versions you can install today may not read them yet. Spaces' support is coming. This website doesn't read your files either: it has its own theme picker.
+
+If you want an app to show its own look, run `polycarp theme off`.
 
 ### My accent is refused
 

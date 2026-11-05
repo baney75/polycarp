@@ -196,7 +196,9 @@ density = "compact"
 | `polycarp theme export <css\|json> [name] [--surface <name>]` | Print the resolved theme. With no name it is the current one in its forced mode, as in `current/`; JSON has `mode` |
 | `polycarp theme undo [--force]` | Step back one change. Refuses if the theme file was edited after that change; `--force` saves the edited text in `history/` as a `.bak` copy, then undoes |
 | `polycarp theme history [--json]` | Past changes, newest first |
-| `polycarp theme reset` | Back to `polycarp`, mode `auto`, no accent |
+| `polycarp theme off` | Turn the theme off: remove `current/theme.json` and `current/<surface>.css` so each app uses its own look. Records `enabled = false` in `[appearance]` and in history, so `undo` brings it back. Your themes stay |
+| `polycarp theme on` | Turn the last theme back on and write `current/` again. `set`, `accent`, `change` and `apply` also turn it on, and say so |
+| `polycarp theme reset` | Back to `polycarp`, mode `auto`, no accent. Also turns the theme on |
 
 Every `theme` command takes `--json`.
 
@@ -216,13 +218,15 @@ for its own `on_accent`: setting either one keeps the product's accent pair as t
 
 ## What gets written
 
-`set`, `accent`, `undo` and `reset` write these files in the config folder:
+`set`, `accent`, `on`, `undo` and `reset` write these files in the config folder:
 
-- `config.toml`: your choices. `[appearance]` holds `theme`, `mode`, `accent_light` and `accent_dark`.
+- `config.toml`: your choices. `[appearance]` holds `theme`, `mode`, `accent_light` and `accent_dark`, and `enabled = false` while the theme is off (the key is left out when it is on).
 - `current/theme.json`: the resolved theme for every product. Whether motion is reduced is in `surfaces.<surface>.motion.reduced`; there is no top-level `reduced_motion`.
 - `current/spaces.css`, `voice.css`, `browser.css`, `site.css`: the same, as CSS variables.
 
 Products read these files once their adapters land. Until then only the files change.
+
+While the theme is off (`polycarp theme off`), `theme.json` and the four CSS files are removed and nothing is written there, so each app uses its own look. `theme current` shows `state: off` and `"enabled": false`.
 
 Files are written to a temporary name and then renamed, so a reader never sees half a file. If one of the
 files is a symbolic link, the file it points to is written and the link stays. An existing file keeps its
@@ -337,6 +341,7 @@ descriptions give the workflow above. Each tool returns the `--json` envelope as
 | `theme_create`, `theme_delete` | `create`, `delete`, so an agent can clean up the themes it made |
 | `theme_validate` | `validate`, for a draft theme passed in, without saving |
 | `theme_preview`, `theme_export` | `preview`, `export` |
+| `theme_off`, `theme_on` | `off`, `on`. `theme_off` removes files, so its `destructiveHint` is true; `theme_on` only writes them |
 | `theme_undo`, `theme_history`, `theme_reset` | `undo`, `history`, `reset` |
 
 `theme_preview` takes no `out`: over MCP it writes only into `<config>/previews/`. Its annotations say it

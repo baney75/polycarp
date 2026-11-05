@@ -43,6 +43,8 @@ Usage:
   polycarp theme export <css|json> [name] [--surface spaces|voice|browser|site]
   polycarp theme undo [--force]
   polycarp theme history [--json]
+  polycarp theme off
+  polycarp theme on
   polycarp theme reset
 
 Every command takes --json and then prints the envelope {ok, data} or {ok:false, error}.
@@ -918,6 +920,8 @@ struct State {
     mode: String,
     accent_light: Option<String>,
     accent_dark: Option<String>,
+    /// False after `theme off`: the files in `current/` are removed and the apps use their own look.
+    enabled: bool,
 }
 
 impl State {
@@ -927,6 +931,7 @@ impl State {
             mode: "auto".into(),
             accent_light: None,
             accent_dark: None,
+            enabled: true,
         }
     }
 }
@@ -979,6 +984,10 @@ fn load_state(cfg: &Cfg) -> (State, Vec<String>) {
                 _ => problems.push(format!(
                     "appearance.mode: {v} is not one of auto, light, dark"
                 )),
+            },
+            "enabled" => match v.as_bool() {
+                Some(b) => st.enabled = b,
+                None => problems.push(format!("appearance.enabled: {v} is not true or false")),
             },
             "accent_light" | "accent_dark" => match v.as_str() {
                 Some(s) if is_hex(s) => {
@@ -1053,6 +1062,9 @@ fn state_table(cfg: &Cfg, st: &State) -> String {
     let mut app = Table::new();
     app.insert("theme".into(), Value::String(st.theme.clone()));
     app.insert("mode".into(), Value::String(st.mode.clone()));
+    if !st.enabled {
+        app.insert("enabled".into(), Value::Boolean(false));
+    }
     if let Some(a) = &st.accent_light {
         app.insert("accent_light".into(), Value::String(a.clone()));
     }
@@ -1290,6 +1302,20 @@ fn write_outputs(cfg: &Cfg, eff: &Eff) -> (Vec<PathBuf>, Vec<String>) {
     let dir = cfg.current();
     let mut wrote = Vec::new();
     let mut failed = Vec::new();
+    if !eff.state.enabled {
+        // Off: the same files are removed, and the list returned is the files removed.
+        let mut names = vec!["theme.json".to_string()];
+        names.extend(SURFACES.iter().map(|s| format!("{s}.css")));
+        for n in names {
+            let p = dir.join(&n);
+            match fs::remove_file(&p) {
+                Ok(()) => wrote.push(p),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => failed.push(format!("{n}: {e}")),
+            }
+        }
+        return (wrote, failed);
+    }
     // A Value always serializes, so the fallback is never used.
     let json =
         serde_json::to_string_pretty(&theme_json(&eff.full, Some(&eff.state))).unwrap_or_default();
@@ -1997,7 +2023,8 @@ pub(crate) fn op_current(c: &Ctx) -> Res {
         "user"
     };
     let text = format!(
-        "theme: {} ({source})\nmode: {}\naccent_light: {}\naccent_dark: {}\nconfig: {}\nfolder: {}\n",
+        "state: {}\ntheme: {} ({source})\nmode: {}\naccent_light: {}\naccent_dark: {}\nconfig: {}\nfolder: {}\n",
+        if eff.state.enabled { "on" } else { "off" },
         eff.state.theme,
         eff.state.mode,
         eff.state.accent_light.as_deref().unwrap_or("none"),
@@ -2006,6 +2033,7 @@ pub(crate) fn op_current(c: &Ctx) -> Res {
         c.cfg.dir.display()
     );
     let data = json!({
+        "enabled": eff.state.enabled,
         "theme": eff.state.theme,
         "title": eff.full.title,
         "source": source,
@@ -2269,7 +2297,15 @@ fn finish_with(cfg: &Cfg, soft: bool) -> Res {
 
 /// What is in force, as a result. `wrote` is the files written (none for a no-op).
 fn summary(cfg: &Cfg, eff: Eff, wrote: Vec<PathBuf>, late: Option<String>) -> Out {
-    let mut text = format!("theme: {}\nmode: {}\n", eff.state.theme, eff.state.mode);
+    let off = !eff.state.enabled;
+    let mut text = if off {
+        format!(
+            "the theme is off; the apps use their own look\nlast theme: {}\nmode: {}\n",
+            eff.state.theme, eff.state.mode
+        )
+    } else {
+        format!("theme: {}\nmode: {}\n", eff.state.theme, eff.state.mode)
+    };
     if eff.state.accent_light.is_some() || eff.state.accent_dark.is_some() {
         text.push_str(&format!(
             "accent: light {}, dark {}\n",
@@ -2279,17 +2315,27 @@ fn summary(cfg: &Cfg, eff: Eff, wrote: Vec<PathBuf>, late: Option<String>) -> Ou
     }
     text.push_str(&format!("wrote {}\n", cfg.file().display()));
     for w in &wrote {
-        text.push_str(&format!("wrote {}\n", w.display()));
+        text.push_str(&format!(
+            "{} {}\n",
+            if off { "removed" } else { "wrote" },
+            w.display()
+        ));
     }
-    text.push_str(NOTE);
-    text.push('\n');
+    if off {
+        text.push_str("run `polycarp theme on` to bring the theme back\n");
+    } else {
+        text.push_str(NOTE);
+        text.push('\n');
+    }
     let data = json!({
+        "enabled": eff.state.enabled,
         "theme": eff.state.theme,
         "mode": eff.state.mode,
         "accent_light": eff.state.accent_light,
         "accent_dark": eff.state.accent_dark,
         "config": cfg.file().display().to_string(),
-        "wrote": wrote.iter().map(|w| w.display().to_string()).collect::<Vec<_>>(),
+        "wrote": if off { Vec::new() } else { wrote.iter().map(|w| w.display().to_string()).collect::<Vec<_>>() },
+        "removed": if off { wrote.iter().map(|w| w.display().to_string()).collect::<Vec<_>>() } else { Vec::new() },
         "note": NOTE,
         "next": "Look at it with theme preview. If the person dislikes it, run theme undo.",
     });
@@ -2408,6 +2454,49 @@ fn commit(c: &Ctx, st: Option<&State>, action: &str, file: Option<(&str, Option<
     finish_with(&c.cfg, true)
 }
 
+/// A change that picks a theme also turns a theme that was off back on, and says so.
+fn turn_on(st: &mut State, notes: &mut Vec<String>) {
+    if !st.enabled {
+        st.enabled = true;
+        notes.push(
+            "the theme was off; this change turned it on, so the apps use it again".to_string(),
+        );
+    }
+}
+
+/// Removes `current/theme.json` and the css files so each app uses its own look. The choice is
+/// kept in `config.toml` as `enabled = false`, recorded in history, so `undo` and `on` restore it.
+pub(crate) fn op_off(c: &Ctx) -> Res {
+    let _lock = Lock::acquire(&c.cfg)?;
+    let eff = effective(&c.cfg);
+    require_healthy(&eff)?;
+    if !eff.state.enabled {
+        let mut out = summary(&c.cfg, eff, Vec::new(), None);
+        out.text = format!("nothing to change: the theme is already off\n{}", out.text);
+        return Ok(out.with(json!({"changed": false})));
+    }
+    let mut st = eff.state;
+    st.enabled = false;
+    let out = commit(c, Some(&st), "theme off", None)?;
+    Ok(out.with(json!({"changed": true})))
+}
+
+/// Turns the last theme back on and writes `current/` again.
+pub(crate) fn op_on(c: &Ctx) -> Res {
+    let _lock = Lock::acquire(&c.cfg)?;
+    let eff = effective(&c.cfg);
+    require_healthy(&eff)?;
+    if eff.state.enabled {
+        let mut out = summary(&c.cfg, eff, Vec::new(), None);
+        out.text = format!("nothing to change: the theme is already on\n{}", out.text);
+        return Ok(out.with(json!({"changed": false})));
+    }
+    let mut st = eff.state;
+    st.enabled = true;
+    let out = commit(c, Some(&st), "theme on", None)?;
+    Ok(out.with(json!({"changed": true})))
+}
+
 pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
     if let Some(m) = mode {
         if !mode_ok(m) {
@@ -2429,6 +2518,7 @@ pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
         st.mode = m.to_string();
     }
     st.theme = name.to_string();
+    turn_on(&mut st, &mut notes);
     if apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref()).is_err() {
         notes.push(format!(
             "your accent override does not read well on {name}, so it is cleared"
@@ -2464,6 +2554,8 @@ pub(crate) fn op_accent(c: &Ctx, color: Option<&str>, mode: Option<&str>) -> Res
     let eff = effective(&c.cfg);
     require_healthy(&eff)?;
     let mut st = eff.state.clone();
+    let mut turned_on = Vec::new();
+    turn_on(&mut st, &mut turned_on);
     let mut adjusted = serde_json::Map::new();
     for m in &modes {
         let set = |st: &mut State, value: Option<String>| {
@@ -2511,6 +2603,7 @@ pub(crate) fn op_accent(c: &Ctx, color: Option<&str>, mode: Option<&str>) -> Res
         None => "theme accent --clear".to_string(),
     };
     let mut done = commit(c, Some(&st), &action, None)?;
+    done.notes.splice(0..0, turned_on);
     if !adjusted.is_empty() {
         let says = adjusted
             .iter()
@@ -2915,6 +3008,7 @@ pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) ->
             ));
         }
         st.theme = name.clone();
+        turn_on(&mut st, &mut notes);
         if apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref()).is_err() {
             notes.push(format!(
                 "your accent override does not read well on {name}, so it is cleared"
@@ -2988,6 +3082,8 @@ pub(crate) fn op_change(c: &Ctx, path: &str, value: &Json) -> Res {
     let previous = lookup(&eff.full, path).ok();
     let current = eff.state.theme.clone();
     let mut st = eff.state.clone();
+    let mut notes = Vec::new();
+    turn_on(&mut st, &mut notes);
 
     let (name, base_text, created) = if is_builtin(&current) {
         let name = free_custom_name(&c.cfg, &current);
@@ -3036,7 +3132,6 @@ pub(crate) fn op_change(c: &Ctx, path: &str, value: &Json) -> Res {
         .map_err(|ps| bad_theme("the change is refused, nothing changed", &ps))?;
 
     // An explicit accent change replaces a `theme accent` override for that mode.
-    let mut notes = Vec::new();
     if let Target::Field {
         surface: None,
         section: sec,
@@ -3409,6 +3504,10 @@ pub(crate) fn op_reset(c: &Ctx) -> Res {
         }
     }
     let mut out = finish_with(&c.cfg, true)?;
+    out.text = format!(
+        "reset turns the theme on, with the default theme\n{}",
+        out.text
+    );
     for w in warnings {
         out = out.caution(w);
     }
@@ -3714,6 +3813,14 @@ pub fn run(args: &[OsString]) -> i32 {
         "history" => cmd(rest, &[], &[], |c, p| {
             exactly(p, 0, "no arguments")?;
             op_history(c)
+        }),
+        "off" => cmd(rest, &[], &[], |c, p| {
+            exactly(p, 0, "no arguments")?;
+            op_off(c)
+        }),
+        "on" => cmd(rest, &[], &[], |c, p| {
+            exactly(p, 0, "no arguments")?;
+            op_on(c)
         }),
         "reset" => cmd(rest, &[], &[], |c, p| {
             exactly(p, 0, "no arguments")?;
