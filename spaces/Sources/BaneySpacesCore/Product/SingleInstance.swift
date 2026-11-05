@@ -40,6 +40,8 @@ public enum SingleInstance {
         public let url: URL
         init(fd: Int32, url: URL) { self.fd = fd; self.url = url }
         public var isHeld: Bool { fd >= 0 }
+        /// For tests only.
+        public var fdForTest: Int32 { fd }
 
         public enum Result {
             case acquired(Lock)
