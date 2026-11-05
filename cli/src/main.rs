@@ -4,9 +4,10 @@
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 mod mcp;
@@ -144,39 +145,113 @@ fn is_self(p: &Path) -> bool {
     fs::canonicalize(p).map(|c| c == me).unwrap_or(false)
 }
 
-/// True when `p` sits directly in the current folder, through any symlink.
-fn in_current_folder(p: &Path) -> bool {
+/// Why a candidate was turned down, when it was not simply missing or not runnable.
+#[derive(Debug, PartialEq)]
+enum Miss {
+    /// Nothing usable was found.
+    Nothing,
+    /// A tool is there but sits inside the current folder's tree.
+    InCwd(PathBuf),
+    /// The current folder could not be resolved, so nothing can be shown to be outside it.
+    NoCwd,
+    /// A `.cmd` or `.bat` file, which only runs through a shell.
+    Script(PathBuf),
+}
+
+/// True when this system runs `.cmd` and `.bat` only through a shell. Tests set
+/// POLYCARP_SHIM_CHECK to exercise the rule on any system.
+fn shims_matter() -> bool {
+    cfg!(windows) || env::var_os("POLYCARP_SHIM_CHECK").is_some()
+}
+
+fn is_script(p: &Path) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
+}
+
+/// Places under the home folder that stay allowed when the current folder is the home folder
+/// or an ancestor of it: where the installers and the fixed spots put the tools.
+const HOME_ALLOWED: [&str; 3] = [".local/bin", ".config/tabkyra", "Applications/Silas.app"];
+
+/// Where `p` stands against the current folder. Anything inside the current folder's tree is
+/// refused, through any symlink. Two exceptions: from `/` nothing is refused (everything is
+/// below it, and the system spots must work), and when the current folder is the home folder or
+/// an ancestor of it, a candidate under `HOME_ALLOWED` is still fine. `$HOME/node_modules/.bin`,
+/// a file directly in `~`, or a tool outside `~` but inside the current folder stay refused.
+/// If the current folder or `p` can't be resolved, this fails closed.
+fn against_cwd(p: &Path) -> Result<(), Miss> {
     let Ok(cwd) = env::current_dir().and_then(fs::canonicalize) else {
-        return false;
+        return Err(Miss::NoCwd);
     };
-    let parent = fs::canonicalize(p)
-        .ok()
-        .and_then(|c| c.parent().map(Path::to_path_buf));
-    let named_parent = p.parent().and_then(|d| fs::canonicalize(d).ok());
-    parent.as_deref() == Some(cwd.as_path()) || named_parent.as_deref() == Some(cwd.as_path())
+    if cwd.parent().is_none() {
+        return Ok(());
+    }
+    let resolved: Vec<PathBuf> = [
+        fs::canonicalize(p).ok(),
+        p.parent().and_then(|d| fs::canonicalize(d).ok()),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if resolved.is_empty() {
+        return Err(Miss::NoCwd);
+    }
+    let home = home().and_then(|h| fs::canonicalize(h).ok());
+    let from_home_or_above = home.as_ref().is_some_and(|h| h.starts_with(&cwd));
+    let allowed = |c: &Path| {
+        from_home_or_above
+            && home.as_ref().is_some_and(|h| {
+                HOME_ALLOWED
+                    .iter()
+                    .filter_map(|a| fs::canonicalize(h.join(a)).ok())
+                    .any(|a| c.starts_with(a))
+            })
+    };
+    if resolved.iter().any(|c| c.starts_with(&cwd) && !allowed(c)) {
+        return Err(Miss::InCwd(p.to_path_buf()));
+    }
+    Ok(())
 }
 
 /// The one gate every candidate passes, from an override, PATH or a fixed spot.
-fn usable(p: &Path) -> bool {
-    p.is_absolute() && is_executable_file(p) && !is_self(p) && !in_current_folder(p)
+fn check(p: &Path) -> Result<(), Miss> {
+    if !p.is_absolute() || !is_executable_file(p) || is_self(p) {
+        return Err(Miss::Nothing);
+    }
+    if shims_matter() && is_script(p) {
+        return Err(Miss::Script(p.to_path_buf()));
+    }
+    against_cwd(p)
 }
 
-/// First match wins: environment override, PATH, fixed spots.
-fn find(tool: &Tool) -> Option<PathBuf> {
+/// First match wins: environment override, PATH, fixed spots. If nothing is usable, says the
+/// first reason a candidate was refused.
+fn find(tool: &Tool) -> Result<PathBuf, Miss> {
     if let Some(v) = env::var_os(tool.env).filter(|v| !v.is_empty()) {
         let p = PathBuf::from(v);
-        return usable(&p).then_some(p);
+        return check(&p).map(|()| p);
     }
+    let mut miss = Miss::Nothing;
+    let mut note = |r: Result<(), Miss>| {
+        if let Err(m) = r {
+            if miss == Miss::Nothing {
+                miss = m;
+            }
+        }
+    };
     let file = if cfg!(windows) {
         format!("{}.exe", tool.exe)
     } else {
         tool.exe.to_string()
     };
-    if let Some(path) = env::var_os("PATH") {
-        for dir in env::split_paths(&path) {
+    let path = env::var_os("PATH");
+    if let Some(path) = &path {
+        for dir in env::split_paths(path) {
             let cand = dir.join(&file);
-            if usable(&cand) {
-                return Some(cand);
+            match check(&cand) {
+                Ok(()) => return Ok(cand),
+                r => note(r),
             }
         }
     }
@@ -191,18 +266,53 @@ fn find(tool: &Tool) -> Option<PathBuf> {
             None if env::var_os("POLYCARP_NO_SYSTEM_SPOTS").is_some() => continue,
             None => PathBuf::from(spot),
         };
-        if usable(&cand) {
-            return Some(cand);
+        match check(&cand) {
+            Ok(()) => return Ok(cand),
+            r => note(r),
         }
     }
-    None
+    // npm gives tabkyra.cmd, not tabkyra.exe. Say so instead of "not found".
+    if shims_matter() {
+        if let Some(path) = &path {
+            for dir in env::split_paths(path).filter(|d| d.is_absolute()) {
+                for ext in ["cmd", "bat"] {
+                    let cand = dir.join(format!("{}.{ext}", tool.exe));
+                    if cand.is_file() {
+                        note(Err(Miss::Script(cand)));
+                    }
+                }
+            }
+        }
+    }
+    Err(miss)
 }
 
-fn not_found(tool: &Tool) -> i32 {
-    eprintln!(
-        "polycarp: {} ({}) not found. Install {} from {} or set {} to its path.",
-        tool.exe, tool.sub, tool.product, tool.install, tool.env
-    );
+fn script_advice(tool: &Tool, p: &Path) -> String {
+    format!(
+        "{} ({}) is a .cmd or .bat file at {}. Those only run through a shell, and polycarp never uses one. Run Node on the tool's entry point, or set {} to a real executable.",
+        tool.exe,
+        tool.sub,
+        p.display(),
+        tool.env
+    )
+}
+
+fn not_found(tool: &Tool, why: &Miss) -> i32 {
+    match why {
+        Miss::Nothing => eprintln!(
+            "polycarp: {} ({}) not found. Install {} from {} or set {} to its path.",
+            tool.exe, tool.sub, tool.product, tool.install, tool.env
+        ),
+        Miss::InCwd(p) => eprintln!(
+            "polycarp: {} ({}) was found at {} but not run: it is in the current folder, and polycarp never runs a tool from there. Run polycarp from another folder, or set {} to a path outside it.",
+            tool.exe, tool.sub, p.display(), tool.env
+        ),
+        Miss::NoCwd => eprintln!(
+            "polycarp: could not tell what the current folder is, so {} ({}) was not run. Change to a folder that exists and try again.",
+            tool.exe, tool.sub
+        ),
+        Miss::Script(p) => eprintln!("polycarp: {}", script_advice(tool, p)),
+    }
     127
 }
 
@@ -249,8 +359,9 @@ fn run(mut cmd: Command) -> i32 {
 }
 
 fn handoff(tool: &Tool, args: &[OsString]) -> i32 {
-    let Some(path) = find(tool) else {
-        return not_found(tool);
+    let path = match find(tool) {
+        Ok(p) => p,
+        Err(why) => return not_found(tool, &why),
     };
     let mut cmd = Command::new(path);
     cmd.args(args);
@@ -263,6 +374,38 @@ fn handoff(tool: &Tool, args: &[OsString]) -> i32 {
     run(cmd)
 }
 
+/// On a Mac the Silas app is one fixed place: `/Applications/Silas.app`, else
+/// `~/Applications/Silas.app`. `voice` and `doctor` both use it, so they cannot disagree.
+#[cfg(target_os = "macos")]
+fn silas_app() -> Result<PathBuf, Miss> {
+    let mut spots = Vec::new();
+    // Tests set this so the machine's real installs are never reached.
+    if env::var_os("POLYCARP_NO_SYSTEM_SPOTS").is_none() {
+        spots.push(PathBuf::from("/Applications/Silas.app"));
+    }
+    if let Some(h) = home() {
+        spots.push(h.join("Applications/Silas.app"));
+    }
+    let mut miss = Miss::Nothing;
+    for app in spots.into_iter().filter(|a| a.is_dir()) {
+        match against_cwd(&app) {
+            Ok(()) => return Ok(app),
+            Err(m) if miss == Miss::Nothing => miss = m,
+            Err(_) => {}
+        }
+    }
+    Err(miss)
+}
+
+/// Where a tool is, by the one rule for it.
+fn locate(tool: &Tool) -> Result<PathBuf, Miss> {
+    #[cfg(target_os = "macos")]
+    if tool.sub == "voice" && env::var_os(tool.env).is_none_or(|v| v.is_empty()) {
+        return silas_app();
+    }
+    find(tool)
+}
+
 fn voice(args: &[OsString]) -> i32 {
     if !args.is_empty() {
         eprintln!(
@@ -270,25 +413,21 @@ fn voice(args: &[OsString]) -> i32 {
         );
         return 2;
     }
-    #[cfg(target_os = "macos")]
-    {
-        // An explicit override is run directly; otherwise open the app without focus.
-        if env::var_os(VOICE.env).is_none_or(|v| v.is_empty()) {
-            return match Command::new("/usr/bin/open")
-                .args(["-g", "-a", "Silas"])
-                .status()
-            {
-                Ok(s) => s.code().unwrap_or(1),
-                Err(e) => {
-                    eprintln!("polycarp: could not run open: {e}");
-                    126
-                }
-            };
-        }
-    }
-    let Some(path) = find(&VOICE) else {
-        return not_found(&VOICE);
+    let path = match locate(&VOICE) {
+        Ok(p) => p,
+        Err(why) => return not_found(&VOICE, &why),
     };
+    #[cfg(target_os = "macos")]
+    if path.is_dir() {
+        // The app bundle: open it without taking focus.
+        return match Command::new("/usr/bin/open").arg("-g").arg(&path).status() {
+            Ok(s) => s.code().unwrap_or(1),
+            Err(e) => {
+                eprintln!("polycarp: could not run open: {e}");
+                126
+            }
+        };
+    }
     let mut cmd = Command::new(path);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -313,11 +452,22 @@ fn voice(args: &[OsString]) -> i32 {
     }
 }
 
+/// How long `doctor` waits for a tool's `--version`, reading included. Tests shorten it.
+fn doctor_limit() -> Duration {
+    env::var("POLYCARP_DOCTOR_LIMIT_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .map_or(Duration::from_secs(10), Duration::from_millis)
+}
+
 fn doctor() -> i32 {
+    // A locked handle, and a closed pipe (`polycarp doctor | head -1`) is a quiet end, not a panic.
+    let mut out = std::io::stdout().lock();
+    let mut printing = true;
     let mut ok = true;
     for tool in [&SPACES, &BROWSER, &VOICE] {
-        match find(tool) {
-            Some(p) => {
+        let line = match locate(tool) {
+            Ok(p) => {
                 let mut line = format!("{}: {}", tool.sub, p.display());
                 if tool.sub == "browser" {
                     match first_version_line(&p) {
@@ -328,16 +478,44 @@ fn doctor() -> i32 {
                         }
                     }
                 }
-                println!("{line}");
+                line
             }
-            None => {
-                println!("{}: not found", tool.sub);
+            Err(Miss::Script(p)) => {
+                ok = false;
+                format!(
+                    "{}: present but not runnable. {}",
+                    tool.sub,
+                    script_advice(tool, &p)
+                )
+            }
+            Err(Miss::InCwd(p)) => {
+                ok = tool.sub == "voice" && ok;
+                format!(
+                    "{}: {} is in the current folder, so it is not used. Run doctor from another folder",
+                    tool.sub,
+                    p.display()
+                )
+            }
+            Err(Miss::NoCwd) => {
+                ok = tool.sub == "voice" && ok;
+                format!(
+                    "{}: not checked, because the current folder can't be resolved",
+                    tool.sub
+                )
+            }
+            Err(Miss::Nothing) => {
                 if tool.sub != "voice" {
                     ok = false;
                 }
+                format!("{}: not found", tool.sub)
             }
+        };
+        // Stop printing after a write error, but finish the checks, so the exit code stays true.
+        if printing && writeln!(out, "{line}").is_err() {
+            printing = false;
         }
     }
+    let _ = out.flush();
     if ok {
         0
     } else {
@@ -345,7 +523,9 @@ fn doctor() -> i32 {
     }
 }
 
-/// The tool's version, or None if it can't start, fails, prints nothing or hangs past 10 seconds.
+/// The tool's version, or None if it can't start, fails, prints nothing or takes past the limit.
+/// The limit covers reading too: a tool that leaves a background process holding its output
+/// open can't stall `doctor`.
 fn first_version_line(p: &Path) -> Option<String> {
     let mut child = Command::new(p)
         .arg("--version")
@@ -354,12 +534,28 @@ fn first_version_line(p: &Path) -> Option<String> {
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
+    let stdout = child.stdout.take()?;
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut text = String::new();
+        let read = stdout.take(64 * 1024).read_to_string(&mut text);
+        let _ = tx.send(read.ok().map(|_| text));
+    });
     let started = Instant::now();
+    let limit = doctor_limit();
+    let text = match rx.recv_timeout(limit) {
+        Ok(Some(text)) => text,
+        _ => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+    };
     loop {
         match child.try_wait().ok()? {
             Some(status) if status.success() => break,
             Some(_) => return None,
-            None if started.elapsed() > Duration::from_secs(10) => {
+            None if started.elapsed() > limit => {
                 let _ = child.kill();
                 let _ = child.wait();
                 return None;
@@ -367,8 +563,6 @@ fn first_version_line(p: &Path) -> Option<String> {
             None => std::thread::sleep(Duration::from_millis(20)),
         }
     }
-    let mut text = String::new();
-    child.stdout.take()?.read_to_string(&mut text).ok()?;
     text.lines()
         .next()
         .map(|l| l.trim().to_string())

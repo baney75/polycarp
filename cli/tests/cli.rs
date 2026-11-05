@@ -534,3 +534,274 @@ fn doctor_says_when_the_browser_tool_is_broken() {
     assert!(out(&o).contains("did not work"), "{}", out(&o));
     assert!(!out(&o).contains("oops"), "{}", out(&o));
 }
+
+// ---- Issue #5 follow-ups ----
+
+/// A tool below the current folder, such as node_modules/.bin on PATH, is never run.
+#[cfg(unix)]
+#[test]
+fn a_path_entry_below_the_current_folder_is_refused_and_named() {
+    let s = Sandbox::new();
+    let marker = s.dir("ran");
+    let below = s.dir("cwd").join("node_modules/.bin");
+    fs::create_dir_all(&below).unwrap();
+    stub(
+        &below,
+        "baneyspaces",
+        &format!("echo x > '{}'", marker.display()),
+    );
+    let o = s.cmd(&["spaces"]).env("PATH", &below).output().unwrap();
+    assert_eq!(code(&o), 127);
+    assert!(!marker.exists());
+    let e = err(&o);
+    assert!(e.contains("current folder"), "{e}");
+    assert!(
+        e.contains(below.join("baneyspaces").to_str().unwrap()),
+        "{e}"
+    );
+    assert!(!e.contains("Install"), "{e}");
+}
+
+/// From the home folder, an ancestor of it, or `/`, a tool in `~/.local/bin` is fine.
+#[cfg(unix)]
+#[test]
+fn from_home_or_an_ancestor_of_home_a_tool_under_home_still_runs() {
+    let s = Sandbox::new();
+    let d = s.dir("home").join(".local/bin");
+    fs::create_dir_all(&d).unwrap();
+    stub(&d, "baneyspaces", "echo from-home");
+    for cwd in [s.dir("home"), PathBuf::from("/"), s.root.clone()] {
+        let o = s
+            .cmd(&["spaces"])
+            .env("PATH", &d)
+            .current_dir(&cwd)
+            .output()
+            .unwrap();
+        assert_eq!(
+            out(&o),
+            "from-home\n",
+            "from {}: {}",
+            cwd.display(),
+            err(&o)
+        );
+    }
+    // `.local/bin` is neither home nor an ancestor of it, so as the current folder it is refused.
+    let o = s
+        .cmd(&["spaces"])
+        .env("PATH", &d)
+        .current_dir(&d)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 127);
+}
+
+/// The exception is narrow: from `~`, a file in `~` and `~/node_modules/.bin` are still refused.
+#[cfg(unix)]
+#[test]
+fn from_home_only_the_allowed_places_under_home_run() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let nm = home.join("node_modules/.bin");
+    fs::create_dir_all(&nm).unwrap();
+    let marker = s.dir("ran");
+    let body = format!("echo x > '{}'", marker.display());
+    stub(&nm, "baneyspaces", &body);
+    stub(&home, "baneyspaces", &body);
+    for dir in [&nm, &home] {
+        let o = s
+            .cmd(&["spaces"])
+            .env("PATH", dir)
+            .current_dir(&home)
+            .output()
+            .unwrap();
+        assert_eq!(code(&o), 127, "{}", dir.display());
+        assert!(err(&o).contains("current folder"), "{}", err(&o));
+    }
+    assert!(!marker.exists());
+}
+
+/// HOME inside a checkout, with the checkout as the current folder: a tool outside HOME but
+/// inside the checkout is refused, and the one under HOME's .local/bin is not.
+#[cfg(unix)]
+#[test]
+fn home_inside_the_current_folder_does_not_open_the_whole_folder() {
+    let s = Sandbox::new();
+    let marker = s.dir("ran");
+    stub(
+        &s.dir("bin"),
+        "baneyspaces",
+        &format!("echo x > '{}'", marker.display()),
+    );
+    let o = s
+        .cmd(&["spaces"])
+        .env("PATH", s.dir("bin"))
+        .current_dir(&s.root)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 127, "{}", err(&o));
+    assert!(!marker.exists());
+    let local = s.dir("home").join(".local/bin");
+    fs::create_dir_all(&local).unwrap();
+    stub(&local, "baneyspaces", "echo ok");
+    let o = s
+        .cmd(&["spaces"])
+        .env("PATH", &local)
+        .current_dir(&s.root)
+        .output()
+        .unwrap();
+    assert_eq!(out(&o), "ok\n");
+}
+
+/// With no current folder to compare against, nothing runs.
+#[cfg(unix)]
+#[test]
+fn an_unresolvable_current_folder_fails_closed() {
+    let s = Sandbox::new();
+    stub(&s.dir("bin"), "baneyspaces", "echo ran");
+    let mut c = Command::new("/bin/sh");
+    c.env_clear()
+        .env("HOME", s.dir("home"))
+        .env("PATH", s.dir("bin"))
+        .env("POLYCARP_NO_SYSTEM_SPOTS", "1")
+        .current_dir(s.dir("cwd"))
+        .arg("-c")
+        .arg("/bin/rmdir \"$1\" && exec \"$2\" spaces")
+        .arg("sh")
+        .arg(s.dir("cwd"))
+        .arg(env!("CARGO_BIN_EXE_polycarp"));
+    let o = c.output().unwrap();
+    assert_eq!(code(&o), 127, "{}{}", out(&o), err(&o));
+    assert!(!out(&o).contains("ran"));
+    assert!(err(&o).contains("current folder"), "{}", err(&o));
+}
+
+/// `sleep 60 &` leaves a process holding stdout; doctor must still end within its limit.
+#[cfg(unix)]
+#[test]
+fn doctor_time_limit_covers_reading() {
+    let s = Sandbox::new();
+    stub(&s.dir("bin"), "baneyspaces", "exit 0");
+    stub(&s.dir("bin"), "tabkyra", "/bin/sleep 60 &\necho tabkyra 1");
+    let started = std::time::Instant::now();
+    let o = s
+        .cmd(&["doctor"])
+        .env("PATH", s.dir("bin"))
+        .env("POLYCARP_DOCTOR_LIMIT_MS", "500")
+        .stdin(Stdio::null())
+        .output();
+    // output() waits on the stub's background process only if doctor leaks it; doctor itself
+    // must be back long before the 60 seconds are up.
+    assert!(started.elapsed() < std::time::Duration::from_secs(20));
+    let o = o.unwrap();
+    assert_eq!(code(&o), 1);
+    assert!(out(&o).contains("did not work"), "{}", out(&o));
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_piped_to_a_closed_reader_ends_quietly() {
+    let s = Sandbox::new();
+    stub(&s.dir("bin"), "baneyspaces", "exit 0");
+    stub(&s.dir("bin"), "tabkyra", "/bin/sleep 1\necho tabkyra 1");
+    let mut child = s
+        .cmd(&["doctor"])
+        .env("PATH", s.dir("bin"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Close the reading end at once, as `| head -1` does. Doctor writes after the 1 s wait.
+    drop(child.stdout.take());
+    let o = child.wait_with_output().unwrap();
+    assert!(!err(&o).contains("panicked"), "{}", err(&o));
+    assert_ne!(code(&o), 101);
+}
+
+/// A closed reader must not make a failing check look healthy.
+#[cfg(unix)]
+#[test]
+fn doctor_with_a_closed_reader_still_reports_a_missing_tool_in_its_exit_code() {
+    let s = Sandbox::new();
+    stub(&s.dir("bin"), "baneyspaces", "exit 0");
+    let mut child = s
+        .cmd(&["doctor"])
+        .env("PATH", s.dir("bin"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let o = child.wait_with_output().unwrap();
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(!err(&o).contains("panicked"));
+}
+
+#[cfg(unix)]
+#[test]
+fn an_override_to_a_cmd_or_bat_file_is_refused_with_the_reason() {
+    let s = Sandbox::new();
+    for name in ["tabkyra.cmd", "tabkyra.BAT"] {
+        let p = stub(&s.dir("bin"), name, "echo ran");
+        let o = s
+            .cmd(&["browser"])
+            .env("POLYCARP_SHIM_CHECK", "1")
+            .env("POLYCARP_BROWSER_BIN", &p)
+            .output()
+            .unwrap();
+        assert_eq!(code(&o), 127, "{name}");
+        assert!(!out(&o).contains("ran"));
+        let e = err(&o);
+        assert!(
+            e.contains("shell") && e.contains("POLYCARP_BROWSER_BIN"),
+            "{e}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_reports_a_cmd_shim_as_present_but_not_runnable_with_advice() {
+    let s = Sandbox::new();
+    stub(&s.dir("bin"), "baneyspaces", "exit 0");
+    stub(&s.dir("bin"), "tabkyra.cmd", "echo ran");
+    let o = s
+        .cmd(&["doctor"])
+        .env("POLYCARP_SHIM_CHECK", "1")
+        .env("PATH", s.dir("bin"))
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 1);
+    let t = out(&o);
+    assert!(t.contains("present but not runnable"), "{t}");
+    assert!(
+        t.contains("Node") && t.contains("POLYCARP_BROWSER_BIN"),
+        "{t}"
+    );
+    assert!(!t.contains("browser: not found"), "{t}");
+    let o = s
+        .cmd(&["browser"])
+        .env("POLYCARP_SHIM_CHECK", "1")
+        .env("PATH", s.dir("bin"))
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 127);
+    assert!(err(&o).contains("Node"), "{}", err(&o));
+}
+
+/// On a Mac, `doctor` and `voice` look at the same fixed app path.
+#[cfg(target_os = "macos")]
+#[test]
+fn voice_and_doctor_use_the_same_app_path_on_a_mac() {
+    let s = Sandbox::new();
+    let o = s.run(&["voice"]);
+    assert_eq!(code(&o), 127, "{}", err(&o));
+    assert!(err(&o).contains("not found"), "{}", err(&o));
+    let app = s.dir("home").join("Applications/Silas.app");
+    fs::create_dir_all(&app).unwrap();
+    let o = s.run(&["doctor"]);
+    assert!(
+        out(&o).contains(&format!("voice: {}", app.display())),
+        "{}",
+        out(&o)
+    );
+}

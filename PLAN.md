@@ -33,6 +33,10 @@ Asked for by Donovan, 2026-11-04.
 Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all hyper themable and customizable.
 - [ ] One theme file drives every product and the site. Check: `polycarp theme set still-water` changes Spaces, Voice, Browser and a local site build, read back from each
 - [ ] Agents can customize everything for their user. Check: from a schema read alone, an agent applies a change over MCP, previews it and undoes it, with its name in the history
+- [x] A person can get the apps' own look back from the command. Check: `polycarp theme off` removes the theme files, and `theme on` or `undo` brings them back
+- [ ] Spaces falls back to its own look when the theme files are gone. Check: a Spaces test that removes `current/theme.json` and reads back its own look
+- [ ] Voice falls back to its own look when the theme files are gone. Check: a Voice test that removes `current/theme.json` and reads back its own look
+- [ ] Browser falls back to its own look when the theme files are gone. Check: a Browser test that removes `current/theme.json` and reads back its own look
 - [x] The default themes look good, not just pass contrast. Check: `theme preview` of each, both modes, judged on a contact sheet
 - [ ] Every color, radius, font and duration in every surface comes from the theme. Check: a test fails on a hard-coded value in product UI, with a written allowlist
 - [ ] Browser reads the theme. Check: `polycarp theme set still-water` changes the installed panel within 5 seconds, read back in a real browser

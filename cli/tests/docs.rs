@@ -118,16 +118,28 @@ fn the_guide_and_the_server_list_the_same_mcp_tools() {
     assert_eq!(code, docs, "docs/guide.md and tools/list disagree");
 }
 
+/// The built-in themes `polycarp theme list --json` reports with an empty config folder.
+fn listed_built_ins() -> BTreeSet<String> {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("docs-empty-cfg");
+    let _ = std::fs::remove_dir_all(&dir);
+    let out = Command::new(env!("CARGO_BIN_EXE_polycarp"))
+        .args(["theme", "list", "--json"])
+        .env("POLYCARP_CONFIG_DIR", &dir)
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    v["data"]["themes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["source"] == "built-in")
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
 #[test]
-fn the_guide_and_the_themes_folder_list_the_same_built_ins() {
-    let mut code = BTreeSet::new();
-    for file in std::fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../themes")).unwrap()
-    {
-        let name = file.unwrap().file_name().to_string_lossy().into_owned();
-        if let Some(theme) = name.strip_suffix(".toml") {
-            code.insert(theme.to_string());
-        }
-    }
+fn the_guide_and_theme_list_name_the_same_built_ins() {
+    let code = listed_built_ins();
     assert!(code.len() >= 6, "{code:?}");
     let guide = guide();
     let table = guide
@@ -140,5 +152,109 @@ fn the_guide_and_the_themes_folder_list_the_same_built_ins() {
         .take_while(|l| l.starts_with('|'))
         .filter_map(|l| l.split('`').nth(1).map(str::to_string))
         .collect();
-    assert_eq!(code, docs, "docs/guide.md and themes/ disagree");
+    assert_eq!(code, docs, "docs/guide.md and `theme list` disagree");
+    // The themes folder ships the same files.
+    let mut files = BTreeSet::new();
+    for file in std::fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../themes")).unwrap()
+    {
+        let name = file.unwrap().file_name().to_string_lossy().into_owned();
+        if let Some(theme) = name.strip_suffix(".toml") {
+            files.insert(theme.to_string());
+        }
+    }
+    assert_eq!(code, files, "themes/ and `theme list` disagree");
+}
+
+/// The rows of the markdown table that follows `header`, as lists of cells.
+fn table_rows(text: &str, header: &str) -> Vec<Vec<String>> {
+    text.split(header)
+        .nth(1)
+        .unwrap_or_else(|| panic!("no table headed {header}"))
+        .lines()
+        .skip(2)
+        .take_while(|l| l.starts_with('|'))
+        .map(|l| {
+            l.trim_matches('|')
+                .split(" | ")
+                .map(|c| c.trim().to_string())
+                .collect()
+        })
+        .collect()
+}
+
+/// Every backticked piece of text in `cell`.
+fn backticked(cell: &str) -> Vec<String> {
+    cell.split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn the_command_table_and_help_list_the_same_commands_both_ways() {
+    let code = from_usage(&help(&["--help"]), "polycarp");
+    assert!(code.len() >= 8, "{code:?}");
+    let docs: BTreeSet<String> = table_rows(&guide(), "| Command | What it does |")
+        .iter()
+        .flat_map(|row| backticked(&row[0]))
+        .filter_map(|c| {
+            c.strip_prefix("polycarp ")
+                .and_then(|r| r.split_whitespace().next())
+                .map(str::to_string)
+        })
+        .collect();
+    assert_eq!(
+        code, docs,
+        "the command table and `polycarp --help` disagree"
+    );
+}
+
+#[test]
+fn the_mcp_table_names_every_served_tool_and_nothing_else() {
+    let served = served_tools();
+    let docs: BTreeSet<String> = table_rows(&guide(), "| Tool | Use it to |")
+        .iter()
+        .flat_map(|row| backticked(&row[0]))
+        .collect();
+    assert_eq!(served, docs, "the MCP table and tools/list disagree");
+}
+
+#[test]
+fn every_flag_in_a_guide_example_is_in_that_commands_usage() {
+    let usage = help(&["theme", "--help"]);
+    let guide = guide();
+    let mut in_block = false;
+    let mut checked = 0;
+    for line in guide.lines() {
+        if line.starts_with("```") {
+            in_block = !in_block;
+            continue;
+        }
+        let Some(rest) = line
+            .trim()
+            .strip_prefix("polycarp theme ")
+            .filter(|_| in_block)
+        else {
+            continue;
+        };
+        let mut words = rest.split_whitespace();
+        let sub = words.next().unwrap();
+        let usage_line = usage
+            .lines()
+            .find(|l| {
+                let l = l.trim();
+                l == format!("polycarp theme {sub}")
+                    || l.starts_with(&format!("polycarp theme {sub} "))
+            })
+            .unwrap_or_else(|| panic!("the guide runs `polycarp theme {sub}`, which has no usage"));
+        for flag in words.filter(|w| w.starts_with("--")) {
+            checked += 1;
+            assert!(
+                usage_line.contains(flag),
+                "the guide uses {flag} with `theme {sub}`, but its usage is: {usage_line}"
+            );
+        }
+    }
+    assert!(checked >= 4, "only {checked} flags were checked");
 }
