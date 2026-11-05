@@ -36,6 +36,7 @@ Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all
 - [x] The default themes look good, not just pass contrast. Check: `theme preview` of each, both modes, judged on a contact sheet
 - [ ] Every color, radius, font and duration in every surface comes from the theme. Check: a test fails on a hard-coded value in product UI, with a written allowlist
 - [ ] Browser reads the theme. Check: `polycarp theme set still-water` changes the installed panel within 5 seconds, read back in a real browser
+- [ ] Spaces reads the theme. Check: `polycarp theme set still-water` changes the installed app within 2 seconds on every surface, read back on a real Mac with the probes in `spaces/AGENTS.md`
 - [ ] Any value can be overridden per product. Check: a `[surface.*]` override changes only that product
 - [x] Unreadable themes are refused. Check: contrast tests on every built-in and surface
 - [ ] Keys, motion and behavior are configurable from one file, by people and by agents, with undo and a recovery key. Check: `spaces/spec/config.md` conformance across products
