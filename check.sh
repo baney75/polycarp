@@ -16,6 +16,7 @@ run() {
 	fi
 }
 
+run cli cli 'cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check'
 run spaces spaces 'swift build && swift test'
 run voice voice 'bun install --frozen-lockfile && bun run build && (cd src-tauri && cargo test --lib && cargo clippy --lib -- -D warnings)'
 run browser browser 'scripts/setup-siblings.sh && npm ci && (cd cli && npm ci) && npx biome check . && npx tsc --noEmit && node --import tsx --test test/*.test.mjs && (cd cli && npx tsc --noEmit && npm test) && node cli/dist/index.js skill lint skills && (cd cli && node --test test/skill-lint.test.mjs)'

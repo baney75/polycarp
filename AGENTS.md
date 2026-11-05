@@ -1,6 +1,6 @@
 # Polycarp agent rules
 
-This repo holds three apps with their full history. Each directory keeps its own `AGENTS.md`
+This repo holds three apps and one small command (`cli/`) with their full history. Each directory keeps its own `AGENTS.md`
 rules; read the one for the directory you touch before you change it. No renaming of the products
 yet.
 
@@ -8,6 +8,7 @@ yet.
 
 Run each from its directory.
 
+- `cli/`: `cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check`.
 - `spaces/`: `swift build` and `swift test` (its `AGENTS.md` adds probes and a live check).
 - `voice/`: `bun install --frozen-lockfile`, then
   `bun run build && (cd src-tauri && cargo test --lib && cargo clippy --lib -- -D warnings)`.

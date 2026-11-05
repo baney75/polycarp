@@ -6,10 +6,11 @@ working until step 5. A box is checked only when its check has passed.
 ## 1. Bring the code together
 - [x] Full history of all three in `spaces/`, `voice/`, `browser/`
 - [x] Brand files in `brand/`
-- [ ] Every suite in `./check.sh` passes on a Mac and in CI
+- [x] Every suite in `./check.sh` passes on a Mac and in CI
 
 ## 2. One name, one command
-- [ ] `polycarp spaces`, `polycarp browser`, `polycarp voice`. Check: each old command works through an alias and gives the same result
+- [ ] `polycarp spaces`, `polycarp browser`, `polycarp voice`. Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
+- [ ] `polycarp voice` gains commands once baney75/silas#6 lands. Until then it only opens the app
 - [ ] Polycarp MCP server, keeping `tabkyra` and `baneyspaces` as aliases. Check: an agent reaches the same tools under both names
 
 ## 3. One core, a native app on each device

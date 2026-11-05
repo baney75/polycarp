@@ -13,6 +13,19 @@ replace them yet.
 Polycarp means "much fruit". John 15:5 (ESV): "Whoever abides in me and I in him, he it is that
 bears much fruit, for apart from me you can do nothing."
 
+## The command
+
+`polycarp` is one command that hands off to the three apps. The apps must already be installed.
+
+```
+polycarp spaces ls          # runs baneyspaces ls
+polycarp browser --version  # runs tabkyra --version
+polycarp voice              # opens Silas
+polycarp doctor             # shows which tools it found
+```
+
+Build it with `cd cli && cargo build`. See [cli/](cli/).
+
 ## Plan
 
 See [PLAN.md](PLAN.md). The name, logo and colors are in [brand/](brand/README.md).
