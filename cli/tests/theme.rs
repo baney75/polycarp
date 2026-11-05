@@ -1443,6 +1443,50 @@ fn other_tables_in_config_toml_are_kept() {
     assert!(text.contains("theme = \"evening\""), "{text}");
 }
 
+#[cfg(unix)]
+#[test]
+fn writes_follow_symlinks_keep_modes_and_new_files_are_0644() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    let b = Box::new();
+    b.ok(&["set", "evening"]);
+    let there = b.root.join("elsewhere");
+    fs::create_dir_all(&there).unwrap();
+    // current/site.css and config.toml are links to files in another folder, with their own modes.
+    let css_link = b.cfg().join("current").join("site.css");
+    let css_real = there.join("real.css");
+    fs::rename(&css_link, &css_real).unwrap();
+    fs::set_permissions(&css_real, fs::Permissions::from_mode(0o600)).unwrap();
+    symlink(&css_real, &css_link).unwrap();
+    let cfg_real = there.join("real-config.toml");
+    fs::rename(b.state_file(), &cfg_real).unwrap();
+    fs::set_permissions(&cfg_real, fs::Permissions::from_mode(0o640)).unwrap();
+    symlink(&cfg_real, b.state_file()).unwrap();
+    // A file that does not exist yet is created with 0644.
+    let voice = b.cfg().join("current").join("voice.css");
+    fs::remove_file(&voice).unwrap();
+
+    b.ok(&["set", "calm"]);
+
+    for link in [&css_link, &b.state_file()] {
+        assert!(
+            fs::symlink_metadata(link).unwrap().file_type().is_symlink(),
+            "{link:?} stopped being a link"
+        );
+    }
+    assert!(fs::read_to_string(&css_real).unwrap().contains("\"calm\""));
+    assert!(fs::read_to_string(&cfg_real).unwrap().contains("calm"));
+    assert_eq!((mode(&css_real), mode(&cfg_real)), (0o600, 0o640));
+    assert_eq!(mode(&voice), 0o644);
+    let mut files = Vec::new();
+    files_under(&there, &mut files);
+    files_under(&b.cfg(), &mut files);
+    assert!(
+        files.iter().all(|f| !f.to_string_lossy().contains(".tmp")),
+        "{files:?}"
+    );
+}
+
 #[test]
 fn atomic_writes_leave_no_temp_files() {
     let b = Box::new();

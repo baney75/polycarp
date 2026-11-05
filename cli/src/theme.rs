@@ -1020,32 +1020,62 @@ fn state_table(cfg: &Cfg, st: &State) -> String {
 
 static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-/// Writes to a temp file in the same folder, then renames it into place. Mode 0644 on Unix.
+/// Follows symbolic links, even dangling ones, to the file that would really be written.
+fn resolve_link(path: &Path) -> PathBuf {
+    let mut p = path.to_path_buf();
+    for _ in 0..16 {
+        match fs::symlink_metadata(&p) {
+            Ok(m) if m.file_type().is_symlink() => match fs::read_link(&p) {
+                Ok(t) => {
+                    p = if t.is_absolute() {
+                        t
+                    } else {
+                        p.parent().map_or(t.clone(), |d| d.join(&t))
+                    }
+                }
+                Err(_) => break,
+            },
+            _ => break,
+        }
+    }
+    p
+}
+
+/// Writes to a temp file next to the real target, then renames it into place. If `path` is a
+/// symbolic link the target is written and the link stays. An existing file keeps its mode; a new
+/// one gets 0644 on Unix.
 fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
-    let dir = path.parent().ok_or("no parent folder")?;
+    let target = resolve_link(path);
+    let dir = target.parent().ok_or("no parent folder")?;
     fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
     let n = TEMP_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let file = path.file_name().map(|f| f.to_string_lossy().into_owned());
+    let file = target.file_name().map(|f| f.to_string_lossy().into_owned());
     let tmp = dir.join(format!(
         ".{}.tmp-{}-{n}",
         file.unwrap_or_default(),
         std::process::id()
     ));
+    let existing = fs::metadata(&target).ok().filter(|m| m.is_file());
     let result = (|| -> std::io::Result<()> {
         let mut f = fs::File::create(&tmp)?;
         f.write_all(data)?;
         f.sync_all()?;
         drop(f);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&tmp, fs::Permissions::from_mode(0o644))?;
+        match &existing {
+            Some(m) => fs::set_permissions(&tmp, m.permissions())?,
+            None => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o644))?;
+                }
+            }
         }
-        fs::rename(&tmp, path)
+        fs::rename(&tmp, &target)
     })();
     if let Err(e) = result {
         let _ = fs::remove_file(&tmp);
-        return Err(format!("could not write {}: {e}", path.display()));
+        return Err(format!("could not write {}: {e}", target.display()));
     }
     Ok(())
 }
