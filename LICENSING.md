@@ -2,6 +2,7 @@
 
 | Directory | License |
 | --- | --- |
+| `cli/` | MIT |
 | `spaces/` | MIT |
 | `voice/` | MIT |
 | `browser/` | AGPL-3.0 |

@@ -1,0 +1,13 @@
+[package]
+name = "polycarp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "One command that hands off to BaneySpaces, Tabkyra and Silas"
+publish = false
+
+[[bin]]
+name = "polycarp"
+path = "src/main.rs"
+
+[dependencies]
