@@ -19,7 +19,7 @@ pub(super) fn describe(path: &str) -> &'static str {
         "type" => "Fonts and text size. Same in light and dark.",
         "motion" => "How long things take to move and how they ease. Same in light and dark.",
         "surface" => "Changes for one product only. Each product named here gets the theme with these sections merged over it. Use this when only one product should look different.",
-        "surface.spaces" => "Overrides for BaneySpaces: the workspace bar, the dock and its tiles.",
+        "surface.spaces" => "Overrides for Polycarp Spaces: the workspace bar, the dock and its tiles.",
         "surface.voice" => "Overrides for Silas: the dictation overlay and its settings window.",
         "surface.browser" => "Overrides for Tabkyra: the browser side panel, chat and permission prompts.",
         "surface.site" => "Overrides for the Polycarp website.",

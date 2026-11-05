@@ -50,7 +50,7 @@ struct Tool {
 fn tools() -> Vec<Tool> {
     let name = json!({"type":"string","description":"A theme name from theme_list. Leave out for the current theme."});
     let surface = json!({"type":"string","enum":["spaces","voice","browser","site"],
-        "description":"One product: spaces (BaneySpaces), voice (Silas), browser (Tabkyra) or site. Leave out for the theme without product overrides."});
+        "description":"One product: spaces (Polycarp Spaces), voice (Silas), browser (Tabkyra) or site. Leave out for the theme without product overrides."});
     let theme_doc = json!({"type":["object","string"],
         "description":"The whole theme: a JSON object, or a string of TOML or JSON. Same shape as theme_schema. Use `extends` and list only what changes."});
     vec![
