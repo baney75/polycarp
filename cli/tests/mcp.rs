@@ -354,12 +354,12 @@ fn a_full_workflow_over_the_real_binary_records_the_agent_by_name() {
         .to_string()
         .contains("toml-one"));
     s.tool("theme_set", json!({"name": "evening", "mode": "dark"}));
-    s.tool("theme_accent", json!({"color": "#3a8f6b"}));
+    s.tool("theme_accent", json!({"color": "#2f6b55", "mode": "light"}));
     let r = s.tool("theme_export", json!({"format": "css", "surface": "site"}));
     assert!(r["structuredContent"]["data"]["css"]
         .as_str()
         .unwrap()
-        .contains("--pc-accent: #3a8f6b;"));
+        .contains("--pc-accent: #2f6b55;"));
     let r = s.tool("theme_show", json!({"name": "calm"}));
     assert_eq!(r["structuredContent"]["data"]["name"], "calm");
     s.tool("theme_accent", json!({"clear": true}));

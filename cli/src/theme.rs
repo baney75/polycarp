@@ -350,18 +350,31 @@ pub fn contrast(a: &str, b: &str) -> f64 {
 
 type Colors = BTreeMap<String, String>;
 
-/// The pairs that must stay readable: (text, on, minimum).
+/// Contrast for text, and for marks that are not text (the status indicators on `sunken`).
+const TEXT_MIN: f64 = 4.5;
+const MARK_MIN: f64 = 3.0;
+
+/// The pairs that must stay readable: (text, on, minimum). They are the pairs the UI draws.
+/// Contrast is the same both ways round, so the danger button's `background` on `urgent` is the
+/// `urgent` on `background` pair below.
 fn pairs() -> Vec<(&'static str, &'static str, f64)> {
     let mut v = Vec::new();
     for fg in ["foreground", "strong", "muted"] {
-        for bg in ["background", "surface"] {
-            v.push((fg, bg, 4.5));
+        for bg in ["background", "surface", "sunken"] {
+            v.push((fg, bg, TEXT_MIN));
         }
     }
-    v.push(("on_accent", "accent", 4.5));
-    v.push(("accent", "background", 3.0));
-    for fg in ["urgent", "working", "done"] {
-        v.push((fg, "background", 3.0));
+    for fg in ["foreground", "strong"] {
+        v.push((fg, "selection", TEXT_MIN));
+    }
+    for fg in ["urgent", "working", "done", "accent"] {
+        for bg in ["background", "surface"] {
+            v.push((fg, bg, TEXT_MIN));
+        }
+    }
+    v.push(("on_accent", "accent", TEXT_MIN));
+    for fg in ["urgent", "working", "done", "accent"] {
+        v.push((fg, "sunken", MARK_MIN));
     }
     v
 }
@@ -768,7 +781,7 @@ fn apply_accents(
             let own = c.get("on_accent").cloned().unwrap_or_default();
             let pick = [own.as_str(), "#000000", "#ffffff"]
                 .into_iter()
-                .find(|cand| is_hex(cand) && contrast(cand, a) >= 4.5)
+                .find(|cand| is_hex(cand) && contrast(cand, a) >= TEXT_MIN)
                 .unwrap_or("#000000")
                 .to_string();
             c.insert("accent".into(), a.to_lowercase());
@@ -2011,13 +2024,18 @@ pub(crate) fn op_accent(c: &Ctx, color: Option<&str>, mode: Option<&str>) -> Res
         }
     }
     build_full(&c.cfg, &st).map_err(|ps| {
-        bad_theme(
+        let e = bad_theme(
             &format!(
                 "accent {} is refused, nothing changed",
                 new.as_deref().unwrap_or("")
             ),
             &ps,
-        )
+        );
+        if modes.len() == 2 {
+            e.suggest("One color seldom reads on both a light and a dark background. Set each mode on its own: `theme accent <color> --mode light`, then `--mode dark`.")
+        } else {
+            e
+        }
     })?;
     let action = match &new {
         Some(c) => format!("theme accent {c}"),

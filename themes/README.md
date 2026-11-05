@@ -104,11 +104,16 @@ accent = "#3f6b6a"
 A theme is refused if text is hard to read. The check uses the WCAG contrast formula. It runs for both
 modes and for every product, after all merging.
 
-- `foreground`, `strong` and `muted` on `background` and on `surface`: at least 4.5
+- `foreground`, `strong` and `muted` on `background`, `surface` and `sunken`: at least 4.5
+- `foreground` and `strong` on `selection`: at least 4.5
+- `urgent`, `working`, `done` and `accent` on `background` and `surface`: at least 4.5, because the UI
+  draws them as text
 - `on_accent` on `accent`: at least 4.5
-- `accent` on `background`: at least 3.0
-- `urgent`, `working` and `done` on `background`: at least 3.0
+- `urgent`, `working`, `done` and `accent` on `sunken`: at least 3.0, because there they are indicators
 - `border` is not checked
+
+Contrast reads the same both ways round, so the danger button (`background` text on an `urgent` fill) is
+covered by `urgent` on `background`.
 
 A refusal looks like this:
 
@@ -195,10 +200,13 @@ density = "compact"
 
 Every `theme` command takes `--json`.
 
-`accent` sets the accent for both modes, or for one with `--mode`. It picks `on_accent` for you: the
-theme's own if it reads on the new accent, else black, else white. If the accent would fail the contrast
-check, it is refused and nothing changes. `set` keeps your accent if it still reads on the new theme.
-If not, it clears it and says so.
+`accent` sets the accent for both modes, or for one with `--mode`. It picks `on_accent` for you by the same
+rule the check uses (at least 4.5 on the accent): the theme's own if it reads on the new accent, else black,
+else white. If the accent would fail the contrast check, it is refused and nothing changes. The accent is
+also drawn as text, so it needs 4.5 on `background` and `surface`. That means one color almost never works
+in both light and dark, so set the two modes one at a time: `accent <color> --mode light`, then
+`accent <color> --mode dark`. `set` keeps your accent if it still reads on the new theme. If not, it clears
+it and says so.
 
 ## What gets written
 

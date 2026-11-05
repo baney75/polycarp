@@ -19,7 +19,8 @@ One theme file drives every Polycarp product. Change it with the `polycarp theme
      that extends it and switches to it; it says so. The built-ins are never edited.
    - A whole look: `polycarp theme apply <file|->` with TOML or JSON. Set `extends` and list only what changes.
    - One product only: use `surface.<product>.<section>.<key>` paths, or a `[surface.<product>]` table.
-   - Only the brand color: `polycarp theme accent '#rrggbb'` (it picks a readable `on_accent`).
+   - Only the brand color: `polycarp theme accent '#rrggbb' --mode light`, then again with `--mode dark` and a
+     lighter color (one color rarely reads on both). It picks a readable `on_accent`.
 4. **Read refusals, then adjust.** A refusal changes nothing. With `--json`, `error.data.errors` lists each
    `path`, and for contrast the `actual` and `needs` ratios. Pick other colors. Never loosen the rules or
    edit the files in `current/` by hand.

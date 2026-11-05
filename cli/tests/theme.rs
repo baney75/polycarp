@@ -565,7 +565,7 @@ fn contrast_refusal_message_is_exact() {
         "{e}"
     );
     assert!(e.contains("dark.muted on dark.background is"), "{e}");
-    // Light mode is checked as well, and the accent minimum is 3.0.
+    // Light mode is checked as well. The accent is text too, so it needs 4.5 there.
     let p = b.write_theme(
         "pale",
         &user_theme(
@@ -576,12 +576,68 @@ fn contrast_refusal_message_is_exact() {
     );
     let e = b.refused(&["validate", p.to_str().unwrap()]);
     assert!(
-        e.contains("light.accent on light.background is 1.19, needs 3.0"),
+        e.contains("light.accent on light.background is 1.19, needs 4.5"),
         "{e}"
     );
+    assert!(e.contains("light.accent on light.sunken is"), "{e}");
     assert!(e.contains(", needs 3.0\n"), "{e}");
     assert!(e.contains("light.urgent on light.background is"), "{e}");
     assert!(e.contains("light.on_accent on light.accent is"), "{e}");
+}
+
+#[test]
+fn every_pair_the_ui_draws_is_checked_in_both_modes() {
+    let b = Box::new();
+    // (what to change, a message that must appear). Each case passed the older, shorter rules.
+    let cases = [
+        // Text on the selected row.
+        (
+            "[light]\nselection = \"#6a6a6a\"",
+            "light.foreground on light.selection is",
+        ),
+        (
+            "[dark]\nselection = \"#8a8a8a\"",
+            "dark.strong on dark.selection is",
+        ),
+        // Text on the recessed wells.
+        (
+            "[light]\nsunken = \"#8a8a7a\"",
+            "light.muted on light.sunken is",
+        ),
+        (
+            "[dark]\nsunken = \"#7a7a6a\"",
+            "dark.foreground on dark.sunken is",
+        ),
+        // Accent and status colors are text, so they need 4.5 on background and surface.
+        (
+            "[dark]\naccent = \"#7a8a6a\"",
+            "dark.accent on dark.background is 3.72, needs 4.5",
+        ),
+        (
+            "[dark]\nworking = \"#8a7e5a\"",
+            "dark.working on dark.background is 3.42, needs 4.5",
+        ),
+        ("[dark]\ndone = \"#6a8a86\"", "dark.done on dark.surface is"),
+        (
+            "[light]\nurgent = \"#c0584a\"",
+            "light.urgent on light.background is",
+        ),
+        // Indicators need 3.0 on sunken.
+        (
+            "[light]\nsunken = \"#b5ad92\"",
+            "light.urgent on light.sunken is 2.92, needs 3.0",
+        ),
+    ];
+    for (i, (body, want)) in cases.iter().enumerate() {
+        let name = format!("case-{i}");
+        let p = b.write_theme(&name, &user_theme(&name, "polycarp", body));
+        let e = b.refused(&["validate", p.to_str().unwrap()]);
+        assert!(e.contains(want), "{body}: wanted {want:?} in\n{e}");
+    }
+    // The built-ins themselves pass all of it (they are validated again by every other test).
+    for n in BUILTINS {
+        b.ok(&["show", n]);
+    }
 }
 
 #[test]
@@ -806,36 +862,40 @@ fn a_user_file_cannot_shadow_a_builtin() {
 
 // --- accent ------------------------------------------------------------------------------------
 
+/// A green that reads on the light themes (4.5 on background and surface) and one that reads on
+/// the dark ones. No single color reads on both, so `accent` is set one mode at a time.
+const GREEN_L: &str = "#2f6b55";
+const GREEN_D: &str = "#8fcfb2";
+
 #[test]
 fn accent_override_and_automatic_on_accent() {
     let b = Box::new();
-    // The theme's own on_accent is too pale on #3a8f6b, so black is picked.
-    let o = b.ok(&["accent", "#3A8F6B"]);
+    b.ok(&["accent", GREEN_L, "--mode", "light"]);
+    let o = b.ok(&["accent", &GREEN_D.to_uppercase(), "--mode", "dark"]);
     assert!(o.contains("wrote"), "{o}");
     let v: Value =
         serde_json::from_str(&fs::read_to_string(b.cfg().join("current/theme.json")).unwrap())
             .unwrap();
     for s in SURFACES {
-        for mode in ["light", "dark"] {
-            assert_eq!(v["surfaces"][s][mode]["accent"], "#3a8f6b");
-            assert_eq!(v["surfaces"][s][mode]["on_accent"], "#000000");
-        }
+        assert_eq!(v["surfaces"][s]["light"]["accent"], GREEN_L);
+        assert_eq!(v["surfaces"][s]["dark"]["accent"], GREEN_D);
+        // The theme's own on_accent reads on both, so it is kept.
+        assert_eq!(v["surfaces"][s]["light"]["on_accent"], "#f6f3e8");
+        assert_eq!(v["surfaces"][s]["dark"]["on_accent"], "#20231a");
     }
-    assert_eq!(v["accent_light"], "#3a8f6b");
-    assert_eq!(v["accent_dark"], "#3a8f6b");
+    assert_eq!(v["accent_light"], GREEN_L);
+    assert_eq!(v["accent_dark"], GREEN_D);
     let state = fs::read_to_string(b.state_file()).unwrap();
-    assert!(
-        state.contains("accent_light = \"#3a8f6b\"") && state.contains("accent_dark = \"#3a8f6b\"")
-    );
+    assert!(state.contains(&format!("accent_light = \"{GREEN_L}\"")));
+    assert!(state.contains(&format!("accent_dark = \"{GREEN_D}\"")));
     let cur = b.json(&["current", "--json"]);
-    assert_eq!(cur["accent_light"], "#3a8f6b");
+    assert_eq!(cur["accent_light"], GREEN_L);
 
-    // With --mode only that mode changes, and the theme's own on_accent is kept when it reads.
+    // With --mode only that mode changes.
     b.ok(&["accent", "--clear"]);
     b.ok(&["accent", "#3f6b6a", "--mode", "light"]);
     let v = b.json(&["export", "json"]);
     assert_eq!(v["surfaces"]["site"]["light"]["accent"], "#3f6b6a");
-    assert_eq!(v["surfaces"]["site"]["light"]["on_accent"], "#f6f3e8");
     assert_eq!(v["surfaces"]["site"]["dark"]["accent"], "#a9bb8a");
     let cur = b.json(&["current", "--json"]);
     assert_eq!(cur["accent_light"], "#3f6b6a");
@@ -853,6 +913,47 @@ fn accent_override_and_automatic_on_accent() {
 }
 
 #[test]
+fn accent_picks_on_accent_by_the_same_rule_the_checker_uses() {
+    let b = Box::new();
+    // This theme's own light on_accent is too weak on a new accent, and black is too, so white is
+    // picked. The picked label must read on the accent (4.5), as the checker requires.
+    let doc = user_theme(
+        "odd",
+        "polycarp",
+        "[light]\naccent = \"#0f2a1e\"\non_accent = \"#9a9a9a\"",
+    );
+    let o = b.run_stdin(&["theme", "apply", "-"], &doc);
+    assert_eq!(code(&o), 0, "{}{}", err(&o), out(&o));
+    b.ok(&["accent", GREEN_L, "--mode", "light"]);
+    let v = b.json(&["export", "json"]);
+    assert_eq!(v["surfaces"]["site"]["light"]["accent"], GREEN_L);
+    assert_eq!(v["surfaces"]["site"]["light"]["on_accent"], "#ffffff");
+}
+
+#[test]
+fn one_accent_cannot_serve_light_and_dark_so_both_modes_are_refused_with_the_way_out() {
+    let b = Box::new();
+    let (c, v) = b.jrun(&["accent", GREEN_L]);
+    assert_eq!(c, 1, "{v}");
+    assert_eq!(v["error"]["code"], "contrast");
+    let paths: Vec<String> = v["error"]["data"]["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["path"].as_str().unwrap().to_string())
+        .collect();
+    assert!(paths.contains(&"dark.accent".to_string()), "{paths:?}");
+    assert!(
+        v["error"]["suggestion"]
+            .as_str()
+            .unwrap()
+            .contains("--mode"),
+        "{v}"
+    );
+    assert!(!b.state_file().exists());
+}
+
+#[test]
 fn accent_that_fails_contrast_is_refused_and_state_is_unchanged() {
     let b = Box::new();
     b.ok(&["set", "polycarp"]);
@@ -862,7 +963,7 @@ fn accent_that_fails_contrast_is_refused_and_state_is_unchanged() {
     // Fine in light mode, too dark against the dark background.
     let e = b.refused(&["accent", "#2255aa"]);
     assert!(
-        e.contains("dark.accent on dark.background is 1.93, needs 3.0"),
+        e.contains("dark.accent on dark.background is 1.93, needs 4.5"),
         "{e}"
     );
     assert!(e.contains("nothing changed"), "{e}");
@@ -888,10 +989,10 @@ fn accent_that_fails_contrast_is_refused_and_state_is_unchanged() {
 #[test]
 fn accent_is_kept_by_set_when_it_reads_and_cleared_when_it_does_not() {
     let b = Box::new();
-    // 3.12 on evening's light background, 2.93 on parchment's.
-    b.ok(&["accent", "#7d8a95", "--mode", "light"]);
+    // 4.57 on evening's light background, 4.29 on parchment's (it needs 4.5).
+    b.ok(&["accent", "#666e76", "--mode", "light"]);
     b.ok(&["set", "evening"]);
-    assert_eq!(b.json(&["current", "--json"])["accent_light"], "#7d8a95");
+    assert_eq!(b.json(&["current", "--json"])["accent_light"], "#666e76");
     let o = b.run(&["theme", "set", "parchment"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert!(
@@ -1010,12 +1111,12 @@ fn history_and_undo() {
     let o = b.run_as("agent:claude", &["theme", "set", "evening"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
     b.ok(&["set", "still-water"]);
-    b.ok(&["accent", "#3a8f6b"]);
+    b.ok(&["accent", GREEN_L, "--mode", "light"]);
 
     let h = b.json(&["history", "--json"])["entries"].clone();
     let h = h.as_array().unwrap();
     assert_eq!(h.len(), 3);
-    assert_eq!(h[0]["action"], "theme accent #3a8f6b");
+    assert_eq!(h[0]["action"], "theme accent #2f6b55");
     assert_eq!(h[0]["caller"], "user");
     assert_eq!(h[2]["action"], "theme set evening");
     assert_eq!(h[2]["caller"], "agent:claude");
@@ -1034,7 +1135,7 @@ fn history_and_undo() {
 
     // Undo steps back one change at a time and rewrites the outputs.
     let o = b.ok(&["undo"]);
-    assert!(o.contains("undid: theme accent #3a8f6b"), "{o}");
+    assert!(o.contains("undid: theme accent #2f6b55"), "{o}");
     let cur = b.json(&["current", "--json"]);
     assert_eq!(cur["theme"], "still-water");
     assert!(cur["accent_light"].is_null());
@@ -1097,7 +1198,7 @@ fn caller_is_cleaned() {
 fn reset_goes_back_to_defaults_and_is_recorded() {
     let b = Box::new();
     b.ok(&["set", "blocks", "--mode", "light"]);
-    b.ok(&["accent", "#3a8f6b"]);
+    b.ok(&["accent", GREEN_L, "--mode", "light"]);
     let o = b.ok(&["reset"]);
     assert!(o.contains("theme: polycarp") && o.contains("mode: auto"));
     let cur = b.json(&["current", "--json"]);
@@ -1229,7 +1330,7 @@ fn other_tables_in_config_toml_are_kept() {
 fn atomic_writes_leave_no_temp_files() {
     let b = Box::new();
     b.ok(&["set", "evening", "--mode", "dark"]);
-    b.ok(&["accent", "#3a8f6b"]);
+    b.ok(&["accent", GREEN_L, "--mode", "light"]);
     b.ok(&["create", "mine", "--extends", "calm"]);
     b.ok(&["set", "mine"]);
     b.ok(&["undo"]);
@@ -1468,7 +1569,7 @@ fn schema_describes_every_field_of_every_builtin() {
     );
     let root = schema["description"].as_str().unwrap();
     assert!(root.contains("4.5") && root.contains("3.0"), "{root}");
-    assert_eq!(schema["x-contrast"].as_array().unwrap().len(), 11);
+    assert_eq!(schema["x-contrast"].as_array().unwrap().len(), 24);
 }
 
 #[test]
@@ -1667,8 +1768,8 @@ fn get_reads_resolved_values() {
         "#3f6b6a\n"
     );
     // Current theme with an accent override.
-    b.ok(&["accent", "#3a8f6b"]);
-    assert_eq!(b.ok(&["get", "light.accent"]), "#3a8f6b\n");
+    b.ok(&["accent", GREEN_L, "--mode", "light"]);
+    assert_eq!(b.ok(&["get", "light.accent"]), format!("{GREEN_L}\n"));
     let (c, v) = b.jrun(&["get", "shape.radus"]);
     assert_eq!(c, 1);
     assert_eq!(v["error"]["code"], "unknown_path");
@@ -1845,11 +1946,12 @@ fn change_refused_for_contrast_leaves_everything_unchanged() {
 #[test]
 fn change_of_an_accent_clears_a_matching_override() {
     let b = Box::new();
-    b.ok(&["accent", "#3a8f6b"]);
+    b.ok(&["accent", GREEN_L, "--mode", "light"]);
+    b.ok(&["accent", GREEN_D, "--mode", "dark"]);
     let v = b.json(&["change", "dark.accent", "#a9d0bc", "--json"]);
     assert!(v["notes"].to_string().contains("override for dark"), "{v}");
     assert_eq!(b.ok(&["get", "dark.accent"]), "#a9d0bc\n");
-    assert_eq!(b.json(&["current", "--json"])["accent_light"], "#3a8f6b");
+    assert_eq!(b.json(&["current", "--json"])["accent_light"], GREEN_L);
 }
 
 #[test]
@@ -1945,11 +2047,11 @@ fn preview_uses_the_surface_the_indicator_and_the_default_path() {
     let o = b.run(&["theme", "preview", "still-water", "--mode", "dark"]);
     assert_eq!(code(&o), 0);
     // The current theme with its accent override is what you see when no name is given.
-    b.ok(&["accent", "#3a8f6b"]);
+    b.ok(&["accent", GREEN_L, "--mode", "light"]);
     let o = b.run(&["theme", "preview", "--mode", "light"]);
     assert!(fs::read_to_string(out(&o).trim())
         .unwrap()
-        .contains("--pc-accent: #3a8f6b;"));
+        .contains(&format!("--pc-accent: {GREEN_L};")));
     for bad in [["--mode", "sepia"], ["--surface", "moon"]] {
         let o = b.run(&["theme", "preview", bad[0], bad[1]]);
         assert_eq!(code(&o), 2);
@@ -2085,7 +2187,7 @@ fn every_failure_in_json_parses_and_carries_paths() {
         vec!["export", "css"],
         vec!["export", "json"],
         vec!["set", "calm"],
-        vec!["accent", "#3a8f6b"],
+        vec!["accent", GREEN_L, "--mode", "light"],
         vec!["reset"],
         vec!["--help"],
     ] {

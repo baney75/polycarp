@@ -15,7 +15,7 @@ accent = "#59693F"
 on_accent = "#F6F3E8"
 selection = "#DCE3CC"
 urgent = "#A33A2A"
-working = "#8A6F2E"
+working = "#856A29"
 done = "#3F6B6A"
 
 [dark]

@@ -26,16 +26,16 @@ pub(super) fn describe(path: &str) -> &'static str {
         "color.background" => "The page itself: the window behind everything, the bar, the side panel body and the website page.",
         "color.surface" => "Cards and panels that sit on the background: settings groups, chat replies, the permission prompt, menus and dialogs.",
         "color.sunken" => "Recessed areas inside a surface: text inputs, code blocks, switch tracks and idle workspace tiles.",
-        "color.foreground" => "Normal text: body copy, labels and chat messages. Read on background and surface.",
-        "color.strong" => "Headings, window titles, workspace names and anything emphasized. Read on background and surface.",
-        "color.muted" => "Quiet text: hints, captions, timestamps, line numbers and disabled labels. Still must read on background and surface.",
+        "color.foreground" => "Normal text: body copy, labels and chat messages. Read on background, surface, sunken and selection.",
+        "color.strong" => "Headings, window titles, workspace names and anything emphasized. Read on background, surface, sunken and selection.",
+        "color.muted" => "Quiet text: hints, captions, timestamps, line numbers and disabled labels. Still must read on background, surface and sunken.",
         "color.border" => "Lines and outlines: dividers, input and card edges, idle indicators. Not checked for contrast.",
-        "color.accent" => "The brand color: primary buttons, the selected workspace's edge, links, focus rings, switches that are on and the user's chat bubble.",
-        "color.on_accent" => "Text and icons drawn on top of the accent color, such as a primary button's label or the user's chat text.",
-        "color.selection" => "Background of selected things: the active workspace tile, the chosen row in a list and highlighted text.",
-        "color.urgent" => "Status color for what needs the person now: errors, permission prompts, delete confirmations, an urgent workspace.",
-        "color.working" => "Status color for work in progress: an agent running, dictation listening, loading, a busy workspace.",
-        "color.done" => "Status color for finished work: saved, completed, connected, a finished workspace.",
+        "color.accent" => "The brand color: primary buttons, the selected workspace's edge, links, focus rings, switches that are on and the user's chat bubble. Also drawn as text, so it needs 4.5 on background and surface, and 3.0 on sunken.",
+        "color.on_accent" => "Text and icons drawn on top of the accent color, such as a primary button's label or the user's chat text. Needs 4.5 on accent.",
+        "color.selection" => "Background of selected things: the active workspace tile, the chosen row in a list and highlighted text. Foreground and strong text must read on it (4.5).",
+        "color.urgent" => "Status color for what needs the person now: errors, permission prompts, delete confirmations, an urgent workspace. Drawn as text, so it needs 4.5 on background and surface, and 3.0 on sunken.",
+        "color.working" => "Status color for work in progress: an agent running, dictation listening, loading, a busy workspace. Drawn as text, so it needs 4.5 on background and surface, and 3.0 on sunken.",
+        "color.done" => "Status color for finished work: saved, completed, connected, a finished workspace. Drawn as text, so it needs 4.5 on background and surface, and 3.0 on sunken.",
         "shape.radius_small" => "Corner radius in px for small parts: keycaps, code spans, tags and the number block in a workspace indicator.",
         "shape.radius" => "Corner radius in px for everyday controls: buttons, text inputs, workspace tiles, menus and chat bubbles. 0 is square.",
         "shape.radius_large" => "Corner radius in px for big containers: cards, panels, the dictation overlay and dialogs. 0 is square.",
@@ -232,8 +232,10 @@ pub(super) fn schema() -> Json {
         "description": "A Polycarp theme: the colors, shape, type and motion of every Polycarp product and the website. \
             A theme is complete when, after `extends`, it has every field. Set `extends` and list only what changes. \
             Contrast is checked with the WCAG formula, for light and dark, for the theme and for each product after \
-            merging: foreground, strong and muted on background and surface need 4.5; on_accent on accent needs 4.5; \
-            accent on background needs 3.0; urgent, working and done on background need 3.0; border is not checked. \
+            merging: foreground, strong and muted on background, surface and sunken need 4.5; foreground and strong on \
+            selection need 4.5; urgent, working, done and accent on background and surface need 4.5, because they are \
+            used as text; on_accent on accent needs 4.5; urgent, working, done and accent on sunken need 3.0, for \
+            indicators; border is not checked. \
             A theme that breaks a rule is refused whole and nothing changes; read the errors (each has a path, the actual \
             ratio and the needed one) and pick better colors. Change one value with `change <path> <value>` \
             (paths like dark.accent, shape.radius, surface.site.light.accent), or send a whole theme with `apply`.",
