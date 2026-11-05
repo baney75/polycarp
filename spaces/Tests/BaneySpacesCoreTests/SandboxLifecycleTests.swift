@@ -282,9 +282,13 @@ final class SandboxLifecycleTests: XCTestCase {
         let r = rig()
         _ = try r.manager.up(task: "t1")
         let host = FakeWindowHost(); host.workspace = nil
-        let spawns = r.tart.spawned.count
+        // up also boots the warm clone in the background, so count only the task VM's runs.
+        let vm = r.manager.snapshot().vm
+        let runs = { r.tart.spawned.filter { $0.args.last == vm }.count }
+        let before = runs()
         XCTAssertThrowsError(try r.manager.view(show: true, host: host)) { XCTAssertEqual(($0 as? SandboxError)?.code, "no_agent_workspace") }
-        XCTAssertEqual(r.tart.spawned.count, spawns, "no window process started")
+        XCTAssertEqual(runs(), before, "the task VM was not restarted")
+        XCTAssertTrue(r.tart.spawned.allSatisfy { $0.args.contains("--no-graphics") }, "no window process started")
         XCTAssertTrue(host.log.isEmpty)
         XCTAssertNotNil(r.manager.snapshot().vm)
     }
@@ -307,12 +311,14 @@ final class SandboxLifecycleTests: XCTestCase {
         XCTAssertTrue(host.log.first!.hasSuffix("->9"), "claimed for 9: \(host.log)")
         XCTAssertEqual(host.moves.map(\.0), [77], "only the VM's window moves; another app's stays")
         XCTAssertTrue(host.moves.allSatisfy { $0.1 == 9 && $0.1 != host.current })
-        XCTAssertFalse(r.tart.spawned.last!.args.contains("--no-graphics"))
+        // By name: the warm clone can boot in the background, so it may be the last spawn.
+        let vm = r.manager.snapshot().vm
+        XCTAssertFalse(r.tart.spawned.last { $0.args.last == vm }!.args.contains("--no-graphics"))
         XCTAssertTrue(r.manager.snapshot().graphics)
         // and back to headless
         _ = try r.manager.view(show: false, host: host)
         XCTAssertFalse(r.manager.snapshot().graphics)
-        XCTAssertTrue(r.tart.spawned.last!.args.contains("--no-graphics"))
+        XCTAssertTrue(r.tart.spawned.last { $0.args.last == vm }!.args.contains("--no-graphics"))
     }
 
     func testViewFailureToResumeDeletesTheVM() throws {

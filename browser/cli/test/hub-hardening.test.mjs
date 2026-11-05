@@ -117,30 +117,45 @@ test("many slow unfinished initialize bodies hit the caps (429) and memory stays
 	const before = rssMb(hub.proc.pid);
 	const url = new URL(`${hub.url}/mcp`);
 	const open = [];
-	const statuses = [];
-	const slow = (secret) => {
+	// Each batch collects its own outcomes, so a request from the first can't count toward the second.
+	const slow = (secret, outcomes) => {
 		const req = httpRequest({ host: url.hostname, port: url.port, path: "/mcp", method: "POST", agent: false, headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${secret}`, "content-length": "3000000" } });
+		let told = false;
+		const tell = (outcome) => {
+			if (!told) outcomes.push(outcome);
+			told = true;
+		};
 		req.on("response", (res) => {
-			statuses.push(res.statusCode);
+			tell(res.statusCode);
 			res.resume();
 		});
-		req.on("error", () => undefined);
+		req.on("error", (err) => tell(err.code));
 		req.write(Buffer.alloc(1_000_000, 0x20));
 		open.push(req);
 	};
 	// One caller: its cap of 8 sessions-or-initializes holds before any body is read.
 	const one = createToken(hub, "one", "skills.read");
-	for (let i = 0; i < 20; i++) slow(one);
-	await sleep(800);
-	assert.ok(statuses.filter((x) => x === 429).length >= 12, `one caller is held to its cap: ${statuses.join(",")}`);
+	// On macOS the hub closing on an unread body can reset the socket and lose the 429 (issue baney75/polycarp#2). Only there does a reset count.
+	const isRefusal = (x) => x === 429 || (process.platform === "darwin" && (x === "ECONNRESET" || x === "EPIPE"));
+	const refused = (outcomes) => outcomes.filter(isRefusal).length;
+	// A floor keeps the hub's time to read bodies; the deadline allows for a slow machine. A crash is caught below.
+	const refusalsReach = async (outcomes, count, floorMs) => {
+		const started = Date.now();
+		while (Date.now() - started < 15000 && refused(outcomes) < count) await sleep(50);
+		await sleep(Math.max(0, floorMs - (Date.now() - started)));
+	};
+	const first = [];
+	for (let i = 0; i < 20; i++) slow(one, first);
+	await refusalsReach(first, 12, 800);
+	assert.ok(refused(first) >= 12, `one caller is held to its cap: ${first.join(",")}`);
 	// Many callers: the hub-wide cap holds too.
-	statuses.length = 0;
+	const many = [];
 	for (let c = 0; c < 12; c++) {
 		const secret = createToken(hub, `c${c}`, "skills.read");
-		for (let i = 0; i < 8; i++) slow(secret);
+		for (let i = 0; i < 8; i++) slow(secret, many);
 	}
-	await sleep(1500);
-	assert.ok(statuses.filter((x) => x === 429).length >= 96 - 64 - 8, `the hub-wide cap refuses the rest: ${statuses.length} refusals`);
+	await refusalsReach(many, 96 - 64 - 8, 1500);
+	assert.ok(refused(many) >= 96 - 64 - 8, `the hub-wide cap refuses the rest: ${many.join(",")}`);
 	assert.equal(hub.proc.exitCode, null);
 	assert.ok(rssMb(hub.proc.pid) - before < 250, `memory is bounded (${(rssMb(hub.proc.pid) - before).toFixed(0)} MB more)`);
 	for (const req of open) req.destroy();

@@ -1,0 +1,45 @@
+# Polycarp plan
+
+BaneySpaces, Tabkyra and Silas become one product on Mac, Windows, Linux, iPhone, iPad and Android. Old apps keep
+working until step 5. A box is checked only when its check has passed.
+
+## 1. Bring the code together
+- [x] Full history of all three in `spaces/`, `voice/`, `browser/`
+- [x] Brand files in `brand/`
+- [ ] Every suite in `./check.sh` passes on a Mac and in CI
+
+## 2. One name, one command
+- [ ] `polycarp spaces`, `polycarp browser`, `polycarp voice`. Check: each old command works through an alias and gives the same result
+- [ ] Polycarp MCP server, keeping `tabkyra` and `baneyspaces` as aliases. Check: an agent reaches the same tools under both names
+
+## 3. One core, a native app on each device
+- [ ] Shared Rust core for workspaces, voice and sync, growing from `spaces/crates/baneyspaces-core` and `voice/src-tauri`. Check: `spaces/spec/conformance` passes on every platform
+- [ ] Mac: the Swift app hosts voice, with one settings window. Check: `spaces/AGENTS.md` probes and live gestures, and `voice/AGENTS.md` rules (never paste, never auto-unload)
+- [ ] Windows and Linux: voice, workspaces and browser agents in one app. Check: run on a Windows VM and on Omarchy
+- [ ] iPhone, iPad, Android: voice in its own app and keyboard, plus control of your computer's workspaces and browser. Check: Simulator, emulator and a real device. To verify: iOS limits microphone use inside keyboards
+- [ ] Dictionary and settings sync directly between your own devices, with no Polycarp cloud. Check: an edit on one device appears on another with no third-party server in the path
+- [ ] Each app follows its platform's conventions. Check: screenshots from the real target, plus keyboard, touch, focus, reduced motion and text size
+
+## Spaces: replace the top bar
+Asked for by Donovan, 2026-11-04.
+- [ ] Mac: a Polycarp bar replaces the system menu bar, with the system bar auto-hidden, so app menus, status items, clock and Control Center stay reachable. Check: live on a real Mac across displays, full screen and every workspace; nothing from today's bar is lost
+- [ ] Windows: a bar that reserves space across the top of the screen. Check: on a Windows VM, maximized windows stop below it
+- [ ] Omarchy: modify the existing Waybar instead of replacing it, easy to change and to undo. Check: live on Omarchy; the user's own Waybar changes survive, and uninstall restores the original
+- [ ] Linux outside Omarchy: decide after Omarchy works
+- [ ] Phones: not possible. iOS and Android don't let an app replace the status bar
+
+## 4. Move the fleet
+- [ ] BaneyFleet PR for the files that name these products, plus skills, agents and `CLAUDE.md`. Field notes keep old names as history. Check: agents reach Polycarp's tools on each machine
+
+## 5. Switch over
+- [ ] Polycarp installs and updates on each device. Settings, dictionary and skills move across
+- [ ] Old apps get a final release that points to Polycarp
+- [ ] Donovan grants Accessibility and Microphone once on his Mac, since macOS ties them to the app's identity
+
+## 6. Archive
+- [ ] Land or move open PRs (on 2026-11-04: BaneySpaces 10, Silas 2)
+- [ ] Archive `baneyspaces`, `silas`, `tabkyra`. Check: no open PRs, no fleet references outside history, old install links still resolve
+
+## Later, with an owner's decision
+- Paid: domains, Apple Developer and Google Play accounts, Windows code signing
+- An attorney's trademark search, including logos, before filing or a big launch
