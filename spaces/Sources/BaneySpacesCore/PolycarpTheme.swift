@@ -418,15 +418,51 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
         self.path = path; self.interval = interval; self.queue = queue; self.log = log; self.load = load; self.deliver = deliver
     }
 
-    public func start() {
+    public func start() { _ = start(firstLookWithin: 0) }
+
+    /// What `start(firstLookWithin:)` found.
+    public enum FirstLook: Equatable, Sendable {
+        /// The first look finished in time: this theme is in force. It is not also passed to `deliver`.
+        case theme(PolycarpTheme)
+        /// The first look finished in time and there is no theme (no file, or one that was refused).
+        case none
+        /// It didn't finish in time, or couldn't settle (the file moved while being read). `deliver` gets it when it does.
+        case pending
+    }
+
+    private final class First: @unchecked Sendable {
+        let lock = NSLock()
+        var theme: PolycarpTheme?
+        var settled = false
+        var abandoned = false
+    }
+
+    /// Starts the watcher and waits up to `timeout` for the first look (a stat and one small read, on the watcher's
+    /// queue), so the caller can apply the theme before it builds its first panel. A slow disk costs `timeout` at
+    /// most: the caller moves on, and the theme arrives through `deliver` when the read finishes.
+    public func start(firstLookWithin timeout: TimeInterval) -> FirstLook {
+        let first = First()
+        let sem = DispatchSemaphore(value: 0)
         queue.async { [self] in
-            guard timer == nil, path != nil else { return }
+            defer { sem.signal() }
+            guard timer == nil, path != nil else { first.lock.lock(); first.settled = true; first.lock.unlock(); return }
+            if timeout > 0 {
+                tick { t in
+                    first.lock.lock()
+                    if first.abandoned { first.lock.unlock(); self.deliver(t) } else { first.theme = t; first.settled = true; first.lock.unlock() }
+                }
+            }
             let t = DispatchSource.makeTimerSource(queue: queue)
-            t.schedule(deadline: .now(), repeating: interval, leeway: .milliseconds(100))
+            t.schedule(deadline: .now() + (timeout > 0 ? interval : 0), repeating: interval, leeway: .milliseconds(100))
             t.setEventHandler { [weak self] in self?.tick() }
             timer = t
             t.resume()
         }
+        guard timeout > 0 else { return .pending }
+        _ = sem.wait(timeout: .now() + timeout)
+        first.lock.lock(); defer { first.lock.unlock() }
+        if !first.settled { first.abandoned = true; return .pending }
+        return first.theme.map { .theme($0) } ?? .none
     }
 
     public func stop() {
@@ -435,7 +471,7 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
 
     /// One look. Stat, read if it changed, stat again: a file that moved while being read is tried again on
     /// the next tick, so half a write never sticks. Call it on `queue` only (tests do, through `tickNow`).
-    func tick() {
+    func tick(into out: ((PolycarpTheme?) -> Void)? = nil) {
         guard let path else { return }
         let before = PolycarpThemeFile.stamp(path)
         if started && before == last { return }
@@ -465,7 +501,7 @@ public final class PolycarpThemeWatcher: @unchecked Sendable {
             lastProblem = nil
             lastName = t.name
         }
-        deliver(loaded.theme)
+        (out ?? deliver)(loaded.theme)
     }
 
     /// For tests: one tick on the watcher's queue, waited for.

@@ -416,7 +416,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async { Appearance.shared.usePolycarp(theme) }
         }
         polycarpWatcher = watcher
-        watcher.start()
+        // Wait a moment for the first look (a stat and a small read) so a theme file that is already there
+        // draws from the first panel on; a slow disk costs 0.15 s at most and the theme then arrives as any change does.
+        if case .theme(let t) = watcher.start(firstLookWithin: 0.15) { Appearance.shared.usePolycarp(t) }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         let menu = NSMenu()
         menu.delegate = self

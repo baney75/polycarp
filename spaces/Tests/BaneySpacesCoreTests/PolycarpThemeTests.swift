@@ -531,6 +531,35 @@ final class PolycarpThemeTests: XCTestCase {
         XCTAssertEqual(seen.themes.last??.name, "blocks")
     }
 
+    func testAThemeFileThatIsThereIsReadBeforeStartReturns() throws {
+        try PolycarpFixtures.still_water.write(toFile: file, atomically: true, encoding: .utf8)
+        let seen = Seen()
+        let w = watcher(seen)
+        defer { w.stop() }
+        XCTAssertEqual(w.start(firstLookWithin: 5), .theme(try good()))
+        w.tickNow()
+        XCTAssertTrue(seen.themes.isEmpty, "the caller applies the first look; it is not delivered twice")
+        // No file, and a file that is refused: settled too, with nothing to apply.
+        let none = Seen()
+        let w2 = PolycarpThemeWatcher(path: dir.appendingPathComponent("nope.json").path, deliver: none.add)
+        defer { w2.stop() }
+        XCTAssertEqual(w2.start(firstLookWithin: 5), .none)
+    }
+
+    func testASlowDiskCostsOnlyTheWaitAndTheThemeArrivesLater() throws {
+        try PolycarpFixtures.still_water.write(toFile: file, atomically: true, encoding: .utf8)
+        let seen = Seen()
+        let arrived = expectation(description: "delivered")
+        let w = PolycarpThemeWatcher(path: file, load: { p in Thread.sleep(forTimeInterval: 0.6); return PolycarpThemeFile.load(path: p) },
+                                     deliver: { seen.add($0); arrived.fulfill() })
+        defer { w.stop() }
+        let t0 = Date()
+        XCTAssertEqual(w.start(firstLookWithin: 0.05), .pending)
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 0.4, "launch did not wait for the disk")
+        wait(for: [arrived], timeout: 5)
+        XCTAssertEqual(seen.themes.last??.name, "still-water")
+    }
+
     func testTheTimerPollsOnItsOwnQueueNotTheMainThread() throws {
         let seen = Seen()
         let ran = expectation(description: "delivered")
@@ -713,6 +742,7 @@ final class PolycarpWiringTests: XCTestCase {
         let app = try Repo.code("Sources/BaneySpaces/AppDelegate.swift")
         XCTAssertTrue(app.contains("PolycarpThemeWatcher(path: PolycarpThemeFile.path()"))
         XCTAssertTrue(app.contains("DispatchQueue.main.async { Appearance.shared.usePolycarp(theme) }"))
+        XCTAssertTrue(app.contains("watcher.start(firstLookWithin:"), "the first look is applied before the first panel")
         let core = try Repo.code("Sources/BaneySpacesCore/PolycarpTheme.swift")
         XCTAssertFalse(core.contains("DispatchQueue.main"), "the watcher's queue is its own")
         XCTAssertFalse(core.contains("FileManager"), "a poll is one stat")
