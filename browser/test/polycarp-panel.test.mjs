@@ -28,6 +28,7 @@ function setup(t) {
 	const attrs = new Set();
 	const handlers = {};
 	const store = new Map();
+	const local = new Map([["tabkyra.appearance", { preset: "slate" }]]);
 	const asked = [];
 	const helper = { reply: { route: "none", passcodeSet: false, theme: { preset: "tabkyra" } }, down: false };
 	const root = {
@@ -46,7 +47,13 @@ function setup(t) {
 		},
 		localStorage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) },
 		chrome: {
-			storage: { local: { get: async () => ({ "tabkyra.appearance": { preset: "slate" } }), set: async () => {} } },
+			storage: {
+				local: {
+					get: async (keys) => Object.fromEntries([keys].flat().filter((k) => local.has(k)).map((k) => [k, local.get(k)])),
+					set: async (items) => Object.entries(items).forEach(([k, v]) => local.set(k, v)),
+					remove: async (keys) => [keys].flat().forEach((k) => local.delete(k)),
+				},
+			},
 			runtime: {
 				connect: () => port,
 			},
@@ -58,7 +65,7 @@ function setup(t) {
 			else globalThis[k] = v;
 		}
 	});
-	const page = { classes, props, attrs, handlers, store, asked, helper, doc };
+	const page = { local, classes, props, attrs, handlers, store, asked, helper, doc };
 	live = page;
 	const flush = async () => {
 		for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
@@ -183,4 +190,40 @@ test("with no helper, or one that never answers, the panel keeps today's look an
 	assert.equal(apply.currentPolycarp(), undefined);
 	assert.equal(page.props.get("--background"), "#f1f5f9");
 	assert.equal(page.asked.filter((m) => m.method === "status").length, 1, "one question at a time while the first is unanswered");
+});
+
+test("the last valid theme is cached, applied before the first paint and replaced or cleared when the helper answers", async (t) => {
+	const page = setup(t);
+	page.helper.down = true;
+	page.local.set("tabkyra.polycarp", payload(fixture("blocks")));
+	const apply = await import("../src/appearance/apply.ts?cache");
+	await apply.startAppearance();
+	assert.equal(apply.currentPolycarp()?.name, "blocks", "applied from the cache before the helper answered");
+	assert.equal(page.props.get("--radius"), "0px");
+
+	t.mock.timers.tick(60_000); // the unanswered first question times out
+	await page.flush();
+	page.helper.down = false;
+	page.helper.reply = { ...page.helper.reply, polycarp: payload(fixture("still-water")) };
+	t.mock.timers.tick(apply.POLYCARP_POLL_MS);
+	await page.flush();
+	assert.equal(apply.currentPolycarp()?.name, "still-water");
+	assert.equal(page.local.get("tabkyra.polycarp").name, "still-water", "replaced");
+
+	delete page.helper.reply.polycarp;
+	t.mock.timers.tick(apply.POLYCARP_POLL_MS);
+	await page.flush();
+	assert.equal(page.local.has("tabkyra.polycarp"), false, "cleared when the host has no theme");
+});
+
+test("a cached payload that no longer parses is ignored: the first paint is today's", async (t) => {
+	const page = setup(t);
+	page.helper.down = true;
+	const bad = payload(fixture("blocks"));
+	for (const mode of ["light", "dark"]) for (const role of Object.keys(bad.surfaces.browser[mode])) bad.surfaces.browser[mode][role] = "#ffffff";
+	page.local.set("tabkyra.polycarp", bad);
+	const apply = await import("../src/appearance/apply.ts?badcache");
+	await apply.startAppearance();
+	assert.equal(apply.currentPolycarp(), undefined);
+	assert.equal(page.props.get("--background"), "#f1f5f9");
 });

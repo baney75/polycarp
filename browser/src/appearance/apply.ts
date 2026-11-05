@@ -87,6 +87,22 @@ async function seedFromHelper(): Promise<void> {
 }
 
 let asking = false;
+/** Where the last valid Polycarp payload is kept, so the next panel opens in the theme before the helper answers. */
+export const POLYCARP_CACHE_KEY = "tabkyra.polycarp";
+let cachedJson: string | undefined;
+
+/** Keep this payload as the last good one when it parses, or drop the cache when it does not (no theme, or a refused one). */
+async function remember(raw: unknown): Promise<void> {
+	const json = parsePolycarpTheme(raw) ? JSON.stringify(raw) : undefined;
+	if (json === cachedJson) return;
+	cachedJson = json;
+	try {
+		if (json === undefined) await chrome.storage.local.remove(POLYCARP_CACHE_KEY);
+		else await chrome.storage.local.set({ [POLYCARP_CACHE_KEY]: raw });
+	} catch {
+		// Storage is only a head start; the helper's answer already applied.
+	}
+}
 
 /**
  * Ask the helper for the Polycarp theme and apply it. No answer (no helper, an old helper, a timeout)
@@ -96,7 +112,9 @@ export async function refreshPolycarp(): Promise<void> {
 	if (asking) return;
 	asking = true;
 	try {
-		applyPolycarp((await connectStatus()).polycarp);
+		const { polycarp: raw } = await connectStatus();
+		applyPolycarp(raw);
+		await remember(raw);
 	} catch {
 		// Not connected: keep today's behavior.
 	} finally {
@@ -123,12 +141,19 @@ function watchPolycarp(): void {
 /** Read the saved choice, apply it, and keep it applied when the light/dark switch or the system setting changes. */
 export async function startAppearance(): Promise<void> {
 	let saved = false;
+	let cache: unknown;
 	try {
-		const raw = (await chrome.storage.local.get(APPEARANCE_KEY))[APPEARANCE_KEY];
-		saved = raw !== undefined;
-		current = parseChoice(raw);
+		const stored = await chrome.storage.local.get([APPEARANCE_KEY, POLYCARP_CACHE_KEY]);
+		saved = stored[APPEARANCE_KEY] !== undefined;
+		current = parseChoice(stored[APPEARANCE_KEY]);
+		cache = stored[POLYCARP_CACHE_KEY];
 	} catch {
 		current = { preset: "tabkyra" };
+	}
+	// The last theme the helper gave, checked again, so the first paint is already in it. No valid cache: exactly today's first paint.
+	if (parsePolycarpTheme(cache)) {
+		cachedJson = JSON.stringify(cache);
+		applyPolycarp(cache);
 	}
 	paint();
 	if (!saved) void seedFromHelper().catch(() => {});
