@@ -203,7 +203,7 @@ polycarp theme off
 polycarp theme on
 ```
 
-`off` removes `current/theme.json` and the `current/<product>.css` files, so each app goes back to its own look. It keeps your settings and themes, records the change in `history/`, and says what it removed. `undo` brings the theme back, and so does `polycarp theme on`. `set`, `accent` and `change` also turn the theme on, and tell you so. `polycarp theme current` shows whether it is on or off.
+`off` removes `current/theme.json` and the `current/<product>.css` files, so each app goes back to its own look. It keeps your settings and themes, records the change in `history/`, and says what it removed. `undo` brings the theme back, and so does `polycarp theme on`. `set`, `accent` and `change` also turn the theme on, and tell you so. So does `apply`, unless you add `--no-activate`. `off` and `on` also tidy `current/` if the setting was already that way, and `off` works even if a theme or settings file is broken. If one of the files is a link, `off` removes the link (not what it points to) and `on` writes a plain file. `polycarp theme current` shows whether it is on or off.
 
 ### Use a theme elsewhere
 

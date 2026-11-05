@@ -189,7 +189,7 @@ density = "compact"
 | `polycarp theme preview [name] [--mode light\|dark\|both] [--surface <s>] [--out <file>]` | Write an HTML page showing the theme on product UI, by default into `<config>/previews/` (private to you). `--out` will not replace a file that is not itself a preview |
 | `polycarp theme set <name> [--mode auto\|light\|dark]` | Use a theme and write the files |
 | `polycarp theme accent <#rrggbb> [--mode light\|dark]` | Override the accent. `--clear` removes it |
-| `polycarp theme create <name> --extends <base> [--force]` | Write a new user theme. Not one that extends itself or loops. `undo` removes it or restores the old one |
+| `polycarp theme create <name> --extends <base> [--force]` | Write a new user theme. Not one that extends itself or loops. `undo` removes it or restores the old one; it refuses to remove one that another user theme extends, unless `--force` |
 | `polycarp theme edit-path <name>` | Print the file's path |
 | `polycarp theme delete <name>` | Delete a user theme. Not the current one, one it extends, or one that another user theme extends (it names them). `undo` brings it back |
 | `polycarp theme validate <file>` | Exit 0 if the file is valid, 1 if not. Prints every problem |
@@ -197,7 +197,7 @@ density = "compact"
 | `polycarp theme undo [--force]` | Step back one change. Refuses if the theme file was edited after that change; `--force` saves the edited text in `history/` as a `.bak` copy, then undoes |
 | `polycarp theme history [--json]` | Past changes, newest first |
 | `polycarp theme off` | Turn the theme off: remove `current/theme.json` and `current/<surface>.css` so each app uses its own look. Records `enabled = false` in `[appearance]` and in history, so `undo` brings it back. Your themes stay |
-| `polycarp theme on` | Turn the last theme back on and write `current/` again. `set`, `accent`, `change` and `apply` also turn it on, and say so |
+| `polycarp theme on` | Turn the last theme back on and write `current/` again. `set`, `accent` and `change` also turn it on, and say so; `apply` does too, but only when it activates the theme (not with `--no-activate`). `off` works even when the settings or a theme file are broken, and both bring `current/` into line when the setting is already so |
 | `polycarp theme reset` | Back to `polycarp`, mode `auto`, no accent. Also turns the theme on |
 
 Every `theme` command takes `--json`.
@@ -224,9 +224,9 @@ for its own `on_accent`: setting either one keeps the product's accent pair as t
 - `current/theme.json`: the resolved theme for every product. Whether motion is reduced is in `surfaces.<surface>.motion.reduced`; there is no top-level `reduced_motion`.
 - `current/spaces.css`, `voice.css`, `browser.css`, `site.css`: the same, as CSS variables.
 
-Products read these files once their adapters land. Until then only the files change.
+Voice and Browser can read these files; that support is merged but not released yet. Spaces' is coming. Until an app is updated, only the files change.
 
-While the theme is off (`polycarp theme off`), `theme.json` and the four CSS files are removed and nothing is written there, so each app uses its own look. `theme current` shows `state: off` and `"enabled": false`.
+While the theme is off (`polycarp theme off`), `theme.json` and the four CSS files are removed and nothing is written there, so each app uses its own look. `theme current` shows `state: off` and `"enabled": false`. `off` removes a symbolic link at one of those paths (the file it points to is left alone), and `on` writes plain files, so a link is not remembered. `off` does not need a working theme: if `config.toml` is broken, it is kept in `history/` and replaced.
 
 Files are written to a temporary name and then renamed, so a reader never sees half a file. If one of the
 files is a symbolic link, the file it points to is written and the link stays. An existing file keeps its

@@ -224,7 +224,7 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "theme_on",
-            description: "Turn the last theme back on after theme_off and write the files in current/ again. theme_set, theme_accent, theme_change and theme_apply also turn it on.",
+            description: "Turn the last theme back on after theme_off and write the files in current/ again. theme_set, theme_accent and theme_change also turn it on, and so does theme_apply when it activates the theme (not with activate false).",
             schema: obj(json!({}), &[]),
             read_only: false,
             destructive: false,
