@@ -43,6 +43,8 @@ Usage:
   polycarp theme export <css|json> [name] [--surface spaces|voice|browser|site]
   polycarp theme undo [--force]
   polycarp theme history [--json]
+  polycarp theme off
+  polycarp theme on
   polycarp theme reset
 
 Every command takes --json and then prints the envelope {ok, data} or {ok:false, error}.
@@ -918,6 +920,8 @@ struct State {
     mode: String,
     accent_light: Option<String>,
     accent_dark: Option<String>,
+    /// False after `theme off`: the files in `current/` are removed and the apps use their own look.
+    enabled: bool,
 }
 
 impl State {
@@ -927,6 +931,7 @@ impl State {
             mode: "auto".into(),
             accent_light: None,
             accent_dark: None,
+            enabled: true,
         }
     }
 }
@@ -979,6 +984,10 @@ fn load_state(cfg: &Cfg) -> (State, Vec<String>) {
                 _ => problems.push(format!(
                     "appearance.mode: {v} is not one of auto, light, dark"
                 )),
+            },
+            "enabled" => match v.as_bool() {
+                Some(b) => st.enabled = b,
+                None => problems.push(format!("appearance.enabled: {v} is not true or false")),
             },
             "accent_light" | "accent_dark" => match v.as_str() {
                 Some(s) if is_hex(s) => {
@@ -1033,7 +1042,9 @@ fn effective(cfg: &Cfg) -> Eff {
             }
         }
     }
-    let def = State::default_state();
+    let mut def = State::default_state();
+    // Whether the theme is on is a separate choice from a theme that fails to build.
+    def.enabled = st.enabled;
     // The built-in default always resolves; the tests hold that.
     let full = resolve_name(cfg, DEFAULT_THEME).unwrap_or_else(|e| {
         panic!("built-in default theme is invalid: {}", e.join("; "));
@@ -1053,6 +1064,9 @@ fn state_table(cfg: &Cfg, st: &State) -> String {
     let mut app = Table::new();
     app.insert("theme".into(), Value::String(st.theme.clone()));
     app.insert("mode".into(), Value::String(st.mode.clone()));
+    if !st.enabled {
+        app.insert("enabled".into(), Value::Boolean(false));
+    }
     if let Some(a) = &st.accent_light {
         app.insert("accent_light".into(), Value::String(a.clone()));
     }
@@ -1290,6 +1304,20 @@ fn write_outputs(cfg: &Cfg, eff: &Eff) -> (Vec<PathBuf>, Vec<String>) {
     let dir = cfg.current();
     let mut wrote = Vec::new();
     let mut failed = Vec::new();
+    if !eff.state.enabled {
+        // Off: the same files are removed, and the list returned is the files removed.
+        let mut names = vec!["theme.json".to_string()];
+        names.extend(SURFACES.iter().map(|s| format!("{s}.css")));
+        for n in names {
+            let p = dir.join(&n);
+            match fs::remove_file(&p) {
+                Ok(()) => wrote.push(p),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => failed.push(format!("{n}: {e}")),
+            }
+        }
+        return (wrote, failed);
+    }
     // A Value always serializes, so the fallback is never used.
     let json =
         serde_json::to_string_pretty(&theme_json(&eff.full, Some(&eff.state))).unwrap_or_default();
@@ -1997,7 +2025,8 @@ pub(crate) fn op_current(c: &Ctx) -> Res {
         "user"
     };
     let text = format!(
-        "theme: {} ({source})\nmode: {}\naccent_light: {}\naccent_dark: {}\nconfig: {}\nfolder: {}\n",
+        "state: {}\ntheme: {} ({source})\nmode: {}\naccent_light: {}\naccent_dark: {}\nconfig: {}\nfolder: {}\n",
+        if eff.state.enabled { "on" } else { "off" },
         eff.state.theme,
         eff.state.mode,
         eff.state.accent_light.as_deref().unwrap_or("none"),
@@ -2006,6 +2035,7 @@ pub(crate) fn op_current(c: &Ctx) -> Res {
         c.cfg.dir.display()
     );
     let data = json!({
+        "enabled": eff.state.enabled,
         "theme": eff.state.theme,
         "title": eff.full.title,
         "source": source,
@@ -2269,7 +2299,26 @@ fn finish_with(cfg: &Cfg, soft: bool) -> Res {
 
 /// What is in force, as a result. `wrote` is the files written (none for a no-op).
 fn summary(cfg: &Cfg, eff: Eff, wrote: Vec<PathBuf>, late: Option<String>) -> Out {
-    let mut text = format!("theme: {}\nmode: {}\n", eff.state.theme, eff.state.mode);
+    summary_with(cfg, eff, wrote, late, true)
+}
+
+/// `config_written` is false for a result that changed no settings, so it claims no write.
+fn summary_with(
+    cfg: &Cfg,
+    eff: Eff,
+    wrote: Vec<PathBuf>,
+    late: Option<String>,
+    config_written: bool,
+) -> Out {
+    let off = !eff.state.enabled;
+    let mut text = if off {
+        format!(
+            "the theme is off; the apps use their own look\nlast theme: {}\nmode: {}\n",
+            eff.state.theme, eff.state.mode
+        )
+    } else {
+        format!("theme: {}\nmode: {}\n", eff.state.theme, eff.state.mode)
+    };
     if eff.state.accent_light.is_some() || eff.state.accent_dark.is_some() {
         text.push_str(&format!(
             "accent: light {}, dark {}\n",
@@ -2277,21 +2326,40 @@ fn summary(cfg: &Cfg, eff: Eff, wrote: Vec<PathBuf>, late: Option<String>) -> Ou
             eff.state.accent_dark.as_deref().unwrap_or("theme's own")
         ));
     }
-    text.push_str(&format!("wrote {}\n", cfg.file().display()));
-    for w in &wrote {
-        text.push_str(&format!("wrote {}\n", w.display()));
+    if config_written {
+        text.push_str(&format!("wrote {}\n", cfg.file().display()));
     }
-    text.push_str(NOTE);
-    text.push('\n');
+    if off && wrote.is_empty() {
+        text.push_str("no theme files were in current/\n");
+    }
+    for w in &wrote {
+        text.push_str(&format!(
+            "{} {}\n",
+            if off { "removed" } else { "wrote" },
+            w.display()
+        ));
+    }
+    if off {
+        text.push_str("run `polycarp theme on` to bring the theme back\n");
+    } else {
+        text.push_str(NOTE);
+        text.push('\n');
+    }
     let data = json!({
+        "enabled": eff.state.enabled,
         "theme": eff.state.theme,
         "mode": eff.state.mode,
         "accent_light": eff.state.accent_light,
         "accent_dark": eff.state.accent_dark,
         "config": cfg.file().display().to_string(),
-        "wrote": wrote.iter().map(|w| w.display().to_string()).collect::<Vec<_>>(),
+        "wrote": if off { Vec::new() } else { wrote.iter().map(|w| w.display().to_string()).collect::<Vec<_>>() },
+        "removed": if off { wrote.iter().map(|w| w.display().to_string()).collect::<Vec<_>>() } else { Vec::new() },
         "note": NOTE,
-        "next": "Look at it with theme preview. If the person dislikes it, run theme undo.",
+        "next": if off {
+            "The apps use their own look. Run theme on, or theme undo, to bring the theme back."
+        } else {
+            "Look at it with theme preview. If the person dislikes it, run theme undo."
+        },
     });
     let out = Out::new(data, text).warn(eff.problems);
     match late {
@@ -2408,6 +2476,103 @@ fn commit(c: &Ctx, st: Option<&State>, action: &str, file: Option<(&str, Option<
     finish_with(&c.cfg, true)
 }
 
+/// A change that picks a theme also turns a theme that was off back on, and says so.
+fn turn_on(st: &mut State, notes: &mut Vec<String>) {
+    if !st.enabled {
+        st.enabled = true;
+        notes.push(
+            "the theme was off; this change turned it on, so the apps use it again".to_string(),
+        );
+    }
+}
+
+/// Removes `current/theme.json` and the css files so each app uses its own look. The choice is
+/// kept in `config.toml` as `enabled = false`, recorded in history, so `undo` and `on` restore it.
+/// It works even when the theme or `config.toml` is broken: removing files needs no valid theme.
+pub(crate) fn op_off(c: &Ctx) -> Res {
+    set_enabled(c, false)
+}
+
+/// Turns the last theme back on and writes `current/` again. Plain files are written, whatever
+/// was there before (a link that `off` removed is not remembered).
+pub(crate) fn op_on(c: &Ctx) -> Res {
+    set_enabled(c, true)
+}
+
+fn set_enabled(c: &Ctx, want: bool) -> Res {
+    let word = if want { "on" } else { "off" };
+    let _lock = Lock::acquire(&c.cfg)?;
+    let mut warnings = Vec::new();
+    if want {
+        require_healthy(&effective(&c.cfg))?;
+    } else if let Some(aside) = move_config_dir_aside(&c.cfg)? {
+        warnings.push(format!(
+            "{} was a folder, not a file. It was moved to {}",
+            c.cfg.file().display(),
+            aside.display()
+        ));
+    }
+    let (mut st, state_problems) = load_state(&c.cfg);
+    let mut out = if st.enabled == want && state_problems.is_empty() {
+        // The settings already say so. Still bring current/ into line with them, in case a file
+        // was left behind, put back or never written. Nothing is recorded in history.
+        let eff = effective(&c.cfg);
+        let (done, failed) = write_outputs(&c.cfg, &eff);
+        if !failed.is_empty() {
+            return Err(io_err(format!(
+                "the theme is already {word}, but current/ could not be brought into line: {}",
+                failed.join("; ")
+            )));
+        }
+        let mut out = summary_with(&c.cfg, eff, done, None, false);
+        out.text = format!(
+            "nothing to change in the settings: the theme is already {word}\n{}",
+            out.text
+        );
+        out.with(json!({"changed": false}))
+    } else {
+        let mut notes = Vec::new();
+        if !state_problems.is_empty() {
+            notes.push(format!(
+                "the old settings were invalid and are replaced (the old file is kept in history): {}",
+                state_problems.join("; ")
+            ));
+        }
+        st.enabled = want;
+        let mut out = commit(c, Some(&st), &format!("theme {word}"), None)?;
+        out.notes.splice(0..0, notes);
+        out.with(json!({"changed": true}))
+    };
+    for w in warnings {
+        out = out.caution(w);
+    }
+    Ok(out)
+}
+
+/// A folder where config.toml should be is moved aside, not deleted. Returns where it went.
+fn move_config_dir_aside(cfg: &Cfg) -> Result<Option<PathBuf>, ApiErr> {
+    let cfg_file = cfg.file();
+    if !fs::metadata(&cfg_file).is_ok_and(|m| m.is_dir()) {
+        return Ok(None);
+    }
+    let (compact, _) = stamps();
+    let mut n = 0;
+    let aside = loop {
+        let p = cfg.dir.join(format!("config.toml.moved-{compact}-{n}"));
+        if fs::symlink_metadata(&p).is_err() {
+            break p;
+        }
+        n += 1;
+    };
+    fs::rename(&cfg_file, &aside).map_err(|e| {
+        io_err(format!(
+            "{} is a folder and could not be moved aside: {e}",
+            cfg_file.display()
+        ))
+    })?;
+    Ok(Some(aside))
+}
+
 pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
     if let Some(m) = mode {
         if !mode_ok(m) {
@@ -2429,6 +2594,7 @@ pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
         st.mode = m.to_string();
     }
     st.theme = name.to_string();
+    turn_on(&mut st, &mut notes);
     if apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref()).is_err() {
         notes.push(format!(
             "your accent override does not read well on {name}, so it is cleared"
@@ -2464,6 +2630,8 @@ pub(crate) fn op_accent(c: &Ctx, color: Option<&str>, mode: Option<&str>) -> Res
     let eff = effective(&c.cfg);
     require_healthy(&eff)?;
     let mut st = eff.state.clone();
+    let mut turned_on = Vec::new();
+    turn_on(&mut st, &mut turned_on);
     let mut adjusted = serde_json::Map::new();
     for m in &modes {
         let set = |st: &mut State, value: Option<String>| {
@@ -2511,6 +2679,7 @@ pub(crate) fn op_accent(c: &Ctx, color: Option<&str>, mode: Option<&str>) -> Res
         None => "theme accent --clear".to_string(),
     };
     let mut done = commit(c, Some(&st), &action, None)?;
+    done.notes.splice(0..0, turned_on);
     if !adjusted.is_empty() {
         let says = adjusted
             .iter()
@@ -2686,6 +2855,61 @@ fn current_name_lenient(cfg: &Cfg) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The user themes that extend `name`. Fails closed: a theme file or folder that can't be read
+/// or parsed might extend it, so it is an error that names the file.
+fn dependents_of(cfg: &Cfg, name: &str) -> Result<Vec<String>, ApiErr> {
+    let dir = cfg.themes();
+    let rd = match fs::read_dir(&dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(io_err(format!(
+                "could not read {}, so it is not known whether another theme extends {name:?}: {e}",
+                dir.display()
+            )))
+        }
+    };
+    let mut found = Vec::new();
+    for entry in rd {
+        let entry = entry.map_err(|e| {
+            io_err(format!(
+                "could not read {}, so it is not known whether another theme extends {name:?}: {e}",
+                dir.display()
+            ))
+        })?;
+        let file = entry.file_name().to_string_lossy().into_owned();
+        let Some(other) = file.strip_suffix(".toml") else {
+            continue;
+        };
+        if other == name || !valid_name(other) || is_builtin(other) {
+            continue;
+        }
+        match load_raw(cfg, other) {
+            Ok(t) if ext_of(&t).as_deref() == Some(name) => found.push(other.to_string()),
+            Ok(_) => {}
+            Err(e) => {
+                return Err(io_err(format!(
+                    "could not read {}, so it is not known whether it extends {name:?}: {e}",
+                    entry.path().display()
+                )))
+            }
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
+fn in_use(name: &str, dependents: &[String], what: &str) -> ApiErr {
+    ApiErr::at(
+        "in_use",
+        "name",
+        format!(
+            "{name:?} is extended by {}, which would stop loading; delete or change those first, so nothing was {what}",
+            dependents.join(", ")
+        ),
+    )
+}
+
 pub(crate) fn op_delete(c: &Ctx, name: &str) -> Res {
     user_theme_name(name)?;
     if is_builtin(name) {
@@ -2721,6 +2945,11 @@ pub(crate) fn op_delete(c: &Ctx, name: &str) -> Res {
                 "{name:?} is a base of the current theme {current:?}; run `polycarp theme set <other>` first"
             ),
         ));
+    }
+    // Another user theme that extends this one would stop loading.
+    let dependents = dependents_of(&c.cfg, name)?;
+    if !dependents.is_empty() {
+        return Err(in_use(name, &dependents, "deleted"));
     }
     let mut out = commit(c, None, &format!("theme delete {name}"), Some((name, None)))?;
     out.text = format!("deleted {}\n{}", path.display(), out.text);
@@ -2915,6 +3144,7 @@ pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) ->
             ));
         }
         st.theme = name.clone();
+        turn_on(&mut st, &mut notes);
         if apply_accents(&full, st.accent_light.as_deref(), st.accent_dark.as_deref()).is_err() {
             notes.push(format!(
                 "your accent override does not read well on {name}, so it is cleared"
@@ -2988,6 +3218,8 @@ pub(crate) fn op_change(c: &Ctx, path: &str, value: &Json) -> Res {
     let previous = lookup(&eff.full, path).ok();
     let current = eff.state.theme.clone();
     let mut st = eff.state.clone();
+    let mut notes = Vec::new();
+    turn_on(&mut st, &mut notes);
 
     let (name, base_text, created) = if is_builtin(&current) {
         let name = free_custom_name(&c.cfg, &current);
@@ -3036,7 +3268,6 @@ pub(crate) fn op_change(c: &Ctx, path: &str, value: &Json) -> Res {
         .map_err(|ps| bad_theme("the change is refused, nothing changed", &ps))?;
 
     // An explicit accent change replaces a `theme accent` override for that mode.
-    let mut notes = Vec::new();
     if let Target::Field {
         surface: None,
         section: sec,
@@ -3247,6 +3478,17 @@ pub(crate) fn op_undo(c: &Ctx, force: bool) -> Res {
         }
     }
 
+    // Undoing a create removes the theme file. Refuse if another theme extends it, as `delete` does.
+    if let (Some(name), true) = (last.theme_name.as_deref(), last.theme_absent) {
+        if !force {
+            let dependents = dependents_of(&c.cfg, name)?;
+            if !dependents.is_empty() {
+                return Err(in_use(name, &dependents, "undone")
+                    .suggest("Use `polycarp theme undo --force` to remove it anyway."));
+            }
+        }
+    }
+
     // Everything is worked out. Now write; if a later step fails, the earlier ones are undone,
     // so the folder is never left half-way.
     let mut theme_was: Option<(PathBuf, Option<Vec<u8>>)> = None;
@@ -3346,6 +3588,7 @@ pub(crate) fn op_history(c: &Ctx) -> Res {
 /// failure is a warning: recovery must not depend on any of them.
 pub(crate) fn op_reset(c: &Ctx) -> Res {
     let mut warnings = Vec::new();
+    let was_off = !load_state(&c.cfg).0.enabled;
     let _lock = match Lock::acquire(&c.cfg) {
         Ok(l) => Some(l),
         Err(e) => {
@@ -3364,23 +3607,7 @@ pub(crate) fn op_reset(c: &Ctx) -> Res {
     let st = State::default_state();
     let cfg_file = c.cfg.file();
     // A folder where config.toml should be is moved aside, not deleted, so reset can write it.
-    if fs::metadata(&cfg_file).is_ok_and(|m| m.is_dir()) {
-        let (compact, _) = stamps();
-        let mut n = 0;
-        let aside = loop {
-            let name = format!("config.toml.moved-{compact}-{n}");
-            let p = c.cfg.dir.join(name);
-            if fs::symlink_metadata(&p).is_err() {
-                break p;
-            }
-            n += 1;
-        };
-        fs::rename(&cfg_file, &aside).map_err(|e| {
-            io_err(format!(
-                "{} is a folder and could not be moved aside: {e}",
-                cfg_file.display()
-            ))
-        })?;
+    if let Some(aside) = move_config_dir_aside(&c.cfg)? {
         warnings.push(format!(
             "{} was a folder, not a file. It was moved to {}",
             cfg_file.display(),
@@ -3409,6 +3636,14 @@ pub(crate) fn op_reset(c: &Ctx) -> Res {
         }
     }
     let mut out = finish_with(&c.cfg, true)?;
+    if was_off {
+        out.text = format!(
+            "reset turned the theme on, with the default theme\n{}",
+            out.text
+        );
+        out.notes
+            .push("the theme was off; reset turned it on, with the default theme".to_string());
+    }
     for w in warnings {
         out = out.caution(w);
     }
@@ -3714,6 +3949,14 @@ pub fn run(args: &[OsString]) -> i32 {
         "history" => cmd(rest, &[], &[], |c, p| {
             exactly(p, 0, "no arguments")?;
             op_history(c)
+        }),
+        "off" => cmd(rest, &[], &[], |c, p| {
+            exactly(p, 0, "no arguments")?;
+            op_off(c)
+        }),
+        "on" => cmd(rest, &[], &[], |c, p| {
+            exactly(p, 0, "no arguments")?;
+            op_on(c)
         }),
         "reset" => cmd(rest, &[], &[], |c, p| {
             exactly(p, 0, "no arguments")?;

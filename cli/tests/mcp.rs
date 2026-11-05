@@ -130,7 +130,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 17] = [
+const TOOLS: [&str; 19] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -147,6 +147,8 @@ const TOOLS: [&str; 17] = [
     "theme_export",
     "theme_undo",
     "theme_history",
+    "theme_off",
+    "theme_on",
     "theme_reset",
 ];
 
@@ -649,4 +651,36 @@ fn an_agent_can_create_and_delete_its_own_theme() {
     let r = s.tool("theme_undo", json!({}));
     assert_eq!(r["structuredContent"]["ok"], true, "{r}");
     assert!(sb.cfg().join("themes").join("scratch.toml").exists());
+}
+
+#[test]
+fn theme_off_and_on_work_over_mcp_with_honest_annotations() {
+    let sb = Sandbox::new();
+    let mut s = sb.server();
+    let init = s.initialize("claude-code");
+    assert!(init["result"]["instructions"]
+        .as_str()
+        .unwrap()
+        .contains("if the person wants the apps' own look back, use `theme_off`"));
+    let v = s.request("tools/list", json!({}));
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let ann = |n: &str| tools.iter().find(|t| t["name"] == n).unwrap()["annotations"].clone();
+    assert_eq!(ann("theme_off")["readOnlyHint"], false);
+    assert_eq!(ann("theme_off")["destructiveHint"], true);
+    assert_eq!(ann("theme_off")["idempotentHint"], true);
+    assert_eq!(ann("theme_on")["readOnlyHint"], false);
+    assert_eq!(ann("theme_on")["destructiveHint"], false);
+    s.tool("theme_set", json!({"name": "calm"}));
+    assert!(sb.cfg().join("current/theme.json").is_file());
+    let r = s.tool("theme_off", json!({}));
+    assert_eq!(r["structuredContent"]["data"]["enabled"], false);
+    assert!(!sb.cfg().join("current/theme.json").exists());
+    let r = s.tool("theme_current", json!({}));
+    assert_eq!(r["structuredContent"]["data"]["enabled"], false);
+    let r = s.tool("theme_on", json!({}));
+    assert_eq!(r["structuredContent"]["data"]["enabled"], true);
+    assert!(sb.cfg().join("current/theme.json").is_file());
+    let h = s.tool("theme_history", json!({}));
+    assert!(h["structuredContent"]["data"]["entries"][1]["action"] == "theme off");
+    assert_eq!(s.finish(), 0);
 }
