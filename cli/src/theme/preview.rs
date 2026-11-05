@@ -295,9 +295,10 @@ code { font: .9em var(--pc-font-mono); background: var(--pc-sunken); color: var(
   border-radius: var(--pc-radius); padding: var(--pc-space-2) var(--pc-space-3); font: .875em/1.6 var(--pc-font-mono);
   color: var(--pc-foreground); overflow: auto; }
 .code .n { color: var(--pc-muted); display: inline-block; width: 2em; user-select: none; }
+/* Text on sunken only uses foreground, strong and muted: those are checked at 4.5 there. */
 .code .c { color: var(--pc-muted); }
-.code .k { color: var(--pc-accent); font-weight: 700; }
-.code .s { color: var(--pc-done); }
-.code .w { color: var(--pc-working); }
-.code .e { color: var(--pc-urgent); }
+.code .k { color: var(--pc-strong); font-weight: 700; }
+.code .s { color: var(--pc-foreground); }
+.code .w { color: var(--pc-foreground); }
+.code .e { color: var(--pc-strong); font-style: italic; }
 "##;

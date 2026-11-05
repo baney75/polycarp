@@ -3001,3 +3001,19 @@ fn docs_and_plan_describe_the_agent_interface() {
         assert!(t.contains(&format!("polycarp theme {sub}")), "{sub}");
     }
 }
+
+#[test]
+fn the_preview_code_sample_uses_only_text_colors_checked_on_sunken() {
+    let b = Box::new();
+    let f = b.root.join("p.html");
+    let o = b.run(&["theme", "preview", "evening", "--out", f.to_str().unwrap()]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let html = fs::read_to_string(&f).unwrap();
+    let rules: Vec<&str> = html.lines().filter(|l| l.starts_with(".code")).collect();
+    assert!(rules.len() >= 5, "{rules:?}");
+    for r in rules {
+        for bad in ["accent", "urgent", "working", "done", "selection"] {
+            assert!(!r.contains(&format!("--pc-{bad}")), "{r}");
+        }
+    }
+}

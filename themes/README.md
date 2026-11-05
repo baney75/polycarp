@@ -109,7 +109,7 @@ modes and for every product, after all merging.
 - `urgent`, `working`, `done` and `accent` on `background` and `surface`: at least 4.5, because the UI
   draws them as text
 - `on_accent` on `accent`: at least 4.5
-- `urgent`, `working`, `done` and `accent` on `sunken`: at least 3.0, because there they are indicators
+- `urgent`, `working`, `done` and `accent` on `sunken`: at least 3.0, because there they are indicators (dots, bars, edges), never text; the preview's code sample uses only `foreground`, `strong` and `muted` on `sunken`
 - `border` is not checked
 
 Contrast reads the same both ways round, so the danger button (`background` text on an `urgent` fill) is
