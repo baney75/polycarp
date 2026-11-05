@@ -86,6 +86,7 @@ final class VoiceOverlay {
     // MARK: Faces
 
     private func begin() {
+        learnedWork?.cancel()   // a pending hide of the learned pill must not hide a live recording
         face = .recording
         startedAt = Date()
         targets = [CGFloat](repeating: 0, count: 16)

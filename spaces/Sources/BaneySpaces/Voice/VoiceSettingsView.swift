@@ -24,14 +24,13 @@ struct VoiceSettingsView: View {
     }
 
     private var statusLine: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: voice.state?.status.isLive == true ? "mic.fill" : "mic").foregroundStyle(Chrome.accent)
-            Text(voice.refusal ?? voice.state.map { $0.status.menuLine(hotkeyLabel: $0.hotkeyLabel) } ?? "Starting…")
+            Text(voice.statusLine)
                 .font(Chrome.font(13, .semibold))
+                .fixedSize(horizontal: false, vertical: true)
             Spacer()
-            if voice.refusal == nil, let st = voice.state {
-                Toggle("On", isOn: Binding(get: { st.enabled }, set: { $0 ? voice.start() : voice.stop() })).toggleStyle(.switch)
-            }
+            Toggle("On", isOn: Binding(get: { voice.userEnabled }, set: { voice.setUserEnabled($0) })).toggleStyle(.switch)
         }
         .padding(10)
         .background(Chrome.shape(.settingsCell, continuous: false).fill(Chrome.cell(0.08)))
@@ -47,7 +46,10 @@ struct VoiceSettingsView: View {
                 Button(capturing ? "Press a key…" : "Pick another key") {
                     capturing = true
                     voice.captureHotkey { _ in capturing = false }
-                }.disabled(capturing)
+                }.disabled(capturing || voice.state?.listener != true)
+                if voice.state?.listener != true {
+                    Text("Turn dictation on first.").font(Chrome.font(11)).foregroundStyle(.secondary)
+                }
             }
             Toggle("Tap once to start and again to stop (otherwise hold)", isOn: Binding(get: { s.tapToToggle }, set: { v in voice.update { $0.tapToToggle = v } }))
             Toggle("Show the pill while dictating", isOn: Binding(get: { s.showOverlay }, set: { v in voice.update { $0.showOverlay = v } }))

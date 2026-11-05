@@ -31,8 +31,11 @@ public enum LegacyHandover {
     }
     public static func alertDetail(running names: [String]) -> String {
         let both = names.count > 1 ? "None of them can run beside \(Product.name)." : "Both can't run at once."
-        let silas = names.contains(Product.Silas.name) ? " Your dictionary, history and speech models are copied, never moved." : ""
-        return "\(both) \(Product.name) copies your settings and leaves \(names.joined(separator: " and ")) installed.\(silas)"
+        var text = "\(both) \(Product.name) copies your settings and leaves \(names.joined(separator: " and ")) installed."
+        if names.contains(Product.Silas.name) {
+            text += " \(Product.name)'s dictation takes over from here. \(Product.Silas.name) stays installed until that has worked once, and your dictionary, history and speech models are copied, never moved."
+        }
+        return text
     }
     public static func continueButton(running names: [String]) -> String { "Quit \(names.joined(separator: " and ")) and Continue" }
     public static func didNotQuit(_ names: [String]) -> String {
@@ -67,6 +70,16 @@ public enum LegacyHandover {
         return .carryOn
     }
 
+    /// The notice after an old app is closed, worded for that app (Silas's is about the dictation key).
+    public static func notificationTitle(forBundleID id: String?) -> String {
+        "\(replaced.first { $0.bundleID == id }?.name ?? Product.Legacy.name) was closed"
+    }
+    public static func notificationBody(forBundleID id: String?) -> String {
+        id == Product.Silas.bundleID
+            ? "\(Product.name)'s dictation is on, and the two can't share the dictation key. Turn dictation off in Settings > Voice to use \(Product.Silas.name) again."
+            : notificationBody
+    }
+
     /// While Polycarp runs: what to do when an app launches.
     public struct Watch: Equatable {
         public var quit: Bool
@@ -74,9 +87,17 @@ public enum LegacyHandover {
     }
 
     /// BaneySpaces starting is asked to quit every time; the person is told once, so a repeat doesn't nag.
-    public static func onLaunch(bundleID: String?, alreadyNotified: Bool) -> Watch {
+    /// `takesOver` is whether Polycarp's own dictation is active (`VoiceGate.takesOver` is nil). Silas is asked to quit
+    /// only then: with voice off, or no model yet, Silas is the working dictation and is never touched.
+    public static func onLaunch(bundleID: String?, alreadyNotified: Bool, takesOver: Bool = true) -> Watch {
         guard let bundleID, replacedBundleIDs.contains(bundleID) else { return Watch(quit: false, notify: false) }
+        if bundleID == Product.Silas.bundleID && !takesOver { return Watch(quit: false, notify: false) }
         return Watch(quit: true, notify: !alreadyNotified)
+    }
+
+    /// The names to put in the launch alert: BaneySpaces if it runs; Silas if it runs and Polycarp's dictation takes over.
+    public static func namesToReplace(running bundleIDs: [String], takesOver: Bool) -> [String] {
+        replaced.filter { r in bundleIDs.contains(r.bundleID) && (r.bundleID != Product.Silas.bundleID || takesOver) }.map(\.name)
     }
 
     /// Whether Polycarp may take the dictation hotkey. Two apps reading the same key fight over it, and Silas keeps
@@ -85,7 +106,7 @@ public enum LegacyHandover {
         case start
         case refuse(reason: String)
     }
-    public static let silasRunningReason = "\(Product.Silas.name) is running and has the dictation key. Quit it and \(Product.name) takes over."
+    public static let silasRunningReason = "\(Product.Silas.name) is running and has the dictation key. Quit it and \(Product.name)'s dictation takes over."
     public static func voiceStart(silasPids: [Int32]) -> VoiceStart {
         silasPids.isEmpty ? .start : .refuse(reason: silasRunningReason)
     }

@@ -133,21 +133,166 @@ final class VoiceTests: XCTestCase {
         XCTAssertTrue(why.contains("Silas is running"))
     }
 
-    func testTheInstallerTreatsSilasAsAnOldApp() throws {
+    func testTheInstallerQuitsSilasButLeavesItInstalled() throws {
         let sh = try Repo.text("scripts/install-app.sh")
         let env = try Repo.text("scripts/product.env")
         XCTAssertTrue(env.contains("SILAS_BUNDLE_ID=com.baney.silas"))
-        XCTAssertTrue(sh.contains(#"tell application id \"$SILAS_BUNDLE_ID\" to quit"#), "quits it")
-        XCTAssertTrue(sh.contains(#"for dir in /Applications "$HOME/Applications""#) && sh.contains("$dir/$SILAS_NAME.app"), "looks in both Applications folders")
-        XCTAssertTrue(sh.contains(".Trash/$SILAS_NAME-"), "Trash, not delete")
-        XCTAssertFalse(sh.contains("rm -rf \"$SILAS"), "never deletes it")
+        XCTAssertTrue(sh.contains(#"tell application id \"$SILAS_BUNDLE_ID\" to quit"#), "quits it so the key is free")
+        XCTAssertFalse(sh.contains(".Trash/$SILAS_NAME"), "the installer never trashes Silas; Polycarp does, after its dictation has typed")
+        XCTAssertFalse(sh.contains("mv \"$dir/$SILAS_NAME.app\""))
+        XCTAssertFalse(sh.contains("rm -rf \"$SILAS"))
         XCTAssertFalse(sh.contains("Application Support/$SILAS"), "its data stays")
-        let quit = try XCTUnwrap(sh.range(of: #"tell application id \"$SILAS_BUNDLE_ID\" to quit"#))
-        let copy = try XCTUnwrap(sh.range(of: "cp -R \"$APP\" \"$DEST\""))
-        let trash = try XCTUnwrap(sh.range(of: ".Trash/$SILAS_NAME-"))
-        XCTAssertLessThan(quit.lowerBound, copy.lowerBound, "quit, then install")
-        XCTAssertLessThan(copy.lowerBound, trash.lowerBound, "then Trash")
+        XCTAssertTrue(sh.contains("voiceEnabled"), "with voice switched off, Silas is left running")
     }
+
+    func testTheInstallerRunThroughTrashesNothingOfSilas() throws {
+        // A temp HOME with a planted Silas.app; test mode (BANEYSPACES_DEST_DIR) skips every step that touches the machine.
+        let home = temp()
+        let silas = home.appendingPathComponent("Applications/Silas.app/Contents")
+        write("silas", silas.appendingPathComponent("MacOS/Silas"))
+        let stamp = try FileManager.default.attributesOfItem(atPath: silas.deletingLastPathComponent().path)[.modificationDate] as? Date
+        let dest = temp()
+        let fake = temp().appendingPathComponent("Polycarp.app/Contents/MacOS")
+        write("x", fake.appendingPathComponent("Polycarp"))
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = [Repo.root.appendingPathComponent("scripts/install-app.sh").path, "--in-place", fake.deletingLastPathComponent().deletingLastPathComponent().path]
+        p.environment = ["HOME": home.path, "PATH": "/usr/bin:/bin", "BANEYSPACES_DEST_DIR": dest.path, "BANEYSPACES_NO_LAUNCH": "1"]
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+        try p.run(); p.waitUntilExit()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: silas.path), "Silas is still in the temp home's Applications")
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: silas.deletingLastPathComponent().path)[.modificationDate] as? Date, stamp)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".Trash").path), "nothing went to a Trash")
+    }
+
+    // MARK: When voice listens
+
+    func testVoiceListensOnlyWithAModelAnImportedSilasAndTheSwitchOn() {
+        typealias G = VoiceGate
+        XCTAssertEqual(G.decide(userEnabled: true, modelInstalled: true, importFinished: true, silasPids: []), .start)
+        XCTAssertEqual(G.decide(userEnabled: true, modelInstalled: false, importFinished: true, silasPids: []), .wait(.needsModel), "no model, no key")
+        XCTAssertEqual(G.decide(userEnabled: true, modelInstalled: true, importFinished: false, silasPids: []), .wait(.importPending))
+        XCTAssertEqual(G.decide(userEnabled: false, modelInstalled: true, importFinished: true, silasPids: []), .wait(.userOff))
+        XCTAssertEqual(G.decide(userEnabled: true, modelInstalled: true, importFinished: true, silasPids: [9]), .wait(.silasRunning))
+        XCTAssertEqual(G.decide(userEnabled: false, modelInstalled: true, importFinished: true, silasPids: [9]), .wait(.userOff), "the person's Off outlives Silas quitting")
+        XCTAssertNil(G.message(.userOff))
+        XCTAssertTrue(G.message(.needsModel)!.contains("Settings > Voice"))
+    }
+
+    func testAModelImportedFromSilasCounts() {
+        let silas = temp(), new = temp()
+        XCTAssertFalse(VoiceGate.hasModel(in: [new, silas]))
+        write("w", silas.appendingPathComponent("models/parakeet-v3/m.onnx"))
+        XCTAssertFalse(VoiceGate.hasModel(in: [new, silas]), "a half download is not a model")
+        write("ok", silas.appendingPathComponent("models/parakeet-v3/.complete"))
+        XCTAssertTrue(VoiceGate.hasModel(in: [new, silas]))
+        XCTAssertFalse(VoiceImport.isFinished(silasDir: silas, newDir: new), "there is something to bring across")
+        VoiceImport.run(silasDir: silas, newDir: new)
+        XCTAssertTrue(VoiceImport.isFinished(silasDir: silas, newDir: new))
+        XCTAssertTrue(VoiceGate.hasModel(in: [new]), "now it's Polycarp's own")
+        XCTAssertTrue(VoiceImport.isFinished(silasDir: temp(), newDir: temp()), "no Silas data at all: nothing to wait for")
+    }
+
+    func testSilasIsLeftAloneUnlessPolycarpsDictationTakesOver() {
+        XCTAssertEqual(LegacyHandover.onLaunch(bundleID: "com.baney.silas", alreadyNotified: false, takesOver: false), .init(quit: false, notify: false))
+        XCTAssertEqual(LegacyHandover.onLaunch(bundleID: "com.baney.silas", alreadyNotified: false, takesOver: true), .init(quit: true, notify: true))
+        XCTAssertEqual(LegacyHandover.onLaunch(bundleID: "com.baney.baneyspaces", alreadyNotified: false, takesOver: false), .init(quit: true, notify: true), "BaneySpaces is unaffected")
+        XCTAssertEqual(LegacyHandover.namesToReplace(running: ["com.baney.silas"], takesOver: false), [])
+        XCTAssertEqual(LegacyHandover.namesToReplace(running: ["com.baney.silas", "com.baney.baneyspaces"], takesOver: false), ["BaneySpaces"])
+        XCTAssertEqual(LegacyHandover.namesToReplace(running: ["com.baney.silas"], takesOver: true), ["Silas"])
+        let detail = LegacyHandover.alertDetail(running: ["Silas"])
+        XCTAssertTrue(detail.contains("dictation takes over from here"), detail)
+        XCTAssertTrue(detail.contains("stays installed until that has worked once"), detail)
+    }
+
+    // MARK: Silas goes to the Trash after the first dictation that typed
+
+    private func plantSilas(_ home: URL, in folder: String = "Applications") -> URL {
+        let app = home.appendingPathComponent("\(folder)/Silas.app")
+        write("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>com.baney.silas</string></dict></plist>", app.appendingPathComponent("Contents/Info.plist"))
+        write("bin", app.appendingPathComponent("Contents/MacOS/silas"))
+        return app
+    }
+
+    func testTheDecisionToRetireSilas() {
+        let a = URL(fileURLWithPath: "/Applications/Silas.app")
+        XCTAssertTrue(SilasRetirement.shouldRetire(voiceOn: true, typedText: true, alreadyRetired: false, silas: a, silasRunning: false))
+        XCTAssertFalse(SilasRetirement.shouldRetire(voiceOn: false, typedText: true, alreadyRetired: false, silas: a, silasRunning: false), "voice off: Silas is the way back")
+        XCTAssertFalse(SilasRetirement.shouldRetire(voiceOn: true, typedText: false, alreadyRetired: false, silas: a, silasRunning: false), "only a real typed result")
+        XCTAssertFalse(SilasRetirement.shouldRetire(voiceOn: true, typedText: true, alreadyRetired: true, silas: a, silasRunning: false), "once")
+        XCTAssertFalse(SilasRetirement.shouldRetire(voiceOn: true, typedText: true, alreadyRetired: false, silas: nil, silasRunning: false), "not at /Applications or ~/Applications")
+        XCTAssertFalse(SilasRetirement.shouldRetire(voiceOn: true, typedText: true, alreadyRetired: false, silas: a, silasRunning: true))
+    }
+
+    func testSilasIsFoundOnlyInTheTwoApplicationsFolders() {
+        let home = temp(), system = temp()
+        XCTAssertNil(SilasRetirement.locate(home: home, systemApplications: system))
+        _ = plantSilas(home, in: "Downloads")
+        XCTAssertNil(SilasRetirement.locate(home: home, systemApplications: system), "a Silas in Downloads isn't touched")
+        let mine = plantSilas(home)
+        XCTAssertEqual(SilasRetirement.locate(home: home, systemApplications: system)?.path, mine.path)
+    }
+
+    func testRetiringMovesSilasRemovesOnlyItsLoginItemAndRecordsIt() throws {
+        let home = temp(), voice = temp().appendingPathComponent("voice"), trash = temp()
+        let app = plantSilas(home)
+        let agents = home.appendingPathComponent("Library/LaunchAgents")
+        let mine = SilasRetirement.loginItem(home: home)
+        write("<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>Label</key><string>Silas</string><key>ProgramArguments</key><array><string>\(app.path)/Contents/MacOS/silas</string><string>--background</string></array></dict></plist>", mine)
+        let other = agents.appendingPathComponent("com.example.other.plist")
+        write("<plist version=\"1.0\"><dict/></plist>", other)
+        let silasData = home.appendingPathComponent("Library/Application Support/Silas/history.json")
+        write("[]", silasData)
+
+        let report = SilasRetirement.retire(silas: app, home: home, voiceDir: voice) { url in
+            let to = trash.appendingPathComponent(url.lastPathComponent)
+            try FileManager.default.moveItem(at: url, to: to)
+            return to
+        }
+        XCTAssertEqual(report.trashed?.path, trash.appendingPathComponent("Silas.app").path)
+        XCTAssertTrue(report.loginItemRemoved)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: app.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: mine.path), "Silas's own login item is gone")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: other.path), "any other login item stays")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: silasData.path), "its data stays")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: voice.appendingPathComponent("silas-retired-record/Silas.plist").path), "a copy of what was removed")
+        XCTAssertTrue(SilasRetirement.alreadyRetired(voiceDir: voice), "once only")
+        XCTAssertFalse(SilasRetirement.shouldRetire(voiceOn: true, typedText: true, alreadyRetired: SilasRetirement.alreadyRetired(voiceDir: voice), silas: nil, silasRunning: false))
+        XCTAssertEqual(SilasRetirement.notice, "Dictation works here, so Silas went to the Trash.")
+    }
+
+    func testALoginItemThatIsNotSilasIsNotRemoved() {
+        let home = temp(), voice = temp()
+        let app = plantSilas(home)
+        let item = SilasRetirement.loginItem(home: home)
+        write("<plist version=\"1.0\"><dict><key>ProgramArguments</key><array><string>/Applications/Something.app/Contents/MacOS/x</string></array></dict></plist>", item)
+        let r = SilasRetirement.retire(silas: app, home: home, voiceDir: voice) { $0 }
+        XCTAssertFalse(r.loginItemRemoved)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: item.path))
+    }
+
+    func testAFailedMoveLeavesNoMarkerSoItIsTriedAgain() {
+        let home = temp(), voice = temp()
+        let app = plantSilas(home)
+        struct Boom: Error {}
+        let r = SilasRetirement.retire(silas: app, home: home, voiceDir: voice) { _ in throw Boom() }
+        XCTAssertNil(r.trashed)
+        XCTAssertEqual(r.failed, ["app"])
+        XCTAssertFalse(SilasRetirement.alreadyRetired(voiceDir: voice))
+    }
+
+    func testAnErrorShowsItsReasonInTheMenu() {
+        XCTAssertEqual(VoiceStatus.error.menuLine(hotkeyLabel: "x", detail: "Polycarp can't hear your key yet."), "Polycarp can't hear your key yet.")
+        XCTAssertEqual(VoiceStatus.error.menuLine(hotkeyLabel: "x"), "Needs attention")
+        XCTAssertEqual(VoiceStatus.ready.menuLine(hotkeyLabel: "Right ⌘", detail: "ignored"), "Ready · hold Right ⌘ to speak")
+    }
+
+    func testTheNoticeNamesTheAppThatWasClosed() {
+        XCTAssertEqual(LegacyHandover.notificationTitle(forBundleID: "com.baney.silas"), "Silas was closed")
+        XCTAssertTrue(LegacyHandover.notificationBody(forBundleID: "com.baney.silas").contains("dictation key"))
+        XCTAssertEqual(LegacyHandover.notificationTitle(forBundleID: "com.baney.baneyspaces"), "BaneySpaces was closed")
+    }
+
 }
 
 extension VoiceStatus {

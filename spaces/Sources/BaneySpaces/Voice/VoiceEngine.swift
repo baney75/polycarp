@@ -1,6 +1,7 @@
 import AppKit
 import BaneySpacesCore
 import CPolycarpCore
+import UserNotifications
 
 /// Dictation, inside this process: a thin Swift face on the Rust voice core (core/ffi, linked as a static library).
 /// The behavior is the core's, ported from Silas, not rewritten here: hold the key, speak, the text is typed as
@@ -19,8 +20,28 @@ final class VoiceEngine: ObservableObject {
     /// 0...1 download progress by model id.
     @Published private(set) var downloads: [String: Double] = [:]
     @Published private(set) var lastError: String?
-    /// Set while Silas has the key; the engine is not started then (`LegacyHandover.voiceStart`).
-    @Published private(set) var refusal: String?
+    /// Why the key isn't being listened to, if it isn't (`VoiceGate`). Silas running clears itself when Silas quits;
+    /// the person's own Off stays until the person turns dictation on, across restarts.
+    @Published private(set) var waiting: VoiceGate.Reason?
+    /// The words for `waiting`, or nil for the person's own Off (the switch says it).
+    var refusal: String? { waiting.flatMap(VoiceGate.message) }
+    var userEnabled: Bool { VoiceGate.userEnabled(.standard) }
+
+    /// Whether Polycarp's own dictation is active, ignoring whether Silas runs right now.
+    var takesOver: Bool {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let silasDir = Product.silasSupportDir(home: home)
+        return VoiceGate.takesOver(userEnabled: userEnabled, modelInstalled: VoiceGate.hasModel(in: [dir, silasDir]),
+                                   importFinished: true) == nil
+    }
+
+    /// The one line for the menu and Settings: why it's waiting, the error's reason and next step, or the status.
+    var statusLine: String {
+        if let w = waiting { return VoiceGate.message(w) ?? "Dictation is off" }
+        guard let st = state else { return "Starting…" }
+        if !st.enabled { return "Dictation is off" }
+        return st.status.menuLine(hotkeyLabel: st.hotkeyLabel, detail: st.detail)
+    }
 
     /// Level while recording, for the overlay. Not published: it changes many times a second.
     var onLevel: ((Float) -> Void)?
@@ -35,7 +56,9 @@ final class VoiceEngine: ObservableObject {
 
     // MARK: Lifecycle
 
-    /// Opens the core and, unless Silas is running, starts listening for the hotkey. Safe to call again.
+    /// Opens the core and decides whether to listen for the dictation key (`VoiceGate`): only with voice on, a speech
+    /// model installed, Silas's import finished, and Silas not running. Safe to call again; it is how every change
+    /// (Silas starting or quitting, a model arriving, the switch) is applied, so a pause for one reason never outlives it.
     func start() {
         if core == nil {
             let user = Unmanaged.passUnretained(self).toOpaque()
@@ -51,28 +74,33 @@ final class VoiceEngine: ObservableObject {
             }, user) }
             guard core != nil else { return fail("The voice engine didn't open.") }
         }
+        guard let core else { return }
+        models = decode(pc_models_list(core)) ?? models
         let silas = NSRunningApplication.runningApplications(withBundleIdentifier: Product.Silas.bundleID).map(\.processIdentifier)
-        switch LegacyHandover.voiceStart(silasPids: silas) {
-        case .refuse(let reason):
-            // Never take the key from a running Silas. The state is still read so Settings has something to show.
-            refusal = reason
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let decision = VoiceGate.decide(userEnabled: userEnabled, modelInstalled: models.contains { $0.installed },
+                                        importFinished: VoiceImport.isFinished(silasDir: Product.silasSupportDir(home: home), newDir: dir),
+                                        silasPids: silas)
+        switch decision {
+        case .wait(let why):
+            // No key is listened to (no listener has started, or it is paused); the model stays loaded if it was.
+            waiting = why
             _ = pc_stop(core)
         case .start:
-            refusal = nil
-            if pc_start(core) == PC_OK { started = true } else { fail(lastCoreError()) }
+            waiting = nil
+            if pc_start(core) != PC_OK { fail(lastCoreError()) }
         }
         reload()
     }
 
-    /// Pauses dictation (the model stays loaded).
-    func stop() {
-        guard let core else { return }
-        _ = pc_stop(core)
-        reload()
-    }
+    /// Silas started or quit: decide again.
+    func silasChanged() { start() }
 
-    /// Silas quit: take over.
-    func silasQuit() { if refusal != nil { start() } }
+    /// The person's switch: remembered across restarts.
+    func setUserEnabled(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: VoiceGate.enabledKey)
+        start()
+    }
 
     func toggleRecording() { if let core { _ = pc_toggle_recording(core) } }
 
@@ -99,6 +127,10 @@ final class VoiceEngine: ObservableObject {
             if let core { state = decode(pc_status(core)) ?? state }
         case "transcript":
             if let core { history = decode(pc_history_get(core, 200)) ?? history }
+            if let data = json.data(using: .utf8), let t = try? JSONDecoder().decode(Typed.self, from: data), t.typed { retireSilasIfDue() }
+        case "benchmark-done", "benchmark-error":
+            // A benchmark may have switched the model: the tab must not keep showing the old one "In use".
+            reload()
         case "learned":
             if let data = json.data(using: .utf8), let r = try? JSONDecoder().decode(Learned.self, from: data), let c = r.learned.first {
                 onLearned?(c.from, c.to)
@@ -116,6 +148,7 @@ final class VoiceEngine: ObservableObject {
         }
     }
 
+    private struct Typed: Decodable { var typed: Bool }
     private struct StatusEvent: Decodable { var status: VoiceStatus; var detail: String? }
     private struct Learned: Decodable { struct C: Decodable { var from: String; var to: String }; var learned: [C] }
     private struct Progress: Decodable { var id: String; var downloaded: Int64; var total: Int64; var stage: String; var message: String? }
@@ -145,11 +178,14 @@ final class VoiceEngine: ObservableObject {
         downloads[id] = 0
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let r = id.withCString { pc_model_download(core, $0) }
+            // The core keeps its message per thread: read it here, on the thread that made the call.
+            let message = r != PC_OK ? String(cString: pc_last_error()) : nil
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.downloads[id] = nil
-                if r != PC_OK { self.fail(self.lastCoreError()) }
+                if let message { self.fail(message) }
                 self.reload()
+                self.start()   // a first model may be the last thing dictation was waiting for
             }
         }
     }
@@ -212,5 +248,35 @@ final class VoiceEngine: ObservableObject {
     }
 
     private func lastCoreError() -> String { String(cString: pc_last_error()) }
-    private func fail(_ message: String) { lastError = message; Trace.log("voice: \(message)") }
+    /// An empty message never replaces a real one (the download's own event already set the real text).
+    private func fail(_ message: String) {
+        guard !message.isEmpty else { return }
+        lastError = message
+        Trace.log("voice: \(message)")
+    }
+
+    // MARK: Silas goes to the Trash after the first dictation that typed
+
+    private func retireSilasIfDue() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let silas = SilasRetirement.locate(home: home)
+        let running = !NSRunningApplication.runningApplications(withBundleIdentifier: Product.Silas.bundleID).isEmpty
+        guard SilasRetirement.shouldRetire(voiceOn: userEnabled && state?.enabled != false, typedText: true,
+                                           alreadyRetired: SilasRetirement.alreadyRetired(voiceDir: dir), silas: silas, silasRunning: running),
+              let silas else { return }
+        let report = SilasRetirement.retire(silas: silas, home: home, voiceDir: dir) { url in
+            var landed: NSURL?
+            try FileManager.default.trashItem(at: url, resultingItemURL: &landed)
+            return landed as URL?
+        }
+        Trace.log("voice: retired Silas: \(report)")
+        guard report.trashed != nil else { return }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = SilasRetirement.notice
+            center.add(UNNotificationRequest(identifier: "silas-retired", content: content, trigger: nil))
+        }
+    }
 }

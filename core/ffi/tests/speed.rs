@@ -111,6 +111,16 @@ fn measure_rtf() -> Option<f64> {
     result
 }
 
+/// The voice keys, set inside whatever else the file holds (the browser helper keeps its numbers there too).
+fn merge_voice(mut doc: Value, start: f64, rtf: Option<f64>, with_model: bool) -> Value {
+    let obj = doc.as_object_mut().expect("speed.json is an object");
+    obj.insert("regressionLimit".into(), json!(LIMIT));
+    obj.insert("startToReadyMs".into(), json!({ "baseline": (start * 100.0).round() / 100.0, "model": with_model }));
+    let kept = obj.get("transcribeRtf").and_then(|v| v["baseline"].as_f64());
+    obj.insert("transcribeRtf".into(), json!({ "baseline": rtf.map(|r| (r * 1000.0).round() / 1000.0).or(kept) }));
+    doc
+}
+
 fn baseline() -> Value {
     serde_json::from_str(&std::fs::read_to_string(speed_json()).expect("spaces/spec/speed.json is missing")).unwrap()
 }
@@ -130,15 +140,8 @@ fn measures_and_optionally_writes_baselines() {
     eprintln!("bench-voice: start_to_ready_ms={start:.2} rtf={rtf:?}");
     assert!(start > 0.0);
     if std::env::var_os("POLYCARP_BENCH_WRITE").is_some() {
-        let old = baseline();
-        let out = json!({
-            "about": "Voice fast-path baselines from spaces/scripts/bench-voice --write. A measurement more than 25% over its baseline fails core/ffi/tests/speed.rs (the startup number has a 10 ms floor). rtf is null until measured on a Mac with a speech model (POLYCARP_BENCH_MODELS).",
-            "regressionLimit": LIMIT,
-            "startToReadyMs": { "baseline": (start * 100.0).round() / 100.0, "model": models_source().is_some() },
-            "transcribeRtf": { "baseline": rtf.map(|r| (r * 1000.0).round() / 1000.0).or_else(|| old["transcribeRtf"]["baseline"].as_f64()) },
-            "appLaunchToFirstFrame": old["appLaunchToFirstFrame"].clone(),
-        });
-        std::fs::write(speed_json(), serde_json::to_string_pretty(&out).unwrap() + "\n").unwrap();
+        let merged = merge_voice(baseline(), start, rtf, models_source().is_some());
+        std::fs::write(speed_json(), serde_json::to_string_pretty(&merged).unwrap() + "\n").unwrap();
     }
 }
 
@@ -167,4 +170,22 @@ fn fast_path_has_not_regressed() {
     } else {
         eprintln!("transcription RTF not compared (no model folder in POLYCARP_BENCH_MODELS, or no baseline yet)");
     }
+}
+
+#[test]
+fn writing_baselines_leaves_every_other_key_alone() {
+    let before = json!({
+        "about": "mine", "browser": { "versionMs": 41 }, "appLaunchToFirstFrame": { "baseline": null },
+        "regressionLimit": 1.25, "startToReadyMs": { "baseline": 9, "model": false },
+        "transcribeRtf": { "baseline": 0.5 }
+    });
+    let after = merge_voice(before.clone(), 12.345, None, false);
+    assert_eq!(after["browser"], before["browser"]);
+    assert_eq!(after["about"], before["about"]);
+    assert_eq!(after["appLaunchToFirstFrame"], before["appLaunchToFirstFrame"]);
+    assert_eq!(after["startToReadyMs"]["baseline"], json!(12.35));
+    assert_eq!(after["transcribeRtf"]["baseline"], json!(0.5), "an unmeasured RTF keeps the old baseline");
+    let measured = merge_voice(before, 12.0, Some(0.1234), true);
+    assert_eq!(measured["transcribeRtf"]["baseline"], json!(0.123));
+    assert_eq!(measured["startToReadyMs"]["model"], json!(true));
 }

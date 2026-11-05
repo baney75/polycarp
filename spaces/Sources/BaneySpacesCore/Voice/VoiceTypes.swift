@@ -7,8 +7,10 @@ public enum VoiceStatus: String, Codable, Sendable {
     case loading, needsModel = "needs_model", ready, recording, transcribing, typing, error
 
     /// The menu bar line, as the Tauri tray words it.
-    public func menuLine(hotkeyLabel: String) -> String {
-        switch self {
+    public func menuLine(hotkeyLabel: String, detail: String? = nil) -> String {
+        // An error says why and what to do (the core words it with the host's product name).
+        if self == .error, let detail, !detail.isEmpty { return detail }
+        return switch self {
         case .loading: "Loading model…"
         case .needsModel: "Choose a speech model"
         case .ready: "Ready · hold \(hotkeyLabel) to speak"

@@ -516,14 +516,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func startVoice() {
         let voice = VoiceEngine.shared
         voice.onLevel = { [weak self] level in DispatchQueue.main.async { self?.voiceOverlay.level(level) } }
-        voice.onLearned = { [weak self] from, to in self?.voiceOverlay.learned(from: from, to: to) }
+        voice.onLearned = { [weak self] from, to in
+            // The pill's own switch covers this one too.
+            if voice.settings?.showOverlay ?? true { self?.voiceOverlay.learned(from: from, to: to) }
+        }
         voice.onStateChange = { [weak self] in
             guard let self, let st = voice.state else { return }
             self.voiceOverlay.status(st.status, enabled: voice.settings?.showOverlay ?? true)
             self.updateIcon()
         }
-        legacyWatcher.onSilasQuit = { voice.silasQuit() }
-        legacyWatcher.onSilasStarted = { voice.stop() }
+        legacyWatcher.onSilasQuit = { voice.silasChanged() }
+        legacyWatcher.onSilasStarted = { voice.silasChanged() }
+        legacyWatcher.takesOver = { voice.takesOver }
         voice.start()
     }
 
@@ -829,7 +833,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         // Dictation's state, first: the same line the Silas tray showed ("Ready · hold Right ⌘ to speak").
         if let st = VoiceEngine.shared.state {
-            let line = VoiceEngine.shared.refusal ?? (st.enabled ? st.status.menuLine(hotkeyLabel: st.hotkeyLabel) : "Dictation is paused")
+            let line = VoiceEngine.shared.statusLine
             menu.addItem(withTitle: line, action: nil, keyEquivalent: "")
             menu.addItem(.separator())
         }

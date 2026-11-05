@@ -77,9 +77,10 @@ if [ "$IN_PLACE" = 0 ] && [ -z "$TEST" ]; then
       exit 1
     fi
   fi
-  # Silas, the dictation app, has its voice inside $PRODUCT_NAME now, and two apps on one key fight. It quits the
-  # same way; it goes to the Trash after the install below (its data folder stays).
-  if pgrep -f "$SILAS_NAME.app/Contents/MacOS/" >/dev/null; then
+  # Silas, the dictation app, is the working dictation until $PRODUCT_NAME's has typed text once (the app then moves
+  # Silas to the Trash by itself). It is quit here only so the dictation key is free for the new copy; the app stays
+  # where it is. With voice switched off in $PRODUCT_NAME's settings, Silas is the way back and is left running.
+  if [ "$(defaults read "$BUNDLE_ID" voiceEnabled 2>/dev/null || echo 1)" != 0 ] && pgrep -f "$SILAS_NAME.app/Contents/MacOS/" >/dev/null; then
     osascript -e "tell application id \"$SILAS_BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
     for _ in $(seq 1 75); do pgrep -f "$SILAS_NAME.app/Contents/MacOS/" >/dev/null || break; sleep 0.2; done
     if pgrep -f "$SILAS_NAME.app/Contents/MacOS/" >/dev/null; then
@@ -137,21 +138,6 @@ if [ -z "$TEST" ]; then
     echo "moved Ghostdeck.app to the Trash; the session engine in $PRODUCT_NAME replaces it"
   fi
 fi
-if [ -z "$TEST" ]; then
-  # This build includes voice, so Silas has nothing left to do. Recoverable: the Trash, never rm. Its data
-  # (~/Library/Application Support/Silas) is not touched; Polycarp copied what it needs.
-  for dir in /Applications "$HOME/Applications"; do
-    if [ -d "$dir/$SILAS_NAME.app" ]; then
-      # Polycarp is already in place, so a move that fails is a note, never a failed install.
-      mkdir -p "$HOME/.Trash"
-      if mv "$dir/$SILAS_NAME.app" "$HOME/.Trash/$SILAS_NAME-$(date +%Y%m%d-%H%M%S).app"; then
-        echo "moved $dir/$SILAS_NAME.app to the Trash; voice is inside $PRODUCT_NAME now (its data stays)"
-      else
-        echo "note: couldn't move $dir/$SILAS_NAME.app to the Trash; drag it there yourself" >&2
-      fi
-    fi
-  done
-fi
 mkdir -p "$HOME/.local/bin"
 # polycarp-spaces is the command; baneyspaces and ghostdeck stay as names for it, because agents and
 # hooks on other machines call them.
@@ -186,9 +172,14 @@ if [ -x "$HELPER" ]; then
     else
       echo "note: $TABKYRA_LINK is a file, not a link, so it was left alone; \`polycarp browser\` runs the same helper." >&2
     fi
+  elif [ ! -L "$TABKYRA_LINK" ]; then
+    # A regular file is someone's own command, working or not: never touched.
+    echo "note: $TABKYRA_LINK is a file, not a link, so it was left alone; \`polycarp browser\` runs the helper in this app." >&2
   elif ! runs_ok "$TABKYRA_LINK" --version; then
-    # Dangling or broken: nothing of anyone's works there, so the name is free.
-    ln -sf "$HELPER" "$TABKYRA_LINK" 2>/dev/null || echo "note: $TABKYRA_LINK doesn't work and is not a link, so it was left alone." >&2
+    # A link that dangles or fails: the name is free, but where it pointed is written down first.
+    mkdir -p "$HOME/Library/Application Support/$SUPPORT_FOLDER"
+    readlink "$TABKYRA_LINK" > "$HOME/Library/Application Support/$SUPPORT_FOLDER/tabkyra-previous-link"
+    ln -sf "$HELPER" "$TABKYRA_LINK"
   else
     echo "note: a working tabkyra is already at $TABKYRA_LINK, so it was left alone; \`polycarp browser\` runs the helper in this app. POLYCARP_TAKE_OVER_TABKYRA=1 scripts/install-app.sh takes the name over." >&2
   fi

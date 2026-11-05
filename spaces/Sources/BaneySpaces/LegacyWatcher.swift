@@ -7,7 +7,10 @@ import UserNotifications
 /// item, a double click), asks it to quit, and tells the person once why. The decisions are `LegacyHandover`'s.
 final class LegacyWatcher {
     private var observer: NSObjectProtocol?
-    private var notified = false
+    /// One notice for each old app, so Silas's isn't hidden by BaneySpaces's.
+    private var notified: Set<String> = []
+    /// Whether Polycarp's own dictation is active (`VoiceGate`); Silas is asked to quit only then.
+    var takesOver: () -> Bool = { true }
     /// Silas started while Polycarp runs (so the voice must step back), or went away (so it may take over).
     var onSilasStarted: () -> Void = {}
     var onSilasQuit: () -> Void = {}
@@ -18,13 +21,14 @@ final class LegacyWatcher {
         observer = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] note in
             guard let self, let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
-            let action = LegacyHandover.onLaunch(bundleID: app.bundleIdentifier, alreadyNotified: self.notified)
+            let id = app.bundleIdentifier
+            let action = LegacyHandover.onLaunch(bundleID: id, alreadyNotified: id.map { self.notified.contains($0) } ?? true, takesOver: self.takesOver())
             if app.bundleIdentifier == Product.Silas.bundleID { self.onSilasStarted() }
             if action.quit {
                 Trace.log("legacy: \(app.localizedName ?? Product.Legacy.name) started while \(Product.name) runs; asking it to quit")
                 app.terminate()
             }
-            if action.notify { self.notified = true; self.tell() }
+            if action.notify, let id { self.notified.insert(id); self.tell(id) }
         }
     }
 
@@ -40,13 +44,13 @@ final class LegacyWatcher {
         }
     }
 
-    private func tell() {
+    private func tell(_ bundleID: String) {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert]) { granted, _ in
             guard granted else { return Trace.log("legacy: notifications are off, so the quit was not announced") }
             let content = UNMutableNotificationContent()
-            content.title = LegacyHandover.notificationTitle
-            content.body = LegacyHandover.notificationBody
+            content.title = LegacyHandover.notificationTitle(forBundleID: bundleID)
+            content.body = LegacyHandover.notificationBody(forBundleID: bundleID)
             center.add(UNNotificationRequest(identifier: "legacy-closed", content: content, trigger: nil))
         }
     }

@@ -32,6 +32,16 @@ public enum VoiceImport {
         return t.split(separator: "\n").map(String.init)
     }
 
+    /// Whether the import is over: done (the marker), or never needed (nothing of Silas's to bring across and nothing
+    /// pending). While part of it is still to come, voice does not start.
+    public static func isFinished(silasDir: URL, newDir: URL) -> Bool {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: newDir.appendingPathComponent(markerName).path) { return true }
+        if pending(in: newDir) != nil { return false }
+        let hasFiles = files.contains { fm.fileExists(atPath: silasDir.appendingPathComponent($0).path) }
+        return !hasFiles && !GateModels.any(in: silasDir)
+    }
+
     @discardableResult
     public static func run(silasDir: URL, newDir: URL) -> Outcome {
         let fm = FileManager.default
@@ -98,4 +108,8 @@ public enum VoiceImport {
             return false
         }
     }
+}
+
+enum GateModels {
+    static func any(in dir: URL) -> Bool { VoiceGate.hasModel(in: [dir]) }
 }
