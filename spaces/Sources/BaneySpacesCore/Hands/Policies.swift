@@ -16,7 +16,7 @@ public enum AgentAppPolicy {
     /// files. It ships inside BaneySpaces.app (Resources/probe), signed with the app's own identity, and starts only
     /// from there and only when its signature checks out (`ProbeAppTrust` in the app). A user-writable folder, or a
     /// copy that claims the bundle id, is refused like any unlisted app.
-    public static let canvasProbeBundle = "com.baney.baneyspaces.canvasprobe"
+    public static let canvasProbeBundle = "com.baney.polycarp.canvasprobe"
 
     public static func allowed(bundle: String) -> Bool { separateInstance.contains(bundle) }
     public static func needsSeparateInstance(bundle: String) -> Bool { separateInstance.contains(bundle) || bundle == canvasProbeBundle }
@@ -78,7 +78,7 @@ public enum AgentOpenGate {
         }
         if AgentAppPolicy.documentRequired.contains(bundle), files.isEmpty {
             return .failure(HandsError(.badArguments, "\(app) must be started with a file from the handoff folder, or it shows an Open panel",
-                                       suggestion: "Put a file in \(handoff.path) and pass its path: `baneyspaces agent open \(app) <file>`.", retry: .safe))
+                                       suggestion: "Put a file in \(handoff.path) and pass its path: `polycarp-spaces agent open \(app) <file>`.", retry: .safe))
         }
         return .success(files)
     }
@@ -216,17 +216,17 @@ public enum SocketPolicy {
     public static func refusal(for r: Wire.Request) -> String? {
         // The cursor is how Donovan sees agent activity: an agent may pick its look, but only he switches it off (Settings).
         if r.op == .agent, r.text?.lowercased() == "cursor", r.args?.first?.lowercased() == "off" {
-            return "turning the agent cursor off is Donovan's to do, in BaneySpaces Settings; agents may change its theme: `baneyspaces agent cursor theme <name>`"
+            return "turning the agent cursor off is Donovan's to do, in Polycarp Settings; agents may change its theme: `polycarp-spaces agent cursor theme <name>`"
         }
         // Agent access (Read Only, Default, Full Access) is set only in Settings, behind a real click: nothing on the socket changes it.
         if r.op == .agent, r.text?.lowercased() == "mode", let want = r.args?.first, !want.isEmpty {
-            return "changing agent access to \(want) is Donovan's to do, in BaneySpaces Settings > Agents; `baneyspaces agent mode` shows the current one"
+            return "changing agent access to \(want) is Donovan's to do, in Polycarp Settings > Agents; `polycarp-spaces agent mode` shows the current one"
         }
         if r.op == .sandbox, r.text?.lowercased() == "images" {
             return "deleting the sandbox's images (24 GB to download again) is Donovan's to do: Settings > Agents > Delete Images"
         }
         guard r.op == .agent, let text = r.text?.lowercased(), humanOnly.contains(text) else { return nil }
-        return "\(text) is Donovan's to do: `baneyspaces agent lend <app>` asks him in a sheet in BaneySpaces; nothing sent on this socket lends an app"
+        return "\(text) is Donovan's to do: `polycarp-spaces agent lend <app>` asks him in a sheet in Polycarp; nothing sent on this socket lends an app"
     }
 
     /// An agent caller may move a window to the agent workspace only if its process was started for an agent.

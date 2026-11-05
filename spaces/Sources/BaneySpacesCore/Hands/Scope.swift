@@ -127,8 +127,8 @@ public enum ScopeGuard {
                              mode: AgentAccessMode = .standard, selfPid: Int32? = nil) -> ScopeDecision {
         // BaneySpaces' own windows (Settings, the consent sheets) are never an agent's, in any mode.
         if let me = selfPid, w.pid == me {
-            return .denied(HandsError(.permissionDenied, "window \(w.id) is BaneySpaces' own",
-                                      suggestion: "Agents never use BaneySpaces' windows; its settings are Donovan's.", retry: .never))
+            return .denied(HandsError(.permissionDenied, "window \(w.id) is Polycarp' own",
+                                      suggestion: "Agents never use Polycarp' windows; its settings are Donovan's.", retry: .never))
         }
         if let agent = agentWorkspace, w.workspace == agent {
             // His hands are on this app (in front, or used in the last 30 s): the agent waits, even here.
@@ -141,7 +141,7 @@ public enum ScopeGuard {
         if lends.isLent(w, now: now) {
             if inUse {
                 return .denied(HandsError(.inUse, "\(w.app) is lent, but you are using it right now",
-                                          suggestion: "Wait until Donovan has been away from \(w.app) for 30 seconds, or work on the agent workspace with `baneyspaces agent open \(w.app)`.",
+                                          suggestion: "Wait until Donovan has been away from \(w.app) for 30 seconds, or work on the agent workspace with `polycarp-spaces agent open \(w.app)`.",
                                           retry: .safe))
             }
             return .lent
@@ -156,12 +156,12 @@ public enum ScopeGuard {
         guard agentWorkspace != nil else {
             return .denied(HandsError(.agentWorkspaceOff,
                                       "there is no agent workspace, and \(w.app) isn't lent",
-                                      suggestion: "Ask Donovan to run `baneyspaces agent on`, or to lend \(w.app) (the BaneySpaces menu, Lend to Agents)."))
+                                      suggestion: "Ask Donovan to run `polycarp-spaces agent on`, or to lend \(w.app) (the Polycarp menu, Lend to Agents)."))
         }
-        let where_ = w.workspace.map { "workspace \($0)" } ?? "a place BaneySpaces doesn't manage"
+        let where_ = w.workspace.map { "workspace \($0)" } ?? "a place Polycarp doesn't manage"
         return .denied(HandsError(.outsideAgentWorkspace,
                                   "window \(w.id) of \(w.app) is on \(where_), not the agent workspace",
-                                  suggestion: "Open a window of it on the agent workspace with `baneyspaces agent open \(w.app)`, or ask Donovan to lend this one (you can't lend: he runs `baneyspaces agent lend \(w.app)` or uses the BaneySpaces menu)."))
+                                  suggestion: "Open a window of it on the agent workspace with `polycarp-spaces agent open \(w.app)`, or ask Donovan to lend this one (you can't lend: he runs `polycarp-spaces agent lend \(w.app)` or uses the Polycarp menu)."))
     }
 
     /// The windows an agent may use now.

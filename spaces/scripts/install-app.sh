@@ -1,27 +1,30 @@
 #!/bin/bash
-# Installs a built BaneySpaces.app and starts it:
-#   scripts/install-app.sh path/to/BaneySpaces.app
-#   scripts/install-app.sh --in-place path/to/BaneySpaces.app
+# Installs a built Polycarp.app and starts it:
+#   scripts/install-app.sh path/to/Polycarp.app
+#   scripts/install-app.sh --in-place path/to/Polycarp.app
 # bundle.sh --install runs this on what it just built, and install.sh runs the copy inside the
 # downloaded app (Contents/Resources/install-app.sh) on the prebuilt release.
 #
 # Where it goes: BANEYSPACES_INSTALL_DIR if set (the updater sets it to the folder the running
-# app is in), else the folder of the BaneySpaces.app already installed (~/Applications, then
+# app is in), else the folder of the Polycarp.app already installed (~/Applications, then
 # /Applications), else ~/Applications. One copy only.
 #
 # --in-place: the app is already where it should be (dragged there from the disk image). Nothing
 # is quit, copied, registered or opened; this only does the rest: AeroSpace steps aside, the
-# ~/.local/bin command links point at that app, Ghostdeck goes to the Trash. The app runs it
+# ~/.local/bin command links (polycarp-spaces, baneyspaces, ghostdeck) point at that app, Ghostdeck goes to the Trash. The app runs it
 # once at launch when its command link is missing.
 #
 # BANEYSPACES_DEST_DIR: test mode. Install into this folder and change nothing else: the running
 # copy, AeroSpace, Ghostdeck, Launch Services and ~/.local/bin are left alone and the app isn't
 # opened. (With --in-place, test mode leaves AeroSpace and Ghostdeck alone but makes the links.)
 # BANEYSPACES_NO_LAUNCH=1: install as usual but don't open the app.
+# The app's name, identifier and command names come from product.env, which sits beside this script
+# (scripts/ in the repo, Contents/Resources in the app).
+source "$(dirname "${BASH_SOURCE[0]}")/product.env"
 set -euo pipefail
 IN_PLACE=0
 if [ "${1:-}" = "--in-place" ]; then IN_PLACE=1; shift; fi
-[ $# -eq 1 ] && [ -d "$1" ] || { echo "usage: install-app.sh [--in-place] path/to/BaneySpaces.app" >&2; exit 1; }
+[ $# -eq 1 ] && [ -d "$1" ] || { echo "usage: install-app.sh [--in-place] path/to/$PRODUCT_NAME.app" >&2; exit 1; }
 APP=$(cd "$1" && pwd)
 TEST="${BANEYSPACES_DEST_DIR:-}"
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
@@ -33,10 +36,10 @@ else
   if [ -z "$DEST_DIR" ]; then
     DEST_DIR="$HOME/Applications"
     for dir in "$HOME/Applications" /Applications; do
-      if [ -d "$dir/BaneySpaces.app" ]; then DEST_DIR="$dir"; break; fi
+      if [ -d "$dir/$PRODUCT_NAME.app" ]; then DEST_DIR="$dir"; break; fi
     done
   fi
-  DEST="$DEST_DIR/BaneySpaces.app"
+  DEST="$DEST_DIR/$PRODUCT_NAME.app"
 fi
 
 # macOS ties the Accessibility permission to the signature. An ad-hoc (or missing) signature is new
@@ -52,12 +55,23 @@ if [ "$IN_PLACE" = 0 ] && [ -d "$DEST" ]; then
 fi
 
 if [ "$IN_PLACE" = 0 ] && [ -z "$TEST" ]; then
-  # Quit by bundle ID so BaneySpaces brings every hidden window back before it exits.
-  osascript -e 'tell application id "com.baney.baneyspaces" to quit' >/dev/null 2>&1 || true
-  for _ in $(seq 1 50); do pgrep -f "$DEST/Contents/MacOS/BaneySpaces" >/dev/null || break; sleep 0.2; done
-  if pgrep -f "$DEST/Contents/MacOS/BaneySpaces" >/dev/null; then
-    echo "BaneySpaces is still running; quit it from the menu bar and run this again." >&2
+  # Quit by bundle ID so the app brings every hidden window back before it exits.
+  osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+  for _ in $(seq 1 50); do pgrep -f "$DEST/Contents/MacOS/$EXECUTABLE" >/dev/null || break; sleep 0.2; done
+  if pgrep -f "$DEST/Contents/MacOS/$EXECUTABLE" >/dev/null; then
+    echo "$PRODUCT_NAME is still running; quit it from the menu bar and run this again." >&2
     exit 1
+  fi
+  # Only one copy runs, so a running $LEGACY_NAME would make the new app hand over to it and exit.
+  # Quitting is the gentle way out (it puts every window and the Dock back first); nothing of it is
+  # removed, and it stays installed until the person removes it.
+  if pgrep -f "$LEGACY_NAME.app/Contents/MacOS/$LEGACY_NAME" >/dev/null; then
+    osascript -e "tell application id \"$LEGACY_BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+    for _ in $(seq 1 75); do pgrep -f "$LEGACY_NAME.app/Contents/MacOS/$LEGACY_NAME" >/dev/null || break; sleep 0.2; done
+    if pgrep -f "$LEGACY_NAME.app/Contents/MacOS/$LEGACY_NAME" >/dev/null; then
+      echo "$LEGACY_NAME is still running; quit it from the menu bar and run this again." >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -65,7 +79,7 @@ if [ -z "$TEST" ]; then
   # Two workspace managers on the same keys fight, so AeroSpace steps aside: it quits, it stops
   # opening at login, and its config stops re-adding it. The app itself stays installed.
   # Each change is written down first, so uninstall.sh can put it back.
-  STATE="$HOME/Library/Application Support/BaneySpaces"
+  STATE="$HOME/Library/Application Support/$SUPPORT_FOLDER"
   mkdir -p "$STATE"
   if [ -f "$HOME/.aerospace.toml" ] && grep -q '^start-at-login *= *true' "$HOME/.aerospace.toml"; then
     touch "$STATE/aerospace-start-at-login"
@@ -106,11 +120,14 @@ if [ -z "$TEST" ]; then
   if [ -d "$HOME/Applications/Ghostdeck.app" ]; then
     for _ in $(seq 1 25); do pgrep -f "Ghostdeck.app/Contents/MacOS/Ghostdeck" >/dev/null || break; sleep 0.2; done
     mv "$HOME/Applications/Ghostdeck.app" "$HOME/.Trash/Ghostdeck-$(date +%Y%m%d-%H%M%S).app"
-    echo "moved Ghostdeck.app to the Trash; the session engine in BaneySpaces replaces it"
+    echo "moved Ghostdeck.app to the Trash; the session engine in $PRODUCT_NAME replaces it"
   fi
 fi
 mkdir -p "$HOME/.local/bin"
-ln -sf "$DEST/Contents/Resources/bin/baneyspaces" "$HOME/.local/bin/baneyspaces"
-ln -sf "$DEST/Contents/Resources/bin/baneyspaces" "$HOME/.local/bin/ghostdeck"
+# polycarp-spaces is the command; baneyspaces and ghostdeck stay as names for it, because agents and
+# hooks on other machines call them.
+for name in $CLI_NAME $CLI_ALIASES; do
+  ln -sf "$DEST/Contents/Resources/bin/$CLI_NAME" "$HOME/.local/bin/$name"
+done
 if [ "$IN_PLACE" = 0 ] && [ "${BANEYSPACES_NO_LAUNCH:-}" != 1 ]; then open "$DEST"; fi
-echo "installed $DEST and ~/.local/bin/baneyspaces"
+echo "installed $DEST and ~/.local/bin/$CLI_NAME"

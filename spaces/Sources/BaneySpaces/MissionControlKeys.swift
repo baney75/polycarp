@@ -128,7 +128,7 @@ final class MissionControlKeys {
                                           eventsOfInterest: mask, callback: MissionControlKeys.callback, userInfo: nil)
                 ?? CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
                                      eventsOfInterest: mask, callback: MissionControlKeys.callback, userInfo: nil)
-        else { return NSLog("BaneySpaces: could not watch the Mission Control key") }
+        else { return NSLog("Polycarp: could not watch the Mission Control key") }
         self.tap = tap
         let t = Thread { [weak self] in
             guard let self else { return }
@@ -142,7 +142,7 @@ final class MissionControlKeys {
             CGEvent.tapEnable(tap: tap, enable: true)
             CFRunLoopRun()
         }
-        t.name = "BaneySpaces Mission Control key"
+        t.name = "Polycarp Mission Control key"
         t.qualityOfService = .userInteractive
         thread = t
         t.start()

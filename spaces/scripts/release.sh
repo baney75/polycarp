@@ -3,7 +3,7 @@
 # Builds, signs and uploads the prebuilt app for a stable release. Run it on the owner's Mac
 # (the signing key never leaves it) after pushing the tag:
 #   git tag v0.2.2 && git push origin v0.2.2     # the Release workflow writes the notes
-#   make release                                 # uploads BaneySpaces.zip, .sha256 and .dmg, then publishes
+#   make release                                 # uploads Polycarp.zip, .sha256 and .dmg, then publishes
 # The Release workflow creates the release as a draft. This uploads the files, checks them again as
 # uploaded, and only then publishes it, so nobody is offered a release without its app.
 # --dry-run does everything except the tag check, the upload and the publish, so it can run on a branch.
@@ -43,10 +43,10 @@ fi
 
 step "Building $TAG"
 scripts/bundle.sh
-codesign -v -R "=$REQ" build/BaneySpaces.app 2>/dev/null \
+codesign -v -R "=$REQ" build/Polycarp.app 2>/dev/null \
   || fail "bundle.sh didn't sign with the release identity (it fell back to ad-hoc or used another key). Nothing was packaged."
 if [ "$DRY" = 0 ]; then
-  ARCHS=$(lipo -archs build/BaneySpaces.app/Contents/MacOS/BaneySpaces)
+  ARCHS=$(lipo -archs build/Polycarp.app/Contents/MacOS/Polycarp)
   [ "$ARCHS" = "x86_64 arm64" ] || [ "$ARCHS" = "arm64 x86_64" ] || fail "the app isn't universal ($ARCHS)."
 fi
 
@@ -62,15 +62,15 @@ if [ "$DRY" = 1 ]; then
 fi
 # The release is a draft until the files are up and checked again; the updater never offers a draft.
 step "Uploading to $TAG"
-gh release upload "$TAG" build/BaneySpaces.zip build/BaneySpaces.zip.sha256 build/BaneySpaces.dmg --clobber
+gh release upload "$TAG" build/Polycarp.zip build/Polycarp.zip.sha256 build/Polycarp.dmg --clobber
 step "Checking what was uploaded"
 BACK=$(mktemp -d)
 trap 'rm -rf "$BACK"' EXIT
-gh release download "$TAG" --dir "$BACK" --pattern 'BaneySpaces.zip' --pattern 'BaneySpaces.zip.sha256' --pattern 'BaneySpaces.dmg'
-for f in BaneySpaces.zip BaneySpaces.zip.sha256 BaneySpaces.dmg; do
+gh release download "$TAG" --dir "$BACK" --pattern 'Polycarp.zip' --pattern 'Polycarp.zip.sha256' --pattern 'Polycarp.dmg'
+for f in Polycarp.zip Polycarp.zip.sha256 Polycarp.dmg; do
   cmp -s "build/$f" "$BACK/$f" || fail "the uploaded $f differs from the one built. $TAG stays unpublished."
 done
 scripts/verify-release.sh "$BACK"
 step "Publishing $TAG"
 gh release edit "$TAG" --draft=false --latest
-echo "published $TAG with BaneySpaces.zip, BaneySpaces.zip.sha256 and BaneySpaces.dmg"
+echo "published $TAG with Polycarp.zip, Polycarp.zip.sha256 and Polycarp.dmg"

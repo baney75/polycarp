@@ -14,7 +14,7 @@ public final class SandboxService {
         self.manager = manager; self.tart = tart; self.settings = settings; self.windowHost = windowHost; self.tartHome = tartHome
     }
 
-    public static let usage = "usage: baneyspaces sandbox up [--task NAME] | down | reset | status | view [--off] | guest status | images delete"
+    public static let usage = "usage: polycarp-spaces sandbox up [--task NAME] | down | reset | status | view [--off] | guest status | images delete"
 
     /// The request's `text` is the verb, `args` the rest. Long: `up` and `reset` can take a minute, so
     /// the app calls this off the main thread.

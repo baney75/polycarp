@@ -6,21 +6,21 @@ enum Uninstaller {
     static let command = "curl -fsSL https://raw.githubusercontent.com/baney75/baneyspaces/main/uninstall.sh | bash"
 
     static let summary = """
-        BaneySpaces quits first, which brings every hidden window and app back. Then it puts back \
-        the macOS Dock, Mission Control (switched off while BaneySpaces' overview replaces it), Mission Control for a window dragged to the top (and fill-the-screen, if an older BaneySpaces turned it off; if this version of BaneySpaces gave up turning it back on, this tries once more), the screenshot and Spotlight shortcuts and your Claude Code settings as \
+        Polycarp quits first, which brings every hidden window and app back. Then it puts back \
+        the macOS Dock, Mission Control (switched off while Polycarp' overview replaces it), Mission Control for a window dragged to the top (and fill-the-screen, if an older Polycarp turned it off; if this version of Polycarp gave up turning it back on, this tries once more), the screenshot and Spotlight shortcuts and your Claude Code settings as \
         they were, and removes the app, its settings, its login item, its command and its \
         Accessibility permission. Your own hooks and settings stay.
         """
 
     static var log: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/BaneySpaces-uninstall.log")
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Polycarp-uninstall.log")
     }
 
     /// Starts the script on its own, out of the app it's about to delete: a copy in a temporary
     /// folder, so removing the app can't pull it out from under bash. The caller quits next.
     static func start() throws {
         guard let script = Bundle.main.url(forResource: "uninstall", withExtension: "sh") else {
-            throw NSError(domain: "BaneySpaces", code: 1, userInfo: [NSLocalizedDescriptionKey: "uninstall.sh is missing from the app."])
+            throw NSError(domain: "Polycarp", code: 1, userInfo: [NSLocalizedDescriptionKey: "uninstall.sh is missing from the app."])
         }
         let fm = FileManager.default
         let dir = fm.temporaryDirectory.appendingPathComponent("baneyspaces-uninstall-\(UUID().uuidString)")
@@ -33,12 +33,12 @@ enum Uninstaller {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
         // When it's done, say so: the app that asked is gone by then.
-        let say = "osascript -e 'on run argv' -e 'display dialog (item 1 of argv) buttons {\"OK\"} default button 1 with title \"BaneySpaces\"' -e 'end run' \"$m\""
+        let say = "osascript -e 'on run argv' -e 'display dialog (item 1 of argv) buttons {\"OK\"} default button 1 with title \"Polycarp\"' -e 'end run' \"$m\""
         let run = """
             /bin/bash "$0"; s=$?
             case $s in
-              0) m="BaneySpaces is removed. Your windows, Dock, shortcuts and agent settings are back as they were." ;;
-              2) m="BaneySpaces is removed, but some settings need a hand. The list is at $1" ;;
+              0) m="Polycarp is removed. Your windows, Dock, shortcuts and agent settings are back as they were." ;;
+              2) m="Polycarp is removed, but some settings need a hand. The list is at $1" ;;
               *) m="The uninstaller stopped before removing anything. Its log is at $1" ;;
             esac
             \(say) >/dev/null 2>&1

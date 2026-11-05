@@ -23,7 +23,7 @@ public enum SandboxWindows {
         case refuse(String)
     }
 
-    public static let noAgentWorkspace = "the agent workspace is off, and the sandbox window only ever opens there: baneyspaces agent on"
+    public static let noAgentWorkspace = "the agent workspace is off, and the sandbox window only ever opens there: polycarp-spaces agent on"
 
     /// Before the display process starts.
     public static func beforeLaunch(agentWorkspace: Int?) -> Decision {

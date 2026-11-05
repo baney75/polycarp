@@ -2,26 +2,26 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleExecutable</key><string>BaneySpaces</string>
-  <key>CFBundleIdentifier</key><string>com.baney.baneyspaces</string>
-  <key>CFBundleName</key><string>BaneySpaces</string>
-  <key>CFBundleDisplayName</key><string>BaneySpaces</string>
-  <key>CFBundleIconFile</key><string>BaneySpaces</string>
+  <key>CFBundleExecutable</key><string>Polycarp</string>
+  <key>CFBundleIdentifier</key><string>com.baney.polycarp</string>
+  <key>CFBundleName</key><string>Polycarp</string>
+  <key>CFBundleDisplayName</key><string>Polycarp</string>
+  <key>CFBundleIconFile</key><string>Polycarp</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>@VERSION@</string>
   <key>CFBundleVersion</key><string>@VERSION@</string>
-  <key>BaneySpacesCommit</key><string>@COMMIT@</string>
-  <key>BaneySpacesCommitDate</key><string>@COMMIT_DATE@</string>
+  <key>PolycarpCommit</key><string>@COMMIT@</string>
+  <key>PolycarpCommitDate</key><string>@COMMIT_DATE@</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
-  <key>NSAppleEventsUsageDescription</key><string>BaneySpaces reads the tabs and splits of your terminals and browser to list them in the launcher, brings forward the one you pick, and types into a terminal only when you or an agent asks it to.</string>
+  <key>NSAppleEventsUsageDescription</key><string>Polycarp reads the tabs and splits of your terminals and browser to list them in the launcher, brings forward the one you pick, and types into a terminal only when you or an agent asks it to.</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>© 2026 Donovan Baney (@baney75). MIT License.</string>
   <key>CFBundleURLTypes</key>
   <array><dict>
-    <key>CFBundleURLName</key><string>com.baney.baneyspaces</string>
-    <key>CFBundleURLSchemes</key><array><string>baneyspaces</string></array>
+    <key>CFBundleURLName</key><string>com.baney.polycarp</string>
+    <key>CFBundleURLSchemes</key><array><string>polycarp</string><string>baneyspaces</string></array>
   </dict></array>
 </dict>
 </plist>

@@ -11,7 +11,7 @@ public enum ThemeData {
  },
  "themes": {
   "baneyspaces": {
-   "label": "BaneySpaces",
+   "label": "Polycarp",
    "radius": {
     "bar": 24,
     "tile": 16,

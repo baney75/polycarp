@@ -16,7 +16,7 @@ enum HandsCLI {
     /// Sends one request to the app and returns its envelope. Nothing here can fail without saying why.
     static func send(_ request: HandsRequest, timeout: Double = 180) -> HandsEnvelope {
         guard remoteHost == nil else {
-            return .failure(HandsError(.badArguments, "agent commands run on this Mac only", suggestion: "Run `baneyspaces agent …` on the machine whose apps you want to drive.", retry: .never))
+            return .failure(HandsError(.badArguments, "agent commands run on this Mac only", suggestion: "Run `polycarp-spaces agent …` on the machine whose apps you want to drive.", retry: .never))
         }
         guard let data = try? JSONEncoder().encode(request), let text = String(data: data, encoding: .utf8) else {
             return .failure(HandsError(.badArguments, "couldn't encode the request", suggestion: "Check the arguments.", retry: .never))
@@ -25,15 +25,15 @@ enum HandsCLI {
             // The socket is there but the answer didn't come in time: the action may have landed.
             if Wire.socketCandidates().contains(where: { FileManager.default.fileExists(atPath: $0) }) {
                 let acts = HandsTools.tool(verb: request.verb)?.acts ?? false
-                return .failure(HandsError(.timeout, "BaneySpaces didn't answer in time", suggestion: acts
-                    ? "The action may have landed: read the element back with `baneyspaces agent get` before trying again."
+                return .failure(HandsError(.timeout, "Polycarp didn't answer in time", suggestion: acts
+                    ? "The action may have landed: read the element back with `polycarp-spaces agent get` before trying again."
                     : "Try again in a moment.", retry: acts ? .never : .safe))
             }
-            return .failure(HandsError(.notRunning, "BaneySpaces isn't running, or hasn't finished starting (it needs Accessibility)",
-                                       suggestion: "Open BaneySpaces and run `baneyspaces doctor`.", retry: .safe))
+            return .failure(HandsError(.notRunning, "Polycarp isn't running, or hasn't finished starting (it needs Accessibility)",
+                                       suggestion: "Open Polycarp and run `polycarp-spaces doctor`.", retry: .safe))
         }
         if let line = reply.info?["envelope"], let env = HandsEnvelope.decode(line) { return env }
-        return .failure(HandsError(.engineError, reply.error ?? "the app answered without a result", suggestion: "Update BaneySpaces and try again.", retry: .never))
+        return .failure(HandsError(.engineError, reply.error ?? "the app answered without a result", suggestion: "Update Polycarp and try again.", retry: .never))
     }
 
     /// `agent lend <app|pid> [--for 30m] [--session ID]`: asks. It sends a request to the app, which shows Donovan
@@ -47,16 +47,16 @@ enum HandsCLI {
         if let i = rest.firstIndex(of: "--session"), i + 1 < rest.count { session = rest[i + 1]; rest.removeSubrange(i...(i + 1)) }
         func finish(_ env: HandsEnvelope) -> Never { print(env.line); exit(env.ok ? 0 : 1) }
         guard words[0] == "lend" else {
-            finish(.failure(HandsError(.needsLend, "returning an app is Donovan's, in BaneySpaces",
-                                       suggestion: "Run `baneyspaces agent lend <app>` and choose Take Back in the sheet, or let the lend run out (30 minutes).", retry: .never)))
+            finish(.failure(HandsError(.needsLend, "returning an app is Donovan's, in Polycarp",
+                                       suggestion: "Run `polycarp-spaces agent lend <app>` and choose Take Back in the sheet, or let the lend run out (30 minutes).", retry: .never)))
         }
-        guard let app = rest.first else { finish(.failure(HandsError(.badArguments, "say which app", suggestion: "usage: baneyspaces agent lend <app|pid> [--for 30m]", retry: .safe))) }
-        FileHandle.standardError.write(Data("Asking Donovan in BaneySpaces to let agents use \(app)…\n".utf8))
+        guard let app = rest.first else { finish(.failure(HandsError(.badArguments, "say which app", suggestion: "usage: polycarp-spaces agent lend <app|pid> [--for 30m]", retry: .safe))) }
+        FileHandle.standardError.write(Data("Asking Donovan in Polycarp to let agents use \(app)…\n".utf8))
         guard let reply = Wire.call(Wire.Request(op: .agent, text: "lend-ask", args: [app, duration ?? "", session]), timeout: 90) else {
-            finish(.failure(HandsError(.notRunning, "BaneySpaces isn't running, or didn't answer", suggestion: "Open BaneySpaces and run `baneyspaces doctor`.", retry: .safe)))
+            finish(.failure(HandsError(.notRunning, "Polycarp isn't running, or didn't answer", suggestion: "Open Polycarp and run `polycarp-spaces doctor`.", retry: .safe)))
         }
         if let line = reply.info?["envelope"], let env = HandsEnvelope.decode(line) { finish(env) }
-        finish(.failure(HandsError(.engineError, reply.error ?? "no answer", suggestion: "Update BaneySpaces and try again.", retry: .never)))
+        finish(.failure(HandsError(.engineError, reply.error ?? "no answer", suggestion: "Update Polycarp and try again.", retry: .never)))
     }
 
     static func run(_ words: [String]) -> Never {

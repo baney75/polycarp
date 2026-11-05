@@ -70,10 +70,10 @@ enum Launcher {
         func out(_ s: String) { FileHandle.standardOutput.write(Data((s + "\n").utf8)) }
         func err(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
         let usage = """
-        usage: BaneySpaces --bangs list
-               BaneySpaces --bangs add <trigger> <name> <address with {q}> [--agent]
-               BaneySpaces --bangs remove <trigger>
-        Example: BaneySpaces --bangs add jira Jira 'https://acme.atlassian.net/browse/{q}'
+        usage: Polycarp --bangs list
+               Polycarp --bangs add <trigger> <name> <address with {q}> [--agent]
+               Polycarp --bangs remove <trigger>
+        Example: Polycarp --bangs add jira Jira 'https://acme.atlassian.net/browse/{q}'
         """
         switch args.first {
         case "list", nil:
@@ -311,7 +311,7 @@ final class LauncherModel: ObservableObject {
             case .files: "Any file or folder in your home folder and iCloud Drive, by name"
             case .install: "Thousands of apps from Homebrew and the App Store"
             case .remove: "Uninstall apps Homebrew installed"
-            case .update: "Homebrew apps, macOS and BaneySpaces"
+            case .update: "Homebrew apps, macOS and Polycarp"
             case .system: "Lock, sleep, restart, dark mode and more"
             case .workspaces: "Go to any of the nine"
             }
@@ -703,7 +703,7 @@ final class LauncherModel: ObservableObject {
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
         NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
-            if let error { NSLog("BaneySpaces: couldn't open %@: %@", a.path, error.localizedDescription) }
+            if let error { NSLog("Polycarp: couldn't open %@: %@", a.path, error.localizedDescription) }
         }
     }
 
@@ -732,14 +732,14 @@ final class LauncherModel: ObservableObject {
             ("Restart…", "restart", "macOS asks before restarting", { System.loginWindow("rrst") }),
             ("Shut Down…", "power", "macOS asks before shutting down", { System.loginWindow("rsdn") }),
             ("Log Out…", "rectangle.portrait.and.arrow.right", "macOS asks before logging out", { System.loginWindow("rlgo") }),
-            ("Toggle Dark Mode", "circle.lefthalf.filled", "Asks once to let BaneySpaces change appearance", { System.toggleDarkMode() }),
+            ("Toggle Dark Mode", "circle.lefthalf.filled", "Asks once to let Polycarp change appearance", { System.toggleDarkMode() }),
             ("Take a Screenshot", "camera.viewfinder", "Choose an area, a window or the screen", { System.run("/usr/bin/open", ["-a", "Screenshot"]) }),
             ("New Claude Session", "sparkle", "Another Claude Code session in Ghostty", { [weak self] in self?.actions.newClaude() }),
             ("New Terminal", "plus", "A new Ghostty window", { [weak self] in self?.actions.newTerminal() }),
             ("Show All Workspaces", "square.grid.3x3", "", { [weak self] in self?.actions.showOverview() }),
             ("Bring Every Window Back", "arrow.uturn.backward.circle", "Gathers every window onto workspace 1", { [weak self] in self?.actions.bringBack() }),
             (dockOn ? "Turn Off Workspace Dock" : "Turn On Workspace Dock", "dock.rectangle", "", { [weak self] in self?.actions.toggleDock() }),
-            ("BaneySpaces Settings", "slider.horizontal.3", "", { [weak self] in self?.actions.showSetup() }),
+            ("Polycarp Settings", "slider.horizontal.3", "", { [weak self] in self?.actions.showSetup() }),
         ]
         return all.filter { q.isEmpty || Fuzzy.score(q, $0.0) != nil }.map { c in
             LauncherItem(id: "cmd:\(c.0)", section: "System", title: c.0, subtitle: c.2, icon: .symbol(c.1),
@@ -761,7 +761,7 @@ final class LauncherModel: ObservableObject {
                                     self?.close()
                                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Software-Update-Settings.extension")!)
                                 }))
-        out.append(LauncherItem(id: "upd:self", section: "Update", title: "Check for BaneySpaces Updates",
+        out.append(LauncherItem(id: "upd:self", section: "Update", title: "Check for Polycarp Updates",
                                 subtitle: "Stable or Nightly, as set in Settings > Updates", icon: .symbol("square.grid.3x3.fill"),
                                 run: { [weak self] in self?.close(); self?.actions.checkForUpdates() }))
         return out
@@ -992,7 +992,7 @@ final class LauncherModel: ObservableObject {
 /// Runs `FileSearch`'s query through Spotlight over your own folders (iCloud Drive and cloud
 /// drives included, the rest of Library left out), off the main thread, and ranks what it finds.
 enum FileFinder {
-    private static let queue = DispatchQueue(label: "BaneySpaces file search", qos: .userInitiated)
+    private static let queue = DispatchQueue(label: "Polycarp file search", qos: .userInitiated)
     /// Files kept per search for ranking. A two-letter search can match thousands; the ranking
     /// only needs enough to find the few worth showing.
     static let cap = 1000

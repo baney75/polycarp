@@ -45,7 +45,7 @@ final class AppSandbox: SandboxWindowHost {
     func cleanupAtLaunch() {
         let keep = SandboxSettings.load().enabled
         DispatchQueue.global(qos: .utility).async { [service] in
-            do { try service?.manager.startupCleanup(keepOwnership: keep) } catch { NSLog("BaneySpaces sandbox: %@", "\(error)") }
+            do { try service?.manager.startupCleanup(keepOwnership: keep) } catch { NSLog("Polycarp sandbox: %@", "\(error)") }
         }
     }
 
@@ -100,7 +100,7 @@ extension AppSandbox {
         case .starting: line = "Starting"
         case .resetting: line = "Resetting"
         case .stopping: line = "Stopping"
-        case .error: line = "Stopped after an error: \(s.lastError ?? "see baneyspaces sandbox status")"
+        case .error: line = "Stopped after an error: \(s.lastError ?? "see polycarp-spaces sandbox status")"
         case .stopped: line = "Not running"
         }
         if s.phase == .running { line += s.warm == .ready ? ". A clean clone is ready." : ". Building the next clean clone." }

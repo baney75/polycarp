@@ -328,7 +328,7 @@ final class SessionController {
         do { try p.run() } catch { done() }
     }
 
-    static func cliPath() -> String { Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/bin/baneyspaces").path }
+    static func cliPath() -> String { Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/bin/\(Product.commandName)").path }
 
     static func hooksInstalled() -> Bool {
         guard let d = FileManager.default.contents(atPath: NSHomeDirectory() + "/.claude/settings.json"),
@@ -386,8 +386,8 @@ final class SessionController {
     /// `baneyspaces agent snapshot|click|…`: off the main thread (see `Server.handleHands`).
     func handleHands(_ r: Wire.Request) -> Wire.Reply {
         guard started else {
-            let e = HandsEnvelope.failure(HandsError(.notRunning, "BaneySpaces hasn't finished starting (it needs Accessibility)",
-                                                     suggestion: "Run `baneyspaces doctor`; allow Accessibility if it asks.", retry: .safe))
+            let e = HandsEnvelope.failure(HandsError(.notRunning, "Polycarp hasn't finished starting (it needs Accessibility)",
+                                                     suggestion: "Run `polycarp-spaces doctor`; allow Accessibility if it asks.", retry: .safe))
             return .init(ok: true, info: ["envelope": e.line])
         }
         return hands.handleWire(r)
@@ -402,7 +402,7 @@ final class SessionController {
     func handle(_ r: Wire.Request) -> Wire.Reply {
         // Looks and the dock switch need no Accessibility, so they answer before the session engine has started.
         if r.op == .setting { return setting(r) }
-        guard started else { return .init(ok: false, error: "BaneySpaces hasn't finished starting (it needs Accessibility)") }
+        guard started else { return .init(ok: false, error: "Polycarp hasn't finished starting (it needs Accessibility)") }
         switch r.op {
         case .ping:
             var info = engine.statusInfo
@@ -469,7 +469,7 @@ final class SessionController {
         }
     }
 
-    private var notReady: Wire.Reply { .init(ok: false, error: "BaneySpaces isn't ready for settings yet; try again in a moment") }
+    private var notReady: Wire.Reply { .init(ok: false, error: "Polycarp isn't ready for settings yet; try again in a moment") }
 
     private func setting(_ r: Wire.Request) -> Wire.Reply {
         switch SettingKey.ask(target: r.target, text: r.text) {
@@ -518,7 +518,7 @@ final class SessionController {
             guard Workspaces.range.contains(n) else { return .init(ok: false, error: "pick a workspace from 1 to 9") }
             // Every window on the agent workspace is open to agents: a workspace with windows on it is someone's.
             if n != h.workspace(), h.occupied(n) {
-                return .init(ok: false, error: "workspace \(n) has windows on it; pick an empty workspace: baneyspaces agent on <N>")
+                return .init(ok: false, error: "workspace \(n) has windows on it; pick an empty workspace: polycarp-spaces agent on <N>")
             }
             h.setWorkspace(n)
             return agentStatus()
@@ -534,7 +534,7 @@ final class SessionController {
         case "open":
             // Full Access is for agents on this Mac: a caller on another machine gets Default at most.
             let mode = remote ? AgentAccess.shared.current.forRemote : AgentAccess.shared.current
-            guard let n = h.workspace() else { return .init(ok: false, error: "the agent workspace is off: baneyspaces agent on") }
+            guard let n = h.workspace() else { return .init(ok: false, error: "the agent workspace is off: polycarp-spaces agent on") }
             guard let name = args.first, let url = Self.appURL(name) else { return .init(ok: false, error: "no app called \(args.first ?? "")") }
             let appName = url.deletingPathExtension().lastPathComponent
             let bundle = Bundle(url: url)?.bundleIdentifier ?? ""
@@ -642,16 +642,16 @@ final class SessionController {
             let target = args.first ?? ""
             return .init(ok: true, info: ["envelope": hands.askToLend(target: target, duration: args.dropFirst().first, session: args.dropFirst(2).first ?? "").line])
         case "run":
-            guard let n = h.workspace() else { return .init(ok: false, error: "the agent workspace is off: baneyspaces agent on") }
+            guard let n = h.workspace() else { return .init(ok: false, error: "the agent workspace is off: polycarp-spaces agent on") }
             let cmd = args.drop { $0 != "--" }.dropFirst().joined(separator: " ")
-            guard !cmd.isEmpty else { return .init(ok: false, error: "usage: baneyspaces agent run [--dir DIR] -- <command>") }
+            guard !cmd.isEmpty else { return .init(ok: false, error: "usage: polycarp-spaces agent run [--dir DIR] -- <command>") }
             let dir = args.firstIndex(of: "--dir").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
             guard engine.newAgentTerminal(in: dir, command: cmd, opened: { pid, name in AgentOwned.shared.add(pid); h.claim(pid, n, false, name) }) else {
                 return .init(ok: false, error: "couldn't start a terminal for it")
             }
             return .init(ok: true, info: ["workspace": "\(n)", "command": cmd])
         case "move":
-            guard let n = h.workspace() else { return .init(ok: false, error: "the agent workspace is off: baneyspaces agent on") }
+            guard let n = h.workspace() else { return .init(ok: false, error: "the agent workspace is off: polycarp-spaces agent on") }
             // A window number (what `agent windows` and `agent status` show), or a row by ID or words.
             var id: UInt32?
             if args.count == 1, let w = UInt32(args[0]) { id = w }
@@ -662,13 +662,13 @@ final class SessionController {
             // A process Full Access let in is the agent's only while the mode is still Full Access.
             let granted = h.pidOf(id).map { AgentAccess.shared.current != .full && AgentAccess.shared.grantedUnderFull($0) } ?? false
             guard !granted, SocketPolicy.mayMove(windowPid: h.pidOf(id), startedForAgents: AgentOwned.shared.pids) else {
-                return .init(ok: false, error: "needs_lend: window \(id) isn't an agent's; only windows of apps BaneySpaces started for an agent move here",
-                             info: ["code": "needs_lend", "suggestion": "Move your own window with its workspace key (⌘⇧\(n)), or lend the app with `baneyspaces agent lend <app>`."])
+                return .init(ok: false, error: "needs_lend: window \(id) isn't an agent's; only windows of apps Polycarp started for an agent move here",
+                             info: ["code": "needs_lend", "suggestion": "Move your own window with its workspace key (⌘⇧\(n)), or lend the app with `polycarp-spaces agent lend <app>`."])
             }
             h.move(id, n)
             return .init(ok: true, info: ["workspace": "\(n)", "moved": "window \(id)"])
         default:
-            return .init(ok: false, error: "usage: baneyspaces agent status|mode|on [N]|off|open <app> [file…]|lend <app>|run [--dir D] -- <cmd>|move <row>|cursor on|theme <name>")
+            return .init(ok: false, error: "usage: polycarp-spaces agent status|mode|on [N]|off|open <app> [file…]|lend <app>|run [--dir D] -- <cmd>|move <row>|cursor on|theme <name>")
         }
     }
 
@@ -752,7 +752,7 @@ final class ToastPanel: NSPanel {
         backgroundColor = .clear
         hasShadow = true
         hidesOnDeactivate = false
-        title = "BaneySpaces Agent Notice"
+        title = "Polycarp Agent Notice"
         setAccessibilityIdentifier("session.toast")
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         contentView = Self.chrome(text, radius: 12)

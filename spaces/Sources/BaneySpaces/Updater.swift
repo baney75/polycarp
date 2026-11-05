@@ -31,8 +31,8 @@ final class Updater: NSObject {
 
     static let build: BuildInfo = {
         let info = Bundle.main.infoDictionary ?? [:]
-        let commit = (info["BaneySpacesCommit"] as? String).flatMap { $0.allSatisfy(\.isHexDigit) && $0.count >= 7 ? $0 : nil }
-        let date = (info["BaneySpacesCommitDate"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
+        let commit = (info["PolycarpCommit"] as? String).flatMap { $0.allSatisfy(\.isHexDigit) && $0.count >= 7 ? $0 : nil }
+        let date = (info["PolycarpCommitDate"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
         return BuildInfo(version: info["CFBundleShortVersionString"] as? String ?? "0", commit: commit, commitDate: date)
     }()
 
@@ -95,7 +95,7 @@ final class Updater: NSObject {
         checking = true
         var request = URLRequest(url: Self.releasesURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("BaneySpaces/\(Self.build.version)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Polycarp/\(Self.build.version)", forHTTPHeaderField: "User-Agent")
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -119,7 +119,7 @@ final class Updater: NSObject {
                     } else if toolsMissing && self.channel == .nightly {
                         self.tell("Nightly needs Apple's command line tools", Self.nightlyNeedsToolsMessage)
                     } else {
-                        self.tell("BaneySpaces is up to date", "You have \(Self.buildDescription), the newest \(self.channel == .stable ? "stable release" : "build on the Nightly channel").")
+                        self.tell("Polycarp is up to date", "You have \(Self.buildDescription), the newest \(self.channel == .stable ? "stable release" : "build on the Nightly channel").")
                     }
                 }
             }
@@ -135,7 +135,7 @@ final class Updater: NSObject {
               let url = URL(string: "https://api.github.com/repos/baney75/baneyspaces/compare/\(mine)...\(theirs)") else { return then(release) }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("BaneySpaces/\(Self.build.version)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Polycarp/\(Self.build.version)", forHTTPHeaderField: "User-Agent")
         URLSession.shared.dataTask(with: request) { data, response, _ in
             let status = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["status"] as? String
             DispatchQueue.main.async {
@@ -152,7 +152,7 @@ final class Updater: NSObject {
     func offer(_ release: Release) {
         let alert = NSAlert()
         alert.messageText = release.isNightly ? "A new nightly build is available" : "\(release.name) is available"
-        alert.informativeText = "You have \(Self.buildDescription). Updating installs the new version in about a minute, then BaneySpaces restarts by itself. Your workspaces stay as they are."
+        alert.informativeText = "You have \(Self.buildDescription). Updating installs the new version in about a minute, then Polycarp restarts by itself. Your workspaces stay as they are."
         alert.accessoryView = Self.notesView(release.notes)
         alert.addButton(withTitle: "Update Now")
         alert.addButton(withTitle: "Later")
@@ -204,7 +204,7 @@ final class Updater: NSObject {
     // MARK: Installing
 
     private static var supportFolder: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/BaneySpaces")
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Polycarp")
     }
     private static var logURL: URL { supportFolder.appendingPathComponent("update.log") }
 
@@ -227,7 +227,7 @@ final class Updater: NSObject {
             return tell("Nightly needs Apple's command line tools", Self.nightlyNeedsToolsMessage)
         }
         guard !Self.installerRunning else {
-            return tell("An update is already installing", "It installs in the background and restarts BaneySpaces when it's done.")
+            return tell("An update is already installing", "It installs in the background and restarts Polycarp when it's done.")
         }
         let folder = Self.supportFolder
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -238,7 +238,7 @@ final class Updater: NSObject {
         set -uo pipefail
         echo $$ > "$BANEYSPACES_PID_FILE"
         TMP=$(mktemp -d)
-        trap 'code=$?; rm -rf "$TMP"; [ $code = 0 ] || echo "BaneySpaces update failed ($code)"; echo $code > "$BANEYSPACES_STATUS_FILE"; rm -f "$BANEYSPACES_PID_FILE"' EXIT
+        trap 'code=$?; rm -rf "$TMP"; [ $code = 0 ] || echo "Polycarp update failed ($code)"; echo $code > "$BANEYSPACES_STATUS_FILE"; rm -f "$BANEYSPACES_PID_FILE"' EXIT
         set -e
         echo "== $(date) updating to $BANEYSPACES_REF ${BANEYSPACES_COMMIT:-}"
         curl -fsSL "https://raw.githubusercontent.com/baney75/baneyspaces/${BANEYSPACES_COMMIT:-$BANEYSPACES_REF}/install.sh" -o "$TMP/install.sh"
@@ -296,7 +296,7 @@ final class Updater: NSObject {
             alert.messageText = "The update didn't install"
             alert.informativeText = log.contains("moved to a newer build")
                 ? "A newer build was published while you were reading the notes. Check for updates again to see it."
-                : "BaneySpaces is still on \(Self.buildDescription) and works as before. The log says what went wrong."
+                : "Polycarp is still on \(Self.buildDescription) and works as before. The log says what went wrong."
             alert.addButton(withTitle: "Show Log")
             alert.addButton(withTitle: "OK")
             self.present(alert) { if $0 == 0 { NSWorkspace.shared.open(Self.logURL) } }
@@ -315,7 +315,7 @@ final class Updater: NSObject {
         // After setup has had its chance to open: it comes first when permission needs fixing.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [self] in
             let alert = NSAlert()
-            alert.messageText = "BaneySpaces is updated"
+            alert.messageText = "Polycarp is updated"
             alert.informativeText = "You're on \(Self.buildDescription) now (from \(info["from"] ?? "an older build")). Here's what changed."
             alert.accessoryView = Self.notesView(info["notes"] ?? "")
             alert.addButton(withTitle: "OK")

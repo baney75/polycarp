@@ -43,7 +43,7 @@ func render(scale: Int, to name: String) {
         ctx.textPosition = CGPoint(x: (640 - width) / 2, y: 400 - top)
         CTLineDraw(line, ctx)
     }
-    text("Drag BaneySpaces to Applications", size: 22, weight: .semibold, color: ink, top: 66)
+    text("Drag Polycarp to Applications", size: 22, weight: .semibold, color: ink, top: 66)
     text("First open: System Settings › Privacy & Security › Open Anyway", size: 12.5, weight: .regular,
          color: ink.withAlphaComponent(0.6), top: 352)
 

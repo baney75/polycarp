@@ -91,11 +91,11 @@ final class Spaces {
     var onChange: (() -> Void)?
 
     static let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("BaneySpaces")
+        .appendingPathComponent("Polycarp")
     static let framesURL = folder.appendingPathComponent("frames.json")
     static let stateURL = folder.appendingPathComponent("state.json")
     static let layoutURL = folder.appendingPathComponent("layout.json")
-    private static let writer = DispatchQueue(label: "com.baney.baneyspaces.persist", qos: .utility)
+    private static let writer = DispatchQueue(label: "com.baney.polycarp.persist", qos: .utility)
 
     init() {
         saved = SavedFrames.load(from: Spaces.framesURL)
@@ -684,7 +684,7 @@ final class Spaces {
         if switching { return enqueue { [weak self] in self?.moveFocused(to: n) } }
         refresh()
         guard let w = Windows.focused(in: Array(windows.values)) else {
-            NSLog("BaneySpaces: no window to move (focused app pid %d)", Windows.focusedPid() ?? -1)
+            NSLog("Polycarp: no window to move (focused app pid %d)", Windows.focusedPid() ?? -1)
             return NSSound.beep()
         }
         model.assign(w.id, to: n)

@@ -12,7 +12,7 @@ public enum CrashLoopReport {
 
     /// "launch: BaneySpaces 0.2.1 (abc1234), normal, pid 412".
     public static func launch(build: String, mode: Mode, pid: Int32) -> String {
-        "launch: BaneySpaces \(build), \(mode.rawValue), pid \(pid)"
+        "launch: Polycarp \(build), \(mode.rawValue), pid \(pid)"
     }
 
     /// What `CrashLedgerFile.begin` decided. `recent` is the crashes still in the window after it

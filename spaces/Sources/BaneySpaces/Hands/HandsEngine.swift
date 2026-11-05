@@ -113,7 +113,7 @@ final class HandsEngine {
         if done.wait(timeout: .now() + budget) == .timedOut {
             box.cancel()
             return .failed(HandsError(.timeout, "the app didn't answer within \(Int(budget)) s",
-                                      suggestion: mutating ? "It may still land: read the element back with `baneyspaces agent get` before trying again."
+                                      suggestion: mutating ? "It may still land: read the element back with `polycarp-spaces agent get` before trying again."
                                                            : "The app is busy or showing a dialog. Try again in a moment.",
                                       retry: mutating ? .never : .safe))
         }
@@ -138,16 +138,16 @@ final class HandsEngine {
         if adapter != nil, evidenceAdapter != nil { return nil }
         if let failure { return failure }
         guard ad_init(UInt32(AD_ABI_VERSION_MAJOR)) == Self.resultOK else {
-            failure = HandsError(.engineError, "the hands engine library doesn't match this build", suggestion: "Reinstall BaneySpaces (make install).", retry: .never)
+            failure = HandsError(.engineError, "the hands engine library doesn't match this build", suggestion: "Reinstall Polycarp (make install).", retry: .never)
             return failure
         }
         guard let a = ad_adapter_create() else {
-            failure = HandsError(.engineError, "the hands engine didn't start: \(lastError().message)", suggestion: "Check `baneyspaces doctor`.", retry: .never)
+            failure = HandsError(.engineError, "the hands engine didn't start: \(lastError().message)", suggestion: "Check `polycarp-spaces doctor`.", retry: .never)
             return failure
         }
         guard let e = "evidence".withCString({ ad_adapter_create_with_session($0) }) else {
             ad_adapter_destroy(a)
-            failure = HandsError(.engineError, "the engine's evidence store didn't start: \(lastError().message)", suggestion: "Check `baneyspaces doctor`.", retry: .never)
+            failure = HandsError(.engineError, "the engine's evidence store didn't start: \(lastError().message)", suggestion: "Check `polycarp-spaces doctor`.", retry: .never)
             return failure
         }
         adapter = a
@@ -170,8 +170,8 @@ final class HandsEngine {
         if let err = json?["error"] { return .failed(Self.translate(err)) }
         let e = lastError()
         if code == Self.resultPermDenied || e.message.lowercased().contains("permission") {
-            return .failed(HandsError(.permissionDenied, "Accessibility isn't allowed for BaneySpaces",
-                                      suggestion: "Allow BaneySpaces in System Settings > Privacy & Security > Accessibility.", retry: .safe))
+            return .failed(HandsError(.permissionDenied, "Accessibility isn't allowed for Polycarp",
+                                      suggestion: "Allow Polycarp in System Settings > Privacy & Security > Accessibility.", retry: .safe))
         }
         return .failed(HandsError(.engineError, e.message.isEmpty ? "the engine failed (\(code))" : e.message,
                                   suggestion: e.suggestion.isEmpty ? "Take a new snapshot and try again." : e.suggestion, retry: .never))
@@ -216,7 +216,7 @@ final class HandsEngine {
 
     private func doSnapshot(windowID: UInt32, interactive: Bool, compact: Bool, depth: UInt8, evidence: Bool) -> Reply {
         if let e = ready() { return .failed(e) }
-        guard let adapter = evidence ? evidenceAdapter : adapter else { return .failed(HandsError(.engineError, "the engine isn't ready", suggestion: "Check `baneyspaces doctor`.", retry: .never)) }
+        guard let adapter = evidence ? evidenceAdapter : adapter else { return .failed(HandsError(.engineError, "the engine isn't ready", suggestion: "Check `polycarp-spaces doctor`.", retry: .never)) }
         var out: UnsafeMutablePointer<CChar>?
         let id = "w-\(windowID)"
         // The exact window id alone names the window. The app's name is not passed: two copies of an app share
@@ -240,7 +240,7 @@ final class HandsEngine {
 
     private func doGet(ref: String, property: String) -> Reply {
         if let e = ready() { return .failed(e) }
-        guard let adapter else { return .failed(HandsError(.engineError, "the engine isn't ready", suggestion: "Check `baneyspaces doctor`.", retry: .never)) }
+        guard let adapter else { return .failed(HandsError(.engineError, "the engine isn't ready", suggestion: "Check `polycarp-spaces doctor`.", retry: .never)) }
         var out: UnsafeMutablePointer<CChar>?
         let code = ref.withCString { r in property.withCString { p in ad_get_ref(adapter, r, p, &out) } }
         return finish(code, out)
@@ -268,7 +268,7 @@ final class HandsEngine {
     func act(window w: HandsWindow, ref: String, kind: Kind, text: String? = nil, direction: Int32 = 1, amount: UInt32 = 3, check: @escaping Check) -> Reply {
         run(window: w, budget: Budget.act, mutating: true, check: check) { [self] cancelled in
             if let e = ready() { return .failed(e) }
-            guard let adapter else { return .failed(HandsError(.engineError, "the engine isn't ready", suggestion: "Check `baneyspaces doctor`.", retry: .never)) }
+            guard let adapter else { return .failed(HandsError(.engineError, "the engine isn't ready", suggestion: "Check `polycarp-spaces doctor`.", retry: .never)) }
             var out: UnsafeMutablePointer<CChar>?
             var action = AdAction()
             action.kind = kind.rawValue
@@ -314,7 +314,7 @@ final class HandsEngine {
     /// Whether the engine can read windows at all (Accessibility granted).
     func permissionProblem() -> HandsError? {
         AXIsProcessTrusted() ? nil
-            : HandsError(.permissionDenied, "Accessibility isn't allowed for BaneySpaces",
-                         suggestion: "Allow BaneySpaces in System Settings > Privacy & Security > Accessibility.", retry: .safe)
+            : HandsError(.permissionDenied, "Accessibility isn't allowed for Polycarp",
+                         suggestion: "Allow Polycarp in System Settings > Privacy & Security > Accessibility.", retry: .safe)
     }
 }

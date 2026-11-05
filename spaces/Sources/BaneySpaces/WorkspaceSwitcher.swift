@@ -530,7 +530,7 @@ extension NSWindow {
 /// what macOS logged. The file rotates at 200 KB (trace.log, .1, .2) instead of deleting history.
 /// Lines hold workspace numbers, window ids and app names, never window titles, so they're public.
 enum Trace {
-    private static let unified = Logger(subsystem: "com.baney.baneyspaces", category: "trace")
+    private static let unified = Logger(subsystem: "com.baney.polycarp", category: "trace")
 
     static func log(_ line: String) {
         unified.notice("\(line, privacy: .public)")

@@ -9,7 +9,7 @@ import Foundation
 /// (`--restore-mission-control`), which needs nothing from the app. A quit restores at once; a
 /// quit for an update leaves a marker, and the new build has `updateLimit` seconds to start.
 public enum MissionControlWatchdog {
-    public static let label = "com.baney.baneyspaces.mc-watchdog"
+    public static let label = "com.baney.polycarp.mc-watchdog"
     public static let interval = 15
     public static let limit = 60
     public static let updateLimit = 30
@@ -30,21 +30,21 @@ public enum MissionControlWatchdog {
     public static var script: String {
         """
         #!/bin/bash
-        # BaneySpaces: puts macOS's Mission Control back if BaneySpaces has stopped running without doing it.
-        D="$HOME/Library/Application Support/BaneySpaces"
+        # Polycarp: puts macOS's Mission Control back if Polycarp has stopped running without doing it.
+        D="$HOME/Library/Application Support/Polycarp"
         [ -f "$D/\(heartbeat)" ] || exit 0
-        # The record is in BaneySpaces' settings, or in a file of its own if a crash kept it from them.
-        { defaults read com.baney.baneyspaces systemMissionControlSaved >/dev/null 2>&1 || [ -f "$D/\(DurableRecord.fileName)" ]; } || exit 0
+        # The record is in Polycarp' settings, or in a file of its own if a crash kept it from them.
+        { defaults read com.baney.polycarp systemMissionControlSaved >/dev/null 2>&1 || [ -f "$D/\(DurableRecord.fileName)" ]; } || exit 0
         beat=$(stat -f %m "$D/\(heartbeat)" 2>/dev/null) || exit 0
         limit=\(limit)
         [ -f "$D/\(updating)" ] && limit=\(updateLimit)
         [ $(( $(date +%s) - beat )) -gt "$limit" ] || exit 0
         # Running means the process that wrote the heartbeat, and a build that knows this takeover.
-        # Any other BaneySpaces (an older build started since) doesn't answer the swipe or the
+        # Any other Polycarp (an older build started since) doesn't answer the swipe or the
         # corners and doesn't give Mission Control back, so it doesn't count.
         pid=$(head -n 1 "$D/\(heartbeat)" 2>/dev/null)
         if grep -qx '\(capability)' "$D/\(heartbeat)" 2>/dev/null && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null \
-          && ps -p "$pid" -o comm= 2>/dev/null | grep -q BaneySpaces; then exit 0; fi
+          && ps -p "$pid" -o comm= 2>/dev/null | grep -q Polycarp; then exit 0; fi
         [ -f "$D/\(restoreName)" ] || exit 0
         exec /bin/bash "$D/\(restoreName)" --restore-mission-control
         """ + "\n"
@@ -122,7 +122,7 @@ public struct WatchdogInstaller {
     private func installFiles(pid: Int32) -> String? {
         let fm = FileManager.default
         guard let source = restoreSource, let restore = try? Data(contentsOf: source) else {
-            return "BaneySpaces' uninstaller is missing from the app, and it is what puts Mission Control back if BaneySpaces stops."
+            return "Polycarp' uninstaller is missing from the app, and it is what puts Mission Control back if Polycarp stops."
         }
         do {
             try fm.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -130,21 +130,21 @@ public struct WatchdogInstaller {
             try beatNow(pid: pid)
             guard try replace(file(MissionControlWatchdog.restoreName), with: restore),
                   try replace(file(MissionControlWatchdog.scriptName), with: Data(MissionControlWatchdog.script.utf8)) else {
-                return "BaneySpaces stopped before the files that put Mission Control back were in place."
+                return "Polycarp stopped before the files that put Mission Control back were in place."
             }
             let escaped = folder.path.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
             let plist = MissionControlWatchdog.plist(folder: escaped)
             let old = try? String(contentsOf: agentPlist, encoding: .utf8)
             try fm.createDirectory(at: agentPlist.deletingLastPathComponent(), withIntermediateDirectories: true)
-            guard try replace(agentPlist, with: Data(plist.utf8)) else { return "BaneySpaces stopped before the launch agent was in place." }
+            guard try replace(agentPlist, with: Data(plist.utf8)) else { return "Polycarp stopped before the launch agent was in place." }
             // A changed agent is loaded again.
             if old != nil, old != plist { _ = launchctl(["bootout", target]) }
         } catch {
-            return "BaneySpaces couldn't write the files that put Mission Control back if it stops (\(error.localizedDescription))."
+            return "Polycarp couldn't write the files that put Mission Control back if it stops (\(error.localizedDescription))."
         }
         if !launchctl(["print", target]) { _ = launchctl(["bootstrap", "gui/\(uid)", agentPlist.path]) }
         guard launchctl(["print", target]) else {
-            return "macOS wouldn't load the launch agent that puts Mission Control back if BaneySpaces stops. Check System Settings › General › Login Items & Extensions for BaneySpaces."
+            return "macOS wouldn't load the launch agent that puts Mission Control back if Polycarp stops. Check System Settings › General › Login Items & Extensions for Polycarp."
         }
         return nil
     }
@@ -205,7 +205,7 @@ public enum MissionControlSetup {
         case .done(let changed):
             return .taken(changed: changed)
         case .recordNotSaved:
-            return .notArmed(reason: "BaneySpaces couldn't save what Mission Control was set to, and it needs that to put it back.", restored: false)
+            return .notArmed(reason: "Polycarp couldn't save what Mission Control was set to, and it needs that to put it back.", restored: false)
         }
     }
 }
