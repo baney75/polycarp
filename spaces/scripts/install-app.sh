@@ -142,8 +142,13 @@ if [ -z "$TEST" ]; then
   # (~/Library/Application Support/Silas) is not touched; Polycarp copied what it needs.
   for dir in /Applications "$HOME/Applications"; do
     if [ -d "$dir/$SILAS_NAME.app" ]; then
-      mv "$dir/$SILAS_NAME.app" "$HOME/.Trash/$SILAS_NAME-$(date +%Y%m%d-%H%M%S).app"
-      echo "moved $dir/$SILAS_NAME.app to the Trash; voice is inside $PRODUCT_NAME now (its data stays)"
+      # Polycarp is already in place, so a move that fails is a note, never a failed install.
+      mkdir -p "$HOME/.Trash"
+      if mv "$dir/$SILAS_NAME.app" "$HOME/.Trash/$SILAS_NAME-$(date +%Y%m%d-%H%M%S).app"; then
+        echo "moved $dir/$SILAS_NAME.app to the Trash; voice is inside $PRODUCT_NAME now (its data stays)"
+      else
+        echo "note: couldn't move $dir/$SILAS_NAME.app to the Trash; drag it there yourself" >&2
+      fi
     fi
   done
 fi

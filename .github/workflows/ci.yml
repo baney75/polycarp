@@ -76,7 +76,7 @@ jobs:
       - name: Voice engine tests
         working-directory: core/voice
         run: cargo test
-      - name: C ABI tests (macOS: the native app's library)
+      - name: C ABI tests, on macOS for the native app's library
         if: runner.os == 'macOS'
         working-directory: core/ffi
         run: cargo test && cargo clippy --all-targets -- -D warnings
