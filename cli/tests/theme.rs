@@ -1822,6 +1822,32 @@ fn a_surface_value_beats_the_global_accent_and_editing_it_keeps_the_global_one()
 }
 
 #[test]
+fn export_with_no_name_uses_the_forced_mode_like_current_files() {
+    let b = Box::new();
+    b.ok(&["set", "evening", "--mode", "dark"]);
+    let css = b.ok(&["export", "css", "--surface", "site"]);
+    let file = fs::read_to_string(b.cfg().join("current").join("site.css")).unwrap();
+    assert_eq!(css, file);
+    assert!(css.contains("color-scheme: dark;") && !css.contains("prefers-color-scheme"));
+    let v = b.json(&["export", "json"]);
+    assert_eq!(v["mode"], "dark");
+    assert_eq!(
+        b.json(&["export", "json", "--surface", "site"])["mode"],
+        "dark"
+    );
+    // A named theme has no forced mode.
+    assert_eq!(b.json(&["export", "json", "calm"])["mode"], "auto");
+    assert!(b
+        .ok(&["export", "css", "calm"])
+        .contains("prefers-color-scheme"));
+    let on_disk: Value = serde_json::from_str(
+        &fs::read_to_string(b.cfg().join("current").join("theme.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(v, on_disk);
+}
+
+#[test]
 fn atomic_writes_leave_no_temp_files() {
     let b = Box::new();
     b.ok(&["set", "evening", "--mode", "dark"]);

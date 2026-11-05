@@ -2923,11 +2923,23 @@ pub(crate) fn op_export(c: &Ctx, format: &str, name: Option<&str>, surface: Opti
             )));
         }
     }
-    let (full, problems) = resolve_for_view(&c.cfg, name)?;
+    // With no name, the state in force: its forced mode, like the files in current/.
+    let (full, problems, state) = match name {
+        Some(_) => {
+            let (f, p) = resolve_for_view(&c.cfg, name)?;
+            (f, p, None)
+        }
+        None => {
+            let eff = effective(&c.cfg);
+            (eff.full, eff.problems, Some(eff.state))
+        }
+    };
+    let mode = state.as_ref().map_or("auto", |s| s.mode.as_str());
+    let forced = (mode != "auto").then_some(mode);
     let out = if format == "css" {
-        let css = css(&full, surface, None);
+        let css = css(&full, surface, forced);
         Out::new(
-            json!({"format": "css", "theme": full.name, "surface": surface, "css": css}),
+            json!({"format": "css", "theme": full.name, "surface": surface, "mode": mode, "css": css}),
             css,
         )
     } else if let Some(s) = surface {
@@ -2936,11 +2948,15 @@ pub(crate) fn op_export(c: &Ctx, format: &str, name: Option<&str>, surface: Opti
             o.insert("name".into(), json!(full.name));
             o.insert("title".into(), json!(full.title));
             o.insert("surface".into(), json!(s));
+            o.insert("mode".into(), json!(mode));
         }
         let text = format!("{}\n", pretty(&v));
         Out::new(v, text)
     } else {
-        let v = theme_json(&full, None);
+        let mut v = theme_json(&full, state.as_ref());
+        if let Some(o) = v.as_object_mut() {
+            o.insert("mode".into(), json!(mode));
+        }
         let text = format!("{}\n", pretty(&v));
         Out::new(v, text)
     };
