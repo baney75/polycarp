@@ -1,6 +1,6 @@
 import XCTest
 
-/// uninstall.sh against a made-up home folder: everything BaneySpaces added goes, everything the
+/// uninstall.sh against a made-up home folder: everything Polycarp added goes, everything the
 /// person had stays. Commands that would touch this Mac's real settings, permissions or
 /// processes only print (BANEYSPACES_UNINSTALL_TEST).
 final class UninstallTests: XCTestCase {
@@ -48,11 +48,11 @@ final class UninstallTests: XCTestCase {
     }
 
     func testRemovesWhatItAddedAndKeepsWhatWasThere() throws {
-        let app = "Applications/BaneySpaces.app"
-        try write("\(app)/Contents/MacOS/BaneySpaces", "#!/bin/sh\n")
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path("\(app)/Contents/MacOS/BaneySpaces").path)
-        try write("Library/Application Support/BaneySpaces/state.json", "{}")
-        try write("Library/Caches/com.baney.baneyspaces/x", "")
+        let app = "Applications/Polycarp.app"
+        try write("\(app)/Contents/MacOS/Polycarp", "#!/bin/sh\n")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path("\(app)/Contents/MacOS/Polycarp").path)
+        try write("Library/Application Support/Polycarp/state.json", "{}")
+        try write("Library/Caches/com.baney.polycarp/x", "")
         try write(".claude/skills/baneyspaces/SKILL.md", "skill")
         try write(".claude/skills/other/SKILL.md", "theirs")
         try write(".grok/hooks/baneyspaces.json", "{}")
@@ -74,15 +74,16 @@ final class UninstallTests: XCTestCase {
         try fm.createDirectory(at: path(".claude"), withIntermediateDirectories: true)
         try fm.createSymbolicLink(at: path(".claude/settings.json"), withDestinationURL: path("dotfiles/settings.json"))
         try fm.createDirectory(at: path(".local/bin"), withIntermediateDirectories: true)
-        try fm.createSymbolicLink(atPath: path(".local/bin/baneyspaces").path, withDestinationPath: path("\(app)/Contents/Resources/bin/baneyspaces").path)
-        try fm.createSymbolicLink(atPath: path(".local/bin/ghostdeck").path, withDestinationPath: "/old/BaneySpaces.app/Contents/Resources/bin/baneyspaces")
+        try fm.createSymbolicLink(atPath: path(".local/bin/baneyspaces").path, withDestinationPath: path("\(app)/Contents/Resources/bin/polycarp-spaces").path)
+        try fm.createSymbolicLink(atPath: path(".local/bin/polycarp-spaces").path, withDestinationPath: path("\(app)/Contents/Resources/bin/polycarp-spaces").path)
+        try fm.createSymbolicLink(atPath: path(".local/bin/ghostdeck").path, withDestinationPath: "/old/Polycarp.app/Contents/Resources/bin/polycarp-spaces")
         try fm.createSymbolicLink(atPath: path(".local/bin/claude").path, withDestinationPath: "/opt/claude")
 
         let out = try uninstall()
 
         // Gone: the app, its data, its command, its skill, Grok's hook file.
-        for gone in [app, "Library/Application Support/BaneySpaces", "Library/Caches/com.baney.baneyspaces",
-                     ".claude/skills/baneyspaces", ".grok/hooks/baneyspaces.json", ".local/bin/baneyspaces", ".local/bin/ghostdeck"] {
+        for gone in [app, "Library/Application Support/Polycarp", "Library/Caches/com.baney.polycarp",
+                     ".claude/skills/baneyspaces", ".grok/hooks/baneyspaces.json", ".local/bin/baneyspaces", ".local/bin/polycarp-spaces", ".local/bin/ghostdeck"] {
             XCTAssertNil(try? fm.attributesOfItem(atPath: path(gone).path), "\(gone) is still there")
         }
         // Kept: other skills, other Grok hooks, other commands.
@@ -106,8 +107,8 @@ final class UninstallTests: XCTestCase {
         XCTAssertEqual((pre["hooks"] as? [[String: Any]])?.compactMap { $0["command"] as? String }, ["guard.sh"])
 
         // The Mac-wide steps it would take, each once.
-        for step in ["--restore-shortcuts", "--restore-dock", "--unregister-login", "defaults delete com.baney.baneyspaces",
-                     "tccutil reset Accessibility com.baney.baneyspaces"] {
+        for step in ["--restore-shortcuts", "--restore-dock", "--unregister-login", "defaults delete com.baney.polycarp",
+                     "tccutil reset Accessibility com.baney.polycarp"] {
             XCTAssertTrue(out.contains("would run: ") && out.contains(step), "missing \(step):\n\(out)")
         }
     }
@@ -117,7 +118,7 @@ final class UninstallTests: XCTestCase {
     func testWithoutTheAppItSaysWhatsStillOffAndKeepsTheRecord() throws {
         let out = try uninstall(status: 2, prefs: ["freedShortcuts": [28, 29]])
         XCTAssertTrue(out.contains("screenshot or Spotlight shortcuts are still off"), out)
-        XCTAssertFalse(out.contains("defaults delete com.baney.baneyspaces"), out)
+        XCTAssertFalse(out.contains("defaults delete com.baney.polycarp"), out)
         XCTAssertFalse(out.contains("back as they were"), out)
     }
 
@@ -156,7 +157,7 @@ final class UninstallTests: XCTestCase {
         XCTAssertFalse(givenBack.contains("EnableTopTilingByEdgeDrag"), givenBack)
     }
 
-    /// Fill-the-screen still on, or off before BaneySpaces, is left alone.
+    /// Fill-the-screen still on, or off before Polycarp, is left alone.
     func testWithoutTheAppFillTheScreenOnOrOffBeforeIsLeftAlone() throws {
         let on = try uninstall(prefs: ["systemTopDragSaved": [String: Bool]()], macOS: "0",
                                macOSKeys: ["EnableTopTilingByEdgeDrag": "1"])
@@ -172,7 +173,7 @@ final class UninstallTests: XCTestCase {
         XCTAssertFalse(out.contains("enterMissionControlByTopWindowDrag"), out)
     }
 
-    /// Without the app, Mission Control and the hot corners BaneySpaces remapped go back from its record.
+    /// Without the app, Mission Control and the hot corners Polycarp remapped go back from its record.
     func testWithoutTheAppMissionControlAndItsCornersComeBack() throws {
         let saved: [String: Any] = ["com.apple.dock/wvous-tl-corner": 2, "com.apple.dock/wvous-br-corner": 2]
         let out = try uninstall(prefs: ["systemMissionControlSaved": saved], macOS: "0",
@@ -181,7 +182,7 @@ final class UninstallTests: XCTestCase {
         XCTAssertTrue(out.contains("would run: defaults delete com.apple.dock mcx-expose-disabled"), out)
         XCTAssertTrue(out.contains("would run: defaults write com.apple.dock wvous-tl-corner -int 2"), out)
         XCTAssertTrue(out.contains("would run: defaults write com.apple.dock wvous-br-corner -int 2"), out)
-        XCTAssertFalse(out.contains("wvous-tr-corner"), "a corner BaneySpaces never touched")
+        XCTAssertFalse(out.contains("wvous-tr-corner"), "a corner Polycarp never touched")
         XCTAssertTrue(out.contains("would run: killall Dock"), out)
     }
 
@@ -197,10 +198,10 @@ final class UninstallTests: XCTestCase {
 
     /// The launch agent and its files go with the app.
     func testTheMissionControlWatchdogIsRemoved() throws {
-        try write("Library/LaunchAgents/com.baney.baneyspaces.mc-watchdog.plist", "<plist/>")
+        try write("Library/LaunchAgents/com.baney.polycarp.mc-watchdog.plist", "<plist/>")
         let out = try uninstall()
         XCTAssertTrue(out.contains("would run: launchctl bootout gui/"), out)
-        XCTAssertFalse(fm.fileExists(atPath: path("Library/LaunchAgents/com.baney.baneyspaces.mc-watchdog.plist").path))
+        XCTAssertFalse(fm.fileExists(atPath: path("Library/LaunchAgents/com.baney.polycarp.mc-watchdog.plist").path))
     }
 
     /// Settings changed since (the switch off, a corner given another job) are the person's.
@@ -219,19 +220,19 @@ final class UninstallTests: XCTestCase {
 
     /// r2: one in the Trash still counts as the app.
     func testUsesTheAppFromTheTrash() throws {
-        try write(".Trash/BaneySpaces 2.app/Contents/MacOS/BaneySpaces", "#!/bin/sh\n")
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path(".Trash/BaneySpaces 2.app/Contents/MacOS/BaneySpaces").path)
+        try write(".Trash/Polycarp 2.app/Contents/MacOS/Polycarp", "#!/bin/sh\n")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path(".Trash/Polycarp 2.app/Contents/MacOS/Polycarp").path)
         let out = try uninstall(prefs: ["freedShortcuts": [28]])
-        XCTAssertTrue(out.contains("BaneySpaces 2.app/Contents/MacOS/BaneySpaces --restore-shortcuts"), out)
+        XCTAssertTrue(out.contains("Polycarp 2.app/Contents/MacOS/Polycarp --restore-shortcuts"), out)
     }
 
     /// r2: the installer stops AeroSpace opening at login, and writes that down; uninstalling
     /// puts both back.
     func testPutsAeroSpaceBack() throws {
         try write(".aerospace.toml", "after-login-command = []\nstart-at-login = false\n")
-        try write("Library/Application Support/BaneySpaces/aerospace-start-at-login", "")
+        try write("Library/Application Support/Polycarp/aerospace-start-at-login", "")
         try write("Applications/AeroSpace.app/Contents/Info.plist", "")
-        try write("Library/Application Support/BaneySpaces/aerospace-login-item", path("Applications/AeroSpace.app").path)
+        try write("Library/Application Support/Polycarp/aerospace-login-item", path("Applications/AeroSpace.app").path)
         let out = try uninstall()
         XCTAssertTrue(try String(contentsOf: path(".aerospace.toml"), encoding: .utf8).contains("start-at-login = true"))
         XCTAssertTrue(out.contains("make login item") && out.contains("AeroSpace.app"), out)
@@ -239,17 +240,17 @@ final class UninstallTests: XCTestCase {
 
     /// r4: AeroSpace gone from where it was: said so, not skipped quietly behind "back as they were".
     func testSaysWhenAeroSpaceMoved() throws {
-        try write("Library/Application Support/BaneySpaces/aerospace-login-item", "/nowhere/AeroSpace.app")
+        try write("Library/Application Support/Polycarp/aerospace-login-item", "/nowhere/AeroSpace.app")
         let out = try uninstall(status: 2)
         XCTAssertTrue(out.contains("isn't any more"), out)
     }
 
     /// r4: a failed removal is listed once, with what to do.
     func testAnAppThatWontGoIsListedOnce() throws {
-        try write("Applications/BaneySpaces.app/Contents/MacOS/BaneySpaces", "#!/bin/sh\n")
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path("Applications/BaneySpaces.app/Contents/MacOS/BaneySpaces").path)
-        try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: path("Applications/BaneySpaces.app/Contents").path)
-        defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path("Applications/BaneySpaces.app/Contents").path) }
+        try write("Applications/Polycarp.app/Contents/MacOS/Polycarp", "#!/bin/sh\n")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path("Applications/Polycarp.app/Contents/MacOS/Polycarp").path)
+        try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: path("Applications/Polycarp.app/Contents").path)
+        defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path("Applications/Polycarp.app/Contents").path) }
         let out = try uninstall(status: 2)
         XCTAssertEqual(out.components(separatedBy: "Couldn't remove").count - 1, 1, out)
         XCTAssertFalse(out.contains("A step failed"), out)
@@ -260,6 +261,40 @@ final class UninstallTests: XCTestCase {
         try write(".aerospace.toml", "start-at-login = false\n")
         _ = try uninstall()
         XCTAssertTrue(try String(contentsOf: path(".aerospace.toml"), encoding: .utf8).contains("start-at-login = false"))
+    }
+
+    /// Polycarp's uninstall never touches a BaneySpaces that is still installed: its hooks and skill stay,
+    /// and the two command names Polycarp took over go back to it.
+    func testAStillInstalledBaneySpacesKeepsItsHooksAndGetsItsCommandsBack() throws {
+        let old = "Applications/BaneySpaces.app"
+        try write("\(old)/Contents/MacOS/BaneySpaces", "#!/bin/sh\n")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path("\(old)/Contents/MacOS/BaneySpaces").path)
+        try write("\(old)/Contents/Resources/bin/baneyspaces", "cli")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path("\(old)/Contents/Resources/bin/baneyspaces").path)
+        let hook = "'/Users/x/.local/bin/baneyspaces' hook claude 2>/dev/null || true"
+        let settings: [String: Any] = ["hooks": ["Stop": [["hooks": [["type": "command", "command": hook]]]]]]
+        try write(".claude/settings.json", String(decoding: try JSONSerialization.data(withJSONObject: settings), as: UTF8.self))
+        try write(".claude/skills/baneyspaces/SKILL.md", "skill")
+        try write("Library/Application Support/BaneySpaces/state.json", "{}")
+        let app = "Applications/Polycarp.app"
+        try write("\(app)/Contents/MacOS/Polycarp", "#!/bin/sh\n")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path("\(app)/Contents/MacOS/Polycarp").path)
+        try write("\(app)/Contents/Resources/bin/polycarp-spaces", "cli")
+        for name in ["polycarp-spaces", "baneyspaces", "ghostdeck"] {
+            try fm.createDirectory(at: path(".local/bin"), withIntermediateDirectories: true)
+            try fm.createSymbolicLink(atPath: path(".local/bin/\(name)").path, withDestinationPath: path("\(app)/Contents/Resources/bin/polycarp-spaces").path)
+        }
+        _ = try uninstall()
+        XCTAssertFalse(fm.fileExists(atPath: path(app).path), "Polycarp itself goes")
+        XCTAssertTrue(fm.fileExists(atPath: path(old).path), "BaneySpaces is never removed")
+        XCTAssertTrue(fm.fileExists(atPath: path("Library/Application Support/BaneySpaces/state.json").path), "its data stays")
+        XCTAssertTrue(try String(contentsOf: path(".claude/settings.json"), encoding: .utf8).contains("baneyspaces' hook claude"), "its hooks stay")
+        XCTAssertTrue(fm.fileExists(atPath: path(".claude/skills/baneyspaces/SKILL.md").path))
+        XCTAssertFalse(fm.fileExists(atPath: path(".local/bin/polycarp-spaces").path))
+        for name in ["baneyspaces", "ghostdeck"] {
+            XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: path(".local/bin/\(name)").path),
+                           path("\(old)/Contents/Resources/bin/baneyspaces").path, name)
+        }
     }
 
     /// r3: a hook whose path is in double quotes, which JSON writes as \".
@@ -275,26 +310,26 @@ final class UninstallTests: XCTestCase {
     /// removing anything": everything else goes, and the exit is 2.
     func testAFailedStepIsListedAndTheRestStillGoes() throws {
         try write(".aerospace.toml", "start-at-login = false\n")
-        try write("Library/Application Support/BaneySpaces/aerospace-start-at-login", "")
+        try write("Library/Application Support/Polycarp/aerospace-start-at-login", "")
         try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: path(".aerospace.toml").path)
         defer { try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: path(".aerospace.toml").path) }
         try write(".claude/skills/baneyspaces/SKILL.md", "skill")
         let out = try uninstall(status: 2)
         XCTAssertTrue(out.contains("set start-at-login = true"), out)
         XCTAssertFalse(fm.fileExists(atPath: path(".claude/skills/baneyspaces").path))
-        XCTAssertFalse(fm.fileExists(atPath: path("Library/Application Support/BaneySpaces").path))
+        XCTAssertFalse(fm.fileExists(atPath: path("Library/Application Support/Polycarp").path))
     }
 
     /// r3: an empty record (nothing was ever turned off) isn't "still off".
     func testAnEmptyShortcutRecordIsNothingToRestore() throws {
         let out = try uninstall(prefs: ["freedShortcuts": [Int]()])
-        XCTAssertTrue(out.contains("defaults delete com.baney.baneyspaces"), out)
+        XCTAssertTrue(out.contains("defaults delete com.baney.polycarp"), out)
     }
 
     /// Nothing installed at all: it still finishes cleanly, so running it twice is safe.
     func testRunsOnAnEmptyHome() throws {
         let out = try uninstall()
-        XCTAssertTrue(out.contains("BaneySpaces is removed."), out)
+        XCTAssertTrue(out.contains("Polycarp is removed."), out)
     }
 
     /// A stand-in `security` that reports the certificate's SHA-1 and nothing else; no real key is read.
@@ -310,30 +345,30 @@ final class UninstallTests: XCTestCase {
 
     /// On the owner's Mac the local signing key signs the releases: uninstalling moves it aside.
     func testTheReleaseSigningKeyIsKeptNotDeleted() throws {
-        try write("Library/Application Support/BaneySpaces/Signing/baneyspaces-signing.keychain-db", "keychain")
-        try write("Library/Application Support/BaneySpaces/state.json", "{}")
+        try write("Library/Application Support/Polycarp/Signing/polycarp-signing.keychain-db", "keychain")
+        try write("Library/Application Support/Polycarp/state.json", "{}")
         let out = try uninstall(extraPath: try fakeSecurity(sha1: "D1CFBD7446F84F6C625B9DB83C5BF96DA33B157E"))
-        XCTAssertTrue(out.contains("Kept the signing key because it signs BaneySpaces releases"), out)
+        XCTAssertTrue(out.contains("Kept the signing key because it signs Polycarp releases"), out)
         XCTAssertFalse(out.contains("would run: security delete-keychain"), out)
-        XCTAssertTrue(fm.fileExists(atPath: path("Library/BaneySpaces Release Signing/baneyspaces-signing.keychain-db").path))
-        XCTAssertFalse(fm.fileExists(atPath: path("Library/Application Support/BaneySpaces").path), "the rest of its data still goes")
+        XCTAssertTrue(fm.fileExists(atPath: path("Library/Polycarp Release Signing/polycarp-signing.keychain-db").path))
+        XCTAssertFalse(fm.fileExists(atPath: path("Library/Application Support/Polycarp").path), "the rest of its data still goes")
     }
 
     /// Any other person's local key is just deleted, as before.
     func testAnotherLocalSigningKeyIsStillDeleted() throws {
-        try write("Library/Application Support/BaneySpaces/Signing/baneyspaces-signing.keychain-db", "keychain")
+        try write("Library/Application Support/Polycarp/Signing/polycarp-signing.keychain-db", "keychain")
         let out = try uninstall(extraPath: try fakeSecurity(sha1: "0000000000000000000000000000000000000000"))
         XCTAssertTrue(out.contains("would run: security delete-keychain"), out)
-        XCTAssertFalse(fm.fileExists(atPath: path("Library/BaneySpaces Release Signing").path))
-        XCTAssertFalse(fm.fileExists(atPath: path("Library/Application Support/BaneySpaces").path))
+        XCTAssertFalse(fm.fileExists(atPath: path("Library/Polycarp Release Signing").path))
+        XCTAssertFalse(fm.fileExists(atPath: path("Library/Application Support/Polycarp").path))
     }
 
     /// If the fingerprint can't be read the key might be the release key, so it is kept, not deleted.
     func testAnUnreadableSigningKeyIsKeptNotDeleted() throws {
-        try write("Library/Application Support/BaneySpaces/Signing/baneyspaces-signing.keychain-db", "keychain")
+        try write("Library/Application Support/Polycarp/Signing/polycarp-signing.keychain-db", "keychain")
         let out = try uninstall(extraPath: try fakeSecurity(sha1: ""))
         XCTAssertTrue(out.contains("fingerprint couldn't be read"), out)
         XCTAssertFalse(out.contains("would run: security delete-keychain"), out)
-        XCTAssertTrue(fm.fileExists(atPath: path("Library/BaneySpaces Release Signing/baneyspaces-signing.keychain-db").path))
+        XCTAssertTrue(fm.fileExists(atPath: path("Library/Polycarp Release Signing/polycarp-signing.keychain-db").path))
     }
 }

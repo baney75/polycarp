@@ -312,7 +312,7 @@ final class PolycarpThemeTests: XCTestCase {
         }
         XCTAssertNoThrow(try parse(with(1)).get())
         let newer = failure(with(2))
-        XCTAssertTrue(newer.contains("schema 2") && newer.contains("update BaneySpaces"), newer)
+        XCTAssertTrue(newer.contains("schema 2") && newer.contains("update Polycarp"), newer)
         XCTAssertTrue(failure(with(nil)).contains("schema is missing"))
         XCTAssertTrue(failure(with("1")).contains("schema is missing or not a whole number"))
         XCTAssertTrue(failure(with(1.5)).contains("not a whole number"))
