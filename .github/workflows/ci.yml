@@ -111,6 +111,7 @@ jobs:
         run: scripts/check-requirement.sh --pin && scripts/check-requirement-test.sh && bash scripts/signing-identity-test.sh && bash scripts/install-requirement-test.sh
       - run: bun install --frozen-lockfile
       - run: bun run build
+      - run: bun run check:theme
       - name: Unit tests
         working-directory: voice/src-tauri
         run: cargo test --lib
