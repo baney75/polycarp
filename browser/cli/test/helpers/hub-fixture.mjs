@@ -35,7 +35,10 @@ export function machine(root, name) {
 	const sock = join(root, name, "sock");
 	mkdirSync(home, { recursive: true });
 	mkdirSync(sock, { recursive: true, mode: 0o700 });
-	const env = { HOME: home, TABKYRA_CONFIG_DIR: config, TABKYRA_SOCKET_DIR: sock, PATH: dirname(process.execPath), NO_COLOR: "1" };
+	// An empty Polycarp config folder, so a developer's own Polycarp theme never reaches these processes.
+	const polycarp = join(root, name, "polycarp");
+	mkdirSync(polycarp, { recursive: true });
+	const env = { HOME: home, TABKYRA_CONFIG_DIR: config, TABKYRA_SOCKET_DIR: sock, POLYCARP_CONFIG_DIR: polycarp, PATH: dirname(process.execPath), NO_COLOR: "1" };
 	return {
 		name,
 		env,
@@ -52,6 +55,33 @@ export function machine(root, name) {
 		},
 		file: (f) => join(config, f),
 	};
+}
+
+/** Signal a child and resolve once it has exited, with SIGKILL if it is still there after `graceMs`. */
+export function endProcess(proc, signal = "SIGTERM", graceMs = 3000) {
+	if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve();
+	return new Promise((resolve) => {
+		const timer = setTimeout(() => proc.kill("SIGKILL"), graceMs);
+		proc.once("exit", () => {
+			clearTimeout(timer);
+			resolve();
+		});
+		proc.kill(signal);
+	});
+}
+
+/** Run each stop callback, wait for the processes to exit, then remove the temp root. */
+export async function teardown(cleanup, root) {
+	await Promise.all(
+		cleanup.map(async (stop) => {
+			try {
+				await stop();
+			} catch {
+				/* already gone */
+			}
+		}),
+	);
+	rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 export function tempRoot(prefix) {
@@ -81,8 +111,9 @@ export async function startHub(root, name = "hub", { port: wantedPort, env: extr
 		port,
 		url,
 		proc,
+		/** Stop the hub and resolve once the process is gone. */
 		stop() {
-			proc.kill();
+			return endProcess(proc, "SIGTERM");
 		},
 		/** The snapshot `hub devices --json` shows: devices by name. */
 		devices() {
@@ -117,7 +148,8 @@ export async function addDevice(root, hub, name, { manage = false, scope, wait =
 		proc,
 		code,
 		logs: () => out,
-		kill: (signal = "SIGKILL") => proc.kill(signal),
+		/** Signal the process and resolve once it is gone. */
+		kill: (signal = "SIGKILL") => endProcess(proc, signal),
 		/** What link run last wrote about itself: connected, sessions, requests and streams in flight. */
 		live: () => {
 			try {

@@ -9,21 +9,11 @@ import { request as httpRequest } from "node:http";
 import { after, test } from "node:test";
 import { WebSocket } from "ws";
 import { spawn } from "node:child_process";
-import { addDevice, cli, connect, createToken, DEFAULT_CAP, fakeDevice as makeFake, INITIALIZE, rawTools, readJson, rmSync, rpc, sleep, startHub, tempRoot, writeJson } from "./helpers/hub-fixture.mjs";
+import { addDevice, cli, connect, createToken, DEFAULT_CAP, fakeDevice as makeFake, INITIALIZE, rawTools, readJson, rmSync, rpc, sleep, startHub, teardown, tempRoot, writeJson } from "./helpers/hub-fixture.mjs";
 
 const root = tempRoot("tabkyra-hublimits-");
 const cleanup = [];
-after(() => {
-	for (const stop of cleanup) {
-		try {
-			stop();
-		} catch {
-			/* already gone */
-		}
-	}
-	// A hub that was just stopped can still be writing its files for a moment; retry instead of failing on ENOTEMPTY.
-	rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-});
+after(() => teardown(cleanup, root));
 
 async function hubFor(name, options) {
 	const hub = await startHub(root, name, options);

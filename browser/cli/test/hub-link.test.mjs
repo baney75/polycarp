@@ -6,26 +6,16 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { WebSocket } from "ws";
-import { addDevice, cli, connect, createToken, freePort, hostRequest, INITIALIZE, machine, rawTools, readJson, rmSync, rpc, sleep, startHub, tempRoot, writeJson } from "./helpers/hub-fixture.mjs";
+import { addDevice, cli, connect, createToken, freePort, hostRequest, endProcess, INITIALIZE, machine, rawTools, readJson, rpc, sleep, startHub, teardown, tempRoot, writeJson } from "./helpers/hub-fixture.mjs";
 
 const root = tempRoot("tabkyra-hublink-");
 const cleanup = [];
-after(() => {
-	for (const stop of cleanup) {
-		try {
-			stop();
-		} catch {
-			/* already gone */
-		}
-	}
-	// A hub that was just stopped can still be writing its files for a moment; retry instead of failing on ENOTEMPTY.
-	rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-});
+after(() => teardown(cleanup, root));
 
 /** A hub that is stopped when the file's tests end. */
 async function hubFor(name) {
@@ -190,7 +180,7 @@ test("a plain serve token ignores x-tabkyra-hub-* headers, and a link token work
 		spawn(process.execPath, [cli, "serve", "--port", String(port)], { env: m.env }),
 		spawn(process.execPath, [cli, "serve", "--port", String(publicPort), "--public-url", `http://127.0.0.1:${publicPort}`], { env: m.env }),
 	];
-	cleanup.push(() => procs.forEach((p) => p.kill()));
+	cleanup.push(() => Promise.all(procs.map((p) => endProcess(p))));
 	for (const p of procs) {
 		await new Promise((resolve, reject) => {
 			let out = "";
@@ -553,4 +543,17 @@ test("the link token is minted by link run with the device's cap, kind link, has
 	d.kill("SIGTERM");
 	await sleep(1500);
 	assert.ok(readJson(d.file("tokens.json")).tokens.filter((t) => t.kind === "link").every((t) => t.revokedAt), "revoked when link run stops");
+});
+
+test("stop and kill resolve only once the process has exited, so the temp folder is quiet before it is removed", async () => {
+	const hub = await hubFor("stop-waits");
+	assert.equal(hub.proc.exitCode ?? hub.proc.signalCode, null);
+	await hub.stop();
+	assert.notEqual(hub.proc.exitCode ?? hub.proc.signalCode, null);
+});
+
+test("the test machines get an empty Polycarp config folder of their own", () => {
+	const m = machine(root, "polycarp-dir");
+	assert.deepEqual(readdirSync(m.env.POLYCARP_CONFIG_DIR), []);
+	assert.ok(m.env.POLYCARP_CONFIG_DIR.startsWith(root));
 });
