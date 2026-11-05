@@ -1578,6 +1578,68 @@ fn writes_follow_symlinks_keep_modes_and_new_files_are_0644() {
 }
 
 #[test]
+fn several_processes_changing_one_theme_lose_nothing() {
+    let b = Box::new();
+    let doc = user_theme("mine", "polycarp", "");
+    assert_eq!(code(&b.run_stdin(&["theme", "apply", "-"], &doc)), 0);
+    let changes = [
+        ("shape.radius_small", "1"),
+        ("shape.radius", "2"),
+        ("shape.radius_large", "3"),
+        ("shape.border_width", "4"),
+        ("shape.blur", "5"),
+        ("motion.fast", "6"),
+        ("motion.normal", "7"),
+        ("motion.slow", "8"),
+        ("type.size", "17"),
+        ("type.weight", "500"),
+    ];
+    let children: Vec<_> = changes
+        .iter()
+        .map(|(path, value)| {
+            b.cmd(&["theme", "change", path, value])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    for ch in children {
+        let o = ch.wait_with_output().unwrap();
+        assert_eq!(code(&o), 0, "{}", err(&o));
+    }
+    for (path, value) in changes {
+        assert_eq!(b.ok(&["get", path]).trim(), value, "{path} was lost");
+    }
+    assert_eq!(b.history_count(), changes.len() + 1);
+    assert!(!b.cfg().join(".lock").exists(), "the lock is released");
+}
+
+#[test]
+fn a_held_lock_is_busy_after_five_seconds_and_a_stale_one_is_taken_over() {
+    let b = Box::new();
+    fs::create_dir_all(b.cfg()).unwrap();
+    let lock = b.cfg().join(".lock");
+    fs::write(&lock, "999999").unwrap();
+    let t = std::time::Instant::now();
+    let (c, v) = b.jrun(&["set", "calm"]);
+    assert_eq!(c, 1, "{v}");
+    assert_eq!(v["error"]["code"], "busy", "{v}");
+    assert!(t.elapsed().as_secs() >= 4, "gave up too early");
+    assert!(!b.state_file().exists());
+    // The same file, 20 seconds old, was left by a crash.
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(20);
+    fs::File::options()
+        .write(true)
+        .open(&lock)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    b.ok(&["set", "calm"]);
+    assert!(!lock.exists());
+}
+
+#[test]
 fn atomic_writes_leave_no_temp_files() {
     let b = Box::new();
     b.ok(&["set", "evening", "--mode", "dark"]);

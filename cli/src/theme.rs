@@ -1081,6 +1081,73 @@ fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Lock
+// ---------------------------------------------------------------------------------------------
+
+const LOCK_STALE: std::time::Duration = std::time::Duration::from_secs(10);
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// An exclusive lock on the config folder, held while a change is read, checked, recorded and
+/// written. It is a file made with `create_new`; a lock older than 10 seconds is taken as left
+/// behind by a crash and removed. Dropping it removes the file.
+struct Lock {
+    path: PathBuf,
+}
+
+impl Lock {
+    fn acquire(cfg: &Cfg) -> Result<Lock, ApiErr> {
+        fs::create_dir_all(&cfg.dir)
+            .map_err(|e| io_err(format!("could not create {}: {e}", cfg.dir.display())))?;
+        let path = cfg.dir.join(".lock");
+        let start = std::time::Instant::now();
+        loop {
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut f) => {
+                    let _ = write!(f, "{}", std::process::id());
+                    return Ok(Lock { path });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let age = fs::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| SystemTime::now().duration_since(t).ok());
+                    if age.is_some_and(|a| a >= LOCK_STALE) {
+                        let _ = fs::remove_file(&path);
+                        continue;
+                    }
+                    if start.elapsed() >= LOCK_WAIT {
+                        return Err(ApiErr::new(
+                            "busy",
+                            format!(
+                                "another polycarp command is changing the theme files ({} is held)",
+                                path.display()
+                            ),
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(e) => {
+                    return Err(io_err(format!(
+                        "could not create the lock {}: {e}",
+                        path.display()
+                    )))
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------------------------
 
@@ -1648,6 +1715,7 @@ impl ApiErr {
             "exists" => "Pick another name, or pass force.",
             "current_theme" => "Run `theme set <other>` first.",
             "nothing_to_undo" => "History is empty. `theme reset` goes back to the default.",
+            "busy" => "Wait a moment and run the command again. If it keeps happening and no polycarp command is running, delete the .lock file in the config folder.",
             "io_error" => "Check that the config folder is writable, then try again.",
             "config_error" => "Set POLYCARP_CONFIG_DIR to an absolute path of a folder you can write.",
             _ => "",
@@ -2103,6 +2171,7 @@ pub(crate) fn op_set(c: &Ctx, name: &str, mode: Option<&str>) -> Res {
             return Err(ApiErr::usage("--mode must be auto, light or dark"));
         }
     }
+    let _lock = Lock::acquire(&c.cfg)?;
     let full = resolve_name(&c.cfg, name)
         .map_err(|ps| bad_theme(&format!("theme {name:?} cannot be used"), &ps))?;
     let (mut st, old_problems) = load_state(&c.cfg);
@@ -2148,6 +2217,7 @@ pub(crate) fn op_accent(c: &Ctx, color: Option<&str>, mode: Option<&str>) -> Res
             ))
         }
     };
+    let _lock = Lock::acquire(&c.cfg)?;
     let eff = effective(&c.cfg);
     let mut st = eff.state.clone();
     for m in &modes {
@@ -2209,6 +2279,7 @@ pub(crate) fn op_create(c: &Ctx, name: &str, base_name: &str, force: bool) -> Re
     }
     let base = resolve_name(&c.cfg, base_name)
         .map_err(|ps| bad_theme(&format!("cannot extend {base_name:?}"), &ps))?;
+    let _lock = Lock::acquire(&c.cfg)?;
     let path = c.cfg.theme_path(name);
     if path.exists() && !force {
         return Err(ApiErr::at(
@@ -2316,6 +2387,7 @@ pub(crate) fn op_delete(c: &Ctx, name: &str) -> Res {
             format!("{name:?} is built in and cannot be deleted"),
         ));
     }
+    let _lock = Lock::acquire(&c.cfg)?;
     let path = c.cfg.theme_path(name);
     if !path.is_file() {
         return Err(ApiErr::at(
@@ -2496,6 +2568,7 @@ pub(crate) fn op_apply(c: &Ctx, doc: Doc, name: Option<&str>, activate: bool) ->
         ));
     }
     table.insert("name".into(), Value::String(name.clone()));
+    let _lock = Lock::acquire(&c.cfg)?;
     let full = resolve_doc(&c.cfg, table.clone(), Some(name.as_str()))
         .map_err(|ps| bad_theme("the theme is refused, nothing changed", &ps))?;
 
@@ -2584,6 +2657,7 @@ pub(crate) fn op_change(c: &Ctx, path: &str, value: &Json) -> Res {
         }
     }
 
+    let _lock = Lock::acquire(&c.cfg)?;
     let eff = effective(&c.cfg);
     let previous = lookup(&eff.full, path).ok();
     let current = eff.state.theme.clone();
@@ -2777,6 +2851,7 @@ fn put_back(path: &Path, was: &Option<Vec<u8>>) {
 }
 
 pub(crate) fn op_undo(c: &Ctx) -> Res {
+    let _lock = Lock::acquire(&c.cfg)?;
     let hist = read_history(&c.cfg);
     let Some(last) = hist.first() else {
         return Err(ApiErr::new("nothing_to_undo", "nothing to undo"));
