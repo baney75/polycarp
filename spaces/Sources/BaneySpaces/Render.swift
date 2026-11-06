@@ -17,6 +17,13 @@ enum Render {
         let sample = ProductRenderPlan.windows(ProductRenderPlan.sample(named: ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_SAMPLE"]))
         // Product shots always show the default look, whatever this Mac has picked.
         Appearance.shared.useDefaultLookWithoutSaving()
+        // BANEYSPACES_RENDER_POLYCARP=<theme.json> draws what an install really shows: `polycarp theme set` writes this file.
+        if let path = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_POLYCARP"],
+           case .theme(let theme) = PolycarpThemeFile.load(path: path) {
+            Appearance.shared.usePolycarp(theme)
+        }
+        VoiceEngine.shared.useRenderSample()
+        BrowserModel.shared.useRenderSample()
         // BANEYSPACES_RENDER_THEME=omarchy|minimal draws the same shots in that theme (a check, saved nowhere).
         if let t = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME"], let id = ThemeID(rawValue: t) {
             Appearance.shared.settings.theme = id
@@ -40,13 +47,13 @@ enum Render {
         // Drawn by AppKit in an offscreen window (never shown), so colors match the live app.
         func save(_ view: some View, _ name: String, _ size: CGSize) -> Bool {
             let height: CGFloat? = size.height == 0 ? nil : size.height
-            let framed = view.frame(width: size.width, height: height).environment(\.colorScheme, .dark)
+            let framed = view.frame(width: size.width, height: height).environment(\.colorScheme, Chrome.scheme)
             let host = NSHostingView(rootView: framed)
             // Height 0 means "as tall as the content".
             let size = size.height == 0 ? CGSize(width: size.width, height: host.fittingSize.height) : size
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless],
                                   backing: .buffered, defer: false)
-            window.appearance = NSAppearance(named: .darkAqua)
+            window.appearance = NSAppearance(named: Chrome.scheme == .dark ? .darkAqua : .aqua)
             window.contentView = host
             host.frame = NSRect(origin: .zero, size: size)
             host.layoutSubtreeIfNeeded()
@@ -93,12 +100,12 @@ enum Render {
         setup.update = .init(have: "0.3.0 (abc1234)", channel: .stable, daily: true, nightlyNeedsTools: false, notice: UpdateNotice(name: "Polycarp 0.3.1", isNightly: false, installing: false))
         setup.finished = [.init(id: "a", label: "Claude Code · baneyspaces")]
         guard save(SetupView(model: setup, close: {}).background(Color(nsColor: .windowBackgroundColor)),
-                   "setup.png", CGSize(width: 560, height: 0)) else { return 1 }
+                   "setup.png", SettingsSidebar.windowSize) else { return 1 }
         // Each settings tab, for checks.
         for tab in SettingsTab.allCases.dropFirst() {
             setup.tab = tab
             guard save(SetupView(model: setup, close: {}).background(Color(nsColor: .windowBackgroundColor)),
-                       "setup-\(tab.rawValue.lowercased()).png", CGSize(width: 560, height: 0)) else { return 1 }
+                       "setup-\(tab.rawValue.lowercased()).png", SettingsSidebar.windowSize) else { return 1 }
         }
         setup.tab = .general
         // The ⌘Tab workspace switcher, second tile selected.
@@ -251,7 +258,11 @@ enum Render {
         fresh.openAtLogin = false
         fresh.viewerKeys = true
         guard save(SetupView(model: fresh, close: {}).background(Color(nsColor: .windowBackgroundColor)),
-                   "setup-first-run.png", CGSize(width: 560, height: 0)) else { return 1 }
+                   "setup-first-run.png", SettingsSidebar.windowSize) else { return 1 }
+        // The welcome window, as a new person sees it.
+        let welcome = WelcomeModel()
+        welcome.granted = [.accessibility]
+        guard save(WelcomeView(model: welcome), "welcome.png", CGSize(width: 560, height: 0)) else { return 1 }
         return 0
     }
 }

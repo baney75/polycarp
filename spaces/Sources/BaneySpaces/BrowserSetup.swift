@@ -20,7 +20,18 @@ final class BrowserModel: ObservableObject {
     private var resources: URL? { Bundle.main.resourceURL }
     var helper: URL? { BrowserBundle.helper(resources: resources) }
     var extensionFolder: URL? { BrowserBundle.extensionFolder(resources: resources) }
-    var available: Bool { helper.map { FileManager.default.isExecutableFile(atPath: $0.path) } ?? false }
+    private var renderSample = false
+    var available: Bool { renderSample || helper.map { FileManager.default.isExecutableFile(atPath: $0.path) } ?? false }
+
+    private static let renderSampleJSON = #"""
+    {"checks":[{"id":"host:Helium","status":"ok","label":"Helium: native host registered"},{"id":"host:Chrome","status":"warn","label":"Chrome: not connected yet"},{"id":"connected","status":"ok","label":"Extension connected (1.1.10)"},{"id":"connected:Helium","status":"ok","label":"Helium (1.1.10)"},{"id":"mcp:claude","status":"ok","label":"Claude Code: Polycarp MCP server configured"},{"id":"mcp:codex","status":"warn","label":"Codex: not added"}]}
+    """#
+
+    /// `--render` only: sample browsers and agents, so Settings > Browser draws its real rows with no helper running.
+    func useRenderSample() {
+        renderSample = true
+        status = BrowserStatus.parse(Data(BrowserModel.renderSampleJSON.utf8))
+    }
 
     func startWatching() {
         watchers += 1
