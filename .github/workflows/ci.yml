@@ -2,9 +2,9 @@ name: CI
 on:
   push:
     branches: [main]
-    paths: ['cli/**', 'spaces/**', 'voice/**', 'browser/**', '.github/workflows/ci.yml']
+    paths: ['cli/**', 'spaces/**', 'voice/**', 'core/**', 'browser/**', '.github/workflows/ci.yml']
   pull_request:
-    paths: ['cli/**', 'spaces/**', 'voice/**', 'browser/**', '.github/workflows/ci.yml']
+    paths: ['cli/**', 'spaces/**', 'voice/**', 'core/**', 'browser/**', '.github/workflows/ci.yml']
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -18,6 +18,7 @@ jobs:
       spaces: ${{ steps.f.outputs.spaces }}
       voice: ${{ steps.f.outputs.voice }}
       browser: ${{ steps.f.outputs.browser }}
+      core: ${{ steps.f.outputs.core }}
     steps:
       - uses: actions/checkout@v4
       - id: f
@@ -25,8 +26,9 @@ jobs:
         with:
           filters: |
             cli: ['cli/**', '.github/workflows/ci.yml']
-            spaces: ['spaces/**', '.github/workflows/ci.yml']
-            voice: ['voice/**', '.github/workflows/ci.yml']
+            spaces: ['spaces/**', 'core/**', '.github/workflows/ci.yml']
+            voice: ['voice/**', 'core/**', '.github/workflows/ci.yml']
+            core: ['core/**', '.github/workflows/ci.yml']
             browser: ['browser/**', '.github/workflows/ci.yml']
 
   cli:
@@ -51,6 +53,38 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo fmt --check
 
+  core:
+    needs: changes
+    if: needs.changes.outputs.core == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: |
+            core/voice
+            core/ffi
+          key: ${{ matrix.os }}
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev libxdo-dev
+      - name: Voice engine tests
+        working-directory: core/voice
+        run: cargo test
+      - name: C ABI tests, on macOS for the native app's library
+        if: runner.os == 'macOS'
+        working-directory: core/ffi
+        run: cargo test && cargo clippy --all-targets -- -D warnings
+
   spaces:
     needs: changes
     if: needs.changes.outputs.spaces == 'true'
@@ -61,21 +95,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check the install scripts
-        run: bash -n install.sh && bash -n uninstall.sh && bash -n scripts/bundle.sh && bash -n scripts/build-engine.sh
+        run: bash -n install.sh && bash -n uninstall.sh && bash -n scripts/bundle.sh && bash -n scripts/build-engine.sh && bash -n scripts/build-core.sh && bash -n scripts/build-browser.sh
       - name: Build the hands engine
         run: BANEYSPACES_ARM64_ONLY=1 scripts/build-engine.sh
+      - name: Build the voice core
+        run: BANEYSPACES_ARM64_ONLY=1 scripts/build-core.sh
       - name: Test
         run: swift test
 
   spaces-bundle:
     needs: changes
-    if: needs.changes.outputs.spaces == 'true'
+    # The bundle holds the voice core, the browser helper and the `polycarp` command, so a change to any of them can break it.
+    if: needs.changes.outputs.spaces == 'true' || needs.changes.outputs.browser == 'true' || needs.changes.outputs.cli == 'true' || needs.changes.outputs.core == 'true'
     runs-on: macos-15
     defaults:
       run:
         working-directory: spaces
     steps:
       - uses: actions/checkout@v4
+      # The helper is compiled with Bun from the esbuild bundle; the extension needs the pinned siblings.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - name: Check out the browser extension's pinned siblings and install
+        run: ./browser/scripts/setup-siblings.sh
+        working-directory: .
       - name: Bundle the app
         run: BANEYSPACES_ADHOC=1 BANEYSPACES_ARM64_ONLY=1 scripts/bundle.sh
       - name: The licence of ported code and the probe app are in the bundle
@@ -83,6 +130,21 @@ jobs:
           test -s build/Polycarp.app/Contents/Resources/licenses/cua-driver-MIT.txt
           test -s build/Polycarp.app/Contents/Resources/probe/CanvasProbe.cdhash
           codesign --verify --deep --strict build/Polycarp.app/Contents/Resources/probe/CanvasProbe.app
+      - name: The browser helper and the extension are in the bundle, signed, and answer
+        run: |
+          B=build/Polycarp.app/Contents/Resources/browser
+          test -x $B/polycarp-browser
+          test -s $B/extension/manifest.json
+          test -s $B/extension/background.js
+          test -s build/Polycarp.app/Contents/Resources/licenses/polycarp-browser-packages.txt
+          codesign --verify --deep --strict build/Polycarp.app
+          codesign --verify --strict $B/polycarp-browser
+          H=$(mktemp -d)
+          HOME=$H POLYCARP_CONFIG_DIR=$H/pc TABKYRA_SOCKET_DIR=$H/s $B/polycarp-browser --version
+      # Recorded on the owner's Mac; a shared runner is slower, so this reports and does not block. The test that gates is test/speed.test.mjs.
+      - name: The helper's cold start against spec/speed.json (25%)
+        continue-on-error: true
+        run: POLYCARP_SPEED_HELPER=$PWD/build/Polycarp.app/Contents/Resources/browser/polycarp-browser node scripts/browser-speed.mjs $PWD/build/Polycarp.app/Contents/Resources/browser/polycarp-browser --check
 
   voice:
     needs: changes
@@ -98,6 +160,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with: { workspaces: voice/src-tauri, key: "${{ matrix.os }}" }
@@ -194,6 +258,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+      # The compiled helper's real-executable tests (compiled.test.mjs) need Bun, pinned like the bundle job's.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
       # Clones mini-lit/ and pi-mono/ into the repo root (gitignored).
       - name: Check out the pinned siblings and install
         run: ./browser/scripts/setup-siblings.sh

@@ -5,6 +5,7 @@
 #   build/Polycarp.dmg         the disk image for people who download in a browser
 # It refuses any app that isn't signed with the release identity (scripts/release-requirement.txt),
 # so an ad-hoc or wrong-key build can never be packaged.
+# --no-dmg stops after the zip and its checksum (the preview release has no disk image).
 # The disk image is made without Finder: dmgbuild (pip, in a venv under ~/Library/Caches) writes it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -13,6 +14,8 @@ APP=build/$PRODUCT_NAME.app
 # The one place the release identity is written; the app's identifier in it is BUNDLE_ID (a test keeps them equal).
 REQ=$(cat scripts/release-requirement.txt)
 fail() { echo "package.sh: $*" >&2; exit 1; }
+NO_DMG=0
+if [ "${1:-}" = "--no-dmg" ]; then NO_DMG=1; fi
 
 [ -d "$APP" ] || fail "$APP doesn't exist. Run scripts/bundle.sh first."
 codesign -v -R "=$REQ" "$APP" 2>/dev/null \
@@ -21,6 +24,11 @@ codesign -v -R "=$REQ" "$APP" 2>/dev/null \
 rm -f "build/$PRODUCT_NAME.zip" "build/$PRODUCT_NAME.zip.sha256" "build/$PRODUCT_NAME.dmg"
 ditto -c -k --keepParent "$APP" "build/$PRODUCT_NAME.zip"
 (cd build && shasum -a 256 "$PRODUCT_NAME.zip" > "$PRODUCT_NAME.zip.sha256")
+
+if [ "$NO_DMG" = 1 ]; then
+  echo "packaged build/$PRODUCT_NAME.zip ($(du -h "build/$PRODUCT_NAME.zip" | cut -f1)), no disk image"
+  exit 0
+fi
 
 # Disk image: the app on the left, an Applications link on the right, over a drawn background.
 # dmgbuild and what it needs are pinned by version and hash (scripts/dmg-requirements.txt) and live

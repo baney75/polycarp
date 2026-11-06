@@ -2,7 +2,7 @@ import Foundation
 
 /// A macOS permission Polycarp asks for on first run.
 public enum PermissionKind: String, CaseIterable, Sendable {
-    case accessibility, screenRecording, inputMonitoring
+    case accessibility, screenRecording, inputMonitoring, microphone
 }
 
 /// What the welcome window says about one permission, in the order they're asked for. Every word here has to be true of
@@ -45,7 +45,22 @@ public enum Welcome {
             settingsName: "Input Monitoring",
             settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
             after: "Turn on Polycarp in the list. This window updates by itself."),
+        PermissionStep(
+            kind: .microphone,
+            title: "Dictate by voice",
+            why: "Press the dictation key and speak; Polycarp types it. It listens only from when you press the key until you let go or tap again. Speech becomes text on this Mac, and the audio isn't saved or sent anywhere.",
+            isRequired: false,
+            settingsName: "Microphone",
+            settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+            after: "Choose Allow in the box macOS shows, or turn on Polycarp in the list. This window updates by itself."),
     ]
+
+    /// macOS's answer about the microphone, without the framework: `AVCaptureDevice.authorizationStatus(for: .audio)` mapped.
+    public enum MicrophoneAccess: Sendable { case notDetermined, authorized, denied }
+
+    /// "Allow" on the microphone row: macOS asks itself while it has never been asked, so Settings opens only after a
+    /// no (macOS never asks twice, and the list is the only way back).
+    public static func opensSettingsWhenAllowing(microphone: MicrophoneAccess) -> Bool { microphone == .denied }
 
     /// The last row: not a permission, so it never blocks starting and is never "current". On by default.
     public enum StartAtLogin {

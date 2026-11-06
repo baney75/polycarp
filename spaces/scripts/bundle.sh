@@ -6,11 +6,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/product.env
 VERSION=$(cat VERSION)
+# The bundle holds the browser helper, which is compiled with Bun from the pinned sibling repos. Say so now, not after
+# the long builds: a build without them would be a Polycarp with no browser piece.
+command -v bun >/dev/null || { echo "bundle: Bun is needed to compile the browser helper (https://bun.sh). Install it, then run this again." >&2; exit 1; }
+[ -d ../mini-lit ] && [ -d ../pi-mono ] && [ -d ../browser/node_modules ] \
+  || { echo "bundle: the browser's sibling repos are missing. Run browser/scripts/setup-siblings.sh once (it needs Node and Bun), then run this again." >&2; exit 1; }
 APP=build/$PRODUCT_NAME.app
 rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources/bin" "$APP/Contents/Resources/skill" "$APP/Contents/Resources/licenses"
 
 # The hands engine (agent-desktop's library), built from the pinned commit; Polycarp links it.
 scripts/build-engine.sh
+# The voice core (dictation), a static library from ../core; Polycarp links it into its own binary.
+scripts/build-core.sh
 
 ARCHS=(--arch arm64)
 if xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1 && [ "${BANEYSPACES_ARM64_ONLY:-}" != 1 ]; then ARCHS+=(--arch x86_64); fi
@@ -26,10 +33,28 @@ done
 # The session engine's command, polycarp-spaces (baneyspaces and ghostdeck are links to it, made at install).
 # It lives in Resources, not MacOS, so it is never mistaken for the app's own executable.
 cp "$(dirname "$BIN")/baneyspaces-cli" "$APP/Contents/Resources/bin/$CLI_NAME"
+# The `polycarp` command, in the app, so one install gives you everything.
+if [ "${BANEYSPACES_ARM64_ONLY:-}" = 1 ]; then
+  cargo build --quiet --release --locked --manifest-path ../cli/Cargo.toml --target-dir build/cli-target
+  cp build/cli-target/release/polycarp "$APP/Contents/Resources/bin/polycarp"
+else
+  for t in aarch64-apple-darwin x86_64-apple-darwin; do
+    cargo build --quiet --release --locked --target "$t" --manifest-path ../cli/Cargo.toml --target-dir build/cli-target
+  done
+  lipo -create build/cli-target/aarch64-apple-darwin/release/polycarp build/cli-target/x86_64-apple-darwin/release/polycarp \
+    -output "$APP/Contents/Resources/bin/polycarp"
+fi
 cp skill/SKILL.md "$APP/Contents/Resources/skill/SKILL.md"
 cp engine/lib/libagent_desktop_ffi.dylib "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
 cp NOTICE "$APP/Contents/Resources/NOTICE"
 cp LICENSES/* "$APP/Contents/Resources/licenses/"
+# The browser piece: the helper (one executable, no Node on the Mac) and the extension folder it hands to the browser.
+scripts/build-browser.sh
+BROWSER_DIR="$APP/Contents/Resources/browser"
+mkdir -p "$BROWSER_DIR"
+cp build/browser/polycarp-browser "$BROWSER_DIR/polycarp-browser"
+cp -R build/browser/extension "$BROWSER_DIR/extension"
+cp build/browser/licenses/* "$APP/Contents/Resources/licenses/"
 # Settings' Uninstall runs the same script as the README.
 cp uninstall.sh "$APP/Contents/Resources/uninstall.sh"
 # install.sh runs this copy on the prebuilt release, so the installer that fetched the app and the
@@ -79,23 +104,31 @@ if [ "${BANEYSPACES_ADHOC:-}" != 1 ] && IDENT=$(scripts/signing-identity.sh 2>/d
   # Inside out: the engine's library, then the command, then the app that holds both.
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.engine" "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.cli" "$APP/Contents/Resources/bin/$CLI_NAME"
+  codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.command" "$APP/Contents/Resources/bin/polycarp"
+  codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.browser" "$BROWSER_DIR/polycarp-browser"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.canvasprobe" "$PROBE"
   codesign -dvvv "$PROBE" 2>&1 | sed -n 's/^CDHash=//p' > "$APP/Contents/Resources/probe/CanvasProbe.cdhash"
-  codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID" "$APP"
+  codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID" --entitlements Resources/Polycarp.entitlements "$APP"
 else
   ADHOC_NOTE="note: signed ad-hoc, so macOS will ask for Accessibility again after each update"
   echo "$ADHOC_NOTE" >&2
   codesign --force --sign - --identifier "$BUNDLE_ID.engine" "$APP/Contents/Frameworks/libagent_desktop_ffi.dylib"
   codesign --force --sign - --identifier "$BUNDLE_ID.cli" "$APP/Contents/Resources/bin/$CLI_NAME"
+  codesign --force --sign - --identifier "$BUNDLE_ID.command" "$APP/Contents/Resources/bin/polycarp"
+  codesign --force --sign - --identifier "$BUNDLE_ID.browser" "$BROWSER_DIR/polycarp-browser"
   codesign --force --sign - --identifier "$BUNDLE_ID.canvasprobe" "$PROBE"
   codesign -dvvv "$PROBE" 2>&1 | sed -n 's/^CDHash=//p' > "$APP/Contents/Resources/probe/CanvasProbe.cdhash"
-  codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
+  codesign --force --sign - --identifier "$BUNDLE_ID" --entitlements Resources/Polycarp.entitlements "$APP"
 fi
 codesign --verify --deep --strict "$APP"
 # The probe app's recorded hash must be the hash of the signed app inside the sealed bundle.
 [ -s "$APP/Contents/Resources/probe/CanvasProbe.cdhash" ] && [ "$(cat "$APP/Contents/Resources/probe/CanvasProbe.cdhash")" = "$(codesign -dvvv "$PROBE" 2>&1 | sed -n 's/^CDHash=//p')" ] || { echo "bundle: the probe app's code hash is not recorded" >&2; exit 1; }
 # The licence of ported code ships with the app.
 [ -s "$APP/Contents/Resources/licenses/cua-driver-MIT.txt" ] || { echo "bundle: the cua-driver licence is missing from the bundle" >&2; exit 1; }
+# The browser helper and the extension folder are in the sealed bundle, and the helper is signed with the app's identity.
+[ -x "$BROWSER_DIR/polycarp-browser" ] && [ -s "$BROWSER_DIR/extension/manifest.json" ] && [ -s "$BROWSER_DIR/extension/background.js" ] || { echo "bundle: the browser helper or the extension is missing from the bundle" >&2; exit 1; }
+codesign --verify --strict "$BROWSER_DIR/polycarp-browser" || { echo "bundle: the browser helper is not validly signed" >&2; exit 1; }
+[ -s "$APP/Contents/Resources/licenses/polycarp-browser-packages.txt" ] || { echo "bundle: the browser helper's licences are missing from the bundle" >&2; exit 1; }
 # The app must find its library next to itself, not where it was built.
 otool -L "$APP/Contents/MacOS/$EXECUTABLE" | grep -q '@rpath/libagent_desktop_ffi.dylib' || { echo "bundle: Polycarp doesn't link the engine through @rpath" >&2; exit 1; }
 otool -l "$APP/Contents/MacOS/$EXECUTABLE" | grep -A2 LC_RPATH | grep -q '@executable_path/../Frameworks' || { echo "bundle: no @executable_path/../Frameworks rpath" >&2; exit 1; }

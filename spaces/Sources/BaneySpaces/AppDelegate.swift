@@ -486,8 +486,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // ⌘Space works with or without Accessibility; Spotlight hands it over first.
         if Launcher.onCmdSpace { setLauncherOnCmdSpace(true) } else { registerShortcuts() }
         legacyWatcher.start()
+        startVoice()
         updater.onChange = { [weak self] in self?.updateIcon() }
-        updater.isBusy = { [weak self] in self?.spaces.switching ?? false }
+        // Not while a workspace switches, and not while dictation is recording, transcribing or typing.
+        updater.isBusy = { [weak self] in (self?.spaces.switching ?? false) || (VoiceEngine.shared.state?.status.isDictating ?? false) }
         updater.start()
         // The first launch walks through setup, and so does any launch without permission (an
         // update that macOS no longer trusts). Otherwise it's one click away in the menu.
@@ -507,6 +509,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func showSetup() { setup.show() }
     private let legacyWatcher = LegacyWatcher()
+
+    // MARK: Voice (dictation, inside this process)
+
+    private let voiceOverlay = VoiceOverlay()
+
+    private func startVoice() {
+        let voice = VoiceEngine.shared
+        voice.onLevel = { [weak self] level in DispatchQueue.main.async { self?.voiceOverlay.level(level) } }
+        voice.onLearned = { [weak self] from, to in
+            // The pill's own switch covers this one too.
+            if voice.settings?.showOverlay ?? true { self?.voiceOverlay.learned(from: from, to: to) }
+        }
+        voice.onStateChange = { [weak self] in
+            guard let self, let st = voice.state else { return }
+            self.voiceOverlay.status(st.status, enabled: voice.settings?.showOverlay ?? true)
+            self.updateIcon()
+        }
+        legacyWatcher.onSilasQuit = { pid in voice.silasChanged(terminating: pid) }
+        voice.onSilasInTheWay = { [weak self] in self?.legacyWatcher.askSilasToQuit() }
+        legacyWatcher.onSilasStarted = { voice.silasChanged() }
+        legacyWatcher.takesOver = { voice.takesOver }
+        voice.start()
+    }
+
+    func showVoiceSettings() {
+        setup.model.tab = .voice
+        setup.show()
+    }
     @objc private func showWelcome() { welcome.show() }
     private lazy var welcome: WelcomeWindowController = {
         let c = WelcomeWindowController()
@@ -718,6 +748,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.title = (n > 0 ? " \(n)" : "") + full
         statusItem.button?.toolTip = full.isEmpty ? nil : "Agents have full access (Settings > Agents)"
         statusItem.button?.imagePosition = .imageLeading
+        // Dictation shows in the menu bar while it listens: the mic beside the mark.
+        if VoiceEngine.shared.state?.status.isLive == true {
+            statusItem.button?.title = " 🎙" + (statusItem.button?.title ?? "")
+            statusItem.button?.toolTip = "Listening"
+        }
     }
 
     private func startSession() {
@@ -797,6 +832,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(.separator())
             menu.addItem(item("Quit Polycarp", #selector(quit), key: "q"))
             return
+        }
+        // Dictation's state, first: the same line the Silas tray showed ("Ready · hold Right ⌘ to speak").
+        if let st = VoiceEngine.shared.state {
+            let line = VoiceEngine.shared.statusLine
+            menu.addItem(withTitle: line, action: nil, keyEquivalent: "")
+            menu.addItem(.separator())
         }
         spaces.refresh()
         var apps: [Int: [String]] = [:]
@@ -1037,6 +1078,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "move": run { $0.moveFocused(to: n) }
         case "restore": run { _ in bringBack() }
         case "viewer": run { _ in viewer.toggle() }
+        // `polycarp voice` opens the Voice settings. Showing a window changes nothing, so a web page may.
+        case "voice": showVoiceSettings()
         // Opening it changes nothing on its own, so a web page may: every action inside needs a key press.
         case "launcher": launcher.show(scope: LauncherModel.Scope(rawValue: url.lastPathComponent) ?? .root, takeKeys: false)
         case "dock":

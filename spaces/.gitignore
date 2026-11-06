@@ -16,3 +16,5 @@ __pycache__/
 platforms/windows/third_party/
 platforms/windows/engine/
 .runs/
+# The voice core: built by scripts/build-core.sh from ../core
+core-lib/

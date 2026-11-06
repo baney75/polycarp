@@ -9,7 +9,6 @@ use chrono::{Local, Utc};
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::json;
-use tauri::{AppHandle, Emitter, Manager};
 
 use crate::audio::Recording;
 use crate::benchmark::{self, ModelResult, Report, Timed};
@@ -18,6 +17,47 @@ use crate::keys::{EditWatch, Machine, Out, Trigger, Watch};
 use crate::models::{self, Engine};
 use crate::store::{self, HistoryItem, Settings, Stats};
 use crate::typer;
+
+/// What the interface around the engine provides. The engine never names a UI toolkit:
+/// the Tauri app (Windows, Linux, Android) and the native Mac app both implement this.
+///
+/// Calls may come from any thread, including while the engine holds its own short locks,
+/// so an implementation must return quickly and must not call back into [`Core`] methods
+/// that take the status lock (`set_status`).
+pub trait Host: Send + Sync + 'static {
+    /// A named event with a JSON payload: `status`, `transcript`, `learned`,
+    /// `model-progress`, `benchmark-progress`, `benchmark-done`, `benchmark-error`.
+    fn emit(&self, event: &str, payload: serde_json::Value);
+    /// Microphone level in 0..=1, many times a second while recording.
+    fn level(&self, level: f32);
+    /// The status changed. `show_overlay` is the user's setting; whether the overlay is up
+    /// for this status is [`overlay_status`].
+    fn status_changed(&self, status: Status, show_overlay: bool);
+    /// Bring the app's main window forward (a model is needed, or setup is incomplete).
+    fn show_main(&self);
+    /// The key listener came back after the user fixed a permission: refocus the app's
+    /// main window if it is showing.
+    fn listener_returned(&self);
+    /// A fresh install of a nightly build stays on the nightly channel.
+    fn is_nightly(&self) -> bool {
+        false
+    }
+    /// What messages call the app ("Silas" in the Tauri app, "Polycarp" in the native one).
+    fn product_name(&self) -> String {
+        "Silas".into()
+    }
+}
+
+/// A host that ignores everything. For tests and headless use.
+pub struct NullHost;
+
+impl Host for NullHost {
+    fn emit(&self, _: &str, _: serde_json::Value) {}
+    fn level(&self, _: f32) {}
+    fn status_changed(&self, _: Status, _: bool) {}
+    fn show_main(&self) {}
+    fn listener_returned(&self) {}
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,7 +72,7 @@ pub enum Status {
 }
 
 pub struct Core {
-    pub app: AppHandle,
+    pub host: Arc<dyn Host>,
     pub settings: Mutex<Settings>,
     pub dict: Mutex<Dictionary>,
     pub history: Mutex<Vec<HistoryItem>>,
@@ -63,6 +103,9 @@ pub struct Core {
     dictations: AtomicU64,
     /// The model a background load is working on, so one model is never loaded twice at once.
     loading: Mutex<Option<String>>,
+    /// False while the interface has paused dictation: keys are ignored, nothing records.
+    /// The model stays loaded.
+    enabled: AtomicBool,
 }
 
 pub type Shared = Arc<Core>;
@@ -106,24 +149,24 @@ impl Drop for BenchGuard {
 
 const MAX_RECORDING: Duration = Duration::from_secs(300);
 
-pub fn key_access_message() -> String {
-    key_access_message_for(std::env::consts::OS)
+pub fn key_access_message(product: &str) -> String {
+    key_access_message_for(std::env::consts::OS, product)
 }
 
 /// The macOS text also covers a stale grant: after a build with a different signature, the
 /// Accessibility switch can still look on for the old one while this build is not trusted.
 /// Turning that switch off and on keeps the old signature, so the text never suggests it:
 /// Fix Permission clears the entry, and removing and re-adding Silas by hand does the same.
-fn key_access_message_for(os: &str) -> String {
+fn key_access_message_for(os: &str, p: &str) -> String {
     match os {
-        "macos" => "Silas can't hear your key yet. Click Fix Permission on the Silas home screen. If that doesn't work, open System Settings, Privacy & Security, Accessibility, select Silas, click the minus button to remove it, click plus and add Silas from Applications, then turn on its switch.".into(),
-        "linux" => "Silas can't read the keyboard. Reinstall the package, or add the udev rule from the README, then log out and back in.".into(),
-        _ => "Silas couldn't start its keyboard listener. Restart Silas.".into(),
+        "macos" => format!("{p} can't hear your key yet. Click Fix Permission on the {p} home screen. If that doesn't work, open System Settings, Privacy & Security, Accessibility, select {p}, click the minus button to remove it, click plus and add {p} from Applications, then turn on its switch."),
+        "linux" => format!("{p} can't read the keyboard. Reinstall the package, or add the udev rule from the README, then log out and back in."),
+        _ => format!("{p} couldn't start its keyboard listener. Restart {p}."),
     }
 }
 
 impl Core {
-    pub fn new(app: AppHandle) -> Shared {
+    pub fn new(host: Arc<dyn Host>) -> Shared {
         let mut settings: Settings = store::load("settings.json");
         // Settings from before per-device picks have no modelSource. A model other than the
         // default was chosen by the user then, so no benchmark or registry may move them off it.
@@ -140,12 +183,7 @@ impl Core {
         }
         // A fresh nightly install stays on nightly instead of jumping to stable.
         if !store::exists("settings.json")
-            && app
-                .package_info()
-                .version
-                .pre
-                .as_str()
-                .starts_with("nightly")
+            && host.is_nightly()
         {
             settings.update_channel = "nightly".into();
         }
@@ -156,7 +194,7 @@ impl Core {
         let mut history: Vec<HistoryItem> = store::load("history.json");
         history.truncate(store::HISTORY_KEEP);
         Arc::new(Core {
-            app,
+            host,
             dict: Mutex::new(store::load("dictionary.json")),
             history: Mutex::new(history),
             status: Mutex::new((Status::Loading, None)),
@@ -176,6 +214,7 @@ impl Core {
             bench_running: AtomicBool::new(false),
             dictations: AtomicU64::new(0),
             loading: Mutex::new(None),
+            enabled: AtomicBool::new(true),
             settings: Mutex::new(settings),
         })
     }
@@ -196,16 +235,12 @@ impl Core {
                 return;
             }
             let missing_key =
-                cur.0 == Status::Error && cur.1.as_deref() == Some(key_access_message().as_str());
+                cur.0 == Status::Error && cur.1.as_deref() == Some(key_access_message(&self.host.product_name()).as_str());
             (ok && missing_key) || (!ok && cur.0 == Status::Ready)
         };
         if ok {
             // The user just flipped the switch in System Settings; bring them back to Silas.
-            if let Some(w) = self.app.get_webview_window("main") {
-                if w.is_visible().unwrap_or(false) {
-                    let _ = w.set_focus();
-                }
-            }
+            self.host.listener_returned();
         }
         if refresh {
             if ok && self.active_model().is_none() {
@@ -234,38 +269,17 @@ impl Core {
         let (s, detail) = {
             let mut cur = self.status.lock();
             let next = if s == Status::Ready && !self.listener_ok.load(Ordering::Relaxed) {
-                (Status::Error, Some(key_access_message()))
+                (Status::Error, Some(key_access_message(&self.host.product_name())))
             } else {
                 (s, detail)
             };
             *cur = next.clone();
             next
         };
-        let _ = self
-            .app
+        self.host
             .emit("status", json!({ "status": s, "detail": detail }));
-        crate::tray::refresh(&self.app, s);
-        self.overlay(s);
-    }
-
-    fn overlay(&self, s: Status) {
-        let Some(w) = self.app.get_webview_window("overlay") else {
-            return;
-        };
-        let enabled = self.settings.lock().show_overlay;
-        let show = enabled && overlay_status(s);
-        if show {
-            if let Ok(Some(monitor)) = w.primary_monitor().or_else(|_| w.current_monitor()) {
-                let size = monitor.size();
-                let pos = monitor.position();
-                let scale = monitor.scale_factor();
-                let (ww, wh) = (260.0 * scale, 64.0 * scale);
-                let x = pos.x as f64 + (size.width as f64 - ww) / 2.0;
-                let y = pos.y as f64 + size.height as f64 - wh - 72.0 * scale;
-                let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
-            }
-        }
-        place_overlay(&self.app, w, enabled);
+        let show_overlay = self.settings.lock().show_overlay;
+        self.host.status_changed(s, show_overlay);
     }
 
     // ------------------------------------------------------------ model
@@ -349,17 +363,17 @@ impl Core {
             }
             d.push(id.to_string());
         }
-        let app = self.app.clone();
+        let host = self.host.clone();
         let idc = id.to_string();
         let result = models::download(id, &|downloaded, total, stage| {
-            let _ = app.emit(
+            host.emit(
                 "model-progress",
                 json!({ "id": idc, "downloaded": downloaded, "total": total, "stage": stage }),
             );
         });
         self.downloading.lock().retain(|x| x != id);
         if let Err(e) = &result {
-            let _ = self.app.emit("model-progress", json!({ "id": id, "downloaded": 0, "total": 0, "stage": "error", "message": e.to_string() }));
+            self.host.emit("model-progress", json!({ "id": id, "downloaded": 0, "total": 0, "stage": "error", "message": e.to_string() }));
             return result;
         }
         if self.active_model().is_none() {
@@ -512,12 +526,11 @@ impl Core {
         let result = self.measure(scope);
         match &result {
             Ok(report) => {
-                let _ = self.app.emit("benchmark-done", report);
+                self.host.emit("benchmark-done", json!(report));
                 self.apply_pick(report);
             }
             Err(e) => {
-                let _ = self
-                    .app
+                self.host
                     .emit("benchmark-error", json!({ "message": e.to_string() }));
             }
         }
@@ -544,7 +557,7 @@ impl Core {
             let id = &ids[next];
             next += 1;
             let progress = |clip: usize, clips: usize| {
-                let _ = self.app.emit(
+                self.host.emit(
                     "benchmark-progress",
                     json!({ "model": id, "clip": clip, "clips": clips }),
                 );
@@ -644,10 +657,58 @@ impl Core {
         store::save("settings.json", &*self.settings.lock());
     }
 
+    /// Replace the settings with `settings` as the interface sent them. The model and who
+    /// chose it stay the core's: a benchmark can switch models while the UI holds an older
+    /// copy, and saving that copy must not undo the switch. Updates the hotkey, saves, and
+    /// refreshes the status label. Returns the stored settings and the ones they replaced.
+    pub fn apply_settings(self: &Shared, settings: Settings) -> Result<(Settings, Settings), String> {
+        let mut settings = settings;
+        let trigger = Trigger::parse(&settings.hotkey)
+            .ok_or_else(|| format!("{} is not a key {} can use", settings.hotkey, self.host.product_name()))?;
+        if !cfg!(target_os = "macos") {
+            settings.update_channel = "nightly".into();
+        }
+        let old = {
+            let mut cur = self.settings.lock();
+            settings.model = cur.model.clone();
+            settings.model_source = cur.model_source.clone();
+            std::mem::replace(&mut *cur, settings.clone())
+        };
+        {
+            let mut m = self.machine.lock();
+            m.trigger = trigger;
+            m.tap_to_toggle = settings.tap_to_toggle;
+        }
+        self.save_settings();
+        if old.hotkey != settings.hotkey && self.status().0 == Status::Ready {
+            self.set_status(Status::Ready, None); // refresh the label
+        }
+        Ok((settings, old))
+    }
+
+    /// Pause (`false`) or resume (`true`) dictation. Pausing drops a recording in progress and
+    /// ignores the hotkey; it never unloads the model.
+    pub fn set_enabled(self: &Shared, on: bool) {
+        self.enabled.store(on, Ordering::Release);
+        if !on {
+            self.machine.lock().reset();
+            self.cancel_recording();
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Acquire)
+    }
+
     // ------------------------------------------------------------ keys
 
     /// Every key event from the global listener lands here.
     pub fn on_key(self: &Shared, ev: &handy_keys::KeyEvent) {
+        if !self.is_enabled() {
+            // Paused: the hotkey does nothing, but picking a new one still works while a listener runs.
+            self.capture_key(ev);
+            return;
+        }
         if self.typing.load(Ordering::Relaxed) {
             // Silas's own text arrives as key events too, so only keys it never sends
             // (deleting, moving the cursor) mean the user edited mid-typing.
@@ -674,6 +735,19 @@ impl Core {
             }
             return;
         }
+        if self.capture_key(ev) {
+            return;
+        }
+        let now = Instant::now();
+        let out = self.machine.lock().on_event(ev, now);
+        if out == Out::Nothing && !self.machine.lock().is_active() {
+            self.feed_watch(ev, now);
+        }
+        self.act(out);
+    }
+
+    /// A pending "pick the hotkey" request takes this key event. True when it did.
+    fn capture_key(&self, ev: &handy_keys::KeyEvent) -> bool {
         // Take the sender in its own statement: an `if let` would keep the lock held.
         let capture = self.capture.lock().take();
         if let Some(tx) = capture {
@@ -689,14 +763,9 @@ impl Core {
                     }
                 }
             }
-            return;
+            return true;
         }
-        let now = Instant::now();
-        let out = self.machine.lock().on_event(ev, now);
-        if out == Out::Nothing && !self.machine.lock().is_active() {
-            self.feed_watch(ev, now);
-        }
-        self.act(out);
+        false
     }
 
     pub fn act(self: &Shared, out: Out) {
@@ -772,7 +841,7 @@ impl Core {
             }
             Status::NeedsModel => {
                 self.machine.lock().reset();
-                crate::show_main(&self.app);
+                self.host.show_main();
                 return;
             }
             _ => {
@@ -785,10 +854,10 @@ impl Core {
             self.machine.lock().reset();
             self.set_status(
                 Status::Error,
-                Some(
-                    "Microphone: not allowed yet. Open Silas and click Allow for the microphone."
-                        .into(),
-                ),
+                Some(format!(
+                    "Microphone: not allowed yet. Open {} and click Allow for the microphone.",
+                    self.host.product_name()
+                )),
             );
             self.recover_soon();
             return;
@@ -796,10 +865,8 @@ impl Core {
         // Note where the keyboard is now, at key-down, without making the mic wait for it.
         let capture = std::thread::spawn(crate::focus::Target::capture);
         let device = self.settings.lock().microphone.clone();
-        let app = self.app.clone();
-        match Recording::start(device.as_deref(), move |lvl| {
-            let _ = app.emit_to("overlay", "level", lvl);
-        }) {
+        let host = self.host.clone();
+        match Recording::start(device.as_deref(), move |lvl| host.level(lvl)) {
             Ok(r) => {
                 // The mic is already running; publish the target before the recording, so a
                 // release can never find a recording without its target.
@@ -952,7 +1019,11 @@ impl Core {
             }
             store::save("dictionary.json", &*me.dict.lock());
             *me.last_activity.lock() = Instant::now();
-            let _ = me.app.emit("transcript", &item);
+            // `typed` is true only when the text really went out as keystrokes: the app moves Silas to the Trash
+            // after the first one, never after a dictation that only reached History.
+            let mut payload = json!(&item);
+            payload["typed"] = json!(!lost_focus && typing_error.is_none());
+            me.host.emit("transcript", payload);
             if let Some(e) = typing_error {
                 me.set_status(
                     Status::Error,
@@ -962,7 +1033,7 @@ impl Core {
             } else if lost_focus {
                 me.set_status(
                     Status::Error,
-                    Some("Another window took the keyboard, so Silas stopped typing. Your full text is in History.".into()),
+                    Some(format!("Another window took the keyboard, so {} stopped typing. Your full text is in History.", me.host.product_name())),
                 );
                 me.recover_soon();
             } else {
@@ -1033,7 +1104,7 @@ impl Core {
         // apps need the toast.
         if !result.is_empty() && !explicit {
             log::info!("learned {:?}", result);
-            let _ = self.app.emit("learned", &result);
+            self.host.emit("learned", json!(&result));
         }
         result
     }
@@ -1070,61 +1141,9 @@ impl Core {
     }
 }
 
-fn overlay_status(s: Status) -> bool {
+/// Whether the overlay is up for this status.
+pub fn overlay_status(s: Status) -> bool {
     matches!(s, Status::Recording | Status::Transcribing | Status::Typing)
-}
-
-/// Shows or hides the overlay on the main thread, deciding there from the current status, not
-/// the one this call was made for: two status changes racing from worker threads can queue
-/// their calls in either order, and the window must end in the state the last status asks for.
-///
-/// On macOS, showing puts it on the Space in front, full-screen apps included. Tao sets "all
-/// Spaces" once at launch, but a hidden window misses Spaces made after that (a window going
-/// full screen) and comes up on its old Space, covered. Clearing and setting the behavior again
-/// before each show puts it back on every Space; full-screen auxiliary lets it sit over a
-/// full-screen app. `orderFrontRegardless` orders it in without making it key or activating
-/// Silas, which runs in the background.
-fn place_overlay(app: &AppHandle, w: tauri::WebviewWindow, enabled: bool) {
-    let app = app.clone();
-    let _ = w.clone().run_on_main_thread(move || {
-        // Only the status lock, held for a copy: no thread holds it while waiting on this one.
-        let show = enabled
-            && app
-                .try_state::<Shared>()
-                .is_some_and(|c| overlay_status(c.status().0));
-        #[cfg(target_os = "macos")]
-        order_overlay(&w, show);
-        #[cfg(not(target_os = "macos"))]
-        let _ = if show { w.show() } else { w.hide() };
-    });
-}
-
-/// Runs on the main thread. The window is looked up here, so it can't be gone by the time
-/// it's used.
-#[cfg(target_os = "macos")]
-fn order_overlay(w: &tauri::WebviewWindow, show: bool) {
-    use objc2::msg_send;
-    use objc2::runtime::AnyObject;
-    // NSWindowCollectionBehavior: CanJoinAllSpaces | Stationary | IgnoresCycle |
-    // FullScreenAuxiliary.
-    const BEHAVIOR: usize = 1 | 1 << 4 | 1 << 6 | 1 << 8;
-    let Ok(ns) = w.ns_window() else { return };
-    let Some(win) = (unsafe { (ns as *mut AnyObject).as_ref() }) else {
-        return;
-    };
-    unsafe {
-        if !show {
-            let _: () = msg_send![win, orderOut: std::ptr::null::<AnyObject>()];
-            return;
-        }
-        // Already up (Recording, then Writing): leave its Spaces alone so it can't blink.
-        let visible: bool = msg_send![win, isVisible];
-        if !visible {
-            let _: () = msg_send![win, setCollectionBehavior: 0usize];
-            let _: () = msg_send![win, setCollectionBehavior: BEHAVIOR];
-        }
-        let _: () = msg_send![win, orderFrontRegardless];
-    }
 }
 
 #[cfg(test)]
@@ -1133,7 +1152,7 @@ mod tests {
 
     #[test]
     fn the_mac_key_message_explains_a_stale_grant() {
-        let m = key_access_message_for("macos");
+        let m = key_access_message_for("macos", "Silas");
         // home.ts finds the banner by this phrase.
         assert!(m.contains("can't hear your key"));
         assert!(m.contains("Privacy & Security, Accessibility"));
@@ -1145,6 +1164,26 @@ mod tests {
             assert!(!lower.contains(banned), "{m}");
         }
         assert!(!m.contains(['\u{2014}', '\u{2013}', '\u{203a}']), "{m}");
+    }
+
+    #[test]
+    fn a_paused_engine_still_takes_the_key_being_picked() {
+        use handy_keys::{Key, KeyEvent, Modifiers};
+        let dir = std::env::temp_dir().join(format!("pc-capture-{}", std::process::id()));
+        store::set_data_dir(Some(dir.clone()));
+        let core = Core::new(Arc::new(NullHost));
+        core.set_enabled(false);
+        let (tx, rx) = std::sync::mpsc::channel();
+        *core.capture.lock() = Some(tx);
+        core.on_key(&KeyEvent {
+            modifiers: Modifiers::empty(),
+            key: Some(Key::F13),
+            is_key_down: true,
+            changed_modifier: None,
+        });
+        assert_eq!(rx.try_recv().as_deref(), Ok("F13"));
+        store::set_data_dir(None);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

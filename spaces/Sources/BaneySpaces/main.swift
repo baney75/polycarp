@@ -29,7 +29,15 @@ let instanceLock: SingleInstance.Lock? = {
     guard EntryPoint.needsExclusiveCopy(arguments: CommandLine.arguments) else { return nil }
     let home = FileManager.default.homeDirectoryForCurrentUser
     let oneShot = !Set(CommandLine.arguments).isDisjoint(with: crashLoopOneShots)
-    let legacy = NSRunningApplication.runningApplications(withBundleIdentifier: Product.Legacy.bundleID)
+    // Every app Polycarp replaces that is running now (BaneySpaces, Silas): one alert for all of them.
+    let allLegacy = LegacyHandover.replacedBundleIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }
+    // Silas is in the alert only when Polycarp's dictation takes over right now, by the one gate the engine and the watcher
+    // use (`VoiceGate.takesOverNow`: voice on, a finished model of its own, the import really finished). Otherwise Silas is
+    // the working dictation and is left alone; once the import has run, the app asks it to quit if the gate then says so.
+    let voiceTakesOver = VoiceGate.takesOverNow(userEnabled: VoiceGate.userEnabled(.standard),
+        voiceDir: Product.voiceDir(home: home), silasDir: Product.silasSupportDir(home: home))
+    let running = LegacyHandover.namesToReplace(running: allLegacy.compactMap(\.bundleIdentifier), takesOver: voiceTakesOver)
+    let legacy = allLegacy.filter { $0.bundleIdentifier != Product.Silas.bundleID || voiceTakesOver }
     if LegacyHandover.applies(oneShot: oneShot, legacyPids: legacy.map(\.processIdentifier)) {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
@@ -37,16 +45,17 @@ let instanceLock: SingleInstance.Lock? = {
             ask: {
                 NSApp.activate(ignoringOtherApps: true)
                 let alert = NSAlert()
-                alert.messageText = LegacyHandover.alertTitle
-                alert.informativeText = LegacyHandover.alertDetail
-                alert.addButton(withTitle: LegacyHandover.continueButton)
+                alert.messageText = LegacyHandover.alertTitle(running: running)
+                alert.informativeText = LegacyHandover.alertDetail(running: running)
+                alert.addButton(withTitle: LegacyHandover.continueButton(running: running))
                 alert.addButton(withTitle: LegacyHandover.notNowButton)
                 return alert.runModal() == .alertFirstButtonReturn ? .quitAndContinue : .notNow
             },
             quit: { legacy.forEach { $0.terminate() } },
             // Asks the system each time: NSRunningApplication's own state only updates as the run loop turns, and
             // this runs before there is one.
-            isRunning: { legacy.contains { kill($0.processIdentifier, 0) == 0 } })
+            isRunning: { legacy.contains { kill($0.processIdentifier, 0) == 0 } },
+            names: running)
         if case .exit(let message) = outcome {
             if let message {
                 let alert = NSAlert()
@@ -74,6 +83,10 @@ if instanceLock != nil {
                                     legacyDomain: Product.Legacy.bundleID, newDefaults: .standard)
     // Not finished: the failed names are tried again at the next launch, and Settings says so (LegacyApp).
     if case .partial(let report) = result { NSLog("Polycarp: could not import %@ yet", report.failedFiles.joined(separator: ", ")) }
+    // And Silas's dictation data and models, the same way (copy only; Silas's folder is never written).
+    if case .partial(let report) = VoiceImport.run(silasDir: Product.silasSupportDir(home: home), newDir: Product.voiceDir(home: home)) {
+        NSLog("Polycarp: could not import %@ from Silas yet", report.failed.joined(separator: ", "))
+    }
 }
 
 // `Polycarp --render <folder>` draws product images with sample windows, then exits.

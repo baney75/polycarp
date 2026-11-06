@@ -1,17 +1,21 @@
 #!/bin/bash
 # Checks the release files in a folder (default build/) before they are uploaded, and again once
 # they are uploaded: it fails closed on anything off.
-#   scripts/verify-release.sh [folder]
+#   scripts/verify-release.sh [--no-dmg] [folder]
+# --no-dmg checks only the zip and its checksum (the preview release).
 # The zip and the app inside the disk image must each pass `codesign --verify --strict --deep`,
 # satisfy the pinned release requirement and carry this checkout's VERSION; the zip must match its
 # .sha256 file; and the disk image must offer an Applications link beside the app.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+NO_DMG=0
+if [ "${1:-}" = "--no-dmg" ]; then NO_DMG=1; shift; fi
 DIR=$(cd "${1:-build}" && pwd)
 VERSION=$(cat VERSION)
 REQ=$(cat scripts/release-requirement.txt)
 fail() { echo "verify-release.sh: $*" >&2; exit 1; }
-for f in Polycarp.zip Polycarp.zip.sha256 Polycarp.dmg; do [ -f "$DIR/$f" ] || fail "$DIR/$f is missing."; done
+FILES="Polycarp.zip Polycarp.zip.sha256"; [ "$NO_DMG" = 1 ] || FILES="$FILES Polycarp.dmg"
+for f in $FILES; do [ -f "$DIR/$f" ] || fail "$DIR/$f is missing."; done
 
 TMP=$(mktemp -d)
 MNT="$TMP/mnt"
@@ -33,6 +37,10 @@ check_app() {
 mkdir "$TMP/zip"
 ditto -x -k "$DIR/Polycarp.zip" "$TMP/zip"
 check_app "$TMP/zip/Polycarp.app" "Polycarp.zip"
+if [ "$NO_DMG" = 1 ]; then
+  echo "verified $DIR: zip signature, release key, version $VERSION, checksum (no disk image)"
+  exit 0
+fi
 mkdir "$MNT"
 hdiutil attach -nobrowse -readonly -quiet -mountpoint "$MNT" "$DIR/Polycarp.dmg" >/dev/null 2>&1 || fail "Polycarp.dmg won't mount."
 check_app "$MNT/Polycarp.app" "Polycarp.dmg"

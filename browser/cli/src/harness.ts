@@ -10,6 +10,7 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, join } from "node:path";
 import { cliLauncherPath } from "./install.ts";
+import { COMPILED } from "./self.ts";
 
 /**
  * true: the entry runs this CLI with `mcp`. false: no entry. "stale": the entry points at
@@ -87,7 +88,7 @@ export function classify(command: string | undefined, args: string[]): Configure
 		return args.join(" ") === "mcp" ? true : "other";
 	}
 	if (!resolved || !existsSync(resolved)) return "stale";
-	const script = process.argv[1];
+	const script = COMPILED ? process.execPath : process.argv[1];
 	// `node /path/to/tabkyra mcp` is this CLI too.
 	if (/^node(\.exe)?$/.test(basename(resolved)) && args.length === 2 && sameFile(args[0], script) && args[1] === "mcp") return true;
 	if (sameFile(resolved, script)) return args.join(" ") === "mcp" ? true : "other";

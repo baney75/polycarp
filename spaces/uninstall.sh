@@ -275,13 +275,47 @@ JS
 fi
 [ -n "$LEGACY_APP" ] || rm -f "$HOME/.grok/hooks/baneyspaces.json"
 
-step "Removing the polycarp-spaces command (and baneyspaces and ghostdeck, its other names)"
-for link in "$HOME/.local/bin/polycarp-spaces" "$HOME/.local/bin/baneyspaces" "$HOME/.local/bin/ghostdeck"; do
+step "Removing the polycarp-spaces command (and baneyspaces and ghostdeck, its other names) and the polycarp command"
+for link in "$HOME/.local/bin/polycarp-spaces" "$HOME/.local/bin/baneyspaces" "$HOME/.local/bin/ghostdeck" "$HOME/.local/bin/polycarp"; do
   # Only the links Polycarp made: ones into a Polycarp.app, even if it's gone already.
   if [ -L "$link" ]; then
     case "$(readlink "$link")" in *Polycarp.app/*) rm -f "$link" ;; esac
   fi
 done
+# The browser command, only if it links into Polycarp's helper; a tabkyra Polycarp took the name from is put back.
+tabkyra_link="$HOME/.local/bin/tabkyra"
+if [ -L "$tabkyra_link" ]; then
+  case "$(readlink "$tabkyra_link")" in
+    *Polycarp.app/Contents/Resources/browser/polycarp-browser)
+      rm -f "$tabkyra_link"
+      previous="$HOME/Library/Application Support/Polycarp/tabkyra-previous-link"
+      [ ! -s "$previous" ] || ln -s "$(cat "$previous")" "$tabkyra_link"
+      ;;
+  esac
+fi
+# BEGIN restore-browser-previous
+# What Settings > Browser > Connect found before `install --force` wrote its manifests and launchers (BrowserPrevious): put
+# back, or removed where there was nothing. Only a file that still points into Polycarp.app is touched.
+STORE="${STORE:-$HOME/Library/Application Support/Polycarp/browser-previous}"
+if [ -s "$STORE/index.tsv" ]; then
+  while IFS=$'\t' read -r target saved; do
+    [ -n "$target" ] || continue
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      grep -q "Polycarp.app" "$target" 2>/dev/null || continue
+    fi
+    if [ "$saved" = "-" ]; then rm -f "$target"; elif [ -f "$saved" ]; then cp "$saved" "$target"; fi
+  done < "$STORE/index.tsv"
+fi
+# END restore-browser-previous
+# Links the installer repointed on request (install.sh's retire_tabkyra) go back to what they were.
+retired="$HOME/Library/Application Support/Polycarp/tabkyra-retired-links"
+if [ -s "$retired" ]; then
+  while IFS=$'\t' read -r link target; do
+    if [ -L "$link" ]; then
+      case "$(readlink "$link")" in *Polycarp.app/Contents/Resources/browser/polycarp-browser) ln -sf "$target" "$link" ;; esac
+    fi
+  done < "$retired"
+fi
 if [ -n "$LEGACY_APP" ] && [ -x "$LEGACY_APP/Contents/Resources/bin/baneyspaces" ]; then
   # Polycarp took these two names over from BaneySpaces; give them back to it.
   for name in baneyspaces ghostdeck; do

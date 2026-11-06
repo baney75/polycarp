@@ -307,9 +307,9 @@ final class ProbeAppPolicyTests: XCTestCase {
         XCTAssertTrue(bundle.contains("Resources/probe/CanvasProbe.app"))
         XCTAssertTrue(bundle.contains("CanvasProbe.cdhash"), "the hash is recorded when the bundle is built")
         let codesignProbe = bundle.range(of: "--identifier \"$BUNDLE_ID.canvasprobe\" \"$PROBE\"")
-        let codesignApp = bundle.range(of: "--identifier \"$BUNDLE_ID\" \"$APP\"")
-        XCTAssertNotNil(codesignProbe)
-        XCTAssertTrue(codesignProbe!.lowerBound < codesignApp!.lowerBound, "the probe app is signed before the app that seals it")
+        let codesignApp = bundle.range(of: "--identifier \"$BUNDLE_ID\" --entitlements Resources/Polycarp.entitlements \"$APP\"")
+        let probeAt = try XCTUnwrap(codesignProbe), appAt = try XCTUnwrap(codesignApp)
+        XCTAssertTrue(probeAt.lowerBound < appAt.lowerBound, "the probe app is signed before the app that seals it")
     }
 
     func testTheLicenceOfPortedCodeIsCopiedIntoTheBundleAndCIChecksIt() throws {
