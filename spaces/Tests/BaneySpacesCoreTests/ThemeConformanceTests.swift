@@ -220,7 +220,8 @@ final class ThemeConformanceTests: XCTestCase {
             ("Viewer", [".overviewTile", ".overviewChip"]),
             ("SwitchHUD", [".hudPanel", ".hudCell"]),
             ("WorkspaceDock", [".dockBar", ".dockList", ".dockTile", ".dockRow", ".dockButton"]),
-            ("Setup", [".settingsTile", ".settingsCallout", ".settingsCell"]),
+            ("Setup", [".settingsTile"]),
+            ("SettingsKit", [".settingsCallout", ".settingsCell"]),
         ]
         for (file, surfaces) in want {
             let code = try Repo.code("Sources/BaneySpaces/\(file).swift")

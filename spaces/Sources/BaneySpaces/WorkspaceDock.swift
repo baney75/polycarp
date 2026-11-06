@@ -2000,7 +2000,7 @@ struct DockView: View {
         .accessibilityAction { model.onPick(tile.id) }
     }
 
-    /// A finished agent lights the tile's corner orange with a count; clicking it goes to the
+    /// A finished agent lights the tile's corner with a count in the theme's finished color; clicking it goes to the
     /// agent. One still working turns a ring on its app's icon instead (`appIcon`): a plain
     /// dot on the tile read as an unread badge and didn't say which app (Donovan, 2026-10-16).
     @ViewBuilder private func agentBadge(_ tile: DockModel.Tile) -> some View {
@@ -2030,7 +2030,7 @@ struct DockView: View {
         if let done = tile.agents.first(where: { $0.state == .done }) {
             Text("\(tile.agentsDone)")
                 .font(Chrome.font(9.5, .heavy, rounded: true)).foregroundStyle(Chrome.light())
-                .frame(minWidth: 16, minHeight: 16).background(Circle().fill(Color.orange))
+                .frame(minWidth: 16, minHeight: 16).background(Circle().fill(Chrome.finished))
                 .contentShape(Circle())
                 .onTapGesture { if model.clickCounts { model.onFocusAgent(done, tile.id) } }
                 .help(done.summary)

@@ -225,20 +225,20 @@ struct BrowserRemoteView: View {
     @State private var assistant = RemoteCopy.assistants[0].name
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(RemoteCopy.title).font(Chrome.font(13, .bold))
-            content
-            if let n = model.note { Text(n).font(Chrome.font(11)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
-            Link(destination: RemoteCopy.docsURL) {
-                (Text(RemoteCopy.otherWays).font(Chrome.font(11, .medium)).underline() + Text("  \(RemoteCopy.otherWaysHelp)").font(Chrome.font(11)))
-                    .foregroundStyle(.secondary)
+        SettingsGroup(RemoteCopy.title) {
+            SettingsBlock {
+                VStack(alignment: .leading, spacing: 10) { content }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(RemoteCopy.otherWays): \(RemoteCopy.otherWaysHelp)")
+            if let n = model.note { SettingsNote(n, tone: .urgent) }
+            SettingsBlock {
+                Link(destination: RemoteCopy.docsURL) {
+                    (Text(RemoteCopy.otherWays).font(Chrome.font(11, .medium)).underline() + Text("  \(RemoteCopy.otherWaysHelp)").font(Chrome.font(11)))
+                        .foregroundStyle(Chrome.muted)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(RemoteCopy.otherWays): \(RemoteCopy.otherWaysHelp)")
+            }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Chrome.shape(.settingsCell, continuous: false).fill(Chrome.cell(0.06)))
         .onAppear { model.startWatching() }
         .onDisappear { model.stopWatching() }
     }
@@ -337,7 +337,7 @@ struct BrowserRemoteView: View {
     @ViewBuilder private func details(_ message: String) -> some View {
         if !message.isEmpty {
             DisclosureGroup(RemoteCopy.detailsLabel) {
-                Text(message).font(Chrome.font(11)).foregroundStyle(.secondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                Text(message).font(Chrome.font(11)).foregroundStyle(Chrome.muted).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
             .font(Chrome.font(11))
         }
@@ -346,12 +346,12 @@ struct BrowserRemoteView: View {
     // MARK: Pieces
 
     private func line(_ text: String) -> some View {
-        Text(text).font(Chrome.font(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        Text(text).font(Chrome.font(12)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
     }
 
     private func step<Actions: View>(_ title: String, _ body: String, @ViewBuilder actions: () -> Actions) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(Chrome.font(12, .medium))
+            Text(title).font(Chrome.font(13, .semibold))
             line(body)
             actions()
         }
@@ -369,10 +369,10 @@ struct BrowserRemoteView: View {
     private func onView(address: String, browserConnected: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Image(systemName: browserConnected ? "checkmark.circle.fill" : "exclamationmark.circle").foregroundStyle(browserConnected ? Chrome.accent : Color.orange)
-                Text(RemoteCopy.onTitle).font(Chrome.font(12, .medium))
+                Image(systemName: browserConnected ? "checkmark.circle.fill" : "exclamationmark.circle").foregroundStyle(browserConnected ? Chrome.done : Chrome.working)
+                Text(RemoteCopy.onTitle).font(Chrome.font(13, .semibold))
             }
-            if !browserConnected { Text(RemoteCopy.noBrowserNote).font(Chrome.font(11)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+            if !browserConnected { Text(RemoteCopy.noBrowserNote).font(Chrome.font(11)).foregroundStyle(Chrome.working).fixedSize(horizontal: false, vertical: true) }
             copyRow(RemoteCopy.addressLabel, address, label: "address", secret: false)
             passcodeBlock
             assistants
@@ -431,12 +431,12 @@ struct BrowserRemoteView: View {
     private func copyRow(_ title: String, _ value: String, label: String, secret: Bool) -> some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(Chrome.font(11)).foregroundStyle(.secondary)
+                Text(title).font(Chrome.font(11)).foregroundStyle(Chrome.muted)
                 Text(value).font(Chrome.font(12, .medium)).textSelection(.enabled).lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
             // Every screen with a Copy button confirms it here, so the Funnel refusal and problem screens do too.
-            if model.copied == label { Text("Copied").font(Chrome.font(11)).foregroundStyle(.secondary) }
+            if model.copied == label { Text("Copied").font(Chrome.font(11)).foregroundStyle(Chrome.muted) }
             Button("Copy") { model.copy(value, label: label, secret: secret) }.controlSize(.small).accessibilityLabel("Copy the \(label)")
         }
     }

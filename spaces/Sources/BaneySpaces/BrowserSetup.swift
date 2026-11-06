@@ -140,13 +140,12 @@ struct BrowserSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             if !model.available {
-                Text("This copy of Polycarp doesn't include the browser helper. Install the release from github.com/baney75/polycarp.")
-                    .font(Chrome.font(12)).foregroundStyle(.secondary)
+                SettingsGroup { SettingsNote("This copy of Polycarp doesn't include the browser helper. Install the release from github.com/baney75/polycarp.") }
             } else {
                 browsers
                 agents
                 BrowserRemoteView()
-                if let m = model.message { Text(m).font(Chrome.font(12)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
+                if let m = model.message { SettingsGroup { SettingsNote(m, tone: .urgent) } }
             }
         }
         .onAppear { model.startWatching() }
@@ -154,55 +153,49 @@ struct BrowserSettingsView: View {
     }
 
     private var browsers: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Browsers").font(Chrome.font(13, .bold))
+        SettingsGroup("Browsers") {
             if let s = model.status, s.unattributed {
                 // An older extension or helper doesn't say which browser it is in: one line for the connection.
-                Label("Connected\(s.extensionVersion.map { " (extension \($0))" } ?? "")", systemImage: "checkmark.circle.fill")
-                    .font(Chrome.font(12, .medium)).foregroundStyle(Color.green)
+                SettingsRow("Extension\(s.extensionVersion.map { " \($0)" } ?? "")") { SettingsStatusLabel(text: "Connected") }
             }
             if model.status == nil {
-                Text("Looking…").font(Chrome.font(12)).foregroundStyle(.secondary)
+                SettingsNote("Looking…")
             } else if model.rows.isEmpty {
-                Text("No Chromium browser found. Install Helium, Chrome, Brave, Edge or Arc, open it once, then come back.")
-                    .font(Chrome.font(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                SettingsNote("No Chromium browser found. Install Helium, Chrome, Brave, Edge or Arc, open it once, then come back.")
             }
             ForEach(model.rows) { row in
-                HStack(spacing: 8) {
-                    Text(row.name).font(Chrome.font(12))
-                    Spacer()
-                    switch row.state {
-                    case .connected:
-                        Label("Connected", systemImage: "checkmark.circle.fill").font(Chrome.font(12, .medium)).foregroundStyle(Color.green)
-                    case .reload(_, _):
-                        Text("Reload the extension").font(Chrome.font(12)).foregroundStyle(.orange)
-                        Button("Connect") { model.connect(row.name) }.disabled(model.busy)
-                    case .connect:
-                        Button("Connect") { model.connect(row.name) }.disabled(model.busy)
-                    }
+                switch row.state {
+                case .connected:
+                    SettingsRow(row.name) { SettingsStatusLabel(text: "Connected") }
+                case .reload(_, _):
+                    SettingsRow(row.name, help: "Reload the extension") { connect(row.name) }
+                case .connect:
+                    SettingsRow(row.name) { connect(row.name) }
                 }
             }
         }
     }
 
+    private func connect(_ browser: String) -> some View {
+        Button("Connect") { model.connect(browser) }.disabled(model.busy)
+    }
+
     private var agents: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Agents").font(Chrome.font(13, .bold))
+        SettingsGroup("Agents") {
             if let s = model.status {
                 ForEach(s.agents) { a in
-                    HStack(spacing: 8) {
-                        Image(systemName: a.connected ? "checkmark.circle.fill" : "circle").foregroundStyle(a.connected ? Color.green : Color.secondary)
-                        Text(a.name).font(Chrome.font(12))
-                        Text(a.connected ? "can use the browser" : "not added").font(Chrome.font(11)).foregroundStyle(.secondary)
+                    SettingsRow(a.name) {
+                        SettingsStatusLabel(text: a.connected ? "Can use the browser" : "Not added", done: a.connected)
                     }
                 }
-                if s.agents.isEmpty { Text("No agent found on this Mac.").font(Chrome.font(12)).foregroundStyle(.secondary) }
+                if s.agents.isEmpty { SettingsNote("No agent found on this Mac.") }
                 if !s.addable.isEmpty {
-                    Button(model.busy ? "Adding…" : "Add to Claude Code and Codex") { model.addAgents() }.disabled(model.busy)
+                    SettingsRow("Let your agents use the browser") {
+                        Button(model.busy ? "Adding…" : "Add to Claude Code and Codex") { model.addAgents() }.disabled(model.busy)
+                    }
                 }
             }
-            Text("`polycarp browser` is the command; `tabkyra` still works as another name for it.")
-                .font(Chrome.font(11)).foregroundStyle(.secondary)
+            SettingsNote("In a terminal, the command is polycarp browser.")
         }
     }
 }

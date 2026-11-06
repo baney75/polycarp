@@ -373,26 +373,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             SystemMissionControl.restore()
             exit(0)
         }
-        // `BaneySpaces --check-settings`: opens the settings window on each tab and exits 1 if any
-        // comes up empty or taller than the screen. It opened 0×0, invisible, on macOS 27.
+        // `BaneySpaces --check-settings`: opens the settings window on each section and exits 1 if the window is not the one
+        // fixed size on every section. It opened 0×0, invisible, on macOS 27. It checks the window's size, not what a section shows.
         if CommandLine.arguments.contains("--check-settings") {
             // The app's own controller, wired as the app wires it.
             let c = setup
             c.show()
             let screen = NSScreen.main?.visibleFrame.height ?? 800
             var ok = true
-            var heights = Set<Int>()
             for t in SettingsTab.allCases {
                 c.model.tab = t
                 RunLoop.current.run(until: Date().addingTimeInterval(0.5))
                 let f = c.window!.frame
-                let fits = f.width >= 400 && f.height >= 200 && f.height <= screen
+                let want = SettingsSidebar.windowSize
+                let content = c.window!.contentRect(forFrameRect: f).size
+                let fits = abs(content.width - want.width) < 1 && abs(content.height - want.height) < 1 && f.height <= screen
                 print("\(t.rawValue): \(Int(f.width))×\(Int(f.height))\(fits ? "" : "  FAIL")")
                 ok = ok && fits
-                heights.insert(Int(f.height))
             }
-            // Every tab the same height means the window never refit to its tab.
-            if heights.count < 2 { print("FAIL: every tab is \(heights.first ?? 0) tall; the window didn't refit"); ok = false }
             exit(ok ? 0 : 1)
         }
         // `BaneySpaces --unregister-login`: the uninstaller's way to take it out of Login Items.
