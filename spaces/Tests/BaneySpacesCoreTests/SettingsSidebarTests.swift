@@ -1,4 +1,5 @@
 import XCTest
+import BaneySpacesCore
 
 /// The settings window is a sidebar of sections. The app target can't be imported here, so this reads the sources: every
 /// `SettingsTab` case is in the sidebar exactly once, so a new section can't be forgotten, and the window stays one fixed size.
@@ -74,6 +75,16 @@ final class SettingsSidebarTests: XCTestCase {
         }
         let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
         for role in ["done", "working", "urgent"] { XCTAssertTrue(kit.contains("role(\"\(role)\")")) }
+    }
+
+    /// Settings offers every built-in theme, and each pick is the one command a person could run themselves.
+    func testThemePickerOffersEveryBuiltInTheme() throws {
+        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("themes")
+        let files = try FileManager.default.contentsOfDirectory(atPath: folder.path).filter { $0.hasSuffix(".toml") }.map { String($0.dropLast(5)) }
+        XCTAssertEqual(Set(files), Set(ThemeChoice.builtIn.map(\.name)))
+        XCTAssertEqual(ThemeChoice.arguments(name: "calm"), ["theme", "set", "calm"])
+        XCTAssertEqual(ThemeChoice.arguments(name: "calm", mode: .dark), ["theme", "set", "calm", "--mode", "dark"])
+        XCTAssertEqual(ThemeChoice.arguments(name: ThemeChoice.ownColors), ["theme", "off"])
     }
 
     /// The dock's finished count and its legend in Settings are one token, so the legend can't describe a different color.

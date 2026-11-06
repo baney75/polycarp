@@ -436,6 +436,7 @@ struct SetupView: View {
     @ObservedObject var model: SetupModel
     @ObservedObject private var appearance = Appearance.shared
     @ObservedObject private var cursor = CursorController.shared
+    @StateObject private var themes = ThemePicker()
     var close: () -> Void
 
     var body: some View {
@@ -798,7 +799,7 @@ struct SetupView: View {
                     ForEach(SandboxSettings.handoffChoices, id: \.self) { Text("\($0) GB").tag($0) }
                 }.labelsHidden().disabled(!model.sandbox.enabled)
             }
-            SettingsRow(model.sandboxState, help: "Disk used: \(model.sandboxDisk). Changes apply the next time it starts.") {
+            SettingsRow(model.sandboxState, help: (model.sandboxDisk.isEmpty ? "" : "Disk used: \(model.sandboxDisk). ") + "Changes apply the next time it starts.") {
                 HStack {
                     Button("Reset Now", action: model.sandboxReset).disabled(!model.sandboxRunning || model.sandboxBusy)
                     Button("Delete Images…", action: model.sandboxDeleteImages).disabled(model.sandboxRunning || model.sandboxBusy)
@@ -812,17 +813,9 @@ struct SetupView: View {
 
     // MARK: Appearance
 
-    @ViewBuilder private var appearanceTab: some View {
-        if let p = appearance.polycarp {
-            SettingsGroup("Polycarp theme") {
-                SettingsRow("\(p.title) (\(p.mode.rawValue)) is in force", help: "It draws every Polycarp surface instead of the theme, palette and accent below.") { EmptyView() }
-                SettingsBlock {
-                    Text("Change it in Terminal:  polycarp theme set <name>").font(Chrome.font(11)).foregroundStyle(Chrome.muted).textSelection(.enabled)
-                }
-                LearnMore("polycarp theme list shows the names. To go back to your own theme, delete \(PolycarpThemeFile.path().map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "the theme file").")
-            }
-        }
-        SettingsGroup("Theme") {
+    /// The shape, palette and accent, shown only with no Polycarp theme on: a theme draws instead of them.
+    @ViewBuilder private var ownColors: some View {
+        SettingsGroup("Style") {
             SettingsBlock {
                 HStack(spacing: 10) {
                     ForEach(ThemeID.allCases, id: \.self) { t in
@@ -868,6 +861,33 @@ struct SetupView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder private var appearanceTab: some View {
+        SettingsGroup("Theme") {
+            SettingsRow("Theme") {
+                Picker("Theme", selection: binding({ themes.pendingName ?? appearance.polycarp?.name ?? ThemeChoice.ownColors }, { themes.pick(name: $0) })) {
+                    ForEach(ThemeChoice.builtIn, id: \.name) { Text($0.title).tag($0.name) }
+                    if let p = appearance.polycarp, !ThemeChoice.builtIn.contains(where: { $0.name == p.name }) { Text(p.title).tag(p.name) }
+                    Divider()
+                    Text("My own colors").tag(ThemeChoice.ownColors)
+                }
+                .labelsHidden().frame(width: 170).disabled(!themes.available)
+            }
+            if let p = appearance.polycarp {
+                SettingsRow("Light or dark") {
+                    Picker("Light or dark", selection: binding({ themes.pendingMode ?? p.mode }, { themes.pick(name: p.name, mode: $0) })) {
+                        Text("Auto").tag(PolycarpTheme.Mode.auto)
+                        Text("Light").tag(PolycarpTheme.Mode.light)
+                        Text("Dark").tag(PolycarpTheme.Mode.dark)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 190).disabled(!themes.available)
+                }
+            }
+            if let e = themes.error { SettingsNote(e, tone: .urgent) }
+            LearnMore("Your theme colors Polycarp and stays through updates. In Terminal, polycarp theme set <name> does the same, and polycarp theme create mine starts your own.")
+        }
+        if appearance.polycarp == nil { ownColors }
 
         SettingsGroup("Workspace colors") {
             SettingsRow("Colors") {
@@ -875,7 +895,7 @@ struct SetupView: View {
                     Picker("Workspace colors", selection: binding({ appearance.settings.palette }, { appearance.settings.palette = $0 })) {
                         ForEach(WorkspacePalette.allCases, id: \.self) { Text($0.title).tag($0) }
                     }
-                    .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 270)
                     Button("Reset") { appearance.settings.resetOverrides() }
                         .disabled(appearance.settings.overrides.isEmpty)
                         .help("Clear the colors picked for single workspaces")
@@ -1034,6 +1054,36 @@ struct SetupView: View {
         case .off: "macOS's own app switcher. It only reaches apps on the workspace you're on."
         case .apps: "Hold ⌘ and tap Tab to step through every app with a window, on any workspace, most recent first; let go to go straight to it. ⌘⇧Tab steps back and Esc cancels."
         case .workspaces: "Hold ⌘ and tap Tab to step through your workspaces, most recent first; let go to go there. ⌘⇧Tab steps back and Esc cancels."
+        }
+    }
+}
+
+/// Runs the bundled `polycarp theme` command for a pick in Settings, off the main thread. The theme's file changes and the app's
+/// watcher redraws within about a second, so a pick shows at once and lets go after that.
+final class ThemePicker: ObservableObject {
+    @Published private(set) var pendingName: String?
+    @Published private(set) var pendingMode: PolycarpTheme.Mode?
+    @Published private(set) var error: String?
+
+    private var command: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/bin/polycarp") }
+    var available: Bool { FileManager.default.isExecutableFile(atPath: command.path) }
+
+    func pick(name: String, mode: PolycarpTheme.Mode? = nil) {
+        guard available else { return }
+        pendingName = name; pendingMode = mode; error = nil
+        let command = command
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let p = Process()
+            p.executableURL = command
+            p.arguments = ThemeChoice.arguments(name: name, mode: mode)
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
+            var ok = false
+            do { try p.run(); p.waitUntilExit(); ok = p.terminationStatus == 0 } catch {}
+            DispatchQueue.main.asyncAfter(deadline: .now() + (ok ? 1.5 : 0)) { [weak self] in
+                self?.pendingName = nil; self?.pendingMode = nil
+                if !ok { self?.error = "That theme didn't apply. Try again. If it keeps failing, run polycarp theme list in Terminal to see why." }
+            }
         }
     }
 }
