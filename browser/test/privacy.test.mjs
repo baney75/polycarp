@@ -146,12 +146,7 @@ test("bug reports are off by default; turning them off clears the log through th
 		assert.doesNotMatch(readFileSync(join(repo, file), "utf8"), /\bfetch\(|sendBeacon|XMLHttpRequest/, `${file} sends data`);
 	}
 	const welcome = readFileSync(join(repo, "src", "dialogs", "WelcomeSetupDialog.ts"), "utf8");
-	const input = welcome.slice(welcome.indexOf("<input"), welcome.indexOf("/>", welcome.indexOf("<input")));
-	assert.ok(input.includes('type="checkbox"'), "found the welcome checkbox");
-	// A checked attribute or a .checked binding (reading e.target.checked in the handler is fine).
-	assert.doesNotMatch(input, /(^|\s)[.?]?checked(\s*=|\s*$|\s)/m, "the welcome checkbox has no checked attribute or binding");
-	assert.match(welcome, /setBugReports\(getTabkyraStorage\(\)/, "the welcome box goes through the shared queue");
-	assert.match(welcome, /this\.reportsOn\s*\?/, "when reports are already on, the welcome dialog says so instead of an unchecked box");
+	assert.doesNotMatch(welcome, /<input|setBugReports/, "the first screen asks one question; reports stay off until Settings > Privacy");
 });
 
 test("the stream gate applies private mode, the trusted hosts and the proxy check to every side panel request", () => {

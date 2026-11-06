@@ -645,13 +645,18 @@ function openApiKeysDialog(show?: { tab: string; anchor?: string }): Promise<voi
 	const providers = new ApiKeysTab();
 	const page = SettingsPage.open([
 		providers,
-		new BridgeTab(),
-		new ConnectTab(),
+		new CombinedTab("Agents", [
+			{ tab: new BridgeTab() },
+			{ tab: new ConnectTab(), heading: "Use from claude.ai or ChatGPT", id: "connect-heading" },
+		]),
 		new SkillsTab(),
 		new CombinedTab("Privacy", [{ tab: new PrivacyTab() }, { tab: new ProxyTab(), heading: "CORS proxy" }]),
 		new AppearanceTab(),
-		new CostsTab(),
-		new CombinedTab("About", [{ tab: new AboutTab() }, { tab: new UpdatesTab() }]),
+		new CombinedTab("About", [
+			{ tab: new AboutTab() },
+			{ tab: new UpdatesTab() },
+			{ tab: new CostsTab(), heading: "Costs" },
+		]),
 	]);
 	providers.onChooseModel = () => {
 		page.close();
@@ -1618,7 +1623,9 @@ async function initApp() {
 		const choice: WelcomeChoice = await WelcomeSetupDialog.show();
 		// "Set up provider" lands on the API keys list, not the top of the tab (Free mode and subscriptions sit above it).
 		await openApiKeysDialog(
-			choice === "connect" ? { tab: "Connect" } : { tab: "Providers", anchor: "api-keys-heading" },
+			choice === "connect"
+				? { tab: "Agents", anchor: "connect-heading" }
+				: { tab: "Providers", anchor: "api-keys-heading" },
 		);
 		await refreshDiscoveredModels(storage, { wait: true }).catch(() => {});
 		await selectDefaultModelForAvailableProvider();

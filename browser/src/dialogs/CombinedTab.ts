@@ -9,7 +9,7 @@ import { html, nothing, type TemplateResult } from "lit";
 export class CombinedTab extends SettingsTab {
 	constructor(
 		private readonly name: string,
-		private readonly parts: Array<{ tab: SettingsTab; heading?: string }>,
+		private readonly parts: Array<{ tab: SettingsTab; heading?: string; id?: string }>,
 	) {
 		super();
 	}
@@ -22,7 +22,7 @@ export class CombinedTab extends SettingsTab {
 		return html`<div class="flex flex-col">
 			${this.parts.map(
 				(part, i) => html`<section class="${i > 0 ? "mt-6 pt-6 border-t border-border" : ""}">
-					${part.heading ? html`<h3 class="text-sm font-semibold text-foreground mb-2">${part.heading}</h3>` : nothing}
+					${part.heading ? html`<h3 id=${part.id ?? nothing} class="text-sm font-semibold text-foreground mb-2">${part.heading}</h3>` : nothing}
 					${part.tab}
 				</section>`,
 			)}

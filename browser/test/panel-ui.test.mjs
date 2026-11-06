@@ -159,7 +159,7 @@ test("native controls follow the theme: dark mode declares color-scheme dark", (
 
 test("Settings > Providers reads top to bottom: Free mode, subscriptions, API keys with their search and list, custom providers", () => {
 	const tab = readFileSync(new URL("../src/dialogs/ApiKeysTab.ts", import.meta.url), "utf8");
-	const order = ["Free mode: use the best free model", "<tabkyra-subscriptions>", "agentSetupPromptButton(", ">API keys</h3>", 'placeholder="Find a provider"', "<tabkyra-provider-key", "${this.custom}"].map((s) => tab.indexOf(s));
+	const order = ["Free mode: use the best free model", "<tabkyra-subscriptions>", ">API keys</h3>", 'placeholder="Find a provider"', "<tabkyra-provider-key", "${this.custom}"].map((s) => tab.indexOf(s));
 	assert.ok(order.every((i) => i > 0), JSON.stringify(order));
 	assert.deepEqual([...order].sort((a, b) => a - b), order);
 });
