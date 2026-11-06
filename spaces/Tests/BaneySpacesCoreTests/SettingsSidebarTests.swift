@@ -64,9 +64,13 @@ final class SettingsSidebarTests: XCTestCase {
         for literal in ["Color.green", ".foregroundStyle(.green)", "Color.orange", ".foregroundStyle(.orange)"] {
             XCTAssertFalse(setup.contains(literal), "Setup.swift still draws \(literal)")
         }
-        let voice = try read("Sources/BaneySpaces/Voice/VoiceSettingsView.swift")
-        for literal in ["Color.green", ".foregroundStyle(.green)", "Color.orange", ".foregroundStyle(.red)", ".foregroundStyle(.secondary)"] {
-            XCTAssertFalse(voice.contains(literal), "VoiceSettingsView.swift still draws \(literal)")
+        let browser = try read("Sources/BaneySpaces/BrowserSetup.swift")
+        let browserView = String(browser[try XCTUnwrap(browser.range(of: "struct BrowserSettingsView")).lowerBound...])
+        for (name, text) in [("VoiceSettingsView", try read("Sources/BaneySpaces/Voice/VoiceSettingsView.swift")), ("BrowserSettingsView", browserView)] {
+            for literal in ["Color.green", ".foregroundStyle(.green)", "Color.orange", ".foregroundStyle(.orange)", ".foregroundStyle(.red)", ".foregroundStyle(.secondary)"] {
+                XCTAssertFalse(text.contains(literal), "\(name) still draws \(literal)")
+            }
+            XCTAssertTrue(text.contains("SettingsGroup"), "\(name) is built from the shared components")
         }
         let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
         for role in ["done", "working", "urgent"] { XCTAssertTrue(kit.contains("role(\"\(role)\")")) }
