@@ -31,7 +31,20 @@ export const MAX_CHAIN = 3;
 export const FREE_MAX_PRICE = { prompt: 0, completion: 0, request: 0, image: 0 } as const;
 
 export const FREE_PRIVACY_NOTE =
-	"Free providers may log and train on your prompts. Private mode allows only free models with zero data retention.";
+	"Free models may keep and train on what you send, including pages the agent reads. Polycarp tries ones that keep nothing first and removes keys and card numbers, but it can't promise more. Private mode allows only free models with zero data retention.";
+/** Shown beside the model's name for as long as Free mode is on. */
+export const FREE_SHORT_NOTE = "may keep what you send";
+/** Set once someone has read FREE_CONSENT_TEXT and said yes. */
+export const FREE_CONSENT_KEY = "freeMode.consented";
+export const FREE_CONSENT_TEXT = `Free models can see and keep your data.
+
+Whatever you type, and whatever the agent reads from a page, goes to the free model's company. It may keep it and train on it. That includes signed-in pages and screenshots.
+
+Polycarp tries free models that keep nothing first, and it removes keys and card numbers from text. It can't promise more than that.
+
+Don't use Free mode with mail, banking, medical or work accounts.
+
+Use Free mode?`;
 export const FREE_KEY_NOTE =
 	"Free mode needs a free OpenRouter key: sign up at openrouter.ai/keys and paste the key here.";
 
@@ -149,6 +162,14 @@ export function privateFreeChain(ranked: string[], zdr: ZdrEndpoint[], max = MAX
 		);
 	}
 	return chain;
+}
+
+/** Models with a free zero-data-retention endpoint go first, each group in its measured order. */
+export function keepNothingFirst(ranked: string[], zdr: ZdrEndpoint[]): string[] {
+	const zdrFree = new Set(
+		zdr.filter((e) => e.model_id.endsWith(":free") && zeroPrice(e.pricing)).map((e) => e.model_id),
+	);
+	return [...ranked.filter((id) => zdrFree.has(id)), ...ranked.filter((id) => !zdrFree.has(id))];
 }
 
 /** The request body Free mode sends: the chain as OpenRouter's fallback list, and a zero price cap. */

@@ -17,6 +17,7 @@ import { handleThreads } from "../threads/bridge.js";
 import { resyncMirror, startThreadMirror } from "../threads/mirror.js";
 import { asBuildInfo, BUILD, type BuildInfo } from "../update/build.js";
 import type { UpdateAction } from "../update/logic.js";
+import { runningFromStore } from "../update/store-install.js";
 import { type Delivered, dialogError, raceDialogs } from "./dialogs.js";
 import { BridgeError, classify } from "./errors.js";
 import {
@@ -745,6 +746,18 @@ function onHostMessage(message: HostToExt): void {
 				return;
 			}
 			if (message.method === "bridge.reload") {
+				if (runningFromStore()) {
+					send({
+						type: "response",
+						clientId: message.clientId,
+						id: message.id,
+						error: {
+							code: ERR.NOT_FOUND,
+							message: "A copy from the Chrome Web Store is updated by the browser.",
+						},
+					});
+					return;
+				}
 				// Development aid: reload the extension so a rebuilt bundle is picked up without the extensions page.
 				send({ type: "response", clientId: message.clientId, id: message.id, result: { reloading: true } });
 				setTimeout(() => chrome.runtime.reload(), 200);

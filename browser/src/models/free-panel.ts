@@ -7,7 +7,15 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { setPinnedModels } from "@mariozechner/pi-web-ui";
 import { ApiKeyDialog } from "../dialogs/ApiKeyDialog.js";
-import { FREE_KEY_NOTE, FREE_MODEL_NAME, freeLabel, OPENROUTER_FREE_ROUTER } from "./free-mode.js";
+import { redactContext } from "../privacy/free-redact.js";
+import {
+	FREE_CONSENT_KEY,
+	FREE_CONSENT_TEXT,
+	FREE_KEY_NOTE,
+	FREE_MODEL_NAME,
+	freeLabel,
+	OPENROUTER_FREE_ROUTER,
+} from "./free-mode.js";
 import {
 	type FreeList,
 	freeChains,
@@ -90,6 +98,10 @@ export async function setFreeMode(on: boolean): Promise<boolean> {
 			await host.leaveFreeMode((await host.settings.get<Model<Api>>(PREVIOUS_MODEL_KEY)) ?? undefined);
 		return false;
 	}
+	if (!(await host.settings.get<boolean>(FREE_CONSENT_KEY))) {
+		if (!confirm(FREE_CONSENT_TEXT)) return false;
+		await host.settings.set(FREE_CONSENT_KEY, true);
+	}
 	if (!(await host.hasOpenRouterKey()) && !(await ApiKeyDialog.prompt("openrouter", FREE_KEY_NOTE))) return false;
 	const current = host.currentModel();
 	if (current && !isFreeModeModel(current)) await host.settings.set(PREVIOUS_MODEL_KEY, current);
@@ -121,7 +133,7 @@ export async function streamFree(
 		inner,
 		(chain) => finish(resolveFreeModel(model, chain, list)),
 		chains,
-		context,
+		redactContext(context),
 		options,
 		(message) => {
 			// A pulled model: refresh the list so the next turn doesn't ask for it again.

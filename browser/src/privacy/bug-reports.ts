@@ -17,6 +17,17 @@ export interface BugEntry {
 	stack?: string;
 }
 
+/** Private keys, bearer headers and keys with a known prefix. Leaves addresses and long ids alone. */
+export function redactKnownSecrets(text: string): string {
+	return text
+		.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, "[private-key]")
+		.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{16,}/g, "$1 [secret]")
+		.replace(
+			/\b(sk|pk|rk|ghp|gho|ghu|ghs|github_pat|glpat|xox[abprs]|AKIA|ASIA|AIza|ya29|eyJ|npm_|hf_|sk-ant|sk-proj|sk-or)[\w-]{10,}/g,
+			"[secret]",
+		);
+}
+
 /**
  * Strip secrets only: API keys and tokens by their known prefixes, bearer headers, JWTs and
  * private key blocks. Unlike `redact`, it keeps addresses and names: a chat transcript an
@@ -24,13 +35,7 @@ export interface BugEntry {
  */
 export function redactSecrets(text: string): string {
 	return (
-		text
-			.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, "[private-key]")
-			.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{16,}/g, "$1 [secret]")
-			.replace(
-				/\b(sk|pk|rk|ghp|gho|ghu|ghs|github_pat|glpat|xox[abprs]|AKIA|ASIA|AIza|ya29|eyJ|npm_|hf_|sk-ant|sk-proj|sk-or)[\w-]{10,}/g,
-				"[secret]",
-			)
+		redactKnownSecrets(text)
 			// Long mixed-case or mixed letter-and-digit tokens (keys without a known prefix). Plain
 			// hex stays only at a git commit id's length (40): 32 and 64 hex digits are the shapes of
 			// API keys, auth tokens and private keys (Datadog, Twilio, ed25519), so those go.
