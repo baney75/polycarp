@@ -87,28 +87,8 @@ if [ "$DRY" = 1 ]; then
   echo "dry run: $TAG not uploaded. The files are in build/."
   exit 0
 fi
-if [ "$PREVIEW" = 1 ]; then
-  step "Publishing the preview prerelease"
-  # The tag moves to this commit; the release is a prerelease, never Latest, so the stable updater ignores it.
-  git tag -f preview HEAD
-  git push --force origin refs/tags/preview
-  if gh release view preview >/dev/null 2>&1; then
-    gh release edit preview --prerelease --latest=false --title "Preview" --notes "Apple silicon build of $(git rev-parse --short HEAD). Not a stable release."
-  else
-    gh release create preview --prerelease --title "Preview" --notes "Apple silicon build of $(git rev-parse --short HEAD). Not a stable release." --verify-tag
-  fi
-  # Replace the earlier preview's assets: upload over the same names, and remove any other asset.
-  gh release upload preview build/Polycarp.zip build/Polycarp.zip.sha256 --clobber
-  for old in $(gh release view preview --json assets --jq '.assets[].name'); do
-    case "$old" in Polycarp.zip|Polycarp.zip.sha256) ;; *) gh release delete-asset preview "$old" --yes ;; esac
-  done
-  BACK=$(mktemp -d); trap 'rm -rf "$BACK"' EXIT
-  gh release download preview --dir "$BACK" --pattern 'Polycarp.zip' --pattern 'Polycarp.zip.sha256'
-  for f in Polycarp.zip Polycarp.zip.sha256; do cmp -s "build/$f" "$BACK/$f" || fail "the uploaded $f differs from the one built."; done
-  scripts/verify-release.sh --no-dmg "$BACK"
-  echo "published the preview prerelease with Polycarp.zip and Polycarp.zip.sha256"
-  exit 0
-fi
+# The preview has its own, shorter publish: the files are verified above, scripts/publish-preview.sh uploads them.
+[ "$PREVIEW" = 0 ] || exec scripts/publish-preview.sh
 # The release is a draft until the files are up and checked again; the updater never offers a draft.
 step "Uploading to $TAG"
 gh release upload "$TAG" build/Polycarp.zip build/Polycarp.zip.sha256 build/Polycarp.dmg --clobber

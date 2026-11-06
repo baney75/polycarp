@@ -275,8 +275,8 @@ JS
 fi
 [ -n "$LEGACY_APP" ] || rm -f "$HOME/.grok/hooks/baneyspaces.json"
 
-step "Removing the polycarp-spaces command (and baneyspaces and ghostdeck, its other names)"
-for link in "$HOME/.local/bin/polycarp-spaces" "$HOME/.local/bin/baneyspaces" "$HOME/.local/bin/ghostdeck"; do
+step "Removing the polycarp-spaces command (and baneyspaces and ghostdeck, its other names) and the polycarp command"
+for link in "$HOME/.local/bin/polycarp-spaces" "$HOME/.local/bin/baneyspaces" "$HOME/.local/bin/ghostdeck" "$HOME/.local/bin/polycarp"; do
   # Only the links Polycarp made: ones into a Polycarp.app, even if it's gone already.
   if [ -L "$link" ]; then
     case "$(readlink "$link")" in *Polycarp.app/*) rm -f "$link" ;; esac

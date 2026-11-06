@@ -54,6 +54,8 @@ main() {
   # 1. Get the app. Nothing on this Mac changes until it is here and checked.
   local NEW_APP="" from_source="${POLYCARP_FROM_SOURCE:-}" ZIP="${POLYCARP_ZIP:-}"
   [ -z "${POLYCARP_SOURCE:-}" ] || from_source=1
+  # A branch or tag asked for by name is built from source: the ready-made download is the preview channel, not that ref.
+  [ -z "${POLYCARP_REF:-}" ] || from_source=1
   # The ready-made app is for Apple silicon for now.
   [ "$(uname -m)" = arm64 ] || from_source=1
   if [ "$from_source" != 1 ]; then
