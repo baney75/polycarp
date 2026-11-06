@@ -1,8 +1,8 @@
 # Use Polycarp's browser from claude.ai, ChatGPT and grok.com
 
-Web assistants can drive your own signed-in browser through Polycarp (the browser part is still called
-Tabkyra, and its command is `tabkyra`, also reachable as `polycarp browser`). It runs on your computer
-and through your own free account with Tailscale: no account with us, no relay, no cost.
+Web assistants can drive your own signed-in browser through Polycarp. It runs on your computer and
+through your own free account with Tailscale: no account with us, no relay, no cost. The commands below
+also run as `polycarp browser`, for example `polycarp browser remote setup`.
 
 **In the Polycarp app, use Settings > Browser > "Use your browser from Claude, ChatGPT and Grok".** It
 walks you through the steps below one at a time with buttons: get Tailscale, allow Funnel, turn on,
