@@ -49,7 +49,7 @@ public enum FullScreenFill {
     /// Whether a click could be on a window's green button, from the window server's geometry alone: within the corner where
     /// the traffic lights sit. Only such a click is worth asking the app about, so ordinary clicks cost no call to any app.
     public static func isInButtonCorner(_ point: CGPoint, window: CGRect) -> Bool {
-        CGRect(x: window.minX, y: window.minY, width: min(140, window.width), height: min(70, window.height)).contains(point)
+        CGRect(x: window.minX, y: window.minY, width: min(100, window.width), height: min(60, window.height)).contains(point)
     }
 
     public static func isFilling(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = 3) -> Bool {

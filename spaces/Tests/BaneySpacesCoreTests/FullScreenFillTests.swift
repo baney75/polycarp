@@ -53,6 +53,7 @@ final class FullScreenFillTests: XCTestCase {
     func testOrdinaryClicksNeverAskAnApp() {
         let window = CGRect(x: 100, y: 100, width: 800, height: 600)
         XCTAssertTrue(FullScreenFill.isInButtonCorner(CGPoint(x: 150, y: 110), window: window), "the traffic lights")
+        XCTAssertFalse(FullScreenFill.isInButtonCorner(CGPoint(x: 230, y: 110), window: window), "a toolbar button past them")
         XCTAssertFalse(FullScreenFill.isInButtonCorner(CGPoint(x: 500, y: 110), window: window), "the rest of the title bar")
         XCTAssertFalse(FullScreenFill.isInButtonCorner(CGPoint(x: 150, y: 400), window: window), "the content")
     }
@@ -65,6 +66,7 @@ final class FullScreenFillTests: XCTestCase {
         let code = try source("Sources/BaneySpaces/FullScreenGestures.swift")
         XCTAssertTrue(code.contains("FullScreenFill.buttonSubrole"), "only the green button")
         XCTAssertTrue(code.contains("isInButtonCorner"), "only a click in the corner asks the app anything")
+        XCTAssertTrue(code.contains(".milliseconds(40)"), "a frozen app can't hold a click")
         XCTAssertFalse(code.contains("AXUIElementSetMessagingTimeout(system"), "that would change every Accessibility call in the app")
         XCTAssertTrue(code.contains("frontIsFullScreen"), "the key leaves native full screen, as macOS's own")
         XCTAssertTrue(code.contains("tapDisabledByTimeout"), "macOS turning the tap off is noticed")

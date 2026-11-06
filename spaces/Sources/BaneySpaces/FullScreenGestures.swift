@@ -16,6 +16,9 @@ final class FullScreenGestures {
     private var swallowingUp = false
     /// One for the whole process: setting a timeout on it would change every Accessibility call's, so it keeps the app's.
     private let systemWide = AXUIElementCreateSystemWide()
+    private let lookup = DispatchQueue(label: "polycarp.fullscreen.lookup", qos: .userInteractive)
+    /// A lookup still waiting on a frozen app: the next click doesn't queue behind it.
+    private var askingApp = false
 
     static var isEnabled: Bool { FullScreenFill.isEnabled(stored: UserDefaults.standard.object(forKey: FullScreenFill.enabledKey)) }
 
@@ -81,12 +84,25 @@ final class FullScreenGestures {
         return Unmanaged.passUnretained(event)
     }
 
-    /// The window whose green button is under the pointer, if one is.
+    /// The window whose green button is under the pointer, if one is. A click in the corner asks the app, off this thread and
+    /// for at most 40 ms: a frozen app gets its click on time and misses only the fill.
     private func greenButtonWindow(at point: CGPoint) -> AXUIElement? {
-        guard Self.isInTopWindowsCorner(point) else { return nil }
+        guard Self.isInTopWindowsCorner(point), !askingApp else { return nil }
+        askingApp = true
+        final class Answer: @unchecked Sendable { var window: AXUIElement? }
+        let answer = Answer()
+        let done = DispatchSemaphore(value: 0)
+        lookup.async { [self] in
+            answer.window = askApp(at: point)
+            askingApp = false
+            done.signal()
+        }
+        return done.wait(timeout: .now() + .milliseconds(40)) == .success ? answer.window : nil
+    }
+
+    private func askApp(at point: CGPoint) -> AXUIElement? {
         var raw: AXUIElement?
         guard AXUIElementCopyElementAtPosition(systemWide, Float(point.x), Float(point.y), &raw) == .success, let element = raw else { return nil }
-        AXUIElementSetMessagingTimeout(element, 0.05)
         guard let subrole: String = element.value(kAXSubroleAttribute), subrole == FullScreenFill.buttonSubrole else { return nil }
         // A window already in native full screen keeps its own button: that's how the person leaves it.
         guard let window: AXUIElement = element.value(kAXWindowAttribute), !window.bool("AXFullScreen") else { return nil }
