@@ -1,7 +1,15 @@
-# Use Tabkyra from claude.ai, ChatGPT and grok.com
+# Use Polycarp's browser from claude.ai, ChatGPT and grok.com
 
-Web assistants can drive your own signed-in browser through Tabkyra. It runs on your
-computer: no account with us, no relay, no cost. One command sets it up.
+Web assistants can drive your own signed-in browser through Polycarp. It runs on your computer and
+through your own free account with Tailscale: no account with us, no relay, no cost. The commands below
+also run as `polycarp browser`, for example `polycarp browser remote setup`.
+
+**In the Polycarp app, use Settings > Browser > "Use your browser from Claude, ChatGPT and Grok".** It
+walks you through it one step at a time: get Tailscale and sign in, then Turn on. If Tailscale needs
+you to allow Funnel for your computer, Polycarp asks you to after you click Turn on, and you try again.
+When it's on, the window shows the address and a passcode (once) and says how to add them in each
+assistant. Behind the buttons it runs the commands below. The rest of this page is the same thing for
+the terminal. One command sets it up.
 
 ```bash
 tabkyra remote setup
@@ -23,11 +31,39 @@ the public URL answers. The DNS line matters: from inside your own tailnet, a ts
 even when Funnel isn't reaching the internet, so a passing public fetch alone can hide a broken
 Funnel. The computer must stay on, awake and signed in to the browser with Tabkyra loaded.
 
+## For an app
+
+`remote status --json` and `remote setup --json` print one JSON object, so an app never reads
+sentences. `state` is one of `tailscale_missing`, `tailscale_signed_out`, `funnel_not_allowed` (with
+`adminUrl`, the page Tailscale printed), `funnel_closed` (status only), `tailnet_lock`, `port_busy`, `ready`, `on` (with
+`connectorUrl`), `no_browser_connected` or `problem` (with `message`, and sometimes `code`).
+`setup --json` includes `passcode` only in the run that made it, even when that run then fails, so
+keep it. `token passcode --json` makes a new one.
+
+`code` says why when it matters. For `problem`: `launcher`, `hub`, `service`, `serve` (nothing answers
+on the local port, so nothing was turned on), `funnel` (Tailscale's own words are in `message`) or
+`config`. A failure after the passcode was made, such as a file that can't be written, is a `problem` with
+`code` `config`, `service` or `funnel`, and still carries the `passcode`. For `port_busy`: `tailscale_port` (a saved Tailscale setting already uses 8443) or
+`local_port` (a program on this computer uses the local port). A status read on the Funnel route
+names `tailscale_missing`, `tailscale_signed_out` or `tailnet_lock` ahead of `problem`, and
+`funnel_closed` when Tailscale's Funnel isn't open for the saved address (status only; `remote setup`
+opens it again). `problem` with `code` `dns` means the only failures are public DNS and the public
+fetch, which lag a new address by minutes.
+
+`funnel_not_allowed` means Tailscale printed its login.tailscale.com page for enabling Funnel. The
+helper returns it as soon as the page appears and stops that `tailscale funnel` call, which would
+otherwise wait; every `tailscale funnel` call is bounded at 30 seconds. On the Funnel route, `on` is reported only after
+`tailscale serve status` shows Funnel on for the machine. The Mac app's own `tailscale` is found at
+`/Applications/Tailscale.app/Contents/MacOS/Tailscale` when it isn't on PATH, so the terminal and the
+app behave the same.
+
 ## What you need
 
 - Tabkyra installed and connected (`tabkyra setup`, then `tabkyra install` so the service has a
   launcher to start).
-- Tailscale on this computer, signed in, with Funnel allowed for your tailnet. Free plan is enough.
+- Tailscale on this computer, signed in. Free plan is enough. If Funnel isn't allowed for your
+  tailnet yet, `tabkyra remote setup` prints the Tailscale page that allows it and stops; allow it
+  there, then run setup again.
 
 Funnel runs on its own port (8443), so the OAuth paths sit at the root of the URL, and anything
 you serve on 443 stays private.

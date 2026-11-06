@@ -67,7 +67,8 @@ final class SettingsSidebarTests: XCTestCase {
         }
         let browser = try read("Sources/BaneySpaces/BrowserSetup.swift")
         let browserView = String(browser[try XCTUnwrap(browser.range(of: "struct BrowserSettingsView")).lowerBound...])
-        for (name, text) in [("VoiceSettingsView", try read("Sources/BaneySpaces/Voice/VoiceSettingsView.swift")), ("BrowserSettingsView", browserView)] {
+        for (name, text) in [("VoiceSettingsView", try read("Sources/BaneySpaces/Voice/VoiceSettingsView.swift")), ("BrowserSettingsView", browserView),
+                                  ("BrowserRemoteView", try read("Sources/BaneySpaces/BrowserRemoteView.swift"))] {
             for literal in ["Color.green", ".foregroundStyle(.green)", "Color.orange", ".foregroundStyle(.orange)", ".foregroundStyle(.red)", ".foregroundStyle(.secondary)"] {
                 XCTAssertFalse(text.contains(literal), "\(name) still draws \(literal)")
             }

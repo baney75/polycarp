@@ -11,13 +11,24 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { writeTailscaleStub } from "./helpers/tailscale-stub.mjs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cli = join(here, "..", "dist", "index.js");
 const root = mkdtempSync(join(tmpdir(), "tabkyra-remote-"));
-const env = { HOME: join(root, "home"), PATH: dirname(process.execPath), NO_COLOR: "1", TABKYRA_SOCKET_DIR: join(root, "sock") };
+// TABKYRA_APPLICATIONS_DIR points at an empty temp dir, so a real /Applications/Tailscale.app is never found or run.
+// A PATH holds node alone (a symlink), never node's own directory: Homebrew and Linux packages put tailscale and cloudflared beside it.
+const nodeOnly = join(root, "node-path");
+mkdirSync(nodeOnly, { recursive: true });
+symlinkSync(process.execPath, join(nodeOnly, "node"));
+/** A stub directory plus node, so the stubs run and nothing else on this machine is found. */
+const withNode = (bin) => {
+	if (!existsSync(join(bin, "node"))) symlinkSync(process.execPath, join(bin, "node"));
+	return bin;
+};
+const env = { HOME: join(root, "home"), PATH: nodeOnly, NO_COLOR: "1", TABKYRA_SOCKET_DIR: join(root, "sock"), TABKYRA_APPLICATIONS_DIR: join(root, "apps") };
 mkdirSync(env.HOME, { recursive: true });
 mkdirSync(env.TABKYRA_SOCKET_DIR, { mode: 0o700 });
 let server;
@@ -166,7 +177,7 @@ test("tunnel tailscale serves the tailnet path; --public uses funnel; --off stop
 		`#!/bin/sh\necho "$@" >> ${log}\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.example.ts.net."}}'; fi\n`,
 	);
 	chmodSync(join(bin, "tailscale"), 0o755);
-	const path = `${bin}:${dirname(process.execPath)}`;
+	const path = withNode(bin);
 	const on = cliRun(["tunnel", "tailscale", "--port", "8787"], { PATH: path });
 	assert.equal(on.code, 0, on.out);
 	assert.match(on.out, /https:\/\/mac\.example\.ts\.net\/tabkyra\/mcp/);
@@ -257,7 +268,7 @@ test("tunnel ports are validated, and Funnel is refused when other paths share p
 		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.example.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo '{"Web":{"mac.example.ts.net:443":{"Handlers":{"/grafana":{}}}}}'; exit 0; fi\necho "$@" >> ${join(root, "funnel.log")}\n`,
 	);
 	chmodSync(join(bin, "tailscale"), 0o755);
-	const r = cliRun(["tunnel", "tailscale", "--public"], { PATH: `${bin}:${dirname(process.execPath)}` });
+	const r = cliRun(["tunnel", "tailscale", "--public"], { PATH: withNode(bin) });
 	assert.equal(r.code, 1, r.out);
 	assert.match(r.out, /\/grafana/);
 	assert.throws(() => readFileSync(join(root, "funnel.log"), "utf8"), "funnel was never called");
@@ -301,7 +312,7 @@ test("tailscale serve is refused while Funnel is on for 443; the cloudflare URL 
 		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.example.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo '{"AllowFunnel":{"mac.example.ts.net:443":true}}'; exit 0; fi\necho "$@" >> ${join(root, "serve-on.log")}\n`,
 	);
 	chmodSync(join(bin, "tailscale"), 0o755);
-	const r = cliRun(["tunnel", "tailscale"], { PATH: `${bin}:${dirname(process.execPath)}` });
+	const r = cliRun(["tunnel", "tailscale"], { PATH: withNode(bin) });
 	assert.equal(r.code, 1, r.out);
 	assert.match(r.out, /Funnel is on/);
 	const cf = join(root, "bin-cf");
@@ -330,7 +341,7 @@ test("tailscale changes nothing when serve status can't be read", () => {
 		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.example.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo 'warning: something' >&2; exit 1; fi\necho "$@" >> ${join(root, "status-fail.log")}\n`,
 	);
 	chmodSync(join(bin, "tailscale"), 0o755);
-	const r = cliRun(["tunnel", "tailscale"], { PATH: `${bin}:${dirname(process.execPath)}` });
+	const r = cliRun(["tunnel", "tailscale"], { PATH: withNode(bin) });
 	assert.equal(r.code, 1, r.out);
 	assert.match(r.out, /Couldn't read tailscale serve status/);
 	assert.throws(() => readFileSync(join(root, "status-fail.log"), "utf8"), "serve was never changed");
@@ -672,8 +683,11 @@ test("oauth.ts: the request path never calls the thread-blocking change() or wit
 // passcode and a user service. tailscale, launchctl and systemctl are stubs that log their args.
 const DNS = "mac.example.ts.net";
 
-/** A scenario with its own HOME and stub tailscale, launchctl and systemctl on PATH. funnelFails: what `tailscale funnel --bg` prints before exiting 1. */
-function remoteScenario(name, { lock = "Tailnet lock is NOT enabled.", serveStatus = "{}", funnelFails = "", funnelOffFails = false } = {}) {
+/**
+ * A scenario with its own HOME and stub tailscale, launchctl and systemctl on PATH. funnel: how `tailscale funnel --bg` behaves (see
+ * helpers/tailscale-stub.mjs). funnelFails: shorthand for funnel "fail" printing that text. tailscaleAt: put the stub there, not on PATH.
+ */
+function remoteScenario(name, { lock = "Tailnet lock is NOT enabled.", serveStatus = "{}", funnelFails = "", funnel = funnelFails ? "fail" : "enabled", funnelOffFails = false, tailscaleAt = "" } = {}) {
 	const dir = join(root, name);
 	const bin = join(dir, "bin");
 	const home = join(dir, "home");
@@ -684,16 +698,16 @@ function remoteScenario(name, { lock = "Tailnet lock is NOT enabled.", serveStat
 		writeFileSync(join(bin, file), `#!/bin/sh\n${body}`);
 		chmodSync(join(bin, file), 0o755);
 	};
-	const funnelCase = (funnelFails ? `"funnel --bg") echo '${funnelFails}'; exit 1 ;;\n` : "") + (funnelOffFails ? `"funnel --https=8443") echo 'boom' >&2; exit 1 ;;\n` : "");
-	script(
-		"tailscale",
-		`echo "tailscale $*" >> ${log}\ncase "$1 $2" in\n"lock status") echo '${lock}' ;;\n"status --json") echo '{"Self":{"DNSName":"${DNS}."}}' ;;\n"serve status") echo '${serveStatus}' ;;\n${funnelCase}esac\n`,
-	);
+	const apps = join(dir, "apps");
+	mkdirSync(apps, { recursive: true });
+	const stubFile = tailscaleAt === "app" ? join(apps, "Tailscale.app", "Contents", "MacOS", "Tailscale") : join(bin, "tailscale");
+	const stub = writeTailscaleStub(stubFile, { dir, log, dns: DNS, lock, serveStatus, funnel, funnelText: funnelFails, funnelOffFails });
 	// The stub service managers start nothing. launchctl print says "not loaded" (exit 1) unless failStop() ran.
 	script("launchctl", `echo "launchctl $*" >> ${log}\ncase "$1" in\nprint) exit 1 ;;\nesac\n`);
 	script("systemctl", `echo "systemctl $*" >> ${log}\n`);
-	const scenarioEnv = { HOME: home, TABKYRA_CONFIG_DIR: join(home, "cfg"), PATH: `${bin}:${dirname(process.execPath)}` };
+	const scenarioEnv = { HOME: home, TABKYRA_CONFIG_DIR: join(home, "cfg"), PATH: withNode(bin), TABKYRA_APPLICATIONS_DIR: apps };
 	return {
+		stub,
 		env: { ...env, ...scenarioEnv },
 		home,
 		config: scenarioEnv.TABKYRA_CONFIG_DIR,
@@ -837,9 +851,14 @@ test("remote setup --public-url: a URL with a path is refused; an origin is stor
 	assert.match(ok.out, /Connector URL: https:\/\/tabkyra\.example\.com\/mcp/);
 });
 
-test("remote setup --no-service writes no service file", () => {
+test("remote setup --no-service writes no service file", async () => {
 	const s = remoteScenario("no-service");
-	assert.equal(s.run(["remote", "setup", "--no-service"]).code, 0);
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	try {
+		assert.equal((await runAsync(s, ["remote", "setup", "--no-service", "--port", String(local.port)])).code, 0);
+	} finally {
+		await local.close();
+	}
 	assert.equal(existsSync(s.serviceFile()), false);
 	assert.equal(managerCalls(s).length, 0);
 });
@@ -938,17 +957,23 @@ test("remote setup --no-service opens Funnel only when serve already answers wit
 	const idle = remoteScenario("idle");
 	const port = await freePort();
 	const r = idle.run(["remote", "setup", "--no-service", "--port", String(port)]);
-	assert.equal(r.code, 0, r.out);
+	assert.equal(r.code, 1, "Funnel wasn't opened, so setup didn't finish: it is never reported as on");
 	assert.ok(!idle.calls().some((x) => x.startsWith("tailscale funnel")), idle.calls().join("\n"));
-	assert.deepEqual(idle.remoteJson(), { publicUrl: FUNNEL_URL, port, route: "funnel" });
-	assert.match(r.out, /Start tabkyra serve \(it reads remote\.json\), then run tabkyra remote setup --no-service again to open Funnel\./);
-	assert.doesNotMatch(r.out, /Funnel is open/);
+	assert.deepEqual(idle.remoteJson(), { publicUrl: FUNNEL_URL, port, route: "funnel" }, "remote.json is kept");
+	assert.match(r.out, /Nothing is listening on 127\.0\.0\.1:\d+ yet, so Funnel was not opened\./);
+	assert.match(r.out, /Start tabkyra serve \(it reads remote\.json\), then run tabkyra remote setup --no-service again\./);
+	assert.doesNotMatch(r.out, /Connector URL/);
 });
 
-test("remote setup refuses a switch from Funnel to a custom URL and leaves remote.json as it was", () => {
+test("remote setup refuses a switch from Funnel to a custom URL and leaves remote.json as it was", async () => {
 	const s = remoteScenario("switch");
-	const port = 9123;
-	assert.equal(s.run(["remote", "setup", "--no-service", "--port", String(port)]).code, 0);
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	const port = local.port;
+	try {
+		assert.equal((await runAsync(s, ["remote", "setup", "--no-service", "--port", String(port)])).code, 0);
+	} finally {
+		await local.close();
+	}
 	const before = readFileSync(join(s.config, "remote.json"), "utf8");
 	const r = s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--no-service"]);
 	assert.equal(r.code, 1, r.out);

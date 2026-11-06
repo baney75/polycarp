@@ -144,6 +144,7 @@ struct BrowserSettingsView: View {
             } else {
                 browsers
                 agents
+                BrowserRemoteView()
                 if let m = model.message { SettingsGroup { SettingsNote(m, tone: .urgent) } }
             }
         }

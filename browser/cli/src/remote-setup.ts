@@ -6,10 +6,13 @@
  * remote.json when `--public-url` is absent.
  */
 
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { get as httpGet } from "node:http";
 import { join } from "node:path";
 import { launcherValid, tabkyraBinary, which } from "./harness.ts";
+import { connectionChecks } from "./doctor.ts";
+import { completeFunnelAdminUrl, funnelAdminUrl, printReport, type RemoteState, type SetupReport, stateFromStatus } from "./remote-state.ts";
 import { installService, removeService, run, serviceFile, serviceLogHint, sleep, writeAtomic } from "./service.ts";
 import { configDir, listClients, passcodeSet, setPasscode } from "./oauth.ts";
 import { hubFile } from "./hub-state.ts";
@@ -62,11 +65,25 @@ export function saveRemoteConfig(config: RemoteConfig): void {
 
 // ---------- Tailscale Funnel ----------
 
+/** Where the Tailscale Mac app keeps its command. It never puts `tailscale` on PATH. TABKYRA_APPLICATIONS_DIR replaces /Applications, for tests. */
+export const tailscaleAppPath = () => join(process.env.TABKYRA_APPLICATIONS_DIR || "/Applications", "Tailscale.app", "Contents", "MacOS", "Tailscale");
+
+/**
+ * The `tailscale` binary: on PATH, or the Tailscale Mac app's own copy at its fixed path, so a terminal and Polycarp's window
+ * find the same one. Nothing else is searched: a path nobody asked for is never run.
+ */
+export function tailscaleBinary(): string | undefined {
+	const onPath = which("tailscale");
+	if (onPath) return onPath;
+	const app = tailscaleAppPath();
+	return existsSync(app) ? app : undefined;
+}
+
 type ServeWeb = Record<string, { Handlers?: Record<string, { Proxy?: string }> }>;
 type ServeTcp = Record<string, { HTTPS?: boolean; TCPForward?: string }>;
 
-/** What `tailscale` says about this machine: not connected, unreadable serve status, or its DNS name and Web entries. */
-type TailscaleState = { kind: "disconnected" } | { kind: "unreadable" } | { kind: "ok"; dns: string; web: ServeWeb; tcp: ServeTcp };
+/** What `tailscale` says about this machine: not connected, unreadable serve status, or its DNS name, Web entries and which host:ports Funnel is on for. */
+type TailscaleState = { kind: "disconnected" } | { kind: "unreadable" } | { kind: "ok"; dns: string; web: ServeWeb; tcp: ServeTcp; allowFunnel: Record<string, boolean> };
 
 function readTailscale(bin: string): TailscaleState {
 	let dns = "";
@@ -79,8 +96,8 @@ function readTailscale(bin: string): TailscaleState {
 	const serveStatus = run(bin, ["serve", "status", "--json"]);
 	try {
 		if (serveStatus.code !== 0) throw new Error("serve status failed");
-		const parsed = JSON.parse(serveStatus.out || "{}") as { Web?: ServeWeb; TCP?: ServeTcp };
-		return { kind: "ok", dns, web: parsed.Web ?? {}, tcp: parsed.TCP ?? {} };
+		const parsed = JSON.parse(serveStatus.out || "{}") as { Web?: ServeWeb; TCP?: ServeTcp; AllowFunnel?: Record<string, boolean> };
+		return { kind: "ok", dns, web: parsed.Web ?? {}, tcp: parsed.TCP ?? {}, allowFunnel: parsed.AllowFunnel ?? {} };
 	} catch {
 		return { kind: "unreadable" };
 	}
@@ -88,26 +105,39 @@ function readTailscale(bin: string): TailscaleState {
 
 const LOCAL_PROXY = /^http:\/\/(127\.0\.0\.1|localhost):/;
 
-type FunnelPlan = { ok: true; bin: string; dns: string } | { ok: false; message: string };
+type FunnelBlock = { ok: false; state: RemoteState; message: string; code?: string };
+type FunnelPlan = { ok: true; bin: string; dns: string } | FunnelBlock;
 
-/** Everything that can refuse Funnel, checked before anything changes. `ports` are the local ports that count as ours on 8443. */
-function planFunnel(ports: number[]): FunnelPlan {
-	const bin = which("tailscale");
-	if (!bin) return { ok: false, message: "Tailscale isn't installed. Install it from tailscale.com, or use --public-url with your own tunnel (a free Cloudflare named tunnel works)." };
+/** The Tailscale part of planning: installed, no Tailnet Lock, signed in. What `remote status` re-checks once remote.json exists. */
+export function tailscaleReady(): { ok: true; bin: string; state: TailscaleState } | FunnelBlock {
+	const bin = tailscaleBinary();
+	if (!bin) return { ok: false, state: "tailscale_missing", message: "Tailscale isn't installed. Install it from tailscale.com, or use --public-url with your own tunnel (a free Cloudflare named tunnel works)." };
 	if (/tailnet lock is enabled/i.test(run(bin, ["lock", "status"]).out)) {
 		return {
 			ok: false,
+			state: "tailnet_lock",
 			message:
 				"This tailnet has Tailnet Lock on, and Tailscale Funnel doesn't work on a Tailnet Lock tailnet. Nothing was changed. Use --public-url with a Cloudflare named tunnel (free); docs/remote.md has the steps.",
 		};
 	}
 	const state = readTailscale(bin);
-	if (state.kind === "disconnected") return { ok: false, message: "Tailscale isn't connected. Run tailscale up, then try again." };
-	if (state.kind === "unreadable") return { ok: false, message: "Couldn't read tailscale serve status, so nothing was changed." };
+	if (state.kind === "disconnected") return { ok: false, state: "tailscale_signed_out", message: "Tailscale isn't connected. Run tailscale up, then try again." };
+	return { ok: true, bin, state };
+}
+
+/** Everything that can refuse Funnel, checked before anything changes. `ports` are the local ports that count as ours on 8443. */
+export function planFunnel(ports: number[]): FunnelPlan {
+	const basics = tailscaleReady();
+	if (!basics.ok) return basics;
+	const { bin, state } = basics;
+	if (state.kind === "unreadable") return { ok: false, state: "problem", message: "Couldn't read tailscale serve status, so nothing was changed." };
+	if (state.kind !== "ok") return { ok: false, state: "problem", message: "Couldn't read tailscale, so nothing was changed." };
 	const tcp = state.tcp[String(FUNNEL_PORT)];
 	if (tcp && tcp.HTTPS !== true) {
 		return {
 			ok: false,
+			state: "port_busy",
+			code: "tailscale_port",
 			message: `Port ${FUNNEL_PORT} on this machine already forwards TCP traffic${tcp.TCPForward ? ` to ${tcp.TCPForward}` : ""}. Funnel would make it public, so nothing was changed. Turn that off in Tailscale first, or use --public-url.`,
 		};
 	}
@@ -118,11 +148,105 @@ function planFunnel(ports: number[]): FunnelPlan {
 		if (others.length) {
 			return {
 				ok: false,
+				state: "port_busy",
+				code: "tailscale_port",
 				message: `Port ${FUNNEL_PORT} on this machine already serves something else (${others.map(([path]) => path).join(", ")}). Funnel would make it public, so nothing was changed. Turn that off in Tailscale first, or use --public-url.`,
 			};
 		}
 	}
 	return { ok: true, bin, dns: state.dns };
+}
+
+// ---------- opening Funnel ----------
+
+/**
+ * `tailscale funnel --bg` as Tailscale's own CLI behaves (tailscale/tailscale, cmd/tailscale/cli):
+ * - serve_v2.go:458 calls verifyFunnelEnabled for every `funnel` that isn't `off`; funnel.go:139-162 runs enableFeatureInteractive
+ *   and, only if that errors, falls back to ipn.CheckFunnelAccess (error text with tailscale.com/s/https or /s/no-funnel).
+ * - serve_legacy.go:797-870, enableFeatureInteractive, when Funnel isn't enabled for the node: prints the login.tailscale.com
+ *   page (826-828), then EITHER exits 0 with nothing changed when the control server says not to wait (829-835), OR blocks until
+ *   enablement arrives and prints "Success." (836-873), which can be never. A lost connection is log.Fatalf (845, 856).
+ * So a URL on the output means "not enabled", whatever the exit code, and the process may never end by itself.
+ */
+type FunnelOpen = { kind: "opened" } | { kind: "not_allowed"; url: string } | { kind: "failed"; message: string };
+
+/** Longest `tailscale funnel` call, in ms. TABKYRA_FUNNEL_WAIT_MS shortens it for tests. */
+const funnelWaitMs = () => {
+	const n = Number(process.env.TABKYRA_FUNNEL_WAIT_MS);
+	return Number.isFinite(n) && n > 0 ? n : 30_000;
+};
+
+/** Run `tailscale funnel --bg`, reading as it prints. The enablement page ends the call at once and stops the process; every call is bounded. */
+function openFunnelProcess(bin: string, port: number): Promise<FunnelOpen> {
+	return new Promise((resolve) => {
+		let out = "";
+		let settled = false;
+		let child: ReturnType<typeof spawn>;
+		const limit = funnelWaitMs();
+		const stop = () => {
+			try {
+				if (child.pid) process.kill(-child.pid, "SIGKILL");
+			} catch {
+				try {
+					child.kill("SIGKILL");
+				} catch {
+					/* already gone */
+				}
+			}
+			child.stdout?.destroy();
+			child.stderr?.destroy();
+		};
+		// Cancelled (Ctrl-C, or the app's timeout) while the call runs: its process group dies with us, so it can't open Funnel later.
+		const onSignal = (signal: NodeJS.Signals) => {
+			stop();
+			process.exit(signal === "SIGINT" ? 130 : 143);
+		};
+		const finish = (result: FunnelOpen) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			process.off("SIGINT", onSignal);
+			process.off("SIGTERM", onSignal);
+			stop();
+			resolve(result);
+		};
+		try {
+			// A process group of its own, so stopping it stops anything it started.
+			child = spawn(bin, ["funnel", "--bg", "--yes", `--https=${FUNNEL_PORT}`, `http://127.0.0.1:${port}`], { stdio: ["ignore", "pipe", "pipe"], detached: true });
+		} catch (err) {
+			resolve({ kind: "failed", message: err instanceof Error ? err.message : String(err) });
+			return;
+		}
+		process.once("SIGINT", onSignal);
+		process.once("SIGTERM", onSignal);
+		const timer = setTimeout(() => {
+			const url = funnelAdminUrl(out);
+			finish(url ? { kind: "not_allowed", url } : { kind: "failed", message: [out.trim(), `tailscale funnel didn't finish in ${Math.round(limit / 1000)} seconds`].filter(Boolean).join("\n") });
+		}, limit);
+		const onData = (chunk: Buffer) => {
+			out += chunk.toString("utf8");
+			const url = completeFunnelAdminUrl(out);
+			if (url) finish({ kind: "not_allowed", url });
+		};
+		child.stdout?.on("data", onData);
+		child.stderr?.on("data", onData);
+		child.on("error", (err) => finish({ kind: "failed", message: [out.trim(), err.message].filter(Boolean).join("\n") }));
+		child.on("close", (code) => {
+			const url = funnelAdminUrl(out);
+			if (url) finish({ kind: "not_allowed", url });
+			else if (code === 0) finish({ kind: "opened" });
+			else finish({ kind: "failed", message: out.trim() || `tailscale funnel exited with code ${code}` });
+		});
+	});
+}
+
+/** Open Funnel on 8443 and confirm Tailscale really has it on for this machine before saying so. */
+async function openFunnel(bin: string, dns: string, port: number): Promise<FunnelOpen> {
+	const result = await openFunnelProcess(bin, port);
+	if (result.kind !== "opened") return result;
+	const after = readTailscale(bin);
+	if (after.kind === "ok" && after.allowFunnel[`${dns}:${FUNNEL_PORT}`] === true) return result;
+	return { kind: "failed", message: `tailscale funnel finished, but Funnel isn't on for ${dns}:${FUNNEL_PORT}${after.kind === "ok" ? "" : " (and tailscale serve status can't be read)"}.` };
 }
 
 /**
@@ -135,7 +259,7 @@ const LOOPBACK_PORT = /^http:\/\/(?:127\.0\.0\.1|localhost):(\d+)/;
 
 /** Port 8443 handlers that proxy to a loopback port, or nothing at all. */
 async function strayFunnel(): Promise<StrayFunnel> {
-	const bin = which("tailscale");
+	const bin = tailscaleBinary();
 	if (!bin) return { kind: "none" };
 	const state = readTailscale(bin);
 	if (state.kind === "disconnected") return { kind: "none" };
@@ -202,6 +326,12 @@ async function answersLikeTabkyra(port: number): Promise<boolean> {
 	}
 }
 
+/** How long setup waits for serve to answer, in ms. TABKYRA_SERVE_WAIT_MS shortens it for tests. */
+const serveWaitMs = () => {
+	const n = Number(process.env.TABKYRA_SERVE_WAIT_MS);
+	return Number.isFinite(n) && n > 0 ? n : 15_000;
+};
+
 export async function waitForServe(port: number, publicUrl: string, totalMs: number): Promise<boolean> {
 	const deadline = Date.now() + totalMs;
 	for (;;) {
@@ -220,59 +350,71 @@ export interface SetupOptions {
 	service: boolean;
 	/** False (--no-passcode) mints and prints no passcode; the one-time connect code is the way in. For an agent's shell. */
 	passcode?: boolean;
+	/** One JSON object on stdout (a SetupReport) and no other output, for an app. The passcode is in it only when this run made it. */
+	json?: boolean;
 }
 
 export async function remoteSetup(options: SetupOptions): Promise<number> {
+	const json = options.json === true;
+	/** The passcode this run made. A run that fails after making it still reports it, because a later run won't print it again. */
+	let madePasscode: string | undefined;
+	const say = (line: string) => {
+		if (!json) console.log(line);
+	};
+	/** Text mode: the old stderr lines. JSON mode: the state, with the passcode if this run made it. */
+	const fail = (state: RemoteState, message: string, extra: { adminUrl?: string; code?: string; after?: string } = {}): number => {
+		if (json) {
+			const report: SetupReport = { ok: false, state, message, ...(extra.adminUrl ? { adminUrl: extra.adminUrl } : {}), ...(extra.code ? { code: extra.code } : {}), ...(madePasscode ? { passcode: madePasscode } : {}), passcodeSet: passcodeSet() };
+			printReport(report);
+			return 1;
+		}
+		console.error(`${sym.fail} ${message}`);
+		if (extra.after) console.error(extra.after);
+		return 1;
+	};
 	// One public route per install: a hub (polycarp browser hub setup) owns it.
 	if (existsSync(hubFile())) {
-		console.error(`${sym.fail} This install is set up as a hub (${hubFile()}), and an install has one public route. Run ${COMMAND_NAME} hub off first. Nothing was changed.`);
-		return 1;
+		return fail("problem", `This install is set up as a hub (${hubFile()}), and an install has one public route. Run ${COMMAND_NAME} hub off first. Nothing was changed.`, { code: "hub" });
 	}
 	let previous: RemoteConfig | undefined;
 	try {
 		previous = loadRemoteConfig();
 	} catch (err) {
-		console.error(`${sym.fail} ${err instanceof Error ? err.message : String(err)} Nothing was changed; run ${COMMAND_NAME} remote off first.`);
-		return 1;
+		return fail("problem", `${err instanceof Error ? err.message : String(err)} Nothing was changed; run ${COMMAND_NAME} remote off first.`, { code: "config" });
 	}
 	const port = options.port ?? previous?.port ?? DEFAULT_PORT;
 	// Plan: everything that can refuse, before anything changes.
 	let publicUrl: string;
 	let route: RemoteConfig["route"];
 	let funnelBin = "";
+	let funnelDns = "";
 	if (options.publicUrl) {
 		if (previous?.route === "funnel") {
-			console.error(`${sym.fail} Funnel from an earlier setup is on. Run ${COMMAND_NAME} remote off first.`);
-			return 1;
+			return fail("problem", `Funnel from an earlier setup is on. Run ${COMMAND_NAME} remote off first.`);
 		}
 		// Funnel on 8443 would stay public and forward to this machine, whatever front door the user adds.
-		if (which("tailscale")) {
+		if (tailscaleBinary()) {
 			const stray = await strayFunnel();
 			if (stray.kind !== "none") {
-				console.error(`${sym.fail} Funnel on ${FUNNEL_PORT} is on${stray.kind === "unknown" ? ` (${stray.message})` : ""}; run ${COMMAND_NAME} remote off first. Nothing was changed.`);
-				return 1;
+				return fail("port_busy", `Funnel on ${FUNNEL_PORT} is on${stray.kind === "unknown" ? ` (${stray.message})` : ""}; run ${COMMAND_NAME} remote off first. Nothing was changed.`);
 			}
 		}
 		publicUrl = options.publicUrl;
 		route = "custom";
 	} else {
 		const plan = planFunnel(previous?.route === "funnel" ? [port, previous.port] : [port]);
-		if (!plan.ok) {
-			console.error(`${sym.fail} ${plan.message}`);
-			return 1;
-		}
+		if (!plan.ok) return fail(plan.state, plan.message, plan.code ? { code: plan.code } : {});
 		funnelBin = plan.bin;
+		funnelDns = plan.dns;
 		publicUrl = `https://${plan.dns}:${FUNNEL_PORT}`;
 		route = "funnel";
 	}
 	const installed = serviceFile();
 	if (!options.service && installed && existsSync(installed)) {
-		console.error(`${sym.fail} A service from an earlier setup is installed (${installed}), and --no-service would leave it running. Run ${COMMAND_NAME} remote off first. Nothing was changed.`);
-		return 1;
+		return fail("problem", `A service from an earlier setup is installed (${installed}), and --no-service would leave it running. Run ${COMMAND_NAME} remote off first. Nothing was changed.`);
 	}
 	if (options.service && !launcherValid()) {
-		console.error(`${sym.fail} ${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then ${COMMAND_NAME} remote setup again.`);
-		return 1;
+		return fail("problem", `${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then ${COMMAND_NAME} remote setup again.`, { code: "launcher" });
 	}
 	// Whatever listens on the port must be Polycarp with OAuth for this URL, or Funnel would publish something else.
 	const probe = await probeLocal(port, publicUrl);
@@ -280,55 +422,74 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 		const file = serviceFile();
 		const restartsOurs = options.service && Boolean(file && existsSync(file)) && previous?.port === port;
 		if (!restartsOurs) {
-			console.error(
-				`${sym.fail} Something already listens on 127.0.0.1:${port} and isn't Polycarp serve for ${publicUrl} (${probe.detail}). Nothing was changed. Stop it (a ${COMMAND_NAME} serve you started by hand, or another program), or pick another port with --port, then run ${COMMAND_NAME} remote setup again.`,
+			return fail(
+				"port_busy",
+				`Something already listens on 127.0.0.1:${port} and isn't Polycarp serve for ${publicUrl} (${probe.detail}). Nothing was changed. Stop it (a ${COMMAND_NAME} serve you started by hand, or another program), or pick another port with --port, then run ${COMMAND_NAME} remote setup again.`,
+				{ code: "local_port" },
 			);
-			return 1;
 		}
 	}
 	if (options.passcode === false && !passcodeSet()) {
-		console.log(`${sym.dot} No passcode made (--no-passcode). Approve a connection with a one-time connect code: ${COMMAND_NAME} token approval-code. ${COMMAND_NAME} token passcode sets a passcode later.`);
+		say(`${sym.dot} No passcode made (--no-passcode). Approve a connection with a one-time connect code: ${COMMAND_NAME} token approval-code. ${COMMAND_NAME} token passcode sets a passcode later.`);
 	} else if (!passcodeSet()) {
-		const passcode = setPasscode();
-		console.log(`${sym.ok} OAuth passcode:\n\n  ${passcode}\n`);
-		console.log(c.dim(`Shown once. Type it on the approval page when claude.ai, ChatGPT or grok.com connects. Keep it in a password manager, but not one the browser Polycarp drives can fill. ${COMMAND_NAME} token passcode replaces it; grants already approved keep working.`));
+		madePasscode = setPasscode();
+		say(`${sym.ok} OAuth passcode:\n\n  ${madePasscode}\n`);
+		say(c.dim(`Shown once. Type it on the approval page when claude.ai, ChatGPT or grok.com connects. Keep it in a password manager, but not one the browser Polycarp drives can fill. ${COMMAND_NAME} token passcode replaces it; grants already approved keep working.`));
 	}
-	saveRemoteConfig({ publicUrl, port, route, ...(previous?.redirectHosts ? { redirectHosts: previous.redirectHosts } : {}), ...(previous?.allowHosts ? { allowHosts: previous.allowHosts } : {}) });
-	console.log(`${sym.ok} Wrote ${c.dim(remoteFile())}`);
-	let listening = probe.state === "match";
-	if (options.service) {
-		const service = await installService();
-		console.log(`${service.ok ? sym.ok : sym.fail} ${service.message}`);
-		if (!service.ok) {
-			console.error(`${sym.fail} The service didn't start, so ${route === "funnel" ? "Funnel was not opened" : "setup isn't finished"}. remote.json is kept; fix the cause above and run ${COMMAND_NAME} remote setup again.`);
-			return 1;
-		}
-		if (!(await waitForServe(port, publicUrl, 15_000))) {
-			console.error(
-				`${sym.fail} ${COMMAND_NAME} serve isn't answering on 127.0.0.1:${port} with ${publicUrl}/mcp after 15 seconds, so ${route === "funnel" ? "Funnel was not opened" : "setup isn't finished"}. Look in ${serviceLogHint()}. remote.json is kept; fix the cause and run ${COMMAND_NAME} remote setup again.`,
-			);
-			return 1;
-		}
-		listening = true;
-	}
-	if (route === "funnel" && !listening) {
-		console.log(`${sym.warn} Start ${COMMAND_NAME} serve (it reads remote.json), then run ${COMMAND_NAME} remote setup --no-service again to open Funnel.`);
-	} else if (route === "funnel") {
-		const r = run(funnelBin, ["funnel", "--bg", "--yes", `--https=${FUNNEL_PORT}`, `http://127.0.0.1:${port}`]);
-		if (r.code !== 0) {
-			const login = /https:\/\/login\.tailscale\.com\/[^\s"'<>]*/.exec(r.out);
-			if (login) {
-				console.error(`${sym.fail} Funnel isn't enabled for this tailnet or node yet. Open ${login[0]}, enable it, then run ${COMMAND_NAME} remote setup again.`);
-			} else {
-				console.error(`${sym.fail} tailscale funnel failed: ${r.out}`);
+	// Every step from here on has made (or may have made) a passcode a later run won't print, so in JSON mode a throw is still a report.
+	let stage = "config";
+	try {
+		saveRemoteConfig({ publicUrl, port, route, ...(previous?.redirectHosts ? { redirectHosts: previous.redirectHosts } : {}), ...(previous?.allowHosts ? { allowHosts: previous.allowHosts } : {}) });
+		say(`${sym.ok} Wrote ${c.dim(remoteFile())}`);
+		stage = "service";
+		let listening = probe.state === "match";
+		if (options.service) {
+			const service = await installService();
+			say(`${service.ok ? sym.ok : sym.fail} ${service.message}`);
+			if (!service.ok) {
+				return fail("problem", `The service didn't start, so ${route === "funnel" ? "Funnel was not opened" : "setup isn't finished"}. remote.json is kept; fix the cause and run ${COMMAND_NAME} remote setup again.${json ? ` (${service.message})` : ""}`, { code: "service" });
 			}
-			console.error(`${sym.dot} remote.json is kept. Fix that, then run ${COMMAND_NAME} remote setup again, or ${COMMAND_NAME} remote off to undo setup.`);
-			return 1;
+			if (!(await waitForServe(port, publicUrl, serveWaitMs()))) {
+				return fail(
+					"problem",
+					`${COMMAND_NAME} serve isn't answering on 127.0.0.1:${port} with ${publicUrl}/mcp after ${Math.round(serveWaitMs() / 1000)} seconds, so ${route === "funnel" ? "Funnel was not opened" : "setup isn't finished"}. Look in ${serviceLogHint()}. remote.json is kept; fix the cause and run ${COMMAND_NAME} remote setup again.`,
+					{ code: "serve" },
+				);
+			}
+			listening = true;
 		}
-		console.log(`${sym.ok} Tailscale Funnel on ${publicUrl} ${c.dim(`-> 127.0.0.1:${port}`)}`);
-	}
-	if (!options.service && (route === "custom" || listening)) console.log(`${sym.dot} No service installed. Start it yourself: ${c.bold(`${COMMAND_NAME} serve`)}`);
-	console.log(`
+		if (!listening && (route === "funnel" || json)) {
+			// Nothing answers on the port: Funnel stays closed (or, on your own route, there is nothing to reach), so this is not "on".
+			return fail(
+				"problem",
+				`Nothing is listening on 127.0.0.1:${port} yet, so ${route === "funnel" ? "Funnel was not opened" : "remote access isn't on"}. remote.json is kept. Start ${COMMAND_NAME} serve (it reads remote.json), then run ${COMMAND_NAME} remote setup --no-service again.`,
+				{ code: "serve" },
+			);
+		}
+		stage = "funnel";
+		if (route === "funnel") {
+			const opened = await openFunnel(funnelBin, funnelDns, port);
+			const after = `${sym.dot} remote.json is kept. Fix that, then run ${COMMAND_NAME} remote setup again, or ${COMMAND_NAME} remote off to undo setup.`;
+			if (opened.kind === "not_allowed") {
+				return fail("funnel_not_allowed", `Funnel isn't enabled for this tailnet or node yet. Open ${opened.url}, enable it, then run ${COMMAND_NAME} remote setup again.`, { adminUrl: opened.url, after });
+			}
+			if (opened.kind === "failed") return fail("problem", `tailscale funnel failed: ${opened.message}`, { code: "funnel", after });
+			say(`${sym.ok} Tailscale Funnel on ${publicUrl} ${c.dim(`-> 127.0.0.1:${port}`)}`);
+		}
+		if (!options.service) say(listening ? `${sym.dot} No service installed. Start it yourself: ${c.bold(`${COMMAND_NAME} serve`)}` : `${sym.warn} Nothing is listening on 127.0.0.1:${port} yet. Start it yourself: ${c.bold(`${COMMAND_NAME} serve`)}`);
+		if (json) {
+			const report: SetupReport = {
+				ok: true,
+				state: "on",
+				message: "Connector ready.",
+				connectorUrl: `${publicUrl}/mcp`,
+				...(madePasscode ? { passcode: madePasscode } : {}),
+				passcodeSet: passcodeSet(),
+			};
+			printReport(report);
+			return 0;
+		}
+		console.log(`
 Connector URL: ${c.bold(`${publicUrl}/mcp`)}
 
   claude.ai   Settings > Connectors > Add custom connector, paste the URL.
@@ -337,7 +498,11 @@ Connector URL: ${c.bold(`${publicUrl}/mcp`)}
 
 ${passcodeSet() ? "Approve with your Polycarp passcode." : `Approve with a one-time connect code: ${COMMAND_NAME} token approval-code.`}
 Check it with: ${COMMAND_NAME} remote status`);
-	return 0;
+		return 0;
+	} catch (err) {
+		if (!json) throw err;
+		return fail("problem", `${err instanceof Error ? err.message : String(err)}. remote.json is kept; fix the cause and run ${COMMAND_NAME} remote setup again.`, { code: stage });
+	}
 }
 
 // ---------- remote status ----------
@@ -387,6 +552,16 @@ export async function dnsCheck(host: string): Promise<Check> {
 	return { name, status: "fail", detail: `public DNS has no A record for ${host}` };
 }
 
+/** Read-only: can setup go ahead? ready, or the first thing in the way. Runs the same checks setup runs before it changes anything. */
+export async function preflight(): Promise<{ state: RemoteState; message: string; code?: string }> {
+	if (existsSync(hubFile())) return { state: "problem", message: `This install is set up as a hub (${hubFile()}), and an install has one public route. Run ${COMMAND_NAME} hub off first.`, code: "hub" };
+	const plan = planFunnel([DEFAULT_PORT]);
+	if (!plan.ok) return { state: plan.state, message: plan.message, ...(plan.code ? { code: plan.code } : {}) };
+	const probe = await probeLocal(DEFAULT_PORT, `https://${plan.dns}:${FUNNEL_PORT}`);
+	if (probe.state === "other") return { state: "port_busy", message: `Something already listens on 127.0.0.1:${DEFAULT_PORT} and isn't Polycarp serve (${probe.detail}).`, code: "local_port" };
+	return { state: "ready", message: "Ready to turn on." };
+}
+
 export async function remoteStatus(options: { json: boolean }): Promise<number> {
 	const checks: Check[] = [];
 	let config: RemoteConfig | undefined;
@@ -401,7 +576,21 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 		checks.push({ name: "remote.json", status: "fail", detail: `${remoteFile()} not found. Run ${COMMAND_NAME} remote setup.` });
 	}
 	let clients = 0;
-	if (config) {
+	// On the Funnel route, Tailscale going away (quit, signed out, uninstalled, Tailnet Lock turned on) is the first thing to say, and
+	// nothing past it can work, so the internet-side checks are skipped.
+	const blocked = config?.route === "funnel" ? tailscaleReady() : undefined;
+	let tailscale: { state: RemoteState; message: string } | undefined = blocked && !blocked.ok ? { state: blocked.state, message: blocked.message } : undefined;
+	if (blocked?.ok && config && blocked.state.kind === "ok") {
+		// Signed in, but Funnel isn't open for the address remote.json names (turned off in Tailscale, or an earlier refusal never retried):
+		// the connector can't be reached from the internet, whatever else answers.
+		const address = new URL(config.publicUrl);
+		const key = `${address.hostname}:${address.port || "443"}`;
+		if (blocked.state.allowFunnel[key] !== true) {
+			tailscale = { state: "funnel_closed", message: `Tailscale Funnel isn't open for ${key}, so assistants can't reach this computer. Run ${COMMAND_NAME} remote setup to open it again.` };
+		}
+	}
+	if (tailscale) checks.push({ name: "tailscale", status: "fail", detail: tailscale.message });
+	if (config && !tailscale) {
 		const passcode = passcodeSet();
 		checks.push({ name: "passcode", status: passcode ? "ok" : "warn", detail: passcode ? "set" : `not set; only a connect code (${COMMAND_NAME} token approval-code) can approve a connection. ${COMMAND_NAME} token passcode sets one.` });
 		const local = await probeLocal(config.port, config.publicUrl, 3000);
@@ -430,7 +619,22 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 	}
 	const ok = checks.every((x) => x.status !== "fail");
 	if (options.json) {
-		process.stdout.write(`${JSON.stringify({ ok, route: config?.route ?? null, publicUrl: config?.publicUrl ?? null, oauthClients: clients, checks }, null, 2)}\n`);
+		// The state is the app's answer; the checks stay for anyone who wants the detail. The passcode itself is never here.
+		const extensionConnected = config && !tailscale ? (await connectionChecks()).checks.some((x) => x.id === "connected" && x.status === "ok") : undefined;
+		const { state, message, code } = stateFromStatus({ configured: Boolean(config), checks, extensionConnected, preflight: config ? undefined : await preflight(), tailscale });
+		printReport({
+			ok,
+			state,
+			message,
+			...(code ? { code } : {}),
+			route: config?.route ?? null,
+			publicUrl: config?.publicUrl ?? null,
+			connectorUrl: config ? `${config.publicUrl}/mcp` : null,
+			passcodeSet: passcodeSet(),
+			extensionConnected: extensionConnected ?? null,
+			oauthClients: clients,
+			checks,
+		});
 		return ok ? 0 : 1;
 	}
 	for (const check of checks) {
@@ -444,7 +648,8 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 
 /** Close Funnel on 8443. A failure that leaves the entry in place is a failure; an entry already gone counts as off. */
 function funnelOff(bin: string | undefined): { ok: boolean; message: string } {
-	const r = bin ? run(bin, ["funnel", `--https=${FUNNEL_PORT}`, "off"]) : { code: 1, out: "tailscale isn't on PATH" };
+	// Bounded like opening it: a call that never ends is a failure that leaves Funnel as it was.
+	const r = bin ? run(bin, ["funnel", `--https=${FUNNEL_PORT}`, "off"], 30_000) : { code: 1, out: `Tailscale wasn't found (not on PATH, and not at ${tailscaleAppPath()})` };
 	if (r.code === 0) return { ok: true, message: `Tailscale Funnel on port ${FUNNEL_PORT} is off.` };
 	if (bin) {
 		const state = readTailscale(bin);
@@ -465,7 +670,7 @@ export async function remoteOff(): Promise<number> {
 	if (badFile !== undefined) console.log(`${sym.warn} ${badFile}`);
 	let code = 0;
 	if (config?.route === "funnel") {
-		const r = funnelOff(which("tailscale"));
+		const r = funnelOff(tailscaleBinary());
 		if (!r.ok) {
 			console.error(`${sym.fail} ${r.message}`);
 			return 1;
