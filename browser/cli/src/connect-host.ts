@@ -11,6 +11,7 @@
  * ten per ten minutes, counted in a private file so a new host process does not reset it. Nothing here prints to stdout: that stream is the channel to the browser.
  */
 
+import { COMMAND_NAME } from "./self.ts";
 import type { HostConnect } from "../../src/bridge/protocol.ts";
 import {
 	type ApprovalCode,
@@ -162,7 +163,7 @@ const MINT_FILE = "connect-mints.json";
 const NOT_MANAGER = "This device isn't a manager, so it can't ask the hub for codes. Link it with a code from polycarp browser hub code --manage, or run the command on the hub.";
 const NO_ROUTE = "This computer has no public address yet. Run polycarp browser remote setup (one computer) or polycarp browser hub setup --public-url https://host (many devices) first.";
 
-const GENERIC_FAILURE = "That didn't work on this computer. Try again, or run the matching tabkyra command in a terminal.";
+const GENERIC_FAILURE = "That didn't work on this computer. Try again, or run the matching ${COMMAND_NAME} command in a terminal.";
 const unreadable = (file: string) => `${file} is unreadable. Fix it or move it aside.`;
 
 /** The longest sentence that passes through from the library or a hub; the panel shows it as written. */

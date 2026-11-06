@@ -2,7 +2,7 @@
  * Remote MCP: `polycarp browser serve` exposes the MCP server over Streamable HTTP for agents that
  * aren't on this machine (cloud agents, another device), and `polycarp browser token` manages who
  * may use it. Off unless started. It binds to loopback only; reaching it from elsewhere
- * goes through a tunnel that terminates TLS (`tabkyra tunnel`, tunnel.ts).
+ * goes through a tunnel that terminates TLS (`polycarp browser tunnel`, tunnel.ts).
  *
  * Every request needs a bearer token. Tokens are per client, scoped, revocable, and stored
  * only as SHA-256 hashes. There is no wildcard: a token lists its scopes, and a session sees
@@ -10,6 +10,7 @@
  * listed or called.
  */
 
+import { COMMAND_NAME } from "./self.ts";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -291,7 +292,7 @@ export interface ServeOptions {
 
 /** Serve MCP over Streamable HTTP on loopback. Each session is bound to the token that opened it. */
 export async function serve(options: ServeOptions): Promise<{ close: () => Promise<void>; url: string; sessionCount: () => number; closeSessions: () => void }> {
-	if (!LOOPBACK.has(options.host)) throw new Error(`polycarp browser serve binds to loopback only (got ${options.host}). Use tabkyra tunnel to reach it from another device over TLS.`);
+	if (!LOOPBACK.has(options.host)) throw new Error(`polycarp browser serve binds to loopback only (got ${options.host}). Use ${COMMAND_NAME} tunnel to reach it from another device over TLS.`);
 	if (options.acceptLinkTokens && options.oauth) throw new Error("A link token is never accepted on a public route: acceptLinkTokens can't be combined with a public URL.");
 	const sessions = new Map<string, { transport: StreamableHTTPServerTransport; tokenId: string; lastSeen: number }>();
 	const IDLE_MS = 30 * 60_000;

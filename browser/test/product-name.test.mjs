@@ -12,9 +12,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Lines that may say Tabkyra, by file, with the reason. A line carrying the marker comment is allowed too. */
 const ALLOW = new Map([
-	// The tab group title an earlier version used; groups it left behind are still recognized and tidied.
-	["src/browser/session.ts", "legacy tab group title"],
-	["src/bridge/native.ts", "legacy tab group title"],
+	// The setup prompt names the section heading and the clone folder that earlier setups made.
+	["src/agent-setup-prompt.ts", "earlier section heading and clone folder"],
 	// The skill gate: its rules and tests match on these words (the install marker, "the tabkyra skill"), and the lint, its
 	// router and the catalog are maintainer-reviewed. They change only in a change that is about them.
 	["cli/src/skill-lint.ts", "skill lint matches the install marker"],
@@ -33,9 +32,13 @@ function* walk(dir) {
 }
 
 const TEXT_DIRS = ["src", "static", "cli/src"];
+// Capitalized in prose, also right after a "\n" escape in source, where there is no word boundary to see.
 const CAPITAL = /\bTabkyra\b/;
+// Lowercase in prose: "the tabkyra side panel", "the matching tabkyra command". The command, the MCP server name, the host
+// name and the folders are lowercase too, but none of them is followed by one of these words.
+const PROSE = /(?<![/\w.@-])tabkyra (?:side panel|panel|command|extension|helper|app|host|bridge|cli)\b/i;
 // "tabkyra setup" in text a person reads: the command to type is `polycarp browser setup`.
-const COMMAND = /(?<![/\w.@-])tabkyra (?=(?:setup|doctor|install|update|reload|status|allow|deny|skill|theme|serve|hub|link|remote|token|threads|sessions|tabs|library|debug|host|pi-extension|copilot-sdk|completion|version|help)\b)/;
+const COMMAND = /(?<![/\w.@-])tabkyra (?=(?:setup|doctor|install|update|reload|status|allow|deny|skill|theme|serve|hub|link|remote|token|threads|sessions|tabs|library|debug|host|pi-extension|copilot-sdk|completion|version|help|tunnel|sessions|reload)\b)/;
 
 test("no user-visible text says Tabkyra", () => {
 	const found = [];
@@ -44,10 +47,12 @@ test("no user-visible text says Tabkyra", () => {
 			const rel = relative(root, file);
 			readFileSync(file, "utf8")
 				.split("\n")
-				.forEach((line, i) => {
-					if (!CAPITAL.test(line) && !COMMAND.test(line)) return;
-					if (line.includes(MARKER) || ALLOW.has(rel)) return;
-					found.push(`${rel}:${i + 1}: ${line.trim().slice(0, 100)}`);
+				.forEach((raw, i) => {
+					// "\nTabkyra" in source has no word boundary; read the escapes as the spaces they print as.
+					const line = raw.replace(/\\[nrt]/g, " ");
+					if (!CAPITAL.test(line) && !COMMAND.test(line) && !PROSE.test(line)) return;
+					if (raw.includes(MARKER) || ALLOW.has(rel)) return;
+					found.push(`${rel}:${i + 1}: ${raw.trim().slice(0, 100)}`);
 				});
 		}
 	}

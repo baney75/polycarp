@@ -5,7 +5,7 @@ import { runDoctor } from "./doctor.ts";
 import { runNativeHost } from "./host.ts";
 import { browserDirs, hostStatus, install, isInstalled } from "./install.ts";
 import { runMcpServer } from "./mcp.ts";
-import { COMPILED } from "./self.ts";
+import { COMMAND_NAME, COMPILED } from "./self.ts";
 import { EXTENSION_FILES, extensionDir } from "./paths.ts";
 import { writePiExtension } from "./pi-extension.ts";
 import { parseSetupArgs, parseUpdateArgs } from "./parse-args.ts";
@@ -703,7 +703,7 @@ async function main(): Promise<void> {
 					: kind === "cloudflare"
 						? await cloudflareTunnel({ port, off: flag("--off") })
 						: undefined;
-			if (!result) throw new UsageError("Usage: tabkyra tunnel tailscale|cloudflare [--port N] [--public] [--off]");
+			if (!result) throw new UsageError(`Usage: ${COMMAND_NAME} tunnel tailscale|cloudflare [--port N] [--public] [--off]`);
 			if (flag("--public") && kind === "tailscale" && !flag("--off")) console.log(`${sym.warn} --public uses Tailscale Funnel: anyone on the internet can reach it, and the token is the only lock.`);
 			console.log(`${result.ok ? sym.ok : sym.fail} ${result.message}`);
 			process.exitCode = result.ok ? 0 : 1;

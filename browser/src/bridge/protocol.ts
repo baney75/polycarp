@@ -1,5 +1,5 @@
 /**
- * Wire protocol of the tabkyra bridge. Shared by the extension (src/bridge) and
+ * Wire protocol of the Polycarp bridge. Shared by the extension (src/bridge) and
  * the CLI (cli/src), which imports this file directly.
  *
  *   harness ── stdio MCP ── `tabkyra mcp` ── unix socket ── native host ── native messaging ── extension

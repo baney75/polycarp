@@ -281,7 +281,7 @@ export const COMMANDS: CommandSpec[] = [
 	{ name: "install", what: "Re-register the native host with every browser, or with --browser <name> only that one", group: "Troubleshoot", flags: ["--force", "--browser"] },
 	{ name: "reload", what: "Reload the extension after rebuilding dist-chrome", group: "Troubleshoot" },
 	{ name: "debug", what: "Bridge state, request timings and a benchmark (JSON)", group: "Troubleshoot" },
-	{ name: "completion", positional: 1, args: "zsh|bash|fish", what: 'Shell completions: eval "$(polycarp browser completion zsh)"', group: "Troubleshoot", values: ["zsh", "bash", "fish"] },
+	{ name: "completion", positional: 1, args: "zsh|bash|fish", what: 'Completions for the tabkyra command name: eval "$(tabkyra completion zsh)"', group: "Troubleshoot", values: ["zsh", "bash", "fish"] }, // product-name allowlist: completions are for the tabkyra command name
 	{ name: "version", what: "This CLI's version (also --version)", group: "Troubleshoot", flags: ["--json"] },
 	{ name: "help", selfParsed: true, what: "This help (also --help)", group: "Troubleshoot", hidden: true },
 	{ name: "host", selfParsed: true, what: "The native host the browser starts", group: "Troubleshoot", hidden: true },
@@ -368,7 +368,7 @@ export function completionScript(shell: string): string | undefined {
 	if (shell === "zsh") {
 		const lines = [
 			"#compdef tabkyra",
-			'# polycarp browser completion for zsh. Load it with: eval "$(polycarp browser completion zsh)"',
+			'# completion for the tabkyra command name (zsh). Load it with: eval "$(tabkyra completion zsh)"', // product-name allowlist: completions are for the tabkyra command name
 			"_tabkyra() {",
 			"  local -a commands subs flags",
 			"  local paths=0",
@@ -376,7 +376,7 @@ export function completionScript(shell: string): string | undefined {
 			...cmds.map((c) => `    '${sh(c.name)}:${desc(c.summary ?? c.what)}'`),
 			"  )",
 			"  if (( CURRENT == 2 )); then",
-			"    _describe -t commands 'tabkyra command' commands",
+			"    _describe -t commands 'command' commands",
 			"    return",
 			"  fi",
 			"  case $words[2] in",
@@ -434,7 +434,7 @@ export function completionScript(shell: string): string | undefined {
 				return `    ${sh(f)}) ${values ? `COMPREPLY=( $(compgen -W "${values}" -- "$cur") ); ` : ""}compopt +o default 2>/dev/null; return ;;`;
 			});
 		const lines = [
-			'# polycarp browser completion for bash. Load it with: eval "$(polycarp browser completion bash)"',
+			'# completion for the tabkyra command name (bash). Load it with: eval "$(tabkyra completion bash)"', // product-name allowlist: completions are for the tabkyra command name
 			"_tabkyra() {",
 			'  local cur="${COMP_WORDS[COMP_CWORD]}" prev="${COMP_WORDS[COMP_CWORD-1]}" paths=0',
 			"  COMPREPLY=()",
@@ -480,7 +480,7 @@ export function completionScript(shell: string): string | undefined {
 		return lines.join("\n");
 	}
 	if (shell === "fish") {
-		const lines = ["# polycarp browser completion for fish. Load it with: polycarp browser completion fish | source"];
+		const lines = ["# completion for the tabkyra command name (fish). Load it with: tabkyra completion fish | source"]; // product-name allowlist: completions are for the tabkyra command name
 		for (const c of cmds) lines.push(`complete -c tabkyra -n __fish_use_subcommand -f -a ${sh(c.name)} -d '${desc(c.summary ?? c.what)}'`);
 		for (const c of cmds) {
 			const subs = c.subcommands ?? [];

@@ -30,7 +30,6 @@ export class AboutTab extends SettingsTab {
 				<div class="text-sm text-muted-foreground space-y-1">
 					<p class="text-foreground">${i18n("You steer. Polycarp works the tabs.")}</p>
 					<p>${i18n("An AI agent in your side panel, and a browser your coding agents can drive.")}</p>
-					<p>${i18n("The name joins tab and kyra, from Greek kybernētēs, “helmsman”.")}</p>
 				</div>
 
 				<div class="rounded-lg border border-border p-3 text-sm space-y-2">

@@ -369,7 +369,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	state.lastActivityAt = Date.now();
 	try {
 		if (!(await isBridgeEnabled())) {
-			throw new BridgeError(ERR.DISABLED, "The tabkyra bridge is disabled in Settings > Agents.");
+			throw new BridgeError(ERR.DISABLED, "The Polycarp bridge is disabled in Settings > Agents.");
 		}
 		if (gone()) return;
 
@@ -399,7 +399,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 							? "Not allowed to open Polycarp's own pages."
 							: `Not allowed to open ${hostOf(url) || url}. ` +
 									(mode === "ask"
-										? "The user can allow it in the tabkyra side panel under Settings > Agents, or answer the permission prompt."
+										? "The user can allow it in the Polycarp side panel under Settings > Agents, or answer the permission prompt."
 										: "Bridge navigation is blocked."),
 					);
 				}
@@ -462,7 +462,7 @@ async function runAsk(state: ClientState, req: HostForwardedRequest): Promise<vo
 			});
 		if (!(await isBridgeEnabled()))
 			return respond({
-				error: { code: ERR.DISABLED, message: "The tabkyra bridge is disabled in Settings > Agents." },
+				error: { code: ERR.DISABLED, message: "The Polycarp bridge is disabled in Settings > Agents." },
 			});
 		// The client may have hung up during the awaits; its question would have nobody to answer to.
 		if (clients.get(state.clientId) !== state) return;

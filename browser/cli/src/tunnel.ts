@@ -1,5 +1,5 @@
 /**
- * `tabkyra tunnel`: reach `polycarp browser serve` from another device or a cloud agent through a
+ * `polycarp browser tunnel`: reach `polycarp browser serve` from another device or a cloud agent through a
  * tunnel the user owns, which terminates TLS. Nothing is exposed until the user runs one.
  *
  * - tailscale: `tailscale serve` publishes https://<this machine>.<tailnet>.ts.net/tabkyra
@@ -12,6 +12,7 @@
  * Polycarp doesn't install either tool.
  */
 
+import { COMMAND_NAME } from "./self.ts";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -125,7 +126,7 @@ export async function cloudflareTunnel(options: { port: number; off: boolean; ti
 		}
 		return { ok: true, message: "Stopped the Cloudflare tunnel." };
 	}
-	if (ourCloudflared() !== undefined) return { ok: false, message: "A Cloudflare tunnel is already running. Run tabkyra tunnel cloudflare --off first." };
+	if (ourCloudflared() !== undefined) return { ok: false, message: "A Cloudflare tunnel is already running. Run ${COMMAND_NAME} tunnel cloudflare --off first." };
 	const bin = which("cloudflared");
 	if (!bin) {
 		return {

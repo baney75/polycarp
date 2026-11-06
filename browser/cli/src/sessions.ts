@@ -4,6 +4,7 @@
  * session of its own.
  */
 
+import { COMMAND_NAME } from "./self.ts";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { banner, c, sym } from "./ui.ts";
 
@@ -78,7 +79,7 @@ function printList(list: Described[]): void {
 		const group = s.group?.title ?? `Polycarp · ${s.label}`;
 		console.log(`${pad(c.bold(s.name), 22)}${pad(s.agent ?? (s.kind === "panel" ? "panel" : "-"), 9)}${pad(group, 34)}${pad(String(s.tabCount), 6)}${pad(state(s), 13)}${ago(s.lastUsedAt)}`);
 	}
-	console.log(c.dim(`\nTabkyra sessions show <name> lists a session's tabs; end, rename, focus, collapse and expand act on one.`));
+	console.log(c.dim(`\n${COMMAND_NAME} sessions show <name> lists a session's tabs; end, rename, focus, collapse and expand act on one.`));
 }
 
 function printOne(s: Described): void {

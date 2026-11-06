@@ -4,6 +4,7 @@
  * extensions and has no MCP client).
  */
 
+import { COMMAND_NAME } from "./self.ts";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -89,7 +90,7 @@ class Bridge {
 	private async ensure(): Promise<void> {
 		if (this.socket && !this.socket.destroyed) return;
 		const path = newestSocket();
-		if (!path) throw new Error("tabkyra browser bridge is not running (is the tabkyra extension loaded and \`polycarp browser install\` done?)");
+		if (!path) throw new Error("The Polycarp browser bridge is not running (is the Polycarp extension loaded and \`${COMMAND_NAME} install\` done?)");
 		await new Promise<void>((resolve, reject) => {
 			const socket = connect(path);
 			socket.once("error", reject);
