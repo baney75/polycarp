@@ -52,6 +52,95 @@ pub(super) fn set(
     })
 }
 
+/// Removes `key` from the table at `section`, keeping every other line and comment. A section
+/// left with no keys goes too, with the one blank line before it that `set` adds.
+pub(super) fn remove(text: &str, section: &[&str], key: &str) -> Result<Edited, String> {
+    let original: Table = text
+        .parse()
+        .map_err(|e: toml::de::Error| format!("not valid TOML: {}", e.message()))?;
+    let mut expected = original;
+    fn go(t: &mut Table, section: &[&str], key: &str) {
+        match section {
+            [] => {
+                t.remove(key);
+            }
+            [first, rest @ ..] => {
+                if let Some(Value::Table(sub)) = t.get_mut(*first) {
+                    go(sub, rest, key);
+                    if sub.is_empty() {
+                        t.remove(*first);
+                    }
+                }
+            }
+        }
+    }
+    go(&mut expected, section, key);
+    if let Some(edited) = remove_lines(text, &section.join("."), key) {
+        if edited.parse::<Table>().ok().as_ref() == Some(&expected) {
+            return Ok(Edited {
+                text: edited,
+                kept_comments: true,
+            });
+        }
+    }
+    let body = toml::to_string(&expected).map_err(|e| e.to_string())?;
+    Ok(Edited {
+        text: format!(
+            "# Comments were dropped when this file was last edited by `polycarp theme`.\n{body}"
+        ),
+        kept_comments: false,
+    })
+}
+
+fn remove_lines(text: &str, target: &str, key: &str) -> Option<String> {
+    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let mut current = String::new();
+    let mut header_at: Option<usize> = None;
+    let mut found: Option<usize> = None;
+    for (i, line) in lines.iter().enumerate() {
+        if let Some(h) = header_of(line) {
+            if h == target {
+                header_at = Some(i);
+            }
+            current = h;
+            continue;
+        }
+        if current == target && key_of(line).as_deref() == Some(key) {
+            found = Some(i);
+            break;
+        }
+    }
+    let at = found?;
+    // A one-line plain value only.
+    let eq = lines[at].find('=')?;
+    let rest = lines[at][eq + 1..].trim_start();
+    let end = value_end(rest)?;
+    let tail = rest[end..].trim();
+    if !(tail.is_empty() || tail.starts_with('#')) {
+        return None;
+    }
+    lines.remove(at);
+    if let Some(h) = header_at {
+        let body_empty = lines[h + 1..]
+            .iter()
+            .take_while(|l| header_of(l).is_none())
+            .all(|l| l.trim().is_empty());
+        if body_empty {
+            // Drop the header and the lines up to the next header, and one blank line before it.
+            let mut end = h + 1;
+            while end < lines.len() && header_of(&lines[end]).is_none() {
+                end += 1;
+            }
+            lines.drain(h..end);
+            if h > 0 && lines.get(h - 1).is_some_and(|l| l.trim().is_empty()) {
+                lines.remove(h - 1);
+            }
+        }
+    }
+    Some(join(&lines, eol))
+}
+
 /// A TOML value as one line of text.
 pub(super) fn render(v: &Value) -> String {
     v.to_string()
@@ -220,6 +309,22 @@ mod tests {
         assert!(e
             .text
             .ends_with("[surface.site.light]\naccent = \"#444444\"\n"));
+    }
+
+    #[test]
+    fn remove_undoes_a_set_exactly() {
+        let src = "# top\nname = \"x\"\n\n[light]\naccent = \"#111111\"\n";
+        for (section, key) in [
+            (vec!["light"], "border"),
+            (vec!["dark"], "muted"),
+            (vec!["surface", "site", "dark"], "accent"),
+        ] {
+            let set = set(src, &section, key, &s("#333333")).unwrap();
+            assert!(set.kept_comments);
+            let back = remove(&set.text, &section, key).unwrap();
+            assert!(back.kept_comments);
+            assert_eq!(back.text, src, "{section:?}");
+        }
     }
 
     #[test]

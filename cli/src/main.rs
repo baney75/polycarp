@@ -716,6 +716,11 @@ fn doctor() -> i32 {
             printing = false;
         }
     }
+    if let Some(line) = theme::doctor_line() {
+        if printing {
+            let _ = writeln!(out, "{line}");
+        }
+    }
     let _ = out.flush();
     if ok {
         0
