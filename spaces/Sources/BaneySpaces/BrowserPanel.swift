@@ -77,6 +77,8 @@ final class BrowserDropModel: ObservableObject {
     let folder: URL
     @Published var state: BrowserPanelState = .waiting
     @Published var showSteps = false
+    /// A rendered still (ImageRenderer) can't draw an AppKit view, so a render leaves the drag handler out.
+    var rendering = false
     private let onClose: () -> Void
     private let browserModel = BrowserModel.shared
     private var watching = false
@@ -133,8 +135,8 @@ struct BrowserDropView: View {
                 Text("\(model.browser) is running version \(loaded); Polycarp has \(current). Press the reload arrow on its card on the Extensions page.")
                     .font(Chrome.font(11)).foregroundStyle(.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             case .waiting:
-                Text("Drag this onto the Extensions page").font(Chrome.font(13, .bold))
-                DragTile(folder: model.folder)
+                Text("Drag this onto the Extensions page").font(Chrome.font(13, .bold)).multilineTextAlignment(.center).frame(maxWidth: .infinity)
+                DragTile(folder: model.folder, interactive: !model.rendering)
                 Text("Turn on Developer mode first, at the top right, if the page doesn't take it.")
                     .font(Chrome.font(11)).foregroundStyle(.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                 Button("Use Load unpacked instead") { model.useLoadUnpacked() }
@@ -160,6 +162,7 @@ struct BrowserDropView: View {
 /// Finder would hand over, so the Extensions page loads it as it loads a dropped folder.
 struct DragTile: View {
     let folder: URL
+    var interactive = true
     var body: some View {
         ZStack {
             Chrome.shape(.settingsTile).fill(Chrome.accent)
@@ -167,7 +170,7 @@ struct DragTile: View {
                 Image(systemName: "leaf.fill").font(Chrome.font(44)).foregroundStyle(Chrome.onAccent)
                 Text("Polycarp").font(Chrome.font(12, .bold)).foregroundStyle(Chrome.onAccent)
             }
-            DragSourceView(folder: folder)
+            if interactive { DragSourceView(folder: folder) }
         }
         .frame(width: 140, height: 120)
         .help("Drag onto the Extensions page")
