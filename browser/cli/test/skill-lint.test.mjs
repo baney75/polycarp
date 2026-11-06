@@ -395,7 +395,7 @@ test("a local copy is used only if apply recorded it, and never for a protected 
 	writeFileSync(join(local, "index.json"), JSON.stringify({ rsi: { baseSha256: null, appliedAt: "x" } }));
 	const r = runIn(home, "skill", "install");
 	assert.match(r.out, /local copy of rsi is not used: rsi changes only through a reviewed pull request/);
-	assert.match(r.out, /local copy of osint is not used: .*wasn't added with tabkyra skill apply/);
+	assert.match(r.out, /local copy of osint is not used: .*wasn't added with polycarp browser skill apply/);
 	for (const name of ["rsi", "osint"]) assert.doesNotMatch(readFileSync(join(home, ".claude", "skills", name, "SKILL.md"), "utf8"), /Planted line/);
 });
 

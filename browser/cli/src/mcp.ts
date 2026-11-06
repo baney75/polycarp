@@ -190,7 +190,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"The browser is signed in as the user. Ask the user before you act under their sign-in: sending messages or email, posting, buying, booking, deleting, changing settings, or submitting forms that do any of these.",
 				"Do not enter passwords or payment details.",
 				"When a page needs a sign-in or captcha, call tabs_show and ask the user to do it.",
-				"Opening a new site may need the user's approval; if a site is denied (\"Not allowed to open\"), tell the user to allow it in the Polycarp side panel (Settings > Agents) or with `polycarp browser allow <host>`; do not get around it.",
+				"Opening a new site may need the user's approval; if a site is denied (\"Not allowed to open\"), tell the user to allow it in the Polycarp side panel (Settings > Agents) or with `polycarp browser allow <host>`; do not try to get around it.",
 				"First call skill_match with the user's task (it needs no browser). If it names a skill, call skill_read for that one skill only and follow it; if it says none, work without one.",
 				"Call tabs_context before any browser tool: it shows your session, your tab group and tabs (including ones left from earlier work in this project) and news from the user. If it says Polycarp isn't connected, tell the user and stop browser work.",
 				"status adds the site permissions.",
