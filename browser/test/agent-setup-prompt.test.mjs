@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 // The "Copy setup prompt" button replaced the subscription sign-in paragraph. The prompt is
 // pasted into an agent with shell access, so it passes the same lint as a skill: no piped
 // installers, no secrets, no config tampering. It must also name every step setup needs.
@@ -33,7 +34,11 @@ test("the setup prompt covers install, connect, skills and a status check", () =
 
 test("the setup prompt refuses to build without a version to pin", () => {
 	assert.throws(() => agentSetupPrompt(""), /No extension version/);
-	assert.match(prompt, /git checkout browser-v1\.2\.3/);
+	assert.match(prompt, /git checkout --detach browser-v1\.2\.3/);
+	// A helper of another version isn't the one that matches, even if it runs.
+	assert.match(prompt, /--version prints 1\.2\.3 and [^\n]* doctor reports no problems/);
+	// A one-tag clone has no other ref to check out, so the fallback names what to fetch.
+	assert.match(prompt, /git fetch --depth 1 origin HEAD && git checkout --detach FETCH_HEAD/);
 	assert.match(prompt, /any local change, stop and ask me/);
 	// The existing-checkout branch comes before the clone, so an agent reading in order doesn't clone over it.
 	assert.ok(prompt.indexOf("If ~/polycarp-src/polycarp exists: cd into it") < prompt.indexOf("git clone"), "existing checkout is handled before cloning");
@@ -48,19 +53,13 @@ test("the setup prompt appends skills to the user's project AGENTS.md, not the c
 	const line = prompt.split("\n").find((l) => l.includes(">> AGENTS.md"));
 	assert.match(line, /cd back to the directory step 1 printed \(my project, not the Polycarp clone\); if you aren't sure it's my project's root, ask me\. If its AGENTS\.md already has a "## Browser: Polycarp" or "## Browser: Tabkyra" section \(the same section under its earlier name\), leave it as it is\. Otherwise run polycarp browser skill print >> AGENTS\.md/);
 	assert.match(prompt, /1\. Note the directory you started in[^\n]*pwd && node -v && git --version/);
-	// Clones dirtied by the old step: offer to restore, only on the user's yes.
-	// The restore offer comes before the doctor skip, so a working install still gets it, and the
-	// version checkout runs only on a clean tree.
-	const restoreAt = prompt.indexOf("git restore AGENTS.md");
-	assert.ok(restoreAt > 0 && restoreAt < prompt.indexOf("skip the rest of this step"));
-	assert.match(prompt, /Run it only if I say yes\./);
-	assert.match(prompt, /If git status shows any local change, stop and ask me\. With a clean checkout, run git fetch --tags && git checkout browser-v/);
+	// The version checkout runs only on a clean tree.
+	assert.match(prompt, /If git status shows any local change, stop and ask me\. With a clean checkout, run git fetch --depth 1 origin tag browser-v/);
 });
 
 test("the setup prompt passes the skill security lint", () => {
-	// The two agent-config writes the prompt makes, each on its own line, only at the user's request:
-	// the append to the project's AGENTS.md and the offered restore of the clone's.
-	const allowed = (line) => /^\s+- First, if ~\/polycarp-src\/polycarp exists and git status there lists AGENTS\.md as the only changed file, run git diff AGENTS\.md there\. If the diff only adds lines, starting with a "## Browser: Polycarp" or "## Browser: Tabkyra" section an earlier setup appended, show me that diff and offer to undo it:$/.test(line) || /Otherwise run polycarp browser skill print >> AGENTS\.md$/.test(line);
+	// The one agent-config write the prompt makes, on its own line, only at the user's request: the append to the project's AGENTS.md.
+	const allowed = (line) => /Otherwise run polycarp browser skill print >> AGENTS\.md$/.test(line);
 	const findings = lintText("setup prompt", prompt, { reference: true }).filter((f) => !(f.rule === "config-tamper" && allowed(prompt.split("\n")[f.line - 1])));
 	assert.deepEqual(findings, [], findings.map((f) => `${f.rule}: ${f.message}`).join("\n"));
 	assert.doesNotMatch(prompt, /\|\s*(sh|bash)\b/);
@@ -157,6 +156,14 @@ test("first-F7: after npm link succeeds, a prompt that started as `polycarp brow
 test("a section an earlier setup appended under either name counts as the same section", () => {
 	for (const text of [prompt, standalone]) {
 		assert.match(text, /"## Browser: Polycarp" or "## Browser: Tabkyra" section \(the same section under its earlier name\), leave it as it is/);
-		assert.match(text, /starting with a "## Browser: Polycarp" or "## Browser: Tabkyra" section an earlier setup appended/);
 	}
+});
+
+test("no release tag until the helper at that commit knows the store extension's id", () => {
+	const script = join(repo, "scripts", "tag-browser-release.sh");
+	const install = readFileSync(join(repo, "cli", "src", "install.ts"), "utf8");
+	const hasId = /STORE_EXTENSION_ID: string = "[a-p]{32}"/.test(install);
+	const run = spawnSync("bash", [script, "--check"], { encoding: "utf8" });
+	assert.equal(run.status, hasId ? 0 : 1, run.stderr);
+	if (!hasId) assert.match(run.stderr, /STORE_EXTENSION_ID/);
 });

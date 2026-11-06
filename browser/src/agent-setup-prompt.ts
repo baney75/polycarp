@@ -15,13 +15,10 @@ export function agentSetupPrompt(version: string, command = "tabkyra"): string {
 1. Note the directory you started in, then check that Node 20+ and git are installed: pwd && node -v && git --version
    Remember the directory pwd printed: it is my project.
 2. Install the CLI that matches the extension.
-   - First, if ~/polycarp-src/polycarp exists and git status there lists AGENTS.md as the only changed file, run git diff AGENTS.md there. If the diff only adds lines, starting with a "## Browser: Polycarp" or "## Browser: Tabkyra" section an earlier setup appended, show me that diff and offer to undo it:
-     (cd ~/polycarp-src/polycarp && git restore AGENTS.md)
-     Run it only if I say yes.
-   - If ${command} runs and ${command} doctor reports no problems with the CLI or the build, skip the rest of this step and go to step 3. Otherwise:
-   - If ~/polycarp-src/polycarp exists: cd into it. If git status shows any local change, stop and ask me. With a clean checkout, run git fetch --tags && git checkout browser-v${version}.
+   - If ${command} --version prints ${version} and ${command} doctor reports no problems with the CLI or the build, skip the rest of this step and go to step 3. Otherwise:
+   - If ~/polycarp-src/polycarp exists: cd into it. If git status shows any local change, stop and ask me. With a clean checkout, run git fetch --depth 1 origin tag browser-v${version} && git checkout --detach browser-v${version}. If that tag doesn't exist, run git fetch --depth 1 origin HEAD && git checkout --detach FETCH_HEAD and tell me you used the newest code.
    - If it doesn't exist: mkdir -p ~/polycarp-src && cd ~/polycarp-src && git clone --depth 1 --branch browser-v${version} https://github.com/baney75/polycarp && cd polycarp
-   - If the tag browser-v${version} doesn't exist, use the default branch instead and tell me you did.
+     If that tag doesn't exist, run the same clone without --branch browser-v${version} and tell me you used the newest code.
    - Then: (cd browser/cli && npm ci && npm run build && npm link)
    The npm link gives the command the name tabkyra.${command === "tabkyra" ? "" : ` Once it succeeds, run "tabkyra" in place of "${command}" in every command below, whichever name this prompt started with.`} If npm link fails with a permissions error, run "node ~/polycarp-src/polycarp/browser/cli/dist/index.js" in place of "${command}" in every command below.
 3. Run: ${command} setup --yes
