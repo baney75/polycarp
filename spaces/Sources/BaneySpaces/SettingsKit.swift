@@ -206,7 +206,7 @@ struct SettingsSidebarView: View {
                 Group {
                     // Silas's mark is its own pen, tinted like the symbols beside it.
                     if let symbol = tab.symbol { Image(systemName: symbol).font(Chrome.font(13)) }
-                    else { Image(nsImage: SilasMark.templateImage(size: 15)).renderingMode(.template) }
+                    else { Image(nsImage: SilasMark.templateImage(size: 18)).renderingMode(.template) }
                 }
                 .frame(width: 20)
                 Text(tab.rawValue).font(Chrome.font(13, on ? .semibold : .regular))

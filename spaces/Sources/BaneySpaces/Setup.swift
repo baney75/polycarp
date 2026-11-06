@@ -465,6 +465,7 @@ struct SetupView: View {
         .frame(width: SettingsSidebar.windowSize.width, height: SettingsSidebar.windowSize.height)
         .foregroundStyle(Chrome.wash())
         .tint(Chrome.accent)
+        .toggleStyle(.switch)   // every on-or-off setting is the same control
         .background(Chrome.panel())
         .environment(\.colorScheme, Chrome.scheme)
         // ⌘W closes the window, as in any Mac app; so does its close button.
