@@ -53,8 +53,8 @@ public enum VoiceGate {
     public static func message(_ r: Reason) -> String? {
         switch r {
         case .userOff: nil
-        case .needsModel: "Dictation is waiting for a speech model. Download one in Settings > Voice."
-        case .importPending: "Dictation is waiting for \(Product.Silas.name)'s data to finish coming across. It tries again the next time \(Product.name) starts."
+        case .needsModel: "Dictation is waiting for a speech model. Download one in Settings > Silas."
+        case .importPending: "Dictation is waiting for \(Product.Silas.phrase)'s data to finish coming across. It tries again the next time \(Product.name) starts."
         case .silasRunning: LegacyHandover.silasRunningReason
         }
     }

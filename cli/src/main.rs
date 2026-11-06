@@ -88,7 +88,7 @@ polycarp: one command for Polycarp Spaces, Tabkyra and Silas
 Usage:
   polycarp spaces [args...]    run the Spaces command
   polycarp browser [args...]   run the Tabkyra command
-  polycarp voice               open Polycarp's Voice settings (Silas only if Polycarp isn't installed)
+  polycarp voice               open Silas's settings in Polycarp (the Silas app only if Polycarp isn't installed)
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
   polycarp mcp                 serve the theme commands to an agent over MCP (stdio)
   polycarp doctor              show which tools were found
@@ -581,7 +581,7 @@ fn open_polycarp_voice(app: &Path) -> i32 {
 fn voice(args: &[OsString]) -> i32 {
     if !args.is_empty() {
         eprintln!(
-            "polycarp: voice has no commands yet. Run `polycarp voice` alone to open Polycarp's Voice settings."
+            "polycarp: voice has no commands yet. Run `polycarp voice` alone to open Silas's settings in Polycarp."
         );
         return 2;
     }

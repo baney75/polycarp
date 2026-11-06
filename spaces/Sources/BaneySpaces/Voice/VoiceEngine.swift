@@ -264,7 +264,7 @@ final class VoiceEngine: ObservableObject {
 
     // MARK: Silas can go when the person is ready
 
-    /// One notification after the first dictation that typed. Nothing is moved; the button in Settings > Voice does that.
+    /// One notification after the first dictation that typed. Nothing is moved; the button in Settings > Silas does that.
     private func notifyIfDue() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         guard SilasRetirement.shouldNotify(voiceOn: userEnabled && state?.enabled != false, typedText: true,
@@ -281,7 +281,7 @@ final class VoiceEngine: ObservableObject {
         }
     }
 
-    /// What Settings > Voice shows: Silas, if it is installed where this can move it.
+    /// What Settings > Silas shows: Silas, if it is installed where this can move it.
     func refreshSilas() {
         silasApp = SilasRetirement.locate(home: FileManager.default.homeDirectoryForCurrentUser)
     }

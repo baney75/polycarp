@@ -749,7 +749,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                 ?? MenuBarMark.polycarp(workspace: spaces.model.current, description: description)) : nil)
             ?? NSImage(systemSymbolName: name, accessibilityDescription: description)
         image?.isTemplate = true
-        statusItem.button?.image = image
+        // While Silas listens the pen and its dot join the workspace mark in one template image, so macOS tints all of it for the
+        // menu bar's appearance; the title below stays the system's own.
+        let listening = VoiceEngine.shared.state?.status.isLive == true
+        if listening, let base = image { statusItem.button?.image = SilasMenuBarImage.composite(base: base) } else { statusItem.button?.image = image }
         // Agents that finished while you were elsewhere, counted beside the workspace number.
         let n = started && session.started ? session.unseenCount : 0
         // Full Access stays until Donovan changes it, so the menu bar says so for as long as it is on.
@@ -757,11 +760,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.title = (n > 0 ? " \(n)" : "") + full
         statusItem.button?.toolTip = full.isEmpty ? nil : "Agents have full access (Settings > Agents)"
         statusItem.button?.imagePosition = .imageLeading
-        // Dictation shows in the menu bar while it listens: the mic beside the mark.
-        if VoiceEngine.shared.state?.status.isLive == true {
-            statusItem.button?.title = " 🎙" + (statusItem.button?.title ?? "")
-            statusItem.button?.toolTip = "Listening"
-        }
+        if listening { statusItem.button?.toolTip = "Silas is listening" }
     }
 
     private func startSession() {
@@ -842,10 +841,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item("Quit Polycarp", #selector(quit), key: "q"))
             return
         }
-        // Dictation's state, first: the same line the Silas tray showed ("Ready · hold Right ⌘ to speak").
+        // Silas's state, first: the same line the Silas tray showed ("Ready · hold Right ⌘ to speak").
         if let st = VoiceEngine.shared.state {
             let line = VoiceEngine.shared.statusLine
-            menu.addItem(withTitle: line, action: nil, keyEquivalent: "")
+            let silasItem = menu.addItem(withTitle: SilasName.menuTitle(line), action: nil, keyEquivalent: "")
+            silasItem.image = SilasMark.templateImage(size: 14, recording: st.status.isLive)
             menu.addItem(.separator())
         }
         spaces.refresh()

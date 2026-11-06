@@ -33,6 +33,8 @@ public enum Product {
         public static let bundleID = "com.baney.silas"
         public static let supportFolder = "Silas"
         public static let appName = "Silas.app"
+        /// What the old app is called in a sentence ("the Silas app"), since the voice part inside Polycarp is Silas too.
+        public static let phrase = "the Silas app"
     }
 
     public static func supportDir(home: URL) -> URL {

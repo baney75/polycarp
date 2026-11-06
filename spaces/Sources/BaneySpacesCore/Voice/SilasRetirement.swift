@@ -3,13 +3,13 @@ import Foundation
 /// Silas stays until the person says it can go. Nothing here runs on its own.
 ///
 /// After Polycarp's first dictation that really typed text, one notification says dictation is working. While voice is on
-/// and Silas is installed in /Applications or ~/Applications, Settings > Voice shows "Silas is still installed." and a
+/// and Silas is installed in /Applications or ~/Applications, Settings > Silas shows "The Silas app is still installed." and a
 /// button; a click moves the app to the Trash, removes Silas's login item only after that move succeeded, and a failure is
-/// shown in the tab. Silas's data stays. Voice off: nothing is offered.
+/// shown in the tab. Silas's data stays. Silas off: nothing is offered.
 public enum SilasRetirement {
-    public static let notice = "Dictation is working. Silas can go when you're ready."
-    public static let stillInstalled = "Silas is still installed."
-    public static let button = "Move Silas to the Trash"
+    public static let notice = "Dictation is working. \(LegacyHandover.sentence(Product.Silas.phrase)) can go when you're ready."
+    public static let stillInstalled = "The Silas app is still installed."
+    public static let button = "Move the Silas app to the Trash"
     public static let notifiedMarker = "silas-notified"
     public static let recordFolder = "silas-retired-record"
 
@@ -38,7 +38,7 @@ public enum SilasRetirement {
         voiceOn && typedText && !alreadyNotified && silas != nil
     }
 
-    /// Whether Settings > Voice offers the button: voice on, Silas there, and not running (a running Silas can't be moved).
+    /// Whether Settings > Silas offers the button: voice on, Silas there, and not running (a running Silas can't be moved).
     public static func offers(voiceOn: Bool, silas: URL?, silasRunning: Bool) -> Bool {
         voiceOn && silas != nil && !silasRunning
     }
@@ -68,7 +68,7 @@ public enum SilasRetirement {
             let landed = try trash(silas)
             report.trashed = landed ?? silas
         } catch {
-            report.failure = "Couldn't move \(Product.Silas.name) to the Trash: \(error.localizedDescription). Drag \(silas.path) to the Trash yourself."
+            report.failure = "Couldn't move \(Product.Silas.phrase) to the Trash: \(error.localizedDescription). Drag \(silas.path) to the Trash yourself."
             return report
         }
         let fm = FileManager.default
@@ -84,7 +84,7 @@ public enum SilasRetirement {
                 try fm.removeItem(at: item)
                 report.loginItemRemoved = true
             } catch {
-                report.failure = "\(Product.Silas.name) is in the Trash, but its login item couldn't be removed (\(error.localizedDescription)). Remove \(item.path) yourself."
+                report.failure = "The Silas app is in the Trash, but its login item couldn't be removed (\(error.localizedDescription)). Remove \(item.path) yourself."
             }
         }
         try? Data("moved \(silas.path) to \(report.trashed?.path ?? "?")\nlogin item removed: \(report.loginItemRemoved)\n".utf8)

@@ -411,10 +411,10 @@ final class SetupModel: ObservableObject {
 /// The settings window's tabs. General comes first: it's where a new Mac starts.
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general = "General", keys = "Keys", dock = "Dock", appearance = "Appearance", launcher = "Launcher",
-         automation = "Automation", updates = "Updates", agents = "Agents", voice = "Voice", browser = "Browser"
+         automation = "Automation", updates = "Updates", agents = "Agents", voice = "Silas", browser = "Browser"
     var id: Self { self }
 
-    var symbol: String {
+    var symbol: String? {
         switch self {
         case .general: "gearshape"
         case .keys: "keyboard"
@@ -424,7 +424,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .automation: "gearshape.2"
         case .updates: "arrow.down.circle"
         case .agents: "cpu"
-        case .voice: "mic"
+        case .voice: nil   // Silas draws its own pen (`SilasMark`); every consumer must handle the missing symbol
         case .browser: "globe"
         }
     }

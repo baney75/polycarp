@@ -203,7 +203,12 @@ struct SettingsSidebarView: View {
         let on = selection == tab
         return Button { selection = tab } label: {
             HStack(spacing: 8) {
-                Image(systemName: tab.symbol).font(Chrome.font(13)).frame(width: 20)
+                Group {
+                    // Silas's mark is its own pen, tinted like the symbols beside it.
+                    if let symbol = tab.symbol { Image(systemName: symbol).font(Chrome.font(13)) }
+                    else { Image(nsImage: SilasMark.templateImage(size: 15)).renderingMode(.template) }
+                }
+                .frame(width: 20)
                 Text(tab.rawValue).font(Chrome.font(13, on ? .semibold : .regular))
                 Spacer(minLength: 0)
             }

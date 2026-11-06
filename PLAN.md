@@ -10,7 +10,7 @@ working, and their repos stay up. A box is checked only when its check has passe
 
 ## 2. One name, one command
 - [x] `polycarp spaces`, `polycarp browser`, `polycarp voice`. Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
-- [x] `polycarp voice` opens Polycarp's Voice settings (`polycarp://voice`); Silas only if Polycarp isn't installed. It gains commands later
+- [x] `polycarp voice` opens Silas's settings in Polycarp (`polycarp://voice`); the Silas app only if Polycarp isn't installed. It gains commands later
 - [ ] Polycarp MCP server, keeping `tabkyra` and `baneyspaces` as aliases. Check: an agent reaches the same tools under both names
 
 ## 3. One core, a native app on each device
@@ -60,7 +60,7 @@ Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all
 ## 6. The old apps
 Decided by Donovan, 2026-11-05: the `baneyspaces`, `silas` and `tabkyra` repos stay up, so people can keep using the independent apps. They are not archived.
 - [ ] Land or move open PRs that belong in Polycarp
-- [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash), then Voice and Browser. Silas is not trashed by the installer or by Polycarp on its own: after the first dictation that typed text, one notification says so, and Settings > Voice offers "Move Silas to the Trash" (voice on, Silas installed). Check: dictation and agents' browser work through Polycarp before Silas and Tabkyra go
+- [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash), then Voice and Browser. The Silas app is not trashed by the installer or by Polycarp on its own: after the first dictation that typed text, one notification says so, and Settings > Silas offers "Move the Silas app to the Trash" (Silas on, the app installed). Check: dictation and agents' browser work through Polycarp before Silas and Tabkyra go
 
 ## One app, everywhere
 Decided by Donovan, 2026-11-05: ALL the apps together as ONE ultrafast app on every device. One Rust core in `core/`; a native Swift interface on Mac, iPhone and iPad; a shared Tauri interface on Windows, Linux and Android. Phones get voice plus control of your computer, since they can't arrange other apps' windows.
@@ -96,4 +96,5 @@ Asked for by Donovan, 2026-11-05: it has to work better and look much better, wi
 - An attorney's trademark search, including logos, before filing or a big launch
 - [ ] The free install route (Download, disk image, Open Anyway) shows Apple's own warning the first time Polycarp opens, because the app isn't notarized. An owner decision on Apple Developer enrollment would remove it.
 - [ ] Live on a real Mac, after a person installs from the download and BaneySpaces goes to the Trash: if BaneySpaces had been set to start at login, restart the Mac and check nothing starts it, or that Polycarp quits it if it does (`LegacyWatcher`). Polycarp doesn't launch the old app to clear its login item.
-
+- [x] Naming: the voice part in the Mac app is called Silas (tab, menu, overlay, welcome row, alerts), with its pen-nib mark instead of a microphone; the older separate app is "the Silas app". Only the Microphone permission row says Microphone, because that's macOS's word.
+- [ ] Live on a preview build: the listening pen and dot in the real menu bar, light and dark. Checked so far only in an offscreen render.
