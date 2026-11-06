@@ -10,7 +10,9 @@ and stays inside the 1,000 tunnels a Cloudflare account includes. Past the limit
 DNS name, and gives the person's computer the tunnel token. After that the person's computer talks to
 Cloudflare directly, and Cloudflare forwards requests for `pc-….<host>` to `127.0.0.1` on that computer.
 
-**Our account can never read or use a person's browser.**
+**What protects a person's browser, and what doesn't.** Using someone's browser takes their approval passcode and the sign-in it issues. Those are made on their computer and stay there (`remote setup --public-url`); this service never receives them, so it can't use a browser with what it holds.
+
+This is a real dependency, stated plainly. The connection runs on a Cloudflare account Donovan controls, and Cloudflare carries the traffic, so it passes through Cloudflare unencrypted at that point. Whoever controls that account could see metadata, could turn on logging, or could repoint or remove a person's address. A person who doesn't want that shouldn't turn this on: it's off by default, and `remote setup` with their own Tailscale or Cloudflare account avoids it.
 
 - The approval passcode, the OAuth consent page and every access token live on the person's computer
   (`remote setup --public-url`). This service never receives them.
