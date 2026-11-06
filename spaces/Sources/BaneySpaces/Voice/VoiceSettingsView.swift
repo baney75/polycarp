@@ -14,71 +14,68 @@ struct VoiceSettingsView: View {
     @State private var showHistory = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            statusLine
+        VStack(alignment: .leading, spacing: 18) {
+            statusSection
             if voice.offersSilasTrash { silasSection }
             if let s = voice.settings { keySection(s); modelSection(s); dictionarySection; historySection }
-            else { Text("The voice engine isn't running.").foregroundStyle(.secondary) }
-            if let e = voice.lastError { Text(e).font(Chrome.font(12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+            else { SettingsGroup { SettingsNote("The voice engine isn't running.") } }
+            if let e = voice.lastError { SettingsGroup { SettingsNote(e, tone: .urgent) } }
         }
         .onAppear { voice.reload() }
     }
 
-    private var statusLine: some View {
-        VStack(alignment: .leading, spacing: 6) {
-        // What Silas is, in one line, for someone meeting it here.
-        Text(SilasName.description).font(Chrome.font(11)).foregroundStyle(.secondary)
-        HStack(alignment: .top, spacing: 8) {
-            SilasMarkView(live: voice.state?.status.isLive == true)
-            Text(voice.statusLine)
-                .font(Chrome.font(13, .semibold))
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            Toggle("On", isOn: Binding(get: { voice.userEnabled }, set: { voice.setUserEnabled($0) })).toggleStyle(.switch)
-        }
-        .padding(10)
-        .background(Chrome.shape(.settingsCell, continuous: false).fill(Chrome.cell(0.08)))
+    private var statusSection: some View {
+        SettingsGroup {
+            SettingsBlock {
+                HStack(spacing: 12) {
+                    SilasMarkView(live: voice.state?.status.isLive == true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(voice.statusLine).font(Chrome.font(13, .semibold)).fixedSize(horizontal: false, vertical: true)
+                        // What Silas is, in one line, for someone meeting it here.
+                        Text(SilasName.description).font(Chrome.font(11)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Toggle("On", isOn: Binding(get: { voice.userEnabled }, set: { voice.setUserEnabled($0) })).toggleStyle(.switch).labelsHidden()
+                }
+            }
         }
     }
 
     /// Only when Silas is on and the Silas app is installed. Nothing here happens by itself.
     private var silasSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(SilasRetirement.stillInstalled).font(Chrome.font(12, .semibold))
-                Spacer()
+        SettingsGroup {
+            SettingsRow(SilasRetirement.stillInstalled, help: "Its dictionary, history and models are already copied here, and its own data stays where it is.") {
                 Button(SilasRetirement.button) { voice.trashSilas() }
             }
-            Text("Its dictionary, history and models are already copied here, and its own data stays where it is.")
-                .font(Chrome.font(11)).foregroundStyle(.secondary)
-            if let m = voice.silasMessage { Text(m).font(Chrome.font(12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+            if let m = voice.silasMessage { SettingsNote(m, tone: .urgent) }
         }
-        .padding(10)
-        .background(Chrome.shape(.settingsCell, continuous: false).fill(Chrome.cell(0.06)))
     }
 
     private func keySection(_ s: VoiceSettings) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Dictation key").font(Chrome.font(13, .bold))
-            HStack {
-                Picker("", selection: Binding(get: { s.hotkey }, set: { k in voice.update { $0.hotkey = k } })) {
-                    ForEach(VoiceHotkeys.presets + (VoiceHotkeys.presets.contains(s.hotkey) ? [] : [s.hotkey]), id: \.self) { Text(label($0)).tag($0) }
-                }.labelsHidden().frame(width: 160)
-                Button(capturing ? "Press a key…" : "Pick another key") {
-                    capturing = true
-                    voice.captureHotkey { _ in capturing = false }
-                }.disabled(capturing || voice.state?.listener != true)
-                if voice.state?.listener != true {
-                    Text("Turn dictation on first.").font(Chrome.font(11)).foregroundStyle(.secondary)
+        SettingsGroup("Dictation key") {
+            SettingsRow("Key", help: voice.state?.listener == true ? nil : "Turn dictation on first to pick another key.") {
+                HStack {
+                    Picker("Key", selection: Binding(get: { s.hotkey }, set: { k in voice.update { $0.hotkey = k } })) {
+                        ForEach(VoiceHotkeys.presets + (VoiceHotkeys.presets.contains(s.hotkey) ? [] : [s.hotkey]), id: \.self) { Text(label($0)).tag($0) }
+                    }.labelsHidden().frame(width: 130)
+                    Button(capturing ? "Press a key…" : "Pick another key") {
+                        capturing = true
+                        voice.captureHotkey { _ in capturing = false }
+                    }.disabled(capturing || voice.state?.listener != true)
                 }
             }
-            Toggle("Tap once to start and again to stop (otherwise hold)", isOn: Binding(get: { s.tapToToggle }, set: { v in voice.update { $0.tapToToggle = v } }))
-            Toggle("Show the pill while dictating", isOn: Binding(get: { s.showOverlay }, set: { v in voice.update { $0.showOverlay = v } }))
-            Toggle("Remove filler words", isOn: Binding(get: { s.removeFillers }, set: { v in voice.update { $0.removeFillers = v } }))
-            Toggle("Learn from my edits", isOn: Binding(get: { s.learnFromEdits }, set: { v in voice.update { $0.learnFromEdits = v } }))
-            Toggle("Sounds", isOn: Binding(get: { s.sounds }, set: { v in voice.update { $0.sounds = v } }))
-            Text("Text is typed as keystrokes. Polycarp never pastes and never touches your clipboard.")
-                .font(Chrome.font(11)).foregroundStyle(.secondary)
+            toggle("Tap once to start and again to stop", help: "Otherwise hold the key.", s.tapToToggle) { v in voice.update { $0.tapToToggle = v } }
+            toggle("Show the pill while dictating", s.showOverlay) { v in voice.update { $0.showOverlay = v } }
+            toggle("Remove filler words", s.removeFillers) { v in voice.update { $0.removeFillers = v } }
+            toggle("Learn from my edits", s.learnFromEdits) { v in voice.update { $0.learnFromEdits = v } }
+            toggle("Sounds", s.sounds) { v in voice.update { $0.sounds = v } }
+            SettingsNote("Text is typed as keystrokes. Polycarp never pastes and never touches your clipboard.")
+        }
+    }
+
+    private func toggle(_ title: String, help: String? = nil, _ value: Bool, _ set: @escaping (Bool) -> Void) -> some View {
+        SettingsRow(title, help: help) {
+            Toggle(title, isOn: Binding(get: { value }, set: set)).toggleStyle(.switch).labelsHidden()
         }
     }
 
@@ -93,47 +90,43 @@ struct VoiceSettingsView: View {
     }
 
     private func modelSection(_ s: VoiceSettings) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Speech model").font(Chrome.font(13, .bold))
-            Text("Runs on this Mac. It stays loaded so dictation starts at once.").font(Chrome.font(11)).foregroundStyle(.secondary)
+        SettingsGroup("Speech model") {
+            SettingsNote("Runs on this Mac. It stays loaded so dictation starts at once.")
             ForEach(voice.models) { m in
-                HStack(alignment: .top, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(m.name + (m.recommended ? "  Recommended" : "")).font(Chrome.font(12, .semibold))
-                        Text("\(m.tagline) \(m.sizeMb) MB.").font(Chrome.font(11)).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer()
-                    if let p = voice.downloads[m.id] {
-                        ProgressView(value: p).frame(width: 90)
-                    } else if m.active {
-                        Text("In use").font(Chrome.font(11, .medium)).foregroundStyle(Chrome.accent)
-                    } else if m.installed {
-                        Button("Use") { voice.select(model: m.id) }
-                        Button("Remove") { voice.delete(model: m.id) }
-                    } else {
-                        Button("Download") { voice.download(model: m.id) }
+                SettingsRow(m.name + (m.recommended ? "  Recommended" : ""), help: "\(m.tagline) \(m.sizeMb) MB.") {
+                    HStack {
+                        if let p = voice.downloads[m.id] {
+                            ProgressView(value: p).frame(width: 90)
+                        } else if m.active {
+                            SettingsStatusLabel(text: "In use")
+                        } else if m.installed {
+                            Button("Use") { voice.select(model: m.id) }
+                            Button("Remove") { voice.delete(model: m.id) }
+                        } else {
+                            Button("Download") { voice.download(model: m.id) }
+                        }
                     }
                 }
-                .padding(8)
-                .background(Chrome.shape(.settingsCell, continuous: false).fill(Chrome.cell(m.active ? 0.1 : 0.04)))
             }
         }
     }
 
     private var dictionarySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Dictionary").font(Chrome.font(13, .bold))
-            HStack {
-                TextField("Add a word or name", text: $newTerm).onSubmit(addTerm)
-                Button("Add", action: addTerm).disabled(newTerm.trimmingCharacters(in: .whitespaces).isEmpty)
+        SettingsGroup("Dictionary") {
+            SettingsBlock {
+                HStack {
+                    TextField("Add a word or name", text: $newTerm).onSubmit(addTerm)
+                    Button("Add", action: addTerm).disabled(newTerm.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
             }
-            HStack {
-                TextField("When I say", text: $from)
-                Image(systemName: "arrow.right").foregroundStyle(.secondary)
-                TextField("Write", text: $to)
-                Button("Add") { voice.addCorrection(from: from, to: to); from = ""; to = "" }
-                    .disabled(from.trimmingCharacters(in: .whitespaces).isEmpty || to.trimmingCharacters(in: .whitespaces).isEmpty)
+            SettingsBlock {
+                HStack {
+                    TextField("When I say", text: $from)
+                    Image(systemName: "arrow.right").foregroundStyle(Chrome.muted).accessibilityHidden(true)
+                    TextField("Write", text: $to)
+                    Button("Add") { voice.addCorrection(from: from, to: to); from = ""; to = "" }
+                        .disabled(from.trimmingCharacters(in: .whitespaces).isEmpty || to.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
             }
             if let d = voice.dictionary {
                 ForEach(d.terms, id: \.text) { t in
@@ -153,12 +146,14 @@ struct VoiceSettingsView: View {
     }
 
     private var historySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("History").font(Chrome.font(13, .bold))
-                Spacer()
-                Button(showHistory ? "Hide" : "Show \(voice.history.count)") { showHistory.toggle() }
-                if !voice.history.isEmpty { Button("Clear") { voice.clearHistory() } }
+        SettingsGroup("History") {
+            SettingsRow(voice.history.isEmpty ? "Nothing yet" : "\(voice.history.count) saved") {
+                HStack {
+                    if !voice.history.isEmpty {
+                        Button(showHistory ? "Hide" : "Show") { showHistory.toggle() }
+                        Button("Clear") { voice.clearHistory() }
+                    }
+                }
             }
             if showHistory {
                 ForEach(voice.history.prefix(30)) { h in
@@ -169,11 +164,13 @@ struct VoiceSettingsView: View {
     }
 
     private func row(_ text: String, remove: @escaping () -> Void) -> some View {
-        HStack {
-            Text(text).font(Chrome.font(12)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            Button(action: remove) { Image(systemName: "xmark.circle") }.buttonStyle(.plain).foregroundStyle(.secondary)
-                .accessibilityLabel("Remove")
+        SettingsBlock {
+            HStack {
+                Text(text).font(Chrome.font(12)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button(action: remove) { Image(systemName: "xmark.circle") }.buttonStyle(.plain).foregroundStyle(Chrome.muted)
+                    .accessibilityLabel("Remove")
+            }
         }
     }
 }

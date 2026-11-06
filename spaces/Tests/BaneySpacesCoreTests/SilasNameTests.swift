@@ -48,7 +48,7 @@ final class SilasNameTests: XCTestCase {
             }
         }
         XCTAssertTrue(try Repo.text("Sources/BaneySpaces/Voice/VoiceSettingsView.swift").contains("SilasMarkView"))
-        XCTAssertTrue(try Repo.text("Sources/BaneySpaces/Setup.swift").contains("SilasMark.templateImage"))
+        XCTAssertTrue(try Repo.text("Sources/BaneySpaces/SettingsKit.swift").contains("SilasMark.templateImage"))
         XCTAssertTrue(try Repo.text("Sources/BaneySpaces/AppDelegate.swift").contains("SilasMark.templateImage"))
     }
 
