@@ -17,6 +17,8 @@ final class PartsModel: ObservableObject {
     @Published private(set) var hasChosen: Bool
 
     var onChange: ((FeatureSet, FeatureSet) -> Void)?
+    /// The first choice was made: the app starts its parts. Nothing has run yet, so this isn't a change to apply.
+    var onChosen: (() -> Void)?
 
     private init() {
         let saved = FeatureFile.load(path: path)
@@ -35,7 +37,8 @@ final class PartsModel: ObservableObject {
         let now = PolycarpThemeFile.stamp(path)
         guard now != stamp else { return }
         stamp = now
-        apply(FeatureFile.load(path: path) ?? .all)
+        guard let saved = FeatureFile.load(path: path) else { return hasChosen ? apply(.all) : () }
+        if hasChosen { apply(saved) } else { first(saved) }
     }
 
     private func apply(_ new: FeatureSet) {
@@ -45,12 +48,17 @@ final class PartsModel: ObservableObject {
         onChange?(old, new)
     }
 
-    /// The welcome window's checkboxes.
+    private func first(_ set: FeatureSet) {
+        current = set
+        hasChosen = true
+        onChosen?()
+    }
+
+    /// The welcome window's checkboxes, and every later change.
     func choose(_ set: FeatureSet) {
         FeatureFile.save(set, path: path)
         stamp = path.flatMap { PolycarpThemeFile.stamp($0) }
-        hasChosen = true
-        apply(set)
+        if hasChosen { apply(set) } else { first(set) }
     }
 
     /// True when the switch may change this part: one part must stay on, and turning Workspaces either way restarts the app.

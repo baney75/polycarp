@@ -60,6 +60,15 @@ main() {
     say "  ${dim}Change how it looks: polycarp theme list${reset}"; say ""
     return 0
   fi
+
+  local CFG="${POLYCARP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/polycarp}"
+  # Which parts to run. POLYCARP_FEATURES=voice,browser answers without asking; with no terminal and no answer, the
+  # welcome window asks instead. A reinstall keeps what was chosen.
+  if [ ! -e "$CFG/$PARTS_FILE" ]; then
+    REPLY="${POLYCARP_FEATURES:-}"
+    [ -n "$REPLY" ] || choose_parts
+    if [ -n "$REPLY" ]; then write_parts "$CFG" "$REPLY" || fail "POLYCARP_FEATURES has a part Polycarp doesn't know. Use workspaces, voice and browser."; fi
+  fi
   [ "$(uname -s)" = Darwin ] || fail "This installer is for a Mac or Linux. The polycarp command runs elsewhere: cargo install --git $REPO polycarp"
   [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 13 ] || fail "Polycarp needs macOS 13 Ventura or later."
   local BIN="$HOME/.local/bin"
@@ -128,6 +137,8 @@ main() {
   if [ -z "$test_mode" ] || [ "$HOME" != "$(eval echo "~$(id -un)")" ]; then
     while IFS= read -r a; do [ -d "$a" ] && OLD_APPS+=("$a"); done < <(old_app_paths "$test_mode")
   fi
+  # Someone who left Workspaces unticked may still want BaneySpaces, so it stays where it is.
+  if grep -q '^workspaces = false' "$CFG/$PARTS_FILE" 2>/dev/null; then OLD_APPS=(); fi
   # 2. Quit it (it puts every window and the Dock back first). The two can't run together, so the install
   # step quits any running BaneySpaces too. Never in test mode.
   local running=""
@@ -172,14 +183,6 @@ main() {
   fi
 
   # The Polycarp theme, unless you've already chosen something.
-  local CFG="${POLYCARP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/polycarp}"
-  # Which parts to run. POLYCARP_FEATURES=voice,browser answers without asking; with no terminal and no answer, the
-  # welcome window asks instead. A reinstall keeps what was chosen.
-  if [ ! -e "$CFG/$PARTS_FILE" ]; then
-    REPLY="${POLYCARP_FEATURES:-}"
-    [ -n "$REPLY" ] || choose_parts
-    if [ -n "$REPLY" ]; then write_parts "$CFG" "$REPLY" || fail "POLYCARP_FEATURES has a part Polycarp doesn't know. Use workspaces, voice and browser."; fi
-  fi
   local installed="${test_mode:-$HOME/Applications}/Polycarp.app"
   [ -d "$installed" ] || installed="/Applications/Polycarp.app"
   if [ ! -e "$CFG/config.toml" ] && ! "$installed/Contents/Resources/bin/polycarp" theme set polycarp </dev/null >>"$LOG" 2>&1; then
@@ -218,10 +221,11 @@ PARTS_FILE=features.toml
 
 # Writes the chosen parts, comma-separated. A file that's already there stays, and a name nobody knows is an error.
 write_parts() {
-  local dir=$1 chosen=",$2," part file="$1/$PARTS_FILE" known=",workspaces,voice,browser,"
+  local list=${2//[[:space:]]/,}
+  local dir=$1 chosen=",$list," part file="$1/$PARTS_FILE" known=",workspaces,voice,browser,"
   [ -e "$file" ] && return 0
-  [ "$chosen" != ",," ] || return 2
-  local rest=${2//,/ } name
+  [ -n "${list//,/}" ] || return 2
+  local rest=${list//,/ } name
   for name in $rest; do case "$known" in *",$name,"*) ;; *) return 2 ;; esac; done
   mkdir -p "$dir" || return 1
   {

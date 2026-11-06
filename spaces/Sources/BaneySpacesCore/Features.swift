@@ -106,11 +106,30 @@ public enum BrowserHosts {
         for manifest in manifests(home: home) {
             let parked = URL(fileURLWithPath: manifest.path + offSuffix)
             let (from, to) = on ? (parked, manifest) : (manifest, parked)
+            // A manifest written while Browser was off is the newer one, so a parked copy beside it just goes.
+            if on, fm.fileExists(atPath: manifest.path), fm.fileExists(atPath: parked.path) {
+                try? fm.removeItem(at: parked)
+                continue
+            }
             guard let data = fm.contents(atPath: from.path), !fm.fileExists(atPath: to.path),
                   String(decoding: data, as: UTF8.self).contains("Polycarp.app") else { continue }
             if (try? fm.moveItem(at: from, to: to)) != nil { changed += 1 }
         }
         return changed
+    }
+
+    /// The helper processes that give agents the browser, from a `ps -axo pid=,command=` listing: what a browser started
+    /// (`<helper> chrome-extension://<id>/` or `<helper> host ...`) and remote access (`<helper> serve ...`). Any other use of
+    /// the helper, and any other program, is left alone.
+    public static func hostPids(ps: String, helper: String) -> [Int32] {
+        ps.split(whereSeparator: \.isNewline).compactMap { line in
+            let trimmed = line.drop(while: \.isWhitespace)
+            guard let space = trimmed.firstIndex(of: " "), let pid = Int32(trimmed[..<space]) else { return nil }
+            let command = trimmed[trimmed.index(after: space)...].drop(while: \.isWhitespace)
+            guard command.hasPrefix(helper + " ") else { return nil }
+            let args = command.dropFirst(helper.count + 1)
+            return args.hasPrefix("chrome-extension://") || args.hasPrefix("host ") || args.hasPrefix("serve") ? pid : nil
+        }
     }
 
     /// Removing Browser: parked manifests go too. A live one, if turning it off failed, stays for the person to see.

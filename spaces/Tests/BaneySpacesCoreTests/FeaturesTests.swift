@@ -113,6 +113,7 @@ final class FeaturesTests: XCTestCase {
         try Data("{\"path\":\"/Applications/Polycarp.app/newer\"}".utf8).write(to: ours)
         XCTAssertEqual(BrowserHosts.setEnabled(true, home: home), 0)
         XCTAssertTrue(String(decoding: FileManager.default.contents(atPath: ours.path)!, as: UTF8.self).contains("newer"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ours.path + BrowserHosts.offSuffix), "the older parked copy goes")
     }
 
     func testRemovingBrowserDeletesOnlyParkedManifests() throws {
@@ -124,6 +125,20 @@ final class FeaturesTests: XCTestCase {
         XCTAssertEqual(BrowserHosts.removeParked(home: home), 1)
         XCTAssertFalse(fm.fileExists(atPath: ours.path + BrowserHosts.offSuffix))
         XCTAssertTrue(fm.fileExists(atPath: theirs.path))
+    }
+
+    func testOnlyBrowserStartedHostsAreStopped() {
+        let helper = "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser"
+        let ps = """
+          101 \(helper) chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/ --parent-window=0
+          102 \(helper) serve --port 8787
+          106 \(helper) doctor --json
+          103 /opt/homebrew/bin/tabkyra chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/
+         1004 \(helper) chrome-extension://abcdefghijklmnopabcdefghijklmnop/
+          105 /bin/zsh -c grep \(helper) chrome-extension://
+        garbage line
+        """
+        XCTAssertEqual(BrowserHosts.hostPids(ps: ps, helper: helper), [101, 102, 1004], "remote access goes too; doctor doesn't")
     }
 
     // MARK: The installer's checkboxes
@@ -158,12 +173,28 @@ final class FeaturesTests: XCTestCase {
         XCTAssertNil(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path))
     }
 
+    func testSpacesAroundThePartsAreFine() throws {
+        let dir = try temp()
+        XCTAssertEqual(try installer("write_parts '\(dir.path)' 'voice, browser'").0, 0)
+        XCTAssertEqual(FeatureFile.load(path: dir.appendingPathComponent("features.toml").path), FeatureSet([.voice, .browser]))
+    }
+
     func testAReinstallKeepsTheChoice() throws {
         let dir = try temp()
         let file = dir.appendingPathComponent("features.toml")
         FeatureFile.save(FeatureSet([.voice]), path: file.path)
         XCTAssertEqual(try installer("write_parts '\(dir.path)' 'browser'").0, 0)
         XCTAssertEqual(FeatureFile.load(path: file.path), FeatureSet([.voice]))
+    }
+
+    func testTheOldAppIsRetiredOnlyForSomeoneTakingWorkspaces() throws {
+        let installer = try String(contentsOf: Repo.root.deletingLastPathComponent().appendingPathComponent("install.sh"), encoding: .utf8)
+        let keep = try XCTUnwrap(installer.range(of: "grep -q '^workspaces = false'"))
+        let retire = try XCTUnwrap(installer.range(of: "if [ ${#OLD_APPS[@]} -gt 0 ]; then"))
+        XCTAssertLessThan(keep.lowerBound, retire.lowerBound, "the list is emptied before anything acts on it")
+        let choose = try XCTUnwrap(installer.range(of: "[ -n \"$REPLY\" ] || choose_parts"))
+        let download = try XCTUnwrap(installer.range(of: "# 1. Get the app."))
+        XCTAssertLessThan(choose.lowerBound, download.lowerBound, "the boxes come before the wait")
     }
 
     func testTheInstallerNeverPromptsWithoutATerminal() throws {
