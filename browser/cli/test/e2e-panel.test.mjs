@@ -85,7 +85,7 @@ async function settings(tab, theme = "light", width = 400) {
 	await page.evaluate((t) => localStorage.setItem("theme", t), theme);
 	await page.evaluate(() => chrome.storage.local.remove("tabkyra.appearance"));
 	await page.reload();
-	await page.getByRole("button", { name: "Set up provider" }).click({ timeout: 20_000 });
+	await page.getByRole("button", { name: "Chat here" }).click({ timeout: 20_000 });
 	await page.waitForSelector("tabkyra-settings", { state: "attached" });
 	await page.getByRole("tab", { name: tab, exact: true }).click();
 	await page.waitForTimeout(600);
@@ -99,7 +99,7 @@ const rgb = (css) => {
 
 for (const width of [400, 320]) {
 	test(`Connect's command boxes show the whole command at ${width} px, and nothing runs past the panel`, async () => {
-		const page = await settings("Connect", "light", width);
+		const page = await settings("Agents", "light", width);
 		try {
 			const boxes = await page.evaluate(() =>
 				[...document.querySelectorAll("tabkyra-settings code")].map((c) => {
@@ -184,12 +184,12 @@ test("the Appearance color box and hex box show the accent in use, never black, 
 
 for (const width of [400, 320]) {
 	test(`every Settings tab name is whole at ${width} px`, async () => {
-		const page = await settings("Connect", "light", width);
+		const page = await settings("Agents", "light", width);
 		try {
 			const tabs = await page.evaluate(() =>
 				[...document.querySelectorAll('tabkyra-settings [role="tab"]')].map((t) => ({ name: t.textContent.trim(), cut: t.scrollWidth > t.clientWidth + 1 })),
 			);
-			assert.deepEqual(tabs.map((t) => t.name), ["Providers", "Agents", "Connect", "Skills", "Privacy", "Appearance", "Costs", "About"]);
+			assert.deepEqual(tabs.map((t) => t.name), ["Providers", "Agents", "Skills", "Privacy", "Appearance", "About"]);
 			assert.deepEqual(tabs.filter((t) => t.cut), []);
 		} finally {
 			await page.close();
@@ -198,7 +198,7 @@ for (const width of [400, 320]) {
 }
 
 test("Join hub asks for a Confirm that names the host and the scopes; after joining, the outcome stays up although the form is gone", async () => {
-	const page = await settings("Connect");
+	const page = await settings("Agents");
 	try {
 		await page.getByPlaceholder("https://hub.example.com").fill("https://hub.example.com/mcp");
 		await page.getByPlaceholder("TK-XXXX-XXXX").fill("TK-ABCD-EFGH");
@@ -260,7 +260,7 @@ test("a real side panel (no tab) is served by the real Connect relay, not discon
 	try {
 		await page.goto(PANEL);
 		// Let the app finish drawing, or it replaces the page body under the button.
-		await page.getByRole("button", { name: "Set up provider" }).waitFor({ timeout: 20_000 });
+		await page.getByRole("button", { name: "Chat here" }).waitFor({ timeout: 20_000 });
 		await page.waitForTimeout(1500);
 		await page.evaluate(() => {
 			const b = document.createElement("button");

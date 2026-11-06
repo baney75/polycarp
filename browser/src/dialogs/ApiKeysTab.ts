@@ -4,7 +4,6 @@ import { getAppStorage, SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, nothing, type TemplateResult } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { API_BILLING_NOTE, REMOVED_SIGN_IN_PROVIDERS } from "../auth/policy.js";
-import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
 import { providerDisplayName } from "../models/display.js";
 import { FREE_PRIVACY_NOTE } from "../models/free-mode.js";
 import { isFreeModeOn, setFreeMode } from "../models/free-panel.js";
@@ -12,6 +11,7 @@ import { SUBSCRIPTION_PROVIDERS } from "../subscriptions/constants.js";
 import { CustomProvidersTab } from "./CustomProvidersTab.js";
 import "../components/ProviderKeyRow.js";
 import "../subscriptions/SubscriptionsSection.js";
+import { getTabkyraStorage } from "../storage/app-storage.js";
 
 // Providers to hide from the API key list: removed sign-ins, and clouds that need more than a key.
 const HIDDEN_PROVIDERS = new Set([
@@ -32,6 +32,9 @@ const HIDDEN_PROVIDERS = new Set([
  * (its key field opens on Add key), providers with a key come first, a search box narrows the
  * list, and saving a key offers "Choose a model" right there.
  */
+/** Shown without asking. The rest wait behind "Show all providers" or a search. */
+const COMMON_PROVIDERS = new Set(["anthropic", "openai", "google", "openrouter"]);
+
 export class ApiKeysTab extends SettingsTab {
 	/** Opens the model picker (the composer's own); set by the side panel. */
 	onChooseModel?: () => void;
@@ -42,6 +45,9 @@ export class ApiKeysTab extends SettingsTab {
 	/** The provider whose key was just saved: it gets the "Choose a model" prompt. */
 	private justSaved?: string;
 	private readonly custom = new CustomProvidersTab();
+	private showAll = false;
+	/** Custom providers someone set up never hide behind a button. */
+	private hasCustom = false;
 
 	getTabName(): string {
 		return "Providers";
@@ -59,6 +65,11 @@ export class ApiKeysTab extends SettingsTab {
 		} catch (error) {
 			console.error("Failed to load provider keys:", error);
 		}
+		try {
+			this.hasCustom = (await getTabkyraStorage().customProviders.getAll()).length > 0;
+		} catch (error) {
+			console.error("Failed to load custom providers:", error);
+		}
 		this.requestUpdate();
 	}
 
@@ -70,6 +81,8 @@ export class ApiKeysTab extends SettingsTab {
 
 	private onSaved = (e: Event) => {
 		this.justSaved = (e as CustomEvent<string>).detail;
+		// It stays in the short list once a search is cleared.
+		this.withKeys.add(this.justSaved);
 		this.requestUpdate();
 	};
 
@@ -80,14 +93,18 @@ export class ApiKeysTab extends SettingsTab {
 
 	private providers(): string[] {
 		const q = this.query.trim().toLowerCase();
-		return getProviders()
-			.filter((p) => !HIDDEN_PROVIDERS.has(p))
-			.filter((p) => !q || p.includes(q) || providerDisplayName(p).toLowerCase().includes(q))
-			.sort(
-				(a, b) =>
-					Number(this.withKeys.has(b)) - Number(this.withKeys.has(a)) ||
-					providerDisplayName(a).localeCompare(providerDisplayName(b)),
-			);
+		return (
+			getProviders()
+				.filter((p) => !HIDDEN_PROVIDERS.has(p))
+				.filter((p) => !q || p.includes(q) || providerDisplayName(p).toLowerCase().includes(q))
+				// With no search, what you use and the common four. Everything else is one click away.
+				.filter((p) => q || this.showAll || this.withKeys.has(p) || COMMON_PROVIDERS.has(p))
+				.sort(
+					(a, b) =>
+						Number(this.withKeys.has(b)) - Number(this.withKeys.has(a)) ||
+						providerDisplayName(a).localeCompare(providerDisplayName(b)),
+				)
+		);
 	}
 
 	private async toggleFree(e: Event) {
@@ -118,7 +135,6 @@ export class ApiKeysTab extends SettingsTab {
 				</div>
 				<section class="flex flex-col gap-4 pt-5 border-t border-border">
 					<tabkyra-subscriptions></tabkyra-subscriptions>
-					${agentSetupPromptButton("Using your own agent instead? Paste this prompt into Claude Code, Codex, pi, OMP or any agent to connect it to this browser.")}
 				</section>
 				<section class="flex flex-col gap-3 pt-5 border-t border-border" aria-labelledby="api-keys-heading">
 					<div>
@@ -164,7 +180,20 @@ export class ApiKeysTab extends SettingsTab {
 						}
 					</div>
 				</section>
-				<div class="pt-5 border-t border-border">${this.custom}</div>
+				${
+					this.showAll || this.hasCustom || this.query.trim()
+						? html`<div class="pt-5 border-t border-border">${this.custom}</div>`
+						: html`<button
+								type="button"
+								class="self-start text-sm text-muted-foreground underline underline-offset-2 cursor-pointer"
+								@click=${() => {
+									this.showAll = true;
+									this.requestUpdate();
+								}}
+							>
+								Show all providers
+							</button>`
+				}
 			</div>
 		`;
 	}

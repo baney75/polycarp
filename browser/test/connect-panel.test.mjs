@@ -42,7 +42,7 @@ test("countdown and last-seen read as a person would say them", () => {
 	assert.equal(linkCommand("https://h.example.com", "TK-ABCD-EFGH"), "tabkyra link https://h.example.com --code TK-ABCD-EFGH");
 });
 
-test("Settings has the eight tabs in the spec's order, and Bridge is now Agents", () => {
+test("Settings has six tabs, with Connect under Agents and Costs under About", () => {
 	const panel = read("src/sidepanel.ts");
 	const start = panel.indexOf("SettingsPage.open([");
 	const list = panel.slice(start, panel.indexOf("]);\n", start));
@@ -52,18 +52,18 @@ test("Settings has the eight tabs in the spec's order, and Bridge is now Agents"
 		.map((line) => /^\t\t(?:new CombinedTab\("(\w+)"|new (\w+)\(|(providers),)/.exec(line))
 		.filter(Boolean)
 		.map((m) => m[1] ?? m[2] ?? m[3]);
-	assert.deepEqual(order, ["providers", "BridgeTab", "ConnectTab", "SkillsTab", "Privacy", "AppearanceTab", "CostsTab", "About"]);
+	assert.deepEqual(order, ["providers", "Agents", "SkillsTab", "Privacy", "AppearanceTab", "About"]);
 	assert.match(read("src/dialogs/BridgeTab.ts"), /getTabName\(\): string \{\s*return "Agents";/);
 	assert.match(read("src/dialogs/ConnectTab.ts"), /return "Connect";/);
 	assert.match(read("src/dialogs/AppearanceTab.ts"), /return "Appearance";/);
 });
 
-test("the welcome dialog offers Connect, and Set up provider lands on the API keys list", () => {
+test("the welcome dialog offers Connect, and Chat here lands on the API keys list", () => {
 	const welcome = read("src/dialogs/WelcomeSetupDialog.ts");
 	assert.match(welcome, /Use from claude\.ai or ChatGPT/);
-	assert.match(welcome, /Set up provider/);
+	assert.match(welcome, /Chat here/);
 	const panel = read("src/sidepanel.ts");
-	assert.match(panel, /choice === "connect" \? \{ tab: "Connect" \} : \{ tab: "Providers", anchor: "api-keys-heading" \}/);
+	assert.match(panel, /choice === "connect"\s*\?\s*\{ tab: "Agents", anchor: "connect-heading" \}\s*:\s*\{ tab: "Providers", anchor: "api-keys-heading" \}/);
 	assert.match(read("src/dialogs/ApiKeysTab.ts"), /id="api-keys-heading"/);
 });
 
