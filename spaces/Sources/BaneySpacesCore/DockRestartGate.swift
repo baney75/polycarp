@@ -9,9 +9,6 @@ public enum DockRestartGate {
     public static let settleSeconds: TimeInterval = 3
     /// A Space that changed this recently may still be sliding.
     public static let spaceQuietSeconds: TimeInterval = 2
-    /// How long a helper left behind by a quit keeps waiting before giving up the wait and restarting anyway: settings that
-    /// never apply are worse than a slide, and someone can stay in a full-screen app for hours.
-    public static let helperGiveUpSeconds: TimeInterval = 600
 
     public enum Decision: Equatable {
         case restartNow

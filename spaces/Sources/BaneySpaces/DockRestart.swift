@@ -42,8 +42,8 @@ enum DockRestart {
             try helper.run()
             pending = []
         } catch {
-            // No helper: a restart now beats settings that never apply.
-            kill(pending)
+            // No helper: the settings are saved, and the Dock reads them next time it starts. A frozen screen is the worse risk.
+            Trace.log("dock restart: couldn't start the helper, \(error)")
             pending = []
         }
     }
@@ -51,10 +51,12 @@ enum DockRestart {
     /// The helper's whole life: wait for the gate, restart, exit.
     static func runHelper(_ names: Set<String>) -> Never {
         watchSpaces()
-        let started = Date()
+        // It can't know what the app saw just before quitting, so it starts by assuming a Space just changed. It waits as long
+        // as it takes: someone can stay in a full-screen app for hours, and a late setting beats a frozen screen.
+        lastSpaceChange = Date()
         pending = names
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            try_(giveUp: Date().timeIntervalSince(started) > DockRestartGate.helperGiveUpSeconds)
+            try_()
             if pending.isEmpty { exit(0) }
         }
         RunLoop.main.run()
@@ -69,13 +71,12 @@ enum DockRestart {
         }
     }
 
-    private static func try_(giveUp: Bool = false) {
+    private static func try_() {
         let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first
         // Until the old Dock has actually gone, its launch date reads as settled, so our own last restart counts too.
         let uptime = dock == nil ? nil : [dock?.launchDate, lastKill].compactMap { $0 }.map { Date().timeIntervalSince($0) }.min()
         let quiet = lastSpaceChange.map { Date().timeIntervalSince($0) } ?? .infinity
-        let decision = DockRestartGate.decide(onFullScreenSpace: Windows.onFullScreenSpace(), switching: isSwitching(), dockUptime: uptime, sinceSpaceChange: quiet)
-        switch giveUp ? .restartNow : decision {
+        switch DockRestartGate.decide(onFullScreenSpace: Windows.onFullScreenSpace(), switching: isSwitching(), dockUptime: uptime, sinceSpaceChange: quiet) {
         case .wait(let reason):
             if reason != lastReason { Trace.log("dock restart: waiting, \(reason.rawValue)") }
             lastReason = reason

@@ -36,6 +36,21 @@ final class DockRestartGateTests: XCTestCase {
         XCTAssertTrue(EntryPoint.runsBesideAnotherCopy.contains(DockRestartHelper.argument), "it mustn't wait on the next launch's lock")
     }
 
+    func testNothingEverForcesARestartPastTheGate() throws {
+        let code = try source("Sources/BaneySpaces/DockRestart.swift")
+        XCTAssertFalse(code.contains("giveUp"), "waiting forever beats freezing the screen")
+        // The only kill outside the gate's .restartNow is none: `handOffBeforeQuit`'s failure path restarts nothing.
+        XCTAssertEqual(code.components(separatedBy: "kill(names)").count - 1, 1)
+        XCTAssertFalse(code.contains("kill(pending)"))
+    }
+
+    func testAWaitingHelperDoesNotBlockAnInstall() throws {
+        let install = try source("scripts/install-app.sh")
+        XCTAssertTrue(install.contains("grep -vq -- --restart-when-safe"))
+        XCTAssertFalse(install.contains("pgrep -f \"$DEST/Contents/MacOS/$EXECUTABLE\""), "that matches the helper too")
+        XCTAssertTrue(install.contains("app_is_running"))
+    }
+
     func testAnOldInstallMarkerDoesNotSkipARealQuit() {
         XCTAssertTrue(InstallHandoff.isCurrent(markedAt: 1000, now: 1010))
         XCTAssertFalse(InstallHandoff.isCurrent(markedAt: 1000, now: 1200), "left behind by a failed install")
