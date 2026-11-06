@@ -16,6 +16,9 @@ final class SilasNameTests: XCTestCase {
 
     func testTheVoicePartIsCalledSilasNotVoice() throws {
         for s in strings { XCTAssertFalse(s.contains("Voice"), "\"\(s)\" uses Voice as a name") }
+        for s in strings { XCTAssertFalse(s.contains("'s dictation"), "\"\(s)\" calls Silas Polycarp's dictation") }
+        XCTAssertTrue(LegacyHandover.alertDetail(running: [Product.Silas.phrase]).contains("Silas in Polycarp takes over from here"))
+        XCTAssertTrue(LegacyHandover.notificationBody(forBundleID: Product.Silas.bundleID).hasPrefix("Silas in Polycarp is on"))
         XCTAssertEqual(SilasName.description, "Silas: hold a key, speak and it types.")
         XCTAssertEqual(SilasName.menuTitle("Ready · hold Right ⌘ to speak"), "Silas: Ready · hold Right ⌘ to speak")
         XCTAssertTrue(Welcome.step(.microphone).why.hasPrefix(SilasName.description), "the plain description comes first")
@@ -66,5 +69,21 @@ final class SilasNameTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(box.minY, 0); XCTAssertLessThanOrEqual(box.maxY, SilasMarkGeometry.grid)
         XCTAssertTrue(SilasMarkGeometry.dot().contains(SilasMarkGeometry.dotCenter), "the listening dot")
         XCTAssertFalse(SilasMarkGeometry.dot().boundingBoxOfPath.intersects(CGRect(x: 14, y: 8, width: 15, height: 5.5)), "the dot stays clear of the cap")
+    }
+
+    func testTheListeningMarkIsOneTemplateImageNotAnAttachmentInAnUnstyledTitle() throws {
+        let delegate = try Repo.text("Sources/BaneySpaces/AppDelegate.swift")
+        XCTAssertFalse(delegate.contains("NSTextAttachment"), "an attachment in a plain string doesn't follow a dark menu bar")
+        XCTAssertFalse(delegate.contains("attributedTitle = title"))
+        XCTAssertTrue(delegate.contains("SilasMenuBarImage.composite(base: base, recording: true)"))
+        let image = try Repo.text("Sources/BaneySpaces/Voice/SilasMenuBarImage.swift")
+        XCTAssertTrue(image.contains("image.isTemplate = true"), "macOS tints it for the bar")
+        XCTAssertTrue(image.contains("SilasMarkGeometry.dot()"))
+        // The Settings mark keeps its documented look: the pen in the text color, the dot in the accent.
+        XCTAssertFalse(try Repo.text("Sources/BaneySpaces/Voice/VoiceSettingsView.swift").contains("SilasMarkView(live: voice.state?.status.isLive == true).foregroundStyle"))
+        // One icon path: the Silas tab has no placeholder symbol.
+        let setup = try Repo.text("Sources/BaneySpaces/Setup.swift")
+        XCTAssertTrue(setup.contains("var symbol: String? {"))
+        XCTAssertTrue(setup.contains("case .voice: nil"))
     }
 }

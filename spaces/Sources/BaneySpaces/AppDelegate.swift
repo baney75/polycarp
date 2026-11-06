@@ -751,7 +751,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                 ?? MenuBarMark.polycarp(workspace: spaces.model.current, description: description)) : nil)
             ?? NSImage(systemSymbolName: name, accessibilityDescription: description)
         image?.isTemplate = true
-        statusItem.button?.image = image
+        // While Silas listens the pen and its dot join the workspace mark in one template image, so macOS tints all of it for the
+        // menu bar's appearance; the title below stays the system's own.
+        let listening = VoiceEngine.shared.state?.status.isLive == true
+        if listening, let base = image { statusItem.button?.image = SilasMenuBarImage.composite(base: base, recording: true) } else { statusItem.button?.image = image }
         // Agents that finished while you were elsewhere, counted beside the workspace number.
         let n = started && session.started ? session.unseenCount : 0
         // Full Access stays until Donovan changes it, so the menu bar says so for as long as it is on.
@@ -759,17 +762,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.title = (n > 0 ? " \(n)" : "") + full
         statusItem.button?.toolTip = full.isEmpty ? nil : "Agents have full access (Settings > Agents)"
         statusItem.button?.imagePosition = .imageLeading
-        // Dictation shows in the menu bar while it listens: the mic beside the mark.
-        if VoiceEngine.shared.state?.status.isLive == true {
-            // The pen with its listening dot, beside the workspace mark.
-            let attachment = NSTextAttachment()
-            attachment.image = SilasMark.templateImage(size: 14, recording: true)
-            let title = NSMutableAttributedString(string: " ")
-            title.append(NSAttributedString(attachment: attachment))
-            title.append(NSAttributedString(string: statusItem.button?.title ?? ""))
-            statusItem.button?.attributedTitle = title
-            statusItem.button?.toolTip = "Listening"
-        }
+        if listening { statusItem.button?.toolTip = "Silas is listening" }
     }
 
     private func startSession() {

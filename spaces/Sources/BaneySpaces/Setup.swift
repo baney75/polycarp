@@ -414,7 +414,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
          automation = "Automation", updates = "Updates", agents = "Agents", voice = "Silas", browser = "Browser"
     var id: Self { self }
 
-    var symbol: String {
+    var symbol: String? {
         switch self {
         case .general: "gearshape"
         case .keys: "keyboard"
@@ -424,7 +424,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .automation: "gearshape.2"
         case .updates: "arrow.down.circle"
         case .agents: "cpu"
-        case .voice: "pencil"   // not shown: the Silas tab draws its own pen (`SilasMark`)
+        case .voice: nil   // Silas draws its own pen (`SilasMark`); every consumer must handle the missing symbol
         case .browser: "globe"
         }
     }
@@ -480,10 +480,10 @@ struct SetupView: View {
 
     /// Every tab is a symbol and a name; Silas's is its own pen, as a template image the picker tints.
     @ViewBuilder private func tabLabel(_ t: SettingsTab) -> some View {
-        if t == .voice {
-            Label { Text(t.rawValue) } icon: { Image(nsImage: SilasMark.templateImage(size: 16)) }
+        if let symbol = t.symbol {
+            Label(t.rawValue, systemImage: symbol)
         } else {
-            Label(t.rawValue, systemImage: t.symbol)
+            Label { Text(t.rawValue) } icon: { Image(nsImage: SilasMark.templateImage(size: 16)) }
         }
     }
 

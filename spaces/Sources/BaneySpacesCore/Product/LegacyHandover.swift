@@ -36,7 +36,7 @@ public enum LegacyHandover {
         let both = names.count > 1 ? "None of them can run beside \(Product.name)." : "Both can't run at once."
         var text = "\(both) \(Product.name) copies your settings and leaves \(names.joined(separator: " and ")) installed."
         if names.contains(Product.Silas.phrase) {
-            text += " \(Product.name)'s dictation takes over from here. \(sentence(Product.Silas.phrase)) stays installed (Settings > Silas offers to move it to the Trash once dictation works), and your dictionary, history and speech models are copied, never moved."
+            text += " Silas in \(Product.name) takes over from here. \(sentence(Product.Silas.phrase)) stays installed (Settings > Silas offers to move it to the Trash once dictation works), and your dictionary, history and speech models are copied, never moved."
         }
         return text
     }
@@ -79,7 +79,7 @@ public enum LegacyHandover {
     }
     public static func notificationBody(forBundleID id: String?) -> String {
         id == Product.Silas.bundleID
-            ? "\(Product.name)'s dictation is on, and the two can't share the dictation key. Turn Silas off in Settings > Silas to use \(Product.Silas.phrase) again."
+            ? "Silas in \(Product.name) is on, and the two can't share the dictation key. Turn Silas off in Settings > Silas to use \(Product.Silas.phrase) again."
             : notificationBody
     }
 

@@ -3,11 +3,11 @@ import Foundation
 /// Silas stays until the person says it can go. Nothing here runs on its own.
 ///
 /// After Polycarp's first dictation that really typed text, one notification says dictation is working. While voice is on
-/// and Silas is installed in /Applications or ~/Applications, Settings > Voice shows "The Silas app is still installed." and a
+/// and Silas is installed in /Applications or ~/Applications, Settings > Silas shows "The Silas app is still installed." and a
 /// button; a click moves the app to the Trash, removes Silas's login item only after that move succeeded, and a failure is
 /// shown in the tab. Silas's data stays. Silas off: nothing is offered.
 public enum SilasRetirement {
-    public static let notice = "Dictation is working. \(SilasName.oldAppCapitalized) can go when you're ready."
+    public static let notice = "Dictation is working. \(LegacyHandover.sentence(Product.Silas.phrase)) can go when you're ready."
     public static let stillInstalled = "The Silas app is still installed."
     public static let button = "Move the Silas app to the Trash"
     public static let notifiedMarker = "silas-notified"
@@ -38,7 +38,7 @@ public enum SilasRetirement {
         voiceOn && typedText && !alreadyNotified && silas != nil
     }
 
-    /// Whether Settings > Voice offers the button: voice on, Silas there, and not running (a running Silas can't be moved).
+    /// Whether Settings > Silas offers the button: voice on, Silas there, and not running (a running Silas can't be moved).
     public static func offers(voiceOn: Bool, silas: URL?, silasRunning: Bool) -> Bool {
         voiceOn && silas != nil && !silasRunning
     }

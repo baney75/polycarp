@@ -6,9 +6,7 @@ public enum SilasName {
     public static let name = "Silas"
     /// The first thing a person reads about it.
     public static let description = "Silas: hold a key, speak and it types."
-    /// The older separate app, mid-sentence ("the Silas app") and at the start of one ("The Silas app").
-    public static let oldApp = "the Silas app"
-    public static let oldAppCapitalized = "The Silas app"
+    // The older separate app is `Product.Silas.phrase` ("the Silas app"); `LegacyHandover.sentence` capitalizes it at the start of a sentence.
     /// The first line of the menu: Silas's state.
     public static func menuTitle(_ state: String) -> String { "\(name): \(state)" }
 }
