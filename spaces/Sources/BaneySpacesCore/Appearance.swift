@@ -163,7 +163,7 @@ public enum DockSize: String, Codable, CaseIterable, Equatable {
 /// shipped with, so a fresh install is unchanged.
 public struct AppearanceSettings: Codable, Equatable {
     public var accent: AccentChoice = .preset(.red)
-    public var palette: WorkspacePalette = .rainbow
+    public var palette: WorkspacePalette = .accent
     /// A color picked for one workspace (1...9); it wins over the palette.
     public var overrides: [Int: RGB] = [:]
     public var panelStyle: PanelStyle = .glass

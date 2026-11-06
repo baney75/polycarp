@@ -58,6 +58,14 @@ final class VoiceEngine: ObservableObject {
 
     private let dir = Product.voiceDir(home: FileManager.default.homeDirectoryForCurrentUser)
 
+    /// `--render` only: sample settings, so Settings > Silas draws its real rows with no engine running.
+    func useRenderSample() {
+        let decoder = JSONDecoder()
+        state = try? decoder.decode(VoiceState.self, from: Data(#"{"status":"ready","detail":null,"model":"parakeet-v3","hotkey":"Dictation","hotkeyLabel":"the microphone key","enabled":true,"listener":true}"#.utf8))
+        settings = try? decoder.decode(VoiceSettings.self, from: Data(#"{"hotkey":"Dictation","tapToToggle":true,"model":"parakeet-v3","modelSource":"default","language":"en","removeFillers":true,"trailingSpace":true,"typingSpeed":"fast","newlineAsShiftEnter":true,"learnFromEdits":true,"sounds":true,"showOverlay":true,"launchAtLogin":true,"microphone":null,"onboarded":true,"updateChannel":"stable","autoUpdate":true}"#.utf8))
+        models = (try? decoder.decode([VoiceModel].self, from: Data(#"[{"id":"parakeet-v3","name":"Parakeet v3","tagline":"Fast and accurate on this Mac.","tier":"fast","languages":"English and 24 more","sizeMb":478,"recommended":true,"installed":true,"active":true},{"id":"cohere-int4","name":"Cohere Transcribe","tagline":"Best on long, careful speech.","tier":"best","languages":"English and 13 more","sizeMb":1420,"recommended":false,"installed":false,"active":false}]"#.utf8))) ?? []
+    }
+
     // MARK: Lifecycle
 
     /// Opens the core and decides whether to listen for the dictation key (`VoiceGate`): only with voice on, a speech
