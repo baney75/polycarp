@@ -6,8 +6,10 @@
 import AppKit
 
 let out = CommandLine.arguments[1]
-let ink = NSColor(srgbRed: 0.145, green: 0.165, blue: 0.231, alpha: 1)
-let red = NSColor(srgbRed: 0.91, green: 0.26, blue: 0.29, alpha: 1)
+// The brand's colors (brand/README.md): Cream #F6F3E8 behind everything, Ink #2B2E26 for words, Vine green #59693F for the arrow.
+func hex(_ v: Int) -> NSColor { NSColor(srgbRed: CGFloat((v >> 16) & 255) / 255, green: CGFloat((v >> 8) & 255) / 255, blue: CGFloat(v & 255) / 255, alpha: 1) }
+let ink = hex(0x2B2E26)
+let vine = hex(0x59693F)
 
 func render(scale: Int, to name: String) {
     let w = 640 * scale, h = 400 * scale
@@ -15,15 +17,16 @@ func render(scale: Int, to name: String) {
                         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
     let s = CGFloat(scale)
     ctx.scaleBy(x: s, y: s)  // from here on, points; the origin is the bottom left
-    let light = CGColor(srgbRed: 0.985, green: 0.985, blue: 0.99, alpha: 1)
-    let shade = CGColor(srgbRed: 0.90, green: 0.91, blue: 0.93, alpha: 1)
-    ctx.drawLinearGradient(CGGradient(colorsSpace: nil, colors: [light, shade] as CFArray, locations: [0, 1])!,
+    // Cream, a touch lighter at the top.
+    let light = CGColor(srgbRed: 0.97, green: 0.955, blue: 0.915, alpha: 1)   // a little above #F6F3E8
+    let cream = hex(0xF6F3E8).cgColor
+    ctx.drawLinearGradient(CGGradient(colorsSpace: nil, colors: [light, cream] as CFArray, locations: [0, 1])!,
                            start: CGPoint(x: 0, y: 400), end: CGPoint(x: 0, y: 0), options: [.drawsAfterEndLocation])
 
     // The arrow: a shaft and a head, at the icons' height (190 from the top).
     let y: CGFloat = 400 - 190
-    ctx.setStrokeColor(red.cgColor)
-    ctx.setFillColor(red.cgColor)
+    ctx.setStrokeColor(vine.cgColor)
+    ctx.setFillColor(vine.cgColor)
     ctx.setLineWidth(6)
     ctx.setLineCap(.round)
     ctx.move(to: CGPoint(x: 262, y: y))
@@ -44,8 +47,11 @@ func render(scale: Int, to name: String) {
         CTLineDraw(line, ctx)
     }
     text("Drag Polycarp to Applications", size: 22, weight: .semibold, color: ink, top: 66)
-    text("First open: System Settings › Privacy & Security › Open Anyway", size: 12.5, weight: .regular,
-         color: ink.withAlphaComponent(0.6), top: 352)
+    // For someone who has never done this: what macOS will say the first time, and what to press.
+    text("The first time, your Mac may say it can't check Polycarp. That's expected:", size: 12.5, weight: .regular,
+         color: ink.withAlphaComponent(0.7), top: 338)
+    text("open System Settings, choose Privacy & Security, scroll down and press Open Anyway.", size: 12.5, weight: .regular,
+         color: ink.withAlphaComponent(0.7), top: 358)
 
     // Set the size in points so the 2x file carries 144 dpi, which tiffutil needs to pair them.
     let rep = NSBitmapImageRep(cgImage: ctx.makeImage()!)

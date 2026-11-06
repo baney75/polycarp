@@ -8,7 +8,7 @@
 # uploaded, and only then publishes it, so nobody is offered a release without its app.
 # --dry-run does everything except the tag check, the upload and the publish, so it can run on a branch.
 # --preview builds for Apple silicon only, signs with the real identity, and publishes a prerelease named `preview`
-# with Polycarp.zip and its .sha256 (no disk image), replacing the assets of the last preview. It needs no version tag:
+# with Polycarp.zip, its .sha256 and Polycarp.dmg (the Download button's file), replacing the assets of the last preview. It needs no version tag:
 # the `preview` tag is moved to HEAD, which must already be pushed. install.sh downloads this release on Apple silicon.
 #   scripts/release.sh --preview [--dry-run]
 set -euo pipefail
@@ -75,13 +75,10 @@ if [ "$DRY" = 0 ] && [ "$PREVIEW" = 0 ]; then
 fi
 
 step "Packaging"
-if [ "$PREVIEW" = 1 ]; then NODMG=--no-dmg; else NODMG=; fi
-scripts/package.sh $NODMG
-# The files are checked as a person would get them, before anything is uploaded.
-step "Checking the zip$([ "$PREVIEW" = 1 ] || echo ", the disk image") and the checksum"
-if [ "$PREVIEW" = 1 ]; then scripts/verify-release.sh --no-dmg build; else
+scripts/package.sh
+# The files are checked as a person would get them, before anything is uploaded. The preview ships the same three files.
+step "Checking the zip, the disk image and the checksum"
 scripts/verify-release.sh build
-fi
 
 if [ "$DRY" = 1 ]; then
   echo "dry run: $TAG not uploaded. The files are in build/."
