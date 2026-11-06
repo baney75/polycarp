@@ -85,6 +85,9 @@ final class SettingsSidebarTests: XCTestCase {
         XCTAssertEqual(ThemeChoice.arguments(name: "calm"), ["theme", "set", "calm"])
         XCTAssertEqual(ThemeChoice.arguments(name: "calm", mode: .dark), ["theme", "set", "calm", "--mode", "dark"])
         XCTAssertEqual(ThemeChoice.arguments(name: ThemeChoice.ownColors), ["theme", "off"])
+        // "My own colors" runs a real subcommand: the command's own tests cover what `theme off` does to the files.
+        let cli = try String(contentsOf: folder.deletingLastPathComponent().appendingPathComponent("cli/src/theme.rs"), encoding: .utf8)
+        XCTAssertTrue(cli.contains("\"off\" => cmd(rest"))
     }
 
     /// The dock's finished count and its legend in Settings are one token, so the legend can't describe a different color.

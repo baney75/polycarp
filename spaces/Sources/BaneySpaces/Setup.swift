@@ -709,6 +709,7 @@ struct SetupView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .toggleStyle(.checkbox)   // a list to tick, as the note above says
                     .frame(height: CGFloat(min(model.parkedRows.count, 8)) * 24)
                     .disabled(model.automationReason != nil)
                 }
@@ -876,14 +877,16 @@ struct SetupView: View {
             }
             if let p = appearance.polycarp {
                 SettingsRow("Light or dark") {
-                    Picker("Light or dark", selection: binding({ themes.pendingMode ?? p.mode }, { themes.pick(name: p.name, mode: $0) })) {
+                    Picker("Light or dark", selection: binding({ themes.pendingMode ?? p.mode }, { themes.pick(name: themes.pendingName ?? p.name, mode: $0) })) {
                         Text("Auto").tag(PolycarpTheme.Mode.auto)
                         Text("Light").tag(PolycarpTheme.Mode.light)
                         Text("Dark").tag(PolycarpTheme.Mode.dark)
                     }
-                    .pickerStyle(.segmented).labelsHidden().frame(width: 190).disabled(!themes.available)
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 190)
+                    .disabled(!themes.available || themes.pendingName == ThemeChoice.ownColors)
                 }
             }
+            if !themes.available { SettingsNote("This copy of Polycarp doesn't include the theme command, so the theme can't change here.") }
             if let e = themes.error { SettingsNote(e, tone: .urgent) }
             LearnMore("Your theme colors Polycarp and stays through updates. In Terminal, polycarp theme set <name> does the same, and polycarp theme create mine starts your own.")
         }
@@ -931,7 +934,7 @@ struct SetupView: View {
                 .disabled(!Chrome.spec.fill.adjustable)
             }
             SettingsRow("Opacity", help: Chrome.spec.fill.adjustable ? "Dock, ⌘Tab, launcher, overview and switch overlay. Solid is always opaque."
-                        : "The \(Chrome.spec.label) theme draws its own fill. Style and opacity apply to the Polycarp theme.") {
+                        : "This look draws its own fill, so style and opacity don't change it.") {
                 HStack(spacing: 8) {
                     Slider(value: binding({ appearance.settings.panelOpacity }, { appearance.settings.panelOpacity = $0 }),
                            in: AppearanceSettings.panelOpacityRange)
@@ -1058,33 +1061,49 @@ struct SetupView: View {
     }
 }
 
-/// Runs the bundled `polycarp theme` command for a pick in Settings, off the main thread. The theme's file changes and the app's
-/// watcher redraws within about a second, so a pick shows at once and lets go after that.
+/// Runs the bundled `polycarp theme` command for a pick in Settings, one at a time and in order, so the last pick is the one that
+/// stays. The theme's file changes and the app's watcher redraws within about a second, so a pick shows at once and lets go after
+/// that. Only the latest pick may clear what's shown or report a failure.
 final class ThemePicker: ObservableObject {
     @Published private(set) var pendingName: String?
     @Published private(set) var pendingMode: PolycarpTheme.Mode?
     @Published private(set) var error: String?
 
+    private let queue = DispatchQueue(label: "polycarp.settings.theme", qos: .userInitiated)
+    private var latest = 0
     private var command: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/bin/polycarp") }
     var available: Bool { FileManager.default.isExecutableFile(atPath: command.path) }
 
     func pick(name: String, mode: PolycarpTheme.Mode? = nil) {
         guard available else { return }
+        latest += 1
+        let pick = latest
         pendingName = name; pendingMode = mode; error = nil
         let command = command
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let p = Process()
-            p.executableURL = command
-            p.arguments = ThemeChoice.arguments(name: name, mode: mode)
-            p.standardOutput = FileHandle.nullDevice
-            p.standardError = FileHandle.nullDevice
-            var ok = false
-            do { try p.run(); p.waitUntilExit(); ok = p.terminationStatus == 0 } catch {}
-            DispatchQueue.main.asyncAfter(deadline: .now() + (ok ? 1.5 : 0)) { [weak self] in
-                self?.pendingName = nil; self?.pendingMode = nil
-                if !ok { self?.error = "That theme didn't apply. Try again. If it keeps failing, run polycarp theme list in Terminal to see why." }
+        queue.async { [weak self] in
+            let why = Self.run(command, ThemeChoice.arguments(name: name, mode: mode))
+            DispatchQueue.main.asyncAfter(deadline: .now() + (why == nil ? 1.5 : 0)) { [weak self] in
+                guard let self, pick == self.latest else { return }
+                self.pendingName = nil; self.pendingMode = nil
+                self.error = why
             }
         }
+    }
+
+    /// nil when it worked, or the command's own last line of complaint.
+    private static func run(_ command: URL, _ arguments: [String]) -> String? {
+        let p = Process()
+        let errors = Pipe()
+        p.executableURL = command
+        p.arguments = arguments
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = errors
+        do { try p.run() } catch { return "That theme didn't apply: \(error.localizedDescription)" }
+        let data = errors.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard p.terminationStatus != 0 else { return nil }
+        let last = String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline).last.map(String.init)
+        return "That theme didn't apply" + (last.map { ": \($0)" } ?? ".")
     }
 }
 
