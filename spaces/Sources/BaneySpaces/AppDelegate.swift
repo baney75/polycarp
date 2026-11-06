@@ -558,20 +558,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }()
 
     func applicationWillTerminate(_ n: Notification) {
+        // An install swaps the app in place: the Dock and Mission Control stay as they are, since
+        // restoring them here and taking them back at the launch would restart the Dock twice in seconds.
+        let forInstall = InstallHandoff.isCurrent(markedAt: (UserDefaults.standard.object(forKey: InstallHandoff.key) as? NSNumber)?.doubleValue, now: Date().timeIntervalSince1970)
+        UserDefaults.standard.removeObject(forKey: InstallHandoff.key)
+        DockRestart.isQuitting = true
         // The macOS Dock comes back with everything else; the next launch tucks it away again.
         sandbox.shutdown()
-        dock.stop(restoreSystemDock: true)
+        dock.stop(restoreSystemDock: !forInstall)
         topDrag.stop()
         // Mission Control comes back with the Dock, so there's always a way to see the desktops.
         // Quitting for an update is the exception: the new build takes over, and if it never
         // starts the launch agent puts Mission Control back after 30 seconds.
         if SystemMissionControl.isTakenByUs {
-            // So is an install swapping the app in place: restoring here and taking over at the launch would restart the
-            // Dock twice in seconds.
-            let forInstall = InstallHandoff.isCurrent(markedAt: (UserDefaults.standard.object(forKey: InstallHandoff.key) as? NSNumber)?.doubleValue, now: Date().timeIntervalSince1970)
-            UserDefaults.standard.removeObject(forKey: InstallHandoff.key)
             if forInstall || UserDefaults.standard.dictionary(forKey: "updatingTo") != nil { SystemMissionControl.leaveForUpdate() }
-            else { SystemMissionControl.restore(isQuitting: true) }
+            else { SystemMissionControl.restore() }
         }
         if started { spaces.restoreAll() }
         // ⌘Space goes back to Spotlight while BaneySpaces isn't running; the next launch takes it again.
@@ -580,6 +581,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // A clean quit, not a crash, for the next launch's crash-loop check.
         CrashLoop.launchEnded()
         hotCorners.stop()
+        DockRestart.handOffBeforeQuit()
     }
 
     // MARK: Accessibility

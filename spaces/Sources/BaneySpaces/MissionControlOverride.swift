@@ -110,14 +110,13 @@ enum SystemMissionControl {
     /// turned off (the uninstaller removes it itself): on a quit it finds no heartbeat and does nothing.
     /// Returns whether any saved setting changed (false: nothing to undo, or already as saved).
     @discardableResult
-    static func restore(keeping why: String? = nil, removeAgent: Bool = false, isQuitting: Bool = false) -> Bool {
+    static func restore(keeping why: String? = nil, removeAgent: Bool = false) -> Bool {
         problem = why
         let changed = takeover.restore()
         if removeAgent { installer.remove() } else { installer.stopHolding() }
         if changed {
             Trace.log("mission control: back as it was")
-            // Quitting has no later to wait for, so this one goes straight away. An install doesn't come here at all.
-            if isQuitting { DockRestart.now() } else { restartDock() }
+            restartDock()
         }
         return changed
     }

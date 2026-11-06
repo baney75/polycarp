@@ -6,7 +6,7 @@ import XCTest
 final class DockRestartGateTests: XCTestCase {
     func testAnOrdinaryQuietDesktopRestartsNow() {
         XCTAssertEqual(DockRestartGate.decide(onFullScreenSpace: false, switching: false, dockUptime: 60), .restartNow)
-        XCTAssertEqual(DockRestartGate.decide(onFullScreenSpace: false, switching: false, dockUptime: nil), .restartNow)
+        XCTAssertEqual(DockRestartGate.decide(onFullScreenSpace: false, switching: false, dockUptime: nil), .wait(.dockJustStarted), "between restarts")
     }
 
     func testItWaitsWhileAFullScreenSpaceShows() {
@@ -20,6 +20,20 @@ final class DockRestartGateTests: XCTestCase {
     func testTwoRestartsCannotLandSecondsApart() {
         XCTAssertEqual(DockRestartGate.decide(onFullScreenSpace: false, switching: false, dockUptime: 2.9), .wait(.dockJustStarted))
         XCTAssertEqual(DockRestartGate.decide(onFullScreenSpace: false, switching: false, dockUptime: 3), .restartNow)
+    }
+
+    func testASpaceThatJustChangedMayStillBeSliding() {
+        XCTAssertEqual(DockRestartGate.decide(onFullScreenSpace: false, switching: false, dockUptime: 60, sinceSpaceChange: 1), .wait(.spaceJustChanged))
+        XCTAssertEqual(DockRestartGate.decide(onFullScreenSpace: false, switching: false, dockUptime: 60, sinceSpaceChange: 5), .restartNow)
+    }
+
+    func testAQuitHandsItsRestartToAHelperAndAnInstallRestoresNothing() throws {
+        let app = try source("Sources/BaneySpaces/AppDelegate.swift")
+        let quit = try XCTUnwrap(app.range(of: "func applicationWillTerminate").map { String(app[$0.lowerBound...].prefix(2000)) })
+        XCTAssertTrue(quit.contains("dock.stop(restoreSystemDock: !forInstall)"))
+        XCTAssertTrue(quit.contains("DockRestart.handOffBeforeQuit()"), "what the quit owes outlives it")
+        XCTAssertLessThan(try XCTUnwrap(quit.range(of: "DockRestart.isQuitting = true")).lowerBound, try XCTUnwrap(quit.range(of: "dock.stop")).lowerBound)
+        XCTAssertTrue(EntryPoint.runsBesideAnotherCopy.contains(DockRestartHelper.argument), "it mustn't wait on the next launch's lock")
     }
 
     func testAnOldInstallMarkerDoesNotSkipARealQuit() {
@@ -46,5 +60,6 @@ final class DockRestartGateTests: XCTestCase {
         let quit = try XCTUnwrap(install.range(of: "to quit\" >/dev/null"))
         XCTAssertLessThan(mark.lowerBound, quit.lowerBound, "the marker has to be there before the app is asked to quit")
         XCTAssertTrue(try source("Sources/BaneySpaces/AppDelegate.swift").contains("InstallHandoff.isCurrent"))
+        XCTAssertTrue(install.contains("restartingForInstall -int"), "a float rounds epoch seconds by minutes")
     }
 }

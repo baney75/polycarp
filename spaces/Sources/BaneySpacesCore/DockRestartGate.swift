@@ -7,6 +7,11 @@ import Foundation
 public enum DockRestartGate {
     /// A Dock younger than this may still be finishing its own start.
     public static let settleSeconds: TimeInterval = 3
+    /// A Space that changed this recently may still be sliding.
+    public static let spaceQuietSeconds: TimeInterval = 2
+    /// How long a helper left behind by a quit keeps waiting before giving up the wait and restarting anyway: settings that
+    /// never apply are worse than a slide, and someone can stay in a full-screen app for hours.
+    public static let helperGiveUpSeconds: TimeInterval = 600
 
     public enum Decision: Equatable {
         case restartNow
@@ -14,15 +19,23 @@ public enum DockRestartGate {
     }
 
     public enum Reason: String, Equatable {
-        case fullScreenShowing, switching, dockJustStarted
+        case fullScreenShowing, switching, dockJustStarted, spaceJustChanged
     }
 
-    public static func decide(onFullScreenSpace: Bool, switching: Bool, dockUptime: TimeInterval?) -> Decision {
+    /// `dockUptime` nil means no Dock is running yet: it's between restarts, so that counts as just started.
+    public static func decide(onFullScreenSpace: Bool, switching: Bool, dockUptime: TimeInterval?, sinceSpaceChange: TimeInterval = .infinity) -> Decision {
         if onFullScreenSpace { return .wait(.fullScreenShowing) }
         if switching { return .wait(.switching) }
-        if let dockUptime, dockUptime < settleSeconds { return .wait(.dockJustStarted) }
+        if sinceSpaceChange < spaceQuietSeconds { return .wait(.spaceJustChanged) }
+        guard let dockUptime, dockUptime >= settleSeconds else { return .wait(.dockJustStarted) }
         return .restartNow
     }
+}
+
+public enum DockRestartHelper {
+    /// `Polycarp --restart-when-safe Dock,...` waits for the gate, restarts those, and exits. A quit starts it, so a restart
+    /// the quit owes still goes through the gate after the app has gone.
+    public static let argument = "--restart-when-safe"
 }
 
 /// How the next launch learns that this quit is only an install swapping the app. Nothing is restored then, so the Dock isn't
