@@ -298,6 +298,16 @@ Exit codes: 0 means ok, 1 means refused or invalid, 2 means the command was used
 
 The [`polycarp-theme` skill](https://github.com/baney75/polycarp/blob/main/skills/polycarp-theme/SKILL.md) teaches an agent this workflow, with worked examples.
 
+## Use your browser from Claude, ChatGPT and Grok
+
+Settings > Browser has a section called "Use your browser from Claude, ChatGPT and Grok". It lets the assistants you use on the web work in the browser on your Mac. It's off until you click Turn on, and it takes one step at a time: get Tailscale, sign in, allow Funnel for your computer, then Turn on.
+
+You need your own free Tailscale account. Polycarp runs no service for this. Tailscale's Funnel setting is what makes the address reachable from the internet. When it's on, Polycarp shows the address to add in each assistant and a passcode, once. An assistant has to be approved with that passcode before it can use your browser.
+
+Your computer must stay on and signed in. Agents you approve can use your signed-in browser, so only approve ones you trust. Turn off closes it. If Tailscale doesn't suit you, the [remote access guide](https://github.com/baney75/polycarp/blob/main/browser/docs/remote.md) has other ways, such as a free Cloudflare address of your own.
+
+This hasn't been tried on a live Mac yet.
+
 ## Keys, motion and behavior
 
 Themes cover the look. On a Mac, keys, the dock, the launcher, dictation and browser access are all in Polycarp's Settings. On Windows and Linux, see the [Silas](/projects/silas/docs/) and [Tabkyra](/projects/tabkyra/docs/) docs.

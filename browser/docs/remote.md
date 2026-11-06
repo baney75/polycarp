@@ -1,7 +1,13 @@
-# Use Tabkyra from claude.ai, ChatGPT and grok.com
+# Use Polycarp's browser from claude.ai, ChatGPT and grok.com
 
-Web assistants can drive your own signed-in browser through Tabkyra. It runs on your
-computer: no account with us, no relay, no cost. One command sets it up.
+Web assistants can drive your own signed-in browser through Polycarp (the browser part is still called
+Tabkyra, and its command is `tabkyra`, also reachable as `polycarp browser`). It runs on your computer
+and through your own free account with Tailscale: no account with us, no relay, no cost.
+
+**In the Polycarp app, use Settings > Browser > "Use your browser from Claude, ChatGPT and Grok".** It
+walks you through the steps below one at a time with buttons: get Tailscale, allow Funnel, turn on,
+copy the address and passcode, add the connector. It does what the command here does and nothing
+else. The rest of this page is the same thing for the terminal. One command sets it up.
 
 ```bash
 tabkyra remote setup
@@ -22,6 +28,16 @@ computer, whether public DNS resolves the name to an address outside the tailnet
 the public URL answers. The DNS line matters: from inside your own tailnet, a ts.net name works
 even when Funnel isn't reaching the internet, so a passing public fetch alone can hide a broken
 Funnel. The computer must stay on, awake and signed in to the browser with Tabkyra loaded.
+
+## For an app
+
+`remote status --json` and `remote setup --json` print one JSON object, so an app never reads
+sentences. `state` is one of `tailscale_missing`, `tailscale_signed_out`, `funnel_not_allowed` (with
+`adminUrl`, the page Tailscale printed), `tailnet_lock`, `port_busy`, `ready`, `on` (with
+`connectorUrl`), `no_browser_connected` or `problem` (with `message`, and sometimes `code`).
+`setup --json` includes `passcode` only in the run that made it, even when that run then fails, so
+keep it. `token passcode --json` makes a new one. On a Mac, `TABKYRA_TAILSCALE_APP` names the
+Tailscale app's own command, which isn't on PATH.
 
 ## What you need
 
