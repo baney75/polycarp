@@ -9,8 +9,8 @@ description: Install Polycarp, use its one command, choose or build a theme, and
 Polycarp is one app for your workspaces, your voice and the browser your agents use. It's early, and it's arriving one device at a time.
 
 - **Mac, Apple silicon:** workspaces, dictation and browser agents are all inside `Polycarp.app`, with one Settings window and one set of permissions.
-- **Other devices:** the same Rust core is on its way to them. Until then, the Silas and Tabkyra apps cover Windows and Linux, and those repos stay up.
-- **Themes:** `polycarp theme` checks, writes, previews and undoes themes, and agents can do the same over MCP. The Mac app follows your theme live. On Omarchy, Polycarp matches your system theme, and you can still change anything.
+- **Other devices:** the same Rust core is on its way to them. Until then, Silas offers nightly voice builds on Windows and Linux, and Tabkyra's installer for them is written but not yet tried live. Those repos stay up.
+- **Themes:** `polycarp theme` checks, writes, previews and undoes themes, and agents can do the same over MCP. The Mac app follows your theme live. On Omarchy, Polycarp matches your system theme, and you can still change anything; that hasn't run on a real theme switch yet.
 - `polycarp theme off` removes the theme files. Apps that read them use their own look when they next check. `polycarp theme on` brings your theme back.
 
 The [plan](https://github.com/baney75/polycarp/blob/main/PLAN.md) lists every step and the check that proves it.
@@ -23,15 +23,15 @@ The [plan](https://github.com/baney75/polycarp/blob/main/PLAN.md) lists every st
 curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash
 ```
 
-This downloads the signed app for Apple silicon and opens it, with no developer tools needed. A welcome window walks you through the permissions. Accessibility is the only one Polycarp can't run without.
+This downloads the signed app for Apple silicon, puts `polycarp` in `~/.local/bin` and opens the app, with no developer tools needed. A welcome window walks you through the permissions. Accessibility is the only one Polycarp can't run without. Browser agents take one more step: Settings > Browser walks you through loading the extension in Chromium.
 
-If you have BaneySpaces, it goes to the Trash, because the two can't run together, and Polycarp copies its settings. Silas stays installed and Polycarp copies its dictionary and models. Once dictation works for you, **Move Silas to the Trash** in Settings > Voice finishes the job. With voice turned off, Silas keeps working as it always did. Your own `tabkyra` keeps working too.
+If you have BaneySpaces, it goes to the Trash, because the two can't run together, and Polycarp copies its settings. Silas stays installed and Polycarp copies its dictionary and models. Once dictation works for you, **Move Silas to the Trash** in Settings > Voice finishes the job. With voice turned off, Silas keeps working as it always did. Your own `tabkyra` keeps working too, and `baneyspaces` keeps working as a name for `polycarp-spaces`.
 
 On an Intel Mac, or with `POLYCARP_FROM_SOURCE=1`, it builds on your Mac instead. That needs Apple's command line tools, [Rust](https://rustup.rs), [Bun](https://bun.sh) and [Node](https://nodejs.org).
 
 ### On Linux
 
-The same command needs [Rust](https://rustup.rs) and installs the `polycarp` command and every theme. On Omarchy it also turns on matching your system theme. The app for Linux is on the way.
+The same install script needs [Rust](https://rustup.rs) and installs the `polycarp` command and every theme. On Omarchy it also turns on matching your system theme. The app for Linux is on the way.
 
 ### On Windows
 
@@ -319,7 +319,7 @@ The [`polycarp-theme` skill](https://github.com/baney75/polycarp/blob/main/skill
 
 ## Keys, motion and behavior
 
-Themes cover the look. On a Mac, keys, the dock, the launcher, dictation and browser access are all in Polycarp's Settings.
+Themes cover the look. On a Mac, keys, the dock, the launcher, dictation and browser access are all in Polycarp's Settings. On Windows and Linux, see the [Silas](/projects/silas/docs/) and [Tabkyra](/projects/tabkyra/docs/) docs.
 
 One file for all of them, with undo and a recovery key, is on the plan. Its contract is [`spaces/spec/config.md`](https://github.com/baney75/polycarp/blob/main/spaces/spec/config.md).
 
@@ -330,7 +330,7 @@ One file for all of them, with undo and a recovery key, is on the plan. Its cont
 | Voice | In the app | Nightly, as Silas | Nightly | In progress, iPad first | Planned |
 | Workspaces | In the app | In progress | In progress | Planned: control your computer's | Planned: control your computer's |
 | Browser agents | In the app | Not yet tried | Not yet tried | Planned: watch and steer your computer's | Planned: watch and steer your computer's |
-| Themes | In the app | Command works | Command works, matches Omarchy | Planned | Planned |
+| Themes | In the app | Command works | Command works; Omarchy matching not yet tried live | Planned | Planned |
 
 ### The top bar
 
