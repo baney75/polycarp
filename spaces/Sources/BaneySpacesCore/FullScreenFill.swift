@@ -28,11 +28,28 @@ public enum FullScreenFill {
     /// Accessibility's name for the green button.
     public static let buttonSubrole = "AXFullScreenButton"
 
-    /// Where a press of the gesture sends a window. A window already filling goes back where it was; any other fills. A
-    /// filled window with nothing saved, such as one the person sized by hand to fill, stays.
-    public static func target(current: CGRect, fill: CGRect, saved: CGRect?) -> CGRect {
-        guard isFilling(current, fill) else { return fill }
-        return saved ?? current
+    /// A window this filled: where it was, and where it landed, which can fall short of the screen for an app that snaps to
+    /// character cells or has a maximum size.
+    public struct Record: Equatable, Sendable {
+        public var from: CGRect
+        public var landed: CGRect
+        public init(from: CGRect, landed: CGRect) {
+            self.from = from
+            self.landed = landed
+        }
+    }
+
+    /// Where a press sends a window. Still where this filled it: back where it was. Anywhere else, including somewhere the
+    /// person dragged it since: it fills.
+    public static func target(current: CGRect, fill: CGRect, record: Record?) -> CGRect {
+        if let record, isFilling(current, record.landed) { return record.from }
+        return fill
+    }
+
+    /// Whether a click could be on a window's green button, from the window server's geometry alone: within the corner where
+    /// the traffic lights sit. Only such a click is worth asking the app about, so ordinary clicks cost no call to any app.
+    public static func isInButtonCorner(_ point: CGPoint, window: CGRect) -> Bool {
+        CGRect(x: window.minX, y: window.minY, width: min(140, window.width), height: min(70, window.height)).contains(point)
     }
 
     public static func isFilling(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = 3) -> Bool {

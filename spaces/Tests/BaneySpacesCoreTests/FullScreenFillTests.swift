@@ -33,18 +33,28 @@ final class FullScreenFillTests: XCTestCase {
     }
 
     func testThePressTogglesAndComesBackWhereItWas() {
-        XCTAssertEqual(FullScreenFill.target(current: small, fill: fill, saved: nil), fill)
-        XCTAssertEqual(FullScreenFill.target(current: fill, fill: fill, saved: small), small)
-        XCTAssertEqual(FullScreenFill.target(current: fill, fill: fill, saved: nil), fill, "nothing saved: it stays")
+        XCTAssertEqual(FullScreenFill.target(current: small, fill: fill, record: nil), fill)
+        let record = FullScreenFill.Record(from: small, landed: fill)
+        XCTAssertEqual(FullScreenFill.target(current: fill, fill: fill, record: record), small)
     }
 
-    func testAWindowThatMovedSinceFillingFillsAgain() {
-        XCTAssertEqual(FullScreenFill.target(current: small, fill: fill, saved: CGRect(x: 1, y: 1, width: 2, height: 2)), fill)
+    func testAnAppThatSnapsItsSizeStillComesBack() {
+        // Terminal lands short of the screen, on a character cell. Measuring against the screen would fill it forever.
+        let snapped = CGRect(x: 0, y: 34, width: 1490, height: 930)
+        let record = FullScreenFill.Record(from: small, landed: snapped)
+        XCTAssertEqual(FullScreenFill.target(current: snapped, fill: fill, record: record), small)
     }
 
-    func testAppsThatRoundTheirSizeStillCountAsFilling() {
-        XCTAssertTrue(FullScreenFill.isFilling(CGRect(x: 0, y: 34, width: 1510, height: 946), fill))
-        XCTAssertFalse(FullScreenFill.isFilling(CGRect(x: 0, y: 34, width: 1400, height: 948), fill))
+    func testAWindowDraggedSinceFillingFillsAgain() {
+        let record = FullScreenFill.Record(from: small, landed: fill)
+        XCTAssertEqual(FullScreenFill.target(current: CGRect(x: 40, y: 80, width: 900, height: 700), fill: fill, record: record), fill)
+    }
+
+    func testOrdinaryClicksNeverAskAnApp() {
+        let window = CGRect(x: 100, y: 100, width: 800, height: 600)
+        XCTAssertTrue(FullScreenFill.isInButtonCorner(CGPoint(x: 150, y: 110), window: window), "the traffic lights")
+        XCTAssertFalse(FullScreenFill.isInButtonCorner(CGPoint(x: 500, y: 110), window: window), "the rest of the title bar")
+        XCTAssertFalse(FullScreenFill.isInButtonCorner(CGPoint(x: 150, y: 400), window: window), "the content")
     }
 
     private func source(_ path: String) throws -> String {
@@ -54,7 +64,9 @@ final class FullScreenFillTests: XCTestCase {
     func testTheGestureWatcherOnlySwallowsWhatItActsOn() throws {
         let code = try source("Sources/BaneySpaces/FullScreenGestures.swift")
         XCTAssertTrue(code.contains("FullScreenFill.buttonSubrole"), "only the green button")
-        XCTAssertTrue(code.contains("AXUIElementSetMessagingTimeout"), "a frozen app can't hold up clicks")
+        XCTAssertTrue(code.contains("isInButtonCorner"), "only a click in the corner asks the app anything")
+        XCTAssertFalse(code.contains("AXUIElementSetMessagingTimeout(system"), "that would change every Accessibility call in the app")
+        XCTAssertTrue(code.contains("frontIsFullScreen"), "the key leaves native full screen, as macOS's own")
         XCTAssertTrue(code.contains("tapDisabledByTimeout"), "macOS turning the tap off is noticed")
         XCTAssertTrue(code.contains("swallowingUp"), "a swallowed press takes its release with it")
     }

@@ -627,7 +627,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         missionControlKeys.start()
         syncMissionControl()
         spaces.start()
-        fullScreenGestures.onGesture = { [weak self] id in self?.spaces.toggleFill(id) }
+        fullScreenGestures.onGesture = { [weak self] window in self?.spaces.toggleFill(window) }
         fullScreenGestures.start()
         watchClicksForDisplay()
         if WorkspaceDock.enabled { dock.start() }
