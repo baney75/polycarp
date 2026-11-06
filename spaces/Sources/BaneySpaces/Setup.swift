@@ -430,8 +430,8 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     }
 }
 
-/// BaneySpaces' settings: a tab for each part, so nothing sits below the bottom of a laptop
-/// screen. It opens on General until BaneySpaces has what it needs to run.
+/// Polycarp's settings: a sidebar of sections on the left and the chosen section on the right, in a window that never changes
+/// size. It opens on General until Polycarp has what it needs to run.
 struct SetupView: View {
     @ObservedObject var model: SetupModel
     @ObservedObject private var appearance = Appearance.shared
@@ -439,123 +439,94 @@ struct SetupView: View {
     var close: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("", selection: $model.tab) {
-                ForEach(SettingsTab.allCases) { t in Label(t.rawValue, systemImage: t.symbol).tag(t) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 24).padding(.top, 16).padding(.bottom, 4)
-            VStack(alignment: .leading, spacing: 18) {
-                switch model.tab {
-                case .general: general
-                case .keys: keys
-                case .dock: dock
-                case .appearance: appearanceTab
-                case .launcher: launcher
-                case .automation: automation
-                case .updates: updates
-                case .agents: agents
-                case .voice: VoiceSettingsView()
-                case .browser: BrowserSettingsView()
+        HStack(spacing: 0) {
+            SettingsSidebarView(selection: $model.tab)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text(model.tab.rawValue).font(Chrome.font(20, .bold)).accessibilityAddTraits(.isHeader)
+                    switch model.tab {
+                    case .general: general
+                    case .keys: keys
+                    case .dock: dock
+                    case .appearance: appearanceTab
+                    case .launcher: launcher
+                    case .automation: automation
+                    case .updates: updates
+                    case .agents: agents
+                    case .voice: VoiceSettingsView()
+                    case .browser: BrowserSettingsView()
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(.horizontal, 28).padding(.top, 40).padding(.bottom, 28)
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
-            .padding(24)
-            Divider()
-            HStack {
-                // About the app as a whole, so only under General; on another tab it read like a stray note.
-                if model.tab == .general {
-                    Text("Full screen works as usual; switching workspaces takes a window out of it first. Change anything later with Settings… in the menu bar icon's menu (⌘,).")
-                        .font(Chrome.font(10)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                Button("Done", action: close).keyboardShortcut(.defaultAction)
-            }
-            .padding(.horizontal, 24).padding(.vertical, 14)
+            .id(model.tab)   // each section opens at its top
         }
-        .frame(width: 560)
+        .frame(width: SettingsSidebar.windowSize.width, height: SettingsSidebar.windowSize.height)
+        .foregroundStyle(Chrome.wash())
+        .tint(Chrome.accent)
+        .background(Chrome.panel())
+        .environment(\.colorScheme, Chrome.scheme)
+        // ⌘W closes the window, as in any Mac app; so does its close button.
+        .background(Button("", action: close).keyboardShortcut("w", modifiers: .command).opacity(0).accessibilityHidden(true))
     }
+
+    private func binding<T>(_ get: @escaping () -> T, _ set: @escaping (T) -> Void) -> Binding<T> { Binding(get: get, set: set) }
 
     // MARK: General
 
     @ViewBuilder private var general: some View {
-        HStack(spacing: 14) {
-            Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 56, height: 56)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Polycarp").font(Chrome.font(17, .bold))
-                Text("Nine workspaces. One row of keys.").foregroundStyle(.secondary)
-            }
-        }
-
-        if model.justEnabled && model.ready {
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.seal.fill").font(Chrome.font(17)).foregroundStyle(.green)
-                Text("Polycarp is on. Try \(model.modifier.symbol)2.").font(Chrome.font(15, .bold))
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Chrome.shape(.settingsCallout, continuous: false).fill(Color.green.opacity(0.12)))
-        }
-
-        step(done: model.trusted, title: "Let Polycarp arrange windows") {
-            if model.trusted {
-                Text("Allowed.").foregroundStyle(.secondary)
-            } else {
-                Text("Accessibility lets Polycarp show, hide and move other apps' windows. It can't read what you type.")
-                    .foregroundStyle(.secondary)
-                Button(action: model.allow) {
-                    Text("Allow Polycarp").frame(minWidth: 160)
-                }
-                .controlSize(.large)
-                .buttonStyle(.borderedProminent)
-                Text("macOS opens its settings. Turn on Polycarp in the list and come back; this window updates by itself.")
-                    .font(Chrome.font(12)).foregroundStyle(.secondary)
-                if model.staleGrant {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Already switched on and still not working?").font(Chrome.font(12, .bold))
-                        Text("macOS kept an old permission from an earlier copy of Polycarp. Fixing it removes the old entry and asks again.")
-                            .font(Chrome.font(12)).foregroundStyle(.secondary)
-                        Button(model.fixing ? "Fixing…" : "Fix Permission", action: model.fixPermission)
-                            .disabled(model.fixing)
+        SettingsGroup {
+            SettingsBlock {
+                HStack(spacing: 14) {
+                    Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 44, height: 44)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Polycarp").font(Chrome.font(15, .bold))
+                        Text("Nine workspaces. One row of keys.").font(Chrome.font(12)).foregroundStyle(Chrome.muted)
                     }
-                    .padding(10)
-                    .background(Chrome.shape(.settingsCell, continuous: false).fill(Color.orange.opacity(0.12)))
-                }
-            }
-        }
-
-        if model.aeroSpaceRunning {
-            step(done: false, title: "Quit AeroSpace") {
-                Text("AeroSpace is running and uses the same keys. Polycarp starts as soon as it quits.")
-                    .foregroundStyle(.secondary)
-                Button("Quit AeroSpace", action: model.quitAeroSpace)
-            }
-        }
-
-        if model.desktops > 1 {
-            step(done: false, title: "Optional: keep one macOS desktop") {
-                if model.viewerKeys {
-                    Text("You have \(model.desktops) desktops in Mission Control. Windows on the others are out of reach. Polycarp's overview has replaced Mission Control, so to close the extra ones, turn off \"Use Polycarp's overview instead of Mission Control\" under Keys, open Mission Control, hover each extra desktop at the top and click its close button, then turn the switch back on.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("You have \(model.desktops) desktops in Mission Control. Windows on the others are out of reach. Open Mission Control, hover each extra desktop at the top, and click its close button.")
-                        .foregroundStyle(.secondary)
-                    Button("Open Mission Control") {
-                        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Mission Control.app"))
-                    }
-                }
-            }
-        }
-
-        step(done: model.openAtLogin, title: "Start with your Mac") {
-            Toggle("Open Polycarp at login", isOn: Binding(get: { model.openAtLogin }, set: { model.setOpenAtLogin($0) }))
-            if model.loginNeedsApproval {
-                HStack {
-                    Text("macOS needs you to approve it in Login Items.").font(Chrome.font(12)).foregroundStyle(.secondary)
                     Spacer()
-                    Button("Approve in Login Items") { SMAppService.openSystemSettingsLoginItems() }
+                    SettingsStatusLabel(text: model.ready ? "Running" : "Needs a switch", done: model.ready)
+                }
+            }
+            if model.justEnabled && model.ready { SettingsNote("Polycarp is on. Try \(model.modifier.symbol)2.", tone: .done) }
+        }
+
+        SettingsGroup("Permissions") {
+            SettingsRow("Arrange windows", help: model.trusted ? "Polycarp can show, hide and move windows. It can't read what you type."
+                        : "Lets Polycarp show, hide and move windows. It can't read what you type.") {
+                if model.trusted { SettingsStatusLabel(text: "Allowed") }
+                else { Button("Allow Polycarp", action: model.allow).buttonStyle(.borderedProminent) }
+            }
+            if !model.trusted { SettingsNote("macOS opens its settings. Turn on Polycarp, then come back; this window updates by itself.") }
+            if !model.trusted && model.staleGrant {
+                SettingsRow("Already on, still not working?", help: "macOS kept an old permission from an earlier copy. Fixing removes it and asks again.") {
+                    Button(model.fixing ? "Fixing…" : "Fix Permission", action: model.fixPermission).disabled(model.fixing)
+                }
+            }
+            if model.aeroSpaceRunning {
+                SettingsRow("AeroSpace is running", help: "It uses the same keys. Polycarp starts as soon as it quits.") {
+                    Button("Quit AeroSpace", action: model.quitAeroSpace)
+                }
+            }
+            if model.desktops > 1 {
+                SettingsRow("Extra macOS desktops", help: "You have \(model.desktops). Windows on the others are out of reach.") {
+                    if !model.viewerKeys {
+                        Button("Open Mission Control") { NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Mission Control.app")) }
+                    }
+                }
+                LearnMore(model.viewerKeys
+                    ? "Polycarp's overview has replaced Mission Control. To close the extra desktops, turn off \"Use Polycarp's overview instead of Mission Control\" under Keys, open Mission Control, hover each extra desktop at the top and click its close button, then turn the switch back on."
+                    : "Open Mission Control, hover each extra desktop at the top, and click its close button.")
+            }
+        }
+
+        SettingsGroup("Startup") {
+            SettingsRow("Open Polycarp at login") {
+                Toggle("Open Polycarp at login", isOn: binding({ model.openAtLogin }, { model.setOpenAtLogin($0) })).labelsHidden()
+            }
+            if model.loginNeedsApproval {
+                SettingsRow("macOS needs your approval", help: "Approve Polycarp in Login Items.") {
+                    Button("Approve") { SMAppService.openSystemSettingsLoginItems() }
                 }
             }
         }
@@ -564,152 +535,143 @@ struct SetupView: View {
         let home = FileManager.default.homeDirectoryForCurrentUser
         if let note = LegacyApp.line(installed: LegacyApp.installed(in: LegacyApp.searchFolders(home: home)),
                                      supportDir: Product.supportDir(home: home)) {
-            Text(note).font(Chrome.font(12)).foregroundStyle(.secondary)
+            SettingsGroup { SettingsNote(note) }
         }
 
-        step(done: true, title: "Uninstall", symbol: "trash") {
-            // Text across the full width, the button under it, as the Allow step lays out; side by
-            // side, the text wrapped into a narrow four-line column beside a floating button.
-            Text("Puts back your windows, the macOS Dock, the screenshot and Spotlight shortcuts and your Claude Code settings as they were, then removes Polycarp.")
-                .font(Chrome.font(12)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button("Uninstall Polycarp…") { model.onUninstall?() }
+        SettingsGroup {
+            SettingsRow("Uninstall Polycarp", help: "Puts your windows, the Dock, shortcuts and Claude Code settings back, then removes Polycarp.") {
+                Button("Uninstall…") { model.onUninstall?() }
+            }
+            LearnMore("Full screen works as usual; switching workspaces takes a window out of it first. Change anything later with Settings… in the menu bar icon's menu (⌘,).")
         }
     }
 
     // MARK: Keys
 
     @ViewBuilder private var keys: some View {
-        section("Workspace keys") {
-            Picker("", selection: Binding(get: { model.modifier }, set: { model.pick($0) })) {
-                ForEach(Modifier.allCases) { Text($0.symbol).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 220)
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-                GridRow { Text("\(model.modifier.symbol)1 – \(model.modifier.symbol)9").monospaced(); Text("go to a workspace") }
-                GridRow { Text("\(model.modifier.symbol)⇧1 – \(model.modifier.symbol)⇧9").monospaced(); Text("send the front window there") }
-            }
-            Text(model.modifier.tradeoff).font(Chrome.font(12)).foregroundStyle(.secondary)
-            ForEach(model.conflicts, id: \.self) { c in
-                HStack {
-                    Text(c).font(Chrome.font(12)).foregroundStyle(.secondary)
-                    Spacer()
-                    Button(model.freeing ? "Working…" : "Free Them", action: model.freeShortcuts).disabled(model.freeing)
+        SettingsGroup("Workspace keys") {
+            SettingsRow("Modifier", help: model.modifier.tradeoff) {
+                Picker("Modifier", selection: binding({ model.modifier }, { model.pick($0) })) {
+                    ForEach(Modifier.allCases) { Text($0.symbol).tag($0) }
                 }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 200)
+            }
+            SettingsRow("\(model.modifier.symbol)1 – \(model.modifier.symbol)9", help: "Go to a workspace") { EmptyView() }
+            SettingsRow("\(model.modifier.symbol)⇧1 – \(model.modifier.symbol)⇧9", help: "Send the front window there") { EmptyView() }
+            ForEach(model.conflicts, id: \.self) { c in
+                SettingsRow(c) { Button(model.freeing ? "Working…" : "Free Them", action: model.freeShortcuts).disabled(model.freeing) }
             }
             if model.screenshotsFreed && model.conflicts.isEmpty {
-                HStack {
-                    Text("macOS's own shortcuts for these keys are off.").font(Chrome.font(12)).foregroundStyle(.secondary)
-                    Spacer()
+                SettingsRow("macOS's own shortcuts for these keys are off") {
                     Button(model.freeing ? "Working…" : "Turn Them Back On", action: model.restoreShortcuts).disabled(model.freeing)
                 }
             }
         }
 
-        section("See every workspace at once") {
-            Toggle("Use Polycarp's overview instead of Mission Control", isOn: Binding(get: { model.viewerKeys }, set: { model.setViewerKeys($0) }))
+        SettingsGroup("Overview") {
+            SettingsRow("Use Polycarp's overview instead of Mission Control", help: "The Mission Control key, ⌃↑ and hot corners open it.") {
+                Toggle("Overview", isOn: binding({ model.viewerKeys }, { model.setViewerKeys($0) })).labelsHidden()
+            }
             if model.viewerKeysFailed {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Already switched on and still not working?").font(Chrome.font(12, .bold))
-                    Text("macOS wouldn't let Polycarp watch the Mission Control key and ⌃↑, so macOS's Mission Control stays on until it does. Usually macOS kept an old permission from an earlier copy of Polycarp. Fixing it removes the old entry and asks again. The overview is always in the menu bar menu (Show All Workspaces).")
-                        .font(Chrome.font(12)).foregroundStyle(.secondary)
-                    Button(model.fixing ? "Fixing…" : "Fix Permission", action: model.fixPermission)
-                        .disabled(model.fixing)
+                SettingsRow("Already on, still not working?", help: "macOS kept an old permission. Fixing removes it and asks again.") {
+                    Button(model.fixing ? "Fixing…" : "Fix Permission", action: model.fixPermission).disabled(model.fixing)
                 }
-                .padding(10)
-                .background(Chrome.shape(.settingsCell, continuous: false).fill(Color.orange.opacity(0.12)))
+                LearnMore("macOS wouldn't let Polycarp watch the Mission Control key and ⌃↑, so macOS's Mission Control stays on until it does. The overview is always in the menu bar menu (Show All Workspaces).")
             } else {
-                Text("The Mission Control key, ⌃↑ and any hot corner set to Mission Control open the overview. macOS's Mission Control is switched off in the Dock while Polycarp runs, and comes back, with your hot corners as they were, when you turn this off or quit. A Magic Mouse's two-finger double tap opens nothing while this is on.")
-                    .font(Chrome.font(12)).foregroundStyle(.secondary)
+                LearnMore("macOS's Mission Control is switched off in the Dock while Polycarp runs, and comes back, with your hot corners as they were, when you turn this off or quit. A Magic Mouse's two-finger double tap opens nothing while this is on.")
             }
             if let problem = model.missionControlFailed {
-                Text("macOS's Mission Control is still on. \(problem) Polycarp tries again every few minutes.")
-                    .font(Chrome.font(12)).foregroundStyle(.orange)
+                SettingsNote("macOS's Mission Control is still on. \(problem) Polycarp tries again every few minutes.", tone: .urgent)
             }
-            Toggle("Dragging a window to the top of the screen opens the overview", isOn: Binding(get: { model.topDrag }, set: { model.setTopDrag($0) }))
-            Text("Let go over a workspace to send the window there; let go at the top and it fills the screen. Mission Control for that drag stays off while this is on, and comes back when you turn it off.")
-                .font(Chrome.font(12)).foregroundStyle(.secondary)
+            SettingsRow("Drag a window to the top of the screen to open the overview", help: "Let go over a workspace to send the window there; at the top it fills the screen.") {
+                Toggle("Drag to top", isOn: binding({ model.topDrag }, { model.setTopDrag($0) })).labelsHidden()
+            }
         }
 
-        section("⌘Tab") {
-            Picker("⌘Tab switches", selection: Binding(get: { model.cmdTab }, set: { model.setCmdTab($0) })) {
-                ForEach(MissionControlKeys.CmdTabMode.allCases) { Text($0.title).tag($0) }
+        SettingsGroup("⌘Tab") {
+            SettingsRow("⌘Tab switches") {
+                Picker("⌘Tab switches", selection: binding({ model.cmdTab }, { model.setCmdTab($0) })) {
+                    ForEach(MissionControlKeys.CmdTabMode.allCases) { Text($0.title).tag($0) }
+                }
+                .labelsHidden()
             }
-            .fixedSize()
-            Text(cmdTabNote).font(Chrome.font(12)).foregroundStyle(.secondary)
+            LearnMore(cmdTabNote)
         }
     }
 
     // MARK: Dock
 
     @ViewBuilder private var dock: some View {
-        section("Workspace Dock") {
-            Toggle("Workspace Dock in place of the macOS Dock", isOn: Binding(get: { model.workspaceDock }, set: { model.setWorkspaceDock($0) }))
-            Text("Rest the pointer on the dock's edge of the screen to see your workspaces, each with its apps; click one to go there. At the top it waits a moment longer, so reaching for the menu bar doesn't bring it up. The macOS Dock stays out of sight while this is on and comes back as it was when you turn it off or quit Polycarp.")
-                .font(Chrome.font(12)).foregroundStyle(.secondary)
-            Picker("Position on screen", selection: Binding(get: { model.dockEdge }, set: { model.dockEdge = $0; model.onDockEdgeChange?($0) })) {
-                ForEach(DockEdge.allCases, id: \.self) { Text($0.title).tag($0) }
+        SettingsGroup("Workspace Dock") {
+            SettingsRow("Workspace Dock in place of the macOS Dock", help: "Rest the pointer on the screen edge to see your workspaces and their apps.") {
+                Toggle("Workspace Dock", isOn: binding({ model.workspaceDock }, { model.setWorkspaceDock($0) })).labelsHidden()
             }
-            .fixedSize().disabled(!model.workspaceDock)
+            SettingsRow("Position on screen") {
+                Picker("Position on screen", selection: binding({ model.dockEdge }, { model.dockEdge = $0; model.onDockEdgeChange?($0) })) {
+                    ForEach(DockEdge.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .labelsHidden().disabled(!model.workspaceDock)
+            }
+            LearnMore("Click a workspace to go there. At the top the dock waits a moment longer, so reaching for the menu bar doesn't bring it up. The macOS Dock stays out of sight while this is on and comes back as it was when you turn it off or quit Polycarp.")
         }
 
-        section("Agent status") {
-            Toggle("Show what coding agents are doing on their app icons", isOn: Binding(get: { model.dockAgentStatus }, set: { model.setDockAgentStatus($0) }))
-                .disabled(!model.workspaceDock)
-            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
-                legend(AgentStatusBadge(state: .working, size: 16), "Working")
-                legend(AgentStatusBadge(state: .asking, size: 16), "Asking you something, such as a permission")
-                legend(AgentStatusBadge(state: .failed, size: 16), "Stopped on an error")
-                legend(Text("1").font(Chrome.font(10, .heavy, rounded: true)).foregroundStyle(Chrome.light())
-                        .frame(width: 16, height: 16).background(Circle().fill(Color.orange)),
-                       "Finished while you were away (on the workspace's corner)")
+        SettingsGroup("Agent status") {
+            SettingsRow("Show what coding agents are doing on their app icons", help: "Click an app with a badge to go to that agent's tab.") {
+                Toggle("Agent status", isOn: binding({ model.dockAgentStatus }, { model.setDockAgentStatus($0) })).labelsHidden()
+                    .disabled(!model.workspaceDock)
             }
-            .opacity(model.dockAgentStatus && model.workspaceDock ? 1 : 0.4)
-            Text("Click an app with a badge to go straight to that agent's tab. Off, the dock shows apps only.")
-                .font(Chrome.font(12)).foregroundStyle(.secondary)
+            SettingsBlock {
+                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
+                    legend(AgentStatusBadge(state: .working, size: 16), "Working")
+                    legend(AgentStatusBadge(state: .asking, size: 16), "Asking you something, such as a permission")
+                    legend(AgentStatusBadge(state: .failed, size: 16), "Stopped on an error")
+                    legend(Text("1").font(Chrome.font(10, .heavy, rounded: true)).foregroundStyle(Chrome.light())
+                            .frame(width: 16, height: 16).background(Circle().fill(Chrome.working)),
+                           "Finished while you were away")
+                }
+                .opacity(model.dockAgentStatus && model.workspaceDock ? 1 : 0.4)
+            }
         }
 
-        section("Agent cursor") {
-            Toggle("Show each agent's cursor on the agent workspace", isOn: Binding(get: { cursor.settings.enabled }, set: { cursor.setEnabled($0) }))
-            Picker("Look", selection: Binding(get: { cursor.settings.resolvedTheme.name }, set: { cursor.setTheme($0) })) {
-                ForEach(cursor.themeNames, id: \.self) { Text($0.capitalized).tag($0) }
+        SettingsGroup("Agent cursor") {
+            SettingsRow("Show each agent's cursor on the agent workspace", help: "It never moves your pointer or takes a click.") {
+                Toggle("Agent cursor", isOn: binding({ cursor.settings.enabled }, { cursor.setEnabled($0) })).labelsHidden()
             }
-            .fixedSize().disabled(!cursor.settings.enabled || cursor.themeSetInFile)
-            if cursor.themeSetInFile {
-                Text("The look is set in config.toml (behavior.cursor.theme).").font(.callout).foregroundStyle(.secondary)
+            SettingsRow("Look") {
+                Picker("Look", selection: binding({ cursor.settings.resolvedTheme.name }, { cursor.setTheme($0) })) {
+                    ForEach(cursor.themeNames, id: \.self) { Text($0.capitalized).tag($0) }
+                }
+                .labelsHidden().disabled(!cursor.settings.enabled || cursor.themeSetInFile)
             }
-            Text("A small cursor with the agent's name glides to what it is working on, so you can follow it. It is drawn only while you look at the agent workspace (or at an app you lent), never moves your pointer and never takes a click or a key. Its colors are its own. Only you turn it off, here; agents can pick its look with polycarp-spaces agent cursor theme <name>.")
-                .font(.callout).foregroundStyle(.secondary)
+            if cursor.themeSetInFile { SettingsNote("The look is set in config.toml (behavior.cursor.theme).") }
+            LearnMore("A small cursor with the agent's name glides to what it is working on, so you can follow it. It is drawn only while you look at the agent workspace (or at an app you lent). Its colors are its own. Agents can pick its look with polycarp-spaces agent cursor theme <name>.")
         }
 
         if !model.finished.isEmpty {
-            section("Finished while you were away") {
+            SettingsGroup("Finished while you were away") {
                 ForEach(model.finished) { row in
-                    Button { model.focusFinished(row.id) } label: {
-                        Label(row.label, systemImage: "checkmark.circle").lineLimit(1)
+                    SettingsBlock {
+                        Button { model.focusFinished(row.id) } label: { Label(row.label, systemImage: "checkmark.circle").lineLimit(1) }
+                            .buttonStyle(.link)
                     }
-                    .buttonStyle(.link)
                 }
             }
         }
 
-        section("Agent hooks") {
-            if model.hooks == .noClaudeCode {
-                Text("Claude Code isn't set up on this Mac (there's no ~/.claude/settings.json). Once it is, install the hooks here.")
-                    .font(Chrome.font(12)).foregroundStyle(.secondary)
-                Button("Install Claude Code and Grok Hooks", action: model.installHooks)
-            } else if model.hooks == .unreadable {
-                Text("~/.claude/settings.json isn't valid JSON, so Polycarp leaves it alone. Fix it, then come back here.")
-                    .font(Chrome.font(12)).foregroundStyle(.orange)
-            } else if model.hooks == .on {
-                Label("Claude Code and Grok report to Polycarp.", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-            } else {
-                Text("Hooks let Claude Code and Grok say when they start, finish, ask for permission or hit an error. Without them Polycarp reads only terminal titles.")
-                    .font(Chrome.font(12)).foregroundStyle(.secondary)
-                Button("Install Claude Code and Grok Hooks", action: model.installHooks)
+        SettingsGroup("Agent hooks") {
+            switch model.hooks {
+            case .noClaudeCode:
+                SettingsRow("Claude Code isn't set up on this Mac", help: "Once it is, install the hooks here.") {
+                    Button("Install Hooks", action: model.installHooks)
+                }
+            case .unreadable:
+                SettingsNote("~/.claude/settings.json isn't valid JSON, so Polycarp leaves it alone. Fix it, then come back here.", tone: .urgent)
+            case .on:
+                SettingsRow("Claude Code and Grok report to Polycarp") { SettingsStatusLabel(text: "On") }
+            case .off:
+                SettingsRow("Let Claude Code and Grok report to Polycarp", help: "They say when they start, finish, ask or hit an error.") {
+                    Button("Install Hooks", action: model.installHooks)
+                }
             }
         }
     }
@@ -724,120 +686,122 @@ struct SetupView: View {
     // MARK: Automation
 
     @ViewBuilder private var automation: some View {
-        section("Keep usable by automation") {
-            Text("Checked apps aren't hidden on other workspaces, so automation tools can still click and type in them. Their windows are parked just out of view instead.")
-                .font(Chrome.font(12)).foregroundStyle(.secondary)
-            if let why = model.automationReason {
-                Text(why).font(Chrome.font(12)).foregroundStyle(.orange)
-            }
+        SettingsGroup("Keep usable by automation") {
+            SettingsNote("Checked apps aren't hidden on other workspaces, so automation tools can still click and type in them. Their windows are parked just out of view.")
+            if let why = model.automationReason { SettingsNote(why, tone: .urgent) }
             if model.parkedRows.isEmpty {
-                if model.automationReason == nil { Text("No apps with windows yet.").font(Chrome.font(12)).foregroundStyle(.secondary) }
+                if model.automationReason == nil { SettingsNote("No apps with windows yet.") }
             } else {
-                // Past eight, the list scrolls, so the window never runs off a laptop screen.
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(model.parkedRows) { row in
-                            Toggle(row.on && row.animates ? "\(row.name) (hidden: it animates window moves)" : row.name,
-                                   isOn: Binding(get: { row.on }, set: { _ in model.toggleParked(row.id) }))
+                // Past eight rows the list scrolls inside the group.
+                SettingsBlock {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(model.parkedRows) { row in
+                                Toggle(row.on && row.animates ? "\(row.name) (hidden: it animates window moves)" : row.name,
+                                       isOn: Binding(get: { row.on }, set: { _ in model.toggleParked(row.id) }))
+                            }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: CGFloat(min(model.parkedRows.count, 8)) * 24)
+                    .disabled(model.automationReason != nil)
                 }
-                .frame(height: CGFloat(min(model.parkedRows.count, 8)) * 24)
-                .disabled(model.automationReason != nil)
             }
         }
 
-        section("If windows get tangled") {
-            Text("Gathers every window onto workspace 1, all visible. It gets you out of any tangle.")
-                .font(Chrome.font(12)).foregroundStyle(.secondary)
-            Button("Bring Every Window Back") { model.onBringBack?() }.disabled(model.automationReason != nil)
+        SettingsGroup("If windows get tangled") {
+            SettingsRow("Bring every window back", help: "Gathers every window onto workspace 1, all visible.") {
+                Button("Bring Back") { model.onBringBack?() }.disabled(model.automationReason != nil)
+            }
         }
     }
 
     // MARK: Updates
 
     @ViewBuilder private var updates: some View {
-        section("Software update") {
-            Text("You have \(model.update.have).").foregroundStyle(.secondary)
+        SettingsGroup("Software update") {
+            SettingsRow("You have \(model.update.have)") {
+                Button("Check for Updates Now…") { model.onCheckForUpdates?() }
+            }
             if let notice = model.update.notice, notice.installing {
-                Label(notice.menuTitle, systemImage: "arrow.down.circle")
+                SettingsBlock { Label(notice.menuTitle, systemImage: "arrow.down.circle") }
             } else if let notice = model.update.notice {
-                HStack {
-                    Label(notice.sentence, systemImage: "arrow.down.circle.fill").font(Chrome.font(13, .bold))
-                    Spacer()
+                SettingsRow(notice.sentence, help: "Shows what's new first. Nothing installs until you press Update Now.") {
                     Button(notice.menuTitle) { model.onOfferUpdate?() }
                 }
-                Text("Shows what's new first. Nothing installs until you press Update Now.")
-                    .font(Chrome.font(12)).foregroundStyle(.secondary)
             }
-            Picker("Follow", selection: Binding(get: { model.update.channel }, set: { model.setUpdateChannel($0) })) {
-                Text("Stable: tested releases").tag(UpdateChannel.stable)
-                Text(model.update.nightlyNeedsTools ? "Nightly: needs Apple's command line tools" : "Nightly: newest changes, every night").tag(UpdateChannel.nightly)
+            SettingsBlock {
+                Picker("Follow", selection: binding({ model.update.channel }, { model.setUpdateChannel($0) })) {
+                    Text("Stable: tested releases").tag(UpdateChannel.stable)
+                    Text(model.update.nightlyNeedsTools ? "Nightly: needs Apple's command line tools" : "Nightly: newest changes, every night").tag(UpdateChannel.nightly)
+                }
+                .pickerStyle(.radioGroup)
             }
-            .pickerStyle(.radioGroup)
-            Toggle("Check for updates daily", isOn: Binding(get: { model.update.daily }, set: { model.setCheckDaily($0) }))
-            Button("Check for Updates Now…") { model.onCheckForUpdates?() }
+            SettingsRow("Check for updates daily") {
+                Toggle("Daily", isOn: binding({ model.update.daily }, { model.setCheckDaily($0) })).labelsHidden()
+            }
         }
 
-        section("About") {
-            HStack(spacing: 14) {
-                Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 48, height: 48)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Polycarp").font(Chrome.font(15, .bold))
-                    Text("Nine workspaces on one keyboard row.").foregroundStyle(.secondary)
-                    Text("\(model.modifier.symbol)1–\(model.modifier.symbol)9 to switch. Add ⇧ to bring the window along.")
-                        .font(Chrome.font(12)).foregroundStyle(.secondary)
+        SettingsGroup("About") {
+            SettingsBlock {
+                HStack(spacing: 14) {
+                    Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 44, height: 44)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Polycarp").font(Chrome.font(15, .bold))
+                        Text("\(model.modifier.symbol)1–\(model.modifier.symbol)9 to switch. Add ⇧ to bring the window along.")
+                            .font(Chrome.font(11)).foregroundStyle(Chrome.muted)
+                    }
+                    Spacer()
+                    Button("About Polycarp…") { model.onAbout?() }
                 }
             }
-            Button("About Polycarp…") { model.onAbout?() }
         }
     }
 
     // MARK: Agents
 
     @ViewBuilder private var agents: some View {
-        section("Agent access") {
-            Picker("", selection: Binding(get: { model.agentAccess }, set: { model.pickAgentAccess($0) })) {
-                ForEach(AgentAccessMode.allCases, id: \.self) { Text($0.title).tag($0) }
+        SettingsGroup("Agent access") {
+            SettingsBlock {
+                Picker("Agent access", selection: binding({ model.agentAccess }, { model.pickAgentAccess($0) })) {
+                    ForEach(AgentAccessMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden()
             }
-            .pickerStyle(.segmented).labelsHidden().fixedSize()
-            Text(model.agentAccess.detail).font(.callout).foregroundStyle(model.agentAccess == .full ? .orange : .secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Only you change this, here or in the Polycarp menu. More access asks you first; it stays until you change it.")
-                .font(.callout).foregroundStyle(.secondary)
+            SettingsNote(model.agentAccess.detail, tone: model.agentAccess == .full ? .urgent : .quiet)
+            SettingsNote("Only you change this, here or in the Polycarp menu. More access asks you first.")
         }
 
-        section("Sandbox") {
-            Toggle("Allow the sandbox: a throwaway macOS VM for agent work", isOn: Binding(get: { model.sandbox.enabled },
-                set: { var s = model.sandbox; s.enabled = $0; model.setSandbox(s) }))
-                .disabled(model.sandboxHostProblem != nil)
-            if let why = model.sandboxHostProblem { Text(why).font(.callout).foregroundStyle(.orange) }
-            Text("Untrusted sites, throwaway logins and anything that installs software run in a virtual Mac that has no access to your files, iCloud, keychain, the Mac itself, your network or your tailnet: only the internet, and one handoff folder per task. It's deleted when the task ends, and a clean copy is kept ready so a reset takes seconds. Nothing starts until an agent asks.")
-                .font(.callout).foregroundStyle(.secondary)
-            HStack(spacing: 18) {
-                Picker("Memory", selection: Binding(get: { model.sandbox.memoryGB }, set: { var s = model.sandbox; s.memoryGB = $0; model.setSandbox(s) })) {
+        SettingsGroup("Sandbox") {
+            SettingsRow("Allow the sandbox", help: "A throwaway macOS VM for agent work.") {
+                Toggle("Sandbox", isOn: binding({ model.sandbox.enabled }, { var s = model.sandbox; s.enabled = $0; model.setSandbox(s) })).labelsHidden()
+                    .disabled(model.sandboxHostProblem != nil)
+            }
+            if let why = model.sandboxHostProblem { SettingsNote(why, tone: .urgent) }
+            SettingsRow("Memory") {
+                Picker("Memory", selection: binding({ model.sandbox.memoryGB }, { var s = model.sandbox; s.memoryGB = $0; model.setSandbox(s) })) {
                     ForEach(SandboxSettings.memoryChoices, id: \.self) { Text("\($0) GB").tag($0) }
-                }.fixedSize()
-                Picker("CPUs", selection: Binding(get: { model.sandbox.cpus }, set: { var s = model.sandbox; s.cpus = $0; model.setSandbox(s) })) {
+                }.labelsHidden().disabled(!model.sandbox.enabled || model.sandboxRunning)
+            }
+            SettingsRow("CPUs") {
+                Picker("CPUs", selection: binding({ model.sandbox.cpus }, { var s = model.sandbox; s.cpus = $0; model.setSandbox(s) })) {
                     ForEach(SandboxSettings.cpuChoices, id: \.self) { Text("\($0)").tag($0) }
-                }.fixedSize()
+                }.labelsHidden().disabled(!model.sandbox.enabled || model.sandboxRunning)
             }
-            .disabled(!model.sandbox.enabled || model.sandboxRunning)
-            Picker("Handoff folder limit", selection: Binding(get: { model.sandbox.handoffGB }, set: { var s = model.sandbox; s.handoffGB = $0; model.setSandbox(s) })) {
-                ForEach(SandboxSettings.handoffChoices, id: \.self) { Text("\($0) GB").tag($0) }
+            SettingsRow("Handoff folder limit", help: "A guest that writes more than this is stopped.") {
+                Picker("Handoff folder limit", selection: binding({ model.sandbox.handoffGB }, { var s = model.sandbox; s.handoffGB = $0; model.setSandbox(s) })) {
+                    ForEach(SandboxSettings.handoffChoices, id: \.self) { Text("\($0) GB").tag($0) }
+                }.labelsHidden().disabled(!model.sandbox.enabled)
             }
-            .fixedSize().disabled(!model.sandbox.enabled)
-            Text("A guest that writes more than this into its handoff folder is stopped.").font(.callout).foregroundStyle(.secondary)
-            Text("Takes effect the next time the sandbox starts.").font(.callout).foregroundStyle(.secondary)
-            Text(model.sandboxState).font(.callout)
-            Text("Disk used: \(model.sandboxDisk)").font(.callout).foregroundStyle(.secondary)
-            if let p = model.sandboxProblem { Text(p).font(.callout).foregroundStyle(.orange) }
-            HStack {
-                Button("Reset Now", action: model.sandboxReset).disabled(!model.sandboxRunning || model.sandboxBusy)
-                Button("Delete Images…", action: model.sandboxDeleteImages).disabled(model.sandboxRunning || model.sandboxBusy)
-                    .help("Deletes the sandbox's VMs and the downloaded macOS image (about 24 GB, downloaded again next time)")
+            SettingsRow(model.sandboxState, help: "Disk used: \(model.sandboxDisk). Changes apply the next time it starts.") {
+                HStack {
+                    Button("Reset Now", action: model.sandboxReset).disabled(!model.sandboxRunning || model.sandboxBusy)
+                    Button("Delete Images…", action: model.sandboxDeleteImages).disabled(model.sandboxRunning || model.sandboxBusy)
+                        .help("Deletes the sandbox's VMs and the downloaded macOS image (about 24 GB, downloaded again next time)")
+                }
             }
+            if let p = model.sandboxProblem { SettingsNote(p, tone: .urgent) }
+            LearnMore("Untrusted sites, throwaway logins and anything that installs software run in a virtual Mac that has no access to your files, iCloud, keychain, the Mac itself, your network or your tailnet: only the internet, and one handoff folder per task. It's deleted when the task ends, and a clean copy is kept ready so a reset takes seconds. Nothing starts until an agent asks.")
         }
     }
 
@@ -845,136 +809,139 @@ struct SetupView: View {
 
     @ViewBuilder private var appearanceTab: some View {
         if let p = appearance.polycarp {
-            section("Polycarp theme") {
-                Text("\(p.title) (\(p.mode.rawValue)) is in force. It draws every Polycarp surface instead of the theme, palette and accent below, which come back when it is removed.")
-                    .font(Chrome.font(12)).fixedSize(horizontal: false, vertical: true)
-                Text("Change it in Terminal:  polycarp theme set <name>").font(Chrome.font(12)).foregroundStyle(.secondary).textSelection(.enabled)
-                Text("polycarp theme list shows the names. To go back to your own theme, delete \(PolycarpThemeFile.path().map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "the theme file").")
-                    .font(Chrome.font(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            SettingsGroup("Polycarp theme") {
+                SettingsRow("\(p.title) (\(p.mode.rawValue)) is in force", help: "It draws every Polycarp surface instead of the theme, palette and accent below.") { EmptyView() }
+                SettingsBlock {
+                    Text("Change it in Terminal:  polycarp theme set <name>").font(Chrome.font(11)).foregroundStyle(Chrome.muted).textSelection(.enabled)
+                }
+                LearnMore("polycarp theme list shows the names. To go back to your own theme, delete \(PolycarpThemeFile.path().map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "the theme file").")
             }
         }
-        section("Theme") {
-            HStack(spacing: 10) {
-                ForEach(ThemeID.allCases, id: \.self) { t in
-                    ThemeCard(theme: t, selected: appearance.settings.theme == t) { appearance.settings.theme = t }
-                }
-            }
-            paletteMenu
-        }
-
-        section("Accent") {
-            HStack(spacing: 7) {
-                ForEach(AccentPreset.allCases, id: \.self) { p in
-                    swatch(Appearance.color(p.rgb), selected: appearance.settings.accent == .preset(p), name: p.title) {
-                        appearance.settings.accent = .preset(p)
-                    }
-                }
-                Divider().frame(height: 18)
-                Button { appearance.settings.accent = .system } label: {
-                    HStack(spacing: 5) {
-                        Circle().fill(Appearance.color(Appearance.systemAccent)).frame(width: 10, height: 10)
-                        Text("System").font(Chrome.font(12))
-                    }
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Chrome.pill().strokeBorder(appearance.settings.accent == .system ? Color.primary : Color.secondary.opacity(0.35),
-                                                       lineWidth: Chrome.width(.settingsTile, focused: appearance.settings.accent == .system)))
-                }
-                .buttonStyle(.plain)
-                .help("Follow the accent color in System Settings")
-                ColorPicker("Custom accent", selection: Binding(
-                    get: { Appearance.color(appearance.settings.accentRGB(system: Appearance.systemAccent)) },
-                    set: { picked in
-                        // The picker also answers with the color it was shown; that isn't a pick.
-                        guard let rgb = Appearance.rgb(picked) else { return }
-                        let shown = appearance.accentRGB
-                        guard abs(rgb.r - shown.r) + abs(rgb.g - shown.g) + abs(rgb.b - shown.b) > 0.01 else { return }
-                        appearance.settings.accent = .custom(rgb)
-                    }), supportsOpacity: false)
-                    .labelsHidden()
-                    .help("Pick any color")
-            }
-        }
-
-        section("Workspace colors") {
-            HStack(spacing: 12) {
-                Picker("Workspace colors", selection: Binding(get: { appearance.settings.palette }, set: { appearance.settings.palette = $0 })) {
-                    ForEach(WorkspacePalette.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 280)
-                Spacer()
-                Button("Reset") { appearance.settings.resetOverrides() }
-                    .disabled(appearance.settings.overrides.isEmpty)
-                    .help("Clear the colors picked for single workspaces")
-            }
-            HStack(spacing: 6) {
-                ForEach(1...9, id: \.self) { n in
-                    VStack(spacing: 1) {
-                        ColorPicker("Workspace \(n)", selection: Binding(
-                            get: { Chrome.workspace(n) },
-                            set: { picked in
-                                // The picker also answers with the color it was shown; that isn't a pick.
-                                guard let rgb = Appearance.rgb(picked) else { return }
-                                let shown = appearance.settings.workspaceColor(n, accent: appearance.accentRGB).rgb
-                                guard abs(rgb.r - shown.r) + abs(rgb.g - shown.g) + abs(rgb.b - shown.b) > 0.01 else { return }
-                                appearance.settings.overrides[n] = rgb
-                            }), supportsOpacity: false)
-                            .labelsHidden()
-                        Text("\(n)").font(Chrome.font(10, .semibold)).foregroundStyle(appearance.settings.overrides[n] == nil ? Color.secondary : Color.primary)
+        SettingsGroup("Theme") {
+            SettingsBlock {
+                HStack(spacing: 10) {
+                    ForEach(ThemeID.allCases, id: \.self) { t in
+                        ThemeCard(theme: t, selected: appearance.settings.theme == t) { appearance.settings.theme = t }
                     }
                 }
             }
-            Text("Click a color to change one workspace. Bright colors are dimmed so the numbers stay readable.")
-                .font(Chrome.font(12)).foregroundStyle(.secondary)
+            SettingsRow("Palette", help: appearance.settings.colorPalette == AppearanceSettings.autoPalette
+                        ? "Auto: the panels' own dark look with your accent." : "Any theme takes any palette.") { paletteMenu }
         }
 
-        section("Panels") {
-            HStack(spacing: 12) {
-                Picker("Panel style", selection: Binding(get: { appearance.settings.panelStyle }, set: { appearance.settings.panelStyle = $0 })) {
+        SettingsGroup("Accent") {
+            SettingsBlock {
+                HStack(spacing: 7) {
+                    ForEach(AccentPreset.allCases, id: \.self) { p in
+                        swatch(Appearance.color(p.rgb), selected: appearance.settings.accent == .preset(p), name: p.title) {
+                            appearance.settings.accent = .preset(p)
+                        }
+                    }
+                    Divider().frame(height: 18)
+                    Button { appearance.settings.accent = .system } label: {
+                        HStack(spacing: 5) {
+                            Circle().fill(Appearance.color(Appearance.systemAccent)).frame(width: 10, height: 10)
+                            Text("System").font(Chrome.font(12))
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .background(Chrome.pill().strokeBorder(appearance.settings.accent == .system ? Chrome.wash() : Chrome.wash(0.35),
+                                                           lineWidth: Chrome.width(.settingsTile, focused: appearance.settings.accent == .system)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Follow the accent color in System Settings")
+                    ColorPicker("Custom accent", selection: Binding(
+                        get: { Appearance.color(appearance.settings.accentRGB(system: Appearance.systemAccent)) },
+                        set: { picked in
+                            // The picker also answers with the color it was shown; that isn't a pick.
+                            guard let rgb = Appearance.rgb(picked) else { return }
+                            let shown = appearance.accentRGB
+                            guard abs(rgb.r - shown.r) + abs(rgb.g - shown.g) + abs(rgb.b - shown.b) > 0.01 else { return }
+                            appearance.settings.accent = .custom(rgb)
+                        }), supportsOpacity: false)
+                        .labelsHidden()
+                        .help("Pick any color")
+                }
+            }
+        }
+
+        SettingsGroup("Workspace colors") {
+            SettingsRow("Colors") {
+                HStack(spacing: 10) {
+                    Picker("Workspace colors", selection: binding({ appearance.settings.palette }, { appearance.settings.palette = $0 })) {
+                        ForEach(WorkspacePalette.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                    Button("Reset") { appearance.settings.resetOverrides() }
+                        .disabled(appearance.settings.overrides.isEmpty)
+                        .help("Clear the colors picked for single workspaces")
+                }
+            }
+            SettingsBlock {
+                HStack(spacing: 6) {
+                    ForEach(1...9, id: \.self) { n in
+                        VStack(spacing: 1) {
+                            ColorPicker("Workspace \(n)", selection: Binding(
+                                get: { Chrome.workspace(n) },
+                                set: { picked in
+                                    guard let rgb = Appearance.rgb(picked) else { return }
+                                    let shown = appearance.settings.workspaceColor(n, accent: appearance.accentRGB).rgb
+                                    guard abs(rgb.r - shown.r) + abs(rgb.g - shown.g) + abs(rgb.b - shown.b) > 0.01 else { return }
+                                    appearance.settings.overrides[n] = rgb
+                                }), supportsOpacity: false)
+                                .labelsHidden()
+                            Text("\(n)").font(Chrome.font(10, .semibold)).foregroundStyle(appearance.settings.overrides[n] == nil ? Chrome.muted : Chrome.wash())
+                        }
+                    }
+                }
+            }
+            SettingsNote("Click a color to change one workspace. Bright colors are dimmed so the numbers stay readable.")
+        }
+
+        SettingsGroup("Panels") {
+            SettingsRow("Style") {
+                Picker("Panel style", selection: binding({ appearance.settings.panelStyle }, { appearance.settings.panelStyle = $0 })) {
                     ForEach(PanelStyle.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 220)
-                Slider(value: Binding(get: { appearance.settings.panelOpacity }, set: { appearance.settings.panelOpacity = $0 }),
-                       in: AppearanceSettings.panelOpacityRange)
-                    .accessibilityLabel("Panel opacity")
-                    .frame(width: 120)
-                    .disabled(appearance.settings.panelStyle == .solid)
-                Text("\(Int((appearance.settings.effectivePanelOpacity * 100).rounded()))%")
-                    .font(Chrome.font(12).monospacedDigit()).foregroundStyle(.secondary).frame(width: 40, alignment: .trailing)
+                .pickerStyle(.segmented).labelsHidden().frame(width: 200)
+                .disabled(!Chrome.spec.fill.adjustable)
             }
-            // Omarchy and Minimal draw one fill of their own, so the style and opacity don't reach them.
-            .disabled(!Chrome.spec.fill.adjustable)
-            Text(Chrome.spec.fill.adjustable ? "Dock, ⌘Tab, launcher, overview and switch overlay. Solid is always opaque."
-                 : "The \(Chrome.spec.label) theme draws its own fill. Style and opacity apply to the Polycarp theme.")
-                .font(Chrome.font(12)).foregroundStyle(.secondary)
+            SettingsRow("Opacity", help: Chrome.spec.fill.adjustable ? "Dock, ⌘Tab, launcher, overview and switch overlay. Solid is always opaque."
+                        : "The \(Chrome.spec.label) theme draws its own fill. Style and opacity apply to the Polycarp theme.") {
+                HStack(spacing: 8) {
+                    Slider(value: binding({ appearance.settings.panelOpacity }, { appearance.settings.panelOpacity = $0 }),
+                           in: AppearanceSettings.panelOpacityRange)
+                        .accessibilityLabel("Panel opacity")
+                        .frame(width: 120)
+                        .disabled(appearance.settings.panelStyle == .solid || !Chrome.spec.fill.adjustable)
+                    Text("\(Int((appearance.settings.effectivePanelOpacity * 100).rounded()))%")
+                        .font(Chrome.font(12).monospacedDigit()).foregroundStyle(Chrome.muted).frame(width: 40, alignment: .trailing)
+                }
+            }
         }
 
-        section("Dock size") {
-            Picker("Dock size", selection: Binding(get: { appearance.settings.dockSize }, set: { appearance.settings.dockSize = $0 })) {
-                ForEach(DockSize.allCases, id: \.self) { Text($0.title).tag($0) }
+        SettingsGroup("Dock size") {
+            SettingsRow("Size") {
+                Picker("Dock size", selection: binding({ appearance.settings.dockSize }, { appearance.settings.dockSize = $0 })) {
+                    ForEach(DockSize.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 200)
             }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 220)
         }
     }
 
     /// Auto and the 22 palettes, each with its swatch.
     private var paletteMenu: some View {
-        HStack(spacing: 8) {
-            Text("Palette").font(Chrome.font(12))
-            Menu {
-                paletteItem(AppearanceSettings.autoPalette, "Auto")
-                Divider()
-                ForEach(PaletteCatalog.shared.palettes) { p in paletteItem(p.name, p.name) }
-            } label: {
-                let name = appearance.settings.colorPalette
-                Label { Text(name == AppearanceSettings.autoPalette ? "Auto" : name) } icon: {
-                    Image(nsImage: PaletteSwatch.image(appearance.look.palette))
-                }
+        Menu {
+            paletteItem(AppearanceSettings.autoPalette, "Auto")
+            Divider()
+            ForEach(PaletteCatalog.shared.palettes) { p in paletteItem(p.name, p.name) }
+        } label: {
+            let name = appearance.settings.colorPalette
+            Label { Text(name == AppearanceSettings.autoPalette ? "Auto" : name) } icon: {
+                Image(nsImage: PaletteSwatch.image(appearance.look.palette))
             }
-            .fixedSize()
-            Text(appearance.settings.colorPalette == AppearanceSettings.autoPalette
-                 ? "Auto: the panels' own dark look with your accent." : "Any theme takes any palette.")
-                .font(Chrome.font(10)).foregroundStyle(.secondary)
         }
+        .fixedSize()
     }
 
     private func paletteItem(_ name: String, _ title: String) -> some View {
@@ -987,7 +954,7 @@ struct SetupView: View {
     private func swatch(_ color: Color, selected: Bool, name: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Circle().fill(color).frame(width: 20, height: 20)
-                .overlay(Circle().strokeBorder(Color.primary.opacity(selected ? 0.9 : 0.15), lineWidth: Chrome.width(.settingsTile, focused: selected)))
+                .overlay(Circle().strokeBorder(Chrome.wash(selected ? 0.9 : 0.15), lineWidth: Chrome.width(.settingsTile, focused: selected)))
                 .padding(2)
         }
         .buttonStyle(.plain)
@@ -999,80 +966,62 @@ struct SetupView: View {
     // MARK: Launcher
 
     @ViewBuilder private var launcher: some View {
-        section("Find and install apps") {
-            Toggle("⌘Space opens the Polycarp launcher instead of Spotlight", isOn: Binding(get: { model.launcherOnCmdSpace }, set: { model.setLauncher($0) }))
-            Text("Open apps, install and remove them, find files, terminal tabs and splits, browser tabs and agent windows, search the web and ask an agent, from one box. ⌃⌘K opens it from any app. Off gives ⌘Space back to Spotlight; the launcher stays in the menu bar, the Workspace Dock and ⌃⌘K.")
-                .font(Chrome.font(12)).foregroundStyle(.secondary)
-            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
-                GridRow {
-                    Text("Search the web with")
-                    Picker("", selection: $model.searchEngine) { ForEach(Bangs.engines, id: \.trigger) { Text($0.name).tag($0.trigger) } }
-                        .labelsHidden().fixedSize()
-                }
-                GridRow {
-                    Text("Ask questions (?) with")
-                    Picker("", selection: $model.agent) { ForEach(Bangs.agents, id: \.trigger) { Text($0.name).tag($0.trigger) } }
-                        .labelsHidden().fixedSize()
-                }
+        SettingsGroup("Launcher") {
+            SettingsRow("⌘Space opens the Polycarp launcher instead of Spotlight", help: "One box for apps, files, tabs, the web and agents. ⌃⌘K opens it from any app.") {
+                Toggle("Launcher on ⌘Space", isOn: binding({ model.launcherOnCmdSpace }, { model.setLauncher($0) })).labelsHidden()
             }
-            Text("Type !yt cats, !i sunsets or ? a question. Type ! to see every bang.")
-                .font(Chrome.font(12)).foregroundStyle(.secondary)
+            LearnMore("Open apps, install and remove them, find files, terminal tabs and splits, browser tabs and agent windows, search the web and ask an agent, from one box. Off gives ⌘Space back to Spotlight; the launcher stays in the menu bar, the Workspace Dock and ⌃⌘K.")
+            SettingsRow("Search the web with") {
+                Picker("Search the web with", selection: $model.searchEngine) { ForEach(Bangs.engines, id: \.trigger) { Text($0.name).tag($0.trigger) } }
+                    .labelsHidden()
+            }
+            SettingsRow("Ask questions (?) with", help: "Type !yt cats, !i sunsets or ? a question. Type ! to see every bang.") {
+                Picker("Ask questions with", selection: $model.agent) { ForEach(Bangs.agents, id: \.trigger) { Text($0.name).tag($0.trigger) } }
+                    .labelsHidden()
+            }
         }
-        section("Your bangs\(model.customBangs.isEmpty ? "" : " (\(model.customBangs.count))")") { bangEditor }
-    }
-
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        let themed = Chrome.theme != .baneyspaces
-        return VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(Chrome.font(13, .bold))
-            content()
+        SettingsGroup("Your bangs\(model.customBangs.isEmpty ? "" : " (\(model.customBangs.count))")") {
+            bangEditor
+            LearnMore("Agents and scripts can add bangs too: ~/Applications/Polycarp.app/Contents/MacOS/Polycarp --bangs add jira Jira 'https://acme.atlassian.net/browse/{q}'")
         }
-        .padding(themed ? 6 : 0)
-        .overlay { if themed { Chrome.shape(.settingsCallout).strokeBorder(Chrome.edge(0.1), lineWidth: Chrome.width(.settingsCallout)) } }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // Notes wrap instead of trailing off.
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Your own bangs: each a trigger, a name and an address with {q} where the words go.
     private var bangEditor: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Past six, the list scrolls, so the window never runs off a laptop screen.
-            ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(model.customBangs, id: \.trigger) { b in
-                        HStack {
-                            Text("!\(b.trigger)").monospaced().frame(width: 70, alignment: .leading)
-                            Text(b.name + (b.isAgent ? " (agent)" : "")).lineLimit(1)
-                            Text(b.url).font(Chrome.font(10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                            Spacer()
-                            Button { model.removeBang(b.trigger) } label: { Image(systemName: "minus.circle") }
-                                .buttonStyle(.borderless).help("Remove !\(b.trigger)")
+        SettingsBlock {
+            VStack(alignment: .leading, spacing: 8) {
+                // Past six, the list scrolls inside the group.
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(model.customBangs, id: \.trigger) { b in
+                            HStack {
+                                Text("!\(b.trigger)").monospaced().frame(width: 70, alignment: .leading)
+                                Text(b.name + (b.isAgent ? " (agent)" : "")).lineLimit(1)
+                                Text(b.url).font(Chrome.font(10)).foregroundStyle(Chrome.muted).lineLimit(1).truncationMode(.middle)
+                                Spacer()
+                                Button { model.removeBang(b.trigger) } label: { Image(systemName: "minus.circle") }
+                                    .buttonStyle(.borderless).help("Remove !\(b.trigger)")
+                                    .accessibilityLabel("Remove !\(b.trigger)")
+                            }
                         }
                     }
                 }
+                .frame(height: model.customBangs.isEmpty ? 0 : CGFloat(min(model.customBangs.count, 6)) * 22)
+                HStack {
+                    TextField("trigger", text: $model.newTrigger).frame(width: 70)
+                    TextField("Name", text: $model.newName).frame(width: 100)
+                    TextField("https://example.com/search?q={q}", text: $model.newURL)
+                }
+                .textFieldStyle(.roundedBorder)
+                HStack {
+                    Toggle("It's an AI agent", isOn: $model.newIsAgent)
+                    Spacer()
+                    Button("Add Bang", action: model.addBang)
+                }
+                if let why = model.bangProblem { Text(why).font(Chrome.font(11)).foregroundStyle(Chrome.urgent) }
+                Text("A bang with a built-in's trigger replaces it.").font(Chrome.font(11)).foregroundStyle(Chrome.muted)
             }
-            .frame(height: model.customBangs.isEmpty ? 0 : CGFloat(min(model.customBangs.count, 6)) * 22)
-            HStack {
-                TextField("trigger", text: $model.newTrigger).frame(width: 70)
-                TextField("Name", text: $model.newName).frame(width: 100)
-                TextField("https://example.com/search?q={q}", text: $model.newURL)
-            }
-            .textFieldStyle(.roundedBorder)
-            HStack {
-                Toggle("It's an AI agent", isOn: $model.newIsAgent)
-                Spacer()
-                Button("Add Bang", action: model.addBang)
-            }
-            if let why = model.bangProblem { Text(why).font(Chrome.font(12)).foregroundStyle(.orange) }
-            Text(verbatim: "A bang with a built-in's trigger replaces it. Agents and scripts can add them too:")
-                .font(Chrome.font(10)).foregroundStyle(.secondary)
-            Text(verbatim: "~/Applications/Polycarp.app/Contents/MacOS/Polycarp --bangs add jira Jira 'https://acme.atlassian.net/browse/{q}'")
-                .font(Chrome.font(10).monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(10)
-        .background(Chrome.shape(.settingsCell, continuous: false).fill(Color.secondary.opacity(0.08)))
     }
 
     private var cmdTabNote: String {
@@ -1082,19 +1031,6 @@ struct SetupView: View {
         case .workspaces: "Hold ⌘ and tap Tab to step through your workspaces, most recent first; let go to go there. ⌘⇧Tab steps back and Esc cancels."
         }
     }
-
-    private func step<Content: View>(done: Bool, title: String, symbol: String? = nil, @ViewBuilder content: () -> Content) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: symbol ?? (done ? "checkmark.circle.fill" : "circle"))
-                .font(Chrome.font(15))
-                .foregroundStyle(symbol != nil ? Color.secondary : done ? Color.green : Color.secondary)
-                .frame(width: 22)
-            VStack(alignment: .leading, spacing: 8) {
-                Text(title).font(Chrome.font(13, .bold))
-                content()
-            }
-        }
-    }
 }
 
 final class SetupWindowController: NSWindowController, NSWindowDelegate {
@@ -1102,39 +1038,22 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
     private var activeObserver: NSObjectProtocol?
     /// The window taking the keyboard, and apps launching or quitting: kept so `deinit` can remove them.
     private var observers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
-    private var sizing: AnyCancellable?
 
     convenience init() {
-        let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        // A fixed size: the sections scroll inside it, so the window never changes shape. The title bar blends with the sidebar.
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: NSSize(width: SettingsSidebar.windowSize.width, height: SettingsSidebar.windowSize.height)),
+                              styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         self.init(window: window)
         window.title = "Polycarp Settings"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = false
         window.delegate = self
         model.windowVisible = { [weak window] in window?.isVisible == true }
         let host = NSHostingView(rootView: SetupView(model: model) { [weak window] in window?.close() })
-        // Its size comes from the content. With .preferredContentSize the hosting view reported
-        // 0×0 on macOS 27 and the window opened invisible (2026-10-16, on main too).
-        host.sizingOptions = [.intrinsicContentSize]
         window.contentView = host
-        window.setContentSize(host.fittingSize)
+        window.setContentSize(SettingsSidebar.windowSize)
         window.center()
-        // The window grows and shrinks with the tab and the steps shown, its top edge holding still.
-        // Many changes land at once (the 0.25 s permission check reassigns several), so they're
-        // folded into one refit per pass of the main loop.
-        var pending = false
-        sizing = model.objectWillChange.sink { [weak window, weak host] _ in
-            guard !pending else { return }
-            pending = true
-            DispatchQueue.main.async {
-                pending = false
-                guard let window, let host else { return }
-                host.layoutSubtreeIfNeeded()
-                let size = host.fittingSize
-                guard size.height > 0, size != window.contentRect(forFrameRect: window.frame).size else { return }
-                let frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: size))
-                window.setFrame(NSRect(x: window.frame.minX, y: window.frame.maxY - frame.height, width: frame.width, height: frame.height),
-                                display: true, animate: window.isVisible)
-            }
-        }
         // On grant: come forward, celebrate, then get out of the way.
         model.onReady = { [weak self] in
             NSApp.activate(ignoringOtherApps: true)
