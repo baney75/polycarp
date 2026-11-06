@@ -18,6 +18,8 @@ final class WelcomeModel: ObservableObject {
     var onGained: () -> Void = {}
     /// The login item, as macOS has it. On unless the person turned it off.
     @Published var startAtLogin = false
+    /// BaneySpaces went to the Trash on this first launch: one line says so (`LegacyRetirement`).
+    @Published var legacyNote = UserDefaults.standard.bool(forKey: LegacyRetirement.noteKey)
     @Published var loginNeedsApproval = false
     @Published var askedAccessibilityAt: Date?
     private var timer: Timer?
@@ -51,6 +53,8 @@ final class WelcomeModel: ObservableObject {
             }
             if self.looksStale { self.objectWillChange.send() }
             self.readLoginItem()
+            let note = UserDefaults.standard.bool(forKey: LegacyRetirement.noteKey)
+            if note != self.legacyNote { self.legacyNote = note }
         }
     }
 
@@ -131,6 +135,11 @@ struct WelcomeView: View {
             }
             .padding(.horizontal, 20)
 
+            if model.legacyNote {
+                Text(LegacyRetirement.welcomeNote).font(Chrome.font(12)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 28).padding(.top, 12)
+            }
+
             if model.canStart {
                 HStack(spacing: 10) {
                     Image(systemName: "leaf.fill").foregroundStyle(Chrome.accent)
@@ -144,7 +153,7 @@ struct WelcomeView: View {
             HStack {
                 Text("You can change any of this in Settings.").font(Chrome.font(11)).foregroundStyle(.secondary)
                 Spacer()
-                Button(model.canStart ? "Start using Polycarp" : "Waiting for Accessibility") { model.onFinish() }
+                Button(model.canStart ? "Start using Polycarp" : "Waiting for Accessibility") { UserDefaults.standard.set(false, forKey: LegacyRetirement.noteKey); model.onFinish() }
                     // Return presses the current permission's button while one is left; this only when none is.
                     .keyboardShortcut(Welcome.defaultAction(granted: model.granted, skipped: model.skipped) == .finish ? KeyboardShortcut.defaultAction : nil)
                     .disabled(!model.canStart)
