@@ -12,7 +12,7 @@ final class BrowserRemoteTests: XCTestCase {
         for state in RemoteState.allCases {
             XCTAssertEqual(try report(#"{"state":"\#(state.rawValue)"}"#).state, state)
         }
-        XCTAssertEqual(RemoteState.allCases.count, 9, "the helper's REMOTE_STATES")
+        XCTAssertEqual(RemoteState.allCases.count, 10, "the helper's REMOTE_STATES")
     }
 
     func testAnUnknownStateIsAProblemNotABlankWindow() throws {
@@ -83,9 +83,9 @@ final class BrowserRemoteTests: XCTestCase {
     func testEachStatusIsOneStep() {
         XCTAssertEqual(screen(), .checking)
         XCTAssertEqual(screen(available: false), .unavailable)
-        XCTAssertEqual(screen(status: .init(state: .tailscaleMissing)), .getTailscale)
-        XCTAssertEqual(screen(status: .init(state: .tailscaleSignedOut)), .signIn)
-        XCTAssertEqual(screen(status: .init(state: .tailnetLock)), .tailnetLock)
+        XCTAssertEqual(screen(status: .init(state: .tailscaleMissing)), .getTailscale(configured: false))
+        XCTAssertEqual(screen(status: .init(state: .tailscaleSignedOut)), .signIn(configured: false))
+        XCTAssertEqual(screen(status: .init(state: .tailnetLock)), .tailnetLock(configured: false))
         XCTAssertEqual(screen(status: .init(state: .portBusy)), .portBusy(tailscaleSetting: false, detail: ""))
         XCTAssertEqual(screen(status: .init(state: .ready)), .ready)
         XCTAssertEqual(screen(status: .init(state: .on, connectorURL: url, extensionConnected: true)), .on(connectorURL: url, browserConnected: true))
@@ -102,7 +102,7 @@ final class BrowserRemoteTests: XCTestCase {
     func testInstallingTailscaleMovesTheWindowOnByItself() {
         // Each poll replaces the status; no click in between.
         let states: [RemoteState] = [.tailscaleMissing, .tailscaleSignedOut, .ready]
-        XCTAssertEqual(states.map { screen(status: .init(state: $0)) }, [.getTailscale, .signIn, .ready])
+        XCTAssertEqual(states.map { screen(status: .init(state: $0)) }, [.getTailscale(configured: false), .signIn(configured: false), .ready])
     }
 
     func testAFunnelRefusalStaysOnScreenWhileStatusSaysItIsHalfDone() {
@@ -112,8 +112,8 @@ final class BrowserRemoteTests: XCTestCase {
         let half = RemoteReport(state: .problem, message: "public DNS: …")
         XCTAssertEqual(screen(status: half, setup: refused), .funnelNotAllowed(adminURL: admin))
         // Tailscale going away is more basic than the refusal.
-        XCTAssertEqual(screen(status: .init(state: .tailscaleSignedOut), setup: refused), .signIn)
-        XCTAssertEqual(screen(status: .init(state: .tailnetLock), setup: refused), .tailnetLock)
+        XCTAssertEqual(screen(status: .init(state: .tailscaleSignedOut), setup: refused), .signIn(configured: false))
+        XCTAssertEqual(screen(status: .init(state: .tailnetLock), setup: refused), .tailnetLock(configured: false))
     }
 
     func testASetupRefusalForOtherReasonsShowsItsOwnStep() {
@@ -129,7 +129,7 @@ final class BrowserRemoteTests: XCTestCase {
         XCTAssertEqual(screen(status: .init(state: .problem), setup: done, age: 5), .on(connectorURL: url, browserConnected: true))
         // Once the grace is over, whatever status says takes over: signed out, a dead service, or a `remote off` in a terminal.
         let over = RemoteFlow.setupGrace + 1
-        XCTAssertEqual(screen(status: .init(state: .tailscaleSignedOut), setup: done, age: over), .signIn)
+        XCTAssertEqual(screen(status: .init(state: .tailscaleSignedOut), setup: done, age: over), .signIn(configured: false))
         XCTAssertEqual(screen(status: .init(state: .problem, message: "local serve: down"), setup: done, age: over), .problem("local serve: down"))
         XCTAssertEqual(screen(status: .init(state: .ready), setup: done, age: over), .ready)
         // A status that confirms it speaks for itself at once, whatever the age.
@@ -155,7 +155,7 @@ final class BrowserRemoteTests: XCTestCase {
         // The Funnel refusal isn't about Tailscale itself: status "ready" can't clear it (and the helper can't say it after one).
         let refused = RemoteReport(state: .funnelNotAllowed)
         XCTAssertEqual(RemoteFlow.settle(setup: refused, status: .init(state: .problem)), refused)
-        XCTAssertEqual(screen(status: .init(state: .ready), setup: signedOut), .signIn, "before the status read that clears it, the refusal still shows")
+        XCTAssertEqual(screen(status: .init(state: .ready), setup: signedOut), .signIn(configured: false), "before the status read that clears it, the refusal still shows")
     }
 
     func testTwoFailedReadsInARowSayTheHelperIsSilent() {
@@ -163,6 +163,9 @@ final class BrowserRemoteTests: XCTestCase {
         XCTAssertEqual(screen(readsFailing: true), .problem(RemoteCopy.helperSilent), "a first read that never answers isn't Looking… forever")
         XCTAssertEqual(screen(status: .init(state: .on, connectorURL: url, extensionConnected: true), setup: nil, readsFailing: false), .on(connectorURL: url, browserConnected: true))
         XCTAssertEqual(screen(status: .init(state: .ready), readsFailing: true), .problem(RemoteCopy.helperSilent), "and a later failure doesn't leave the old state up as current")
+        // An old "On" doesn't stay up either: with the helper silent the window can't know remote access still works.
+        XCTAssertEqual(screen(status: .init(state: .on, connectorURL: url, extensionConnected: true), readsFailing: true), .problem(RemoteCopy.helperSilent))
+        XCTAssertEqual(screen(status: .init(state: .noBrowserConnected, connectorURL: url, extensionConnected: false), readsFailing: true), .problem(RemoteCopy.helperSilent))
         XCTAssertEqual(screen(settingUp: true, readsFailing: true), .turningOn)
     }
 
@@ -187,15 +190,61 @@ final class BrowserRemoteTests: XCTestCase {
     }
 
     func testPollingIsQuickWhileWaitingAndSlowWheneverStatusSaysItIsSetUp() {
-        XCTAssertEqual(RemoteFlow.pollInterval(for: .getTailscale), 4)
+        XCTAssertEqual(RemoteFlow.pollInterval(for: .getTailscale(configured: false)), 4)
         XCTAssertEqual(RemoteFlow.pollInterval(for: .on(connectorURL: url, browserConnected: true)), 30)
         // Half done after a Funnel refusal: remote.json is kept, so a full read (with its internet checks) isn't repeated every 4 s.
         let half = RemoteReport(state: .problem, connectorURL: url)
         XCTAssertEqual(RemoteFlow.pollInterval(for: .funnelNotAllowed(adminURL: nil), status: half), 30)
         // Tailscale itself being the problem is a cheap read, and the window should notice the sign-in.
-        XCTAssertEqual(RemoteFlow.pollInterval(for: .signIn, status: .init(state: .tailscaleSignedOut, connectorURL: url)), 4)
+        XCTAssertEqual(RemoteFlow.pollInterval(for: .signIn(configured: true), status: .init(state: .tailscaleSignedOut, connectorURL: url)), 4)
         XCTAssertEqual(RemoteFlow.pollInterval(for: .ready, status: .init(state: .ready)), 4)
         XCTAssertEqual(RemoteFlow.pollInterval(for: .on(connectorURL: url, browserConnected: true), bridging: true), 4, "just turned on: confirm quickly")
+    }
+
+    func testAnInstallThatIsSetUpAndWaitingOnTailscaleIsNotFirstRun() {
+        // Funnel route, Tailscale signed out or quit: remote.json is kept and status still carries the address.
+        let signedOut = RemoteReport(state: .tailscaleSignedOut, connectorURL: url)
+        XCTAssertTrue(signedOut.configured)
+        XCTAssertEqual(screen(status: signedOut), .signIn(configured: true))
+        XCTAssertEqual(screen(status: .init(state: .tailscaleMissing, connectorURL: url)), .getTailscale(configured: true))
+        XCTAssertEqual(screen(status: .init(state: .tailnetLock, connectorURL: url)), .tailnetLock(configured: true))
+        // A refusal kept from this session takes its configured-ness from the status read, not from its own answer.
+        XCTAssertEqual(screen(status: signedOut, setup: .init(state: .tailscaleSignedOut)), .signIn(configured: true))
+        // Nothing set up yet stays the first-run step.
+        XCTAssertEqual(screen(status: .init(state: .tailscaleSignedOut)), .signIn(configured: false))
+        // The words: no "Nothing was changed" on an install that is already set up, and it says it will resume.
+        XCTAssertTrue(RemoteCopy.lockBody.contains("Nothing was changed."))
+        XCTAssertFalse(RemoteCopy.lockConfiguredBody.contains("Nothing was changed"))
+        XCTAssertTrue(RemoteCopy.stillSetUp.contains("still set up") && RemoteCopy.stillSetUp.contains("picks up again by itself"))
+    }
+
+    func testFunnelClosedAfterSetupIsItsOwnStepAndSurvivesARelaunch() {
+        // No retained setup report (the app was relaunched): status alone says Funnel is closed.
+        let closed = RemoteReport(state: .funnelClosed, connectorURL: url)
+        XCTAssertEqual(screen(status: closed), .funnelClosed)
+        XCTAssertEqual(RemoteFlow.pollInterval(for: .funnelClosed, status: closed), 30, "set up, so the full read isn't repeated every few seconds")
+        // A refusal from the Try again that follows stays on screen over the status that only says Funnel is still closed.
+        let refused = RemoteReport(state: .funnelNotAllowed, adminURL: URL(string: "https://login.tailscale.com/f/funnel?node=n1"))
+        XCTAssertEqual(screen(status: closed, setup: refused), .funnelNotAllowed(adminURL: refused.adminURL))
+        // Tailscale itself going away is still more basic.
+        XCTAssertEqual(screen(status: .init(state: .tailscaleSignedOut, connectorURL: url), setup: refused), .signIn(configured: true))
+        XCTAssertEqual(RemoteFlow.settle(setup: refused, status: closed), refused)
+        XCTAssertTrue(RemoteCopy.funnelClosedBody.contains("Try again"))
+    }
+
+    func testPublicDNSLagRightAfterASuccessfulSetupStaysPending() {
+        let done = RemoteReport(ok: true, state: .on, connectorURL: url, passcode: "abcde-fghij-klmno-pqrst", passcodeSet: true)
+        let dns = RemoteReport(state: .problem, message: "public DNS: no A record", code: "dns", connectorURL: url)
+        XCTAssertGreaterThanOrEqual(RemoteFlow.dnsGrace, 600, "Tailscale can take minutes to publish a new Funnel address")
+        XCTAssertEqual(RemoteFlow.grace(for: dns), RemoteFlow.dnsGrace)
+        XCTAssertEqual(RemoteFlow.grace(for: .init(state: .problem)), RemoteFlow.setupGrace)
+        // Past the ordinary grace but inside the DNS one: still On, with the address and passcode.
+        let late = RemoteFlow.setupGrace + 30
+        XCTAssertEqual(screen(status: dns, setup: done, age: late), .on(connectorURL: url, browserConnected: true))
+        XCTAssertEqual(screen(status: .init(state: .problem, message: "local serve: down", connectorURL: url), setup: done, age: late), .problem("local serve: down"), "any other problem ends the bridge on time")
+        // Once the DNS grace is over it is a problem like any other.
+        XCTAssertEqual(screen(status: dns, setup: done, age: RemoteFlow.dnsGrace + 1), .problem("public DNS: no A record"))
+        XCTAssertEqual(try? report(#"{"state":"problem","code":"dns","message":"m","connectorUrl":"\#(url)"}"#).code, "dns")
     }
 
     // MARK: Commands
@@ -207,13 +256,6 @@ final class BrowserRemoteTests: XCTestCase {
         XCTAssertEqual(RemoteCommand.newPasscode.arguments, ["token", "passcode", "--json"])
         XCTAssertFalse(RemoteCommand.setup.arguments.contains("--public-url"), "no hosted address and no cloudflared from the app")
         XCTAssertGreaterThan(RemoteCommand.setup.timeout, 60, "setup waits up to 15 s for the service, then Tailscale")
-    }
-
-    func testTheTailscaleAppIsNamedOnlyWhenItExists() {
-        XCTAssertNil(RemoteCommand.environment(base: ["A": "1"], tailscaleAppExists: false)["TABKYRA_TAILSCALE_APP"])
-        let env = RemoteCommand.environment(base: ["A": "1"], tailscaleAppExists: true)
-        XCTAssertEqual(env["TABKYRA_TAILSCALE_APP"], "/Applications/Tailscale.app/Contents/MacOS/Tailscale")
-        XCTAssertEqual(env["A"], "1")
     }
 
     func testNewPasscodeAnswer() {
@@ -233,7 +275,7 @@ final class BrowserRemoteTests: XCTestCase {
     }
 
     func testFunnelIsNamedOnlyWhereItIsTailscalesOwnSetting() {
-        let allowed: Set<String> = [RemoteCopy.funnelTitle, RemoteCopy.funnelBody, RemoteCopy.lockBody]
+        let allowed: Set<String> = [RemoteCopy.funnelTitle, RemoteCopy.funnelBody, RemoteCopy.lockBody, RemoteCopy.lockConfiguredBody, RemoteCopy.funnelClosedTitle, RemoteCopy.funnelClosedBody]
         for line in RemoteCopy.everySentence where line.contains("Funnel") || line.contains("funnel") {
             XCTAssertTrue(allowed.contains(line), "\"\(line)\" names Funnel")
         }
@@ -308,8 +350,22 @@ final class BrowserRemoteTests: XCTestCase {
         // on screen (S5), and a copied passcode is cleared by change count (S7).
         XCTAssertTrue(view.contains("guard started == self.generation"))
         XCTAssertEqual(view.components(separatedBy: "generation += 1").count - 1, 4, "turnOn, checkAgain, turnOff and newPasscode each bump it")
-        let funnelCase = try XCTUnwrap(view.range(of: "case .funnelNotAllowed(let admin):")), lockCase = try XCTUnwrap(view.range(of: "case .tailnetLock:"))
+        let funnelCase = try XCTUnwrap(view.range(of: "case .funnelNotAllowed(let admin):")), lockCase = try XCTUnwrap(view.range(of: "case .funnelClosed:"))
         XCTAssertTrue(view[funnelCase.lowerBound..<lockCase.lowerBound].contains("passcodeShown"))
+        // A run can make the passcode and then land on a screen other than On: every such screen shows it (F3).
+        let busyCase = try XCTUnwrap(view.range(of: "case .portBusy(")), readyCase = try XCTUnwrap(view.range(of: "case .ready:"))
+        XCTAssertTrue(view[busyCase.lowerBound..<readyCase.lowerBound].contains("passcodeShown"))
+        let problemCase = try XCTUnwrap(view.range(of: "case .problem(let message):")), pieces = try XCTUnwrap(view.range(of: "/// The helper's own words"))
+        XCTAssertTrue(view[problemCase.lowerBound..<pieces.lowerBound].contains("passcodeShown"))
+        // Turn off stays reachable on the screens an already set-up install can be waiting on (F2) and on the Funnel-closed one.
+        for (from, to) in [("case .getTailscale(", "case .signIn("), ("case .signIn(", "case .needsBrowser"), ("case .funnelClosed:", "case .tailnetLock("), ("case .tailnetLock(", "case .portBusy(")] {
+            let a = try XCTUnwrap(view.range(of: from)), b = try XCTUnwrap(view.range(of: to))
+            XCTAssertTrue(view[a.lowerBound..<b.lowerBound].contains("turnOffButton"), from)
+            if from != "case .funnelClosed:" { XCTAssertTrue(view[a.lowerBound..<b.lowerBound].contains("configured"), from) }
+        }
+        // The Copied label lives in copyRow, so every screen with a Copy button has it (S13).
+        let copyRow = try XCTUnwrap(view.range(of: "private func copyRow("))
+        XCTAssertTrue(view[copyRow.lowerBound...].contains("model.copied == label"))
         XCTAssertGreaterThanOrEqual(view.components(separatedBy: "line(RemoteCopy.intro)").count - 1, 3)
         XCTAssertTrue(view.contains("RemoteFlow.shouldClearClipboard") && view.contains("RemoteFlow.passcodeClipboardSeconds") && view.contains("changeCount"))
         XCTAssertTrue(view.contains("RemoteCopy.newPasscodeNote") && view.contains("RemoteCopy.noPasscodeNote"))

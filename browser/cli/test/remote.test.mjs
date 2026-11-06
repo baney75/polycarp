@@ -19,7 +19,16 @@ const here = dirname(fileURLToPath(import.meta.url));
 const cli = join(here, "..", "dist", "index.js");
 const root = mkdtempSync(join(tmpdir(), "tabkyra-remote-"));
 // TABKYRA_APPLICATIONS_DIR points at an empty temp dir, so a real /Applications/Tailscale.app is never found or run.
-const env = { HOME: join(root, "home"), PATH: dirname(process.execPath), NO_COLOR: "1", TABKYRA_SOCKET_DIR: join(root, "sock"), TABKYRA_APPLICATIONS_DIR: join(root, "apps") };
+// A PATH holds node alone (a symlink), never node's own directory: Homebrew and Linux packages put tailscale and cloudflared beside it.
+const nodeOnly = join(root, "node-path");
+mkdirSync(nodeOnly, { recursive: true });
+symlinkSync(process.execPath, join(nodeOnly, "node"));
+/** A stub directory plus node, so the stubs run and nothing else on this machine is found. */
+const withNode = (bin) => {
+	if (!existsSync(join(bin, "node"))) symlinkSync(process.execPath, join(bin, "node"));
+	return bin;
+};
+const env = { HOME: join(root, "home"), PATH: nodeOnly, NO_COLOR: "1", TABKYRA_SOCKET_DIR: join(root, "sock"), TABKYRA_APPLICATIONS_DIR: join(root, "apps") };
 mkdirSync(env.HOME, { recursive: true });
 mkdirSync(env.TABKYRA_SOCKET_DIR, { mode: 0o700 });
 let server;
@@ -168,7 +177,7 @@ test("tunnel tailscale serves the tailnet path; --public uses funnel; --off stop
 		`#!/bin/sh\necho "$@" >> ${log}\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.example.ts.net."}}'; fi\n`,
 	);
 	chmodSync(join(bin, "tailscale"), 0o755);
-	const path = `${bin}:${dirname(process.execPath)}`;
+	const path = withNode(bin);
 	const on = cliRun(["tunnel", "tailscale", "--port", "8787"], { PATH: path });
 	assert.equal(on.code, 0, on.out);
 	assert.match(on.out, /https:\/\/mac\.example\.ts\.net\/tabkyra\/mcp/);
@@ -259,7 +268,7 @@ test("tunnel ports are validated, and Funnel is refused when other paths share p
 		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.example.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo '{"Web":{"mac.example.ts.net:443":{"Handlers":{"/grafana":{}}}}}'; exit 0; fi\necho "$@" >> ${join(root, "funnel.log")}\n`,
 	);
 	chmodSync(join(bin, "tailscale"), 0o755);
-	const r = cliRun(["tunnel", "tailscale", "--public"], { PATH: `${bin}:${dirname(process.execPath)}` });
+	const r = cliRun(["tunnel", "tailscale", "--public"], { PATH: withNode(bin) });
 	assert.equal(r.code, 1, r.out);
 	assert.match(r.out, /\/grafana/);
 	assert.throws(() => readFileSync(join(root, "funnel.log"), "utf8"), "funnel was never called");
@@ -303,7 +312,7 @@ test("tailscale serve is refused while Funnel is on for 443; the cloudflare URL 
 		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.example.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo '{"AllowFunnel":{"mac.example.ts.net:443":true}}'; exit 0; fi\necho "$@" >> ${join(root, "serve-on.log")}\n`,
 	);
 	chmodSync(join(bin, "tailscale"), 0o755);
-	const r = cliRun(["tunnel", "tailscale"], { PATH: `${bin}:${dirname(process.execPath)}` });
+	const r = cliRun(["tunnel", "tailscale"], { PATH: withNode(bin) });
 	assert.equal(r.code, 1, r.out);
 	assert.match(r.out, /Funnel is on/);
 	const cf = join(root, "bin-cf");
@@ -332,7 +341,7 @@ test("tailscale changes nothing when serve status can't be read", () => {
 		`#!/bin/sh\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.example.ts.net."}}'; exit 0; fi\nif [ "$1" = serve ] && [ "$2" = status ]; then echo 'warning: something' >&2; exit 1; fi\necho "$@" >> ${join(root, "status-fail.log")}\n`,
 	);
 	chmodSync(join(bin, "tailscale"), 0o755);
-	const r = cliRun(["tunnel", "tailscale"], { PATH: `${bin}:${dirname(process.execPath)}` });
+	const r = cliRun(["tunnel", "tailscale"], { PATH: withNode(bin) });
 	assert.equal(r.code, 1, r.out);
 	assert.match(r.out, /Couldn't read tailscale serve status/);
 	assert.throws(() => readFileSync(join(root, "status-fail.log"), "utf8"), "serve was never changed");
@@ -696,7 +705,7 @@ function remoteScenario(name, { lock = "Tailnet lock is NOT enabled.", serveStat
 	// The stub service managers start nothing. launchctl print says "not loaded" (exit 1) unless failStop() ran.
 	script("launchctl", `echo "launchctl $*" >> ${log}\ncase "$1" in\nprint) exit 1 ;;\nesac\n`);
 	script("systemctl", `echo "systemctl $*" >> ${log}\n`);
-	const scenarioEnv = { HOME: home, TABKYRA_CONFIG_DIR: join(home, "cfg"), PATH: `${bin}:${dirname(process.execPath)}`, TABKYRA_APPLICATIONS_DIR: apps };
+	const scenarioEnv = { HOME: home, TABKYRA_CONFIG_DIR: join(home, "cfg"), PATH: withNode(bin), TABKYRA_APPLICATIONS_DIR: apps };
 	return {
 		stub,
 		env: { ...env, ...scenarioEnv },

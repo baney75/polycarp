@@ -7,6 +7,7 @@
  * Where setting up remote access stands.
  * - tailscale_missing / tailscale_signed_out: Tailscale isn't installed, or isn't signed in (or isn't running).
  * - funnel_not_allowed: Tailscale refused Funnel for this tailnet or computer; `adminUrl` is the page it printed.
+ * - funnel_closed: set up, but Tailscale's Funnel isn't open for the saved address (status only; running setup again opens it).
  * - tailnet_lock: the tailnet has Tailnet Lock, and Funnel doesn't work on one.
  * - port_busy: something else uses the local port or Funnel's port 8443, so nothing was changed.
  * - ready: nothing is set up yet and nothing stands in the way.
@@ -18,6 +19,7 @@ export type RemoteState =
 	| "tailscale_missing"
 	| "tailscale_signed_out"
 	| "funnel_not_allowed"
+	| "funnel_closed"
 	| "tailnet_lock"
 	| "port_busy"
 	| "ready"
@@ -29,6 +31,7 @@ export const REMOTE_STATES: readonly RemoteState[] = [
 	"tailscale_missing",
 	"tailscale_signed_out",
 	"funnel_not_allowed",
+	"funnel_closed",
 	"tailnet_lock",
 	"port_busy",
 	"ready",
@@ -45,7 +48,8 @@ export interface SetupReport {
 	adminUrl?: string;
 	/**
 	 * Why a `problem` or `port_busy` happened, when an app has something specific to say. problem: "launcher" (no working launcher yet:
-	 * connect a browser first), "hub", "service", "serve" (nothing answers on the local port), "funnel", "config". port_busy:
+	 * connect a browser first), "hub", "service", "serve" (nothing answers on the local port), "funnel", "config"; on status also
+	 * "dns" (public DNS doesn't answer for the address yet; Tailscale takes minutes to publish a new one). port_busy:
 	 * "tailscale_port" (a Tailscale setting already uses 8443) or "local_port" (a program here uses the local port).
 	 */
 	code?: string;
@@ -84,7 +88,7 @@ export interface StatusCheck {
  * One state for `remote status --json`. Without remote.json the answer is the read-only preflight (`preflight`:
  * ready, or what stands in the way). With it, a failed check is a problem, a working connection with no browser
  * attached is no_browser_connected, and the rest is on. `extensionConnected` is undefined when nobody asked.
- * `tailscale` is what stands in the way of Tailscale itself (missing, signed out, Tailnet Lock) when remote.json is on the Funnel
+ * `tailscale` is what stands in the way of Tailscale itself (missing, signed out, Tailnet Lock, or Funnel closed) when remote.json is on the Funnel
  * route; it comes ahead of everything else, because nothing else can work without Tailscale.
  */
 export function stateFromStatus(input: {
@@ -100,7 +104,12 @@ export function stateFromStatus(input: {
 		return input.preflight ?? { state: "ready", message: "Nothing is set up yet." };
 	}
 	if (input.tailscale) return input.tailscale;
-	if (failed) return { state: "problem", message: `${failed.name}: ${failed.detail}` };
+	if (failed) {
+		// Public DNS (and so the public fetch) lags a fresh Funnel by minutes: code "dns" lets an app treat that, and only that, as still pending.
+		const failures = input.checks.filter((x) => x.status === "fail");
+		const dnsOnly = failures.some((x) => x.name === "public DNS") && failures.every((x) => x.name === "public DNS" || x.name === "public fetch");
+		return { state: "problem", message: `${failed.name}: ${failed.detail}`, ...(dnsOnly ? { code: "dns" } : {}) };
+	}
 	if (input.extensionConnected === false) return { state: "no_browser_connected", message: "Remote access is on, but no browser has Polycarp's extension connected." };
 	return { state: "on", message: "Remote access is on." };
 }

@@ -35,23 +35,27 @@ Funnel. The computer must stay on, awake and signed in to the browser with Tabky
 
 `remote status --json` and `remote setup --json` print one JSON object, so an app never reads
 sentences. `state` is one of `tailscale_missing`, `tailscale_signed_out`, `funnel_not_allowed` (with
-`adminUrl`, the page Tailscale printed), `tailnet_lock`, `port_busy`, `ready`, `on` (with
+`adminUrl`, the page Tailscale printed), `funnel_closed` (status only), `tailnet_lock`, `port_busy`, `ready`, `on` (with
 `connectorUrl`), `no_browser_connected` or `problem` (with `message`, and sometimes `code`).
 `setup --json` includes `passcode` only in the run that made it, even when that run then fails, so
 keep it. `token passcode --json` makes a new one.
 
 `code` says why when it matters. For `problem`: `launcher`, `hub`, `service`, `serve` (nothing answers
 on the local port, so nothing was turned on), `funnel` (Tailscale's own words are in `message`) or
-`config`. For `port_busy`: `tailscale_port` (a saved Tailscale setting already uses 8443) or
+`config`. A failure after the passcode was made, such as a file that can't be written, is a `problem` with
+`code` `config`, `service` or `funnel`, and still carries the `passcode`. For `port_busy`: `tailscale_port` (a saved Tailscale setting already uses 8443) or
 `local_port` (a program on this computer uses the local port). A status read on the Funnel route
-names `tailscale_missing`, `tailscale_signed_out` or `tailnet_lock` ahead of `problem`.
+names `tailscale_missing`, `tailscale_signed_out` or `tailnet_lock` ahead of `problem`, and
+`funnel_closed` when Tailscale's Funnel isn't open for the saved address (status only; `remote setup`
+opens it again). `problem` with `code` `dns` means the only failures are public DNS and the public
+fetch, which lag a new address by minutes.
 
 `funnel_not_allowed` means Tailscale printed its login.tailscale.com page for enabling Funnel. The
 helper returns it as soon as the page appears and stops that `tailscale funnel` call, which would
 otherwise wait; every `tailscale funnel` call is bounded at 30 seconds. On the Funnel route, `on` is reported only after
 `tailscale serve status` shows Funnel on for the machine. The Mac app's own `tailscale` is found at
 `/Applications/Tailscale.app/Contents/MacOS/Tailscale` when it isn't on PATH, so the terminal and the
-app behave the same; `TABKYRA_TAILSCALE_APP` names another copy.
+app behave the same.
 
 ## What you need
 

@@ -9,6 +9,7 @@ public enum RemoteState: String, CaseIterable, Equatable {
     case tailscaleMissing = "tailscale_missing"
     case tailscaleSignedOut = "tailscale_signed_out"
     case funnelNotAllowed = "funnel_not_allowed"
+    case funnelClosed = "funnel_closed"
     case tailnetLock = "tailnet_lock"
     case portBusy = "port_busy"
     case ready
@@ -81,11 +82,14 @@ public struct RemoteReport: Equatable {
 public enum RemoteScreen: Equatable {
     case unavailable
     case checking
-    case getTailscale
-    case signIn
+    /// `configured`: remote access is already set up and only waiting on Tailscale, so the intro and "nothing was changed" are wrong.
+    case getTailscale(configured: Bool)
+    case signIn(configured: Bool)
     case needsBrowser
     case funnelNotAllowed(adminURL: URL?)
-    case tailnetLock
+    /// Set up, but Tailscale's Funnel setting no longer lets the internet in for the saved address. Try again opens it.
+    case funnelClosed
+    case tailnetLock(configured: Bool)
     /// `tailscaleSetting`: a saved Tailscale setting uses the connection (not a program to quit). `detail`: the helper's own words.
     case portBusy(tailscaleSetting: Bool, detail: String)
     case ready
@@ -95,8 +99,12 @@ public enum RemoteScreen: Equatable {
 }
 
 public enum RemoteFlow {
-    /// How long a successful Turn on is allowed to speak for itself while status reads catch up (DNS and Funnel can lag).
+    /// How long a successful Turn on is allowed to speak for itself while status reads catch up (Funnel can lag).
     public static let setupGrace: TimeInterval = 60
+    /// The same, while the only thing status finds wrong is public DNS (code `dns`): Tailscale takes minutes to publish a new address.
+    public static let dnsGrace: TimeInterval = 600
+    /// The grace that applies to what status says now.
+    public static func grace(for status: RemoteReport?) -> TimeInterval { status?.code == "dns" ? dnsGrace : setupGrace }
     /// Status reads in a row that must fail (no JSON, a crash, a timeout) before the window says the helper is silent.
     public static let readFailureLimit = 2
     /// A copied passcode is taken off the clipboard after this many seconds, unless something else was copied since.
@@ -111,22 +119,23 @@ public enum RemoteFlow {
                               readsFailing: Bool = false) -> RemoteScreen {
         guard helperAvailable else { return .unavailable }
         if settingUp { return .turningOn }
+        // Reads that keep failing come before the last good answer: an old "On" must not stay up while the helper is silent.
+        if readsFailing { return .problem(RemoteCopy.helperSilent) }
         if let status, status.state == .on || status.state == .noBrowserConnected, let url = status.connectorURL {
             return .on(connectorURL: url, browserConnected: status.state == .on)
         }
-        if readsFailing { return .problem(RemoteCopy.helperSilent) }
         if let setup {
             if setup.state == .on, let url = setup.connectorURL {
                 // Just turned on. Before the first status read, or while it lags (inside the grace period), this stands in for it.
-                if status == nil || setupAge < setupGrace {
+                if status == nil || setupAge < grace(for: status) {
                     return .on(connectorURL: url, browserConnected: status?.extensionConnected ?? true)
                 }
             } else if setup.state != .on {
-                if !(status.map { moreBasic.contains($0.state) } ?? false) { return screen(for: setup) }
+                if !(status.map { moreBasic.contains($0.state) } ?? false) { return screen(for: setup, configured: status?.configured ?? false) }
             }
         }
         guard let status else { return .checking }
-        return screen(for: status)
+        return screen(for: status, configured: status.configured)
     }
 
     /// Tailscale itself being gone is more basic than any refusal about Funnel or a busy connection.
@@ -141,12 +150,13 @@ public enum RemoteFlow {
         return setup
     }
 
-    private static func screen(for r: RemoteReport) -> RemoteScreen {
+    private static func screen(for r: RemoteReport, configured: Bool) -> RemoteScreen {
         switch r.state {
-        case .tailscaleMissing: .getTailscale
-        case .tailscaleSignedOut: .signIn
+        case .tailscaleMissing: .getTailscale(configured: configured)
+        case .tailscaleSignedOut: .signIn(configured: configured)
         case .funnelNotAllowed: .funnelNotAllowed(adminURL: r.adminURL)
-        case .tailnetLock: .tailnetLock
+        case .funnelClosed: .funnelClosed
+        case .tailnetLock: .tailnetLock(configured: configured)
         case .portBusy: .portBusy(tailscaleSetting: r.code == "tailscale_port", detail: r.message)
         case .ready: .ready
         case .on, .noBrowserConnected:
@@ -200,16 +210,6 @@ public enum RemoteCommand: Equatable {
         }
     }
 
-    /// The Tailscale Mac app keeps its command inside the app and doesn't put it on PATH.
-    public static let tailscaleAppCommand = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-
-    /// The helper's environment for these commands: the usual one, plus the Tailscale app's own command when it is there.
-    public static func environment(base: [String: String], tailscaleAppExists: Bool) -> [String: String] {
-        var env = base
-        if tailscaleAppExists { env["TABKYRA_TAILSCALE_APP"] = tailscaleAppCommand }
-        return env
-    }
-
     /// `{"ok":true,"passcode":"…"}` from `token passcode --json`.
     public static func parsePasscode(_ data: Data) -> String? {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -249,6 +249,13 @@ public enum RemoteCopy {
 
     public static let lockTitle = "This won't work on your Tailscale network"
     public static let lockBody = "Your network has Tailnet Lock turned on, and Tailscale's Funnel setting doesn't work with it. Nothing was changed. Turning Tailnet Lock off is your decision, so Polycarp doesn't. Other ways are listed in the guide."
+    /// The same, for an install that is already set up: nothing is "unchanged" about it.
+    public static let lockConfiguredBody = "Your network has Tailnet Lock turned on, and Tailscale's Funnel setting doesn't work with it. Turning Tailnet Lock off is your decision, so Polycarp doesn't. Other ways are listed in the guide."
+    public static let stillSetUp = "Remote access is still set up on this computer. It picks up again by itself once this is fixed."
+
+    public static let funnelClosedTitle = "Funnel is closed in Tailscale"
+    public static let funnelClosedBody = "Remote access is still set up, but Tailscale's Funnel setting isn't open for this computer, so assistants can't reach it. Try again to open it. If Tailscale asks you to allow it first, Polycarp shows you the page."
+    public static let funnelClosedButton = "Try again"
 
     public static let busyTitle = "Something else is in the way"
     public static let busyBody = "Another program on this computer is already using the connection Polycarp needs. Nothing was changed. Quit that program, then check again."
@@ -297,7 +304,7 @@ public enum RemoteCopy {
     /// All of it, for the tests that hold the words to the rules.
     public static var everySentence: [String] {
         let fixed = [title, intro, honest, staysOn, genericProblem, getTailscaleTitle, getTailscaleBody, getTailscaleButton, signInTitle, signInBody, openTailscaleButton,
-                     needsBrowserTitle, needsBrowserBody, funnelTitle, funnelBody, funnelButton, tryAgainButton, lockTitle, lockBody, busyTitle, busyBody, checkAgainButton,
+                     needsBrowserTitle, needsBrowserBody, funnelTitle, funnelBody, funnelButton, tryAgainButton, lockTitle, lockBody, lockConfiguredBody, stillSetUp, funnelClosedTitle, funnelClosedBody, funnelClosedButton, busyTitle, busyBody, checkAgainButton,
                      readyTitle, readyBody, turnOnButton, turningOnTitle, turningOnBody, onTitle, noBrowserNote, addressLabel, passcodeLabel, passcodeOnce, passcodeSaved,
                      passcodeEarlier, noPasscodeNote, busyTailscaleBody, startOverButton, detailsLabel, newPasscodeButton, newPasscodeNote, turnOffButton, turnOffFailed, helperSilent, unavailable, otherWays, otherWaysHelp, approvalNote, menusNote]
         return fixed + assistants.flatMap { [$0.name] + $0.steps }

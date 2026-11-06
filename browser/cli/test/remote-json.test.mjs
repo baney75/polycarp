@@ -3,7 +3,7 @@
 // a real service manager or ~/.config/tabkyra. Run with --experimental-strip-types (it imports src/remote-state.ts).
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -32,6 +32,8 @@ function scenario(name, { lock = "Tailnet lock is NOT enabled.", status = `{"Sel
 	const home = join(dir, "home");
 	const log = join(dir, "calls.log");
 	mkdirSync(bin, { recursive: true });
+	// node alone on PATH, as a symlink: never node's own directory, where a real tailscale can sit (Homebrew, /usr/bin on Linux).
+	symlinkSync(process.execPath, join(bin, "node"));
 	mkdirSync(join(dir, tailscaleDir), { recursive: true });
 	mkdirSync(home, { recursive: true });
 	const sock = join(dir, "sock");
@@ -52,7 +54,7 @@ function scenario(name, { lock = "Tailnet lock is NOT enabled.", status = `{"Sel
 		TABKYRA_CONFIG_DIR: join(home, "cfg"),
 		TABKYRA_SOCKET_DIR: sock,
 		NO_COLOR: "1",
-		PATH: `${bin}:${dirname(process.execPath)}`,
+		PATH: bin,
 		// An empty temp dir, so a real /Applications/Tailscale.app is never found or run.
 		TABKYRA_APPLICATIONS_DIR: apps,
 	};
@@ -72,6 +74,16 @@ function scenario(name, { lock = "Tailnet lock is NOT enabled.", status = `{"Sel
 	return {
 		env,
 		dir,
+		home,
+		script: (name, body) => script(join(bin, name), body),
+		/** The launcher `polycarp browser install` writes: an executable script that runs an existing file. */
+		launcher: () => {
+			const path = join(home, ".config", "tabkyra", "tabkyra");
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, `#!/bin/sh\nexec "${process.execPath}" "$@"\n`);
+			chmodSync(path, 0o755);
+			return path;
+		},
 		stub,
 		run,
 		runAsync,
@@ -133,7 +145,16 @@ test("stateFromStatus: preflight when nothing is set up; problem, no_browser_con
 	const gone = { state: "tailscale_signed_out", message: "t" };
 	assert.deepEqual(stateFromStatus({ configured: true, checks: [ok, { name: "local serve", status: "fail", detail: "x" }], tailscale: gone }), gone, "Tailscale going away comes ahead of a problem");
 	assert.equal(stateFromStatus({ configured: true, checks: [ok], extensionConnected: true, tailscale: gone }).state, "tailscale_signed_out", "and ahead of on");
-	for (const state of ["tailscale_missing", "tailscale_signed_out", "funnel_not_allowed", "tailnet_lock", "port_busy", "ready", "on", "no_browser_connected"]) assert.ok(REMOTE_STATES.includes(state), state);
+	// Public DNS lagging a fresh Funnel is "dns", and only when nothing else is wrong.
+	const dns = { name: "public DNS", status: "fail", detail: "no A record" };
+	const fetchFail = { name: "public fetch", status: "fail", detail: "didn't answer" };
+	assert.equal(stateFromStatus({ configured: true, checks: [ok, dns, fetchFail], extensionConnected: true }).code, "dns");
+	assert.equal(stateFromStatus({ configured: true, checks: [ok, dns], extensionConnected: true }).code, "dns");
+	assert.equal(stateFromStatus({ configured: true, checks: [{ name: "local serve", status: "fail", detail: "x" }, dns], extensionConnected: true }).code, undefined, "a dead serve is not a DNS wait");
+	assert.equal(stateFromStatus({ configured: true, checks: [fetchFail], extensionConnected: true }).code, undefined);
+	const closed = { state: "funnel_closed", message: "c" };
+	assert.deepEqual(stateFromStatus({ configured: true, checks: [ok], extensionConnected: true, tailscale: closed }), closed);
+	for (const state of ["funnel_closed", "tailscale_missing", "tailscale_signed_out", "funnel_not_allowed", "tailnet_lock", "port_busy", "ready", "on", "no_browser_connected"]) assert.ok(REMOTE_STATES.includes(state), state);
 });
 
 // ---------- remote status --json, nothing set up ----------
@@ -176,13 +197,11 @@ test("remote status --json: a clear machine is ready, and status changes nothing
 	assert.deepEqual(s.calls().filter((x) => /^(systemctl|launchctl)/.test(x)), []);
 });
 
-test("TABKYRA_TAILSCALE_APP names the Mac app's tailscale when PATH has none; a relative or missing path is ignored", () => {
-	const s = scenario("st-app", { tailscaleDir: "app" });
-	assert.equal(s.run(["remote", "status", "--json"]).json().state, "tailscale_missing", "off PATH and not named");
-	const named = s.run(["remote", "status", "--json"], { TABKYRA_TAILSCALE_APP: join(s.dir, "app", "tailscale") });
-	assert.equal(named.json().state, "ready");
-	assert.equal(s.run(["remote", "status", "--json"], { TABKYRA_TAILSCALE_APP: "app/tailscale" }).json().state, "tailscale_missing");
-	assert.equal(s.run(["remote", "status", "--json"], { TABKYRA_TAILSCALE_APP: join(s.dir, "nope") }).json().state, "tailscale_missing");
+test("a tailscale that is neither on PATH nor in the Mac app's fixed place is never found or run", () => {
+	const s = scenario("st-elsewhere", { tailscaleDir: "elsewhere" });
+	assert.equal(s.run(["remote", "status", "--json"]).json().state, "tailscale_missing", "off PATH");
+	assert.equal(s.run(["remote", "status", "--json"], { TABKYRA_TAILSCALE_APP: join(s.dir, "elsewhere", "tailscale") }).json().state, "tailscale_missing", "and naming it does nothing");
+	assert.deepEqual(s.calls(), [], "it was never run");
 });
 
 // ---------- remote setup --json ----------
@@ -490,13 +509,170 @@ test("remote status --json: with remote.json on the Funnel route, Tailscale miss
 	}
 });
 
+// ---------- status: Funnel closed, without any report left over from setup ----------
+
+test("remote status --json: a Funnel remote.json with Funnel closed is funnel_closed, so a refusal survives a relaunch", () => {
+	const s = scenario("so-closed");
+	mkdirSync(s.env.TABKYRA_CONFIG_DIR, { recursive: true });
+	writeFileSync(join(s.env.TABKYRA_CONFIG_DIR, "remote.json"), JSON.stringify({ publicUrl: FUNNEL_URL, port: 9, route: "funnel" }));
+	const r = s.run(["remote", "status", "--json"]);
+	const report = r.json();
+	assert.equal(report.state, "funnel_closed");
+	assert.equal(report.ok, false);
+	assert.equal(report.connectorUrl, `${FUNNEL_URL}/mcp`, "it is still set up");
+	assert.match(report.message, /Funnel isn't open for mac\.example\.ts\.net:8443/);
+	assert.ok(report.checks.some((x) => x.name === "tailscale" && x.status === "fail"));
+	assert.ok(!report.checks.some((x) => x.name === "public fetch"), "no internet checks while Funnel is closed");
+	assert.equal(report.extensionConnected, null, "and the bridge isn't asked either");
+	noFunnelChange(s);
+	// Text mode says it too.
+	assert.match(s.run(["remote", "status"]).stdout, /Funnel isn't open for mac\.example\.ts\.net:8443/);
+	// With Funnel open for that address it is no longer funnel_closed (nothing listens on port 9, so it is a problem instead).
+	const open = scenario("so-open");
+	mkdirSync(open.env.TABKYRA_CONFIG_DIR, { recursive: true });
+	writeFileSync(join(open.env.TABKYRA_CONFIG_DIR, "remote.json"), JSON.stringify({ publicUrl: FUNNEL_URL, port: 9, route: "funnel" }));
+	writeFileSync(open.stub.stateFile, "on\n");
+	assert.equal(open.run(["remote", "status", "--json"]).json().state, "problem");
+});
+
+// ---------- a failure after the passcode was made is still a report ----------
+
+test("remote setup --json: a write that throws after the passcode was made is a problem report that carries the passcode", { skip: process.platform !== "darwin" && "needs chflags" }, async () => {
+	const s = scenario("su-unwritable");
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	const file = join(s.env.TABKYRA_CONFIG_DIR, "remote.json");
+	mkdirSync(s.env.TABKYRA_CONFIG_DIR, { recursive: true });
+	writeFileSync(file, JSON.stringify({ publicUrl: FUNNEL_URL, port: local.port, route: "funnel" }));
+	// Immutable: remote.json reads fine (so planning passes and the passcode is made), and replacing it fails.
+	assert.equal(spawnSync("chflags", ["uchg", file]).status, 0);
+	try {
+		const r = await s.runAsync(["remote", "setup", "--json", "--no-service", "--port", String(local.port)]);
+		assert.equal(r.code, 1, r.stdout + r.stderr);
+		const report = r.json();
+		assert.equal(report.ok, false);
+		assert.equal(report.state, "problem");
+		assert.equal(report.code, "config");
+		assert.match(report.passcode, PASSCODE, "the passcode that was made is in the report");
+		assert.equal(report.passcodeSet, true);
+		noFunnelChange(s);
+	} finally {
+		spawnSync("chflags", ["nouchg", file]);
+		await local.close();
+	}
+});
+
+const serviceTest = process.platform === "linux" || process.platform === "darwin" ? test : test.skip;
+/** The directory the user service file goes in, made impossible to write by putting a file where the folder should be. */
+const blockServiceDir = (s) => {
+	const blocker = process.platform === "darwin" ? join(s.home, "Library") : join(s.home, ".config", "systemd");
+	mkdirSync(dirname(blocker), { recursive: true });
+	writeFileSync(blocker, "not a folder");
+};
+
+serviceTest("remote setup --json: a service file that can't be written is a problem report (code service) with the passcode, not silence", async () => {
+	const s = scenario("su-svc-unwritable");
+	s.launcher();
+	blockServiceDir(s);
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	try {
+		const r = await s.runAsync(["remote", "setup", "--json", "--port", String(local.port)]);
+		assert.equal(r.code, 1, r.stdout + r.stderr);
+		assert.equal(r.stderr, "");
+		const report = r.json();
+		assert.equal(report.state, "problem");
+		assert.equal(report.code, "service");
+		assert.match(report.passcode, PASSCODE);
+		noFunnelChange(s);
+	} finally {
+		await local.close();
+	}
+});
+
+// ---------- the path the app always takes: a service, with a launcher ----------
+
+serviceTest("remote setup --json with a service: success is one JSON object and the passcode", async () => {
+	const s = scenario("su-svc-ok");
+	s.launcher();
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	try {
+		const r = await s.runAsync(["remote", "setup", "--json", "--port", String(local.port)]);
+		assert.equal(r.code, 0, r.stdout + r.stderr);
+		assert.equal(r.stderr, "");
+		const report = r.json(); // JSON.parse throws on anything but a single object on stdout
+		assert.equal(report.state, "on");
+		assert.equal(report.connectorUrl, `${FUNNEL_URL}/mcp`);
+		assert.match(report.passcode, PASSCODE);
+		assert.ok(s.calls().some((x) => /^(launchctl|systemctl)/.test(x)), "the stub service manager was used");
+		assert.ok(s.calls().includes(`tailscale funnel --bg --yes --https=8443 http://127.0.0.1:${local.port}`));
+	} finally {
+		await local.close();
+	}
+});
+
+serviceTest("remote setup --json with a service: a service manager that fails is code service, with the passcode, and Funnel is not opened", async () => {
+	const s = scenario("su-svc-fail");
+	s.launcher();
+	s.script("launchctl", `echo "launchctl $*" >> ${join(s.dir, "calls.log")}\ncase "$1" in\nbootstrap) echo 'boom' >&2; exit 1 ;;\nprint) exit 1 ;;\nesac\n`);
+	s.script("systemctl", `echo "systemctl $*" >> ${join(s.dir, "calls.log")}\ncase "$2" in\nrestart) echo 'boom' >&2; exit 1 ;;\nesac\n`);
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	try {
+		const r = await s.runAsync(["remote", "setup", "--json", "--port", String(local.port)]);
+		assert.equal(r.code, 1, r.stdout + r.stderr);
+		const report = r.json();
+		assert.equal(report.state, "problem");
+		assert.equal(report.code, "service");
+		assert.match(report.passcode, PASSCODE);
+		assert.ok(s.remoteJsonExists(), "remote.json is kept");
+		noFunnelChange(s);
+	} finally {
+		await local.close();
+	}
+});
+
+serviceTest("remote setup --json with a service: serve that never answers is code serve, with the passcode, and Funnel is not opened", async () => {
+	const s = scenario("su-svc-silent");
+	s.launcher();
+	const port = await freePort();
+	const r = await s.runAsync(["remote", "setup", "--json", "--port", String(port)], { TABKYRA_SERVE_WAIT_MS: "1500" });
+	assert.equal(r.code, 1, r.stdout + r.stderr);
+	const report = r.json();
+	assert.equal(report.state, "problem");
+	assert.equal(report.code, "serve");
+	assert.match(report.passcode, PASSCODE);
+	noFunnelChange(s);
+});
+
+// ---------- cancelling setup stops the funnel call it started ----------
+
+test("remote setup: a SIGTERM while `tailscale funnel` runs stops that process too, so it can't open Funnel later", async () => {
+	const s = scenario("su-sigterm", { funnel: "hang" });
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	try {
+		const child = spawn(process.execPath, [cli, "remote", "setup", "--json", "--no-service", "--port", String(local.port)], { env: s.env });
+		const closed = new Promise((resolve) => child.on("close", (code, signal) => resolve({ code, signal })));
+		const started = Date.now();
+		while (!existsSync(s.stub.pidFile)) {
+			assert.ok(Date.now() - started < 15_000, "the funnel call started");
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		const funnelPid = Number(readFileSync(s.stub.pidFile, "utf8").trim());
+		child.kill("SIGTERM");
+		const end = await closed;
+		assert.ok(end.code === 143 || end.signal === "SIGTERM", JSON.stringify(end));
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		assert.throws(() => process.kill(funnelPid, 0), "the tailscale funnel process is gone");
+	} finally {
+		await local.close();
+	}
+});
+
 // ---------- the Tailscale Mac app at its fixed path: a terminal and Polycarp's window behave the same ----------
 
 test("the CLI finds the Tailscale app at its fixed path with nothing named: status, setup and remote off all use it", async () => {
 	const s = scenario("app-fixed", { app: true });
 	const local = await localServer(`${FUNNEL_URL}/mcp`);
 	try {
-		assert.equal(s.run(["remote", "status", "--json"]).json().state, "ready", "found with no PATH entry and no TABKYRA_TAILSCALE_APP");
+		assert.equal(s.run(["remote", "status", "--json"]).json().state, "ready", "found with no PATH entry");
 		const on = await s.runAsync(["remote", "setup", "--json", "--no-service", "--port", String(local.port)]);
 		assert.equal(on.code, 0, on.stdout + on.stderr);
 		assert.equal(on.json().state, "on");

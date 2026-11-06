@@ -35,7 +35,7 @@ final class BrowserRemoteModel: ObservableObject {
     }
     /// A Turn on just succeeded and the status reads haven't confirmed it yet (and the grace period isn't over).
     private var bridging: Bool {
-        setup?.state == .on && (setupAt.map { Date().timeIntervalSince($0) < RemoteFlow.setupGrace } ?? false)
+        setup?.state == .on && (setupAt.map { Date().timeIntervalSince($0) < RemoteFlow.grace(for: status) } ?? false)
     }
     var passcodeSet: Bool { status?.passcodeSet ?? setup?.passcodeSet ?? false }
 
@@ -99,9 +99,11 @@ final class BrowserRemoteModel: ObservableObject {
                 self.setupAt = Date()
                 if report.state == .on {
                     // The success speaks for itself only briefly: when the grace is over, whatever status says takes over.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + RemoteFlow.setupGrace + 0.5) { [weak self] in
-                        self?.objectWillChange.send()
-                        self?.refresh()
+                    for grace in [RemoteFlow.setupGrace, RemoteFlow.dnsGrace] {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + grace + 0.5) { [weak self] in
+                            self?.objectWillChange.send()
+                            self?.refresh()
+                        }
                     }
                 }
                 self.refresh()
@@ -190,8 +192,7 @@ final class BrowserRemoteModel: ObservableObject {
         let p = Process()
         p.executableURL = exe
         p.arguments = command.arguments
-        let base = BrowserBundle.environment(base: ProcessInfo.processInfo.environment, loginPath: Self.loginPath)
-        p.environment = RemoteCommand.environment(base: base, tailscaleAppExists: FileManager.default.fileExists(atPath: RemoteCommand.tailscaleAppCommand))
+        p.environment = BrowserBundle.environment(base: ProcessInfo.processInfo.environment, loginPath: Self.loginPath)
         let out = Pipe(), err = Pipe()
         p.standardOutput = out
         p.standardError = err
@@ -248,16 +249,24 @@ struct BrowserRemoteView: View {
             line(RemoteCopy.unavailable)
         case .checking:
             HStack(spacing: 8) { ProgressView().controlSize(.small); line("Looking…") }
-        case .getTailscale:
-            line(RemoteCopy.intro)
+        case .getTailscale(let configured):
+            if !configured { line(RemoteCopy.intro) }
             step(RemoteCopy.getTailscaleTitle, RemoteCopy.getTailscaleBody) {
-                Button(RemoteCopy.getTailscaleButton) { NSWorkspace.shared.open(RemoteCopy.tailscaleDownloadURL) }
+                HStack(spacing: 10) {
+                    Button(RemoteCopy.getTailscaleButton) { NSWorkspace.shared.open(RemoteCopy.tailscaleDownloadURL) }
+                    if configured { turnOffButton }
+                }
             }
-        case .signIn:
-            line(RemoteCopy.intro)
+            if configured { line(RemoteCopy.stillSetUp) }
+        case .signIn(let configured):
+            if !configured { line(RemoteCopy.intro) }
             step(RemoteCopy.signInTitle, RemoteCopy.signInBody) {
-                if model.tailscaleAppInstalled { Button(RemoteCopy.openTailscaleButton) { model.openTailscale() } }
+                HStack(spacing: 10) {
+                    if model.tailscaleAppInstalled { Button(RemoteCopy.openTailscaleButton) { model.openTailscale() } }
+                    if configured { turnOffButton }
+                }
             }
+            if configured { line(RemoteCopy.stillSetUp) }
         case .needsBrowser:
             step(RemoteCopy.needsBrowserTitle, RemoteCopy.needsBrowserBody) {
                 Button(RemoteCopy.checkAgainButton) { model.checkAgain() }
@@ -267,20 +276,34 @@ struct BrowserRemoteView: View {
                 HStack(spacing: 10) {
                     if let admin { Button(RemoteCopy.funnelButton) { NSWorkspace.shared.open(admin) } }
                     Button(RemoteCopy.tryAgainButton) { model.turnOn() }
-                    Button(RemoteCopy.turnOffButton) { model.turnOff() }.controlSize(.small).disabled(model.working)
+                    turnOffButton
                 }
             }
             // The passcode was made before Funnel was refused: show it here, so it can't be lost unseen.
             passcodeShown
-        case .tailnetLock:
-            step(RemoteCopy.lockTitle, RemoteCopy.lockBody) {
-                Button(RemoteCopy.checkAgainButton) { model.checkAgain() }
+        case .funnelClosed:
+            step(RemoteCopy.funnelClosedTitle, RemoteCopy.funnelClosedBody) {
+                HStack(spacing: 10) {
+                    Button(RemoteCopy.funnelClosedButton) { model.turnOn() }
+                    turnOffButton
+                }
             }
+            passcodeShown
+        case .tailnetLock(let configured):
+            step(RemoteCopy.lockTitle, configured ? RemoteCopy.lockConfiguredBody : RemoteCopy.lockBody) {
+                HStack(spacing: 10) {
+                    Button(RemoteCopy.checkAgainButton) { model.checkAgain() }
+                    if configured { turnOffButton }
+                }
+            }
+            if configured { line(RemoteCopy.stillSetUp) }
         case .portBusy(let tailscaleSetting, let detail):
             step(RemoteCopy.busyTitle, tailscaleSetting ? RemoteCopy.busyTailscaleBody : RemoteCopy.busyBody) {
                 Button(RemoteCopy.checkAgainButton) { model.checkAgain() }
             }
             details(detail)
+            // The passcode may have been made before the run stopped: never leave it unseen.
+            passcodeShown
         case .ready:
             line(RemoteCopy.intro)
             step(RemoteCopy.readyTitle, RemoteCopy.readyBody) {
@@ -306,6 +329,7 @@ struct BrowserRemoteView: View {
                 }
             }
             if message != RemoteCopy.genericProblem, !silent { details(message) }
+            passcodeShown
         }
     }
 
@@ -333,6 +357,10 @@ struct BrowserRemoteView: View {
         }
     }
 
+    private var turnOffButton: some View {
+        Button(RemoteCopy.turnOffButton) { model.turnOff() }.controlSize(.small).disabled(model.working)
+    }
+
     @ViewBuilder private var footnotes: some View {
         line(RemoteCopy.honest)
         line(RemoteCopy.staysOn)
@@ -349,10 +377,7 @@ struct BrowserRemoteView: View {
             passcodeBlock
             assistants
             footnotes
-            HStack(spacing: 10) {
-                Button(RemoteCopy.turnOffButton) { model.turnOff() }.disabled(model.working)
-                if let c = model.copied { Text("Copied \(c)").font(Chrome.font(11)).foregroundStyle(.secondary) }
-            }
+            Button(RemoteCopy.turnOffButton) { model.turnOff() }.disabled(model.working)
         }
     }
 
@@ -410,6 +435,8 @@ struct BrowserRemoteView: View {
                 Text(value).font(Chrome.font(12, .medium)).textSelection(.enabled).lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
+            // Every screen with a Copy button confirms it here, so the Funnel refusal and problem screens do too.
+            if model.copied == label { Text("Copied").font(Chrome.font(11)).foregroundStyle(.secondary) }
             Button("Copy") { model.copy(value, label: label, secret: secret) }.controlSize(.small).accessibilityLabel("Copy the \(label)")
         }
     }
