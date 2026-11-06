@@ -53,7 +53,7 @@ struct VoiceSettingsView: View {
 
     private func keySection(_ s: VoiceSettings) -> some View {
         SettingsGroup("Dictation key") {
-            SettingsRow("Key", help: voice.state?.listener == true ? (s.hotkey == "Dictation" ? "The key with the microphone, F5 on the top row. If your keyboard has none, pick another." : nil) : "Turn dictation on first to pick another key.") {
+            SettingsRow("Key", help: voice.state?.listener == true ? (s.hotkey == "Dictation" ? "The key with the microphone, F5 on the top row. If your keyboard has none, pick another." + (s.hotkeyFallback == nil ? "" : " Right ⌘ also works until you first press it.") : nil) : "Turn dictation on first to pick another key.") {
                 HStack {
                     Picker("Key", selection: Binding(get: { s.hotkey }, set: { k in voice.update { $0.hotkey = k } })) {
                         ForEach(VoiceHotkeys.presets + (VoiceHotkeys.presets.contains(s.hotkey) ? [] : [s.hotkey]), id: \.self) { Text(label($0)).tag($0) }

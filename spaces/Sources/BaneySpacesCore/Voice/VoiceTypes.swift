@@ -41,6 +41,7 @@ public struct VoiceState: Codable, Equatable, Sendable {
 /// `Settings` in core/voice/src/store.rs. Keys are camelCase on the wire.
 public struct VoiceSettings: Codable, Equatable, Sendable {
     public var hotkey: String
+    public var hotkeyFallback: String?
     public var tapToToggle: Bool
     public var model: String
     public var modelSource: String
