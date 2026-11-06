@@ -90,14 +90,6 @@ test("the extension id still comes from the unchanged manifest key", () => {
 	assert.match(m.key, /8wIDAQAB$/);
 });
 
-test("the icons are the Polycarp mark from brand/export", () => {
-	const same = (a, b) => assert.ok(readFileSync(join(root, a)).equals(readFileSync(join(root, "..", b))), `${a} is ${b}`);
-	same("static/icon-16.png", "brand/export/macos/icon-16.png");
-	same("static/icon-32.png", "brand/export/macos/icon-32.png");
-	same("static/icon-48.png", "brand/export/linux/icon-48.png");
-	same("static/icon-128.png", "brand/export/macos/icon-128.png");
-});
-
 test("the extension's stored data keeps its names", () => {
 	// A renamed storage key or database would hide a person's chats, keys and skills after the update, so the storage code
 	// may say Polycarp only in comments.

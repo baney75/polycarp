@@ -22,26 +22,27 @@ export interface Preset {
 }
 
 export const PRESETS: Record<string, Preset> = {
+	// Polycarp's own colors (brand/README.md, themes/polycarp.toml). The id stays, because saved settings name it.
 	tabkyra: {
 		light: {
-			bg: "#f6f5f2",
-			panel: "#ffffff",
-			text: "#1b1b1b",
-			muted: "#5c5850",
-			border: "#d6d2c8",
-			accent: "#e3a93b",
-			accentText: "#1b1b1b",
-			danger: "#a40000",
+			bg: "#f6f3e8",
+			panel: "#fffdf6",
+			text: "#2b2e26",
+			muted: "#5c6152",
+			border: "#d5d0bf",
+			accent: "#59693f",
+			accentText: "#f6f3e8",
+			danger: "#a33a2a",
 		},
 		dark: {
-			bg: "#151515",
-			panel: "#222222",
-			text: "#eeeeee",
-			muted: "#b0aca2",
-			border: "#444444",
-			accent: "#e3a93b",
-			accentText: "#151515",
-			danger: "#ff8a8a",
+			bg: "#1f211b",
+			panel: "#2b2e26",
+			text: "#f6f3e8",
+			muted: "#cdcfbf",
+			border: "#464a3d",
+			accent: "#a9bb8a",
+			accentText: "#20231a",
+			danger: "#e58a76",
 		},
 	},
 	slate: {

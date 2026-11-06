@@ -3,7 +3,7 @@ import { DialogContent, DialogHeader } from "@mariozechner/mini-lit/dist/Dialog.
 import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
 import { html } from "lit";
 import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
-import { helmMark } from "../components/HelmMark.js";
+import { polycarpMark } from "../components/PolycarpMark.js";
 import { BUG_REPORTS_KEY } from "../privacy/bug-reports.js";
 import { setBugReports } from "../privacy/capture.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
@@ -45,7 +45,7 @@ export class WelcomeSetupDialog extends DialogBase {
 			${DialogContent({
 				className: "flex flex-col gap-4",
 				children: html`
-					${helmMark(40, "tile", "rounded-[9px]")}
+					${polycarpMark(40, "tile", "rounded-[9px]")}
 					${DialogHeader({
 						title: "Welcome to Polycarp",
 					})}
