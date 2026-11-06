@@ -112,7 +112,7 @@ fn unknown_subcommand_gives_2() {
 fn not_found_gives_127_and_names_the_tool() {
     let s = Sandbox::new();
     for (sub, name, var) in [
-        ("spaces", "baneyspaces", "POLYCARP_SPACES_BIN"),
+        ("spaces", "polycarp-spaces", "POLYCARP_SPACES_BIN"),
         ("browser", "tabkyra", "POLYCARP_BROWSER_BIN"),
     ] {
         let o = s.run(&[sub, "x"]);
@@ -121,6 +121,14 @@ fn not_found_gives_127_and_names_the_tool() {
         assert!(err(&o).contains(var), "{sub}: {}", err(&o));
         assert!(err(&o).contains("Install"), "{sub}: {}", err(&o));
     }
+    // The hint for Spaces points at the Polycarp repo, not at the old BaneySpaces one.
+    let o = s.run(&["spaces", "x"]);
+    assert!(
+        err(&o).contains("https://github.com/baney75/polycarp"),
+        "{}",
+        err(&o)
+    );
+    assert!(!err(&o).contains("baneyspaces"), "{}", err(&o));
 }
 
 #[test]
@@ -139,7 +147,7 @@ fn voice_with_args_gives_2() {
     let s = Sandbox::new();
     let o = s.run(&["voice", "dictate"]);
     assert_eq!(code(&o), 2);
-    assert!(err(&o).contains("silas#6"));
+    assert!(err(&o).contains("has no commands yet"));
 }
 
 #[test]
@@ -516,7 +524,7 @@ fn the_child_sees_its_own_name_as_argv0() {
         .env("POLYCARP_SPACES_BIN", compiled_stub())
         .output()
         .unwrap();
-    assert!(out(&o).contains("argv0:baneyspaces"), "{}", out(&o));
+    assert!(out(&o).contains("argv0:polycarp-spaces"), "{}", out(&o));
 }
 
 #[cfg(unix)]
@@ -533,6 +541,26 @@ fn doctor_says_when_the_browser_tool_is_broken() {
     assert_eq!(code(&o), 1, "{}", out(&o));
     assert!(out(&o).contains("did not work"), "{}", out(&o));
     assert!(!out(&o).contains("oops"), "{}", out(&o));
+}
+
+#[cfg(unix)]
+#[test]
+fn spaces_prefers_the_new_command_name_and_falls_back_to_the_old() {
+    let s = Sandbox::new();
+    stub(&s.dir("bin"), "baneyspaces", "echo old");
+    let o = s
+        .cmd(&["spaces"])
+        .env("PATH", s.dir("bin"))
+        .output()
+        .unwrap();
+    assert_eq!(out(&o), "old\n", "the old name still works alone");
+    stub(&s.dir("bin"), "polycarp-spaces", "echo new");
+    let o = s
+        .cmd(&["spaces"])
+        .env("PATH", s.dir("bin"))
+        .output()
+        .unwrap();
+    assert_eq!(out(&o), "new\n", "the new name wins when both are there");
 }
 
 // ---- Issue #5 follow-ups ----
@@ -1111,5 +1139,118 @@ fn a_voice_script_alone_does_not_fail_doctor() {
         out(&o).contains("voice: present but not runnable"),
         "{}",
         out(&o)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_finds_the_copy_inside_the_app_before_path() {
+    let s = Sandbox::new();
+    let app = s
+        .dir("home")
+        .join("Applications/Polycarp.app/Contents/Resources/browser");
+    fs::create_dir_all(&app).unwrap();
+    stub(&app, "polycarp-browser", "echo bundled \"$@\"");
+    let on_path = s.dir("a");
+    fs::create_dir_all(&on_path).unwrap();
+    stub(&on_path, "tabkyra", "echo from-path");
+    let o = s
+        .cmd(&["browser", "mcp"])
+        .env("PATH", &on_path)
+        .output()
+        .unwrap();
+    assert_eq!(out(&o), "bundled mcp\n");
+    // The override still wins over the app's copy.
+    let mine = stub(&on_path, "mine", "echo override");
+    let o = s
+        .cmd(&["browser"])
+        .env("POLYCARP_BROWSER_BIN", &mine)
+        .output()
+        .unwrap();
+    assert_eq!(out(&o), "override\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn browser_falls_back_to_path_without_the_app() {
+    let s = Sandbox::new();
+    let on_path = s.dir("a");
+    fs::create_dir_all(&on_path).unwrap();
+    stub(&on_path, "tabkyra", "echo from-path");
+    let o = s.cmd(&["browser"]).env("PATH", &on_path).output().unwrap();
+    assert_eq!(out(&o), "from-path\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_shows_the_bundled_browser_helper_and_its_version() {
+    let s = Sandbox::new();
+    let app = s
+        .dir("home")
+        .join("Applications/Polycarp.app/Contents/Resources/browser");
+    fs::create_dir_all(&app).unwrap();
+    stub(&app, "polycarp-browser", "echo 1.2.3");
+    let o = s.run(&["doctor"]);
+    let t = out(&o);
+    assert!(t.contains("polycarp-browser (1.2.3)"), "{t}");
+}
+
+/// With Polycarp installed, voice is inside it: `polycarp voice` opens its Voice settings through `polycarp://voice`,
+/// even when a Silas is also there, and `doctor` says so. `open` is a stub, so nothing is launched.
+#[cfg(target_os = "macos")]
+#[test]
+fn voice_opens_polycarps_voice_settings_when_it_is_installed() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let polycarp = home.join("Applications/Polycarp.app");
+    let silas = home.join("Applications/Silas.app");
+    fs::create_dir_all(polycarp.join("Contents")).unwrap();
+    fs::create_dir_all(silas.join("Contents")).unwrap();
+    let log = s.dir("open-args");
+    let open = stub(
+        &s.dir("bin"),
+        "fake-open",
+        &format!("echo \"$@\" > '{}'", log.display()),
+    );
+    let o = s
+        .cmd(&["voice"])
+        .env("POLYCARP_OPEN_BIN", &open)
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let args = fs::read_to_string(&log).unwrap();
+    assert!(args.contains("polycarp://voice"), "{args}");
+    assert!(args.contains(polycarp.to_str().unwrap()), "{args}");
+    assert!(!args.contains("Silas.app"), "Silas is not opened: {args}");
+    let o = s.cmd(&["doctor"]).current_dir(&home).output().unwrap();
+    assert!(out(&o).contains("voice: inside Polycarp"), "{}", out(&o));
+}
+
+/// Silas is only the fallback: no Polycarp, the old behavior.
+#[cfg(target_os = "macos")]
+#[test]
+fn voice_falls_back_to_silas_only_when_polycarp_is_not_installed() {
+    let s = Sandbox::new();
+    let home = s.dir("home");
+    let silas = home.join("Applications/Silas.app");
+    fs::create_dir_all(silas.join("Contents")).unwrap();
+    let log = s.dir("open-args");
+    let open = stub(
+        &s.dir("bin"),
+        "fake-open",
+        &format!("echo \"$@\" > '{}'", log.display()),
+    );
+    let o = s
+        .cmd(&["voice"])
+        .env("POLYCARP_OPEN_BIN", &open)
+        .current_dir(&home)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let args = fs::read_to_string(&log).unwrap();
+    assert!(
+        args.contains("Silas.app") && !args.contains("polycarp://"),
+        "{args}"
     );
 }

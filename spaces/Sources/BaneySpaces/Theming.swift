@@ -307,6 +307,25 @@ extension RGB {
 /// The menu bar's workspace indicator in the theme's own form. The BaneySpaces theme keeps the numbered
 /// square symbol the menu bar has always shown (nil here); Omarchy draws a numbered block, Minimal a number over a bar.
 enum MenuBarMark {
+    /// The Polycarp olive branch (a template image made at build time from brand/mark-small.svg,
+    /// `Resources/MenuBarMark.png` and `@2x`) with the workspace number beside it. nil when the
+    /// bundle has no mark (a `swift run` build), and the caller draws the numbered square instead.
+    static func polycarp(workspace n: Int, description: String) -> NSImage? {
+        guard let base = Bundle.main.image(forResource: "MenuBarMark") else { return nil }
+        let side: CGFloat = 18
+        let text = NSAttributedString(string: "\(n)", attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.black])
+        let t = text.size()
+        let image = NSImage(size: NSSize(width: side + 3 + ceil(t.width), height: side), flipped: false) { rect in
+            base.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+            text.draw(at: NSPoint(x: side + 3, y: rect.midY - t.height / 2))
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = description
+        return image
+    }
+
     static func image(workspace n: Int, description: String) -> NSImage? {
         let spec = Chrome.spec
         guard Chrome.theme != .baneyspaces else { return nil }

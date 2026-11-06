@@ -271,7 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             mcBackAtDock += 1
             if mcBackAtDock >= 2 {
                 mcBackAtDock = 0
-                Trace.log("mission control: turned back on at the Dock; BaneySpaces' overview switched off")
+                Trace.log("mission control: turned back on at the Dock; Polycarp's overview switched off")
                 return setup.model.setViewerKeys(false)
             }
         }
@@ -331,7 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let home = NSHomeDirectory()
         guard bundle.hasPrefix("/Applications/") || bundle.hasPrefix("\(home)/Applications/"),
               let script = Bundle.main.url(forResource: "install-app", withExtension: "sh") else { return }
-        let link = "\(home)/.local/bin/baneyspaces"
+        let link = "\(home)/.local/bin/\(Product.commandName)"
         if let target = try? FileManager.default.destinationOfSymbolicLink(atPath: link), target.hasPrefix(bundle + "/") { return }
         DispatchQueue.global(qos: .utility).async {
             let p = Process()
@@ -419,7 +419,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Wait a moment for the first look (a stat and a small read) so a theme file that is already there
         // draws from the first panel on; a slow disk costs 0.15 s at most and the theme then arrives as any change does.
         if case .theme(let t) = watcher.start(firstLookWithin: 0.15) { Appearance.shared.usePolycarp(t) }
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
@@ -485,15 +485,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startWhenTrusted()
         // ⌘Space works with or without Accessibility; Spotlight hands it over first.
         if Launcher.onCmdSpace { setLauncherOnCmdSpace(true) } else { registerShortcuts() }
+        legacyWatcher.start()
+        startVoice()
         updater.onChange = { [weak self] in self?.updateIcon() }
-        updater.isBusy = { [weak self] in self?.spaces.switching ?? false }
+        // Not while a workspace switches, and not while dictation is recording, transcribing or typing.
+        updater.isBusy = { [weak self] in (self?.spaces.switching ?? false) || (VoiceEngine.shared.state?.status.isDictating ?? false) }
         updater.start()
         // The first launch walks through setup, and so does any launch without permission (an
         // update that macOS no longer trusts). Otherwise it's one click away in the menu.
-        if !UserDefaults.standard.bool(forKey: "setupShown") || !AXIsProcessTrusted()
-            || CommandLine.arguments.contains("--setup") {
-            UserDefaults.standard.set(true, forKey: "setupShown")
+        UserDefaults.standard.set(true, forKey: "setupShown")
+        if CommandLine.arguments.contains("--setup") {
             showSetup()
+        } else if Welcome.shouldShow(hasFinished: UserDefaults.standard.bool(forKey: Welcome.finishedKey), granted: WelcomeModel.read(), forced: false) {
+            showWelcome()
         }
     }
 
@@ -504,6 +508,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func showSetup() { setup.show() }
+    private let legacyWatcher = LegacyWatcher()
+
+    // MARK: Voice (dictation, inside this process)
+
+    private let voiceOverlay = VoiceOverlay()
+
+    private func startVoice() {
+        let voice = VoiceEngine.shared
+        voice.onLevel = { [weak self] level in DispatchQueue.main.async { self?.voiceOverlay.level(level) } }
+        voice.onLearned = { [weak self] from, to in
+            // The pill's own switch covers this one too.
+            if voice.settings?.showOverlay ?? true { self?.voiceOverlay.learned(from: from, to: to) }
+        }
+        voice.onStateChange = { [weak self] in
+            guard let self, let st = voice.state else { return }
+            self.voiceOverlay.status(st.status, enabled: voice.settings?.showOverlay ?? true)
+            self.updateIcon()
+        }
+        legacyWatcher.onSilasQuit = { pid in voice.silasChanged(terminating: pid) }
+        voice.onSilasInTheWay = { [weak self] in self?.legacyWatcher.askSilasToQuit() }
+        legacyWatcher.onSilasStarted = { voice.silasChanged() }
+        legacyWatcher.takesOver = { voice.takesOver }
+        voice.start()
+    }
+
+    func showVoiceSettings() {
+        setup.model.tab = .voice
+        setup.show()
+    }
+    @objc private func showWelcome() { welcome.show() }
+    private lazy var welcome: WelcomeWindowController = {
+        let c = WelcomeWindowController()
+        c.model.modifierSymbol = { [weak self] in self?.setup.model.modifier.symbol ?? "⌘" }
+        c.model.onFixStale = { [weak self] in self?.setup.model.fixPermission() }
+        return c
+    }()
 
     func applicationWillTerminate(_ n: Notification) {
         // The macOS Dock comes back with everything else; the next launch tucks it away again.
@@ -631,7 +671,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         started = false
         registerShortcuts()
         updateIcon()
-        showSetup()
+        showWelcome()
         startWhenTrusted()
         return false
     }
@@ -694,9 +734,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateIcon() {
         let name = started ? "\(spaces.model.current).square.fill" : "exclamationmark.triangle"
-        let description = started ? "BaneySpaces, workspace \(spaces.model.current)" : "BaneySpaces needs Accessibility access"
-        // The BaneySpaces theme keeps the numbered square it has always shown; the others draw their indicator.
-        let image = (started ? MenuBarMark.image(workspace: spaces.model.current, description: description) : nil)
+        let description = started ? "Polycarp, workspace \(spaces.model.current)" : "Polycarp needs Accessibility access"
+        // The Polycarp theme shows the olive branch with the workspace number; the others draw their own indicator.
+        let image = (started ? (MenuBarMark.image(workspace: spaces.model.current, description: description)
+                                ?? MenuBarMark.polycarp(workspace: spaces.model.current, description: description)) : nil)
             ?? NSImage(systemSymbolName: name, accessibilityDescription: description)
         image?.isTemplate = true
         statusItem.button?.image = image
@@ -707,6 +748,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.title = (n > 0 ? " \(n)" : "") + full
         statusItem.button?.toolTip = full.isEmpty ? nil : "Agents have full access (Settings > Agents)"
         statusItem.button?.imagePosition = .imageLeading
+        // Dictation shows in the menu bar while it listens: the mic beside the mark.
+        if VoiceEngine.shared.state?.status.isLive == true {
+            statusItem.button?.title = " 🎙" + (statusItem.button?.title ?? "")
+            statusItem.button?.toolTip = "Listening"
+        }
     }
 
     private func startSession() {
@@ -778,14 +824,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 menu.addItem(withTitle: "Waiting for AeroSpace to quit", action: nil, keyEquivalent: "")
             }
             if !AXIsProcessTrusted() {
-                menu.addItem(withTitle: "BaneySpaces needs permission to arrange windows", action: nil, keyEquivalent: "")
-                menu.addItem(item("Allow BaneySpaces…", #selector(showSetup)))
+                menu.addItem(withTitle: "Polycarp needs permission to arrange windows", action: nil, keyEquivalent: "")
+                menu.addItem(item("Allow Polycarp…", #selector(showWelcome)))
             } else {
                 menu.addItem(item("Settings…", #selector(showSetup)))
             }
             menu.addItem(.separator())
-            menu.addItem(item("Quit BaneySpaces", #selector(quit), key: "q"))
+            menu.addItem(item("Quit Polycarp", #selector(quit), key: "q"))
             return
+        }
+        // Dictation's state, first: the same line the Silas tray showed ("Ready · hold Right ⌘ to speak").
+        if let st = VoiceEngine.shared.state {
+            let line = VoiceEngine.shared.statusLine
+            menu.addItem(withTitle: line, action: nil, keyEquivalent: "")
+            menu.addItem(.separator())
         }
         spaces.refresh()
         var apps: [Int: [String]] = [:]
@@ -818,7 +870,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .settings:
             return item("Settings…", #selector(showSetup), key: ",")
         case .quit:
-            return item("Quit BaneySpaces", #selector(quit), key: "q")
+            return item("Quit Polycarp", #selector(quit), key: "q")
         case .finished(let count):
             // Clicking an agent goes to it and marks it seen, which drops it from this list.
             return session.finishedMenuItem(title: MenuLayout.finishedTitle(count))
@@ -895,7 +947,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func uninstall() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Uninstall BaneySpaces?"
+        alert.messageText = "Uninstall Polycarp?"
         alert.informativeText = Uninstaller.summary
         alert.addButton(withTitle: "Uninstall")
         alert.addButton(withTitle: "Cancel")
@@ -906,7 +958,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSApp.terminate(nil)
         } catch {
             let fail = NSAlert()
-            fail.messageText = "BaneySpaces couldn't start the uninstaller"
+            fail.messageText = "Polycarp couldn't start the uninstaller"
             fail.informativeText = "\(error.localizedDescription)\n\nRun this in Terminal instead:\n\(Uninstaller.command)"
             fail.runModal()
         }
@@ -1019,13 +1071,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The same actions as the shortcuts, for scripts and checks.
     @objc private func handleURL(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
         guard let text = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
-              let url = URL(string: text), url.scheme == "baneyspaces" else { return }
+              let url = URL(string: text), url.scheme == "polycarp" || url.scheme == "baneyspaces" else { return }
         let n = Int(url.lastPathComponent) ?? 0
         switch url.host {
         case "switch": run { $0.switchTo(n) }
         case "move": run { $0.moveFocused(to: n) }
         case "restore": run { _ in bringBack() }
         case "viewer": run { _ in viewer.toggle() }
+        // `polycarp voice` opens the Voice settings. Showing a window changes nothing, so a web page may.
+        case "voice": showVoiceSettings()
         // Opening it changes nothing on its own, so a web page may: every action inside needs a key press.
         case "launcher": launcher.show(scope: LauncherModel.Scope(rawValue: url.lastPathComponent) ?? .root, takeKeys: false)
         case "dock":
@@ -1043,9 +1097,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // For `scripts/dock-motion-probe.swift`: open and close the first "+N" list without the pointer.
             case "more" where checks: run { _ in _ = dock.openMoreForCheck() }
             case "lessmore" where checks: run { _ in dock.closeMoreForCheck() }
-            default: NSLog("BaneySpaces: dock command refused or unknown %@", text)
+            default: NSLog("Polycarp: dock command refused or unknown %@", text)
             }
-        default: NSLog("BaneySpaces: unknown command %@", text)
+        default: NSLog("Polycarp: unknown command %@", text)
         }
     }
 }

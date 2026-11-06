@@ -1,23 +1,30 @@
 #!/bin/bash
-# Removes BaneySpaces from this Mac and puts back everything it changed:
-#   curl -fsSL https://raw.githubusercontent.com/baney75/baneyspaces/main/uninstall.sh | bash
-# Settings > General > Uninstall BaneySpaces runs this same script.
+# Removes Polycarp from this Mac and puts back everything it changed:
+#   curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/spaces/uninstall.sh | bash
+# Settings > General > Uninstall Polycarp runs this same script.
+# A BaneySpaces app that is still installed is never touched (Polycarp copied its settings, it never moved them).
 # Quitting first brings every hidden window and app back on screen.
 #
 # Exits 0 when everything is removed and put back, 2 when everything is removed but something
 # couldn't be put back (it says what, and keeps what's needed to finish by hand), 1 when it
 # stopped before removing anything.
 #
-# BANEYSPACES_APP: the app to remove (default ~/Applications/BaneySpaces.app).
+# BANEYSPACES_APP: the app to remove (default ~/Applications/Polycarp.app).
 # BANEYSPACES_UNINSTALL_TEST=1: for the test only. Commands that touch the real Mac's
 # settings, permissions or processes are printed instead of run; files under $HOME still go.
 set -euo pipefail
 bold=$(tput bold 2>/dev/null || true); reset=$(tput sgr0 2>/dev/null || true)
 step() { printf '%s==>%s %s\n' "$bold" "$reset" "$*"; }
-APP="${BANEYSPACES_APP:-$HOME/Applications/BaneySpaces.app}"
+APP="${BANEYSPACES_APP:-$HOME/Applications/Polycarp.app}"
 APP="${APP%/}"
-DATA="$HOME/Library/Application Support/BaneySpaces"
-ID=com.baney.baneyspaces
+DATA="$HOME/Library/Application Support/Polycarp"
+ID=com.baney.polycarp
+# The app this one replaces. If it is still installed its hooks, skill and command links stay.
+LEGACY_APP=""
+for dir in "$HOME/Applications" /Applications; do
+  [ "$dir" = "/Applications" ] && [ -n "${BANEYSPACES_UNINSTALL_TEST:-}" ] && continue
+  if [ -x "$dir/BaneySpaces.app/Contents/MacOS/BaneySpaces" ]; then LEGACY_APP="$dir/BaneySpaces.app"; break; fi
+done
 TEST="${BANEYSPACES_UNINSTALL_TEST:-}"
 # The real Mac's settings, permissions and processes: printed instead of run in the test.
 # (To the script's own output, past any redirect on the command.)
@@ -28,7 +35,7 @@ problems=()
 problem() { problems+=("$*"); }
 running() {
   [ -z "$TEST" ] || return 1
-  pgrep -f "BaneySpaces.app/Contents/MacOS/BaneySpaces" >/dev/null || pgrep -f "$APP/Contents/MacOS/" >/dev/null
+  pgrep -f "Polycarp.app/Contents/MacOS/Polycarp" >/dev/null || pgrep -f "$APP/Contents/MacOS/" >/dev/null
 }
 # Its own settings. The test reads them from a plist file instead (BANEYSPACES_UNINSTALL_PREFS).
 pref() {
@@ -77,7 +84,7 @@ restore_mission_control() {
 }
 
 # The launch agent that did this when BaneySpaces had stopped running, and its files.
-WATCHDOG=com.baney.baneyspaces.mc-watchdog
+WATCHDOG=com.baney.polycarp.mc-watchdog
 remove_watchdog() {
   # The plist first: when the agent is what runs this, unloading it ends this very process.
   rm -f "$HOME/Library/LaunchAgents/$WATCHDOG.plist"
@@ -96,13 +103,13 @@ if [ "${1:-}" = "--restore-mission-control" ]; then
   exit 0
 fi
 
-step "Quitting BaneySpaces (it puts every window back first)"
+step "Quitting Polycarp (it puts every window back first)"
 sys osascript -e "tell application id \"$ID\" to quit" >/dev/null 2>&1 || true
 for _ in $(seq 1 75); do running || break; sleep 0.2; done
 # Its saved window positions are deleted below, so it must be gone first or a hidden window
 # could lose its place.
 if running; then
-  echo "BaneySpaces is still running. Quit it from its menu bar icon, then run this again." >&2
+  echo "Polycarp is still running. Quit it from its menu bar icon, then run this again." >&2
   exit 1
 fi
 # From here on a failed step doesn't stop the rest: it's listed at the end, and the exit is 2.
@@ -116,24 +123,24 @@ BIN=""
 # The places it's installed; the test stays inside its made-up home.
 # Each once: by default $APP is the first of these.
 INSTALLED=("$APP")
-for app in "$HOME/Applications/BaneySpaces.app" "/Applications/BaneySpaces.app"; do
+for app in "$HOME/Applications/Polycarp.app" "/Applications/Polycarp.app"; do
   [ "$app" = "$APP" ] && continue
-  [ "$app" = "/Applications/BaneySpaces.app" ] && [ -n "$TEST" ] && continue
+  [ "$app" = "/Applications/Polycarp.app" ] && [ -n "$TEST" ] && continue
   INSTALLED+=("$app")
 done
-for app in "${INSTALLED[@]}" "$HOME/.Trash/BaneySpaces"*.app; do
-  if [ -x "$app/Contents/MacOS/BaneySpaces" ]; then BIN="$app/Contents/MacOS/BaneySpaces"; break; fi
+for app in "${INSTALLED[@]}" "$HOME/.Trash/Polycarp"*.app; do
+  if [ -x "$app/Contents/MacOS/Polycarp" ]; then BIN="$app/Contents/MacOS/Polycarp"; break; fi
 done
 
 if [ -n "$BIN" ]; then
   # Screenshot and Spotlight shortcuts that setup's Free Them or the launcher switched off go back on.
-  step "Turning macOS's screenshot and Spotlight shortcuts back on (if BaneySpaces turned them off)"
+  step "Turning macOS's screenshot and Spotlight shortcuts back on (if Polycarp turned them off)"
   sys "$BIN" --restore-shortcuts >/dev/null 2>&1 || problem "macOS's screenshot or Spotlight shortcuts may still be off: turn them on in System Settings › Keyboard › Keyboard Shortcuts."
   # Quitting already brings the macOS Dock back; this covers a crash that didn't.
   sys "$BIN" --restore-dock >/dev/null 2>&1 || true
   step "Removing it from Login Items"
   sys "$BIN" --unregister-login >/dev/null 2>&1 \
-    || problem "BaneySpaces may still be in Login Items: remove it in System Settings › General › Login Items."
+    || problem "Polycarp may still be in Login Items: remove it in System Settings › General › Login Items."
 elif shortcuts_off; then
   # Without the app the shortcuts can't be written back the way it turned them off, so its
   # record of them stays for the next install to finish the job.
@@ -207,11 +214,28 @@ fi
 # setting stays as it is. With the app gone, the same rule runs here in JavaScript.
 CLAUDE="$HOME/.claude/settings.json"
 # As the file has it: a double quote around the path is written \" in JSON.
-ours="(ghostdeck|baneyspaces)(\\\\?['\"])? +hook +(claude|grok)"
-if [ -f "$CLAUDE" ] && grep -Eq "$ours" "$CLAUDE"; then
+ours="(ghostdeck|baneyspaces|polycarp-spaces)(\\\\?['\"])? +hook +(claude|grok)"
+# The hooks, the agent skill and the command links are shared with a BaneySpaces that is still
+# installed, which keeps working on them; they go only when it is not there.
+# Hooks Polycarp wrote name its command, polycarp-spaces, which is going. For BaneySpaces to keep reporting they must
+# name its command, the baneyspaces link, instead. Written in place (cat into the file), so a symlinked settings file
+# and its permissions stay.
+rewrite_hooks() {  # file
+  [ -f "$1" ] || return 0
+  local q="'" tmp
+  grep -Eq "polycarp-spaces([${q}\"\\\\]*) +hook" "$1" || return 0
+  tmp=$(mktemp) || return 1
+  sed -E "s#polycarp-spaces([${q}\"\\\\]*) +hook#baneyspaces\\1 hook#g" "$1" > "$tmp" && cat "$tmp" > "$1" || problem "Couldn't point the hooks in $1 at BaneySpaces' command: change 'polycarp-spaces hook' to 'baneyspaces hook' there."
+  rm -f "$tmp"
+}
+if [ -n "$LEGACY_APP" ]; then
+  step "Leaving the agent hooks and skill for BaneySpaces, which is still installed (its command name goes into them)"
+  rewrite_hooks "$CLAUDE"
+  rewrite_hooks "$HOME/.grok/hooks/baneyspaces.json"
+elif [ -f "$CLAUDE" ] && grep -Eq "$ours" "$CLAUDE"; then
   step "Removing its hooks from Claude Code's settings (your own hooks stay)"
   had_backup=""; [ -f "$CLAUDE.baneyspaces-backup" ] && had_backup=1
-  CLI=""; [ -n "$BIN" ] && CLI="$(dirname "$(dirname "$BIN")")/Resources/bin/baneyspaces"
+  CLI=""; [ -n "$BIN" ] && CLI="$(dirname "$(dirname "$BIN")")/Resources/bin/polycarp-spaces"
   # The real CLI edits the real home, so the test uses the JavaScript below.
   if [ -z "$TEST" ] && [ -n "$CLI" ] && [ -x "$CLI" ]; then "$CLI" hooks uninstall >/dev/null 2>&1 || true; fi
   if grep -Eq "$ours" "$CLAUDE"; then
@@ -223,7 +247,7 @@ function run(argv) {
   const path = $(argv[0]).stringByResolvingSymlinksInPath.js
   const text = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null).js
   const settings = JSON.parse(text)
-  const ours = h => /(ghostdeck|baneyspaces)'?"?\s+hook\s+(claude|grok)/.test((h && h.command) || '')
+  const ours = h => /(ghostdeck|baneyspaces|polycarp-spaces)'?"?\s+hook\s+(claude|grok)/.test((h && h.command) || '')
   const hooks = settings.hooks || {}
   for (const event of Object.keys(hooks)) {
     if (!Array.isArray(hooks[event])) continue
@@ -243,46 +267,87 @@ function run(argv) {
 JS
   fi
   if grep -Eq "$ours" "$CLAUDE"; then
-    problem "Claude Code's settings ($CLAUDE) still have hooks that run 'baneyspaces hook': remove those entries by hand."
+    problem "Claude Code's settings ($CLAUDE) still have hooks that run 'polycarp-spaces hook' or 'baneyspaces hook': remove those entries by hand."
   fi
   if [ -n "$had_backup" ]; then
-    echo "  Your settings from before BaneySpaces are still at $CLAUDE.baneyspaces-backup"
+    echo "  Your settings from before Polycarp are still at $CLAUDE.baneyspaces-backup"
   fi
 fi
-rm -f "$HOME/.grok/hooks/baneyspaces.json"
+[ -n "$LEGACY_APP" ] || rm -f "$HOME/.grok/hooks/baneyspaces.json"
 
-step "Removing the baneyspaces command and its agent skill"
-for link in "$HOME/.local/bin/baneyspaces" "$HOME/.local/bin/ghostdeck"; do
-  # Only the links BaneySpaces made: ones into a BaneySpaces.app, even if it's gone already.
+step "Removing the polycarp-spaces command (and baneyspaces and ghostdeck, its other names) and the polycarp command"
+for link in "$HOME/.local/bin/polycarp-spaces" "$HOME/.local/bin/baneyspaces" "$HOME/.local/bin/ghostdeck" "$HOME/.local/bin/polycarp"; do
+  # Only the links Polycarp made: ones into a Polycarp.app, even if it's gone already.
   if [ -L "$link" ]; then
-    case "$(readlink "$link")" in *BaneySpaces.app/*) rm -f "$link" ;; esac
+    case "$(readlink "$link")" in *Polycarp.app/*) rm -f "$link" ;; esac
   fi
 done
-rm -rf "$HOME/.claude/skills/baneyspaces"
+# The browser command, only if it links into Polycarp's helper; a tabkyra Polycarp took the name from is put back.
+tabkyra_link="$HOME/.local/bin/tabkyra"
+if [ -L "$tabkyra_link" ]; then
+  case "$(readlink "$tabkyra_link")" in
+    *Polycarp.app/Contents/Resources/browser/polycarp-browser)
+      rm -f "$tabkyra_link"
+      previous="$HOME/Library/Application Support/Polycarp/tabkyra-previous-link"
+      [ ! -s "$previous" ] || ln -s "$(cat "$previous")" "$tabkyra_link"
+      ;;
+  esac
+fi
+# BEGIN restore-browser-previous
+# What Settings > Browser > Connect found before `install --force` wrote its manifests and launchers (BrowserPrevious): put
+# back, or removed where there was nothing. Only a file that still points into Polycarp.app is touched.
+STORE="${STORE:-$HOME/Library/Application Support/Polycarp/browser-previous}"
+if [ -s "$STORE/index.tsv" ]; then
+  while IFS=$'\t' read -r target saved; do
+    [ -n "$target" ] || continue
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      grep -q "Polycarp.app" "$target" 2>/dev/null || continue
+    fi
+    if [ "$saved" = "-" ]; then rm -f "$target"; elif [ -f "$saved" ]; then cp "$saved" "$target"; fi
+  done < "$STORE/index.tsv"
+fi
+# END restore-browser-previous
+# Links the installer repointed on request (install.sh's retire_tabkyra) go back to what they were.
+retired="$HOME/Library/Application Support/Polycarp/tabkyra-retired-links"
+if [ -s "$retired" ]; then
+  while IFS=$'\t' read -r link target; do
+    if [ -L "$link" ]; then
+      case "$(readlink "$link")" in *Polycarp.app/Contents/Resources/browser/polycarp-browser) ln -sf "$target" "$link" ;; esac
+    fi
+  done < "$retired"
+fi
+if [ -n "$LEGACY_APP" ] && [ -x "$LEGACY_APP/Contents/Resources/bin/baneyspaces" ]; then
+  # Polycarp took these two names over from BaneySpaces; give them back to it.
+  for name in baneyspaces ghostdeck; do
+    [ -e "$HOME/.local/bin/$name" ] || [ -L "$HOME/.local/bin/$name" ] || ln -s "$LEGACY_APP/Contents/Resources/bin/baneyspaces" "$HOME/.local/bin/$name"
+  done
+else
+  rm -rf "$HOME/.claude/skills/baneyspaces"
+fi
 
 step "Removing settings and the local signing key"
 # On the owner's Mac this keychain holds the key every release is signed with (the pinned
 # requirement below names its certificate). That one is moved aside, never deleted. Only the
 # certificate's public fingerprint is read; the private key is never touched or printed.
-RELEASE_REQUIREMENT='identifier "com.baney.baneyspaces" and certificate leaf = H"d1cfbd7446f84f6c625b9db83c5bf96da33b157e"'
-SIGNING_KC="$DATA/Signing/baneyspaces-signing.keychain-db"
+RELEASE_REQUIREMENT='identifier "com.baney.polycarp" and certificate leaf = H"d1cfbd7446f84f6c625b9db83c5bf96da33b157e"'
+SIGNING_KC="$DATA/Signing/polycarp-signing.keychain-db"
 KEEP_SIGNING=""
 KEEP_WHY=""
 if [ -f "$SIGNING_KC" ]; then
   release_leaf=${RELEASE_REQUIREMENT##*H\"}; release_leaf=$(printf '%s' "${release_leaf%\"}" | tr 'A-F' 'a-f')
-  local_leaf=$(security find-certificate -c "BaneySpaces Local Signing" -Z "$SIGNING_KC" 2>/dev/null \
+  local_leaf=$(security find-certificate -c "Polycarp Local Signing" -Z "$SIGNING_KC" 2>/dev/null \
     | sed -n 's/^SHA-1 hash: *//p' | head -1 | tr 'A-F' 'a-f' || true)
   # Deleted only when the fingerprint is readable and is not the release key's. If it can't be
   # read, the key might be the release key, so it is kept.
-  if [ -z "$local_leaf" ]; then KEEP_SIGNING=1; KEEP_WHY="its fingerprint couldn't be read, so it might sign BaneySpaces releases"
-  elif [ "$local_leaf" = "$release_leaf" ]; then KEEP_SIGNING=1; KEEP_WHY="it signs BaneySpaces releases"; fi
+  if [ -z "$local_leaf" ]; then KEEP_SIGNING=1; KEEP_WHY="its fingerprint couldn't be read, so it might sign Polycarp releases"
+  elif [ "$local_leaf" = "$release_leaf" ]; then KEEP_SIGNING=1; KEEP_WHY="it signs Polycarp releases"; fi
 fi
 if [ -n "$KEEP_SIGNING" ]; then
-  KEPT="$HOME/Library/BaneySpaces Release Signing"
+  KEPT="$HOME/Library/Polycarp Release Signing"
   [ ! -e "$KEPT" ] || KEPT="$KEPT $(date +%Y%m%d-%H%M%S)"
   if mv "$DATA/Signing" "$KEPT"; then
     echo "Kept the signing key because $KEEP_WHY: moved to $KEPT"
-    echo "The next BaneySpaces build on this Mac puts it back by itself."
+    echo "The next Polycarp build on this Mac puts it back by itself."
   else
     problem "The signing key ($KEEP_WHY) couldn't be moved aside, so it stays in $DATA/Signing."
   fi
@@ -303,8 +368,10 @@ fi
 
 step "Removing its Accessibility permission"
 # A fresh install gets a new signature; an old entry left here would show "on" but not work.
+sys tccutil reset ScreenCapture "$ID" >/dev/null 2>&1 || true
+sys tccutil reset ListenEvent "$ID" >/dev/null 2>&1 || true
 sys tccutil reset Accessibility "$ID" >/dev/null 2>&1 \
-  || problem "BaneySpaces may still be listed in System Settings › Privacy & Security › Accessibility: remove it there."
+  || problem "Polycarp may still be listed in System Settings › Privacy & Security › Accessibility: remove it there."
 
 step "Removing the app"
 # Last, so a failure here leaves nothing else half done. Open at Login goes with it.
@@ -315,11 +382,13 @@ done
 
 echo
 if [ ${#problems[@]} -eq 0 ]; then
-  printf '%sBaneySpaces is removed.%s\n' "$bold" "$reset"
+  printf '%sPolycarp is removed.%s\n' "$bold" "$reset"
   echo "Your windows, Dock, shortcuts and agent settings are back as they were."
-  echo "Its permission, settings, login item and command are gone too."
+  echo "Its permission, settings and login item are gone too."
+  echo "The polycarp command and your theme files stay on purpose: Voice and Browser use them too."
+  echo "To remove the command as well: cargo uninstall --root ~/.local polycarp"
   exit 0
 fi
-printf '%sBaneySpaces is removed, but some things need a hand:%s\n' "$bold" "$reset"
+printf '%sPolycarp is removed, but some things need a hand:%s\n' "$bold" "$reset"
 for p in "${problems[@]}"; do echo "  - $p"; done
 exit 2

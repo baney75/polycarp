@@ -41,7 +41,7 @@ final class Hotkeys {
                                          EventHotKeyID(signature: OSType(0x42414E59), id: id),
                                          GetApplicationEventTarget(), 0, &ref)
         guard status == noErr, let ref else {
-            NSLog("BaneySpaces: macOS refused shortcut %d (status %d)", keyCode, status)
+            NSLog("Polycarp: macOS refused shortcut %d (status %d)", keyCode, status)
             return false
         }
         refs.append(ref)

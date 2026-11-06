@@ -9,6 +9,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFile
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
+import { COMPILED, selfExec, selfPrefix } from "./self.ts";
 
 /** Stable id from the `key` in static/manifest.chrome.json. */
 export const EXTENSION_ID = "kenehmggpggpiolepbjojeenmeapgfoc";
@@ -84,9 +85,27 @@ function stableNode(): string {
 	return exec;
 }
 
+/**
+ * What the browser runs for the native host. Inside Polycarp that is the helper itself (it takes the
+ * `chrome-extension://` argument the browser passes as `host`), so the manifest holds one path that
+ * moves with the app; elsewhere it is the launcher script.
+ */
+export function hostTarget(): string {
+	return COMPILED ? selfExec() : launcherPath();
+}
+
 function writeScript(path: string, args: string, options: { compileCache?: boolean } = {}): void {
+	if (COMPILED) {
+		// The helper is the whole program: no Node to pin, no script, no compile cache.
+		if (process.platform === "win32") writeFileSync(path, `@echo off\r\n"${selfExec()}" ${args} %*\r\n`);
+		else {
+			writeFileSync(path, `#!/bin/sh\nexec "${selfExec()}" ${args}"$@"\n`);
+			chmodSync(path, 0o755);
+		}
+		return;
+	}
 	const node = stableNode();
-	const script = process.argv[1];
+	const script = selfPrefix()[0] ?? process.argv[1];
 	if (process.platform === "win32") {
 		writeFileSync(path, `@echo off\r\n"${node}" "${script}" ${args} %*\r\n`);
 	} else {
@@ -105,7 +124,7 @@ function writeLauncher(): string {
 	writeScript(cliLauncherPath(), "", { compileCache: true });
 	const path = launcherPath();
 	writeScript(path, "host ");
-	return path;
+	return hostTarget();
 }
 
 export function manifestFor(launcher: string): string {
@@ -169,7 +188,7 @@ export type HostState = "current" | "stale" | "missing";
 /** For each browser found on this machine: is our host manifest there and current. */
 export function hostStatus(): Array<BrowserDir & { state: HostState; file: string }> {
 	if (process.platform === "win32") return [];
-	const manifest = manifestFor(launcherPath());
+	const manifest = manifestFor(hostTarget());
 	return browserDirs()
 		.filter(({ dir }) => existsSync(dir))
 		.map((browser) => {
@@ -183,6 +202,6 @@ export function hostStatus(): Array<BrowserDir & { state: HostState; file: strin
 /** True when at least one browser has a current manifest. */
 export function isInstalled(): boolean {
 	if (process.platform === "win32") return existsSync(join(configDir(), `${NATIVE_HOST_NAME}.json`));
-	if (!existsSync(launcherPath())) return false;
+	if (!existsSync(hostTarget())) return false;
 	return hostStatus().some((b) => b.state === "current");
 }

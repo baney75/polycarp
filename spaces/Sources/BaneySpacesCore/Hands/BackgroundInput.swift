@@ -255,16 +255,16 @@ public enum BackgroundRefusal {
 
     public static func outside(_ app: String, window: UInt32) -> HandsError {
         HandsError(.outsideAgentWorkspace, "window \(window) of \(app) is not on the agent workspace and is not lent",
-                   suggestion: "Open it on the agent workspace with `baneyspaces agent open \(app)`; Donovan can lend an app he is not using.")
+                   suggestion: "Open it on the agent workspace with `polycarp-spaces agent open \(app)`; Donovan can lend an app he is not using.")
     }
     public static func notOurProcess(_ app: String, pid: Int32) -> HandsError {
-        HandsError(.needsLend, "process \(pid) (\(app)) is not one BaneySpaces started for an agent, so keys and pointer events are never posted to it",
-                   suggestion: "Start your own copy with `baneyspaces agent open \(app)`, or ask Donovan to lend this one; a lent app gets keys only while he is away from it.",
+        HandsError(.needsLend, "process \(pid) (\(app)) is not one Polycarp started for an agent, so keys and pointer events are never posted to it",
+                   suggestion: "Start your own copy with `polycarp-spaces agent open \(app)`, or ask Donovan to lend this one; a lent app gets keys only while he is away from it.",
                    retry: .never)
     }
     public static func windowChanged(window: UInt32, owner: Int32?, pid: Int32) -> HandsError {
         HandsError(.staleRef, "window \(window) belongs to process \(owner.map(String.init) ?? "none") now, not \(pid)",
-                   suggestion: "Run `baneyspaces agent windows` and take a new snapshot.", retry: .afterSnapshot)
+                   suggestion: "Run `polycarp-spaces agent windows` and take a new snapshot.", retry: .afterSnapshot)
     }
     public static func inUse(_ app: String) -> HandsError {
         HandsError(.inUse, "\(app) is in front: Donovan is using it", suggestion: "Wait until he has been away from \(app) for 30 seconds.", retry: .safe)
@@ -289,7 +289,7 @@ public enum BackgroundRefusal {
     }
     public static func axUnresolved(_ app: String, window: UInt32) -> HandsError {
         HandsError(.notSupported, "window \(window) of \(app) is not among the app's accessibility windows, so no event can be proven to land in it",
-                   suggestion: "Run `baneyspaces agent windows` and snapshot the window again; if it stays missing, " + sandboxLine, retry: .never)
+                   suggestion: "Run `polycarp-spaces agent windows` and snapshot the window again; if it stays missing, " + sandboxLine, retry: .never)
     }
     public static func siblings(_ app: String, count: Int) -> HandsError {
         HandsError(.notSupported, "\(app) has \(count) other window\(count == 1 ? "" : "s"); a key goes to a process, not a window, and could land in one of them",
@@ -300,12 +300,12 @@ public enum BackgroundRefusal {
                    suggestion: "`click` the element in this window first so the app focuses it, then press the key again; or use `type` on it.", retry: .never)
     }
     public static func noTransport(_ app: String) -> HandsError {
-        HandsError(.notSupported, "this Mac has no per-process event route that BaneySpaces can use (SkyLight symbol missing and the public call unavailable)",
+        HandsError(.notSupported, "this Mac has no per-process event route that Polycarp can use (SkyLight symbol missing and the public call unavailable)",
                    suggestion: sandboxLine, retry: .never)
     }
     public static func noVerifier(_ app: String) -> HandsError {
         HandsError(.notSupported, "nothing in \(app)'s window can be read back, so a key or pointer event there could not be proven",
-                   suggestion: "Take a snapshot to confirm the window exposes an accessibility tree, allow Screen Recording for BaneySpaces for pixel proof, or " + sandboxLine, retry: .never)
+                   suggestion: "Take a snapshot to confirm the window exposes an accessibility tree, allow Screen Recording for Polycarp for pixel proof, or " + sandboxLine, retry: .never)
     }
     public static func pointerStampsMissing(_ app: String) -> HandsError {
         HandsError(.notSupported, "this Mac does not offer every field a pointer event needs to name one window, so no pointer event is posted to \(app) (it could be handled by another window of the process)",
@@ -313,16 +313,16 @@ public enum BackgroundRefusal {
     }
     public static func pointInTitleBar(window: UInt32) -> HandsError {
         HandsError(.badArguments, "the point is in window \(window)'s title bar, where a click presses close, minimize or zoom and a drag moves the window",
-                   suggestion: "Give a point below the title bar. Coordinates start at the window's top-left corner, title bar included (`baneyspaces agent shot` shows the window at twice that size in pixels).", retry: .safe)
+                   suggestion: "Give a point below the title bar. Coordinates start at the window's top-left corner, title bar included (`polycarp-spaces agent shot` shows the window at twice that size in pixels).", retry: .safe)
     }
     public static func pointOutside(window: UInt32) -> HandsError {
         HandsError(.badArguments, "the point is outside window \(window)",
-                   suggestion: "Give x and y in points from the window's top-left corner, inside its size (`baneyspaces agent shot` shows it at twice that in pixels).", retry: .safe)
+                   suggestion: "Give x and y in points from the window's top-left corner, inside its size (`polycarp-spaces agent shot` shows it at twice that in pixels).", retry: .safe)
     }
     /// After a post: nothing proved it.
     public static func unverified(basis: String) -> HandsError {
         HandsError(.unverified, "the events were posted, and nothing read back from the window shows they landed (\(basis))",
-                   suggestion: "Do not send them again. Read the element with `baneyspaces agent get` or take a snapshot; if they did not land, " + sandboxLine, retry: .never)
+                   suggestion: "Do not send them again. Read the element with `polycarp-spaces agent get` or take a snapshot; if they did not land, " + sandboxLine, retry: .never)
     }
     public static func elementNotPlaced(_ app: String) -> HandsError {
         HandsError(.notSupported, "\(app)'s focused element cannot be placed in any window, so a key could go to a window nobody can name",
@@ -335,7 +335,7 @@ public enum BackgroundRefusal {
     /// Some steps of a multi-key press were proved and one was not; the steps after it were not sent.
     public static func partial(landed: Int, of total: Int, basis: String) -> HandsError {
         HandsError(.unverified, "\(landed) of \(total) steps landed; step \(landed + 1) showed no sign of landing (\(basis)) and the steps after it were not sent",
-                   suggestion: "Do not send the whole press again: the first \(landed) step\(landed == 1 ? "" : "s") already landed. Read the element with `baneyspaces agent get` and continue from step \(landed + 1) if it did not land.", retry: .never)
+                   suggestion: "Do not send the whole press again: the first \(landed) step\(landed == 1 ? "" : "s") already landed. Read the element with `polycarp-spaces agent get` and continue from step \(landed + 1) if it did not land.", retry: .never)
     }
     public static func frontUnknown(_ app: String) -> HandsError {
         HandsError(.actionFailed, "the front app could not be read while events were being posted to \(app); the rest were not sent",
@@ -343,7 +343,7 @@ public enum BackgroundRefusal {
     }
     public static func frontChanged(_ app: String, to pid: Int32?) -> HandsError {
         HandsError(.actionFailed, "the front app changed while events were being posted to \(app); the rest were not sent",
-                   suggestion: "Read the element back before doing anything else: part of the input may have landed. BaneySpaces did not follow the change.", retry: .never)
+                   suggestion: "Read the element back before doing anything else: part of the input may have landed. Polycarp did not follow the change.", retry: .never)
     }
     public static func pointerMoved(from: CGPoint, to: CGPoint) -> HandsError {
         HandsError(.actionFailed, "the real pointer moved from (\(Int(from.x)), \(Int(from.y))) to (\(Int(to.x)), \(Int(to.y))) while an event was posted",
@@ -546,8 +546,8 @@ public enum PostGuard {
             switch self {
             case .moved(let f, let t): return BackgroundRefusal.pointerMoved(from: f, to: t)
             case .leaked(let n):
-                return HandsError(.actionFailed, "\(n) event(s) posted by BaneySpaces reached the session instead of one process",
-                                  suggestion: "Read the element back before doing anything else. This is a bug in BaneySpaces' posting; report it.", retry: .never)
+                return HandsError(.actionFailed, "\(n) event(s) posted by Polycarp reached the session instead of one process",
+                                  suggestion: "Read the element back before doing anything else. This is a bug in Polycarp's posting; report it.", retry: .never)
             default: return nil
             }
         }

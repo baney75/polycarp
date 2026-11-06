@@ -30,7 +30,7 @@ final class OSA {
             let s = NSAppleScript(source: source)
             var err: NSDictionary?
             guard s?.compileAndReturnError(&err) == true else {
-                NSLog("BaneySpaces session: script didn't compile: %@", err ?? [:])
+                NSLog("Polycarp session: script didn't compile: %@", err ?? [:])
                 return (nil, Self.didNotCompile)
             }
             compiled = s

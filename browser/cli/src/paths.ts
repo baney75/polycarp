@@ -2,6 +2,7 @@ import { statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { bundledExtensionDir } from "./self.ts";
 
 /**
  * Socket directory: per user, outside $TMPDIR so every process finds the same path.
@@ -44,7 +45,7 @@ export function repoRoot(): string {
 
 /** The unpacked extension folder users load in the browser. TABKYRA_EXTENSION_DIR overrides it (tests). */
 export function extensionDir(): string {
-	return process.env.TABKYRA_EXTENSION_DIR || join(repoRoot(), "dist-chrome");
+	return process.env.TABKYRA_EXTENSION_DIR || bundledExtensionDir() || join(repoRoot(), "dist-chrome");
 }
 
 /** Files a loadable build must have; a half-written dist-chrome unloads the extension. */

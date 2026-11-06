@@ -158,7 +158,7 @@ public final class SandboxManager {
         let fd = open(paths.lock.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
         guard fd >= 0, flock(fd, LOCK_EX | LOCK_NB) == 0 else {
             if fd >= 0 { close(fd) }
-            throw SandboxError("not_owner", "another BaneySpaces process owns the sandbox: use `baneyspaces sandbox …` (no --local) while the app runs", vmDeleted: true)
+            throw SandboxError("not_owner", "another Polycarp process owns the sandbox: use `polycarp-spaces sandbox …` (no --local) while the app runs", vmDeleted: true)
         }
         guard tart.deleteAllOurs() else {
             flock(fd, LOCK_UN); close(fd)
@@ -235,14 +235,14 @@ public final class SandboxManager {
     /// Starts a `tart run` and records the process the moment it exists, so quitting can kill a guest that is
     /// still booting. Refuses once shutdown has begun, and kills a process that began just as it did.
     private func spawn(_ vm: String, _ options: TartRunOptions, hold: Bool = false) throws -> RunningProcess {
-        if isShuttingDown { throw SandboxError("shutting_down", "BaneySpaces is quitting") }
+        if isShuttingDown { throw SandboxError("shutting_down", "Polycarp is quitting") }
         let p = try tart.spawnRun(vm: vm, options: options, hold: hold)
         state.lock()
         inflight.removeAll { !$0.isRunning }
         inflight.append(p)
         let quitting = shuttingDown
         state.unlock()
-        if quitting { p.kill(); throw SandboxError("shutting_down", "BaneySpaces is quitting") }
+        if quitting { p.kill(); throw SandboxError("shutting_down", "Polycarp is quitting") }
         return p
     }
 
@@ -271,15 +271,15 @@ public final class SandboxManager {
         op.lock(); defer { op.unlock() }
         let cfg = settings()
         touch()
-        guard cfg.enabled else { throw SandboxError("off", "the sandbox is off: Settings > Agents, or baneyspaces sandbox on") }
+        guard cfg.enabled else { throw SandboxError("off", "the sandbox is off: Settings > Agents, or polycarp-spaces sandbox on") }
         if let why = SandboxSettings.hostProblem(hostMemoryGB: hostMemoryGB) { throw SandboxError("host_too_small", why) }
         let task = requested ?? SandboxHandoff.defaultTask()
         guard SandboxHandoff.valid(task) else { throw SandboxError("bad_task", "a task name is letters, digits, . - _ (up to 64): \(task)") }
-        if isShuttingDown { throw SandboxError("shutting_down", "BaneySpaces is quitting") }
+        if isShuttingDown { throw SandboxError("shutting_down", "Polycarp is quitting") }
         try ensureOwner()
         if let w = currentWorking() {
             guard w.task == task || requested == nil else {
-                throw SandboxError("busy", "the sandbox is up for task \(w.task): baneyspaces sandbox down first", retry: "after")
+                throw SandboxError("busy", "the sandbox is up for task \(w.task): polycarp-spaces sandbox down first", retry: "after")
             }
             return snapshot()
         }
@@ -333,7 +333,7 @@ public final class SandboxManager {
         if choice == .waitForWarm {
             if allowWait, waitForWarm(limit: warmWaitLimit) { choice = .swap } else { choice = .cold }
         }
-        if isShuttingDown { throw SandboxError("shutting_down", "BaneySpaces is quitting") }
+        if isShuttingDown { throw SandboxError("shutting_down", "Polycarp is quitting") }
         if choice == .swap, let got = try? takeOverWarm(task: task, rules: rules) { return got }
         return try coldBoot(task: task, rules: rules, cfg: cfg)
     }
@@ -508,9 +508,9 @@ public final class SandboxManager {
         let cfg = settings()
         touch()
         guard cfg.enabled else { throw SandboxError("off", "the sandbox is off") }
-        if isShuttingDown { throw SandboxError("shutting_down", "BaneySpaces is quitting") }
+        if isShuttingDown { throw SandboxError("shutting_down", "Polycarp is quitting") }
         try ensureOwner()
-        guard let w = currentWorking() else { throw SandboxError("not_up", "the sandbox is not up: baneyspaces sandbox up") }
+        guard let w = currentWorking() else { throw SandboxError("not_up", "the sandbox is not up: polycarp-spaces sandbox up") }
         set(.resetting); fail(nil)
         let t0 = clock.now()
         let rules = SandboxNetwork.rules(hostAddresses: facts.read().ipv4)
@@ -793,7 +793,7 @@ public final class SandboxManager {
             let now = SandboxNetwork.rules(hostAddresses: facts.currentAddresses()).hash
             if now != w.rulesHash {
                 destroyWorking()
-                fail("the Mac's network addresses changed, so the sandbox's block list was out of date; the sandbox was stopped and its files are in the task folder. Run `baneyspaces sandbox up` again.")
+                fail("the Mac's network addresses changed, so the sandbox's block list was out of date; the sandbox was stopped and its files are in the task folder. Run `polycarp-spaces sandbox up` again.")
                 set(.stopped)
             }
         }
@@ -872,7 +872,7 @@ public final class SandboxManager {
     /// Settings > Agents > Delete images: the VMs and the pulled base image. Refuses while the sandbox is up.
     public func deleteImages() throws {
         op.lock(); defer { op.unlock() }
-        if currentWorking() != nil { throw SandboxError("busy", "the sandbox is up: baneyspaces sandbox down first") }
+        if currentWorking() != nil { throw SandboxError("busy", "the sandbox is up: polycarp-spaces sandbox down first") }
         try ensureOwner()
         dropWarm()
         let vmsGone = tart.deleteAllOurs()
@@ -896,14 +896,14 @@ public final class SandboxManager {
     public func view(show: Bool, host: SandboxWindowHost?) throws -> ViewResult? {
         op.lock(); defer { op.unlock() }
         touch()
-        if isShuttingDown { throw SandboxError("shutting_down", "BaneySpaces is quitting") }
-        guard let w = currentWorking() else { throw SandboxError("not_up", "the sandbox is not up: baneyspaces sandbox up") }
+        if isShuttingDown { throw SandboxError("shutting_down", "Polycarp is quitting") }
+        guard let w = currentWorking() else { throw SandboxError("not_up", "the sandbox is not up: polycarp-spaces sandbox up") }
         if !show {
             guard w.graphics else { return nil }
             try relaunch(w, graphics: false, host: nil)
             return nil
         }
-        guard let host else { throw SandboxError("no_app", "the window opens in the BaneySpaces app: run this without --local") }
+        guard let host else { throw SandboxError("no_app", "the window opens in the Polycarp app: run this without --local") }
         let workspace: Int
         switch SandboxWindows.beforeLaunch(agentWorkspace: host.agentWorkspace()) {
         case .claim(let n): workspace = n
@@ -920,7 +920,7 @@ public final class SandboxManager {
         var windows = 0
         let end = clock.now() + 20
         repeat {
-            if isShuttingDown { throw SandboxError("shutting_down", "BaneySpaces is quitting", vmDeleted: false) }
+            if isShuttingDown { throw SandboxError("shutting_down", "Polycarp is quitting", vmDeleted: false) }
             let list = host.windows(of: pid)
             windows = list.count
             let moves = SandboxWindows.afterLaunch(windows: list, vmPid: pid, agentWorkspace: host.agentWorkspace())
@@ -968,7 +968,7 @@ public final class SandboxManager {
     public func guestCall(_ request: GuestHands.Request, counts: Bool = true) -> GuestHands.Reply {
         if counts { touch() }
         guard let w = currentWorking() else {
-            return GuestHands.failure(request.id, "not_up", "the sandbox is not up: baneyspaces sandbox up")
+            return GuestHands.failure(request.id, "not_up", "the sandbox is not up: polycarp-spaces sandbox up")
         }
         return GuestHands.call(request, vm: w.name, tart: tart)
     }

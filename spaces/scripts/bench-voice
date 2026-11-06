@@ -1,0 +1,15 @@
+#!/bin/bash
+# Times the voice fast path with the fixture audio (core/voice/bench) and checks it against spec/speed.json.
+#   scripts/bench-voice           measure, and fail if the fast path is over 25% slower than its baseline
+#   scripts/bench-voice --write   measure and write the baselines (run on a quiet Mac, with a model for the RTF)
+#   POLYCARP_BENCH_MODELS=<a models folder>  also measures transcription's real-time factor (read only)
+# Never starts the app, opens the microphone or listens for a key: the core runs headless in a temp folder.
+#
+# App launch to first frame is not measured here, because it can't be without opening the app. Live check on the Mac:
+#   log stream --predicate 'process == "Polycarp"' --style compact &  open -a Polycarp
+# and read the time from the process start (ps -o lstart) to the first "welcome" or "started" line in Polycarp's trace.log.
+# Record it in spec/speed.json under appLaunchToFirstFrame once measured.
+set -euo pipefail
+cd "$(dirname "$0")/../../core/ffi"
+if [ "${1:-}" = "--write" ]; then export POLYCARP_BENCH_WRITE=1; fi
+CARGO_TARGET_DIR="$PWD/target" cargo test --release --locked --test speed -- --nocapture --test-threads=1

@@ -129,7 +129,7 @@ final class CursorController: ObservableObject {
             return status()
         case "off":
             Trace.log("cursor off refused: asked on the command line")
-            return Wire.Reply(ok: false, error: "turning the agent cursor off is Donovan's to do, in BaneySpaces Settings")
+            return Wire.Reply(ok: false, error: "turning the agent cursor off is Donovan's to do, in Polycarp Settings")
         case "theme":
             guard let name = args.dropFirst().first else { return status() }
             guard let theme = CursorTheme.named(name) else {
@@ -140,7 +140,7 @@ final class CursorController: ObservableObject {
             }
             return status()
         default:
-            return Wire.Reply(ok: false, error: "usage: baneyspaces agent cursor on|theme <name>|status")
+            return Wire.Reply(ok: false, error: "usage: polycarp-spaces agent cursor on|theme <name>|status")
         }
     }
 }

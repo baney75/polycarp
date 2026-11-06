@@ -20,8 +20,13 @@ struct Tool {
     product: &'static str,
     /// Executable name on PATH (without `.exe`).
     exe: &'static str,
+    /// Older names for the same command, tried after `exe` (on PATH, then at the fixed spots).
+    old_exes: &'static [&'static str],
     /// Environment variable that overrides the search.
     env: &'static str,
+    /// Where the app carries its own copy, tried before PATH: the bundled one is the one that matches the app.
+    /// `~` means the home folder; the absolute ones are skipped like the other system spots in tests.
+    bundled: &'static [&'static str],
     /// Fixed install spots; `~` means the home folder.
     spots: &'static [&'static str],
     install: &'static str,
@@ -29,45 +34,61 @@ struct Tool {
 
 const SPACES: Tool = Tool {
     sub: "spaces",
-    product: "BaneySpaces",
-    exe: "baneyspaces",
+    product: "Polycarp",
+    exe: "polycarp-spaces",
+    // The command's old names, still installed as links by the app and called by agents and hooks.
+    old_exes: &["baneyspaces"],
     env: "POLYCARP_SPACES_BIN",
+    bundled: &[],
+    // The Polycarp app first, then BaneySpaces' own copy as the fallback.
     spots: &[
+        "~/.local/bin/polycarp-spaces",
+        "~/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces",
+        "/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces",
         "~/.local/bin/baneyspaces",
+        "~/Applications/BaneySpaces.app/Contents/Resources/bin/baneyspaces",
         "/Applications/BaneySpaces.app/Contents/Resources/bin/baneyspaces",
     ],
-    install: "https://github.com/baney75/baneyspaces",
+    install: "https://github.com/baney75/polycarp",
 };
 
 const BROWSER: Tool = Tool {
     sub: "browser",
     product: "Tabkyra",
     exe: "tabkyra",
+    old_exes: &[],
     env: "POLYCARP_BROWSER_BIN",
+    // The helper inside Polycarp.app is one executable with no Node needed; `tabkyra` is the same program.
+    bundled: &[
+        "~/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
+        "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
+    ],
     spots: &[
         "~/.config/tabkyra/tabkyra",
         "/opt/homebrew/bin/tabkyra",
         "/usr/local/bin/tabkyra",
     ],
-    install: "https://github.com/baney75/tabkyra",
+    install: "https://github.com/baney75/polycarp",
 };
 
 const VOICE: Tool = Tool {
     sub: "voice",
     product: "Silas",
     exe: "silas",
+    old_exes: &[],
     env: "POLYCARP_VOICE_BIN",
+    bundled: &[],
     spots: &["/Applications/Silas.app/Contents/MacOS/silas"],
     install: "https://github.com/baney75/silas",
 };
 
 const USAGE: &str = "\
-polycarp: one command for BaneySpaces, Tabkyra and Silas
+polycarp: one command for Polycarp Spaces, Tabkyra and Silas
 
 Usage:
-  polycarp spaces [args...]    run the BaneySpaces command
+  polycarp spaces [args...]    run the Spaces command
   polycarp browser [args...]   run the Tabkyra command
-  polycarp voice               open the Silas app
+  polycarp voice               open Polycarp's Voice settings (Silas only if Polycarp isn't installed)
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
   polycarp mcp                 serve the theme commands to an agent over MCP (stdio)
   polycarp doctor              show which tools were found
@@ -295,7 +316,21 @@ fn check(p: &Path) -> Result<(), Miss> {
     against_cwd(p)
 }
 
-/// First match wins: environment override, PATH, fixed spots. If nothing is usable, says the
+/// A fixed spot as a path: `~/…` under the home folder, anything else absolute (skipped in tests that
+/// set POLYCARP_NO_SYSTEM_SPOTS, so a machine's real installs are never reached).
+fn spot_path(spot: &str) -> Option<PathBuf> {
+    match spot.strip_prefix("~/") {
+        Some(rest) => match home() {
+            Some(h) if cfg!(windows) => Some(h.join(format!("{rest}.exe"))),
+            Some(h) => Some(h.join(rest)),
+            None => None,
+        },
+        None if env::var_os("POLYCARP_NO_SYSTEM_SPOTS").is_some() => None,
+        None => Some(PathBuf::from(spot)),
+    }
+}
+
+/// First match wins: environment override, the app's own copy, PATH, fixed spots. If nothing is usable, says the
 /// first reason a candidate was refused.
 fn find(tool: &Tool) -> Result<PathBuf, Miss> {
     if let Some(v) = env::var_os(tool.env).filter(|v| !v.is_empty()) {
@@ -310,31 +345,36 @@ fn find(tool: &Tool) -> Result<PathBuf, Miss> {
             }
         }
     };
-    let file = if cfg!(windows) {
-        format!("{}.exe", tool.exe)
-    } else {
-        tool.exe.to_string()
-    };
+    // The app's own copy first: it is the one built with the app.
+    for spot in tool.bundled {
+        let Some(cand) = spot_path(spot) else {
+            continue;
+        };
+        match check(&cand) {
+            Ok(()) => return Ok(cand),
+            r => note(r),
+        }
+    }
     let path = env::var_os("PATH");
     if let Some(path) = &path {
-        for dir in env::split_paths(path) {
-            let cand = dir.join(&file);
-            match check(&cand) {
-                Ok(()) => return Ok(cand),
-                r => note(r),
+        for name in std::iter::once(&tool.exe).chain(tool.old_exes) {
+            let file = if cfg!(windows) {
+                format!("{name}.exe")
+            } else {
+                name.to_string()
+            };
+            for dir in env::split_paths(path) {
+                let cand = dir.join(&file);
+                match check(&cand) {
+                    Ok(()) => return Ok(cand),
+                    r => note(r),
+                }
             }
         }
     }
     for spot in tool.spots {
-        let cand = match spot.strip_prefix("~/") {
-            Some(rest) => match home() {
-                Some(h) if cfg!(windows) => h.join(format!("{rest}.exe")),
-                Some(h) => h.join(rest),
-                None => continue,
-            },
-            // Tests set this so the machine's real installs are never reached.
-            None if env::var_os("POLYCARP_NO_SYSTEM_SPOTS").is_some() => continue,
-            None => PathBuf::from(spot),
+        let Some(cand) = spot_path(spot) else {
+            continue;
         };
         match check(&cand) {
             Ok(()) => return Ok(cand),
@@ -467,6 +507,36 @@ fn silas_app() -> Result<PathBuf, Miss> {
     Err(miss)
 }
 
+/// The Polycarp app, where voice lives now: `/Applications/Polycarp.app`, else `~/Applications/Polycarp.app`.
+/// Same rules as `silas_app`. Only the Mac has the integrated voice.
+#[cfg(target_os = "macos")]
+fn polycarp_app() -> Option<PathBuf> {
+    let mut spots = Vec::new();
+    if env::var_os("POLYCARP_NO_SYSTEM_SPOTS").is_none() {
+        spots.push(PathBuf::from("/Applications/Polycarp.app"));
+    }
+    if let Some(h) = home() {
+        spots.push(h.join("Applications/Polycarp.app"));
+    }
+    spots
+        .into_iter()
+        .filter(|a| a.is_dir())
+        .find(|a| against_cwd(a).is_ok())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn polycarp_app() -> Option<PathBuf> {
+    None
+}
+
+/// Voice is inside Polycarp when the app is installed and no explicit POLYCARP_VOICE_BIN says otherwise.
+fn integrated_voice() -> Option<PathBuf> {
+    if env::var_os(VOICE.env).is_some_and(|v| !v.is_empty()) {
+        return None;
+    }
+    polycarp_app()
+}
+
 /// Where a tool is, by the one rule for it.
 fn locate(tool: &Tool) -> Result<PathBuf, Miss> {
     #[cfg(target_os = "macos")]
@@ -476,12 +546,49 @@ fn locate(tool: &Tool) -> Result<PathBuf, Miss> {
     find(tool)
 }
 
+/// Opens the Voice settings in Polycarp through its own `polycarp://voice` address.
+#[cfg(target_os = "macos")]
+fn open_polycarp_voice(app: &Path) -> i32 {
+    // POLYCARP_OPEN_BIN lets a test stand in for `open`, so no app is launched.
+    let open = match env::var_os("POLYCARP_OPEN_BIN").filter(|v| !v.is_empty()) {
+        Some(v) => {
+            let v = PathBuf::from(v);
+            if check(&v).is_err() {
+                eprintln!(
+                    "polycarp: POLYCARP_OPEN_BIN {} was refused: it must be an absolute path to a program outside the current folder.",
+                    v.display()
+                );
+                return 127;
+            }
+            v
+        }
+        None => PathBuf::from("/usr/bin/open"),
+    };
+    match Command::new(open)
+        .arg("-a")
+        .arg(app)
+        .arg("polycarp://voice")
+        .status()
+    {
+        Ok(s) => s.code().unwrap_or(1),
+        Err(e) => {
+            eprintln!("polycarp: could not run open: {e}");
+            126
+        }
+    }
+}
+
 fn voice(args: &[OsString]) -> i32 {
     if !args.is_empty() {
         eprintln!(
-            "polycarp: voice has no commands yet (they arrive with baney75/silas#6). Run `polycarp voice` alone to open the app."
+            "polycarp: voice has no commands yet. Run `polycarp voice` alone to open Polycarp's Voice settings."
         );
         return 2;
+    }
+    // Dictation is inside Polycarp. Silas is only the fallback for a Mac that doesn't have Polycarp installed.
+    #[cfg(target_os = "macos")]
+    if let Some(app) = integrated_voice() {
+        return open_polycarp_voice(&app);
     }
     let path = match locate(&VOICE) {
         Ok(p) => p,
@@ -552,7 +659,15 @@ fn doctor() -> i32 {
     let mut printing = true;
     let mut ok = true;
     for tool in [&SPACES, &BROWSER, &VOICE] {
-        let line = match locate(tool) {
+        let integrated = if tool.sub == "voice" {
+            integrated_voice()
+        } else {
+            None
+        };
+        let line = match integrated.map(Ok).unwrap_or_else(|| locate(tool)) {
+            Ok(p) if tool.sub == "voice" && integrated_voice().as_ref() == Some(&p) => {
+                format!("voice: inside Polycarp ({})", p.display())
+            }
             Ok(p) => {
                 let mut line = format!("{}: {}", tool.sub, p.display());
                 if tool.sub == "browser" {

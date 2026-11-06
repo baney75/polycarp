@@ -7,7 +7,7 @@ public struct HandsMCP {
     public static let serverName = "baneyspaces"
     public static let defaultProtocol = "2025-06-18"
     public static let instructions = """
-    BaneySpaces' hands: read and act on apps on the user's Mac without touching their screen. \
+    Polycarp's hands: read and act on apps on the user's Mac without touching their screen. \
     Work in a loop: `open` an app (it lands on the agent workspace), `windows` for its window id, \
     `snapshot` that window (interactive) to get refs, act on a ref (`click`, `type`, `set_value`, `press`, \
     `scroll`, `select`, `toggle`), then read the evidence in the result and `get` or snapshot again to check. \

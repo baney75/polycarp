@@ -1,20 +1,31 @@
 import Foundation
 
-/// The app and the `baneyspaces` command talk over a Unix socket, one JSON line each way. The socket
-/// is in the user's Application Support folder, so only this user's processes can reach it.
+/// The app and the `polycarp-spaces` command (also `baneyspaces`, `ghostdeck`) talk over a Unix socket, one
+/// JSON line each way. The socket is in the user's Application Support folder, so only this user's
+/// processes can reach it.
 public enum Wire {
-    public static var supportDir: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/BaneySpaces")
+    public static var supportDir: URL { Product.supportDir(home: FileManager.default.homeDirectoryForCurrentUser) }
+    /// The folder of the app this one replaced. Read for fallbacks only.
+    public static var legacySupportDir: URL { Product.legacySupportDir(home: FileManager.default.homeDirectoryForCurrentUser) }
+    public static var socketPath: String { supportDir.appendingPathComponent(Product.socketName).path }
+    /// The live state file: the app's own, else a running BaneySpaces', which writes the same file.
+    public static var statePath: String {
+        let mine = supportDir.appendingPathComponent("session.json").path
+        let old = legacySupportDir.appendingPathComponent("session.json").path
+        let fm = FileManager.default
+        return !fm.fileExists(atPath: mine) && fm.fileExists(atPath: old) ? old : mine
     }
-    public static var socketPath: String { supportDir.appendingPathComponent("baneyspaces.sock").path }
-    public static var statePath: String { supportDir.appendingPathComponent("session.json").path }
-    /// The socket before the Deck name was cut. A running MCP client or hook built against it keeps
-    /// working across an update: the app listens on both, and the command tries both.
-    public static var legacySocketPath: String { supportDir.appendingPathComponent("deck.sock").path }
 
-    /// Where to reach the app, in order: the current socket, then the old one.
-    public static func socketCandidates(dir: URL = supportDir) -> [String] {
-        [dir.appendingPathComponent("baneyspaces.sock").path, dir.appendingPathComponent("deck.sock").path]
+    /// Where the app listens: its own socket only. The old names live in the old folder and belong
+    /// to a BaneySpaces that may still be running.
+    public static func listenPaths(dir: URL = supportDir) -> [String] {
+        [dir.appendingPathComponent(Product.socketName).path]
+    }
+
+    /// Where to reach the app, in order: the current socket, then the old app's two (`baneyspaces.sock`,
+    /// `deck.sock`), so an older install or a client started before the move keeps working.
+    public static func socketCandidates(dir: URL = supportDir, legacyDir: URL = legacySupportDir) -> [String] {
+        listenPaths(dir: dir) + Product.Legacy.socketNames.map { legacyDir.appendingPathComponent($0).path }
     }
 
     public struct Request: Codable, Equatable, Sendable {

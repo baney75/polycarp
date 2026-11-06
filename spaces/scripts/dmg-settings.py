@@ -1,4 +1,4 @@
-# dmgbuild settings for build/BaneySpaces.dmg; scripts/package.sh passes `app` and `background`.
+# dmgbuild settings for build/Polycarp.dmg; scripts/package.sh passes `app` and `background`.
 # Coordinates are points in the window, from its top left: the window is 640x400, and the
 # background (scripts/make-dmg-background.swift) draws its arrow between the two icon centers.
 import os.path

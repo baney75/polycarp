@@ -106,7 +106,7 @@ enum AccessConsent {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = mode == .full ? "Give agents full access to this Mac?" : "Switch agents to \(mode.title)?"
-        alert.informativeText = mode.detail + (mode == .full ? " It stays on until you change it in Settings > Agents or the BaneySpaces menu." : "")
+        alert.informativeText = mode.detail + (mode == .full ? " It stays on until you change it in Settings > Agents or the Polycarp menu." : "")
         alert.addButton(withTitle: "Keep \(AgentAccess.shared.current.title)")   // first button: the default (Return)
         alert.addButton(withTitle: mode == .full ? "Give Full Access" : "Switch")
         let button = alert.buttons[1]

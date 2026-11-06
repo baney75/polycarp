@@ -3,27 +3,51 @@
 # Builds, signs and uploads the prebuilt app for a stable release. Run it on the owner's Mac
 # (the signing key never leaves it) after pushing the tag:
 #   git tag v0.2.2 && git push origin v0.2.2     # the Release workflow writes the notes
-#   make release                                 # uploads BaneySpaces.zip, .sha256 and .dmg, then publishes
+#   make release                                 # uploads Polycarp.zip, .sha256 and .dmg, then publishes
 # The Release workflow creates the release as a draft. This uploads the files, checks them again as
 # uploaded, and only then publishes it, so nobody is offered a release without its app.
 # --dry-run does everything except the tag check, the upload and the publish, so it can run on a branch.
+# --preview builds for Apple silicon only, signs with the real identity, and publishes a prerelease named `preview`
+# with Polycarp.zip and its .sha256 (no disk image), replacing the assets of the last preview. It needs no version tag:
+# the `preview` tag is moved to HEAD, which must already be pushed. install.sh downloads this release on Apple silicon.
+#   scripts/release.sh --preview [--dry-run]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 DRY=0
-case "${1:-}" in
-  "") ;;
-  --dry-run) DRY=1 ;;
-  *) echo "usage: scripts/release.sh [--dry-run]" >&2; exit 1 ;;
-esac
+PREVIEW=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY=1 ;;
+    --preview) PREVIEW=1 ;;
+    *) echo "usage: scripts/release.sh [--preview] [--dry-run]" >&2; exit 1 ;;
+  esac
+done
 VERSION=$(cat VERSION)
 TAG="v$VERSION"
+[ "$PREVIEW" = 0 ] || TAG=preview
 REQ=$(cat scripts/release-requirement.txt)
 bold=$(tput bold 2>/dev/null || true); reset=$(tput sgr0 2>/dev/null || true)
 step() { printf '%s==>%s %s\n' "$bold" "$reset" "$*"; }
 fail() { echo "release.sh: $*" >&2; exit 1; }
 
 [ -z "$(git status --porcelain)" ] || fail "the working tree isn't clean. Commit or stash first, so the app matches a commit."
-if [ "$DRY" = 0 ]; then
+# The app holds the browser helper, built with Bun from the pinned sibling repos: a release is built with everything.
+command -v bun >/dev/null || fail "Bun isn't installed (https://bun.sh); the browser helper can't be built without it."
+if [ ! -d ../mini-lit ] || [ ! -d ../pi-mono ] || [ ! -d ../browser/node_modules ]; then
+  step "Checking out the browser's sibling repos"
+  ../browser/scripts/setup-siblings.sh
+fi
+if [ "$PREVIEW" = 1 ]; then
+  # Apple silicon only, and still the stable signing identity (never ad-hoc).
+  export BANEYSPACES_ARM64_ONLY=1
+  unset BANEYSPACES_ADHOC
+  if [ "$DRY" = 0 ]; then
+    git fetch --quiet origin || fail "couldn't reach origin."
+    [ -n "$(git branch -r --contains HEAD 2>/dev/null)" ] || fail "HEAD isn't on origin. Push the branch first, so the preview matches a commit anyone can see."
+    # A real release may not be moving a published stable tag.
+    [ "$(git ls-remote origin refs/tags/preview | wc -l)" -le 1 ] || fail "origin has more than one preview ref."
+  fi
+elif [ "$DRY" = 0 ]; then
   TAG_COMMIT=$(git rev-parse --verify --quiet "refs/tags/$TAG^{commit}") || fail "tag $TAG doesn't exist. Tag the release commit first."
   [ "$TAG_COMMIT" = "$(git rev-parse HEAD)" ] || fail "HEAD isn't the commit of $TAG. Check out the tag, or move VERSION to match."
   # The remote must have the same tag on the same commit (an annotated tag shows its commit on the ^{} line).
@@ -43,34 +67,39 @@ fi
 
 step "Building $TAG"
 scripts/bundle.sh
-codesign -v -R "=$REQ" build/BaneySpaces.app 2>/dev/null \
+codesign -v -R "=$REQ" build/Polycarp.app 2>/dev/null \
   || fail "bundle.sh didn't sign with the release identity (it fell back to ad-hoc or used another key). Nothing was packaged."
-if [ "$DRY" = 0 ]; then
-  ARCHS=$(lipo -archs build/BaneySpaces.app/Contents/MacOS/BaneySpaces)
+if [ "$DRY" = 0 ] && [ "$PREVIEW" = 0 ]; then
+  ARCHS=$(lipo -archs build/Polycarp.app/Contents/MacOS/Polycarp)
   [ "$ARCHS" = "x86_64 arm64" ] || [ "$ARCHS" = "arm64 x86_64" ] || fail "the app isn't universal ($ARCHS)."
 fi
 
 step "Packaging"
-scripts/package.sh
+if [ "$PREVIEW" = 1 ]; then NODMG=--no-dmg; else NODMG=; fi
+scripts/package.sh $NODMG
 # The files are checked as a person would get them, before anything is uploaded.
-step "Checking the zip, the disk image and the checksum"
+step "Checking the zip$([ "$PREVIEW" = 1 ] || echo ", the disk image") and the checksum"
+if [ "$PREVIEW" = 1 ]; then scripts/verify-release.sh --no-dmg build; else
 scripts/verify-release.sh build
+fi
 
 if [ "$DRY" = 1 ]; then
   echo "dry run: $TAG not uploaded. The files are in build/."
   exit 0
 fi
+# The preview has its own, shorter publish: the files are verified above, scripts/publish-preview.sh uploads them.
+[ "$PREVIEW" = 0 ] || exec scripts/publish-preview.sh
 # The release is a draft until the files are up and checked again; the updater never offers a draft.
 step "Uploading to $TAG"
-gh release upload "$TAG" build/BaneySpaces.zip build/BaneySpaces.zip.sha256 build/BaneySpaces.dmg --clobber
+gh release upload "$TAG" build/Polycarp.zip build/Polycarp.zip.sha256 build/Polycarp.dmg --clobber
 step "Checking what was uploaded"
 BACK=$(mktemp -d)
 trap 'rm -rf "$BACK"' EXIT
-gh release download "$TAG" --dir "$BACK" --pattern 'BaneySpaces.zip' --pattern 'BaneySpaces.zip.sha256' --pattern 'BaneySpaces.dmg'
-for f in BaneySpaces.zip BaneySpaces.zip.sha256 BaneySpaces.dmg; do
+gh release download "$TAG" --dir "$BACK" --pattern 'Polycarp.zip' --pattern 'Polycarp.zip.sha256' --pattern 'Polycarp.dmg'
+for f in Polycarp.zip Polycarp.zip.sha256 Polycarp.dmg; do
   cmp -s "build/$f" "$BACK/$f" || fail "the uploaded $f differs from the one built. $TAG stays unpublished."
 done
 scripts/verify-release.sh "$BACK"
 step "Publishing $TAG"
 gh release edit "$TAG" --draft=false --latest
-echo "published $TAG with BaneySpaces.zip, BaneySpaces.zip.sha256 and BaneySpaces.dmg"
+echo "published $TAG with Polycarp.zip, Polycarp.zip.sha256 and Polycarp.dmg"

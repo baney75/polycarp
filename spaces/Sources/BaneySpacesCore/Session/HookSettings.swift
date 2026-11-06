@@ -9,7 +9,7 @@ public enum HookSettings {
     /// Ours whatever the path looks like: `'/Users/me/.local/bin/baneyspaces' hook claude 2>/dev/null || true`.
     /// Ghostdeck's hooks count too, so installing replaces them instead of doubling up.
     public static func isOurs(command: String) -> Bool {
-        command.range(of: #"(ghostdeck|baneyspaces)'?"?\s+hook\s+(claude|grok)"#, options: .regularExpression) != nil
+        command.range(of: #"(ghostdeck|baneyspaces|polycarp-spaces)'?"?\s+hook\s+(claude|grok)"#, options: .regularExpression) != nil
     }
 
     static func isOurs(_ hook: [String: Any]) -> Bool { isOurs(command: (hook["command"] as? String) ?? "") }

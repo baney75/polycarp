@@ -1,7 +1,7 @@
 # Polycarp plan
 
 BaneySpaces, Tabkyra and Silas become one product on Mac, Windows, Linux, iPhone, iPad and Android. Old apps keep
-working until step 5. A box is checked only when its check has passed.
+working, and their repos stay up. A box is checked only when its check has passed.
 
 ## 1. Bring the code together
 - [x] Full history of all three in `spaces/`, `voice/`, `browser/`
@@ -10,7 +10,7 @@ working until step 5. A box is checked only when its check has passed.
 
 ## 2. One name, one command
 - [x] `polycarp spaces`, `polycarp browser`, `polycarp voice`. Check: `polycarp spaces ls` and `polycarp browser --version` match the old commands on a real Mac, and CI passes on all three systems
-- [ ] `polycarp voice` gains commands once baney75/silas#6 lands. Until then it only opens the app
+- [x] `polycarp voice` opens Polycarp's Voice settings (`polycarp://voice`); Silas only if Polycarp isn't installed. It gains commands later
 - [ ] Polycarp MCP server, keeping `tabkyra` and `baneyspaces` as aliases. Check: an agent reaches the same tools under both names
 
 ## 3. One core, a native app on each device
@@ -57,9 +57,39 @@ Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all
 - [ ] Old apps get a final release that points to Polycarp
 - [ ] Donovan grants Accessibility and Microphone once on his Mac, since macOS ties them to the app's identity
 
-## 6. Archive
-- [ ] Land or move open PRs (on 2026-11-04: BaneySpaces 10, Silas 2)
-- [ ] Archive `baneyspaces`, `silas`, `tabkyra`. Check: no open PRs, no fleet references outside history, old install links still resolve
+## 6. The old apps
+Decided by Donovan, 2026-11-05: the `baneyspaces`, `silas` and `tabkyra` repos stay up, so people can keep using the independent apps. They are not archived.
+- [ ] Land or move open PRs that belong in Polycarp
+- [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash), then Voice and Browser. Silas is not trashed by the installer or by Polycarp on its own: after the first dictation that typed text, one notification says so, and Settings > Voice offers "Move Silas to the Trash" (voice on, Silas installed). Check: dictation and agents' browser work through Polycarp before Silas and Tabkyra go
+
+## One app, everywhere
+Decided by Donovan, 2026-11-05: ALL the apps together as ONE ultrafast app on every device. One Rust core in `core/`; a native Swift interface on Mac, iPhone and iPad; a shared Tauri interface on Windows, Linux and Android. Phones get voice plus control of your computer, since they can't arrange other apps' windows.
+- [x] Voice engine in `core/voice` with a C interface in `core/ffi`, used by the Tauri app and the Swift app. Check: both test suites
+- [x] Mac: voice and browser agents inside `Polycarp.app`, with one Settings window, one welcome window and one install. Check: tests and renders; live check below
+- [ ] Live on a real Mac: dictate into another app (Silas stays until that has worked once), the agents' browser connects, Silas's dictionary and models come across. Check: Donovan's install
+- [ ] Windows and Linux: one Tauri app with voice, workspaces and browser agents. Check: a Windows VM and Omarchy
+- [ ] iPhone, iPad, Android: one app with voice and control of your computer. Check: Simulator, emulator and a real device
+- [ ] Speed: launch, workspace switch, press-to-record and agent tools each have a target in `spaces/spec/speed.json`, and a regression fails. Check: the ratchets, including the two still unmeasured
+
+## Install and permissions
+Asked for by Donovan, 2026-11-05: installation and permissions need to be excellent.
+- [x] One command installs the Mac app and the `polycarp` command. Check: `install.sh` run end to end against a temporary home, with an old app planted
+- [x] One first-run window explains each permission in plain words, with live status. Check: `WelcomeTests`, and renders of the real view in light and dark
+- [ ] First run on a real Mac: each switch updates the window, and Polycarp starts without a restart. Check: Donovan's first install
+- [ ] A ready-made download that needs no developer tools, from a Polycarp release. Check: installs on a Mac with no command line tools
+- [ ] Voice and Browser install from the same command, and share the welcome window
+
+## Omarchy
+Asked for by Donovan, 2026-11-05: on Omarchy, Polycarp matches the system theme.
+- [ ] Polycarp follows Omarchy's current theme, live, when you run `omarchy-theme-set`. Check: on a real Omarchy machine, read back from the theme files after a switch
+- [ ] Polycarp's bar is the existing Waybar, themed by Omarchy, with its own additions easy to remove
+
+## Agents' computer use
+Asked for by Donovan, 2026-11-05: it has to work better and look much better, with a better cursor.
+- [x] The olive leaf cursor, calm status colors, a glide you can follow. Check: `CursorThemeTests`, and renders of the real layers in every theme on five backgrounds
+- [x] An app an agent starts stays off your screen, and your keyboard stays yours. Check: `FocusReturnTests`
+- [ ] The same on a real Mac. Check: `agent open Calculator` while typing elsewhere: its window lands on the agent workspace, `agent windows` lists it and focus returns
+- [ ] Measure the whole loop (open, read, act, check) on real apps, and lock the gains with a ratchet test
 
 ## Later, with an owner's decision
 - Paid: domains, Apple Developer and Google Play accounts, Windows code signing

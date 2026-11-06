@@ -21,7 +21,7 @@ final class InstallScriptTests: XCTestCase {
 
     func testRequirementIsThePinnedReleaseKey() throws {
         XCTAssertEqual(try requirement(),
-                       #"identifier "com.baney.baneyspaces" and certificate leaf = H"d1cfbd7446f84f6c625b9db83c5bf96da33b157e""#)
+                       #"identifier "com.baney.polycarp" and certificate leaf = H"d1cfbd7446f84f6c625b9db83c5bf96da33b157e""#)
     }
 
     func testInstallShInlinesTheSameRequirement() throws {
@@ -41,7 +41,7 @@ final class InstallScriptTests: XCTestCase {
         XCTAssertLessThan(try index(of: "codesign --verify --strict --deep", in: install), verify)
         XCTAssertLessThan(verify, try index(of: "Resources/install-app.sh", in: install))
         // A pinned commit is checked before anything installs, too.
-        XCTAssertLessThan(try index(of: "BaneySpacesCommit", in: install), try index(of: "Resources/install-app.sh", in: install))
+        XCTAssertLessThan(try index(of: "PolycarpCommit", in: install), try index(of: "Resources/install-app.sh", in: install))
     }
 
     func testCommandLineToolsAreOnlyCheckedOnTheSourcePath() throws {
@@ -64,7 +64,7 @@ final class InstallScriptTests: XCTestCase {
         let check = try index(of: #"codesign -v -R "=$REQUIREMENT" "$EXISTING""#, in: install)
         let source = try index(of: "FROM_SOURCE=1\n", in: install)
         XCTAssertLessThan(check, source)
-        XCTAssertLessThan(source, try index(of: #"ZIP_URL="$BASE/download/$TAG/BaneySpaces.zip""#, in: install), "decided before any download")
+        XCTAssertLessThan(source, try index(of: #"ZIP_URL="$BASE/download/$TAG/Polycarp.zip""#, in: install), "decided before any download")
         XCTAssertTrue(install.contains("macOS will ask for the Accessibility permission once more"))
     }
 
@@ -72,7 +72,7 @@ final class InstallScriptTests: XCTestCase {
         let install = try read("install.sh")
         XCTAssertFalse(install.contains("api.github.com"))
         XCTAssertTrue(install.contains("$BASE/latest"))
-        XCTAssertTrue(install.contains("$BASE/download/$TAG/BaneySpaces.zip"))
+        XCTAssertTrue(install.contains("$BASE/download/$TAG/Polycarp.zip"))
         XCTAssertTrue(install.contains("%{http_code}"))
         XCTAssertTrue(install.contains("404) echo"))
         XCTAssertTrue(install.contains("BANEYSPACES_FROM_SOURCE=1"))
@@ -81,14 +81,14 @@ final class InstallScriptTests: XCTestCase {
     func testTheVersionAndChecksumAreChecked() throws {
         let install = try read("install.sh")
         XCTAssertTrue(install.contains(#"CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist" 2>/dev/null)" != "${TAG#v}""#))
-        XCTAssertTrue(install.contains("BaneySpaces.zip.sha256"))
+        XCTAssertTrue(install.contains("Polycarp.zip.sha256"))
         XCTAssertLessThan(try index(of: "shasum -a 256", in: install), try index(of: "Resources/install-app.sh", in: install))
     }
 
     func testInstallLocationFollowsTheRunningCopy() throws {
         let installApp = try read("scripts/install-app.sh")
         XCTAssertTrue(installApp.contains("BANEYSPACES_INSTALL_DIR"))
-        XCTAssertLessThan(try index(of: #""$HOME/Applications" /Applications"#, in: installApp), try index(of: #"DEST="$DEST_DIR/BaneySpaces.app""#, in: installApp))
+        XCTAssertLessThan(try index(of: #""$HOME/Applications" /Applications"#, in: installApp), try index(of: #"DEST="$DEST_DIR/$PRODUCT_NAME.app""#, in: installApp))
         let updater = try read("Sources/BaneySpaces/Updater.swift")
         // Only an Applications folder is passed on; anywhere else the installer finds the installed copy.
         XCTAssertTrue(updater.contains(#"parent == "/Applications" || parent == "\(NSHomeDirectory())/Applications""#))
@@ -107,9 +107,9 @@ final class InstallScriptTests: XCTestCase {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("bs-inplace-\(UUID().uuidString)").resolvingSymlinksInPath()
         defer { try? fm.removeItem(at: home) }
-        let app = home.appendingPathComponent("Apps/BaneySpaces.app")
+        let app = home.appendingPathComponent("Apps/Polycarp.app")
         try fm.createDirectory(at: app.appendingPathComponent("Contents/Resources/bin"), withIntermediateDirectories: true)
-        try "x".write(to: app.appendingPathComponent("Contents/Resources/bin/baneyspaces"), atomically: true, encoding: .utf8)
+        try "x".write(to: app.appendingPathComponent("Contents/Resources/bin/polycarp-spaces"), atomically: true, encoding: .utf8)
         let dest = home.appendingPathComponent("elsewhere")
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -122,8 +122,11 @@ final class InstallScriptTests: XCTestCase {
         let out = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         p.waitUntilExit()
         XCTAssertEqual(p.terminationStatus, 0, out)
-        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: home.appendingPathComponent(".local/bin/baneyspaces").path),
-                       app.appendingPathComponent("Contents/Resources/bin/baneyspaces").path)
+        // polycarp-spaces is the command; baneyspaces and ghostdeck stay as names for it.
+        for name in ["polycarp-spaces", "baneyspaces", "ghostdeck"] {
+            XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: home.appendingPathComponent(".local/bin/\(name)").path),
+                           app.appendingPathComponent("Contents/Resources/bin/polycarp-spaces").path, name)
+        }
         XCTAssertFalse(fm.fileExists(atPath: dest.path), "nothing was copied")
         let script = try read("scripts/install-app.sh")
         XCTAssertLessThan(try index(of: "if [ \"$IN_PLACE\" = 0 ]; then\n  rm -rf \"$DEST\"", in: script), try index(of: #"cp -R "$APP" "$DEST""#, in: script))
@@ -135,11 +138,11 @@ final class InstallScriptTests: XCTestCase {
         let fm = FileManager.default
         let home = fm.temporaryDirectory.appendingPathComponent("bs-adhoc-\(UUID().uuidString)").resolvingSymlinksInPath()
         defer { try? fm.removeItem(at: home) }
-        let app = home.appendingPathComponent("build/BaneySpaces.app")
+        let app = home.appendingPathComponent("build/Polycarp.app")
         try fm.createDirectory(at: app.appendingPathComponent("Contents/Resources/bin"), withIntermediateDirectories: true)
-        try "new".write(to: app.appendingPathComponent("Contents/Resources/bin/baneyspaces"), atomically: true, encoding: .utf8)
+        try "new".write(to: app.appendingPathComponent("Contents/Resources/bin/polycarp-spaces"), atomically: true, encoding: .utf8)
         let dest = home.appendingPathComponent("Applications")
-        let marker = dest.appendingPathComponent("BaneySpaces.app/Contents/old")
+        let marker = dest.appendingPathComponent("Polycarp.app/Contents/old")
         try fm.createDirectory(at: marker.deletingLastPathComponent(), withIntermediateDirectories: true)
         try "old".write(to: marker, atomically: true, encoding: .utf8)
         let p = Process()
@@ -166,7 +169,7 @@ final class InstallScriptTests: XCTestCase {
         XCTAssertTrue(install.contains("%{redirect_url}"))
         XCTAssertTrue(install.contains("/releases/tag/"))
         XCTAssertFalse(install.contains("url_effective"))
-        XCTAssertLessThan(try index(of: "%{redirect_url}", in: install), try index(of: #"ZIP_URL="$BASE/download/$TAG/BaneySpaces.zip""#, in: install))
+        XCTAssertLessThan(try index(of: "%{redirect_url}", in: install), try index(of: #"ZIP_URL="$BASE/download/$TAG/Polycarp.zip""#, in: install))
         // The source build uses that tag too.
         XCTAssertTrue(install.contains(#"REF="${BANEYSPACES_REF:-$LATEST_TAG}""#))
     }
@@ -177,7 +180,7 @@ final class InstallScriptTests: XCTestCase {
         let failFast = try index(of: "needs Apple's command line tools (Nightly builds always do", in: install)
         XCTAssertLessThan(gate, failFast)
         XCTAssertLessThan(failFast, try index(of: "xcode-select --install", in: install))
-        XCTAssertTrue(install.contains(#"Resources/install-app.sh" "$SRC/build/BaneySpaces.app""#))
+        XCTAssertTrue(install.contains(#"Resources/install-app.sh" "$SRC/build/Polycarp.app""#))
         XCTAssertTrue(install.contains(#"bundle.sh" --install"#), "older revisions only")
     }
 
@@ -220,52 +223,69 @@ final class InstallScriptTests: XCTestCase {
         for (folder, key) in kept {
             let dir = home.appendingPathComponent("Library/\(folder)")
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-            try key.write(to: dir.appendingPathComponent("baneyspaces-signing.keychain-db"), atomically: true, encoding: .utf8)
+            try key.write(to: dir.appendingPathComponent("polycarp-signing.keychain-db"), atomically: true, encoding: .utf8)
             try "pw".write(to: dir.appendingPathComponent(".hidden"), atomically: true, encoding: .utf8)
         }
-        let target = home.appendingPathComponent("Library/Application Support/BaneySpaces/Signing")
+        let target = home.appendingPathComponent("Library/Application Support/Polycarp/Signing")
         if existingDir { try fm.createDirectory(at: target, withIntermediateDirectories: true) }
         if let existingFile { try "x".write(to: target.appendingPathComponent(existingFile), atomically: true, encoding: .utf8) }
         return home
     }
 
     private func restored(_ home: URL, _ name: String) -> String? {
-        try? String(contentsOf: home.appendingPathComponent("Library/Application Support/BaneySpaces/Signing/\(name)"), encoding: .utf8)
+        try? String(contentsOf: home.appendingPathComponent("Library/Application Support/Polycarp/Signing/\(name)"), encoding: .utf8)
     }
 
     func testSigningRestoresTheKeptFolder() throws {
-        let home = try signingSandbox(kept: ["BaneySpaces Release Signing": "key"])
+        let home = try signingSandbox(kept: ["Polycarp Release Signing": "key"])
         defer { try? FileManager.default.removeItem(at: home) }
         let out = try runSigningRestore(home: home)
-        XCTAssertTrue(out.contains("restored the BaneySpaces release signing key"), out)
-        XCTAssertEqual(restored(home, "baneyspaces-signing.keychain-db"), "key")
+        XCTAssertTrue(out.contains("restored the Polycarp release signing key"), out)
+        XCTAssertEqual(restored(home, "polycarp-signing.keychain-db"), "key")
         XCTAssertEqual(restored(home, ".hidden"), "pw", "dotfiles come back too")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent("Library/BaneySpaces Release Signing").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent("Library/Polycarp Release Signing").path))
+    }
+
+    /// BaneySpaces' own uninstaller kept the release key as "BaneySpaces Release Signing" with its own file name.
+    func testSigningRestoresTheKeyBaneySpacesKept() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("bs-sign-\(UUID().uuidString)").resolvingSymlinksInPath()
+        defer { try? fm.removeItem(at: home) }
+        for (folder, key) in ["BaneySpaces Release Signing 20261030-101010": "old", "BaneySpaces Release Signing 20261031-090000": "new"] {
+            let dir = home.appendingPathComponent("Library/\(folder)")
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            try key.write(to: dir.appendingPathComponent("baneyspaces-signing.keychain-db"), atomically: true, encoding: .utf8)
+        }
+        let out = try runSigningRestore(home: home)
+        XCTAssertTrue(out.contains("restored the BaneySpaces release signing key"), out)
+        let legacy = home.appendingPathComponent("Library/Application Support/BaneySpaces/Signing/baneyspaces-signing.keychain-db")
+        XCTAssertEqual(try String(contentsOf: legacy, encoding: .utf8), "new", "the newest dated folder, back under the old names")
+        XCTAssertFalse(fm.fileExists(atPath: home.appendingPathComponent("Library/Application Support/Polycarp/Signing").path), "no second key is made")
     }
 
     func testSigningRestoresIntoAnExistingEmptyFolder() throws {
-        let home = try signingSandbox(kept: ["BaneySpaces Release Signing": "key"], existingDir: true)
+        let home = try signingSandbox(kept: ["Polycarp Release Signing": "key"], existingDir: true)
         defer { try? FileManager.default.removeItem(at: home) }
         _ = try runSigningRestore(home: home)
-        XCTAssertEqual(restored(home, "baneyspaces-signing.keychain-db"), "key")
+        XCTAssertEqual(restored(home, "polycarp-signing.keychain-db"), "key")
     }
 
     func testSigningMergesIntoAFolderThatHasOtherFiles() throws {
-        let home = try signingSandbox(kept: ["BaneySpaces Release Signing": "key"], existingDir: true, existingFile: "stray")
+        let home = try signingSandbox(kept: ["Polycarp Release Signing": "key"], existingDir: true, existingFile: "stray")
         defer { try? FileManager.default.removeItem(at: home) }
         _ = try runSigningRestore(home: home)
-        XCTAssertEqual(restored(home, "baneyspaces-signing.keychain-db"), "key")
+        XCTAssertEqual(restored(home, "polycarp-signing.keychain-db"), "key")
         XCTAssertEqual(restored(home, ".hidden"), "pw")
         XCTAssertEqual(restored(home, "stray"), "x")
     }
 
     func testSigningRestoresTheNewestDatedFolderWhenThereIsNoPlainOne() throws {
-        let home = try signingSandbox(kept: ["BaneySpaces Release Signing 20261030-101010": "old",
-                                             "BaneySpaces Release Signing 20261031-090000": "new"])
+        let home = try signingSandbox(kept: ["Polycarp Release Signing 20261030-101010": "old",
+                                             "Polycarp Release Signing 20261031-090000": "new"])
         defer { try? FileManager.default.removeItem(at: home) }
         _ = try runSigningRestore(home: home)
-        XCTAssertEqual(restored(home, "baneyspaces-signing.keychain-db"), "new")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: home.appendingPathComponent("Library/BaneySpaces Release Signing 20261030-101010").path), "the older one is left alone")
+        XCTAssertEqual(restored(home, "polycarp-signing.keychain-db"), "new")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: home.appendingPathComponent("Library/Polycarp Release Signing 20261030-101010").path), "the older one is left alone")
     }
 
     func testReleaseIsADraftUntilTheUploadIsCheckedAndPublished() throws {
@@ -294,6 +314,6 @@ final class InstallScriptTests: XCTestCase {
         let uninstall = try read("uninstall.sh")
         XCTAssertTrue(uninstall.contains("RELEASE_REQUIREMENT='\(try requirement())'"))
         XCTAssertLessThan(try index(of: "security find-certificate", in: uninstall), try index(of: "security delete-keychain", in: uninstall))
-        XCTAssertTrue(uninstall.contains("BaneySpaces Release Signing"))
+        XCTAssertTrue(uninstall.contains("Polycarp Release Signing"))
     }
 }

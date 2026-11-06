@@ -10,7 +10,7 @@ final class AutomationGateTests: XCTestCase {
 
     func testWaitingForAccessibilityNamesIt() throws {
         let why = try XCTUnwrap(AutomationGate.reason(trusted: false, aeroSpaceRunning: false, started: false))
-        XCTAssertTrue(why.hasPrefix("Available once BaneySpaces is running"))
+        XCTAssertTrue(why.hasPrefix("Available once Polycarp is running"))
         XCTAssertTrue(why.contains("Accessibility"))
     }
 

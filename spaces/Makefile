@@ -19,8 +19,8 @@ bench:
 	scripts/bench.sh
 # The README banner and the GitHub social card, drawn from the icon.
 brand:
-	swift scripts/make-icon.swift build/BaneySpaces.iconset
-	swift scripts/make-brand.swift build/BaneySpaces.iconset/icon_512x512@2x.png docs
+	swift scripts/make-icon.swift build/Polycarp.iconset ../brand
+	swift scripts/make-brand.swift build/Polycarp.iconset/icon_512x512@2x.png docs
 # Product images with sample windows (never your real ones), refreshed into docs/shots.
 shots: build
 	rm -rf build/shots

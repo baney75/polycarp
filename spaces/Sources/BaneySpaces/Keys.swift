@@ -144,7 +144,7 @@ enum SystemShortcuts {
 
     /// Taking and giving back run one at a time, in order, so a quick on-off can't leave
     /// Spotlight switched off with nothing recorded to turn it back on.
-    static let spotlightQueue = DispatchQueue(label: "com.baney.baneyspaces.spotlight")
+    static let spotlightQueue = DispatchQueue(label: "com.baney.polycarp.spotlight")
 
     /// True while macOS opens Spotlight on ⌘Space. Someone who moved Spotlight to other keys or
     /// turned it off already left ⌘Space free.

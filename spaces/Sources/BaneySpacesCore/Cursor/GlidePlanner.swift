@@ -9,6 +9,9 @@ public struct GlideSpring: Equatable, Codable, Sendable {
 
     public init(response: Double, damping: Double) { self.response = response; self.damping = damping }
 
+    /// The `polycarp` preset, the default: quick enough to keep up with an agent and slow enough to follow by eye, with no
+    /// visible overshoot. Actions never wait for the glide, so this costs an agent no time.
+    public static let polycarp = GlideSpring(response: 0.22, damping: 0.9)
     /// The `baneyspaces` preset: about 150 ms to reach an element from across the screen, no visible overshoot.
     public static let baneyspaces = GlideSpring(response: 0.13, damping: 0.85)
     public static let responseRange: ClosedRange<Double> = 0.04...0.6
@@ -17,6 +20,7 @@ public struct GlideSpring: Equatable, Codable, Sendable {
     /// The spring of an `animation.preset`; nil for a name that is no preset. `off` is instant.
     public static func preset(_ name: String) -> GlideSpring? {
         switch name {
+        case "polycarp": return .polycarp
         case "baneyspaces": return .baneyspaces
         case "omarchy": return GlideSpring(response: 0.2, damping: 1.0)
         case "snappy": return GlideSpring(response: 0.08, damping: 1.0)
@@ -43,6 +47,18 @@ public struct GlideSpring: Equatable, Codable, Sendable {
         let w = 2 * Double.pi / r
         if w * factor < Self.minDecayRate { r = 2 * Double.pi * factor / Self.minDecayRate }
         return GlideSpring(response: r, damping: z)
+    }
+}
+
+/// How far the cursor leans into a move: nothing for a short hop, up to 12 degrees across the screen, toward the side
+/// it is moving to.
+public enum CursorMotionLean {
+    public static let maxRadians = 12.0 * Double.pi / 180
+    public static let minDistance = 80.0
+    public static func radians(dx: Double, distance: Double) -> Double {
+        guard distance > minDistance else { return 0 }
+        let reach = min(1, (distance - minDistance) / 600)
+        return maxRadians * reach * (dx / distance)
     }
 }
 

@@ -1,8 +1,8 @@
 #!/bin/bash
-# Installs BaneySpaces on macOS:
-#   curl -fsSL https://raw.githubusercontent.com/baney75/baneyspaces/main/install.sh | bash
+# Installs Polycarp on macOS:
+#   curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/spaces/install.sh | bash
 # A stable release carries the finished app (a few MB). This downloads it, checks that it is
-# signed with BaneySpaces' release key (it refuses anything else), and puts it in the folder the
+# signed with Polycarp's release key (it refuses anything else), and puts it in the folder the
 # current copy is in (~/Applications on a first install). No developer tools are needed.
 # It builds from source instead, with Apple's free command line tools, when the release has no
 # ready-made app (the Nightly build, an old release), when BANEYSPACES_FROM_SOURCE=1, or when the
@@ -13,20 +13,20 @@
 # Set BANEYSPACES_REF to install a specific tag (or, building from source, a branch).
 # BANEYSPACES_COMMIT (the updater sets it) pins the exact commit; a different build is refused.
 # BANEYSPACES_INSTALL_DIR (the updater sets it) is the folder to install into.
-# BANEYSPACES_ZIP=/path/to/BaneySpaces.zip uses that file instead of downloading (for tests; pair
+# BANEYSPACES_ZIP=/path/to/Polycarp.zip uses that file instead of downloading (for tests; pair
 # it with BANEYSPACES_DEST_DIR so nothing outside that folder changes).
 set -euo pipefail
-REPO_URL="${BANEYSPACES_REPO:-https://github.com/baney75/baneyspaces.git}"
+REPO_URL="${BANEYSPACES_REPO:-https://github.com/baney75/polycarp.git}"
 bold=$(tput bold 2>/dev/null || true); dim=$(tput dim 2>/dev/null || true); reset=$(tput sgr0 2>/dev/null || true)
 step() { printf '%s==>%s %s\n' "$bold" "$reset" "$*"; }
-fail() { printf 'BaneySpaces install failed: %s\n' "$*" >&2; exit 1; }
+fail() { printf 'Polycarp install failed: %s\n' "$*" >&2; exit 1; }
 
-[ "$(uname -s)" = Darwin ] || fail "BaneySpaces is a Mac app (this is $(uname -s))."
+[ "$(uname -s)" = Darwin ] || fail "Polycarp is a Mac app (this is $(uname -s))."
 MAJOR=$(sw_vers -productVersion | cut -d. -f1)
-[ "$MAJOR" -ge 13 ] || fail "BaneySpaces needs macOS 13 Ventura or later (this Mac has $(sw_vers -productVersion))."
+[ "$MAJOR" -ge 13 ] || fail "Polycarp needs macOS 13 Ventura or later (this Mac has $(sw_vers -productVersion))."
 # The designated requirement every release is signed to (scripts/release-requirement.txt, which a
 # test keeps identical to this). It pins the app's identifier and the release certificate.
-REQUIREMENT='identifier "com.baney.baneyspaces" and certificate leaf = H"d1cfbd7446f84f6c625b9db83c5bf96da33b157e"'
+REQUIREMENT='identifier "com.baney.polycarp" and certificate leaf = H"d1cfbd7446f84f6c625b9db83c5bf96da33b157e"'
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -36,7 +36,7 @@ elif [ -n "${BANEYSPACES_INSTALL_DIR:-}" ]; then CANDIDATES=("$BANEYSPACES_INSTA
 else CANDIDATES=("$HOME/Applications" /Applications); fi
 EXISTING=""
 for dir in "${CANDIDATES[@]}"; do
-  if [ -d "$dir/BaneySpaces.app" ]; then EXISTING="$dir/BaneySpaces.app"; break; fi
+  if [ -d "$dir/Polycarp.app" ]; then EXISTING="$dir/Polycarp.app"; break; fi
 done
 have_tools() { xcode-select -p >/dev/null 2>&1 && xcrun --find swift >/dev/null 2>&1; }
 
@@ -47,20 +47,20 @@ have_tools() { xcode-select -p >/dev/null 2>&1 && xcrun --find swift >/dev/null 
 FROM_SOURCE="${BANEYSPACES_FROM_SOURCE:-}"
 if [ "$FROM_SOURCE" != 1 ] && [ -n "$EXISTING" ] && ! codesign -v -R "=$REQUIREMENT" "$EXISTING" >/dev/null 2>&1; then
   if have_tools; then
-    step "Your BaneySpaces was built on this Mac, so it is updated the same way (macOS keeps its Accessibility permission)"
+    step "Your Polycarp was built on this Mac, so it is updated the same way (macOS keeps its Accessibility permission)"
     FROM_SOURCE=1
   else
-    step "Your BaneySpaces was built on this Mac and this one is ready-made, so macOS will ask for the Accessibility permission once more"
+    step "Your Polycarp was built on this Mac and this one is ready-made, so macOS will ask for the Accessibility permission once more"
   fi
 fi
 
-# The prebuilt app: the release's BaneySpaces.zip, straight from GitHub's download address (no API,
+# The prebuilt app: the release's Polycarp.zip, straight from GitHub's download address (no API,
 # no JSON to read, which stock macOS has no good tool for).
 ZIP="${BANEYSPACES_ZIP:-}"
 TAG="${BANEYSPACES_REF:-}"
 SHA_URL=""
 # BANEYSPACES_RELEASES_BASE is for tests: a stand-in for GitHub's releases address.
-BASE="${BANEYSPACES_RELEASES_BASE:-https://github.com/baney75/baneyspaces/releases}"
+BASE="${BANEYSPACES_RELEASES_BASE:-https://github.com/baney75/polycarp/releases}"
 # Prints the HTTP status; a connection that fails prints 000.
 fetch() { curl -sSL -w '%{http_code}' -o "$2" "$1" 2>/dev/null || true; }
 
@@ -93,12 +93,12 @@ if [ -z "$ZIP" ] && [ "$FROM_SOURCE" != 1 ] && [[ "$TAG" =~ ^[A-Za-z0-9._-]*$ ]]
     esac
   fi
   if [ -n "$TAG" ]; then
-    step "Downloading BaneySpaces ($TAG)"
-    ZIP_URL="$BASE/download/$TAG/BaneySpaces.zip"
-    reply=$(fetch "$ZIP_URL" "$WORK/BaneySpaces.zip")
-    [ "$reply" = 200 ] || [ "$reply" = 404 ] || { sleep 2; reply=$(fetch "$ZIP_URL" "$WORK/BaneySpaces.zip"); }
+    step "Downloading Polycarp ($TAG)"
+    ZIP_URL="$BASE/download/$TAG/Polycarp.zip"
+    reply=$(fetch "$ZIP_URL" "$WORK/Polycarp.zip")
+    [ "$reply" = 200 ] || [ "$reply" = 404 ] || { sleep 2; reply=$(fetch "$ZIP_URL" "$WORK/Polycarp.zip"); }
     case "$reply" in
-      200) ZIP="$WORK/BaneySpaces.zip"; SHA_URL="$BASE/download/$TAG/BaneySpaces.zip.sha256" ;;
+      200) ZIP="$WORK/Polycarp.zip"; SHA_URL="$BASE/download/$TAG/Polycarp.zip.sha256" ;;
       404) echo "  There is no ready-made app for this release; building it." ;;
       *) fail "the download didn't work (HTTP $reply). Try again, or build it on this Mac with BANEYSPACES_FROM_SOURCE=1." ;;
     esac
@@ -109,9 +109,9 @@ if [ -n "$ZIP" ] && [ "$FROM_SOURCE" != 1 ]; then
   [ -f "$ZIP" ] || fail "$ZIP doesn't exist."
   # The checksum file is optional: a release without one is checked by its signature alone.
   if [ -n "$SHA_URL" ]; then
-    reply=$(fetch "$SHA_URL" "$WORK/BaneySpaces.zip.sha256")
+    reply=$(fetch "$SHA_URL" "$WORK/Polycarp.zip.sha256")
     case "$reply" in
-      200) [ "$(awk '{print $1}' "$WORK/BaneySpaces.zip.sha256")" = "$(shasum -a 256 "$ZIP" | awk '{print $1}')" ] \
+      200) [ "$(awk '{print $1}' "$WORK/Polycarp.zip.sha256")" = "$(shasum -a 256 "$ZIP" | awk '{print $1}')" ] \
              || fail "the download doesn't match its checksum, so it was not installed." ;;
       404) ;;
       *) fail "couldn't fetch the checksum (HTTP $reply). Try again, or build it on this Mac with BANEYSPACES_FROM_SOURCE=1." ;;
@@ -119,16 +119,16 @@ if [ -n "$ZIP" ] && [ "$FROM_SOURCE" != 1 ]; then
   fi
   mkdir "$WORK/app"
   ditto -x -k "$ZIP" "$WORK/app" || fail "the download isn't a usable zip."
-  APP="$WORK/app/BaneySpaces.app"
-  [ -d "$APP" ] || fail "the download doesn't contain BaneySpaces.app."
+  APP="$WORK/app/Polycarp.app"
+  [ -d "$APP" ] || fail "the download doesn't contain Polycarp.app."
   step "Checking the signature"
   codesign --verify --strict --deep "$APP" 2>/dev/null \
     || fail "the download's signature is broken, so it was not installed."
   codesign -v -R "=$REQUIREMENT" "$APP" 2>/dev/null \
-    || fail "the download isn't signed with BaneySpaces' release key, so it was not installed."
+    || fail "the download isn't signed with Polycarp's release key, so it was not installed."
   if [ -n "${BANEYSPACES_COMMIT:-}" ]; then
     # An update pins the exact commit whose notes were shown; a tag that moved since is refused.
-    if [ "$(plutil -extract BaneySpacesCommit raw -o - "$APP/Contents/Info.plist" 2>/dev/null)" != "$BANEYSPACES_COMMIT" ]; then
+    if [ "$(plutil -extract PolycarpCommit raw -o - "$APP/Contents/Info.plist" 2>/dev/null)" != "$BANEYSPACES_COMMIT" ]; then
       fail "${TAG:-the release} moved to a newer build after you looked at it. Check for updates again to see what changed."
     fi
   elif [[ "$TAG" =~ ^v[0-9] ]]; then
@@ -146,8 +146,8 @@ if [ -n "$ZIP" ] && [ "$FROM_SOURCE" != 1 ]; then
   fi
   grep -E "^(built|installed) " "$LOG" | sed "s/^/${dim}    /;s/\$/${reset}/" || true
   echo
-  printf '%sBaneySpaces is installed.%s It is in your menu bar now.\n' "$bold" "$reset"
-  echo "A setup window is open. Click Allow BaneySpaces, turn on the switch macOS shows you,"
+  printf '%sPolycarp is installed.%s It is in your menu bar now.\n' "$bold" "$reset"
+  echo "A setup window is open. Click Allow Polycarp, turn on the switch macOS shows you,"
   echo "and come back. Then press ⌘1 to ⌘9 to switch workspaces; add ⇧ to move a window."
   exit 0
 fi
@@ -159,7 +159,7 @@ if ! have_tools; then
   if [ -n "${BANEYSPACES_COMMIT:-}" ]; then
     fail "this update is built on your Mac and needs Apple's command line tools (Nightly builds always do; Stable releases install ready-made). Run xcode-select --install in Terminal, then update again."
   fi
-  step "BaneySpaces needs Apple's free command line tools first"
+  step "Polycarp needs Apple's free command line tools first"
   xcode-select --install >/dev/null 2>&1 || true
   echo "  A macOS window just opened. Click Install and agree to the license."
   echo "  It downloads about 1 GB and usually takes 5 to 15 minutes."
@@ -172,7 +172,7 @@ REF="${BANEYSPACES_REF:-$LATEST_TAG}"
 [ -n "$REF" ] || REF=$(git ls-remote --tags --refs --sort=-v:refname "$REPO_URL" 'v*' 2>/dev/null | head -1 | sed 's#.*refs/tags/##' || true)
 REF="${REF:-main}"
 
-step "Downloading BaneySpaces ($REF)"
+step "Downloading Polycarp ($REF)"
 git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$REF" "$REPO_URL" "$WORK/baneyspaces"
 # An update pins the exact commit whose notes were shown; a tag that moved since is refused.
 if [ -n "${BANEYSPACES_COMMIT:-}" ] && [ "$(git -C "$WORK/baneyspaces" rev-parse HEAD)" != "$BANEYSPACES_COMMIT" ]; then
@@ -181,10 +181,10 @@ fi
 step "Building (about a minute the first time)"
 # The whole build log is kept, so a failure shows its real cause instead of the last few lines.
 LOG="${TMPDIR:-/tmp}/baneyspaces-install.log"
-SRC="$WORK/baneyspaces"
+SRC="$WORK/baneyspaces/spaces"
 if [ -f "$SRC/scripts/install-app.sh" ]; then
   # Build, then place the app with that build's own install step, which knows where to put it.
-  if ! { "$SRC/scripts/bundle.sh" && bash "$SRC/build/BaneySpaces.app/Contents/Resources/install-app.sh" "$SRC/build/BaneySpaces.app" </dev/null; } >"$LOG" 2>&1; then
+  if ! { "$SRC/scripts/bundle.sh" && bash "$SRC/build/Polycarp.app/Contents/Resources/install-app.sh" "$SRC/build/Polycarp.app" </dev/null; } >"$LOG" 2>&1; then
     echo
     grep -E "error:|Error|failed|still running" "$LOG" | head -20 || tail -20 "$LOG"
     fail "the build stopped. The full log is at $LOG"
@@ -197,6 +197,6 @@ elif ! "$SRC/scripts/bundle.sh" --install >"$LOG" 2>&1; then
 fi
 grep -E "^(built|installed) " "$LOG" | sed "s/^/${dim}    /;s/\$/${reset}/"
 echo
-printf '%sBaneySpaces is installed.%s It is in your menu bar now.\n' "$bold" "$reset"
-echo "A setup window is open. Click Allow BaneySpaces, turn on the switch macOS shows you,"
+printf '%sPolycarp is installed.%s It is in your menu bar now.\n' "$bold" "$reset"
+echo "A setup window is open. Click Allow Polycarp, turn on the switch macOS shows you,"
 echo "and come back. Then press ⌘1 to ⌘9 to switch workspaces; add ⇧ to move a window."
