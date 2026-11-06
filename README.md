@@ -21,7 +21,8 @@ through the permissions. If you have BaneySpaces, it goes to the Trash, because 
 Polycarp copies its settings. If you have Silas, it stays installed and working: Polycarp copies its dictionary,
 history and speech models, and takes over dictation only when voice is on, a speech model is installed and the copy has
 finished. After the first dictation that really typed text, one notification says dictation is working; Settings > Voice
-then offers "Move Silas to the Trash" when you're ready. Nothing moves on its own. With voice off, Silas runs freely, untouched. On an Intel Mac, or with
+then offers "Move Silas to the Trash" when you're ready. Nothing moves on its own. With voice off, Silas runs freely, untouched.
+On an Intel Mac, or with
 `POLYCARP_FROM_SOURCE=1`, it builds on your Mac, which needs Apple's command line tools, Rust, Bun and Node.
 
 ## The name
