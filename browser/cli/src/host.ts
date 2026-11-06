@@ -5,6 +5,7 @@
  * No browser logic lives here.
  */
 
+import { parentBrowserName } from "./parent-browser.ts";
 import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
@@ -34,6 +35,8 @@ const clients = new Map<string, Client>();
 let extensionReady = false;
 /** The browser profile behind this host (from the extension's hello). */
 let browserId: string | undefined;
+/** Which browser started this host, found once: its parent process. */
+const browserName = parentBrowserName();
 let seq = 0;
 /** ChatGPT and Copilot sign-ins; made on the first request, so a host that never sees one opens nothing. */
 let subscriptions: SubscriptionService | undefined;
@@ -156,7 +159,7 @@ function onClientMessage(client: Client, message: ClientToHost): void {
 		client.hello = message;
 		// A stopping host can't run anything: it doesn't present itself as ready to a new client.
 		const ready = extensionReady && !stopping;
-		toClient(client.id, { type: "welcome", clientId: client.id, hostVersion: VERSION, extensionConnected: ready, ...(ready && browserId ? { browserId } : {}) });
+		toClient(client.id, { type: "welcome", clientId: client.id, hostVersion: VERSION, extensionConnected: ready, ...(ready && browserId ? { browserId } : {}), ...(browserName ? { browserName } : {}) });
 		toExtension({ type: "client_connected", clientId: client.id, client: forExtension(client.id, message.client) });
 		return;
 	}

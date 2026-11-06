@@ -67,6 +67,40 @@ const MAC_APPS: Record<string, string> = {
 	Opera: "Opera",
 };
 
+/** Each browser's bundle identifier, for finding its app wherever it lives (Launch Services knows; the fixed folders may not). */
+const MAC_BUNDLE_IDS: Record<string, string> = {
+	Helium: "net.imput.helium",
+	Chrome: "com.google.Chrome",
+	"Chrome Beta": "com.google.Chrome.beta",
+	"Chrome Canary": "com.google.Chrome.canary",
+	Chromium: "org.chromium.Chromium",
+	Brave: "com.brave.Browser",
+	Edge: "com.microsoft.edgemac",
+	Arc: "company.thebrowser.Browser",
+	Vivaldi: "com.vivaldi.Vivaldi",
+	Opera: "com.operasoftware.Opera",
+};
+
+/** The browser (by browserDirs() name) for a Mac app name such as "Google Chrome", or the app name itself if it isn't one we list. */
+export function browserNameForApp(app: string): string {
+	return Object.entries(MAC_APPS).find(([, a]) => a === app)?.[0] ?? app;
+}
+
+const spotlight = new Map<string, boolean>();
+/** Does Launch Services (through Spotlight's index) know an app with this bundle id? Asked once per id. */
+function knownToSpotlight(id: string): boolean {
+	const seen = spotlight.get(id);
+	if (seen !== undefined) return seen;
+	let found = false;
+	try {
+		found = execFileSync("/usr/bin/mdfind", [`kMDItemCFBundleIdentifier == '${id}'`], { encoding: "utf8", timeout: 3000 }).trim().length > 0;
+	} catch {
+		/* no Spotlight, or it timed out: the fixed folders decide */
+	}
+	spotlight.set(id, found);
+	return found;
+}
+
 /**
  * Is the browser really installed? A data folder outlives the app (uninstalled browsers leave theirs), so on a Mac the app
  * must be in an Applications folder. TABKYRA_APPLICATIONS_DIRS (a PATH-style list) replaces the folders, for tests.
@@ -77,12 +111,16 @@ export function browserInstalled(name: string): boolean {
 	const app = MAC_APPS[name];
 	if (!app) return true;
 	const dirs = process.env.TABKYRA_APPLICATIONS_DIRS ? process.env.TABKYRA_APPLICATIONS_DIRS.split(delimiter) : ["/Applications", join(homedir(), "Applications")];
-	return dirs.some((dir) => existsSync(join(dir, `${app}.app`)));
+	if (dirs.some((dir) => existsSync(join(dir, `${app}.app`)))) return true;
+	// An app outside the top of an Applications folder (Setapp, an external drive): ask by bundle id. Not under test overrides.
+	const id = MAC_BUNDLE_IDS[name];
+	return !process.env.TABKYRA_APPLICATIONS_DIRS && id !== undefined && knownToSpotlight(id);
 }
 
 /** The browsers with a data folder here and the app installed. */
 export function installedBrowserDirs(): BrowserDir[] {
-	return browserDirs().filter(({ name, dir }) => existsSync(dir) && browserInstalled(name));
+	// A browser that already has our manifest stays listed even if its app can't be found: it is in use.
+	return browserDirs().filter(({ name, dir }) => existsSync(dir) && (browserInstalled(name) || existsSync(join(dir, "NativeMessagingHosts", `${NATIVE_HOST_NAME}.json`))));
 }
 
 function configDir(): string {
@@ -241,15 +279,22 @@ export type HostState = "current" | "stale" | "missing";
 /** For each browser found on this machine: is our host manifest there and current. */
 export function hostStatus(): Array<BrowserDir & { state: HostState; file: string }> {
 	if (process.platform === "win32") return [];
-	const manifest = manifestFor(hostTarget());
-	return browserDirs()
-		.filter(({ dir }) => existsSync(dir))
-		.map((browser) => {
-			const file = join(browser.dir, "NativeMessagingHosts", `${NATIVE_HOST_NAME}.json`);
-			let state: HostState = "missing";
-			if (existsSync(file)) state = readFileSync(file, "utf8") === manifest ? "current" : "stale";
-			return { ...browser, state, file };
-		});
+	const accepted = new Set([hostTarget(), launcherPath()]);
+	return installedBrowserDirs().map((browser) => {
+		const file = join(browser.dir, "NativeMessagingHosts", `${NATIVE_HOST_NAME}.json`);
+		let state: HostState = "missing";
+		if (existsSync(file)) {
+			// Current: it names the helper or a standalone launcher that still runs, and the one extension id (doctor's test).
+			try {
+				const m = JSON.parse(readFileSync(file, "utf8")) as { path?: string; allowed_origins?: string[] };
+				const ok = typeof m.path === "string" && accepted.has(m.path) && existsSync(m.path) && JSON.stringify(m.allowed_origins) === JSON.stringify([`chrome-extension://${EXTENSION_ID}/`]);
+				state = ok ? "current" : "stale";
+			} catch {
+				state = "stale";
+			}
+		}
+		return { ...browser, state, file };
+	});
 }
 
 /** True when at least one browser has a current manifest. */

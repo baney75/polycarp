@@ -69,6 +69,8 @@ export interface HostWelcome {
 	extensionConnected: boolean;
 	/** The browser profile behind this host, once its extension has said hello. */
 	browserId?: string;
+	/** Which browser started this host (a name like Chrome or Brave), when the system said. */
+	browserName?: string;
 }
 
 export interface HostResponse {

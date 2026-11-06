@@ -131,9 +131,12 @@ function hostChecks(): Check[] {
 			status: "fail",
 			label: `${name}: native host ${existsSync(file) ? "manifest is wrong" : "not registered"}`,
 			detail,
-			fix: `${COMMAND_NAME} install --force`,
+			fix: `${COMMAND_NAME} install --browser ${name}`,
 		});
-		if (!existsSync(file)) return fail(file);
+		// A browser that was simply never connected is news, not a failure: one-browser Connect leaves the others alone.
+		if (!existsSync(file)) {
+			return { id: `host:${name}`, status: "warn", label: `${name}: not connected yet`, detail: "Polycarp isn't set up in this browser.", fix: `${COMMAND_NAME} install --browser ${name}` };
+		}
 		let manifest: { name?: string; path?: string; allowed_origins?: string[] };
 		try {
 			manifest = JSON.parse(readFileSync(file, "utf8"));
@@ -236,6 +239,9 @@ async function connectionChecks(): Promise<Check[]> {
 	} catch (err) {
 		return [{ ...notConnected, detail: err instanceof Error ? err.message : String(err) }];
 	}
+	// Every live browser connection, each with the browser that holds it (the host knows its parent process).
+	const checks: Check[] = [];
+	let first = true;
 	for (const path of sockets) {
 		const client = new BridgeClient({ name: "doctor" });
 		try {
@@ -248,14 +254,19 @@ async function connectionChecks(): Promise<Check[]> {
 			client.close();
 			continue;
 		}
+		const holder = client.hostBrowserName;
 		try {
 			let info = (await client.call("bridge.debug", {}, 5000)) as DebugInfo;
-			if (userScriptsCheck(info) && (info.workerUptimeS ?? SETTLE_S) < SETTLE_S) {
+			if (first && userScriptsCheck(info) && (info.workerUptimeS ?? SETTLE_S) < SETTLE_S) {
 				await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
 				// A worker still restarting may not answer again; the first answer stands then.
 				info = ((await client.call("bridge.debug", {}, 5000).catch(() => undefined)) as DebugInfo | undefined) ?? info;
 			}
-			const checks: Check[] = [{ id: "connected", status: "ok", label: `Extension connected (${info.version ?? "unknown version"})`, detail: path }];
+			const version = info.version ?? "unknown version";
+			if (holder) checks.push({ id: `connected:${holder}`, status: "ok", label: `${holder}: extension connected (${version})`, detail: path });
+			if (!first) continue;
+			first = false;
+			checks.unshift({ id: "connected", status: "ok", label: `Extension connected (${version})`, detail: path });
 			const built = builtVersion();
 			if (built && info.version && built !== info.version) {
 				checks.push({
@@ -267,22 +278,22 @@ async function connectionChecks(): Promise<Check[]> {
 			}
 			const userScripts = userScriptsCheck(info);
 			if (userScripts) checks.push(userScripts);
-			return checks;
 		} catch (err) {
-			return [
-				{
+			if (first) {
+				first = false;
+				checks.unshift({
 					id: "connected",
 					status: "fail",
 					label: "Extension connected but not responding",
 					detail: err instanceof Error ? err.message : String(err),
 					fix: `${COMMAND_NAME} reload`,
-				},
-			];
+				});
+			}
 		} finally {
 			client.close();
 		}
 	}
-	return [notConnected];
+	return checks.length ? checks : [notConnected];
 }
 
 function harnessChecks(): Check[] {

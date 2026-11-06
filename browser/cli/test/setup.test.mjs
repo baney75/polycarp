@@ -53,6 +53,8 @@ function run(args, extraEnv = {}) {
 			PATH: bin,
 			TABKYRA_SOCKET_DIR: socketDir,
 			TABKYRA_EXTENSION_DIR: extensionDir,
+			// The browsers that count as installed here, not what this machine has.
+			TABKYRA_APPLICATIONS_DIRS: join(root, "apps"),
 			TERM: "xterm-256color",
 			...extraEnv,
 		},
@@ -74,6 +76,7 @@ before(() => {
 	symlinkSync(process.execPath, join(bin, "node"));
 	mkdirSync(socketDir, { mode: 0o700 });
 	mkdirSync(helium(), { recursive: true });
+	mkdirSync(join(root, "apps", "Helium.app"), { recursive: true });
 	writeFileSync(harnessLog, "");
 	fakeBuild(sourceVersion);
 });
@@ -87,8 +90,8 @@ test("doctor fails with one fix per problem on a fresh machine", () => {
 	const byId = Object.fromEntries(report.checks.map((c) => [c.id, c]));
 	assert.equal(byId.node.status, "ok");
 	assert.equal(byId.build.status, "ok");
-	assert.equal(byId["host:Helium"].status, "fail");
-	assert.equal(byId["host:Helium"].fix, "polycarp browser install --force");
+	assert.equal(byId["host:Helium"].status, "warn", "a browser never connected is news, not a failure");
+	assert.equal(byId["host:Helium"].fix, "tabkyra install --browser Helium");
 	assert.equal(byId.connected.status, "fail");
 	for (const check of report.checks) if (check.status === "fail") assert.ok(check.fix, `${check.id} has no fix`);
 });
@@ -99,7 +102,7 @@ test("doctor flags a build from another version of the checkout", () => {
 		const build = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "build");
 		assert.equal(build.status, "fail");
 		assert.match(build.label, /does not match this checkout/);
-		assert.equal(build.fix, "polycarp browser setup");
+		assert.equal(build.fix, "tabkyra setup");
 	} finally {
 		fakeBuild(sourceVersion);
 	}

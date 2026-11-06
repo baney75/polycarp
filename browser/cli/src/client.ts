@@ -131,6 +131,8 @@ export class BridgeClient {
 	private lastBrowser?: string;
 	clientId?: string;
 	extensionConnected = false;
+	/** Which browser started the host this client last dialed (Chrome, Brave...), when the host said. */
+	hostBrowserName: string | undefined;
 	/** Set once the extension has been connected; only a bridge that once worked is worth waiting for. */
 	private everConnected = false;
 
@@ -272,6 +274,7 @@ export class BridgeClient {
 						clearTimeout(timer);
 						this.socketExtension.set(socket, msg.extensionConnected);
 						this.noteBrowser(socket, target, msg.browserId);
+						this.hostBrowserName = msg.browserName;
 						resolve({ socket, path: target, clientId: msg.clientId });
 					} else this.onMessage(msg, socket, target);
 				}

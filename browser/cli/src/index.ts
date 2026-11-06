@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { BridgeClient, BridgeRpcError, isConnectionError, listSockets, NOT_CONNECTED } from "./client.ts";
 import { runDoctor } from "./doctor.ts";
 import { runNativeHost } from "./host.ts";
-import { hostStatus, install, isInstalled } from "./install.ts";
+import { browserDirs, hostStatus, install, isInstalled } from "./install.ts";
 import { runMcpServer } from "./mcp.ts";
 import { COMPILED } from "./self.ts";
 import { EXTENSION_FILES, extensionDir } from "./paths.ts";
@@ -178,8 +178,9 @@ async function status(json: boolean): Promise<number> {
 	}
 	if (!isInstalled()) console.log(`${sym.fail} Native host not registered ${sym.arrow} ${c.bold("polycarp browser setup")}`);
 	for (const h of report.hosts) {
-		const mark = h.state === "current" ? sym.ok : sym.fail;
-		console.log(`${mark} ${h.browser.padEnd(13)} ${c.dim(h.state === "current" ? "host registered" : `host ${h.state}`)}`);
+		// A browser that was never connected is not a failure: Connect sets up one browser at a time.
+		const mark = h.state === "current" ? sym.ok : h.state === "missing" ? sym.dot : sym.fail;
+		console.log(`${mark} ${h.browser.padEnd(13)} ${c.dim(h.state === "current" ? "host registered" : h.state === "missing" ? "not connected yet" : `host ${h.state}`)}`);
 	}
 	if (!report.connected) console.log(`\n${sym.arrow} Run ${c.bold("polycarp browser doctor")} for the exact fix.`);
 	return report.connected ? 0 : 1;
@@ -294,7 +295,14 @@ async function main(): Promise<void> {
 			return;
 		}
 		case "install": {
-			const result = install({ force: flag("--force"), browser: option("--browser") });
+			const only = option("--browser");
+			if (only !== undefined) {
+				const known = browserDirs();
+				const match = known.find((b) => b.name === only);
+				if (!match) throw new UsageError(`Unknown browser "${only}". Use one of: ${known.map((b) => b.name).join(", ")}.`);
+				if (!existsSync(match.dir)) throw new UsageError(`${only} has no profile folder on this computer (${match.dir}). Open it once, then run this again.`);
+			}
+			const result = install({ force: flag("--force"), browser: only });
 			console.log(`${sym.ok} Launcher ${c.dim(result.launcher)}`);
 			for (const f of result.written) console.log(`${sym.ok} Wrote ${c.dim(f)}`);
 			for (const f of result.skipped) console.log(`${sym.ok} Current ${c.dim(f)}`);
