@@ -294,7 +294,7 @@ async function main(): Promise<void> {
 			return;
 		}
 		case "install": {
-			const result = install({ force: flag("--force") });
+			const result = install({ force: flag("--force"), browser: option("--browser") });
 			console.log(`${sym.ok} Launcher ${c.dim(result.launcher)}`);
 			for (const f of result.written) console.log(`${sym.ok} Wrote ${c.dim(f)}`);
 			for (const f of result.skipped) console.log(`${sym.ok} Current ${c.dim(f)}`);

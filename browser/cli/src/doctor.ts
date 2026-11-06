@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { NATIVE_HOST_NAME, type UserScriptsStatus } from "../../src/bridge/protocol.ts";
 import { BridgeClient, listSockets } from "./client.ts";
 import { harnesses, launcherValid, shellJoin } from "./harness.ts";
-import { browserDirs, cliLauncherPath, EXTENSION_ID, launcherPath } from "./install.ts";
+import { cliLauncherPath, EXTENSION_ID, hostTarget, installedBrowserDirs, launcherPath } from "./install.ts";
 import { EXTENSION_FILES, extensionDir, repoRoot } from "./paths.ts";
 import { banner, c, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
@@ -108,8 +108,10 @@ function hostChecks(): Check[] {
 		];
 	}
 	const origin = `chrome-extension://${EXTENSION_ID}/`;
-	const launcher = launcherPath();
-	const found = browserDirs().filter(({ dir }) => existsSync(dir));
+	// What a manifest may name: the helper inside Polycarp, or the standalone launcher (a standalone Tabkyra's own manifest is fine).
+	const accepted = [...new Set([hostTarget(), launcherPath()])];
+	// Only browsers that are really installed: a data folder outlives the app.
+	const found = installedBrowserDirs();
 	if (found.length === 0) {
 		return [
 			{
@@ -142,8 +144,9 @@ function hostChecks(): Check[] {
 		if (origins.length !== 1 || origins[0] !== origin) {
 			return fail(`allowed_origins is ${JSON.stringify(origins)}, expected ["${origin}"] (extension id ${EXTENSION_ID})`);
 		}
-		if (manifest.path !== launcher) return fail(`path is ${manifest.path}, expected ${launcher}`);
-		if (!existsSync(launcher) || (statSync(launcher).mode & 0o111) === 0) return fail(`${launcher} is missing or not executable`);
+		const path = manifest.path ?? "";
+		if (!accepted.includes(path)) return fail(`path is ${manifest.path}, expected ${accepted.join(" or ")}`);
+		if (!existsSync(path) || (statSync(path).mode & 0o111) === 0) return fail(`${path} is missing or not executable`);
 		return { id: `host:${name}`, status: "ok", label: `${name}: native host registered`, detail: file };
 	});
 }

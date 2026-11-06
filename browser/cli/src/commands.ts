@@ -78,6 +78,7 @@ export const VALUE_HINTS: Record<string, string> = {
 	"--branch": "<branch>",
 	"--serial": "N",
 	"--source": "<commit>",
+	"--browser": "<name>",
 };
 
 export const VALUE_FLAGS = new Set(Object.keys(VALUE_HINTS));
@@ -277,7 +278,7 @@ export const COMMANDS: CommandSpec[] = [
 		group: "Troubleshoot",
 		flags: UPDATE_FLAGS,
 	},
-	{ name: "install", what: "Re-register the native host with every browser", group: "Troubleshoot", flags: ["--force"] },
+	{ name: "install", what: "Re-register the native host with every browser, or with --browser <name> only that one", group: "Troubleshoot", flags: ["--force", "--browser"] },
 	{ name: "reload", what: "Reload the extension after rebuilding dist-chrome", group: "Troubleshoot" },
 	{ name: "debug", what: "Bridge state, request timings and a benchmark (JSON)", group: "Troubleshoot" },
 	{ name: "completion", positional: 1, args: "zsh|bash|fish", what: 'Shell completions: eval "$(tabkyra completion zsh)"', group: "Troubleshoot", values: ["zsh", "bash", "fish"] },

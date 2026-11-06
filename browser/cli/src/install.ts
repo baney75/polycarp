@@ -5,7 +5,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
@@ -51,6 +51,38 @@ export function browserDirs(): BrowserDir[] {
 		];
 	}
 	return [];
+}
+
+/** The app each browser ships as on a Mac, by the name browserDirs() gives it. */
+const MAC_APPS: Record<string, string> = {
+	Helium: "Helium",
+	Chrome: "Google Chrome",
+	"Chrome Beta": "Google Chrome Beta",
+	"Chrome Canary": "Google Chrome Canary",
+	Chromium: "Chromium",
+	Brave: "Brave Browser",
+	Edge: "Microsoft Edge",
+	Arc: "Arc",
+	Vivaldi: "Vivaldi",
+	Opera: "Opera",
+};
+
+/**
+ * Is the browser really installed? A data folder outlives the app (uninstalled browsers leave theirs), so on a Mac the app
+ * must be in an Applications folder. TABKYRA_APPLICATIONS_DIRS (a PATH-style list) replaces the folders, for tests.
+ * Elsewhere the data folder is all there is to go on.
+ */
+export function browserInstalled(name: string): boolean {
+	if (process.platform !== "darwin") return true;
+	const app = MAC_APPS[name];
+	if (!app) return true;
+	const dirs = process.env.TABKYRA_APPLICATIONS_DIRS ? process.env.TABKYRA_APPLICATIONS_DIRS.split(delimiter) : ["/Applications", join(homedir(), "Applications")];
+	return dirs.some((dir) => existsSync(join(dir, `${app}.app`)));
+}
+
+/** The browsers with a data folder here and the app installed. */
+export function installedBrowserDirs(): BrowserDir[] {
+	return browserDirs().filter(({ name, dir }) => existsSync(dir) && browserInstalled(name));
 }
 
 function configDir(): string {
@@ -147,8 +179,16 @@ export interface InstallResult {
 	skipped: string[];
 }
 
-export function install(options: { force?: boolean } = {}): InstallResult {
-	const launcher = writeLauncher();
+export interface InstallOptions {
+	force?: boolean;
+	/** Register only this browser (by the name browserDirs() gives it), and touch the launchers only if the agent launcher doesn't work. */
+	browser?: string;
+}
+
+export function install(options: InstallOptions = {}): InstallResult {
+	// One browser: a working launcher (a standalone Tabkyra's, say) stays as it is, so nothing else is repointed.
+	const keepLaunchers = options.browser !== undefined && launcherCheckValid();
+	const launcher = keepLaunchers ? hostTarget() : writeLauncher();
 	const manifest = manifestFor(launcher);
 	const written: string[] = [];
 	const skipped: string[] = [];
@@ -168,8 +208,9 @@ export function install(options: { force?: boolean } = {}): InstallResult {
 		return { launcher, written, skipped };
 	}
 
-	for (const { dir } of browserDirs()) {
+	for (const { name, dir } of browserDirs()) {
 		if (!existsSync(dir)) continue;
+		if (options.browser !== undefined && name !== options.browser) continue;
 		const hostsDir = join(dir, "NativeMessagingHosts");
 		const file = join(hostsDir, `${NATIVE_HOST_NAME}.json`);
 		if (!options.force && existsSync(file) && readFileSync(file, "utf8") === manifest) {
@@ -181,6 +222,18 @@ export function install(options: { force?: boolean } = {}): InstallResult {
 		written.push(file);
 	}
 	return { launcher, written, skipped };
+}
+
+/** The agent launcher exists, is executable, and the program it runs is still there (the same test as harness.ts's launcherValid). */
+function launcherCheckValid(): boolean {
+	const path = cliLauncherPath();
+	try {
+		if (process.platform !== "win32" && (statSync(path).mode & 0o111) === 0) return false;
+		const target = readFileSync(path, "utf8").match(/"([^"]+)"\s+(?:"\$@"|%\*)/)?.[1];
+		return Boolean(target && existsSync(target));
+	} catch {
+		return false;
+	}
 }
 
 export type HostState = "current" | "stale" | "missing";
