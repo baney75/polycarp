@@ -31,7 +31,7 @@ final class VoiceEngine: ObservableObject {
     /// own, the import really finished). Silas is asked to quit only when this is true.
     var takesOver: Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        return VoiceGate.takesOverNow(userEnabled: userEnabled, voiceDir: dir, silasDir: Product.silasSupportDir(home: home))
+        return VoiceGate.takesOverNow(userEnabled: userEnabled && partIsOn, voiceDir: dir, silasDir: Product.silasSupportDir(home: home))
     }
 
     /// The one line for the menu and Settings: why it's waiting, the error's reason and next step, or the status.

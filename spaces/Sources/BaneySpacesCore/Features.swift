@@ -113,6 +113,19 @@ public enum BrowserHosts {
         return changed
     }
 
+    /// The helper processes browsers started as their native host, from a `ps -axo pid=,command=` listing. A browser runs
+    /// it as `<helper> chrome-extension://<id>/`; the same helper serving agents has other arguments and is left alone, and
+    /// so is any other program.
+    public static func hostPids(ps: String, helper: String) -> [Int32] {
+        ps.split(whereSeparator: \.isNewline).compactMap { line in
+            let trimmed = line.drop(while: \.isWhitespace)
+            guard let space = trimmed.firstIndex(of: " "), let pid = Int32(trimmed[..<space]) else { return nil }
+            let command = trimmed[trimmed.index(after: space)...].drop(while: \.isWhitespace)
+            guard command.hasPrefix(helper + " ") else { return nil }
+            return command.contains(" chrome-extension://") ? pid : nil
+        }
+    }
+
     /// Removing Browser: parked manifests go too. A live one, if turning it off failed, stays for the person to see.
     @discardableResult
     public static func removeParked(home: URL) -> Int {

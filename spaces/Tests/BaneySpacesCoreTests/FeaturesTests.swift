@@ -126,6 +126,19 @@ final class FeaturesTests: XCTestCase {
         XCTAssertTrue(fm.fileExists(atPath: theirs.path))
     }
 
+    func testOnlyBrowserStartedHostsAreStopped() {
+        let helper = "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser"
+        let ps = """
+          101 \(helper) chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/ --parent-window=0
+          102 \(helper) serve --port 8787
+          103 /opt/homebrew/bin/tabkyra chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/
+         1004 \(helper) chrome-extension://abcdefghijklmnopabcdefghijklmnop/
+          105 /bin/zsh -c grep \(helper) chrome-extension://
+        garbage line
+        """
+        XCTAssertEqual(BrowserHosts.hostPids(ps: ps, helper: helper), [101, 1004])
+    }
+
     // MARK: The installer's checkboxes
 
     /// Runs one of install.sh's functions in bash, the way the installer does.
@@ -164,6 +177,16 @@ final class FeaturesTests: XCTestCase {
         FeatureFile.save(FeatureSet([.voice]), path: file.path)
         XCTAssertEqual(try installer("write_parts '\(dir.path)' 'browser'").0, 0)
         XCTAssertEqual(FeatureFile.load(path: file.path), FeatureSet([.voice]))
+    }
+
+    func testTheOldAppIsRetiredOnlyForSomeoneTakingWorkspaces() throws {
+        let installer = try String(contentsOf: Repo.root.deletingLastPathComponent().appendingPathComponent("install.sh"), encoding: .utf8)
+        let keep = try XCTUnwrap(installer.range(of: "grep -q '^workspaces = false'"))
+        let retire = try XCTUnwrap(installer.range(of: "if [ ${#OLD_APPS[@]} -gt 0 ]; then"))
+        XCTAssertLessThan(keep.lowerBound, retire.lowerBound, "the list is emptied before anything acts on it")
+        let choose = try XCTUnwrap(installer.range(of: "[ -n \"$REPLY\" ] || choose_parts"))
+        let download = try XCTUnwrap(installer.range(of: "# 1. Get the app."))
+        XCTAssertLessThan(choose.lowerBound, download.lowerBound, "the boxes come before the wait")
     }
 
     func testTheInstallerNeverPromptsWithoutATerminal() throws {

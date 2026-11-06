@@ -503,10 +503,17 @@ struct SetupView: View {
 
         if parts.current.contains(.workspaces) || parts.current.contains(.voice) {
         SettingsGroup("Permissions") {
+            if !parts.current.contains(.workspaces) {
+                SettingsRow("Let Silas type for you", help: "Silas watches for its key and types what you said into the app you're in.") {
+                    if model.trusted { SettingsStatusLabel(text: "Allowed") }
+                    else { Button("Allow Polycarp", action: model.allow).buttonStyle(.borderedProminent) }
+                }
+            } else {
             SettingsRow("Arrange windows", help: model.trusted ? "Polycarp can show, hide and move windows. It can't read what you type."
                         : "Lets Polycarp show, hide and move windows. It can't read what you type.") {
                 if model.trusted { SettingsStatusLabel(text: "Allowed") }
                 else { Button("Allow Polycarp", action: model.allow).buttonStyle(.borderedProminent) }
+            }
             }
             if !model.trusted { SettingsNote("macOS opens its settings. Turn on Polycarp, then come back; this window updates by itself.") }
             if !model.trusted && model.staleGrant {

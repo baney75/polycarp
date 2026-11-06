@@ -35,7 +35,7 @@ final class BrowserModel: ObservableObject {
     }
 
     func refresh() {
-        guard let helper, !refreshing else { return }
+        guard let helper, !refreshing, PartsModel.shared.current.contains(.browser) else { return }
         refreshing = true
         pollQueue.async { [weak self] in
             // A new app brings a new extension: the copy the browser loads is refreshed before anyone is asked to reload.
@@ -46,6 +46,18 @@ final class BrowserModel: ObservableObject {
                 self?.refreshing = false
                 if let parsed, parsed != self?.status { self?.status = parsed }
             }
+        }
+    }
+
+    /// Puts the browser link in the state Settings > General says. Off, the browser can't start the helper again, and a
+    /// helper it already started is stopped, so an agent mid-task loses the browser now rather than at the next restart.
+    func applyPart(on: Bool) {
+        queue.async { [self] in
+            BrowserHosts.setEnabled(on, home: FileManager.default.homeDirectoryForCurrentUser)
+            if on { _ = loadableFolder(); return }
+            guard let helper else { return }
+            let ps = Self.run(URL(fileURLWithPath: "/bin/ps"), ["-axo", "pid=,command="], timeout: 5)
+            for pid in BrowserHosts.hostPids(ps: String(decoding: ps.out, as: UTF8.self), helper: helper.path) { kill(pid, SIGTERM) }
         }
     }
 
