@@ -145,6 +145,48 @@ final class MoveToApplicationsTests: XCTestCase {
         XCTAssertTrue(FirstLaunch.shouldRunInstallStep(bundle: app("/Users/pat/Applications/Polycarp.app"), home: home, commandLinkTarget: nil))
     }
 
+    func testAnInstalledCopyThatIsAsNewIsTheOneOpened_theNewestOfThem() {
+        func versionOf(_ u: URL) -> String? { ["/Applications/Polycarp.app": "0.2.0", "/Users/pat/Applications/Polycarp.app": "0.4.0"][u.path] }
+        let p = MoveToApplications.plan(bundle: app("/Volumes/P/Polycarp.app"), home: home, canWrite: { _ in true },
+                                        installed: [app("/Applications/Polycarp.app"), app("/Users/pat/Applications/Polycarp.app")],
+                                        installedVersion: versionOf, thisVersion: "0.3.0", mountedImages: ["/Volumes/P"])
+        XCTAssertTrue(p.openInstalledOnly)
+        XCTAssertEqual(p.destination.path, "/Users/pat/Applications/Polycarp.app", "the 0.4.0 copy opens, not the 0.2.0 one beside it")
+        XCTAssertEqual(p.eject?.path, "/Volumes/P", "and the image is let go")
+        // Dragged to Applications already: it is installed, so it is never asked again.
+        XCTAssertFalse(MoveToApplications.shouldAsk(arguments: ["Polycarp"], bundle: app("/Applications/Polycarp.app"), home: home))
+    }
+
+    func testTheDownloadMarkIsClearedOnTheInstalledCopyToo() throws {
+        let runner = try Repo.text("Sources/BaneySpaces/MoveToApplicationsRunner.swift")
+        let clear = try XCTUnwrap(runner.range(of: "if plan.openInstalledOnly { MoveToApplications.clearDownloadMark(at: plan.destination) }"))
+        XCTAssertLessThan(clear.lowerBound, try XCTUnwrap(runner.range(of: "guard openAndWait(plan.destination)")).lowerBound, "before it is opened")
+        let delegate = try Repo.text("Sources/BaneySpaces/AppDelegate.swift")
+        let mark = try XCTUnwrap(delegate.range(of: "MoveToApplications.clearDownloadMark(at: Bundle.main.bundleURL)"))
+        XCTAssertLessThan(mark.lowerBound, try XCTUnwrap(delegate.range(of: "\"--in-place\", bundle")).lowerBound, "a dragged copy is cleared before the install step runs its tools")
+    }
+
+    func testAnInterruptedInstallGetsItsOldCopyBack() throws {
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appendingPathComponent("rec-\(UUID().uuidString)")
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: folder) }
+        let aside = folder.appendingPathComponent(".Polycarp-old.app"), installed = folder.appendingPathComponent("Polycarp.app")
+        try fm.createDirectory(at: aside.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+        // Interrupted after the old copy was set aside: nothing at the destination, so the old one comes back.
+        XCTAssertTrue(MoveToApplications.recoverInterruptedInstall(in: folder, fileManager: fm))
+        XCTAssertTrue(fm.fileExists(atPath: installed.appendingPathComponent("Contents").path))
+        XCTAssertFalse(fm.fileExists(atPath: aside.path))
+        // Nothing to recover now; and a set-aside copy beside a real install is never deleted.
+        XCTAssertFalse(MoveToApplications.recoverInterruptedInstall(in: folder, fileManager: fm))
+        try fm.createDirectory(at: aside.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+        XCTAssertFalse(MoveToApplications.recoverInterruptedInstall(in: folder, fileManager: fm))
+        XCTAssertTrue(fm.fileExists(atPath: aside.path), "kept")
+        let runner = try Repo.text("Sources/BaneySpaces/MoveToApplicationsRunner.swift")
+        XCTAssertFalse(runner.contains("removeItem(at: aside)"), "the old copy is never deleted before the new one is in")
+        XCTAssertTrue(try Repo.text("Sources/BaneySpaces/main.swift").contains("recoverInterruptedInstall"), "every launch")
+    }
+
     func testTheDownloadMarkComesOffTheCopyAndEverythingInIt() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("q-\(UUID().uuidString)")
         let inner = dir.appendingPathComponent("Polycarp.app/Contents/MacOS")
@@ -181,7 +223,9 @@ final class MoveToApplicationsTests: XCTestCase {
         let section = String(rest[..<(rest.range(of: "\n## ")?.lowerBound ?? rest.endIndex)])
         // Link addresses aren't read by a person; only the words are.
         let words = section.replacingOccurrences(of: "\\]\\([^)]*\\)", with: "]", options: .regularExpression)
-        XCTAssertTrue(words.contains("Download Polycarp"), words)
+        XCTAssertTrue(words.contains("[Download Polycarp]"), words)
+        XCTAssertTrue(section.contains("(https://github.com/baney75/polycarp/releases/download/preview/Polycarp.dmg)"), "the link is the file itself, so nobody chooses one")
+        XCTAssertTrue(words.contains("look for a chip whose name starts with Apple"), "a way to check, in plain words")
         XCTAssertTrue(words.contains("open the file, and drag"), words)
         XCTAssertTrue(words.contains("drag\nPolycarp onto Applications") || words.contains("drag Polycarp onto Applications"), words)
         XCTAssertTrue(words.contains("This download is for newer Macs with Apple silicon."), "an Intel owner is told")
@@ -220,8 +264,8 @@ final class LegacyRetirementTests: XCTestCase {
     }
 
     func testBaneySpacesGoesOnlyForANewArrivalWithItsSettingsCopiedAndNotRunning() {
-        func go(_ apps: [URL]? = nil, running: Bool = false, copied: Bool = true, done: Bool = false, finished: Bool = false) -> Bool {
-            LegacyRetirement.shouldRetire(legacyApps: apps ?? old, running: running, settingsCopied: copied, alreadyDone: done, welcomeFinished: finished)
+        func go(_ apps: [URL]? = nil, running: Bool = false, copied: Bool = true, done: Bool = false, finished: Bool = false, installed: Bool = true) -> Bool {
+            LegacyRetirement.shouldRetire(legacyApps: apps ?? old, running: running, settingsCopied: copied, alreadyDone: done, welcomeFinished: finished, polycarpInstalled: installed)
         }
         XCTAssertTrue(go())
         XCTAssertFalse(go([]), "not installed")
@@ -229,6 +273,12 @@ final class LegacyRetirementTests: XCTestCase {
         XCTAssertFalse(go(copied: false), "settings are copied first")
         XCTAssertFalse(go(done: true), "once")
         XCTAssertFalse(go(finished: true), "an existing user's BaneySpaces never disappears silently")
+        XCTAssertFalse(go(installed: false), "a Polycarp run from the Desktop, a build folder or the disk image removes nothing")
+        // Only the import unfinished: wait and try again, never retire.
+        XCTAssertTrue(LegacyRetirement.shouldWaitForImport(legacyApps: old, running: false, settingsCopied: false, alreadyDone: false, welcomeFinished: false, polycarpInstalled: true))
+        XCTAssertFalse(LegacyRetirement.shouldWaitForImport(legacyApps: old, running: false, settingsCopied: false, alreadyDone: false, welcomeFinished: false, polycarpInstalled: false), "not installed: nothing to wait for")
+        XCTAssertFalse(LegacyRetirement.shouldWaitForImport(legacyApps: old, running: false, settingsCopied: false, alreadyDone: false, welcomeFinished: true, polycarpInstalled: true))
+        XCTAssertFalse(LegacyRetirement.shouldWaitForImport(legacyApps: old, running: false, settingsCopied: true, alreadyDone: false, welcomeFinished: false, polycarpInstalled: true))
     }
 
     func testSettingsCountAsCopiedWhenTheImportFinishedOrThereWasNothing() throws {

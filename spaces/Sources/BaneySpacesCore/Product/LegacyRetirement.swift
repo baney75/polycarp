@@ -29,8 +29,18 @@ public enum LegacyRetirement {
 
     /// Only while the welcome window hasn't been finished: that is a new arrival, and the window tells them. A person who
     /// finished it before keeps their BaneySpaces; it never disappears silently.
-    public static func shouldRetire(legacyApps: [URL], running: Bool, settingsCopied: Bool, alreadyDone: Bool, welcomeFinished: Bool) -> Bool {
-        !legacyApps.isEmpty && !running && settingsCopied && !alreadyDone && !welcomeFinished
+    /// Also only when this Polycarp is itself installed (in an Applications folder), so a copy run from the Desktop, a build
+    /// folder or the disk image never removes BaneySpaces, and only once the settings import has really finished.
+    public static func shouldRetire(legacyApps: [URL], running: Bool, settingsCopied: Bool, alreadyDone: Bool, welcomeFinished: Bool,
+                                    polycarpInstalled: Bool) -> Bool {
+        !legacyApps.isEmpty && !running && settingsCopied && !alreadyDone && !welcomeFinished && polycarpInstalled
+    }
+
+    /// Everything but the import is in place and only the import is unfinished: try again shortly.
+    public static func shouldWaitForImport(legacyApps: [URL], running: Bool, settingsCopied: Bool, alreadyDone: Bool, welcomeFinished: Bool,
+                                           polycarpInstalled: Bool) -> Bool {
+        !settingsCopied && shouldRetire(legacyApps: legacyApps, running: running, settingsCopied: true, alreadyDone: alreadyDone,
+                                        welcomeFinished: welcomeFinished, polycarpInstalled: polycarpInstalled)
     }
 
     public static func alreadyDone(supportDir: URL) -> Bool {

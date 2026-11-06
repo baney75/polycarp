@@ -27,8 +27,9 @@ On an Intel Mac, or with
 
 ### Download and open
 
-Download Polycarp from [the download page](https://github.com/baney75/polycarp/releases/tag/preview), open the file, and drag
-Polycarp onto Applications. This download is for newer Macs with Apple silicon.
+[Download Polycarp](https://github.com/baney75/polycarp/releases/download/preview/Polycarp.dmg), open the file, and drag
+Polycarp onto Applications. This download is for newer Macs with Apple silicon. To check, open the Apple menu, choose
+About This Mac, and look for a chip whose name starts with Apple.
 
 The first time, your Mac says it can't check the app. That's expected: open System Settings, choose Privacy & Security,
 scroll down and press Open Anyway. If you open Polycarp from the file or your Downloads folder instead of Applications, it

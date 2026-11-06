@@ -112,7 +112,13 @@ public enum MoveToApplications {
         default: break
         }
         let newest = installed.compactMap { installedVersion($0) }.first { !isNewer(thisVersion, than: $0) }
-        return Plan(source: bundle, destination: dest, existing: installed, openInstalledOnly: newest != nil, eject: eject, trashOriginal: trash)
+        // Same or newer installed: that is the copy to open, the newest of them, never an older one beside it.
+        var open = dest
+        if newest != nil {
+            let versions = installed.compactMap { app in installedVersion(app).map { (app, $0) } }
+            if let best = versions.reduce(nil as (URL, String)?, { acc, cur in acc.map { isNewer(cur.1, than: $0.1) ? cur : $0 } ?? cur }) { open = best.0 }
+        }
+        return Plan(source: bundle, destination: open, existing: installed, openInstalledOnly: newest != nil, eject: eject, trashOriginal: trash)
     }
 
     /// Mount points of the disk images `hdiutil info -plist` lists. A folder on an external or network drive is not in this
@@ -137,6 +143,17 @@ public enum MoveToApplications {
             pause()
         }
         return true
+    }
+
+    /// An install that stopped after the old copy was set aside (`.Polycarp-old.app`) but before the new one arrived leaves no
+    /// Polycarp in that folder. Put the old one back. If a Polycarp is there, the set-aside one is left where it is (it is never
+    /// deleted here). Returns true when it restored one.
+    @discardableResult
+    public static func recoverInterruptedInstall(in folder: URL, fileManager fm: FileManager = .default) -> Bool {
+        let aside = folder.appendingPathComponent(".\(Product.name)-old.app")
+        let app = folder.appendingPathComponent(Product.name + ".app")
+        guard fm.fileExists(atPath: aside.path), !fm.fileExists(atPath: app.path) else { return false }
+        return (try? fm.moveItem(at: aside, to: app)) != nil
     }
 
     /// The disk image is let go by a separate, short-lived process after this one has exited (an app can't eject the disk

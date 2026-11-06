@@ -21,6 +21,9 @@ if let problem = EntryPoint.usageError(arguments: CommandLine.arguments) {
     exit(EntryPoint.usageExit)
 }
 
+// An install that was interrupted after the old copy was set aside gets its old copy back before anything else.
+for folder in ["/Applications", NSHomeDirectory() + "/Applications"] { MoveToApplications.recoverInterruptedInstall(in: URL(fileURLWithPath: folder, isDirectory: true)) }
+
 // Opened from the disk image, Downloads or a temporary read-only place: offer to move to Applications first, before
 // anything is touched. This ends the process unless the copy is already installed (or this is a one-shot).
 MoveToApplicationsRunner.runIfNeeded(home: FileManager.default.homeDirectoryForCurrentUser)

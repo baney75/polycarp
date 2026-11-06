@@ -41,6 +41,9 @@ enum MoveToApplicationsRunner {
             }
         }
 
+        // The person has just approved this version, so the installed copy shouldn't ask again either.
+        if plan.openInstalledOnly { MoveToApplications.clearDownloadMark(at: plan.destination) }
+
         // Open the installed copy, and only when it really is open let go of the disk image and tidy Downloads.
         guard openAndWait(plan.destination) else {
             _ = alert(MoveToApplications.didNotOpenTitle, MoveToApplications.didNotOpenDetail, buttons: ["OK"])
@@ -64,7 +67,10 @@ enum MoveToApplicationsRunner {
         let folder = plan.destination.deletingLastPathComponent()
         let temp = folder.appendingPathComponent(".\(Product.name)-moving.app")
         let aside = folder.appendingPathComponent(".\(Product.name)-old.app")
-        try? fm.removeItem(at: temp); try? fm.removeItem(at: aside)
+        // A set-aside old copy from an interrupted install is put back first, never deleted.
+        MoveToApplications.recoverInterruptedInstall(in: folder)
+        try? fm.removeItem(at: temp)
+        if fm.fileExists(atPath: aside.path) { try? fm.trashItem(at: aside, resultingItemURL: nil) }
         do {
             try fm.copyItem(at: plan.source, to: temp)
             MoveToApplications.clearDownloadMark(at: temp)
