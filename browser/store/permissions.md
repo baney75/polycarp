@@ -16,7 +16,7 @@ Paste each reason into the Chrome Web Store dashboard's Privacy tab. `test/store
 | `nativeMessaging` | Connects to the Polycarp helper on the user's computer, which is how coding agents such as Claude Code reach the extension. It's optional for the user, and side panel chat works without it. |
 | `alarms` | Keeps the connection to the helper alive across service worker restarts. |
 | `userScripts` (optional) | Asked for only when the user turns it on. Runs the agent's page scripts in an isolated world, so they can't touch the page's own scripts and aren't blocked by its security policy. |
-| `http://*/*` | The agent works on whatever site the user sends it to, so it can't name them ahead of time. Each new site still needs the user's approval, in the side panel or through `polycarp browser allow`, before the agent can open it. |
+| `http://*/*` | The agent works on whatever site the user sends it to, so it can't name them ahead of time. Each new site still needs approval before the agent can open it, in the side panel or with `polycarp browser allow`, a command on the user's own computer. |
 | `https://*/*` | Same as above. |
 | `http://localhost/*` | Local development servers, and AI models running on the user's own computer. |
 | `http://127.0.0.1/*` | Same as above. |

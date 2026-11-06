@@ -36,7 +36,7 @@ None of these get your pages or your chats, unless the agent is told to look som
 | Speech models for side panel dictation, if you use it | Hugging Face | A download request. Your voice stays on your computer |
 | Packages the agent loads to run its own code, such as a chart or a spreadsheet library | The CDN it names: esm.run, jsDelivr, unpkg, cdnjs, esm.sh, Skypack or Tailwind | The name of the package. This code runs in an isolated sandbox with no access to your pages or your browser |
 | Checking sources for the library | Crossref, OpenAlex, doi.org | The citation being checked |
-| Updates and community skills, for copies not from the Chrome Web Store | GitHub | An ordinary request |
+| Community skills, and updates for copies not from the Chrome Web Store | GitHub | An ordinary request |
 
 ### What stays on your computer
 

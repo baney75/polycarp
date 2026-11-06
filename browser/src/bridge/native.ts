@@ -745,7 +745,19 @@ function onHostMessage(message: HostToExt): void {
 					.then((r) => send({ type: "response", clientId: message.clientId, id: message.id, ...r }));
 				return;
 			}
-			if (message.method === "bridge.reload" && !runningFromStore()) {
+			if (message.method === "bridge.reload") {
+				if (runningFromStore()) {
+					send({
+						type: "response",
+						clientId: message.clientId,
+						id: message.id,
+						error: {
+							code: ERR.NOT_FOUND,
+							message: "A copy from the Chrome Web Store is updated by the browser.",
+						},
+					});
+					return;
+				}
 				// Development aid: reload the extension so a rebuilt bundle is picked up without the extensions page.
 				send({ type: "response", clientId: message.clientId, id: message.id, result: { reloading: true } });
 				setTimeout(() => chrome.runtime.reload(), 200);
