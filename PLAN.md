@@ -94,3 +94,6 @@ Asked for by Donovan, 2026-11-05: it has to work better and look much better, wi
 ## Later, with an owner's decision
 - Paid: domains, Apple Developer and Google Play accounts, Windows code signing
 - An attorney's trademark search, including logos, before filing or a big launch
+- [ ] The free install route (Download, disk image, Open Anyway) shows Apple's own warning the first time Polycarp opens, because the app isn't notarized. An owner decision on Apple Developer enrollment would remove it.
+- [ ] Live on a real Mac, after a person installs from the download and BaneySpaces goes to the Trash: if BaneySpaces had been set to start at login, restart the Mac and check nothing starts it, or that Polycarp quits it if it does (`LegacyWatcher`). Polycarp doesn't launch the old app to clear its login item.
+

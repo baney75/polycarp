@@ -329,10 +329,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func linkCommandIfNeeded() {
         let bundle = Bundle.main.bundleURL.path
         let home = NSHomeDirectory()
-        guard bundle.hasPrefix("/Applications/") || bundle.hasPrefix("\(home)/Applications/"),
-              let script = Bundle.main.url(forResource: "install-app", withExtension: "sh") else { return }
         let link = "\(home)/.local/bin/\(Product.commandName)"
-        if let target = try? FileManager.default.destinationOfSymbolicLink(atPath: link), target.hasPrefix(bundle + "/") { return }
+        guard FirstLaunch.shouldRunInstallStep(bundle: Bundle.main.bundleURL, home: URL(fileURLWithPath: home),
+                                               commandLinkTarget: try? FileManager.default.destinationOfSymbolicLink(atPath: link)),
+              let script = Bundle.main.url(forResource: "install-app", withExtension: "sh") else { return }
+        // A copy dragged to Applications still carries the download mark on every file, including the tools this step starts.
+        MoveToApplications.clearDownloadMark(at: Bundle.main.bundleURL)
         DispatchQueue.global(qos: .utility).async {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -403,6 +405,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         linkCommandIfNeeded()
         // A new app brings a new extension: refresh the copy the browser loads now, off the main thread, before anyone is told to reload.
         DispatchQueue.global(qos: .utility).async { _ = BrowserModel.shared.loadableFolder() }
+        // A person who came by the disk image never ran install.sh: BaneySpaces, if there, goes to the Trash once Polycarp runs.
+        let welcomeFinishedAtLaunch = UserDefaults.standard.bool(forKey: Welcome.finishedKey)
+        // Tried at 5 s, and again every 10 s (for up to two minutes) while only the settings import is unfinished.
+        func tryRetirement(_ attempt: Int) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + (attempt == 0 ? 5 : 10)) {
+                if !LegacyRetirementRunner.runIfDue(welcomeFinished: welcomeFinishedAtLaunch), attempt < 12 { tryRetirement(attempt + 1) }
+            }
+        }
+        tryRetirement(0)
         NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleURL(_:reply:)),
                                                      forEventClass: AEEventClass(kInternetEventClass),
                                                      andEventID: AEEventID(kAEGetURL))
