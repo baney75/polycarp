@@ -1,4 +1,4 @@
-// `tabkyra doctor`'s user-scripts row against a fake native host that answers bridge.debug
+// `polycarp browser doctor`'s user-scripts row against a fake native host that answers bridge.debug
 // with each status the extension can report. The row must name the real cause and its fix:
 // a missing permission is not "the toggle is off", and an old extension still gets a row.
 import assert from "node:assert/strict";

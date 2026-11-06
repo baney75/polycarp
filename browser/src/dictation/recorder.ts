@@ -10,7 +10,7 @@ export const MAX_SECONDS = 300;
 
 export class MicPermissionError extends Error {
 	constructor() {
-		super("Tabkyra doesn't have microphone access yet.");
+		super("Polycarp doesn't have microphone access yet.");
 		this.name = "MicPermissionError";
 	}
 }

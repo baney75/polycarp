@@ -1,5 +1,5 @@
 /**
- * Which sign-ins Tabkyra offers, and the guard that keeps the removed ones out.
+ * Which sign-ins Polycarp offers, and the guard that keeps the removed ones out.
  * docs/auth-policy.md has the provider terms behind each decision.
  *
  * Every subscription sign-in this fork inherited borrowed another product's identity
@@ -25,7 +25,7 @@ export const API_BILLING_NOTE = "API use is billed by the provider to the accoun
 export class RemovedSignInError extends Error {
 	constructor(provider: string) {
 		super(
-			`${provider}: subscription sign-in was removed from Tabkyra because it used another app's identity, which the provider's terms forbid. Add an API key in Settings > Providers instead.`,
+			`${provider}: subscription sign-in was removed from Polycarp because it used another app's identity, which the provider's terms forbid. Add an API key in Settings > Providers instead.`,
 		);
 		this.name = "RemovedSignInError";
 	}

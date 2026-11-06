@@ -12,7 +12,7 @@
  *   signed-in URLs, account names, cookies or copied page text. Submission refuses a skill
  *   with any of these (D6); it never edits the skill behind the user's back.
  *
- * The same checks run in `tabkyra skill lint --community`, `skill test`, `skill submit`, CI,
+ * The same checks run in `polycarp browser skill lint --community`, `skill test`, `skill submit`, CI,
  * and on every client before a synced skill is used.
  */
 

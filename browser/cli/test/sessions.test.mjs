@@ -1,5 +1,5 @@
 // Sessions from the CLI's side: which session `tabkyra mcp` picks, how tabs_context reads, and
-// `tabkyra sessions` / `tabkyra tabs` without a browser. The live behavior is in e2e-bridge.
+// `polycarp browser sessions` / `polycarp browser tabs` without a browser. The live behavior is in e2e-bridge.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -82,7 +82,7 @@ test("outside a project (the disk root, the home folder, a home that is a git re
 
 test("tabs_context is a few short lines: the session, news, then one line per tab", () => {
 	const text = formatContext({
-		session: { name: "shop-1a2b", group: { title: "Tabkyra · claude · shop", color: "blue", collapsed: true }, currentTabId: 7 },
+		session: { name: "shop-1a2b", group: { title: "Polycarp · claude · shop", color: "blue", collapsed: true }, currentTabId: 7 },
 		notices: ["The user took tab 9 out of your group; it's theirs now and you can't use it."],
 		tabs: [
 			{ tabId: 7, url: "https://example.com/cart", title: "Cart", current: true },
@@ -92,13 +92,13 @@ test("tabs_context is a few short lines: the session, news, then one line per ta
 	assert.equal(
 		text,
 		[
-			'Session shop-1a2b | group "Tabkyra · claude · shop" (blue, collapsed by the user) | 2 tabs',
+			'Session shop-1a2b | group "Polycarp · claude · shop" (blue, collapsed by the user) | 2 tabs',
 			"News: The user took tab 9 out of your group; it's theirs now and you can't use it.",
 			'* 7 "Cart" https://example.com/cart',
 			'  8 "Shop" https://example.com/',
 		].join("\n"),
 	);
-	assert.match(formatContext({ session: { name: "x", group: { title: "Tabkyra · claude · x", open: false }, currentTabId: null }, tabs: [] }), /no group open yet.*\nNo tabs yet: navigate opens one/s);
+	assert.match(formatContext({ session: { name: "x", group: { title: "Polycarp · claude · x", open: false }, currentTabId: null }, tabs: [] }), /no group open yet.*\nNo tabs yet: navigate opens one/s);
 	assert.match(formatContext({ tabs: [{ tabId: 1, url: "u", title: "t", current: false }] }), /No current tab: tabs_select one, or navigate\./);
 });
 
@@ -110,7 +110,7 @@ function run(...args) {
 	return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
-test("tabkyra sessions and tabs: usage errors exit 2, no browser exits 1 with the fix", () => {
+test("polycarp browser sessions and tabs: usage errors exit 2, no browser exits 1 with the fix", () => {
 	for (const args of [["sessions", "frob"], ["sessions", "show"], ["sessions", "rename", "a"], ["sessions", "end", "a", "--bogus"], ["tabs", "a", "b"], ["mcp", "--session"]]) {
 		const r = run(...args);
 		assert.equal(r.code, 2, `tabkyra ${args.join(" ")}: ${r.err}`);

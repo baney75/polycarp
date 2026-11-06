@@ -72,7 +72,7 @@ mkdirSync(out, { recursive: true });
 const version = JSON.parse(readFileSync("static/manifest.chrome.json", "utf8")).version;
 const commit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 for (const f of ["background.js", "sidepanel.js", "sidepanel.html", "app.css"]) writeFileSync(join(out, f), "// " + commit);
-writeFileSync(join(out, "manifest.json"), JSON.stringify({ manifest_version: 3, name: "Tabkyra", version }));
+writeFileSync(join(out, "manifest.json"), JSON.stringify({ manifest_version: 3, name: "Polycarp", version }));
 writeFileSync(join(out, "build-info.json"), JSON.stringify({ id: randomUUID(), commit, version, builtAt: new Date().toISOString() }));
 `;
 const BUILD_CLI = `
@@ -323,7 +323,7 @@ test("skill refresh replaces unedited copies and reports edited ones", () => {
 	assert.equal(install.status, 0, install.stdout + install.stderr);
 	const plain = join(claudeHome, "skills", "tabkyra", "SKILL.md");
 	const edited = join(claudeHome, "skills", "academic-research", "SKILL.md");
-	// An older bundled text Tabkyra wrote (recorded), and a hand edit (not recorded).
+	// An older bundled text Polycarp wrote (recorded), and a hand edit (not recorded).
 	const marker = "<!-- Installed by `tabkyra skill install`; reinstalling replaces this file. -->";
 	const older = `---\nname: tabkyra\ndescription: old\n---\n${marker}\nold text\n`;
 	writeFileSync(plain, older);
@@ -589,7 +589,7 @@ test("a host that starts after an updater died says so instead of showing it as 
 test("a skills record that can't be written doesn't stop the install", async () => {
 	const c = makeCheckout();
 	pushCommit(c, "Something");
-	// Tabkyra refuses to write through a linked config folder; the update must still install.
+	// Polycarp refuses to write through a linked config folder; the update must still install.
 	const real = join(tmp, "real-config");
 	mkdirSync(real, { recursive: true });
 	const linked = join(tmp, "linked-config");

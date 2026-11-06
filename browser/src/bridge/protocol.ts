@@ -1,5 +1,5 @@
 /**
- * Wire protocol of the tabkyra bridge. Shared by the extension (src/bridge) and
+ * Wire protocol of the Polycarp bridge. Shared by the extension (src/bridge) and
  * the CLI (cli/src), which imports this file directly.
  *
  *   harness ── stdio MCP ── `tabkyra mcp` ── unix socket ── native host ── native messaging ── extension
@@ -69,6 +69,8 @@ export interface HostWelcome {
 	extensionConnected: boolean;
 	/** The browser profile behind this host, once its extension has said hello. */
 	browserId?: string;
+	/** Which browser started this host (a name like Chrome or Brave), when the system said. */
+	browserName?: string;
 }
 
 export interface HostResponse {
@@ -227,7 +229,7 @@ export interface HostPing {
 	type: "ping";
 }
 
-/** How Tabkyra was installed, which decides what "update" does (docs/updates.md). */
+/** How Polycarp was installed, which decides what "update" does (docs/updates.md). */
 export type InstallMode = "release" | "checkout" | "unmanaged";
 
 /** The record of the last update, rollback or reinstall (~/.config/tabkyra/last-update.json). */
@@ -281,6 +283,8 @@ export interface HostCommunityStatus {
 /** What the last check found, and everything Settings > Updates shows. */
 export interface HostUpdateStatus {
 	type: "update_status";
+	/** What a person types to run this helper: "polycarp browser" inside the app, "tabkyra" otherwise. */
+	command?: string;
 	available: boolean;
 	/** Release version, or "<version> (<commit>)" in a checkout. */
 	current: string;
@@ -500,7 +504,7 @@ export const BRIDGE_METHODS = [
 export type BridgeMethod = (typeof BRIDGE_METHODS)[number];
 
 // bridge.debug `userScripts`: why in-page scripts can or can't use chrome.userScripts
-// (probe and classifier in src/browser/userscripts-status.ts; read by `tabkyra doctor`).
+// (probe and classifier in src/browser/userscripts-status.ts; read by `polycarp browser doctor`).
 
 /**
  * - ready: the API is present and a call into it succeeded.

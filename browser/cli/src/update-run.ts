@@ -1,5 +1,5 @@
 /**
- * `tabkyra update --host [--activate|--rollback|--reinstall]`: the update the native host runs
+ * `polycarp browser update --host [--activate|--rollback|--reinstall]`: the update the native host runs
  * for the side panel, as a child process. It prints one JSON line per step ({phase, message})
  * and a last one with phase "done" or "failed"; the host forwards them to the extension. Each
  * line is also written to ~/.config/tabkyra/update-progress.json, so a host that restarts (the
@@ -10,7 +10,7 @@
  *   --host --activate swap the staged build in, refresh skills, record What's new. The extension
  *                     asks for this only when no agent runs, and reloads right after.
  *
- * What "update" means depends on how Tabkyra runs (detectMode):
+ * What "update" means depends on how Polycarp runs (detectMode):
  *   release:   the signed GitHub release flow of update.ts, with its checks unchanged.
  *   checkout:  fetch, git pull --ff-only on main, setup-siblings, build (checkout.ts).
  *   unmanaged: an npm install or copied folder; refused, with what to run instead.
@@ -48,6 +48,7 @@ import {
 	writeLastUpdate,
 	writeStatus,
 } from "./update.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export type { HostRunAction, ProgressEvent, ProgressRecord } from "./update-progress.ts";
 
@@ -108,7 +109,7 @@ function skillsLine(skills: LastUpdate["skills"]): string {
 /** Swallow the log lines of the terminal flow; the steps are reported as phases instead. */
 const quiet = (_line: string) => {};
 
-const WHEN_IDLE = "It installs when no agent is running, then Tabkyra reloads.";
+const WHEN_IDLE = "It installs when no agent is running, then Polycarp reloads.";
 
 // ---- release mode -------------------------------------------------------------------------
 
@@ -271,7 +272,7 @@ export async function runHostAction(action: HostRunAction): Promise<number> {
 	try {
 		if (mode === "unmanaged") {
 			throw new UpdateError(
-				`This Tabkyra runs from ${root}, which is neither a release install nor a git checkout, so it can't update itself from the side panel. Run tabkyra update in a terminal.`,
+				`This Polycarp runs from ${root}, which is neither a release install nor a git checkout, so it can't update itself from the side panel. Run ${COMMAND_NAME} update in a terminal.`,
 			);
 		}
 		if (mode === "release") {
@@ -295,7 +296,7 @@ export async function runHostAction(action: HostRunAction): Promise<number> {
 				/* the next updater or host start repairs it; the mismatch banner shows meanwhile */
 			}
 			const extensionBuild = readBuildInfo(join(mode === "release" ? appDir() : root, "dist-chrome"))?.id;
-			emit({ phase: "failed", message: `${message} Reloading Tabkyra to run what is installed.`, reload: true, extensionBuild });
+			emit({ phase: "failed", message: `${message} Reloading Polycarp to run what is installed.`, reload: true, extensionBuild });
 		} else emit({ phase: "failed", message });
 		return 1;
 	}

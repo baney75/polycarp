@@ -21,7 +21,7 @@ declare module "@mariozechner/mini-lit" {
 		"Click the download button above to view it on your computer.": string;
 		Settings: string;
 
-		// Tabkyra extension keys
+		// Polycarp extension keys
 		// Custom provider dialog
 		"A custom provider with that name already exists": string;
 		"API Key (optional)": string;
@@ -115,9 +115,8 @@ declare module "@mariozechner/mini-lit" {
 		"Waiting for selection": string;
 		"Preparing element selector...": string;
 		About: string;
-		"You steer. Tabkyra works the tabs.": string;
+		"You steer. Polycarp works the tabs.": string;
 		"An AI agent in your side panel, and a browser your coding agents can drive.": string;
-		"The name joins tab and kyra, from Greek kybernētēs, “helmsman”.": string;
 		"Built on the work of": string;
 		"the agent bridge, the CLI and MCP server, agent tab groups, per-tab side panels and the foreground guard.": string;
 		"the original Sitegeist extension and the pi agent libraries it runs on.": string;
@@ -283,11 +282,9 @@ const tabkyraTranslations = {
 		"Waiting for selection": "Waiting for selection",
 		"Preparing element selector...": "Preparing element selector...",
 		About: "About",
-		"You steer. Tabkyra works the tabs.": "You steer. Tabkyra works the tabs.",
+		"You steer. Polycarp works the tabs.": "You steer. Polycarp works the tabs.",
 		"An AI agent in your side panel, and a browser your coding agents can drive.":
 			"An AI agent in your side panel, and a browser your coding agents can drive.",
-		"The name joins tab and kyra, from Greek kybernētēs, “helmsman”.":
-			"The name joins tab and kyra, from Greek kybernētēs, “helmsman”.",
 		"Built on the work of": "Built on the work of",
 		"the agent bridge, the CLI and MCP server, agent tab groups, per-tab side panels and the foreground guard.":
 			"the agent bridge, the CLI and MCP server, agent tab groups, per-tab side panels and the foreground guard.",
@@ -453,11 +450,9 @@ const tabkyraTranslations = {
 		"Waiting for selection": "Warte auf Auswahl",
 		"Preparing element selector...": "Bereite Element-Auswahl vor...",
 		About: "Über",
-		"You steer. Tabkyra works the tabs.": "Du steuerst. Tabkyra bedient die Tabs.",
+		"You steer. Polycarp works the tabs.": "Du steuerst. Polycarp bedient die Tabs.",
 		"An AI agent in your side panel, and a browser your coding agents can drive.":
 			"Ein KI-Agent in deiner Seitenleiste und ein Browser, den deine Coding-Agenten steuern können.",
-		"The name joins tab and kyra, from Greek kybernētēs, “helmsman”.":
-			"Der Name verbindet „Tab“ und „kyra“, von griechisch kybernētēs, „Steuermann“.",
 		"Built on the work of": "Aufgebaut auf der Arbeit von",
 		"the agent bridge, the CLI and MCP server, agent tab groups, per-tab side panels and the foreground guard.":
 			"Agenten-Bridge, CLI und MCP-Server, Tab-Gruppen für Agenten, Seitenleisten pro Tab und den Vordergrundschutz.",

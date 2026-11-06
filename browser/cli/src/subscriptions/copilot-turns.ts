@@ -4,7 +4,7 @@
  * the chat no longer matches (reopened, edited, another model), starts a fresh session that gets
  * the earlier messages as context.
  *
- * Tabkyra's browser tools are declared to the SDK with handlers that wait for the side panel:
+ * Polycarp's browser tools are declared to the SDK with handlers that wait for the side panel:
  * a tool call ends the turn with stopReason "toolUse", the side panel runs the tool, and the
  * next turn's tool results resolve the waiting handlers. Only these tools exist in the session
  * (mode "empty", availableTools), so the SDK never runs a shell or touches files.
@@ -230,13 +230,13 @@ export class CopilotTurns {
 		}));
 		conv.session = await client.createSession({
 			model: req.model,
-			clientName: "Tabkyra",
+			clientName: "Tabkyra", // product-name allowlist: the name GitHub knows this client by
 			streaming: true,
 			tools,
 			availableTools: tools.map((t) => t.name),
 			systemMessage: { mode: "append", content: req.systemPrompt },
 			...(req.reasoningEffort ? { reasoningEffort: req.reasoningEffort } : {}),
-			// Only Tabkyra's own tools exist, and they skip permission; refuse anything else.
+			// Only Polycarp's own tools exist, and they skip permission; refuse anything else.
 			onPermissionRequest: () => ({ kind: "denied-no-approval-rule-and-could-not-request-from-user" }),
 		});
 		conv.unsubscribe = conv.session.on((event) => this.onEvent(conv, event));

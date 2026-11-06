@@ -1,8 +1,8 @@
 /**
- * Remote MCP: `tabkyra serve` exposes the MCP server over Streamable HTTP for agents that
- * aren't on this machine (cloud agents, another device), and `tabkyra token` manages who
+ * Remote MCP: `polycarp browser serve` exposes the MCP server over Streamable HTTP for agents that
+ * aren't on this machine (cloud agents, another device), and `polycarp browser token` manages who
  * may use it. Off unless started. It binds to loopback only; reaching it from elsewhere
- * goes through a tunnel that terminates TLS (`tabkyra tunnel`, tunnel.ts).
+ * goes through a tunnel that terminates TLS (`polycarp browser tunnel`, tunnel.ts).
  *
  * Every request needs a bearer token. Tokens are per client, scoped, revocable, and stored
  * only as SHA-256 hashes. There is no wildcard: a token lists its scopes, and a session sees
@@ -10,6 +10,7 @@
  * listed or called.
  */
 
+import { COMMAND_NAME } from "./self.ts";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -45,10 +46,10 @@ export const SCOPES: Record<string, { tools: string[]; what: string }> = {
 	"library.write": { tools: ["library_add"], what: "Add sources to the library (fetches from doi.org, OpenAlex, Crossref)" },
 	"threads.read": {
 		tools: ["threads_list", "thread_read", "thread_search"],
-		what: "Read your past Tabkyra side panel chats (never private-mode ones)",
+		what: "Read your past Polycarp side panel chats (never private-mode ones)",
 	},
 	"skills.read": { tools: ["skill_match", "skill_read"], what: "Find the skill for a task and read the bundled skills (never your local edits)" },
-	"user.ask": { tools: ["ask_user"], what: "Ask the user multiple-choice questions in the Tabkyra side panel and get their answers" },
+	"user.ask": { tools: ["ask_user"], what: "Ask the user multiple-choice questions in the Polycarp side panel and get their answers" },
 	"web.search": { tools: ["search"], what: "Search the web through the user's self-hosted SearXNG (SEARXNG_URL)" },
 	"web.scrape": {
 		tools: ["page_markdown", "map", "crawl"],
@@ -64,7 +65,7 @@ export interface TokenRecord {
 	createdAt: string;
 	revokedAt?: string;
 	lastUsedAt?: string;
-	/** "link": the token `tabkyra link run` holds for its own loopback serve. Only that serve accepts it (see ServeOptions.acceptLinkTokens). */
+	/** "link": the token `polycarp browser link run` holds for its own loopback serve. Only that serve accepts it (see ServeOptions.acceptLinkTokens). */
 	kind?: "link";
 }
 
@@ -280,7 +281,7 @@ export interface ServeOptions {
 	/** Extra Host values to accept besides the public URL's and loopback (with oauth only). */
 	allowedHosts?: string[];
 	/**
-	 * Accept the link-kind token and honor the hub's scope headers on it. Only `tabkyra link run` sets
+	 * Accept the link-kind token and honor the hub's scope headers on it. Only `polycarp browser link run` sets
 	 * this, on its own loopback serve. It can't be combined with oauth (a public route): a link token
 	 * must never be usable from the internet.
 	 */
@@ -291,7 +292,7 @@ export interface ServeOptions {
 
 /** Serve MCP over Streamable HTTP on loopback. Each session is bound to the token that opened it. */
 export async function serve(options: ServeOptions): Promise<{ close: () => Promise<void>; url: string; sessionCount: () => number; closeSessions: () => void }> {
-	if (!LOOPBACK.has(options.host)) throw new Error(`tabkyra serve binds to loopback only (got ${options.host}). Use tabkyra tunnel to reach it from another device over TLS.`);
+	if (!LOOPBACK.has(options.host)) throw new Error(`${COMMAND_NAME} serve binds to loopback only (got ${options.host}). Use ${COMMAND_NAME} tunnel to reach it from another device over TLS.`);
 	if (options.acceptLinkTokens && options.oauth) throw new Error("A link token is never accepted on a public route: acceptLinkTokens can't be combined with a public URL.");
 	const sessions = new Map<string, { transport: StreamableHTTPServerTransport; tokenId: string; lastSeen: number }>();
 	const IDLE_MS = 30 * 60_000;
@@ -342,7 +343,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 
 	const http = createServer((req: IncomingMessage, res: ServerResponse) => {
 		handle(req, res).catch((err) => {
-			process.stderr.write(`[tabkyra serve] ${err instanceof Error ? err.message : String(err)}\n`);
+			process.stderr.write(`[${COMMAND_NAME} serve] ${err instanceof Error ? err.message : String(err)}\n`);
 			if (!res.headersSent) deny(res, 500, "Internal error.");
 			else res.end();
 		});
@@ -368,7 +369,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		}
 		if (path !== "/mcp") return deny(res, 404, "Not found. The MCP endpoint is /mcp.");
 		const token = caller(req.headers.authorization);
-		if (!token) return deny(res, 401, oauth ? "Connect with OAuth or a valid, unrevoked bearer token." : "A valid, unrevoked bearer token is required (tabkyra token create).");
+		if (!token) return deny(res, 401, oauth ? "Connect with OAuth or a valid, unrevoked bearer token." : `A valid, unrevoked bearer token is required (${COMMAND_NAME} token create).`);
 		const sessionId = req.headers["mcp-session-id"];
 		const existing = typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
 		if (existing) {

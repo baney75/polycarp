@@ -1,5 +1,5 @@
 /**
- * The two subscription sign-ins Tabkyra offers, both on routes the provider documents for
+ * The two subscription sign-ins Polycarp offers, both on routes the provider documents for
  * third-party apps (docs/auth-policy.md). Shared by the extension and the native host
  * (cli/src/subscriptions), which imports this file directly.
  *
@@ -9,7 +9,7 @@
 
 /** Provider id for ChatGPT plan usage through Sign in with ChatGPT (open-source path). */
 export const CHATGPT_PROVIDER = "chatgpt-plan";
-/** Provider id for GitHub Copilot through the Copilot SDK and Tabkyra's own OAuth App. */
+/** Provider id for GitHub Copilot through the Copilot SDK and Polycarp's own OAuth App. */
 export const COPILOT_PROVIDER = "copilot-plan";
 export const SUBSCRIPTION_PROVIDERS: ReadonlySet<string> = new Set([CHATGPT_PROVIDER, COPILOT_PROVIDER]);
 
@@ -28,7 +28,7 @@ export const SIWC = {
 	/** First-time registration entrypoint; never saved and never used for a token exchange. */
 	dynamicClient: "dynamic_agent_client",
 	/** Our app's actual name, the same in every installation. */
-	agentName: "Tabkyra",
+	agentName: "Tabkyra", // product-name allowlist: the name registered with the provider
 	scope: "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct",
 	/** The scope that allows ChatGPT plan usage; a valid ID token alone does not. */
 	planScope: "chatgpt.tokens.use.direct",
@@ -43,30 +43,30 @@ export const SIWC = {
 } as const;
 
 /**
- * GitHub Copilot through the Copilot SDK with Tabkyra's own OAuth App (registered by
+ * GitHub Copilot through the Copilot SDK with Polycarp's own OAuth App (registered by
  * baney75, device flow on, no client secret issued). Source:
  * https://docs.github.com/en/copilot/how-tos/copilot-sdk/setup/github-oauth (read 2026-10-28).
  */
 export const COPILOT = {
-	/** Tabkyra's OAuth App. A client id is public; the device flow needs no secret. */
+	/** Polycarp's OAuth App. A client id is public; the device flow needs no secret. */
 	clientId: "Ov23li1qDiu9lRXbvcFh",
 	deviceCodeUrl: "https://github.com/login/device/code",
 	tokenUrl: "https://github.com/login/oauth/access_token",
 	userUrl: "https://api.github.com/user",
 	/** No OAuth scopes: the Copilot SDK only needs the user's identity and Copilot plan. */
 	scope: "",
-	/** Pinned SDK release; `tabkyra copilot-sdk install` installs exactly this. */
+	/** Pinned SDK release; `polycarp browser copilot-sdk install` installs exactly this. */
 	sdkPackage: "@github/copilot-sdk",
 	sdkVersion: "1.0.28",
-	/** Where a user reviews or revokes Tabkyra's access (revoking needs the app's secret, which Tabkyra has none of). */
+	/** Where a user reviews or revokes Polycarp's access (revoking needs the app's secret, which Polycarp has none of). */
 	revokeUrl: "https://github.com/settings/applications",
 	termsUrl: "https://docs.github.com/en/copilot/how-tos/copilot-sdk/authenticate-copilot-sdk/authenticate-copilot-sdk",
 } as const;
 
 /**
  * Anthropic and Google forbid third-party apps from using subscription sign-ins, including
- * driving their CLIs on the user's behalf. Tabkyra offers the reverse: the user runs their own
- * Claude Code or Gemini CLI and connects it to Tabkyra's MCP server.
+ * driving their CLIs on the user's behalf. Polycarp offers the reverse: the user runs their own
+ * Claude Code or Gemini CLI and connects it to Polycarp's MCP server.
  */
 export const CLI_MCP_SETUP = {
 	claude: "claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp",
@@ -93,7 +93,7 @@ export const SIWC_UNSUPPORTED_FIELDS = [
 	"previous_response_id",
 ] as const;
 
-/** Namespace Tabkyra's function tools are grouped in, as the ChatGPT plan route requires. */
+/** Namespace Polycarp's function tools are grouped in, as the ChatGPT plan route requires. */
 export const SIWC_TOOL_NAMESPACE = "tabkyra";
 
 type Json = Record<string, unknown>;
@@ -134,7 +134,7 @@ export function siwcRequestBody(input: Json): Json {
 					{
 						type: "namespace",
 						name: SIWC_TOOL_NAMESPACE,
-						description: "Tabkyra browser tools",
+						description: "Polycarp browser tools",
 						tools: functions,
 					},
 				]

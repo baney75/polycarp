@@ -8,6 +8,7 @@ final class BrowserStatusTests: XCTestCase {
       {"id":"host:Helium","status":"ok","label":"Helium: native host registered"},
       {"id":"host:Chrome","status":"fail","label":"Chrome: native host not registered"},
       {"id":"connected","status":"ok","label":"Extension connected (1.1.9)"},
+      {"id":"connected:Helium","status":"ok","label":"Helium: extension connected (1.1.9)"},
       {"id":"mcp:claude","status":"ok","label":"Claude Code: Tabkyra MCP server configured"},
       {"id":"mcp:codex","status":"fail","label":"Codex: Tabkyra MCP server not configured"},
       {"id":"mcp:cursor","status":"warn","label":"Cursor: Tabkyra MCP server not configured"}]}
@@ -18,6 +19,8 @@ final class BrowserStatusTests: XCTestCase {
         XCTAssertEqual(s.browsers, [.init(name: "Helium", registered: true), .init(name: "Chrome", registered: false)])
         XCTAssertTrue(s.extensionConnected)
         XCTAssertEqual(s.extensionVersion, "1.1.9")
+        XCTAssertEqual(s.connections, ["Helium": "1.1.9"])
+        XCTAssertFalse(s.unattributed)
         XCTAssertEqual(s.agents.map(\.id), ["claude", "codex", "cursor"])
         XCTAssertEqual(s.agents.first?.name, "Claude Code")
         XCTAssertEqual(s.addable.map(\.id), ["codex"], "only Claude Code and Codex are added by the one button")
@@ -50,7 +53,7 @@ final class BrowserStatusTests: XCTestCase {
         let setup = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/Setup.swift"), encoding: .utf8)
         XCTAssertTrue(setup.contains("case .browser: BrowserSettingsView()"))
         let view = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/BrowserSetup.swift"), encoding: .utf8)
-        for command in [#"["install", "--force"]"#, #"["setup", "--yes", "--no-wait"]"#, #"["doctor", "--json"]"#] { XCTAssertTrue(view.contains(command), command) }
+        for command in [#"["install", "--browser", browser]"#, #"["setup", "--yes", "--no-wait"]"#, #"["doctor", "--json"]"#] { XCTAssertTrue(view.contains(command), command) }
         XCTAssertFalse(view.contains("NativeMessagingHosts"))
         let welcome = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/WelcomeWindow.swift"), encoding: .utf8)
         XCTAssertTrue(welcome.contains("BrowserWelcomeRow()"))

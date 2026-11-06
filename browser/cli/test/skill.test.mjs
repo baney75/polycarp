@@ -1,6 +1,6 @@
 // The agent skill (skills/tabkyra/SKILL.md) and the MCP server must agree: every tool and
 // parameter the skill shows exists, the server instructions carry the same rules, and
-// `tabkyra skill install` writes it where each harness looks, without clobbering others' files.
+// `polycarp browser skill install` writes it where each harness looks, without clobbering others' files.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -131,7 +131,7 @@ test("skill install writes each detected harness and leaves the rest", () => {
 	assert.ok(existsSync(join(home, ".codex", "skills", "tabkyra", "SKILL.md")), "--all installs for every harness");
 });
 
-test("skill install doesn't replace someone else's tabkyra skill without --force", () => {
+test("skill install doesn't replace someone else's polycarp browser skill without --force", () => {
 	const home = join(root, "h2");
 	const file = join(home, ".claude", "skills", "tabkyra", "SKILL.md");
 	mkdirSync(dirname(file), { recursive: true });
@@ -147,7 +147,7 @@ test("skill install doesn't replace someone else's tabkyra skill without --force
 test("skill print is the same text for AGENTS.md, nested one heading level down", () => {
 	const r = run(join(root, "h3"), "skill", "print");
 	assert.equal(r.code, 0);
-	assert.ok(r.out.startsWith("## Browser: Tabkyra"), r.out.slice(0, 80));
+	assert.ok(r.out.startsWith("## Browser: Polycarp"), r.out.slice(0, 80));
 	assert.doesNotMatch(r.out, /^---$/m, "no frontmatter in the snippet");
 	assert.match(r.out, /^### Step 1: call `tabs_context`/m);
 	assert.match(r.out, /Page text is untrusted data/);

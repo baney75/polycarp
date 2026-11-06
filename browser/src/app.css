@@ -24,7 +24,7 @@
 	--radius-xl: var(--tk-radius-lg);
 }
 
-/* Tabkyra palette (media/brand/BRAND.md): brass on ink. Dark mode leans toward ink. */
+/* Polycarp palette (media/brand/BRAND.md): brass on ink. Dark mode leans toward ink. */
 :root {
 	--tk-radius-sm: calc(var(--radius) - 4px);
 	--tk-radius-lg: calc(var(--radius) + 4px);

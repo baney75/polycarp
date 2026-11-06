@@ -483,7 +483,7 @@ async function copyCurrentChat() {
 		return;
 	}
 	try {
-		await navigator.clipboard.writeText(chatToMarkdown(messages, currentTitle || "Tabkyra chat", agent.state.model));
+		await navigator.clipboard.writeText(chatToMarkdown(messages, currentTitle || "Polycarp chat", agent.state.model));
 		Toast.success("Chat copied as Markdown");
 	} catch {
 		Toast.error("Couldn't copy the chat");
@@ -1025,7 +1025,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			);
 		},
 		onBeforeSend: async () => {
-			// Tabkyra may be swapping in an update and about to reload; a run started then would be cut
+			// Polycarp may be swapping in an update and about to reload; a run started then would be cut
 			// off. Marking the panel busy under the gate makes the update wait for this run instead.
 			// Everything that waits comes first, so nothing async lies between the reservation and
 			// the run starting (AgentInterface calls prompt() right after this hook, synchronously).
@@ -1035,7 +1035,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			const note = await pageChangeNote();
 			const reserved = await reserveRun(markBusyForSend);
 			if (!reserved) {
-				throw new Error("Tabkyra is installing an update and reloads in a moment. Send it again after the reload.");
+				throw new Error(
+					"Polycarp is installing an update and reloads in a moment. Send it again after the reload.",
+				);
 			}
 			if (note && agent) agent.appendMessage(note);
 			// After this hook the send either starts its run (streaming) or queues; either way the
@@ -1255,7 +1257,7 @@ async function saveTitle(value: string) {
 }
 
 function titleArea() {
-	if (!currentTitle) return html`<span class="text-sm font-semibold tracking-tight select-none">Tabkyra</span>`;
+	if (!currentTitle) return html`<span class="text-sm font-semibold tracking-tight select-none">Polycarp</span>`;
 	if (isEditingTitle)
 		return html`<div class="flex-1 min-w-0" data-title-input>
 			${Input({

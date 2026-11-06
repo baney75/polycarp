@@ -32,7 +32,7 @@ const FORBIDDEN = [
 	["Gemini CLI client header value", "gl-node/22.17.0"],
 	["ChatGPT subscription backend", "chatgpt.com/backend-api"],
 	// Codex CLI's OAuth endpoints. Sign in with ChatGPT uses auth.openai.com/api/accounts/... with
-	// Tabkyra's own registration; the allowlist test below pins every auth.openai.com URL to those.
+	// Polycarp's own registration; the allowlist test below pins every auth.openai.com URL to those.
 	["Codex CLI OAuth endpoints", "auth.openai.com/oauth/"],
 	["Claude OAuth host", "claude.ai/oauth"],
 	["Claude console OAuth", "platform.claude.com/v1/oauth"],
@@ -116,7 +116,7 @@ test("the policy still lists every removed provider and subscription API", () =>
 });
 
 // Sign in with ChatGPT (open-source path) and Copilot through the SDK are the only subscription
-// sign-ins, each on the provider's documented route with Tabkyra's own registration
+// sign-ins, each on the provider's documented route with Polycarp's own registration
 // (docs/auth-policy.md, D-entry "Subscription sign-ins"). These pin exactly what they may contact.
 const SIWC_ENDPOINTS = new Set([
 	"https://auth.openai.com",
@@ -145,7 +145,7 @@ test("every auth.openai.com and github.com/login URL in shipped source is a docu
 	assert.deepEqual(bad, [], `Unexpected sign-in endpoints:\n${bad.join("\n")}`);
 });
 
-test("the only OAuth client ids are Tabkyra's own: SIWC registers dynamically, Copilot uses Tabkyra's OAuth App", () => {
+test("the only OAuth client ids are Polycarp's own: SIWC registers dynamically, Copilot uses Polycarp's OAuth App", () => {
 	const constants = readFileSync(join(repo, "src", "subscriptions", "constants.ts"), "utf8");
 	assert.match(constants, /dynamicClient: "dynamic_agent_client"/);
 	assert.match(constants, /clientId: "Ov23li1qDiu9lRXbvcFh"/);
@@ -198,7 +198,7 @@ test("the UI says API use is billed and offers only the sanctioned subscription 
 	const section = readFileSync(join(repo, "src", "subscriptions", "SubscriptionsSection.ts"), "utf8");
 	assert.match(section, /Continue with ChatGPT/, "OpenAI's UI guidelines name the button Continue with ChatGPT");
 	assert.match(section, /Sign in with GitHub Copilot/);
-	assert.match(section, /Use your Claude Code or Gemini CLI subscription by running it with Tabkyra's MCP server/);
+	assert.match(section, /Use your Claude Code or Gemini CLI subscription by running it with Polycarp's MCP server/);
 	assert.doesNotMatch(section, /Sign in with Claude|Continue with Claude|Sign in with Gemini|Sign in with Google/);
 });
 

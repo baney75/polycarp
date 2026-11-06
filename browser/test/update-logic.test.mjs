@@ -172,7 +172,7 @@ test("release notes become a short digest: first sentence of each entry, grouped
 		"",
 		"---",
 		"",
-		"Update with `tabkyra update`, then reload Tabkyra.",
+		"Update with `polycarp browser update`, then reload Polycarp.",
 	].join("\n");
 	const d = digestReleaseNotes(notes);
 	assert.deepEqual(d?.sections, [
@@ -231,7 +231,7 @@ test("every section gets its first entry before any gets a second, and code span
 	);
 	assert.equal(d?.more, 6);
 	assert.equal(digestReleaseNotes("### Fixed\n- Reads `__dirname` instead of `__filename`.")?.sections[0].items[0], "Reads `__dirname` instead of `__filename`.");
-	const cut = digestReleaseNotes("### Added\n- Adds `tabkyra skill eval --json --update-baseline …")?.sections[0].items[0] ?? "";
+	const cut = digestReleaseNotes("### Added\n- Adds `polycarp browser skill eval --json --update-baseline …")?.sections[0].items[0] ?? "";
 	assert.equal((cut.match(/`/g) ?? []).length % 2, 0, cut);
 });
 

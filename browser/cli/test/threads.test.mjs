@@ -1,6 +1,6 @@
 // Threads from the CLI's side: the native host's mirror writer (atomic files, 0600 and 0700,
 // delete, sync, clear, ids that can't escape), and reading threads back without a browser
-// through `tabkyra threads` and the MCP tools. The live path is in e2e-bridge.
+// through `polycarp browser threads` and the MCP tools. The live path is in e2e-bridge.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";

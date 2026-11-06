@@ -134,7 +134,7 @@ test("a click cut off by a drop is not replayed, and the agent is told it may ha
 	plan.click = ["drop"];
 	const r = await mcp.callTool({ name: "click", arguments: { ref: "e1" } });
 	assert.equal(r.isError, true);
-	assert.match(text(r), /^interrupted: The browser connection dropped while click was running .* may have run\. Check the page with read_page before you repeat it; Tabkyra reconnects on your next call\./);
+	assert.match(text(r), /^interrupted: The browser connection dropped while click was running .* may have run\. Check the page with read_page before you repeat it; Polycarp reconnects on your next call\./);
 	assert.equal(seen.click, 1, "the click reached the browser twice");
 	// The bridge is back: the next call works without the agent doing anything special.
 	assert.ok(!(await mcp.callTool({ name: "tabs_context", arguments: {} })).isError);

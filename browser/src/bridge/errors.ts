@@ -1,7 +1,7 @@
 /**
  * Errors a bridge call returns. An expected failure (a stale ref, a missing tab, a script that
  * threw) gets its own code and a message with no stack trace; `internal` is for real bugs. The
- * stack goes to the debug log (`tabkyra debug`), not to the agent.
+ * stack goes to the debug log (`polycarp browser debug`), not to the agent.
  */
 
 import { isDetachError, isNavigatedError, PageException } from "../browser/cdp.js";
@@ -30,7 +30,7 @@ export class BridgeError extends Error {
 export function detachedError(method: string, what: string): BridgeError {
 	return new BridgeError(
 		ERR.INTERRUPTED,
-		`The browser's debugger detached from the tab while ${method} was running, so it may have run (${what}). Check the page with read_page before you repeat it; Tabkyra attaches again on your next call.`,
+		`The browser's debugger detached from the tab while ${method} was running, so it may have run (${what}). Check the page with read_page before you repeat it; Polycarp attaches again on your next call.`,
 		"extension",
 	);
 }
@@ -57,7 +57,7 @@ export function splitStack(text: string): { message: string; stack?: string } {
 }
 
 /**
- * [pattern, code] for failures whose text Tabkyra itself wrote (src/browser/page.ts, session.ts,
+ * [pattern, code] for failures whose text Polycarp itself wrote (src/browser/page.ts, session.ts,
  * cdp.ts). Each pattern is anchored to the start of that text: several messages quote the page
  * after their first words (`Ref e7 is covered by div "<its name>"`), and a page must not pick the
  * code by how it names an element.
@@ -87,7 +87,7 @@ const KNOWN: Array<[RegExp, string]> = [
 
 /**
  * The BridgeError for whatever a handler threw. A PageException (run_js code that threw) is
- * script_error; text Tabkyra wrote maps through KNOWN; anything else is `internal`.
+ * script_error; text Polycarp wrote maps through KNOWN; anything else is `internal`.
  * The returned message never has a stack; `stack` is for the debug log.
  */
 export function classify(err: unknown, method: string): { error: BridgeError; stack?: string } {
@@ -104,7 +104,7 @@ export function classify(err: unknown, method: string): { error: BridgeError; st
 	const { message, stack } = splitStack(errText(err));
 	const known = KNOWN.find(([re]) => re.test(message));
 	const code = known ? known[1] : ERR.INTERNAL;
-	// A page-side Error stringifies as "Error: text"; for a failure Tabkyra worded itself, the text is the message.
+	// A page-side Error stringifies as "Error: text"; for a failure Polycarp worded itself, the text is the message.
 	return {
 		error: new BridgeError(code, known ? message.replace(/^Error: /, "") : message),
 		stack: stack ?? (code === ERR.INTERNAL && err instanceof Error ? err.stack : undefined),

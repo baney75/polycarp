@@ -127,7 +127,7 @@ test("skill remove reverts local skills, turns community skills off, and refuses
 	assert.ok(!JSON.parse(run(home, ["skill", "list", "--json"]).stdout).some((s) => s.name === "notion-navigation"));
 	const builtIn = run(home, ["skill", "remove", "dorks"]);
 	assert.equal(builtIn.code, 1);
-	assert.match(builtIn.out, /built-in skill; it ships with Tabkyra/);
+	assert.match(builtIn.out, /built-in skill; it ships with Polycarp/);
 });
 
 // --- Community rules and scrubbing -----------------------------------------------------------

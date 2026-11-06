@@ -38,7 +38,7 @@ test("the text starts with a header naming provenance and sites", () => {
 	assert.equal(first.description, "alpha description");
 	assert.ok(
 		first.text.startsWith(
-			"[community, catalog 42; written by the Tabkyra community and reviewed by a maintainer; scoped to example.com, example.org: use it only on those sites]\n\n# alpha",
+			"[community, catalog 42; written by the Polycarp community and reviewed by a maintainer; scoped to example.com, example.org: use it only on those sites]\n\n# alpha",
 		),
 	);
 });

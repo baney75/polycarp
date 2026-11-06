@@ -1,5 +1,5 @@
 /**
- * The skill router as a module of its own, for `tabkyra skill eval --router`. CI builds this
+ * The skill router as a module of its own, for `polycarp browser skill eval --router`. CI builds this
  * shim (from the base branch) around a pull request's skill-router.ts. The judge runs it in a
  * child process under Node's permission model: a small fixed loader reads the bundle and the
  * request from stdin and imports the bundle from memory, so the router needs no file access

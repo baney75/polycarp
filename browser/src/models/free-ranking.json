@@ -1,6 +1,6 @@
 {
 	"measuredAt": "2026-10-28",
-	"method": "cli/eval/free-models.mjs: tasks shop, contact, forum, stores on the fixture site through Tabkyra's MCP tools in a headless Chromium, 1 rep per task, 2 for dots-studio/dots-3-note-preview:free, nvidia/nemotron-3.5-super-vl:free, nvidia/nemotron-3-ultra-550b-a55b:free, cohere/north-mini-code:free, poolside/laguna-s-2.1:free, nvidia/nemotron-3.5-lightning:free; score = tasks passed / runs, ties by fewer tool calls then fewer seconds. A run still rate-limited after three retries was rerun (--retry-limited); one never measured counts as a failure. Merged by cli/eval/free-ranking.mjs.",
+	"method": "cli/eval/free-models.mjs: tasks shop, contact, forum, stores on the fixture site through Polycarp's MCP tools in a headless Chromium, 1 rep per task, 2 for dots-studio/dots-3-note-preview:free, nvidia/nemotron-3.5-super-vl:free, nvidia/nemotron-3-ultra-550b-a55b:free, cohere/north-mini-code:free, poolside/laguna-s-2.1:free, nvidia/nemotron-3.5-lightning:free; score = tasks passed / runs, ties by fewer tool calls then fewer seconds. A run still rate-limited after three retries was rerun (--retry-limited); one never measured counts as a failure. Merged by cli/eval/free-ranking.mjs.",
 	"models": [
 		{
 			"id": "dots-studio/dots-3-note-preview:free",

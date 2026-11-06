@@ -219,7 +219,7 @@ test("two agents in one project at once get separate sessions, titled with the a
 	const ctx = await request("c2", "tabs.context");
 	assert.deepEqual(ctx.result.tabs.map((x) => x.tabId), [two.result.tabId], "an agent saw another agent's tab");
 	assert.equal(ctx.result.session.name, "shop-1a2b-2");
-	assert.equal(ctx.result.session.group.title, "Tabkyra · claude · shop 2");
+	assert.equal(ctx.result.session.group.title, "Polycarp · claude · shop 2");
 });
 
 test("a name the user chose is shared, not split", async () => {
@@ -329,7 +329,7 @@ test("the CLI's admin methods list, rename and end sessions without opening one 
 	assert.equal(port.sent.filter((m) => m.clientId === "cli" && m.error).length, 1, "only the bad rename failed");
 });
 
-test("tabkyra sessions focus shows a tab that still exists, even when the current one is gone", async () => {
+test("polycarp browser sessions focus shows a tab that still exists, even when the current one is gone", async () => {
 	const { fake, request, settle, connect } = await startBridge();
 	connect("agent", "focus-1a2b", { auto: true, project: "focus" });
 	const first = (await request("agent", "tabs.create", {})).result.tabId;

@@ -253,7 +253,7 @@ export async function detachTab(tabId: number, force = false): Promise<void> {
 	if (force) await stopScreencast(tabId).catch(() => undefined);
 	attachedTabs.delete(tabId);
 	viewportTabs.delete(tabId);
-	noteCaptureStopped(tabId, "Tabkyra released the debugger (the client disconnected or the session ended)");
+	noteCaptureStopped(tabId, "Polycarp released the debugger (the client disconnected or the session ended)");
 	try {
 		await chrome.debugger.detach({ tabId });
 	} catch {
@@ -407,7 +407,7 @@ async function resizeImage(
 }
 
 /**
- * An exception the page's own script threw (run_js code, not Tabkyra's). The bridge reports it as
+ * An exception the page's own script threw (run_js code, not Polycarp's). The bridge reports it as
  * script_error whatever its text says: a page cannot pick the error code by what it throws.
  */
 export class PageException extends Error {}
@@ -745,7 +745,7 @@ export function installCdpListeners(): void {
 //
 // Console and network capture lives in the debugging session of the tab: it ends when the
 // debugger detaches (the user closed the infobar, DevTools took over, the page's target was
-// replaced or crashed, Tabkyra released it), and it is lost when the worker restarts. None of
+// replaced or crashed, Polycarp released it), and it is lost when the worker restarts. None of
 // that is an error for the next call, and the buffers still hold what came before, so a read
 // would look live. Each ending is recorded here; the next read says so, attaches again and
 // starts capturing again.
@@ -914,7 +914,7 @@ export async function enableNetworkCapture(tabId: number): Promise<CaptureReport
 }
 
 /**
- * Capture for a tab Tabkyra just opened, started before its first page loads. Returns why it
+ * Capture for a tab Polycarp just opened, started before its first page loads. Returns why it
  * could not start (both kinds are tried), or undefined.
  */
 export async function startCapture(tabId: number): Promise<string | undefined> {

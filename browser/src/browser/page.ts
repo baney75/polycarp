@@ -702,7 +702,7 @@ function pageSnapshot(
 	};
 	for (const at of roots)
 		for (const el of Array.from(at.root.querySelectorAll(selector))) if (!cross.has(el)) place(el, at);
-	// A frame Tabkyra can't look into (another site) is still listed, so the agent knows it's there.
+	// A frame Polycarp can't look into (another site) is still listed, so the agent knows it's there.
 	for (const { el, at } of crossFrames) place(el, at);
 	for (const { el, at } of [...inView, ...offView]) {
 		if (nodes.length >= maxNodes) break;
