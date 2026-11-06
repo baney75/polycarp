@@ -1,4 +1,4 @@
-// The skill router's regression suite (docs/skill-platform.md). `polycarp browser skill eval` runs
+// The skill router's regression suite (docs/skill-platform.md). `tabkyra skill eval` runs
 // skills-eval/router-cases.jsonl through the router and checks every gate: top-1 accuracy,
 // false invokes on "none" cases, cases per skill, p95 latency, the committed baseline, and
 // the floors on skills-eval/router-heldout.jsonl, which the scorer was never tuned on.
@@ -389,7 +389,7 @@ test("naming a skill to use routes to it; naming it to change it doesn't", () =>
 	const name = (task) => JSON.parse(run(["skill", "match", "--json", task]).stdout)[0].name;
 	assert.equal(name("Use the osint skill on the landlord at 12 Elm St"), "osint");
 	assert.equal(name("run the dorks skill to find PDFs"), "dorks");
-	assert.equal(name("use the polycarp browser skill to fill the form"), "tabkyra");
+	assert.equal(name("use the tabkyra skill to fill the form"), "tabkyra");
 	assert.equal(name("the proton-pass skill, please, for the deploy token"), "proton-pass");
 	assert.notEqual(name("Repair the osint skill, it keeps failing on small models"), "osint");
 	assert.notEqual(name("Update the dorks skill with a new operator"), "dorks");
@@ -579,8 +579,8 @@ test("an explicit request survives edit-like words elsewhere; a governing edit v
 	assert.equal(name("Use the news-research skill for the latest updates on the rail strike"), "news-research");
 	assert.equal(name("Use the osint skill on the port authority's new contractor"), "osint");
 	assert.equal(name("Run the osint skill and review what you find on the landlord"), "osint");
-	assert.equal(name("Use the polycarp browser skill to fill in my fixed address"), "tabkyra");
-	assert.equal(name("Rewrite the dorks skill to Polycarp's skill standard"), "kyraskillmaker");
+	assert.equal(name("Use the tabkyra skill to fill in my fixed address"), "tabkyra");
+	assert.equal(name("Rewrite the dorks skill to Tabkyra's skill standard"), "kyraskillmaker");
 	// A "no" or "not" that doesn't govern the mention is no exclusion.
 	assert.equal(name("I have no idea who runs this website so use the osint skill"), "osint");
 	assert.equal(name("Why not use the osint skill on this landlord?"), "osint");
@@ -590,19 +590,19 @@ test("an explicit request survives edit-like words elsewhere; a governing edit v
 	for (const [task, banned] of [
 		["Don't use the osint skill, just search the news for the landlord", "osint"],
 		["Instead of the dorks skill, write me a plain search query", "dorks"],
-		["Skip the polycarp browser skill and fetch the URL directly", "tabkyra"],
+		["Skip the tabkyra skill and fetch the URL directly", "tabkyra"],
 		["Without the osint skill, do a background check on this landlord", "osint"],
 	]) {
 		assert.ok(!all(task).includes(banned), `${task} -> ${all(task)}`);
 	}
 });
 
-test("polycarp browser skill <subcommand> is the CLI, not a request for the polycarp browser skill", () => {
+test("tabkyra skill <subcommand> is the CLI, not a request for the tabkyra skill", () => {
 	const name = (task) => JSON.parse(run(["skill", "match", "--json", task]).stdout)[0].name;
-	assert.equal(name("polycarp browser skill install wrote to the wrong folder, report it"), "bug");
-	assert.equal(name("polycarp browser skill versions shows nothing for my local skill"), "bug");
-	assert.equal(name("how do I use polycarp browser skill rollback"), "none");
-	assert.equal(name("Use the polycarp browser skill to read this page"), "tabkyra");
+	assert.equal(name("tabkyra skill install wrote to the wrong folder, report it"), "bug");
+	assert.equal(name("tabkyra skill versions shows nothing for my local skill"), "bug");
+	assert.equal(name("how do I use tabkyra skill rollback"), "none");
+	assert.equal(name("Use the tabkyra skill to read this page"), "tabkyra");
 });
 
 test("the catalog script makes valid, distinct identifiers for any skill name", async () => {
@@ -720,7 +720,7 @@ test("curly apostrophes read as straight ones, so a typed-on-a-phone negation st
 	for (const [task, banned] of [
 		["Don’t use the osint skill, just search the news for the landlord", "osint"],
 		["Don’t run the dorks skill, write me a plain search query", "dorks"],
-		["Don’t use the polycarp browser skill; fetch the URL directly", "tabkyra"],
+		["Don’t use the tabkyra skill; fetch the URL directly", "tabkyra"],
 		["Don’t apply the osint skill, just tell me what you know about the landlord", "osint"],
 	]) {
 		assert.ok(!all(task).includes(banned), `${task} -> ${all(task)}`);
@@ -729,7 +729,7 @@ test("curly apostrophes read as straight ones, so a typed-on-a-phone negation st
 
 test("'..., debug it' after a use-verb is about the work, not the skill", () => {
 	const name = (task) => JSON.parse(run(["skill", "match", "--json", task]).stdout)[0].name;
-	assert.equal(name("Use the polycarp browser skill to open localhost:3000 and debug it"), "tabkyra");
+	assert.equal(name("Use the tabkyra skill to open localhost:3000 and debug it"), "tabkyra");
 	assert.equal(name("Run the osint skill on the landlord and review it"), "osint");
 	// Without a use-verb, "fix it" still points back at the skill.
 	assert.equal(name("The proton-pass skill gave my small model a bad result, fix it"), "fix");
@@ -878,8 +878,8 @@ test("'<name> skill(s)' about a person's abilities names no skill; lists, negati
 	assert.equal(top("use the video-editing skill to trim talk.mp4")[0], "video-editing");
 	assert.equal(top("Improve the osint skill so a small model follows it")[0], "kyraskillmaker");
 	assert.equal(top("The autoresearch skill gave a weak report on my 8B model. Fix it")[0], "fix");
-	// "a Polycarp skill" is a kind of skill to make, not a request for the polycarp browser skill.
-	assert.ok(!top("Port my Cursor rule into a Polycarp skill that passes lint").includes("tabkyra"));
+	// "a Tabkyra skill" is a kind of skill to make, not a request for the tabkyra skill.
+	assert.ok(!top("Port my Cursor rule into a Tabkyra skill that passes lint").includes("tabkyra"));
 });
 
 test("past 32 skills the single-evidence bar grows with a two-skill word's weight", async () => {

@@ -309,7 +309,7 @@ test("edit --draft-only never opens an editor or asks, even in a terminal", (t) 
 	}
 	assert.equal(existsSync(marker), false, "no editor ran");
 	assert.doesNotMatch(r.out, /Apply\?/);
-	assert.match(r.out, /tabkyra skill apply \S+skill-drafts\/dorks/);
+	assert.match(r.out, /polycarp browser skill apply \S+skill-drafts\/dorks/);
 	assert.equal(existsSync(local(home, "dorks")), false);
 	assert.equal(run(home, ["skill", "edit", "dorks", "--draft-only", "--yes"]).code, 0);
 	assert.equal(existsSync(local(home, "dorks")), false, "--yes doesn't make --draft-only apply");

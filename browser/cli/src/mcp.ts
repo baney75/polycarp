@@ -190,7 +190,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"The browser is signed in as the user. Ask the user before you act under their sign-in: sending messages or email, posting, buying, booking, deleting, changing settings, or submitting forms that do any of these.",
 				"Do not enter passwords or payment details.",
 				"When a page needs a sign-in or captcha, call tabs_show and ask the user to do it.",
-				"Opening a new site may need the user's approval; if a site is denied (\"Not allowed to open\"), tell the user they can allow it in the Polycarp side panel (Settings > Agents) or with `polycarp browser allow <host>`, and do not try to get around it.",
+				"Opening a new site may need the user's approval; if a site is denied (\"Not allowed to open\"), tell the user to allow it in the Polycarp side panel (Settings > Agents) or with `polycarp browser allow <host>`; do not get around it.",
 				"First call skill_match with the user's task (it needs no browser). If it names a skill, call skill_read for that one skill only and follow it; if it says none, work without one.",
 				"Call tabs_context before any browser tool: it shows your session, your tab group and tabs (including ones left from earlier work in this project) and news from the user. If it says Polycarp isn't connected, tell the user and stop browser work.",
 				"status adds the site permissions.",
@@ -819,7 +819,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"skill_match",
 		{
 			title: "Find the skill for a task",
-			description: "Which Polycarp skill fits a task, best first, or none. Call it before reading any skill, then skill_read only the one you pick. Offline and instant. Example: {\"task\":\"find peer-reviewed studies on sleep and memory\"}",
+			description: "Which Polycarp skill fits a task, best first, or none. Call it before reading any skill, then skill_read only the one you pick. Offline, instant. Example: {\"task\":\"find peer-reviewed studies on sleep and memory\"}",
 			inputSchema: {
 				task: z.string().min(1).max(2000).describe("The user's task, in their words"),
 				top: z.number().int().min(1).max(5).optional().describe("How many matches to return (default 3)"),

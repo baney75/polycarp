@@ -118,7 +118,7 @@ test("granted but hidden: names both causes and the restart, not just the toggle
 	const row = await userScriptsRow(status("toggle_off", { apiPresent: false }));
 	assert.match(row.label, /granted but the browser hides/);
 	assert.match(row.detail, /hasn't restarted/);
-	assert.match(row.fix, /tabkyra reload/);
+	assert.match(row.fix, /polycarp browser reload/);
 });
 
 test("probe_error: shows the error text", async () => {

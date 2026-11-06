@@ -477,7 +477,7 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 		const phished = await approve([["request", signed], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
 		assert.equal(phished.status, 401, "the passcode alone is refused for a new client");
 		assert.equal(phished.headers.get("location"), null, "and no authorization code is issued");
-		assert.match(await phished.text(), /tabkyra token approval-code/);
+		assert.match(await phished.text(), /polycarp browser token approval-code/);
 		const mint = () => /TK-[A-Z0-9]{4}-[A-Z0-9]{4}/.exec(run(["token", "approval-code"]).out)?.[0];
 		const ok = await approve([["request", signed], ["passcode", mint()], ["scope", "browser.read"], ["decision", "allow"]]);
 		assert.equal(ok.status, 302, "a freshly minted connect code approves the new client");
@@ -1154,7 +1154,7 @@ serviceTest("remote off turns Funnel off first, then removes the service and rem
 	assert.equal(s.hasRemoteJson(), false);
 	assert.ok(existsSync(join(s.config, "oauth.json")), "grants stay");
 	assert.match(r.out, /oauth\.json/);
-	assert.match(r.out, /tabkyra token revoke/);
+	assert.match(r.out, /polycarp browser token revoke/);
 });
 
 serviceTest("remote off leaves the service running and the files in place when Funnel won't turn off", async () => {
@@ -1260,9 +1260,9 @@ test("remote off with no remote.json closes a Polycarp Funnel on 8443, and says 
 
 test("remote lists its subcommands in help and rejects unknown flags", () => {
 	const help = cliRun(["remote", "--help"]).out;
-	assert.match(help, /tabkyra remote setup \[--public-url https:\/\/host\] \[--port N\] \[--no-service\]/);
-	assert.match(help, /tabkyra remote status \[--json\]/);
-	assert.match(help, /tabkyra remote off/);
+	assert.match(help, /polycarp browser remote setup \[--public-url https:\/\/host\] \[--port N\] \[--no-service\]/);
+	assert.match(help, /polycarp browser remote status \[--json\]/);
+	assert.match(help, /polycarp browser remote off/);
 	assert.equal(cliRun(["remote", "setup", "--bogus"]).code, 2);
 	assert.equal(cliRun(["remote"]).code, 2);
 });

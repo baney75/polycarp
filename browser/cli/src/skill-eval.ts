@@ -1,5 +1,5 @@
 /**
- * `polycarp browser skill eval`: the router's regression suite. Cases live in
+ * `tabkyra skill eval`: the router's regression suite. Cases live in
  * skills-eval/router-cases.jsonl, one `{"task": "...", "skill": "<name>|none"}` per line,
  * and the per-skill accuracy each release must keep is in skills-eval/baseline.json.
  * skills-eval/router-heldout.jsonl holds cases the scorer was never tuned on; it is the
@@ -38,7 +38,7 @@ export type Ranker = (
 	wallPerMatchMs?: number;
 };
 
-/** The router in this process: what `polycarp browser skill eval` uses by default. */
+/** The router in this process: what `tabkyra skill eval` uses by default. */
 export const inProcessRanker: Ranker = (skills, tasks, rounds) => {
 	const started = performance.now();
 	const index = buildRouterIndex(skills);
@@ -330,9 +330,9 @@ export function runEval(skills: RouterSkill[], cases: EvalCase[], baseline?: Bas
 			gate: "baseline",
 			ok: baseline !== undefined && unbased.length === 0 && regressions.length === 0 && underFloor.length === 0,
 			detail: !baseline
-				? "no baseline.json; run polycarp browser skill eval --update-baseline and commit it"
+				? "no baseline.json; run tabkyra skill eval --update-baseline and commit it"
 				: unbased.length
-					? `no valid baseline (a number from 0 to 1) for ${unbased.join(", ")}; run polycarp browser skill eval --update-baseline and commit it`
+					? `no valid baseline (a number from 0 to 1) for ${unbased.join(", ")}; run tabkyra skill eval --update-baseline and commit it`
 					: regressions.length || underFloor.length
 						? [
 								regressions.length ? `${tolerance ? `dropped more than ${tolerance} points` : "the baseline claims more than the router measures"}: ${regressions.map(([n, s]) => `${n} ${pct(s.accuracy)} (baseline ${pct(s.baseline ?? 0)})`).join(", ")}` : "",

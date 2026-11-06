@@ -38,7 +38,7 @@ import { SKILLS } from "./skills-catalog.ts";
 import { banner, c, sym } from "./ui.ts";
 
 /** Written under the frontmatter, so a later install knows the file is ours to replace. */
-const MARKER = "<!-- Installed by `polycarp browser skill install`; reinstalling replaces this file. -->";
+const MARKER = "<!-- Installed by `tabkyra skill install`; reinstalling replaces this file. -->"; // product-name allowlist: written into installed skills, lint recognizes it
 const NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 /** A usable skill name: "none" is reserved for the router's "no skill fits". */
 const isName = (n: string) => NAME.test(n) && n !== "none";
@@ -85,7 +85,7 @@ export interface SkillTarget {
 	detected: boolean;
 	/** The harness's skills folder; each skill goes in <dir>/<skill>/SKILL.md. */
 	dir: string;
-	/** Where the polycarp browser skill goes, kept for callers that name one file. */
+	/** Where the tabkyra skill goes, kept for callers that name one file. */
 	file: string;
 }
 

@@ -13,7 +13,7 @@
  * A match needs MIN_SCORE and two pieces of evidence, or one word specific enough to reach
  * SINGLE_SCORE alone. Otherwise the answer is "none": a small model does better with no
  * skill than with the wrong one (docs/decisions.md D12). The constants are calibrated on
- * skills-eval/router-cases.jsonl; `polycarp browser skill eval` reports how well they hold.
+ * skills-eval/router-cases.jsonl; `tabkyra skill eval` reports how well they hold.
  */
 
 export interface RouterSkill {
@@ -347,7 +347,7 @@ const USE_GOVERNS = /\b(?:use|run|apply|follow|invoke|load)\s+(?:(?:the|this|tha
 /**
  * A negation that governs the mention, within a few words before it: "don't use the osint
  * skill", "never run my dorks skill", "without the osint skill", "instead of the dorks skill",
- * "skip the polycarp browser skill", "not the osint skill". A "no" or "not" elsewhere ("no rush, use
+ * "skip the tabkyra skill", "not the osint skill". A "no" or "not" elsewhere ("no rush, use
  * the osint skill", "why not use the osint skill") doesn't.
  */
 const DET = "(?:(?:the|this|that|my|our|your|any)\\s+)?(?:[a-z0-9'-]+\\s+)?";
@@ -358,7 +358,7 @@ const EXCLUDES = new RegExp(
 		"\\bnot\\s+(?:(?:the|this|that|my|our|your)\\s+)?$",
 	].join("|"),
 );
-/** `polycarp browser skill <subcommand>` is the Polycarp CLI (read as "tabkyra cli"), not a mention of the polycarp browser skill. */
+/** `tabkyra skill <subcommand>` is the Tabkyra CLI (read as "tabkyra cli"), not a mention of the tabkyra skill. */
 const CLI_SUBCOMMAND = /^\s+(?:install|list|print|lint|apply|revert|edit|eval|match|versions|rollback)\b/;
 
 /** "the osint skill", "this dorks skill": a determiner, and at most one word, right before the mention. */
@@ -398,7 +398,7 @@ interface ReadTask {
  *   word elsewhere ("the latest updates", "review what you find") doesn't count.
  * - It is ruled out when a negation governs it ("don't use the osint skill", "instead of the
  *   dorks skill", see EXCLUDES): that skill is never returned.
- * - `polycarp browser skill install` and the other subcommands are the CLI, not the polycarp browser skill.
+ * - `tabkyra skill install` and the other subcommands are the CLI, not the tabkyra skill.
  * - Otherwise ("use the osint skill on this landlord") it is a request for that skill.
  */
 function readTask(index: RouterIndex, task: string): ReadTask {
@@ -442,11 +442,11 @@ function readTask(index: RouterIndex, task: string): ReadTask {
 		// employers want", "improve my writing skill". It names a subject, so it scores for neither
 		// that skill nor the skills whose job is skills.
 		if (command === undefined && !pointsAt && !edits && !uses) {
-			// "a Polycarp skill", "an osint skill": a kind of skill to make, so the word "skill" stays.
+			// "a Tabkyra skill", "an osint skill": a kind of skill to make, so the word "skill" stays.
 			return /\ban?\s+$/.test(before) ? ` ${list} ${noun} ` : " abilities ";
 		}
 		// "..., fix it" points back at the mention, unless a use-verb governs the mention: in
-		// "use the polycarp browser skill to open the app and debug it", "it" is the app. Not limited to
+		// "use the tabkyra skill to open the app and debug it", "it" is the app. Not limited to
 		// the clause: "The autoresearch skill gave a weak report. Fix it" is a fix request.
 		const backReference = !uses && POINTS_BACK.test(after);
 		if (command !== undefined || edits || backReference) {

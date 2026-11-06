@@ -300,7 +300,7 @@ export function flagHints(flags: string[] = []): string {
 	return flags.map((f) => ` [${f}${VALUE_HINTS[f] ? ` ${VALUE_HINTS[f]}` : ""}]`).join("");
 }
 
-/** One help row per command, or per subcommand: [usage after "tabkyra ", what it does]. */
+/** One help row per command, or per subcommand: [usage after "polycarp browser ", what it does]. */
 export function helpRows(spec: CommandSpec): Array<[string, string]> {
 	if (spec.subcommands)
 		return spec.subcommands.map((sub) => [`${spec.name} ${sub.name}${sub.args ? ` ${sub.args}` : ""}${flagHints(sub.flags)}`, sub.what]);
@@ -319,14 +319,14 @@ export function argsProblem(command: string, args: string[]): string | undefined
 	const positional = args.filter((a, i) => !a.startsWith("-") && !(VALUE_FLAGS.has(args[i - 1] ?? "") && !args[i - 1].includes("=")));
 	let flags = spec.flags ?? [];
 	let max = spec.positional ?? 0;
-	let usage = `Usage: tabkyra ${helpRows(spec)[0][0]}`;
+	let usage = `Usage: polycarp browser ${helpRows(spec)[0][0]}`;
 	if (spec.subcommands) {
 		const sub = spec.subcommands.find((x) => x.name === (positional[0] ?? spec.defaultSubcommand));
 		// An unknown or missing subcommand is the command's own usage error, with its list.
 		if (!sub) return undefined;
 		flags = sub.flags ?? [];
 		max = (positional[0] === undefined ? 0 : 1) + (sub.max ?? 0);
-		usage = `Usage: tabkyra ${spec.name} ${sub.name}${sub.args ? ` ${sub.args}` : ""}${flagHints(flags)}`;
+		usage = `Usage: polycarp browser ${spec.name} ${sub.name}${sub.args ? ` ${sub.args}` : ""}${flagHints(flags)}`;
 	}
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];

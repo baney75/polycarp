@@ -49,7 +49,7 @@ test("the CLI's version is the extension manifest's", async () => {
 test("help lists every command the CLI dispatches, grouped, with the exit codes", () => {
 	const help = run("--help").out;
 	for (const name of ["setup", "status", "mcp", "skill", "serve", "token", "tunnel", "library", "allow", "ask", "allow-all", "doctor", "update", "install", "reload", "debug", "completion", "version"]) {
-		assert.match(help, new RegExp(`tabkyra ${name}\\b`), `help lacks ${name}`);
+		assert.match(help, new RegExp(`polycarp browser ${name}\\b`), `help lacks ${name}`);
 		// A listed command is one the dispatcher knows: it never says "Unknown command".
 		const r = run(name, "--definitely-not-a-flag");
 		assert.doesNotMatch(r.err, /Unknown command/, name);
@@ -65,7 +65,7 @@ test("help lists every command the CLI dispatches, grouped, with the exit codes"
 		tunnel: ["tailscale", "cloudflare"],
 		library: ["add", "search", "list", "cite", "export", "obsidian", "verify", "remove"],
 	}))
-		for (const sub of subs) assert.match(help, new RegExp(`tabkyra ${command} [^\\n]*\\b${sub}\\b`), `help has no row for ${command} ${sub}`);
+		for (const sub of subs) assert.match(help, new RegExp(`polycarp browser ${command} [^\\n]*\\b${sub}\\b`), `help has no row for ${command} ${sub}`);
 	const unknown = run("frobnicate");
 	assert.equal(unknown.code, 2);
 	assert.match(unknown.err, /Unknown command "frobnicate"/);
@@ -118,15 +118,15 @@ test("completions parse in each shell and complete commands, subcommands and fla
 	const complete = (words) =>
 		execFileSync("bash", ["-c", `source "${file}"; COMP_WORDS=(${words}); COMP_CWORD=$((\${#COMP_WORDS[@]} - 1)); _tabkyra; echo "\${COMPREPLY[@]}"`], { encoding: "utf8" }).trim();
 	assert.equal(complete("tabkyra sta"), "status");
-	assert.equal(complete("polycarp browser skill li").split(" ").sort().join(" "), "lint list");
-	assert.equal(complete("polycarp browser doctor --j"), "--json");
+	assert.equal(complete("tabkyra skill li").split(" ").sort().join(" "), "lint list");
+	assert.equal(complete("tabkyra doctor --j"), "--json");
 	// Only the chosen subcommand's flags: create takes no --json, cloudflare no --public.
-	assert.equal(complete("polycarp browser token create x --j"), "");
-	assert.equal(complete("polycarp browser token list --j"), "--json");
+	assert.equal(complete("tabkyra token create x --j"), "");
+	assert.equal(complete("tabkyra token list --j"), "--json");
 	assert.equal(complete("tabkyra tunnel cloudflare --p"), "--port");
 	// Path arguments fall back to file names: nothing from the script, and -o default set.
-	assert.equal(complete("polycarp browser skill apply sk"), "");
-	assert.equal(complete("polycarp browser skill eval --cases ev"), "");
+	assert.equal(complete("tabkyra skill apply sk"), "");
+	assert.equal(complete("tabkyra skill eval --cases ev"), "");
 	assert.match(execFileSync("bash", ["-c", `source "${file}"; complete -p tabkyra`], { encoding: "utf8" }), /-o bashdefault -o default -F _tabkyra tabkyra/);
 	// fish: files only where paths go.
 	assert.match(fish, /__fish_seen_subcommand_from skill; and __fish_seen_subcommand_from list' -f/);
@@ -136,12 +136,12 @@ test("completions parse in each shell and complete commands, subcommands and fla
 	const withCompopt = (words) =>
 		execFileSync("bash", ["-c", `compopt() { echo "compopt $*"; }; source "${file}"; COMP_WORDS=(${words} ""); COMP_CWORD=$((\${#COMP_WORDS[@]} - 1)); _tabkyra; echo "R:\${COMPREPLY[*]}"`], { encoding: "utf8" }).trim();
 	assert.match(withCompopt("tabkyra mcp"), /compopt \+o default/);
-	assert.match(withCompopt("polycarp browser token revoke"), /compopt \+o default/);
-	assert.doesNotMatch(withCompopt("polycarp browser skill apply"), /compopt/);
+	assert.match(withCompopt("tabkyra token revoke"), /compopt \+o default/);
+	assert.doesNotMatch(withCompopt("tabkyra skill apply"), /compopt/);
 	// ...and an empty word there gets file names (nothing from the script), not just "--yes".
-	assert.match(withCompopt("polycarp browser skill apply"), /R:$/);
-	assert.match(withCompopt("polycarp browser library obsidian"), /R:$/);
-	assert.match(withCompopt("polycarp browser update --channel"), /R:stable nightly$/);
+	assert.match(withCompopt("tabkyra skill apply"), /R:$/);
+	assert.match(withCompopt("tabkyra library obsidian"), /R:$/);
+	assert.match(withCompopt("tabkyra update --channel"), /R:stable nightly$/);
 	assert.match(withCompopt("tabkyra tunnel tailscale --port"), /R:$/);
 	if (spawnSync("zsh", ["--version"]).status === 0) assert.equal(spawnSync("zsh", ["-n"], { input: zsh.out }).status, 0, "zsh script has a syntax error");
 	else t.diagnostic("zsh is not installed here: the zsh script's syntax was not checked");
@@ -161,7 +161,7 @@ test("completions parse in each shell and complete commands, subcommands and fla
 	assert.doesNotMatch(bash, /\byolo\b/);
 	const bad = run("completion", "powershell");
 	assert.equal(bad.code, 2);
-	assert.match(bad.err, /tabkyra completion zsh\|bash\|fish/);
+	assert.match(bad.err, /polycarp browser completion zsh\|bash\|fish/);
 });
 
 test("read commands print JSON with --json, and exit 1 when not connected", () => {
