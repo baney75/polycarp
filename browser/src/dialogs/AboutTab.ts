@@ -2,7 +2,7 @@ import { i18n } from "@mariozechner/mini-lit/dist/i18n.js";
 import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { customElement } from "lit/decorators.js";
-import { helmMark } from "../components/HelmMark.js";
+import { polycarpMark } from "../components/PolycarpMark.js";
 import "../utils/i18n-extension.js";
 
 const link = (href: string, label: string) =>
@@ -20,7 +20,7 @@ export class AboutTab extends SettingsTab {
 		return html`
 			<div class="flex flex-col gap-5">
 				<div class="flex items-center gap-3">
-					${helmMark(44, "tile", "rounded-[10px]")}
+					${polycarpMark(44, "tile", "rounded-[10px]")}
 					<div>
 						<h3 class="text-lg font-semibold tracking-tight text-foreground leading-tight">Polycarp</h3>
 						<p class="text-sm text-muted-foreground">${i18n("Version:")} ${version}</p>
