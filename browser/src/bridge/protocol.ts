@@ -281,6 +281,8 @@ export interface HostCommunityStatus {
 /** What the last check found, and everything Settings > Updates shows. */
 export interface HostUpdateStatus {
 	type: "update_status";
+	/** What a person types to run this helper: "polycarp browser" inside the app, "tabkyra" otherwise. */
+	command?: string;
 	available: boolean;
 	/** Release version, or "<version> (<commit>)" in a checkout. */
 	current: string;

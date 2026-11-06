@@ -10,7 +10,8 @@ import { lintText } from "../cli/src/skill-lint.ts";
 import { agentSetupPrompt, deviceSetupPrompt, remoteSetupPrompt } from "../src/agent-setup-prompt.ts";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
-const prompt = agentSetupPrompt("1.2.3");
+const prompt = agentSetupPrompt("1.2.3", "polycarp browser");
+const standalone = agentSetupPrompt("1.2.3");
 
 test("the setup prompt covers install, connect, skills and a status check", () => {
 	for (const step of [
@@ -45,7 +46,7 @@ test("the setup prompt refuses to build without a version to pin", () => {
 test("the setup prompt appends skills to the user's project AGENTS.md, not the clone's", () => {
 	// Step 2 leaves the shell in ~/tabkyra-src/tabkyra; appending there would dirty the clone and stop the next update.
 	const line = prompt.split("\n").find((l) => l.includes(">> AGENTS.md"));
-	assert.match(line, /cd back to the directory step 1 printed \(my project, not the Polycarp clone\); if you aren't sure it's my project's root, ask me\. If its AGENTS\.md already has a "## Browser: Polycarp" section, leave it as it is\. Otherwise run polycarp browser skill print >> AGENTS\.md/);
+	assert.match(line, /cd back to the directory step 1 printed \(my project, not the Polycarp clone\); if you aren't sure it's my project's root, ask me\. If its AGENTS\.md already has a "## Browser: Polycarp" or "## Browser: Tabkyra" section \(the same section under its earlier name\), leave it as it is\. Otherwise run polycarp browser skill print >> AGENTS\.md/);
 	assert.match(prompt, /1\. Note the directory you started in[^\n]*pwd && node -v && git --version/);
 	// Clones dirtied by the old step: offer to restore, only on the user's yes.
 	// The restore offer comes before the doctor skip, so a working install still gets it, and the
@@ -59,7 +60,7 @@ test("the setup prompt appends skills to the user's project AGENTS.md, not the c
 test("the setup prompt passes the skill security lint", () => {
 	// The two agent-config writes the prompt makes, each on its own line, only at the user's request:
 	// the append to the project's AGENTS.md and the offered restore of the clone's.
-	const allowed = (line) => /^\s+- First, if ~\/tabkyra-src\/tabkyra exists and git status there lists AGENTS\.md as the only changed file, run git diff AGENTS\.md there\. If the diff only adds lines, starting with a "## Browser: Polycarp" section an earlier Polycarp setup appended, show me that diff and offer to undo it:$/.test(line) || /Otherwise run polycarp browser skill print >> AGENTS\.md$/.test(line);
+	const allowed = (line) => /^\s+- First, if ~\/tabkyra-src\/tabkyra exists and git status there lists AGENTS\.md as the only changed file, run git diff AGENTS\.md there\. If the diff only adds lines, starting with a "## Browser: Polycarp" or "## Browser: Tabkyra" section an earlier setup appended, show me that diff and offer to undo it:$/.test(line) || /Otherwise run polycarp browser skill print >> AGENTS\.md$/.test(line);
 	const findings = lintText("setup prompt", prompt, { reference: true }).filter((f) => !(f.rule === "config-tamper" && allowed(prompt.split("\n")[f.line - 1])));
 	assert.deepEqual(findings, [], findings.map((f) => `${f.rule}: ${f.message}`).join("\n"));
 	assert.doesNotMatch(prompt, /\|\s*(sh|bash)\b/);
@@ -73,8 +74,8 @@ test("the API keys tab no longer carries the subscription sign-in paragraph, and
 	}
 });
 
-const remote = remoteSetupPrompt("1.2.3");
-const device = deviceSetupPrompt("1.2.3", "https://hub.example.com", "TK-ABCD-EFGH");
+const remote = remoteSetupPrompt("1.2.3", "polycarp browser");
+const device = deviceSetupPrompt("1.2.3", "https://hub.example.com", "TK-ABCD-EFGH", "polycarp browser");
 
 test("the remote setup prompt runs setup, mints a one-time code and never repeats the passcode", () => {
 	for (const step of [/polycarp browser doctor/, /polycarp browser remote setup/, /polycarp browser hub setup --public-url https:\/\/ADDRESS/, /polycarp browser token approval-code/, /polycarp browser remote status/, /Settings > Connectors/, /1\.2\.3/]) assert.match(remote, step);
@@ -105,5 +106,30 @@ test("the remote and device prompts pass the same skill security lint as the set
 	for (const [name, text] of [["remote setup prompt", remote], ["device setup prompt", device]]) {
 		const findings = lintText(name, text, { reference: true });
 		assert.deepEqual(findings, [], findings.map((f) => `${f.rule}: ${f.message}`).join("\n"));
+	}
+});
+
+test("every command in a prompt wears the one name the helper was started as, in both modes", () => {
+	const commands = ["setup --yes", "pi-extension", "skill install", "skill print >> AGENTS.md", "doctor"];
+	for (const [name, text, other] of [["polycarp browser", prompt, "tabkyra"], ["tabkyra", standalone, "polycarp browser"]]) {
+		for (const c of commands) assert.ok(text.includes(`${name} ${c}`), `${name} prompt lacks "${name} ${c}"`);
+		// No command in the other form: only the MCP server's name, its launcher path and the clone's folder say tabkyra.
+		const stray = text.split("\n").filter((l) => new RegExp(`(?<![\\w/.~-])${other} (setup|doctor|skill|pi-extension|install)\\b`).test(l));
+		assert.deepEqual(stray, [], `${name} prompt mixes in ${other}`);
+	}
+	assert.match(standalone, /npm link gives the command the name tabkyra/);
+	assert.match(prompt, /in place of "polycarp browser" in every command below/);
+	assert.throws(() => agentSetupPrompt("1.2.3", "polycarp"), /Unknown command name/);
+	for (const make of [(c) => remoteSetupPrompt("1.2.3", c), (c) => deviceSetupPrompt("1.2.3", "https://hub.example.com", "TK-ABCD-EFGH", c)]) {
+		assert.match(make("polycarp browser"), /polycarp browser doctor/);
+		assert.doesNotMatch(make("polycarp browser"), /(?<![\w/.~-])tabkyra doctor/);
+		assert.match(make("tabkyra"), /(?<![\w/.~ -])tabkyra doctor|^1\. Run: tabkyra doctor/m);
+	}
+});
+
+test("a section an earlier setup appended under either name counts as the same section", () => {
+	for (const text of [prompt, standalone]) {
+		assert.match(text, /"## Browser: Polycarp" or "## Browser: Tabkyra" section \(the same section under its earlier name\), leave it as it is/);
+		assert.match(text, /starting with a "## Browser: Polycarp" or "## Browser: Tabkyra" section an earlier setup appended/);
 	}
 });

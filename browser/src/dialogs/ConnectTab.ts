@@ -4,6 +4,7 @@ import { html, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { live } from "lit/directives/live.js";
 import { deviceSetupPrompt, remoteSetupPrompt } from "../agent-setup-prompt.js";
+import { hostCommand } from "../bridge/host-command.js";
 import { COMMAND_BOX_CLASS } from "../components/command-box.js";
 import { Toast } from "../components/Toast.js";
 import {
@@ -293,7 +294,7 @@ export class ConnectTab extends SettingsTab {
 							onClick: () => {
 								try {
 									void copyText(
-										remoteSetupPrompt(extensionVersion()),
+										remoteSetupPrompt(extensionVersion(), hostCommand()),
 										"Setup prompt copied. Paste it into your agent.",
 									);
 								} catch (err) {
@@ -392,7 +393,7 @@ export class ConnectTab extends SettingsTab {
 											if (!validDeviceCode(made)) return;
 											try {
 												void copyText(
-													deviceSetupPrompt(extensionVersion(), made.hubUrl, made.code),
+													deviceSetupPrompt(extensionVersion(), made.hubUrl, made.code, hostCommand()),
 													"Setup prompt copied. Paste it into the agent on that device.",
 												);
 											} catch (err) {

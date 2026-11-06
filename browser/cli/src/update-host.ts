@@ -29,7 +29,7 @@ import {
 	toolEnv,
 } from "./checkout.ts";
 import { type HostRunAction, type ProgressEvent, type ProgressRecord, readProgressRecord, writeProgressRecord } from "./update-progress.ts";
-import { selfExec, selfPrefix } from "./self.ts";
+import { COMMAND_NAME, selfExec, selfPrefix } from "./self.ts";
 import {
 	CHECK_INTERVAL_MS,
 	checkForUpdate,
@@ -241,6 +241,7 @@ export async function computeStatus(force = false): Promise<HostUpdateStatus> {
 		const { mode, root } = detectMode();
 		return {
 			type: "update_status",
+			command: COMMAND_NAME,
 			available: false,
 			current: cached?.current ?? "unknown",
 			channel: cached?.channel ?? settings.channel,
@@ -293,6 +294,7 @@ export async function computeStatus(force = false): Promise<HostUpdateStatus> {
 	const mismatch = diagnoseVersions({ extension: extension.build, extensionOnDisk, location: extension.location, host: BUILD, cliOnDisk });
 	const status: HostUpdateStatus = {
 		type: "update_status",
+		command: COMMAND_NAME,
 		available: checks && check.available && !check.error,
 		current: check.current,
 		latest: check.latest,

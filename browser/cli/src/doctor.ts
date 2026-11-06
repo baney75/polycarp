@@ -3,6 +3,7 @@
  * one exact fix per failure. Exits 1 when any check fails.
  */
 
+import { COMMAND_NAME } from "./self.ts";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { NATIVE_HOST_NAME, type UserScriptsStatus } from "../../src/bridge/protocol.ts";
@@ -69,7 +70,7 @@ function buildCheck(): Check {
 	const dir = extensionDir();
 	const state = buildState();
 	if (state === "missing") {
-		return { id: "build", status: "fail", label: "Extension build missing", detail: `${dir} is missing or incomplete.`, fix: "polycarp browser setup" };
+		return { id: "build", status: "fail", label: "Extension build missing", detail: `${dir} is missing or incomplete.`, fix: `${COMMAND_NAME} setup` };
 	}
 	if (state === "stale") {
 		return {
@@ -77,7 +78,7 @@ function buildCheck(): Check {
 			status: "fail",
 			label: `Extension build ${builtVersion()} does not match this checkout (${sourceVersion()})`,
 			detail: "dist-chrome was built from a different version of the source.",
-			fix: "polycarp browser setup",
+			fix: `${COMMAND_NAME} setup`,
 		};
 	}
 	return { id: "build", status: "ok", label: `Extension build ${builtVersion()}`, detail: dir };
@@ -91,7 +92,7 @@ function launcherCheck(): Check {
 				status: "fail",
 				label: "Agent launcher missing or broken",
 				detail: `${cliLauncherPath()} is what harness configs run.`,
-				fix: "polycarp browser install --force",
+				fix: `${COMMAND_NAME} install --force`,
 			};
 }
 
@@ -102,8 +103,8 @@ function hostChecks(): Check[] {
 				id: "host",
 				status: "warn",
 				label: "Native host registration is not checked on Windows",
-				detail: "polycarp browser install writes HKCU\\Software\\<browser>\\NativeMessagingHosts keys; run it again if the extension can't connect.",
-				fix: "polycarp browser install --force",
+				detail: `${COMMAND_NAME} install writes HKCU\\Software\\<browser>\\NativeMessagingHosts keys; run it again if the extension can't connect.`,
+				fix: `${COMMAND_NAME} install --force`,
 			},
 		];
 	}
@@ -119,7 +120,7 @@ function hostChecks(): Check[] {
 				status: "fail",
 				label: "No Chromium browser found",
 				detail: "Polycarp works with Helium, Chrome, Chromium, Brave, Edge, Arc, Vivaldi and Opera.",
-				fix: "Install a Chromium browser, then run: polycarp browser setup",
+				fix: `Install a Chromium browser, then run: ${COMMAND_NAME} setup`,
 			},
 		];
 	}
@@ -130,7 +131,7 @@ function hostChecks(): Check[] {
 			status: "fail",
 			label: `${name}: native host ${existsSync(file) ? "manifest is wrong" : "not registered"}`,
 			detail,
-			fix: "polycarp browser install --force",
+			fix: `${COMMAND_NAME} install --force`,
 		});
 		if (!existsSync(file)) return fail(file);
 		let manifest: { name?: string; path?: string; allowed_origins?: string[] };
@@ -161,7 +162,7 @@ export interface DebugInfo {
 }
 
 const GRANT_STEPS =
-	"Open the Polycarp side panel > Settings > Agents > Page scripts and click Allow, then accept the browser's prompt. If doctor still warns, run polycarp browser reload.";
+	`Open the Polycarp side panel > Settings > Agents > Page scripts and click Allow, then accept the browser's prompt. If doctor still warns, run ${COMMAND_NAME} reload.`;
 
 /** The "Allow user scripts" row of `polycarp browser doctor`, or undefined when there is nothing to say. */
 export function userScriptsCheck(info: DebugInfo): Check | undefined {
@@ -186,7 +187,7 @@ export function userScriptsCheck(info: DebugInfo): Check | undefined {
 					status: "warn",
 					label: "The userScripts permission is granted but the browser hides the API",
 					detail: `${slow} Either "Allow user scripts" is off on the extension's Details page, or Polycarp hasn't restarted since the permission was granted.`,
-					fix: 'Check "Allow user scripts" at chrome://extensions > Polycarp > Details, then polycarp browser reload',
+					fix: `Check "Allow user scripts" at chrome://extensions > Polycarp > Details, then ${COMMAND_NAME} reload`,
 				};
 			}
 			return {
@@ -194,7 +195,7 @@ export function userScriptsCheck(info: DebugInfo): Check | undefined {
 				status: "warn",
 				label: '"Allow user scripts" is off',
 				detail: `${slow} The permission is granted, but the browser refuses userScripts calls until the toggle is on.${status.error ? ` Browser said: ${status.error}` : ""}`,
-				fix: 'Turn on "Allow user scripts" at chrome://extensions > Polycarp > Details, then polycarp browser reload',
+				fix: `Turn on "Allow user scripts" at chrome://extensions > Polycarp > Details, then ${COMMAND_NAME} reload`,
 			};
 		case "probe_error":
 			return {
@@ -202,7 +203,7 @@ export function userScriptsCheck(info: DebugInfo): Check | undefined {
 				status: "warn",
 				label: "Couldn't tell whether user scripts work",
 				detail: `${slow} The check failed: ${status.error ?? "no error text"}`,
-				fix: "polycarp browser reload, then polycarp browser doctor",
+				fix: `${COMMAND_NAME} reload, then ${COMMAND_NAME} doctor`,
 			};
 	}
 	// No structured status (an older extension) or a state this CLI doesn't know (a newer one):
@@ -213,7 +214,7 @@ export function userScriptsCheck(info: DebugInfo): Check | undefined {
 		status: "warn",
 		label: "User scripts are unavailable",
 		detail: `Page scripts fall back to a slower path. Either the userScripts permission is not granted or "Allow user scripts" is off on the extension's Details page.`,
-		fix: "polycarp browser update or rebuild the CLI so doctor can name the cause",
+		fix: `${COMMAND_NAME} update or rebuild the CLI so doctor can name the cause`,
 	};
 }
 
@@ -227,7 +228,7 @@ async function connectionChecks(): Promise<Check[]> {
 		status: "fail",
 		label: "Extension not connected",
 		detail: "No running browser has the Polycarp extension loaded, or it has not reached the native host yet.",
-		fix: "polycarp browser setup",
+		fix: `${COMMAND_NAME} setup`,
 	};
 	let sockets: string[];
 	try {
@@ -261,7 +262,7 @@ async function connectionChecks(): Promise<Check[]> {
 					id: "loaded-version",
 					status: "fail",
 					label: `The browser runs extension ${info.version}, the build is ${built}`,
-					fix: "polycarp browser reload",
+					fix: `${COMMAND_NAME} reload`,
 				});
 			}
 			const userScripts = userScriptsCheck(info);
@@ -274,7 +275,7 @@ async function connectionChecks(): Promise<Check[]> {
 					status: "fail",
 					label: "Extension connected but not responding",
 					detail: err instanceof Error ? err.message : String(err),
-					fix: "polycarp browser reload",
+					fix: `${COMMAND_NAME} reload`,
 				},
 			];
 		} finally {
@@ -345,7 +346,7 @@ export async function runDoctor(options: { json: boolean }): Promise<number> {
 	console.log(
 		failed === 0
 			? `${sym.ok} ${c.bold("All checks passed.")}`
-			: `${sym.fail} ${c.bold(`${failed} check${failed === 1 ? "" : "s"} failed.`)} Run the ${sym.arrow} command under each, then run ${c.bold("polycarp browser doctor")} again.`,
+			: `${sym.fail} ${c.bold(`${failed} check${failed === 1 ? "" : "s"} failed.`)} Run the ${sym.arrow} command under each, then run ${c.bold(`${COMMAND_NAME} doctor`)} again.`,
 	);
 	return failed === 0 ? 0 : 1;
 }

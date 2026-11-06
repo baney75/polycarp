@@ -4,6 +4,7 @@
  * after a yes and always points harnesses at the absolute path of the tabkyra launcher.
  */
 
+import { COMMAND_NAME } from "./self.ts";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -64,12 +65,12 @@ async function ensureBuild(options: SetupOptions): Promise<boolean> {
 	// The extension compiles against sibling checkouts of pi-mono and mini-lit.
 	if (!existsSync(join(root, "..", "pi-mono")) || !existsSync(join(root, "node_modules"))) {
 		if (!run("./scripts/setup-siblings.sh", [], root)) {
-			console.log(`  ${sym.fail} Sibling setup failed. Fix the error above, then run ${c.bold("polycarp browser setup")} again.`);
+			console.log(`  ${sym.fail} Sibling setup failed. Fix the error above, then run ${c.bold(`${COMMAND_NAME} setup`)} again.`);
 			return false;
 		}
 	}
 	if (!run("npm", ["run", "build"], root, { ...process.env, TABKYRA_NO_BUMP: "1" }) || buildState() !== "ok") {
-		console.log(`  ${sym.fail} The build failed. Fix the error above, then run ${c.bold("polycarp browser setup")} again.`);
+		console.log(`  ${sym.fail} The build failed. Fix the error above, then run ${c.bold(`${COMMAND_NAME} setup`)} again.`);
 		return false;
 	}
 	console.log(`  ${sym.ok} Extension built ${c.dim(`(${builtVersion()})`)}`);
@@ -84,7 +85,7 @@ function registerHost(): boolean {
 	}
 	const present = browserDirs().filter(({ dir }) => existsSync(dir));
 	if (present.length === 0) {
-		console.log(`  ${sym.fail} No Chromium browser profile found. Open your browser once, then run ${c.bold("polycarp browser setup")} again.`);
+		console.log(`  ${sym.fail} No Chromium browser profile found. Open your browser once, then run ${c.bold(`${COMMAND_NAME} setup`)} again.`);
 		return false;
 	}
 	for (const { name, dir } of present) {
@@ -184,7 +185,7 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 			continue;
 		}
 		if (h.configured === undefined) {
-			console.log(`  ${sym.warn} ${h.name}: couldn't tell whether Polycarp is configured. ${c.dim("Run polycarp browser doctor for details.")}`);
+			console.log(`  ${sym.warn} ${h.name}: couldn't tell whether Polycarp is configured. ${c.dim(`Run ${COMMAND_NAME} doctor for details.`)}`);
 			continue;
 		}
 		const replacing = h.configured === "stale" || h.configured === "other";
@@ -236,8 +237,8 @@ async function offerSkill(options: SetupOptions): Promise<void> {
 	if (targets.length === 0) return;
 	const names = targets.map((t) => t.name).join(", ");
 	const skills = [...SKILLS.keys()].join(", ");
-	if (!(await confirm(`  ${sym.dot} Install the Polycarp skills (${skills}) for ${names}? ${c.dim("(polycarp browser skill install)")}`, { assumeYes: options.yes }))) {
-		console.log(`    ${c.dim("Later:")} polycarp browser skill install`);
+	if (!(await confirm(`  ${sym.dot} Install the Polycarp skills (${skills}) for ${names}? ${c.dim(`(${COMMAND_NAME} skill install)`)}`, { assumeYes: options.yes }))) {
+		console.log(`    ${c.dim("Later:")} ${COMMAND_NAME} skill install`);
 		return;
 	}
 	const results = installSkills({ force: false, all: false });
@@ -246,7 +247,7 @@ async function offerSkill(options: SetupOptions): Promise<void> {
 		const ok = mine.filter((r) => r.state === "written" || r.state === "current").length;
 		if (ok) console.log(`  ${sym.ok} ${t.name}: ${ok} skills ${c.dim(t.dir)}`);
 		for (const r of mine.filter((r) => r.state === "linked")) console.log(`  ${sym.warn} ${t.name}: ${r.file} is a symbolic link; left alone`);
-		for (const r of mine.filter((r) => r.state === "kept")) console.log(`  ${sym.warn} ${t.name}: ${r.file} is not ours; left alone ${c.dim(`(polycarp browser skill install ${r.skill} --force)`)}`);
+		for (const r of mine.filter((r) => r.state === "kept")) console.log(`  ${sym.warn} ${t.name}: ${r.file} is not ours; left alone ${c.dim(`(${COMMAND_NAME} skill install ${r.skill} --force)`)}`);
 	}
 }
 
@@ -306,7 +307,7 @@ async function loadExtension(options: SetupOptions): Promise<boolean> {
 		}
 	}
 	if (!options.wait) {
-		console.log(`  ${c.dim("Not waiting (--no-wait). Check later with")} ${c.bold("polycarp browser status")}`);
+		console.log(`  ${c.dim("Not waiting (--no-wait). Check later with")} ${c.bold(`${COMMAND_NAME} status`)}`);
 		return false;
 	}
 
@@ -347,7 +348,7 @@ async function loadExtension(options: SetupOptions): Promise<boolean> {
 		console.log(`  It went away after the reload. On chrome://extensions, check that Polycarp is on and loaded from:`);
 		console.log(`  ${c.cyan(dir)}`);
 	} else if (last.error) console.log(`  Last error: ${last.error}`);
-	console.log(`  If it is loaded, reload it once on chrome://extensions, then run ${c.bold("polycarp browser doctor")}.`);
+	console.log(`  If it is loaded, reload it once on chrome://extensions, then run ${c.bold(`${COMMAND_NAME} doctor`)}.`);
 	return false;
 }
 
@@ -385,6 +386,6 @@ export async function runSetup(options: SetupOptions): Promise<number> {
 		return 0;
 	}
 	const next = connected ? "fix the agent step above" : "load the extension";
-	console.log(`${sym.warn} ${c.bold("Almost there.")} ${next[0].toUpperCase()}${next.slice(1)}, then run ${c.bold("polycarp browser doctor")} to check everything.`);
+	console.log(`${sym.warn} ${c.bold("Almost there.")} ${next[0].toUpperCase()}${next.slice(1)}, then run ${c.bold(`${COMMAND_NAME} doctor`)} to check everything.`);
 	return 1;
 }
