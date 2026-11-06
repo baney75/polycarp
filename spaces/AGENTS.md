@@ -111,6 +111,7 @@ When one returns, add the date and the commit that brought it back.
 | ⌘Tab window bar glitches or comes up wrong | 10-12, 10-13, 11-01 | #4, #5, #6, #8; 11-01: `df2d54f` (#145) listed every empty workspace, centered on the whole screen (off the left edge) and drew a LazyVGrid panel far taller than its row | `WindowBarGateTests`; workspaces mode (only occupied plus current, MRU order, frame inside the visible area, one-row height, one stepper for Tab and arrows): `WorkspaceSwitcherOrderTests`, `SwitcherLayoutTests`, `SwitcherPanelFrameTests`, `SwitcherSelectionTests`, `SwitcherWiringTests` |
 | Holding Tab lands on the wrong app | 10-12 | #6 | none yet; add one |
 | The screen freezes mid-Space-slide with a full-screen app in front (half a desktop, a black gap, no menu bar) | 11-06 (an install restarted the Dock twice in 3 s) | Every Dock restart goes through `DockRestart` and `DockRestartGate`; an install leaves Mission Control alone (`InstallHandoff`) | `DockRestartGateTests` |
+| Switching to or from a full-screen app plays macOS's slide | 11-06 (Donovan's recording) | The green button and ⌃⌘F fill on the workspace (`FullScreenFill`, `FullScreenGestures`) | `FullScreenFillTests` |
 
 Never trade away a fix Donovan asked for to make agents' work easier (the `9512b94` mistake)
 without asking him first. When the two conflict, his visible desktop wins.
