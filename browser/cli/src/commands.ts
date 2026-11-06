@@ -56,6 +56,8 @@ export const VALUE_HINTS: Record<string, string> = {
 	"--router": "<script>",
 	"--port": "N",
 	"--public-url": "https://host",
+	"--invite": "PC-XXXX-XXXX-XXXX-XXXX",
+	"--token": "<delete token>",
 	"--redirect-host": "a,b",
 	"--allow-host": "a,b",
 	"--scope": "a,b",
@@ -236,6 +238,19 @@ export const COMMANDS: CommandSpec[] = [
 			{ name: "setup", what: "Tailscale Funnel (or your own --public-url), a passcode and a service that keeps serve running", flags: ["--public-url", "--port", "--no-service", "--no-passcode"] },
 			{ name: "status", what: "Is it up and reachable from the internet?", flags: ["--json"] },
 			{ name: "off", what: "Stop the service, turn Funnel off and remove remote.json" },
+		],
+	},
+	{
+		name: "connect",
+		summary: "One step to use your browser from Claude, ChatGPT and Grok",
+		what: "Connect your web assistants to this browser",
+		group: "Remote",
+		subcommands: [
+			{ name: "on", what: "Get a free connection, set up remote access and keep it running", flags: ["--invite", "--port", "--no-service", "--no-wait", "--new-passcode", "--json"] },
+			{ name: "off", what: "Stop the connection, turn remote access off and free the connection", flags: ["--json"] },
+			{ name: "status", what: "Is it on, and is it reachable from the internet?", flags: ["--json"] },
+			{ name: "waitlist", args: "<email>", what: "Join the waitlist when free connections are full (--token removes you)", flags: ["--token", "--json"], max: 1 },
+			{ name: "run", what: "Internal: what the connection service runs" },
 		],
 	},
 	{

@@ -453,7 +453,7 @@ function funnelOff(bin: string | undefined): { ok: boolean; message: string } {
 }
 
 /** Funnel first, then the service, then the files: while Funnel is open, a serve with OAuth on loopback is the safe state. */
-export async function remoteOff(): Promise<number> {
+export async function remoteOff(options: { frontDoorStopped?: boolean } = {}): Promise<number> {
 	let config: RemoteConfig | undefined;
 	let badFile: string | undefined;
 	try {
@@ -502,7 +502,7 @@ export async function remoteOff(): Promise<number> {
 	} else {
 		console.log(`${sym.dot} No remote.json; nothing else to remove.`);
 	}
-	if (config?.route === "custom") console.log(`${sym.warn} Your own front door for ${config.publicUrl} still forwards to this machine. Stop it there (for example, stop cloudflared); tabkyra remote off can't.`);
+	if (config?.route === "custom" && !options.frontDoorStopped) console.log(`${sym.warn} Your own front door for ${config.publicUrl} still forwards to this machine. Stop it there (for example, stop cloudflared); tabkyra remote off can't.`);
 	console.log(c.dim("Approved connectors keep their grants in oauth.json. tabkyra token clients lists them; tabkyra token revoke <client id> ends one."));
 	return code;
 }

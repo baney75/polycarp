@@ -19,6 +19,7 @@ import { hubCode, hubDevices, hubOff, hubPrefer, hubRemove, hubServe, hubSetup, 
 import { loadHubConfig } from "./hub-state.ts";
 import { linkBusy, linkEnroll, linkMintCode, linkOff, linkRun, linkStatus, normalizeHubUrl, printCode } from "./link.ts";
 import { runTheme } from "./theme.ts";
+import { ConnectUsageError, runConnect } from "./connect.ts";
 import { loadRemoteConfig, remoteFile, remoteOff, remoteSetup, remoteStatus } from "./remote-setup.ts";
 import { createHubToken, hubTunnel, HUB_SCOPES } from "./hub.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
@@ -558,6 +559,15 @@ async function main(): Promise<void> {
 				return;
 			}
 			throw new UsageError("Usage: tabkyra remote setup [--public-url https://host] [--port N] [--no-service] [--no-passcode] | status [--json] | off");
+		}
+		case "connect": {
+			try {
+				process.exitCode = await runConnect(argv.slice(1));
+			} catch (err) {
+				if (err instanceof ConnectUsageError) throw new UsageError(err.message);
+				throw err;
+			}
+			return;
 		}
 		case "hub": {
 			const rest = argv.slice(1).filter((a, i, all) => !a.startsWith("-") && !(VALUE_FLAGS.has(all[i - 1] ?? "") && !(all[i - 1] ?? "").includes("=")));
