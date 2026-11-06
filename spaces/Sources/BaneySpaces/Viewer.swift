@@ -3,7 +3,7 @@ import BaneySpacesCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The overview: all nine workspaces at once, laid out like the number keys' 3×3 grid.
+/// The overview: all nine workspaces at once, placed by `OverviewLayout`. The arrow keys still move as if on the number keys' 3×3 grid.
 /// Opens from the Mission Control key or ⌃↑ in place of Mission Control.
 final class ViewerModel: ObservableObject {
     /// A window card being dragged: what it is, where it came from, where the cursor is.

@@ -14,11 +14,13 @@ public enum OverviewLayout {
 
     public static let gap: CGFloat = 16
     public static let slotSize: CGFloat = 56
-    /// A workspace with one window still gets at least a quarter of what one with seven gets.
-    static func weight(_ windows: Int) -> CGFloat { max(CGFloat(windows), 7.0 / 4) }
+    /// A workspace with one window still gets at least a quarter of what any other gets. Past seven windows a workspace takes
+    /// no more room, since its cards shrink to fit and a very full one would otherwise squeeze a quiet one to nothing.
+    static func weight(_ windows: Int) -> CGFloat { min(max(CGFloat(windows), 7.0 / 4), 7) }
 
     /// `area` is what the overview may use. `current` always gets a tile, so where you are is never just a slot.
-    public static func plan(windows: [Int: Int], current: Int, in area: CGRect, workspaces: ClosedRange<Int> = 1...9) -> Plan {
+    public static func plan(windows: [Int: Int], current: Int, in area: CGRect) -> Plan {
+        let workspaces = 1...9
         let used = workspaces.filter { (windows[$0] ?? 0) > 0 || $0 == current }
         let empty = workspaces.filter { !used.contains($0) }
         let stripHeight = empty.isEmpty ? 0 : slotSize + gap
@@ -91,12 +93,12 @@ public enum OverviewLayout {
         // A row's height follows its weight per tile, softened so a busy row doesn't flatten a quiet one.
         let shares = zip(groups, sums).map { row, sum in (sum / CGFloat(row.count)).squareRoot() }
         let total = shares.reduce(0, +)
-        let usableHeight = area.height - gap * CGFloat(groups.count - 1)
+        let usableHeight = max(0, area.height - gap * CGFloat(groups.count - 1))
         var out: [Int: CGRect] = [:]
         var y = area.minY
         for (i, row) in groups.enumerated() {
             let height = usableHeight * shares[i] / total
-            let usableWidth = area.width - gap * CGFloat(row.count - 1)
+            let usableWidth = max(0, area.width - gap * CGFloat(row.count - 1))
             var x = area.minX
             for n in row {
                 let width = usableWidth * weight(windows[n] ?? 0) / sums[i]

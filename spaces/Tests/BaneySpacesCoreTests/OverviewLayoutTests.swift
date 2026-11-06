@@ -5,7 +5,8 @@ import XCTest
 final class OverviewLayoutTests: XCTestCase {
     private let area = CGRect(x: 48, y: 48, width: 1416, height: 800)
 
-    private func assertSound(_ plan: OverviewLayout.Plan, file: StaticString = #filePath, line: UInt = #line) {
+    private func assertSound(_ plan: OverviewLayout.Plan, in area: CGRect? = nil, file: StaticString = #filePath, line: UInt = #line) {
+        let area = area ?? self.area
         let all = plan.all
         XCTAssertEqual(Set(all.keys), Set(1...9), "every workspace is reachable", file: file, line: line)
         let rects = Array(all.values)
@@ -51,6 +52,31 @@ final class OverviewLayoutTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(quiet.width * quiet.height, busy.width * busy.height / 4 - 1)
     }
 
+    func testAQuietWorkspaceKeepsItsShareAcrossRows() {
+        // Review, round 1: a floor that only held inside a row let tile 1 fall under a quarter of tile 3.
+        let loads: [[Int: Int]] = [
+            [1: 1, 2: 15, 3: 7, 4: 7],
+            [1: 1, 2: 60, 3: 60],
+            [1: 1, 2: 7, 3: 7, 4: 7, 5: 7, 6: 7, 7: 7, 8: 7],
+            [1: 1, 2: 60, 3: 60, 4: 60, 5: 60, 6: 60, 7: 60, 8: 60, 9: 60],
+        ]
+        for load in loads {
+            let plan = OverviewLayout.plan(windows: load, current: 1, in: area)
+            assertSound(plan)
+            let sizes = plan.tiles.values.map { $0.width * $0.height }
+            XCTAssertGreaterThanOrEqual(sizes.min()!, sizes.max()! / 4 - 1, "\(load)")
+        }
+    }
+
+    func testNoSpaceAtAllDrawsNothingRatherThanANegativeSize() {
+        var windows: [Int: Int] = [:]
+        for n in 1...9 { windows[n] = 2 }
+        for tile in OverviewLayout.plan(windows: windows, current: 1, in: .zero).tiles.values {
+            XCTAssertGreaterThanOrEqual(tile.width, 0)
+            XCTAssertGreaterThanOrEqual(tile.height, 0)
+        }
+    }
+
     func testEveryLoadStaysSound() {
         for perWorkspace in [0, 1, 7, 24, 60] {
             for occupied in 0...9 {
@@ -88,8 +114,7 @@ final class OverviewLayoutTests: XCTestCase {
         for occupied in 0...9 {
             var windows: [Int: Int] = [:]
             for n in 1...9 where n <= occupied { windows[n] = 3 }
-            let plan = OverviewLayout.plan(windows: windows, current: 1, in: small)
-            XCTAssertEqual(Set(plan.all.keys), Set(1...9))
+            assertSound(OverviewLayout.plan(windows: windows, current: 1, in: small), in: small)
         }
     }
 }
