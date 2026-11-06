@@ -307,8 +307,12 @@ private struct BrowserWelcomeRow: View {
                     }
                     Text("Let Claude Code and Codex use your browser, in their own tab group. Set it up now or later in Settings > Browser.")
                         .font(Chrome.font(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    if let b = model.status?.browsers.first, model.status?.extensionConnected != true {
-                        Button("Connect \(b.name)") { model.connect(b.name) }.disabled(model.busy)
+                    ForEach(model.rows) { row in
+                        if row.state == .connected {
+                            Label("\(row.name) is connected", systemImage: "checkmark.circle.fill").font(Chrome.font(12, .medium)).foregroundStyle(Color.green)
+                        } else {
+                            Button("Connect \(row.name)") { model.connect(row.name) }.disabled(model.busy)
+                        }
                     }
                 }
             }

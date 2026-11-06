@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// What Settings > Browser shows, read from the bundled helper's `doctor --json`. The helper owns every check (which browsers
@@ -51,6 +52,105 @@ public struct BrowserStatus: Equatable {
     public var addable: [Agent] { agents.filter { ($0.id == "claude" || $0.id == "codex") && !$0.connected } }
 }
 
+/// A copy of the extension where a file dialog can reach it: the bundled one is inside Polycarp.app, which "Load unpacked"
+/// can't browse into. The copy is in the support folder, replaced whenever the app's version or the extension's changes (a
+/// new copy is built beside it and swapped in, so a failed copy leaves the old one). The manifest's key is copied with
+/// everything else, so the extension keeps its id.
+public enum ExtensionCopy {
+    public static let folderName = "Extension"
+    public static let stampName = "Extension.stamp"
+
+    public static func destination(supportDir: URL) -> URL { supportDir.appendingPathComponent(folderName, isDirectory: true) }
+
+    /// The `version` in a folder's manifest.json.
+    public static func manifestVersion(of folder: URL) -> String? {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("manifest.json")),
+              let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return m["version"] as? String
+    }
+
+    /// Makes sure the copy matches `source` for `appVersion`. Returns the copy's folder, or nil if it could not be made.
+    @discardableResult
+    public static func refresh(source: URL, supportDir: URL, appVersion: String) -> URL? {
+        let fm = FileManager.default
+        let dest = destination(supportDir: supportDir)
+        let stampFile = supportDir.appendingPathComponent(stampName)
+        let stamp = "\(appVersion)|\(manifestVersion(of: source) ?? "?")"
+        if fm.fileExists(atPath: dest.appendingPathComponent("manifest.json").path),
+           (try? String(contentsOf: stampFile, encoding: .utf8)) == stamp { return dest }
+        guard fm.fileExists(atPath: source.appendingPathComponent("manifest.json").path) else { return nil }
+        let fresh = supportDir.appendingPathComponent(folderName + ".new", isDirectory: true)
+        let old = supportDir.appendingPathComponent(folderName + ".old", isDirectory: true)
+        do {
+            try fm.createDirectory(at: supportDir, withIntermediateDirectories: true)
+            try? fm.removeItem(at: fresh); try? fm.removeItem(at: old)
+            try fm.copyItem(at: source, to: fresh)
+            if fm.fileExists(atPath: dest.path) { try fm.moveItem(at: dest, to: old) }
+            try fm.moveItem(at: fresh, to: dest)
+            try? fm.removeItem(at: old)
+            try stamp.write(to: stampFile, atomically: true, encoding: .utf8)
+            return dest
+        } catch {
+            try? fm.removeItem(at: fresh)
+            if !fm.fileExists(atPath: dest.path), fm.fileExists(atPath: old.path) { try? fm.moveItem(at: old, to: dest) }
+            return fm.fileExists(atPath: dest.appendingPathComponent("manifest.json").path) ? dest : nil
+        }
+    }
+}
+
+/// What the person drags onto the browser's extensions page: the Extension folder as a real file URL, the same item Finder
+/// would drag.
+public enum ExtensionDrag {
+    public static func writer(for folder: URL) -> NSPasteboardWriting { folder as NSURL }
+    public static let type = NSPasteboard.PasteboardType.fileURL
+}
+
+/// One browser's line in Settings and the welcome window.
+public struct BrowserRow: Equatable, Identifiable {
+    public enum State: Equatable { case connect, connected, reload(loaded: String, current: String) }
+    public var name: String
+    public var state: State
+    public var id: String { name }
+}
+
+public enum BrowserRows {
+    /// A loaded extension that is not the bundled version needs a Reload (or a fresh Load unpacked).
+    public static func stale(loaded: String?, current: String?) -> Bool {
+        guard let loaded, let current else { return false }
+        return loaded != current
+    }
+
+    /// One row per installed browser. The helper reports one connection and not which browser it is in, so it is shown on the
+    /// one registered browser, or on the one the person last clicked Connect on when several are registered.
+    public static func rows(_ status: BrowserStatus, lastClicked: String?, bundledVersion: String?) -> [BrowserRow] {
+        let registered = status.browsers.filter(\.registered)
+        return status.browsers.map { b in
+            let holds = status.extensionConnected && b.registered && (registered.count == 1 || b.name == lastClicked)
+            guard holds else { return BrowserRow(name: b.name, state: .connect) }
+            if stale(loaded: status.extensionVersion, current: bundledVersion), let l = status.extensionVersion, let c = bundledVersion {
+                return BrowserRow(name: b.name, state: .reload(loaded: l, current: c))
+            }
+            return BrowserRow(name: b.name, state: .connected)
+        }
+    }
+}
+
+/// The floating panel beside the browser: waiting for the drop, connected (then it closes by itself), or a stale copy.
+public enum BrowserPanelState: Equatable {
+    case waiting, connected, reload(loaded: String, current: String)
+    public static let closeDelay: TimeInterval = 1.5
+
+    public static func next(_ status: BrowserStatus?, bundledVersion: String?) -> BrowserPanelState {
+        guard let status, status.extensionConnected else { return .waiting }
+        if BrowserRows.stale(loaded: status.extensionVersion, current: bundledVersion), let l = status.extensionVersion, let c = bundledVersion {
+            return .reload(loaded: l, current: c)
+        }
+        return .connected
+    }
+    /// Only a connected, current extension closes the panel.
+    public var closesItself: Bool { self == .connected }
+}
+
 /// Where the bundled pieces are, and how a browser is opened on its extensions page.
 public enum BrowserBundle {
     /// `Polycarp.app/Contents/Resources/browser` for a resources folder.
@@ -72,6 +172,17 @@ public enum BrowserBundle {
 
     /// Every Chromium browser takes `chrome://extensions` as an address.
     public static let extensionsAddress = "chrome://extensions"
+
+    /// The page's address in the browser's own scheme where it has one; every other Chromium browser takes chrome://.
+    public static func extensionsAddress(for browser: String) -> String {
+        switch browser {
+        case "Brave": "brave://extensions"
+        case "Edge": "edge://extensions"
+        case "Vivaldi": "vivaldi://extensions"
+        case "Opera": "opera://extensions"
+        default: extensionsAddress
+        }
+    }
 
     /// The environment the helper runs in from the app: the person's own, plus nothing that points at a Node.
     public static func environment(base: [String: String], home: String = NSHomeDirectory(), loginPath: String? = nil) -> [String: String] {

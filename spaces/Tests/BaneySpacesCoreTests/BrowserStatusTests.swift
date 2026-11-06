@@ -50,7 +50,7 @@ final class BrowserStatusTests: XCTestCase {
         let setup = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/Setup.swift"), encoding: .utf8)
         XCTAssertTrue(setup.contains("case .browser: BrowserSettingsView()"))
         let view = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/BrowserSetup.swift"), encoding: .utf8)
-        for command in [#"["install", "--force"]"#, #"["setup", "--yes", "--no-wait"]"#, #"["doctor", "--json"]"#] { XCTAssertTrue(view.contains(command), command) }
+        for command in [#"["install", "--browser", browser]"#, #"["setup", "--yes", "--no-wait"]"#, #"["doctor", "--json"]"#] { XCTAssertTrue(view.contains(command), command) }
         XCTAssertFalse(view.contains("NativeMessagingHosts"))
         let welcome = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/WelcomeWindow.swift"), encoding: .utf8)
         XCTAssertTrue(welcome.contains("BrowserWelcomeRow()"))
