@@ -610,6 +610,12 @@ struct SetupView: View {
             }
         }
 
+        SettingsGroup("Full screen") {
+            SettingsRow("The green button and ⌃⌘F fill the screen on the workspace", help: "Switching stays instant. Off, they use macOS full screen, a separate desktop that slides each time you switch. A video's own full-screen button always uses macOS's.") {
+                Toggle("Fill the screen", isOn: Binding(get: { FullScreenGestures.isEnabled }, set: { UserDefaults.standard.set($0, forKey: FullScreenFill.enabledKey); model.objectWillChange.send() })).labelsHidden()
+            }
+        }
+
         SettingsGroup("⌘Tab") {
             SettingsRow("⌘Tab switches") {
                 Picker("⌘Tab switches", selection: binding({ model.cmdTab }, { model.setCmdTab($0) })) {

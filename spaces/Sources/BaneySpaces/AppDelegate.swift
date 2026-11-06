@@ -639,6 +639,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Moving other apps' windows needs Accessibility access. Ask once, then wait for it, and for
     /// AeroSpace to quit, since two managers moving the same windows would fight.
+    private let fullScreenGestures = FullScreenGestures()
+
     private func startWhenTrusted() {
         if canStart { return start() }
         // Left out of sight by a crash, the macOS Dock comes back while BaneySpaces waits; the
@@ -683,6 +685,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         missionControlKeys.start()
         syncMissionControl()
         spaces.start()
+        fullScreenGestures.onGesture = { [weak self] window in self?.spaces.toggleFill(window) }
+        fullScreenGestures.start()
         watchClicksForDisplay()
         if WorkspaceDock.enabled { dock.start() }
         // macOS's own top-of-screen drag goes quiet first, so only one view answers the gesture.

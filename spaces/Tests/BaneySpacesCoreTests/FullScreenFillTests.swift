@@ -1,0 +1,75 @@
+@testable import BaneySpacesCore
+import XCTest
+
+/// 2026-11-06: with an app in macOS full screen, every workspace switch played macOS's slide. The green button and ⌃⌘F fill the
+/// screen on the window's workspace instead.
+final class FullScreenFillTests: XCTestCase {
+    private let fill = CGRect(x: 0, y: 34, width: 1512, height: 948)
+    private let small = CGRect(x: 100, y: 100, width: 800, height: 600)
+
+    func testItIsOnUnlessTurnedOff() {
+        XCTAssertTrue(FullScreenFill.isEnabled(stored: nil))
+        XCTAssertTrue(FullScreenFill.isEnabled(stored: true))
+        XCTAssertFalse(FullScreenFill.isEnabled(stored: false))
+    }
+
+    func testOnlyTheStandardKeysCount() {
+        let key = { (code: Int64, c: Bool, m: Bool, s: Bool, o: Bool, f: Bool) in
+            FullScreenFill.isFullScreenKey(code: code, control: c, command: m, shift: s, option: o, fn: f)
+        }
+        XCTAssertTrue(key(3, true, true, false, false, false), "⌃⌘F")
+        XCTAssertTrue(key(3, false, false, false, false, true), "fn-F")
+        XCTAssertFalse(key(3, false, true, false, false, false), "⌘F is Find")
+        XCTAssertFalse(key(3, true, false, false, false, false), "⌃F")
+        XCTAssertFalse(key(3, true, true, true, false, false), "⌃⌘⇧F belongs to the app")
+        XCTAssertFalse(key(3, true, true, false, true, false))
+        XCTAssertFalse(key(4, true, true, false, false, false), "another letter")
+        XCTAssertFalse(key(3, false, false, false, false, false), "plain f")
+    }
+
+    func testOptionClickStaysMacOSsZoom() {
+        XCTAssertTrue(FullScreenFill.isPlainClick(command: false, control: false, shift: false, option: false))
+        XCTAssertFalse(FullScreenFill.isPlainClick(command: false, control: false, shift: false, option: true))
+    }
+
+    func testThePressTogglesAndComesBackWhereItWas() {
+        XCTAssertEqual(FullScreenFill.target(current: small, fill: fill, record: nil), fill)
+        let record = FullScreenFill.Record(from: small, landed: fill)
+        XCTAssertEqual(FullScreenFill.target(current: fill, fill: fill, record: record), small)
+    }
+
+    func testAnAppThatSnapsItsSizeStillComesBack() {
+        // Terminal lands short of the screen, on a character cell. Measuring against the screen would fill it forever.
+        let snapped = CGRect(x: 0, y: 34, width: 1490, height: 930)
+        let record = FullScreenFill.Record(from: small, landed: snapped)
+        XCTAssertEqual(FullScreenFill.target(current: snapped, fill: fill, record: record), small)
+    }
+
+    func testAWindowDraggedSinceFillingFillsAgain() {
+        let record = FullScreenFill.Record(from: small, landed: fill)
+        XCTAssertEqual(FullScreenFill.target(current: CGRect(x: 40, y: 80, width: 900, height: 700), fill: fill, record: record), fill)
+    }
+
+    func testOrdinaryClicksNeverAskAnApp() {
+        let window = CGRect(x: 100, y: 100, width: 800, height: 600)
+        XCTAssertTrue(FullScreenFill.isInButtonCorner(CGPoint(x: 150, y: 110), window: window), "the traffic lights")
+        XCTAssertFalse(FullScreenFill.isInButtonCorner(CGPoint(x: 230, y: 110), window: window), "a toolbar button past them")
+        XCTAssertFalse(FullScreenFill.isInButtonCorner(CGPoint(x: 500, y: 110), window: window), "the rest of the title bar")
+        XCTAssertFalse(FullScreenFill.isInButtonCorner(CGPoint(x: 150, y: 400), window: window), "the content")
+    }
+
+    private func source(_ path: String) throws -> String {
+        try String(contentsOf: Repo.root.appendingPathComponent(path), encoding: .utf8)
+    }
+
+    func testTheGestureWatcherOnlySwallowsWhatItActsOn() throws {
+        let code = try source("Sources/BaneySpaces/FullScreenGestures.swift")
+        XCTAssertTrue(code.contains("FullScreenFill.buttonSubrole"), "only the green button")
+        XCTAssertTrue(code.contains("isInButtonCorner"), "only a click in the corner asks the app anything")
+        XCTAssertTrue(code.contains(".milliseconds(40)"), "a frozen app can't hold a click")
+        XCTAssertFalse(code.contains("AXUIElementSetMessagingTimeout(system"), "that would change every Accessibility call in the app")
+        XCTAssertTrue(code.contains("frontIsFullScreen"), "the key leaves native full screen, as macOS's own")
+        XCTAssertTrue(code.contains("tapDisabledByTimeout"), "macOS turning the tap off is noticed")
+        XCTAssertTrue(code.contains("swallowingUp"), "a swallowed press takes its release with it")
+    }
+}
