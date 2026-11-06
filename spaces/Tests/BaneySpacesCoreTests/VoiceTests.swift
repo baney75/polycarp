@@ -197,7 +197,7 @@ final class VoiceTests: XCTestCase {
         XCTAssertEqual(LegacyHandover.namesToReplace(running: ["com.baney.silas", "com.baney.baneyspaces"], takesOver: false), ["BaneySpaces"])
         XCTAssertEqual(LegacyHandover.namesToReplace(running: ["com.baney.silas"], takesOver: true), ["the Silas app"])
         let detail = LegacyHandover.alertDetail(running: ["the Silas app"])
-        XCTAssertTrue(detail.contains("dictation takes over from here"), detail)
+        XCTAssertTrue(detail.contains("Silas in Polycarp takes over from here"), detail)
         XCTAssertTrue(detail.contains("stays installed"), detail)
         XCTAssertTrue(detail.contains("Settings > Silas offers to move it to the Trash"), detail)
     }
