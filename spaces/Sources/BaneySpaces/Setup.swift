@@ -436,6 +436,7 @@ struct SetupView: View {
     @ObservedObject var model: SetupModel
     @ObservedObject private var appearance = Appearance.shared
     @ObservedObject private var cursor = CursorController.shared
+    @ObservedObject private var parts = PartsModel.shared
     @StateObject private var themes = ThemePicker()
     var close: () -> Void
 
@@ -486,20 +487,33 @@ struct SetupView: View {
                     Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 44, height: 44)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Polycarp").font(Chrome.font(15, .bold))
-                        Text("Nine workspaces. One row of keys.").font(Chrome.font(12)).foregroundStyle(Chrome.muted)
+                        Text(parts.current.contains(.workspaces) ? "Nine workspaces. One row of keys." : "Bear much fruit.")
+                            .font(Chrome.font(12)).foregroundStyle(Chrome.muted)
                     }
                     Spacer()
-                    SettingsStatusLabel(text: model.ready ? "Running" : "Needs a switch", done: model.ready)
+                    if parts.current.contains(.workspaces) || parts.current.contains(.voice) {
+                        SettingsStatusLabel(text: model.trusted ? "Running" : "Needs a switch", done: model.trusted)
+                    }
                 }
             }
             if model.justEnabled && model.ready { SettingsNote("Polycarp is on. Try \(model.modifier.symbol)2.", tone: .done) }
         }
 
+        PartsSection(parts: parts)
+
+        if parts.current.contains(.workspaces) || parts.current.contains(.voice) {
         SettingsGroup("Permissions") {
+            if !parts.current.contains(.workspaces) {
+                SettingsRow("Let Silas type for you", help: "Silas watches for its key and types what you said into the app you're in.") {
+                    if model.trusted { SettingsStatusLabel(text: "Allowed") }
+                    else { Button("Allow Polycarp", action: model.allow).buttonStyle(.borderedProminent) }
+                }
+            } else {
             SettingsRow("Arrange windows", help: model.trusted ? "Polycarp can show, hide and move windows. It can't read what you type."
                         : "Lets Polycarp show, hide and move windows. It can't read what you type.") {
                 if model.trusted { SettingsStatusLabel(text: "Allowed") }
                 else { Button("Allow Polycarp", action: model.allow).buttonStyle(.borderedProminent) }
+            }
             }
             if !model.trusted { SettingsNote("macOS opens its settings. Turn on Polycarp, then come back; this window updates by itself.") }
             if !model.trusted && model.staleGrant {
@@ -522,6 +536,8 @@ struct SetupView: View {
                     ? "Polycarp's overview has replaced Mission Control. To close the extra desktops, turn off \"Use Polycarp's overview instead of Mission Control\" under Keys, open Mission Control, hover each extra desktop at the top and click its close button, then turn the switch back on."
                     : "Open Mission Control, hover each extra desktop at the top, and click its close button.")
             }
+        }
+
         }
 
         SettingsGroup("Startup") {

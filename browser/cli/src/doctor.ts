@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { NATIVE_HOST_NAME, type UserScriptsStatus } from "../../src/bridge/protocol.ts";
 import { BridgeClient, listSockets } from "./client.ts";
 import { harnesses, launcherValid, shellJoin } from "./harness.ts";
-import { cliLauncherPath, EXTENSION_ID, hostTarget, installedBrowserDirs, launcherPath, manifestLauncherRuns } from "./install.ts";
+import { cliLauncherPath, extensionOrigins, hostTarget, installedBrowserDirs, launcherPath, manifestLauncherRuns, originsCurrent } from "./install.ts";
 import { EXTENSION_FILES, extensionDir, repoRoot } from "./paths.ts";
 import { banner, c, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
@@ -109,7 +109,7 @@ function hostChecks(live: readonly string[] = []): Check[] {
 			},
 		];
 	}
-	const origin = `chrome-extension://${EXTENSION_ID}/`;
+	const origins = extensionOrigins();
 	// What a manifest may name: the helper inside Polycarp, or the standalone launcher (a standalone Polycarp's own manifest is fine).
 	const accepted = [...new Set([hostTarget(), launcherPath()])];
 	// Only browsers that are really installed: a data folder outlives the app.
@@ -146,9 +146,8 @@ function hostChecks(live: readonly string[] = []): Check[] {
 			return fail(`${file} is not valid JSON`);
 		}
 		if (manifest.name !== NATIVE_HOST_NAME) return fail(`name is ${manifest.name}, expected ${NATIVE_HOST_NAME}`);
-		const origins = manifest.allowed_origins ?? [];
-		if (origins.length !== 1 || origins[0] !== origin) {
-			return fail(`allowed_origins is ${JSON.stringify(origins)}, expected ["${origin}"] (extension id ${EXTENSION_ID})`);
+		if (!originsCurrent(manifest.allowed_origins ?? [])) {
+			return fail(`allowed_origins is ${JSON.stringify(manifest.allowed_origins ?? [])}, expected ${JSON.stringify(origins)}`);
 		}
 		const path = manifest.path ?? "";
 		if (!accepted.includes(path)) return fail(`path is ${manifest.path}, expected ${accepted.join(" or ")}`);

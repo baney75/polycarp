@@ -11,8 +11,21 @@ import { delimiter, isAbsolute, join } from "node:path";
 import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
 import { COMPILED, selfExec, selfPrefix } from "./self.ts";
 
-/** Stable id from the `key` in static/manifest.chrome.json. */
+/** Stable id from the `key` in static/manifest.chrome.json: unpacked and bundled copies. */
 export const EXTENSION_ID = "kenehmggpggpiolepbjojeenmeapgfoc";
+
+/** The id Google assigned the Chrome Web Store listing. Empty until the first upload. */
+export const STORE_EXTENSION_ID: string = "";
+
+/** Every extension allowed to talk to the native host: the unpacked copy, and the store copy once it exists. */
+export function extensionOrigins(storeId: string = STORE_EXTENSION_ID): string[] {
+	return [EXTENSION_ID, storeId].filter(Boolean).map((id) => `chrome-extension://${id}/`);
+}
+
+/** True when a host manifest allows exactly today's extensions. An older file gets rewritten. */
+export function originsCurrent(origins: unknown, storeId: string = STORE_EXTENSION_ID): boolean {
+	return JSON.stringify(origins) === JSON.stringify(extensionOrigins(storeId));
+}
 
 export interface BrowserDir {
 	name: string;
@@ -213,7 +226,7 @@ export function manifestFor(launcher: string): string {
 			description: "Polycarp browser bridge",
 			path: launcher,
 			type: "stdio",
-			allowed_origins: [`chrome-extension://${EXTENSION_ID}/`],
+			allowed_origins: extensionOrigins(),
 		},
 		null,
 		2,
@@ -341,7 +354,7 @@ export function hostStatus(): Array<BrowserDir & { state: HostState; file: strin
 			// Current: it names the helper or a standalone launcher that still runs (down to the program the launcher execs), and the one extension id (doctor's test).
 			try {
 				const m = JSON.parse(readFileSync(file, "utf8")) as { path?: string; allowed_origins?: string[] };
-				const ok = typeof m.path === "string" && accepted.has(m.path) && manifestLauncherRuns(m.path) && JSON.stringify(m.allowed_origins) === JSON.stringify([`chrome-extension://${EXTENSION_ID}/`]);
+				const ok = typeof m.path === "string" && accepted.has(m.path) && manifestLauncherRuns(m.path) && originsCurrent(m.allowed_origins);
 				state = ok ? "current" : "stale";
 			} catch {
 				state = "stale";

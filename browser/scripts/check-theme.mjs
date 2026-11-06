@@ -25,7 +25,7 @@ export const ALLOWLIST = {
 		max: Number.POSITIVE_INFINITY,
 		why: "The preset palettes: this file is the token source for the panel and the pages.",
 	},
-	"src/components/helm-svg.ts": {
+	"src/components/polycarp-svg.ts": {
 		max: 21,
 		why: "The brand mark (media/brand/BRAND.md): a fixed image, not a theme surface.",
 	},

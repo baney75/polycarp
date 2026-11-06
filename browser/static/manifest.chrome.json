@@ -2,7 +2,7 @@
 	"manifest_version": 3,
 	"minimum_chrome_version": "141",
 	"name": "Polycarp",
-	"description": "An AI agent in your browser side panel, and a browser for your coding agents",
+	"description": "Lets AI agents work in your browser, in their own tab group, while you keep working.",
 	"version": "1.1.10",
 	"key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2kC2+fqshozr+m/uopS9WXvavWghH5/l2yJbwV0sZZUpq0OOMfnVkGZLJtN7y/n0ifjKi4NENTCFou2e7CfX8D2j+0GSYuYFC/D4x0SElBEaL1Ey23JbjEL3auyfG5B4k4YfqU1hKk0Vxw1ENP46dvE7Vv0xvkOCnB1vcZzdJhqGFXjyPIrrTfiXNmzozeFSGPzi+AfNNh41T3pbN/9CB81rlhZnxVav3tTYLsvi8xrBbC88H4B1BtDw4OVLLETvmYJeXUE7tHftQdmZzAg70D6ABBfmYqKNIC+6mDYMH6uXokSZb4qog3LNrV1XCvaUHKGU9E/Xla3gTs8PLiR+8wIDAQAB",
 	"action": {

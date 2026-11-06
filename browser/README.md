@@ -526,9 +526,7 @@ The full index is [docs/README.md](docs/README.md). The ones most people want:
 
 ## FAQ
 
-**Is this on the Chrome Web Store?** No. Tabkyra loads unpacked from `dist-chrome`, and
-`tabkyra setup` builds it for you. The fixed manifest key gives every Chromium browser
-the same extension id.
+**Is this on the Chrome Web Store?** Its listing is on the way. Until then, Polycarp loads unpacked from `dist-chrome`, and that stays an option afterward.
 
 **Do I need an API key?** Not for agents that connect through MCP. Your agent uses its own
 sign-in, and the CLI and the MCP server never call a model. The side panel agent needs an API key from a
