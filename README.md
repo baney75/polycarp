@@ -25,6 +25,14 @@ then offers "Move Silas to the Trash" when you're ready. Nothing moves on its ow
 On an Intel Mac, or with
 `POLYCARP_FROM_SOURCE=1`, it builds on your Mac, which needs Apple's command line tools, Rust, Bun and Node.
 
+### Without Terminal
+
+Download `Polycarp.dmg` from the [preview release](https://github.com/baney75/polycarp/releases/tag/preview), open it, and drag
+Polycarp to Applications. The first time, your Mac says it can't check the app. That's expected: open System Settings,
+choose Privacy & Security, scroll down and press Open Anyway. If you open Polycarp from the disk image or your Downloads
+folder instead, it offers to move itself to Applications, and if BaneySpaces is installed it moves it to the Trash once
+Polycarp is running, with your settings copied first.
+
 ## The name
 
 Polycarp means "much fruit". John 15:5 (ESV): "Whoever abides in me and I in him, he it is that

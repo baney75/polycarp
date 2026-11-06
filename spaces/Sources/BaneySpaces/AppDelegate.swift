@@ -401,6 +401,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             exit((try? app.unregister()) != nil ? 0 : 1)
         }
         linkCommandIfNeeded()
+        // A person who came by the disk image never ran install.sh: BaneySpaces, if there, goes to the Trash once Polycarp runs.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { LegacyRetirementRunner.runIfDue() }
         NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleURL(_:reply:)),
                                                      forEventClass: AEEventClass(kInternetEventClass),
                                                      andEventID: AEEventID(kAEGetURL))
