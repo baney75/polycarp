@@ -253,6 +253,9 @@ const buildOptions = {
 	target: ["chrome120"],
 	platform: "browser",
 	sourcemap: isWatch ? "inline" : true,
+	// Smaller means a faster panel. Identifiers stay, since page tools send functions to pages as text.
+	minifyWhitespace: !isWatch,
+	minifySyntax: !isWatch,
 	entryNames: "[name]",
 	loader: {
 		".ts": "ts",

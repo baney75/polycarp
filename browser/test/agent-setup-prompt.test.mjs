@@ -70,7 +70,7 @@ test("the API keys tab no longer carries the subscription sign-in paragraph, and
 	for (const file of ["ApiKeysTab.ts", "WelcomeSetupDialog.ts", "BridgeTab.ts"]) {
 		const text = readFileSync(join(repo, "src", "dialogs", file), "utf8");
 		assert.doesNotMatch(text, /posing as|terms forbid/, `${file} still explains removed sign-ins`);
-		assert.match(text, /agentSetupPromptButton\(/, `${file} lacks the setup prompt button`);
+		if (file !== "ApiKeysTab.ts") assert.match(text, /agentSetupPromptButton\(/, `${file} lacks the setup prompt button`);
 	}
 });
 

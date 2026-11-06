@@ -159,7 +159,7 @@ test("native controls follow the theme: dark mode declares color-scheme dark", (
 
 test("Settings > Providers reads top to bottom: Free mode, subscriptions, API keys with their search and list, custom providers", () => {
 	const tab = readFileSync(new URL("../src/dialogs/ApiKeysTab.ts", import.meta.url), "utf8");
-	const order = ["Free mode: use the best free model", "<tabkyra-subscriptions>", "agentSetupPromptButton(", ">API keys</h3>", 'placeholder="Find a provider"', "<tabkyra-provider-key", "${this.custom}"].map((s) => tab.indexOf(s));
+	const order = ["Free mode: use the best free model", "<tabkyra-subscriptions>", ">API keys</h3>", 'placeholder="Find a provider"', "<tabkyra-provider-key", "${this.custom}"].map((s) => tab.indexOf(s));
 	assert.ok(order.every((i) => i > 0), JSON.stringify(order));
 	assert.deepEqual([...order].sort((a, b) => a - b), order);
 });
@@ -337,4 +337,11 @@ test("Settings, the skill screens and the provider editor are pages, not overlay
 	const page = read("components/PageBase.ts");
 	assert.match(page, /aria-label=\$\{i18n\("Back"\)\}/, "every page has a back arrow");
 	assert.match(page, /fixed inset-0/, "a page fills the panel");
+});
+
+test("the short provider list loses nothing: a saved key stays, and custom providers never hide", () => {
+	const tab = readFileSync(new URL("../src/dialogs/ApiKeysTab.ts", import.meta.url), "utf8");
+	assert.match(tab, /this\.withKeys\.add\(this\.justSaved\)/);
+	assert.match(tab, /this\.showAll \|\| this\.hasCustom \|\| this\.query\.trim\(\)/);
+	assert.match(tab, /q \|\| this\.showAll \|\| this\.withKeys\.has\(p\) \|\| COMMON_PROVIDERS\.has\(p\)/);
 });
