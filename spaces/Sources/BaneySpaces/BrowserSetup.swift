@@ -127,6 +127,7 @@ struct BrowserSettingsView: View {
             } else {
                 browsers
                 agents
+                BrowserConnectView()
                 if let m = model.message { Text(m).font(Chrome.font(12)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
             }
         }
