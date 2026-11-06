@@ -75,10 +75,10 @@ final class SilasNameTests: XCTestCase {
         let delegate = try Repo.text("Sources/BaneySpaces/AppDelegate.swift")
         XCTAssertFalse(delegate.contains("NSTextAttachment"), "an attachment in a plain string doesn't follow a dark menu bar")
         XCTAssertFalse(delegate.contains("attributedTitle = title"))
-        XCTAssertTrue(delegate.contains("SilasMenuBarImage.composite(base: base, recording: true)"))
+        XCTAssertTrue(delegate.contains("SilasMenuBarImage.composite(base: base)"))
         let image = try Repo.text("Sources/BaneySpaces/Voice/SilasMenuBarImage.swift")
         XCTAssertTrue(image.contains("image.isTemplate = true"), "macOS tints it for the bar")
-        XCTAssertTrue(image.contains("SilasMarkGeometry.dot()"))
+        XCTAssertTrue(image.contains("SilasMark.templateImage(size: pen, recording: true)"), "the pen and its dot, drawn the one way")
         // The Settings mark keeps its documented look: the pen in the text color, the dot in the accent.
         XCTAssertFalse(try Repo.text("Sources/BaneySpaces/Voice/VoiceSettingsView.swift").contains("SilasMarkView(live: voice.state?.status.isLive == true).foregroundStyle"))
         // One icon path: the Silas tab has no placeholder symbol.

@@ -754,7 +754,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // While Silas listens the pen and its dot join the workspace mark in one template image, so macOS tints all of it for the
         // menu bar's appearance; the title below stays the system's own.
         let listening = VoiceEngine.shared.state?.status.isLive == true
-        if listening, let base = image { statusItem.button?.image = SilasMenuBarImage.composite(base: base, recording: true) } else { statusItem.button?.image = image }
+        if listening, let base = image { statusItem.button?.image = SilasMenuBarImage.composite(base: base) } else { statusItem.button?.image = image }
         // Agents that finished while you were elsewhere, counted beside the workspace number.
         let n = started && session.started ? session.unseenCount : 0
         // Full Access stays until Donovan changes it, so the menu bar says so for as long as it is on.
