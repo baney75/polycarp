@@ -83,7 +83,7 @@ final class VoiceEngine: ObservableObject {
         let silas = LegacyHandover.livePids(NSRunningApplication.runningApplications(withBundleIdentifier: Product.Silas.bundleID)
             .map { ($0.processIdentifier, $0.isTerminated) }, excluding: terminating)
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let decision = VoiceGate.decide(userEnabled: userEnabled, modelInstalled: VoiceGate.hasModel(in: [dir]),
+        let decision = VoiceGate.decide(userEnabled: userEnabled && partIsOn, modelInstalled: VoiceGate.hasModel(in: [dir]),
                                         importFinished: VoiceImport.isFinished(silasDir: Product.silasSupportDir(home: home), newDir: dir),
                                         silasPids: silas)
         switch decision {
@@ -101,6 +101,9 @@ final class VoiceEngine: ObservableObject {
 
     /// Silas started or quit: decide again.
     func silasChanged(terminating: Int32? = nil) { start(terminating: terminating) }
+
+    /// Settings > General's Silas switch. Off, no key is listened to, and the switch below keeps its own setting.
+    var partIsOn = true { didSet { if partIsOn != oldValue { start() } } }
 
     /// The person's switch: remembered across restarts.
     func setUserEnabled(_ on: Bool) {

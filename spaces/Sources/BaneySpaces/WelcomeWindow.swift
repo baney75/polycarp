@@ -33,8 +33,8 @@ final class WelcomeModel: ObservableObject {
         return s
     }
 
-    var current: PermissionKind? { Welcome.next(granted: granted, skipped: skipped) }
-    var canStart: Bool { Welcome.canStart(granted: granted) }
+    var current: PermissionKind? { Welcome.next(granted: granted, skipped: skipped, features: PartsModel.shared.current) }
+    var canStart: Bool { Welcome.canStart(granted: granted, features: PartsModel.shared.current) }
     /// macOS keeps an old grant for an earlier copy: the switch is on and nothing happens.
     var looksStale: Bool {
         guard !granted.contains(.accessibility), let at = askedAccessibilityAt else { return false }
@@ -115,6 +115,7 @@ final class WelcomeModel: ObservableObject {
 
 struct WelcomeView: View {
     @ObservedObject var model: WelcomeModel
+    @ObservedObject private var parts = PartsModel.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -122,16 +123,31 @@ struct WelcomeView: View {
                 Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 60, height: 60)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Welcome to Polycarp").font(Chrome.font(21, .bold))
-                    Text(model.canStart ? "You're set. Everything else can wait." : "One switch and you're working.")
+                    Text(parts.hasChosen ? (model.canStart ? "You're set. Everything else can wait." : "One switch and you're working.")
+                        : "Pick what you want. You can change this any time.")
                         .foregroundStyle(.secondary)
                 }
             }
             .padding(.horizontal, 28).padding(.top, 26).padding(.bottom, 20)
 
+            if parts.hasChosen { walk } else { WelcomePartsChooser(parts: parts) }
+        }
+        .frame(width: 560)
+        .foregroundStyle(Chrome.wash())
+        .tint(Chrome.accent)
+        .background(Chrome.panel())
+        .environment(\.colorScheme, Chrome.scheme)
+        .animation(Chrome.ease(0.2), value: model.granted)
+        .animation(Chrome.ease(0.2), value: model.skipped)
+        .animation(Chrome.ease(0.2), value: parts.hasChosen)
+    }
+
+    /// The permissions the chosen parts need, then the way in.
+    @ViewBuilder private var walk: some View {
             VStack(spacing: 8) {
-                ForEach(Welcome.steps, id: \.kind) { row($0) }
+                ForEach(Welcome.steps(for: parts.current), id: \.kind) { row($0) }
                 loginRow
-                BrowserWelcomeRow()
+                if parts.current.contains(.browser) { BrowserWelcomeRow() }
             }
             .padding(.horizontal, 20)
 
@@ -140,7 +156,7 @@ struct WelcomeView: View {
                     .padding(.horizontal, 28).padding(.top, 12)
             }
 
-            if model.canStart {
+            if model.canStart, parts.current.contains(.workspaces) {
                 HStack(spacing: 10) {
                     Image(systemName: "leaf.fill").foregroundStyle(Chrome.accent)
                     Text("Try it: press \(model.modifierSymbol())2. Add ⇧ to bring the window along.")
@@ -155,19 +171,11 @@ struct WelcomeView: View {
                 Spacer()
                 Button(model.canStart ? "Start using Polycarp" : "Waiting for Accessibility") { UserDefaults.standard.set(false, forKey: LegacyRetirement.noteKey); model.onFinish() }
                     // Return presses the current permission's button while one is left; this only when none is.
-                    .keyboardShortcut(Welcome.defaultAction(granted: model.granted, skipped: model.skipped) == .finish ? KeyboardShortcut.defaultAction : nil)
+                    .keyboardShortcut(Welcome.defaultAction(granted: model.granted, skipped: model.skipped, features: parts.current) == .finish ? KeyboardShortcut.defaultAction : nil)
                     .disabled(!model.canStart)
                     .buttonStyle(WelcomeButtonStyle(large: true))
             }
             .padding(.horizontal, 28).padding(.vertical, 18)
-        }
-        .frame(width: 560)
-        .foregroundStyle(Chrome.wash())
-        .tint(Chrome.accent)
-        .background(Chrome.panel())
-        .environment(\.colorScheme, Chrome.scheme)
-        .animation(Chrome.ease(0.2), value: model.granted)
-        .animation(Chrome.ease(0.2), value: model.skipped)
     }
 
     @ViewBuilder private func row(_ s: PermissionStep) -> some View {
@@ -250,7 +258,7 @@ struct WelcomeView: View {
 
 /// The accent with the theme's own text on it, so a light accent in a dark theme stays readable. The system's prominent
 /// button always draws white text.
-private struct WelcomeButtonStyle: ButtonStyle {
+struct WelcomeButtonStyle: ButtonStyle {
     let large: Bool
     @Environment(\.isEnabled) private var isEnabled
 
