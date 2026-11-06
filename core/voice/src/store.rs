@@ -72,6 +72,11 @@ pub fn exists(name: &str) -> bool {
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub hotkey: String,
+    /// Which default `hotkey` was last settled against. See `migrate_hotkey`.
+    pub hotkey_version: u32,
+    /// A second key that also works until the microphone key has been seen once. No code says whether a keyboard has
+    /// that key (a Mac mini with a third-party keyboard doesn't), so nobody is left unable to dictate.
+    pub hotkey_fallback: Option<String>,
     pub tap_to_toggle: bool,
     pub model: String,
     /// Who chose `model`: default | registry | benchmark | user. A user choice is never overridden.
@@ -109,6 +114,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             hotkey: default_hotkey().into(),
+            hotkey_version: HOTKEY_VERSION,
+            hotkey_fallback: default_fallback().map(String::from),
             tap_to_toggle: true,
             model: "parakeet-v3".into(),
             model_source: "default".into(),
@@ -145,10 +152,42 @@ impl Settings {
     }
 }
 
+/// Bumped when the default key changes, so a saved old default can move once and a key picked
+/// afterwards stays picked.
+pub const HOTKEY_VERSION: u32 = 2;
+
+/// Settings saved before version 2 hold Right ⌘ whether or not anyone chose it, since it was the
+/// default on a Mac and the key was never recorded as a choice. Where the microphone key is now the
+/// default they move to it once (Donovan, 2026-11-06), with Right ⌘ still working until the new key
+/// is pressed. Any other key was picked by hand and stays, and so does Right Super on Windows and
+/// Linux, where it was never the default.
+pub fn migrate_hotkey(settings: &mut Settings, raw: &str) {
+    let has_version = serde_json::from_str::<serde_json::Value>(raw)
+        .map(|v| v.get("hotkeyVersion").is_some())
+        .unwrap_or(true);
+    if !has_version {
+        let moves = settings.hotkey == "CmdRight" && default_hotkey() == "Dictation";
+        settings.hotkey_fallback = moves.then(|| "CmdRight".to_string());
+        if moves {
+            settings.hotkey = default_hotkey().into();
+        }
+        settings.hotkey_version = HOTKEY_VERSION;
+    }
+}
+
+/// What keeps working beside the default key on a new install.
+pub fn default_fallback() -> Option<&'static str> {
+    (default_hotkey() == "Dictation").then_some("CmdRight")
+}
+
 pub fn default_hotkey() -> &'static str {
-    // Right ⌘ on a Mac. Elsewhere the right Windows/Super key opens the Start menu or
-    // launcher on release, so Right Ctrl is the safer hold key.
-    if cfg!(target_os = "macos") {
+    // The microphone key on an Apple silicon Mac: F5 on the top row, or Globe if it is set to
+    // start dictation. Intel Macs mostly lack it, so they keep Right ⌘. Elsewhere the right
+    // Windows/Super key opens the Start menu or launcher on release, so Right Ctrl is the safer
+    // hold key.
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "Dictation"
+    } else if cfg!(target_os = "macos") {
         "CmdRight"
     } else {
         "CtrlRight"
@@ -158,6 +197,7 @@ pub fn default_hotkey() -> &'static str {
 pub fn hotkey_label(hotkey: &str) -> String {
     let mac = cfg!(target_os = "macos");
     match hotkey {
+        "Dictation" => "the microphone key (F5)".into(),
         "CmdRight" if mac => "Right ⌘".into(),
         "CmdRight" => "Right Super".into(),
         "CmdLeft" if mac => "Left ⌘".into(),
@@ -202,6 +242,45 @@ pub struct Stats {
 #[cfg(test)]
 mod migrate_tests {
     use super::*;
+
+    #[test]
+    fn a_saved_old_default_moves_only_where_the_microphone_key_is_the_default() {
+        let raw = r#"{"hotkey":"CmdRight","onboarded":true}"#;
+        let mut s: Settings = serde_json::from_str(raw).unwrap();
+        migrate_hotkey(&mut s, raw);
+        assert_eq!(s.hotkey_version, HOTKEY_VERSION);
+        if default_hotkey() == "Dictation" {
+            assert_eq!(s.hotkey, "Dictation");
+            assert_eq!(s.hotkey_fallback.as_deref(), Some("CmdRight"), "nobody loses dictation");
+        } else {
+            assert_eq!(s.hotkey, "CmdRight", "a key picked by hand here, since it was never the default");
+            assert_eq!(s.hotkey_fallback, None);
+        }
+    }
+
+    #[test]
+    fn a_key_picked_by_hand_stays_with_no_second_key() {
+        let raw = r#"{"hotkey":"F13","onboarded":true}"#;
+        let mut s: Settings = serde_json::from_str(raw).unwrap();
+        migrate_hotkey(&mut s, raw);
+        assert_eq!(s.hotkey, "F13");
+        assert_eq!(s.hotkey_fallback, None, "Right ⌘ must not start working for someone who chose F13");
+        assert_eq!(s.hotkey_version, HOTKEY_VERSION);
+    }
+
+    #[test]
+    fn right_command_picked_after_the_move_stays() {
+        let raw = r#"{"hotkey":"CmdRight","hotkeyVersion":2,"hotkeyFallback":null}"#;
+        let mut s: Settings = serde_json::from_str(raw).unwrap();
+        migrate_hotkey(&mut s, raw);
+        assert_eq!(s.hotkey, "CmdRight");
+    }
+
+    #[test]
+    fn the_microphone_key_parses_and_has_a_label() {
+        assert!(crate::keys::Trigger::parse("Dictation").is_some());
+        assert_eq!(hotkey_label("Dictation"), "the microphone key (F5)");
+    }
 
     #[test]
     fn old_settings_with_a_chosen_model_become_user() {

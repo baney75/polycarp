@@ -82,6 +82,8 @@ pub struct Core {
     /// Where the keyboard was when the hotkey went down; the text goes back there.
     target: Mutex<Option<crate::focus::Target>>,
     pub machine: Mutex<Machine>,
+    /// What the key listener swallows, shared with its event tap. See `sync_blocked`.
+    pub blocked: handy_keys::BlockingHotkeys,
     watch: Mutex<Option<EditWatch>>,
     /// True while Silas is typing, so its own keystrokes are not read as the user's.
     pub typing: AtomicBool,
@@ -180,6 +182,7 @@ impl Core {
                 &store::read_raw("settings.json"),
                 installed,
             );
+            store::migrate_hotkey(&mut settings, &store::read_raw("settings.json"));
         }
         // A fresh nightly install stays on nightly instead of jumping to stable.
         if !store::exists("settings.json")
@@ -190,7 +193,8 @@ impl Core {
         let trigger = Trigger::parse(&settings.hotkey)
             .or_else(|| Trigger::parse(store::default_hotkey()))
             .expect("default hotkey parses");
-        let machine = Machine::new(trigger, settings.tap_to_toggle);
+        let mut machine = Machine::new(trigger, settings.tap_to_toggle);
+        machine.fallback = settings.hotkey_fallback.as_deref().and_then(Trigger::parse);
         let mut history: Vec<HistoryItem> = store::load("history.json");
         history.truncate(store::HISTORY_KEEP);
         Arc::new(Core {
@@ -202,6 +206,7 @@ impl Core {
             recording: Mutex::new(None),
             target: Mutex::new(None),
             machine: Mutex::new(machine),
+            blocked: Default::default(),
             watch: Mutex::new(None),
             typing: AtomicBool::new(false),
             listener_ok: AtomicBool::new(false),
@@ -672,13 +677,17 @@ impl Core {
             let mut cur = self.settings.lock();
             settings.model = cur.model.clone();
             settings.model_source = cur.model_source.clone();
+            // Choosing a key ends the second key. Otherwise it's the core's, like the model: the interface's copy may lag.
+            settings.hotkey_fallback = if settings.hotkey == cur.hotkey { cur.hotkey_fallback.clone() } else { None };
             std::mem::replace(&mut *cur, settings.clone())
         };
         {
             let mut m = self.machine.lock();
             m.trigger = trigger;
+            m.fallback = settings.hotkey_fallback.as_deref().and_then(Trigger::parse);
             m.tap_to_toggle = settings.tap_to_toggle;
         }
+        self.sync_blocked();
         self.save_settings();
         if old.hotkey != settings.hotkey && self.status().0 == Status::Ready {
             self.set_status(Status::Ready, None); // refresh the label
@@ -693,6 +702,33 @@ impl Core {
         if !on {
             self.machine.lock().reset();
             self.cancel_recording();
+        }
+        self.sync_blocked();
+    }
+
+    /// This keyboard has the microphone key, so the second key has done its job.
+    fn retire_fallback(&self) {
+        if self.settings.lock().hotkey != "Dictation" {
+            return;
+        }
+        let had = self.settings.lock().hotkey_fallback.take().is_some();
+        if had {
+            self.machine.lock().fallback = None;
+            self.save_settings();
+        }
+    }
+
+    /// Swallow the dictation key only while it is doing Polycarp's work. Paused, the key goes
+    /// back to the system.
+    pub fn sync_blocked(&self) {
+        let want = if self.is_enabled() {
+            crate::keys::blocked_hotkeys(&self.machine.lock().trigger)
+        } else {
+            Vec::new()
+        };
+        if let Ok(mut set) = self.blocked.lock() {
+            set.clear();
+            set.extend(want);
         }
     }
 
@@ -737,6 +773,9 @@ impl Core {
         }
         if self.capture_key(ev) {
             return;
+        }
+        if ev.is_key_down && ev.key == Some(handy_keys::Key::Dictation) {
+            self.retire_fallback();
         }
         let now = Instant::now();
         let out = self.machine.lock().on_event(ev, now);
@@ -1166,10 +1205,66 @@ mod tests {
         assert!(!m.contains(['\u{2014}', '\u{2013}', '\u{203a}']), "{m}");
     }
 
+    /// The store's folder is one global, so tests that set it take turns. Otherwise one test clearing it could send
+    /// another's writes into the real settings folder.
+    static STORE_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn the_microphone_key_is_swallowed_only_while_it_is_ours() {
+        use handy_keys::{Key, Modifiers};
+        let dir = std::env::temp_dir().join(format!("pc-blocked-{}", std::process::id()));
+        let _store = STORE_LOCK.lock();
+        store::set_data_dir(Some(dir.clone()));
+        let core = Core::new(Arc::new(NullHost));
+        let holds = |core: &Shared| {
+            core.blocked
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|h| h.key == Some(Key::Dictation) && h.modifiers == Modifiers::FN)
+        };
+        let mut s = core.settings.lock().clone();
+        s.hotkey = "Dictation".into();
+        core.apply_settings(s.clone()).unwrap();
+        assert!(holds(&core), "chosen: Polycarp takes the press");
+        core.set_enabled(false);
+        assert!(!holds(&core), "paused: the key goes back to the system");
+        core.set_enabled(true);
+        assert!(holds(&core), "resumed");
+        s.hotkey = "CmdRight".into();
+        core.apply_settings(s).unwrap();
+        assert!(!holds(&core), "another key: nothing is swallowed");
+        assert!(core.blocked.lock().unwrap().is_empty());
+        store::set_data_dir(None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_second_key_retires_on_the_first_press_of_the_microphone_key() {
+        use handy_keys::{Key, KeyEvent, Modifiers};
+        let dir = std::env::temp_dir().join(format!("pc-retire-{}", std::process::id()));
+        let _store = STORE_LOCK.lock();
+        store::set_data_dir(Some(dir.clone()));
+        let core = Core::new(Arc::new(NullHost));
+        let mut s = core.settings.lock().clone();
+        s.hotkey = "Dictation".into();
+        s.hotkey_fallback = Some("CmdRight".into());
+        *core.settings.lock() = s;
+        core.machine.lock().fallback = Trigger::parse("CmdRight");
+        core.on_key(&KeyEvent { modifiers: Modifiers::FN, key: Some(Key::Dictation), is_key_down: true, changed_modifier: None });
+        assert_eq!(core.settings.lock().hotkey_fallback, None);
+        assert_eq!(core.machine.lock().fallback, None);
+        let saved: Settings = store::load("settings.json");
+        assert_eq!(saved.hotkey_fallback, None, "it stays gone after a restart");
+        store::set_data_dir(None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn a_paused_engine_still_takes_the_key_being_picked() {
         use handy_keys::{Key, KeyEvent, Modifiers};
         let dir = std::env::temp_dir().join(format!("pc-capture-{}", std::process::id()));
+        let _store = STORE_LOCK.lock();
         store::set_data_dir(Some(dir.clone()));
         let core = Core::new(Arc::new(NullHost));
         core.set_enabled(false);
