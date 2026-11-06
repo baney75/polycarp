@@ -47,8 +47,8 @@ public enum Welcome {
             after: "Turn on Polycarp in the list. This window updates by itself."),
         PermissionStep(
             kind: .microphone,
-            title: "Dictate by voice",
-            why: "Press the dictation key and speak; Polycarp types it. It listens only from when you press the key until you let go or tap again. Speech becomes text on this Mac, and the audio isn't saved or sent anywhere.",
+            title: "Let Silas hear you",
+            why: "Silas: hold a key, speak and it types. It listens only from when you press the key until you let go or tap again. Speech becomes text on this Mac, and the audio isn't saved or sent anywhere.",
             isRequired: false,
             settingsName: "Microphone",
             settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",

@@ -56,7 +56,7 @@ final class VoiceOverlay {
 
     private func accessibility() {
         panel.setAccessibilityRole(.group)
-        panel.setAccessibilityLabel("Dictation")
+        panel.setAccessibilityLabel("Silas")
     }
 
     // MARK: Driven by the engine

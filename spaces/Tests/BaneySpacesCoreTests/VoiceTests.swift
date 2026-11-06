@@ -114,11 +114,11 @@ final class VoiceTests: XCTestCase {
     // MARK: Silas running
 
     func testASilasThatRunsGetsTheSameOneAlert() {
-        XCTAssertEqual(LegacyHandover.alertTitle(running: ["Silas"]), "Silas is running. Polycarp replaces it.")
-        XCTAssertEqual(LegacyHandover.alertTitle(running: ["BaneySpaces", "Silas"]), "BaneySpaces and Silas are running. Polycarp replaces them.")
+        XCTAssertEqual(LegacyHandover.alertTitle(running: ["the Silas app"]), "The Silas app is running. Polycarp replaces it.")
+        XCTAssertEqual(LegacyHandover.alertTitle(running: ["BaneySpaces", "the Silas app"]), "BaneySpaces and the Silas app are running. Polycarp replaces them.")
         XCTAssertEqual(LegacyHandover.alertTitle(running: ["BaneySpaces"]), LegacyHandover.alertTitle, "unchanged for the old case")
-        XCTAssertEqual(LegacyHandover.continueButton(running: ["Silas"]), "Quit Silas and Continue")
-        XCTAssertTrue(LegacyHandover.alertDetail(running: ["Silas"]).contains("copied, never moved"))
+        XCTAssertEqual(LegacyHandover.continueButton(running: ["the Silas app"]), "Quit the Silas app and Continue")
+        XCTAssertTrue(LegacyHandover.alertDetail(running: ["the Silas app"]).contains("copied, never moved"))
         XCTAssertTrue(LegacyHandover.applies(oneShot: false, legacyPids: [7]))
     }
 
@@ -130,7 +130,7 @@ final class VoiceTests: XCTestCase {
     func testPolycarpRefusesTheHotkeyWhileSilasRuns() {
         XCTAssertEqual(LegacyHandover.voiceStart(silasPids: []), .start)
         guard case .refuse(let why) = LegacyHandover.voiceStart(silasPids: [42]) else { return XCTFail("must refuse") }
-        XCTAssertTrue(why.contains("Silas is running"))
+        XCTAssertTrue(why.contains("The Silas app is running"))
     }
 
     func testTheInstallerNeverTouchesSilas() throws {
@@ -172,7 +172,7 @@ final class VoiceTests: XCTestCase {
         XCTAssertEqual(G.decide(userEnabled: true, modelInstalled: true, importFinished: true, silasPids: [9]), .wait(.silasRunning))
         XCTAssertEqual(G.decide(userEnabled: false, modelInstalled: true, importFinished: true, silasPids: [9]), .wait(.userOff), "the person's Off outlives Silas quitting")
         XCTAssertNil(G.message(.userOff))
-        XCTAssertTrue(G.message(.needsModel)!.contains("Settings > Voice"))
+        XCTAssertTrue(G.message(.needsModel)!.contains("Settings > Silas"))
     }
 
     func testAModelImportedFromSilasCounts() {
@@ -195,11 +195,11 @@ final class VoiceTests: XCTestCase {
         XCTAssertEqual(LegacyHandover.onLaunch(bundleID: "com.baney.baneyspaces", alreadyNotified: false, takesOver: false), .init(quit: true, notify: true), "BaneySpaces is unaffected")
         XCTAssertEqual(LegacyHandover.namesToReplace(running: ["com.baney.silas"], takesOver: false), [])
         XCTAssertEqual(LegacyHandover.namesToReplace(running: ["com.baney.silas", "com.baney.baneyspaces"], takesOver: false), ["BaneySpaces"])
-        XCTAssertEqual(LegacyHandover.namesToReplace(running: ["com.baney.silas"], takesOver: true), ["Silas"])
-        let detail = LegacyHandover.alertDetail(running: ["Silas"])
-        XCTAssertTrue(detail.contains("dictation takes over from here"), detail)
+        XCTAssertEqual(LegacyHandover.namesToReplace(running: ["com.baney.silas"], takesOver: true), ["the Silas app"])
+        let detail = LegacyHandover.alertDetail(running: ["the Silas app"])
+        XCTAssertTrue(detail.contains("Silas in Polycarp takes over from here"), detail)
         XCTAssertTrue(detail.contains("stays installed"), detail)
-        XCTAssertTrue(detail.contains("Settings > Voice offers to move it to the Trash"), detail)
+        XCTAssertTrue(detail.contains("Settings > Silas offers to move it to the Trash"), detail)
     }
 
     // MARK: Silas can go when the person is ready
@@ -213,7 +213,7 @@ final class VoiceTests: XCTestCase {
 
     func testOnlyANotificationAfterTheFirstTypedDictationNothingMoves() {
         let a = URL(fileURLWithPath: "/Applications/Silas.app")
-        XCTAssertEqual(SilasRetirement.notice, "Dictation is working. Silas can go when you're ready.")
+        XCTAssertEqual(SilasRetirement.notice, "Dictation is working. The Silas app can go when you're ready.")
         XCTAssertTrue(SilasRetirement.shouldNotify(voiceOn: true, typedText: true, alreadyNotified: false, silas: a))
         XCTAssertFalse(SilasRetirement.shouldNotify(voiceOn: true, typedText: false, alreadyNotified: false, silas: a), "only a real typed result")
         XCTAssertFalse(SilasRetirement.shouldNotify(voiceOn: true, typedText: true, alreadyNotified: true, silas: a), "once")
@@ -231,8 +231,8 @@ final class VoiceTests: XCTestCase {
         XCTAssertFalse(SilasRetirement.offers(voiceOn: false, silas: a, silasRunning: false), "voice off: Silas is the way back")
         XCTAssertFalse(SilasRetirement.offers(voiceOn: true, silas: nil, silasRunning: false))
         XCTAssertFalse(SilasRetirement.offers(voiceOn: true, silas: a, silasRunning: true))
-        XCTAssertEqual(SilasRetirement.stillInstalled, "Silas is still installed.")
-        XCTAssertEqual(SilasRetirement.button, "Move Silas to the Trash")
+        XCTAssertEqual(SilasRetirement.stillInstalled, "The Silas app is still installed.")
+        XCTAssertEqual(SilasRetirement.button, "Move the Silas app to the Trash")
     }
 
     func testSilasIsFoundOnlyInTheTwoApplicationsFolders() {
@@ -334,7 +334,7 @@ final class VoiceTests: XCTestCase {
     }
 
     func testTheNoticeNamesTheAppThatWasClosed() {
-        XCTAssertEqual(LegacyHandover.notificationTitle(forBundleID: "com.baney.silas"), "Silas was closed")
+        XCTAssertEqual(LegacyHandover.notificationTitle(forBundleID: "com.baney.silas"), "The Silas app was closed")
         XCTAssertTrue(LegacyHandover.notificationBody(forBundleID: "com.baney.silas").contains("dictation key"))
         XCTAssertEqual(LegacyHandover.notificationTitle(forBundleID: "com.baney.baneyspaces"), "BaneySpaces was closed")
     }

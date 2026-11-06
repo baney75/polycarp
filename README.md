@@ -18,10 +18,11 @@ curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | 
 
 This downloads the signed app for Apple silicon and opens it; no developer tools are needed. A window walks you
 through the permissions. If you have BaneySpaces, it goes to the Trash, because it can't run beside Polycarp, and
-Polycarp copies its settings. If you have Silas, it stays installed and working: Polycarp copies its dictionary,
-history and speech models, and takes over dictation only when voice is on, a speech model is installed and the copy has
-finished. After the first dictation that really typed text, one notification says dictation is working; Settings > Voice
-then offers "Move Silas to the Trash" when you're ready. Nothing moves on its own. With voice off, Silas runs freely, untouched.
+Polycarp copies its settings. The voice part keeps its name, Silas: hold a key, speak and it types. If you have the Silas app, it stays installed and
+working: Polycarp copies its dictionary, history and speech models, and Silas inside Polycarp takes over only when it is
+on, a speech model is installed and the copy has finished. After the first dictation that really typed text, one
+notification says dictation is working; Settings > Silas then offers "Move the Silas app to the Trash" when you're
+ready. Nothing moves on its own. With Silas off, the Silas app runs freely, untouched.
 On an Intel Mac, or with
 `POLYCARP_FROM_SOURCE=1`, it builds on your Mac, which needs Apple's command line tools, Rust, Bun and Node.
 
@@ -48,7 +49,7 @@ bears much fruit, for apart from me you can do nothing."
 ```
 polycarp spaces ls          # runs baneyspaces ls
 polycarp browser --version  # runs tabkyra --version
-polycarp voice              # opens Polycarp's Voice settings (Silas only if Polycarp isn't installed)
+polycarp voice              # opens Silas's settings in Polycarp (the Silas app only if Polycarp isn't installed)
 polycarp doctor             # shows which tools it found
 polycarp mcp                # serves the theme tools to an agent over MCP (stdio)
 ```
