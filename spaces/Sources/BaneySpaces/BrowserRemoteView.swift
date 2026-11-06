@@ -15,6 +15,11 @@ final class BrowserRemoteModel: ObservableObject {
     @Published private(set) var passcode: String?
     @Published private(set) var note: String?
     @Published private(set) var copied: String?
+    /// Status reads in a row that gave no usable answer.
+    @Published private(set) var failedReads = 0
+    private var setupAt: Date?
+    /// Bumped by every click that changes things. A status read that started before the click is out of date and is dropped.
+    private var generation = 0
     private var timer: Timer?
     private var watchers = 0
     private var refreshing = false
@@ -24,7 +29,14 @@ final class BrowserRemoteModel: ObservableObject {
     private var helper: URL? { BrowserBundle.helper(resources: Bundle.main.resourceURL) }
     var available: Bool { helper.map { FileManager.default.isExecutableFile(atPath: $0.path) } ?? false }
 
-    var screen: RemoteScreen { RemoteFlow.screen(helperAvailable: available, settingUp: settingUp, status: status, setup: setup) }
+    var screen: RemoteScreen {
+        RemoteFlow.screen(helperAvailable: available, settingUp: settingUp, status: status, setup: setup,
+                          setupAge: setupAt.map { Date().timeIntervalSince($0) } ?? 0, readsFailing: failedReads >= RemoteFlow.readFailureLimit)
+    }
+    /// A Turn on just succeeded and the status reads haven't confirmed it yet (and the grace period isn't over).
+    private var bridging: Bool {
+        setup?.state == .on && (setupAt.map { Date().timeIntervalSince($0) < RemoteFlow.setupGrace } ?? false)
+    }
     var passcodeSet: Bool { status?.passcodeSet ?? setup?.passcodeSet ?? false }
 
     // MARK: Reading
@@ -43,7 +55,7 @@ final class BrowserRemoteModel: ObservableObject {
     private func schedule() {
         timer?.invalidate()
         guard watchers > 0 else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: RemoteFlow.pollInterval(for: screen), repeats: false) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: RemoteFlow.pollInterval(for: screen, status: status, bridging: bridging), repeats: false) { [weak self] _ in
             self?.refresh()
             self?.schedule()
         }
@@ -52,13 +64,20 @@ final class BrowserRemoteModel: ObservableObject {
     func refresh() {
         guard available, !refreshing, !settingUp, !working else { return }
         refreshing = true
+        let started = generation
         pollQueue.async { [weak self] in
             let result = Self.run(.status)
             let parsed = RemoteReport.parse(result.out)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.refreshing = false
-                if let parsed, parsed != self.status { self.status = parsed }
+                // A click happened while this read ran: its answer describes the old state. Read again.
+                guard started == self.generation else { self.refresh(); return }
+                guard let parsed else { self.failedReads += 1; return }
+                if self.failedReads != 0 { self.failedReads = 0 }
+                let kept = RemoteFlow.settle(setup: self.setup, status: parsed)
+                if kept != self.setup { self.setup = kept }
+                if parsed != self.status { self.status = parsed }
             }
         }
     }
@@ -67,7 +86,7 @@ final class BrowserRemoteModel: ObservableObject {
 
     func turnOn() {
         guard available, !settingUp, !working else { return }
-        settingUp = true; note = nil
+        settingUp = true; note = nil; generation += 1; failedReads = 0
         queue.async { [weak self] in
             let result = Self.run(.setup)
             let parsed = RemoteReport.parse(result.out)
@@ -77,26 +96,34 @@ final class BrowserRemoteModel: ObservableObject {
                 let report = parsed ?? RemoteReport(state: .problem, message: RemoteCopy.helperSilent)
                 self.passcode = RemoteFlow.keepPasscode(current: self.passcode, from: report)
                 self.setup = report
+                self.setupAt = Date()
+                if report.state == .on {
+                    // The success speaks for itself only briefly: when the grace is over, whatever status says takes over.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + RemoteFlow.setupGrace + 0.5) { [weak self] in
+                        self?.objectWillChange.send()
+                        self?.refresh()
+                    }
+                }
                 self.refresh()
             }
         }
     }
 
     func checkAgain() {
-        setup = nil; note = nil
+        setup = nil; note = nil; generation += 1; failedReads = 0
         refresh()
     }
 
     func turnOff() {
         guard available, !settingUp, !working else { return }
-        working = true; note = nil
+        working = true; note = nil; generation += 1
         queue.async { [weak self] in
             let result = Self.run(.off)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.working = false
                 if result.code == 0 {
-                    self.setup = nil; self.passcode = nil; self.status = nil
+                    self.setup = nil; self.setupAt = nil; self.passcode = nil; self.status = nil; self.failedReads = 0
                 } else {
                     self.note = RemoteCopy.turnOffFailed + (result.text.isEmpty ? "" : " \(result.text)")
                 }
@@ -107,7 +134,7 @@ final class BrowserRemoteModel: ObservableObject {
 
     func newPasscode() {
         guard available, !settingUp, !working else { return }
-        working = true; note = nil
+        working = true; note = nil; generation += 1
         queue.async { [weak self] in
             let result = Self.run(.newPasscode)
             let code = RemoteCommand.parsePasscode(result.out)
@@ -125,8 +152,16 @@ final class BrowserRemoteModel: ObservableObject {
         let board = NSPasteboard.general
         board.clearContents()
         board.setString(text, forType: .string)
-        // Clipboard managers that honor this skip the entry.
-        if secret { board.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")) }
+        if secret {
+            // Clipboard managers that honor this skip the entry.
+            board.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+            // The passcode doesn't stay on the clipboard: after a minute it is cleared, unless something else was copied since.
+            let changeCount = board.changeCount
+            DispatchQueue.main.asyncAfter(deadline: .now() + RemoteFlow.passcodeClipboardSeconds) {
+                let current = NSPasteboard.general
+                if RemoteFlow.shouldClearClipboard(copiedAt: changeCount, now: current.changeCount) { current.clearContents() }
+            }
+        }
         copied = label
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in if self?.copied == label { self?.copied = nil } }
     }
@@ -214,10 +249,12 @@ struct BrowserRemoteView: View {
         case .checking:
             HStack(spacing: 8) { ProgressView().controlSize(.small); line("Looking…") }
         case .getTailscale:
+            line(RemoteCopy.intro)
             step(RemoteCopy.getTailscaleTitle, RemoteCopy.getTailscaleBody) {
                 Button(RemoteCopy.getTailscaleButton) { NSWorkspace.shared.open(RemoteCopy.tailscaleDownloadURL) }
             }
         case .signIn:
+            line(RemoteCopy.intro)
             step(RemoteCopy.signInTitle, RemoteCopy.signInBody) {
                 if model.tailscaleAppInstalled { Button(RemoteCopy.openTailscaleButton) { model.openTailscale() } }
             }
@@ -233,15 +270,19 @@ struct BrowserRemoteView: View {
                     Button(RemoteCopy.turnOffButton) { model.turnOff() }.controlSize(.small).disabled(model.working)
                 }
             }
+            // The passcode was made before Funnel was refused: show it here, so it can't be lost unseen.
+            passcodeShown
         case .tailnetLock:
             step(RemoteCopy.lockTitle, RemoteCopy.lockBody) {
                 Button(RemoteCopy.checkAgainButton) { model.checkAgain() }
             }
-        case .portBusy:
-            step(RemoteCopy.busyTitle, RemoteCopy.busyBody) {
+        case .portBusy(let tailscaleSetting, let detail):
+            step(RemoteCopy.busyTitle, tailscaleSetting ? RemoteCopy.busyTailscaleBody : RemoteCopy.busyBody) {
                 Button(RemoteCopy.checkAgainButton) { model.checkAgain() }
             }
+            details(detail)
         case .ready:
+            line(RemoteCopy.intro)
             step(RemoteCopy.readyTitle, RemoteCopy.readyBody) {
                 Button(RemoteCopy.turnOnButton) { model.turnOn() }
             }
@@ -257,18 +298,24 @@ struct BrowserRemoteView: View {
         case .on(let address, let browserConnected):
             onView(address: address, browserConnected: browserConnected)
         case .problem(let message):
-            step("Something is not working", RemoteCopy.genericProblem) {
+            let silent = message == RemoteCopy.helperSilent
+            step("Something is not working", silent ? RemoteCopy.helperSilent : RemoteCopy.genericProblem) {
                 HStack(spacing: 10) {
                     Button(RemoteCopy.checkAgainButton) { model.checkAgain() }
                     Button(RemoteCopy.startOverButton) { model.turnOff() }.disabled(model.working)
                 }
             }
-            if message != RemoteCopy.genericProblem {
-                DisclosureGroup(RemoteCopy.detailsLabel) {
-                    Text(message).font(Chrome.font(11)).foregroundStyle(.secondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                }
-                .font(Chrome.font(11))
+            if message != RemoteCopy.genericProblem, !silent { details(message) }
+        }
+    }
+
+    /// The helper's own words, for anyone who wants them.
+    @ViewBuilder private func details(_ message: String) -> some View {
+        if !message.isEmpty {
+            DisclosureGroup(RemoteCopy.detailsLabel) {
+                Text(message).font(Chrome.font(11)).foregroundStyle(.secondary).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
+            .font(Chrome.font(11))
         }
     }
 
@@ -309,16 +356,28 @@ struct BrowserRemoteView: View {
         }
     }
 
-    @ViewBuilder private var passcodeBlock: some View {
+    /// The passcode this run made, with the "I've saved it" step. Nothing when there isn't one to show.
+    @ViewBuilder private var passcodeShown: some View {
         if let code = model.passcode {
             copyRow(RemoteCopy.passcodeLabel, code, label: "passcode", secret: true)
             HStack(spacing: 8) {
                 line(RemoteCopy.passcodeOnce)
                 Button(RemoteCopy.passcodeSaved) { model.savedPasscode() }.controlSize(.small)
             }
+        }
+    }
+
+    @ViewBuilder private var passcodeBlock: some View {
+        if model.passcode != nil {
+            passcodeShown
         } else {
-            HStack(spacing: 8) {
-                line(model.passcodeSet ? RemoteCopy.passcodeEarlier : RemoteCopy.newPasscodeNote)
+            VStack(alignment: .leading, spacing: 6) {
+                if model.passcodeSet {
+                    line(RemoteCopy.passcodeEarlier)
+                    line(RemoteCopy.newPasscodeNote)
+                } else {
+                    line(RemoteCopy.noPasscodeNote)
+                }
                 Button(RemoteCopy.newPasscodeButton) { model.newPasscode() }.controlSize(.small).disabled(model.working)
             }
         }

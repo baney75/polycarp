@@ -43,7 +43,11 @@ export interface SetupReport {
 	state: RemoteState;
 	message: string;
 	adminUrl?: string;
-	/** Why a `problem` happened, when an app has something specific to say: "launcher" (no working launcher yet: connect a browser first), "hub", "service", "serve", "funnel", "config". */
+	/**
+	 * Why a `problem` or `port_busy` happened, when an app has something specific to say. problem: "launcher" (no working launcher yet:
+	 * connect a browser first), "hub", "service", "serve" (nothing answers on the local port), "funnel", "config". port_busy:
+	 * "tailscale_port" (a Tailscale setting already uses 8443) or "local_port" (a program here uses the local port).
+	 */
 	code?: string;
 	connectorUrl?: string;
 	passcode?: string;
@@ -51,10 +55,19 @@ export interface SetupReport {
 	passcodeSet?: boolean;
 }
 
-/** The page Tailscale prints when Funnel isn't enabled yet, or undefined. Trailing punctuation from a sentence is dropped. */
+/**
+ * The page Tailscale prints when Funnel isn't enabled yet (tailscale funnel: enableFeatureInteractive in
+ * tailscale/cli/serve_legacy.go), or undefined. Only a login.tailscale.com address counts: a docs link such as
+ * tailscale.com/s/https comes from a different failure. Trailing punctuation from a sentence is dropped.
+ */
 export function funnelAdminUrl(output: string): string | undefined {
-	const match = /https:\/\/(?:login\.)?tailscale\.com\/[^\s"'<>]*/.exec(output);
+	const match = /https:\/\/login\.tailscale\.com\/[^\s"'<>]*/.exec(output);
 	return match?.[0].replace(/[.,;:)\]]+$/, "");
+}
+
+/** The enablement page, but only once something follows it (a space, a newline or a quote), so a chunk that stops mid-address never counts. */
+export function completeFunnelAdminUrl(output: string): string | undefined {
+	return /https:\/\/login\.tailscale\.com\/[^\s"'<>]*[\s"'<>]/.test(output) ? funnelAdminUrl(output) : undefined;
 }
 
 export function printReport(report: object): void {
@@ -71,18 +84,22 @@ export interface StatusCheck {
  * One state for `remote status --json`. Without remote.json the answer is the read-only preflight (`preflight`:
  * ready, or what stands in the way). With it, a failed check is a problem, a working connection with no browser
  * attached is no_browser_connected, and the rest is on. `extensionConnected` is undefined when nobody asked.
+ * `tailscale` is what stands in the way of Tailscale itself (missing, signed out, Tailnet Lock) when remote.json is on the Funnel
+ * route; it comes ahead of everything else, because nothing else can work without Tailscale.
  */
 export function stateFromStatus(input: {
 	configured: boolean;
 	checks: StatusCheck[];
 	extensionConnected?: boolean;
-	preflight?: { state: RemoteState; message: string };
-}): { state: RemoteState; message: string } {
+	preflight?: { state: RemoteState; message: string; code?: string };
+	tailscale?: { state: RemoteState; message: string };
+}): { state: RemoteState; message: string; code?: string } {
 	const failed = input.checks.find((x) => x.status === "fail");
 	if (!input.configured) {
 		if (failed && failed.name === "remote.json" && !/not found/.test(failed.detail)) return { state: "problem", message: failed.detail };
 		return input.preflight ?? { state: "ready", message: "Nothing is set up yet." };
 	}
+	if (input.tailscale) return input.tailscale;
 	if (failed) return { state: "problem", message: `${failed.name}: ${failed.detail}` };
 	if (input.extensionConnected === false) return { state: "no_browser_connected", message: "Remote access is on, but no browser has Polycarp's extension connected." };
 	return { state: "on", message: "Remote access is on." };

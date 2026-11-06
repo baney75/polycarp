@@ -74,8 +74,9 @@ final class BrowserRemoteTests: XCTestCase {
 
     // MARK: The one step on screen
 
-    private func screen(settingUp: Bool = false, status: RemoteReport? = nil, setup: RemoteReport? = nil, available: Bool = true) -> RemoteScreen {
-        RemoteFlow.screen(helperAvailable: available, settingUp: settingUp, status: status, setup: setup)
+    private func screen(settingUp: Bool = false, status: RemoteReport? = nil, setup: RemoteReport? = nil, available: Bool = true, age: TimeInterval = 0,
+                        readsFailing: Bool = false) -> RemoteScreen {
+        RemoteFlow.screen(helperAvailable: available, settingUp: settingUp, status: status, setup: setup, setupAge: age, readsFailing: readsFailing)
     }
     private let url = "https://m.ts.net:8443/mcp"
 
@@ -85,7 +86,7 @@ final class BrowserRemoteTests: XCTestCase {
         XCTAssertEqual(screen(status: .init(state: .tailscaleMissing)), .getTailscale)
         XCTAssertEqual(screen(status: .init(state: .tailscaleSignedOut)), .signIn)
         XCTAssertEqual(screen(status: .init(state: .tailnetLock)), .tailnetLock)
-        XCTAssertEqual(screen(status: .init(state: .portBusy)), .portBusy)
+        XCTAssertEqual(screen(status: .init(state: .portBusy)), .portBusy(tailscaleSetting: false, detail: ""))
         XCTAssertEqual(screen(status: .init(state: .ready)), .ready)
         XCTAssertEqual(screen(status: .init(state: .on, connectorURL: url, extensionConnected: true)), .on(connectorURL: url, browserConnected: true))
         XCTAssertEqual(screen(status: .init(state: .noBrowserConnected, connectorURL: url, extensionConnected: false)), .on(connectorURL: url, browserConnected: false))
@@ -116,16 +117,63 @@ final class BrowserRemoteTests: XCTestCase {
     }
 
     func testASetupRefusalForOtherReasonsShowsItsOwnStep() {
-        XCTAssertEqual(screen(status: .init(state: .ready), setup: .init(state: .portBusy)), .portBusy)
+        XCTAssertEqual(screen(status: .init(state: .ready), setup: .init(state: .portBusy)), .portBusy(tailscaleSetting: false, detail: ""))
         XCTAssertEqual(screen(status: .init(state: .ready), setup: .init(state: .problem, message: "boom")), .problem("boom"))
         XCTAssertEqual(screen(status: .init(state: .ready), setup: .init(state: .problem, code: "launcher")), .needsBrowser)
     }
 
-    func testSuccessShowsOnAtOnceAndStatusTakesOver() {
+    func testSuccessIsAShortBridgeNotALastingState() {
         let done = RemoteReport(ok: true, state: .on, connectorURL: url, passcode: "abcde-fghij-klmno-pqrst", passcodeSet: true)
         XCTAssertEqual(screen(setup: done), .on(connectorURL: url, browserConnected: true), "before the first status read")
-        XCTAssertEqual(screen(status: .init(state: .problem), setup: done), .on(connectorURL: url, browserConnected: true))
+        // Inside the grace period a status that hasn't caught up (DNS or Funnel lag) doesn't undo it.
+        XCTAssertEqual(screen(status: .init(state: .problem), setup: done, age: 5), .on(connectorURL: url, browserConnected: true))
+        // Once the grace is over, whatever status says takes over: signed out, a dead service, or a `remote off` in a terminal.
+        let over = RemoteFlow.setupGrace + 1
+        XCTAssertEqual(screen(status: .init(state: .tailscaleSignedOut), setup: done, age: over), .signIn)
+        XCTAssertEqual(screen(status: .init(state: .problem, message: "local serve: down"), setup: done, age: over), .problem("local serve: down"))
+        XCTAssertEqual(screen(status: .init(state: .ready), setup: done, age: over), .ready)
+        // A status that confirms it speaks for itself at once, whatever the age.
         XCTAssertEqual(screen(status: .init(state: .noBrowserConnected, connectorURL: url, extensionConnected: false), setup: done), .on(connectorURL: url, browserConnected: false))
+        XCTAssertEqual(screen(status: .init(state: .on, connectorURL: url, extensionConnected: true), setup: done, age: over), .on(connectorURL: url, browserConnected: true))
+    }
+
+    func testAStatusThatConfirmsTheSuccessEndsTheBridge() {
+        let done = RemoteReport(ok: true, state: .on, connectorURL: url, passcodeSet: true)
+        XCTAssertNil(RemoteFlow.settle(setup: done, status: .init(state: .on, connectorURL: url, extensionConnected: true)))
+        XCTAssertNil(RemoteFlow.settle(setup: done, status: .init(state: .noBrowserConnected, connectorURL: url, extensionConnected: false)))
+        XCTAssertEqual(RemoteFlow.settle(setup: done, status: .init(state: .problem)), done, "a status that hasn't caught up leaves the bridge to the grace period")
+        XCTAssertNil(RemoteFlow.settle(setup: nil, status: .init(state: .ready)))
+    }
+
+    func testARetainedRefusalAboutTailscaleEndsWhenThatBlockerIsGone() {
+        let signedOut = RemoteReport(state: .tailscaleSignedOut)
+        // Still signed out: the refusal stays. Signed in again (status ready): it is cleared, with no click.
+        XCTAssertEqual(RemoteFlow.settle(setup: signedOut, status: .init(state: .tailscaleSignedOut)), signedOut)
+        XCTAssertNil(RemoteFlow.settle(setup: signedOut, status: .init(state: .ready)))
+        XCTAssertNil(RemoteFlow.settle(setup: .init(state: .tailscaleMissing), status: .init(state: .tailscaleSignedOut)), "installed now, so the step moves on")
+        XCTAssertNil(RemoteFlow.settle(setup: .init(state: .tailnetLock), status: .init(state: .ready)))
+        // The Funnel refusal isn't about Tailscale itself: status "ready" can't clear it (and the helper can't say it after one).
+        let refused = RemoteReport(state: .funnelNotAllowed)
+        XCTAssertEqual(RemoteFlow.settle(setup: refused, status: .init(state: .problem)), refused)
+        XCTAssertEqual(screen(status: .init(state: .ready), setup: signedOut), .signIn, "before the status read that clears it, the refusal still shows")
+    }
+
+    func testTwoFailedReadsInARowSayTheHelperIsSilent() {
+        XCTAssertEqual(RemoteFlow.readFailureLimit, 2)
+        XCTAssertEqual(screen(readsFailing: true), .problem(RemoteCopy.helperSilent), "a first read that never answers isn't Looking… forever")
+        XCTAssertEqual(screen(status: .init(state: .on, connectorURL: url, extensionConnected: true), setup: nil, readsFailing: false), .on(connectorURL: url, browserConnected: true))
+        XCTAssertEqual(screen(status: .init(state: .ready), readsFailing: true), .problem(RemoteCopy.helperSilent), "and a later failure doesn't leave the old state up as current")
+        XCTAssertEqual(screen(settingUp: true, readsFailing: true), .turningOn)
+    }
+
+    func testABusyConnectionSaysWhichKindAndKeepsTheHelpersWords() throws {
+        let tailscale = try report(#"{"ok":false,"state":"port_busy","message":"Port 8443 on this machine already forwards TCP traffic to 127.0.0.1:22.","code":"tailscale_port"}"#)
+        let local = try report(#"{"ok":false,"state":"port_busy","message":"Something already listens on 127.0.0.1:8787","code":"local_port"}"#)
+        XCTAssertEqual(screen(status: tailscale), .portBusy(tailscaleSetting: true, detail: tailscale.message))
+        XCTAssertEqual(screen(status: local), .portBusy(tailscaleSetting: false, detail: local.message))
+        XCTAssertEqual(screen(status: .init(state: .ready), setup: tailscale), .portBusy(tailscaleSetting: true, detail: tailscale.message))
+        XCTAssertTrue(RemoteCopy.busyTailscaleBody.contains("isn't a program you can quit"))
+        XCTAssertFalse(RemoteCopy.busyBody.contains("Tailscale"))
     }
 
     func testOnWithoutAnAddressIsAProblemNotAnEmptyCard() {
@@ -138,9 +186,16 @@ final class BrowserRemoteTests: XCTestCase {
         XCTAssertEqual(RemoteFlow.keepPasscode(current: "first", from: .init(state: .on, passcode: "second")), "second")
     }
 
-    func testPollingIsQuickWhileWaitingAndSlowOnceOn() {
+    func testPollingIsQuickWhileWaitingAndSlowWheneverStatusSaysItIsSetUp() {
         XCTAssertEqual(RemoteFlow.pollInterval(for: .getTailscale), 4)
         XCTAssertEqual(RemoteFlow.pollInterval(for: .on(connectorURL: url, browserConnected: true)), 30)
+        // Half done after a Funnel refusal: remote.json is kept, so a full read (with its internet checks) isn't repeated every 4 s.
+        let half = RemoteReport(state: .problem, connectorURL: url)
+        XCTAssertEqual(RemoteFlow.pollInterval(for: .funnelNotAllowed(adminURL: nil), status: half), 30)
+        // Tailscale itself being the problem is a cheap read, and the window should notice the sign-in.
+        XCTAssertEqual(RemoteFlow.pollInterval(for: .signIn, status: .init(state: .tailscaleSignedOut, connectorURL: url)), 4)
+        XCTAssertEqual(RemoteFlow.pollInterval(for: .ready, status: .init(state: .ready)), 4)
+        XCTAssertEqual(RemoteFlow.pollInterval(for: .on(connectorURL: url, browserConnected: true), bridging: true), 4, "just turned on: confirm quickly")
     }
 
     // MARK: Commands
@@ -194,6 +249,14 @@ final class BrowserRemoteTests: XCTestCase {
         XCTAssertEqual(RemoteCopy.otherWays, "Other ways")
         XCTAssertEqual(RemoteCopy.turnOnButton, "Turn on")
         XCTAssertEqual(RemoteCopy.newPasscodeButton, "Make a new passcode")
+        // The passcode is the approval gate, so autofill by the browser the assistant drives would weaken it.
+        XCTAssertTrue(RemoteCopy.passcodeOnce.contains("not one built into the browser Polycarp uses"))
+        // Turning on makes an address anyone on the internet can reach; the passcode is what stands in the way.
+        XCTAssertTrue(RemoteCopy.readyBody.contains("Anyone on the internet can reach that address"))
+        XCTAssertTrue(RemoteCopy.readyBody.contains("an assistant still needs the passcode"))
+        XCTAssertTrue(RemoteCopy.intro.contains("It's off until you turn it on."))
+        XCTAssertTrue(RemoteCopy.needsBrowserBody.contains("press Check again"), "that screen doesn't update by itself, so it says to press the button")
+        XCTAssertTrue(RemoteCopy.passcodeEarlier.contains("make a new one"), "never claims it was shown when it may not have been")
         XCTAssertEqual(RemoteCopy.turnOffButton, "Turn off")
         XCTAssertEqual(RemoteCopy.tailscaleDownloadURL.absoluteString, "https://tailscale.com/download")
     }
@@ -202,6 +265,12 @@ final class BrowserRemoteTests: XCTestCase {
         // The guide says who can reach the address and what stands between them and the browser; it makes no claim about
         // encryption, so neither does the window.
         for line in RemoteCopy.everySentence { XCTAssertNil(line.range(of: "encrypt|end-to-end|private|secure", options: [.regularExpression, .caseInsensitive]), line) }
+    }
+
+    func testTheClipboardIsClearedAfterAMinuteOnlyIfNothingWasCopiedSince() {
+        XCTAssertEqual(RemoteFlow.passcodeClipboardSeconds, 60)
+        XCTAssertTrue(RemoteFlow.shouldClearClipboard(copiedAt: 41, now: 41))
+        XCTAssertFalse(RemoteFlow.shouldClearClipboard(copiedAt: 41, now: 42), "the person copied something else")
     }
 
     func testTheStepsMatchTheGuide() throws {
@@ -235,5 +304,14 @@ final class BrowserRemoteTests: XCTestCase {
         let pollBody = String(view[from.lowerBound..<to.lowerBound])
         XCTAssertFalse(pollBody.contains("Self.run(.setup)") || pollBody.contains("turnOn()"))
         for hosted in ["workers.dev", "cloudflared", "trycloudflare", "waitlist"] { XCTAssertFalse(view.contains(hosted), hosted) }
+        // A status read that began before a click is dropped (F10), the passcode shows on the Funnel refusal screen (S3), the intro is
+        // on screen (S5), and a copied passcode is cleared by change count (S7).
+        XCTAssertTrue(view.contains("guard started == self.generation"))
+        XCTAssertEqual(view.components(separatedBy: "generation += 1").count - 1, 4, "turnOn, checkAgain, turnOff and newPasscode each bump it")
+        let funnelCase = try XCTUnwrap(view.range(of: "case .funnelNotAllowed(let admin):")), lockCase = try XCTUnwrap(view.range(of: "case .tailnetLock:"))
+        XCTAssertTrue(view[funnelCase.lowerBound..<lockCase.lowerBound].contains("passcodeShown"))
+        XCTAssertGreaterThanOrEqual(view.components(separatedBy: "line(RemoteCopy.intro)").count - 1, 3)
+        XCTAssertTrue(view.contains("RemoteFlow.shouldClearClipboard") && view.contains("RemoteFlow.passcodeClipboardSeconds") && view.contains("changeCount"))
+        XCTAssertTrue(view.contains("RemoteCopy.newPasscodeNote") && view.contains("RemoteCopy.noPasscodeNote"))
     }
 }

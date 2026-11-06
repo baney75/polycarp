@@ -18,8 +18,8 @@ export function writeAtomic(path: string, text: string, mode: number): void {
 }
 
 /** stdio is explicit: a child never inherits this process's stdout, which is the native host's channel to the browser. */
-export function run(cmd: string, args: string[]): { code: number; out: string } {
-	const r = spawnSync(cmd, args, { encoding: "utf8", timeout: 60_000, stdio: ["ignore", "pipe", "pipe"] });
+export function run(cmd: string, args: string[], timeoutMs = 60_000): { code: number; out: string } {
+	const r = spawnSync(cmd, args, { encoding: "utf8", timeout: timeoutMs, stdio: ["ignore", "pipe", "pipe"] });
 	const output = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim();
 	// A timeout or spawn error still keeps what the command printed: tailscale prints its sign-in URL before it waits.
 	if (r.error) return { code: 1, out: [output, r.error.message].filter(Boolean).join("\n") };

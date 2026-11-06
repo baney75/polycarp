@@ -300,7 +300,7 @@ The [`polycarp-theme` skill](https://github.com/baney75/polycarp/blob/main/skill
 
 ## Use your browser from Claude, ChatGPT and Grok
 
-Settings > Browser has a section called "Use your browser from Claude, ChatGPT and Grok". It lets the assistants you use on the web work in the browser on your Mac. It's off until you click Turn on, and it takes one step at a time: get Tailscale, sign in, allow Funnel for your computer, then Turn on.
+Settings > Browser has a section called "Use your browser from Claude, ChatGPT and Grok". It lets the assistants you use on the web work in the browser on your Mac. It's off until you click Turn on, and it takes one step at a time: get Tailscale, sign in, then Turn on. If Tailscale needs you to allow Funnel for your computer, Polycarp asks you to after you click Turn on, and you try again.
 
 You need your own free Tailscale account. Polycarp runs no service for this. Tailscale's Funnel setting is what makes the address reachable from the internet. When it's on, Polycarp shows the address to add in each assistant and a passcode, once. An assistant has to be approved with that passcode before it can use your browser.
 

@@ -5,9 +5,11 @@ through your own free account with Tailscale: no account with us, no relay, no c
 also run as `polycarp browser`, for example `polycarp browser remote setup`.
 
 **In the Polycarp app, use Settings > Browser > "Use your browser from Claude, ChatGPT and Grok".** It
-walks you through the steps below one at a time with buttons: get Tailscale, allow Funnel, turn on,
-copy the address and passcode, add the connector. It does what the command here does and nothing
-else. The rest of this page is the same thing for the terminal. One command sets it up.
+walks you through it one step at a time: get Tailscale and sign in, then Turn on. If Tailscale needs
+you to allow Funnel for your computer, Polycarp asks you to after you click Turn on, and you try again.
+When it's on, the window shows the address and a passcode (once) and says how to add them in each
+assistant. Behind the buttons it runs the commands below. The rest of this page is the same thing for
+the terminal. One command sets it up.
 
 ```bash
 tabkyra remote setup
@@ -36,14 +38,28 @@ sentences. `state` is one of `tailscale_missing`, `tailscale_signed_out`, `funne
 `adminUrl`, the page Tailscale printed), `tailnet_lock`, `port_busy`, `ready`, `on` (with
 `connectorUrl`), `no_browser_connected` or `problem` (with `message`, and sometimes `code`).
 `setup --json` includes `passcode` only in the run that made it, even when that run then fails, so
-keep it. `token passcode --json` makes a new one. On a Mac, `TABKYRA_TAILSCALE_APP` names the
-Tailscale app's own command, which isn't on PATH.
+keep it. `token passcode --json` makes a new one.
+
+`code` says why when it matters. For `problem`: `launcher`, `hub`, `service`, `serve` (nothing answers
+on the local port, so nothing was turned on), `funnel` (Tailscale's own words are in `message`) or
+`config`. For `port_busy`: `tailscale_port` (a saved Tailscale setting already uses 8443) or
+`local_port` (a program on this computer uses the local port). A status read on the Funnel route
+names `tailscale_missing`, `tailscale_signed_out` or `tailnet_lock` ahead of `problem`.
+
+`funnel_not_allowed` means Tailscale printed its login.tailscale.com page for enabling Funnel. The
+helper returns it as soon as the page appears and stops that `tailscale funnel` call, which would
+otherwise wait; every `tailscale funnel` call is bounded at 30 seconds. On the Funnel route, `on` is reported only after
+`tailscale serve status` shows Funnel on for the machine. The Mac app's own `tailscale` is found at
+`/Applications/Tailscale.app/Contents/MacOS/Tailscale` when it isn't on PATH, so the terminal and the
+app behave the same; `TABKYRA_TAILSCALE_APP` names another copy.
 
 ## What you need
 
 - Tabkyra installed and connected (`tabkyra setup`, then `tabkyra install` so the service has a
   launcher to start).
-- Tailscale on this computer, signed in, with Funnel allowed for your tailnet. Free plan is enough.
+- Tailscale on this computer, signed in. Free plan is enough. If Funnel isn't allowed for your
+  tailnet yet, `tabkyra remote setup` prints the Tailscale page that allows it and stops; allow it
+  there, then run setup again.
 
 Funnel runs on its own port (8443), so the OAuth paths sit at the root of the URL, and anything
 you serve on 443 stays private.

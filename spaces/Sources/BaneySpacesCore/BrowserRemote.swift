@@ -25,7 +25,8 @@ public struct RemoteReport: Equatable {
     public var message: String
     /// Tailscale's page for allowing Funnel: only ever a tailscale.com address.
     public var adminURL: URL?
-    /// Why a problem happened, when the helper says (`launcher`: no browser has been connected yet).
+    /// Why a problem or a busy connection happened, when the helper says (`launcher`: no browser has been connected yet;
+    /// `tailscale_port`: a saved Tailscale setting is in the way; `local_port`: a program on this computer is).
     public var code: String?
     public var connectorURL: String?
     /// Present only in the answer of the run that made the passcode.
@@ -33,6 +34,9 @@ public struct RemoteReport: Equatable {
     public var passcodeSet: Bool
     /// Status only: whether a browser has the extension connected. Nil when the answer didn't say.
     public var extensionConnected: Bool?
+
+    /// Status only: remote access is set up on this computer (the answer carries its address), whatever shape it is in.
+    public var configured: Bool { connectorURL != nil }
 
     public init(ok: Bool = false, state: RemoteState, message: String = "", adminURL: URL? = nil, code: String? = nil,
                 connectorURL: String? = nil, passcode: String? = nil, passcodeSet: Bool = false, extensionConnected: Bool? = nil) {
@@ -82,7 +86,8 @@ public enum RemoteScreen: Equatable {
     case needsBrowser
     case funnelNotAllowed(adminURL: URL?)
     case tailnetLock
-    case portBusy
+    /// `tailscaleSetting`: a saved Tailscale setting uses the connection (not a program to quit). `detail`: the helper's own words.
+    case portBusy(tailscaleSetting: Bool, detail: String)
     case ready
     case turningOn
     case on(connectorURL: String, browserConnected: Bool)
@@ -90,25 +95,50 @@ public enum RemoteScreen: Equatable {
 }
 
 public enum RemoteFlow {
+    /// How long a successful Turn on is allowed to speak for itself while status reads catch up (DNS and Funnel can lag).
+    public static let setupGrace: TimeInterval = 60
+    /// Status reads in a row that must fail (no JSON, a crash, a timeout) before the window says the helper is silent.
+    public static let readFailureLimit = 2
+    /// A copied passcode is taken off the clipboard after this many seconds, unless something else was copied since.
+    public static let passcodeClipboardSeconds: TimeInterval = 60
+
     /// What the window shows for the latest status and the result of the last Turn on.
-    /// - `setup`: the last `remote setup` answer, kept until the person acts again. A refusal stays on screen (the status
-    ///   read afterwards only says the setup is half done) except where status names something more basic.
-    public static func screen(helperAvailable: Bool, settingUp: Bool, status: RemoteReport?, setup: RemoteReport?) -> RemoteScreen {
+    /// - `setup`: the last `remote setup` answer. A refusal stays on screen (the status read afterwards only says the setup
+    ///   is half done) except where status names something more basic. A success is a short bridge, not a lasting state: it
+    ///   speaks for itself only until a status read answers, and for at most `setupGrace` seconds (`setupAge`) after that.
+    /// - `readsFailing`: the last `readFailureLimit` status reads all failed.
+    public static func screen(helperAvailable: Bool, settingUp: Bool, status: RemoteReport?, setup: RemoteReport?, setupAge: TimeInterval = 0,
+                              readsFailing: Bool = false) -> RemoteScreen {
         guard helperAvailable else { return .unavailable }
         if settingUp { return .turningOn }
         if let status, status.state == .on || status.state == .noBrowserConnected, let url = status.connectorURL {
             return .on(connectorURL: url, browserConnected: status.state == .on)
         }
+        if readsFailing { return .problem(RemoteCopy.helperSilent) }
         if let setup {
             if setup.state == .on, let url = setup.connectorURL {
-                // Just turned on; the next status read confirms it.
-                return .on(connectorURL: url, browserConnected: status?.extensionConnected ?? true)
+                // Just turned on. Before the first status read, or while it lags (inside the grace period), this stands in for it.
+                if status == nil || setupAge < setupGrace {
+                    return .on(connectorURL: url, browserConnected: status?.extensionConnected ?? true)
+                }
+            } else if setup.state != .on {
+                if !(status.map { moreBasic.contains($0.state) } ?? false) { return screen(for: setup) }
             }
-            let moreBasic: Set<RemoteState> = [.tailscaleMissing, .tailscaleSignedOut, .tailnetLock]
-            if setup.state != .on, !(status.map { moreBasic.contains($0.state) } ?? false) { return screen(for: setup) }
         }
         guard let status else { return .checking }
         return screen(for: status)
+    }
+
+    /// Tailscale itself being gone is more basic than any refusal about Funnel or a busy connection.
+    private static let moreBasic: Set<RemoteState> = [.tailscaleMissing, .tailscaleSignedOut, .tailnetLock]
+
+    /// The `setup` answer to keep once a status read arrives. A success was only a bridge: a status that confirms it ends it. A
+    /// refusal about Tailscale itself ends once status no longer says the same thing, so signing in moves the window on.
+    public static func settle(setup: RemoteReport?, status: RemoteReport) -> RemoteReport? {
+        guard let setup else { return nil }
+        if status.state == .on || status.state == .noBrowserConnected, status.connectorURL != nil { return nil }
+        if moreBasic.contains(setup.state), status.state != setup.state { return nil }
+        return setup
     }
 
     private static func screen(for r: RemoteReport) -> RemoteScreen {
@@ -117,7 +147,7 @@ public enum RemoteFlow {
         case .tailscaleSignedOut: .signIn
         case .funnelNotAllowed: .funnelNotAllowed(adminURL: r.adminURL)
         case .tailnetLock: .tailnetLock
-        case .portBusy: .portBusy
+        case .portBusy: .portBusy(tailscaleSetting: r.code == "tailscale_port", detail: r.message)
         case .ready: .ready
         case .on, .noBrowserConnected:
             // Set up but the answer carried no address: nothing to show but what the helper said.
@@ -127,16 +157,23 @@ public enum RemoteFlow {
         }
     }
 
-    /// Seconds until the next status read: quick while a step is waiting on the person, slow once it is on (the read then
-    /// checks the internet side too).
-    public static func pollInterval(for screen: RemoteScreen) -> TimeInterval {
+    /// Seconds until the next status read. Quick while a step waits on the person and the read is cheap; slow whenever status
+    /// reports an install that is set up (a full read then checks the internet side and the browser too, so it isn't repeated
+    /// every few seconds), except while Tailscale itself is the problem: that read skips those checks and the window should
+    /// notice the sign-in. `bridging`: a Turn on just succeeded and status hasn't confirmed it yet.
+    public static func pollInterval(for screen: RemoteScreen, status: RemoteReport? = nil, bridging: Bool = false) -> TimeInterval {
+        if bridging { return 4 }
         if case .on = screen { return 30 }
+        if let status, status.configured, !moreBasic.contains(status.state) { return 30 }
         return 4
     }
 
     /// The passcode to show. The first answer that carries one wins until the person says they've saved it; a later answer
     /// without one (a retry after a refusal) never clears it.
     public static func keepPasscode(current: String?, from report: RemoteReport) -> String? { report.passcode ?? current }
+
+    /// Clear a copied passcode only if nothing else has been copied since (the pasteboard's change count is the same).
+    public static func shouldClearClipboard(copiedAt: Int, now: Int) -> Bool { copiedAt == now }
 }
 
 /// The helper's commands and what the app tells it. Exact arguments are pinned by tests, so a rename here fails loudly.
@@ -203,7 +240,7 @@ public enum RemoteCopy {
     public static let openTailscaleButton = "Open Tailscale"
 
     public static let needsBrowserTitle = "Connect a browser first"
-    public static let needsBrowserBody = "Polycarp needs a browser connected before an assistant can use it. Use Connect in the Browsers section above, then come back; this window updates by itself."
+    public static let needsBrowserBody = "Polycarp needs a browser connected before an assistant can use it. Use Connect in the Browsers section above, then come back and press Check again."
 
     public static let funnelTitle = "Allow Funnel in Tailscale"
     public static let funnelBody = "Funnel is Tailscale's setting that lets the internet reach this computer. Allow it for this computer on the page below, then come back and try again."
@@ -215,10 +252,11 @@ public enum RemoteCopy {
 
     public static let busyTitle = "Something else is in the way"
     public static let busyBody = "Another program on this computer is already using the connection Polycarp needs. Nothing was changed. Quit that program, then check again."
+    public static let busyTailscaleBody = "A setting saved in Tailscale is already using the connection Polycarp needs. It isn't a program you can quit. Nothing was changed. Turn that setting off in Tailscale, then check again."
     public static let checkAgainButton = "Check again"
 
     public static let readyTitle = "Ready to turn on"
-    public static let readyBody = "Tailscale is signed in. Turning this on gives you an address to add in each assistant, and a passcode that approves them."
+    public static let readyBody = "Tailscale is signed in. Turning this on gives you an address to add in each assistant, and a passcode that approves them. Anyone on the internet can reach that address, but an assistant still needs the passcode."
     public static let turnOnButton = "Turn on"
 
     public static let turningOnTitle = "Turning on…"
@@ -228,9 +266,10 @@ public enum RemoteCopy {
     public static let noBrowserNote = "No browser is connected right now. Open your browser with Polycarp's extension, and assistants will be able to use it."
     public static let addressLabel = "Address to add in an assistant"
     public static let passcodeLabel = "Passcode"
-    public static let passcodeOnce = "Shown once. Save it in a password manager; you type it when an assistant asks to connect."
+    public static let passcodeOnce = "Shown once. Save it in a password manager, but not one built into the browser Polycarp uses. You type it when an assistant asks to connect."
     public static let passcodeSaved = "I've saved it"
-    public static let passcodeEarlier = "Your passcode was shown when you turned this on."
+    public static let passcodeEarlier = "You already have a passcode. If you didn't save it, make a new one."
+    public static let noPasscodeNote = "There's no passcode yet. Make one before you add an assistant."
     public static let newPasscodeButton = "Make a new passcode"
     public static let newPasscodeNote = "A new passcode replaces the old one. Assistants you've already approved keep working."
     public static let turnOffButton = "Turn off"
@@ -260,7 +299,7 @@ public enum RemoteCopy {
         let fixed = [title, intro, honest, staysOn, genericProblem, getTailscaleTitle, getTailscaleBody, getTailscaleButton, signInTitle, signInBody, openTailscaleButton,
                      needsBrowserTitle, needsBrowserBody, funnelTitle, funnelBody, funnelButton, tryAgainButton, lockTitle, lockBody, busyTitle, busyBody, checkAgainButton,
                      readyTitle, readyBody, turnOnButton, turningOnTitle, turningOnBody, onTitle, noBrowserNote, addressLabel, passcodeLabel, passcodeOnce, passcodeSaved,
-                     passcodeEarlier, startOverButton, detailsLabel, newPasscodeButton, newPasscodeNote, turnOffButton, turnOffFailed, helperSilent, unavailable, otherWays, otherWaysHelp, approvalNote, menusNote]
+                     passcodeEarlier, noPasscodeNote, busyTailscaleBody, startOverButton, detailsLabel, newPasscodeButton, newPasscodeNote, turnOffButton, turnOffFailed, helperSilent, unavailable, otherWays, otherWaysHelp, approvalNote, menusNote]
         return fixed + assistants.flatMap { [$0.name] + $0.steps }
     }
 }
