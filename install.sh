@@ -221,10 +221,11 @@ PARTS_FILE=features.toml
 
 # Writes the chosen parts, comma-separated. A file that's already there stays, and a name nobody knows is an error.
 write_parts() {
-  local dir=$1 chosen=",$2," part file="$1/$PARTS_FILE" known=",workspaces,voice,browser,"
+  local list=${2//[[:space:]]/,}
+  local dir=$1 chosen=",$list," part file="$1/$PARTS_FILE" known=",workspaces,voice,browser,"
   [ -e "$file" ] && return 0
-  [ "$chosen" != ",," ] || return 2
-  local rest=${2//,/ } name
+  [ -n "${list//,/}" ] || return 2
+  local rest=${list//,/ } name
   for name in $rest; do case "$known" in *",$name,"*) ;; *) return 2 ;; esac; done
   mkdir -p "$dir" || return 1
   {

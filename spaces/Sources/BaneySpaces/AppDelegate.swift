@@ -560,6 +560,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if Launcher.onCmdSpace { setLauncherOnCmdSpace(true) } else { registerShortcuts() }
         } else {
             restoreSystemControls()
+            // ⌘Space goes back to Spotlight, as it does on a quit.
+            SystemShortcuts.spotlightQueue.async { SystemShortcuts.restoreSpotlight() }
         }
         if parts.contains(.voice) { startVoice() } else { VoiceEngine.shared.partIsOn = false }
         BrowserModel.shared.applyPart(on: parts.contains(.browser))
