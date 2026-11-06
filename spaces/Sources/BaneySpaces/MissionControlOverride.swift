@@ -110,13 +110,14 @@ enum SystemMissionControl {
     /// turned off (the uninstaller removes it itself): on a quit it finds no heartbeat and does nothing.
     /// Returns whether any saved setting changed (false: nothing to undo, or already as saved).
     @discardableResult
-    static func restore(keeping why: String? = nil, removeAgent: Bool = false) -> Bool {
+    static func restore(keeping why: String? = nil, removeAgent: Bool = false, isQuitting: Bool = false) -> Bool {
         problem = why
         let changed = takeover.restore()
         if removeAgent { installer.remove() } else { installer.stopHolding() }
         if changed {
             Trace.log("mission control: back as it was")
-            restartDock()
+            // Quitting has no later to wait for, so this one goes straight away. An install doesn't come here at all.
+            if isQuitting { DockRestart.now() } else { restartDock() }
         }
         return changed
     }
@@ -151,12 +152,7 @@ enum SystemMissionControl {
     }
 
     /// The Dock reads these settings when it starts; restarting it is how System Settings applies them.
-    private static func restartDock() {
-        let kill = Process()
-        kill.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        kill.arguments = ["Dock"]
-        try? kill.run()
-    }
+    private static func restartDock() { DockRestart.request() }
 }
 
 /// Hot corners that used to open Mission Control, now opening the overview. macOS's own are

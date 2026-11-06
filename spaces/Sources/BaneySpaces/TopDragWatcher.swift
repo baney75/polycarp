@@ -107,10 +107,7 @@ enum SystemTopDrag {
     private static func restart(_ changed: [Setting]) {
         let names = Set(changed.map(\.process))
         guard !names.isEmpty else { return }
-        let kill = Process()
-        kill.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        kill.arguments = names.sorted()
-        try? kill.run()
+        DockRestart.request(names)
     }
 }
 

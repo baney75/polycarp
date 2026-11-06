@@ -493,6 +493,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // ⌃⌘K (registered in `registerShortcuts`) opens the launcher, which searches the session rows.
         session.onSearch = { [weak self] in self?.launcher.toggle() }
         session.onItemsChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
+        DockRestart.isSwitching = { [weak self] in self?.spaces.switching ?? false }
         startWhenTrusted()
         // ⌘Space works with or without Accessibility; Spotlight hands it over first.
         if Launcher.onCmdSpace { setLauncherOnCmdSpace(true) } else { registerShortcuts() }
@@ -565,8 +566,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Quitting for an update is the exception: the new build takes over, and if it never
         // starts the launch agent puts Mission Control back after 30 seconds.
         if SystemMissionControl.isTakenByUs {
-            if UserDefaults.standard.dictionary(forKey: "updatingTo") != nil { SystemMissionControl.leaveForUpdate() }
-            else { SystemMissionControl.restore() }
+            // So is an install swapping the app in place: restoring here and taking over at the launch would restart the
+            // Dock twice in seconds.
+            let forInstall = InstallHandoff.isCurrent(markedAt: UserDefaults.standard.object(forKey: InstallHandoff.key) as? TimeInterval, now: Date().timeIntervalSince1970)
+            UserDefaults.standard.removeObject(forKey: InstallHandoff.key)
+            if forInstall || UserDefaults.standard.dictionary(forKey: "updatingTo") != nil { SystemMissionControl.leaveForUpdate() }
+            else { SystemMissionControl.restore(isQuitting: true) }
         }
         if started { spaces.restoreAll() }
         // ⌘Space goes back to Spotlight while BaneySpaces isn't running; the next launch takes it again.
