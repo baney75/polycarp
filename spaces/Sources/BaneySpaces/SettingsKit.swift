@@ -153,7 +153,15 @@ private extension View {
 /// The sections in the order and groups the sidebar shows. A test pins that every `SettingsTab` is listed exactly once.
 enum SettingsSidebar {
     struct Group { var header: String?; var tabs: [SettingsTab] }
-    static let groups: [Group] = [
+    /// The sections of the parts that are on (`FeatureSet.showsSettingsTab`).
+    static var groups: [Group] {
+        allGroups.compactMap { group in
+            let tabs = group.tabs.filter { PartsModel.shared.current.showsSettingsTab($0.rawValue) }
+            return tabs.isEmpty ? nil : Group(header: group.header, tabs: tabs)
+        }
+    }
+
+    static let allGroups: [Group] = [
         Group(header: nil, tabs: [.general, .keys, .dock, .appearance, .launcher]),
         Group(header: "Your tools", tabs: [.voice, .browser, .agents]),
         Group(header: "System", tabs: [.automation, .updates]),
