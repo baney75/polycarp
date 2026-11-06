@@ -91,5 +91,5 @@ public struct VoiceHistoryItem: Codable, Equatable, Identifiable, Sendable {
 
 /// The keys offered as presets in Settings; anything else is picked by pressing it (`pc_hotkey_capture`).
 public enum VoiceHotkeys {
-    public static let presets = ["CmdRight", "OptRight", "CtrlRight", "Fn"]
+    public static let presets = ["Dictation", "CmdRight", "OptRight", "CtrlRight", "Fn"]
 }
