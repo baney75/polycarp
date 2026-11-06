@@ -59,6 +59,10 @@ public enum EntryPoint {
         return nil
     }
 
+    /// Flags a normal start may carry besides the one-shots. The copy that moved itself to Applications is started with
+    /// `--after-move`; it must run as a normal start, never be refused as unknown.
+    public static let startFlags: Set<String> = ["--setup", MoveToApplications.movedFlag]
+
     /// The exit status for `usageError` (EX_USAGE).
     public static let usageExit: Int32 = 64
 }

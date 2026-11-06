@@ -198,7 +198,8 @@ if [ -x "$HELPER" ]; then
 fi
 # The Polycarp theme, unless a look was already chosen (install.sh does the same; a person who came by the disk image
 # never ran it, and the app runs this script on its first launch).
-if [ -z "$TEST" ] && [ ! -e "${POLYCARP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/polycarp}/config.toml" ]; then
+if { [ -z "$TEST" ] || [ "$IN_PLACE" = 1 ]; } && [ -x "$DEST/Contents/Resources/bin/polycarp" ] \
+   && [ ! -e "${POLYCARP_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/polycarp}/config.toml" ]; then
   "$DEST/Contents/Resources/bin/polycarp" theme set polycarp </dev/null >/dev/null 2>&1 || true
 fi
 if [ "$IN_PLACE" = 0 ] && [ "${BANEYSPACES_NO_LAUNCH:-}" != 1 ]; then open "$DEST"; fi

@@ -329,10 +329,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func linkCommandIfNeeded() {
         let bundle = Bundle.main.bundleURL.path
         let home = NSHomeDirectory()
-        guard bundle.hasPrefix("/Applications/") || bundle.hasPrefix("\(home)/Applications/"),
-              let script = Bundle.main.url(forResource: "install-app", withExtension: "sh") else { return }
         let link = "\(home)/.local/bin/\(Product.commandName)"
-        if let target = try? FileManager.default.destinationOfSymbolicLink(atPath: link), target.hasPrefix(bundle + "/") { return }
+        guard FirstLaunch.shouldRunInstallStep(bundle: Bundle.main.bundleURL, home: URL(fileURLWithPath: home),
+                                               commandLinkTarget: try? FileManager.default.destinationOfSymbolicLink(atPath: link)),
+              let script = Bundle.main.url(forResource: "install-app", withExtension: "sh") else { return }
         DispatchQueue.global(qos: .utility).async {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -402,7 +402,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         linkCommandIfNeeded()
         // A person who came by the disk image never ran install.sh: BaneySpaces, if there, goes to the Trash once Polycarp runs.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { LegacyRetirementRunner.runIfDue() }
+        let welcomeFinishedAtLaunch = UserDefaults.standard.bool(forKey: Welcome.finishedKey)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { LegacyRetirementRunner.runIfDue(welcomeFinished: welcomeFinishedAtLaunch) }
         NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleURL(_:reply:)),
                                                      forEventClass: AEEventClass(kInternetEventClass),
                                                      andEventID: AEEventID(kAEGetURL))

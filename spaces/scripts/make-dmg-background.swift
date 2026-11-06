@@ -9,7 +9,7 @@ let out = CommandLine.arguments[1]
 // The brand's colors (brand/README.md): Cream #F6F3E8 behind everything, Ink #2B2E26 for words, Vine green #59693F for the arrow.
 func hex(_ v: Int) -> NSColor { NSColor(srgbRed: CGFloat((v >> 16) & 255) / 255, green: CGFloat((v >> 8) & 255) / 255, blue: CGFloat(v & 255) / 255, alpha: 1) }
 let ink = hex(0x2B2E26)
-let red = hex(0x59693F)   // the arrow (named `red` before the brand colors)
+let vine = hex(0x59693F)
 
 func render(scale: Int, to name: String) {
     let w = 640 * scale, h = 400 * scale
@@ -25,8 +25,8 @@ func render(scale: Int, to name: String) {
 
     // The arrow: a shaft and a head, at the icons' height (190 from the top).
     let y: CGFloat = 400 - 190
-    ctx.setStrokeColor(red.cgColor)
-    ctx.setFillColor(red.cgColor)
+    ctx.setStrokeColor(vine.cgColor)
+    ctx.setFillColor(vine.cgColor)
     ctx.setLineWidth(6)
     ctx.setLineCap(.round)
     ctx.move(to: CGPoint(x: 262, y: y))
