@@ -175,7 +175,7 @@ export const COMMANDS: CommandSpec[] = [
 			{ name: "create", args: "<name>", what: "A scoped, revocable token, shown once", flags: ["--scope"], max: 1 },
 			{ name: "list", what: "Every token and when it was last used", flags: ["--json"] },
 			{ name: "revoke", args: "<id|name|client id|grant id>", what: "End a token, an OAuth client and its grants, or one grant", max: 1 },
-			{ name: "passcode", what: "A new passcode for the OAuth approval page, shown once" },
+			{ name: "passcode", what: "A new passcode for the OAuth approval page, shown once", flags: ["--json"] },
 			{ name: "approval-code", what: "A one-time code (10 minutes) that approves one connector instead of the passcode", flags: ["--json"] },
 			{ name: "clients", what: "OAuth clients (claude.ai, ChatGPT, grok.com) and their grants", flags: ["--json"] },
 			{ name: "scopes", what: "The scopes a token can have", flags: ["--json"] },
@@ -233,7 +233,7 @@ export const COMMANDS: CommandSpec[] = [
 		what: "Remote access for web connectors",
 		group: "Remote",
 		subcommands: [
-			{ name: "setup", what: "Tailscale Funnel (or your own --public-url), a passcode and a service that keeps serve running", flags: ["--public-url", "--port", "--no-service", "--no-passcode"] },
+			{ name: "setup", what: "Tailscale Funnel (or your own --public-url), a passcode and a service that keeps serve running", flags: ["--public-url", "--port", "--no-service", "--no-passcode", "--json"] },
 			{ name: "status", what: "Is it up and reachable from the internet?", flags: ["--json"] },
 			{ name: "off", what: "Stop the service, turn Funnel off and remove remote.json" },
 		],

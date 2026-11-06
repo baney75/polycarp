@@ -218,7 +218,7 @@ export function userScriptsCheck(info: DebugInfo): Check | undefined {
 const SETTLE_S = 10;
 const RETRY_MS = 1500;
 
-async function connectionChecks(): Promise<Check[]> {
+export async function connectionChecks(): Promise<Check[]> {
 	const notConnected: Check = {
 		id: "connected",
 		status: "fail",

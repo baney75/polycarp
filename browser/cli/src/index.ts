@@ -474,6 +474,10 @@ async function main(): Promise<void> {
 			}
 			if (sub === "passcode") {
 				const passcode = setPasscode();
+				if (flag("--json")) {
+					console.log(JSON.stringify({ ok: true, passcode }));
+					return;
+				}
 				console.log(`${sym.ok} OAuth passcode:\n\n  ${passcode}\n`);
 				console.log(c.dim("Shown once. Type it on the approval page when claude.ai, ChatGPT or grok.com connects. Keep it in a password manager, but not one the browser Tabkyra drives can fill. Running this again replaces it and clears approval rate limits; grants already approved keep working."));
 				return;
@@ -546,7 +550,7 @@ async function main(): Promise<void> {
 						throw new UsageError(err instanceof Error ? err.message : String(err));
 					}
 				}
-				process.exitCode = await remoteSetup({ publicUrl, port, service: !flag("--no-service"), passcode: !flag("--no-passcode") });
+				process.exitCode = await remoteSetup({ publicUrl, port, service: !flag("--no-service"), passcode: !flag("--no-passcode"), json: flag("--json") });
 				return;
 			}
 			if (sub === "status") {
@@ -557,7 +561,7 @@ async function main(): Promise<void> {
 				process.exitCode = await remoteOff();
 				return;
 			}
-			throw new UsageError("Usage: tabkyra remote setup [--public-url https://host] [--port N] [--no-service] [--no-passcode] | status [--json] | off");
+			throw new UsageError("Usage: tabkyra remote setup [--public-url https://host] [--port N] [--no-service] [--no-passcode] [--json] | status [--json] | off");
 		}
 		case "hub": {
 			const rest = argv.slice(1).filter((a, i, all) => !a.startsWith("-") && !(VALUE_FLAGS.has(all[i - 1] ?? "") && !(all[i - 1] ?? "").includes("=")));
