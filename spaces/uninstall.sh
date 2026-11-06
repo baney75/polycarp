@@ -293,6 +293,20 @@ if [ -L "$tabkyra_link" ]; then
       ;;
   esac
 fi
+# BEGIN restore-browser-previous
+# What Settings > Browser > Connect found before `install --force` wrote its manifests and launchers (BrowserPrevious): put
+# back, or removed where there was nothing. Only a file that still points into Polycarp.app is touched.
+STORE="${STORE:-$HOME/Library/Application Support/Polycarp/browser-previous}"
+if [ -s "$STORE/index.tsv" ]; then
+  while IFS=$'\t' read -r target saved; do
+    [ -n "$target" ] || continue
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      grep -q "Polycarp.app" "$target" 2>/dev/null || continue
+    fi
+    if [ "$saved" = "-" ]; then rm -f "$target"; elif [ -f "$saved" ]; then cp "$saved" "$target"; fi
+  done < "$STORE/index.tsv"
+fi
+# END restore-browser-previous
 # Links the installer repointed on request (install.sh's retire_tabkyra) go back to what they were.
 retired="$HOME/Library/Application Support/Polycarp/tabkyra-retired-links"
 if [ -s "$retired" ]; then

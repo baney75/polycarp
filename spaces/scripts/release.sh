@@ -79,7 +79,9 @@ if [ "$PREVIEW" = 1 ]; then NODMG=--no-dmg; else NODMG=; fi
 scripts/package.sh $NODMG
 # The files are checked as a person would get them, before anything is uploaded.
 step "Checking the zip$([ "$PREVIEW" = 1 ] || echo ", the disk image") and the checksum"
-scripts/verify-release.sh $NODMG build
+if [ "$PREVIEW" = 1 ]; then scripts/verify-release.sh --no-dmg build; else
+scripts/verify-release.sh build
+fi
 
 if [ "$DRY" = 1 ]; then
   echo "dry run: $TAG not uploaded. The files are in build/."

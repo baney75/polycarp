@@ -11,7 +11,11 @@ final class BrowserModel: ObservableObject {
     @Published var message: String?
     private var timer: Timer?
     private var watchers = 0
-    private let queue = DispatchQueue(label: "polycarp.browser", qos: .utility)
+    /// A refresh is running: the 2-second poll skips instead of queuing another behind a slow doctor.
+    private var refreshing = false
+    /// Connect and Add run here; the poll has its own queue, so a click never waits behind a slow `doctor`.
+    private let queue = DispatchQueue(label: "polycarp.browser", qos: .userInitiated)
+    private let pollQueue = DispatchQueue(label: "polycarp.browser.poll", qos: .utility)
 
     private var resources: URL? { Bundle.main.resourceURL }
     var helper: URL? { BrowserBundle.helper(resources: resources) }
@@ -31,11 +35,15 @@ final class BrowserModel: ObservableObject {
     }
 
     func refresh() {
-        guard let helper else { return }
-        queue.async { [weak self] in
+        guard let helper, !refreshing else { return }
+        refreshing = true
+        pollQueue.async { [weak self] in
             let result = Self.run(helper, ["doctor", "--json"], timeout: 12)
             let parsed = BrowserStatus.parse(result.out)
-            DispatchQueue.main.async { if let parsed, parsed != self?.status { self?.status = parsed } }
+            DispatchQueue.main.async {
+                self?.refreshing = false
+                if let parsed, parsed != self?.status { self?.status = parsed }
+            }
         }
     }
 
@@ -44,6 +52,9 @@ final class BrowserModel: ObservableObject {
         guard let helper, let folder = extensionFolder else { return }
         busy = true; message = nil
         queue.async { [weak self] in
+            // Write down what `install --force` is about to overwrite, once, for uninstall.sh to put back.
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            BrowserPrevious.record(home: home, store: Product.supportDir(home: home).appendingPathComponent("browser-previous", isDirectory: true))
             let result = Self.run(helper, ["install", "--force"], timeout: 30)
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -77,6 +88,21 @@ final class BrowserModel: ObservableObject {
         }
     }
 
+    /// The person's PATH as a login shell sets it, read once (3 s at most). Nil if the shell doesn't answer.
+    static let loginPath: String? = {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"].flatMap { $0.hasPrefix("/") ? $0 : nil } ?? "/bin/zsh")
+        p.arguments = ["-l", "-c", "printf %s \"$PATH\""]
+        let pipe = Pipe()
+        p.standardOutput = pipe; p.standardError = FileHandle.nullDevice; p.standardInput = FileHandle.nullDevice
+        do { try p.run() } catch { return nil }
+        let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 3, execute: killer)
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit(); killer.cancel()
+        return p.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+    }()
+
     struct Result { var code: Int32; var out: Data; var text: String }
 
     /// Runs the helper and waits at most `timeout` seconds. It runs as the person, in their home, never through a shell.
@@ -84,7 +110,7 @@ final class BrowserModel: ObservableObject {
         let p = Process()
         p.executableURL = exe
         p.arguments = args
-        p.environment = BrowserBundle.environment(base: ProcessInfo.processInfo.environment)
+        p.environment = BrowserBundle.environment(base: ProcessInfo.processInfo.environment, loginPath: Self.loginPath)
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = Pipe()

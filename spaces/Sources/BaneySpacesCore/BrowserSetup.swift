@@ -74,9 +74,21 @@ public enum BrowserBundle {
     public static let extensionsAddress = "chrome://extensions"
 
     /// The environment the helper runs in from the app: the person's own, plus nothing that points at a Node.
-    public static func environment(base: [String: String]) -> [String: String] {
+    public static func environment(base: [String: String], home: String = NSHomeDirectory(), loginPath: String? = nil) -> [String: String] {
         var env = base
         env["NO_COLOR"] = "1"
+        env["PATH"] = path(base: base["PATH"], loginPath: loginPath, home: home)
         return env
+    }
+
+    /// An app started from Finder or at login has the bare GUI PATH, so `tabkyra`, node or npm folders are not found and an
+    /// MCP entry with a bare command looks stale. The helper gets the person's login-shell PATH when it is known, then the
+    /// usual per-user folders, then what the app has. Relative entries are dropped; each folder appears once.
+    public static func path(base: String?, loginPath: String?, home: String) -> String {
+        var seen = Set<String>(), out: [String] = []
+        let extra = ["\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"]
+        for dir in ((loginPath ?? "").split(separator: ":").map(String.init)) + extra + ((base ?? "").split(separator: ":").map(String.init))
+        where dir.hasPrefix("/") && seen.insert(dir).inserted { out.append(dir) }
+        return out.joined(separator: ":")
     }
 }

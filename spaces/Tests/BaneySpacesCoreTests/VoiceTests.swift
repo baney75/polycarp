@@ -313,3 +313,76 @@ final class VoiceSpeedRatchetTests: XCTestCase {
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: Repo.root.appendingPathComponent("scripts/bench-voice").path))
     }
 }
+
+final class BrowserPreviousTests: XCTestCase {
+    private func home() -> URL {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("bp-\(UUID().uuidString)")
+        try! FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: d) }
+        return d
+    }
+    private func write(_ s: String, _ url: URL) {
+        try! FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try! Data(s.utf8).write(to: url)
+    }
+
+    func testTheOldManifestAndLauncherAreWrittenDownOnce() throws {
+        let h = home(), store = home()
+        let chrome = h.appendingPathComponent("Library/Application Support/Google/Chrome/NativeMessagingHosts/ai.tabkyra.bridge.json")
+        write("old manifest", chrome)
+        write("old launcher", h.appendingPathComponent(".config/tabkyra/host"))
+        XCTAssertTrue(BrowserPrevious.record(home: h, store: store))
+        let index = try String(contentsOf: store.appendingPathComponent("index.tsv"))
+        XCTAssertTrue(index.contains(chrome.path), index)
+        XCTAssertTrue(index.contains(".config/tabkyra/host"))
+        XCTAssertTrue(index.contains("tabkyra\t-"), "the launcher that wasn't there is recorded as none")
+        XCTAssertFalse(index.contains("Brave"), "a browser that isn't installed is not recorded")
+        write("{\"path\":\"/Applications/Polycarp.app/x\"}", chrome)
+        XCTAssertFalse(BrowserPrevious.record(home: h, store: store), "a second Connect records nothing new")
+        XCTAssertEqual(try String(contentsOf: store.appendingPathComponent("index.tsv")), index)
+    }
+
+    func testAFileAlreadyPointingIntoPolycarpIsNotRecordedAsPrevious() throws {
+        let h = home(), store = home()
+        write("exec /Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser", h.appendingPathComponent(".config/tabkyra/host"))
+        BrowserPrevious.record(home: h, store: store)
+        let index = try String(contentsOf: store.appendingPathComponent("index.tsv"))
+        XCTAssertFalse(index.contains("tabkyra/host\t"), index)
+    }
+
+    func testUninstallPutsThemBackOrRemovesWhatPolycarpMade() throws {
+        let h = home(), store = home()
+        let chrome = h.appendingPathComponent("Library/Application Support/Google/Chrome/NativeMessagingHosts/ai.tabkyra.bridge.json")
+        let host = h.appendingPathComponent(".config/tabkyra/host")
+        let cli = h.appendingPathComponent(".config/tabkyra/tabkyra")
+        write("old manifest", chrome); write("old launcher", host)
+        BrowserPrevious.record(home: h, store: store)
+        write("{\"path\":\"/Applications/Polycarp.app/h\"}", chrome)
+        write("exec /Applications/Polycarp.app/h", host)
+        write("exec /Applications/Polycarp.app/h", cli)
+        let sh = try Repo.text("uninstall.sh")
+        let from = try XCTUnwrap(sh.range(of: "# BEGIN restore-browser-previous"))
+        let to = try XCTUnwrap(sh.range(of: "# END restore-browser-previous"))
+        let block = String(sh[from.upperBound..<to.lowerBound])
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-c", "set -eu; STORE='\(store.path)'; \(block)"]
+        p.environment = ["HOME": h.path, "PATH": "/usr/bin:/bin"]
+        try p.run(); p.waitUntilExit()
+        XCTAssertEqual(p.terminationStatus, 0)
+        XCTAssertEqual(try String(contentsOf: chrome), "old manifest")
+        XCTAssertEqual(try String(contentsOf: host), "old launcher")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cli.path), "there was none before, so Polycarp's is removed")
+    }
+}
+
+final class BrowserPathTests: XCTestCase {
+    func testTheHelperGetsTheLoginPathThenTheUsualFolders() {
+        let p = BrowserBundle.path(base: "/usr/bin:/bin", loginPath: "/Users/x/.nvm/bin:/opt/homebrew/bin:/usr/bin", home: "/Users/x")
+        XCTAssertEqual(p, "/Users/x/.nvm/bin:/opt/homebrew/bin:/usr/bin:/Users/x/.local/bin:/usr/local/bin:/bin")
+    }
+    func testWithoutALoginPathTheUsualFoldersStillComeFirst() {
+        XCTAssertEqual(BrowserBundle.path(base: "/usr/bin:/bin", loginPath: nil, home: "/h"), "/h/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+        XCTAssertEqual(BrowserBundle.environment(base: ["PATH": "bin:/usr/bin"], home: "/h")["PATH"], "/h/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin", "a relative entry is dropped")
+    }
+}
