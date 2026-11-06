@@ -29,6 +29,7 @@ use polycarp_voice::core::{Core, Host, Shared, Status};
 use polycarp_voice::dictionary::Dictionary;
 use polycarp_voice::store::{self, Settings};
 use polycarp_voice::{audio, models, permissions};
+use parking_lot::Mutex;
 use serde_json::{json, Value};
 
 /// Bumped when an entry point changes shape.
@@ -64,20 +65,32 @@ struct Callbacks {
 unsafe impl Send for Callbacks {}
 unsafe impl Sync for Callbacks {}
 
-struct FfiHost(Callbacks);
+/// Delivers events to the caller. `open` is the one gate: every delivery holds it while the callback runs, and `pc_close`
+/// takes it to turn delivery off. So once `pc_close` returns, no callback is running and none will start, and the caller
+/// may free `user`. (It also means a callback must not call `pc_close` on its own handle.)
+struct FfiHost {
+    cb: Callbacks,
+    open: Arc<Mutex<bool>>,
+}
 
 impl Host for FfiHost {
     fn emit(&self, event: &str, payload: Value) {
-        if let Some(cb) = self.0.event {
+        if let Some(cb) = self.cb.event {
             if let (Ok(e), Ok(p)) = (CString::new(event), CString::new(payload.to_string())) {
-                let _ = catch_unwind(AssertUnwindSafe(|| cb(self.0.user, e.as_ptr(), p.as_ptr())));
+                let open = self.open.lock();
+                if *open {
+                    let _ = catch_unwind(AssertUnwindSafe(|| cb(self.cb.user, e.as_ptr(), p.as_ptr())));
+                }
             }
         }
     }
 
     fn level(&self, level: f32) {
-        if let Some(cb) = self.0.level {
-            let _ = catch_unwind(AssertUnwindSafe(|| cb(self.0.user, level)));
+        if let Some(cb) = self.cb.level {
+            let open = self.open.lock();
+            if *open {
+                let _ = catch_unwind(AssertUnwindSafe(|| cb(self.cb.user, level)));
+            }
         }
     }
 
@@ -99,6 +112,7 @@ impl Host for FfiHost {
 pub struct PcCore {
     core: Shared,
     flags: u32,
+    open: Arc<Mutex<bool>>,
 }
 
 fn guard<T>(fail: T, f: impl FnOnce() -> Result<T, String>) -> T {
@@ -207,14 +221,15 @@ pub unsafe extern "C" fn pc_open(
         let dir = PathBuf::from(arg(data_dir, "data_dir")?);
         std::fs::create_dir_all(&dir).map_err(|e| format!("data folder: {e}"))?;
         store::set_data_dir(Some(dir));
-        let host = Arc::new(FfiHost(Callbacks { event: on_event, level: on_level, user }));
+        let open = Arc::new(Mutex::new(true));
+        let host = Arc::new(FfiHost { cb: Callbacks { event: on_event, level: on_level, user }, open: open.clone() });
         let core = Core::new(host);
-        Ok(Box::into_raw(Box::new(PcCore { core, flags })))
+        Ok(Box::into_raw(Box::new(PcCore { core, flags, open })))
     })
 }
 
-/// Free the handle. Dictation stops being delivered. The key listener thread, if started,
-/// ends with the process.
+/// Free the handle. When it returns, no callback is running and none will run again, so `user` may be freed. The key
+/// listener thread, if started, ends with the process; its events are dropped. Do not call this from inside a callback.
 ///
 /// # Safety
 /// `core` must come from `pc_open` and not be used afterward.
@@ -225,6 +240,8 @@ pub unsafe extern "C" fn pc_close(core: *mut PcCore) {
     }
     let _ = catch_unwind(AssertUnwindSafe(|| {
         let b = Box::from_raw(core);
+        // Delivery off first, and waited for: a callback in flight on another thread finishes before this returns.
+        *b.open.lock() = false;
         b.core.set_enabled(false);
     }));
 }
@@ -682,7 +699,7 @@ mod tests {
 
     #[test]
     fn messages_name_polycarp_not_silas() {
-        let h = FfiHost(Callbacks { event: None, level: None, user: std::ptr::null_mut() });
+        let h = FfiHost { cb: Callbacks { event: None, level: None, user: std::ptr::null_mut() }, open: Arc::new(Mutex::new(true)) };
         assert_eq!(h.product_name(), "Polycarp");
         let o = open();
         unsafe {
@@ -828,5 +845,52 @@ mod tests {
         assert!(last_error().contains("panic"));
         let p = text(|| -> Result<String, String> { panic!("boom") });
         assert!(p.is_null());
+    }
+
+    #[test]
+    fn no_callback_runs_after_close_returns() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        static CLOSED: AtomicBool = AtomicBool::new(false);
+        static LATE: AtomicUsize = AtomicUsize::new(0);
+        static SEEN: AtomicUsize = AtomicUsize::new(0);
+        extern "C" fn cb(_: *mut c_void, _: *const c_char, _: *const c_char) {
+            SEEN.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_micros(200)); // long enough to be in flight when close starts
+            if CLOSED.load(Ordering::SeqCst) {
+                LATE.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let _serial = SERIAL.lock();
+        let dir = tempfile::tempdir().unwrap();
+        let d = c(dir.path().to_str().unwrap());
+        let core = unsafe { pc_open(d.as_ptr(), PC_HEADLESS, Some(cb), None, std::ptr::null_mut()) };
+        assert!(!core.is_null());
+        let host = unsafe { let c = &*core; c.core.host.clone() };
+        let stop = Arc::new(AtomicBool::new(false));
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                let (host, stop) = (host.clone(), stop.clone());
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::SeqCst) {
+                        host.emit("status", json!({}));
+                    }
+                })
+            })
+            .collect();
+        while SEEN.load(Ordering::SeqCst) < 20 {
+            std::thread::yield_now();
+        }
+        unsafe { pc_close(core) };
+        CLOSED.store(true, Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        stop.store(true, Ordering::SeqCst);
+        for t in threads {
+            t.join().unwrap();
+        }
+        store::set_data_dir(None);
+        assert_eq!(LATE.load(Ordering::SeqCst), 0, "a callback was still running, or started, after pc_close returned");
+        let after = SEEN.load(Ordering::SeqCst);
+        host.emit("status", json!({}));
+        assert_eq!(SEEN.load(Ordering::SeqCst), after, "events after close are dropped");
     }
 }
