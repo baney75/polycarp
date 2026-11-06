@@ -177,11 +177,11 @@ export class PrivacyTab extends SettingsTab {
 							: ""
 					}
 					${explained(
-						"Keeps a copy of your chats on this computer so your coding agents can look up what you asked Tabkyra.",
+						"Keeps a copy of your chats on this computer so your coding agents can look up what you asked Polycarp.",
 						`Keeps a copy of your side panel chats in ~/.local/share/tabkyra/threads (readable only by your user), so
-						agents like Claude Code and Codex can look up what you asked Tabkyra, through tabkyra mcp or as files.
+						agents like Claude Code and Codex can look up what you asked Polycarp, through tabkyra mcp or as files.
 						Keys pasted into a chat are removed from the copy, and chats from private mode are never copied. Turning
-						this off deletes the copy and stops agents reading past chats. Agents connected through tabkyra serve need a token with the threads.read scope.`,
+						this off deletes the copy and stops agents reading past chats. Agents connected through polycarp browser serve need a token with the threads.read scope.`,
 					)}
 				</div>
 

@@ -27,9 +27,9 @@ export function loadHubConfig(): HubConfig | undefined {
 	try {
 		raw = JSON.parse(readFileSync(hubFile(), "utf8")) as Record<string, unknown>;
 	} catch {
-		throw new Error(`${hubFile()} isn't valid JSON. Run tabkyra hub off to remove it, then tabkyra hub setup again.`);
+		throw new Error(`${hubFile()} isn't valid JSON. Run polycarp browser hub off to remove it, then polycarp browser hub setup again.`);
 	}
-	if (!raw || typeof raw !== "object") throw new Error(`${hubFile()} isn't a Tabkyra hub file.`);
+	if (!raw || typeof raw !== "object") throw new Error(`${hubFile()} isn't a Polycarp hub file.`);
 	if (typeof raw.publicUrl !== "string" || !raw.publicUrl) throw new Error(`${hubFile()}: publicUrl is missing.`);
 	if (typeof raw.port !== "number" || !Number.isInteger(raw.port) || raw.port < 0 || raw.port > 65535) throw new Error(`${hubFile()}: port must be a port number.`);
 	return { publicUrl: raw.publicUrl, port: raw.port };
@@ -109,7 +109,7 @@ export function authenticateDevice(credential: string | undefined): DeviceRecord
 /** Add a device. Fails when the name is taken. The credential is returned once. */
 function addDevice(name: string, manage: boolean): { record: DeviceRecord; credential: string } {
 	const data = loadDevicesForUpdate();
-	if (data.devices.some((d) => d.name === name)) throw new HubStateError(409, `A device named ${name} is already enrolled. Remove it first (tabkyra hub remove ${name}) or pick another name.`);
+	if (data.devices.some((d) => d.name === name)) throw new HubStateError(409, `A device named ${name} is already enrolled. Remove it first (polycarp browser hub remove ${name}) or pick another name.`);
 	const id = `dv-${randomBytes(6).toString("hex")}`;
 	const secret = randomBytes(32).toString("base64url");
 	const record: DeviceRecord = { id, name, sha256: sha(secret), manage, createdAt: new Date().toISOString() };

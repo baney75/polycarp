@@ -22,12 +22,12 @@ const TEST_MODELS: Record<string, string> = {
 	zai: "glm-4.5-air",
 };
 
-/** Whether Tabkyra can check this provider's keys before saving them. */
+/** Whether Polycarp can check this provider's keys before saving them. */
 export function canCheckKey(provider: string): boolean {
 	return provider in TEST_MODELS;
 }
 
-/** How long a key check may take before Tabkyra gives up on it. */
+/** How long a key check may take before Polycarp gives up on it. */
 const CHECK_TIMEOUT_MS = 30_000;
 const TIMED_OUT: KeyFailure = { kind: "unchecked", reason: "the provider didn't answer within 30 seconds." };
 
@@ -45,7 +45,7 @@ export async function checkKey(
 	const timeout = AbortSignal.timeout(CHECK_TIMEOUT_MS);
 	try {
 		let model = getModel(provider as never, modelId as never);
-		if (!model) return { kind: "unchecked", reason: `Tabkyra has no model to test ${provider} keys with.` };
+		if (!model) return { kind: "unchecked", reason: `Polycarp has no model to test ${provider} keys with.` };
 		const settings = getAppStorage().settings;
 		const proxyUrl = (await settings.get<boolean>("proxy.enabled"))
 			? (await settings.get<string>("proxy.url")) || undefined
@@ -267,8 +267,8 @@ export class ProviderKeyRow extends LitElement {
 						: html`<p id=${`${id}-note`} class="text-xs text-muted-foreground">
 								${
 									canCheckKey(this.provider)
-										? "Tabkyra sends the provider one short test message to check the key, then saves it in this browser."
-										: "Saved in this browser as is: Tabkyra can't check this provider's keys first."
+										? "Polycarp sends the provider one short test message to check the key, then saves it in this browser."
+										: "Saved in this browser as is: Polycarp can't check this provider's keys first."
 								}
 							</p>`
 				}

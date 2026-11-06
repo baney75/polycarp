@@ -21,7 +21,7 @@ const models = [
 	getModel("openrouter", "z-ai/glm-4.6"),
 ];
 
-// Initialize AppStorage so tools relying on Tabkyra storage can operate in debug page
+// Initialize AppStorage so tools relying on Polycarp storage can operate in debug page
 const storage = new TabkyraAppStorage();
 setAppStorage(storage);
 

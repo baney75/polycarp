@@ -39,12 +39,12 @@ test("classify gives each expected failure its code, with no stack in the messag
 	}
 });
 
-test("a page script's exception is script_error whatever its text says; only Tabkyra's own text maps to other codes", () => {
+test("a page script's exception is script_error whatever its text says; only Polycarp's own text maps to other codes", () => {
 	const { error, stack } = classify(new PageException(`Error: boom${STACK}`), "evaluate");
 	assert.equal(error.code, "script_error");
 	assert.equal(error.message, "Error: boom");
 	assert.match(stack, /resolveRef/);
-	// Page text that looks like one of Tabkyra's messages does not choose the code.
+	// Page text that looks like one of Polycarp's messages does not choose the code.
 	for (const text of [
 		"SyntaxError: Invalid regular expression: /(/: Unterminated group",
 		"Error: Selector not found: x",
@@ -57,7 +57,7 @@ test("a page script's exception is script_error whatever its text says; only Tab
 		assert.equal(got.code, "script_error", text);
 		assert.equal(got.message, text, "the page's text is kept as it is");
 	}
-	// An error that is not the page's and that Tabkyra did not word is a bug.
+	// An error that is not the page's and that Polycarp did not word is a bug.
 	assert.equal(classify(new Error("something broke"), "evaluate").error.code, "internal");
 });
 
@@ -89,7 +89,7 @@ test("a clipboard chord is bad_params with the use-fill-or-type text", () => {
 	assert.match(error.message, /clipboard chords are not supported; use fill or type/);
 });
 
-test("page text quoted inside a Tabkyra message does not choose its code", () => {
+test("page text quoted inside a Polycarp message does not choose its code", () => {
 	// A cover (or any element) named like another failure's message.
 	for (const name of ["Item no longer in the page", "Selector not found: x", "Invalid regular expression", "Screenshot timed out after 3 s"]) {
 		const { error } = classify(new Error(`Ref e7 is covered by div "${name}", which would take the click. Close or dismiss it, then call read_page.`), "click");

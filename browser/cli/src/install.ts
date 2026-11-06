@@ -163,7 +163,7 @@ export function manifestFor(launcher: string): string {
 	return `${JSON.stringify(
 		{
 			name: NATIVE_HOST_NAME,
-			description: "Tabkyra browser bridge",
+			description: "Polycarp browser bridge",
 			path: launcher,
 			type: "stdio",
 			allowed_origins: [`chrome-extension://${EXTENSION_ID}/`],
@@ -186,7 +186,7 @@ export interface InstallOptions {
 }
 
 export function install(options: InstallOptions = {}): InstallResult {
-	// One browser: a working launcher (a standalone Tabkyra's, say) stays as it is, so nothing else is repointed.
+	// One browser: a working launcher (a standalone Polycarp's, say) stays as it is, so nothing else is repointed.
 	const keepLaunchers = options.browser !== undefined && launcherCheckValid();
 	const launcher = keepLaunchers ? hostTarget() : writeLauncher();
 	const manifest = manifestFor(launcher);

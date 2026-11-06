@@ -1,4 +1,4 @@
-// A hub and devices as real processes: `tabkyra hub serve` and `tabkyra link run`, each with its
+// A hub and devices as real processes: `polycarp browser hub serve` and `polycarp browser link run`, each with its
 // own config dir, socket dir and HOME. Nothing here touches ~/.config/tabkyra: every process gets
 // TABKYRA_CONFIG_DIR inside a temp directory.
 import { spawn, spawnSync } from "node:child_process";
@@ -88,7 +88,7 @@ export function tempRoot(prefix) {
 	return mkdtempSync(join(tmpdir(), prefix));
 }
 
-/** Start `tabkyra hub serve` on a free loopback port with a public URL on the same address. */
+/** Start `polycarp browser hub serve` on a free loopback port with a public URL on the same address. */
 export async function startHub(root, name = "hub", { port: wantedPort, env: extraEnv = {} } = {}) {
 	const m = machine(root, name);
 	const port = wantedPort ?? (await freePort());

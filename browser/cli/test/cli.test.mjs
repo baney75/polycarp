@@ -19,7 +19,7 @@ mkdirSync(socketDir, { mode: 0o700 });
 after(() => rmSync(home, { recursive: true, force: true }));
 
 function run(...args) {
-	// Nothing from the developer's own Tabkyra setup (config dir, session, extension dir) leaks in.
+	// Nothing from the developer's own Polycarp setup (config dir, session, extension dir) leaks in.
 	const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("TABKYRA_") && k !== "XDG_CONFIG_HOME"));
 	Object.assign(env, { HOME: home, TABKYRA_SOCKET_DIR: socketDir, NO_COLOR: "1" });
 	// A command that ignores an unknown flag could start serving; the timeout turns that into a failure.
@@ -96,10 +96,10 @@ test("options are checked per subcommand, and a value option needs its value", (
 		assert.equal(r.code, 2, `tabkyra ${args.join(" ")} exited ${r.code}`);
 		assert.match(r.err, /takes no value/);
 	}
-	assert.match(run("pi-extension", "a", "b").err, /Usage: tabkyra pi-extension \[dir\]/);
-	assert.match(run("serve", "--port").err, /needs a value\. Usage: tabkyra serve \[--port N\] \[--public-url https:\/\/host\] \[--redirect-host a,b\] \[--allow-host a,b\]$/m);
-	assert.match(run("token", "create", "x", "--bogus").err, /Usage: tabkyra token create <name> \[--scope a,b\]$/m);
-	assert.match(run("token", "revoke", "--bogus").err, /Usage: tabkyra token revoke <id\|name\|client id\|grant id>$/m);
+	assert.match(run("pi-extension", "a", "b").err, /Usage: polycarp browser pi-extension \[dir\]/);
+	assert.match(run("serve", "--port").err, /needs a value\. Usage: polycarp browser serve \[--port N\] \[--public-url https:\/\/host\] \[--redirect-host a,b\] \[--allow-host a,b\]$/m);
+	assert.match(run("token", "create", "x", "--bogus").err, /Usage: polycarp browser token create <name> \[--scope a,b\]$/m);
+	assert.match(run("token", "revoke", "--bogus").err, /Usage: polycarp browser token revoke <id\|name\|client id\|grant id>$/m);
 	// The value of a value option isn't counted as an extra argument.
 	assert.equal(run("token", "list", "--json").code, 0);
 });
@@ -118,15 +118,15 @@ test("completions parse in each shell and complete commands, subcommands and fla
 	const complete = (words) =>
 		execFileSync("bash", ["-c", `source "${file}"; COMP_WORDS=(${words}); COMP_CWORD=$((\${#COMP_WORDS[@]} - 1)); _tabkyra; echo "\${COMPREPLY[@]}"`], { encoding: "utf8" }).trim();
 	assert.equal(complete("tabkyra sta"), "status");
-	assert.equal(complete("tabkyra skill li").split(" ").sort().join(" "), "lint list");
-	assert.equal(complete("tabkyra doctor --j"), "--json");
+	assert.equal(complete("polycarp browser skill li").split(" ").sort().join(" "), "lint list");
+	assert.equal(complete("polycarp browser doctor --j"), "--json");
 	// Only the chosen subcommand's flags: create takes no --json, cloudflare no --public.
-	assert.equal(complete("tabkyra token create x --j"), "");
-	assert.equal(complete("tabkyra token list --j"), "--json");
+	assert.equal(complete("polycarp browser token create x --j"), "");
+	assert.equal(complete("polycarp browser token list --j"), "--json");
 	assert.equal(complete("tabkyra tunnel cloudflare --p"), "--port");
 	// Path arguments fall back to file names: nothing from the script, and -o default set.
-	assert.equal(complete("tabkyra skill apply sk"), "");
-	assert.equal(complete("tabkyra skill eval --cases ev"), "");
+	assert.equal(complete("polycarp browser skill apply sk"), "");
+	assert.equal(complete("polycarp browser skill eval --cases ev"), "");
 	assert.match(execFileSync("bash", ["-c", `source "${file}"; complete -p tabkyra`], { encoding: "utf8" }), /-o bashdefault -o default -F _tabkyra tabkyra/);
 	// fish: files only where paths go.
 	assert.match(fish, /__fish_seen_subcommand_from skill; and __fish_seen_subcommand_from list' -f/);
@@ -136,12 +136,12 @@ test("completions parse in each shell and complete commands, subcommands and fla
 	const withCompopt = (words) =>
 		execFileSync("bash", ["-c", `compopt() { echo "compopt $*"; }; source "${file}"; COMP_WORDS=(${words} ""); COMP_CWORD=$((\${#COMP_WORDS[@]} - 1)); _tabkyra; echo "R:\${COMPREPLY[*]}"`], { encoding: "utf8" }).trim();
 	assert.match(withCompopt("tabkyra mcp"), /compopt \+o default/);
-	assert.match(withCompopt("tabkyra token revoke"), /compopt \+o default/);
-	assert.doesNotMatch(withCompopt("tabkyra skill apply"), /compopt/);
+	assert.match(withCompopt("polycarp browser token revoke"), /compopt \+o default/);
+	assert.doesNotMatch(withCompopt("polycarp browser skill apply"), /compopt/);
 	// ...and an empty word there gets file names (nothing from the script), not just "--yes".
-	assert.match(withCompopt("tabkyra skill apply"), /R:$/);
-	assert.match(withCompopt("tabkyra library obsidian"), /R:$/);
-	assert.match(withCompopt("tabkyra update --channel"), /R:stable nightly$/);
+	assert.match(withCompopt("polycarp browser skill apply"), /R:$/);
+	assert.match(withCompopt("polycarp browser library obsidian"), /R:$/);
+	assert.match(withCompopt("polycarp browser update --channel"), /R:stable nightly$/);
 	assert.match(withCompopt("tabkyra tunnel tailscale --port"), /R:$/);
 	if (spawnSync("zsh", ["--version"]).status === 0) assert.equal(spawnSync("zsh", ["-n"], { input: zsh.out }).status, 0, "zsh script has a syntax error");
 	else t.diagnostic("zsh is not installed here: the zsh script's syntax was not checked");

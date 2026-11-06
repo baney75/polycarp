@@ -6,7 +6,7 @@ import { knownSkills, sentChips } from "../composer/chips.js";
 import { type ComposerRefs, displayText, leadingSkill, REFS_RESOLVED } from "../composer/refs.js";
 
 /**
- * Custom user message component for Tabkyra with fancy pill styling.
+ * Custom user message component for Polycarp with fancy pill styling.
  * Duplicates the web-ui UserMessage but with our custom styling.
  */
 @customElement("tabkyra-user-message")

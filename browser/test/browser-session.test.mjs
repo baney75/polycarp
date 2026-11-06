@@ -376,21 +376,21 @@ test("an agent session stores who and what it serves, and when it began", async 
 	assert.equal(s.record.project, "shop");
 	assert.equal(s.record.name, "shop-1a2b");
 	assert.ok(s.record.createdAt >= before);
-	assert.equal(s.groupName, "Tabkyra · claude · shop");
+	assert.equal(s.groupName, "Polycarp · claude · shop");
 	await s.createTab("https://example.com/");
 	assert.equal(s.record.createdAt, (await BrowserSession.open("bridge-claude-shop-1a2b", "claude · shop")).record.createdAt, "a resumed session keeps its start time");
 });
 
-test("labels an agent picks are plain text: no controls, no bidi, no Tabkyra prefix, 32 characters", async () => {
+test("labels an agent picks are plain text: no controls, no bidi, no Polycarp prefix, 32 characters", async () => {
 	installFakeChrome();
 	const { sanitizeLabel, BrowserSession } = await load("worker");
 	assert.equal(sanitizeLabel("  Flight\n\tsearch  "), "Flight search");
-	assert.equal(sanitizeLabel("Tabkyra · claude · bank"), "claude · bank");
+	assert.equal(sanitizeLabel("Polycarp · claude · bank"), "claude · bank");
 	assert.equal(sanitizeLabel("evil‮gnp.exe"), "evilgnp.exe");
 	assert.equal(sanitizeLabel("x".repeat(80)).length, 32);
 	const s = await BrowserSession.open("bridge-claude-x", "claude · x", 1);
 	await s.createTab("https://example.com/");
-	assert.equal(await s.setAgentLabel("Tabkyra: \u0007Shop"), "Tabkyra · claude · x · Shop");
+	assert.equal(await s.setAgentLabel("Polycarp: \u0007Shop"), "Polycarp · claude · x · Shop");
 });
 
 test("an agent session holds at most 15 tabs, and the 16th is refused with what to do", async () => {

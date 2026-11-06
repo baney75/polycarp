@@ -1,5 +1,5 @@
 /**
- * `tabkyra sessions`: list, rename, end and control agent sessions and their tab groups from the
+ * `polycarp browser sessions`: list, rename, end and control agent sessions and their tab groups from the
  * terminal. These run for a maintenance client, never open a session of their own, and act as
  * the user (the same trust as the side panel): only a local user process reaches the bridge.
  */
@@ -72,15 +72,19 @@ async function describe(
  */
 async function resolve(query: string, panel = false) {
 	const q = query.trim().toLowerCase();
-	if (!q) throw new BridgeError(ERR.BAD_PARAMS, "Which session? Give its name (tabkyra sessions lists them).");
+	if (!q)
+		throw new BridgeError(ERR.BAD_PARAMS, "Which session? Give its name (polycarp browser sessions lists them).");
 	const all = (await listSessions()).filter((s) => panel || isAgentSession(s.id));
 	const exact = all.filter((s) =>
-		[nameOf(s), s.id, s.label, `Tabkyra · ${s.label}`].some((v) => v.toLowerCase() === q),
+		[nameOf(s), s.id, s.label, `Polycarp · ${s.label}`].some((v) => v.toLowerCase() === q),
 	);
 	const hits = exact.length ? exact : all.filter((s) => nameOf(s).toLowerCase().startsWith(q));
 	if (hits.length === 1) return hits[0];
 	if (hits.length === 0)
-		throw new BridgeError(ERR.NOT_FOUND, `No agent session matches "${query}". tabkyra sessions lists them.`);
+		throw new BridgeError(
+			ERR.NOT_FOUND,
+			`No agent session matches "${query}". polycarp browser sessions lists them.`,
+		);
 	throw new BridgeError(
 		ERR.BAD_PARAMS,
 		`"${query}" matches ${hits.length} sessions: ${hits.map(nameOf).join(", ")}. Give the full name.`,

@@ -1,5 +1,5 @@
 /**
- * `tabkyra doctor`: every check that has to pass for an agent to drive a tab, with
+ * `polycarp browser doctor`: every check that has to pass for an agent to drive a tab, with
  * one exact fix per failure. Exits 1 when any check fails.
  */
 
@@ -32,7 +32,7 @@ function nodeCheck(): Check {
 				id: "node",
 				status: "fail",
 				label: `Node ${process.versions.node} is too old`,
-				detail: `Tabkyra needs Node ${MIN_NODE_MAJOR} or newer.`,
+				detail: `Polycarp needs Node ${MIN_NODE_MAJOR} or newer.`,
 				fix: process.platform === "darwin" ? "brew install node" : "Install Node 20+ from https://nodejs.org",
 			};
 }
@@ -69,7 +69,7 @@ function buildCheck(): Check {
 	const dir = extensionDir();
 	const state = buildState();
 	if (state === "missing") {
-		return { id: "build", status: "fail", label: "Extension build missing", detail: `${dir} is missing or incomplete.`, fix: "tabkyra setup" };
+		return { id: "build", status: "fail", label: "Extension build missing", detail: `${dir} is missing or incomplete.`, fix: "polycarp browser setup" };
 	}
 	if (state === "stale") {
 		return {
@@ -77,7 +77,7 @@ function buildCheck(): Check {
 			status: "fail",
 			label: `Extension build ${builtVersion()} does not match this checkout (${sourceVersion()})`,
 			detail: "dist-chrome was built from a different version of the source.",
-			fix: "tabkyra setup",
+			fix: "polycarp browser setup",
 		};
 	}
 	return { id: "build", status: "ok", label: `Extension build ${builtVersion()}`, detail: dir };
@@ -91,7 +91,7 @@ function launcherCheck(): Check {
 				status: "fail",
 				label: "Agent launcher missing or broken",
 				detail: `${cliLauncherPath()} is what harness configs run.`,
-				fix: "tabkyra install --force",
+				fix: "polycarp browser install --force",
 			};
 }
 
@@ -102,13 +102,13 @@ function hostChecks(): Check[] {
 				id: "host",
 				status: "warn",
 				label: "Native host registration is not checked on Windows",
-				detail: "tabkyra install writes HKCU\\Software\\<browser>\\NativeMessagingHosts keys; run it again if the extension can't connect.",
-				fix: "tabkyra install --force",
+				detail: "polycarp browser install writes HKCU\\Software\\<browser>\\NativeMessagingHosts keys; run it again if the extension can't connect.",
+				fix: "polycarp browser install --force",
 			},
 		];
 	}
 	const origin = `chrome-extension://${EXTENSION_ID}/`;
-	// What a manifest may name: the helper inside Polycarp, or the standalone launcher (a standalone Tabkyra's own manifest is fine).
+	// What a manifest may name: the helper inside Polycarp, or the standalone launcher (a standalone Polycarp's own manifest is fine).
 	const accepted = [...new Set([hostTarget(), launcherPath()])];
 	// Only browsers that are really installed: a data folder outlives the app.
 	const found = installedBrowserDirs();
@@ -118,8 +118,8 @@ function hostChecks(): Check[] {
 				id: "host",
 				status: "fail",
 				label: "No Chromium browser found",
-				detail: "Tabkyra works with Helium, Chrome, Chromium, Brave, Edge, Arc, Vivaldi and Opera.",
-				fix: "Install a Chromium browser, then run: tabkyra setup",
+				detail: "Polycarp works with Helium, Chrome, Chromium, Brave, Edge, Arc, Vivaldi and Opera.",
+				fix: "Install a Chromium browser, then run: polycarp browser setup",
 			},
 		];
 	}
@@ -130,7 +130,7 @@ function hostChecks(): Check[] {
 			status: "fail",
 			label: `${name}: native host ${existsSync(file) ? "manifest is wrong" : "not registered"}`,
 			detail,
-			fix: "tabkyra install --force",
+			fix: "polycarp browser install --force",
 		});
 		if (!existsSync(file)) return fail(file);
 		let manifest: { name?: string; path?: string; allowed_origins?: string[] };
@@ -161,9 +161,9 @@ export interface DebugInfo {
 }
 
 const GRANT_STEPS =
-	"Open the Tabkyra side panel > Settings > Agents > Page scripts and click Allow, then accept the browser's prompt. If doctor still warns, run tabkyra reload.";
+	"Open the Polycarp side panel > Settings > Agents > Page scripts and click Allow, then accept the browser's prompt. If doctor still warns, run polycarp browser reload.";
 
-/** The "Allow user scripts" row of `tabkyra doctor`, or undefined when there is nothing to say. */
+/** The "Allow user scripts" row of `polycarp browser doctor`, or undefined when there is nothing to say. */
 export function userScriptsCheck(info: DebugInfo): Check | undefined {
 	const status = info.userScripts;
 	const slow = "Page scripts fall back to a slower path (the debugger).";
@@ -185,8 +185,8 @@ export function userScriptsCheck(info: DebugInfo): Check | undefined {
 					id: "user-scripts",
 					status: "warn",
 					label: "The userScripts permission is granted but the browser hides the API",
-					detail: `${slow} Either "Allow user scripts" is off on the extension's Details page, or Tabkyra hasn't restarted since the permission was granted.`,
-					fix: 'Check "Allow user scripts" at chrome://extensions > Tabkyra > Details, then tabkyra reload',
+					detail: `${slow} Either "Allow user scripts" is off on the extension's Details page, or Polycarp hasn't restarted since the permission was granted.`,
+					fix: 'Check "Allow user scripts" at chrome://extensions > Polycarp > Details, then polycarp browser reload',
 				};
 			}
 			return {
@@ -194,7 +194,7 @@ export function userScriptsCheck(info: DebugInfo): Check | undefined {
 				status: "warn",
 				label: '"Allow user scripts" is off',
 				detail: `${slow} The permission is granted, but the browser refuses userScripts calls until the toggle is on.${status.error ? ` Browser said: ${status.error}` : ""}`,
-				fix: 'Turn on "Allow user scripts" at chrome://extensions > Tabkyra > Details, then tabkyra reload',
+				fix: 'Turn on "Allow user scripts" at chrome://extensions > Polycarp > Details, then polycarp browser reload',
 			};
 		case "probe_error":
 			return {
@@ -202,7 +202,7 @@ export function userScriptsCheck(info: DebugInfo): Check | undefined {
 				status: "warn",
 				label: "Couldn't tell whether user scripts work",
 				detail: `${slow} The check failed: ${status.error ?? "no error text"}`,
-				fix: "tabkyra reload, then tabkyra doctor",
+				fix: "polycarp browser reload, then polycarp browser doctor",
 			};
 	}
 	// No structured status (an older extension) or a state this CLI doesn't know (a newer one):
@@ -213,11 +213,11 @@ export function userScriptsCheck(info: DebugInfo): Check | undefined {
 		status: "warn",
 		label: "User scripts are unavailable",
 		detail: `Page scripts fall back to a slower path. Either the userScripts permission is not granted or "Allow user scripts" is off on the extension's Details page.`,
-		fix: "tabkyra update or rebuild the CLI so doctor can name the cause",
+		fix: "polycarp browser update or rebuild the CLI so doctor can name the cause",
 	};
 }
 
-/** A worker this young may not have settled since `tabkyra reload`; ask it again once. */
+/** A worker this young may not have settled since `polycarp browser reload`; ask it again once. */
 const SETTLE_S = 10;
 const RETRY_MS = 1500;
 
@@ -226,8 +226,8 @@ async function connectionChecks(): Promise<Check[]> {
 		id: "connected",
 		status: "fail",
 		label: "Extension not connected",
-		detail: "No running browser has the Tabkyra extension loaded, or it has not reached the native host yet.",
-		fix: "tabkyra setup",
+		detail: "No running browser has the Polycarp extension loaded, or it has not reached the native host yet.",
+		fix: "polycarp browser setup",
 	};
 	let sockets: string[];
 	try {
@@ -261,7 +261,7 @@ async function connectionChecks(): Promise<Check[]> {
 					id: "loaded-version",
 					status: "fail",
 					label: `The browser runs extension ${info.version}, the build is ${built}`,
-					fix: "tabkyra reload",
+					fix: "polycarp browser reload",
 				});
 			}
 			const userScripts = userScriptsCheck(info);
@@ -274,7 +274,7 @@ async function connectionChecks(): Promise<Check[]> {
 					status: "fail",
 					label: "Extension connected but not responding",
 					detail: err instanceof Error ? err.message : String(err),
-					fix: "tabkyra reload",
+					fix: "polycarp browser reload",
 				},
 			];
 		} finally {
@@ -289,7 +289,7 @@ function harnessChecks(): Check[] {
 		.filter((h) => h.detected)
 		.map((h): Check => {
 			const id = `mcp:${h.id}`;
-			if (h.configured === true) return { id, status: "ok", label: `${h.name}: Tabkyra MCP server configured` };
+			if (h.configured === true) return { id, status: "ok", label: `${h.name}: Polycarp MCP server configured` };
 			const replace = h.configured === "stale" || h.configured === "other";
 			let fix: string;
 			if (h.addCommand) fix = replace && h.removeCommand ? `${shellJoin(h.removeCommand)} && ${shellJoin(h.addCommand)}` : shellJoin(h.addCommand);
@@ -299,7 +299,7 @@ function harnessChecks(): Check[] {
 				return {
 					id,
 					status: "warn",
-					label: `${h.name}: couldn't tell whether Tabkyra is configured`,
+					label: `${h.name}: couldn't tell whether Polycarp is configured`,
 					detail: h.note ?? (h.configFile ? `${h.configFile} could not be parsed.` : `\`${h.id} mcp get tabkyra\` failed or printed something unexpected.`),
 					fix: h.configFile ? `Check ${h.configFile}` : `${h.id} mcp get tabkyra`,
 				};
@@ -316,7 +316,7 @@ function harnessChecks(): Check[] {
 				// A harness the user doesn't browse from shouldn't fail the run; Claude Code and
 				// Codex are fixed with one command, so those count.
 				status: h.id === "claude" || h.id === "codex" ? "fail" : "warn",
-				label: `${h.name}: Tabkyra MCP server not configured`,
+				label: `${h.name}: Polycarp MCP server not configured`,
 				fix,
 			};
 		});
@@ -345,7 +345,7 @@ export async function runDoctor(options: { json: boolean }): Promise<number> {
 	console.log(
 		failed === 0
 			? `${sym.ok} ${c.bold("All checks passed.")}`
-			: `${sym.fail} ${c.bold(`${failed} check${failed === 1 ? "" : "s"} failed.`)} Run the ${sym.arrow} command under each, then run ${c.bold("tabkyra doctor")} again.`,
+			: `${sym.fail} ${c.bold(`${failed} check${failed === 1 ? "" : "s"} failed.`)} Run the ${sym.arrow} command under each, then run ${c.bold("polycarp browser doctor")} again.`,
 	);
 	return failed === 0 ? 0 : 1;
 }

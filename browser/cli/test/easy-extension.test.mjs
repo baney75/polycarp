@@ -57,7 +57,7 @@ test("a manifest naming the helper is right in compiled mode, and so is a standa
 	let host = doctor(env).find((c) => c.id === `host:${first}`);
 	assert.equal(host.status, "ok", JSON.stringify(host));
 	assert.equal(JSON.parse(readFileSync(manifestFile(dirs[first]), "utf8")).path, process.execPath);
-	// A standalone Tabkyra's manifest: the launcher script in ~/.config/tabkyra.
+	// A standalone Polycarp's manifest: the launcher script in ~/.config/tabkyra.
 	const launcher = join(home, ".config", "tabkyra", "host");
 	mkdirSync(dirname(launcher), { recursive: true });
 	writeFileSync(launcher, "#!/bin/sh\nexit 0\n");

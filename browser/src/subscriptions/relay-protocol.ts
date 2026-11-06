@@ -28,7 +28,7 @@ export const RELAY_METHODS = new Set([
 ]);
 
 /**
- * True for Tabkyra's own pages (the side panel, or the same page opened in a tab). A content
+ * True for Polycarp's own pages (the side panel, or the same page opened in a tab). A content
  * script's sender URL is the web page's, so it never passes.
  */
 export function isExtensionPage(sender: chrome.runtime.MessageSender | undefined, origin: string): boolean {

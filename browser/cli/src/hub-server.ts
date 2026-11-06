@@ -1,5 +1,5 @@
 /**
- * `tabkyra hub serve`: one connector URL for many devices (D32). The hub answers the same OAuth
+ * `polycarp browser hub serve`: one connector URL for many devices (D32). The hub answers the same OAuth
  * endpoints and consent page as `serve --public-url`, authenticates /mcp the same way, and then
  * proxies each MCP session to one of the owner's devices, which dial in over a WebSocket (/link)
  * from behind their own NATs. It needs no browser. Single-owner, like every install (D31).
@@ -174,7 +174,7 @@ const bearer = (header: string | undefined) => /^Bearer (\S+)$/.exec(header ?? "
 
 export async function startHub(options: HubOptions): Promise<HubHandle> {
 	const host = options.host ?? "127.0.0.1";
-	if (!LOOPBACK_HOSTS.has(host)) throw new Error(`tabkyra hub serve binds to loopback only (got ${host}). Put an HTTPS front door in front of it.`);
+	if (!LOOPBACK_HOSTS.has(host)) throw new Error(`polycarp browser hub serve binds to loopback only (got ${host}). Put an HTTPS front door in front of it.`);
 	const oauth: OAuthConfig = { publicUrl: options.publicUrl, redirectHosts: options.redirectHosts ?? [], scopes: SCOPES };
 	const links = new Map<string, Link>();
 	// The live snapshot (hub devices) shows each device's sessions, so a change to this map refreshes it.
@@ -211,7 +211,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 
 	const http: Server = createServer((req, res) => {
 		handle(req, res).catch((err) => {
-			process.stderr.write(`[tabkyra hub] ${err instanceof Error ? err.message : String(err)}\n`);
+			process.stderr.write(`[polycarp browser hub] ${err instanceof Error ? err.message : String(err)}\n`);
 			if (!res.headersSent) deny(res, 500, "Internal error.");
 			else res.end();
 		});
@@ -344,7 +344,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 				const out: Record<string, string> = {};
 				for (const k of FORWARD_RESPONSE_HEADERS) if (frame.headers[k]) out[k] = frame.headers[k];
 				if (status === 502 && frame.status === 401) {
-					deny(p.res, 502, "This device refused the hub's link token. Run tabkyra link off and link again on it.");
+					deny(p.res, 502, "This device refused the hub's link token. Run polycarp browser link off and link again on it.");
 					finish(link, frame.id);
 					return;
 				}
@@ -469,7 +469,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 
 	function offlineMessage(): string {
 		const devices = loadDevices().devices;
-		if (!devices.length) return "No device is linked to this hub. Run tabkyra hub code, then tabkyra link on a device.";
+		if (!devices.length) return "No device is linked to this hub. Run polycarp browser hub code, then polycarp browser link on a device.";
 		const lines = devices.map((d) => `${d.name}: ${links.has(d.id) ? "online" : d.lastSeen ? `offline, last seen ${d.lastSeen}` : "never connected"}`);
 		return `No device is online. ${lines.join("; ")}.`;
 	}
@@ -632,7 +632,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			const made = redeemConnectCode(code, name || "device");
 			if (!made) {
 				enrollLimit.fail(source);
-				return sendJson(res, 401, { error: "invalid_code", error_description: "That connect code is wrong, expired or already used. Run tabkyra hub code for a new one." });
+				return sendJson(res, 401, { error: "invalid_code", error_description: "That connect code is wrong, expired or already used. Run polycarp browser hub code for a new one." });
 			}
 			if (typeof body.version === "string") touchDevice(made.record.id, { version: body.version.slice(0, 40) });
 			return sendJson(res, 200, { deviceId: made.record.id, secret: made.credential.slice(made.record.id.length + 1), manage: made.record.manage, name: made.record.name });
@@ -653,7 +653,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			return sendJson(res, 401, { error: "invalid_token", error_description: "This device's credential is not valid." });
 		}
 		// Only a manager device mints codes.
-		if (!device.manage) return sendJson(res, 403, { error: "forbidden", error_description: "This device is not a manager. Link it with a code from tabkyra hub code --manage." });
+		if (!device.manage) return sendJson(res, 403, { error: "forbidden", error_description: "This device is not a manager. Link it with a code from polycarp browser hub code --manage." });
 		const body = await readJsonBody(req, res);
 		if (!body) return;
 		try {
@@ -676,7 +676,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 	}
 
 	function homePage(res: ServerResponse): void {
-		const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tabkyra hub</title><style>${pageCss()}</style></head><body><main><h1>Tabkyra hub</h1><p class="muted">This address connects an assistant to the owner's own browsers. Add <code>${options.publicUrl.replace(/[&<>"']/g, "")}/mcp</code> as a custom connector in claude.ai, ChatGPT or grok.com, then approve it with the owner's passcode or a connect code.</p></main></body></html>`;
+		const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Polycarp hub</title><style>${pageCss()}</style></head><body><main><h1>Polycarp hub</h1><p class="muted">This address connects an assistant to the owner's own browsers. Add <code>${options.publicUrl.replace(/[&<>"']/g, "")}/mcp</code> as a custom connector in claude.ai, ChatGPT or grok.com, then approve it with the owner's passcode or a connect code.</p></main></body></html>`;
 		res.writeHead(200, {
 			"content-type": "text/html; charset=utf-8",
 			"cache-control": "no-store",
@@ -765,7 +765,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			}
 		}, PING_MS),
 	);
-	// A device removed with `tabkyra hub remove` (another process) loses its link within a second.
+	// A device removed with `polycarp browser hub remove` (another process) loses its link within a second.
 	timers.push(
 		setInterval(() => {
 			// A file that can't be read is not a revocation: keep the links until it can.

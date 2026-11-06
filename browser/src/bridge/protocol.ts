@@ -227,7 +227,7 @@ export interface HostPing {
 	type: "ping";
 }
 
-/** How Tabkyra was installed, which decides what "update" does (docs/updates.md). */
+/** How Polycarp was installed, which decides what "update" does (docs/updates.md). */
 export type InstallMode = "release" | "checkout" | "unmanaged";
 
 /** The record of the last update, rollback or reinstall (~/.config/tabkyra/last-update.json). */
@@ -500,7 +500,7 @@ export const BRIDGE_METHODS = [
 export type BridgeMethod = (typeof BRIDGE_METHODS)[number];
 
 // bridge.debug `userScripts`: why in-page scripts can or can't use chrome.userScripts
-// (probe and classifier in src/browser/userscripts-status.ts; read by `tabkyra doctor`).
+// (probe and classifier in src/browser/userscripts-status.ts; read by `polycarp browser doctor`).
 
 /**
  * - ready: the API is present and a call into it succeeded.

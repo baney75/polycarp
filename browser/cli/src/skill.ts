@@ -1,6 +1,6 @@
 /**
- * `tabkyra skill install|list|print|lint|apply|revert|match|eval|versions|rollback|edit`:
- * teach agents to use Tabkyra well.
+ * `polycarp browser skill install|list|print|lint|apply|revert|match|eval|versions|rollback|edit`:
+ * teach agents to use Polycarp well.
  * The skill texts live in skills/<name>/SKILL.md and are bundled into the CLI at build time
  * (skills-catalog.ts), so every harness gets the same words the tests check. The tabkyra
  * skill is tested against the MCP server's instructions (cli/test/skill.test.mjs); every
@@ -38,7 +38,7 @@ import { SKILLS } from "./skills-catalog.ts";
 import { banner, c, sym } from "./ui.ts";
 
 /** Written under the frontmatter, so a later install knows the file is ours to replace. */
-const MARKER = "<!-- Installed by `tabkyra skill install`; reinstalling replaces this file. -->";
+const MARKER = "<!-- Installed by `polycarp browser skill install`; reinstalling replaces this file. -->";
 const NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 /** A usable skill name: "none" is reserved for the router's "no skill fits". */
 const isName = (n: string) => NAME.test(n) && n !== "none";
@@ -85,7 +85,7 @@ export interface SkillTarget {
 	detected: boolean;
 	/** The harness's skills folder; each skill goes in <dir>/<skill>/SKILL.md. */
 	dir: string;
-	/** Where the tabkyra skill goes, kept for callers that name one file. */
+	/** Where the polycarp browser skill goes, kept for callers that name one file. */
 	file: string;
 }
 
@@ -110,7 +110,7 @@ export function skillTargets(): SkillTarget[] {
 
 // --- Local edits (overlays) ----------------------------------------------------------------
 //
-// `tabkyra skill apply` (used by the rsi skill) keeps the user's edited copy of a skill in
+// `polycarp browser skill apply` (used by the rsi skill) keeps the user's edited copy of a skill in
 // ~/.config/tabkyra/skills-local/<name>/SKILL.md and records it in index.json with the
 // bundled text it was based on. A local copy is used only when the index records it, it
 // passes lint, it isn't a protected skill, and it keeps every section of the bundled text;
@@ -217,7 +217,7 @@ function changedProtectedSections(current: string, draft: string): string[] {
 function localText(name: string): { text?: string; problem?: string; overBudget?: boolean } {
 	const file = localFile(name);
 	if (!existsSync(file) && !isLink(file)) return {};
-	if (!readIndex()[name]) return { problem: `${file} wasn't added with tabkyra skill apply` };
+	if (!readIndex()[name]) return { problem: `${file} wasn't added with polycarp browser skill apply` };
 	if (PROTECTED_SKILLS.has(name)) return { problem: `${name} changes only through a reviewed pull request` };
 	const off = communityBaseProblem(name);
 	if (off) return { problem: `${off}, so your copy based on it is off too (the file is kept)` };
@@ -240,9 +240,9 @@ function localText(name: string): { text?: string; problem?: string; overBudget?
 	return { text, overBudget: overBudget && grandfathered };
 }
 
-/** Refuse to touch anything under a symbolic link: a link could lead outside Tabkyra's folders. */
+/** Refuse to touch anything under a symbolic link: a link could lead outside Polycarp's folders. */
 function assertNoLinks(paths: string[]): void {
-	for (const p of paths) if (isLink(p)) throw new SkillError(`${p} is a symbolic link; Tabkyra won't read or write through it. Remove it by hand.`);
+	for (const p of paths) if (isLink(p)) throw new SkillError(`${p} is a symbolic link; Polycarp won't read or write through it. Remove it by hand.`);
 }
 
 function isLink(path: string): boolean {
@@ -277,7 +277,7 @@ function skillText(name: string): string {
 	const local = localText(name);
 	if (local.text !== undefined) return local.text;
 	const text = baseText(name);
-	if (text === undefined) throw new SkillError(`No skill named ${name}.${gone(name)} Run tabkyra skill list.`);
+	if (text === undefined) throw new SkillError(`No skill named ${name}.${gone(name)} Run polycarp browser skill list.`);
 	return text;
 }
 
@@ -294,7 +294,7 @@ function localWarnings(): string[] {
 	const warnings: string[] = [];
 	for (const name of names) {
 		const local = localText(name);
-		if (local.problem) warnings.push(`Your local copy of ${name} is not used: ${local.problem}. Fix it, re-apply it, or run tabkyra skill revert ${name}.`);
+		if (local.problem) warnings.push(`Your local copy of ${name} is not used: ${local.problem}. Fix it, re-apply it, or run polycarp browser skill revert ${name}.`);
 		if (local.overBudget) {
 			warnings.push(
 				`Your local copy of ${name} (${localFile(name)}) is over the skill budget (lint rule "budget": 150 lines and 8,000 characters). It was applied before the budget, so it is still used; trim it and apply it again, since a new apply must fit.`,
@@ -304,9 +304,9 @@ function localWarnings(): string[] {
 		const base = index[name]?.baseSha256;
 		const kind = SKILLS.has(name) ? "bundled" : "community";
 		if (local.text !== undefined && bundled !== undefined && base && base !== sha256(bundled)) {
-			warnings.push(`The ${kind} ${name} skill changed since your edit; your local copy is kept and still used. Compare tabkyra skill print ${name} --raw with the ${kind} text, then re-apply or revert.`);
+			warnings.push(`The ${kind} ${name} skill changed since your edit; your local copy is kept and still used. Compare polycarp browser skill print ${name} --raw with the ${kind} text, then re-apply or revert.`);
 		} else if (local.text !== undefined && kind === "community" && bundled !== undefined) {
-			warnings.push(`Your local copy of ${name} overrides the community skill; community updates to it are not applied (tabkyra skill revert ${name} goes back to the community version).`);
+			warnings.push(`Your local copy of ${name} overrides the community skill; community updates to it are not applied (polycarp browser skill revert ${name} goes back to the community version).`);
 		}
 	}
 	return warnings;
@@ -367,7 +367,7 @@ export function agentsSnippet(name = "tabkyra"): string {
 	const body = text.startsWith("---\n") && end >= 0 ? text.slice(end + 5) : text;
 	// One level down, so it nests under a project's own headings.
 	const nested = body.trim().replace(/^(#{2,5}) /gm, "#$1 ");
-	const heading = name === "tabkyra" ? "## Browser: Tabkyra (MCP server `tabkyra`)" : `## Skill: ${name}`;
+	const heading = name === "tabkyra" ? "## Browser: Polycarp (MCP server `tabkyra`)" : `## Skill: ${name}`;
 	return `${nested.replace(/^# .*/, heading)}\n`;
 }
 
@@ -447,8 +447,8 @@ export function installSkills(options: { force: boolean; all: boolean; only?: st
 
 // --- Refresh after an update ---------------------------------------------------------------
 //
-// After `tabkyra update` installs a new CLI, the skills it bundles may be newer than the copies
-// installed in each harness. A copy is refreshed only when it is still exactly what Tabkyra
+// After `polycarp browser update` installs a new CLI, the skills it bundles may be newer than the copies
+// installed in each harness. A copy is refreshed only when it is still exactly what Polycarp
 // wrote: skills-installed.json records the hash of every file install wrote, and the updater
 // records the installed copies that match the old CLI's text right before it swaps the new one
 // in. Anything else was edited by hand and is reported, never overwritten.
@@ -467,7 +467,7 @@ function readInstalledRecord(): Record<string, string> {
 }
 
 /**
- * Remember the hash of what is in each of these files now (all written by Tabkyra). Best effort:
+ * Remember the hash of what is in each of these files now (all written by Polycarp). Best effort:
  * a record that can't be written only means a later refresh leaves those copies alone.
  */
 function recordInstalled(files: string[]): void {
@@ -539,7 +539,7 @@ export function refreshInstalledSkills(): RefreshResult {
 			continue;
 		}
 		if (record[file] !== sha256(existing)) {
-			result.skipped.push({ skill, file, reason: "edited since Tabkyra installed it" });
+			result.skipped.push({ skill, file, reason: "edited since Polycarp installed it" });
 			continue;
 		}
 		writeFileSync(file, wanted);
@@ -662,7 +662,7 @@ export function revertSkill(name: string): { removed: boolean; results: InstallR
 	return { removed: true, results: installSkills({ force: false, all: false, only: [name] }) };
 }
 
-/** Delete the copies of `name` Tabkyra installed into harnesses (they carry the marker); never anyone else's. */
+/** Delete the copies of `name` Polycarp installed into harnesses (they carry the marker); never anyone else's. */
 export function removeInstalledCopies(name: string): string[] {
 	const removed: string[] = [];
 	// Built-in skills' copies are refreshed or kept, never deleted by community state.
@@ -680,7 +680,7 @@ export function removeInstalledCopies(name: string): string[] {
 
 // --- Router ------------------------------------------------------------------------------
 //
-// skill_match and `tabkyra skill match` route over the skills in use: the bundled ones and
+// skill_match and `polycarp browser skill match` route over the skills in use: the bundled ones and
 // the user's applied local copies. The index is built once per process and rebuilt only
 // when skills-local changes, which a few stat calls detect.
 
@@ -790,7 +790,7 @@ export function readSkill(name: string, bundledOnly = false): string {
 		if (text === undefined) throw new SkillError(`No bundled skill named ${name}. Call skill_match.`);
 		return text;
 	}
-	if (!allNames().includes(name)) throw new SkillError(`No skill named ${name}.${gone(name)} Call skill_match, or run tabkyra skill list.`);
+	if (!allNames().includes(name)) throw new SkillError(`No skill named ${name}.${gone(name)} Call skill_match, or run polycarp browser skill list.`);
 	return skillText(name);
 }
 
@@ -840,7 +840,7 @@ export function skillVersions(name: string): SkillVersion[] {
 			out.push({ version, source: "history", at: stampTime(m[1]), label: m[2] ?? "backup", file, inUse: false });
 		}
 	}
-	if (out.length === 0) throw new SkillError(`No skill named ${name}, and no history for it. Run tabkyra skill list.`);
+	if (out.length === 0) throw new SkillError(`No skill named ${name}, and no history for it. Run polycarp browser skill list.`);
 	return out;
 }
 
@@ -856,7 +856,7 @@ export function planRollback(name: string, to: string): { plan: ApplyPlan; from:
 	const versions = new Set(hits.map((v) => v.version));
 	if (versions.size === 0) {
 		const known = history.map((v) => `${v.version} (${v.at})`).join(", ") || "none";
-		throw new SkillError(`${name} has no version ${to} in its history. Versions in history: ${known}. Run tabkyra skill versions ${name}.`);
+		throw new SkillError(`${name} has no version ${to} in its history. Versions in history: ${known}. Run polycarp browser skill versions ${name}.`);
 	}
 	if (versions.size > 1) throw new SkillError(`${to} matches more than one version of ${name} (${[...versions].join(", ")}). Give more of the version.`);
 	const from = hits[hits.length - 1];
@@ -1006,10 +1006,10 @@ export function removeSkill(name: string): string {
 	if (communitySkills().has(name)) {
 		setDisabled(name, true);
 		const removed = removeInstalledCopies(name);
-		return `Turned off the community skill ${name} on this device${removed.length ? ` and removed ${removed.length} installed cop${removed.length === 1 ? "y" : "ies"}` : ""}. tabkyra skill enable ${name} brings it back.`;
+		return `Turned off the community skill ${name} on this device${removed.length ? ` and removed ${removed.length} installed cop${removed.length === 1 ? "y" : "ies"}` : ""}. polycarp browser skill enable ${name} brings it back.`;
 	}
-	if (SKILLS.has(name)) throw new SkillError(`${name} is a built-in skill; it ships with Tabkyra and can't be removed. An agent that shouldn't use it can skip it.`);
-	throw new SkillError(`No skill named ${name}.${gone(name)} Run tabkyra skill list.`);
+	if (SKILLS.has(name)) throw new SkillError(`${name} is a built-in skill; it ships with Polycarp and can't be removed. An agent that shouldn't use it can skip it.`);
+	throw new SkillError(`No skill named ${name}.${gone(name)} Run polycarp browser skill list.`);
 }
 
 export interface CheckResult {
@@ -1034,7 +1034,7 @@ function skillsIn(root: string): RouterSkill[] {
 
 /**
  * Lint a skill, run the community rules when it is (or will be) a community skill, and run
- * the router eval CI runs. With `root` (a Tabkyra checkout) that is the full regression with
+ * the router eval CI runs. With `root` (a Polycarp checkout) that is the full regression with
  * the skill added; without one, only its own cases are routed.
  */
 export function checkSkill(
@@ -1053,7 +1053,7 @@ export function checkSkill(
 		text = withoutMarker(readFileSync(file, "utf8"));
 	} else {
 		const n = assertName(input.name ?? "");
-		if (!allNames().includes(n)) throw new SkillError(`No skill named ${n}.${gone(n)} Run tabkyra skill list.`);
+		if (!allNames().includes(n)) throw new SkillError(`No skill named ${n}.${gone(n)} Run polycarp browser skill list.`);
 		text = skillText(n);
 		file = `${n}/SKILL.md`;
 	}
@@ -1118,7 +1118,7 @@ export function checkSkill(
 		ok &&= good || !community;
 		lines.push(`${good ? sym.ok : sym.fail} router: ${own.correct} of ${own.cases} cases route to ${name}; ${own.falseInvokes} of ${own.noneCases} none cases route to a skill`);
 		for (const m of own.misses) lines.push(`  ${sym.dot} expected ${m.expected}, got ${m.got}: ${m.task}`);
-		lines.push(`${sym.dot} The full regression (every case, every skill) runs in a Tabkyra checkout and at submit time.`);
+		lines.push(`${sym.dot} The full regression (every case, every skill) runs in a Polycarp checkout and at submit time.`);
 	}
 	return { ok, name, text, community, findings, report, own, lines };
 }
@@ -1140,15 +1140,15 @@ export async function syncCommunity(options: { due?: boolean } = {}): Promise<Co
 	const result = await syncCatalog(options);
 	const notes: string[] = [];
 	// Every pass, whatever the fetch did: a cleanup an earlier process skipped or didn't finish
-	// happens now (it only deletes copies Tabkyra installed, of skills no longer in use).
+	// happens now (it only deletes copies Polycarp installed, of skills no longer in use).
 	const deleted = reconcileInstalled();
 	for (const r of result.removed) {
-		const local = readIndex()[r.name]?.base === "community" ? " Your local copy of it is turned off too; tabkyra skill revert removes it." : "";
+		const local = readIndex()[r.name]?.base === "community" ? " Your local copy of it is turned off too; polycarp browser skill revert removes it." : "";
 		notes.push(`Removed the community skill ${r.name}: ${r.reason}.${local}`);
 	}
 	if (deleted.length) notes.push(`Deleted ${deleted.length} installed cop${deleted.length === 1 ? "y" : "ies"} of community skills no longer in use.`);
 	for (const name of result.updated) {
-		if (localText(name).text !== undefined) notes.push(`Kept your local copy of ${name}; the community version changed. tabkyra skill revert ${name} switches to it.`);
+		if (localText(name).text !== undefined) notes.push(`Kept your local copy of ${name}; the community version changed. polycarp browser skill revert ${name} switches to it.`);
 	}
 	if (result.updated.length) refreshInstalledSkills();
 	return { ...result, notes };
@@ -1176,12 +1176,12 @@ export function reconcileInstalled(): string[] {
 
 export async function runSkillSync(args: string[], flags: SkillFlags): Promise<number> {
 	try {
-		if (args.length) throw new SkillError("Usage: tabkyra skill sync [--on|--off] [--json]");
+		if (args.length) throw new SkillError("Usage: polycarp browser skill sync [--on|--off] [--json]");
 		if (flags.on && flags.off) throw new SkillError("Pick one of --on and --off.");
 		if (flags.on || flags.off) {
 			setEnabled(Boolean(flags.on));
 			if (flags.off) reconcileInstalled();
-			console.log(flags.on ? `${sym.ok} Community skills are on. They are checked about once a day; run tabkyra skill sync to check now.` : `${sym.ok} Community skills are off: none is matched or read, and Tabkyra stops checking for them.`);
+			console.log(flags.on ? `${sym.ok} Community skills are on. They are checked about once a day; run polycarp browser skill sync to check now.` : `${sym.ok} Community skills are off: none is matched or read, and Polycarp stops checking for them.`);
 			return 0;
 		}
 		const result = await syncCommunity();
@@ -1217,10 +1217,10 @@ function printInstall(results: InstallResult[]): void {
 		if (current.length) console.log(`${sym.ok} ${target.name.padEnd(12)} current ${current.join(", ")}`);
 		for (const r of mine.filter((r) => r.backup)) console.log(`${sym.dot} ${target.name.padEnd(12)} replaced ${r.file}; the old file is in ${c.dim(r.backup ?? "")}`);
 		for (const r of mine.filter((r) => r.state === "linked")) {
-			console.log(`${sym.warn} ${target.name.padEnd(12)} left alone: ${c.dim(r.file)} is a symbolic link, and Tabkyra won't write through one. Replace the link by hand to install it.`);
+			console.log(`${sym.warn} ${target.name.padEnd(12)} left alone: ${c.dim(r.file)} is a symbolic link, and Polycarp won't write through one. Replace the link by hand to install it.`);
 		}
 		for (const r of mine.filter((r) => r.state === "kept")) {
-			console.log(`${sym.warn} ${target.name.padEnd(12)} left alone: ${c.dim(r.file)} is not ours ${c.dim(`(tabkyra skill install ${r.skill} --force replaces it)`)}`);
+			console.log(`${sym.warn} ${target.name.padEnd(12)} left alone: ${c.dim(r.file)} is not ours ${c.dim(`(polycarp browser skill install ${r.skill} --force replaces it)`)}`);
 		}
 	}
 }
@@ -1264,7 +1264,7 @@ function reportApplied(plan: ApplyPlan, what: string): number {
 	const { backup, results } = applySkill(plan);
 	console.log(`${sym.ok} ${what}${backup ? ` Backup: ${backup}` : ""}`);
 	printInstall(results);
-	console.log(`${sym.arrow} Undo: tabkyra skill revert ${plan.name}`);
+	console.log(`${sym.arrow} Undo: polycarp browser skill revert ${plan.name}`);
 	return results.some((r) => r.state === "kept" || r.state === "linked") ? 1 : 0;
 }
 
@@ -1283,7 +1283,7 @@ function readIfExists(file: string): string | undefined {
 
 function runEvalCommand(flags: SkillFlags): number {
 	const casesFile = flags.cases ? resolve(flags.cases) : findCases(process.cwd());
-	if (!casesFile || !existsSync(casesFile)) throw new SkillError("No skills-eval/router-cases.jsonl here or above. Run this in a Tabkyra checkout, or pass --cases <file>.");
+	if (!casesFile || !existsSync(casesFile)) throw new SkillError("No skills-eval/router-cases.jsonl here or above. Run this in a Polycarp checkout, or pass --cases <file>.");
 	const dir = dirname(casesFile);
 	const baselineFile = join(dir, "baseline.json");
 	const heldoutText = readIfExists(join(dir, "router-heldout.jsonl"));
@@ -1451,7 +1451,7 @@ export function stagedCasesFile(name: string): string {
 	return join(configDir(), "skill-submissions", assertName(name), "cases.jsonl");
 }
 
-/** The Tabkyra checkout holding the working folder, if any (it has skills-eval/router-cases.jsonl). */
+/** The Polycarp checkout holding the working folder, if any (it has skills-eval/router-cases.jsonl). */
 function checkoutRoot(): string | undefined {
 	const cases = findCases(process.cwd());
 	return cases ? dirname(dirname(cases)) : undefined;
@@ -1459,7 +1459,7 @@ function checkoutRoot(): string | undefined {
 
 function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFlags): number {
 	if (sub === "write") {
-		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill write <name> [--file <SKILL.md>|-] [--yes]");
+		if (args.length !== 1) throw new SkillError("Usage: polycarp browser skill write <name> [--file <SKILL.md>|-] [--yes]");
 		const { plan, applied, backup, results } = writeSkill(args[0], withoutMarker(readInput(flags.file)), Boolean(flags.yes));
 		console.log(`${sym.ok} Lint passed.\n${c.bold(`Change to ${plan.name}:`)}\n${plan.diff}\n`);
 		if (!applied) {
@@ -1468,11 +1468,11 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 		}
 		console.log(`${sym.ok} Saved ${plan.name} as a local skill.${backup ? ` Backup: ${backup}` : ""}`);
 		printInstall(results ?? []);
-		console.log(`${sym.arrow} Undo: tabkyra skill remove ${plan.name}`);
+		console.log(`${sym.arrow} Undo: polycarp browser skill remove ${plan.name}`);
 		return 0;
 	}
 	if (sub === "test") {
-		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill test <name|folder> [--cases <file>] [--json]");
+		if (args.length !== 1) throw new SkillError("Usage: polycarp browser skill test <name|folder> [--cases <file>] [--json]");
 		const isFolder = args[0].includes("/") || existsSync(args[0]);
 		const file = basename(args[0]) === "SKILL.md" ? args[0] : join(args[0], "SKILL.md");
 		if (isFolder && !existsSync(file)) throw new SkillError(`No SKILL.md at ${args[0]}.`);
@@ -1483,12 +1483,12 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 		return result.ok ? 0 : 1;
 	}
 	if (sub === "remove") {
-		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill remove <name>");
+		if (args.length !== 1) throw new SkillError("Usage: polycarp browser skill remove <name>");
 		console.log(`${sym.ok} ${removeSkill(args[0])}`);
 		return 0;
 	}
 	if (sub === "enable") {
-		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill enable <name>");
+		if (args.length !== 1) throw new SkillError("Usage: polycarp browser skill enable <name>");
 		const name = assertName(args[0]);
 		if (!readState().disabled.includes(name)) {
 			console.log(`${sym.dot} ${name} wasn't turned off.`);
@@ -1500,7 +1500,7 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 	}
 	if (sub === "catalog") {
 		// Run by .github/workflows/community-catalog.yml on main: build the catalog the release job signs.
-		if (args.length !== 1 || !flags.out || !flags.serial) throw new SkillError("Usage: tabkyra skill catalog <checkout> --out <file> --serial N [--source <commit>]");
+		if (args.length !== 1 || !flags.out || !flags.serial) throw new SkillError("Usage: polycarp browser skill catalog <checkout> --out <file> --serial N [--source <commit>]");
 		const { catalog, text } = buildCatalog(resolve(args[0]), { serial: Number(flags.serial), source: flags.source ?? "" });
 		writeFileSync(flags.out, text);
 		console.log(`${sym.ok} ${catalog.skills.length} community skill${catalog.skills.length === 1 ? "" : "s"}, ${catalog.revoked.length} revoked, serial ${catalog.serial}: ${flags.out}`);
@@ -1508,20 +1508,20 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 	}
 	if (sub === "refresh") {
 		// Run by the updater with the new CLI; also safe to run by hand.
-		if (args.length !== 0) throw new SkillError("Usage: tabkyra skill refresh [--json]");
+		if (args.length !== 0) throw new SkillError("Usage: polycarp browser skill refresh [--json]");
 		const result = refreshInstalledSkills();
 		if (flags.json) {
 			console.log(JSON.stringify(result));
 			return 0;
 		}
 		for (const file of result.refreshed) console.log(`${sym.ok} refreshed ${c.dim(file)}`);
-		for (const s of result.skipped) console.log(`${sym.warn} left alone: ${c.dim(s.file)} (${s.reason}). tabkyra skill install ${s.skill} --force replaces it.`);
+		for (const s of result.skipped) console.log(`${sym.warn} left alone: ${c.dim(s.file)} (${s.reason}). polycarp browser skill install ${s.skill} --force replaces it.`);
 		if (result.refreshed.length + result.skipped.length === 0) console.log(`${sym.ok} Installed skills are current.`);
 		return 0;
 	}
 	if (sub === "match") {
 		const task = args.join(" ").trim();
-		if (!task) throw new SkillError('Usage: tabkyra skill match "<task>" [--json] [--top N]');
+		if (!task) throw new SkillError('Usage: polycarp browser skill match "<task>" [--json] [--top N]');
 		const top = flags.top === undefined ? 3 : Number(flags.top);
 		if (!Number.isInteger(top) || top < 1 || top > 20) throw new SkillError("--top takes a whole number from 1 to 20.");
 		const matches = matchTask(task, top);
@@ -1532,7 +1532,7 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 	}
 	if (sub === "eval") return runEvalCommand(flags);
 	if (sub === "versions") {
-		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill versions <name> [--json]");
+		if (args.length !== 1) throw new SkillError("Usage: polycarp browser skill versions <name> [--json]");
 		const versions = skillVersions(args[0]);
 		if (flags.json) {
 			console.log(JSON.stringify(versions));
@@ -1542,11 +1542,11 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 			const where = v.source === "history" ? `history  ${v.at} ${c.dim(`${v.label} ${v.file}`)}` : v.source === "local" ? `local    ${c.dim(v.file ?? "")}` : v.source;
 			console.log(`${v.inUse ? sym.ok : sym.dot} ${c.bold(v.version)}  ${where}${v.inUse ? " (in use)" : ""}`);
 		}
-		if (versions.some((v) => v.source === "history")) console.log(`${sym.arrow} Restore one: tabkyra skill rollback ${args[0]} --to <version>`);
+		if (versions.some((v) => v.source === "history")) console.log(`${sym.arrow} Restore one: polycarp browser skill rollback ${args[0]} --to <version>`);
 		return 0;
 	}
 	if (sub === "rollback") {
-		if (args.length !== 1 || !flags.to) throw new SkillError("Usage: tabkyra skill rollback <name> --to <version|time> [--yes]");
+		if (args.length !== 1 || !flags.to) throw new SkillError("Usage: polycarp browser skill rollback <name> --to <version|time> [--yes]");
 		const { plan, from } = planRollback(args[0], flags.to);
 		if (plan.current === plan.text) {
 			console.log(`${sym.ok} ${plan.name} is already at version ${from.version}.`);
@@ -1558,7 +1558,7 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 		if (!flags.yes) {
 			console.log(
 				toBundled
-					? `${sym.arrow} That is the bundled version, so --yes removes your local edit (as tabkyra skill revert ${plan.name} does) and updates reach you again. Nothing changed yet.`
+					? `${sym.arrow} That is the bundled version, so --yes removes your local edit (as polycarp browser skill revert ${plan.name} does) and updates reach you again. Nothing changed yet.`
 					: `${sym.arrow} Lint passed. Nothing changed yet. Show this to the user; run again with --yes once they approve.`,
 			);
 			return 3;
@@ -1572,7 +1572,7 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 		return reportApplied(plan, `Rolled ${plan.name} back to ${from.version}.`);
 	}
 	if (sub === "edit") {
-		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill edit <name> [--yes] [--draft-only]");
+		if (args.length !== 1) throw new SkillError("Usage: polycarp browser skill edit <name> [--yes] [--draft-only]");
 		const { dir, file, resumed, stale, held } = prepareDraft(args[0], { keepExisting: flags.draftOnly });
 		if (held) {
 			console.log(`${sym.fail} ${file} holds unapplied changes to ${args[0]}. It was left as it is. Don't overwrite or delete it: ask the user whether to finish and apply it, or to discard it themselves.`);
@@ -1581,7 +1581,7 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 		const name = basename(dir);
 		const source = readSkill(name);
 		const editor = process.env.VISUAL || process.env.EDITOR;
-		const later = `tabkyra skill apply ${dir}`;
+		const later = `polycarp browser skill apply ${dir}`;
 		if (stale) console.log(`${sym.warn} Your earlier draft was taken from an older version of ${name}, so it would undo changes made since. It is kept at ${stale}; starting a fresh draft.`);
 		console.log(`${sym.ok} ${resumed ? "Your earlier draft" : "Draft"} of ${name}: ${file}`);
 		// --draft-only: for agents, whose shell may be a terminal with the user's $EDITOR.
@@ -1603,7 +1603,7 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 		const changedUnderneath = () => {
 			if (readSkill(name) === source) return false;
 			console.log(
-				`${sym.fail} ${name} changed while you were editing (now version ${skillVersion(readSkill(name))}, you started from ${skillVersion(source)}). Nothing applied, so that change isn't undone. Your draft is kept at ${file}; run tabkyra skill edit ${name} to start again from the new version (your draft moves to skill-drafts/.backups).`,
+				`${sym.fail} ${name} changed while you were editing (now version ${skillVersion(readSkill(name))}, you started from ${skillVersion(source)}). Nothing applied, so that change isn't undone. Your draft is kept at ${file}; run polycarp browser skill edit ${name} to start again from the new version (your draft moves to skill-drafts/.backups).`,
 			);
 			return true;
 		};
@@ -1619,7 +1619,7 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 	}
 	if (sub === "print") {
 		const name = assertName(args[0] ?? "tabkyra");
-		if (!allNames().includes(name)) throw new SkillError(`No skill named ${name}.${gone(name)} Run tabkyra skill list.`);
+		if (!allNames().includes(name)) throw new SkillError(`No skill named ${name}.${gone(name)} Run polycarp browser skill list.`);
 		// --raw: the exact SKILL.md source in use, the starting point for an edit.
 		process.stdout.write(flags.raw ? skillText(name) : agentsSnippet(name));
 		return 0;
@@ -1650,7 +1650,7 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 		return errors.length ? 1 : 0;
 	}
 	if (sub === "apply") {
-		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill apply <folder with SKILL.md> [--yes]");
+		if (args.length !== 1) throw new SkillError("Usage: polycarp browser skill apply <folder with SKILL.md> [--yes]");
 		const plan = planApply(args[0]);
 		console.log(`${c.bold(`Change to ${plan.name}:`)}\n${plan.diff}\n`);
 		if (!flags.yes) {
@@ -1660,7 +1660,7 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 		return reportApplied(plan, `Applied your edit of ${plan.name}.`);
 	}
 	if (sub === "revert") {
-		if (args.length !== 1) throw new SkillError("Usage: tabkyra skill revert <name>");
+		if (args.length !== 1) throw new SkillError("Usage: polycarp browser skill revert <name>");
 		const name = assertName(args[0]);
 		const { removed, results } = revertSkill(name);
 		if (!removed) {
@@ -1675,13 +1675,13 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 	for (const a of args) assertName(a);
 	const unknown = args.find((a) => !allNames().includes(a));
 	if (unknown) {
-		console.log(`${sym.fail} No skill named ${unknown}.${gone(unknown)} Run tabkyra skill list.`);
+		console.log(`${sym.fail} No skill named ${unknown}.${gone(unknown)} Run polycarp browser skill list.`);
 		return 2;
 	}
 	const results = installSkills({ ...flags, only: args });
 	printInstall(results);
 	for (const w of localWarnings()) console.log(`${sym.warn} ${w}`);
-	console.log(`\n${sym.arrow} Other agents: ${c.bold("tabkyra skill print [name] >> AGENTS.md")} adds the same text to a project.`);
+	console.log(`\n${sym.arrow} Other agents: ${c.bold("polycarp browser skill print [name] >> AGENTS.md")} adds the same text to a project.`);
 	if (results.every((r) => r.state === "skipped")) {
 		console.log(`${sym.fail} No Claude Code, Codex or OpenCode found.`);
 		return 1;

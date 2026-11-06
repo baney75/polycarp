@@ -1,6 +1,6 @@
 // Mechanical checks on the text of the artifacts, visual-explainer and mechanism-design skills:
 // rules a reviewer found broken once and that a test can hold. The browser behaviour behind
-// them (the CSP blocking injected script, the 375px iframe) was checked live in Tabkyra.
+// them (the CSP blocking injected script, the 375px iframe) was checked live in Polycarp.
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";

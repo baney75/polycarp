@@ -331,7 +331,7 @@ export function runNativeHost(): void {
 	// never will be.
 	process.stdin.on("end", () => {
 		stopping = true;
-		failOutstanding("the browser connection dropped while this ran (the Tabkyra extension reloaded or restarted)");
+		failOutstanding("the browser connection dropped while this ran (the Polycarp extension reloaded or restarted)");
 		shutdown();
 	});
 	const killed = () => {

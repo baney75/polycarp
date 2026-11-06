@@ -1,4 +1,4 @@
-// `tabkyra update` end to end against a fake GitHub release server on 127.0.0.1, with a
+// `polycarp browser update` end to end against a fake GitHub release server on 127.0.0.1, with a
 // throwaway signing key: install, update, refuse tampered or mis-signed releases, roll back,
 // recover an interrupted swap, and the native host's "update available" message.
 import assert from "node:assert/strict";
@@ -44,7 +44,7 @@ function fakeCheckout(version) {
 	mkdirSync(join(root, "cli", "dist"), { recursive: true });
 	mkdirSync(dist, { recursive: true });
 	const core = version.replace(/-.*/, "");
-	writeFileSync(join(dist, "manifest.json"), JSON.stringify({ manifest_version: 3, name: "Tabkyra", version: core }));
+	writeFileSync(join(dist, "manifest.json"), JSON.stringify({ manifest_version: 3, name: "Polycarp", version: core }));
 	for (const f of ["background.js", "sidepanel.js", "sidepanel.html", "app.css"]) writeFileSync(join(dist, f), `/* ${f} ${version} */`);
 	copyFileSync(cli, join(root, "cli", "dist", "index.js"));
 	copyFileSync(join(here, "..", "package.json"), join(root, "cli", "package.json"));
@@ -217,7 +217,7 @@ test("update --yes installs the signed release and registers the host from it", 
 	assert.equal(r.code, 0, r.out);
 	assert.match(r.out, /Signature verified/);
 	assert.match(r.out, /Checksum verified/);
-	assert.match(r.out, /Reload Tabkyra/);
+	assert.match(r.out, /Reload Polycarp/);
 	assert.equal(appVersion(), "9.1.1");
 	const launcher = readFileSync(join(home, ".config", "tabkyra", "host"), "utf8");
 	assert.ok(launcher.includes(appCli()), `launcher points at the release: ${launcher}`);
@@ -371,7 +371,7 @@ test("a held lock stops a second updater; a dead one is taken over", async () =>
 	// No pid written yet and fresh: another updater is between mkdir and writing its pid.
 	let r = await run(appCli(), "update", "--check");
 	assert.equal(r.code, 1, r.out);
-	assert.match(r.out, /Another tabkyra update is running/);
+	assert.match(r.out, /Another polycarp browser update is running/);
 	// A pid that no longer exists: taken over.
 	writeFileSync(join(lock, "pid"), "999999");
 	r = await run(appCli(), "update", "--check");
@@ -419,7 +419,7 @@ test("the native host tells the extension an update is available", async () => {
 	assert.equal(message.current, appVersion());
 });
 
-/** `tabkyra update --host ...` as the native host runs it: one JSON event per line. */
+/** `polycarp browser update --host ...` as the native host runs it: one JSON event per line. */
 async function runHostUpdate(...args) {
 	const r = await run(appCli(), "update", "--host", ...args);
 	const events = r.out
@@ -508,7 +508,7 @@ test("the CLI's local imports name .ts files, so source runs resolve them", () =
 });
 
 test("fitNotes keeps a bullet that opens with a long code span, counts what it drops, and stays fast on huge notes", () => {
-	const span = `- \`tabkyra skill eval ${"--flag value ".repeat(15)}\` then more words.`;
+	const span = `- \`polycarp browser skill eval ${"--flag value ".repeat(15)}\` then more words.`;
 	const fitted = fitNotes(`### Added\n${span}\n${"- filler entry with words. ".repeat(1).trim()}\n`.repeat(1) + "- x ".repeat(4000), 600);
 	for (const line of fitted.split("\n").filter((l) => l.startsWith("-"))) assert.match(line, /^- \S/, line.slice(0, 60));
 	assert.equal(((fitted.split("\n")[1] ?? "").match(/`/g) ?? []).length % 2, 0);

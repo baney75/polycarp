@@ -1,6 +1,6 @@
 /**
- * User services (launchd on macOS, systemd --user on Linux) that keep `tabkyra serve`, `tabkyra hub serve`
- * or `tabkyra link run` running. Shared by remote setup, hub setup and link.
+ * User services (launchd on macOS, systemd --user on Linux) that keep `polycarp browser serve`, `polycarp browser hub serve`
+ * or `polycarp browser link run` running. Shared by remote setup, hub setup and link.
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -85,7 +85,7 @@ export interface ServiceSpec {
 	args: string[];
 	logName: string;
 	description: string;
-	/** The command that undoes setup, for messages ("tabkyra remote off"). */
+	/** The command that undoes setup, for messages ("polycarp browser remote off"). */
 	off: string;
 	/** What setup keeps when a stop fails, for messages ("remote.json"). */
 	kept: string;
@@ -96,8 +96,8 @@ export const SERVE_SERVICE: ServiceSpec = {
 	unit: "tabkyra-serve.service",
 	args: ["serve"],
 	logName: "tabkyra-serve.log",
-	description: "Tabkyra serve (MCP over HTTP for claude.ai, ChatGPT and grok.com)",
-	off: "tabkyra remote off",
+	description: "Polycarp serve (MCP over HTTP for claude.ai, ChatGPT and grok.com)",
+	off: "polycarp browser remote off",
 	kept: "remote.json",
 };
 
@@ -106,8 +106,8 @@ export const HUB_SERVICE: ServiceSpec = {
 	unit: "tabkyra-hub.service",
 	args: ["hub", "serve"],
 	logName: "tabkyra-hub.log",
-	description: "Tabkyra hub (one connector URL for many devices)",
-	off: "tabkyra hub off",
+	description: "Polycarp hub (one connector URL for many devices)",
+	off: "polycarp browser hub off",
 	kept: "hub.json",
 };
 
@@ -116,8 +116,8 @@ export const LINK_SERVICE: ServiceSpec = {
 	unit: "tabkyra-link.service",
 	args: ["link", "run"],
 	logName: "tabkyra-link.log",
-	description: "Tabkyra link (this device, behind a hub)",
-	off: "tabkyra link off",
+	description: "Polycarp link (this device, behind a hub)",
+	off: "polycarp browser link off",
 	kept: "link.json",
 };
 

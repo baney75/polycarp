@@ -39,7 +39,7 @@ test("countdown and last-seen read as a person would say them", () => {
 	assert.equal(lastSeen("2026-11-02T09:00:00Z", now), "3 hours ago");
 	assert.equal(lastSeen("2026-11-01T11:00:00Z", now), "1 day ago");
 	assert.equal(connectorUrl("https://h.example.com"), "https://h.example.com/mcp");
-	assert.equal(linkCommand("https://h.example.com", "TK-ABCD-EFGH"), "tabkyra link https://h.example.com --code TK-ABCD-EFGH");
+	assert.equal(linkCommand("https://h.example.com", "TK-ABCD-EFGH"), "polycarp browser link https://h.example.com --code TK-ABCD-EFGH");
 });
 
 test("Settings has the eight tabs in the spec's order, and Bridge is now Agents", () => {
@@ -107,10 +107,10 @@ test("Privacy keeps one sentence visible and every long explanation under Detail
 test("Page scripts reads as one plain sentence with the old wording under Details", () => {
 	const text = read("src/dialogs/BridgeTab.ts");
 	assert.match(text, /Turning this on makes agents' page scripts run faster\./);
-	assert.match(text, /Tabkyra has not been granted the userScripts permission\./);
+	assert.match(text, /Polycarp has not been granted the userScripts permission\./);
 	assert.match(text, /<summary class="cursor-pointer text-foreground">Details<\/summary>/);
 	// The jargon is no longer a visible line.
-	assert.doesNotMatch(text, /line\(\s*['"]Off: Tabkyra has not been granted/);
+	assert.doesNotMatch(text, /line\(\s*['"]Off: Polycarp has not been granted/);
 });
 
 // ---------- round-1 review fixes ----------
@@ -198,7 +198,7 @@ test("a request the helper never answers fails with no_reply after 20 s (30 s fo
 	const err = await status;
 	assert.ok(err instanceof client.ConnectRequestError);
 	assert.equal(err.code, "no_reply");
-	assert.equal(err.message, "Tabkyra's helper didn't answer. Update it: tabkyra update");
+	assert.equal(err.message, "Polycarp's helper didn't answer. Update it: polycarp browser update");
 	assert.equal(client.isNoHost(err), false);
 	// A late answer for the forgotten request is ignored.
 	port.listener({ id: port.posted[0].id, result: { route: "none" } });
@@ -248,7 +248,7 @@ test("Join a hub asks for a Device code from Add a device, takes an optional nam
 	assert.doesNotMatch(tab, /<span>Connect code<\/span>/);
 	assert.match(tab, /<span>Device name \(optional\)<\/span>/);
 	assert.match(tab, /this\.joinName\.trim\(\) \|\| undefined/);
-	assert.match(tab, /Tabkyra may have linked this device\. Reopen Settings to check\./);
+	assert.match(tab, /Polycarp may have linked this device\. Reopen Settings to check\./);
 	assert.match(tab, /linkWritten && err instanceof ConnectRequestError && err\.code === "no_reply"/);
 });
 
@@ -411,7 +411,7 @@ test("first-F1: the panel's client mints a gesture only while the click is live,
 	for (const text of [relay, gate]) assert.doesNotMatch(text.replace(/\/\*[\s\S]*?\*\//g, ""), /TEST|process\.env|__TABKYRA|allowTab|globalThis/i);
 });
 
-test("first-F1: the bridge never opens Tabkyra's own pages, in any permission mode, and never asks the user about them", async () => {
+test("first-F1: the bridge never opens Polycarp's own pages, in any permission mode, and never asks the user about them", async () => {
 	const { installFakeChrome } = await import("./fake-chrome.mjs");
 	const fake = installFakeChrome?.();
 	void fake;
@@ -437,7 +437,7 @@ test("first-F1: the bridge never opens Tabkyra's own pages, in any permission mo
 	// native.ts checks before it asks the user, and says why.
 	const native = read("src/bridge/native.ts");
 	assert.match(native, /async function askPermission\([^)]*\): Promise<boolean> \{\s*if \(isOwnExtensionUrl\(url\)\) return false;/);
-	assert.match(native, /isOwnExtensionUrl\(url\)\s*\? "Not allowed to open Tabkyra's own pages\."/);
+	assert.match(native, /isOwnExtensionUrl\(url\)\s*\? "Not allowed to open Polycarp's own pages\."/);
 });
 
 test("first-F2: joining shows the hub's host, the warning and the scopes, and sends nothing until Confirm; success lists the scopes", () => {
@@ -468,7 +468,7 @@ test("hubHost names the host as typed, a pasted connector URL included", async (
 	assert.equal(hubHost("a b"), undefined);
 });
 
-test("sol-F4: join progress and the outcome render outside the join form, and a service failure says to run tabkyra link status", () => {
+test("sol-F4: join progress and the outcome render outside the join form, and a service failure says to run polycarp browser link status", () => {
 	const tab = read("src/dialogs/ConnectTab.ts");
 	const form = /private joinForm\([\s\S]*?\n\t\}\n/.exec(tab)[0];
 	assert.doesNotMatch(form, /joinMessage|this\.joining\b[^)]*role="status"/, "the message is still drawn inside the form that the route change removes");
@@ -484,7 +484,7 @@ test("second-S2: on the link route the connector URL is the hub's own, shown onc
 
 test("first-F3/second-G2: a helper that lists no scopes in {id, what} form gets no Confirm; the confirm lists descriptions, never 'the hub's choice'", async () => {
 	const { joinScopesOf, HELPER_OUT_OF_DATE } = await import("../src/connect/format.ts");
-	assert.equal(HELPER_OUT_OF_DATE, "Tabkyra's helper is out of date. Run tabkyra update, then try again.");
+	assert.equal(HELPER_OUT_OF_DATE, "Polycarp's helper is out of date. Run polycarp browser update, then try again.");
 	const rows = [{ id: "browser.read", what: "See the agent's own tabs and read pages" }];
 	assert.deepEqual(joinScopesOf({ joinScopes: rows }), rows);
 	for (const bad of [undefined, [], ["browser.read"], [{ id: "a" }], [{ id: "", what: "x" }], [rows[0], null], "browser.read"]) assert.equal(joinScopesOf({ joinScopes: bad }), undefined, JSON.stringify(bad));

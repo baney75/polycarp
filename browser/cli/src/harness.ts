@@ -1,5 +1,5 @@
 /**
- * Coding harnesses Tabkyra can serve: how to find them, whether the MCP server is
+ * Coding harnesses Polycarp can serve: how to find them, whether the MCP server is
  * configured, and how to add it. Claude Code and Codex have `mcp add` commands; the
  * others get a config block to paste, because editing their JSON for the user would
  * risk clobbering comments and other servers.
@@ -53,7 +53,7 @@ export function which(name: string): string | undefined {
 	return undefined;
 }
 
-/** The absolute path harness configs run: the launcher `tabkyra install` writes. */
+/** The absolute path harness configs run: the launcher `polycarp browser install` writes. */
 export function tabkyraBinary(): string {
 	return cliLauncherPath();
 }
@@ -208,7 +208,7 @@ export function harnesses(binary = tabkyraBinary()): Harness[] {
 		snippet: snippet({ mcpServers: { tabkyra: { type: "stdio", command: binary, args: ["mcp"], enabled: true } } }),
 	});
 
-	// pi has no MCP client; `tabkyra pi-extension` writes a native pi extension instead.
+	// pi has no MCP client; `polycarp browser pi-extension` writes a native pi extension instead.
 	// Setup prints that command rather than running it, like the other print-only harnesses.
 	const piFile = join(home, ".pi", "agent", "extensions", "tabkyra.ts");
 	list.push({

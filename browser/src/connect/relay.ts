@@ -41,7 +41,7 @@ export function startConnectRelay(): void {
 				clearTimeout(w.timer);
 				w.port.postMessage({
 					id: w.id,
-					error: { code: "no_host", message: "Tabkyra's native host disconnected. Try again." },
+					error: { code: "no_host", message: "Polycarp's native host disconnected. Try again." },
 				} satisfies ConnectReply);
 			}
 			waiting.clear();
@@ -79,7 +79,7 @@ export function startConnectRelay(): void {
 			if (!gate.allows(request.method, request.gesture)) {
 				port.postMessage({
 					id: request.id,
-					error: { code: "no_gesture", message: "Click the button in the Tabkyra side panel to do that." },
+					error: { code: "no_gesture", message: "Click the button in the Polycarp side panel to do that." },
 				} satisfies ConnectReply);
 				return;
 			}
@@ -99,7 +99,7 @@ export function startConnectRelay(): void {
 					id: request.id,
 					error: {
 						code: "no_host",
-						message: "Tabkyra's helper isn't connected. Run `tabkyra setup`, then try again.",
+						message: "Polycarp's helper isn't connected. Run `polycarp browser setup`, then try again.",
 					},
 				} satisfies ConnectReply);
 			}

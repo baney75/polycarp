@@ -113,7 +113,7 @@ export class BridgeTab extends SettingsTab {
 					${line("Turning this on makes agents' page scripts run faster.")}
 					<div>${Button({ size: "sm", variant: "secondary", children: "Allow", onClick: () => this.grantUserScripts() })}</div>
 					${details(
-						'Tabkyra has not been granted the userScripts permission. The "Allow user scripts" toggle on the extension\'s Details page is not enough on its own. Without it, page scripts run through the debugger, which is slower.',
+						'Polycarp has not been granted the userScripts permission. The "Allow user scripts" toggle on the extension\'s Details page is not enough on its own. Without it, page scripts run through the debugger, which is slower.',
 					)}
 				`;
 				break;
@@ -122,8 +122,8 @@ export class BridgeTab extends SettingsTab {
 					${line("Page scripts are slower than they could be: one more switch is needed in the browser.")}
 					${details(
 						status.apiPresent
-							? 'The permission is granted, but "Allow user scripts" is off. Turn it on at chrome://extensions > Tabkyra > Details.'
-							: 'The permission is granted, but the browser hides the API. Check "Allow user scripts" at chrome://extensions > Tabkyra > Details, then restart Tabkyra (tabkyra reload; agent sessions reconnect).',
+							? 'The permission is granted, but "Allow user scripts" is off. Turn it on at chrome://extensions > Polycarp > Details.'
+							: 'The permission is granted, but the browser hides the API. Check "Allow user scripts" at chrome://extensions > Polycarp > Details, then restart Polycarp (polycarp browser reload; agent sessions reconnect).',
 					)}
 				`;
 				break;
@@ -164,7 +164,7 @@ export class BridgeTab extends SettingsTab {
 					<h3 class="text-lg font-semibold text-foreground">Agents</h3>
 					<p class="text-sm text-muted-foreground">
 						Lets coding agents on this computer (Claude Code, Codex, omp, pi) drive the browser through
-						Tabkyra. Each agent gets its own tab group and works in the background.
+						Polycarp. Each agent gets its own tab group and works in the background.
 					</p>
 				</div>
 				${agentSetupPromptButton()}

@@ -1,7 +1,7 @@
 /**
  * Updates under the side panel header: "Update available" with an Update now button, the
  * progress of a running update, a version-mismatch banner with its one-click fix, and a
- * dismissible "What's new" card after an update reloads Tabkyra. The native host reports the
+ * dismissible "What's new" card after an update reloads Polycarp. The native host reports the
  * status (update_status) and each step (update_progress); the service worker relays the buttons
  * (src/update/worker.ts). Settings > Updates (src/dialogs/UpdatesTab.ts) reads the same state.
  */
@@ -145,7 +145,7 @@ function mismatchBanner(): TemplateResult | typeof nothing {
 	return html`<div class="${bar} text-foreground" role="alert" data-testid="update-mismatch">
 		<span class="min-w-0">${m.reason}</span>
 		<button class="${link} ml-auto" @click=${() => requestUpdate(m.fix === "reload" ? "reload" : "reinstall")}>
-			${m.fix === "reload" ? "Reload Tabkyra" : "Re-run install"}
+			${m.fix === "reload" ? "Reload Polycarp" : "Re-run install"}
 		</button>
 	</div>`;
 }
@@ -175,7 +175,7 @@ function availableLine(): TemplateResult | typeof nothing {
 		<button
 			class="${link} ml-auto"
 			?disabled=${!!s.blocked}
-			title=${s.blocked ?? "Install it now; Tabkyra reloads when no agent is running"}
+			title=${s.blocked ?? "Install it now; Polycarp reloads when no agent is running"}
 			@click=${() => requestUpdate("update")}
 		>
 			Update now
@@ -259,7 +259,7 @@ function whatsNewCard(): TemplateResult | typeof nothing {
 			skipped.length
 				? html`<p class="text-muted-foreground">
 						Skills left alone because you edited them: ${skipped.map((s) => s.skill).join(", ")}. Run
-						<code class="font-mono">tabkyra skill install &lt;name&gt; --force</code> to replace one.
+						<code class="font-mono">polycarp browser skill install &lt;name&gt; --force</code> to replace one.
 					</p>`
 				: nothing
 		}

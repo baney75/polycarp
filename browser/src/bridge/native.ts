@@ -301,7 +301,7 @@ async function askPermission(state: ClientState, url: string): Promise<boolean> 
 function guardedError(url: string): BridgeError {
 	return new BridgeError(
 		ERR.PERMISSION_DENIED,
-		`Not allowed to open ${hostOf(url) || url}: it is this computer's Tabkyra approval address, and an agent never opens it. The owner approves a connector there themselves, outside the agent's browser.`,
+		`Not allowed to open ${hostOf(url) || url}: it is this computer's Polycarp approval address, and an agent never opens it. The owner approves a connector there themselves, outside the agent's browser.`,
 	);
 }
 
@@ -354,12 +354,12 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	if (installGate()) {
 		// Refused before it counts as activity: a request started now would run on files being
 		// replaced, and the reload right after the install would cut it off. It never ran, so the
-		// client may resend it once Tabkyra is back.
+		// client may resend it once Polycarp is back.
 		reply(
 			undefined,
 			new BridgeError(
 				ERR.NOT_SENT,
-				"Tabkyra is installing an update and reloads in a few seconds. The request did not run; repeat it once the bridge reconnects.",
+				"Polycarp is installing an update and reloads in a few seconds. The request did not run; repeat it once the bridge reconnects.",
 			),
 		);
 		return;
@@ -396,7 +396,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 					throw new BridgeError(
 						ERR.PERMISSION_DENIED,
 						isOwnExtensionUrl(url)
-							? "Not allowed to open Tabkyra's own pages."
+							? "Not allowed to open Polycarp's own pages."
 							: `Not allowed to open ${hostOf(url) || url}. ` +
 									(mode === "ask"
 										? "The user can allow it in the tabkyra side panel under Settings > Agents, or answer the permission prompt."
@@ -433,7 +433,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		state.lastError = `${req.method}: ${err instanceof Error ? err.message : String(err)}`;
 		console.warn("[Bridge]", state.lastError);
 		const { error, stack } = classify(err, req.method);
-		// The trace is for whoever debugs Tabkyra (tabkyra debug), not for the agent.
+		// The trace is for whoever debugs Polycarp (polycarp browser debug), not for the agent.
 		if (stack) trace(`${req.method} ${error.code}: ${stack.split("\n").slice(0, 6).join(" | ")}`);
 		reply(undefined, error);
 	} finally {
@@ -457,7 +457,7 @@ async function runAsk(state: ClientState, req: HostForwardedRequest): Promise<vo
 				error: {
 					code: ERR.INTERNAL,
 					message:
-						"Tabkyra is installing an update and reloads in a few seconds. Ask again once the bridge reconnects.",
+						"Polycarp is installing an update and reloads in a few seconds. Ask again once the bridge reconnects.",
 				},
 			});
 		if (!(await isBridgeEnabled()))
@@ -547,7 +547,7 @@ function onHostMessage(message: HostToExt): void {
 				return;
 			}
 			if (message.method === "permission.allow") {
-				// `tabkyra allow <host>`: a local user process granting a host, same trust as the side panel.
+				// `polycarp browser allow <host>`: a local user process granting a host, same trust as the side panel.
 				const host = String(message.params?.host ?? "").toLowerCase();
 				if (!host) {
 					send({
@@ -564,7 +564,7 @@ function onHostMessage(message: HostToExt): void {
 				return;
 			}
 			if (message.method === "permission.setMode") {
-				// `tabkyra allow-all` / `tabkyra ask`: a local user process flipping the site-permission mode,
+				// `polycarp browser allow-all` / `tabkyra ask`: a local user process flipping the site-permission mode,
 				// same trust as the Settings > Agents toggle.
 				const mode = String(message.params?.mode ?? "");
 				if (mode !== "ask" && mode !== "allow_all") {
@@ -599,7 +599,7 @@ function onHostMessage(message: HostToExt): void {
 				return;
 			}
 			if (message.method.startsWith("sessions.")) {
-				// `tabkyra sessions`: a local user process, the side panel's trust; no session of its own.
+				// `polycarp browser sessions`: a local user process, the side panel's trust; no session of its own.
 				handleSessionsAdmin(message.method, message.params ?? {}, adminHost).then(
 					(result) => send({ type: "response", clientId: message.clientId, id: message.id, result }),
 					(err) =>
@@ -624,7 +624,7 @@ function onHostMessage(message: HostToExt): void {
 						.query({})
 						.then((groups) =>
 							groups
-								.filter((g) => g.title?.startsWith("Tabkyra"))
+								.filter((g) => g.title?.startsWith("Polycarp") || g.title?.startsWith("Tabkyra")) // product-name allowlist: legacy tab group title
 								.map((g) => ({ id: g.id, title: g.title, windowId: g.windowId })),
 						)
 						.catch(() => []),
@@ -675,7 +675,7 @@ function onHostMessage(message: HostToExt): void {
 						}),
 					)
 					.catch((err) =>
-						// Answer even when a probe fails, so `tabkyra doctor` and `debug` don't wait out a timeout.
+						// Answer even when a probe fails, so `polycarp browser doctor` and `debug` don't wait out a timeout.
 						send({
 							type: "response",
 							clientId: message.clientId,
@@ -727,7 +727,7 @@ function onHostMessage(message: HostToExt): void {
 					error: {
 						code: ERR.INTERNAL,
 						message:
-							"Tabkyra is installing an update and reloads in a few seconds. Repeat the request once the bridge reconnects.",
+							"Polycarp is installing an update and reloads in a few seconds. Repeat the request once the bridge reconnects.",
 					},
 				});
 				return;
@@ -824,7 +824,7 @@ function connect(): void {
 	});
 	trace("native port connected");
 	// The hello says which build runs and which build the extension folder holds now, so the host
-	// can tell whether the browser loads Tabkyra from the folder it updates (docs/updates.md).
+	// can tell whether the browser loads Polycarp from the folder it updates (docs/updates.md).
 	helloSent = false;
 	void Promise.all([readDiskBuild(), getBrowserId()]).then(([diskBuild, browserId]) => {
 		if (port !== next) return;

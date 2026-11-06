@@ -1,5 +1,5 @@
 // The service worker's side of updates (src/update/worker.ts): the side panel's buttons become
-// bare {type, action} frames to the native host, only from Tabkyra's own pages, and the reload
+// bare {type, action} frames to the native host, only from Polycarp's own pages, and the reload
 // after an update waits while an agent runs.
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -181,7 +181,7 @@ test("an install that failed after it may have changed files still reloads", asy
 	const before = ctx.reloads();
 	await ctx.ask({ type: "tabkyra-update", action: "rollback" }, panelUrl);
 	await sleep(400);
-	ctx.port.deliver({ type: "update_progress", action: "rollback", phase: "failed", message: "rename failed. Reloading Tabkyra to run what is installed.", at: Date.now(), reload: true, extensionBuild: "x" });
+	ctx.port.deliver({ type: "update_progress", action: "rollback", phase: "failed", message: "rename failed. Reloading Polycarp to run what is installed.", at: Date.now(), reload: true, extensionBuild: "x" });
 	await sleep(400);
 	assert.equal(ctx.reloads(), before + 1);
 });

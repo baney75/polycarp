@@ -225,7 +225,7 @@ test("a second link run refuses, leaves the first one working, and a stale pid f
 	second.stderr.on("data", (d) => (out += d));
 	const code = await new Promise((resolve) => second.on("exit", resolve));
 	assert.equal(code, 1);
-	assert.match(out, /Another tabkyra link run is already running on this device \(pid \d+\)/);
+	assert.match(out, /Another polycarp browser link run is already running on this device \(pid \d+\)/);
 	assert.equal((await rawTools(`${hub.url}/mcp`, secret)).status, 200, "the first run still answers through the hub");
 	// A crash leaves link.pid behind; its pid is dead, so the next run takes over.
 	const exited = new Promise((resolve) => dev.proc.once("exit", resolve));

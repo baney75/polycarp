@@ -56,7 +56,7 @@ function run(home, args, extraEnv = {}, input) {
 	return { code: r.status, out: `${r.stdout}${r.stderr}`, stdout: r.stdout };
 }
 
-/** A Tabkyra repository to submit to: skills/, skills-eval/ and community/, committed on main. */
+/** A Polycarp repository to submit to: skills/, skills-eval/ and community/, committed on main. */
 function fixtureRepo(name, community = {}) {
 	const dir = join(root, name);
 	mkdirSync(dir);
@@ -127,7 +127,7 @@ test("skill remove reverts local skills, turns community skills off, and refuses
 	assert.ok(!JSON.parse(run(home, ["skill", "list", "--json"]).stdout).some((s) => s.name === "notion-navigation"));
 	const builtIn = run(home, ["skill", "remove", "dorks"]);
 	assert.equal(builtIn.code, 1);
-	assert.match(builtIn.out, /built-in skill; it ships with Tabkyra/);
+	assert.match(builtIn.out, /built-in skill; it ships with Polycarp/);
 });
 
 // --- Community rules and scrubbing -----------------------------------------------------------
@@ -294,7 +294,7 @@ test("sync keeps a local edit of a community skill and says so; --off hides comm
 	assert.match(r.out, /Kept your local copy of notion-navigation; the community version changed/);
 	assert.equal(run(home, ["skill", "print", "notion-navigation", "--raw"]).stdout, edited);
 	assert.match(run(home, ["skill", "list"]).out, /community notion-navigation skill changed since your edit; your local copy is kept and still used/);
-	// Opting out: Tabkyra stops checking.
+	// Opting out: Polycarp stops checking.
 	assert.equal(run(home, ["skill", "sync", "--off"]).code, 0);
 	assert.match(run(home, ["skill", "sync"]).out, /Community skills are off/);
 });
@@ -386,7 +386,7 @@ test("MCP skill_manage lists, writes (lint first, apply only when asked), remove
 		const prepared = await call({ action: "prepare_submit", name: "notion-navigation", cases: casesText.trim().split("\n").map((l) => JSON.parse(l)) });
 		assert.ok(!prepared.error, prepared.text);
 		assert.match(prepared.text, /Nothing was sent\. Show this whole preview to the user/);
-		assert.match(prepared.text, /run: tabkyra skill submit notion-navigation --confirm [0-9a-f]{10}/);
+		assert.match(prepared.text, /run: polycarp browser skill submit notion-navigation --confirm [0-9a-f]{10}/);
 		assert.match((await call({ action: "remove", name: "notion-navigation" })).text, /Removed notion-navigation/);
 	} finally {
 		await mcp.close();
@@ -429,7 +429,7 @@ test("before the first catalog is published, a 404 is not an error and waits a d
 
 // --- Review round 1 (PR #56): each high finding gets a test that failed before its fix. -----
 
-const MARKER = "<!-- Installed by `tabkyra skill install`; reinstalling replaces this file. -->";
+const MARKER = "<!-- Installed by `polycarp browser skill install`; reinstalling replaces this file. -->";
 const statePath = (home) => join(home, ".config", "tabkyra", "community", "state.json");
 const editState = (home, fn) => writeFileSync(statePath(home), JSON.stringify(fn(JSON.parse(readFileSync(statePath(home), "utf8")))));
 

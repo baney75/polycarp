@@ -295,7 +295,7 @@ function renderBlock(
 	}
 }
 
-/** The transcript renderer Tabkyra installs with setTranscriptRenderer. */
+/** The transcript renderer Polycarp installs with setTranscriptRenderer. */
 /** The site of the last page change in the stable list, so the live message continues the count. */
 let stableLastSite: string | undefined;
 

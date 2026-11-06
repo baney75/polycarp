@@ -153,7 +153,7 @@ test("edit outside a terminal writes the exact source as a draft, prints the app
 	assert.equal(r.code, 0, r.out);
 	const draft = join(home, ".config", "tabkyra", "skill-drafts", "dorks", "SKILL.md");
 	assert.equal(readFileSync(draft, "utf8"), run(home, ["skill", "print", "dorks", "--raw"]).stdout);
-	assert.match(r.out, new RegExp(`tabkyra skill apply ${dirname(draft).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+	assert.match(r.out, new RegExp(`polycarp browser skill apply ${dirname(draft).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 	assert.equal(existsSync(marker), false, "no editor opens without a terminal");
 	assert.equal(existsSync(local(home, "dorks")), false);
 

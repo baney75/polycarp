@@ -14,7 +14,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 const cli = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
 const NOT_CONNECTED =
-	"Tabkyra isn't connected. Ask the user to open Helium/Chrome with the Tabkyra extension loaded, or run `tabkyra doctor`.";
+	"Polycarp isn't connected. Ask the user to open Helium/Chrome with the Polycarp extension loaded, or run `polycarp browser doctor`.";
 let root;
 let mcp;
 
@@ -82,7 +82,7 @@ test("skill_match routes a task to one skill, or none, and skill_read returns th
 	// One first step: matching a skill needs no browser, so a missing browser can't stop it.
 	assert.deepEqual(instructions.match(/\bfirst\b/gi), ["First"], "only one step is called first");
 	assert.ok(instructions.indexOf("skill_match") < instructions.indexOf("Call tabs_context"), "skill_match comes before tabs_context");
-	assert.match(instructions, /Call tabs_context before any browser tool: .* If it says Tabkyra isn't connected, tell the user and stop browser work/);
+	assert.match(instructions, /Call tabs_context before any browser tool: .* If it says Polycarp isn't connected, tell the user and stop browser work/);
 	const match = await mcp.callTool({ name: "skill_match", arguments: { task: "find peer-reviewed studies on sleep and memory" } });
 	assert.notEqual(match.isError, true);
 	const lines = match.content[0].text.split("\n");

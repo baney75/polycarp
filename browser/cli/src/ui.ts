@@ -35,7 +35,7 @@ export const sym = {
 
 /** The one-line banner: the helm glyph is ⎈ (U+2388, "helm symbol"). */
 export function banner(title: string): string {
-	return `${c.brass("⎈")} ${c.bold("Tabkyra")} ${c.dim(title)}`;
+	return `${c.brass("⎈")} ${c.bold("Polycarp")} ${c.dim(title)}`;
 }
 
 /** Visible width of a string without ANSI escapes. */

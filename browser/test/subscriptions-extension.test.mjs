@@ -74,7 +74,7 @@ test("a ChatGPT usage-limit error points to ChatGPT's usage settings", () => {
 	assert.equal(explainSubscriptionError("openai", "subscription_sharing_usage_limit_exceeded"), "subscription_sharing_usage_limit_exceeded");
 });
 
-test("the relay takes only Tabkyra's own pages and only the sign-in methods", () => {
+test("the relay takes only Polycarp's own pages and only the sign-in methods", () => {
 	const origin = "chrome-extension://abc/";
 	assert.equal(isExtensionPage({ url: `${origin}sidepanel.html` }, origin), true);
 	assert.equal(isExtensionPage({ url: `${origin}sidepanel.html`, origin: "chrome-extension://abc", tab: { id: 1 } }, origin), true, "the panel opened in a tab");

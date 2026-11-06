@@ -14,7 +14,7 @@ import { VERSION } from "./version.ts";
 
 /** What every tool says when no browser is reachable: the agent can only ask the user. */
 export const NOT_CONNECTED =
-	"Tabkyra isn't connected. Ask the user to open Helium/Chrome with the Tabkyra extension loaded, or run `tabkyra doctor`.";
+	"Polycarp isn't connected. Ask the user to open Helium/Chrome with the Polycarp extension loaded, or run `polycarp browser doctor`.";
 
 export class BridgeRpcError extends Error {
 	constructor(readonly rpc: RpcError) {
@@ -42,7 +42,7 @@ const TOOL_NAMES: Record<string, string> = { evaluate: "run_js", dialog: "handle
 /** What an agent is told when a side-effecting call was cut off: it may have run. */
 export function interruptedMessage(method: string): string {
 	const tool = TOOL_NAMES[method] ?? method.replace(".", "_");
-	return `The browser connection dropped while ${tool} was running (the Tabkyra extension reloaded or restarted), so it may have run. Check the page with read_page before you repeat it; Tabkyra reconnects on your next call.`;
+	return `The browser connection dropped while ${tool} was running (the Polycarp extension reloaded or restarted), so it may have run. Check the page with read_page before you repeat it; Polycarp reconnects on your next call.`;
 }
 
 export interface ClientOptions {
@@ -181,7 +181,7 @@ export class BridgeClient {
 		const timeoutMs = o.timeoutMs ?? 5000;
 		if (o.path) return this.adopt(await this.dial(o.path, timeoutMs));
 		// Several hosts can be alive (two browsers, a stale one): use the newest ready one, the same
-		// socket `tabkyra doctor` and `setup` report on.
+		// socket `polycarp browser doctor` and `setup` report on.
 		const sockets = listSockets().filter((p) => {
 			if (o.rescan && p === this.socketPath) return false;
 			// A host known to serve another browser isn't dialed for a resend in this one.
@@ -408,7 +408,7 @@ export class BridgeClient {
 					if (drops >= MAX_ATTEMPTS)
 						throw new BridgeRpcError({
 							code: ERR.INTERRUPTED,
-							message: `The browser connection dropped ${drops} times in a row during ${TOOL_NAMES[method] ?? method.replace(".", "_")}. Run \`tabkyra doctor\` or ask the user to check the browser, then try again.`,
+							message: `The browser connection dropped ${drops} times in a row during ${TOOL_NAMES[method] ?? method.replace(".", "_")}. Run \`polycarp browser doctor\` or ask the user to check the browser, then try again.`,
 						});
 					// Stop using the socket this request went out on (unless another call already moved on).
 					if (sent.socket && this.socket === sent.socket) this.retire(sent.socket);

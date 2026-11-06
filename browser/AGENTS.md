@@ -31,6 +31,20 @@ time: `cd cli && npx playwright-core install chromium`).
 
 A test that passed proves the logic, not what the user sees. Say which one you ran.
 
+## Names that keep the old name
+The product is Polycarp: the manifest name, toolbar title, side panel, settings, onboarding, debug page, errors and the
+helper's output all say so, and `polycarp browser <command>` is the command the text gives. `test/product-name.test.mjs` fails
+when "Tabkyra" appears in a user-visible string. These stay as they are on purpose, because agents and hooks on the owner's
+machines call them, and no person reads them:
+- the `tabkyra` command, as an alias for `polycarp browser`
+- the MCP server name `tabkyra` and every tool name
+- the native host name `ai.tabkyra.bridge`
+- the manifest `key` (it keeps the extension id)
+- `~/.config/tabkyra` and the other `tabkyra` folders and `TABKYRA_*` variables
+- the extension's stored data: storage keys, database names and the `TabkyraAppStorage` class
+- the tab group title "Tabkyra · ..." that earlier versions made, which is still recognized and tidied
+Skills under `skills/` and the docs and README still say Tabkyra; they are not rewritten yet.
+
 ## Inside Polycarp (single executable)
 `cli/scripts/compile.mjs` builds `polycarp-browser` (Bun, bytecode) from the esbuild bundle with `TABKYRA_CLI_COMPILED=1`;
 `cli/src/self.ts` is the one place that knows whether the program is compiled. In that mode launchers and the native host

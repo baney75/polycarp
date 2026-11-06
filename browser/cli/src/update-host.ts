@@ -158,7 +158,7 @@ function failed(send: Send, action: HostRunAction, message: string): HostUpdateP
 		/* held by a live updater: it finishes on its own */
 	}
 	const extensionBuild = readBuildInfo(join(root, "dist-chrome"))?.id;
-	return progress(send, action, "failed", `${message} Reloading Tabkyra to run what is installed.`, { reload: true, extensionBuild });
+	return progress(send, action, "failed", `${message} Reloading Polycarp to run what is installed.`, { reload: true, extensionBuild });
 }
 
 /**
@@ -183,7 +183,7 @@ export function noteHello(hello: ExtHello, send: Send): void {
 	};
 }
 
-/** For tests and `tabkyra debug`: is an update child running. */
+/** For tests and `polycarp browser debug`: is an update child running. */
 export function updateRunning(): HostRunAction | undefined {
 	return running?.action;
 }
@@ -284,11 +284,11 @@ export async function computeStatus(force = false): Promise<HostUpdateStatus> {
 			canRollback = existsSync(previousDir());
 			rollbackTo = canRollback ? installedVersion(previousDir()) : undefined;
 		} else {
-			blocked = `This Tabkyra runs from ${root}, which is neither a release install nor a git checkout. Run tabkyra update in a terminal.`;
+			blocked = `This Polycarp runs from ${root}, which is neither a release install nor a git checkout. Run polycarp browser update in a terminal.`;
 		}
 	}
 	if (extension.location === "elsewhere") {
-		blocked = `The browser loads Tabkyra from another folder than ${join(root, "dist-chrome")}, so updating here would not change it. Load that folder on chrome://extensions, or update the copy the browser loads.`;
+		blocked = `The browser loads Polycarp from another folder than ${join(root, "dist-chrome")}, so updating here would not change it. Load that folder on chrome://extensions, or update the copy the browser loads.`;
 	}
 	const mismatch = diagnoseVersions({ extension: extension.build, extensionOnDisk, location: extension.location, host: BUILD, cliOnDisk });
 	const status: HostUpdateStatus = {
@@ -464,7 +464,7 @@ export function handleUpdateAction(raw: unknown, send: Send): void {
 	}
 	// Only re-registering a release's host is useful when the browser loads another folder.
 	if (extension.location === "elsewhere" && !(action === "reinstall" && detectMode().mode === "release")) {
-		void computeStatus().then((status) => progress(send, action, "failed", status.blocked ?? "The browser loads Tabkyra from another folder."));
+		void computeStatus().then((status) => progress(send, action, "failed", status.blocked ?? "The browser loads Polycarp from another folder."));
 		return;
 	}
 	runChild(action, send);

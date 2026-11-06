@@ -1,4 +1,4 @@
-// A custom element name Tabkyra defines must not already belong to pi-web-ui or mini-lit:
+// A custom element name Polycarp defines must not already belong to pi-web-ui or mini-lit:
 // the `if (!customElements.get(...))` guard would skip our define, and `new` on the
 // unregistered class throws "Illegal constructor" when the settings dialog opens.
 import assert from "node:assert/strict";

@@ -1,6 +1,6 @@
 /**
- * `tabkyra skill lint`: the gate every skill passes before it ships, installs or gets
- * applied by the rsi loop. One rule set serves CI, the CLI and `tabkyra skill apply`.
+ * `polycarp browser skill lint`: the gate every skill passes before it ships, installs or gets
+ * applied by the rsi loop. One rule set serves CI, the CLI and `polycarp browser skill apply`.
  *
  * A skill is instructions a model will follow with the user's sign-in, so the checks treat
  * it as untrusted input. They look for hidden text (format characters, bidi overrides,
@@ -40,8 +40,8 @@ const MAX_DESCRIPTION = 1024;
  */
 const BUDGET_LINES = 150;
 const BUDGET_CHARS = 8000;
-/** Written by `tabkyra skill install`; the one HTML comment a skill may contain. */
-const INSTALL_MARKER = "<!-- Installed by `tabkyra skill install`; reinstalling replaces this file. -->";
+/** Written by `polycarp browser skill install`; the one HTML comment a skill may contain. */
+const INSTALL_MARKER = "<!-- Installed by `polycarp browser skill install`; reinstalling replaces this file. -->";
 
 /**
  * A clause that starts with a direct prohibition of the act ("Never print the password",
@@ -164,7 +164,7 @@ const PATTERN_RULES: PatternRule[] = [
 			[
 				/(\.claude[/\\]settings(\.local)?\.json|\.claude\.json\b|\.codex[/\\]config\.toml|\bmcp\.json\b|\.bashrc|\.bash_profile|\.zshrc|\.zprofile|\.profile\b|\bcrontab\b|LaunchAgents|LaunchDaemons|systemctl\s+(--user\s+)?enable|\bgit config --global\b|\bhooks?\.json\b)/
 					.source,
-				// Writing a skill or agent instructions directly skips `tabkyra skill apply` and its checks.
+				// Writing a skill or agent instructions directly skips `polycarp browser skill apply` and its checks.
 				/\b(write|edit|append|set|copy|put|add|modify|change|overwrite|replace|create|delete|remove|save|move|mv|cp|tee)\b[^\n]{0,60}(\.config[/\\]tabkyra[/\\](rsi\.json|skills-local|skill-history)|\.(claude|codex)[/\\]skills|opencode[/\\]skills|\bAGENTS\.md\b|\bCLAUDE\.md\b)/
 					.source,
 				/>>?\s*\S*(AGENTS|CLAUDE)\.md\b/.source,

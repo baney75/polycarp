@@ -22,13 +22,13 @@ export class AboutTab extends SettingsTab {
 				<div class="flex items-center gap-3">
 					${helmMark(44, "tile", "rounded-[10px]")}
 					<div>
-						<h3 class="text-lg font-semibold tracking-tight text-foreground leading-tight">Tabkyra</h3>
+						<h3 class="text-lg font-semibold tracking-tight text-foreground leading-tight">Polycarp</h3>
 						<p class="text-sm text-muted-foreground">${i18n("Version:")} ${version}</p>
 					</div>
 				</div>
 
 				<div class="text-sm text-muted-foreground space-y-1">
-					<p class="text-foreground">${i18n("You steer. Tabkyra works the tabs.")}</p>
+					<p class="text-foreground">${i18n("You steer. Polycarp works the tabs.")}</p>
 					<p>${i18n("An AI agent in your side panel, and a browser your coding agents can drive.")}</p>
 					<p>${i18n("The name joins tab and kyra, from Greek kybernētēs, “helmsman”.")}</p>
 				</div>

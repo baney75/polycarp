@@ -3,7 +3,7 @@
  * in baney75/tabkyra, published as one JSON file signed with the release key, and synced to
  * each client about once a day.
  *
- * - Built in CI on main (.github/workflows/community-catalog.yml, `tabkyra skill catalog`),
+ * - Built in CI on main (.github/workflows/community-catalog.yml, `polycarp browser skill catalog`),
  *   signed there with minisign in the release environment, and attached to the
  *   `community-catalog` release. No key is ever on a contributor's or user's machine.
  * - A client accepts a catalog only when its signature verifies against the release key
@@ -14,8 +14,8 @@
  * - The verified file is kept with its signature and verified again each time it is read, so
  *   a file changed on disk is refused too.
  * - A skill missing from a new catalog, or listed under `revoked`, is removed from the client:
- *   it is no longer matched or read, and copies Tabkyra installed into harnesses are deleted.
- * - Opt out with `tabkyra skill sync --off` or Settings > Skills in the side panel.
+ *   it is no longer matched or read, and copies Polycarp installed into harnesses are deleted.
+ * - Opt out with `polycarp browser skill sync --off` or Settings > Skills in the side panel.
  */
 
 import { createHash } from "node:crypto";
@@ -171,7 +171,7 @@ export function verifyCatalog(data: Buffer, signature: string, keyText = release
 	} catch {
 		throw new CatalogError("Refused the community catalog: it is not JSON.");
 	}
-	if (catalog.schema !== 1) throw new CatalogError(`Refused the community catalog: schema ${String(catalog.schema)} is not one this version reads. Update Tabkyra.`);
+	if (catalog.schema !== 1) throw new CatalogError(`Refused the community catalog: schema ${String(catalog.schema)} is not one this version reads. Update Polycarp.`);
 	if (catalog.serial !== Number(m[1])) throw new CatalogError("Refused the community catalog: the file's serial doesn't match its signature.");
 	if (!Array.isArray(catalog.skills) || !Array.isArray(catalog.revoked)) throw new CatalogError("Refused the community catalog: it has no skills or revoked list.");
 	const names = new Set<string>();
@@ -234,7 +234,7 @@ export function readState(): CommunityState {
 
 function atomicWrite(file: string, data: string | Buffer): void {
 	const dir = communityDir();
-	if (existsSync(dir) && lstatSync(dir).isSymbolicLink()) throw new CatalogError(`${dir} is a symbolic link; Tabkyra won't write through it.`);
+	if (existsSync(dir) && lstatSync(dir).isSymbolicLink()) throw new CatalogError(`${dir} is a symbolic link; Polycarp won't write through it.`);
 	mkdirSync(dir, { recursive: true });
 	const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
 	writeFileSync(tmp, data, { flag: "wx", mode: 0o600 });
@@ -323,7 +323,7 @@ export function activeCommunity(bundled: ReadonlySet<string>): Map<string, Activ
 /** Why a community skill is gone: pulled by the catalog, or removed by the user. */
 export function removalReason(name: string): string | undefined {
 	const state = readState();
-	if (state.disabled.includes(name)) return `you removed the community skill ${name} (tabkyra skill enable ${name} brings it back)`;
+	if (state.disabled.includes(name)) return `you removed the community skill ${name} (polycarp browser skill enable ${name} brings it back)`;
 	const pulled = [...state.removed].reverse().find((r) => r.name === name);
 	if (pulled && !loadCatalog().catalog?.skills.some((s) => s.name === name)) return `the community catalog pulled ${name}: ${pulled.reason}`;
 	return undefined;
@@ -376,7 +376,7 @@ export interface SyncResult {
 export async function syncCatalog(options: { due?: boolean } = {}): Promise<SyncResult> {
 	const state = readState();
 	const empty = { added: [], updated: [], removed: [] };
-	if (!state.enabled) return { state: "off", message: "Community skills are off (tabkyra skill sync --on turns them on).", ...empty };
+	if (!state.enabled) return { state: "off", message: "Community skills are off (polycarp browser skill sync --on turns them on).", ...empty };
 	if (options.due && state.lastCheck && Date.now() - Date.parse(state.lastCheck) < SYNC_INTERVAL_MS) {
 		return { state: "skipped", message: `Checked ${state.lastCheck}; the next check is a day after that.`, serial: state.serial, ...empty };
 	}
@@ -454,7 +454,7 @@ const STALE_LOCK_MS = 60_000;
 /** One commit at a time across processes (the native host, MCP servers, the CLI). */
 function withSyncLock<T>(fn: () => T): T {
 	const dir = communityDir();
-	if (existsSync(dir) && lstatSync(dir).isSymbolicLink()) throw new CatalogError(`${dir} is a symbolic link; Tabkyra won't write through it.`);
+	if (existsSync(dir) && lstatSync(dir).isSymbolicLink()) throw new CatalogError(`${dir} is a symbolic link; Polycarp won't write through it.`);
 	mkdirSync(dir, { recursive: true });
 	const lock = join(dir, "sync.lock");
 	const deadline = Date.now() + 15_000;
@@ -469,7 +469,7 @@ function withSyncLock<T>(fn: () => T): T {
 			} catch {
 				/* gone meanwhile */
 			}
-			if (Date.now() > deadline) throw new CatalogError("Another Tabkyra process is saving the community catalog; try again in a moment.");
+			if (Date.now() > deadline) throw new CatalogError("Another Polycarp process is saving the community catalog; try again in a moment.");
 			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
 		}
 	}

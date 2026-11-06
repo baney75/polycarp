@@ -1,5 +1,5 @@
 /**
- * `tabkyra hub`: remote MCP profile — tokens scoped to browser.read and browser.navigate
+ * `polycarp browser hub`: remote MCP profile — tokens scoped to browser.read and browser.navigate
  * only, and a Tailscale tunnel with Funnel off by default. Nothing in this module turns Funnel on.
  */
 
@@ -19,7 +19,7 @@ export function createHubToken(name = "hub"): { token: string; id: string } {
 	}
 	if (loadTokens().some((t) => t.name === name && !t.revokedAt)) {
 		throw new Error(
-			`A token named ${name} already exists. Revoke it with tabkyra token revoke <id>, or pass a different --name.`,
+			`A token named ${name} already exists. Revoke it with polycarp browser token revoke <id>, or pass a different --name.`,
 		);
 	}
 	const { token, record } = createToken(name, [...HUB_SCOPES]);

@@ -1,5 +1,5 @@
 /**
- * `tabkyra sessions` and `tabkyra tabs`: the agent sessions and their tab groups, from the
+ * `polycarp browser sessions` and `polycarp browser tabs`: the agent sessions and their tab groups, from the
  * terminal. Every command is a bridge method (src/bridge/sessions-admin.ts); none opens a
  * session of its own.
  */
@@ -8,7 +8,7 @@ import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "
 import { banner, c, sym } from "./ui.ts";
 
 export const SESSIONS_USAGE =
-	"Usage: tabkyra sessions [list] [--all] [--json] | show <name> | rename <old> <new> | end <name> [--close] | release <name> | focus|collapse|expand <name>  (each takes --json)";
+	"Usage: polycarp browser sessions [list] [--all] [--json] | show <name> | rename <old> <new> | end <name> [--close] | release <name> | focus|collapse|expand <name>  (each takes --json)";
 
 interface Described {
 	id: string;
@@ -75,7 +75,7 @@ function printList(list: Described[]): void {
 	console.log();
 	console.log(c.dim(`${pad("NAME", 22)}${pad("AGENT", 9)}${pad("GROUP", 34)}${pad("TABS", 6)}${pad("STATE", 13)}LAST USED`));
 	for (const s of list) {
-		const group = s.group?.title ?? `Tabkyra · ${s.label}`;
+		const group = s.group?.title ?? `Polycarp · ${s.label}`;
 		console.log(`${pad(c.bold(s.name), 22)}${pad(s.agent ?? (s.kind === "panel" ? "panel" : "-"), 9)}${pad(group, 34)}${pad(String(s.tabCount), 6)}${pad(state(s), 13)}${ago(s.lastUsedAt)}`);
 	}
 	console.log(c.dim(`\nTabkyra sessions show <name> lists a session's tabs; end, rename, focus, collapse and expand act on one.`));
@@ -106,11 +106,11 @@ async function one(client: BridgeClient, name: string): Promise<Described> {
 	const exact = list.filter((s) => [s.name, s.id, s.label, s.group?.title ?? ""].some((v) => v.toLowerCase() === q));
 	const hits = exact.length ? exact : list.filter((s) => s.name.toLowerCase().startsWith(q));
 	if (hits.length === 1) return hits[0];
-	if (hits.length === 0) throw new Error(`No agent session matches "${name}". tabkyra sessions lists them.`);
+	if (hits.length === 0) throw new Error(`No agent session matches "${name}". polycarp browser sessions lists them.`);
 	throw new SessionsUsageError(`"${name}" matches ${hits.length} sessions: ${hits.map((h) => h.name).join(", ")}. Give the full name.`);
 }
 
-/** `tabkyra sessions ...`; returns the exit code. */
+/** `polycarp browser sessions ...`; returns the exit code. */
 export async function runSessions(args: string[], flags: { json: boolean; all: boolean; close: boolean }): Promise<number> {
 	const [sub = "list", ...rest] = args;
 	// Checked before connecting: a typo is a usage error whether or not a browser is up.
@@ -125,7 +125,7 @@ export async function runSessions(args: string[], flags: { json: boolean; all: b
 		expand: [1, "a session name"],
 	};
 	if (!Object.hasOwn(ARITY, sub)) throw new SessionsUsageError(`Unknown subcommand "${sub}". ${SESSIONS_USAGE}`);
-	if (rest.length !== ARITY[sub][0]) throw new SessionsUsageError(`tabkyra sessions ${sub} needs ${ARITY[sub][1]}. ${SESSIONS_USAGE}`);
+	if (rest.length !== ARITY[sub][0]) throw new SessionsUsageError(`polycarp browser sessions ${sub} needs ${ARITY[sub][1]}. ${SESSIONS_USAGE}`);
 	const out = (value: unknown, human: () => void) => {
 		if (flags.json) console.log(JSON.stringify(value, null, 2));
 		else human();
@@ -174,14 +174,14 @@ export async function runSessions(args: string[], flags: { json: boolean; all: b
 		// "No match" and refusals from the extension are failures (exit 1), with what to do next.
 		if (err instanceof BridgeRpcError && err.rpc.code === "bad_params") throw new SessionsUsageError(err.rpc.message);
 		if (err instanceof BridgeRpcError && /^Unknown method sessions\./.test(err.rpc.message))
-			throw new Error("The Tabkyra extension in your browser is older than this CLI and has no sessions yet. Update it (tabkyra update) or reload it after a build (tabkyra reload).");
+			throw new Error("The Polycarp extension in your browser is older than this CLI and has no sessions yet. Update it (polycarp browser update) or reload it after a build (polycarp browser reload).");
 		throw err instanceof BridgeRpcError ? new Error(err.rpc.message) : err;
 	}
 }
 
-/** `tabkyra tabs [name]`: every agent session's tabs, or one session's. */
+/** `polycarp browser tabs [name]`: every agent session's tabs, or one session's. */
 export async function runTabs(args: string[], flags: { json: boolean }): Promise<number> {
-	if (args.length > 1) throw new SessionsUsageError("Usage: tabkyra tabs [session] [--json]");
+	if (args.length > 1) throw new SessionsUsageError("Usage: polycarp browser tabs [session] [--json]");
 	return withClient(async (client) => {
 		const list = args[0] ? [await one(client, args[0])] : await listAll(client, false, true);
 		if (flags.json) {

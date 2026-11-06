@@ -79,8 +79,8 @@ export class UpdatesTab extends SettingsTab {
 				<div class="space-y-1">
 					<h3 class="text-lg font-semibold text-foreground">Updates</h3>
 					<p class="text-sm text-muted-foreground">
-						Tabkyra checks once a day. An update downloads or builds while you work, then installs and reloads
-						Tabkyra when no agent is running in any side panel or bridge session.
+						Polycarp checks once a day. An update downloads or builds while you work, then installs and reloads
+						Polycarp when no agent is running in any side panel or bridge session.
 					</p>
 				</div>
 
@@ -113,8 +113,8 @@ export class UpdatesTab extends SettingsTab {
 								${s.mismatch ? this.row("Mismatch", s.mismatch.reason) : nothing}
 							</div>`
 						: html`<p class="text-sm text-muted-foreground">
-								The native host hasn't reported yet. Updates need the Tabkyra CLI: run
-								<code class="font-mono">tabkyra doctor</code> in a terminal.
+								The native host hasn't reported yet. Updates need the Polycarp CLI: run
+								<code class="font-mono">polycarp browser doctor</code> in a terminal.
 							</p>`
 				}
 

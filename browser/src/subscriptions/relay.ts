@@ -1,6 +1,6 @@
 /**
  * Background worker: carries the side panel's subscription requests to the native host and the
- * answers back. Only Tabkyra's own extension pages may use it (never a content script or a page),
+ * answers back. Only Polycarp's own extension pages may use it (never a content script or a page),
  * and nothing passing through holds a token: the host keeps those (cli/src/subscriptions).
  */
 
@@ -21,7 +21,7 @@ export function startSubscriptionRelay(): void {
 			for (const w of waiting.values())
 				w.port.postMessage({
 					id: w.id,
-					error: { code: "no_host", message: "Tabkyra's native host disconnected. Try again." },
+					error: { code: "no_host", message: "Polycarp's native host disconnected. Try again." },
 				} satisfies RelayReply);
 			waiting.clear();
 			return;
@@ -61,7 +61,7 @@ export function startSubscriptionRelay(): void {
 					error: {
 						code: "no_host",
 						message:
-							"Tabkyra's native host isn't connected. Run `tabkyra setup` (or `tabkyra doctor`), then try again.",
+							"Polycarp's native host isn't connected. Run `polycarp browser setup` (or `polycarp browser doctor`), then try again.",
 					},
 				} satisfies RelayReply);
 			}

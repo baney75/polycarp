@@ -38,7 +38,7 @@ interface Waiter {
 export const REQUEST_TIMEOUT_MS = 20_000;
 /** joinHub talks to the hub, whose own timeout is 15 seconds. */
 export const JOIN_TIMEOUT_MS = 30_000;
-export const NO_REPLY_MESSAGE = "Tabkyra's helper didn't answer. Update it: tabkyra update";
+export const NO_REPLY_MESSAGE = "Polycarp's helper didn't answer. Update it: polycarp browser update";
 
 let port: chrome.runtime.Port | undefined;
 let seq = 0;
@@ -68,7 +68,7 @@ function connect(): chrome.runtime.Port {
 		if (port === next) port = undefined;
 		for (const w of waiters.values()) {
 			clearTimeout(w.timer);
-			w.reject(new ConnectRequestError("no_host", "Lost the connection to Tabkyra's background worker."));
+			w.reject(new ConnectRequestError("no_host", "Lost the connection to Polycarp's background worker."));
 		}
 		waiters.clear();
 	});
@@ -76,7 +76,7 @@ function connect(): chrome.runtime.Port {
 	return next;
 }
 
-export const NO_GESTURE_MESSAGE = "Click the button in the Tabkyra side panel to do that.";
+export const NO_GESTURE_MESSAGE = "Click the button in the Polycarp side panel to do that.";
 
 /**
  * A one-use token minted only while the browser counts the click as live (about five seconds). It
@@ -152,5 +152,5 @@ export const connectSetTheme = (change: {
 		...(change.mode !== undefined ? { mode: change.mode } : {}),
 	});
 
-/** True when the host is absent: the panel then shows how to set Tabkyra up. */
+/** True when the host is absent: the panel then shows how to set Polycarp up. */
 export const isNoHost = (err: unknown): boolean => err instanceof ConnectRequestError && err.code === "no_host";

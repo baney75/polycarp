@@ -55,7 +55,7 @@ function connect(): chrome.runtime.Port {
 		if (port === next) port = undefined;
 		cached = undefined;
 		for (const w of waiters.values())
-			w.reject(new SubscriptionRequestError("no_host", "Lost the connection to Tabkyra's background worker."));
+			w.reject(new SubscriptionRequestError("no_host", "Lost the connection to Polycarp's background worker."));
 		waiters.clear();
 	});
 	port = next;

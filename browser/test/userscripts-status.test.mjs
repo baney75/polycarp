@@ -1,4 +1,4 @@
-// What bridge.debug reports about chrome.userScripts, and so what `tabkyra doctor` says.
+// What bridge.debug reports about chrome.userScripts, and so what `polycarp browser doctor` says.
 // Chromium exposes the API only when the optional permission is granted AND the "Allow user
 // scripts" toggle is on; each combination must map to its own cause.
 import assert from "node:assert/strict";

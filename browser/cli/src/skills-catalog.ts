@@ -1,7 +1,7 @@
 /**
  * Every skill the CLI ships, bundled as text at build time (cli/scripts/build.mjs). A test
  * (cli/test/skill-lint.test.mjs) fails when a folder under skills/ is missing here, and
- * every entry passes `tabkyra skill lint` before it can merge.
+ * every entry passes `polycarp browser skill lint` before it can merge.
  */
 
 import SKILL_ACADEMIC_RESEARCH from "../../skills/academic-research/SKILL.md";

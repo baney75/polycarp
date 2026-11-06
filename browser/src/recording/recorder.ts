@@ -3,7 +3,7 @@
  *
  * Ported, simplified, from the parchi/browser-ai "record" feature: capture the
  * user's clicks, inputs, form submits and navigations on the active tab, then
- * turn them into a site-scoped Tabkyra Skill. Because the generated skill's
+ * turn them into a site-scoped Polycarp Skill. Because the generated skill's
  * `domainPatterns` is the recorded host, the agent automatically sees the skill
  * id when on that site (via the navigate/skill URL matching) and can retrieve
  * and replay it.
@@ -327,7 +327,7 @@ window.${jsName} = {
 };`;
 }
 
-/** Build a Tabkyra Skill from a recording. */
+/** Build a Polycarp Skill from a recording. */
 export function buildSkillFromRecording(
 	rec: RecordingResult,
 	opts: { name: string; domainPatterns?: string[] },

@@ -1,4 +1,4 @@
-// `tabkyra setup` and `tabkyra doctor` against a throwaway HOME, an empty socket
+// `polycarp browser setup` and `polycarp browser doctor` against a throwaway HOME, an empty socket
 // directory, a fake extension build and a PATH holding only a node link plus fake
 // harness CLIs. Nothing here can reach a real browser, bridge or harness config.
 import assert from "node:assert/strict";
@@ -42,7 +42,7 @@ function fakeHarness(name, configured, { args = "mcp", scope = "User config (ava
 function fakeBuild(version) {
 	mkdirSync(extensionDir, { recursive: true });
 	for (const f of ["background.js", "sidepanel.js", "sidepanel.html", "app.css"]) writeFileSync(join(extensionDir, f), "");
-	writeFileSync(join(extensionDir, "manifest.json"), JSON.stringify({ name: "Tabkyra", version }));
+	writeFileSync(join(extensionDir, "manifest.json"), JSON.stringify({ name: "Polycarp", version }));
 }
 
 function run(args, extraEnv = {}) {
@@ -88,7 +88,7 @@ test("doctor fails with one fix per problem on a fresh machine", () => {
 	assert.equal(byId.node.status, "ok");
 	assert.equal(byId.build.status, "ok");
 	assert.equal(byId["host:Helium"].status, "fail");
-	assert.equal(byId["host:Helium"].fix, "tabkyra install --force");
+	assert.equal(byId["host:Helium"].fix, "polycarp browser install --force");
 	assert.equal(byId.connected.status, "fail");
 	for (const check of report.checks) if (check.status === "fail") assert.ok(check.fix, `${check.id} has no fix`);
 });
@@ -99,7 +99,7 @@ test("doctor flags a build from another version of the checkout", () => {
 		const build = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "build");
 		assert.equal(build.status, "fail");
 		assert.match(build.label, /does not match this checkout/);
-		assert.equal(build.fix, "tabkyra setup");
+		assert.equal(build.fix, "polycarp browser setup");
 	} finally {
 		fakeBuild(sourceVersion);
 	}

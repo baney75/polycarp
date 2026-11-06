@@ -127,7 +127,7 @@ export async function routeSubscriptionModel(
 	const status = await trySubscriptionStatus(true);
 	if (!status)
 		throw new Error(
-			"Tabkyra's native host isn't connected, so subscription sign-ins can't run. Run `tabkyra doctor`.",
+			"Polycarp's native host isn't connected, so subscription sign-ins can't run. Run `polycarp browser doctor`.",
 		);
 	const next: SimpleStreamOptions = { ...(options ?? {}), apiKey: status.proxy.secret };
 	if (model.provider === CHATGPT_PROVIDER) {

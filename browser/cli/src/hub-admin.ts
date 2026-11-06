@@ -1,5 +1,5 @@
 /**
- * `tabkyra hub setup|serve|code|devices|remove|prefer|status|off`: run the hub on an always-on box (D32).
+ * `polycarp browser hub setup|serve|code|devices|remove|prefer|status|off`: run the hub on an always-on box (D32).
  * Setup writes hub.json, sets the passcode and installs a user service that runs `hub serve`. The
  * service code is shared with `remote setup` (service.ts).
  */
@@ -41,7 +41,7 @@ export async function hubSetup(options: HubSetupOptions): Promise<number> {
 		else console.error(`${sym.fail} ${message}`);
 		return 1;
 	};
-	if (existsSync(remoteFile())) return fail(`This install already has a public route (${remoteFile()}), and an install has one. Run tabkyra remote off first. Nothing was changed.`);
+	if (existsSync(remoteFile())) return fail(`This install already has a public route (${remoteFile()}), and an install has one. Run polycarp browser remote off first. Nothing was changed.`);
 	let previous: HubConfig | undefined;
 	try {
 		previous = loadHubConfig();
@@ -49,16 +49,16 @@ export async function hubSetup(options: HubSetupOptions): Promise<number> {
 		return fail(`${err instanceof Error ? err.message : String(err)} Nothing was changed.`);
 	}
 	const port = options.port ?? previous?.port ?? DEFAULT_PORT;
-	if (options.service && !launcherValid()) return fail(`${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run tabkyra install first, then tabkyra hub setup again. Nothing was changed.`);
+	if (options.service && !launcherValid()) return fail(`${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run polycarp browser install first, then polycarp browser hub setup again. Nothing was changed.`);
 	const probe = await probeLocal(port, options.publicUrl);
-	if (probe.state === "other" && !options.service) return fail(`Something already listens on 127.0.0.1:${port} and isn't a Tabkyra server for ${options.publicUrl} (${probe.detail}). Nothing was changed.`);
+	if (probe.state === "other" && !options.service) return fail(`Something already listens on 127.0.0.1:${port} and isn't a Polycarp server for ${options.publicUrl} (${probe.detail}). Nothing was changed.`);
 	let passcode: string | undefined;
 	if (options.passcode === false && !passcodeSet()) {
-		say(`${sym.dot} No passcode made (--no-passcode). Approve a connection with a one-time connect code: tabkyra token approval-code. tabkyra token passcode sets a passcode later.`);
+		say(`${sym.dot} No passcode made (--no-passcode). Approve a connection with a one-time connect code: polycarp browser token approval-code. polycarp browser token passcode sets a passcode later.`);
 	} else if (!passcodeSet()) {
 		passcode = setPasscode();
 		say(`${sym.ok} OAuth passcode:\n\n  ${passcode}\n`);
-		say(c.dim("Shown once. Type it on the approval page when claude.ai, ChatGPT or grok.com connects (a one-time connect code from tabkyra token approval-code works too). tabkyra token passcode replaces it; grants already approved keep working."));
+		say(c.dim("Shown once. Type it on the approval page when claude.ai, ChatGPT or grok.com connects (a one-time connect code from polycarp browser token approval-code works too). polycarp browser token passcode replaces it; grants already approved keep working."));
 	}
 	saveHubConfig({ publicUrl: options.publicUrl, port });
 	say(`${sym.ok} Wrote ${c.dim(hubFile())}`);
@@ -67,10 +67,10 @@ export async function hubSetup(options: HubSetupOptions): Promise<number> {
 		const service = await installService(HUB_SERVICE);
 		serviceMessage = service.message;
 		say(`${service.ok ? sym.ok : sym.fail} ${service.message}`);
-		if (!service.ok) return fail(`The service didn't start. hub.json is kept; fix the cause and run tabkyra hub setup again.`);
-		if (!(await waitForServe(port, options.publicUrl, 15_000))) return fail(`The hub isn't answering on 127.0.0.1:${port} with ${options.publicUrl}/mcp after 15 seconds. Look in ${serviceLogHint(HUB_SERVICE)}. hub.json is kept; fix the cause and run tabkyra hub setup again.`);
+		if (!service.ok) return fail(`The service didn't start. hub.json is kept; fix the cause and run polycarp browser hub setup again.`);
+		if (!(await waitForServe(port, options.publicUrl, 15_000))) return fail(`The hub isn't answering on 127.0.0.1:${port} with ${options.publicUrl}/mcp after 15 seconds. Look in ${serviceLogHint(HUB_SERVICE)}. hub.json is kept; fix the cause and run polycarp browser hub setup again.`);
 	} else {
-		say(`${sym.dot} No service installed. Start it yourself: ${c.bold("tabkyra hub serve")}`);
+		say(`${sym.dot} No service installed. Start it yourself: ${c.bold("polycarp browser hub serve")}`);
 	}
 	if (options.json) {
 		console.log(JSON.stringify({ ok: true, publicUrl: options.publicUrl, port, connectorUrl: `${options.publicUrl}/mcp`, ...(passcode ? { passcode } : {}), service: serviceMessage }, null, 2));
@@ -80,10 +80,10 @@ export async function hubSetup(options: HubSetupOptions): Promise<number> {
 Connector URL: ${c.bold(`${options.publicUrl}/mcp`)}
 
 Point your HTTPS front door (a Cloudflare named tunnel works) at http://127.0.0.1:${port}.
-Then, on each device that has a browser with Tabkyra:
-  1. here:       tabkyra hub code
-  2. on device:  tabkyra link ${options.publicUrl} --code <code>
-Add the connector URL once in claude.ai, ChatGPT or grok.com. Check it with: tabkyra hub status`);
+Then, on each device that has a browser with Polycarp:
+  1. here:       polycarp browser hub code
+  2. on device:  polycarp browser link ${options.publicUrl} --code <code>
+Add the connector URL once in claude.ai, ChatGPT or grok.com. Check it with: polycarp browser hub status`);
 	return 0;
 }
 
@@ -102,10 +102,10 @@ function guardConnections(): void {
 	process.on("uncaughtException", (err) => {
 		const code = (err as NodeJS.ErrnoException).code ?? "";
 		if (CONNECTION_ERRORS.has(code)) {
-			process.stderr.write(`[tabkyra hub] a connection error escaped its handler and was survived (${code}): ${err.stack ?? err.message}\n`);
+			process.stderr.write(`[polycarp browser hub] a connection error escaped its handler and was survived (${code}): ${err.stack ?? err.message}\n`);
 			return;
 		}
-		process.stderr.write(`[tabkyra hub] UNCAUGHT ERROR, exiting so the service restarts: ${err.stack ?? err.message}\n`);
+		process.stderr.write(`[polycarp browser hub] UNCAUGHT ERROR, exiting so the service restarts: ${err.stack ?? err.message}\n`);
 		process.exit(1);
 	});
 }
@@ -113,9 +113,9 @@ function guardConnections(): void {
 export async function hubServe(overrides: { port?: number; publicUrl?: string }): Promise<void> {
 	const saved = overrides.publicUrl === undefined ? loadHubConfig() : undefined;
 	const publicUrl = overrides.publicUrl ?? saved?.publicUrl;
-	if (!publicUrl) throw new Error("No public URL. Run tabkyra hub setup --public-url https://host, or pass --public-url.");
+	if (!publicUrl) throw new Error("No public URL. Run polycarp browser hub setup --public-url https://host, or pass --public-url.");
 	const port = overrides.port ?? saved?.port ?? DEFAULT_PORT;
-	if (!passcodeSet()) console.log(`${sym.warn} No OAuth passcode yet; only a connect code (tabkyra token approval-code) can approve a connection. Run: tabkyra token passcode`);
+	if (!passcodeSet()) console.log(`${sym.warn} No OAuth passcode yet; only a connect code (polycarp browser token approval-code) can approve a connection. Run: polycarp browser token passcode`);
 	guardConnections();
 	// TABKYRA_HUB_HEAD_TIMEOUT_MS and TABKYRA_HUB_SLOW_CLIENT_MS shorten the head wait and the slow-client wait; the tests use them.
 	const positive = (name: string) => {
@@ -179,7 +179,7 @@ export function hubDevices(json: boolean): number {
 		return 0;
 	}
 	if (!rows.length) {
-		console.log(`${sym.dot} No devices. Run tabkyra hub code, then tabkyra link on a device.`);
+		console.log(`${sym.dot} No devices. Run polycarp browser hub code, then polycarp browser link on a device.`);
 		return 0;
 	}
 	if (!hubRunning) console.log(`${sym.warn} The hub isn't running, so every device shows offline.`);
@@ -196,7 +196,7 @@ export function hubDevices(json: boolean): number {
 export function hubRemove(nameOrId: string): number {
 	const gone = removeDevice(nameOrId);
 	if (!gone) {
-		console.error(`${sym.fail} No device named or numbered ${nameOrId}. tabkyra hub devices lists them.`);
+		console.error(`${sym.fail} No device named or numbered ${nameOrId}. polycarp browser hub devices lists them.`);
 		return 1;
 	}
 	console.log(`${sym.ok} Removed ${gone.name} (${gone.id}). Its credential no longer works; a running hub closes its link within a second.`);
@@ -208,7 +208,7 @@ export function hubPrefer(list: string): number {
 	const known = new Set(loadDevices().devices.map((d) => d.name));
 	const unknown = names.filter((n) => !known.has(n));
 	if (!names.length || unknown.length) {
-		console.error(`${sym.fail} ${names.length ? `No device named ${unknown.join(", ")}.` : "Name at least one device."} tabkyra hub devices lists them.`);
+		console.error(`${sym.fail} ${names.length ? `No device named ${unknown.join(", ")}.` : "Name at least one device."} polycarp browser hub devices lists them.`);
 		return 1;
 	}
 	setPrefer([...new Set(names)]);
@@ -227,16 +227,16 @@ export async function hubStatus(json: boolean): Promise<number> {
 		checks.push({ name: "hub.json", status: "fail", detail: err instanceof Error ? err.message : String(err) });
 	}
 	if (config) checks.push({ name: "hub.json", status: "ok", detail: `${config.publicUrl}, local port ${config.port}` });
-	else if (!checks.length) checks.push({ name: "hub.json", status: "fail", detail: `${hubFile()} not found. Run tabkyra hub setup --public-url https://host.` });
+	else if (!checks.length) checks.push({ name: "hub.json", status: "fail", detail: `${hubFile()} not found. Run polycarp browser hub setup --public-url https://host.` });
 	if (config) {
 		const passcode = passcodeSet();
-		checks.push({ name: "passcode", status: passcode ? "ok" : "warn", detail: passcode ? "set" : "not set; only connect codes (tabkyra token approval-code) can approve a connection. tabkyra token passcode sets one." });
+		checks.push({ name: "passcode", status: passcode ? "ok" : "warn", detail: passcode ? "set" : "not set; only connect codes (polycarp browser token approval-code) can approve a connection. polycarp browser token passcode sets one." });
 		const local = await probeLocal(config.port, config.publicUrl, 3000);
 		const where = `http://127.0.0.1:${config.port}${METADATA_PATH}`;
 		checks.push({
 			name: "local hub",
 			status: local.state === "match" ? "ok" : "fail",
-			detail: local.state === "match" ? `${where} answers with resource ${config.publicUrl}/mcp` : `${where} ${local.state === "none" ? "didn't answer: connection refused" : local.detail}. Is tabkyra hub serve running? tabkyra hub setup starts it.`,
+			detail: local.state === "match" ? `${where} answers with resource ${config.publicUrl}/mcp` : `${where} ${local.state === "none" ? "didn't answer: connection refused" : local.detail}. Is polycarp browser hub serve running? polycarp browser hub setup starts it.`,
 		});
 		checks.push(await dnsCheck(new URL(config.publicUrl).hostname));
 		const pub = await metadata(`${config.publicUrl}${METADATA_PATH}`, 10_000, config.publicUrl);
@@ -247,7 +247,7 @@ export async function hubStatus(json: boolean): Promise<number> {
 		checks.push({
 			name: "devices",
 			status: !devices.length ? "warn" : online ? "ok" : "warn",
-			detail: !devices.length ? "none enrolled; tabkyra hub code, then tabkyra link on a device" : `${devices.length} enrolled, ${online} online${live ? "" : " (the hub isn't running)"}; tabkyra hub devices has the detail`,
+			detail: !devices.length ? "none enrolled; polycarp browser hub code, then polycarp browser link on a device" : `${devices.length} enrolled, ${online} online${live ? "" : " (the hub isn't running)"}; polycarp browser hub devices has the detail`,
 		});
 	}
 	const ok = checks.every((x) => x.status !== "fail");
@@ -275,6 +275,6 @@ export function hubOff(): number {
 		console.log(`${sym.dot} No hub.json; nothing else to remove.`);
 	}
 	rmSync(liveFile(), { force: true });
-	console.log(c.dim("Devices stay enrolled in hub-devices.json and approvals in oauth.json. tabkyra hub remove <device> and tabkyra token revoke <client id> end them for good."));
+	console.log(c.dim("Devices stay enrolled in hub-devices.json and approvals in oauth.json. polycarp browser hub remove <device> and polycarp browser token revoke <client id> end them for good."));
 	return 0;
 }

@@ -36,7 +36,7 @@ export interface CommandSpec {
 	paths?: boolean;
 	/** The command parses its own arguments (setup, update, library, skill); argsProblem leaves it alone. */
 	selfParsed?: boolean;
-	/** The subcommand a bare `tabkyra <name>` runs (`tabkyra sessions` lists). */
+	/** The subcommand a bare `tabkyra <name>` runs (`polycarp browser sessions` lists). */
 	defaultSubcommand?: string;
 	/** Values completed for the first argument (`completion zsh`). */
 	values?: string[];
@@ -206,7 +206,7 @@ export const COMMANDS: CommandSpec[] = [
 		summary: "Put this device behind a hub",
 		what: "This device behind a hub",
 		subcommands: [
-			{ name: "enroll", args: "<hub-url>", what: "Link this device with a code from the hub (tabkyra link <hub-url> works too)", flags: ["--code", "--name", "--scope", "--no-service", "--json"], max: 1 },
+			{ name: "enroll", args: "<hub-url>", what: "Link this device with a code from the hub (polycarp browser link <hub-url> works too)", flags: ["--code", "--name", "--scope", "--no-service", "--json"], max: 1 },
 			{ name: "run", what: "Dial the hub and answer its requests (the service runs this)" },
 			{ name: "status", what: "Is this device linked and connected?", flags: ["--json"] },
 			{ name: "off", what: "Stop the service, forget the hub and revoke the local link token" },
@@ -281,7 +281,7 @@ export const COMMANDS: CommandSpec[] = [
 	{ name: "install", what: "Re-register the native host with every browser, or with --browser <name> only that one", group: "Troubleshoot", flags: ["--force", "--browser"] },
 	{ name: "reload", what: "Reload the extension after rebuilding dist-chrome", group: "Troubleshoot" },
 	{ name: "debug", what: "Bridge state, request timings and a benchmark (JSON)", group: "Troubleshoot" },
-	{ name: "completion", positional: 1, args: "zsh|bash|fish", what: 'Shell completions: eval "$(tabkyra completion zsh)"', group: "Troubleshoot", values: ["zsh", "bash", "fish"] },
+	{ name: "completion", positional: 1, args: "zsh|bash|fish", what: 'Shell completions: eval "$(polycarp browser completion zsh)"', group: "Troubleshoot", values: ["zsh", "bash", "fish"] },
 	{ name: "version", what: "This CLI's version (also --version)", group: "Troubleshoot", flags: ["--json"] },
 	{ name: "help", selfParsed: true, what: "This help (also --help)", group: "Troubleshoot", hidden: true },
 	{ name: "host", selfParsed: true, what: "The native host the browser starts", group: "Troubleshoot", hidden: true },
@@ -368,7 +368,7 @@ export function completionScript(shell: string): string | undefined {
 	if (shell === "zsh") {
 		const lines = [
 			"#compdef tabkyra",
-			'# tabkyra completion for zsh. Load it with: eval "$(tabkyra completion zsh)"',
+			'# polycarp browser completion for zsh. Load it with: eval "$(polycarp browser completion zsh)"',
 			"_tabkyra() {",
 			"  local -a commands subs flags",
 			"  local paths=0",
@@ -434,7 +434,7 @@ export function completionScript(shell: string): string | undefined {
 				return `    ${sh(f)}) ${values ? `COMPREPLY=( $(compgen -W "${values}" -- "$cur") ); ` : ""}compopt +o default 2>/dev/null; return ;;`;
 			});
 		const lines = [
-			'# tabkyra completion for bash. Load it with: eval "$(tabkyra completion bash)"',
+			'# polycarp browser completion for bash. Load it with: eval "$(polycarp browser completion bash)"',
 			"_tabkyra() {",
 			'  local cur="${COMP_WORDS[COMP_CWORD]}" prev="${COMP_WORDS[COMP_CWORD-1]}" paths=0',
 			"  COMPREPLY=()",
@@ -480,7 +480,7 @@ export function completionScript(shell: string): string | undefined {
 		return lines.join("\n");
 	}
 	if (shell === "fish") {
-		const lines = ["# tabkyra completion for fish. Load it with: tabkyra completion fish | source"];
+		const lines = ["# polycarp browser completion for fish. Load it with: polycarp browser completion fish | source"];
 		for (const c of cmds) lines.push(`complete -c tabkyra -n __fish_use_subcommand -f -a ${sh(c.name)} -d '${desc(c.summary ?? c.what)}'`);
 		for (const c of cmds) {
 			const subs = c.subcommands ?? [];
