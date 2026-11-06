@@ -1,5 +1,5 @@
 #!/bin/bash
-# Publishes build/Polycarp.zip and build/Polycarp.zip.sha256 as the prerelease named `preview`, replacing the last preview's
+# Publishes build/Polycarp.zip, build/Polycarp.zip.sha256 and build/Polycarp.dmg as the prerelease named `preview`, replacing the last preview's
 # assets. Run by `scripts/release.sh --preview` after it has built, signed, packaged and verified the zip; never by hand.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -15,12 +15,12 @@ else
   gh release create preview --prerelease --title "Preview" --notes "Apple silicon build of $(git rev-parse --short HEAD). Not a stable release." --verify-tag
 fi
 # Replace the earlier preview's assets: upload over the same names, and remove any other asset.
-gh release upload preview build/Polycarp.zip build/Polycarp.zip.sha256 --clobber
+gh release upload preview build/Polycarp.zip build/Polycarp.zip.sha256 build/Polycarp.dmg --clobber
 for old in $(gh release view preview --json assets --jq '.assets[].name'); do
-  case "$old" in Polycarp.zip|Polycarp.zip.sha256) ;; *) gh release delete-asset preview "$old" --yes ;; esac
+  case "$old" in Polycarp.zip|Polycarp.zip.sha256|Polycarp.dmg) ;; *) gh release delete-asset preview "$old" --yes ;; esac
 done
 BACK=$(mktemp -d); trap 'rm -rf "$BACK"' EXIT
-gh release download preview --dir "$BACK" --pattern 'Polycarp.zip' --pattern 'Polycarp.zip.sha256'
-for f in Polycarp.zip Polycarp.zip.sha256; do cmp -s "build/$f" "$BACK/$f" || fail "the uploaded $f differs from the one built."; done
-scripts/verify-release.sh --no-dmg "$BACK"
-echo "published the preview prerelease with Polycarp.zip and Polycarp.zip.sha256"
+gh release download preview --dir "$BACK" --pattern 'Polycarp.zip' --pattern 'Polycarp.zip.sha256' --pattern 'Polycarp.dmg'
+for f in Polycarp.zip Polycarp.zip.sha256 Polycarp.dmg; do cmp -s "build/$f" "$BACK/$f" || fail "the uploaded $f differs from the one built."; done
+scripts/verify-release.sh "$BACK"
+echo "published the preview prerelease with Polycarp.zip, Polycarp.zip.sha256 and Polycarp.dmg"
