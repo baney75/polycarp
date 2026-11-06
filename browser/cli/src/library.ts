@@ -1,5 +1,5 @@
 /**
- * `tabkyra library`: a local source library in the spirit of Zotero. Every entry is a
+ * `polycarp browser library`: a local source library in the spirit of Zotero. Every entry is a
  * CSL-JSON record fetched from its DOI's registry (Crossref or DataCite through doi.org),
  * then checked against OpenAlex and Crossref's update notices for retractions. Entries
  * export to BibTeX, RIS and CSL-JSON (Zotero, Word, LaTeX) and to one Obsidian note each.
@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { VERSION } from "./version.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export interface CslName {
 	family?: string;
@@ -79,7 +80,7 @@ export function loadLibrary(): Library {
 	const file = libraryFile();
 	if (!existsSync(file)) return { version: 1, items: [] };
 	const data = JSON.parse(readFileSync(file, "utf8")) as Library;
-	if (data.version !== 1 || !Array.isArray(data.items)) throw new Error(`${file} is not a Tabkyra library.`);
+	if (data.version !== 1 || !Array.isArray(data.items)) throw new Error(`${file} is not a Polycarp library.`);
 	// Entries saved before notices were deduplicated can hold the same notice several times.
 	for (const item of data.items) {
 		const v = item?.tabkyra?.verified;
@@ -631,7 +632,7 @@ const STYLE_ALIASES: Record<string, string> = { mla: "modern-language-associatio
 /** A formatted reference from doi.org's citation formatter (CSL styles). */
 export async function cite(key: string, style = "apa"): Promise<string> {
 	const item = loadLibrary().items.find((i) => i.id === key);
-	if (!item) throw new Error(`No source with key ${key}. Run tabkyra library search.`);
+	if (!item) throw new Error(`No source with key ${key}. Run ${COMMAND_NAME} library search.`);
 	const csl = Object.hasOwn(STYLE_ALIASES, style) ? STYLE_ALIASES[style] : style;
 	if (!STYLES.has(csl)) throw new Error(`Unknown style ${style}. Use apa, mla, chicago, ieee, harvard or vancouver.`);
 	if (!item.DOI) throw new Error(`${key} has no DOI to format.`);
@@ -814,7 +815,7 @@ function sha(text: string): string {
 /**
  * One Obsidian note per source, named by citekey, inside `<vault>/<folder>`. The folder is
  * walked one segment at a time and a symbolic link anywhere stops it, before anything is
- * created. A note is replaced only if Tabkyra wrote it and nobody edited it since.
+ * created. A note is replaced only if Polycarp wrote it and nobody edited it since.
  */
 export function writeObsidian(vault: string, folder = "Sources"): { written: string[]; kept: string[]; stale: string[] } {
 	// The vault itself may be a link (iCloud, Dropbox); folders inside it may not.
@@ -882,7 +883,7 @@ export function writeObsidian(vault: string, folder = "Sources"): { written: str
 			`${md(names(i, "; "))} (${year(i)}). ${i["container-title"] ? `*${md(i["container-title"])}*` : ""}`,
 			i.DOI ? `DOI: <https://doi.org/${doiPath(i.DOI)}>` : "",
 			v.retracted ? "\n> [!warning] Retracted\n> A retraction notice points at this DOI. Don't cite it as support." : "",
-			!v.retracted && v.complete === false ? "\n> [!caution] Retraction check incomplete\n> Run tabkyra library verify before citing." : "",
+			!v.retracted && v.complete === false ? `\n> [!caution] Retraction check incomplete\n> Run ${COMMAND_NAME} library verify before citing.` : "",
 			oa ? `Open access copy: <${oa}>` : "",
 			i.tabkyra.quote ? `\n## Supporting quote\n\n> ${md(i.tabkyra.quote.text)}${i.tabkyra.quote.location ? `\n> (${md(i.tabkyra.quote.location)})` : ""}` : "",
 			i.tabkyra.note ? `\n## Notes\n\n${md(i.tabkyra.note)}` : "",
@@ -910,7 +911,7 @@ function line(i: LibraryItem): string {
 }
 
 export const LIBRARY_USAGE =
-	"Usage: tabkyra library add <doi|arxiv id> [--quote TEXT] [--location TEXT] [--note TEXT] [--tag TAG] | list [--json] | search <words> [--json] | " +
+	`Usage: ${COMMAND_NAME} library add <doi|arxiv id> [--quote TEXT] [--location TEXT] [--note TEXT] [--tag TAG] | list [--json] | search <words> [--json] | ` +
 	"verify [key...] | cite <key> [--style apa|mla|chicago|ieee|harvard|vancouver] | export --format bibtex|ris|csl [--out FILE] | " +
 	"obsidian <vault> [--folder Sources] | remove <key>";
 
@@ -993,7 +994,7 @@ export async function runLibrary(args: string[]): Promise<number> {
 				return 3;
 			}
 			if (v.complete === false) {
-				console.log("  Retraction check incomplete (OpenAlex or Crossref didn't answer). Run tabkyra library verify before citing.");
+				console.log(`  Retraction check incomplete (OpenAlex or Crossref didn't answer). Run ${COMMAND_NAME} library verify before citing.`);
 				return 4;
 			}
 			return 0;
@@ -1040,7 +1041,7 @@ export async function runLibrary(args: string[]): Promise<number> {
 			if (positional.length !== 1) throw new Error(LIBRARY_USAGE);
 			const { written, kept, stale } = writeObsidian(positional[0], opts.folder);
 			console.log(`Wrote ${written.length} notes to ${join(positional[0], opts.folder ?? "Sources")}`);
-			for (const k of kept) console.log(`  kept ${k}: you edited it, or Tabkyra didn't write it`);
+			for (const k of kept) console.log(`  kept ${k}: you edited it, or Polycarp didn't write it`);
 			// A kept note can't show a new warning, so say it here, loudly.
 			for (const x of stale) console.log(`  NOT UPDATED, ${x}. Add the warning to that note yourself.`);
 			return stale.length ? 3 : 0;

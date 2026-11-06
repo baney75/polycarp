@@ -783,7 +783,7 @@ test("an archive with too many entries is refused before JSZip reads it, even wi
 // ---------------------------------------------------------------------------
 
 test("the tests exercise the JSZip and SheetJS the bundle ships", async () => {
-	// scripts/build.mjs aliases both packages to Tabkyra's node_modules, which these tests import.
+	// scripts/build.mjs aliases both packages to Polycarp's node_modules, which these tests import.
 	const build = readFileSync(new URL("../scripts/build.mjs", import.meta.url), "utf8");
 	assert.match(build, /xlsx: join\(packageRoot, "node_modules\/xlsx"\)/);
 	assert.match(build, /jszip: join\(packageRoot, "node_modules\/jszip"\)/);

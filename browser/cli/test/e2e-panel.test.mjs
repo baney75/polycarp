@@ -61,7 +61,7 @@ before(async () => {
 						}
 						if (req.method === "joinHub") {
 							joined = true;
-							return reply({ error: { code: "linked_no_service", message: "Linked as laptop, but the background service didn't start; run tabkyra link status." } });
+							return reply({ error: { code: "linked_no_service", message: "Linked as laptop, but the background service didn't start; run polycarp browser link status." } });
 						}
 						if (req.method === "setTheme") return reply({ result: { preset: req.params.preset } });
 						reply({ error: { code: "bad_params", message: "not stubbed" } });
@@ -218,7 +218,7 @@ test("Join hub asks for a Confirm that names the host and the scopes; after join
 		// The route is now "link", so the form is gone; the message is not.
 		const message = page.locator("[data-join-message]");
 		await message.waitFor({ timeout: 10_000 });
-		assert.match(await message.innerText(), /Linked as laptop, but the background service didn't start; run tabkyra link status\./);
+		assert.match(await message.innerText(), /Linked as laptop, but the background service didn't start; run polycarp browser link status\./);
 		assert.equal(await page.getByRole("button", { name: "Join hub" }).count(), 0);
 		assert.equal(await page.locator("tabkyra-connect-tab").getByText("Get a code to see the connector URL.").count(), 1);
 	} finally {

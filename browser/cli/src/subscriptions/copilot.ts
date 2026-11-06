@@ -1,7 +1,7 @@
 /**
  * GitHub Copilot through the Copilot SDK, run by the native host. GitHub's docs: "Use an OAuth
  * GitHub App to authenticate users through your application and pass their credentials to the
- * SDK" (authenticate-copilot-sdk, read 2026-10-28). Tabkyra signs the user in with its own
+ * SDK" (authenticate-copilot-sdk, read 2026-10-28). Polycarp signs the user in with its own
  * OAuth App (constants.ts) by the device flow, so no client secret exists anywhere, and passes
  * the user's token to the SDK. Each user's Copilot plan pays for their requests.
  *
@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { COPILOT } from "../../../src/subscriptions/constants.ts";
 import { type Fetch, SubscriptionError } from "./siwc.ts";
 import { readPrivateJson, removeFile, subscriptionsDir, withFileLock, writePrivateJson } from "./store.ts";
+import { COMMAND_NAME } from "../self.ts";
 
 export interface CopilotRecord {
 	login?: string;
@@ -259,7 +260,7 @@ export class CopilotAuth {
 
 	/**
 	 * Sign out deletes the token file. Revoking the grant on GitHub's side takes the app's client
-	 * secret, which Tabkyra deliberately doesn't have, so the user is pointed to their settings.
+	 * secret, which Polycarp deliberately doesn't have, so the user is pointed to their settings.
 	 */
 	async signOut(): Promise<{ revoked: false; revokeUrl: string }> {
 		this.generation++;
@@ -273,7 +274,7 @@ export class CopilotAuth {
 
 // ---- the Copilot SDK ---------------------------------------------------------------------
 
-/** Where `tabkyra copilot-sdk install` puts the pinned SDK. */
+/** Where `polycarp browser copilot-sdk install` puts the pinned SDK. */
 export function sdkInstallDir(): string {
 	return process.env.TABKYRA_COPILOT_SDK_DIR || join(homedir(), ".local", "share", "tabkyra", "copilot-sdk");
 }
@@ -288,7 +289,7 @@ export function sdkInstalled(): boolean {
 	return sdkSearchRoots().some((root) => existsSync(join(dirname(root), "node_modules", ...COPILOT.sdkPackage.split("/"), "package.json")));
 }
 
-/** The parts of the SDK Tabkyra uses, typed here so the CLI builds without the 160 MB package. */
+/** The parts of the SDK Polycarp uses, typed here so the CLI builds without the 160 MB package. */
 export interface SdkToolResult {
 	textResultForLlm: string;
 	binaryResultsForLlm?: Array<{ data: string; mimeType: string; type: "image" }>;
@@ -338,11 +339,11 @@ export function loadSdk(): SdkModule {
 	if (sdkInstalled() || failure)
 		throw new SubscriptionError(
 			"sdk_load_failed",
-			`GitHub's Copilot SDK is installed but didn't load (${failure instanceof Error ? failure.message : "unknown error"}). Run \`tabkyra copilot-sdk install\` again.`,
+			`GitHub's Copilot SDK is installed but didn't load (${failure instanceof Error ? failure.message : "unknown error"}). Run \`${COMMAND_NAME} copilot-sdk install\` again.`,
 		);
 	throw new SubscriptionError(
 		"sdk_missing",
-		`GitHub's Copilot SDK isn't installed. Run \`tabkyra copilot-sdk install\` (installs ${COPILOT.sdkPackage}@${COPILOT.sdkVersion}, about 160 MB).`,
+		`GitHub's Copilot SDK isn't installed. Run \`${COMMAND_NAME} copilot-sdk install\` (installs ${COPILOT.sdkPackage}@${COPILOT.sdkVersion}, about 160 MB).`,
 	);
 }
 

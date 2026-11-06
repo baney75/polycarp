@@ -1,7 +1,7 @@
 /**
  * Bug reports are off unless the user turns them on. While on, errors from the side panel
  * are kept locally, redacted, in a short ring buffer. Nothing leaves the browser on its own:
- * the user reviews and edits the report in Tabkyra, copies it, and pastes it into a GitHub
+ * the user reviews and edits the report in Polycarp, copies it, and pastes it into a GitHub
  * issue they open and submit themselves.
  */
 
@@ -43,11 +43,11 @@ export function redactSecrets(text: string): string {
 
 /**
  * Strip what could identify the user or leak a secret. Web addresses become `[url]`
- * (paths and hosts can name people, records or accounts); Tabkyra's own extension scripts
+ * (paths and hosts can name people, records or accounts); Polycarp's own extension scripts
  * keep only the file name, which is what a maintainer needs from a stack trace.
  */
 export function redact(text: string): string {
-	// Tabkyra's own script URLs keep only the file name, and only when it looks like one of its
+	// Polycarp's own script URLs keep only the file name, and only when it looks like one of its
 	// build files ("chunk-4f2a.js", at most 24 characters before the extension) followed by a line number or a break; anything else in the
 	// path (a key, an address, a user name) becomes "[file]". The name is set aside so the
 	// long-token rule can't eat it. The query and fragment stay until the secret rules have read
@@ -96,7 +96,7 @@ export function addEntry(log: BugEntry[], error: unknown, now = new Date()): Bug
 /** The report text the user reviews and edits before anything is shared. */
 export function reportText(version: string, log: BugEntry[], userAgent: string): string {
 	return [
-		`Tabkyra ${version}`,
+		`Polycarp ${version}`,
 		`Browser: ${redact(userAgent)}`,
 		"",
 		"What were you doing?",

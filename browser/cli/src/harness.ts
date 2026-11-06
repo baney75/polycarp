@@ -1,15 +1,15 @@
 /**
- * Coding harnesses Tabkyra can serve: how to find them, whether the MCP server is
+ * Coding harnesses Polycarp can serve: how to find them, whether the MCP server is
  * configured, and how to add it. Claude Code and Codex have `mcp add` commands; the
  * others get a config block to paste, because editing their JSON for the user would
  * risk clobbering comments and other servers.
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, join } from "node:path";
-import { cliLauncherPath } from "./install.ts";
+import { cliLauncherPath, launcherWorks } from "./install.ts";
 import { COMPILED } from "./self.ts";
 
 /**
@@ -53,21 +53,14 @@ export function which(name: string): string | undefined {
 	return undefined;
 }
 
-/** The absolute path harness configs run: the launcher `tabkyra install` writes. */
+/** The absolute path harness configs run: the launcher `polycarp browser install` writes. */
 export function tabkyraBinary(): string {
 	return cliLauncherPath();
 }
 
-/** The launcher exists, is executable, and the script it runs is still there. */
+/** The agent launcher exists, is executable, and the program it runs is still there. */
 export function launcherValid(): boolean {
-	const path = cliLauncherPath();
-	try {
-		if (process.platform !== "win32" && (statSync(path).mode & 0o111) === 0) return false;
-		const script = readFileSync(path, "utf8").match(/"([^"]+)"\s+(?:"\$@"|%\*)/)?.[1];
-		return Boolean(script && existsSync(script));
-	} catch {
-		return false;
-	}
+	return launcherWorks(cliLauncherPath());
 }
 
 function sameFile(a: string, b: string): boolean {
@@ -208,7 +201,7 @@ export function harnesses(binary = tabkyraBinary()): Harness[] {
 		snippet: snippet({ mcpServers: { tabkyra: { type: "stdio", command: binary, args: ["mcp"], enabled: true } } }),
 	});
 
-	// pi has no MCP client; `tabkyra pi-extension` writes a native pi extension instead.
+	// pi has no MCP client; `polycarp browser pi-extension` writes a native pi extension instead.
 	// Setup prints that command rather than running it, like the other print-only harnesses.
 	const piFile = join(home, ".pi", "agent", "extensions", "tabkyra.ts");
 	list.push({

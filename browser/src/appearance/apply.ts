@@ -91,7 +91,7 @@ export function onAppearance(listener: (choice: ThemeChoice) => void): () => voi
 }
 
 /**
- * A panel with no saved choice takes the one `tabkyra theme` saved on this computer, so the first
+ * A panel with no saved choice takes the one `polycarp browser theme` saved on this computer, so the first
  * click on Light or Dark (or any later change) starts from what the pages already show. Quiet when the helper is absent; it tries again next load.
  */
 async function seedFromHelper(): Promise<void> {

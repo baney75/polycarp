@@ -7,7 +7,7 @@
  * - Closing the group (its last tab) ends the session; its record goes.
  * - A window closing is not a gesture: the session survives and reopens in another window.
  *
- * Side panel chats keep their old rules (their tabs are the user's already). Changes Tabkyra
+ * Side panel chats keep their old rules (their tabs are the user's already). Changes Polycarp
  * makes itself (an agent closing or releasing a tab) are skipped via isAgentTouching.
  * BrowserSession.reconcile applies the same rules to moves made while the worker slept.
  */

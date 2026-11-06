@@ -19,7 +19,7 @@ mkdirSync(socketDir, { mode: 0o700 });
 after(() => rmSync(home, { recursive: true, force: true }));
 
 function run(...args) {
-	// Nothing from the developer's own Tabkyra setup (config dir, session, extension dir) leaks in.
+	// Nothing from the developer's own Polycarp setup (config dir, session, extension dir) leaks in.
 	const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("TABKYRA_") && k !== "XDG_CONFIG_HOME"));
 	Object.assign(env, { HOME: home, TABKYRA_SOCKET_DIR: socketDir, NO_COLOR: "1" });
 	// A command that ignores an unknown flag could start serving; the timeout turns that into a failure.
@@ -217,7 +217,7 @@ test("help rows and the parsers agree on every flag, including setup's and updat
 	});
 	const { COMMANDS, LIBRARY_OPTIONS, argsProblem, helpRows, parseSetupArgs, parseUpdateArgs } = await import(out);
 	// setup and update parse their own options: every flag their help row shows is one they take.
-	const sample = { "--timeout": "5", "--channel": "stable", "--auto-check": "on" };
+	const sample = { "--timeout": "5", "--channel": "stable", "--auto-check": "on", "--browser": "Helium" };
 	for (const [name, parse, extra] of [["setup", parseSetupArgs, []], ["update", parseUpdateArgs, ["--check"]]]) {
 		for (const flag of COMMANDS.find((c) => c.name === name).flags) {
 			const args = [...extra.filter((e) => e !== flag), flag, ...(sample[flag] ? [sample[flag]] : [])];

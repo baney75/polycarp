@@ -1,6 +1,7 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { html, type TemplateResult } from "lit";
 import { agentSetupPrompt } from "../agent-setup-prompt.js";
+import { hostCommand } from "../bridge/host-command.js";
 import { Toast } from "./Toast.js";
 
 function extensionVersion(): string {
@@ -14,7 +15,7 @@ function extensionVersion(): string {
 async function copy(): Promise<void> {
 	let prompt: string;
 	try {
-		prompt = agentSetupPrompt(extensionVersion());
+		prompt = agentSetupPrompt(extensionVersion(), hostCommand());
 	} catch (err) {
 		Toast.error(`Couldn't build the setup prompt: ${err instanceof Error ? err.message : String(err)}`);
 		return;

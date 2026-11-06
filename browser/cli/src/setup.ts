@@ -1,16 +1,17 @@
 /**
- * `tabkyra setup`: build, register, wire up the harnesses, then load and connect.
+ * `polycarp browser setup`: build, register, wire up the harnesses, then load and connect.
  * Interactive by default; `--yes` accepts every offer. It edits a harness config only
  * after a yes and always points harnesses at the absolute path of the tabkyra launcher.
  */
 
+import { COMMAND_NAME } from "./self.ts";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { BridgeClient, listSockets } from "./client.ts";
 import { buildState, builtVersion, sourceVersion } from "./doctor.ts";
 import { harnesses, launcherValid, runCommand, shellJoin, tabkyraBinary, which } from "./harness.ts";
-import { browserDirs, install } from "./install.ts";
+import { browserDirs, install, installedBrowserDirs, registeredBrowserNames } from "./install.ts";
 import { extensionDir, repoRoot } from "./paths.ts";
 import { installSkills, skillTargets } from "./skill.ts";
 import { SKILLS } from "./skills-catalog.ts";
@@ -23,6 +24,8 @@ export interface SetupOptions {
 	wait: boolean;
 	/** Seconds to wait for the extension; 0 waits until Ctrl+C. */
 	timeoutS: number;
+	/** Register this browser (by the name browserDirs() gives it) in addition to the ones already registered. */
+	browser?: string;
 }
 
 /** Without a terminal nobody can press Ctrl+C on an endless wait, so it gets a bound. */
@@ -64,27 +67,41 @@ async function ensureBuild(options: SetupOptions): Promise<boolean> {
 	// The extension compiles against sibling checkouts of pi-mono and mini-lit.
 	if (!existsSync(join(root, "..", "pi-mono")) || !existsSync(join(root, "node_modules"))) {
 		if (!run("./scripts/setup-siblings.sh", [], root)) {
-			console.log(`  ${sym.fail} Sibling setup failed. Fix the error above, then run ${c.bold("tabkyra setup")} again.`);
+			console.log(`  ${sym.fail} Sibling setup failed. Fix the error above, then run ${c.bold(`${COMMAND_NAME} setup`)} again.`);
 			return false;
 		}
 	}
 	if (!run("npm", ["run", "build"], root, { ...process.env, TABKYRA_NO_BUMP: "1" }) || buildState() !== "ok") {
-		console.log(`  ${sym.fail} The build failed. Fix the error above, then run ${c.bold("tabkyra setup")} again.`);
+		console.log(`  ${sym.fail} The build failed. Fix the error above, then run ${c.bold(`${COMMAND_NAME} setup`)} again.`);
 		return false;
 	}
 	console.log(`  ${sym.ok} Extension built ${c.dim(`(${builtVersion()})`)}`);
 	return true;
 }
 
-function registerHost(): boolean {
-	const result = install();
+/**
+ * Which browsers setup writes a native-host link for: the ones already registered (refreshed), plus one the person chose with
+ * --browser. A machine with none registered yet gets the installed browsers (a first setup has to connect something).
+ * Never a browser that is only a leftover data folder, and never every folder there is.
+ */
+export function setupBrowsers(options: Pick<SetupOptions, "browser">): string[] {
+	const names = new Set(registeredBrowserNames());
+	if (options.browser !== undefined) names.add(options.browser);
+	if (names.size === 0) for (const { name } of installedBrowserDirs()) names.add(name);
+	return [...names];
+}
+
+function registerHost(options: SetupOptions): boolean {
+	const targets = setupBrowsers(options);
+	// A working launcher stays as it is (a standalone install's, say); only a broken one is rewritten.
+	const result = install({ browsers: targets });
 	if (process.platform === "win32") {
 		for (const key of result.written) console.log(`  ${sym.ok} ${key}`);
 		return result.written.length > 0;
 	}
-	const present = browserDirs().filter(({ dir }) => existsSync(dir));
+	const present = browserDirs().filter(({ name, dir }) => targets.includes(name) && existsSync(dir));
 	if (present.length === 0) {
-		console.log(`  ${sym.fail} No Chromium browser profile found. Open your browser once, then run ${c.bold("tabkyra setup")} again.`);
+		console.log(`  ${sym.fail} No Chromium browser profile found. Open your browser once, then run ${c.bold(`${COMMAND_NAME} setup`)} again.`);
 		return false;
 	}
 	for (const { name, dir } of present) {
@@ -180,11 +197,11 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 	let ok = true;
 	for (const h of found) {
 		if (h.configured === true) {
-			console.log(`  ${sym.ok} ${h.name.padEnd(12)} ${c.dim("already has Tabkyra")}`);
+			console.log(`  ${sym.ok} ${h.name.padEnd(12)} ${c.dim("already has Polycarp")}`);
 			continue;
 		}
 		if (h.configured === undefined) {
-			console.log(`  ${sym.warn} ${h.name}: couldn't tell whether Tabkyra is configured. ${c.dim("Run tabkyra doctor for details.")}`);
+			console.log(`  ${sym.warn} ${h.name}: couldn't tell whether Polycarp is configured. ${c.dim(`Run ${COMMAND_NAME} doctor for details.`)}`);
 			continue;
 		}
 		const replacing = h.configured === "stale" || h.configured === "other";
@@ -196,7 +213,7 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 				console.log(`  ${sym.dot} ${c.bold(h.name)}: run ${shown}`);
 				continue;
 			}
-			let question = `Add Tabkyra to ${c.bold(h.name)}?`;
+			let question = `Add Polycarp to ${c.bold(h.name)}?`;
 			if (h.configured === "stale") question = `${c.bold(h.name)}'s tabkyra entry points at a missing command. Replace it?`;
 			if (h.configured === "other") question = `${c.bold(h.name)}'s tabkyra entry runs ${h.currentCommand}. Replace it with this install?`;
 			// An entry running some other existing command may be the user's own wrapper:
@@ -236,8 +253,8 @@ async function offerSkill(options: SetupOptions): Promise<void> {
 	if (targets.length === 0) return;
 	const names = targets.map((t) => t.name).join(", ");
 	const skills = [...SKILLS.keys()].join(", ");
-	if (!(await confirm(`  ${sym.dot} Install the Tabkyra skills (${skills}) for ${names}? ${c.dim("(tabkyra skill install)")}`, { assumeYes: options.yes }))) {
-		console.log(`    ${c.dim("Later:")} tabkyra skill install`);
+	if (!(await confirm(`  ${sym.dot} Install the Polycarp skills (${skills}) for ${names}? ${c.dim(`(${COMMAND_NAME} skill install)`)}`, { assumeYes: options.yes }))) {
+		console.log(`    ${c.dim("Later:")} ${COMMAND_NAME} skill install`);
 		return;
 	}
 	const results = installSkills({ force: false, all: false });
@@ -246,7 +263,7 @@ async function offerSkill(options: SetupOptions): Promise<void> {
 		const ok = mine.filter((r) => r.state === "written" || r.state === "current").length;
 		if (ok) console.log(`  ${sym.ok} ${t.name}: ${ok} skills ${c.dim(t.dir)}`);
 		for (const r of mine.filter((r) => r.state === "linked")) console.log(`  ${sym.warn} ${t.name}: ${r.file} is a symbolic link; left alone`);
-		for (const r of mine.filter((r) => r.state === "kept")) console.log(`  ${sym.warn} ${t.name}: ${r.file} is not ours; left alone ${c.dim(`(tabkyra skill install ${r.skill} --force)`)}`);
+		for (const r of mine.filter((r) => r.state === "kept")) console.log(`  ${sym.warn} ${t.name}: ${r.file} is not ours; left alone ${c.dim(`(${COMMAND_NAME} skill install ${r.skill} --force)`)}`);
 	}
 }
 
@@ -269,7 +286,7 @@ async function connectedOnCurrentBuild(state: ReloadState): Promise<Probe & { re
 	if (!built || p.version === built) return { ...p, ready: true };
 	if (state.reloadedAt === undefined && p.socket) {
 		state.reloadedAt = Date.now();
-		console.log(`  ${sym.warn} The browser runs Tabkyra ${p.version}, the build is ${built}. Reloading the extension...`);
+		console.log(`  ${sym.warn} The browser runs Polycarp ${p.version}, the build is ${built}. Reloading the extension...`);
 		await reloadExtension(p.socket);
 		return { ...p, ready: false };
 	}
@@ -293,7 +310,7 @@ async function loadExtension(options: SetupOptions): Promise<boolean> {
 					`   and click ${c.bold("Load unpacked")}.`,
 					`${c.brass("2")}  Pick this folder:`,
 					`   ${c.cyan(dir)}`,
-					`${c.brass("3")}  Optional: click ${c.bold("Details")} on Tabkyra and turn on`,
+					`${c.brass("3")}  Optional: click ${c.bold("Details")} on Polycarp and turn on`,
 					`   ${c.bold("Allow user scripts")} (faster page scripts).`,
 				],
 				"One step in your browser",
@@ -306,7 +323,7 @@ async function loadExtension(options: SetupOptions): Promise<boolean> {
 		}
 	}
 	if (!options.wait) {
-		console.log(`  ${c.dim("Not waiting (--no-wait). Check later with")} ${c.bold("tabkyra status")}`);
+		console.log(`  ${c.dim("Not waiting (--no-wait). Check later with")} ${c.bold(`${COMMAND_NAME} status`)}`);
 		return false;
 	}
 
@@ -327,14 +344,14 @@ async function loadExtension(options: SetupOptions): Promise<boolean> {
 		last = p;
 		if (p.mismatch) {
 			if (live) process.stdout.write("\r\x1b[2K");
-			console.log(`  ${sym.fail} The browser still runs Tabkyra ${p.version} after a reload; the build is ${builtVersion()}.`);
-			console.log(`  It is probably loaded from another folder. On chrome://extensions, remove Tabkyra and load unpacked:`);
+			console.log(`  ${sym.fail} The browser still runs Polycarp ${p.version} after a reload; the build is ${builtVersion()}.`);
+			console.log(`  It is probably loaded from another folder. On chrome://extensions, remove Polycarp and load unpacked:`);
 			console.log(`  ${c.cyan(dir)}`);
 			return false;
 		}
 		if (p.ready) {
 			if (live) process.stdout.write("\r\x1b[2K");
-			console.log(`  ${sym.ok} ${c.bold("Connected.")} Tabkyra can reach your browser ${c.dim(`(${p.version ?? "unknown version"})`)}.`);
+			console.log(`  ${sym.ok} ${c.bold("Connected.")} Polycarp can reach your browser ${c.dim(`(${p.version ?? "unknown version"})`)}.`);
 			return true;
 		}
 		if (live) process.stdout.write(`\r  ${c.brass(frames[frame++ % frames.length])} Waiting for the extension to connect ${c.dim("(Ctrl+C to stop)")}`);
@@ -344,10 +361,10 @@ async function loadExtension(options: SetupOptions): Promise<boolean> {
 	console.log(`  ${sym.fail} The extension did not connect within ${options.timeoutS} s.`);
 	if (last.connected) console.log(`  It is connected but still runs an old build. Reload it on chrome://extensions.`);
 	else if (reload.reloadedAt !== undefined) {
-		console.log(`  It went away after the reload. On chrome://extensions, check that Tabkyra is on and loaded from:`);
+		console.log(`  It went away after the reload. On chrome://extensions, check that Polycarp is on and loaded from:`);
 		console.log(`  ${c.cyan(dir)}`);
 	} else if (last.error) console.log(`  Last error: ${last.error}`);
-	console.log(`  If it is loaded, reload it once on chrome://extensions, then run ${c.bold("tabkyra doctor")}.`);
+	console.log(`  If it is loaded, reload it once on chrome://extensions, then run ${c.bold(`${COMMAND_NAME} doctor`)}.`);
 	return false;
 }
 
@@ -361,9 +378,9 @@ export async function runSetup(options: SetupOptions): Promise<number> {
 	if (!(await ensureBuild(opts))) return 1;
 
 	step(2, "Register the native host with your browsers");
-	if (!registerHost()) return 1;
+	if (!registerHost(opts)) return 1;
 	if (!launcherValid()) {
-		install({ force: true });
+		install({ browsers: setupBrowsers(opts), keepLaunchers: false });
 		if (!launcherValid()) {
 			console.log(`  ${sym.fail} Could not write the agent launcher at ${tabkyraBinary()}. Check that ~/.config/tabkyra is writable.`);
 			return 1;
@@ -380,11 +397,11 @@ export async function runSetup(options: SetupOptions): Promise<number> {
 
 	console.log();
 	if (connected && harnessesOk) {
-		console.log(`${sym.ok} ${c.bold("Tabkyra is ready.")} Ask your agent to open a page, for example:`);
-		console.log(`  ${c.dim('"Use tabkyra to open news.ycombinator.com and list the top five stories."')}`);
+		console.log(`${sym.ok} ${c.bold("Polycarp is ready.")} Ask your agent to open a page, for example:`);
+		console.log(`  ${c.dim('"Use Polycarp to open news.ycombinator.com and list the top five stories."')}`);
 		return 0;
 	}
 	const next = connected ? "fix the agent step above" : "load the extension";
-	console.log(`${sym.warn} ${c.bold("Almost there.")} ${next[0].toUpperCase()}${next.slice(1)}, then run ${c.bold("tabkyra doctor")} to check everything.`);
+	console.log(`${sym.warn} ${c.bold("Almost there.")} ${next[0].toUpperCase()}${next.slice(1)}, then run ${c.bold(`${COMMAND_NAME} doctor`)} to check everything.`);
 	return 1;
 }

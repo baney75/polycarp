@@ -11,6 +11,7 @@
  * ten per ten minutes, counted in a private file so a new host process does not reset it. Nothing here prints to stdout: that stream is the channel to the browser.
  */
 
+import { COMMAND_NAME } from "./self.ts";
 import type { HostConnect } from "../../src/bridge/protocol.ts";
 import {
 	type ApprovalCode,
@@ -156,13 +157,13 @@ export interface ConnectOptions {
 
 type Reply = (frame: HostConnect) => void;
 
-const JOIN_REFUSED = "This computer already has a public address or a hub link. Run tabkyra remote off, tabkyra hub off or tabkyra link off first.";
+const JOIN_REFUSED = `This computer already has a public address or a hub link. Run ${COMMAND_NAME} remote off, ${COMMAND_NAME} hub off or ${COMMAND_NAME} link off first.`;
 const MINT_FILE = "connect-mints.json";
 
-const NOT_MANAGER = "This device isn't a manager, so it can't ask the hub for codes. Link it with a code from tabkyra hub code --manage, or run the command on the hub.";
-const NO_ROUTE = "This computer has no public address yet. Run tabkyra remote setup (one computer) or tabkyra hub setup --public-url https://host (many devices) first.";
+const NOT_MANAGER = `This device isn't a manager, so it can't ask the hub for codes. Link it with a code from ${COMMAND_NAME} hub code --manage, or run the command on the hub.`;
+const NO_ROUTE = `This computer has no public address yet. Run ${COMMAND_NAME} remote setup (one computer) or ${COMMAND_NAME} hub setup --public-url https://host (many devices) first.`;
 
-const GENERIC_FAILURE = "That didn't work on this computer. Try again, or run the matching tabkyra command in a terminal.";
+const GENERIC_FAILURE = `That didn't work on this computer. Try again, or run the matching ${COMMAND_NAME} command in a terminal.`;
 const unreadable = (file: string) => `${file} is unreadable. Fix it or move it aside.`;
 
 /** The longest sentence that passes through from the library or a hub; the panel shows it as written. */
@@ -179,7 +180,7 @@ export function safeMessage(err: unknown, file?: string): string {
 	// Text that quotes the hub or the network never passes: a hub can echo a request header, and the credential is in it.
 	if (err instanceof HubCodeError) return hubCodeFailure(err.status).message;
 	if (err instanceof ConnectError || err instanceof CodeLimitError || err instanceof LinkError) return cap(err.message);
-	if (err instanceof LockTimeoutError) return "Another Tabkyra window is busy with that. Try again in a moment.";
+	if (err instanceof LockTimeoutError) return "Another Polycarp window is busy with that. Try again in a moment.";
 	return file ? unreadable(file) : GENERIC_FAILURE;
 }
 
@@ -302,7 +303,7 @@ export class ConnectService {
 			this.stampCodeSlot(file, now);
 		} catch (err) {
 			// A short wait: the event loop is blocked meanwhile, and this host relays every agent's traffic.
-			if (err instanceof LockTimeoutError) throw new ConnectError("busy", "Another Tabkyra window is making a code. Try again in a moment.");
+			if (err instanceof LockTimeoutError) throw new ConnectError("busy", "Another Polycarp window is making a code. Try again in a moment.");
 			throw err;
 		}
 	}
@@ -357,7 +358,7 @@ export class ConnectService {
 	private async deviceCode(): Promise<DeviceCode> {
 		const status = this.status();
 		if (status.route === "none") throw new ConnectError("unavailable", NO_ROUTE);
-		if (status.route === "remote") throw new ConnectError("unavailable", "This computer serves one connector for itself. To add other devices behind one connector, run tabkyra hub setup --public-url https://host instead.");
+		if (status.route === "remote") throw new ConnectError("unavailable", `This computer serves one connector for itself. To add other devices behind one connector, run ${COMMAND_NAME} hub setup --public-url https://host instead.`);
 		if (status.route === "link" && !status.link?.manage) throw new ConnectError("unavailable", NOT_MANAGER);
 		this.takeCodeSlot();
 		try {
@@ -390,7 +391,7 @@ export class ConnectService {
 			try {
 				return await withFileLockAsync(linkFile(), async () => fn(), REQUEST_LOCK_MS);
 			} catch (err) {
-				if (err instanceof LockTimeoutError) throw new ConnectError("busy", "Another Tabkyra window is joining a hub. Try again in a moment.");
+				if (err instanceof LockTimeoutError) throw new ConnectError("busy", "Another Polycarp window is joining a hub. Try again in a moment.");
 				throw err;
 			}
 		};
@@ -425,7 +426,7 @@ export class ConnectService {
 				},
 			);
 			if (result.kind === "failed") throw enrollFailure(result, call.hubUrl);
-			if (!result.ok) throw new ConnectError("linked_no_service", `Linked as ${result.name}, but the background service didn't start; run tabkyra link status.`);
+			if (!result.ok) throw new ConnectError("linked_no_service", `Linked as ${result.name}, but the background service didn't start; run ${COMMAND_NAME} link status.`);
 			return { name: result.name, manage: result.manage, scopes: result.scopes };
 		} finally {
 			clearInterval(keepAlive);
@@ -437,7 +438,7 @@ export class ConnectService {
 /** What a hub's refusal of a code request says to a person: a fixed sentence for the status, never the hub's own words. */
 function hubCodeFailure(status: number | undefined): ConnectError {
 	if (status === undefined) return new ConnectError("failed", "Couldn't reach the hub. Check this computer's connection.");
-	if (status === 401) return new ConnectError("failed", "This device's link was revoked. Run tabkyra link status.");
+	if (status === 401) return new ConnectError("failed", `This device's link was revoked. Run ${COMMAND_NAME} link status.`);
 	if (status === 429) return new ConnectError("rate_limited", "The hub is rate limiting code requests. Wait a few minutes and try again.");
 	if (status === 403) return new ConnectError("unavailable", "This device isn't a manager on the hub.");
 	return new ConnectError("failed", "The hub refused to make a code.");
@@ -454,7 +455,7 @@ function enrollFailure(result: Extract<EnrollResult, { kind: "failed" }>, hubUrl
 		case "unreadable":
 			return new ConnectError("failed", unreadable(linkFile()));
 		case "launcher":
-			return new ConnectError("failed", "Tabkyra's launcher isn't a working one, so the background service would have nothing to start. Run tabkyra install, then try again.");
+			return new ConnectError("failed", `Polycarp's launcher isn't a working one, so the background service would have nothing to start. Run ${COMMAND_NAME} install, then try again.`);
 		case "unreachable": {
 			let host = "the hub";
 			try {
@@ -465,7 +466,7 @@ function enrollFailure(result: Extract<EnrollResult, { kind: "failed" }>, hubUrl
 			return new ConnectError("failed", `Couldn't reach ${host}. Check the address and this computer's connection.`);
 		}
 		case "malformed":
-			return new ConnectError("failed", "The hub's answer wasn't one Tabkyra accepts, so nothing was linked.");
+			return new ConnectError("failed", "The hub's answer wasn't one Polycarp accepts, so nothing was linked.");
 		case "hub":
 			if (cause.status === 401 && cause.invalidCode) return new ConnectError("failed", "That code is wrong, expired or already used. Get a new device code on the hub and try again.");
 			if (cause.status === 429) return new ConnectError("rate_limited", "The hub says there were too many wrong codes. Wait 15 minutes and try again.");

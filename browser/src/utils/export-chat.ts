@@ -44,7 +44,7 @@ function textFromContent(content: unknown): string {
 /** Serialize a conversation to readable Markdown. */
 export function chatToMarkdown(messages: AgentMessage[], title: string, model?: Model<any>): string {
 	const lines: string[] = [];
-	lines.push(`# ${title || "Tabkyra chat"}`);
+	lines.push(`# ${title || "Polycarp chat"}`);
 	lines.push("");
 	const meta: string[] = [`Exported: ${new Date().toLocaleString()}`];
 	if (model) meta.push(`Model: ${model.provider}/${model.id}`);

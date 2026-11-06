@@ -1,5 +1,6 @@
 /** Community skills in the service worker: forwards the side panel's buttons to the native host. */
 
+import { hostCommand } from "../bridge/host-command.js";
 import { sendCommunityAction } from "../bridge/native.js";
 import { PANEL_COMMUNITY_MESSAGE } from "./status.js";
 
@@ -10,7 +11,7 @@ function onPanelMessage(
 ): boolean | undefined {
 	const m = message as { type?: unknown; action?: unknown } | null;
 	if (!m || m.type !== PANEL_COMMUNITY_MESSAGE) return undefined;
-	// Only Tabkyra's own pages, never a content script on a web page.
+	// Only Polycarp's own pages, never a content script on a web page.
 	if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL(""))) {
 		sendResponse({ ok: false, message: "Refused" });
 		return undefined;
@@ -23,7 +24,7 @@ function onPanelMessage(
 	else
 		sendResponse({
 			ok: false,
-			message: "The Tabkyra native host isn't connected. Run tabkyra doctor in a terminal.",
+			message: `The Polycarp native host isn't connected. Run ${hostCommand()} doctor in a terminal.`,
 		});
 	return undefined;
 }

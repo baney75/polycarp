@@ -24,34 +24,34 @@ const extensionDir = join(here, "..", "..", "dist-chrome");
 // From the `key` in static/manifest.chrome.json; cli/test/install.test.mjs checks the derivation.
 const EXTENSION_ID = "kenehmggpggpiolepbjojeenmeapgfoc";
 
-const PAGE = `<!doctype html><title>Tabkyra e2e</title>
+const PAGE = `<!doctype html><title>Polycarp e2e</title>
 <label for="name">Name</label> <input id="name" placeholder="Your name">
 <button id="go" onclick="document.getElementById('out').textContent = 'Hello, ' + document.getElementById('name').value + '!'">Greet</button>
 <p id="out">waiting</p>`;
 
-const ONLOAD_PAGE = `<!doctype html><title>Tabkyra onload</title><p id="x">before</p>
+const ONLOAD_PAGE = `<!doctype html><title>Polycarp onload</title><p id="x">before</p>
 <script>alert('Welcome back!'); document.getElementById('x').textContent = 'after';</script>`;
 
-const TYPING_PAGE = `<!doctype html><title>Tabkyra typing</title>
+const TYPING_PAGE = `<!doctype html><title>Polycarp typing</title>
 <form id="f"><input id="q" onkeydown="if(!window.asked){window.asked=true;confirm('Start a new search?')}"></form>
 <p id="sent">not sent</p>
 <script>document.getElementById('f').onsubmit=(e)=>{e.preventDefault();document.getElementById('sent').textContent='sent';};</script>`;
 
-const DIALOG_PAGE = `<!doctype html><title>Tabkyra dialog</title>
+const DIALOG_PAGE = `<!doctype html><title>Polycarp dialog</title>
 <button id="del" onclick="document.getElementById('res').textContent = confirm('Really delete?') ? 'deleted' : 'kept'">Delete</button>
 <p id="res">untouched</p>`;
 
-const COUNTER_PAGE = `<!doctype html><title>Tabkyra counter</title>
+const COUNTER_PAGE = `<!doctype html><title>Polycarp counter</title>
 <button id="hit" onclick="fetch('/hit',{method:'POST'}).then(r=>r.text()).then(t=>document.getElementById('n').textContent=t)">Hit</button><p id="n">0</p>`;
 // Re-reading must not move a ref to another element: "Add row" puts a new button in front of Keep.
-const REFS_PAGE = `<!doctype html><title>Tabkyra refs</title><h1>Account</h1><label>Notes</label>
+const REFS_PAGE = `<!doctype html><title>Polycarp refs</title><h1>Account</h1><label>Notes</label>
 <div id="rows"><button id="keep" onclick="document.getElementById('r').textContent='kept'">Keep</button>
 <button id="del" onclick="document.getElementById('r').textContent='deleted'">Delete</button></div>
 <button id="add" onclick="const b=document.createElement('button');b.textContent='Danger';b.onclick=()=>document.getElementById('r').textContent='danger';document.getElementById('rows').prepend(b)">Add row</button>
 <p id="r">untouched</p>`;
 
 // Old refs that must fail: a frame that navigated, a node a list reused, a dialog that closed.
-const STALE_PAGE = `<!doctype html><title>Tabkyra stale</title>
+const STALE_PAGE = `<!doctype html><title>Polycarp stale</title>
 <iframe id="fr" src="/frame-a" style="width:300px;height:80px"></iframe>
 <button id="swap" onclick="document.getElementById('fr').src='/frame-b'">Swap frame</button>
 <button id="row" onclick="document.getElementById('r').textContent='invoice 5 deleted'">Delete invoice 5</button>
@@ -64,7 +64,7 @@ const FRAME_B = `<!doctype html><button onclick="parent.document.getElementById(
 
 // Where a click lands: a modal over a button, a link that wraps lines, a virtualized row whose
 // "Delete" button is reused for another row, a rich editor, a field in a closed dialog.
-const HIT_PAGE = `<!doctype html><title>Tabkyra hits</title><style>body{font:16px sans-serif} #col{width:140px}</style>
+const HIT_PAGE = `<!doctype html><title>Polycarp hits</title><style>body{font:16px sans-serif} #col{width:140px}</style>
 <button id="under" onclick="document.getElementById('r').textContent='under clicked'">Pay now</button>
 <div id="modal" style="position:fixed;inset:0;background:rgba(0,0,0,.3)"><button onclick="this.parentNode.remove()">Dismiss</button></div>
 <p id="col">Read the <a href="#wrap" onclick="document.getElementById('r').textContent='wrap clicked'">long policy link that wraps</a> today.</p>
@@ -80,7 +80,7 @@ const HIT_PAGE = `<!doctype html><title>Tabkyra hits</title><style>body{font:16p
 // frame under a banner in its parent page.
 const R = "document.getElementById('r').textContent";
 const LONG = "notifications@github.com [baney75/tabkyra] Pull request review requested on a very long subject line number ";
-const HIT2_PAGE = `<!doctype html><title>Tabkyra hits 2</title><style>body{font:16px sans-serif}</style>
+const HIT2_PAGE = `<!doctype html><title>Polycarp hits 2</title><style>body{font:16px sans-serif}</style>
 <ul><li id="mail">${LONG}1 <button onclick="${R}='archived 1'">Archive mail</button></li></ul>
 <button onclick="document.getElementById('mail').firstChild.textContent='${LONG}2 '">Next mail</button>
 <div role="grid"><div role="row" aria-rowindex="7"><div role="gridcell"><button onclick="${R}='grid '+this.closest('[role=row]').getAttribute('aria-rowindex')">Archive row</button></div></div></div>
@@ -94,7 +94,7 @@ const HIT2_PAGE = `<!doctype html><title>Tabkyra hits 2</title><style>body{font:
 
 // #89: a web component's slotted label, a frame inside a shadow root, a clickable row holding
 // its own Delete button, and a field in a frame under a banner whose name has an "s".
-const HIT3_PAGE = `<!doctype html><title>Tabkyra hits 3</title><style>body{font:16px sans-serif}</style>
+const HIT3_PAGE = `<!doctype html><title>Polycarp hits 3</title><style>body{font:16px sans-serif}</style>
 <script>
 customElements.define("my-btn", class extends HTMLElement { constructor() { super(); const r = this.attachShadow({ mode: "open" });
   r.innerHTML = '<button aria-label="Shadow save" style="padding:6px 20px"><slot></slot></button>';
@@ -114,7 +114,7 @@ const FRAME_C = `<!doctype html><input aria-label="Frame field">`;
 
 // Pages added by the tool-fix tests, served by path (see the server in before()).
 const extraPages = {};
-extraPages["/edit"] = `<!doctype html><title>Tabkyra edit</title>
+extraPages["/edit"] = `<!doctype html><title>Polycarp edit</title>
 <input id="t" aria-label="Task" value="first task"><p id="r">untouched</p>`;
 
 // TodoMVC's markup: item checkboxes carry no label, their text sits in a sibling <label>.
@@ -131,7 +131,7 @@ extraPages["/todo"] = `<!doctype html><title>TodoMVC</title>
 <footer class="info"><p>Part of <a href="http://todomvc.com/examples/checkbox-guide">TodoMVC</a></p><a href="/docs#first-task-howto">Docs</a></footer>`;
 
 // The first load logs and fetches: capture has to be on before it.
-extraPages["/boot"] = `<!doctype html><title>Tabkyra boot</title><p id="x">boot</p>
+extraPages["/boot"] = `<!doctype html><title>Polycarp boot</title><p id="x">boot</p>
 <script>console.log("boot-log"); fetch("/boot-data").then((r) => r.text());</script>`;
 
 // Radios sharing one parent, each with the label beside it (no `for`), and a checkbox in a big
@@ -220,7 +220,7 @@ function hostPid() {
 	return undefined;
 }
 
-/** Reload the extension the way `tabkyra reload` does, retrying while a fresh host waits for its hello. */
+/** Reload the extension the way `polycarp browser reload` does, retrying while a fresh host waits for its hello. */
 async function reloadExtension() {
 	const old = hostPid();
 	await until(() => (execFileSync(process.execPath, [cli, "reload"], { env: env(), stdio: "ignore" }), true), 30_000, "the extension to take a reload");
@@ -334,7 +334,7 @@ before(async () => {
 	});
 	devtools = await until(() => stderr.match(/DevTools listening on ws:\/\/([^/]+)\//)?.[1], 20_000, "Chromium to start");
 	// Developer mode, set the way the extensions page does: without it this Chromium disables an
-	// unpacked extension when it reloads, and the reload tests would unload Tabkyra for good.
+	// unpacked extension when it reloads, and the reload tests would unload Polycarp for good.
 	const version = await (await fetch(`http://${devtools}/json/version`)).json();
 	const { targetId } = await cdp(version.webSocketDebuggerUrl, "Target.createTarget", { url: "chrome://extensions" });
 	const page = await until(
@@ -394,11 +394,11 @@ test("open a page, snapshot, type, click and read back through MCP", async () =>
 		45_000,
 		"the extension to connect and open the page",
 	);
-	assert.match(nav, /Tabkyra e2e/);
+	assert.match(nav, /Polycarp e2e/);
 
 	const status = JSON.parse(await tool("status"));
 	assert.equal(status.connected, true);
-	assert.equal(status.tabGroup, "Tabkyra · e2e");
+	assert.equal(status.tabGroup, "Polycarp · e2e");
 	assert.equal(status.permissionMode, "ask");
 	assert.ok(status.tabs.some((t) => t.current && t.url.startsWith(pageUrl)), JSON.stringify(status.tabs));
 
@@ -556,7 +556,7 @@ test("refs follow rows and clicks reach only their target: prefix rows, grid, fo
 	// The title link under an overlay to the same address: the click goes where it meant.
 	const title = await call("click", { ref: refFor(page, "Card title") });
 	assert.equal(title.error, false, title.text);
-	await until(async () => ((await tool("get_page_text")).includes("Tabkyra counter") ? true : undefined), 10_000, "the card's page");
+	await until(async () => ((await tool("get_page_text")).includes("Polycarp counter") ? true : undefined), 10_000, "the card's page");
 });
 
 test("web components, a frame in a shadow root, a row's own button, a frame field under a banner", async () => {
@@ -586,7 +586,7 @@ test("web components, a frame in a shadow root, a row's own button, a frame fiel
 	// A checkbox under its label, where the label also holds a link: the click ticks the box.
 	await tool("click", { ref: refFor(page, "Consent") });
 	assert.match(await text(), /consented/);
-	assert.doesNotMatch(await text(), /Tabkyra counter/);
+	assert.doesNotMatch(await text(), /Polycarp counter/);
 
 	// A dead ref with a selector falls back to the selector, as before.
 	const plain = await call("fill", { ref: "e1", selector: "#plain", value: "fallback" });
@@ -761,7 +761,7 @@ test("three agents in one project at once: a group each, titled with agent and p
 		const tabs = (await groupsOf()).filter((t) => /\?agent=\d/.test(t.url));
 		const titles = new Set(tabs.map((t) => t.group));
 		assert.equal(titles.size, 3, JSON.stringify(tabs));
-		for (const title of titles) assert.match(title, /^Tabkyra · claude · demo-shop( \d)?$/);
+		for (const title of titles) assert.match(title, /^Polycarp · claude · demo-shop( \d)?$/);
 		assert.equal(new Set(tabs.map((t) => t.color)).size, 3, "two concurrent sessions share a color");
 		// The CLI sees all three, connected.
 		const listed = JSON.parse(tk("sessions", "--json")).filter((s) => s.project === "demo-shop");
@@ -817,7 +817,7 @@ test("tabs_release, a capped group, and ending and renaming a session from the C
 		assert.match(over.content[0].text, /^tab_limit: Your tab group already has 15 tabs.*tabs_close/);
 		const name = JSON.parse(tk("sessions", "--json")).find((s) => s.project === "release").name;
 		assert.match(tk("sessions", "rename", name, "release-demo"), /is now release-demo/);
-		assert.match(await on(agent, "tabs_context"), /^Session release-demo \| group "Tabkyra · claude · release-demo"/);
+		assert.match(await on(agent, "tabs_context"), /^Session release-demo \| group "Polycarp · claude · release-demo"/);
 		assert.match(tk("sessions", "end", "release-demo", "--close"), /Ended release-demo: 15 tabs closed/);
 		assert.match(await on(agent, "tabs_context"), /News: The user ended your session from the terminal and closed its tabs/);
 	} finally {
@@ -989,7 +989,7 @@ test("type after the debugger detached before any key was sent re-attaches and t
 	await go("edit");
 	await tool("fill", { selector: "#t", value: "" });
 	await tool("click", { selector: "#t" });
-	// A detach nobody was told about: Tabkyra still believes it is attached.
+	// A detach nobody was told about: Polycarp still believes it is attached.
 	await sw(`chrome.debugger.detach({ tabId: ${await tabOn("edit")} }).then(() => true)`);
 	await tool("type", { selector: "#t", text: "abc" });
 	assert.equal(await js("document.getElementById('t').value"), "abc");
@@ -1029,7 +1029,7 @@ test("expected failures carry their own code and no stack trace; internal is for
 		["a run_js that throws (isolated world)", "script_error", () => failure("run_js", { code: "(() => { throw new Error('boom') })()" })],
 		["a run_js that throws (main world)", "script_error", () => failure("run_js", { code: "(() => { throw new Error('boom') })()", world: "main" })],
 		["a bad regex", "bad_params", () => failure("read_console", { pattern: "(" })],
-		// The page's own SyntaxError reads like Tabkyra's bad-regex message but is the page's.
+		// The page's own SyntaxError reads like Polycarp's bad-regex message but is the page's.
 		["a run_js whose own regex is invalid", "script_error", () => failure("run_js", { code: "new RegExp('(')" })],
 		["a run_js error that reads like a missing selector", "script_error", () => failure("run_js", { code: "(() => { throw new Error('Selector not found: x') })()", world: "main" })],
 		["a wait that timed out", "timeout", () => failure("wait", { text: "never appears", timeoutMs: 300 })],

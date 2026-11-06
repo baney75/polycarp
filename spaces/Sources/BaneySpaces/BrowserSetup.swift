@@ -38,6 +38,8 @@ final class BrowserModel: ObservableObject {
         guard let helper, !refreshing else { return }
         refreshing = true
         pollQueue.async { [weak self] in
+            // A new app brings a new extension: the copy the browser loads is refreshed before anyone is asked to reload.
+            _ = self?.loadableFolder()
             let result = Self.run(helper, ["doctor", "--json"], timeout: 12)
             let parsed = BrowserStatus.parse(result.out)
             DispatchQueue.main.async {
@@ -47,28 +49,44 @@ final class BrowserModel: ObservableObject {
         }
     }
 
-    /// Registers the helper with the browsers, then opens the browser on its extensions page with the folder to load shown.
+    /// The Extension folder in Application Support, current for this app (see `ExtensionCopy`).
+    func loadableFolder() -> URL? {
+        guard let source = extensionFolder else { return nil }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+        return ExtensionCopy.refresh(source: source, supportDir: Product.supportDir(home: home), appVersion: version)
+    }
+
+    /// The version of the extension shipped in this app.
+    var bundledVersion: String? { extensionFolder.flatMap { ExtensionCopy.manifestVersion(of: $0) } }
+
+    /// One row per installed browser; each says whether it holds the connection (the helper names the browser).
+    var rows: [BrowserRow] { status.map { BrowserRows.rows($0, bundledVersion: bundledVersion) } ?? [] }
+
+    /// Registers the helper with this one browser, opens its extensions page, and shows the panel with the folder to drag.
     func connect(_ browser: String) {
-        guard let helper, let folder = extensionFolder else { return }
+        guard let helper else { return }
         busy = true; message = nil
         queue.async { [weak self] in
-            // Write down what `install --force` is about to overwrite, once, for uninstall.sh to put back.
+            // Write down what the helper may overwrite, once, for uninstall.sh to put back.
             let home = FileManager.default.homeDirectoryForCurrentUser
             BrowserPrevious.record(home: home, store: Product.supportDir(home: home).appendingPathComponent("browser-previous", isDirectory: true))
-            let result = Self.run(helper, ["install", "--force"], timeout: 30)
+            let folder = self?.loadableFolder()
+            let result = Self.run(helper, ["install", "--browser", browser], timeout: 30)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.busy = false
-                if result.code != 0 { self.message = "Couldn't register with \(browser): \(result.text)"; return }
-                NSWorkspace.shared.activateFileViewerSelecting([folder])
-                let name = BrowserBundle.appName(for: browser)
-                let candidates = ["/Applications/\(name).app", NSHomeDirectory() + "/Applications/\(name).app"]
-                if let path = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }),
-                   let url = URL(string: BrowserBundle.extensionsAddress) {
-                    NSWorkspace.shared.open([url], withApplicationAt: URL(fileURLWithPath: path), configuration: NSWorkspace.OpenConfiguration())
+                if result.code != 0 { self.message = "Couldn't set up \(browser): \(result.text)"; return }
+                guard let folder else { self.message = "Couldn't copy the extension to Application Support."; return }
+                // By bundle id, so a browser outside /Applications (Setapp, an external drive) opens like any other.
+                if let id = BrowserBundle.bundleID(for: browser),
+                   let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id),
+                   let url = URL(string: BrowserBundle.extensionsAddress(for: browser)) {
+                    NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
                 } else {
-                    self.message = "Open \(browser) and go to \(BrowserBundle.extensionsAddress) yourself; the folder is shown in Finder."
+                    self.message = BrowserBundle.openYourselfMessage(for: browser)
                 }
+                BrowserDropPanel.shared.show(browser: browser, folder: folder)
                 self.refresh()
             }
         }
@@ -115,7 +133,7 @@ final class BrowserModel: ObservableObject {
     }
 }
 
-/// The Browser tab: which browsers were found, whether the extension is connected, and which agents can use it.
+/// The Browser tab: each installed browser, connected or a Connect button, and which agents can use it.
 struct BrowserSettingsView: View {
     @ObservedObject var model = BrowserModel.shared
 
@@ -137,30 +155,32 @@ struct BrowserSettingsView: View {
     private var browsers: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Browsers").font(Chrome.font(13, .bold))
-            if let s = model.status {
+            if let s = model.status, s.unattributed {
+                // An older extension or helper doesn't say which browser it is in: one line for the connection.
+                Label("Connected\(s.extensionVersion.map { " (extension \($0))" } ?? "")", systemImage: "checkmark.circle.fill")
+                    .font(Chrome.font(12, .medium)).foregroundStyle(Color.green)
+            }
+            if model.status == nil {
+                Text("Looking…").font(Chrome.font(12)).foregroundStyle(.secondary)
+            } else if model.rows.isEmpty {
+                Text("No Chromium browser found. Install Helium, Chrome, Brave, Edge or Arc, open it once, then come back.")
+                    .font(Chrome.font(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(model.rows) { row in
                 HStack(spacing: 8) {
-                    Image(systemName: s.extensionConnected ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(s.extensionConnected ? Color.green : Color.secondary)
-                    Text(s.extensionConnected ? "Connected\(s.extensionVersion.map { " (extension \($0))" } ?? "")" : "Not connected yet")
-                        .font(Chrome.font(12, .medium))
-                }
-                if s.browsers.isEmpty {
-                    Text("No Chromium browser found. Open Helium, Chrome, Brave, Edge, Arc or another Chromium browser once, then come back.")
-                        .font(Chrome.font(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-                ForEach(s.browsers) { b in
-                    HStack {
-                        Text(b.name).font(Chrome.font(12))
-                        Text(b.registered ? "ready" : "not set up").font(Chrome.font(11)).foregroundStyle(.secondary)
-                        Spacer()
-                        Button(s.extensionConnected ? "Reconnect" : "Connect") { model.connect(b.name) }.disabled(model.busy)
+                    Text(row.name).font(Chrome.font(12))
+                    Spacer()
+                    switch row.state {
+                    case .connected:
+                        Label("Connected", systemImage: "checkmark.circle.fill").font(Chrome.font(12, .medium)).foregroundStyle(Color.green)
+                    case .reload(_, _):
+                        Text("Reload the extension").font(Chrome.font(12)).foregroundStyle(.orange)
+                        Button("Connect") { model.connect(row.name) }.disabled(model.busy)
+                    case .connect:
+                        Button("Connect") { model.connect(row.name) }.disabled(model.busy)
                     }
                 }
-            } else {
-                Text("Looking…").font(Chrome.font(12)).foregroundStyle(.secondary)
             }
-            Text("1. Click Connect. The browser opens its extensions page and the extension folder shows in Finder.\n2. Turn on Developer mode, top right.\n3. Click Load unpacked and choose that folder. This window updates by itself.\nIf Polycarp's extension is already loaded, Connect just registers it again.")
-                .font(Chrome.font(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -180,7 +200,7 @@ struct BrowserSettingsView: View {
                     Button(model.busy ? "Adding…" : "Add to Claude Code and Codex") { model.addAgents() }.disabled(model.busy)
                 }
             }
-            Text("The command is still called tabkyra, and `polycarp browser` runs the same thing.")
+            Text("`polycarp browser` is the command; `tabkyra` still works as another name for it.")
                 .font(Chrome.font(11)).foregroundStyle(.secondary)
         }
     }

@@ -1,9 +1,9 @@
 /**
- * Free mode: the side panel runs on the best free OpenRouter model for Tabkyra's work, with
+ * Free mode: the side panel runs on the best free OpenRouter model for Polycarp's work, with
  * the next-best free models as OpenRouter fallbacks, so one rate limit doesn't fail a turn.
  *
  * "Best" is measured: `free-ranking.json` holds the scores from `cli/eval/free-models.mjs`
- * (real browser tasks through Tabkyra's tools). At run time the live list decides what is
+ * (real browser tasks through Polycarp's tools). At run time the live list decides what is
  * still free and still takes tools; measured models keep their measured order, unmeasured
  * new ones follow (longest context first, then newest), and OpenRouter's own free router
  * comes last. Every model in a request is checked free against the live list, so a turn can
@@ -189,7 +189,7 @@ export function isFreeLimitError(message: string | undefined): boolean {
 }
 
 export function noFreeModelsMessage(): string {
-	return "No free OpenRouter model can run Tabkyra's tools right now. Try again later, or pick another model.";
+	return "No free OpenRouter model can run Polycarp's tools right now. Try again later, or pick another model.";
 }
 
 /** Shown when every free model in the chain was limited. */

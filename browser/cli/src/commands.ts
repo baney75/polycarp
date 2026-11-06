@@ -5,6 +5,7 @@
  */
 
 import { SETUP_FLAGS, UPDATE_FLAGS } from "./parse-args.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export interface SubcommandSpec {
 	name: string;
@@ -36,7 +37,7 @@ export interface CommandSpec {
 	paths?: boolean;
 	/** The command parses its own arguments (setup, update, library, skill); argsProblem leaves it alone. */
 	selfParsed?: boolean;
-	/** The subcommand a bare `tabkyra <name>` runs (`tabkyra sessions` lists). */
+	/** The subcommand a bare `tabkyra <name>` runs (`polycarp browser sessions` lists). */
 	defaultSubcommand?: string;
 	/** Values completed for the first argument (`completion zsh`). */
 	values?: string[];
@@ -78,6 +79,7 @@ export const VALUE_HINTS: Record<string, string> = {
 	"--branch": "<branch>",
 	"--serial": "N",
 	"--source": "<commit>",
+	"--browser": "<name>",
 };
 
 export const VALUE_FLAGS = new Set(Object.keys(VALUE_HINTS));
@@ -138,7 +140,7 @@ export const COMMANDS: CommandSpec[] = [
 		subcommands: [
 			{ name: "list", what: "Every agent session: group, tabs, connected or idle", flags: ["--all", "--json"] },
 			{ name: "show", args: "<name>", what: "One session: its group, tabs, times, and how to resume it", flags: ["--json"], max: 1 },
-			{ name: "rename", args: "<old> <new>", what: "Rename; resume it later with tabkyra mcp --session <new>", flags: ["--json"], max: 2 },
+			{ name: "rename", args: "<old> <new>", what: `Rename; resume it later with ${COMMAND_NAME} mcp --session <new>`, flags: ["--json"], max: 2 },
 			{ name: "end", args: "<name>", what: "End it: its tabs become yours (or close, with --close)", flags: ["--close", "--json"], max: 1 },
 			{ name: "release", args: "<name>", what: "Hand all its tabs to you, out of the group, and end it", flags: ["--json"], max: 1 },
 			{ name: "focus", args: "<name>", what: "Show its group to you", flags: ["--json"], max: 1 },
@@ -205,7 +207,7 @@ export const COMMANDS: CommandSpec[] = [
 		summary: "Put this device behind a hub",
 		what: "This device behind a hub",
 		subcommands: [
-			{ name: "enroll", args: "<hub-url>", what: "Link this device with a code from the hub (tabkyra link <hub-url> works too)", flags: ["--code", "--name", "--scope", "--no-service", "--json"], max: 1 },
+			{ name: "enroll", args: "<hub-url>", what: `Link this device with a code from the hub (${COMMAND_NAME} link <hub-url> works too)`, flags: ["--code", "--name", "--scope", "--no-service", "--json"], max: 1 },
 			{ name: "run", what: "Dial the hub and answer its requests (the service runs this)" },
 			{ name: "status", what: "Is this device linked and connected?", flags: ["--json"] },
 			{ name: "off", what: "Stop the service, forget the hub and revoke the local link token" },
@@ -277,10 +279,10 @@ export const COMMANDS: CommandSpec[] = [
 		group: "Troubleshoot",
 		flags: UPDATE_FLAGS,
 	},
-	{ name: "install", what: "Re-register the native host with every browser", group: "Troubleshoot", flags: ["--force"] },
+	{ name: "install", what: "Re-register the native host with every browser, or with --browser <name> only that one", group: "Troubleshoot", flags: ["--force", "--browser"] },
 	{ name: "reload", what: "Reload the extension after rebuilding dist-chrome", group: "Troubleshoot" },
 	{ name: "debug", what: "Bridge state, request timings and a benchmark (JSON)", group: "Troubleshoot" },
-	{ name: "completion", positional: 1, args: "zsh|bash|fish", what: 'Shell completions: eval "$(tabkyra completion zsh)"', group: "Troubleshoot", values: ["zsh", "bash", "fish"] },
+	{ name: "completion", positional: 1, args: "zsh|bash|fish", what: 'Completions for the tabkyra command name: eval "$(tabkyra completion zsh)"', group: "Troubleshoot", values: ["zsh", "bash", "fish"] }, // product-name allowlist: completions are for the tabkyra command name
 	{ name: "version", what: "This CLI's version (also --version)", group: "Troubleshoot", flags: ["--json"] },
 	{ name: "help", selfParsed: true, what: "This help (also --help)", group: "Troubleshoot", hidden: true },
 	{ name: "host", selfParsed: true, what: "The native host the browser starts", group: "Troubleshoot", hidden: true },
@@ -299,7 +301,7 @@ export function flagHints(flags: string[] = []): string {
 	return flags.map((f) => ` [${f}${VALUE_HINTS[f] ? ` ${VALUE_HINTS[f]}` : ""}]`).join("");
 }
 
-/** One help row per command, or per subcommand: [usage after "tabkyra ", what it does]. */
+/** One help row per command, or per subcommand: [usage after "polycarp browser ", what it does]. */
 export function helpRows(spec: CommandSpec): Array<[string, string]> {
 	if (spec.subcommands)
 		return spec.subcommands.map((sub) => [`${spec.name} ${sub.name}${sub.args ? ` ${sub.args}` : ""}${flagHints(sub.flags)}`, sub.what]);
@@ -318,14 +320,14 @@ export function argsProblem(command: string, args: string[]): string | undefined
 	const positional = args.filter((a, i) => !a.startsWith("-") && !(VALUE_FLAGS.has(args[i - 1] ?? "") && !args[i - 1].includes("=")));
 	let flags = spec.flags ?? [];
 	let max = spec.positional ?? 0;
-	let usage = `Usage: tabkyra ${helpRows(spec)[0][0]}`;
+	let usage = `Usage: ${COMMAND_NAME} ${helpRows(spec)[0][0]}`;
 	if (spec.subcommands) {
 		const sub = spec.subcommands.find((x) => x.name === (positional[0] ?? spec.defaultSubcommand));
 		// An unknown or missing subcommand is the command's own usage error, with its list.
 		if (!sub) return undefined;
 		flags = sub.flags ?? [];
 		max = (positional[0] === undefined ? 0 : 1) + (sub.max ?? 0);
-		usage = `Usage: tabkyra ${spec.name} ${sub.name}${sub.args ? ` ${sub.args}` : ""}${flagHints(flags)}`;
+		usage = `Usage: ${COMMAND_NAME} ${spec.name} ${sub.name}${sub.args ? ` ${sub.args}` : ""}${flagHints(flags)}`;
 	}
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];
@@ -367,7 +369,7 @@ export function completionScript(shell: string): string | undefined {
 	if (shell === "zsh") {
 		const lines = [
 			"#compdef tabkyra",
-			'# tabkyra completion for zsh. Load it with: eval "$(tabkyra completion zsh)"',
+			'# completion for the tabkyra command name (zsh). Load it with: eval "$(tabkyra completion zsh)"', // product-name allowlist: completions are for the tabkyra command name
 			"_tabkyra() {",
 			"  local -a commands subs flags",
 			"  local paths=0",
@@ -375,7 +377,7 @@ export function completionScript(shell: string): string | undefined {
 			...cmds.map((c) => `    '${sh(c.name)}:${desc(c.summary ?? c.what)}'`),
 			"  )",
 			"  if (( CURRENT == 2 )); then",
-			"    _describe -t commands 'tabkyra command' commands",
+			"    _describe -t commands 'command' commands",
 			"    return",
 			"  fi",
 			"  case $words[2] in",
@@ -433,7 +435,7 @@ export function completionScript(shell: string): string | undefined {
 				return `    ${sh(f)}) ${values ? `COMPREPLY=( $(compgen -W "${values}" -- "$cur") ); ` : ""}compopt +o default 2>/dev/null; return ;;`;
 			});
 		const lines = [
-			'# tabkyra completion for bash. Load it with: eval "$(tabkyra completion bash)"',
+			'# completion for the tabkyra command name (bash). Load it with: eval "$(tabkyra completion bash)"', // product-name allowlist: completions are for the tabkyra command name
 			"_tabkyra() {",
 			'  local cur="${COMP_WORDS[COMP_CWORD]}" prev="${COMP_WORDS[COMP_CWORD-1]}" paths=0',
 			"  COMPREPLY=()",
@@ -479,7 +481,7 @@ export function completionScript(shell: string): string | undefined {
 		return lines.join("\n");
 	}
 	if (shell === "fish") {
-		const lines = ["# tabkyra completion for fish. Load it with: tabkyra completion fish | source"];
+		const lines = ["# completion for the tabkyra command name (fish). Load it with: tabkyra completion fish | source"]; // product-name allowlist: completions are for the tabkyra command name
 		for (const c of cmds) lines.push(`complete -c tabkyra -n __fish_use_subcommand -f -a ${sh(c.name)} -d '${desc(c.summary ?? c.what)}'`);
 		for (const c of cmds) {
 			const subs = c.subcommands ?? [];

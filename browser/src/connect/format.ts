@@ -1,9 +1,12 @@
 /** Small text helpers for Settings > Connect. */
 
 import { CONNECT_CODE, HUB_ORIGIN } from "../agent-setup-prompt.js";
+import { hostCommand } from "../bridge/host-command.js";
 import type { ApprovalCode, ConnectStatus, DeviceCode, JoinScope } from "./types.js";
 
-export const MALFORMED_CODE = "The helper answered with a malformed code. Try again, or update it: tabkyra update";
+/** Built when shown: the name the helper answers to arrives after this module loads. */
+export const malformedCodeMessage = (): string =>
+	`The helper answered with a malformed code. Try again, or update it: ${hostCommand()} update`;
 
 /**
  * A code reply is shown in a box the owner copies, and a device code also goes into a command they
@@ -56,7 +59,7 @@ export function lastSeen(iso: string | null, now: number): string {
 export const connectorUrl = (origin: string): string => `${origin}/mcp`;
 
 /** The command another device runs to join a hub. */
-export const linkCommand = (hubUrl: string, code: string): string => `tabkyra link ${hubUrl} --code ${code}`;
+export const linkCommand = (hubUrl: string, code: string): string => `${hostCommand()} link ${hubUrl} --code ${code}`;
 
 /** The host of a hub address as typed (a pasted connector URL included), or undefined when it isn't an address. */
 export function hubHost(typed: string): string | undefined {
@@ -75,7 +78,8 @@ export const JOIN_WARNING =
 	"The hub's owner will be able to open sites, read pages, and click and type in this browser as you.";
 
 /** Said when the helper's status has no scope list (a helper from before the list): joining is not offered. */
-export const HELPER_OUT_OF_DATE = "Tabkyra's helper is out of date. Run tabkyra update, then try again.";
+export const helperOutOfDateMessage = (): string =>
+	`Polycarp's helper is out of date. Run ${hostCommand()} update, then try again.`;
 
 /** The scopes a join would grant, as the helper listed them; undefined when it listed none in the shape this panel reads. */
 export function joinScopesOf(status: Pick<ConnectStatus, "joinScopes">): JoinScope[] | undefined {

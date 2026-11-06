@@ -16,7 +16,7 @@ import { effectiveAccent } from "../appearance/tokens.js";
 import { connectSetTheme } from "../connect/client.js";
 
 const PRESET_LABELS: Record<string, string> = {
-	tabkyra: "Tabkyra",
+	tabkyra: "Polycarp",
 	slate: "Slate",
 	forest: "Forest",
 	rose: "Rose",
@@ -40,7 +40,7 @@ export function normalizeHex(text: string): string {
 /**
  * Settings > Appearance: the five presets (the same ones the approval and hub pages use), a custom
  * accent, and Light / Dark / Match system. Applies at once, keeps the choice in extension storage and
- * tells Tabkyra's helper so the approval and hub pages match (skipped quietly when it isn't connected).
+ * tells Polycarp's helper so the approval and hub pages match (skipped quietly when it isn't connected).
  */
 @customElement("tabkyra-appearance-tab")
 export class AppearanceTab extends SettingsTab {
@@ -148,7 +148,7 @@ export class AppearanceTab extends SettingsTab {
 			<div class="flex flex-col gap-6">
 				<div class="space-y-1">
 					<h3 class="text-lg font-semibold text-foreground">Appearance</h3>
-					<p class="text-sm text-muted-foreground">Colors for this panel and for the approval and hub pages Tabkyra serves from your computer.</p>
+					<p class="text-sm text-muted-foreground">Colors for this panel and for the approval and hub pages Polycarp serves from your computer.</p>
 				</div>
 
 				${
@@ -256,7 +256,7 @@ export class AppearanceTab extends SettingsTab {
 					)}
 				</div>
 
-				${this.shared ? "" : html`<p class="text-xs text-muted-foreground">Saved for this panel. Tabkyra's helper isn't connected, so the approval and hub pages keep their colors.</p>`}
+				${this.shared ? "" : html`<p class="text-xs text-muted-foreground">Saved for this panel. Polycarp's helper isn't connected, so the approval and hub pages keep their colors.</p>`}
 			</div>
 		`;
 	}

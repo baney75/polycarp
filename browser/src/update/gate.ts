@@ -1,5 +1,5 @@
 /**
- * The install gate: while the service worker swaps an update in and reloads Tabkyra, no new agent
+ * The install gate: while the service worker swaps an update in and reloads Polycarp, no new agent
  * run may start, so nothing runs on a mix of old and new files and no run is cut off by the
  * reload. Two parts:
  *

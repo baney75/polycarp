@@ -1,9 +1,9 @@
-// `tabkyra setup` and `tabkyra doctor` against a throwaway HOME, an empty socket
+// `polycarp browser setup` and `polycarp browser doctor` against a throwaway HOME, an empty socket
 // directory, a fake extension build and a PATH holding only a node link plus fake
 // harness CLIs. Nothing here can reach a real browser, bridge or harness config.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
@@ -42,7 +42,7 @@ function fakeHarness(name, configured, { args = "mcp", scope = "User config (ava
 function fakeBuild(version) {
 	mkdirSync(extensionDir, { recursive: true });
 	for (const f of ["background.js", "sidepanel.js", "sidepanel.html", "app.css"]) writeFileSync(join(extensionDir, f), "");
-	writeFileSync(join(extensionDir, "manifest.json"), JSON.stringify({ name: "Tabkyra", version }));
+	writeFileSync(join(extensionDir, "manifest.json"), JSON.stringify({ name: "Polycarp", version }));
 }
 
 function run(args, extraEnv = {}) {
@@ -53,6 +53,8 @@ function run(args, extraEnv = {}) {
 			PATH: bin,
 			TABKYRA_SOCKET_DIR: socketDir,
 			TABKYRA_EXTENSION_DIR: extensionDir,
+			// The browsers that count as installed here, not what this machine has.
+			TABKYRA_APPLICATIONS_DIRS: join(root, "apps"),
 			TERM: "xterm-256color",
 			...extraEnv,
 		},
@@ -74,6 +76,7 @@ before(() => {
 	symlinkSync(process.execPath, join(bin, "node"));
 	mkdirSync(socketDir, { mode: 0o700 });
 	mkdirSync(helium(), { recursive: true });
+	mkdirSync(join(root, "apps", "Helium.app"), { recursive: true });
 	writeFileSync(harnessLog, "");
 	fakeBuild(sourceVersion);
 });
@@ -87,8 +90,8 @@ test("doctor fails with one fix per problem on a fresh machine", () => {
 	const byId = Object.fromEntries(report.checks.map((c) => [c.id, c]));
 	assert.equal(byId.node.status, "ok");
 	assert.equal(byId.build.status, "ok");
-	assert.equal(byId["host:Helium"].status, "fail");
-	assert.equal(byId["host:Helium"].fix, "tabkyra install --force");
+	assert.equal(byId["host:Helium"].status, "warn", "a browser never connected is news, not a failure");
+	assert.equal(byId["host:Helium"].fix, "tabkyra install --browser Helium");
 	assert.equal(byId.connected.status, "fail");
 	for (const check of report.checks) if (check.status === "fail") assert.ok(check.fix, `${check.id} has no fix`);
 });
@@ -208,4 +211,33 @@ test("color only when asked for, and NO_COLOR wins", () => {
 	assert.doesNotMatch(run(["doctor"]).out, ansi, "a pipe gets no color");
 	assert.match(run(["doctor"], { FORCE_COLOR: "1" }).out, ansi);
 	assert.doesNotMatch(run(["doctor"], { FORCE_COLOR: "1", NO_COLOR: "1" }).out, ansi);
+});
+
+test("second-S3: setup keeps a working launcher and writes links only for registered or chosen browsers", () => {
+	// Helium is registered by the setup run above. Chrome has a data folder and (on a Mac) an app, and was never connected.
+	const support = process.platform === "darwin" ? join(home, "Library", "Application Support", "Google") : join(home, ".config");
+	const chromeDir = process.platform === "darwin" ? join(support, "Chrome") : join(support, "google-chrome");
+	mkdirSync(chromeDir, { recursive: true });
+	mkdirSync(join(root, "apps", "Google Chrome.app"), { recursive: true });
+	// A working standalone launcher: the agent launcher and the host launcher both exec a file that exists.
+	const standalone = '#!/bin/sh\nexec "/bin/echo" "$@"\n';
+	for (const name of ["tabkyra", "host"]) {
+		writeFileSync(join(home, ".config", "tabkyra", name), standalone);
+		chmodSync(join(home, ".config", "tabkyra", name), 0o755);
+	}
+	const heliumManifest = join(helium(), "NativeMessagingHosts", "ai.tabkyra.bridge.json");
+	const heliumBefore = readFileSync(heliumManifest, "utf8");
+	const { out } = run(["setup", "--yes", "--no-wait"]);
+	assert.match(out, /Helium\s+already registered/, out);
+	assert.doesNotMatch(out, /Chrome\s+(registered|already)/, "setup does not touch a browser nobody registered or chose");
+	assert.equal(existsSync(join(chromeDir, "NativeMessagingHosts", "ai.tabkyra.bridge.json")), false, "no link for Chrome");
+	assert.equal(readFileSync(join(home, ".config", "tabkyra", "tabkyra"), "utf8"), standalone, "the working launcher is kept");
+	assert.equal(readFileSync(join(home, ".config", "tabkyra", "host"), "utf8"), standalone);
+	assert.equal(readFileSync(heliumManifest, "utf8"), heliumBefore, "the registered browser's manifest is unchanged");
+	// Choosing it makes the link, and still leaves the working launcher alone.
+	const chosen = run(["setup", "--yes", "--no-wait", "--browser", "Chrome"]);
+	assert.match(chosen.out, /Chrome\s+registered/, chosen.out);
+	assert.equal(existsSync(join(chromeDir, "NativeMessagingHosts", "ai.tabkyra.bridge.json")), true);
+	assert.equal(readFileSync(join(home, ".config", "tabkyra", "host"), "utf8"), standalone);
+	assert.equal(run(["setup", "--browser", "Netscape"]).code, 2, "an unknown browser is a usage error");
 });

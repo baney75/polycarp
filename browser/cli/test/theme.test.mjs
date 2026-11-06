@@ -117,7 +117,7 @@ const fixtureDir = new URL("../../test/fixtures/polycarp/", import.meta.url);
 const BUILT_INS = ["polycarp", "still-water", "evening", "parchment", "blocks", "calm"];
 const fixture = (name) => JSON.parse(readFileSync(new URL(`${name}.json`, fixtureDir), "utf8"));
 
-/** Run `fn` with the Polycarp and Tabkyra config folders pointed at fresh temp folders; `file` is the theme.json text, or null for none. */
+/** Run `fn` with the Polycarp and Polycarp config folders pointed at fresh temp folders; `file` is the theme.json text, or null for none. */
 async function withPolycarp(file, fn) {
 	const { mkdirSync, writeFileSync } = await import("node:fs");
 	const dir = tempRoot("tabkyra-polycarp-");
@@ -273,7 +273,7 @@ test("a theme whose mode is light or dark pins the pages", async () => {
 	}
 });
 
-test("tabkyra theme list and set say when a Polycarp theme is in force", async () => {
+test("polycarp browser theme list and set say when a Polycarp theme is in force", async () => {
 	await withPolycarp(fixture("parchment"), () => {
 		const list = say(() => assert.equal(poly.runTheme(["list"], false), 0));
 		assert.match(list, /Polycarp theme is in force: parchment/);
@@ -311,7 +311,7 @@ test("a Polycarp theme's base size is set on the root element of the pages, and 
 	await withPolycarp(null, () => assert.doesNotMatch(poly.pageCssDefault(), /html\{font-size/));
 });
 
-test("with mode auto the pages follow a saved `tabkyra theme` mode, else the system setting, the way the panel does", async () => {
+test("with mode auto the pages follow a saved `polycarp browser theme` mode, else the system setting, the way the panel does", async () => {
 	const file = structuredClone(fixture("calm"));
 	file.mode = "auto";
 	await withPolycarp(file, () => {
@@ -328,7 +328,7 @@ test("with mode auto the pages follow a saved `tabkyra theme` mode, else the sys
 	});
 });
 
-test("a file that is there but refused is told apart from no file, with the reason, in the reader and in tabkyra theme list (text and --json)", async () => {
+test("a file that is there but refused is told apart from no file, with the reason, in the reader and in polycarp browser theme list (text and --json)", async () => {
 	await withPolycarp(null, () => {
 		assert.deepEqual(poly.polycarpState(), { state: "absent" });
 		assert.doesNotMatch(say(() => poly.runTheme(["list"], false)), /refused/);
@@ -336,7 +336,7 @@ test("a file that is there but refused is told apart from no file, with the reas
 	const white = structuredClone(fixture("calm"));
 	for (const mode of ["light", "dark"]) for (const role of Object.keys(white.surfaces.browser[mode])) white.surfaces.browser[mode][role] = "#ffffff";
 	const wrongSchema = { ...fixture("calm"), schema: 2 };
-	const cases = [["{nope", /not valid JSON/], [white, /calm would be unreadable: light foreground on background is 1\.00:1/], [wrongSchema, /not a valid theme\.json for Tabkyra/]];
+	const cases = [["{nope", /not valid JSON/], [white, /calm would be unreadable: light foreground on background is 1\.00:1/], [wrongSchema, /not a valid theme\.json for Polycarp/]];
 	for (const [file, reason] of cases) {
 		await withPolycarp(file, () => {
 			const state = poly.polycarpState();

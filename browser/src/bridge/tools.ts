@@ -215,7 +215,7 @@ async function refuseGuardedLanding<T extends { url: string }>(
 	await chrome.tabs.update(tabId, { url: "about:blank" }).catch(() => undefined);
 	throw new BridgeError(
 		ERR.PERMISSION_DENIED,
-		"That page led to this computer's Tabkyra approval address, which an agent never opens. The tab was reset to a blank page.",
+		"That page led to this computer's Polycarp approval address, which an agent never opens. The tab was reset to a blank page.",
 	);
 }
 

@@ -403,6 +403,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             exit((try? app.unregister()) != nil ? 0 : 1)
         }
         linkCommandIfNeeded()
+        // A new app brings a new extension: refresh the copy the browser loads now, off the main thread, before anyone is told to reload.
+        DispatchQueue.global(qos: .utility).async { _ = BrowserModel.shared.loadableFolder() }
         // A person who came by the disk image never ran install.sh: BaneySpaces, if there, goes to the Trash once Polycarp runs.
         let welcomeFinishedAtLaunch = UserDefaults.standard.bool(forKey: Welcome.finishedKey)
         // Tried at 5 s, and again every 10 s (for up to two minutes) while only the settings import is unfinished.

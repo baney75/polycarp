@@ -1,5 +1,5 @@
 /**
- * `tabkyra tunnel`: reach `tabkyra serve` from another device or a cloud agent through a
+ * `polycarp browser tunnel`: reach `polycarp browser serve` from another device or a cloud agent through a
  * tunnel the user owns, which terminates TLS. Nothing is exposed until the user runs one.
  *
  * - tailscale: `tailscale serve` publishes https://<this machine>.<tailnet>.ts.net/tabkyra
@@ -7,11 +7,12 @@
  *   reachable from the internet; the token is then the only lock, so it warns.
  * - cloudflare: a `cloudflared` quick tunnel (free, no account) gives a random
  *   https://*.trycloudflare.com URL. For a stable name the user creates a free Cloudflare
- *   account and a named tunnel themselves; Tabkyra prints the steps and never makes accounts.
+ *   account and a named tunnel themselves; Polycarp prints the steps and never makes accounts.
  *
- * Tabkyra doesn't install either tool.
+ * Polycarp doesn't install either tool.
  */
 
+import { COMMAND_NAME } from "./self.ts";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -89,7 +90,7 @@ export function tailscaleTunnel(options: { port: number; public: boolean; off: b
 	if (r.code !== 0) return { ok: false, message: r.out };
 	const url = `https://${dns}${SERVE_PATH}/mcp`;
 	const reach = options.public ? "anyone on the internet who has a token" : "your own tailnet devices that have a token";
-	return { ok: true, url, message: `MCP is reachable at ${url} by ${reach}. Run tabkyra serve on port ${options.port}.` };
+	return { ok: true, url, message: `MCP is reachable at ${url} by ${reach}. Run ${COMMAND_NAME} serve on port ${options.port}.` };
 }
 
 function cloudflaredPidFile(): string {
@@ -117,7 +118,7 @@ export async function cloudflareTunnel(options: { port: number; off: boolean; ti
 			return { ok: false, message: `Can't check which process ${cloudflaredPidFile()} names on this system. Stop cloudflared yourself, then delete that file.` };
 		}
 		rmSync(cloudflaredPidFile(), { force: true });
-		if (pid === undefined) return { ok: true, message: "No Cloudflare tunnel started by Tabkyra is running." };
+		if (pid === undefined) return { ok: true, message: "No Cloudflare tunnel started by Polycarp is running." };
 		try {
 			process.kill(pid);
 		} catch {
@@ -125,7 +126,7 @@ export async function cloudflareTunnel(options: { port: number; off: boolean; ti
 		}
 		return { ok: true, message: "Stopped the Cloudflare tunnel." };
 	}
-	if (ourCloudflared() !== undefined) return { ok: false, message: "A Cloudflare tunnel is already running. Run tabkyra tunnel cloudflare --off first." };
+	if (ourCloudflared() !== undefined) return { ok: false, message: `A Cloudflare tunnel is already running. Run ${COMMAND_NAME} tunnel cloudflare --off first.` };
 	const bin = which("cloudflared");
 	if (!bin) {
 		return {

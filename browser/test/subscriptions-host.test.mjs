@@ -129,7 +129,7 @@ test("SIWC: the authorization request has exactly the documented parameters", as
 	assert.equal(`${url.origin}${url.pathname}`, "https://auth.openai.com/api/accounts/authorize");
 	const p = url.searchParams;
 	assert.equal(p.get("client_id"), "dynamic_agent_client");
-	assert.equal(p.get("agent_name_hint"), "Tabkyra");
+	assert.equal(p.get("agent_name_hint"), "Tabkyra"); // the name registered with the provider
 	assert.match(p.get("ext_agent_host_id"), /^urn:uuid:[0-9a-f-]{36}$/);
 	assert.equal(p.get("response_type"), "code");
 	assert.match(p.get("redirect_uri"), /^http:\/\/127\.0\.0\.1:\d+\/auth\/callback$/);
@@ -302,7 +302,7 @@ test("proxy: secret and Host are checked; a ChatGPT request goes to /v1/response
 	assert.equal(body.input[0].role, "developer");
 	assert.equal(body.input[2].namespace, "tabkyra");
 	assert.deepEqual(body.tools, [
-		{ type: "namespace", name: "tabkyra", description: "Tabkyra browser tools", tools: [{ type: "function", name: "navigate", description: "go", parameters: { type: "object" }, strict: false }] },
+		{ type: "namespace", name: "tabkyra", description: "Polycarp browser tools", tools: [{ type: "function", name: "navigate", description: "go", parameters: { type: "object" }, strict: false }] },
 	]);
 	await service.stop();
 });
@@ -329,7 +329,7 @@ function fakeGitHub() {
 	return { fetch, calls };
 }
 
-test("Copilot: device flow with Tabkyra's OAuth App, no secret, token stored 0600", async () => {
+test("Copilot: device flow with Polycarp's OAuth App, no secret, token stored 0600", async () => {
 	const dir = tempDir();
 	const gh = fakeGitHub();
 	const auth = new CopilotAuth({ fetch: gh.fetch, dir, sleep: async () => undefined });
@@ -367,7 +367,7 @@ test("Copilot: an expiring token is refreshed without a client secret; sign-out 
 	await assert.rejects(auth.token(), /Sign in with GitHub Copilot first/);
 });
 
-/** A stand-in for @github/copilot-sdk that records what Tabkyra passes it. */
+/** A stand-in for @github/copilot-sdk that records what Polycarp passes it. */
 function fakeSdk(log) {
 	class Session {
 		constructor(config) {
@@ -420,7 +420,7 @@ function sse(text) {
 		.map((c) => JSON.parse(c.slice(6)));
 }
 
-test("Copilot: a turn through the proxy runs in an SDK session with the user's token and only Tabkyra's tools", async () => {
+test("Copilot: a turn through the proxy runs in an SDK session with the user's token and only Polycarp's tools", async () => {
 	const dir = tempDir();
 	process.env.TABKYRA_COPILOT_SDK_DIR = join(dir, "sdk");
 	const gh = fakeGitHub();
@@ -432,7 +432,7 @@ test("Copilot: a turn through the proxy runs in an SDK session with the user's t
 	const { url, secret } = await service.startProxy();
 	const headers = { Authorization: `Bearer ${secret}` };
 	const tools = [{ name: "navigate", description: "Open a URL", parameters: { type: "object", properties: { url: { type: "string" } } } }];
-	const base = { conversation: "chat-1", model: "gpt-x", systemPrompt: "You are Tabkyra.", tools };
+	const base = { conversation: "chat-1", model: "gpt-x", systemPrompt: "You are Polycarp.", tools };
 	const first = await post(`${url}/copilot/turn`, { ...base, messages: [{ role: "user", text: "open example" }] }, headers);
 	assert.deepEqual(sse(first.body), [
 		{ type: "text", delta: "Opening." },

@@ -1,7 +1,7 @@
 /**
  * The HTTP side of the OAuth endpoints (oauth.ts holds the logic): registration, the consent page,
- * token exchange and revocation, plus the metadata documents. `tabkyra serve --public-url` and
- * `tabkyra hub serve` both answer them through handleOAuth, so there is one copy.
+ * token exchange and revocation, plus the metadata documents. `polycarp browser serve --public-url` and
+ * `polycarp browser hub serve` both answer them through handleOAuth, so there is one copy.
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";

@@ -1,5 +1,5 @@
 /**
- * Tabkyra's artifact viewers. pi-web-ui asks this factory first (setArtifactViewerFactory,
+ * Polycarp's artifact viewers. pi-web-ui asks this factory first (setArtifactViewerFactory,
  * patches/pi-mono.patch) and keeps its own viewer when it returns undefined.
  */
 import { type ArtifactElement, TextArtifact } from "@mariozechner/pi-web-ui";

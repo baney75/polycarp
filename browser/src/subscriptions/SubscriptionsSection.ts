@@ -1,6 +1,7 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { html, LitElement, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { hostCommand } from "../bridge/host-command.js";
 import { COMMAND_BOX_CLASS } from "../components/command-box.js";
 import { Toast } from "../components/Toast.js";
 import { request, SubscriptionRequestError, type SubscriptionStatus, subscriptionStatus } from "./client.js";
@@ -11,8 +12,8 @@ import { refreshSubscriptionModels } from "./stream.js";
 export const CHATGPT_WELCOME_KEY = "tabkyra.chatgptPlanWelcomeShown";
 
 /**
- * Settings: the two subscription sign-ins Tabkyra offers, and how to use a Claude or Gemini
- * subscription instead (run that CLI with Tabkyra's MCP server; their terms forbid a sign-in here).
+ * Settings: the two subscription sign-ins Polycarp offers, and how to use a Claude or Gemini
+ * subscription instead (run that CLI with Polycarp's MCP server; their terms forbid a sign-in here).
  * Self-contained so it drops into whichever settings tab lists providers.
  */
 @customElement("tabkyra-subscriptions")
@@ -110,9 +111,9 @@ export class SubscriptionsSection extends LitElement {
 			const result = await request<{ revoked: boolean; revokeUrl?: string }>(`${which}.signout`);
 			if (which === "chatgpt" && !result.revoked)
 				this.notice =
-					"Signed out here, but OpenAI didn't confirm the session was revoked. You can disconnect Tabkyra in ChatGPT Settings.";
+					"Signed out here, but OpenAI didn't confirm the session was revoked. You can disconnect \"Tabkyra (Polycarp's earlier name)\" in ChatGPT Settings."; // product-name allowlist: the name the provider lists
 			if (which === "copilot")
-				this.notice = `Signed out: the token is deleted from this computer. To remove Tabkyra's access on GitHub too, revoke it at ${COPILOT.revokeUrl}.`;
+				this.notice = `Signed out: the token is deleted from this computer. To remove "Tabkyra (Polycarp's earlier name)" from GitHub too, revoke it at ${COPILOT.revokeUrl}.`; // product-name allowlist: the name the provider lists
 			await refreshSubscriptionModels();
 		} catch (err) {
 			this.notice = err instanceof Error ? err.message : String(err);
@@ -234,11 +235,11 @@ export class SubscriptionsSection extends LitElement {
 								<p class="text-xs text-foreground">
 									${
 										this.noHost
-											? "Subscription sign-ins run in Tabkyra's helper on this computer, which isn't connected. Run this in a terminal, then reopen Settings."
+											? "Subscription sign-ins run in Polycarp's helper on this computer, which isn't connected. Run this in a terminal, then reopen Settings."
 											: html`Subscription sign-ins aren't available: ${this.error?.replace(/\.?$/, ".")} Running this in a terminal usually fixes it.`
 									}
 								</p>
-								${this.command("Set up Tabkyra", "tabkyra setup")}
+								${this.command("Set up Polycarp", `${hostCommand()} setup`)}
 							</div>`
 						: nothing
 				}
@@ -280,15 +281,15 @@ export class SubscriptionsSection extends LitElement {
 					}${
 						s && !s.copilot.sdkInstalled
 							? html`<p class="text-xs text-muted-foreground">Copilot needs GitHub's Copilot SDK on this computer (about 160 MB).</p>
-									${this.command("Install the Copilot SDK", "tabkyra copilot-sdk install")}`
+									${this.command("Install the Copilot SDK", `${hostCommand()} copilot-sdk install`)}`
 							: nothing
 					}`,
 				})}
 				<div class="flex flex-col gap-2 rounded-md border border-border p-3" data-subscription="cli">
 					<span class="text-sm font-medium text-foreground">Claude and Gemini</span>
 					<p class="text-xs text-muted-foreground">
-						Use your Claude Code or Gemini CLI subscription by running it with Tabkyra's MCP server. Anthropic's and Google's
-						terms don't allow other apps to sign in with those plans, so Tabkyra doesn't.
+						Use your Claude Code or Gemini CLI subscription by running it with Polycarp's MCP server. Anthropic's and Google's
+						terms don't allow other apps to sign in with those plans, so Polycarp doesn't.
 					</p>
 					${this.command("Claude Code", CLI_MCP_SETUP.claude)}
 					${this.command("Gemini CLI", CLI_MCP_SETUP.gemini)}

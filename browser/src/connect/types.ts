@@ -25,7 +25,7 @@ export interface ConnectStatus {
 	link?: { hubUrl: string; name: string; online: boolean; busy: boolean; manage: boolean };
 	hub?: { devices: ConnectDevice[] };
 	theme: { preset: string; accent?: string; mode?: "light" | "dark" };
-	/** The Polycarp theme in force (Tabkyra's section of theme.json), checked by the helper; the panel checks it again with parsePolycarpTheme. Absent when there is none. */
+	/** The Polycarp theme in force (Polycarp's section of theme.json), checked by the helper; the panel checks it again with parsePolycarpTheme. Absent when there is none. */
 	polycarp?: Record<string, unknown>;
 	/** Why a Polycarp theme file is there but not in use: one line. Absent when it is in force or there is no file. */
 	polycarpRefused?: string;

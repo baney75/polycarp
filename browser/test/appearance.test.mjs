@@ -331,7 +331,7 @@ test("the panel refuses a Polycarp theme that is not exactly right", () => {
 	assert.equal(isEasing("cubic-bezier(0.2, 0, 0)"), false);
 });
 
-test("the payload the helper sends carries only Tabkyra's section, and the panel parses it back to the same theme", () => {
+test("the payload the helper sends carries only Polycarp's section, and the panel parses it back to the same theme", () => {
 	const file = fixtureFile("blocks");
 	const payload = polycarpPayload(file);
 	assert.deepEqual(Object.keys(payload.surfaces), ["browser"]);

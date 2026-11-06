@@ -1,5 +1,5 @@
 /**
- * `tabkyra link`: put this device behind a hub (D32). `link <hub-url> --code TK-XXXX-XXXX` enrolls
+ * `polycarp browser link`: put this device behind a hub (D32). `link <hub-url> --code TK-XXXX-XXXX` enrolls
  * the device and installs a service that runs `link run`. `link run` starts the normal MCP server on
  * an ephemeral loopback port (no public URL) and dials the hub over a WebSocket; the hub sends it
  * MCP requests, it answers from its own browser. The device's cap is the scope list on its local
@@ -39,6 +39,7 @@ import { installService, installServiceAsync, LINK_SERVICE, removeService, servi
 import { splitText } from "./text-split.ts";
 import { c, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export interface LinkConfig {
 	hubUrl: string;
@@ -90,7 +91,7 @@ async function takePidLock(): Promise<void> {
 					await sleep(100);
 					continue;
 				}
-				throw new Error(`Another tabkyra link run is already running on this device (pid ${other}). Stop it first (tabkyra link off stops the service).`);
+				throw new Error(`Another ${COMMAND_NAME} link run is already running on this device (pid ${other}). Stop it first (${COMMAND_NAME} link off stops the service).`);
 			}
 			rmSync(pidFile(), { force: true });
 		}
@@ -104,7 +105,7 @@ export function loadLinkConfig(): LinkConfig | undefined {
 	try {
 		raw = JSON.parse(readFileSync(linkFile(), "utf8")) as Record<string, unknown>;
 	} catch {
-		throw new Error(`${linkFile()} isn't valid JSON. Run tabkyra link off to remove it, then link again.`);
+		throw new Error(`${linkFile()} isn't valid JSON. Run ${COMMAND_NAME} link off to remove it, then link again.`);
 	}
 	const text = (v: unknown, field: string): string => {
 		if (typeof v !== "string" || !v) throw new Error(`${linkFile()}: ${field} is missing.`);
@@ -293,7 +294,7 @@ export async function takeJoinReservation(now = Date.now()): Promise<{ release: 
 	};
 }
 
-const ALREADY_LINKED = (link: LinkConfig) => `This device is already linked to ${link.hubUrl} as ${link.name}. Run tabkyra link off first. Nothing was changed.`;
+const ALREADY_LINKED = (link: LinkConfig) => `This device is already linked to ${link.hubUrl} as ${link.name}. Run ${COMMAND_NAME} link off first. Nothing was changed.`;
 
 /** Enroll this device. Prints nothing itself: it reports through `hooks` and its result. */
 export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: EnrollHooks = {}): Promise<EnrollResult> {
@@ -313,13 +314,13 @@ export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: 
 	if (early) return early;
 	const scopes = options.scopes?.length ? [...new Set(options.scopes)] : [...DEFAULT_GRANT];
 	for (const s of scopes) if (!Object.hasOwn(SCOPES, s)) return failed(`Unknown scope ${s}. Scopes: ${Object.keys(SCOPES).join(", ")}.`, { type: "scopes" });
-	if (options.service && !service.valid()) return failed(`${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run tabkyra install first, then link again (or pass --no-service). Nothing was changed.`, { type: "launcher" });
+	if (options.service && !service.valid()) return failed(`${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then link again (or pass --no-service). Nothing was changed.`, { type: "launcher" });
 	// Reserve before the hub sees the code: a competing join is refused here, with its code unspent.
 	let reservation: Awaited<ReturnType<typeof takeJoinReservation>>;
 	try {
 		reservation = await takeJoinReservation();
 	} catch (err) {
-		if (err instanceof LockTimeoutError) return failed("Another Tabkyra join is starting on this computer. Try again in a moment. Nothing was changed.", { type: "busy" });
+		if (err instanceof LockTimeoutError) return failed("Another Polycarp join is starting on this computer. Try again in a moment. Nothing was changed.", { type: "busy" });
 		throw err;
 	}
 	if (!reservation) return failed("Another join is already running on this computer. Wait for it, or try again in a few minutes. Nothing was changed.", { type: "busy" });
@@ -341,7 +342,7 @@ export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: 
 		const body = result.body;
 		if (typeof body.deviceId !== "string" || typeof body.secret !== "string" || typeof body.name !== "string") return failed(`The hub refused: ${describe(body, result.status)}`, { type: "malformed" });
 		// The hub chooses the name; it ends up in link.json, the service and the panel, so it must be a plain one.
-		if (!validDeviceName(body.name)) return failed("The hub answered with a device name Tabkyra won't use, so nothing was linked.", { type: "malformed" });
+		if (!validDeviceName(body.name)) return failed("The hub answered with a device name Polycarp won't use, so nothing was linked.", { type: "malformed" });
 		deviceId = body.deviceId;
 		name = body.name;
 		config = { hubUrl: options.hubUrl, deviceId, secret: body.secret, name, manage: body.manage === true, scopes };
@@ -361,7 +362,7 @@ export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: 
 				);
 			} catch (err) {
 				if (err instanceof LinkError) return failed(err.message, { type: "linked" });
-				if (err instanceof LockTimeoutError) return failed("Another Tabkyra window is writing link.json. Try again in a moment.", { type: "busy" });
+				if (err instanceof LockTimeoutError) return failed("Another Polycarp window is writing link.json. Try again in a moment.", { type: "busy" });
 				throw err;
 			}
 		}
@@ -370,7 +371,7 @@ export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: 
 	}
 	say(`${sym.ok} Linked as ${c.bold(name)} (${deviceId})${config.manage ? ", a manager device" : ""}. Wrote ${c.dim(linkFile())}`);
 	say(`${sym.dot} This device allows: ${scopes.join(", ")}`);
-	let serviceMessage = "no service (run: tabkyra link run)";
+	let serviceMessage = `no service (run: ${COMMAND_NAME} link run)`;
 	let serviceOk = true;
 	if (options.service) {
 		hooks.step?.("service");
@@ -378,9 +379,9 @@ export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: 
 		serviceOk = installed.ok;
 		serviceMessage = installed.message;
 		say(`${installed.ok ? sym.ok : sym.fail} ${installed.message}`);
-		if (!installed.ok) say(`${sym.dot} link.json is kept. Fix the cause and run tabkyra link ${options.hubUrl} again after tabkyra link off, or start it yourself: tabkyra link run`);
+		if (!installed.ok) say(`${sym.dot} link.json is kept. Fix the cause and run ${COMMAND_NAME} link ${options.hubUrl} again after ${COMMAND_NAME} link off, or start it yourself: ${COMMAND_NAME} link run`);
 	} else {
-		say(`${sym.dot} No service installed. Start it yourself: ${c.bold("tabkyra link run")}`);
+		say(`${sym.dot} No service installed. Start it yourself: ${c.bold(`${COMMAND_NAME} link run`)}`);
 	}
 	return { kind: "linked", ok: serviceOk, name, deviceId, manage: config.manage, scopes, service: serviceMessage };
 }
@@ -449,7 +450,7 @@ export function linkOnline(state: LiveState | undefined, now = Date.now()): bool
 /** Run until stopped: serve on loopback, dial the hub, answer its requests. */
 export async function linkRun(): Promise<void> {
 	const config = loadLinkConfig();
-	if (!config) throw new Error(`${linkFile()} not found. Run tabkyra link <hub-url> --code <code> first.`);
+	if (!config) throw new Error(`${linkFile()} not found. Run ${COMMAND_NAME} link <hub-url> --code <code> first.`);
 	const wsUrl = `${config.hubUrl.replace(/^http/, "ws")}/link`;
 	const cap = capOf(config);
 	await takePidLock();
@@ -479,7 +480,7 @@ export async function linkRun(): Promise<void> {
 		cancelled: boolean;
 	}
 	let active = new Map<string, Active>();
-	const log = (line: string) => process.stderr.write(`[tabkyra link] ${line}\n`);
+	const log = (line: string) => process.stderr.write(`[${COMMAND_NAME} link] ${line}\n`);
 
 	const readBusy = (): boolean => {
 		try {
@@ -664,7 +665,7 @@ export async function linkRun(): Promise<void> {
 				answer(socket, frame);
 			});
 			socket.on("unexpected-response", (_req, res) => {
-				live.lastError = `the hub answered ${res.statusCode}${res.statusCode === 401 ? " (this device's credential was refused; it may have been removed: tabkyra link off)" : ""}`;
+				live.lastError = `the hub answered ${res.statusCode}${res.statusCode === 401 ? ` (this device's credential was refused; it may have been removed: ${COMMAND_NAME} link off)` : ""}`;
 				log(live.lastError);
 				res.resume();
 				socket.terminate();
@@ -727,7 +728,7 @@ export async function linkStatus(json: boolean): Promise<number> {
 	if (config) {
 		checks.push({ name: "link.json", status: "ok", detail: `${config.name} (${config.deviceId}) on ${config.hubUrl}${config.manage ? ", manager" : ""}, allows ${capOf(config).join(",")}${config.busy ? ", marked busy" : ""}` });
 		const file = serviceFile(LINK_SERVICE);
-		checks.push({ name: "service", status: file && existsSync(file) ? "ok" : "warn", detail: file && existsSync(file) ? `${file}; log: ${serviceLogHint(LINK_SERVICE)}` : "no service installed; start it with tabkyra link run" });
+		checks.push({ name: "service", status: file && existsSync(file) ? "ok" : "warn", detail: file && existsSync(file) ? `${file}; log: ${serviceLogHint(LINK_SERVICE)}` : `no service installed; start it with ${COMMAND_NAME} link run` });
 		let state: LiveState | undefined;
 		try {
 			state = readJsonFile<LiveState | undefined>(liveFile(), undefined);
@@ -738,7 +739,7 @@ export async function linkStatus(json: boolean): Promise<number> {
 		checks.push({
 			name: "link",
 			status: fresh && state?.connected ? "ok" : "fail",
-			detail: fresh && state ? (state.connected ? `connected since ${state.lastConnectedAt}; ${state.sessions} session(s); extension ${state.extensionConnected ? "connected" : "not connected"}` : `not connected${state.lastError ? `: ${state.lastError}` : ""}`) : "tabkyra link run isn't running on this device",
+			detail: fresh && state ? (state.connected ? `connected since ${state.lastConnectedAt}; ${state.sessions} session(s); extension ${state.extensionConnected ? "connected" : "not connected"}` : `not connected${state.lastError ? `: ${state.lastError}` : ""}`) : `${COMMAND_NAME} link run isn't running on this device`,
 		});
 		try {
 			const res = await fetch(`${config.hubUrl}/.well-known/oauth-protected-resource/mcp`, { signal: AbortSignal.timeout(8000) });
@@ -747,7 +748,7 @@ export async function linkStatus(json: boolean): Promise<number> {
 			checks.push({ name: "hub", status: "fail", detail: `${config.hubUrl} didn't answer: ${err instanceof Error ? err.message : String(err)}` });
 		}
 	} else if (!checks.length) {
-		checks.push({ name: "link.json", status: "fail", detail: `${linkFile()} not found. Run tabkyra link <hub-url> --code <code>.` });
+		checks.push({ name: "link.json", status: "fail", detail: `${linkFile()} not found. Run ${COMMAND_NAME} link <hub-url> --code <code>.` });
 	}
 	const ok = checks.every((x) => x.status !== "fail");
 	if (json) {
@@ -790,16 +791,16 @@ export async function linkOff(): Promise<number> {
 		);
 	} catch (err) {
 		if (!(err instanceof LockTimeoutError)) throw err;
-		console.error(`${sym.fail} ${linkFile()} is locked by another Tabkyra window. The service is stopped; run tabkyra link off again in a moment to remove it.`);
+		console.error(`${sym.fail} ${linkFile()} is locked by another Polycarp window. The service is stopped; run ${COMMAND_NAME} link off again in a moment to remove it.`);
 		return 1;
 	}
-	console.log(config || removed ? `${sym.ok} Removed ${c.dim(linkFile())}.${config ? ` The hub still lists ${config.name} until you run: tabkyra hub remove ${config.name}` : ""}` : `${sym.dot} No link.json; nothing else to remove.`);
+	console.log(config || removed ? `${sym.ok} Removed ${c.dim(linkFile())}.${config ? ` The hub still lists ${config.name} until you run: ${COMMAND_NAME} hub remove ${config.name}` : ""}` : `${sym.dot} No link.json; nothing else to remove.`);
 	return 0;
 }
 
 function markBusy(busy: boolean): void {
 	const config = loadLinkConfig();
-	if (!config) throw new LinkError("This device isn't linked. Run tabkyra link <hub-url> --code <code>.");
+	if (!config) throw new LinkError(`This device isn't linked. Run ${COMMAND_NAME} link <hub-url> --code <code>.`);
 	const { busy: _old, ...rest } = config;
 	writeJsonPrivate(linkFile(), busy ? { ...rest, busy: true } : rest);
 }
@@ -816,7 +817,7 @@ export async function setLinkBusyAsync(busy: boolean): Promise<void> {
 
 export function linkBusy(value: string | undefined): number {
 	if (value !== "on" && value !== "off") {
-		console.error("Usage: tabkyra link busy on|off");
+		console.error(`Usage: ${COMMAND_NAME} link busy on|off`);
 		return 2;
 	}
 	try {
@@ -834,8 +835,8 @@ export function linkBusy(value: string | undefined): number {
 /** A code from the hub, asked for with this device's credential. Throws a sentence a person can act on. */
 export async function mintViaHub(kind: "connect" | "approval", manage: boolean): Promise<{ code: string; expiresAt: number; url?: string; hubUrl: string }> {
 	const config = loadLinkConfig();
-	if (!config) throw new LinkError("This device isn't linked. Run tabkyra link <hub-url> --code <code>.");
-	if (!config.manage) throw new LinkError("This device isn't a manager, so it can't ask the hub for codes. Link it with a code from tabkyra hub code --manage, or run the command on the hub.");
+	if (!config) throw new LinkError(`This device isn't linked. Run ${COMMAND_NAME} link <hub-url> --code <code>.`);
+	if (!config.manage) throw new LinkError(`This device isn't a manager, so it can't ask the hub for codes. Link it with a code from ${COMMAND_NAME} hub code --manage, or run the command on the hub.`);
 	let result: Awaited<ReturnType<typeof hubPost>>;
 	try {
 		result = await hubPost(config, "/link/code", { kind, manage }, `${config.deviceId}.${config.secret}`);
@@ -901,7 +902,7 @@ export function printCode(kind: "connect" | "approval", code: string, expiresAt:
 	if (kind === "approval") {
 		console.log(`Paste ${c.bold(url ?? "<hub URL>/mcp")} into claude.ai, ChatGPT or grok.com as a custom connector. When the approval page asks for a passcode, enter this code instead.`);
 	} else {
-		console.log(`On the other device: ${c.bold(`tabkyra link ${hubUrl ?? "<hub URL>"} --code ${code}`)}`);
+		console.log(`On the other device: ${c.bold(`${COMMAND_NAME} link ${hubUrl ?? "<hub URL>"} --code ${code}`)}`);
 	}
 	console.log(c.dim(`Shown once. Works one time, for ${minutes} minutes.`));
 }
