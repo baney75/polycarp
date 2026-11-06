@@ -35,7 +35,9 @@ problems=()
 problem() { problems+=("$*"); }
 running() {
   [ -z "$TEST" ] || return 1
-  pgrep -f "Polycarp.app/Contents/MacOS/Polycarp" >/dev/null || pgrep -f "$APP/Contents/MacOS/" >/dev/null
+  # A helper waiting to restart the Dock (--restart-when-safe) runs from the app's path but isn't the app, and it is safe to leave.
+  pgrep -fl "Polycarp.app/Contents/MacOS/Polycarp" 2>/dev/null | grep -vq -- --restart-when-safe \
+    || pgrep -fl "$APP/Contents/MacOS/" 2>/dev/null | grep -vq -- --restart-when-safe
 }
 # Its own settings. The test reads them from a plist file instead (BANEYSPACES_UNINSTALL_PREFS).
 pref() {
