@@ -31,7 +31,7 @@ import { dispatchToSandbox, setCdpMessageHandler } from "./browser/inject.js";
 import { BrowserSession, listSessions, sessionIdForTab, sessionOwningTab } from "./browser/session.js";
 import { shareActiveTab } from "./browser/share-tab.js";
 import { communityLibrary, readCommunityStatus } from "./community/status.js";
-import { helmMark } from "./components/HelmMark.js";
+import { polycarpMark } from "./components/PolycarpMark.js";
 import "./components/HeaderMenu.js";
 import { startAppearance } from "./appearance/apply.js";
 import { followSystem } from "./appearance/mode.js";
@@ -1298,7 +1298,7 @@ const renderApp = () => {
 		<div class="w-full h-full flex flex-col bg-background text-foreground overflow-hidden">
 			<!-- Header: brand or chat title, then what is used every chat; the rest is under More. -->
 			<div class="flex items-center gap-1 border-b border-border shrink-0 h-12 px-2">
-				<span class="flex items-center shrink-0 px-1 select-none" aria-hidden="true">${helmMark(18)}</span>
+				<span class="flex items-center shrink-0 px-1 select-none" aria-hidden="true">${polycarpMark(18)}</span>
 				<div class="flex items-center gap-1 flex-1 min-w-0">${titleArea()}</div>
 				<div class="flex items-center gap-0.5 shrink-0 tk-tips-end">
 					${

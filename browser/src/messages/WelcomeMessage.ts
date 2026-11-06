@@ -5,7 +5,7 @@ import type { AgentInterface, MessageRenderer } from "@mariozechner/pi-web-ui";
 import { registerMessageRenderer } from "@mariozechner/pi-web-ui";
 import { html, LitElement, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { helmMark } from "../components/HelmMark.js";
+import { polycarpMark } from "../components/PolycarpMark.js";
 import type { StarterPrompt } from "../tutorials.js";
 import "../utils/i18n-extension.js";
 
@@ -57,7 +57,7 @@ export class WelcomeMessageElement extends LitElement {
 		return html`
 			<div class="welcome-container my-8 flex flex-col items-center justify-center">
 				<div class="flex flex-col items-center text-center mb-6 px-6">
-					${helmMark(64, "tile", "mb-4 rounded-[15px] shadow-[0_10px_30px_-12px_color-mix(in_srgb,var(--tk-brass)_55%,transparent)]")}
+					${polycarpMark(64, "tile", "mb-4 rounded-[15px] shadow-[0_10px_30px_-12px_color-mix(in_srgb,var(--tk-brass)_55%,transparent)]")}
 					<h1 class="text-2xl font-semibold tracking-tight mb-1.5">Polycarp</h1>
 					<p class="text-sm text-muted-foreground max-w-xs">${i18n("You steer. Polycarp works the tabs.")}</p>
 				</div>
