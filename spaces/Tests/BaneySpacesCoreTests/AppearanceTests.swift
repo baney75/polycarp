@@ -11,7 +11,7 @@ final class AppearanceTests: XCTestCase {
         let data = try XCTUnwrap(s.encoded())
         XCTAssertEqual(AppearanceSettings.decoded(data), s)
         XCTAssertEqual(s.accent, .preset(.red))
-        XCTAssertEqual(s.palette, .rainbow)
+        XCTAssertEqual(s.palette, .accent)
         XCTAssertEqual(s.panelStyle, .glass)
         XCTAssertEqual(s.dockSize, .medium)
         XCTAssertEqual(s.panelOpacity, 0.88)
@@ -111,7 +111,8 @@ final class AppearanceTests: XCTestCase {
     }
 
     func testRainbowIsExactlyTodaysColors() {
-        let s = AppearanceSettings()
+        var s = AppearanceSettings()
+        s.palette = .rainbow
         for n in 1...9 {
             let c = s.workspaceColor(n, accent: red)
             let want = todaysWorkspace(n)
@@ -161,7 +162,7 @@ final class AppearanceTests: XCTestCase {
 
     func testOverridesAreHeldDownForWhiteText() {
         var s = AppearanceSettings()
-        let brightestDefault = (1...9).map { AppearanceSettings().workspaceColor($0, accent: red).rgb.contrastWithWhite }.min()!
+        let brightestDefault = (1...9).map { AppearanceSettings.paletteColor(.rainbow, $0, accent: red).rgb.contrastWithWhite }.min()!
         for hex in ["#FFFFFF", "#FFFF00", "#00FFFF", "#00FF00", "#FF0000", "#FFEEAA", "#CCCCCC", "#80FF00"] {
             s.overrides[1] = RGB(hex: hex)!
             let c = s.workspaceColor(1, accent: red).rgb
