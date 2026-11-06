@@ -167,7 +167,7 @@ struct WelcomePartsChooser: View {
                 })) {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(feature.title).font(Chrome.font(13, .bold))
-                        Text(feature.summary).font(Chrome.font(12)).foregroundStyle(.secondary)
+                        Text(feature.summary).font(Chrome.font(12)).foregroundStyle(Chrome.muted)
                     }
                 }
                 .toggleStyle(.checkbox)
@@ -178,7 +178,7 @@ struct WelcomePartsChooser: View {
         }
         .padding(.horizontal, 20)
         HStack {
-            Text("All three come with the app. Off means it doesn't run.").font(Chrome.font(11)).foregroundStyle(.secondary)
+            Text("All three come with the app. Off means it doesn't run.").font(Chrome.font(11)).foregroundStyle(Chrome.muted)
             Spacer()
             Button("Continue") { parts.choose(picked) }
                 .keyboardShortcut(.defaultAction)

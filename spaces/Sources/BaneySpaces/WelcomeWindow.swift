@@ -125,7 +125,7 @@ struct WelcomeView: View {
                     Text("Welcome to Polycarp").font(Chrome.font(21, .bold))
                     Text(parts.hasChosen ? (model.canStart ? "You're set. Everything else can wait." : "One switch and you're working.")
                         : "Pick what you want. You can change this any time.")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Chrome.muted)
                 }
             }
             .padding(.horizontal, 28).padding(.top, 26).padding(.bottom, 20)
@@ -152,7 +152,7 @@ struct WelcomeView: View {
             .padding(.horizontal, 20)
 
             if model.legacyNote {
-                Text(LegacyRetirement.welcomeNote).font(Chrome.font(12)).foregroundStyle(.secondary)
+                Text(LegacyRetirement.welcomeNote).font(Chrome.font(12)).foregroundStyle(Chrome.muted)
                     .padding(.horizontal, 28).padding(.top, 12)
             }
 
@@ -167,7 +167,7 @@ struct WelcomeView: View {
             }
 
             HStack {
-                Text("You can change any of this in Settings.").font(Chrome.font(11)).foregroundStyle(.secondary)
+                Text("You can change any of this in Settings.").font(Chrome.font(11)).foregroundStyle(Chrome.muted)
                 Spacer()
                 Button(model.canStart ? "Start using Polycarp" : "Waiting for Accessibility") { UserDefaults.standard.set(false, forKey: LegacyRetirement.noteKey); model.onFinish() }
                     // Return presses the current permission's button while one is left; this only when none is.
@@ -194,8 +194,8 @@ struct WelcomeView: View {
                     if wasSkipped { tag("Skipped for now") }
                     Spacer(minLength: 0)
                 }
-                if !done, isCurrent || wasSkipped == false {
-                    Text(s.why).font(Chrome.font(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if !done, isCurrent {
+                    Text(s.why).font(Chrome.font(12)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
                 }
                 if !done, isCurrent {
                     HStack(spacing: 10) {
@@ -205,13 +205,13 @@ struct WelcomeView: View {
                         if Welcome.canSkip(s.kind) { Button("Not now") { model.skip(s.kind) } }
                     }
                     if model.asked.contains(s.kind) {
-                        Text(s.after).font(Chrome.font(11)).foregroundStyle(.secondary)
+                        Text(s.after).font(Chrome.font(11)).foregroundStyle(Chrome.muted)
                     }
                     if s.kind == .accessibility, model.looksStale {
                         VStack(alignment: .leading, spacing: 5) {
                             Text("Already on and still waiting?").font(Chrome.font(12, .bold))
                             Text("macOS can keep an old permission from an earlier copy. This clears it and asks again.")
-                                .font(Chrome.font(11)).foregroundStyle(.secondary)
+                                .font(Chrome.font(11)).foregroundStyle(Chrome.muted)
                             Button("Fix Permission") { model.onFixStale() }
                         }
                         .padding(.top, 2)
@@ -227,18 +227,18 @@ struct WelcomeView: View {
     /// Not a permission: a switch, on by default, that never blocks starting.
     private var loginRow: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: model.startAtLogin ? "checkmark.circle.fill" : "circle")
-                .font(Chrome.font(16))
-                .foregroundStyle(model.startAtLogin ? Chrome.accent : Color.secondary)
-                .frame(width: 22)
             VStack(alignment: .leading, spacing: 7) {
-                Toggle(isOn: Binding(get: { model.startAtLogin }, set: { model.setStartAtLogin($0) })) {
+                HStack {
                     Text(Welcome.StartAtLogin.title).font(Chrome.font(13, .bold))
+                    Spacer()
+                    Toggle(Welcome.StartAtLogin.title, isOn: Binding(get: { model.startAtLogin }, set: { model.setStartAtLogin($0) }))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
                 }
-                Text(Welcome.StartAtLogin.why).font(Chrome.font(12)).foregroundStyle(.secondary)
+                Text(Welcome.StartAtLogin.why).font(Chrome.font(12)).foregroundStyle(Chrome.muted)
                 if model.loginNeedsApproval {
                     HStack {
-                        Text(Welcome.StartAtLogin.approval).font(Chrome.font(11)).foregroundStyle(.secondary)
+                        Text(Welcome.StartAtLogin.approval).font(Chrome.font(11)).foregroundStyle(Chrome.muted)
                         Spacer(minLength: 0)
                         Button(Welcome.StartAtLogin.approvalButton) { SMAppService.openSystemSettingsLoginItems() }
                     }
@@ -250,7 +250,7 @@ struct WelcomeView: View {
     }
 
     private func tag(_ s: String) -> some View {
-        Text(s).font(Chrome.font(10, .medium)).foregroundStyle(.secondary)
+        Text(s).font(Chrome.font(10, .medium)).foregroundStyle(Chrome.muted)
             .padding(.horizontal, 6).padding(.vertical, 1)
             .background(Capsule().fill(Chrome.cell(0.08)))
     }
@@ -320,10 +320,10 @@ private struct BrowserWelcomeRow: View {
                 VStack(alignment: .leading, spacing: 7) {
                     HStack {
                         Text("Browser agents").font(Chrome.font(13, .bold))
-                        Text("optional").font(Chrome.font(10, .medium)).foregroundStyle(.secondary)
+                        Text("optional").font(Chrome.font(10, .medium)).foregroundStyle(Chrome.muted)
                     }
                     Text("Let Claude Code and Codex use your browser, in their own tab group. Set it up now or later in Settings > Browser.")
-                        .font(Chrome.font(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        .font(Chrome.font(12)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
                     if model.status?.unattributed == true {
                         Label("Connected", systemImage: "checkmark.circle.fill").font(Chrome.font(12, .medium)).foregroundStyle(Color.green)
                     }

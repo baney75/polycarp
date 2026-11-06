@@ -58,11 +58,17 @@ if [ "$IN_PLACE" = 0 ] && [ -d "$DEST" ]; then
   fi
 fi
 
+# The app itself, not the small helper a quit can leave waiting to restart the Dock (`--restart-when-safe`), which isn't in
+# the way of anything.
+app_is_running() { pgrep -fl "$DEST/Contents/MacOS/$EXECUTABLE" 2>/dev/null | grep -vq -- --restart-when-safe; }
+
 if [ "$IN_PLACE" = 0 ] && [ -z "$TEST" ]; then
+  # An install swaps the app in place, so Mission Control and the Dock stay as they are: see InstallHandoff.
+  defaults write "$BUNDLE_ID" restartingForInstall -int "$(date +%s)" >/dev/null 2>&1 || true
   # Quit by bundle ID so the app brings every hidden window back before it exits.
   osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
-  for _ in $(seq 1 50); do pgrep -f "$DEST/Contents/MacOS/$EXECUTABLE" >/dev/null || break; sleep 0.2; done
-  if pgrep -f "$DEST/Contents/MacOS/$EXECUTABLE" >/dev/null; then
+  for _ in $(seq 1 50); do app_is_running || break; sleep 0.2; done
+  if app_is_running; then
     echo "$PRODUCT_NAME is still running; quit it from the menu bar and run this again." >&2
     exit 1
   fi
