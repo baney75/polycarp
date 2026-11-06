@@ -2,7 +2,7 @@
 // run, a run that hits a usage message stops, and a missing verdict can't count as a pass.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { graderPrompt, isQuotaStop, parseVerdict, stratifiedSample, summarize, transcriptOf } from "../eval/web-bench.mjs";
+import { errorTextOf, graderPrompt, isQuotaStop, parseVerdict, stratifiedSample, summarize, transcriptOf } from "../eval/web-bench.mjs";
 
 const tasks = Array.from({ length: 300 }, (_, i) => ({ task_id: `t${i}`, task: `task ${i}`, level: i < 80 ? "easy" : i < 223 ? "medium" : "hard" }));
 
@@ -40,7 +40,15 @@ test("only a real verdict counts", () => {
 test("usage and billing messages stop the run; ordinary failures don't", () => {
 	assert.ok(isQuotaStop("Claude usage limit reached"));
 	assert.ok(isQuotaStop("Your credit balance is too low"));
+	assert.ok(isQuotaStop("Weekly limit reached"));
+	assert.ok(isQuotaStop("You've hit your session limit"));
+	assert.ok(isQuotaStop("API Error: 429 rate_limit_error"));
 	assert.ok(!isQuotaStop("The page says the item is out of stock"));
+});
+
+test("an answer that mentions billing doesn't stop the run; a CLI error does", () => {
+	assert.equal(errorTextOf({ is_error: false, subtype: "success", result: "I stopped at the billing address step." }), "");
+	assert.ok(isQuotaStop(errorTextOf({ is_error: true, subtype: "error", result: "Weekly limit reached" })));
 });
 
 test("the summary separates impossible tasks and compares the same tasks", () => {

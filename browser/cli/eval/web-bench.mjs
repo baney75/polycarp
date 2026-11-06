@@ -101,14 +101,21 @@ export function parseVerdict(text) {
 	}
 }
 
+/** What the CLI itself reports as failing. An agent's own answer can say "billing address" and mean nothing by it. */
+export function errorTextOf(event) {
+	return event.is_error ? `${event.subtype ?? ""} ${event.result ?? ""}` : "";
+}
+
 export function isQuotaStop(text) {
-	return /usage limit|rate limit reached|out of (extra )?usage|credit balance|billing|upgrade your plan|hit your limit/i.test(text);
+	return /usage limit|rate.?limit|429|out of (extra )?usage|credit balance|billing|upgrade your plan|hit your (\w+ )?limit|weekly limit|session limit|quota/i.test(text);
 }
 
 function claudeEnv() {
 	const env = { ...process.env };
 	delete env.ANTHROPIC_API_KEY;
 	delete env.ANTHROPIC_AUTH_TOKEN;
+	// Signed-in use only: nothing here may route through a paid API or gateway.
+	for (const key of ["ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"]) delete env[key];
 	return env;
 }
 
@@ -188,7 +195,7 @@ async function runAgent(task, fixtureEnv, cli, model, timeoutMs) {
 			if (e.type === "result") {
 				answer = e.result ?? answer;
 				usage = { turns: e.num_turns, inputTokens: e.usage?.input_tokens, outputTokens: e.usage?.output_tokens };
-				raw = `${e.subtype ?? ""} ${e.result ?? ""}`;
+				raw = errorTextOf(e);
 			}
 		},
 	);
@@ -201,8 +208,10 @@ async function grade(task, answer, steps, model) {
 		graderPrompt(task, answer, transcriptOf(steps)),
 		300000,
 	);
-	if (isQuotaStop(result.out + result.err)) return { quota: true };
-	return parseVerdict(result.out) ?? { verdict: "fail", blocked: false, reason: `the grader gave no verdict: ${result.out.slice(0, 200)}`, graderFailed: true };
+	const verdict = parseVerdict(result.out);
+	// A real verdict can mention billing; only a call that gave none can be a usage stop.
+	if (!verdict && isQuotaStop(result.out + result.err)) return { quota: true };
+	return verdict ?? { verdict: "fail", blocked: false, reason: `the grader gave no verdict: ${result.out.slice(0, 200)}`, graderFailed: true };
 }
 
 export function summarize(results) {
