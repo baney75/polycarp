@@ -119,7 +119,7 @@ final class BrowserDropModel: ObservableObject {
     /// Only on the click: the folder's path goes to the pasteboard, then the two steps are shown.
     /// In the browser being set up, which often isn't the default one.
     func openInBrowser(_ url: URL) {
-        guard let id = BrowserSetup.bundleID(for: browser),
+        guard let id = BrowserBundle.bundleID(for: browser),
               let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else { NSWorkspace.shared.open(url); return }
         NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
     }
