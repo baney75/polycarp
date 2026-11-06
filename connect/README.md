@@ -20,7 +20,7 @@ This is a real dependency, stated plainly. The connection runs on a Cloudflare a
 - The service stores only: tunnel id, hostname, a SHA-256 of the device public key, created and last-seen
   times. It does not store the tunnel token, the public key, IP addresses, or the passcode. Rate limits use a
   keyed hash of the IP that expires in two days.
-- Cloudflare itself carries the encrypted traffic, as it would for anyone's tunnel. Anyone with the tunnel
+- Anyone with the tunnel
   token could run a connector for that hostname, so the token is handed to the device that claimed it and
   nowhere else, and it is never logged.
 - Email is stored only if a person types it into the waitlist, and they can delete it (below).
