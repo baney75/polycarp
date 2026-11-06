@@ -10,20 +10,20 @@ export function agentSetupPrompt(version: string, command = "tabkyra"): string {
 	if (!COMMANDS.includes(command)) throw new Error(`Unknown command name "${command}".`);
 	// Without the version the clone can't be pinned, so refuse rather than copy a broken prompt.
 	if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`No extension version to pin the CLI to (got "${version}").`);
-	return `Set up Polycarp (https://github.com/baney75/tabkyra) so you can use my browser. The Polycarp extension ${version} is already loaded in my browser. Run each step yourself and show me any output you can't fix.
+	return `Set up Polycarp (https://github.com/baney75/polycarp) so you can use my browser. The Polycarp extension ${version} is already loaded in my browser. Run each step yourself and show me any output you can't fix.
 
 1. Note the directory you started in, then check that Node 20+ and git are installed: pwd && node -v && git --version
    Remember the directory pwd printed: it is my project.
 2. Install the CLI that matches the extension.
-   - First, if ~/tabkyra-src/tabkyra exists and git status there lists AGENTS.md as the only changed file, run git diff AGENTS.md there. If the diff only adds lines, starting with a "## Browser: Polycarp" or "## Browser: Tabkyra" section an earlier setup appended, show me that diff and offer to undo it:
-     (cd ~/tabkyra-src/tabkyra && git restore AGENTS.md)
+   - First, if ~/polycarp-src/polycarp exists and git status there lists AGENTS.md as the only changed file, run git diff AGENTS.md there. If the diff only adds lines, starting with a "## Browser: Polycarp" or "## Browser: Tabkyra" section an earlier setup appended, show me that diff and offer to undo it:
+     (cd ~/polycarp-src/polycarp && git restore AGENTS.md)
      Run it only if I say yes.
    - If ${command} runs and ${command} doctor reports no problems with the CLI or the build, skip the rest of this step and go to step 3. Otherwise:
-   - If ~/tabkyra-src/tabkyra exists: cd into it. If git status shows any local change, stop and ask me. With a clean checkout, run git fetch --tags && git checkout v${version}.
-   - If it doesn't exist: mkdir -p ~/tabkyra-src && cd ~/tabkyra-src && git clone --depth 1 --branch v${version} https://github.com/baney75/tabkyra && cd tabkyra
-   - If the tag v${version} doesn't exist, use the default branch instead and tell me you did.
-   - Then: (cd cli && npm ci && npm run build && npm link)
-   The npm link gives the command the name tabkyra.${command === "tabkyra" ? "" : ` Once it succeeds, run "tabkyra" in place of "${command}" in every command below, whichever name this prompt started with.`} If npm link fails with a permissions error, run "node ~/tabkyra-src/tabkyra/cli/dist/index.js" in place of "${command}" in every command below.
+   - If ~/polycarp-src/polycarp exists: cd into it. If git status shows any local change, stop and ask me. With a clean checkout, run git fetch --tags && git checkout browser-v${version}.
+   - If it doesn't exist: mkdir -p ~/polycarp-src && cd ~/polycarp-src && git clone --depth 1 --branch browser-v${version} https://github.com/baney75/polycarp && cd polycarp
+   - If the tag browser-v${version} doesn't exist, use the default branch instead and tell me you did.
+   - Then: (cd browser/cli && npm ci && npm run build && npm link)
+   The npm link gives the command the name tabkyra.${command === "tabkyra" ? "" : ` Once it succeeds, run "tabkyra" in place of "${command}" in every command below, whichever name this prompt started with.`} If npm link fails with a permissions error, run "node ~/polycarp-src/polycarp/browser/cli/dist/index.js" in place of "${command}" in every command below.
 3. Run: ${command} setup --yes
    It registers the browser connection and adds the MCP server to Claude Code and Codex.
 4. Connect this harness, even if Polycarp already works in another one:
@@ -48,7 +48,7 @@ const CLOSING = "Don't ask me for API keys or passwords. Polycarp doesn't need t
 export function remoteSetupPrompt(version: string, command = "tabkyra"): string {
 	if (!COMMANDS.includes(command)) throw new Error(`Unknown command name "${command}".`);
 	if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`No extension version to pin the CLI to (got "${version}").`);
-	return `Set up Polycarp (https://github.com/baney75/tabkyra) so claude.ai, ChatGPT or grok.com can use my browser through my own computer. The Polycarp extension ${version} is already loaded in my browser. Run each step yourself and show me any output you can't fix. Nothing here costs money or goes through anyone else's server.
+	return `Set up Polycarp (https://github.com/baney75/polycarp) so claude.ai, ChatGPT or grok.com can use my browser through my own computer. The Polycarp extension ${version} is already loaded in my browser. Run each step yourself and show me any output you can't fix. Nothing here costs money or goes through anyone else's server.
 
 1. Run: ${command} doctor
    If ${command} isn't installed, stop and tell me to copy the setup prompt from Polycarp's Settings > Agents tab and run that first.

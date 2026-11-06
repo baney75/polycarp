@@ -15,7 +15,7 @@ const standalone = agentSetupPrompt("1.2.3");
 
 test("the setup prompt covers install, connect, skills and a status check", () => {
 	for (const step of [
-		/git clone --depth 1 --branch v1\.2\.3 https:\/\/github\.com\/baney75\/tabkyra/,
+		/git clone --depth 1 --branch browser-v1\.2\.3 https:\/\/github\.com\/baney75\/polycarp/,
 		/npm ci/,
 		/npm link/,
 		/polycarp browser setup --yes/,
@@ -33,10 +33,10 @@ test("the setup prompt covers install, connect, skills and a status check", () =
 
 test("the setup prompt refuses to build without a version to pin", () => {
 	assert.throws(() => agentSetupPrompt(""), /No extension version/);
-	assert.match(prompt, /git checkout v1\.2\.3/);
+	assert.match(prompt, /git checkout browser-v1\.2\.3/);
 	assert.match(prompt, /any local change, stop and ask me/);
 	// The existing-checkout branch comes before the clone, so an agent reading in order doesn't clone over it.
-	assert.ok(prompt.indexOf("If ~/tabkyra-src/tabkyra exists: cd into it") < prompt.indexOf("git clone"), "existing checkout is handled before cloning");
+	assert.ok(prompt.indexOf("If ~/polycarp-src/polycarp exists: cd into it") < prompt.indexOf("git clone"), "existing checkout is handled before cloning");
 	// A working install elsewhere skips only the CLI install, never connecting this harness.
 	assert.match(prompt, /go to step 3\./);
 	assert.doesNotMatch(prompt, /skip to step [4-9]/);
@@ -44,7 +44,7 @@ test("the setup prompt refuses to build without a version to pin", () => {
 });
 
 test("the setup prompt appends skills to the user's project AGENTS.md, not the clone's", () => {
-	// Step 2 leaves the shell in ~/tabkyra-src/tabkyra; appending there would dirty the clone and stop the next update.
+	// Step 2 leaves the shell in ~/polycarp-src/polycarp; appending there would dirty the clone and stop the next update.
 	const line = prompt.split("\n").find((l) => l.includes(">> AGENTS.md"));
 	assert.match(line, /cd back to the directory step 1 printed \(my project, not the Polycarp clone\); if you aren't sure it's my project's root, ask me\. If its AGENTS\.md already has a "## Browser: Polycarp" or "## Browser: Tabkyra" section \(the same section under its earlier name\), leave it as it is\. Otherwise run polycarp browser skill print >> AGENTS\.md/);
 	assert.match(prompt, /1\. Note the directory you started in[^\n]*pwd && node -v && git --version/);
@@ -54,13 +54,13 @@ test("the setup prompt appends skills to the user's project AGENTS.md, not the c
 	const restoreAt = prompt.indexOf("git restore AGENTS.md");
 	assert.ok(restoreAt > 0 && restoreAt < prompt.indexOf("skip the rest of this step"));
 	assert.match(prompt, /Run it only if I say yes\./);
-	assert.match(prompt, /If git status shows any local change, stop and ask me\. With a clean checkout, run git fetch --tags && git checkout v/);
+	assert.match(prompt, /If git status shows any local change, stop and ask me\. With a clean checkout, run git fetch --tags && git checkout browser-v/);
 });
 
 test("the setup prompt passes the skill security lint", () => {
 	// The two agent-config writes the prompt makes, each on its own line, only at the user's request:
 	// the append to the project's AGENTS.md and the offered restore of the clone's.
-	const allowed = (line) => /^\s+- First, if ~\/tabkyra-src\/tabkyra exists and git status there lists AGENTS\.md as the only changed file, run git diff AGENTS\.md there\. If the diff only adds lines, starting with a "## Browser: Polycarp" or "## Browser: Tabkyra" section an earlier setup appended, show me that diff and offer to undo it:$/.test(line) || /Otherwise run polycarp browser skill print >> AGENTS\.md$/.test(line);
+	const allowed = (line) => /^\s+- First, if ~\/polycarp-src\/polycarp exists and git status there lists AGENTS\.md as the only changed file, run git diff AGENTS\.md there\. If the diff only adds lines, starting with a "## Browser: Polycarp" or "## Browser: Tabkyra" section an earlier setup appended, show me that diff and offer to undo it:$/.test(line) || /Otherwise run polycarp browser skill print >> AGENTS\.md$/.test(line);
 	const findings = lintText("setup prompt", prompt, { reference: true }).filter((f) => !(f.rule === "config-tamper" && allowed(prompt.split("\n")[f.line - 1])));
 	assert.deepEqual(findings, [], findings.map((f) => `${f.rule}: ${f.message}`).join("\n"));
 	assert.doesNotMatch(prompt, /\|\s*(sh|bash)\b/);
@@ -151,7 +151,7 @@ test("first-F7: after npm link succeeds, a prompt that started as `polycarp brow
 	// The prompt that already says tabkyra has nothing to switch.
 	assert.doesNotMatch(standalone, /Once it succeeds/);
 	// The substitution for a failed npm link still follows.
-	assert.match(prompt, /If npm link fails with a permissions error, run "node ~\/tabkyra-src\/tabkyra\/cli\/dist\/index\.js" in place of "polycarp browser" in every command below\./);
+	assert.match(prompt, /If npm link fails with a permissions error, run "node ~\/polycarp-src\/polycarp\/browser\/cli\/dist\/index\.js" in place of "polycarp browser" in every command below\./);
 });
 
 test("a section an earlier setup appended under either name counts as the same section", () => {

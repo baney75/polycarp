@@ -87,5 +87,5 @@ No account is needed.
 3. Ask: "Open example.com and tell me what the page says."
 4. Approve example.com when asked. A new tab group opens, and the agent reads the page in it.
 
-Connecting a coding agent needs the free Polycarp helper from https://dbaney.com/polycarp/. It isn't required to review the side panel.
+Connecting a coding agent needs the free Polycarp helper. Settings > Agents > Copy setup prompt gives a coding agent the steps to build it, and the Mac app at https://dbaney.com/polycarp/ includes it. It isn't required to review the side panel.
 ```
