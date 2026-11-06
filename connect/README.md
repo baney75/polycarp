@@ -50,7 +50,7 @@ Variables (in `wrangler.jsonc`, not secret):
 | `HARD_LIMIT` | `1000` | Cloudflare's included tunnels per account. |
 | `RESERVE` | `10` | Kept back from everyone. Only a `reserve` invite can use it. |
 | `INVITE_ONLY_ABOVE` | `900` | From here, a claim needs an invite code. |
-| `PAUSED` | `0` | `1` makes `POST /v1/claim` answer `paused`. People who are already connected keep working and can still turn off. Edit it in the dashboard (Workers › polycarp-connect › Settings › Variables) for an instant switch. |
+| `PAUSED` | `0` | `1` makes new claims answer `paused`. People who are already connected keep working, get their connection back after a restart, and can still turn off. Edit it in the dashboard (Workers › polycarp-connect › Settings › Variables) for an instant switch. |
 | `CLAIMS_PER_IP_PER_DAY` | `10` | The abuse brake: a claim needs only a device key, and keys are free. |
 | `STALE_DAYS` | `60` | The daily pass frees tunnels unseen this long. |
 | `CRON_BATCH` | `12` | Most tunnels the daily pass deletes per run (a Worker has a limit on outgoing calls). The rest wait for the next run. |
@@ -69,8 +69,9 @@ npx wrangler deploy
 curl https://<worker host>/v1/capacity            # {"status":"open","remaining":"plenty","paused":false}
 ```
 
-Then give the Worker a stable address (a route such as `connect.dbaney.com`, or the `workers.dev` address) and
-put it in the app and helper as `POLYCARP_CONNECT_URL`'s default.
+Then give the Worker a stable address (a custom domain such as `connect.dbaney.com`, or the `workers.dev` address)
+and make it the helper's default: `DEFAULT_CONNECT_URL` in `browser/cli/src/connect.ts` (the app runs the helper, so
+it needs nothing else; `POLYCARP_CONNECT_URL` overrides it for testing).
 
 Check before the first real claim: no existing Worker route or DNS record on the zone matches `pc-*.dbaney.com`
 (a `*.dbaney.com/*` route would catch tunnel traffic).

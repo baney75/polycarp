@@ -54,15 +54,9 @@ async function findDevice(env: Env, deviceHash: string): Promise<DeviceRow | nul
 }
 
 export async function handleClaim(request: Request, env: Env, deps: Deps): Promise<Response> {
-	if (paused(env)) return json({ status: "paused", message: "Polycarp is not handing out new connections right now. Check back later." }, 503);
 	const g = await guard(request, env, deps, "claim");
 	if (g instanceof Response) return g;
 	const now = deps.now();
-	// The per-IP daily limit is the abuse brake: a claim needs only a device key, and keys are free to make.
-	const ip = await ipKey(env, request);
-	if (!(await allow(env.DB, `claim:ip:${ip}`, DAY, intVar(env.CLAIMS_PER_IP_PER_DAY, 10), now))) {
-		return json({ status: "rate_limited", message: "This network has asked for too many connections today. Try again tomorrow." }, 429);
-	}
 	if (!(await allow(env.DB, `claim:dev:${g.deviceHash}`, DAY, 10, now))) return json({ status: "rate_limited", message: "This device has asked for too many connections today. Try again tomorrow." }, 429);
 
 	let parsed: { port?: unknown; invite?: unknown } = {};
@@ -79,7 +73,8 @@ export async function handleClaim(request: Request, env: Env, deps: Deps): Promi
 
 	const cf = deps.cf(env);
 	try {
-		// 1. A device that already has a tunnel gets it back. Claim is idempotent.
+		// 1. A device that already has a tunnel gets it back, even while paused and at any IP count: a restart or a
+		//    reboot must not cost a person their connection. Claim is idempotent.
 		let existing = await findDevice(env, g.deviceHash);
 		if (existing?.status === "active" && existing.tunnel_id && existing.hostname) {
 			try {
@@ -95,6 +90,14 @@ export async function handleClaim(request: Request, env: Env, deps: Deps): Promi
 		} else if (existing) {
 			if (existing.reserved_at > now - PENDING_FRESH_SECONDS) return json({ status: "in_progress", message: "This device's connection is still being set up. Try again in a minute." }, 409);
 			await releaseDevice(env, cf, existing);
+		}
+
+		// New tunnels only from here. The kill switch stops them, and the per-IP daily limit is the abuse brake: a claim
+		// needs only a device key, and keys are free. Restarts of an existing device (above) don't use up the IP's allowance.
+		if (paused(env)) return json({ status: "paused", message: "Polycarp is not handing out new connections right now. Check back later." }, 503);
+		const ip = await ipKey(env, request);
+		if (!(await allow(env.DB, `claim:ip:${ip}`, DAY, intVar(env.CLAIMS_PER_IP_PER_DAY, 10), now))) {
+			return json({ status: "rate_limited", message: "This network has asked for too many connections today. Try again tomorrow." }, 429);
 		}
 
 		// 2. Capacity, from the live API count.

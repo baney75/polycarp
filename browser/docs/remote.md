@@ -76,6 +76,24 @@ the name changes on every start.
 If you switch from Funnel to your own front door, run `tabkyra remote off` first so Funnel closes;
 setup refuses to switch while Funnel from an earlier setup is on.
 
+## One click: Polycarp Connect
+
+On a Mac you can skip Tailscale and the domain: `polycarp browser connect on` (or Connect in Settings > Browser)
+asks Polycarp's connection service for a free address of its own, then runs the same `remote setup --public-url`
+described above. The service only hands out the address. Your approval passcode, OAuth and every access token stay on
+your computer, and the service never sees your browser's traffic.
+
+```bash
+polycarp browser connect on        # first run: downloads a pinned, checksum-verified helper (about 20 MB)
+polycarp browser connect status    # honest: service running, local serve, reachable from the internet, service knows you
+polycarp browser connect off       # stops it, turns remote access off and frees the connection
+```
+
+Free connections are limited. When they are full, `connect on` says so and prints how to join the waitlist
+(`polycarp browser connect waitlist you@example.com`) or use an invite code (`connect on --invite CODE`). Connections
+unused for 60 days are freed; a running Connect tells the service it is still there every few hours. The service lives
+in `connect/` (see its README for what it stores and how it is deployed).
+
 ## Add the connector
 
 Paste `<public URL>/mcp` in each:

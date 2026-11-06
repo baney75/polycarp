@@ -281,7 +281,7 @@ describe("GET /v1/capacity", () => {
 });
 
 describe("kill switch and rate limits", () => {
-	it("PAUSED makes claim answer paused, and turning off still works", async () => {
+	it("PAUSED makes new claims answer paused, lets an existing device get its connection back, and turning off still works", async () => {
 		const h = setup();
 		const d = await makeDevice();
 		await claim(h, d);
@@ -292,6 +292,9 @@ describe("kill switch and rate limits", () => {
 		expect(r.status).toBe(503);
 		expect((await j(r)).status).toBe("paused");
 		expect((await j(await paused.fetch(new Request("https://connect.test/v1/capacity")))).paused).toBe(true);
+		const back = await j(await claim(paused, d));
+		expect(back.status).toBe("ok");
+		expect(back.existing).toBe(true);
 		const off = await paused.fetch(await signedRequest(d, paused.clock, "DELETE", "/v1/claim"));
 		expect((await j(off)).status).toBe("ok");
 		expect(paused.cf.tunnels.size).toBe(0);
@@ -304,6 +307,14 @@ describe("kill switch and rate limits", () => {
 		expect(results).toEqual([200, 200, 429]);
 		h.clock.t += 86_400;
 		expect((await h.fetch(await signedRequest(await makeDevice(), h.clock, "POST", "/v1/claim", { body: {}, ip: "198.51.100.7" }))).status).toBe(200);
+	});
+
+	it("a restart of an existing device doesn't use up the IP's daily allowance", async () => {
+		const h = setup({ CLAIMS_PER_IP_PER_DAY: "2" } as never);
+		const d = await makeDevice();
+		for (let i = 0; i < 6; i++) expect((await h.fetch(await signedRequest(d, h.clock, "POST", "/v1/claim", { body: {}, ip: "198.51.100.8" }))).status).toBe(200);
+		expect((await h.fetch(await signedRequest(await makeDevice(), h.clock, "POST", "/v1/claim", { body: {}, ip: "198.51.100.8" }))).status).toBe(200);
+		expect((await h.fetch(await signedRequest(await makeDevice(), h.clock, "POST", "/v1/claim", { body: {}, ip: "198.51.100.8" }))).status).toBe(429);
 	});
 
 	it("limits claims per device per day", async () => {
