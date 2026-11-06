@@ -50,6 +50,7 @@ polycarp doctor
 | --- | --- |
 | `polycarp spaces [args]` | Runs the workspace command with your arguments |
 | `polycarp browser [args]` | Runs the browser helper with your arguments |
+| `polycarp features [on\|off <part>]` | Shows or changes which parts run: `workspaces`, `voice`, `browser` |
 | `polycarp voice` | Opens the Voice settings in Polycarp, or Silas if Polycarp isn't installed |
 | `polycarp theme <command>` | Chooses and checks the theme |
 | `polycarp mcp` | Serves the theme commands to an agent |
