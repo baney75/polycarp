@@ -6,20 +6,43 @@ description: Install Polycarp, use its one command, choose or build a theme, and
 
 ## Where things stand
 
-Polycarp is being assembled from three apps: BaneySpaces, Silas and Tabkyra. Here is what works today.
+Polycarp is one app for your workspaces, your voice and the browser your agents use. It's early, and it's arriving one device at a time.
 
-- The `polycarp` command reaches all three apps.
-- `polycarp theme` checks, writes, previews and undoes theme files, and agents can do the same over MCP.
-- This website is built from the same six themes, and you can try them here. It doesn't read your own files.
-- Voice and Browser can read your theme files. That support is merged but not released yet. Spaces' is coming. Until an app is updated, it keeps its own look and settings.
+- **Mac, Apple silicon:** workspaces, dictation and browser agents are all inside `Polycarp.app`, with one Settings window and one set of permissions.
+- **Other devices:** the same Rust core is on its way to them. Until then, the Silas and Tabkyra apps cover Windows and Linux, and those repos stay up.
+- **Themes:** `polycarp theme` checks, writes, previews and undoes themes, and agents can do the same over MCP. The Mac app follows your theme live. On Omarchy, Polycarp matches your system theme, and you can still change anything.
 - `polycarp theme off` removes the theme files. Apps that read them use their own look when they next check. `polycarp theme on` brings your theme back.
-- The apps install separately for now. The old app names still appear on your computer.
 
 The [plan](https://github.com/baney75/polycarp/blob/main/PLAN.md) lists every step and the check that proves it.
 
 ## Install
 
-### The command
+### On a Mac
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash
+```
+
+This downloads the signed app for Apple silicon and opens it, with no developer tools needed. A welcome window walks you through the permissions. Accessibility is the only one Polycarp can't run without.
+
+If you have BaneySpaces, it goes to the Trash, because the two can't run together, and Polycarp copies its settings. Silas stays installed and Polycarp copies its dictionary and models. Once dictation works for you, **Move Silas to the Trash** in Settings > Voice finishes the job. With voice turned off, Silas keeps working as it always did. Your own `tabkyra` keeps working too.
+
+On an Intel Mac, or with `POLYCARP_FROM_SOURCE=1`, it builds on your Mac instead. That needs Apple's command line tools, [Rust](https://rustup.rs), [Bun](https://bun.sh) and [Node](https://nodejs.org).
+
+### On Linux
+
+The same command needs [Rust](https://rustup.rs) and installs the `polycarp` command and every theme. On Omarchy it also turns on matching your system theme. The app for Linux is on the way.
+
+### On Windows
+
+The command needs [Rust](https://rustup.rs).
+
+```sh
+cargo install --git https://github.com/baney75/polycarp polycarp
+polycarp doctor
+```
+
+## The command
 
 The command needs [Rust](https://rustup.rs).
 
@@ -44,9 +67,9 @@ Each app has its own install guide. Add them in any order.
 
 | Command | What it does |
 | --- | --- |
-| `polycarp spaces [args]` | Runs the BaneySpaces command with your arguments |
-| `polycarp browser [args]` | Runs the Tabkyra command with your arguments |
-| `polycarp voice` | Opens Silas. Voice commands arrive later |
+| `polycarp spaces [args]` | Runs the workspace command with your arguments |
+| `polycarp browser [args]` | Runs the browser helper with your arguments |
+| `polycarp voice` | Opens the Voice settings in Polycarp, or Silas if Polycarp isn't installed |
 | `polycarp theme <command>` | Chooses and checks the theme |
 | `polycarp mcp` | Serves the theme commands to an agent |
 | `polycarp doctor` | Shows which apps were found |
@@ -296,11 +319,7 @@ The [`polycarp-theme` skill](https://github.com/baney75/polycarp/blob/main/skill
 
 ## Keys, motion and behavior
 
-Themes cover the look. Today, each app keeps its own keys and behavior settings:
-
-- [BaneySpaces](/projects/baneyspaces/docs/): keys, the dock, the launcher and more, in its Settings.
-- [Silas](/projects/silas/docs/): the hold-to-talk key and dictionary, in its window.
-- [Tabkyra](/projects/tabkyra/docs/): site access and agents, in its side panel.
+Themes cover the look. On a Mac, keys, the dock, the launcher, dictation and browser access are all in Polycarp's Settings.
 
 One file for all of them, with undo and a recovery key, is on the plan. Its contract is [`spaces/spec/config.md`](https://github.com/baney75/polycarp/blob/main/spaces/spec/config.md).
 
@@ -308,10 +327,10 @@ One file for all of them, with undo and a recovery key, is on the plan. Its cont
 
 | Part | Mac | Windows | Linux | iPhone and iPad | Android |
 | --- | --- | --- | --- | --- | --- |
-| Voice | Ships | Nightly | Nightly | In progress, iPad first | Planned |
-| Workspaces | Ships | In progress | In progress | Planned: control your computer's | Planned: control your computer's |
-| Browser agents | Ships | Not yet tried | Not yet tried | Planned: watch and steer your computer's | Planned: watch and steer your computer's |
-| Themes | Command works | Command works | Command works | Planned | Planned |
+| Voice | In the app | Nightly, as Silas | Nightly | In progress, iPad first | Planned |
+| Workspaces | In the app | In progress | In progress | Planned: control your computer's | Planned: control your computer's |
+| Browser agents | In the app | Not yet tried | Not yet tried | Planned: watch and steer your computer's | Planned: watch and steer your computer's |
+| Themes | In the app | Command works | Command works, matches Omarchy | Planned | Planned |
 
 ### The top bar
 
@@ -333,7 +352,7 @@ Polycarp won't run a tool inside your current folder, including `node_modules/.b
 
 ### My theme changed nothing in the apps
 
-Voice and Browser support for theme files is merged but not released, so the versions you can install today may not read them yet. Spaces' support is coming. This website doesn't read your files either: it has its own theme picker.
+On a Mac, Polycarp follows your theme live. On other devices the Silas and Tabkyra apps may not read theme files yet.
 
 If you want apps to show their own look, run `polycarp theme off`. It removes the theme files; an app that reads them uses its own look when it next checks. If a file can't be removed, `off` fails and names it.
 
