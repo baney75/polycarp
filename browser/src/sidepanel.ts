@@ -74,7 +74,7 @@ import {
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
 import { modelLabelParts } from "./models/display.js";
-import { FREE_KEY_NOTE, FREE_PRIVACY_NOTE } from "./models/free-mode.js";
+import { FREE_KEY_NOTE, FREE_PRIVACY_NOTE, FREE_SHORT_NOTE } from "./models/free-mode.js";
 import { freeComposerText, installFreeMode, setFreeMode, streamFree } from "./models/free-panel.js";
 import { isFreeModeModel } from "./models/free-runtime.js";
 import { refreshDiscoveredModels } from "./models/registry.js";
@@ -616,7 +616,7 @@ function refreshModelLabel(force = false) {
 		if (providerless)
 			return { content: "Add a provider", title: "No provider is set up yet. Click to open Settings." };
 		const text = freeComposerText(model, agent.state.messages);
-		if (text) return { content: text, title: `${text}. ${FREE_PRIVACY_NOTE}` };
+		if (text) return { content: `${text} · ${FREE_SHORT_NOTE}`, title: `${text}. ${FREE_PRIVACY_NOTE}` };
 		const parts = modelLabelParts(model);
 		return {
 			content: html`${parts.name}<span class="text-muted-foreground font-normal"> · ${parts.provider}</span>`,

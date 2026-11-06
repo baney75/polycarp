@@ -21,14 +21,14 @@ The extension can read and act on web pages, including pages you're signed in to
 
 To the AI you choose, and to the sites the agent visits for you. When an agent opens a site, fills in a form or looks something up, that site receives what any browser would send it, under your sign-in if you have one there.
 
-- **The side panel.** Your messages, and what the agent reads from pages, go to the AI provider you picked, using your own API key or your own sign-in. That provider's privacy policy then applies. Providers you can pick include Anthropic, OpenAI, Google, Mistral, xAI, Groq, Cerebras, Hugging Face, Z.ai, OpenRouter and GitHub Copilot. You can also use a model on your own computer or network, and then your prompts stay on your network. Free mode goes through OpenRouter, and free models there may keep or train on what you send. The app says so where you turn it on.
+- **The side panel.** Your messages, and what the agent reads from pages, go to the AI provider you picked, using your own API key or your own sign-in. That provider's privacy policy then applies. Providers you can pick include Anthropic, OpenAI, Google, Mistral, xAI, Groq, Cerebras, Hugging Face, Z.ai, OpenRouter and GitHub Copilot. You can also use a model on your own computer or network, and then your prompts don't go to an AI company. **Free mode** goes through OpenRouter, and free models there may keep and train on what you send, including signed-in pages and screenshots. Polycarp asks before Free mode first turns on and says so while it's on. It tries free models that keep nothing first and removes keys, card numbers and Social Security numbers from text, but it can't promise more than that. Don't use Free mode with mail, banking, medical or work accounts.
 - **Private mode.** When it's on, the side panel only sends prompts to a provider that doesn't keep them: OpenRouter with zero data retention, a model on your own computer or network, or a host you named as your own.
 - **A coding agent you connect**, such as Claude Code or Codex. It reaches the extension through the Polycarp helper on your computer. What it reads goes to that agent and is then covered by that agent's own terms.
 - **Remote access**, if you turn it on. It's off until you turn it on. It lets assistants you approve reach your browser through your own Tailscale or Cloudflare tunnel. Polycarp runs no service for this, but traffic passes through the tunnel you pick, so that company's terms apply too.
 
 ### Other things the extension contacts
 
-None of these get your pages or your chats, unless the agent is told to look something up.
+These don't get your chats. Some carry a small piece of what the agent is working on, as the table says.
 
 | What | Who it contacts | What they see |
 | --- | --- | --- |
@@ -41,12 +41,12 @@ None of these get your pages or your chats, unless the agent is told to look som
 ### What stays on your computer
 
 - **Chats, skills, settings and API keys** stay in the extension's storage in your browser. Your keys go only to the provider they belong to.
-- **Past chats for your coding agents.** A copy of your side panel chats, including what the agent read from pages, is kept in `~/.local/share/tabkyra/threads` so your own coding agents can read them. Keys are removed from the copy, and private mode chats are never copied. It's on by default. Turn it off in Settings > Privacy, which deletes the copies.
+- **Past chats for your coding agents.** A copy of your side panel chats, including what the agent read from pages, is kept in `~/.local/share/tabkyra/threads`, whichever AI you use and whether or not you've connected an agent, so your own coding agents can read it. Any program you run on your computer can read that folder, and what a coding agent reads from it goes to that agent's company. Keys are removed from the copy, and private mode chats are never copied. It's on by default. Turn it off in Settings > Privacy, which deletes the copies.
 - **Error reports** are off by default. When you turn them on, errors are kept on your computer with secrets removed. Nothing is sent. You read the report, copy it, and paste it into a GitHub issue yourself if you choose to.
 
 ### Limited Use
 
-The use of information received from Google APIs will adhere to the [Chrome Web Store User Data Policy](https://developer.chrome.com/docs/webstore/program-policies/policies), including the Limited Use requirements. Polycarp uses what it reads only to do the work you ask for. It passes that data on only to do that work: to the AI you picked or a coding agent you connected, to the sites an agent visits for you, and through a remote access tunnel if you turned one on. Polycarp doesn't use it for advertising, doesn't sell it, doesn't use it to decide credit or lending, and has no people who could read it.
+The use of information received from Google APIs will adhere to the [Chrome Web Store User Data Policy](https://developer.chrome.com/docs/webstore/program-policies/policies), including the Limited Use requirements. Polycarp uses what it reads only to do the work you ask for. It passes that data on only to do that work: to the AI you picked, including a free model if you turned on Free mode after being told it may keep what you send; to a coding agent or assistant you connected; to the sites an agent visits for you; to the services above when a source is checked; and through a remote access tunnel if you turned one on. Polycarp doesn't use it for advertising, doesn't sell it, doesn't use it to decide credit or lending, and has no people who could read it.
 
 ## The Polycarp app for Mac
 
@@ -57,7 +57,7 @@ The use of information received from Google APIs will adhere to the [Chrome Web 
 
 ## Deleting your data
 
-- **Extension:** first turn off the chat copies in Settings > Privacy, or delete `~/.local/share/tabkyra/threads` yourself, since removing the extension can't reach that folder. Then remove the extension from your browser, which deletes everything it stored there. To delete only your chats, keys or settings, use its Settings, and turn off the chat copy too.
+- **Extension:** first turn off the chat copies in Settings > Privacy, or delete `~/.local/share/tabkyra/threads` yourself, since removing the extension can't reach that folder. Then remove the extension from your browser, which deletes everything it stored there. To delete only your chats, keys or settings, use its Settings. A chat you delete there can stay in the chat copy until you turn the copy off.
 - **Mac app:** run the uninstaller, then delete the `Polycarp` folder in `~/Library/Application Support`.
 - **Data you sent to an AI provider:** ask that provider. We never had it.
 

@@ -29,7 +29,7 @@ You stay in charge:
 • Private mode only sends prompts to places that don't keep them.
 • It can check that a citation is real and not retracted before citing it.
 
-Polycarp has no account and no analytics, and it runs no servers of its own. Your chats and keys stay on your computer. What the agent reads goes to the AI you picked, and free models through OpenRouter may keep what you send.
+Polycarp has no account and no analytics, and it runs no servers of its own. Your chat history and keys are kept on your computer. Your messages, and what the agent reads, go to the AI you picked. Free models may keep and train on what you send, so Polycarp asks first, tries ones that keep nothing and removes keys and card numbers from text.
 
 Free software under the AGPL-3.0. Source: https://github.com/baney75/polycarp
 Built on 0xSero's agent bridge and Mario Zechner's Sitegeist.
@@ -51,7 +51,7 @@ Built on 0xSero's agent bridge and Mario Zechner's Sitegeist.
 **Single purpose:**
 
 ```
-Polycarp lets AI agents operate web pages in the user's browser on the user's behalf, from its side panel or from a coding agent on the same computer.
+Polycarp lets AI agents operate web pages in the user's browser on the user's behalf, from its side panel or from an AI agent the user connects.
 ```
 
 **Are you using remote code?** Yes.

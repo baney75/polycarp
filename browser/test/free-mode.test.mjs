@@ -323,3 +323,43 @@ test("the composer says which model answered", () => {
 	assert.equal(freeLabel({ id: "x/y:free" }), "Free · x/y");
 	assert.equal(shortModelName("NVIDIA: Nemotron 3 Ultra (free)", "n"), "Nemotron 3 Ultra");
 });
+
+test("free models that keep nothing are tried first, in their measured order", async () => {
+	const { keepNothingFirst } = await import("../src/models/free-mode.ts");
+	const zdr = [
+		{ model_id: "c:free", pricing: { prompt: "0", completion: "0" } },
+		{ model_id: "paid:free", pricing: { prompt: "1", completion: "0" } },
+		{ model_id: "a:free", pricing: { prompt: "0", completion: "0" } },
+	];
+	assert.deepEqual(keepNothingFirst(["b:free", "a:free", "paid:free", "c:free"], zdr), ["a:free", "c:free", "b:free", "paid:free"]);
+	assert.deepEqual(keepNothingFirst(["b:free", "a:free"], []), ["b:free", "a:free"]);
+});
+
+test("keys, cards and SSNs never reach a free model, and the agent keeps what it needs", async () => {
+	const { redactForFree, redactContext } = await import("../src/privacy/free-redact.ts");
+	assert.equal(redactForFree("card 4242 4242 4242 4242 ok"), "card [card number] ok");
+	assert.equal(redactForFree("ssn 123-45-6789"), "ssn [ssn]");
+	assert.match(redactForFree("key sk-ant-abcdefghijklmnop"), /\[secret\]/);
+	const url = "https://example.com/item/9f8e7d6c5b4a39281706f5e4d3c2b1a0?id=123456789012345";
+	assert.equal(redactForFree(url), url, "the agent has to be able to open addresses it read");
+	assert.equal(redactForFree("order 1234567890123"), "order 1234567890123", "a number that fails the card check stays");
+	const context = { systemPrompt: "s", messages: [
+		{ role: "user", content: "pay with 4242424242424242" },
+		{ role: "toolResult", content: [{ type: "text", text: "token ghp_abcdefghijklmnopqrst" }, { type: "image", data: "x" }] },
+	] };
+	const clean = redactContext(context);
+	assert.equal(clean.messages[0].content, "pay with [card number]");
+	assert.equal(clean.messages[1].content[1].data, "x");
+	assert.match(clean.messages[1].content[0].text, /\[secret\]/);
+	assert.equal(context.messages[0].content, "pay with 4242424242424242", "the chat keeps the original");
+});
+
+test("people are told the risk before and while Free mode is on", async () => {
+	const { FREE_CONSENT_TEXT, FREE_PRIVACY_NOTE, FREE_SHORT_NOTE } = await import("../src/models/free-mode.ts");
+	for (const needed of ["keep", "train", "signed-in", "screenshots", "mail, banking"]) assert.ok(FREE_CONSENT_TEXT.includes(needed), needed);
+	assert.match(FREE_PRIVACY_NOTE, /may keep and train/);
+	assert.match(FREE_SHORT_NOTE, /may keep/);
+	const panel = readFileSync(new URL("../src/models/free-panel.ts", import.meta.url), "utf8");
+	assert.ok(panel.indexOf("FREE_CONSENT_TEXT)") < panel.indexOf("host.setModel(freeModeModel())"), "consent comes before it turns on");
+	assert.match(panel, /redactContext\(context\)/);
+});

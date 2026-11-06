@@ -24,6 +24,7 @@ import {
 	freePayload,
 	isFreeLimitError,
 	isFreeListing,
+	keepNothingFirst,
 	MAX_CHAIN,
 	OPENROUTER_BASE_URL,
 	OPENROUTER_FREE_ROUTER,
@@ -132,7 +133,10 @@ export function freeChains(list: FreeList, privateMode: boolean, attempts = 2): 
 			chains.push(zdrRanked.slice(i * MAX_CHAIN, (i + 1) * MAX_CHAIN));
 		return chains;
 	}
-	const models = ranked.filter((id) => id !== OPENROUTER_FREE_ROUTER);
+	const models = keepNothingFirst(
+		ranked.filter((id) => id !== OPENROUTER_FREE_ROUTER),
+		list.zdr,
+	);
 	const per = MAX_CHAIN - 1;
 	const chains: string[][] = [];
 	for (let i = 0; i < attempts && (i === 0 || i * per < models.length); i++) {
