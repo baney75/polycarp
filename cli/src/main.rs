@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+mod features;
 mod mcp;
 mod theme;
 
@@ -90,6 +91,7 @@ Usage:
   polycarp browser [args...]   run the Tabkyra command
   polycarp voice               open Silas's settings in Polycarp (the Silas app only if Polycarp isn't installed)
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
+  polycarp features            show or change which parts run (polycarp features --help)
   polycarp mcp                 serve the theme commands to an agent over MCP (stdio)
   polycarp doctor              show which tools were found
   polycarp --version
@@ -114,6 +116,7 @@ fn main() {
         Some("browser") => handoff(&BROWSER, &rest),
         Some("voice") => voice(&rest),
         Some("theme") => theme::run(&rest),
+        Some("features") => features::run(&rest),
         Some("mcp") => mcp::run(&rest),
         Some("doctor") => doctor(),
         Some("--version") | Some("-V") => {

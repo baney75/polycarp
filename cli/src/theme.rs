@@ -667,6 +667,11 @@ struct Cfg {
     overlay: Vec<(String, String)>,
 }
 
+/// The config folder, by the same rules as the theme files.
+pub fn config_dir() -> Result<PathBuf, String> {
+    Ok(Cfg::from_env()?.dir)
+}
+
 impl Cfg {
     fn from_env() -> Result<Cfg, String> {
         let nonempty = |k: &str| env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);

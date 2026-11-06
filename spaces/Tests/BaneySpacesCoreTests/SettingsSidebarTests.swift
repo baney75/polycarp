@@ -28,7 +28,7 @@ final class SettingsSidebarTests: XCTestCase {
 
     private func sidebarTabs() throws -> [String] {
         let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
-        let start = try XCTUnwrap(kit.range(of: "static let groups: [Group] = ["))
+        let start = try XCTUnwrap(kit.range(of: "static let allGroups: [Group] = ["))
         let end = try XCTUnwrap(kit[start.upperBound...].range(of: "static var order"))
         return captures(#"\.(\w+)(?=[,\]])"#, in: String(kit[start.upperBound..<end.lowerBound]))
     }
