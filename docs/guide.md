@@ -44,26 +44,7 @@ polycarp doctor
 
 ## The command
 
-The command needs [Rust](https://rustup.rs).
-
-```sh
-cargo install --git https://github.com/baney75/polycarp polycarp
-polycarp doctor
-```
-
-`polycarp doctor` lists the apps it can reach. Exit code 0 means Spaces and Browser were both found.
-
-### The apps
-
-Each app has its own install guide. Add them in any order.
-
-| Part | App | Devices today | Guide |
-| --- | --- | --- | --- |
-| Voice | Silas | Mac (stable), Windows and Linux (nightly) | [Silas docs](/projects/silas/docs/) |
-| Workspaces | BaneySpaces | Mac | [BaneySpaces docs](/projects/baneyspaces/docs/) |
-| Browser agents | Tabkyra | Chromium on a Mac. Linux and Windows are not yet tried live | [Tabkyra docs](/projects/tabkyra/docs/) |
-
-## The command
+`polycarp` comes with the Mac app. On Linux and Windows it comes from the install steps above. It reaches each part from one place:
 
 | Command | What it does |
 | --- | --- |
