@@ -634,6 +634,36 @@ final class Spaces {
         return found
     }
 
+    /// The green button or ⌃⌘F: the window fills the screen on its own workspace, or goes back where it was
+    /// (`FullScreenFill`). No Space, no slide, nothing to wait for.
+    func toggleFill(_ target: AXUIElement?) {
+        guard active else { return }
+        if switching { return enqueue { [weak self] in self?.toggleFill(target) } }
+        refresh()
+        // A window just opened may not be tracked yet, so the element the gesture found is used as it is.
+        var w: Window?
+        if let target, let id = target.windowID {
+            var pid: pid_t = 0
+            AXUIElementGetPid(target, &pid)
+            w = windows[id] ?? Window(id: id, element: target, pid: pid, appName: NSRunningApplication(processIdentifier: pid)?.localizedName ?? "")
+        } else {
+            w = Windows.focused(in: Array(windows.values))
+        }
+        guard let w, let current = w.frame else { return NSSound.beep() }
+        let fill = Windows.visibleArea(near: current)
+        let next = FullScreenFill.target(current: current, fill: fill, record: filled[w.id])
+        let filling = next == fill
+        w.setFrame(next)
+        filled[w.id] = filling ? FullScreenFill.Record(from: current, landed: w.frame ?? next) : nil
+        // A green button on a window behind the front one: the click never reached it, so it comes forward here.
+        AXUIElementPerformAction(w.element, kAXRaiseAction as CFString)
+        NSRunningApplication(processIdentifier: w.pid)?.activate()
+        Trace.log("fill window=\(w.id) \(filling ? "on" : "off")")
+    }
+
+    /// Windows this filled, so a second press puts each back.
+    private var filled: [WindowID: FullScreenFill.Record] = [:]
+
     /// macOS full screen moves a window to a desktop of its own, where BaneySpaces can't hide or
     /// show it. Full screen you choose (a video, a presentation) stays until you switch
     /// workspaces; a window left in full screen from before BaneySpaces started comes back out
