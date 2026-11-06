@@ -63,7 +63,7 @@ test("the welcome dialog offers Connect, and Chat here lands on the API keys lis
 	assert.match(welcome, /Use from claude\.ai or ChatGPT/);
 	assert.match(welcome, /Chat here/);
 	const panel = read("src/sidepanel.ts");
-	assert.match(panel, /choice === "connect" \? \{ tab: "Agents", anchor: "connect-heading" \} : \{ tab: "Providers", anchor: "api-keys-heading" \}/);
+	assert.match(panel, /choice === "connect"\s*\?\s*\{ tab: "Agents", anchor: "connect-heading" \}\s*:\s*\{ tab: "Providers", anchor: "api-keys-heading" \}/);
 	assert.match(read("src/dialogs/ApiKeysTab.ts"), /id="api-keys-heading"/);
 });
 

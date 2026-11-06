@@ -11,6 +11,7 @@ import { SUBSCRIPTION_PROVIDERS } from "../subscriptions/constants.js";
 import { CustomProvidersTab } from "./CustomProvidersTab.js";
 import "../components/ProviderKeyRow.js";
 import "../subscriptions/SubscriptionsSection.js";
+import { getTabkyraStorage } from "../storage/app-storage.js";
 
 // Providers to hide from the API key list: removed sign-ins, and clouds that need more than a key.
 const HIDDEN_PROVIDERS = new Set([
@@ -45,6 +46,8 @@ export class ApiKeysTab extends SettingsTab {
 	private justSaved?: string;
 	private readonly custom = new CustomProvidersTab();
 	private showAll = false;
+	/** Custom providers someone set up never hide behind a button. */
+	private hasCustom = false;
 
 	getTabName(): string {
 		return "Providers";
@@ -62,6 +65,11 @@ export class ApiKeysTab extends SettingsTab {
 		} catch (error) {
 			console.error("Failed to load provider keys:", error);
 		}
+		try {
+			this.hasCustom = (await getTabkyraStorage().customProviders.getAll()).length > 0;
+		} catch (error) {
+			console.error("Failed to load custom providers:", error);
+		}
 		this.requestUpdate();
 	}
 
@@ -73,6 +81,8 @@ export class ApiKeysTab extends SettingsTab {
 
 	private onSaved = (e: Event) => {
 		this.justSaved = (e as CustomEvent<string>).detail;
+		// It stays in the short list once a search is cleared.
+		this.withKeys.add(this.justSaved);
 		this.requestUpdate();
 	};
 
@@ -171,7 +181,7 @@ export class ApiKeysTab extends SettingsTab {
 					</div>
 				</section>
 				${
-					this.showAll || this.query.trim()
+					this.showAll || this.hasCustom || this.query.trim()
 						? html`<div class="pt-5 border-t border-border">${this.custom}</div>`
 						: html`<button
 								type="button"

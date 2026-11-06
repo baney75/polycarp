@@ -338,3 +338,10 @@ test("Settings, the skill screens and the provider editor are pages, not overlay
 	assert.match(page, /aria-label=\$\{i18n\("Back"\)\}/, "every page has a back arrow");
 	assert.match(page, /fixed inset-0/, "a page fills the panel");
 });
+
+test("the short provider list loses nothing: a saved key stays, and custom providers never hide", () => {
+	const tab = readFileSync(new URL("../src/dialogs/ApiKeysTab.ts", import.meta.url), "utf8");
+	assert.match(tab, /this\.withKeys\.add\(this\.justSaved\)/);
+	assert.match(tab, /this\.showAll \|\| this\.hasCustom \|\| this\.query\.trim\(\)/);
+	assert.match(tab, /q \|\| this\.showAll \|\| this\.withKeys\.has\(p\) \|\| COMMON_PROVIDERS\.has\(p\)/);
+});
