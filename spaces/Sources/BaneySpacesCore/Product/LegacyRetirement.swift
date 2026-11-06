@@ -8,8 +8,8 @@ public enum LegacyRetirement {
     public static let doneMarker = "legacy-retired"
     /// Set in the defaults for the welcome window's one line; cleared when the welcome window finishes.
     public static let noteKey = "legacyRetiredNote"
-    public static let welcomeNote = "BaneySpaces moved to the Trash. Your settings came with you."
-    public static let watchdogLabel = "com.baney.baneyspaces.mc-watchdog"
+    public static let welcomeNote = "\(Product.Legacy.name) moved to the Trash. Your settings came with you."
+    public static let watchdogLabel = "\(Product.Legacy.bundleID).mc-watchdog"
 
     public static func watchdogPlist(home: URL) -> URL {
         home.appendingPathComponent("Library/LaunchAgents/\(watchdogLabel).plist")
