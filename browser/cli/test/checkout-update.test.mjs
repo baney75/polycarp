@@ -324,7 +324,7 @@ test("skill refresh replaces unedited copies and reports edited ones", () => {
 	const plain = join(claudeHome, "skills", "tabkyra", "SKILL.md");
 	const edited = join(claudeHome, "skills", "academic-research", "SKILL.md");
 	// An older bundled text Polycarp wrote (recorded), and a hand edit (not recorded).
-	const marker = "<!-- Installed by `polycarp browser skill install`; reinstalling replaces this file. -->";
+	const marker = "<!-- Installed by `tabkyra skill install`; reinstalling replaces this file. -->";
 	const older = `---\nname: tabkyra\ndescription: old\n---\n${marker}\nold text\n`;
 	writeFileSync(plain, older);
 	const recordFile = join(home, ".config", "tabkyra", "skills-installed.json");
