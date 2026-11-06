@@ -23,6 +23,7 @@ import {
 	type UpdateAction,
 	whatsNewFor,
 } from "../update/logic.js";
+import { runningFromStore } from "../update/store-install.js";
 
 const DISMISSED_KEY = "tabkyra.updateDismissed";
 const WHATS_NEW_DISMISSED_KEY = "tabkyra.whatsNewDismissed";
@@ -269,5 +270,6 @@ function whatsNewCard(): TemplateResult | typeof nothing {
 
 /** Everything update-related under the header; nothing when there is nothing to say. */
 export function updateNotice(): TemplateResult {
+	if (runningFromStore()) return html`${nothing}`;
 	return html`${progressLine()}${mismatchBanner()}${stagedLine()}${availableLine()}${whatsNewCard()}`;
 }

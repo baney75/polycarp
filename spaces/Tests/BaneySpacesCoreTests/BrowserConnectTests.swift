@@ -235,4 +235,9 @@ final class BrowserConnectTests: XCTestCase {
         XCTAssertNil(ExtensionCopy.refresh(source: src, supportDir: support, appVersion: "2"))
         XCTAssertEqual(ExtensionCopy.manifestVersion(of: dest), "1.0.0")
     }
+
+    func testTheStoreLinkNeedsAListing() {
+        XCTAssertNil(ExtensionStore.url(id: nil))
+        XCTAssertEqual(ExtensionStore.url(id: "abc")?.absoluteString, "https://chromewebstore.google.com/detail/abc")
+    }
 }

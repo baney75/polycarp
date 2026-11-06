@@ -12,6 +12,7 @@ import {
 } from "../components/UpdateNotice.js";
 import { BUILD, describeBuild } from "../update/build.js";
 import { POLICY_LABELS, type UpdatePolicy } from "../update/logic.js";
+import { runningFromStore } from "../update/store-install.js";
 
 const MODE_LABELS: Record<string, string> = {
 	release: "Signed release (~/.local/share/tabkyra/app)",
@@ -69,6 +70,15 @@ export class UpdatesTab extends SettingsTab {
 	}
 
 	render(): TemplateResult {
+		if (runningFromStore()) {
+			return html`<div class="space-y-1" data-testid="updates-store">
+				<h3 class="text-lg font-semibold text-foreground">Updates</h3>
+				<p class="text-sm text-muted-foreground">
+					Version ${chrome.runtime.getManifest().version}. Your browser keeps this extension up to date from the Chrome
+					Web Store.
+				</p>
+			</div>`;
+		}
 		const s = updateState.status;
 		const p = updateState.progress;
 		const busy = updateRunning();
