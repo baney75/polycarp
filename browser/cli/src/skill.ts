@@ -85,7 +85,7 @@ export interface SkillTarget {
 	detected: boolean;
 	/** The harness's skills folder; each skill goes in <dir>/<skill>/SKILL.md. */
 	dir: string;
-	/** Where the tabkyra skill goes, kept for callers that name one file. */
+	/** Where the bundled browser skill goes, kept for callers that name one file. */
 	file: string;
 }
 
