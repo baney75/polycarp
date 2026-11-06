@@ -556,8 +556,8 @@ struct SetupView: View {
                 }
                 .pickerStyle(.segmented).labelsHidden().frame(width: 200)
             }
-            SettingsRow("\(model.modifier.symbol)1 – \(model.modifier.symbol)9", help: "Go to a workspace") { EmptyView() }
-            SettingsRow("\(model.modifier.symbol)⇧1 – \(model.modifier.symbol)⇧9", help: "Send the front window there") { EmptyView() }
+            SettingsRow("Go to a workspace") { Text("\(model.modifier.symbol)1 – \(model.modifier.symbol)9").font(Chrome.font(12).monospaced()).foregroundStyle(Chrome.muted) }
+            SettingsRow("Send the front window there") { Text("\(model.modifier.symbol)⇧1 – \(model.modifier.symbol)⇧9").font(Chrome.font(12).monospaced()).foregroundStyle(Chrome.muted) }
             ForEach(model.conflicts, id: \.self) { c in
                 SettingsRow(c) { Button(model.freeing ? "Working…" : "Free Them", action: model.freeShortcuts).disabled(model.freeing) }
             }
