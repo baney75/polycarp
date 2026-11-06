@@ -373,8 +373,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             SystemMissionControl.restore()
             exit(0)
         }
-        // `BaneySpaces --check-settings`: opens the settings window on each section and exits 1 if any comes up empty, or
-        // if the window is not the one fixed size on every section. It opened 0×0, invisible, on macOS 27.
+        // `BaneySpaces --check-settings`: opens the settings window on each section and exits 1 if the window is not the one
+        // fixed size on every section. It opened 0×0, invisible, on macOS 27. It checks the window's size, not what a section shows.
         if CommandLine.arguments.contains("--check-settings") {
             // The app's own controller, wired as the app wires it.
             let c = setup

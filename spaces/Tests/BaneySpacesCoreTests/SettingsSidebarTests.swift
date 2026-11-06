@@ -52,7 +52,8 @@ final class SettingsSidebarTests: XCTestCase {
         XCTAssertTrue(kit.contains("static let width: CGFloat = 190"))
         let setup = try read("Sources/BaneySpaces/Setup.swift")
         XCTAssertFalse(setup.contains(#"Button("Done""#))
-        XCTAssertFalse(setup.contains("sizingOptions"))
+        XCTAssertTrue(setup.contains("host.sizingOptions = []"), "the window alone owns its size")
+        XCTAssertTrue(setup.contains(".ignoresSafeArea()"), "the title bar's inset would clip the bottom of the fixed frame")
         XCTAssertFalse(setup.contains("fittingSize"))
         XCTAssertTrue(setup.contains(#"keyboardShortcut("w", modifiers: .command)"#))
         XCTAssertFalse(setup.contains("Picker(\"\", selection: $model.tab)"), "the segmented picker is gone")
@@ -65,5 +66,22 @@ final class SettingsSidebarTests: XCTestCase {
         }
         let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
         for role in ["done", "working", "urgent"] { XCTAssertTrue(kit.contains("role(\"\(role)\")")) }
+    }
+
+    /// The dock's finished count and its legend in Settings are one token, so the legend can't describe a different color.
+    func testFinishedBadgeAndItsLegendShareAToken() throws {
+        for file in ["Sources/BaneySpaces/Setup.swift", "Sources/BaneySpaces/WorkspaceDock.swift"] {
+            XCTAssertTrue(try read(file).contains("Circle().fill(Chrome.finished)"), file)
+        }
+    }
+
+    /// `Chrome` is a plain static, so a kit view with no closure input redraws on a theme change only if it observes `Appearance`.
+    func testKitViewsWithoutClosuresObserveTheTheme() throws {
+        let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
+        for name in ["SettingsNote", "LearnMore", "SettingsStatusLabel", "SettingsSidebarView"] {
+            let start = try XCTUnwrap(kit.range(of: "struct \(name)"))
+            let body = kit[start.upperBound...].prefix(200)
+            XCTAssertTrue(body.contains("Appearance.shared"), "\(name) won't redraw on a theme change")
+        }
     }
 }

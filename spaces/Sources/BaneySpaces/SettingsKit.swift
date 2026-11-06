@@ -3,7 +3,8 @@ import SwiftUI
 
 /// The pieces every Settings section is built from, so the tabs look like one window: a soft rounded group, rows with the label on
 /// the left and the control on the right, a hairline between rows, one line of help under a setting, and a "Learn more" for the rest.
-/// Every color is a Chrome token; none is a literal.
+/// Every color is a Chrome token; none is a literal. A view with no closure input keeps `appearance` so a theme change redraws it:
+/// SwiftUI otherwise sees the same inputs and skips it, and `Chrome` is a plain static that tells it nothing.
 
 extension Chrome {
     /// A palette role as a color (done, working, urgent, sunken…).
@@ -12,6 +13,8 @@ extension Chrome {
     static var done: Color { role("done") }
     static var working: Color { role("working") }
     static var urgent: Color { role("urgent") }
+    /// The dock's "finished while you were away" count, and its legend in Settings.
+    static var finished: Color { working }
     /// Quiet text: help lines, headers, units.
     static var muted: Color { wash(0.62) }
     /// The sidebar, one step below the pane.
@@ -87,6 +90,7 @@ struct SettingsBlock<Content: View>: View {
 /// A line of quiet text in a group, such as a status or a warning.
 struct SettingsNote: View {
     enum Tone { case quiet, urgent, done }
+    @ObservedObject private var appearance = Appearance.shared
     var text: String
     var tone: Tone = .quiet
     init(_ text: String, tone: Tone = .quiet) { self.text = text; self.tone = tone }
@@ -100,6 +104,7 @@ struct SettingsNote: View {
 
 /// The long version of a help line, closed until asked for.
 struct LearnMore: View {
+    @ObservedObject private var appearance = Appearance.shared
     var text: String
     @State private var open = false
     init(_ text: String) { self.text = text }
@@ -116,7 +121,7 @@ struct LearnMore: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Learn more")
                 .accessibilityValue(open ? "expanded" : "collapsed")
-                if open { Text(text).font(Chrome.font(11)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true) }
+                if open { Text(text).font(Chrome.font(11)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
             }
         }
         .animation(reduceMotion ? nil : Chrome.ease(0.15), value: open)
@@ -126,6 +131,7 @@ struct LearnMore: View {
 
 /// An on or off status: a check and a word in the theme's done color, or a dot in its working color.
 struct SettingsStatusLabel: View {
+    @ObservedObject private var appearance = Appearance.shared
     var text: String
     var done = true
     var body: some View {
@@ -136,6 +142,13 @@ struct SettingsStatusLabel: View {
 }
 
 // MARK: - The sidebar
+
+private extension View {
+    /// The sidebar draws its own ring on the selected row, so the system's goes. macOS 13 has no way to remove it.
+    @ViewBuilder func settingsNoSystemFocusRing() -> some View {
+        if #available(macOS 14, *) { focusEffectDisabled() } else { self }
+    }
+}
 
 /// The sections in the order and groups the sidebar shows. A test pins that every `SettingsTab` is listed exactly once.
 enum SettingsSidebar {
@@ -151,6 +164,7 @@ enum SettingsSidebar {
 }
 
 struct SettingsSidebarView: View {
+    @ObservedObject private var appearance = Appearance.shared
     @Binding var selection: SettingsTab
     @FocusState private var focused: Bool
 
@@ -172,6 +186,7 @@ struct SettingsSidebarView: View {
         .frame(maxHeight: .infinity)
         .background(Chrome.sunken)
         .focusable()
+        .settingsNoSystemFocusRing()
         .focused($focused)
         .onMoveCommand { direction in
             let order = SettingsSidebar.order

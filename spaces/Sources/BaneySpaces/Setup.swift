@@ -469,6 +469,8 @@ struct SetupView: View {
         .environment(\.colorScheme, Chrome.scheme)
         // ⌘W closes the window, as in any Mac app; so does its close button.
         .background(Button("", action: close).keyboardShortcut("w", modifiers: .command).opacity(0).accessibilityHidden(true))
+        // The content runs under the title bar; without this the title bar's inset pushes the fixed frame down and clips its bottom.
+        .ignoresSafeArea()
     }
 
     private func binding<T>(_ get: @escaping () -> T, _ set: @escaping (T) -> Void) -> Binding<T> { Binding(get: get, set: set) }
@@ -538,11 +540,13 @@ struct SetupView: View {
             SettingsGroup { SettingsNote(note) }
         }
 
+        SettingsGroup { SettingsNote("Full screen works as usual; switching workspaces takes a window out of it first. Settings… in the menu bar icon's menu opens this window (⌘,).") }
+
         SettingsGroup {
-            SettingsRow("Uninstall Polycarp", help: "Puts your windows, the Dock, shortcuts and Claude Code settings back, then removes Polycarp.") {
+            SettingsRow("Uninstall Polycarp", help: "Puts things back as they were, then removes Polycarp.") {
                 Button("Uninstall Polycarp…") { model.onUninstall?() }
             }
-            LearnMore("Full screen works as usual; switching workspaces takes a window out of it first. Change anything later with Settings… in the menu bar icon's menu (⌘,).")
+            LearnMore("Puts back your windows, the macOS Dock, the screenshot and Spotlight shortcuts and your Claude Code settings as they were, then removes Polycarp.")
         }
     }
 
@@ -626,7 +630,7 @@ struct SetupView: View {
                     legend(AgentStatusBadge(state: .asking, size: 16), "Asking you something, such as a permission")
                     legend(AgentStatusBadge(state: .failed, size: 16), "Stopped on an error")
                     legend(Text("1").font(Chrome.font(10, .heavy, rounded: true)).foregroundStyle(Chrome.light())
-                            .frame(width: 16, height: 16).background(Circle().fill(Chrome.working)),
+                            .frame(width: 16, height: 16).background(Circle().fill(Chrome.finished)),
                            "Finished while you were away")
                 }
                 .opacity(model.dockAgentStatus && model.workspaceDock ? 1 : 0.4)
@@ -1051,9 +1055,15 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         model.windowVisible = { [weak window] in window?.isVisible == true }
         let host = NSHostingView(rootView: SetupView(model: model) { [weak window] in window?.close() })
+        host.sizingOptions = []   // the window alone owns its size
         window.contentView = host
         window.setContentSize(SettingsSidebar.windowSize)
         window.center()
+        // The title bar's controls follow the theme, not the Mac's own light or dark.
+        func matchTheme() { window.appearance = NSAppearance(named: Chrome.scheme == .dark ? .darkAqua : .aqua) }
+        matchTheme()
+        observers.append((NotificationCenter.default, NotificationCenter.default.addObserver(
+            forName: Appearance.didChange, object: nil, queue: .main) { _ in matchTheme() }))
         // On grant: come forward, celebrate, then get out of the way.
         model.onReady = { [weak self] in
             NSApp.activate(ignoringOtherApps: true)
