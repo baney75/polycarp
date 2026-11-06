@@ -761,7 +761,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.imagePosition = .imageLeading
         // Dictation shows in the menu bar while it listens: the mic beside the mark.
         if VoiceEngine.shared.state?.status.isLive == true {
-            statusItem.button?.title = " 🎙" + (statusItem.button?.title ?? "")
+            // The pen with its listening dot, beside the workspace mark.
+            let attachment = NSTextAttachment()
+            attachment.image = SilasMark.templateImage(size: 14, recording: true)
+            let title = NSMutableAttributedString(string: " ")
+            title.append(NSAttributedString(attachment: attachment))
+            title.append(NSAttributedString(string: statusItem.button?.title ?? ""))
+            statusItem.button?.attributedTitle = title
             statusItem.button?.toolTip = "Listening"
         }
     }
@@ -844,10 +850,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item("Quit Polycarp", #selector(quit), key: "q"))
             return
         }
-        // Dictation's state, first: the same line the Silas tray showed ("Ready · hold Right ⌘ to speak").
+        // Silas's state, first: the same line the Silas tray showed ("Ready · hold Right ⌘ to speak").
         if let st = VoiceEngine.shared.state {
             let line = VoiceEngine.shared.statusLine
-            menu.addItem(withTitle: line, action: nil, keyEquivalent: "")
+            let silasItem = menu.addItem(withTitle: SilasName.menuTitle(line), action: nil, keyEquivalent: "")
+            silasItem.image = SilasMark.templateImage(size: 14, recording: st.status.isLive)
             menu.addItem(.separator())
         }
         spaces.refresh()

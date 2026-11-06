@@ -411,7 +411,7 @@ final class SetupModel: ObservableObject {
 /// The settings window's tabs. General comes first: it's where a new Mac starts.
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general = "General", keys = "Keys", dock = "Dock", appearance = "Appearance", launcher = "Launcher",
-         automation = "Automation", updates = "Updates", agents = "Agents", voice = "Voice", browser = "Browser"
+         automation = "Automation", updates = "Updates", agents = "Agents", voice = "Silas", browser = "Browser"
     var id: Self { self }
 
     var symbol: String {
@@ -424,7 +424,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .automation: "gearshape.2"
         case .updates: "arrow.down.circle"
         case .agents: "cpu"
-        case .voice: "mic"
+        case .voice: "pencil"   // not shown: the Silas tab draws its own pen (`SilasMark`)
         case .browser: "globe"
         }
     }
@@ -441,7 +441,7 @@ struct SetupView: View {
     var body: some View {
         VStack(spacing: 0) {
             Picker("", selection: $model.tab) {
-                ForEach(SettingsTab.allCases) { t in Label(t.rawValue, systemImage: t.symbol).tag(t) }
+                ForEach(SettingsTab.allCases) { t in tabLabel(t).tag(t) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -476,6 +476,15 @@ struct SetupView: View {
             .padding(.horizontal, 24).padding(.vertical, 14)
         }
         .frame(width: 560)
+    }
+
+    /// Every tab is a symbol and a name; Silas's is its own pen, as a template image the picker tints.
+    @ViewBuilder private func tabLabel(_ t: SettingsTab) -> some View {
+        if t == .voice {
+            Label { Text(t.rawValue) } icon: { Image(nsImage: SilasMark.templateImage(size: 16)) }
+        } else {
+            Label(t.rawValue, systemImage: t.symbol)
+        }
     }
 
     // MARK: General

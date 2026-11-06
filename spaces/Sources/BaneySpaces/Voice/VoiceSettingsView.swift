@@ -25,8 +25,11 @@ struct VoiceSettingsView: View {
     }
 
     private var statusLine: some View {
+        VStack(alignment: .leading, spacing: 6) {
+        // What Silas is, in one line, for someone meeting it here.
+        Text(SilasName.description).font(Chrome.font(11)).foregroundStyle(.secondary)
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: voice.state?.status.isLive == true ? "mic.fill" : "mic").foregroundStyle(Chrome.accent)
+            SilasMarkView(live: voice.state?.status.isLive == true).foregroundStyle(Chrome.accent)
             Text(voice.statusLine)
                 .font(Chrome.font(13, .semibold))
                 .fixedSize(horizontal: false, vertical: true)
@@ -35,9 +38,10 @@ struct VoiceSettingsView: View {
         }
         .padding(10)
         .background(Chrome.shape(.settingsCell, continuous: false).fill(Chrome.cell(0.08)))
+        }
     }
 
-    /// Only when voice is on and Silas is installed. Nothing here happens by itself.
+    /// Only when Silas is on and the Silas app is installed. Nothing here happens by itself.
     private var silasSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
