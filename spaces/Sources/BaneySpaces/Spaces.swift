@@ -634,6 +634,24 @@ final class Spaces {
         return found
     }
 
+    /// The green button or ⌃⌘F: the window fills the screen on its own workspace, or goes back where it was
+    /// (`FullScreenFill`). No Space, no slide, nothing to wait for.
+    func toggleFill(_ id: WindowID?) {
+        guard active else { return }
+        if switching { return enqueue { [weak self] in self?.toggleFill(id) } }
+        refresh()
+        let target = id.flatMap { windows[$0] } ?? Windows.focused(in: Array(windows.values))
+        guard let w = target, let current = w.frame else { return NSSound.beep() }
+        let fill = Windows.visibleArea(near: current)
+        let next = FullScreenFill.target(current: current, fill: fill, saved: filledFrom[w.id])
+        if FullScreenFill.isFilling(current, fill) { filledFrom[w.id] = nil } else { filledFrom[w.id] = current }
+        w.setFrame(next)
+        Trace.log("fill window=\(w.id) \(FullScreenFill.isFilling(next, fill) ? "on" : "off")")
+    }
+
+    /// Where each filled window was, so a second press puts it back.
+    private var filledFrom: [WindowID: CGRect] = [:]
+
     /// macOS full screen moves a window to a desktop of its own, where BaneySpaces can't hide or
     /// show it. Full screen you choose (a video, a presentation) stays until you switch
     /// workspaces; a window left in full screen from before BaneySpaces started comes back out

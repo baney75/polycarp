@@ -57,9 +57,9 @@ Prefer to keep ⌘1 for your browser's first tab? Pick ⌃, ⌥ or ⌃⌥ in set
 - **New windows open where you are.** Open something on workspace 4 and it lives on workspace 4.
 - **The Dock and ⌘Tab still work.** Click an app whose window is on workspace 6 and you go to
   workspace 6.
-- **Full screen works, and ⌘1–⌘9 still work from it.** Put a video or a slideshow in full screen
-  as usual. Press ⌘2 and the window leaves full screen before you switch, so it stays on its
-  workspace instead of stranding you on a macOS desktop that ⌘1–⌘9 can't reach.
+- **Full screen stays instant.** The green button and ⌃⌘F fill the screen on the window's workspace, with no
+  separate desktop and no slide. Press again to put it back. A video's own full-screen button still uses macOS's;
+  press ⌘2 from there and the window leaves full screen first, so it stays on its workspace.
 - **Empty means empty.** Go to a workspace with nothing on it and you get a clean desktop.
   Typing goes nowhere until you open something.
 - **Each display has a workspace of its own.** With a second monitor or Sidecar, ⌘1–⌘9 change
