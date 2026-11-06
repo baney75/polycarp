@@ -43,6 +43,8 @@ export interface SetupReport {
 	state: RemoteState;
 	message: string;
 	adminUrl?: string;
+	/** Why a `problem` happened, when an app has something specific to say: "launcher" (no working launcher yet: connect a browser first), "hub", "service", "serve", "funnel", "config". */
+	code?: string;
 	connectorUrl?: string;
 	passcode?: string;
 	/** True when a passcode exists after this run, whether or not this run made it. */

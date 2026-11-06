@@ -226,6 +226,7 @@ test("remote setup --json: a Funnel failure with no page to open is a problem wi
 		const report = (await s.runAsync(["remote", "setup", "--json", "--no-service", "--port", String(local.port)])).json();
 		assert.equal(report.state, "problem");
 		assert.match(report.message, /listener already exists/);
+		assert.equal(report.code, "funnel");
 		assert.equal("adminUrl" in report, false);
 	} finally {
 		await local.close();
@@ -270,6 +271,7 @@ test("remote setup --json with a service and no working launcher is a problem, n
 	assert.equal(r.code, 1);
 	assert.equal(r.json().state, "problem");
 	assert.match(r.json().message, /tabkyra install/);
+	assert.equal(r.json().code, "launcher", "the app reads the code, not the sentence");
 });
 
 // ---------- status once it's set up ----------

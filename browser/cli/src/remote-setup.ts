@@ -248,9 +248,9 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 		if (!json) console.log(line);
 	};
 	/** Text mode: the old stderr lines. JSON mode: the state, with the passcode if this run made it. */
-	const fail = (state: RemoteState, message: string, extra: { adminUrl?: string; after?: string } = {}): number => {
+	const fail = (state: RemoteState, message: string, extra: { adminUrl?: string; code?: string; after?: string } = {}): number => {
 		if (json) {
-			const report: SetupReport = { ok: false, state, message, ...(extra.adminUrl ? { adminUrl: extra.adminUrl } : {}), ...(madePasscode ? { passcode: madePasscode } : {}), passcodeSet: passcodeSet() };
+			const report: SetupReport = { ok: false, state, message, ...(extra.adminUrl ? { adminUrl: extra.adminUrl } : {}), ...(extra.code ? { code: extra.code } : {}), ...(madePasscode ? { passcode: madePasscode } : {}), passcodeSet: passcodeSet() };
 			printReport(report);
 			return 1;
 		}
@@ -260,13 +260,13 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 	};
 	// One public route per install: a hub (tabkyra hub setup) owns it.
 	if (existsSync(hubFile())) {
-		return fail("problem", `This install is set up as a hub (${hubFile()}), and an install has one public route. Run tabkyra hub off first. Nothing was changed.`);
+		return fail("problem", `This install is set up as a hub (${hubFile()}), and an install has one public route. Run tabkyra hub off first. Nothing was changed.`, { code: "hub" });
 	}
 	let previous: RemoteConfig | undefined;
 	try {
 		previous = loadRemoteConfig();
 	} catch (err) {
-		return fail("problem", `${err instanceof Error ? err.message : String(err)} Nothing was changed; run tabkyra remote off first.`);
+		return fail("problem", `${err instanceof Error ? err.message : String(err)} Nothing was changed; run tabkyra remote off first.`, { code: "config" });
 	}
 	const port = options.port ?? previous?.port ?? DEFAULT_PORT;
 	// Plan: everything that can refuse, before anything changes.
@@ -298,7 +298,7 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 		return fail("problem", `A service from an earlier setup is installed (${installed}), and --no-service would leave it running. Run tabkyra remote off first. Nothing was changed.`);
 	}
 	if (options.service && !launcherValid()) {
-		return fail("problem", `${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run tabkyra install first, then tabkyra remote setup again.`);
+		return fail("problem", `${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run tabkyra install first, then tabkyra remote setup again.`, { code: "launcher" });
 	}
 	// Whatever listens on the port must be Tabkyra with OAuth for this URL, or Funnel would publish something else.
 	const probe = await probeLocal(port, publicUrl);
@@ -326,12 +326,13 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 		const service = await installService();
 		say(`${service.ok ? sym.ok : sym.fail} ${service.message}`);
 		if (!service.ok) {
-			return fail("problem", `The service didn't start, so ${route === "funnel" ? "Funnel was not opened" : "setup isn't finished"}. remote.json is kept; fix the cause and run tabkyra remote setup again.${json ? ` (${service.message})` : ""}`);
+			return fail("problem", `The service didn't start, so ${route === "funnel" ? "Funnel was not opened" : "setup isn't finished"}. remote.json is kept; fix the cause and run tabkyra remote setup again.${json ? ` (${service.message})` : ""}`, { code: "service" });
 		}
 		if (!(await waitForServe(port, publicUrl, 15_000))) {
 			return fail(
 				"problem",
 				`tabkyra serve isn't answering on 127.0.0.1:${port} with ${publicUrl}/mcp after 15 seconds, so ${route === "funnel" ? "Funnel was not opened" : "setup isn't finished"}. Look in ${serviceLogHint()}. remote.json is kept; fix the cause and run tabkyra remote setup again.`,
+				{ code: "serve" },
 			);
 		}
 		listening = true;
@@ -344,7 +345,7 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 			const login = funnelAdminUrl(r.out);
 			const after = `${sym.dot} remote.json is kept. Fix that, then run tabkyra remote setup again, or tabkyra remote off to undo setup.`;
 			if (login) return fail("funnel_not_allowed", `Funnel isn't enabled for this tailnet or node yet. Open ${login}, enable it, then run tabkyra remote setup again.`, { adminUrl: login, after });
-			return fail("problem", `tailscale funnel failed: ${r.out}`, { after });
+			return fail("problem", `tailscale funnel failed: ${r.out}`, { code: "funnel", after });
 		}
 		say(`${sym.ok} Tailscale Funnel on ${publicUrl} ${c.dim(`-> 127.0.0.1:${port}`)}`);
 	}
