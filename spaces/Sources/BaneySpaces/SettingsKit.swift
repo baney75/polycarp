@@ -171,31 +171,6 @@ enum SettingsSidebar {
     static let windowSize = CGSize(width: 760, height: 560)
 }
 
-/// The on-or-off control in every Polycarp window. The system switch takes its color from macOS and goes gray whenever
-/// the window isn't key, so a setting that's on can read as off; this one's color comes from the theme.
-struct ChromeSwitchStyle: ToggleStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        // Rows draw their own title beside it, so the label is only for VoiceOver.
-        Button { configuration.isOn.toggle() } label: {
-            ZStack {
-                configuration.label.opacity(0).frame(width: 0, height: 0).clipped()
-                Capsule()
-                    .fill(configuration.isOn ? Chrome.accent : Chrome.cell(0.18))
-                    .overlay(Capsule().strokeBorder(Chrome.edge(configuration.isOn ? 0 : 0.2), lineWidth: 1))
-                    .overlay(alignment: configuration.isOn ? .trailing : .leading) {
-                        Circle().fill(configuration.isOn ? Chrome.onAccent : Chrome.wash(0.9)).padding(2.5)
-                    }
-                    .frame(width: 34, height: 20)
-                    .animation(Chrome.ease(0.15), value: configuration.isOn)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityValue(configuration.isOn ? "On" : "Off")
-    }
-}
-
 struct SettingsSidebarView: View {
     @ObservedObject private var appearance = Appearance.shared
     @Binding var selection: SettingsTab

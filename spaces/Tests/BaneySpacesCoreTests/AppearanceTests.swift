@@ -110,6 +110,14 @@ final class AppearanceTests: XCTestCase {
         return (h, 0.62, dim)
     }
 
+    func testAnyoneWhoChoseRainbowKeepsIt() throws {
+        var chosen = AppearanceSettings()
+        chosen.palette = .rainbow
+        let saved = try JSONEncoder().encode(chosen)
+        XCTAssertEqual(AppearanceSettings.decoded(saved).palette, .rainbow)
+        XCTAssertEqual(AppearanceSettings().palette, .accent, "new installs start calm")
+    }
+
     func testRainbowIsExactlyTodaysColors() {
         var s = AppearanceSettings()
         s.palette = .rainbow

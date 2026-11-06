@@ -232,7 +232,8 @@ struct WelcomeView: View {
                     Text(Welcome.StartAtLogin.title).font(Chrome.font(13, .bold))
                     Spacer()
                     Toggle(Welcome.StartAtLogin.title, isOn: Binding(get: { model.startAtLogin }, set: { model.setStartAtLogin($0) }))
-                        .toggleStyle(ChromeSwitchStyle())
+                        .toggleStyle(.switch)
+                        .labelsHidden()
                 }
                 Text(Welcome.StartAtLogin.why).font(Chrome.font(12)).foregroundStyle(Chrome.muted)
                 if model.loginNeedsApproval {
