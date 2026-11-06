@@ -540,7 +540,7 @@ struct SetupView: View {
 
         SettingsGroup {
             SettingsRow("Uninstall Polycarp", help: "Puts your windows, the Dock, shortcuts and Claude Code settings back, then removes Polycarp.") {
-                Button("Uninstall…") { model.onUninstall?() }
+                Button("Uninstall Polycarp…") { model.onUninstall?() }
             }
             LearnMore("Full screen works as usual; switching workspaces takes a window out of it first. Change anything later with Settings… in the menu bar icon's menu (⌘,).")
         }
@@ -710,8 +710,8 @@ struct SetupView: View {
         }
 
         SettingsGroup("If windows get tangled") {
-            SettingsRow("Bring every window back", help: "Gathers every window onto workspace 1, all visible.") {
-                Button("Bring Back") { model.onBringBack?() }.disabled(model.automationReason != nil)
+            SettingsRow("If windows get tangled", help: "Gathers every window onto workspace 1, all visible.") {
+                Button("Bring Every Window Back") { model.onBringBack?() }.disabled(model.automationReason != nil)
             }
         }
     }

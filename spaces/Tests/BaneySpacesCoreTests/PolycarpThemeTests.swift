@@ -861,7 +861,7 @@ final class PolycarpWiringTests: XCTestCase {
     }
 
     func testSettingsAndDoctorReportIt() throws {
-        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Setup.swift").contains("section(\"Polycarp theme\")"))
+        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Setup.swift").contains("SettingsGroup(\"Polycarp theme\")"))
         XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Setup.swift").contains("polycarp theme set <name>"))
         XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Session/SessionController.swift").contains("info[\"polycarp_theme\"]"))
         XCTAssertTrue(try Repo.text("spec/themes.md").contains("## Polycarp themes"))
