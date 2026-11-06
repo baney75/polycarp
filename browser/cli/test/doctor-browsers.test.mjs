@@ -1,7 +1,7 @@
 // doctor reports which browser holds each connection (the host knows its parent process), a never-connected browser is news
 // and not a failure, `install --browser` refuses an unknown name, and the parent process maps to a browser name.
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -58,13 +58,20 @@ after(async () => {
 });
 
 const env = () => ({ HOME: join(root, "home"), PATH: join(root, "bin"), TABKYRA_SOCKET_DIR: join(root, "sock"), TABKYRA_APPLICATIONS_DIRS: join(root, "apps"), TABKYRA_EXTENSION_DIR: join(root, "no-build") });
-const doctor = () => {
-	const r = spawnSync(process.execPath, [cli, "doctor", "--json"], { env: env(), encoding: "utf8" });
-	return JSON.parse(r.stdout).checks;
-};
+// Asynchronous: the fake hosts live in this process, which a blocking spawn would starve.
+const doctor = () =>
+	new Promise((resolve, reject) => {
+		const child = spawn(process.execPath, [cli, "doctor", "--json"], { env: env(), stdio: ["ignore", "pipe", "ignore"] });
+		let out = "";
+		child.stdout.on("data", (d) => {
+			out += d;
+		});
+		child.on("error", reject);
+		child.on("close", () => resolve(JSON.parse(out).checks));
+	});
 
-test("a browser that was never connected is a warning with its own fix, not a failure", () => {
-	const hosts = doctor().filter((c) => c.id.startsWith("host:"));
+test("a browser that was never connected is a warning with its own fix, not a failure", async () => {
+	const hosts = (await doctor()).filter((c) => c.id.startsWith("host:"));
 	assert.ok(hosts.length >= 1);
 	for (const h of hosts) {
 		assert.equal(h.status, "warn", JSON.stringify(h));
@@ -75,8 +82,8 @@ test("a browser that was never connected is a warning with its own fix, not a fa
 
 test("each connection names the browser that holds it", async () => {
 	await fakeHost(process.pid, "Chrome", "1.1.10");
-	await fakeHost(process.pid + 1, "Helium", "1.1.9");
-	const checks = doctor();
+	await fakeHost(process.ppid, "Helium", "1.1.9");
+	const checks = await doctor();
 	const byId = Object.fromEntries(checks.map((c) => [c.id, c]));
 	assert.match(byId["connected:Chrome"].label, /Chrome: extension connected \(1\.1\.10\)/);
 	assert.match(byId["connected:Helium"].label, /Helium: extension connected \(1\.1\.9\)/);
@@ -89,7 +96,7 @@ test("a host that names no browser still gives the overall Connected line only",
 	await rm(join(root, "sock"), { recursive: true, force: true });
 	mkdirSync(join(root, "sock"), { mode: 0o700 });
 	await fakeHost(process.pid, undefined, "1.1.10");
-	const checks = doctor();
+	const checks = await doctor();
 	assert.equal(checks.some((c) => c.id.startsWith("connected:")), false);
 	assert.equal(checks.find((c) => c.id === "connected").status, "ok");
 });
