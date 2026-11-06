@@ -10,7 +10,7 @@ enum Render {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Run from `swift build` rather than the app bundle, macOS hands out a generic folder for
         // the app icon; settings would show that. Use the repo's icon when it's there.
-        if Bundle.main.bundleURL.pathExtension != "app", let icon = NSImage(contentsOfFile: "docs/icon.png") {
+        if Bundle.main.bundleURL.pathExtension != "app", let icon = NSImage(contentsOfFile: "../brand/export/macos/icon-512.png") {
             NSApp.applicationIconImage = icon
         }
         // BANEYSPACES_RENDER_SAMPLE=reported draws seven windows on workspace 1 and none elsewhere.

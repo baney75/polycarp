@@ -35,7 +35,7 @@ struct VoiceSettingsView: View {
                         Text(SilasName.description).font(Chrome.font(11)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    Toggle("On", isOn: Binding(get: { voice.userEnabled }, set: { voice.setUserEnabled($0) })).toggleStyle(.switch).labelsHidden()
+                    Toggle("On", isOn: Binding(get: { voice.userEnabled }, set: { voice.setUserEnabled($0) })).toggleStyle(ChromeSwitchStyle()).labelsHidden()
                 }
             }
         }
@@ -75,7 +75,7 @@ struct VoiceSettingsView: View {
 
     private func toggle(_ title: String, help: String? = nil, _ value: Bool, _ set: @escaping (Bool) -> Void) -> some View {
         SettingsRow(title, help: help) {
-            Toggle(title, isOn: Binding(get: { value }, set: set)).toggleStyle(.switch).labelsHidden()
+            Toggle(title, isOn: Binding(get: { value }, set: set)).toggleStyle(ChromeSwitchStyle()).labelsHidden()
         }
     }
 

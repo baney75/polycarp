@@ -140,18 +140,18 @@ struct BrowserDropView: View {
                     // tile and Load unpacked stay: loading the copy again is the way to the new version either way.
                     Text("A newer extension is ready").font(Chrome.font(13, .bold)).multilineTextAlignment(.center).frame(maxWidth: .infinity)
                     Text("\(model.browser) runs version \(loaded); Polycarp has \(current). Press the reload arrow on its card, or load the folder again.")
-                        .font(Chrome.font(11)).foregroundStyle(.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                        .font(Chrome.font(11)).foregroundStyle(Chrome.muted).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     loadControls
                 case .waiting:
                     Text("Drag this onto the Extensions page").font(Chrome.font(13, .bold)).multilineTextAlignment(.center).frame(maxWidth: .infinity)
                     if let note = model.unattributedNote {
-                        Text(note).font(Chrome.font(11)).foregroundStyle(.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                        Text(note).font(Chrome.font(11)).foregroundStyle(Chrome.muted).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     }
                     loadControls
                 }
             }
             Button(action: model.onCloseRequested) {
-                Image(systemName: "xmark").font(Chrome.font(11, .bold)).foregroundStyle(.secondary).padding(4).contentShape(Rectangle())
+                Image(systemName: "xmark").font(Chrome.font(11, .bold)).foregroundStyle(Chrome.muted).padding(4).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Close")
@@ -169,12 +169,12 @@ struct BrowserDropView: View {
     @ViewBuilder private var loadControls: some View {
         DragTile(folder: model.folder)
         Text("Turn on Developer mode first, at the top right, if the page doesn't take it.")
-            .font(Chrome.font(11)).foregroundStyle(.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+            .font(Chrome.font(11)).foregroundStyle(Chrome.muted).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
         Button("Use Load unpacked instead") { model.useLoadUnpacked() }
         if model.showSteps {
             VStack(alignment: .leading, spacing: 4) {
                 Text("The folder's path is copied.").font(Chrome.font(11, .medium))
-                Text("1. In the dialog press ⌘⇧G.\n2. Paste, then press Return.").font(Chrome.font(11)).foregroundStyle(.secondary)
+                Text("1. In the dialog press ⌘⇧G.\n2. Paste, then press Return.").font(Chrome.font(11)).foregroundStyle(Chrome.muted)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
