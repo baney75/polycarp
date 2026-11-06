@@ -43,7 +43,7 @@ public enum EntryPoint {
 
     /// Arguments that print and exit without starting the app or taking its lock: they must work
     /// while another copy runs. Only a complete invocation counts (`usageError`).
-    public static let runsBesideAnotherCopy: Set<String> = ["--render", "--bangs"]
+    public static let runsBesideAnotherCopy: Set<String> = ["--render", "--bangs", DockRestartHelper.argument]
 
     public static func needsExclusiveCopy(arguments: [String]) -> Bool {
         Set(arguments.dropFirst()).isDisjoint(with: runsBesideAnotherCopy)

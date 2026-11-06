@@ -494,6 +494,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // ⌃⌘K (registered in `registerShortcuts`) opens the launcher, which searches the session rows.
         session.onSearch = { [weak self] in self?.launcher.toggle() }
         session.onItemsChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
+        DockRestart.isSwitching = { [weak self] in self?.spaces.switching ?? false }
         let parts = PartsModel.shared
         legacyWatcher.start()
         parts.onChange = { [weak self] old, new in self?.partsChanged(from: old, to: new) }
@@ -615,15 +616,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }()
 
     func applicationWillTerminate(_ n: Notification) {
+        // An install swaps the app in place: the Dock and Mission Control stay as they are, since
+        // restoring them here and taking them back at the launch would restart the Dock twice in seconds.
+        let forInstall = InstallHandoff.isCurrent(markedAt: (UserDefaults.standard.object(forKey: InstallHandoff.key) as? NSNumber)?.doubleValue, now: Date().timeIntervalSince1970)
+        UserDefaults.standard.removeObject(forKey: InstallHandoff.key)
+        DockRestart.isQuitting = true
         // The macOS Dock comes back with everything else; the next launch tucks it away again.
         sandbox.shutdown()
-        dock.stop(restoreSystemDock: true)
+        dock.stop(restoreSystemDock: !forInstall)
         topDrag.stop()
         // Mission Control comes back with the Dock, so there's always a way to see the desktops.
         // Quitting for an update is the exception: the new build takes over, and if it never
         // starts the launch agent puts Mission Control back after 30 seconds.
         if SystemMissionControl.isTakenByUs {
-            if UserDefaults.standard.dictionary(forKey: "updatingTo") != nil { SystemMissionControl.leaveForUpdate() }
+            if forInstall || UserDefaults.standard.dictionary(forKey: "updatingTo") != nil { SystemMissionControl.leaveForUpdate() }
             else { SystemMissionControl.restore() }
         }
         if started { spaces.restoreAll() }
@@ -633,6 +639,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // A clean quit, not a crash, for the next launch's crash-loop check.
         CrashLoop.launchEnded()
         hotCorners.stop()
+        DockRestart.handOffBeforeQuit()
     }
 
     // MARK: Accessibility

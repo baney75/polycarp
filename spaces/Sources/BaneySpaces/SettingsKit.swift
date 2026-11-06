@@ -220,10 +220,10 @@ struct SettingsSidebarView: View {
                 Text(tab.rawValue).font(Chrome.font(13, on ? .semibold : .regular))
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(on ? Chrome.onAccent : Chrome.wash())
+            .foregroundStyle(Chrome.wash())
             .padding(.horizontal, 10).padding(.vertical, 6)
             .contentShape(Rectangle())
-            .background(Chrome.shape(.settingsCell, continuous: false).fill(on ? Chrome.accent : Color.clear))
+            .background(Chrome.shape(.settingsCell, continuous: false).fill(on ? Chrome.accent.opacity(Chrome.scheme == .dark ? 0.24 : 0.18) : Color.clear))
             // The focus ring: the keyboard's place, drawn on the selected row while the sidebar has the keyboard.
             .overlay(Chrome.shape(.settingsCell, continuous: false).strokeBorder(Chrome.wash(0.9), lineWidth: on && focused ? 2 : 0).padding(1))
         }

@@ -411,7 +411,7 @@ final class MissionControlWatchdogTests: XCTestCase {
         let app = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/BaneySpaces/AppDelegate.swift"), encoding: .utf8)
         XCTAssertTrue(app.contains("SystemMissionControl.restore(keeping: why, removeAgent: !MissionControlKeys.enabled)"))
-        let quit = try XCTUnwrap(app.range(of: "func applicationWillTerminate").map { String(app[$0.lowerBound...].prefix(1200)) })
+        let quit = try XCTUnwrap(app.range(of: "func applicationWillTerminate").map { String(app[$0.lowerBound...].prefix(2000)) })
         XCTAssertTrue(quit.contains("SystemMissionControl.restore()"), "a quit restores at once")
         XCTAssertFalse(quit.contains("removeAgent: true"))
     }

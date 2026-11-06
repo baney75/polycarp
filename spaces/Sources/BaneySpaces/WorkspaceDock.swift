@@ -58,12 +58,7 @@ enum SystemDock {
     }
 
     /// The Dock reads these settings when it starts; restarting it is how System Settings applies them.
-    private static func restartDock() {
-        let kill = Process()
-        kill.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        kill.arguments = ["Dock"]
-        try? kill.run()
-    }
+    private static func restartDock() { DockRestart.request() }
 }
 
 /// A dock of workspaces instead of apps: one tile for each workspace in use, showing its apps.

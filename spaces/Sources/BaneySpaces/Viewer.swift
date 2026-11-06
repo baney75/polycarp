@@ -210,10 +210,10 @@ struct ViewerView: View {
         HStack(alignment: .firstTextBaseline) {
             Text("\(n)").font(Chrome.font(22, .bold, rounded: true))
             if count > 0 {
-                Text(count == 1 ? "1 window" : "\(count) windows").font(Chrome.font(10)).foregroundStyle(.secondary)
+                Text(count == 1 ? "1 window" : "\(count) windows").font(Chrome.font(12)).foregroundStyle(Chrome.muted)
             }
             Spacer()
-            if isCurrent { Text("You're here").font(Chrome.font(10, .semibold)).foregroundStyle(accent) }
+            if isCurrent { Text("You're here").font(Chrome.font(12, .semibold)).foregroundStyle(accent) }
         }
     }
 
@@ -234,7 +234,7 @@ struct ViewerView: View {
         if isTarget {
             Text("Move here").font(Chrome.font(12)).foregroundStyle(accent).frame(maxWidth: .infinity)
         } else {
-            Text("Empty").font(Chrome.font(12)).foregroundStyle(.tertiary).frame(maxWidth: .infinity)
+            Text("Empty").font(Chrome.font(13)).foregroundStyle(Chrome.muted).frame(maxWidth: .infinity)
         }
     }
 
@@ -311,16 +311,16 @@ struct ViewerView: View {
     private func card(_ e: Spaces.Entry, lifted: Bool) -> some View {
         HStack(spacing: 8) {
             Image(nsImage: model.icons[e.id] ?? NSRunningApplication(processIdentifier: e.pid)?.icon ?? NSImage())
-                .resizable().frame(width: 20, height: 20)
+                .resizable().frame(width: 24, height: 24)
             // One line per window: the app, then its title, trimmed in the middle if long.
-            (Text(e.app).font(Chrome.font(12, .medium))
-             + Text(e.title.isEmpty || e.title == e.app ? "" : "  \(e.title)").font(Chrome.font(12)).foregroundColor(.secondary))
+            (Text(e.app).font(Chrome.font(14, .semibold))
+             + Text(e.title.isEmpty || e.title == e.app ? "" : "  \(e.title)").font(Chrome.font(14)).foregroundColor(Chrome.muted))
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Chrome.shape(.overviewChip, continuous: false).fill(lifted ? Chrome.liftedFill : Chrome.cell(0.06)))
         .overlay(Chrome.shape(.overviewChip, continuous: false).strokeBorder(Chrome.edge(lifted ? 0.25 : 0), lineWidth: Chrome.width(.overviewChip)))

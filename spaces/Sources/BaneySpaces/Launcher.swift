@@ -318,7 +318,7 @@ final class LauncherModel: ObservableObject {
         }
         var placeholder: String {
             switch self {
-            case .root: "Search apps, files, the web (!yt), or ask (?)"
+            case .root: "Search apps, files and the web"
             case .files: "Search files and folders by name"
             case .web: "Search the web, or !bang, or ? to ask"
             case .install: "Search for an app to install"
@@ -1555,7 +1555,8 @@ struct LauncherView: View {
             }
             Spacer(minLength: 8)
             if item.state == .working { ProgressView().controlSize(.small).scaleEffect(0.8) }
-            if !item.badge.isEmpty { badge(item.badge, strong: selected) }
+            // The Tab hint only where Tab would act; a status such as "Installing…" always shows.
+            if !item.badge.isEmpty, selected || item.badge != "⇥" { badge(item.badge, strong: selected) }
             HStack(spacing: 3) { ForEach(item.workspaces.prefix(5), id: \.self) { WorkspaceBadge(n: $0, size: 18) } }
         }
         .padding(.horizontal, 10)
