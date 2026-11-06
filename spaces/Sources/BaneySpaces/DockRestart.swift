@@ -9,6 +9,7 @@ enum DockRestart {
     private static var pending = Set<String>()
     private static var timer: Timer?
     private static var lastReason: DockRestartGate.Reason?
+    private static var lastKill: Date?
 
     /// `processes` are names for killall, such as "Dock".
     static func request(_ processes: Set<String> = ["Dock"]) {
@@ -27,7 +28,8 @@ enum DockRestart {
 
     private static func try_() {
         let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first
-        let uptime = dock?.launchDate.map { Date().timeIntervalSince($0) }
+        // Until the old Dock has actually gone, its launch date reads as settled, so our own last restart counts too.
+        let uptime = [dock?.launchDate, lastKill].compactMap { $0 }.map { Date().timeIntervalSince($0) }.min()
         switch DockRestartGate.decide(onFullScreenSpace: Windows.onFullScreenSpace(), switching: isSwitching(), dockUptime: uptime) {
         case .wait(let reason):
             if reason != lastReason { Trace.log("dock restart: waiting, \(reason.rawValue)") }
@@ -38,6 +40,7 @@ enum DockRestart {
             lastReason = nil
             timer?.invalidate()
             timer = nil
+            lastKill = Date()
             kill(names)
             Trace.log("dock restart: \(names.sorted().joined(separator: ", "))")
         }

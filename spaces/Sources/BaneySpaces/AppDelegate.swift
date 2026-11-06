@@ -568,7 +568,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if SystemMissionControl.isTakenByUs {
             // So is an install swapping the app in place: restoring here and taking over at the launch would restart the
             // Dock twice in seconds.
-            let forInstall = InstallHandoff.isCurrent(markedAt: UserDefaults.standard.object(forKey: InstallHandoff.key) as? TimeInterval, now: Date().timeIntervalSince1970)
+            let forInstall = InstallHandoff.isCurrent(markedAt: (UserDefaults.standard.object(forKey: InstallHandoff.key) as? NSNumber)?.doubleValue, now: Date().timeIntervalSince1970)
             UserDefaults.standard.removeObject(forKey: InstallHandoff.key)
             if forInstall || UserDefaults.standard.dictionary(forKey: "updatingTo") != nil { SystemMissionControl.leaveForUpdate() }
             else { SystemMissionControl.restore(isQuitting: true) }
