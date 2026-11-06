@@ -208,6 +208,15 @@ public enum BrowserPanelPlacement {
 }
 
 /// Where the bundled pieces are, and how a browser is opened on its extensions page.
+/// Where the Chrome Web Store has the extension. Nil until Google assigns the listing its id; the panel then offers
+/// only the by-hand ways in.
+public enum ExtensionStore {
+    public static let id: String? = nil
+    public static func url(id: String? = ExtensionStore.id) -> URL? {
+        id.flatMap { URL(string: "https://chromewebstore.google.com/detail/\($0)") }
+    }
+}
+
 public enum BrowserBundle {
     /// `Polycarp.app/Contents/Resources/browser` for a resources folder.
     public static func folder(resources: URL?) -> URL? { resources?.appendingPathComponent("browser", isDirectory: true) }

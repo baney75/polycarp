@@ -165,8 +165,20 @@ struct BrowserDropView: View {
         .padding(6)
     }
 
-    /// The tile, the Developer mode line, and the by-hand way in.
+    /// The store first when there is a listing, with the by-hand ways behind it. Without one, the by-hand ways.
     @ViewBuilder private var loadControls: some View {
+        if let store = ExtensionStore.url() {
+            Button("Add from the Chrome Web Store") { NSWorkspace.shared.open(store) }
+                .keyboardShortcut(.defaultAction)
+            DisclosureGroup("Install by hand") { byHandControls }
+                .font(Chrome.font(11))
+        } else {
+            byHandControls
+        }
+    }
+
+    /// The tile, the Developer mode line, and Load unpacked.
+    @ViewBuilder private var byHandControls: some View {
         DragTile(folder: model.folder)
         Text("Turn on Developer mode first, at the top right, if the page doesn't take it.")
             .font(Chrome.font(11)).foregroundStyle(.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)

@@ -6,6 +6,7 @@ import { BrowserSession, cleanupOrphanGroups, listSessions } from "./browser/ses
 import { startCommunityWorker } from "./community/worker.js";
 import { startConnectRelay } from "./connect/relay.js";
 import { startSubscriptionRelay } from "./subscriptions/relay.js";
+import { runningFromStore } from "./update/store-install.js";
 import { setPanelsOpening, startUpdateWorker } from "./update/worker.js";
 
 // Debugger events reach a worker only if its listeners exist when it starts (detaches, page crashes).
@@ -30,8 +31,9 @@ startBridge();
 startSubscriptionRelay();
 startConnectRelay();
 
-// "Update now", the reload after an update (only when no agent runs), automatic updates.
-startUpdateWorker();
+// "Update now", the reload after an update (only when no agent runs), automatic updates. A copy
+// from the Web Store is updated by Chrome instead.
+if (!runningFromStore()) startUpdateWorker();
 
 // Community skills: the side panel's on, off and sync buttons go to the native host.
 startCommunityWorker();
