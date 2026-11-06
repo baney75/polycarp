@@ -83,7 +83,7 @@ function editPending(edit: (list: PendingQuestion[]) => PendingQuestion[]): Prom
 async function showBadge(list: PendingQuestion[]): Promise<void> {
 	const action = chrome.action;
 	try {
-		await action.setBadgeBackgroundColor?.({ color: "#e3a93b" });
+		await action.setBadgeBackgroundColor?.({ color: "#59693f" });
 		await action.setBadgeText?.({ text: list.length ? String(list.length) : "" });
 		await action.setTitle?.({
 			title: list.length ? `Polycarp: ${list[0].agentName} is asking you a question` : "Polycarp",

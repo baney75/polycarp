@@ -24,20 +24,21 @@
 	--radius-xl: var(--tk-radius-lg);
 }
 
-/* Polycarp palette (media/brand/BRAND.md): brass on ink. Dark mode leans toward ink. */
+/* Polycarp's own palette (brand/README.md), for anyone with no theme file. The --tk-brass names are older than the
+   palette and stay because every rule reads them; they hold the accent. */
 :root {
 	--tk-radius-sm: calc(var(--radius) - 4px);
 	--tk-radius-lg: calc(var(--radius) + 4px);
-	--tk-brass: #e3a93b;
-	--tk-brass-deep: #a8761c;
+	--tk-brass: #59693f;
+	--tk-brass-deep: #59693f;
 	/* Brass text on light backgrounds: 4.5:1 or better on white and on the card. */
-	--tk-brass-text: #8a5f12;
-	--tk-ink: #0f1b24;
+	--tk-brass-text: #4b5935;
+	--tk-ink: #2b2e26;
 	/* Text and glyphs drawn on --tk-brass. Appearance (src/appearance/tokens.ts) pairs it with the accent per preset. */
-	--tk-on-brass: var(--tk-ink);
-	--tk-tide: #43b3a0;
+	--tk-on-brass: #f6f3e8;
+	--tk-tide: #3f6b6a;
 	/* The darker stop of the brass gradients. A Polycarp theme sets it from its accent. */
-	--tk-brass-edge: #a8761c;
+	--tk-brass-edge: #4b5935;
 	/* Fixed colors: the recording pill, switch thumbs and their shadow, the success mark. */
 	--tk-on-rec: #fff;
 	--tk-rec: #c42b2b;
@@ -58,14 +59,18 @@
 }
 
 .dark {
-	--background: oklch(0.17 0.015 240);
-	--card: oklch(0.21 0.017 240);
-	--popover: oklch(0.25 0.018 240);
-	--secondary: oklch(0.26 0.018 240);
-	--muted: oklch(0.26 0.018 240);
-	--accent: oklch(0.31 0.02 240);
-	--border: oklch(0.29 0.018 240);
-	--input: oklch(0.33 0.018 240);
+	--background: #1f211b;
+	--card: #2b2e26;
+	--popover: #2b2e26;
+	--secondary: #34382e;
+	--muted: #34382e;
+	--accent: #39412f;
+	--border: #464a3d;
+	--input: #464a3d;
+	--tk-brass: #a9bb8a;
+	--tk-brass-edge: #8fa270;
+	--tk-on-brass: #20231a;
+	--tk-tide: #8ebdb9;
 	--ring: var(--tk-brass);
 	--accent-foreground: var(--foreground);
 	--tk-brass-text: var(--tk-brass);
