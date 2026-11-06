@@ -117,6 +117,13 @@ final class BrowserDropModel: ObservableObject {
     }
 
     /// Only on the click: the folder's path goes to the pasteboard, then the two steps are shown.
+    /// In the browser being set up, which often isn't the default one.
+    func openInBrowser(_ url: URL) {
+        guard let id = BrowserSetup.bundleID(for: browser),
+              let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) else { NSWorkspace.shared.open(url); return }
+        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+    }
+
     func useLoadUnpacked() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(folder.path, forType: .string)
@@ -168,7 +175,7 @@ struct BrowserDropView: View {
     /// The store first when there is a listing, with the by-hand ways behind it. Without one, the by-hand ways.
     @ViewBuilder private var loadControls: some View {
         if let store = ExtensionStore.url() {
-            Button("Add from the Chrome Web Store") { NSWorkspace.shared.open(store) }
+            Button("Add from the Chrome Web Store") { model.openInBrowser(store) }
                 .keyboardShortcut(.defaultAction)
             DisclosureGroup("Install by hand") { byHandControls }
                 .font(Chrome.font(11))
