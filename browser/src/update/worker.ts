@@ -12,6 +12,7 @@
  * AUTO_UPDATE_QUIET_MS, for every step.
  */
 
+import { hostCommand } from "../bridge/host-command.js";
 import { bridgeActivity, onUpdateMessages, sendUpdateAction, setGateReady, setInstallGate } from "../bridge/native.js";
 import {
 	type HostUpdateProgress,
@@ -208,7 +209,7 @@ async function advanceOnce(): Promise<void> {
 		if (pending.step !== "reload") await release();
 		const what =
 			pending.step === "reload"
-				? "Reloading Tabkyra"
+				? "Reloading Polycarp"
 				: pending.action === "rollback"
 					? "Rolling back"
 					: "Ready. Installing";
@@ -231,7 +232,7 @@ async function advanceOnce(): Promise<void> {
 		if (!sendUpdateAction(pending.action as UpdateAction)) {
 			await chrome.storage.local.set({ [PENDING_KEY]: pending });
 			await release();
-			await setProgress(pending.action, "waiting", "Waiting for the Tabkyra native host to connect.");
+			await setProgress(pending.action, "waiting", "Waiting for the Polycarp native host to connect.");
 			later();
 			return;
 		}
@@ -239,19 +240,19 @@ async function advanceOnce(): Promise<void> {
 		return;
 	}
 	await setPending({ ...pending, reloadedFrom: BUILD?.id ?? "unknown" });
-	await setProgress(pending.action, "reloading", "Reloading Tabkyra");
+	await setProgress(pending.action, "reloading", "Reloading Polycarp");
 	chrome.runtime.reload();
 	// A reload ends this worker at once. Still here a few seconds later means it didn't happen:
 	// let runs start again and say so, rather than hold everything back.
 	const timer = setTimeout(() => {
 		// Try once more. A second miss is reported and runs may start again: holding everything
 		// back for a reload that doesn't come helps nobody.
-		void setProgress(pending.action, "waiting", "Tabkyra hasn't reloaded yet; trying again.");
+		void setProgress(pending.action, "waiting", "Polycarp hasn't reloaded yet; trying again.");
 		chrome.runtime.reload();
 		const again = setTimeout(() => {
 			void release();
 			void chrome.storage.local.remove(PENDING_KEY);
-			void setProgress(pending.action, "failed", "Tabkyra didn't reload. Reload it on chrome://extensions.");
+			void setProgress(pending.action, "failed", "Polycarp didn't reload. Reload it on chrome://extensions.");
 		}, RELOAD_GRACE_MS);
 		(again as { unref?: () => void }).unref?.();
 	}, RELOAD_GRACE_MS);
@@ -278,7 +279,7 @@ async function giveUpOnSent(at: number): Promise<void> {
 		await setProgress(
 			pending.action,
 			"waiting",
-			"No result from the native host. Reloading Tabkyra to run what is installed.",
+			"No result from the native host. Reloading Polycarp to run what is installed.",
 		);
 		await queue("reload", pending.action, {
 			auto: pending.auto,
@@ -318,7 +319,7 @@ async function resume(): Promise<void> {
 			await setProgress(
 				pending.action,
 				"failed",
-				"Tabkyra reloaded but still runs the old build, so the browser loads it from another folder. Check the folder on chrome://extensions.",
+				"Polycarp reloaded but still runs the old build, so the browser loads it from another folder. Check the folder on chrome://extensions.",
 			);
 			return;
 		}
@@ -326,11 +327,11 @@ async function resume(): Promise<void> {
 			await setProgress(
 				pending.action,
 				"failed",
-				`${pending.failure} Tabkyra reloaded and runs ${describeBuild(BUILD)}.`,
+				`${pending.failure} Polycarp reloaded and runs ${describeBuild(BUILD)}.`,
 			);
 			return;
 		}
-		await setProgress(pending.action, "done", `Tabkyra reloaded and runs ${describeBuild(BUILD)}.`);
+		await setProgress(pending.action, "done", `Polycarp reloaded and runs ${describeBuild(BUILD)}.`);
 		return;
 	}
 	// The host follows a running updater after a restart and reports its result.
@@ -364,7 +365,7 @@ async function maybeAutoUpdate(): Promise<void> {
 	}
 	// Only an offer actually sent counts as tried.
 	await chrome.storage.local.set({ [AUTO_KEY]: offerKey(status) });
-	await setProgress("update", "checking", "Updating automatically (Tabkyra is idle)");
+	await setProgress("update", "checking", "Updating automatically (Polycarp is idle)");
 }
 
 /** When the host last sent a frame for each action, for the no-reply check. */
@@ -385,7 +386,7 @@ async function onProgress(progress: HostUpdateProgress): Promise<void> {
 			auto: pending?.auto,
 			failure:
 				progress.phase === "failed"
-					? progress.message.replace(/ Reloading Tabkyra to run what is installed\.$/, "")
+					? progress.message.replace(/ Reloading Polycarp to run what is installed\.$/, "")
 					: undefined,
 		});
 	}
@@ -402,7 +403,7 @@ function expectReply(action: UpdateAction): void {
 		await setProgress(
 			action,
 			"failed",
-			"The native host didn't answer. It may be older than this extension: update the CLI (tabkyra update, or rebuild cli/ in a checkout), then reload Tabkyra.",
+			`The native host didn't answer. It may be older than this extension: update the CLI (${hostCommand()} update, or rebuild cli/ in a checkout), then reload Polycarp.`,
 		);
 		const pending = await getPending();
 		if (pending?.step === "sent" && pending.action === action) await chrome.storage.local.remove(PENDING_KEY);
@@ -417,7 +418,7 @@ function onPanelMessage(
 ): boolean | undefined {
 	const m = message as { type?: unknown; action?: unknown } | null;
 	if (!m || m.type !== PANEL_UPDATE_MESSAGE) return undefined;
-	// Only Tabkyra's own pages, never a content script on a web page.
+	// Only Polycarp's own pages, never a content script on a web page.
 	if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL(""))) {
 		sendResponse({ ok: false, message: "Refused" });
 		return undefined;
@@ -471,7 +472,7 @@ function startPanelAction(
 			await setProgress(
 				action,
 				"failed",
-				"The Tabkyra native host isn't connected. Run tabkyra doctor in a terminal.",
+				`The Polycarp native host isn't connected. Run ${hostCommand()} doctor in a terminal.`,
 			);
 			sendResponse({ ok: false, message: "No native host" });
 			return;

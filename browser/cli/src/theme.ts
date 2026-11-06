@@ -28,6 +28,7 @@ import {
 import { checkPolycarpTheme, type PolycarpTheme, polycarpPayload } from "../../src/appearance/polycarp.ts";
 import { writeJsonPrivate } from "./files.ts";
 import { configDir } from "./oauth.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export const themeFile = () => join(configDir(), "theme.json");
 
@@ -98,7 +99,7 @@ export function polycarpRefusal(): string | undefined {
 	return state.state === "refused" ? state.reason : undefined;
 }
 
-/** The same theme as the JSON the side panel receives (Tabkyra's section only), or undefined. */
+/** The same theme as the JSON the side panel receives (Polycarp's section only), or undefined. */
 export function loadPolycarpPayload(): Record<string, unknown> | undefined {
 	const read = readPolycarpFile();
 	return "raw" in read ? polycarpPayload(read.raw) : undefined;
@@ -126,7 +127,7 @@ export function loadTheme(): SavedTheme {
 }
 
 /**
- * Save a choice with the same checks `tabkyra theme` makes. `preset` undefined keeps the saved preset (a mode-only change). `accent` undefined keeps the saved
+ * Save a choice with the same checks `polycarp browser theme` makes. `preset` undefined keeps the saved preset (a mode-only change). `accent` undefined keeps the saved
  * accent (as `theme set` does), null clears it, a string sets it. `mode` works the same way: undefined
  * keeps the saved mode, "system" clears it, "light" or "dark" pins the pages. Throws on a bad value.
  */
@@ -158,7 +159,7 @@ export function themeCss(choice?: SavedTheme): string {
 	const polycarp = choice ? undefined : loadPolycarpTheme();
 	if (polycarp) {
 		const { light, dark } = polycarp.palettes;
-		// "auto" is the panel's rule: the mode `tabkyra theme` saved if there is one, else the system setting.
+		// "auto" is the panel's rule: the mode `polycarp browser theme` saved if there is one, else the system setting.
 		const mode = polycarp.mode === "auto" ? loadTheme().mode : polycarp.mode;
 		if (mode === "light" || mode === "dark") return `:root{color-scheme:${mode};${vars(polycarp.palettes[mode])}}`;
 		return `:root{color-scheme:light dark;${vars(light)}}@media (prefers-color-scheme:dark){:root{${vars(dark)}}}`;
@@ -175,7 +176,7 @@ function polycarpShapeCss(t: PolycarpTheme): string {
 	return `html{font-size:${t.type.size}px}body{font-family:${t.type.ui};font-size:${t.type.size}px}main{border-radius:${radius}px}fieldset{border-radius:${radiusSmall}px}input.secret,button{border-radius:${radiusSmall}px}code{font-family:${t.type.mono}}h1{font-family:${t.type.display}}`;
 }
 
-/** The page chrome every Tabkyra page shares, drawn from the theme variables. */
+/** The page chrome every Polycarp page shares, drawn from the theme variables. */
 export function pageCss(choice?: SavedTheme): string {
 	const polycarp = choice ? undefined : loadPolycarpTheme();
 	return `${themeCss(choice)}${PAGE_CSS}${polycarp ? polycarpShapeCss(polycarp) : ""}`;
@@ -183,7 +184,7 @@ export function pageCss(choice?: SavedTheme): string {
 
 const PAGE_CSS = `:root{--shadow:#0002}body{font:16px/1.5 system-ui,sans-serif;margin:0;background:var(--bg);color:var(--text)}main{max-width:560px;margin:6vh auto;padding:28px;background:var(--panel);border-radius:14px;border-top:4px solid var(--accent);box-shadow:0 1px 3px var(--shadow)}h1{font-size:1.3rem;margin:0 0 .5rem}p.muted{color:var(--muted)}code{overflow-wrap:anywhere}.scope{display:flex;gap:.6rem;align-items:flex-start;margin:.45rem 0;font-size:.93rem}.scope input{margin-top:.3rem;accent-color:var(--accent)}fieldset{border:1px solid var(--border);border-radius:10px;padding:.6rem .9rem;margin:1rem 0}legend{font-weight:600;padding:0 .3rem}label[for]{display:block;font-weight:600;margin-top:1rem}.secret{-webkit-text-security:disc}input.secret{width:100%;box-sizing:border-box;font:inherit;padding:.6rem;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text)}.row{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.2rem}button{font:inherit;padding:.55rem 1.1rem;border-radius:8px;border:1px solid var(--edge);background:var(--panel);color:var(--text);cursor:pointer}button:focus-visible,input:focus-visible{outline:3px solid var(--ring);outline-offset:2px}.primary{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}.error{color:var(--danger);font-weight:600}`;
 
-// ---------- tabkyra theme ----------
+// ---------- polycarp browser theme ----------
 
 /** Said after a change while a Polycarp theme is in force: the saved choice is kept, but the pages and the panel show the Polycarp theme. */
 function polycarpNote(): string {
@@ -191,7 +192,7 @@ function polycarpNote(): string {
 	return polycarp ? ` Saved, but the Polycarp theme ${polycarp.name} is in force and takes priority, so pages and the panel do not change. Change it with: polycarp theme set <name>` : "";
 }
 
-/** `tabkyra theme list|set <preset>|accent <#hex>|reset [--json]`. Returns the exit code. */
+/** `polycarp browser theme list|set <preset>|accent <#hex>|reset [--json]`. Returns the exit code. */
 export function runTheme(args: string[], json: boolean): number {
 	const [sub = "list", value] = args;
 	const out = (extra: Record<string, unknown> = {}) => {
@@ -241,6 +242,6 @@ export function runTheme(args: string[], json: boolean): number {
 		if (!json) console.log(`Theme reset to ${DEFAULT_PRESET}.${polycarpNote()}`);
 		return 0;
 	}
-	console.error("Usage: tabkyra theme list | set <preset> | accent <#rrggbb> | reset [--json]");
+	console.error(`Usage: ${COMMAND_NAME} theme list | set <preset> | accent <#rrggbb> | reset [--json]`);
 	return 2;
 }

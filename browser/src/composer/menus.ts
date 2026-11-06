@@ -26,7 +26,7 @@ export interface LibrarySkillInfo {
 	description: string;
 }
 
-/** The first sentence of a skill description: what `tabkyra skill list` shows. */
+/** The first sentence of a skill description: what `polycarp browser skill list` shows. */
 export function firstSentence(description: string): string {
 	const first = description.split(/(?<=\.)\s/)[0] ?? description;
 	return first.trim();

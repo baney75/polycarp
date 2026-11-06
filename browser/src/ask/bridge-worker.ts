@@ -86,7 +86,7 @@ async function showBadge(list: PendingQuestion[]): Promise<void> {
 		await action.setBadgeBackgroundColor?.({ color: "#e3a93b" });
 		await action.setBadgeText?.({ text: list.length ? String(list.length) : "" });
 		await action.setTitle?.({
-			title: list.length ? `Tabkyra: ${list[0].agentName} is asking you a question` : "Tabkyra",
+			title: list.length ? `Polycarp: ${list[0].agentName} is asking you a question` : "Polycarp",
 		});
 	} catch {
 		// A badge is a hint; the panel shows the question either way.

@@ -101,7 +101,7 @@ export async function withFileLockAsync<T>(path: string, fn: () => Promise<T>, t
 	}
 }
 
-/** The Tabkyra config directory. TABKYRA_CONFIG_DIR overrides it (tests use a temp one). */
+/** The Polycarp config directory. TABKYRA_CONFIG_DIR overrides it (tests use a temp one). */
 export function configDir(): string {
 	return process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
 }

@@ -66,7 +66,7 @@ const panelPathCache = new Map<number, string | undefined>();
 const pendingOpen = new Map<number, ReturnType<typeof setTimeout>>();
 /** How long a fresh open waits for its task to name the tab (tests shorten it). */
 const PENDING_OPEN_MS = (globalThis as { __TABKYRA_PENDING_OPEN_MS?: number }).__TABKYRA_PENDING_OPEN_MS ?? 10_000;
-// The update worker waits for these before it reloads Tabkyra (src/update/worker.ts).
+// The update worker waits for these before it reloads Polycarp (src/update/worker.ts).
 setPanelsOpening(() => pendingOpen.size);
 
 function clearPendingOpen(tabId: number): void {

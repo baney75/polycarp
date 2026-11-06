@@ -19,7 +19,7 @@ async function ask(): Promise<void> {
 		const blocked = err instanceof DOMException && err.name === "NotAllowedError";
 		say(
 			blocked
-				? "The microphone is blocked for Tabkyra. Allow it with the site settings icon in the address bar, then reload this page."
+				? "The microphone is blocked for Polycarp. Allow it with the site settings icon in the address bar, then reload this page."
 				: `Couldn't open the microphone: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	}

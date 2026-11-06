@@ -7,7 +7,7 @@
 import type { SetupOptions } from "./setup.ts";
 import type { Channel, UpdateOptions } from "./update.ts";
 
-export const SETUP_FLAGS = ["--yes", "--no-wait", "--timeout"];
+export const SETUP_FLAGS = ["--yes", "--no-wait", "--timeout", "--browser"];
 export const UPDATE_FLAGS = ["--check", "--json", "--rollback", "--yes", "--channel", "--auto-check"];
 
 /** Parse `setup` flags strictly: a typo should not silently change what setup does. */
@@ -17,7 +17,11 @@ export function parseSetupArgs(args: string[]): SetupOptions | string {
 		const arg = args[i];
 		if (arg === "--yes" || arg === "-y") options.yes = true;
 		else if (arg === "--no-wait") options.wait = false;
-		else if (arg === "--timeout" || arg.startsWith("--timeout=")) {
+		else if (arg === "--browser" || arg.startsWith("--browser=")) {
+			const raw = arg === "--browser" ? args[++i] : arg.slice("--browser=".length);
+			if (!raw || raw.startsWith("-")) return `--browser needs a browser name, for example Helium or "Chrome Beta".`;
+			options.browser = raw;
+		} else if (arg === "--timeout" || arg.startsWith("--timeout=")) {
 			const raw = arg === "--timeout" ? args[++i] : arg.slice("--timeout=".length);
 			const seconds = Number(raw);
 			if (!raw || !Number.isFinite(seconds) || seconds <= 0) return `--timeout needs a number of seconds above 0, got "${raw ?? ""}".`;

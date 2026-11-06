@@ -112,7 +112,7 @@ export class ApiKeysTab extends SettingsTab {
 						/>
 					</label>
 					<p class="text-xs text-muted-foreground">
-						Picks the free model that does Tabkyra's browser tasks best and falls back to the next when one is busy.
+						Picks the free model that does Polycarp's browser tasks best and falls back to the next when one is busy.
 						Never costs money; needs a free OpenRouter key; limited per day. ${FREE_PRIVACY_NOTE}
 					</p>
 				</div>

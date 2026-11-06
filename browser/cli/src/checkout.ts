@@ -1,5 +1,5 @@
 /**
- * Updating a git checkout that the browser loads unpacked (how Tabkyra is developed, and how
+ * Updating a git checkout that the browser loads unpacked (how Polycarp is developed, and how
  * Donovan runs it): fetch, `git pull --ff-only` on main, `./scripts/setup-siblings.sh`, then
  * build the extension and the CLI next to the live builds and swap them in only when both
  * built. The builds they replace are kept for a one-click rollback.
@@ -40,7 +40,7 @@ export function readBuildInfo(dir: string): BuildInfo | undefined {
 	}
 }
 
-/** True for a Tabkyra source checkout (not a release folder, not an npm install). */
+/** True for a Polycarp source checkout (not a release folder, not an npm install). */
 export function isCheckout(root: string): boolean {
 	if (!existsSync(join(root, ".git")) || !existsSync(join(root, "scripts", "setup-siblings.sh"))) return false;
 	try {

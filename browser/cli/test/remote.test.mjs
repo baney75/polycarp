@@ -670,7 +670,7 @@ test("oauth.ts: the request path never calls the thread-blocking change() or wit
 	assert.match(body("changeAsync"), /withFileLockAsync/);
 });
 
-// tabkyra remote setup|status|off: one command for Funnel (or a custom HTTPS front door), the
+// polycarp browser remote setup|status|off: one command for Funnel (or a custom HTTPS front door), the
 // passcode and a user service. tailscale, launchctl and systemctl are stubs that log their args.
 const DNS = "mac.example.ts.net";
 
@@ -707,7 +707,7 @@ function remoteScenario(name, { lock = "Tailnet lock is NOT enabled.", serveStat
 		remoteJson: () => JSON.parse(readFileSync(join(scenarioEnv.TABKYRA_CONFIG_DIR, "remote.json"), "utf8")),
 		hasRemoteJson: () => existsSync(join(scenarioEnv.TABKYRA_CONFIG_DIR, "remote.json")),
 		serviceFile: () => (process.platform === "darwin" ? join(home, "Library", "LaunchAgents", "com.tabkyra.serve.plist") : join(home, ".config", "systemd", "user", "tabkyra-serve.service")),
-		/** The launcher `tabkyra install` writes: an executable script that runs an existing file. */
+		/** The launcher `polycarp browser install` writes: an executable script that runs an existing file. */
 		launcher: (homeDir = home) => {
 			const path = join(homeDir, ".config", "tabkyra", "tabkyra");
 			mkdirSync(dirname(path), { recursive: true });
@@ -758,7 +758,7 @@ function runAsync(s, args, extra = {}) {
 	});
 }
 
-/** Start `tabkyra serve` and wait until it says OAuth is on. */
+/** Start `polycarp browser serve` and wait until it says OAuth is on. */
 async function startServe(s, args) {
 	const srv = spawn(process.execPath, [cli, "serve", ...args], { env: s.env });
 	await new Promise((resolve, reject) => {
@@ -785,7 +785,7 @@ test("remote setup (funnel) runs the exact funnel command, writes remote.json an
 		assert.match(r.out, new RegExp(`Connector URL: https://${DNS}:8443/mcp`));
 		assert.match(r.out, /Settings > Connectors > Add custom connector/);
 		assert.match(r.out, /grok\.com\/connectors > New Connector > Custom/);
-		assert.match(r.out, /Approve with your Tabkyra passcode\./);
+		assert.match(r.out, /Approve with your Polycarp passcode\./);
 		assert.match(r.out, /Check it with: tabkyra remote status/);
 		assert.match(r.out, PASSCODE, "the passcode is printed");
 		const again = await runAsync(s, ["remote", "setup", "--no-service"]);
@@ -924,7 +924,7 @@ test("remote setup refuses when a foreign process answers on the port: nothing i
 	try {
 		const r = await runAsync(s, ["remote", "setup", "--no-service", "--port", String(foreign.port)]);
 		assert.equal(r.code, 1, r.out);
-		assert.match(r.out, new RegExp(`Something already listens on 127\\.0\\.0\\.1:${foreign.port} and isn't Tabkyra serve for ${FUNNEL_URL}`));
+		assert.match(r.out, new RegExp(`Something already listens on 127\\.0\\.0\\.1:${foreign.port} and isn't Polycarp serve for ${FUNNEL_URL}`));
 		assert.match(r.out, /Nothing was changed\. Stop it/);
 		assert.ok(!s.calls().some((x) => x.startsWith("tailscale funnel")), s.calls().join("\n"));
 		assert.equal(s.hasRemoteJson(), false);
@@ -1206,7 +1206,7 @@ test("remote off on a custom route never turns Funnel off and says your own tunn
 	assert.match(r.out, /Your own front door for https:\/\/tabkyra\.example\.com still forwards to this machine\. Stop it there \(for example, stop cloudflared\)/);
 });
 
-test("remote off on a custom route also closes a Funnel on 8443 that proxies to Tabkyra", async () => {
+test("remote off on a custom route also closes a Funnel on 8443 that proxies to Polycarp", async () => {
 	const port = await freePort();
 	const s = remoteScenario("off-custom-stray");
 	assert.equal(s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--no-service"]).code, 0);
@@ -1221,7 +1221,7 @@ test("remote off on a custom route also closes a Funnel on 8443 that proxies to 
 	}
 });
 
-test("remote off with an unreadable remote.json turns off a Funnel that proxies to Tabkyra, then deletes the file", async () => {
+test("remote off with an unreadable remote.json turns off a Funnel that proxies to Polycarp, then deletes the file", async () => {
 	const port = await freePort();
 	const s = remoteScenario("off-bad-file", { serveStatus: proxyStatus(port) });
 	mkdirSync(s.config, { recursive: true });
@@ -1237,7 +1237,7 @@ test("remote off with an unreadable remote.json turns off a Funnel that proxies 
 	}
 });
 
-test("remote off leaves a Funnel on 8443 alone when what it proxies to doesn't answer like Tabkyra", async () => {
+test("remote off leaves a Funnel on 8443 alone when what it proxies to doesn't answer like Polycarp", async () => {
 	const port = await freePort();
 	const foreign = await localServer(undefined, port);
 	try {
@@ -1246,7 +1246,7 @@ test("remote off leaves a Funnel on 8443 alone when what it proxies to doesn't a
 		writeFileSync(join(bad.config, "remote.json"), "{ not json");
 		const a = await runAsync(bad, ["remote", "off"]);
 		assert.equal(a.code, 1, a.out);
-		assert.match(a.out, /not everything there answers like Tabkyra serve, so it was left on/);
+		assert.match(a.out, /not everything there answers like Polycarp serve, so it was left on/);
 		assert.ok(!bad.calls().includes("tailscale funnel --https=8443 off"));
 		const none = remoteScenario("off-no-file-foreign", { serveStatus: proxyStatus(port) });
 		const b = await runAsync(none, ["remote", "off"]);
@@ -1257,7 +1257,7 @@ test("remote off leaves a Funnel on 8443 alone when what it proxies to doesn't a
 	}
 });
 
-test("remote off with no remote.json closes a Tabkyra Funnel on 8443, and says there is nothing to remove when there is none", async () => {
+test("remote off with no remote.json closes a Polycarp Funnel on 8443, and says there is nothing to remove when there is none", async () => {
 	const port = await freePort();
 	const stray = remoteScenario("off-stray", { serveStatus: proxyStatus(port) });
 	const local = await localServer(`${FUNNEL_URL}/mcp`, port);
@@ -1293,7 +1293,7 @@ test("remote setup --no-passcode makes and prints no passcode, and serve then ap
 	assert.doesNotMatch(ok.out, /([a-zA-Z0-9]{5}-){3}[a-zA-Z0-9]{5}/, "no passcode-shaped string in the output");
 	assert.match(ok.out, /No passcode made \(--no-passcode\)/);
 	assert.match(ok.out, /Approve with a one-time connect code: tabkyra token approval-code\./);
-	assert.doesNotMatch(ok.out, /Approve with your Tabkyra passcode/);
+	assert.doesNotMatch(ok.out, /Approve with your Polycarp passcode/);
 	const oauthFile = join(s.config, "oauth.json");
 	assert.equal(existsSync(oauthFile) ? JSON.parse(readFileSync(oauthFile, "utf8")).passcode : undefined, undefined, "no passcode was stored");
 	// A second setup without the flag still mints one, as before.

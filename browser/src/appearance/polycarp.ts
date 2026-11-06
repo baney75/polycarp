@@ -1,6 +1,6 @@
 /**
  * The Polycarp theme (themes/README.md in the repo root): `polycarp theme` writes
- * `<config>/current/theme.json`, and Tabkyra reads its `surfaces.browser` section and the top-level
+ * `<config>/current/theme.json`, and Polycarp reads its `surfaces.browser` section and the top-level
  * mode. Pure: the CLI reads the file and the side panel gets the same JSON from the helper, and both
  * run it through `parsePolycarpTheme`. Anything that is not exactly right gives undefined, so a bad
  * file means no Polycarp theme and never a crash.
@@ -32,7 +32,7 @@ export interface PolycarpMotion {
 	reduced: boolean;
 }
 
-/** What Tabkyra uses of a Polycarp theme. */
+/** What Polycarp uses of a Polycarp theme. */
 export interface PolycarpTheme {
 	name: string;
 	title: string;
@@ -103,7 +103,7 @@ export function isEasing(value: unknown): value is string {
 	return n.every(Number.isFinite) && n[0] >= 0 && n[0] <= 1 && n[2] >= 0 && n[2] <= 1;
 }
 
-/** Map the theme's roles to Tabkyra's palette: background, surface, foreground, muted, border, accent, on_accent, urgent. */
+/** Map the theme's roles to Polycarp's palette: background, surface, foreground, muted, border, accent, on_accent, urgent. */
 function palette(raw: unknown): Palette | undefined {
 	if (!isRecord(raw)) return undefined;
 	const bg = color(raw.background);
@@ -121,12 +121,12 @@ function palette(raw: unknown): Palette | undefined {
 /** The result of reading theme.json: the theme, or the one-line reason it was refused. */
 export type PolycarpResult = { theme: PolycarpTheme } | { reason: string };
 
-const REFUSED_SHAPE = "it is not a valid theme.json for Tabkyra (schema, name, mode, colors, shape, type or motion)";
+const REFUSED_SHAPE = "it is not a valid theme.json for Polycarp (schema, name, mode, colors, shape, type or motion)";
 const TEXT_MIN = 4.5;
 const SHAPE_MIN = 3;
 
 /**
- * The pairs the Polycarp CLI checks (contrast_on in cli/src/theme.rs), as far as Tabkyra's roles go:
+ * The pairs the Polycarp CLI checks (contrast_on in cli/src/theme.rs), as far as Polycarp's roles go:
  * text and the accent as text on the page and the surface, and on_accent on the accent. [text, background, minimum].
  */
 const ROLE_PAIRS: ReadonlyArray<readonly [keyof Palette, keyof Palette, string, string]> = [
@@ -225,7 +225,7 @@ function parseStructure(raw: unknown): PolycarpTheme | undefined {
 }
 
 /**
- * The part of theme.json worth sending to the panel: Tabkyra's own section and the top-level fields
+ * The part of theme.json worth sending to the panel: Polycarp's own section and the top-level fields
  * the parser reads. The panel runs it through `parsePolycarpTheme` again.
  */
 export function polycarpPayload(raw: unknown): Record<string, unknown> | undefined {

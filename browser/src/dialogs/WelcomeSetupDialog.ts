@@ -8,12 +8,12 @@ import { BUG_REPORTS_KEY } from "../privacy/bug-reports.js";
 import { setBugReports } from "../privacy/capture.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
 
-/** Where the dialog sends the person: the provider keys, or Connect (use Tabkyra from claude.ai or ChatGPT). */
+/** Where the dialog sends the person: the provider keys, or Connect (use Polycarp from claude.ai or ChatGPT). */
 export type WelcomeChoice = "provider" | "connect";
 
 /**
  * Shown on first launch when no API keys are configured.
- * Blocks until the person picks one of two ways in: add a provider key, or use Tabkyra from claude.ai or ChatGPT. Pairs with a third, copying a prompt for their own agent.
+ * Blocks until the person picks one of two ways in: add a provider key, or use Polycarp from claude.ai or ChatGPT. Pairs with a third, copying a prompt for their own agent.
  */
 export class WelcomeSetupDialog extends DialogBase {
 	private resolvePromise?: (choice: WelcomeChoice) => void;
@@ -47,7 +47,7 @@ export class WelcomeSetupDialog extends DialogBase {
 				children: html`
 					${helmMark(40, "tile", "rounded-[9px]")}
 					${DialogHeader({
-						title: "Welcome to Tabkyra",
+						title: "Welcome to Polycarp",
 					})}
 					<p class="text-sm text-foreground">
 						To chat in this side panel, add an API key for at least one AI provider. API use is billed

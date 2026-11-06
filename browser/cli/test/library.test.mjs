@@ -1,4 +1,4 @@
-// `tabkyra library` against a local stand-in for doi.org, OpenAlex and Crossref: sources are
+// `polycarp browser library` against a local stand-in for doi.org, OpenAlex and Crossref: sources are
 // verified before they're saved, retractions are flagged, unregistered DOIs are refused, and
 // hostile metadata can't hide text, inject Markdown or YAML, or write outside the vault.
 import assert from "node:assert/strict";
@@ -259,7 +259,7 @@ test("exports escape for each format", async () => {
 	assert.match(ris, /^SP {2}- 354$/m);
 	assert.match(ris, /^EP {2}- 380$/m);
 	const csl = JSON.parse((await lib("export", "--format", "csl")).out);
-	assert.ok(csl.every((i) => !("tabkyra" in i)), "CSL-JSON carries no Tabkyra fields");
+	assert.ok(csl.every((i) => !("tabkyra" in i)), "CSL-JSON carries no Polycarp fields");
 	assert.equal((await lib("export", "--format", "docx")).code, 1);
 });
 

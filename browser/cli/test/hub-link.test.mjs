@@ -1,6 +1,6 @@
-// The hub and the device link (D32), with real processes: `tabkyra hub serve`, `tabkyra link run`
+// The hub and the device link (D32), with real processes: `polycarp browser hub serve`, `polycarp browser link run`
 // (each with its own serve, config dir and bridge socket dir) and, for the plain-serve checks,
-// `tabkyra serve`. The tools used (tools/list, skill_match) need no browser. Time-dependent
+// `polycarp browser serve`. The tools used (tools/list, skill_match) need no browser. Time-dependent
 // behavior (a code expiring after 10 minutes) is tested by moving the stored expiry into the past,
 // because the tests run the built CLI as processes and can't swap its clock.
 import assert from "node:assert/strict";

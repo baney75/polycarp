@@ -46,7 +46,7 @@ async function allowed(): Promise<void> {
 	if (got[MIRROR_KEY] === false)
 		throw new BridgeError(
 			ERR.PERMISSION_DENIED,
-			"The user turned off agent access to past chats (Tabkyra Settings > Privacy). Ask them if you need it.",
+			"The user turned off agent access to past chats (Polycarp Settings > Privacy). Ask them if you need it.",
 		);
 }
 

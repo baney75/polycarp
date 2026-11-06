@@ -13,7 +13,7 @@ import { TabkyraSessionsStore } from "./stores/sessions-store.js";
 import { SkillsStore } from "./stores/skills-store.js";
 
 /**
- * Extended AppStorage for Tabkyra with skills, memories, and prompts stores.
+ * Extended AppStorage for Polycarp with skills, memories, and prompts stores.
  */
 export class TabkyraAppStorage extends BaseAppStorage {
 	readonly skills: SkillsStore;
@@ -69,7 +69,7 @@ export class TabkyraAppStorage extends BaseAppStorage {
 }
 
 /**
- * Helper to get typed Tabkyra storage.
+ * Helper to get typed Polycarp storage.
  */
 export function getTabkyraStorage(): TabkyraAppStorage {
 	return getAppStorage() as TabkyraAppStorage;

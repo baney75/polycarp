@@ -72,7 +72,7 @@ const DEFAULT_SCOPE_ROWS = [
 	{ id: "library.read", what: "Search and cite the source library" },
 	{ id: "library.write", what: "Add sources to the library (fetches from doi.org, OpenAlex, Crossref)" },
 	{ id: "skills.read", what: "Find the skill for a task and read the bundled skills (never your local edits)" },
-	{ id: "user.ask", what: "Ask the user multiple-choice questions in the Tabkyra side panel and get their answers" },
+	{ id: "user.ask", what: "Ask the user multiple-choice questions in the Polycarp side panel and get their answers" },
 ];
 const sha = (v) => createHash("sha256").update(v).digest("hex");
 const CODE = /^TK-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/;
@@ -384,7 +384,7 @@ test("setBusy writes the busy mark on a linked device and is refused anywhere el
 	});
 });
 
-test("setTheme saves the same file `tabkyra theme` does: preset, accent kept when absent, cleared on null", async () => {
+test("setTheme saves the same file `polycarp browser theme` does: preset, accent kept when absent, cleared on null", async () => {
 	await inConfig("theme", async (dir) => {
 		const s = new ConnectService();
 		assert.deepEqual((await ask(s, "setTheme", { preset: "rose", accent: "#AABBCC" })).result, { preset: "rose", accent: "#aabbcc" });
@@ -502,7 +502,7 @@ test("setTheme with a mode stores it in theme.json, keeps it when absent, clears
 			assert.equal(error.code, "bad_params");
 		}
 		assert.deepEqual(JSON.parse(readFileSync(join(dir, "theme.json"), "utf8")), { preset: "slate" });
-		// `tabkyra theme set` and `accent` keep a mode already chosen.
+		// `polycarp browser theme set` and `accent` keep a mode already chosen.
 		await ask(s, "setTheme", { preset: "slate", mode: "dark" });
 		const m = { ...process.env, TABKYRA_CONFIG_DIR: dir };
 		const theme = (...args) => spawnSync(process.execPath, [cli, "theme", ...args], { env: m, encoding: "utf8" }).status;
@@ -610,7 +610,7 @@ const frame = (m) => {
 	return Buffer.concat([head, body]);
 };
 
-/** `tabkyra host` as a process: write frames to its stdin, read frames from its stdout. */
+/** `polycarp browser host` as a process: write frames to its stdin, read frames from its stdout. */
 function startHost(name, extraEnv = {}) {
 	const m = machine(root, name);
 	const proc = spawn(process.execPath, [cli, "host"], { env: { ...m.env, ...extraEnv }, stdio: ["pipe", "pipe", "pipe"] });
@@ -1407,7 +1407,7 @@ test("first-F2: link off stops the service outside the lock; held, it keeps link
 			console.log = realLog;
 		}
 		assert.equal(code, 1);
-		assert.match(errors.join("\n"), /locked by another Tabkyra window/);
+		assert.match(errors.join("\n"), /locked by another Polycarp window/);
 		assert.equal(readFileSync(join(dir, "link.json"), "utf8"), before);
 		assert.equal(readFileSync(join(dir, "link.json.lock"), "utf8"), "1", "link off removed a lock it did not own");
 	});

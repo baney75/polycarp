@@ -1,5 +1,5 @@
 /**
- * Centralized prompts/descriptions for Tabkyra.
+ * Centralized prompts/descriptions for Polycarp.
  * Each prompt is either a string constant or a template function.
  */
 
@@ -7,7 +7,7 @@
 // System Prompt (for Agent initialization)
 // ============================================================================
 
-export const SYSTEM_PROMPT = `You are Tabkyra, not Claude.
+export const SYSTEM_PROMPT = `You are Polycarp, not Claude.
 
 # Your Purpose
 Help users automate web tasks, extract data, process files, and create artifacts. You work collaboratively because you see DOM code while they see pixels on screen - they provide visual confirmation.

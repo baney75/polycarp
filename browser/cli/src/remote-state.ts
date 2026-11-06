@@ -1,5 +1,5 @@
 /**
- * The structured answer `tabkyra remote setup --json` and `remote status --json` give an app, so it never has to
+ * The structured answer `remote setup --json` and `remote status --json` give an app, so it never has to
  * read sentences to know where a person is. Pure types and helpers with no imports; the commands stay in remote-setup.ts.
  */
 

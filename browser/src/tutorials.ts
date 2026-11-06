@@ -13,7 +13,7 @@ export interface StarterPrompt {
 	mode: "send" | "compose";
 }
 
-/** The empty chat's starter chips: what Tabkyra does best, each a task that runs as is. */
+/** The empty chat's starter chips: what Polycarp does best, each a task that runs as is. */
 export const starters: StarterPrompt[] = [
 	{
 		label: "Summarize this page",

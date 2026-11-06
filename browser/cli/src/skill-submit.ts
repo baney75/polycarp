@@ -1,5 +1,5 @@
 /**
- * `tabkyra skill submit`: propose a skill to the community library as a pull request from the
+ * `polycarp browser skill submit`: propose a skill to the community library as a pull request from the
  * user's own GitHub account (docs/decisions.md D27, CONTRIBUTING-skills.md).
  *
  * 1. Refuse without a signed-in `gh` (one-line fix), and refuse any personal data in the skill,
@@ -27,6 +27,7 @@ import { assertName, type CheckResult, casesFor, checkSkill, readSkill, SkillErr
 import { SKILLS } from "./skills-catalog.ts";
 import { c, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export const DEFAULT_REPO = "baney75/tabkyra";
 
@@ -154,7 +155,7 @@ export function prepareSubmission(options: SubmitOptions, ghLogin?: string): Pre
 		...scanPersonal(options.note ?? "", names).map((p) => `note: ${p.kind} (${p.match})`),
 	];
 	if (personal.length) {
-		throw new SubmitError(`Not submitted: it holds personal data, and a skill with personal data is never shared (decision D6).\n${personal.map((p) => `  ${p}`).join("\n")}\nRewrite those lines in general terms (tabkyra skill write), then try again.`);
+		throw new SubmitError(`Not submitted: it holds personal data, and a skill with personal data is never shared (decision D6).\n${personal.map((p) => `  ${p}`).join("\n")}\nRewrite those lines in general terms (${COMMAND_NAME} skill write), then try again.`);
 	}
 	const dir = cloneTarget(repo, branch);
 	try {
@@ -172,7 +173,7 @@ export function prepareSubmission(options: SubmitOptions, ghLogin?: string): Pre
 		const caseCount = cases.split("\n").filter((l) => l.trim()).length;
 		const title = `Community skill: ${name}${update ? " (update)" : ""}`;
 		const body = [
-			`Submitted with \`tabkyra skill submit\` (Tabkyra ${VERSION}).`,
+			`Submitted with \`${COMMAND_NAME} skill submit\` (Polycarp ${VERSION}).`,
 			"",
 			`- **Skill:** \`${name}\` (${update ? "update" : "new"}), version \`${skillVersion(text)}\``,
 			`- **Sites:** ${sites.join(", ")}`,
@@ -205,7 +206,7 @@ export function prepareSubmission(options: SubmitOptions, ghLogin?: string): Pre
 /** The preview a person reads before saying yes. */
 export function renderPreview(p: Preview, options: { target: string; cases?: string; dryRun?: boolean; ghProblem?: string }): string {
 	const rule = "-".repeat(72);
-	const command = ["tabkyra skill submit", options.target, ...(options.cases ? ["--cases", options.cases] : []), ...(p.repo !== DEFAULT_REPO ? ["--repo", p.repo] : []), ...(p.branch !== "main" ? ["--branch", p.branch] : []), ...(options.dryRun ? ["--dry-run"] : []), "--confirm", p.code].join(" ");
+	const command = [`${COMMAND_NAME} skill submit`, options.target, ...(options.cases ? ["--cases", options.cases] : []), ...(p.repo !== DEFAULT_REPO ? ["--repo", p.repo] : []), ...(p.branch !== "main" ? ["--branch", p.branch] : []), ...(options.dryRun ? ["--dry-run"] : []), "--confirm", p.code].join(" ");
 	return [
 		`${c.bold("Submission preview")} ${options.dryRun ? "(dry run)" : ""}`,
 		`Pull request to ${p.repo} (base ${p.branch}) from a fork on your GitHub account, branch community/${p.name}-${p.code}.`,
@@ -253,8 +254,8 @@ function commit(p: Preview, login?: string): void {
 	run("git", ["add", "--sparse", "--", ...p.files.map((f) => f.path)], { cwd: p.dir });
 	// The user's own git identity; without one, their GitHub noreply address (or a dry-run name).
 	const hasIdentity = spawnSync("git", ["config", "user.email"], { cwd: p.dir, encoding: "utf8" }).stdout.trim() !== "";
-	const identity = hasIdentity ? [] : ["-c", `user.name=${login ?? "Tabkyra dry run"}`, "-c", `user.email=${login ? `${login}@users.noreply.github.com` : "dry-run@example.invalid"}`];
-	run("git", [...identity, "commit", "--quiet", "-m", `${p.title}\n\nSubmitted with tabkyra skill submit; preview code ${p.code}.`], { cwd: p.dir });
+	const identity = hasIdentity ? [] : ["-c", `user.name=${login ?? "Polycarp dry run"}`, "-c", `user.email=${login ? `${login}@users.noreply.github.com` : "dry-run@example.invalid"}`];
+	run("git", [...identity, "commit", "--quiet", "-m", `${p.title}\n\nSubmitted with ${COMMAND_NAME} skill submit; preview code ${p.code}.`], { cwd: p.dir });
 }
 
 export async function runSubmit(options: SubmitOptions): Promise<number> {

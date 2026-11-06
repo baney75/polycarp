@@ -1,5 +1,5 @@
 /**
- * Settings > Skills lists every skill Tabkyra has, never a sample: the bundled library, the
+ * Settings > Skills lists every skill Polycarp has, never a sample: the bundled library, the
  * community skills the user receives, and the site skills in this browser. Pure, for the tab and
  * its tests.
  */

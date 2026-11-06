@@ -4,6 +4,7 @@ import { html, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { live } from "lit/directives/live.js";
 import { deviceSetupPrompt, remoteSetupPrompt } from "../agent-setup-prompt.js";
+import { hostCommand } from "../bridge/host-command.js";
 import { COMMAND_BOX_CLASS } from "../components/command-box.js";
 import { Toast } from "../components/Toast.js";
 import {
@@ -18,13 +19,13 @@ import {
 import {
 	connectorUrl,
 	countdown,
-	HELPER_OUT_OF_DATE,
+	helperOutOfDateMessage,
 	hubHost,
 	JOIN_WARNING,
 	joinScopesOf,
 	lastSeen,
 	linkCommand,
-	MALFORMED_CODE,
+	malformedCodeMessage,
 	validApprovalCode,
 	validDeviceCode,
 } from "../connect/format.js";
@@ -51,7 +52,7 @@ async function copyText(text: string, done: string): Promise<void> {
 
 /**
  * Settings > Connect: use this browser from claude.ai, ChatGPT or grok.com, the devices behind one
- * connector, and joining a hub. Everything is asked of Tabkyra's helper (the native host) through
+ * connector, and joining a hub. Everything is asked of Polycarp's helper (the native host) through
  * the background worker; the panel never holds a token or the passcode.
  */
 @customElement("tabkyra-connect-tab")
@@ -125,11 +126,11 @@ export class ConnectTab extends SettingsTab {
 		try {
 			if (kind === "approval") {
 				const made = await connectApprovalCode();
-				if (!validApprovalCode(made)) throw new Error(MALFORMED_CODE);
+				if (!validApprovalCode(made)) throw new Error(malformedCodeMessage());
 				this.approval = made;
 			} else {
 				const made = await connectDeviceCode();
-				if (!validDeviceCode(made)) throw new Error(MALFORMED_CODE);
+				if (!validDeviceCode(made)) throw new Error(malformedCodeMessage());
 				this.device = made;
 			}
 		} catch (err) {
@@ -162,7 +163,7 @@ export class ConnectTab extends SettingsTab {
 		}
 		const scopes = joinScopesOf(s);
 		if (!scopes) {
-			this.joinMessage = { ok: false, text: HELPER_OUT_OF_DATE };
+			this.joinMessage = { ok: false, text: helperOutOfDateMessage() };
 			return;
 		}
 		// What is confirmed is what is sent: editing a field clears the confirm, so the host the person agreed to cannot change.
@@ -201,7 +202,7 @@ export class ConnectTab extends SettingsTab {
 				ok: false,
 				text:
 					linkWritten && err instanceof ConnectRequestError && err.code === "no_reply"
-						? "Tabkyra may have linked this device. Reopen Settings to check."
+						? "Polycarp may have linked this device. Reopen Settings to check."
 						: err instanceof Error
 							? err.message
 							: String(err),
@@ -255,8 +256,8 @@ export class ConnectTab extends SettingsTab {
 	private noHostBox(): TemplateResult {
 		return html`
 			<div class="flex flex-col gap-2 rounded-md border border-border bg-muted/40 p-3" data-connect-setup>
-				<p class="text-xs text-foreground">Tabkyra's helper isn't connected. It runs on this computer and does the work here. Run this in a terminal, then reopen Settings.</p>
-				${this.command("Set up Tabkyra", "tabkyra setup")}
+				<p class="text-xs text-foreground">Polycarp's helper isn't connected. It runs on this computer and does the work here. Run this in a terminal, then reopen Settings.</p>
+				${this.command("Set up Polycarp", `${hostCommand()} setup`)}
 			</div>
 		`;
 	}
@@ -283,8 +284,8 @@ export class ConnectTab extends SettingsTab {
 						This computer has no public address yet, so those assistants can't reach your browser. Pick one command: the first for this
 						computer alone, the second for an always-on box that several of your computers connect to.
 					</p>
-					${this.command("One computer (needs Tailscale)", "tabkyra remote setup")}
-					${this.command("Many devices, one address", "tabkyra hub setup --public-url https://ADDRESS")}
+					${this.command("One computer (needs Tailscale)", `${hostCommand()} remote setup`)}
+					${this.command("Many devices, one address", `${hostCommand()} hub setup --public-url https://ADDRESS`)}
 					<div class="flex flex-col gap-1.5 items-start">
 						${Button({
 							size: "sm",
@@ -293,7 +294,7 @@ export class ConnectTab extends SettingsTab {
 							onClick: () => {
 								try {
 									void copyText(
-										remoteSetupPrompt(extensionVersion()),
+										remoteSetupPrompt(extensionVersion(), hostCommand()),
 										"Setup prompt copied. Paste it into your agent.",
 									);
 								} catch (err) {
@@ -334,7 +335,7 @@ export class ConnectTab extends SettingsTab {
 								})
 							: html`<p class="text-xs text-muted-foreground">This device can't make codes. Make one on your hub, or on a device linked as a manager.</p>`
 					}
-					${canMint ? html`<p class="text-xs text-muted-foreground">Paste the URL into the assistant's connector settings, then type this code on Tabkyra's approval page.</p>` : nothing}
+					${canMint ? html`<p class="text-xs text-muted-foreground">Paste the URL into the assistant's connector settings, then type this code on Polycarp's approval page.</p>` : nothing}
 				</div>
 			`,
 		);

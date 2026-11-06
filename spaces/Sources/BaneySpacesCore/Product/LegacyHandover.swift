@@ -18,22 +18,25 @@ public enum LegacyHandover {
     /// voice moved into Polycarp. Both want the same keys or the same files, so neither runs beside Polycarp.
     public static let replaced: [(name: String, bundleID: String)] = [
         (Product.Legacy.name, Product.Legacy.bundleID),
-        (Product.Silas.name, Product.Silas.bundleID),
+        (Product.Silas.phrase, Product.Silas.bundleID),
     ]
     public static var replacedBundleIDs: [String] { replaced.map(\.bundleID) }
 
-    /// The one alert, for whichever of the old apps are running: "Silas is running. Polycarp replaces it."
+    /// "the Silas app" at the start of a sentence.
+    static func sentence(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
+
+    /// The one alert, for whichever of the old apps are running: "The Silas app is running. Polycarp replaces it."
     public static func alertTitle(running names: [String]) -> String {
         switch names.count {
-        case 0, 1: "\(names.first ?? Product.Legacy.name) is running. \(Product.name) replaces it."
-        default: "\(names.joined(separator: " and ")) are running. \(Product.name) replaces them."
+        case 0, 1: "\(sentence(names.first ?? Product.Legacy.name)) is running. \(Product.name) replaces it."
+        default: "\(sentence(names.joined(separator: " and "))) are running. \(Product.name) replaces them."
         }
     }
     public static func alertDetail(running names: [String]) -> String {
         let both = names.count > 1 ? "None of them can run beside \(Product.name)." : "Both can't run at once."
         var text = "\(both) \(Product.name) copies your settings and leaves \(names.joined(separator: " and ")) installed."
-        if names.contains(Product.Silas.name) {
-            text += " \(Product.name)'s dictation takes over from here. \(Product.Silas.name) stays installed (Settings > Voice offers to move it to the Trash once dictation works), and your dictionary, history and speech models are copied, never moved."
+        if names.contains(Product.Silas.phrase) {
+            text += " Silas in \(Product.name) takes over from here. \(sentence(Product.Silas.phrase)) stays installed (Settings > Silas offers to move it to the Trash once dictation works), and your dictionary, history and speech models are copied, never moved."
         }
         return text
     }
@@ -72,11 +75,11 @@ public enum LegacyHandover {
 
     /// The notice after an old app is closed, worded for that app (Silas's is about the dictation key).
     public static func notificationTitle(forBundleID id: String?) -> String {
-        "\(replaced.first { $0.bundleID == id }?.name ?? Product.Legacy.name) was closed"
+        "\(sentence(replaced.first { $0.bundleID == id }?.name ?? Product.Legacy.name)) was closed"
     }
     public static func notificationBody(forBundleID id: String?) -> String {
         id == Product.Silas.bundleID
-            ? "\(Product.name)'s dictation is on, and the two can't share the dictation key. Turn dictation off in Settings > Voice to use \(Product.Silas.name) again."
+            ? "Silas in \(Product.name) is on, and the two can't share the dictation key. Turn Silas off in Settings > Silas to use \(Product.Silas.phrase) again."
             : notificationBody
     }
 
@@ -106,7 +109,7 @@ public enum LegacyHandover {
         case start
         case refuse(reason: String)
     }
-    public static let silasRunningReason = "\(Product.Silas.name) is running and has the dictation key. Quit it and \(Product.name)'s dictation takes over."
+    public static let silasRunningReason = "\(sentence(Product.Silas.phrase)) is running and has the dictation key. Quit it and Silas in \(Product.name) takes over."
     /// Pids of apps that are really still there: not terminated, and not the one that is quitting right now. A quit notification
     /// arrives while the app still shows in the running list, which would make the engine think Silas is still in the way.
     public static func livePids(_ apps: [(pid: Int32, terminated: Bool)], excluding quitting: Int32? = nil) -> [Int32] {

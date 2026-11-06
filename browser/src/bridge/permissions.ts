@@ -102,7 +102,7 @@ export function isGuardedUrl(url: string, guardedHosts: readonly string[] | unde
 }
 
 /**
- * Tabkyra's own pages (the side panel, Settings, the Connect relay's callers) are never a place a
+ * Polycarp's own pages (the side panel, Settings, the Connect relay's callers) are never a place a
  * bridge client may take a tab: a page there runs with the extension's rights. Refused in every
  * mode, and never put to the user as a permission prompt.
  */

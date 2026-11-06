@@ -5,7 +5,7 @@
 // by every module instance in the process, as the real one is shared across extension contexts.
 // Node 24 has navigator.locks; older Node (CI runs 22) gets a process-wide FIFO stand-in.
 if (!globalThis.navigator?.locks) {
-	// Exclusive locks only, with the parts of the API Tabkyra uses: request(name, [options,]
+	// Exclusive locks only, with the parts of the API Polycarp uses: request(name, [options,]
 	// callback) with ifAvailable, and query() for what is held.
 	const queues = new Map();
 	const held = new Map();

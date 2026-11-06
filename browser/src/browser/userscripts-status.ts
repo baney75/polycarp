@@ -8,7 +8,7 @@
  * The toggle can be on while the permission was never granted; the API is then missing,
  * and the fix is the grant, not the toggle.
  *
- * The injection path (`src/browser/inject.ts`) and `bridge.debug` (what `tabkyra doctor`
+ * The injection path (`src/browser/inject.ts`) and `bridge.debug` (what `polycarp browser doctor`
  * reads) both start from `userScriptsApi()` here, so they cannot disagree about presence.
  */
 

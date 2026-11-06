@@ -21,7 +21,9 @@
 import { detachTab, ensureAttached, isRestrictedUrl, releaseAgentViewport } from "./cdp.js";
 
 const STORAGE_KEY = "browser_sessions";
-const GROUP_PREFIX = "Tabkyra";
+const GROUP_PREFIX = "Polycarp";
+/** Groups an earlier version named; still ours to tidy up. */
+const LEGACY_GROUP_PREFIX = "Tabkyra"; // product-name allowlist: legacy tab group title
 const GROUP_COLORS: `${chrome.tabGroups.Color}`[] = [
 	"blue",
 	"cyan",
@@ -82,7 +84,7 @@ interface PersistedSession {
 	loose?: number[];
 }
 
-/** Who and what a bridge session serves, for its group title and `tabkyra sessions`. */
+/** Who and what a bridge session serves, for its group title and `polycarp browser sessions`. */
 export interface SessionMeta {
 	agent?: string;
 	project?: string;
@@ -302,7 +304,7 @@ export async function sessionIdForTab(tabId: number): Promise<string | undefined
 }
 
 /**
- * Ungroup tabs sitting in "Tabkyra · ..." groups that no live session owns (left behind
+ * Ungroup tabs sitting in "Polycarp · ..." groups that no live session owns (left behind
  * by an extension reload, which clears session storage but not the browser's groups).
  */
 export async function cleanupOrphanGroups(): Promise<number> {
@@ -312,7 +314,11 @@ export async function cleanupOrphanGroups(): Promise<number> {
 	const groups = await chrome.tabGroups.query({}).catch(() => []);
 	let released = 0;
 	for (const g of groups) {
-		if (!g.title?.startsWith(`${GROUP_PREFIX} ·`) || liveGroups.has(g.id)) continue;
+		if (
+			!(g.title?.startsWith(`${GROUP_PREFIX} ·`) || g.title?.startsWith(`${LEGACY_GROUP_PREFIX} ·`)) ||
+			liveGroups.has(g.id)
+		)
+			continue;
 		const tabs = await chrome.tabs.query({ groupId: g.id }).catch(() => []);
 		for (const t of tabs) {
 			if (t.id === undefined) continue;
@@ -374,7 +380,7 @@ export async function pruneSessions(
 		for (const id of s.tabIds) {
 			const tab = liveTabs.get(id);
 			if (!tab || !isBlankUrl(tab.url ?? tab.pendingUrl) || tab.active) continue;
-			// Tabkyra's own cleanup, not the user closing the group.
+			// Polycarp's own cleanup, not the user closing the group.
 			const done = touch(id);
 			await chrome.tabs.remove(id).catch(() => undefined);
 			done();
@@ -439,7 +445,7 @@ async function tabExists(tabId: number): Promise<chrome.tabs.Tab | undefined> {
 
 /**
  * A label as plain text: no control, format or bidi characters, single spaces, at most 32
- * characters, and never the "Tabkyra ·" prefix, so an agent can't pose as another group.
+ * characters, and never the "Polycarp ·" prefix, so an agent can't pose as another group.
  */
 export function sanitizeLabel(label: string): string {
 	return label
@@ -447,7 +453,7 @@ export function sanitizeLabel(label: string): string {
 		.replace(/[\t\n\r\v\f\u2028\u2029]/g, " ")
 		.replace(/[\p{Cc}\p{Cf}\p{Co}\p{Cn}]/gu, "")
 		.replace(/\s+/g, " ")
-		.replace(/^(tabkyra\s*[·:|-]\s*)+/i, "")
+		.replace(/^((?:polycarp|tabkyra)\s*[·:|-]\s*)+/i, "") // product-name allowlist: the old prefix too
 		.trim()
 		.slice(0, 32)
 		.trim();
@@ -515,7 +521,7 @@ export class BrowserSession {
 		return this.state.groupId;
 	}
 
-	/** A copy of the stored record, for session_info and `tabkyra sessions`. */
+	/** A copy of the stored record, for session_info and `polycarp browser sessions`. */
 	get record(): Readonly<PersistedSession> {
 		return structuredClone(this.state);
 	}
@@ -523,7 +529,7 @@ export class BrowserSession {
 	/** True once the session was ended (by the user, the CLI or the agent); a client opens a fresh one. */
 	ended = false;
 
-	/** The tab group title this session uses ("Tabkyra · claude"), whether or not it exists yet. */
+	/** The tab group title this session uses ("Polycarp · claude"), whether or not it exists yet. */
 	get groupName(): string {
 		return this.groupTitle();
 	}
