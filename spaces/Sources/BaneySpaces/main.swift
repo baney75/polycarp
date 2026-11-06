@@ -31,10 +31,11 @@ let instanceLock: SingleInstance.Lock? = {
     let oneShot = !Set(CommandLine.arguments).isDisjoint(with: crashLoopOneShots)
     // Every app Polycarp replaces that is running now (BaneySpaces, Silas): one alert for all of them.
     let allLegacy = LegacyHandover.replacedBundleIDs.flatMap { NSRunningApplication.runningApplications(withBundleIdentifier: $0) }
-    // Silas is in the alert only when Polycarp's dictation takes over (voice on, a model installed, here or in Silas's
-    // folder); otherwise Silas is the working dictation and is left alone.
-    let voiceTakesOver = VoiceGate.takesOver(userEnabled: VoiceGate.userEnabled(.standard),
-        modelInstalled: VoiceGate.hasModel(in: [Product.voiceDir(home: home), Product.silasSupportDir(home: home)]), importFinished: true) == nil
+    // Silas is in the alert only when Polycarp's dictation takes over right now, by the one gate the engine and the watcher
+    // use (`VoiceGate.takesOverNow`: voice on, a finished model of its own, the import really finished). Otherwise Silas is
+    // the working dictation and is left alone; once the import has run, the app asks it to quit if the gate then says so.
+    let voiceTakesOver = VoiceGate.takesOverNow(userEnabled: VoiceGate.userEnabled(.standard),
+        voiceDir: Product.voiceDir(home: home), silasDir: Product.silasSupportDir(home: home))
     let running = LegacyHandover.namesToReplace(running: allLegacy.compactMap(\.bundleIdentifier), takesOver: voiceTakesOver)
     let legacy = allLegacy.filter { $0.bundleIdentifier != Product.Silas.bundleID || voiceTakesOver }
     if LegacyHandover.applies(oneShot: oneShot, legacyPids: legacy.map(\.processIdentifier)) {

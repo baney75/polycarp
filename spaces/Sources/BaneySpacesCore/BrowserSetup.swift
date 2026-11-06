@@ -81,6 +81,38 @@ public enum BrowserBundle {
         return env
     }
 
+    /// The login shell's PATH, or nil if the shell fails or doesn't finish within `timeout` seconds. The deadline covers the
+    /// read as well as the process: a login profile that leaves a background process holding the pipe open can't hang this.
+    public static func readLoginPath(shell: URL, timeout: TimeInterval = 3) -> String? {
+        let p = Process()
+        p.executableURL = shell
+        p.arguments = ["-l", "-c", "printf %s \"$PATH\""]
+        let pipe = Pipe()
+        p.standardOutput = pipe; p.standardError = FileHandle.nullDevice; p.standardInput = FileHandle.nullDevice
+        let exited = DispatchSemaphore(value: 0)
+        p.terminationHandler = { _ in exited.signal() }
+        do { try p.run() } catch { return nil }
+        // Read off this thread; whatever has arrived by the deadline is all there is.
+        let box = LoginPathBox()
+        let reading = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            let d = pipe.fileHandleForReading.readDataToEndOfFile()
+            box.set(d)
+            reading.signal()
+        }
+        let deadline = DispatchTime.now() + timeout
+        guard exited.wait(timeout: deadline) == .success else { p.terminate(); try? pipe.fileHandleForReading.close(); return nil }
+        // The shell is done; its output is complete unless something it started still holds the pipe, so wait only to the deadline.
+        guard reading.wait(timeout: deadline) == .success, p.terminationStatus == 0 else { try? pipe.fileHandleForReading.close(); return nil }
+        return String(decoding: box.get(), as: UTF8.self)
+    }
+
+    private final class LoginPathBox: @unchecked Sendable {
+        private let lock = NSLock(); private var data = Data()
+        func set(_ d: Data) { lock.lock(); data = d; lock.unlock() }
+        func get() -> Data { lock.lock(); defer { lock.unlock() }; return data }
+    }
+
     /// An app started from Finder or at login has the bare GUI PATH, so `tabkyra`, node or npm folders are not found and an
     /// MCP entry with a bare command looks stale. The helper gets the person's login-shell PATH when it is known, then the
     /// usual per-user folders, then what the app has. Relative entries are dropped; each folder appears once.

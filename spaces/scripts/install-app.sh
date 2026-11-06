@@ -77,17 +77,6 @@ if [ "$IN_PLACE" = 0 ] && [ -z "$TEST" ]; then
       exit 1
     fi
   fi
-  # Silas, the dictation app, is the working dictation until $PRODUCT_NAME's has typed text once (the app then moves
-  # Silas to the Trash by itself). It is quit here only so the dictation key is free for the new copy; the app stays
-  # where it is. With voice switched off in $PRODUCT_NAME's settings, Silas is the way back and is left running.
-  if [ "$(defaults read "$BUNDLE_ID" voiceEnabled 2>/dev/null || echo 1)" != 0 ] && pgrep -f "$SILAS_NAME.app/Contents/MacOS/" >/dev/null; then
-    osascript -e "tell application id \"$SILAS_BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
-    for _ in $(seq 1 75); do pgrep -f "$SILAS_NAME.app/Contents/MacOS/" >/dev/null || break; sleep 0.2; done
-    if pgrep -f "$SILAS_NAME.app/Contents/MacOS/" >/dev/null; then
-      echo "$SILAS_NAME is still running; quit it from the menu bar and run this again." >&2
-      exit 1
-    fi
-  fi
 fi
 
 if [ -z "$TEST" ]; then
@@ -157,13 +146,36 @@ runs_ok() {
   kill "$watcher" 2>/dev/null || true
   return "$rc"
 }
+# Prints the first working tabkyra that isn't ours: in the Homebrew and /usr/local folders (POLYCARP_TABKYRA_DIRS replaces
+# that list, for tests), on this shell's PATH, or on the login shell's PATH (3 seconds at most).
+working_tabkyra() {
+  local dir login="" cand
+  for dir in ${POLYCARP_TABKYRA_DIRS:-/opt/homebrew/bin /usr/local/bin}; do
+    cand="$dir/tabkyra"
+    [ -x "$cand" ] && runs_ok "$cand" --version && { echo "$cand"; return 0; }
+  done
+  login=$( ( "${SHELL:-/bin/zsh}" -l -c 'printf %s "$PATH"' 2>/dev/null & p=$!; ( sleep 3; kill "$p" 2>/dev/null ) >/dev/null 2>&1 & wait "$p" ) 2>/dev/null || true )
+  local IFS=:
+  for dir in $PATH $login; do
+    [ -n "$dir" ] || continue
+    cand="$dir/tabkyra"
+    [ "$cand" = "$HOME/.local/bin/tabkyra" ] && continue
+    [ -x "$cand" ] && runs_ok "$cand" --version && { echo "$cand"; return 0; }
+  done
+  return 1
+}
 HELPER="$DEST/Contents/Resources/browser/polycarp-browser"
 TABKYRA_LINK="$HOME/.local/bin/tabkyra"
 if [ -x "$HELPER" ]; then
   if [ -L "$TABKYRA_LINK" ] && case "$(readlink "$TABKYRA_LINK")" in *Polycarp.app/Contents/Resources/browser/polycarp-browser) true ;; *) false ;; esac; then
     ln -sf "$HELPER" "$TABKYRA_LINK"   # ours already: follow the app to where it is now
   elif [ ! -e "$TABKYRA_LINK" ] && [ ! -L "$TABKYRA_LINK" ]; then
-    ln -s "$HELPER" "$TABKYRA_LINK"
+    # A working tabkyra elsewhere (Homebrew, npm, the login PATH) keeps the name: agents depend on it.
+    if elsewhere=$(working_tabkyra); then
+      echo "note: a working tabkyra is already at $elsewhere, so ~/.local/bin/tabkyra was not made; \`polycarp browser\` runs the helper in this app. POLYCARP_TAKE_OVER_TABKYRA=1 scripts/install-app.sh takes the name over." >&2
+    else
+      ln -s "$HELPER" "$TABKYRA_LINK"
+    fi
   elif [ "${POLYCARP_TAKE_OVER_TABKYRA:-}" = 1 ]; then
     if [ -L "$TABKYRA_LINK" ]; then
       mkdir -p "$HOME/Library/Application Support/$SUPPORT_FOLDER"

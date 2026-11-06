@@ -89,19 +89,8 @@ final class BrowserModel: ObservableObject {
     }
 
     /// The person's PATH as a login shell sets it, read once (3 s at most). Nil if the shell doesn't answer.
-    static let loginPath: String? = {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"].flatMap { $0.hasPrefix("/") ? $0 : nil } ?? "/bin/zsh")
-        p.arguments = ["-l", "-c", "printf %s \"$PATH\""]
-        let pipe = Pipe()
-        p.standardOutput = pipe; p.standardError = FileHandle.nullDevice; p.standardInput = FileHandle.nullDevice
-        do { try p.run() } catch { return nil }
-        let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 3, execute: killer)
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit(); killer.cancel()
-        return p.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
-    }()
+    static let loginPath: String? = BrowserBundle.readLoginPath(
+        shell: URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"].flatMap { $0.hasPrefix("/") ? $0 : nil } ?? "/bin/zsh"))
 
     struct Result { var code: Int32; var out: Data; var text: String }
 

@@ -60,7 +60,7 @@ Asked for by Donovan, 2026-11-04: quality software, a quality site and docs, all
 ## 6. The old apps
 Decided by Donovan, 2026-11-05: the `baneyspaces`, `silas` and `tabkyra` repos stay up, so people can keep using the independent apps. They are not archived.
 - [ ] Land or move open PRs that belong in Polycarp
-- [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash), then Voice and Browser. Silas is not trashed by the installer: Polycarp moves it to the Trash itself after its first dictation that typed text, and never while voice is off. Check: dictation and agents' browser work through Polycarp before Silas and Tabkyra go
+- [ ] On Donovan's Mac: uninstall each old app once its Polycarp version works. Workspaces first (the installer moves BaneySpaces to the Trash), then Voice and Browser. Silas is not trashed by the installer or by Polycarp on its own: after the first dictation that typed text, one notification says so, and Settings > Voice offers "Move Silas to the Trash" (voice on, Silas installed). Check: dictation and agents' browser work through Polycarp before Silas and Tabkyra go
 
 ## One app, everywhere
 Decided by Donovan, 2026-11-05: ALL the apps together as ONE ultrafast app on every device. One Rust core in `core/`; a native Swift interface on Mac, iPhone and iPad; a shared Tauri interface on Windows, Linux and Android. Phones get voice plus control of your computer, since they can't arrange other apps' windows.

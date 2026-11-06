@@ -16,6 +16,7 @@ struct VoiceSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             statusLine
+            if voice.offersSilasTrash { silasSection }
             if let s = voice.settings { keySection(s); modelSection(s); dictionarySection; historySection }
             else { Text("The voice engine isn't running.").foregroundStyle(.secondary) }
             if let e = voice.lastError { Text(e).font(Chrome.font(12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
@@ -34,6 +35,22 @@ struct VoiceSettingsView: View {
         }
         .padding(10)
         .background(Chrome.shape(.settingsCell, continuous: false).fill(Chrome.cell(0.08)))
+    }
+
+    /// Only when voice is on and Silas is installed. Nothing here happens by itself.
+    private var silasSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(SilasRetirement.stillInstalled).font(Chrome.font(12, .semibold))
+                Spacer()
+                Button(SilasRetirement.button) { voice.trashSilas() }
+            }
+            Text("Its dictionary, history and models are already copied here, and its own data stays where it is.")
+                .font(Chrome.font(11)).foregroundStyle(.secondary)
+            if let m = voice.silasMessage { Text(m).font(Chrome.font(12)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+        }
+        .padding(10)
+        .background(Chrome.shape(.settingsCell, continuous: false).fill(Chrome.cell(0.06)))
     }
 
     private func keySection(_ s: VoiceSettings) -> some View {

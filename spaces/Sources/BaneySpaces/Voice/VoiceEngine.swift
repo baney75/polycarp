@@ -27,12 +27,11 @@ final class VoiceEngine: ObservableObject {
     var refusal: String? { waiting.flatMap(VoiceGate.message) }
     var userEnabled: Bool { VoiceGate.userEnabled(.standard) }
 
-    /// Whether Polycarp's own dictation is active, ignoring whether Silas runs right now.
+    /// Whether Polycarp's dictation is taking over right now (`VoiceGate.takesOverNow`: voice on, a finished model of its
+    /// own, the import really finished). Silas is asked to quit only when this is true.
     var takesOver: Bool {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let silasDir = Product.silasSupportDir(home: home)
-        return VoiceGate.takesOver(userEnabled: userEnabled, modelInstalled: VoiceGate.hasModel(in: [dir, silasDir]),
-                                   importFinished: true) == nil
+        return VoiceGate.takesOverNow(userEnabled: userEnabled, voiceDir: dir, silasDir: Product.silasSupportDir(home: home))
     }
 
     /// The one line for the menu and Settings: why it's waiting, the error's reason and next step, or the status.
@@ -48,6 +47,11 @@ final class VoiceEngine: ObservableObject {
     /// A word was learned from an edit: (from, to).
     var onLearned: ((String, String) -> Void)?
     var onStateChange: (() -> Void)?
+    /// Dictation would take over now but Silas is still running: the watcher asks it to quit.
+    var onSilasInTheWay: (() -> Void)?
+    /// Silas is installed (/Applications or ~/Applications) and Settings may offer to move it; set by `reload`.
+    @Published private(set) var silasApp: URL?
+    @Published private(set) var silasMessage: String?
 
     private var core: OpaquePointer?
     private var started = false
@@ -59,7 +63,7 @@ final class VoiceEngine: ObservableObject {
     /// Opens the core and decides whether to listen for the dictation key (`VoiceGate`): only with voice on, a speech
     /// model installed, Silas's import finished, and Silas not running. Safe to call again; it is how every change
     /// (Silas starting or quitting, a model arriving, the switch) is applied, so a pause for one reason never outlives it.
-    func start() {
+    func start(terminating: Int32? = nil) {
         if core == nil {
             let user = Unmanaged.passUnretained(self).toOpaque()
             core = dir.path.withCString { pc_open($0, 0, { user, event, json in
@@ -76,9 +80,10 @@ final class VoiceEngine: ObservableObject {
         }
         guard let core else { return }
         models = decode(pc_models_list(core)) ?? models
-        let silas = NSRunningApplication.runningApplications(withBundleIdentifier: Product.Silas.bundleID).map(\.processIdentifier)
+        let silas = LegacyHandover.livePids(NSRunningApplication.runningApplications(withBundleIdentifier: Product.Silas.bundleID)
+            .map { ($0.processIdentifier, $0.isTerminated) }, excluding: terminating)
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let decision = VoiceGate.decide(userEnabled: userEnabled, modelInstalled: models.contains { $0.installed },
+        let decision = VoiceGate.decide(userEnabled: userEnabled, modelInstalled: VoiceGate.hasModel(in: [dir]),
                                         importFinished: VoiceImport.isFinished(silasDir: Product.silasSupportDir(home: home), newDir: dir),
                                         silasPids: silas)
         switch decision {
@@ -86,6 +91,7 @@ final class VoiceEngine: ObservableObject {
             // No key is listened to (no listener has started, or it is paused); the model stays loaded if it was.
             waiting = why
             _ = pc_stop(core)
+            if why == .silasRunning { onSilasInTheWay?() }
         case .start:
             waiting = nil
             if pc_start(core) != PC_OK { fail(lastCoreError()) }
@@ -94,7 +100,7 @@ final class VoiceEngine: ObservableObject {
     }
 
     /// Silas started or quit: decide again.
-    func silasChanged() { start() }
+    func silasChanged(terminating: Int32? = nil) { start(terminating: terminating) }
 
     /// The person's switch: remembered across restarts.
     func setUserEnabled(_ on: Bool) {
@@ -113,6 +119,7 @@ final class VoiceEngine: ObservableObject {
         models = decode(pc_models_list(core)) ?? models
         dictionary = decode(pc_dictionary_get(core))
         history = decode(pc_history_get(core, 200)) ?? []
+        refreshSilas()
         onStateChange?()
     }
 
@@ -127,7 +134,7 @@ final class VoiceEngine: ObservableObject {
             if let core { state = decode(pc_status(core)) ?? state }
         case "transcript":
             if let core { history = decode(pc_history_get(core, 200)) ?? history }
-            if let data = json.data(using: .utf8), let t = try? JSONDecoder().decode(Typed.self, from: data), t.typed { retireSilasIfDue() }
+            if let data = json.data(using: .utf8), let t = try? JSONDecoder().decode(Typed.self, from: data), t.typed { notifyIfDue() }
         case "benchmark-done", "benchmark-error":
             // A benchmark may have switched the model: the tab must not keep showing the old one "In use".
             reload()
@@ -255,28 +262,48 @@ final class VoiceEngine: ObservableObject {
         Trace.log("voice: \(message)")
     }
 
-    // MARK: Silas goes to the Trash after the first dictation that typed
+    // MARK: Silas can go when the person is ready
 
-    private func retireSilasIfDue() {
+    /// One notification after the first dictation that typed. Nothing is moved; the button in Settings > Voice does that.
+    private func notifyIfDue() {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let silas = SilasRetirement.locate(home: home)
-        let running = !NSRunningApplication.runningApplications(withBundleIdentifier: Product.Silas.bundleID).isEmpty
-        guard SilasRetirement.shouldRetire(voiceOn: userEnabled && state?.enabled != false, typedText: true,
-                                           alreadyRetired: SilasRetirement.alreadyRetired(voiceDir: dir), silas: silas, silasRunning: running),
-              let silas else { return }
-        let report = SilasRetirement.retire(silas: silas, home: home, voiceDir: dir) { url in
-            var landed: NSURL?
-            try FileManager.default.trashItem(at: url, resultingItemURL: &landed)
-            return landed as URL?
-        }
-        Trace.log("voice: retired Silas: \(report)")
-        guard report.trashed != nil else { return }
+        guard SilasRetirement.shouldNotify(voiceOn: userEnabled && state?.enabled != false, typedText: true,
+                                           alreadyNotified: SilasRetirement.alreadyNotified(voiceDir: dir),
+                                           silas: SilasRetirement.locate(home: home)) else { return }
+        SilasRetirement.markNotified(voiceDir: dir)
+        refreshSilas()
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert]) { granted, _ in
             guard granted else { return }
             let content = UNMutableNotificationContent()
             content.title = SilasRetirement.notice
-            center.add(UNNotificationRequest(identifier: "silas-retired", content: content, trigger: nil))
+            center.add(UNNotificationRequest(identifier: "silas-can-go", content: content, trigger: nil))
         }
+    }
+
+    /// What Settings > Voice shows: Silas, if it is installed where this can move it.
+    func refreshSilas() {
+        silasApp = SilasRetirement.locate(home: FileManager.default.homeDirectoryForCurrentUser)
+    }
+
+    /// Whether the tab offers "Move Silas to the Trash".
+    var offersSilasTrash: Bool {
+        let running = !LegacyHandover.livePids(NSRunningApplication.runningApplications(withBundleIdentifier: Product.Silas.bundleID)
+            .map { ($0.processIdentifier, $0.isTerminated) }).isEmpty
+        return SilasRetirement.offers(voiceOn: userEnabled, silas: silasApp, silasRunning: running)
+    }
+
+    /// The button. The app first, its login item only after that worked; a failure is shown in the tab.
+    func trashSilas() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        guard let silas = SilasRetirement.locate(home: home) else { refreshSilas(); return }
+        let report = SilasRetirement.moveToTrash(silas: silas, home: home, voiceDir: dir) { url in
+            var landed: NSURL?
+            try FileManager.default.trashItem(at: url, resultingItemURL: &landed)
+            return landed as URL?
+        }
+        Trace.log("voice: moved Silas to the Trash: \(report)")
+        silasMessage = report.failure
+        refreshSilas()
     }
 }

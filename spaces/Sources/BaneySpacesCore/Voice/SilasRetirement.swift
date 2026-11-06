@@ -1,14 +1,16 @@
 import Foundation
 
-/// Silas goes to the Trash by itself, once, after Polycarp's dictation has really worked.
+/// Silas stays until the person says it can go. Nothing here runs on its own.
 ///
-/// Dictation is what Donovan relies on and Polycarp's voice had never run live when this was written, so the installer
-/// leaves Silas where it is. Polycarp moves it to the Trash after the first dictation that actually typed text, removes
-/// the login item Silas registered, and says so once. Never when voice is off (Silas is the way back then), never twice,
-/// never for a Silas that is somewhere other than /Applications or ~/Applications, never while it runs. Silas's data stays.
+/// After Polycarp's first dictation that really typed text, one notification says dictation is working. While voice is on
+/// and Silas is installed in /Applications or ~/Applications, Settings > Voice shows "Silas is still installed." and a
+/// button; a click moves the app to the Trash, removes Silas's login item only after that move succeeded, and a failure is
+/// shown in the tab. Silas's data stays. Voice off: nothing is offered.
 public enum SilasRetirement {
-    public static let notice = "Dictation works here, so Silas went to the Trash."
-    public static let markerName = "silas-retired"
+    public static let notice = "Dictation is working. Silas can go when you're ready."
+    public static let stillInstalled = "Silas is still installed."
+    public static let button = "Move Silas to the Trash"
+    public static let notifiedMarker = "silas-notified"
     public static let recordFolder = "silas-retired-record"
 
     /// tauri-plugin-autostart with MacosLauncher::LaunchAgent (the auto-launch crate) writes
@@ -31,52 +33,62 @@ public enum SilasRetirement {
         return nil
     }
 
-    public static func shouldRetire(voiceOn: Bool, typedText: Bool, alreadyRetired: Bool, silas: URL?, silasRunning: Bool) -> Bool {
-        voiceOn && typedText && !alreadyRetired && silas != nil && !silasRunning
+    /// The one notification: after a dictation that typed, once, with voice on and Silas there.
+    public static func shouldNotify(voiceOn: Bool, typedText: Bool, alreadyNotified: Bool, silas: URL?) -> Bool {
+        voiceOn && typedText && !alreadyNotified && silas != nil
+    }
+
+    /// Whether Settings > Voice offers the button: voice on, Silas there, and not running (a running Silas can't be moved).
+    public static func offers(voiceOn: Bool, silas: URL?, silasRunning: Bool) -> Bool {
+        voiceOn && silas != nil && !silasRunning
+    }
+
+    public static func alreadyNotified(voiceDir: URL) -> Bool {
+        FileManager.default.fileExists(atPath: voiceDir.appendingPathComponent(notifiedMarker).path)
+    }
+
+    public static func markNotified(voiceDir: URL) {
+        try? FileManager.default.createDirectory(at: voiceDir, withIntermediateDirectories: true)
+        try? Data(Date().description.utf8).write(to: voiceDir.appendingPathComponent(notifiedMarker))
     }
 
     public struct Report: Equatable {
         public var trashed: URL?
         public var loginItemRemoved = false
-        public var failed: [String] = []
+        /// What to show in the tab when something didn't work; nil when it all did.
+        public var failure: String?
     }
 
-    /// Moves Silas to the Trash and removes its login item; writes down what it did. `trash` is injected so a test
-    /// moves into a temp folder; the app passes `FileManager.trashItem`.
-    public static func retire(silas: URL, home: URL, voiceDir: URL, trash: (URL) throws -> URL?) -> Report {
-        let fm = FileManager.default
+    /// Moves Silas to the Trash. Only if that worked is its login item removed (a copy is kept in the record folder so it can
+    /// be put back), so a failed move leaves Silas exactly as it was. `trash` is injected so a test moves into a temp folder;
+    /// the app passes `FileManager.trashItem`.
+    public static func moveToTrash(silas: URL, home: URL, voiceDir: URL, trash: (URL) throws -> URL?) -> Report {
         var report = Report()
-        try? fm.createDirectory(at: voiceDir, withIntermediateDirectories: true)
-        let record = voiceDir.appendingPathComponent(recordFolder, isDirectory: true)
-        try? fm.createDirectory(at: record, withIntermediateDirectories: true)
-
-        // The login item first, while Silas.app is still where its plist says. Only the one Silas registered.
+        do {
+            let landed = try trash(silas)
+            report.trashed = landed ?? silas
+        } catch {
+            report.failure = "Couldn't move \(Product.Silas.name) to the Trash: \(error.localizedDescription). Drag \(silas.path) to the Trash yourself."
+            return report
+        }
+        let fm = FileManager.default
         let item = loginItem(home: home)
         if let data = try? Data(contentsOf: item),
            let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
            let program = (plist["ProgramArguments"] as? [String])?.first ?? plist["Program"] as? String,
            program.contains("/\(Product.Silas.appName)/") {
+            let record = voiceDir.appendingPathComponent(recordFolder, isDirectory: true)
             do {
-                try data.write(to: record.appendingPathComponent(item.lastPathComponent))   // a copy, so it can be put back
+                try fm.createDirectory(at: record, withIntermediateDirectories: true)
+                try data.write(to: record.appendingPathComponent(item.lastPathComponent))
                 try fm.removeItem(at: item)
                 report.loginItemRemoved = true
-            } catch { report.failed.append("login item") }
+            } catch {
+                report.failure = "\(Product.Silas.name) is in the Trash, but its login item couldn't be removed (\(error.localizedDescription)). Remove \(item.path) yourself."
+            }
         }
-
-        do {
-            let landed = try trash(silas)
-            report.trashed = landed ?? silas
-            try? Data("moved \(silas.path) to the Trash at \(landed?.path ?? "?")\nlogin item removed: \(report.loginItemRemoved)\n".utf8)
-                .write(to: record.appendingPathComponent("what-was-done.txt"))
-        } catch { report.failed.append("app") }
-        // Written only when the app itself moved; a failed move is tried again at the next dictation.
-        if report.trashed != nil {
-            try? Data(Date().description.utf8).write(to: voiceDir.appendingPathComponent(markerName))
-        }
+        try? Data("moved \(silas.path) to \(report.trashed?.path ?? "?")\nlogin item removed: \(report.loginItemRemoved)\n".utf8)
+            .write(to: voiceDir.appendingPathComponent(recordFolder + ".txt"))
         return report
-    }
-
-    public static func alreadyRetired(voiceDir: URL) -> Bool {
-        FileManager.default.fileExists(atPath: voiceDir.appendingPathComponent(markerName).path)
     }
 }

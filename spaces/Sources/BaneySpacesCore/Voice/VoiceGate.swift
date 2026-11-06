@@ -41,6 +41,14 @@ public enum VoiceGate {
         return silasPids.isEmpty ? .start : .wait(.silasRunning)
     }
 
+    /// THE gate. Polycarp's dictation is taking over right now only when voice is on, a finished model is in Polycarp's own
+    /// folder and the import from Silas is really finished (not pending, not half done). The engine, the watcher and the
+    /// launch alert all ask this, so none of them can ask Silas to quit while the other would leave it working.
+    public static func takesOverNow(userEnabled: Bool, voiceDir: URL, silasDir: URL) -> Bool {
+        takesOver(userEnabled: userEnabled, modelInstalled: hasModel(in: [voiceDir]),
+                  importFinished: VoiceImport.isFinished(silasDir: silasDir, newDir: voiceDir)) == nil
+    }
+
     /// What the Voice tab and the menu say while the key isn't listened to. Nil for a person's own Off (the switch says it).
     public static func message(_ r: Reason) -> String? {
         switch r {

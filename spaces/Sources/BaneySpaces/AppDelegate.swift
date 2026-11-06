@@ -488,7 +488,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         legacyWatcher.start()
         startVoice()
         updater.onChange = { [weak self] in self?.updateIcon() }
-        updater.isBusy = { [weak self] in self?.spaces.switching ?? false }
+        // Not while a workspace switches, and not while dictation is recording, transcribing or typing.
+        updater.isBusy = { [weak self] in (self?.spaces.switching ?? false) || (VoiceEngine.shared.state?.status.isDictating ?? false) }
         updater.start()
         // The first launch walks through setup, and so does any launch without permission (an
         // update that macOS no longer trusts). Otherwise it's one click away in the menu.
@@ -525,7 +526,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.voiceOverlay.status(st.status, enabled: voice.settings?.showOverlay ?? true)
             self.updateIcon()
         }
-        legacyWatcher.onSilasQuit = { voice.silasChanged() }
+        legacyWatcher.onSilasQuit = { pid in voice.silasChanged(terminating: pid) }
+        voice.onSilasInTheWay = { [weak self] in self?.legacyWatcher.askSilasToQuit() }
         legacyWatcher.onSilasStarted = { voice.silasChanged() }
         legacyWatcher.takesOver = { voice.takesOver }
         voice.start()

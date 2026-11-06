@@ -33,7 +33,7 @@ public enum LegacyHandover {
         let both = names.count > 1 ? "None of them can run beside \(Product.name)." : "Both can't run at once."
         var text = "\(both) \(Product.name) copies your settings and leaves \(names.joined(separator: " and ")) installed."
         if names.contains(Product.Silas.name) {
-            text += " \(Product.name)'s dictation takes over from here. \(Product.Silas.name) stays installed until that has worked once, and your dictionary, history and speech models are copied, never moved."
+            text += " \(Product.name)'s dictation takes over from here. \(Product.Silas.name) stays installed (Settings > Voice offers to move it to the Trash once dictation works), and your dictionary, history and speech models are copied, never moved."
         }
         return text
     }
@@ -107,6 +107,12 @@ public enum LegacyHandover {
         case refuse(reason: String)
     }
     public static let silasRunningReason = "\(Product.Silas.name) is running and has the dictation key. Quit it and \(Product.name)'s dictation takes over."
+    /// Pids of apps that are really still there: not terminated, and not the one that is quitting right now. A quit notification
+    /// arrives while the app still shows in the running list, which would make the engine think Silas is still in the way.
+    public static func livePids(_ apps: [(pid: Int32, terminated: Bool)], excluding quitting: Int32? = nil) -> [Int32] {
+        apps.filter { !$0.terminated && $0.pid != quitting }.map(\.pid)
+    }
+
     public static func voiceStart(silasPids: [Int32]) -> VoiceStart {
         silasPids.isEmpty ? .start : .refuse(reason: silasRunningReason)
     }

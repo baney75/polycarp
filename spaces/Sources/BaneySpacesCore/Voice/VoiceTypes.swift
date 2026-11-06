@@ -22,6 +22,8 @@ public enum VoiceStatus: String, Codable, Sendable {
 
     /// The overlay is up for these (`overlay_status` in core.rs).
     public var showsOverlay: Bool { self == .recording || self == .transcribing || self == .typing }
+    /// Listening, transcribing or typing: the updater must not restart the app now.
+    public var isDictating: Bool { showsOverlay }
     /// The menu bar mark is the "live" one only while listening.
     public var isLive: Bool { self == .recording }
 }

@@ -13,7 +13,7 @@ final class LegacyWatcher {
     var takesOver: () -> Bool = { true }
     /// Silas started while Polycarp runs (so the voice must step back), or went away (so it may take over).
     var onSilasStarted: () -> Void = {}
-    var onSilasQuit: () -> Void = {}
+    var onSilasQuit: (Int32) -> Void = { _ in }
 
     func start() {
         guard observer == nil else { return }
@@ -32,6 +32,15 @@ final class LegacyWatcher {
         }
     }
 
+    /// Polycarp's dictation is taking over (`VoiceEngine.takesOver`) and Silas is running: ask it to quit, tell the person once.
+    func askSilasToQuit() {
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: Product.Silas.bundleID).filter { !$0.isTerminated }
+        guard !running.isEmpty else { return }
+        Trace.log("legacy: \(Product.Silas.name) is running and \(Product.name)'s dictation takes over; asking it to quit")
+        running.forEach { $0.terminate() }
+        if notified.insert(Product.Silas.bundleID).inserted { tell(Product.Silas.bundleID) }
+    }
+
     private var quitObserver: NSObjectProtocol?
 
     /// Silas quitting hands the dictation key to Polycarp.
@@ -40,7 +49,7 @@ final class LegacyWatcher {
             forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   app.bundleIdentifier == Product.Silas.bundleID else { return }
-            self?.onSilasQuit()
+            self?.onSilasQuit(app.processIdentifier)
         }
     }
 
