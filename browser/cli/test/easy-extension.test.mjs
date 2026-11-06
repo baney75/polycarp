@@ -1,7 +1,7 @@
 // doctor and install against a throwaway HOME: only installed browsers are reported, a manifest naming the helper or a
 // standalone launcher is right, and `install --browser` writes one browser's manifest and leaves a working launcher alone.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -92,4 +92,77 @@ test("without a working launcher, install --browser writes one", async () => {
 	const { home, env } = sandbox("nolauncher");
 	execFileSync(process.execPath, [index(), "install", "--browser", first], { env });
 	assert.match(readFileSync(join(home, ".config", "tabkyra", "tabkyra"), "utf8"), /exec "/);
+});
+
+// ---- round 2: leftover manifests, launcher targets, setup's reach, quoted fixes ----
+
+/** An executable script that execs an existing file (a launcher that works) or one that is gone. */
+function writeLauncherScript(path, target) {
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, `#!/bin/sh\nexec "${target}" "$@"\n`);
+	chmodSync(path, 0o755);
+}
+
+test("second-S1: a leftover manifest does not keep an uninstalled browser listed, and a live connection does", { skip: !mac && "app detection is a Mac thing" }, () => {
+	const { dirs, env } = sandbox("leftover");
+	// Chrome's data folder holds the manifest an earlier install wrote; its app is gone.
+	mkdirSync(join(dirs.Chrome, "NativeMessagingHosts"), { recursive: true });
+	writeFileSync(manifestFile(dirs.Chrome), JSON.stringify({ name: "ai.tabkyra.bridge", path: process.execPath }));
+	const hosts = doctor(env).filter((c) => c.id.startsWith("host:"));
+	assert.deepEqual(hosts.map((c) => c.id), [`host:${first}`], "Chrome is not listed: no app");
+});
+
+test("first-F6/sol-F5: the repair command quotes a two-word browser name", { skip: !mac && "app detection is a Mac thing" }, () => {
+	const { home, env } = sandbox("quoted");
+	const support = join(home, "Library", "Application Support");
+	mkdirSync(join(support, "Google", "Chrome Beta"), { recursive: true });
+	mkdirSync(join(home, "Apps", "Google Chrome Beta.app"), { recursive: true });
+	const beta = doctor(env).find((c) => c.id === "host:Chrome Beta");
+	assert.ok(beta, "Chrome Beta is listed");
+	assert.equal(beta.fix, "polycarp browser install --browser 'Chrome Beta'");
+	// The command as a shell reads it is one --browser argument, and install accepts it.
+	execFileSync("/bin/sh", ["-c", `exec "${process.execPath}" "${index()}" install --browser 'Chrome Beta'`], { env });
+	assert.ok(existsSync(manifestFile(join(support, "Google", "Chrome Beta"))));
+});
+
+test("second-S4: install --browser repairs a broken host launcher even when the agent launcher works", () => {
+	const { home, dirs, env } = sandbox("hostbroken");
+	const config = join(home, ".config", "tabkyra");
+	writeLauncherScript(join(config, "tabkyra"), "/bin/echo"); // the agent launcher works
+	// In compiled mode the manifest names the helper, so the host launcher is the helper itself: always there. The case is
+	// the standalone one, where the host launcher is a script; build it with a vanished target.
+	writeLauncherScript(join(config, "host"), join(home, "gone", "cli.js"));
+	execFileSync(process.execPath, [index(), "install", "--browser", first], { env });
+	assert.ok(existsSync(manifestFile(dirs[first])));
+	const manifest = JSON.parse(readFileSync(manifestFile(dirs[first]), "utf8"));
+	// Compiled: the helper. It exists, so the manifest is current and the check passes without touching the scripts.
+	assert.equal(manifest.path, process.execPath);
+	assert.equal(doctor(env).find((c) => c.id === `host:${first}`).status, "ok");
+});
+
+test("second-S6: a manifest naming a standalone launcher whose program is gone is wrong, in doctor and in status", () => {
+	const { home, dirs, env } = sandbox("gonetarget");
+	execFileSync(process.execPath, [index(), "install", "--browser", first], { env });
+	const launcher = join(home, ".config", "tabkyra", "host");
+	writeLauncherScript(launcher, join(home, "deleted-checkout", "cli.js"));
+	const manifest = JSON.parse(readFileSync(manifestFile(dirs[first]), "utf8"));
+	writeFileSync(manifestFile(dirs[first]), JSON.stringify({ ...manifest, path: launcher }));
+	const host = doctor(env).find((c) => c.id === `host:${first}`);
+	assert.equal(host.status, "fail", JSON.stringify(host));
+	assert.match(host.detail, /runs a program that is gone/);
+	const status = spawnSync(process.execPath, [index(), "status"], { env, encoding: "utf8" });
+	assert.equal(status.status, 1, "status fails: the host can't start");
+	assert.match(status.stdout, new RegExp(`${first}\\s+host stale`), status.stdout);
+	// With the program back, it passes again.
+	writeLauncherScript(launcher, "/bin/echo");
+	assert.equal(doctor(env).find((c) => c.id === `host:${first}`).status, "ok");
+});
+
+test("second-S3: doctor's not-connected fix does not send people through registration", () => {
+	const { env } = sandbox("notconnected");
+	const row = doctor(env).find((c) => c.id === "connected");
+	assert.equal(row.status, "fail");
+	assert.doesNotMatch(row.fix, /\bsetup\b|install/);
+	assert.match(row.fix, /load the Polycarp extension/);
+	assert.match(row.fix, /polycarp browser doctor again/);
 });

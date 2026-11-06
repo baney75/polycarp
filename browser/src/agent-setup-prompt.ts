@@ -23,7 +23,7 @@ export function agentSetupPrompt(version: string, command = "tabkyra"): string {
    - If it doesn't exist: mkdir -p ~/tabkyra-src && cd ~/tabkyra-src && git clone --depth 1 --branch v${version} https://github.com/baney75/tabkyra && cd tabkyra
    - If the tag v${version} doesn't exist, use the default branch instead and tell me you did.
    - Then: (cd cli && npm ci && npm run build && npm link)
-   The npm link gives the command the name tabkyra. If npm link fails with a permissions error, run "node ~/tabkyra-src/tabkyra/cli/dist/index.js" in place of "${command}" in every command below.
+   The npm link gives the command the name tabkyra.${command === "tabkyra" ? "" : ` Once it succeeds, run "tabkyra" in place of "${command}" in every command below, whichever name this prompt started with.`} If npm link fails with a permissions error, run "node ~/tabkyra-src/tabkyra/cli/dist/index.js" in place of "${command}" in every command below.
 3. Run: ${command} setup --yes
    It registers the browser connection and adds the MCP server to Claude Code and Codex.
 4. Connect this harness, even if Polycarp already works in another one:
@@ -69,19 +69,23 @@ ${CLOSING}`;
 export const HUB_ORIGIN = /^https?:\/\/(?:[A-Za-z0-9.-]+|\[::1\])(?::\d{1,5})?$/;
 export const CONNECT_CODE = /^TK-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/;
 
-/** A prompt for an agent on another device: link it to this hub with a one-time connect code. */
-export function deviceSetupPrompt(version: string, hubUrl: string, code: string, command = "tabkyra"): string {
-	if (!COMMANDS.includes(command)) throw new Error(`Unknown command name "${command}".`);
+/**
+ * A prompt for an agent on another device: link it to this hub with a one-time connect code. That device may have
+ * `polycarp browser` (the app) or only `tabkyra` (an npm link or checkout), so the prompt does not carry this
+ * helper's name: the agent finds out which one runs there and uses it for every later step.
+ */
+export function deviceSetupPrompt(version: string, hubUrl: string, code: string): string {
 	if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`No extension version to pin the CLI to (got "${version}").`);
 	if (!HUB_ORIGIN.test(hubUrl)) throw new Error("The hub address must be an origin like https://hub.example.com.");
 	if (!CONNECT_CODE.test(code)) throw new Error("The connect code must look like TK-XXXX-XXXX.");
 	return `Connect this computer's browser to my Polycarp hub at ${hubUrl}, so claude.ai, ChatGPT or grok.com can use it through my one connector. The Polycarp extension ${version} should already be loaded in my browser on this computer. Run each step yourself and show me any output you can't fix.
 
-1. Run: ${command} doctor
-   If ${command} isn't installed, stop and tell me to copy the setup prompt from Polycarp's Settings > Agents tab and run that first.
-2. Run: ${command} link ${hubUrl} --code ${code}
+1. Find the command that runs Polycarp's helper on this computer. Run: polycarp browser doctor
+   If that says the command isn't found, run: tabkyra doctor
+   Use whichever of the two runs, and write it as HELPER in every step below: HELPER is "polycarp browser" or "tabkyra", never both. If neither runs, stop and tell me to copy the setup prompt from Polycarp's Settings > Agents tab and run that first.
+2. Run: HELPER link ${hubUrl} --code ${code}
    The code works once and expires 10 minutes after I copied this prompt. If the hub refuses it, tell me to get a new one in Settings > Connect > Add a device.
-3. Run: ${command} link status
+3. Run: HELPER link status
    Tell me whether it says connected.
 
 ${CLOSING}`;

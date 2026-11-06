@@ -15,6 +15,7 @@ import { configDir, listClients, passcodeSet, setPasscode } from "./oauth.ts";
 import { hubFile } from "./hub-state.ts";
 import { DEFAULT_PORT } from "./tunnel.ts";
 import { c, sym } from "./ui.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 /** Funnel's own port: keeps the OAuth paths at the root and anything on 443 private. */
 export const FUNNEL_PORT = 8443;
@@ -43,7 +44,7 @@ export function loadRemoteConfig(): RemoteConfig | undefined {
 	try {
 		raw = JSON.parse(readFileSync(remoteFile(), "utf8")) as Record<string, unknown>;
 	} catch {
-		throw new Error(`${remoteFile()} isn't valid JSON. Run polycarp browser remote off to remove it, then polycarp browser remote setup again.`);
+		throw new Error(`${remoteFile()} isn't valid JSON. Run ${COMMAND_NAME} remote off to remove it, then ${COMMAND_NAME} remote setup again.`);
 	}
 	if (!raw || typeof raw !== "object") throw new Error(`${remoteFile()} isn't a Polycarp remote file.`);
 	if (typeof raw.publicUrl !== "string" || !raw.publicUrl) throw new Error(`${remoteFile()}: publicUrl is missing.`);
@@ -224,14 +225,14 @@ export interface SetupOptions {
 export async function remoteSetup(options: SetupOptions): Promise<number> {
 	// One public route per install: a hub (polycarp browser hub setup) owns it.
 	if (existsSync(hubFile())) {
-		console.error(`${sym.fail} This install is set up as a hub (${hubFile()}), and an install has one public route. Run polycarp browser hub off first. Nothing was changed.`);
+		console.error(`${sym.fail} This install is set up as a hub (${hubFile()}), and an install has one public route. Run ${COMMAND_NAME} hub off first. Nothing was changed.`);
 		return 1;
 	}
 	let previous: RemoteConfig | undefined;
 	try {
 		previous = loadRemoteConfig();
 	} catch (err) {
-		console.error(`${sym.fail} ${err instanceof Error ? err.message : String(err)} Nothing was changed; run polycarp browser remote off first.`);
+		console.error(`${sym.fail} ${err instanceof Error ? err.message : String(err)} Nothing was changed; run ${COMMAND_NAME} remote off first.`);
 		return 1;
 	}
 	const port = options.port ?? previous?.port ?? DEFAULT_PORT;
@@ -241,14 +242,14 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 	let funnelBin = "";
 	if (options.publicUrl) {
 		if (previous?.route === "funnel") {
-			console.error(`${sym.fail} Funnel from an earlier setup is on. Run polycarp browser remote off first.`);
+			console.error(`${sym.fail} Funnel from an earlier setup is on. Run ${COMMAND_NAME} remote off first.`);
 			return 1;
 		}
 		// Funnel on 8443 would stay public and forward to this machine, whatever front door the user adds.
 		if (which("tailscale")) {
 			const stray = await strayFunnel();
 			if (stray.kind !== "none") {
-				console.error(`${sym.fail} Funnel on ${FUNNEL_PORT} is on${stray.kind === "unknown" ? ` (${stray.message})` : ""}; run polycarp browser remote off first. Nothing was changed.`);
+				console.error(`${sym.fail} Funnel on ${FUNNEL_PORT} is on${stray.kind === "unknown" ? ` (${stray.message})` : ""}; run ${COMMAND_NAME} remote off first. Nothing was changed.`);
 				return 1;
 			}
 		}
@@ -266,11 +267,11 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 	}
 	const installed = serviceFile();
 	if (!options.service && installed && existsSync(installed)) {
-		console.error(`${sym.fail} A service from an earlier setup is installed (${installed}), and --no-service would leave it running. Run polycarp browser remote off first. Nothing was changed.`);
+		console.error(`${sym.fail} A service from an earlier setup is installed (${installed}), and --no-service would leave it running. Run ${COMMAND_NAME} remote off first. Nothing was changed.`);
 		return 1;
 	}
 	if (options.service && !launcherValid()) {
-		console.error(`${sym.fail} ${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run polycarp browser install first, then polycarp browser remote setup again.`);
+		console.error(`${sym.fail} ${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then ${COMMAND_NAME} remote setup again.`);
 		return 1;
 	}
 	// Whatever listens on the port must be Polycarp with OAuth for this URL, or Funnel would publish something else.
@@ -280,17 +281,17 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 		const restartsOurs = options.service && Boolean(file && existsSync(file)) && previous?.port === port;
 		if (!restartsOurs) {
 			console.error(
-				`${sym.fail} Something already listens on 127.0.0.1:${port} and isn't Polycarp serve for ${publicUrl} (${probe.detail}). Nothing was changed. Stop it (a polycarp browser serve you started by hand, or another program), or pick another port with --port, then run polycarp browser remote setup again.`,
+				`${sym.fail} Something already listens on 127.0.0.1:${port} and isn't Polycarp serve for ${publicUrl} (${probe.detail}). Nothing was changed. Stop it (a ${COMMAND_NAME} serve you started by hand, or another program), or pick another port with --port, then run ${COMMAND_NAME} remote setup again.`,
 			);
 			return 1;
 		}
 	}
 	if (options.passcode === false && !passcodeSet()) {
-		console.log(`${sym.dot} No passcode made (--no-passcode). Approve a connection with a one-time connect code: polycarp browser token approval-code. polycarp browser token passcode sets a passcode later.`);
+		console.log(`${sym.dot} No passcode made (--no-passcode). Approve a connection with a one-time connect code: ${COMMAND_NAME} token approval-code. ${COMMAND_NAME} token passcode sets a passcode later.`);
 	} else if (!passcodeSet()) {
 		const passcode = setPasscode();
 		console.log(`${sym.ok} OAuth passcode:\n\n  ${passcode}\n`);
-		console.log(c.dim("Shown once. Type it on the approval page when claude.ai, ChatGPT or grok.com connects. Keep it in a password manager, but not one the browser Polycarp drives can fill. polycarp browser token passcode replaces it; grants already approved keep working."));
+		console.log(c.dim(`Shown once. Type it on the approval page when claude.ai, ChatGPT or grok.com connects. Keep it in a password manager, but not one the browser Polycarp drives can fill. ${COMMAND_NAME} token passcode replaces it; grants already approved keep working.`));
 	}
 	saveRemoteConfig({ publicUrl, port, route, ...(previous?.redirectHosts ? { redirectHosts: previous.redirectHosts } : {}), ...(previous?.allowHosts ? { allowHosts: previous.allowHosts } : {}) });
 	console.log(`${sym.ok} Wrote ${c.dim(remoteFile())}`);
@@ -299,34 +300,34 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 		const service = await installService();
 		console.log(`${service.ok ? sym.ok : sym.fail} ${service.message}`);
 		if (!service.ok) {
-			console.error(`${sym.fail} The service didn't start, so ${route === "funnel" ? "Funnel was not opened" : "setup isn't finished"}. remote.json is kept; fix the cause above and run polycarp browser remote setup again.`);
+			console.error(`${sym.fail} The service didn't start, so ${route === "funnel" ? "Funnel was not opened" : "setup isn't finished"}. remote.json is kept; fix the cause above and run ${COMMAND_NAME} remote setup again.`);
 			return 1;
 		}
 		if (!(await waitForServe(port, publicUrl, 15_000))) {
 			console.error(
-				`${sym.fail} polycarp browser serve isn't answering on 127.0.0.1:${port} with ${publicUrl}/mcp after 15 seconds, so ${route === "funnel" ? "Funnel was not opened" : "setup isn't finished"}. Look in ${serviceLogHint()}. remote.json is kept; fix the cause and run polycarp browser remote setup again.`,
+				`${sym.fail} ${COMMAND_NAME} serve isn't answering on 127.0.0.1:${port} with ${publicUrl}/mcp after 15 seconds, so ${route === "funnel" ? "Funnel was not opened" : "setup isn't finished"}. Look in ${serviceLogHint()}. remote.json is kept; fix the cause and run ${COMMAND_NAME} remote setup again.`,
 			);
 			return 1;
 		}
 		listening = true;
 	}
 	if (route === "funnel" && !listening) {
-		console.log(`${sym.warn} Start polycarp browser serve (it reads remote.json), then run polycarp browser remote setup --no-service again to open Funnel.`);
+		console.log(`${sym.warn} Start ${COMMAND_NAME} serve (it reads remote.json), then run ${COMMAND_NAME} remote setup --no-service again to open Funnel.`);
 	} else if (route === "funnel") {
 		const r = run(funnelBin, ["funnel", "--bg", "--yes", `--https=${FUNNEL_PORT}`, `http://127.0.0.1:${port}`]);
 		if (r.code !== 0) {
 			const login = /https:\/\/login\.tailscale\.com\/[^\s"'<>]*/.exec(r.out);
 			if (login) {
-				console.error(`${sym.fail} Funnel isn't enabled for this tailnet or node yet. Open ${login[0]}, enable it, then run polycarp browser remote setup again.`);
+				console.error(`${sym.fail} Funnel isn't enabled for this tailnet or node yet. Open ${login[0]}, enable it, then run ${COMMAND_NAME} remote setup again.`);
 			} else {
 				console.error(`${sym.fail} tailscale funnel failed: ${r.out}`);
 			}
-			console.error(`${sym.dot} remote.json is kept. Fix that, then run polycarp browser remote setup again, or polycarp browser remote off to undo setup.`);
+			console.error(`${sym.dot} remote.json is kept. Fix that, then run ${COMMAND_NAME} remote setup again, or ${COMMAND_NAME} remote off to undo setup.`);
 			return 1;
 		}
 		console.log(`${sym.ok} Tailscale Funnel on ${publicUrl} ${c.dim(`-> 127.0.0.1:${port}`)}`);
 	}
-	if (!options.service && (route === "custom" || listening)) console.log(`${sym.dot} No service installed. Start it yourself: ${c.bold("polycarp browser serve")}`);
+	if (!options.service && (route === "custom" || listening)) console.log(`${sym.dot} No service installed. Start it yourself: ${c.bold(`${COMMAND_NAME} serve`)}`);
 	console.log(`
 Connector URL: ${c.bold(`${publicUrl}/mcp`)}
 
@@ -334,8 +335,8 @@ Connector URL: ${c.bold(`${publicUrl}/mcp`)}
   ChatGPT     Settings > Apps & Connectors (developer mode) > Create, paste the URL, OAuth.
   grok.com    grok.com/connectors > New Connector > Custom, paste the URL.
 
-${passcodeSet() ? "Approve with your Polycarp passcode." : "Approve with a one-time connect code: polycarp browser token approval-code."}
-Check it with: polycarp browser remote status`);
+${passcodeSet() ? "Approve with your Polycarp passcode." : `Approve with a one-time connect code: ${COMMAND_NAME} token approval-code.`}
+Check it with: ${COMMAND_NAME} remote status`);
 	return 0;
 }
 
@@ -397,12 +398,12 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 	if (config) {
 		checks.push({ name: "remote.json", status: "ok", detail: `route ${config.route}, ${config.publicUrl}, local port ${config.port}` });
 	} else if (!checks.length) {
-		checks.push({ name: "remote.json", status: "fail", detail: `${remoteFile()} not found. Run polycarp browser remote setup.` });
+		checks.push({ name: "remote.json", status: "fail", detail: `${remoteFile()} not found. Run ${COMMAND_NAME} remote setup.` });
 	}
 	let clients = 0;
 	if (config) {
 		const passcode = passcodeSet();
-		checks.push({ name: "passcode", status: passcode ? "ok" : "warn", detail: passcode ? "set" : "not set; only a connect code (polycarp browser token approval-code) can approve a connection. polycarp browser token passcode sets one." });
+		checks.push({ name: "passcode", status: passcode ? "ok" : "warn", detail: passcode ? "set" : `not set; only a connect code (${COMMAND_NAME} token approval-code) can approve a connection. ${COMMAND_NAME} token passcode sets one.` });
 		const local = await probeLocal(config.port, config.publicUrl, 3000);
 		const where = `http://127.0.0.1:${config.port}${METADATA_PATH}`;
 		checks.push({
@@ -411,7 +412,7 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 			detail:
 				local.state === "match"
 					? `${where} answers with resource ${config.publicUrl}/mcp`
-					: `${where} ${local.state === "none" ? "didn't answer: connection refused" : local.detail}. Is polycarp browser serve running? polycarp browser remote setup starts it.`,
+					: `${where} ${local.state === "none" ? "didn't answer: connection refused" : local.detail}. Is ${COMMAND_NAME} serve running? ${COMMAND_NAME} remote setup starts it.`,
 		});
 		checks.push(await dnsCheck(new URL(config.publicUrl).hostname));
 		const pub = await metadata(`${config.publicUrl}${METADATA_PATH}`, 10_000, config.publicUrl);
@@ -425,7 +426,7 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 		} catch {
 			clients = 0;
 		}
-		checks.push({ name: "OAuth clients", status: clients ? "ok" : "warn", detail: clients ? `${clients} registered (polycarp browser token clients)` : "none yet; add the connector in claude.ai, ChatGPT or grok.com" });
+		checks.push({ name: "OAuth clients", status: clients ? "ok" : "warn", detail: clients ? `${clients} registered (${COMMAND_NAME} token clients)` : "none yet; add the connector in claude.ai, ChatGPT or grok.com" });
 	}
 	const ok = checks.every((x) => x.status !== "fail");
 	if (options.json) {
@@ -449,7 +450,7 @@ function funnelOff(bin: string | undefined): { ok: boolean; message: string } {
 		const state = readTailscale(bin);
 		if (state.kind === "disconnected" || (state.kind === "ok" && !state.web[`${state.dns}:${FUNNEL_PORT}`])) return { ok: true, message: `Tailscale Funnel on port ${FUNNEL_PORT} was already off.` };
 	}
-	return { ok: false, message: `Couldn't turn Funnel off: ${r.out}. The service and remote.json are kept; run tailscale funnel --https=${FUNNEL_PORT} off, then polycarp browser remote off again.` };
+	return { ok: false, message: `Couldn't turn Funnel off: ${r.out}. The service and remote.json are kept; run tailscale funnel --https=${FUNNEL_PORT} off, then ${COMMAND_NAME} remote off again.` };
 }
 
 /** Funnel first, then the service, then the files: while Funnel is open, a serve with OAuth on loopback is the safe state. */
@@ -473,7 +474,7 @@ export async function remoteOff(): Promise<number> {
 	} else {
 		const stray = await strayFunnel();
 		if (stray.kind === "unknown") {
-			console.error(`${sym.fail} ${stray.message} Nothing was changed. Start Tailscale and run polycarp browser remote off again.`);
+			console.error(`${sym.fail} ${stray.message} Nothing was changed. Start Tailscale and run ${COMMAND_NAME} remote off again.`);
 			return 1;
 		}
 		if (stray.kind === "found" && stray.ours) {
@@ -502,7 +503,7 @@ export async function remoteOff(): Promise<number> {
 	} else {
 		console.log(`${sym.dot} No remote.json; nothing else to remove.`);
 	}
-	if (config?.route === "custom") console.log(`${sym.warn} Your own front door for ${config.publicUrl} still forwards to this machine. Stop it there (for example, stop cloudflared); polycarp browser remote off can't.`);
-	console.log(c.dim("Approved connectors keep their grants in oauth.json. polycarp browser token clients lists them; polycarp browser token revoke <client id> ends one."));
+	if (config?.route === "custom") console.log(`${sym.warn} Your own front door for ${config.publicUrl} still forwards to this machine. Stop it there (for example, stop cloudflared); ${COMMAND_NAME} remote off can't.`);
+	console.log(c.dim(`Approved connectors keep their grants in oauth.json. ${COMMAND_NAME} token clients lists them; ${COMMAND_NAME} token revoke <client id> ends one.`));
 	return code;
 }

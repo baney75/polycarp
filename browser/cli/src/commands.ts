@@ -5,6 +5,7 @@
  */
 
 import { SETUP_FLAGS, UPDATE_FLAGS } from "./parse-args.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export interface SubcommandSpec {
 	name: string;
@@ -139,7 +140,7 @@ export const COMMANDS: CommandSpec[] = [
 		subcommands: [
 			{ name: "list", what: "Every agent session: group, tabs, connected or idle", flags: ["--all", "--json"] },
 			{ name: "show", args: "<name>", what: "One session: its group, tabs, times, and how to resume it", flags: ["--json"], max: 1 },
-			{ name: "rename", args: "<old> <new>", what: "Rename; resume it later with tabkyra mcp --session <new>", flags: ["--json"], max: 2 },
+			{ name: "rename", args: "<old> <new>", what: `Rename; resume it later with ${COMMAND_NAME} mcp --session <new>`, flags: ["--json"], max: 2 },
 			{ name: "end", args: "<name>", what: "End it: its tabs become yours (or close, with --close)", flags: ["--close", "--json"], max: 1 },
 			{ name: "release", args: "<name>", what: "Hand all its tabs to you, out of the group, and end it", flags: ["--json"], max: 1 },
 			{ name: "focus", args: "<name>", what: "Show its group to you", flags: ["--json"], max: 1 },
@@ -206,7 +207,7 @@ export const COMMANDS: CommandSpec[] = [
 		summary: "Put this device behind a hub",
 		what: "This device behind a hub",
 		subcommands: [
-			{ name: "enroll", args: "<hub-url>", what: "Link this device with a code from the hub (polycarp browser link <hub-url> works too)", flags: ["--code", "--name", "--scope", "--no-service", "--json"], max: 1 },
+			{ name: "enroll", args: "<hub-url>", what: `Link this device with a code from the hub (${COMMAND_NAME} link <hub-url> works too)`, flags: ["--code", "--name", "--scope", "--no-service", "--json"], max: 1 },
 			{ name: "run", what: "Dial the hub and answer its requests (the service runs this)" },
 			{ name: "status", what: "Is this device linked and connected?", flags: ["--json"] },
 			{ name: "off", what: "Stop the service, forget the hub and revoke the local link token" },
@@ -319,14 +320,14 @@ export function argsProblem(command: string, args: string[]): string | undefined
 	const positional = args.filter((a, i) => !a.startsWith("-") && !(VALUE_FLAGS.has(args[i - 1] ?? "") && !args[i - 1].includes("=")));
 	let flags = spec.flags ?? [];
 	let max = spec.positional ?? 0;
-	let usage = `Usage: polycarp browser ${helpRows(spec)[0][0]}`;
+	let usage = `Usage: ${COMMAND_NAME} ${helpRows(spec)[0][0]}`;
 	if (spec.subcommands) {
 		const sub = spec.subcommands.find((x) => x.name === (positional[0] ?? spec.defaultSubcommand));
 		// An unknown or missing subcommand is the command's own usage error, with its list.
 		if (!sub) return undefined;
 		flags = sub.flags ?? [];
 		max = (positional[0] === undefined ? 0 : 1) + (sub.max ?? 0);
-		usage = `Usage: polycarp browser ${spec.name} ${sub.name}${sub.args ? ` ${sub.args}` : ""}${flagHints(flags)}`;
+		usage = `Usage: ${COMMAND_NAME} ${spec.name} ${sub.name}${sub.args ? ` ${sub.args}` : ""}${flagHints(flags)}`;
 	}
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i];

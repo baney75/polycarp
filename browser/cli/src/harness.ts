@@ -6,10 +6,10 @@
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, join } from "node:path";
-import { cliLauncherPath } from "./install.ts";
+import { cliLauncherPath, launcherWorks } from "./install.ts";
 import { COMPILED } from "./self.ts";
 
 /**
@@ -58,16 +58,9 @@ export function tabkyraBinary(): string {
 	return cliLauncherPath();
 }
 
-/** The launcher exists, is executable, and the script it runs is still there. */
+/** The agent launcher exists, is executable, and the program it runs is still there. */
 export function launcherValid(): boolean {
-	const path = cliLauncherPath();
-	try {
-		if (process.platform !== "win32" && (statSync(path).mode & 0o111) === 0) return false;
-		const script = readFileSync(path, "utf8").match(/"([^"]+)"\s+(?:"\$@"|%\*)/)?.[1];
-		return Boolean(script && existsSync(script));
-	} catch {
-		return false;
-	}
+	return launcherWorks(cliLauncherPath());
 }
 
 function sameFile(a: string, b: string): boolean {

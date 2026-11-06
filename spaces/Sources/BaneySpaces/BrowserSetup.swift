@@ -78,10 +78,13 @@ final class BrowserModel: ObservableObject {
                 self.busy = false
                 if result.code != 0 { self.message = "Couldn't set up \(browser): \(result.text)"; return }
                 guard let folder else { self.message = "Couldn't copy the extension to Application Support."; return }
-                let name = BrowserBundle.appName(for: browser)
-                let apps = ["/Applications/\(name).app", NSHomeDirectory() + "/Applications/\(name).app"]
-                if let path = apps.first(where: { FileManager.default.fileExists(atPath: $0) }), let url = URL(string: BrowserBundle.extensionsAddress(for: browser)) {
-                    NSWorkspace.shared.open([url], withApplicationAt: URL(fileURLWithPath: path), configuration: NSWorkspace.OpenConfiguration())
+                // By bundle id, so a browser outside /Applications (Setapp, an external drive) opens like any other.
+                if let id = BrowserBundle.bundleID(for: browser),
+                   let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id),
+                   let url = URL(string: BrowserBundle.extensionsAddress(for: browser)) {
+                    NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+                } else {
+                    self.message = BrowserBundle.openYourselfMessage(for: browser)
                 }
                 BrowserDropPanel.shared.show(browser: browser, folder: folder)
                 self.refresh()

@@ -85,8 +85,8 @@ final class BrowserDropModel: ObservableObject {
     private var watching = false
     private var observer: AnyCancellable?
     private var closing = false
-    /// Whether something was already connected when the panel opened (see `BrowserPanelState.next`).
-    private var connectedAtOpen: Bool?
+    /// A connection that can't be named (an older helper or extension): shown as information, never as this browser connecting.
+    @Published var unattributedNote: String?
     var onCloseRequested: () -> Void { onClose }
 
     init(browser: String, folder: URL, onClose: @escaping () -> Void) {
@@ -108,8 +108,8 @@ final class BrowserDropModel: ObservableObject {
     }
 
     func apply(_ status: BrowserStatus?) {
-        if connectedAtOpen == nil, let status { connectedAtOpen = status.extensionConnected }
-        state = BrowserPanelState.next(status, bundledVersion: browserModel.bundledVersion, browser: browser, connectedAtOpen: connectedAtOpen ?? false)
+        state = BrowserPanelState.next(status, bundledVersion: browserModel.bundledVersion, browser: browser)
+        unattributedNote = BrowserPanelState.unattributedNote(status, browser: browser)
         if state.closesItself, !closing {
             closing = true
             DispatchQueue.main.asyncAfter(deadline: .now() + BrowserPanelState.closeDelay) { [weak self] in self?.onClose() }
@@ -144,6 +144,9 @@ struct BrowserDropView: View {
                     loadControls
                 case .waiting:
                     Text("Drag this onto the Extensions page").font(Chrome.font(13, .bold)).multilineTextAlignment(.center).frame(maxWidth: .infinity)
+                    if let note = model.unattributedNote {
+                        Text(note).font(Chrome.font(11)).foregroundStyle(.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    }
                     loadControls
                 }
             }

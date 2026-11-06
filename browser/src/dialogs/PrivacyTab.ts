@@ -4,6 +4,7 @@ import { html, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { Toast } from "../components/Toast.js";
 import "../dictation/DictationSettings.js";
+import { hostCommand } from "../bridge/host-command.js";
 import { BUG_LOG_KEY, BUG_REPORTS_KEY, type BugEntry, NEW_ISSUE_URL, reportText } from "../privacy/bug-reports.js";
 import { setBugReports } from "../privacy/capture.js";
 import { hostOf, PRIVATE_MODE_KEY, TRUSTED_HOSTS_KEY } from "../privacy/private-mode.js";
@@ -179,9 +180,9 @@ export class PrivacyTab extends SettingsTab {
 					${explained(
 						"Keeps a copy of your chats on this computer so your coding agents can look up what you asked Polycarp.",
 						`Keeps a copy of your side panel chats in ~/.local/share/tabkyra/threads (readable only by your user), so
-						agents like Claude Code and Codex can look up what you asked Polycarp, through tabkyra mcp or as files.
+						agents like Claude Code and Codex can look up what you asked Polycarp, through Polycarp's MCP server or as files.
 						Keys pasted into a chat are removed from the copy, and chats from private mode are never copied. Turning
-						this off deletes the copy and stops agents reading past chats. Agents connected through polycarp browser serve need a token with the threads.read scope.`,
+						this off deletes the copy and stops agents reading past chats. Agents connected through ${hostCommand()} serve need a token with the threads.read scope.`,
 					)}
 				</div>
 

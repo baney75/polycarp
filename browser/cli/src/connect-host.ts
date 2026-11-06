@@ -157,13 +157,13 @@ export interface ConnectOptions {
 
 type Reply = (frame: HostConnect) => void;
 
-const JOIN_REFUSED = "This computer already has a public address or a hub link. Run polycarp browser remote off, polycarp browser hub off or polycarp browser link off first.";
+const JOIN_REFUSED = `This computer already has a public address or a hub link. Run ${COMMAND_NAME} remote off, ${COMMAND_NAME} hub off or ${COMMAND_NAME} link off first.`;
 const MINT_FILE = "connect-mints.json";
 
-const NOT_MANAGER = "This device isn't a manager, so it can't ask the hub for codes. Link it with a code from polycarp browser hub code --manage, or run the command on the hub.";
-const NO_ROUTE = "This computer has no public address yet. Run polycarp browser remote setup (one computer) or polycarp browser hub setup --public-url https://host (many devices) first.";
+const NOT_MANAGER = `This device isn't a manager, so it can't ask the hub for codes. Link it with a code from ${COMMAND_NAME} hub code --manage, or run the command on the hub.`;
+const NO_ROUTE = `This computer has no public address yet. Run ${COMMAND_NAME} remote setup (one computer) or ${COMMAND_NAME} hub setup --public-url https://host (many devices) first.`;
 
-const GENERIC_FAILURE = "That didn't work on this computer. Try again, or run the matching ${COMMAND_NAME} command in a terminal.";
+const GENERIC_FAILURE = `That didn't work on this computer. Try again, or run the matching ${COMMAND_NAME} command in a terminal.`;
 const unreadable = (file: string) => `${file} is unreadable. Fix it or move it aside.`;
 
 /** The longest sentence that passes through from the library or a hub; the panel shows it as written. */
@@ -358,7 +358,7 @@ export class ConnectService {
 	private async deviceCode(): Promise<DeviceCode> {
 		const status = this.status();
 		if (status.route === "none") throw new ConnectError("unavailable", NO_ROUTE);
-		if (status.route === "remote") throw new ConnectError("unavailable", "This computer serves one connector for itself. To add other devices behind one connector, run polycarp browser hub setup --public-url https://host instead.");
+		if (status.route === "remote") throw new ConnectError("unavailable", `This computer serves one connector for itself. To add other devices behind one connector, run ${COMMAND_NAME} hub setup --public-url https://host instead.`);
 		if (status.route === "link" && !status.link?.manage) throw new ConnectError("unavailable", NOT_MANAGER);
 		this.takeCodeSlot();
 		try {
@@ -426,7 +426,7 @@ export class ConnectService {
 				},
 			);
 			if (result.kind === "failed") throw enrollFailure(result, call.hubUrl);
-			if (!result.ok) throw new ConnectError("linked_no_service", `Linked as ${result.name}, but the background service didn't start; run polycarp browser link status.`);
+			if (!result.ok) throw new ConnectError("linked_no_service", `Linked as ${result.name}, but the background service didn't start; run ${COMMAND_NAME} link status.`);
 			return { name: result.name, manage: result.manage, scopes: result.scopes };
 		} finally {
 			clearInterval(keepAlive);
@@ -438,7 +438,7 @@ export class ConnectService {
 /** What a hub's refusal of a code request says to a person: a fixed sentence for the status, never the hub's own words. */
 function hubCodeFailure(status: number | undefined): ConnectError {
 	if (status === undefined) return new ConnectError("failed", "Couldn't reach the hub. Check this computer's connection.");
-	if (status === 401) return new ConnectError("failed", "This device's link was revoked. Run polycarp browser link status.");
+	if (status === 401) return new ConnectError("failed", `This device's link was revoked. Run ${COMMAND_NAME} link status.`);
 	if (status === 429) return new ConnectError("rate_limited", "The hub is rate limiting code requests. Wait a few minutes and try again.");
 	if (status === 403) return new ConnectError("unavailable", "This device isn't a manager on the hub.");
 	return new ConnectError("failed", "The hub refused to make a code.");
@@ -455,7 +455,7 @@ function enrollFailure(result: Extract<EnrollResult, { kind: "failed" }>, hubUrl
 		case "unreadable":
 			return new ConnectError("failed", unreadable(linkFile()));
 		case "launcher":
-			return new ConnectError("failed", "Polycarp's launcher isn't a working one, so the background service would have nothing to start. Run polycarp browser install, then try again.");
+			return new ConnectError("failed", `Polycarp's launcher isn't a working one, so the background service would have nothing to start. Run ${COMMAND_NAME} install, then try again.`);
 		case "unreachable": {
 			let host = "the hub";
 			try {

@@ -4,12 +4,12 @@
  */
 
 import { COMMAND_NAME } from "./self.ts";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NATIVE_HOST_NAME, type UserScriptsStatus } from "../../src/bridge/protocol.ts";
 import { BridgeClient, listSockets } from "./client.ts";
 import { harnesses, launcherValid, shellJoin } from "./harness.ts";
-import { cliLauncherPath, EXTENSION_ID, hostTarget, installedBrowserDirs, launcherPath } from "./install.ts";
+import { cliLauncherPath, EXTENSION_ID, hostTarget, installedBrowserDirs, launcherPath, manifestLauncherRuns } from "./install.ts";
 import { EXTENSION_FILES, extensionDir, repoRoot } from "./paths.ts";
 import { banner, c, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
@@ -96,7 +96,8 @@ function launcherCheck(): Check {
 			};
 }
 
-function hostChecks(): Check[] {
+/** `live`: browsers a running connection names, which count as installed even if their app can't be found. */
+function hostChecks(live: readonly string[] = []): Check[] {
 	if (process.platform === "win32") {
 		return [
 			{
@@ -112,7 +113,7 @@ function hostChecks(): Check[] {
 	// What a manifest may name: the helper inside Polycarp, or the standalone launcher (a standalone Polycarp's own manifest is fine).
 	const accepted = [...new Set([hostTarget(), launcherPath()])];
 	// Only browsers that are really installed: a data folder outlives the app.
-	const found = installedBrowserDirs();
+	const found = installedBrowserDirs(live);
 	if (found.length === 0) {
 		return [
 			{
@@ -124,6 +125,7 @@ function hostChecks(): Check[] {
 			},
 		];
 	}
+	const installFix = (name: string): string => `${COMMAND_NAME} install --browser ${shellJoin([name])}`;
 	return found.map(({ name, dir }) => {
 		const file = join(dir, "NativeMessagingHosts", `${NATIVE_HOST_NAME}.json`);
 		const fail = (detail: string): Check => ({
@@ -131,11 +133,11 @@ function hostChecks(): Check[] {
 			status: "fail",
 			label: `${name}: native host ${existsSync(file) ? "manifest is wrong" : "not registered"}`,
 			detail,
-			fix: `${COMMAND_NAME} install --browser ${name}`,
+			fix: installFix(name),
 		});
 		// A browser that was simply never connected is news, not a failure: one-browser Connect leaves the others alone.
 		if (!existsSync(file)) {
-			return { id: `host:${name}`, status: "warn", label: `${name}: not connected yet`, detail: "Polycarp isn't set up in this browser.", fix: `${COMMAND_NAME} install --browser ${name}` };
+			return { id: `host:${name}`, status: "warn", label: `${name}: not connected yet`, detail: "Polycarp isn't set up in this browser.", fix: installFix(name) };
 		}
 		let manifest: { name?: string; path?: string; allowed_origins?: string[] };
 		try {
@@ -150,7 +152,8 @@ function hostChecks(): Check[] {
 		}
 		const path = manifest.path ?? "";
 		if (!accepted.includes(path)) return fail(`path is ${manifest.path}, expected ${accepted.join(" or ")}`);
-		if (!existsSync(path) || (statSync(path).mode & 0o111) === 0) return fail(`${path} is missing or not executable`);
+		// The file the manifest names must run: exist, be executable, and (for a launcher script) point at a program that is still there.
+		if (!manifestLauncherRuns(path)) return fail(`${path} is missing, not executable, or runs a program that is gone`);
 		return { id: `host:${name}`, status: "ok", label: `${name}: native host registered`, detail: file };
 	});
 }
@@ -225,75 +228,112 @@ export function userScriptsCheck(info: DebugInfo): Check | undefined {
 const SETTLE_S = 10;
 const RETRY_MS = 1500;
 
-async function connectionChecks(): Promise<Check[]> {
+async function connectionChecks(): Promise<{ checks: Check[]; holders: string[] }> {
 	const notConnected: Check = {
 		id: "connected",
 		status: "fail",
 		label: "Extension not connected",
 		detail: "No running browser has the Polycarp extension loaded, or it has not reached the native host yet.",
-		fix: `${COMMAND_NAME} setup`,
+		// Not `setup`: it registers browsers, and registration isn't what is missing when the host never heard from the extension.
+		fix: `Open your browser and load the Polycarp extension (chrome://extensions > Load unpacked > ${extensionDir()}), then run ${COMMAND_NAME} doctor again`,
 	};
 	let sockets: string[];
 	try {
 		sockets = listSockets();
 	} catch (err) {
-		return [{ ...notConnected, detail: err instanceof Error ? err.message : String(err) }];
+		return { checks: [{ ...notConnected, detail: err instanceof Error ? err.message : String(err) }], holders: [] };
 	}
-	// Every live browser connection, each with the browser that holds it (the host knows its parent process).
+	// Every live browser connection, each with the browser that holds it (the host knows its parent process). All are asked at
+	// once under one deadline, so browsers that don't answer cost the run one wait, not one each.
+	const clients: BridgeClient[] = [];
+	const seen: Array<Held | undefined> = sockets.map(() => undefined);
+	const asked = sockets.map((path, i) => askSocket(path, clients, (held) => { seen[i] = held; }));
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	await Promise.race([Promise.all(asked), new Promise<void>((resolve) => { timer = setTimeout(resolve, CONNECT_DEADLINE_MS); })]);
+	if (timer) clearTimeout(timer);
+	for (const client of clients) client.close();
+	const live = seen.filter((held): held is Held => held !== undefined);
+	// The overall line comes from the first connection that answered; only when none did, from the first one there is.
+	const primary = live.find((held) => held.info) ?? live[0];
 	const checks: Check[] = [];
-	let first = true;
-	for (const path of sockets) {
-		const client = new BridgeClient({ name: "doctor" });
-		try {
-			await client.connect(path);
-		} catch {
-			client.close();
-			continue;
-		}
-		if (!client.extensionConnected) {
-			client.close();
-			continue;
-		}
-		const holder = client.hostBrowserName;
-		try {
-			let info = (await client.call("bridge.debug", {}, 5000)) as DebugInfo;
-			if (first && userScriptsCheck(info) && (info.workerUptimeS ?? SETTLE_S) < SETTLE_S) {
-				await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
-				// A worker still restarting may not answer again; the first answer stands then.
-				info = ((await client.call("bridge.debug", {}, 5000).catch(() => undefined)) as DebugInfo | undefined) ?? info;
-			}
-			const version = info.version ?? "unknown version";
-			if (holder) checks.push({ id: `connected:${holder}`, status: "ok", label: `${holder}: extension connected (${version})`, detail: path });
-			if (!first) continue;
-			first = false;
-			checks.unshift({ id: "connected", status: "ok", label: `Extension connected (${version})`, detail: path });
+	for (const held of live) {
+		const isFirst = held === primary;
+		const { holder } = held;
+		if (held.info) {
+			const version = held.info.version ?? "unknown version";
+			if (holder) checks.push({ id: `connected:${holder}`, status: "ok", label: `${holder}: extension connected (${version})`, detail: held.path });
+			if (!isFirst) continue;
+			checks.unshift({ id: "connected", status: "ok", label: `Extension connected (${version})`, detail: held.path });
 			const built = builtVersion();
-			if (built && info.version && built !== info.version) {
+			if (built && held.info.version && built !== held.info.version) {
 				checks.push({
 					id: "loaded-version",
 					status: "fail",
-					label: `The browser runs extension ${info.version}, the build is ${built}`,
+					label: `The browser runs extension ${held.info.version}, the build is ${built}`,
 					fix: `${COMMAND_NAME} reload`,
 				});
 			}
-			const userScripts = userScriptsCheck(info);
+			const userScripts = userScriptsCheck(held.info);
 			if (userScripts) checks.push(userScripts);
-		} catch (err) {
-			if (first) {
-				first = false;
-				checks.unshift({
-					id: "connected",
-					status: "fail",
-					label: "Extension connected but not responding",
-					detail: err instanceof Error ? err.message : String(err),
-					fix: `${COMMAND_NAME} reload`,
-				});
-			}
-		} finally {
-			client.close();
+			continue;
+		}
+		// Connected, but bridge.debug failed or timed out: the browser is live, so it still gets its own line.
+		if (holder) {
+			checks.push({
+				id: `connected:${holder}`,
+				status: "warn",
+				label: `${holder}: extension connected but not responding (unknown version)`,
+				detail: held.error,
+				fix: `${COMMAND_NAME} reload`,
+			});
+		}
+		if (isFirst) {
+			checks.unshift({
+				id: "connected",
+				status: "fail",
+				label: "Extension connected but not responding",
+				detail: held.error,
+				fix: `${COMMAND_NAME} reload`,
+			});
 		}
 	}
-	return checks.length ? checks : [notConnected];
+	return { checks: checks.length ? checks : [notConnected], holders: live.flatMap((held) => (held.holder ? [held.holder] : [])) };
+}
+
+/** One live connection: where it is, which browser holds it, and what bridge.debug said (or why it said nothing). */
+interface Held {
+	path: string;
+	holder?: string;
+	info?: DebugInfo;
+	error?: string;
+}
+
+/** Everything doctor does with all its sockets has to finish inside this; the app stops waiting for doctor at 12 seconds. */
+const CONNECT_DEADLINE_MS = 8000;
+
+async function askSocket(path: string, clients: BridgeClient[], report: (held: Held) => void): Promise<void> {
+	const client = new BridgeClient({ name: "doctor" });
+	clients.push(client);
+	try {
+		await client.connect(path);
+	} catch {
+		return;
+	}
+	if (!client.extensionConnected) return;
+	const holder = client.hostBrowserName;
+	// Until it answers, this connection stands as one that did not: the deadline may arrive first.
+	report({ path, holder, error: `no answer from bridge.debug within ${CONNECT_DEADLINE_MS / 1000} seconds` });
+	try {
+		let info = (await client.call("bridge.debug", {}, 5000)) as DebugInfo;
+		if (userScriptsCheck(info) && (info.workerUptimeS ?? SETTLE_S) < SETTLE_S) {
+			await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+			// A worker still restarting may not answer again; the first answer stands then.
+			info = ((await client.call("bridge.debug", {}, 5000).catch(() => undefined)) as DebugInfo | undefined) ?? info;
+		}
+		report({ path, holder, info });
+	} catch (err) {
+		report({ path, holder, error: err instanceof Error ? err.message : String(err) });
+	}
 }
 
 function harnessChecks(): Check[] {
@@ -335,7 +375,8 @@ function harnessChecks(): Check[] {
 }
 
 export async function runDoctor(options: { json: boolean }): Promise<number> {
-	const checks: Check[] = [nodeCheck(), buildCheck(), launcherCheck(), ...hostChecks(), ...(await connectionChecks()), ...harnessChecks()];
+	const connection = await connectionChecks();
+	const checks: Check[] = [nodeCheck(), buildCheck(), launcherCheck(), ...hostChecks(connection.holders), ...connection.checks, ...harnessChecks()];
 	const failed = checks.filter((check) => check.status === "fail").length;
 	if (options.json) {
 		process.stdout.write(`${JSON.stringify({ ok: failed === 0, version: VERSION, checks }, null, 2)}\n`);

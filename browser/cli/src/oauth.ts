@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { CODE_TTL_MS, CodeLimitError, type CodeRecord, findCode, hashCode, liveCodes, newCode, normalizeCode, REQUEST_LOCK_MS } from "./codes.ts";
 import { configDir, LockTimeoutError, readJsonFile, withFileLock, withFileLockAsync, writeJsonPrivate } from "./files.ts";
 import { pageCss } from "./theme.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export { configDir };
 
@@ -439,7 +440,7 @@ export async function registerClient(config: OAuthConfig, body: unknown, source 
 			// out itself, never an approved connector, and never blocks a new registration.
 			const active = new Set(Object.values(state.tokens).map((t) => t.client_id));
 			const oldest = clients.filter((c) => !active.has(c.client_id) && c.last_used === undefined).sort((a, b) => a.created_at - b.created_at)[0];
-			if (!oldest) throw new OAuthError(400, "invalid_client_metadata", "Too many registered clients. Remove unused ones with polycarp browser token revoke <client id>.");
+			if (!oldest) throw new OAuthError(400, "invalid_client_metadata", `Too many registered clients. Remove unused ones with ${COMMAND_NAME} token revoke <client id>.`);
 			delete state.clients[oldest.client_id];
 		}
 		state.clients[clientId] = {
@@ -581,7 +582,7 @@ export async function approveAuthorize(config: OAuthConfig, form: URLSearchParam
 	// The passcode carries about 100 bits, so these caps bound work, not guessing. Per client and
 	// per source first; the global cap is high, and a new passcode clears all of them.
 	if (failures.filter((f) => f.client === request.client_id).length >= 5 || failures.filter((f) => f.source === source).length >= 20 || failures.length >= 1000) {
-		throw new OAuthError(429, "temporarily_unavailable", "Too many wrong passcodes or connect codes. Wait 15 minutes, or run polycarp browser token passcode for a new passcode, which clears this limit.");
+		throw new OAuthError(429, "temporarily_unavailable", `Too many wrong passcodes or connect codes. Wait 15 minutes, or run ${COMMAND_NAME} token passcode for a new passcode, which clears this limit.`);
 	}
 	const typed = form.get("passcode") ?? "";
 	// Consent phishing (issue #97): anyone can register a client against this public URL and send the
@@ -595,7 +596,7 @@ export async function approveAuthorize(config: OAuthConfig, form: URLSearchParam
 		throw new OAuthError(
 			401,
 			"access_denied",
-			"This is a new connector, so your passcode alone does not approve it. On the computer that runs Polycarp, run: polycarp browser token approval-code, and enter that one-time connect code here. Only do this if you added this connector yourself, just now.",
+			`This is a new connector, so your passcode alone does not approve it. On the computer that runs Polycarp, run: ${COMMAND_NAME} token approval-code, and enter that one-time connect code here. Only do this if you added this connector yourself, just now.`,
 		);
 	}
 	// A live approval code stands in for the passcode. It is checked first (a file read), and used up only once the scopes are valid.
@@ -605,7 +606,7 @@ export async function approveAuthorize(config: OAuthConfig, form: URLSearchParam
 		throw new OAuthError(401, "access_denied", message);
 	};
 	if (!byCode && !(await checkPasscode(state.passcode, typed))) {
-		refuse(state.passcode ? "Wrong passcode or connect code." : "No passcode is set. Run polycarp browser token passcode, or polycarp browser token approval-code for a one-time connect code, on the computer that runs serve.");
+		refuse(state.passcode ? "Wrong passcode or connect code." : `No passcode is set. Run ${COMMAND_NAME} token passcode, or ${COMMAND_NAME} token approval-code for a one-time connect code, on the computer that runs serve.`);
 	}
 	const scopes = [...new Set(form.getAll("scope"))];
 	if (scopes.length === 0) throw new OAuthError(400, "invalid_scope", "Tick at least one permission.");
@@ -801,8 +802,8 @@ export function consentPage(config: OAuthConfig, d: ConsentDetails, error?: stri
 <body><main><h1>Allow ${escape(d.clientName)} to use your browser through Polycarp?</h1>
 <p>It will work in its own tab group in your signed-in browser, with the permissions you tick. After you approve, you go back to <strong>${escape(d.redirectHost)}</strong>.</p>
 <p>Only approve a connection you started yourself, just now, in your own account. A link someone sent you could connect their account to your browser. This connection registered ${escape(d.registeredAgo)} and returns to <code>${escape(d.redirectUri)}</code>.</p>
-${d.newClient ? "<p><strong>This is a new connector.</strong> Your passcode will not approve it. On the computer that runs Polycarp, run <code>polycarp browser token approval-code</code> and enter the one-time connect code it prints.</p>" : ""}
-${error ? `<p class="error">${escape(error)}</p>` : ""}${d.passcodeSet || d.newClient ? "" : '<p class="error">No passcode is set yet. Run polycarp browser token passcode on the computer that runs serve, or polycarp browser token approval-code for a one-time connect code.</p>'}
+${d.newClient ? `<p><strong>This is a new connector.</strong> Your passcode will not approve it. On the computer that runs Polycarp, run <code>${COMMAND_NAME} token approval-code</code> and enter the one-time connect code it prints.</p>` : ""}
+${error ? `<p class="error">${escape(error)}</p>` : ""}${d.passcodeSet || d.newClient ? "" : `<p class="error">No passcode is set yet. Run ${COMMAND_NAME} token passcode on the computer that runs serve, or ${COMMAND_NAME} token approval-code for a one-time connect code.</p>`}
 <form method="post" action="/authorize"><input type="hidden" name="request" value="${escape(d.signed)}">
 <fieldset><legend>Permissions</legend>${boxes}</fieldset>
 <label for="passcode">${d.newClient ? "One-time connect code" : "Passcode or connect code"}</label><input id="passcode" name="passcode" type="text" class="secret" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-bwignore required autofocus>

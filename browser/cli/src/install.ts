@@ -5,7 +5,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
@@ -117,10 +117,19 @@ export function browserInstalled(name: string): boolean {
 	return !process.env.TABKYRA_APPLICATIONS_DIRS && id !== undefined && knownToSpotlight(id);
 }
 
-/** The browsers with a data folder here and the app installed. */
-export function installedBrowserDirs(): BrowserDir[] {
-	// A browser that already has our manifest stays listed even if its app can't be found: it is in use.
-	return browserDirs().filter(({ name, dir }) => existsSync(dir) && (browserInstalled(name) || existsSync(join(dir, "NativeMessagingHosts", `${NATIVE_HOST_NAME}.json`))));
+/**
+ * The browsers with a data folder here and the app installed. `live` names browsers a running connection says hold the extension:
+ * they are in use even if their app can't be found. A manifest left in a data folder proves nothing (uninstalling the app keeps it).
+ */
+export function installedBrowserDirs(live: readonly string[] = []): BrowserDir[] {
+	return browserDirs().filter(({ name, dir }) => existsSync(dir) && (browserInstalled(name) || live.includes(name)));
+}
+
+/** The browsers that already have one of our manifests, current or not: the ones this install has been registered with. */
+export function registeredBrowserNames(): string[] {
+	return browserDirs()
+		.filter(({ dir }) => existsSync(join(dir, "NativeMessagingHosts", `${NATIVE_HOST_NAME}.json`)))
+		.map(({ name }) => name);
 }
 
 function configDir(): string {
@@ -219,13 +228,18 @@ export interface InstallResult {
 
 export interface InstallOptions {
 	force?: boolean;
-	/** Register only this browser (by the name browserDirs() gives it), and touch the launchers only if the agent launcher doesn't work. */
+	/** Register only this browser (by the name browserDirs() gives it), and touch the launchers only if one of them doesn't work. */
 	browser?: string;
+	/** Register only these browsers; the launchers are kept as they are while both work. */
+	browsers?: readonly string[];
+	/** False rewrites the launchers even when they work. */
+	keepLaunchers?: boolean;
 }
 
 export function install(options: InstallOptions = {}): InstallResult {
-	// One browser: a working launcher (a standalone Polycarp's, say) stays as it is, so nothing else is repointed.
-	const keepLaunchers = options.browser !== undefined && launcherCheckValid();
+	const only = options.browsers ?? (options.browser !== undefined ? [options.browser] : undefined);
+	// A chosen set of browsers: working launchers (a standalone Polycarp's, say) stay as they are, so nothing else is repointed.
+	const keepLaunchers = options.keepLaunchers !== false && only !== undefined && launchersWork();
 	const launcher = keepLaunchers ? hostTarget() : writeLauncher();
 	const manifest = manifestFor(launcher);
 	const written: string[] = [];
@@ -248,7 +262,7 @@ export function install(options: InstallOptions = {}): InstallResult {
 
 	for (const { name, dir } of browserDirs()) {
 		if (!existsSync(dir)) continue;
-		if (options.browser !== undefined && name !== options.browser) continue;
+		if (only !== undefined && !only.includes(name)) continue;
 		const hostsDir = join(dir, "NativeMessagingHosts");
 		const file = join(hostsDir, `${NATIVE_HOST_NAME}.json`);
 		if (!options.force && existsSync(file) && readFileSync(file, "utf8") === manifest) {
@@ -262,16 +276,56 @@ export function install(options: InstallOptions = {}): InstallResult {
 	return { launcher, written, skipped };
 }
 
-/** The agent launcher exists, is executable, and the program it runs is still there (the same test as harness.ts's launcherValid). */
-function launcherCheckValid(): boolean {
-	const path = cliLauncherPath();
+/**
+ * Does this launcher script run? It exists, is executable, and every program or script it names by absolute path is still
+ * there (a deleted checkout leaves a launcher that execs nothing). A bare name such as `node` is the PATH's business.
+ */
+export function launcherWorks(path: string): boolean {
+	const named = absolutePathsIn(path);
+	return named !== undefined && named.length > 0 && named.every((p) => existsSync(p));
+}
+
+/** The absolute paths a launcher script quotes, or undefined if it isn't there or can't run. */
+function absolutePathsIn(path: string): string[] | undefined {
 	try {
-		if (process.platform !== "win32" && (statSync(path).mode & 0o111) === 0) return false;
-		const target = readFileSync(path, "utf8").match(/"([^"]+)"\s+(?:"\$@"|%\*)/)?.[1];
-		return Boolean(target && existsSync(target));
+		if (process.platform !== "win32" && (statSync(path).mode & 0o111) === 0) return undefined;
+		return [...readFileSync(path, "utf8").matchAll(/"([^"\n]+)"/g)].map((m) => m[1]).filter((p) => isAbsolute(p));
+	} catch {
+		return undefined;
+	}
+}
+
+/** The first `n` characters of a file, without reading the rest (the helper is a large binary). */
+function firstBytes(path: string, n: number): string {
+	const fd = openSync(path, "r");
+	try {
+		const buf = Buffer.alloc(n);
+		const read = readSync(fd, buf, 0, n, 0);
+		return buf.subarray(0, read).toString("latin1");
+	} finally {
+		closeSync(fd);
+	}
+}
+
+/**
+ * What a browser's manifest names: a launcher script (every program it names must still be there) or the helper itself (it must
+ * exist and be executable). A script that names nothing has nothing missing.
+ */
+export function manifestLauncherRuns(path: string): boolean {
+	try {
+		if (!existsSync(path)) return false;
+		const head = firstBytes(path, 2);
+		if (head !== "#!" && !path.endsWith(".cmd")) return process.platform === "win32" || (statSync(path).mode & 0o111) !== 0;
+		const named = absolutePathsIn(path);
+		return named !== undefined && named.every((p) => existsSync(p));
 	} catch {
 		return false;
 	}
+}
+
+/** Both launchers work: the agent launcher harness configs run and the host launcher the manifests name. */
+function launchersWork(): boolean {
+	return launcherWorks(cliLauncherPath()) && manifestLauncherRuns(hostTarget());
 }
 
 export type HostState = "current" | "stale" | "missing";
@@ -284,10 +338,10 @@ export function hostStatus(): Array<BrowserDir & { state: HostState; file: strin
 		const file = join(browser.dir, "NativeMessagingHosts", `${NATIVE_HOST_NAME}.json`);
 		let state: HostState = "missing";
 		if (existsSync(file)) {
-			// Current: it names the helper or a standalone launcher that still runs, and the one extension id (doctor's test).
+			// Current: it names the helper or a standalone launcher that still runs (down to the program the launcher execs), and the one extension id (doctor's test).
 			try {
 				const m = JSON.parse(readFileSync(file, "utf8")) as { path?: string; allowed_origins?: string[] };
-				const ok = typeof m.path === "string" && accepted.has(m.path) && existsSync(m.path) && JSON.stringify(m.allowed_origins) === JSON.stringify([`chrome-extension://${EXTENSION_ID}/`]);
+				const ok = typeof m.path === "string" && accepted.has(m.path) && manifestLauncherRuns(m.path) && JSON.stringify(m.allowed_origins) === JSON.stringify([`chrome-extension://${EXTENSION_ID}/`]);
 				state = ok ? "current" : "stale";
 			} catch {
 				state = "stale";

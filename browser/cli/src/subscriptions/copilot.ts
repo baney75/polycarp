@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { COPILOT } from "../../../src/subscriptions/constants.ts";
 import { type Fetch, SubscriptionError } from "./siwc.ts";
 import { readPrivateJson, removeFile, subscriptionsDir, withFileLock, writePrivateJson } from "./store.ts";
+import { COMMAND_NAME } from "../self.ts";
 
 export interface CopilotRecord {
 	login?: string;
@@ -338,11 +339,11 @@ export function loadSdk(): SdkModule {
 	if (sdkInstalled() || failure)
 		throw new SubscriptionError(
 			"sdk_load_failed",
-			`GitHub's Copilot SDK is installed but didn't load (${failure instanceof Error ? failure.message : "unknown error"}). Run \`polycarp browser copilot-sdk install\` again.`,
+			`GitHub's Copilot SDK is installed but didn't load (${failure instanceof Error ? failure.message : "unknown error"}). Run \`${COMMAND_NAME} copilot-sdk install\` again.`,
 		);
 	throw new SubscriptionError(
 		"sdk_missing",
-		`GitHub's Copilot SDK isn't installed. Run \`polycarp browser copilot-sdk install\` (installs ${COPILOT.sdkPackage}@${COPILOT.sdkVersion}, about 160 MB).`,
+		`GitHub's Copilot SDK isn't installed. Run \`${COMMAND_NAME} copilot-sdk install\` (installs ${COPILOT.sdkPackage}@${COPILOT.sdkVersion}, about 160 MB).`,
 	);
 }
 

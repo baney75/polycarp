@@ -27,6 +27,7 @@ import { parsePublicKey, SignatureError, verifyMinisign } from "./minisign.ts";
 import { lintCommunity, parseSites } from "./skill-community.ts";
 import { lintText, parseFrontmatter } from "./skill-lint.ts";
 import { VERSION } from "./version.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export const CATALOG_FILE = "community-catalog.json";
 export const CATALOG_SIG = "community-catalog.json.minisig";
@@ -323,7 +324,7 @@ export function activeCommunity(bundled: ReadonlySet<string>): Map<string, Activ
 /** Why a community skill is gone: pulled by the catalog, or removed by the user. */
 export function removalReason(name: string): string | undefined {
 	const state = readState();
-	if (state.disabled.includes(name)) return `you removed the community skill ${name} (polycarp browser skill enable ${name} brings it back)`;
+	if (state.disabled.includes(name)) return `you removed the community skill ${name} (${COMMAND_NAME} skill enable ${name} brings it back)`;
 	const pulled = [...state.removed].reverse().find((r) => r.name === name);
 	if (pulled && !loadCatalog().catalog?.skills.some((s) => s.name === name)) return `the community catalog pulled ${name}: ${pulled.reason}`;
 	return undefined;
@@ -376,7 +377,7 @@ export interface SyncResult {
 export async function syncCatalog(options: { due?: boolean } = {}): Promise<SyncResult> {
 	const state = readState();
 	const empty = { added: [], updated: [], removed: [] };
-	if (!state.enabled) return { state: "off", message: "Community skills are off (polycarp browser skill sync --on turns them on).", ...empty };
+	if (!state.enabled) return { state: "off", message: `Community skills are off (${COMMAND_NAME} skill sync --on turns them on).`, ...empty };
 	if (options.due && state.lastCheck && Date.now() - Date.parse(state.lastCheck) < SYNC_INTERVAL_MS) {
 		return { state: "skipped", message: `Checked ${state.lastCheck}; the next check is a day after that.`, serial: state.serial, ...empty };
 	}

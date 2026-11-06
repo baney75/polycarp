@@ -1,8 +1,8 @@
 // doctor reports which browser holds each connection (the host knows its parent process), a never-connected browser is news
-// and not a failure, `install --browser` refuses an unknown name, and the parent process maps to a browser name.
+// and not a failure, and `install --browser` refuses an unknown name. (The parent-process mapping is in parent-browser.test.mjs.)
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -21,7 +21,7 @@ const frame = (m) => {
 let root;
 const servers = [];
 /** A fake host: welcomes as the given browser (or none) and answers bridge.debug with a version. */
-async function fakeHost(pid, browserName, version) {
+async function fakeHost(pid, browserName, version, { silent = false } = {}) {
 	const server = createServer((socket) => {
 		let buffered = Buffer.alloc(0);
 		socket.on("data", (chunk) => {
@@ -30,7 +30,7 @@ async function fakeHost(pid, browserName, version) {
 				const msg = JSON.parse(buffered.subarray(4, 4 + buffered.readUInt32LE(0)).toString());
 				buffered = buffered.subarray(4 + buffered.readUInt32LE(0));
 				if (msg.type === "hello") socket.write(frame({ type: "welcome", clientId: "c1", hostVersion: "0", extensionConnected: true, ...(browserName ? { browserName } : {}) }));
-				else if (msg.method === "bridge.debug") socket.write(frame({ type: "response", id: msg.id, result: { version, userScriptsApi: true, userScripts: { state: "ready" } } }));
+				else if (msg.method === "bridge.debug" && !silent) socket.write(frame({ type: "response", id: msg.id, result: { version, userScriptsApi: true, userScripts: { state: "ready" } } }));
 			}
 		});
 	});
@@ -75,7 +75,7 @@ test("a browser that was never connected is a warning with its own fix, not a fa
 	assert.ok(hosts.length >= 1);
 	for (const h of hosts) {
 		assert.equal(h.status, "warn", JSON.stringify(h));
-		assert.match(h.fix, /^(tabkyra|polycarp browser) install --browser \w/);
+		assert.match(h.fix, /^tabkyra install --browser \w/);
 		assert.doesNotMatch(h.fix, /--force/);
 	}
 });
@@ -108,11 +108,57 @@ test("install --browser refuses a name it doesn't know, and writes nothing", () 
 	assert.equal(existsSync(join(root, "home", ".config", "tabkyra")), false, "no launcher was written");
 });
 
-test("the parent process maps to the browser's name", async () => {
-	const { browserFromExecutable } = await import("../src/parent-browser.ts").catch(() => ({ browserFromExecutable: undefined }));
-	if (!browserFromExecutable) return; // the compiled bundle has no loose source; the mapping is covered where tsx runs
-	assert.equal(browserFromExecutable("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"), "Chrome");
-	assert.equal(browserFromExecutable("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"), "Brave");
-	assert.equal(browserFromExecutable("/usr/bin/microsoft-edge-stable"), "Edge");
-	assert.equal(browserFromExecutable("/bin/zsh"), undefined);
+const reset = async () => {
+	for (const s of servers) s.close();
+	servers.length = 0;
+	await rm(join(root, "sock"), { recursive: true, force: true });
+	mkdirSync(join(root, "sock"), { mode: 0o700 });
+};
+
+test("second-S5: sockets are asked at once under one deadline, and a silent browser still gets its own line", async () => {
+	await reset();
+	await fakeHost(process.pid, "Chrome", "1.1.10", { silent: true });
+	await fakeHost(process.ppid, "Helium", "1.1.9", { silent: true });
+	const started = Date.now();
+	const checks = await doctor();
+	const took = Date.now() - started;
+	// One wait for both (the app stops waiting at 12 s); in sequence these two would need 10 s of bridge.debug timeouts.
+	assert.ok(took < 11000, `doctor took ${took} ms`);
+	const byId = Object.fromEntries(checks.map((c) => [c.id, c]));
+	assert.equal(byId.connected.status, "fail");
+	assert.match(byId.connected.label, /not responding/);
+	for (const name of ["Chrome", "Helium"]) {
+		assert.equal(byId[`connected:${name}`]?.status, "warn", `${name} is live and says so`);
+		assert.match(byId[`connected:${name}`].label, new RegExp(`${name}: extension connected but not responding \\(unknown version\\)`));
+	}
+});
+
+test("second-S5: a later socket that fails still shows its browser as connected, beside one that answers", async () => {
+	await reset();
+	await fakeHost(process.pid, "Chrome", "1.1.10");
+	await fakeHost(process.ppid, "Helium", "1.1.9", { silent: true });
+	const byId = Object.fromEntries((await doctor()).map((c) => [c.id, c]));
+	assert.equal(byId["connected:Chrome"].status, "ok");
+	assert.equal(byId["connected:Helium"].status, "warn");
+	assert.equal(byId.connected.status, "ok");
+});
+
+test("second-S1: a browser with a leftover data folder and no app is not listed, unless a live connection names it", { skip: process.platform !== "darwin" && "app detection is a Mac thing" }, async () => {
+	await reset();
+	const support = join(root, "home", "Library", "Application Support");
+	mkdirSync(join(support, "BraveSoftware", "Brave-Browser", "NativeMessagingHosts"), { recursive: true });
+	// A manifest an earlier install wrote proves nothing: the app is gone.
+	writeFileSync(join(support, "BraveSoftware", "Brave-Browser", "NativeMessagingHosts", "ai.tabkyra.bridge.json"), JSON.stringify({ name: "ai.tabkyra.bridge", path: "/bin/echo" }));
+	assert.equal((await doctor()).some((c) => c.id === "host:Brave"), false);
+	await fakeHost(process.pid, "Brave", "1.1.10");
+	assert.equal((await doctor()).some((c) => c.id === "host:Brave"), true, "a live connection names it");
+});
+
+test("first-F6/sol-F5: the repair command for a two-word browser is quoted", { skip: process.platform !== "darwin" && "app detection is a Mac thing" }, async () => {
+	await reset();
+	const support = join(root, "home", "Library", "Application Support");
+	mkdirSync(join(support, "Google", "Chrome Beta"), { recursive: true });
+	mkdirSync(join(root, "apps", "Google Chrome Beta.app"), { recursive: true });
+	const beta = (await doctor()).find((c) => c.id === "host:Chrome Beta");
+	assert.equal(beta.fix, "tabkyra install --browser 'Chrome Beta'");
 });

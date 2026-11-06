@@ -90,7 +90,7 @@ export function tailscaleTunnel(options: { port: number; public: boolean; off: b
 	if (r.code !== 0) return { ok: false, message: r.out };
 	const url = `https://${dns}${SERVE_PATH}/mcp`;
 	const reach = options.public ? "anyone on the internet who has a token" : "your own tailnet devices that have a token";
-	return { ok: true, url, message: `MCP is reachable at ${url} by ${reach}. Run polycarp browser serve on port ${options.port}.` };
+	return { ok: true, url, message: `MCP is reachable at ${url} by ${reach}. Run ${COMMAND_NAME} serve on port ${options.port}.` };
 }
 
 function cloudflaredPidFile(): string {
@@ -126,7 +126,7 @@ export async function cloudflareTunnel(options: { port: number; off: boolean; ti
 		}
 		return { ok: true, message: "Stopped the Cloudflare tunnel." };
 	}
-	if (ourCloudflared() !== undefined) return { ok: false, message: "A Cloudflare tunnel is already running. Run ${COMMAND_NAME} tunnel cloudflare --off first." };
+	if (ourCloudflared() !== undefined) return { ok: false, message: `A Cloudflare tunnel is already running. Run ${COMMAND_NAME} tunnel cloudflare --off first.` };
 	const bin = which("cloudflared");
 	if (!bin) {
 		return {

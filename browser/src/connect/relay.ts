@@ -8,6 +8,7 @@
  * strictly (cli/src/connect-host.ts) and is the authority.
  */
 
+import { hostCommand } from "../bridge/host-command.js";
 import { onConnectMessage, sendConnect } from "../bridge/native.js";
 import { checkConnectRequest } from "./check.js";
 import { GestureGate, isSidePanelPort } from "./gate.js";
@@ -99,7 +100,7 @@ export function startConnectRelay(): void {
 					id: request.id,
 					error: {
 						code: "no_host",
-						message: "Polycarp's helper isn't connected. Run `polycarp browser setup`, then try again.",
+						message: `Polycarp's helper isn't connected. Run \`${hostCommand()} setup\`, then try again.`,
 					},
 				} satisfies ConnectReply);
 			}

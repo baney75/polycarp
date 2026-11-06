@@ -49,6 +49,7 @@ import { handleOAuth, readBody, requestSource, sendJson } from "./oauth-http.ts"
 import { liveGrantIds, mintApprovalCode, normalizePublicUrl, type OAuthConfig, resourceMetadataUrl, verifyAccessToken } from "./oauth.ts";
 import { authenticate, HUB_CALLER_HEADER, HUB_SCOPES_HEADER, loadTokens, SCOPES, safeCallerName } from "./remote.ts";
 import { pageCss } from "./theme.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 const SESSION_IDLE_MS = 30 * 60_000;
@@ -174,7 +175,7 @@ const bearer = (header: string | undefined) => /^Bearer (\S+)$/.exec(header ?? "
 
 export async function startHub(options: HubOptions): Promise<HubHandle> {
 	const host = options.host ?? "127.0.0.1";
-	if (!LOOPBACK_HOSTS.has(host)) throw new Error(`polycarp browser hub serve binds to loopback only (got ${host}). Put an HTTPS front door in front of it.`);
+	if (!LOOPBACK_HOSTS.has(host)) throw new Error(`${COMMAND_NAME} hub serve binds to loopback only (got ${host}). Put an HTTPS front door in front of it.`);
 	const oauth: OAuthConfig = { publicUrl: options.publicUrl, redirectHosts: options.redirectHosts ?? [], scopes: SCOPES };
 	const links = new Map<string, Link>();
 	// The live snapshot (hub devices) shows each device's sessions, so a change to this map refreshes it.
@@ -211,7 +212,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 
 	const http: Server = createServer((req, res) => {
 		handle(req, res).catch((err) => {
-			process.stderr.write(`[polycarp browser hub] ${err instanceof Error ? err.message : String(err)}\n`);
+			process.stderr.write(`[${COMMAND_NAME} hub] ${err instanceof Error ? err.message : String(err)}\n`);
 			if (!res.headersSent) deny(res, 500, "Internal error.");
 			else res.end();
 		});
@@ -344,7 +345,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 				const out: Record<string, string> = {};
 				for (const k of FORWARD_RESPONSE_HEADERS) if (frame.headers[k]) out[k] = frame.headers[k];
 				if (status === 502 && frame.status === 401) {
-					deny(p.res, 502, "This device refused the hub's link token. Run polycarp browser link off and link again on it.");
+					deny(p.res, 502, `This device refused the hub's link token. Run ${COMMAND_NAME} link off and link again on it.`);
 					finish(link, frame.id);
 					return;
 				}
@@ -469,7 +470,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 
 	function offlineMessage(): string {
 		const devices = loadDevices().devices;
-		if (!devices.length) return "No device is linked to this hub. Run polycarp browser hub code, then polycarp browser link on a device.";
+		if (!devices.length) return `No device is linked to this hub. Run ${COMMAND_NAME} hub code, then ${COMMAND_NAME} link on a device.`;
 		const lines = devices.map((d) => `${d.name}: ${links.has(d.id) ? "online" : d.lastSeen ? `offline, last seen ${d.lastSeen}` : "never connected"}`);
 		return `No device is online. ${lines.join("; ")}.`;
 	}
@@ -632,7 +633,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			const made = redeemConnectCode(code, name || "device");
 			if (!made) {
 				enrollLimit.fail(source);
-				return sendJson(res, 401, { error: "invalid_code", error_description: "That connect code is wrong, expired or already used. Run polycarp browser hub code for a new one." });
+				return sendJson(res, 401, { error: "invalid_code", error_description: `That connect code is wrong, expired or already used. Run ${COMMAND_NAME} hub code for a new one.` });
 			}
 			if (typeof body.version === "string") touchDevice(made.record.id, { version: body.version.slice(0, 40) });
 			return sendJson(res, 200, { deviceId: made.record.id, secret: made.credential.slice(made.record.id.length + 1), manage: made.record.manage, name: made.record.name });
@@ -653,7 +654,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			return sendJson(res, 401, { error: "invalid_token", error_description: "This device's credential is not valid." });
 		}
 		// Only a manager device mints codes.
-		if (!device.manage) return sendJson(res, 403, { error: "forbidden", error_description: "This device is not a manager. Link it with a code from polycarp browser hub code --manage." });
+		if (!device.manage) return sendJson(res, 403, { error: "forbidden", error_description: `This device is not a manager. Link it with a code from ${COMMAND_NAME} hub code --manage.` });
 		const body = await readJsonBody(req, res);
 		if (!body) return;
 		try {

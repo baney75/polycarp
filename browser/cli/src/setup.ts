@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { BridgeClient, listSockets } from "./client.ts";
 import { buildState, builtVersion, sourceVersion } from "./doctor.ts";
 import { harnesses, launcherValid, runCommand, shellJoin, tabkyraBinary, which } from "./harness.ts";
-import { browserDirs, install } from "./install.ts";
+import { browserDirs, install, installedBrowserDirs, registeredBrowserNames } from "./install.ts";
 import { extensionDir, repoRoot } from "./paths.ts";
 import { installSkills, skillTargets } from "./skill.ts";
 import { SKILLS } from "./skills-catalog.ts";
@@ -24,6 +24,8 @@ export interface SetupOptions {
 	wait: boolean;
 	/** Seconds to wait for the extension; 0 waits until Ctrl+C. */
 	timeoutS: number;
+	/** Register this browser (by the name browserDirs() gives it) in addition to the ones already registered. */
+	browser?: string;
 }
 
 /** Without a terminal nobody can press Ctrl+C on an endless wait, so it gets a bound. */
@@ -77,13 +79,27 @@ async function ensureBuild(options: SetupOptions): Promise<boolean> {
 	return true;
 }
 
-function registerHost(): boolean {
-	const result = install();
+/**
+ * Which browsers setup writes a native-host link for: the ones already registered (refreshed), plus one the person chose with
+ * --browser. A machine with none registered yet gets the installed browsers (a first setup has to connect something).
+ * Never a browser that is only a leftover data folder, and never every folder there is.
+ */
+export function setupBrowsers(options: Pick<SetupOptions, "browser">): string[] {
+	const names = new Set(registeredBrowserNames());
+	if (options.browser !== undefined) names.add(options.browser);
+	if (names.size === 0) for (const { name } of installedBrowserDirs()) names.add(name);
+	return [...names];
+}
+
+function registerHost(options: SetupOptions): boolean {
+	const targets = setupBrowsers(options);
+	// A working launcher stays as it is (a standalone install's, say); only a broken one is rewritten.
+	const result = install({ browsers: targets });
 	if (process.platform === "win32") {
 		for (const key of result.written) console.log(`  ${sym.ok} ${key}`);
 		return result.written.length > 0;
 	}
-	const present = browserDirs().filter(({ dir }) => existsSync(dir));
+	const present = browserDirs().filter(({ name, dir }) => targets.includes(name) && existsSync(dir));
 	if (present.length === 0) {
 		console.log(`  ${sym.fail} No Chromium browser profile found. Open your browser once, then run ${c.bold(`${COMMAND_NAME} setup`)} again.`);
 		return false;
@@ -362,9 +378,9 @@ export async function runSetup(options: SetupOptions): Promise<number> {
 	if (!(await ensureBuild(opts))) return 1;
 
 	step(2, "Register the native host with your browsers");
-	if (!registerHost()) return 1;
+	if (!registerHost(opts)) return 1;
 	if (!launcherValid()) {
-		install({ force: true });
+		install({ browsers: setupBrowsers(opts), keepLaunchers: false });
 		if (!launcherValid()) {
 			console.log(`  ${sym.fail} Could not write the agent launcher at ${tabkyraBinary()}. Check that ~/.config/tabkyra is writable.`);
 			return 1;
@@ -382,7 +398,7 @@ export async function runSetup(options: SetupOptions): Promise<number> {
 	console.log();
 	if (connected && harnessesOk) {
 		console.log(`${sym.ok} ${c.bold("Polycarp is ready.")} Ask your agent to open a page, for example:`);
-		console.log(`  ${c.dim('"Use tabkyra to open news.ycombinator.com and list the top five stories."')}`);
+		console.log(`  ${c.dim('"Use Polycarp to open news.ycombinator.com and list the top five stories."')}`);
 		return 0;
 	}
 	const next = connected ? "fix the agent step above" : "load the extension";

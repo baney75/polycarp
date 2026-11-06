@@ -4,6 +4,7 @@
  * secret (cli/src/connect-host.ts).
  */
 
+import { hostCommand } from "../bridge/host-command.js";
 import {
 	type ApprovalCode,
 	CONNECT_PORT,
@@ -38,7 +39,7 @@ interface Waiter {
 export const REQUEST_TIMEOUT_MS = 20_000;
 /** joinHub talks to the hub, whose own timeout is 15 seconds. */
 export const JOIN_TIMEOUT_MS = 30_000;
-export const NO_REPLY_MESSAGE = "Polycarp's helper didn't answer. Update it: polycarp browser update";
+export const noReplyMessage = (): string => `Polycarp's helper didn't answer. Update it: ${hostCommand()} update`;
 
 let port: chrome.runtime.Port | undefined;
 let seq = 0;
@@ -113,7 +114,7 @@ function request<T>(method: string, params?: Record<string, unknown>, onProgress
 		};
 		const expire = () => {
 			waiters.delete(id);
-			reject(new ConnectRequestError("no_reply", NO_REPLY_MESSAGE));
+			reject(new ConnectRequestError("no_reply", noReplyMessage()));
 		};
 		waiters.set(id, waiter);
 		waiter.rearm();

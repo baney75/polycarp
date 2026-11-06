@@ -5,6 +5,7 @@
 
 import { createToken, loadTokens, SCOPES } from "./remote.ts";
 import { DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export const HUB_SCOPES = ["browser.read", "browser.navigate"] as const;
 
@@ -19,7 +20,7 @@ export function createHubToken(name = "hub"): { token: string; id: string } {
 	}
 	if (loadTokens().some((t) => t.name === name && !t.revokedAt)) {
 		throw new Error(
-			`A token named ${name} already exists. Revoke it with polycarp browser token revoke <id>, or pass a different --name.`,
+			`A token named ${name} already exists. Revoke it with ${COMMAND_NAME} token revoke <id>, or pass a different --name.`,
 		);
 	}
 	const { token, record } = createToken(name, [...HUB_SCOPES]);

@@ -2,6 +2,13 @@ import AppKit
 import XCTest
 @testable import BaneySpacesCore
 
+/// A list that several threads append to.
+private final class Collected<T>: @unchecked Sendable {
+    private let lock = NSLock(); private var items: [T] = []
+    func append(_ item: T) { lock.lock(); items.append(item); lock.unlock() }
+    var value: [T] { lock.lock(); defer { lock.unlock() }; return items }
+}
+
 final class BrowserConnectTests: XCTestCase {
     private let fm = FileManager.default
 
@@ -38,9 +45,39 @@ final class BrowserConnectTests: XCTestCase {
         let s = status(unattributed: "1.2.0", browsers: [("Helium", true), ("Chrome", true)])
         XCTAssertTrue(s.unattributed)
         XCTAssertEqual(BrowserRows.rows(s, bundledVersion: "1.2.0").map(\.state), [.connect, .connect], "no row claims it")
-        // The panel: something that was already connected when it opened is not its browser; one that appears later is.
-        XCTAssertEqual(BrowserPanelState.next(s, bundledVersion: "1.2.0", browser: "Chrome", connectedAtOpen: true), .waiting)
-        XCTAssertEqual(BrowserPanelState.next(s, bundledVersion: "1.2.0", browser: "Chrome", connectedAtOpen: false), .connected)
+        // The panel: a connection that names no browser is never this browser connecting, whether it was there at open or came later.
+        XCTAssertEqual(BrowserPanelState.next(s, bundledVersion: "1.2.0", browser: "Chrome"), .waiting)
+        XCTAssertFalse(BrowserPanelState.next(s, bundledVersion: "1.2.0", browser: "Chrome").closesItself)
+        // It shows as its own information line.
+        XCTAssertEqual(BrowserPanelState.unattributedNote(s, browser: "Chrome"), "Polycarp is connected in a browser (extension 1.2.0), but it can't say which. This closes when Chrome connects.")
+        // Once the helper names the browser, that is success.
+        let named = status(connections: ["Chrome": "1.2.0"], browsers: [("Helium", true), ("Chrome", true)])
+        XCTAssertEqual(BrowserPanelState.next(named, bundledVersion: "1.2.0", browser: "Chrome"), .connected)
+        XCTAssertNil(BrowserPanelState.unattributedNote(named, browser: "Chrome"), "an attributed connection needs no note")
+        XCTAssertNil(BrowserPanelState.unattributedNote(nil, browser: "Chrome"))
+    }
+
+    func testAnUnattributedConnectionAfterOpeningNeverClosesAnotherBrowsersPanel() {
+        // Nothing connected when Chrome's panel opened, then an older Helium host connects without a name: Chrome stays waiting.
+        XCTAssertEqual(BrowserPanelState.next(status(browsers: [("Helium", true), ("Chrome", true)]), bundledVersion: "1.2.0", browser: "Chrome"), .waiting)
+        let later = status(unattributed: "1.2.0", browsers: [("Helium", true), ("Chrome", true)])
+        XCTAssertEqual(BrowserPanelState.next(later, bundledVersion: "1.2.0", browser: "Chrome"), .waiting)
+    }
+
+    func testALiveBrowserThatDidNotAnswerStillCountsAsConnected() throws {
+        // doctor reports a live connection whose extension is silent as a warning; the row must not offer Connect for it.
+        let json = #"{"checks":[{"id":"host:Helium","status":"ok","label":"Helium: native host registered"},{"id":"connected:Helium","status":"warn","label":"Helium: extension connected but not responding (unknown version)"}]}"#
+        let s = try XCTUnwrap(BrowserStatus.parse(Data(json.utf8)))
+        XCTAssertEqual(s.connections["Helium"], "")
+        XCTAssertEqual(BrowserRows.rows(s, bundledVersion: "1.2.0").first?.state, .connected)
+    }
+
+    func testBundleIDsAreTheHelpersAndOpenByIdNeedsOne() {
+        XCTAssertEqual(BrowserBundle.bundleID(for: "Chrome Beta"), "com.google.Chrome.beta")
+        XCTAssertEqual(BrowserBundle.bundleID(for: "Helium"), "net.imput.helium")
+        XCTAssertNil(BrowserBundle.bundleID(for: "Netscape"))
+        // No app found: the plain message names the browser and its own address.
+        XCTAssertEqual(BrowserBundle.openYourselfMessage(for: "Brave"), "Open Brave and go to brave://extensions yourself, then drag the folder from the panel onto the page.")
     }
 
     func testOnlyAnOlderLoadedVersionIsStale() {
@@ -139,6 +176,53 @@ final class BrowserConnectTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: dest.appendingPathComponent("ort/file.js"), encoding: .utf8), "c")
         let left = try fm.contentsOfDirectory(atPath: support.path).sorted()
         XCTAssertEqual(left, ["Extension", "Extension.stamp"], "no .new or .old folder is left behind")
+    }
+
+    func testConcurrentRefreshesOnOneDestinationEndWithACompleteCopy() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent("extcopy-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        let support = root.appendingPathComponent("Support", isDirectory: true)
+        let src = try fakeExtension(root, version: "1.0.0")
+        // Many files, so a half-made copy would show.
+        for i in 0..<200 { try "file \(i)".write(to: src.appendingPathComponent("ort/f\(i).js"), atomically: true, encoding: .utf8) }
+        // An older complete copy is there, so the swap path runs; a leftover staging folder from a dead run is swept.
+        XCTAssertNotNil(ExtensionCopy.refresh(source: src, supportDir: support, appVersion: "1"))
+        try fm.createDirectory(at: support.appendingPathComponent(ExtensionCopy.stagingPrefix + "dead"), withIntermediateDirectories: true)
+        // Eight callers at once with a new app version, the way launch, the poll and Connect overlap.
+        let results = Collected<URL?>()
+        DispatchQueue.concurrentPerform(iterations: 8) { _ in
+            let dest = ExtensionCopy.refresh(source: src, supportDir: support, appVersion: "2")
+            results.append(dest)
+        }
+        let all = results.value
+        XCTAssertEqual(all.count, 8)
+        let dest = ExtensionCopy.destination(supportDir: support)
+        XCTAssertTrue(all.allSatisfy { $0?.path == dest.path }, "every caller got the copy")
+        XCTAssertEqual(ExtensionCopy.manifestVersion(of: dest), "1.0.0")
+        XCTAssertTrue(try String(contentsOf: dest.appendingPathComponent("manifest.json"), encoding: .utf8).contains(#""key":"KEY""#))
+        for i in 0..<200 {
+            XCTAssertEqual(try? String(contentsOf: dest.appendingPathComponent("ort/f\(i).js"), encoding: .utf8), "file \(i)", "f\(i).js is whole")
+        }
+        XCTAssertEqual(try String(contentsOf: support.appendingPathComponent(ExtensionCopy.stampName), encoding: .utf8), "2|1.0.0")
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: support.path).sorted(), ["Extension", "Extension.stamp"], "no staging folder is left")
+    }
+
+    func testAFailedCopyKeepsThePreviousCompleteCopy() throws {
+        let root = fm.temporaryDirectory.appendingPathComponent("extcopy-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        let support = root.appendingPathComponent("Support", isDirectory: true)
+        let src = try fakeExtension(root, version: "1.0.0")
+        let dest = try XCTUnwrap(ExtensionCopy.refresh(source: src, supportDir: support, appVersion: "1"))
+        // The next source is a folder with a manifest the copy can't finish reading: an unreadable file inside it.
+        _ = try fakeExtension(root, version: "1.1.0", extra: "new")
+        let blocked = src.appendingPathComponent("ort/file.js")
+        try fm.setAttributes([.posixPermissions: 0o000], ofItemAtPath: blocked.path)
+        defer { try? fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: blocked.path) }
+        let result = ExtensionCopy.refresh(source: src, supportDir: support, appVersion: "2")
+        XCTAssertEqual(result?.path, dest.path, "the old copy is still handed out")
+        XCTAssertEqual(ExtensionCopy.manifestVersion(of: dest), "1.0.0")
+        XCTAssertEqual(try String(contentsOf: dest.appendingPathComponent("ort/file.js"), encoding: .utf8), "a")
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath: support.path).sorted(), ["Extension", "Extension.stamp"])
     }
 
     func testAMissingSourceLeavesTheOldCopyAlone() throws {

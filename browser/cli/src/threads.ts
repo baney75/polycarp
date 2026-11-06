@@ -16,6 +16,7 @@ import { matches, renderMarkdown, renderMessages, renderPage, snippets, type Thr
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { readAllIndexes, threadsDir } from "./threads-mirror.ts";
 import { banner, c, sym } from "./ui.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 /** The line the server instructions add (dropped when a session lacks these tools). */
 export const THREADS_INSTRUCTION =
@@ -150,7 +151,7 @@ export function registerThreadTools(server: McpServer, client: BridgeClient): vo
 	);
 }
 
-export const THREADS_USAGE = "Usage: polycarp browser threads list [words] | show <id> [--offset N] | search <words> | export <id> [--format md|json] [--out FILE]  (list, show and search take --json)";
+export const THREADS_USAGE = `Usage: ${COMMAND_NAME} threads list [words] | show <id> [--offset N] | search <words> | export <id> [--format md|json] [--out FILE]  (list, show and search take --json)`;
 
 export class ThreadsUsageError extends Error {}
 
@@ -159,7 +160,7 @@ export async function runThreads(args: string[], opts: { json: boolean; offset?:
 	const [sub = "list", ...rest] = args;
 	const ARITY: Record<string, [number, number]> = { list: [0, 64], show: [1, 1], search: [1, 64], export: [1, 1] };
 	if (!Object.hasOwn(ARITY, sub)) throw new ThreadsUsageError(`Unknown subcommand "${sub}". ${THREADS_USAGE}`);
-	if (rest.length < ARITY[sub][0] || rest.length > ARITY[sub][1]) throw new ThreadsUsageError(`polycarp browser threads ${sub} takes ${ARITY[sub][0] === 1 && ARITY[sub][1] === 1 ? "one thread id" : "words"}. ${THREADS_USAGE}`);
+	if (rest.length < ARITY[sub][0] || rest.length > ARITY[sub][1]) throw new ThreadsUsageError(`${COMMAND_NAME} threads ${sub} takes ${ARITY[sub][0] === 1 && ARITY[sub][1] === 1 ? "one thread id" : "words"}. ${THREADS_USAGE}`);
 	const format = opts.format ?? "md";
 	if (sub === "export" && format !== "md" && format !== "json") throw new ThreadsUsageError(`--format is md or json. ${THREADS_USAGE}`);
 	const client = new BridgeClient({ name: "threads" });

@@ -39,7 +39,7 @@ test("countdown and last-seen read as a person would say them", () => {
 	assert.equal(lastSeen("2026-11-02T09:00:00Z", now), "3 hours ago");
 	assert.equal(lastSeen("2026-11-01T11:00:00Z", now), "1 day ago");
 	assert.equal(connectorUrl("https://h.example.com"), "https://h.example.com/mcp");
-	assert.equal(linkCommand("https://h.example.com", "TK-ABCD-EFGH"), "polycarp browser link https://h.example.com --code TK-ABCD-EFGH");
+	assert.equal(linkCommand("https://h.example.com", "TK-ABCD-EFGH"), "tabkyra link https://h.example.com --code TK-ABCD-EFGH");
 });
 
 test("Settings has the eight tabs in the spec's order, and Bridge is now Agents", () => {
@@ -198,7 +198,7 @@ test("a request the helper never answers fails with no_reply after 20 s (30 s fo
 	const err = await status;
 	assert.ok(err instanceof client.ConnectRequestError);
 	assert.equal(err.code, "no_reply");
-	assert.equal(err.message, "Polycarp's helper didn't answer. Update it: polycarp browser update");
+	assert.equal(err.message, "Polycarp's helper didn't answer. Update it: tabkyra update");
 	assert.equal(client.isNoHost(err), false);
 	// A late answer for the forgotten request is ignored.
 	port.listener({ id: port.posted[0].id, result: { route: "none" } });
@@ -483,13 +483,13 @@ test("second-S2: on the link route the connector URL is the hub's own, shown onc
 });
 
 test("first-F3/second-G2: a helper that lists no scopes in {id, what} form gets no Confirm; the confirm lists descriptions, never 'the hub's choice'", async () => {
-	const { joinScopesOf, HELPER_OUT_OF_DATE } = await import("../src/connect/format.ts");
-	assert.equal(HELPER_OUT_OF_DATE, "Polycarp's helper is out of date. Run polycarp browser update, then try again.");
+	const { joinScopesOf, helperOutOfDateMessage } = await import("../src/connect/format.ts");
+	assert.equal(helperOutOfDateMessage(), "Polycarp's helper is out of date. Run tabkyra update, then try again.");
 	const rows = [{ id: "browser.read", what: "See the agent's own tabs and read pages" }];
 	assert.deepEqual(joinScopesOf({ joinScopes: rows }), rows);
 	for (const bad of [undefined, [], ["browser.read"], [{ id: "a" }], [{ id: "", what: "x" }], [rows[0], null], "browser.read"]) assert.equal(joinScopesOf({ joinScopes: bad }), undefined, JSON.stringify(bad));
 	const tab = read("src/dialogs/ConnectTab.ts");
-	assert.match(/private askJoin\([\s\S]*?\n\t\}\n/.exec(tab)[0], /const scopes = joinScopesOf\(s\);\s*if \(!scopes\) \{\s*this\.joinMessage = \{ ok: false, text: HELPER_OUT_OF_DATE \};\s*return;/);
+	assert.match(/private askJoin\([\s\S]*?\n\t\}\n/.exec(tab)[0], /const scopes = joinScopesOf\(s\);\s*if \(!scopes\) \{\s*this\.joinMessage = \{ ok: false, text: helperOutOfDateMessage\(\) \};\s*return;/);
 	assert.doesNotMatch(tab, /joinScopes \?\? \[\]/);
 });
 

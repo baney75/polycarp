@@ -3,7 +3,7 @@
 // harness CLIs. Nothing here can reach a real browser, bridge or harness config.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
@@ -211,4 +211,33 @@ test("color only when asked for, and NO_COLOR wins", () => {
 	assert.doesNotMatch(run(["doctor"]).out, ansi, "a pipe gets no color");
 	assert.match(run(["doctor"], { FORCE_COLOR: "1" }).out, ansi);
 	assert.doesNotMatch(run(["doctor"], { FORCE_COLOR: "1", NO_COLOR: "1" }).out, ansi);
+});
+
+test("second-S3: setup keeps a working launcher and writes links only for registered or chosen browsers", () => {
+	// Helium is registered by the setup run above. Chrome has a data folder and (on a Mac) an app, and was never connected.
+	const support = process.platform === "darwin" ? join(home, "Library", "Application Support", "Google") : join(home, ".config");
+	const chromeDir = process.platform === "darwin" ? join(support, "Chrome") : join(support, "google-chrome");
+	mkdirSync(chromeDir, { recursive: true });
+	mkdirSync(join(root, "apps", "Google Chrome.app"), { recursive: true });
+	// A working standalone launcher: the agent launcher and the host launcher both exec a file that exists.
+	const standalone = '#!/bin/sh\nexec "/bin/echo" "$@"\n';
+	for (const name of ["tabkyra", "host"]) {
+		writeFileSync(join(home, ".config", "tabkyra", name), standalone);
+		chmodSync(join(home, ".config", "tabkyra", name), 0o755);
+	}
+	const heliumManifest = join(helium(), "NativeMessagingHosts", "ai.tabkyra.bridge.json");
+	const heliumBefore = readFileSync(heliumManifest, "utf8");
+	const { out } = run(["setup", "--yes", "--no-wait"]);
+	assert.match(out, /Helium\s+already registered/, out);
+	assert.doesNotMatch(out, /Chrome\s+(registered|already)/, "setup does not touch a browser nobody registered or chose");
+	assert.equal(existsSync(join(chromeDir, "NativeMessagingHosts", "ai.tabkyra.bridge.json")), false, "no link for Chrome");
+	assert.equal(readFileSync(join(home, ".config", "tabkyra", "tabkyra"), "utf8"), standalone, "the working launcher is kept");
+	assert.equal(readFileSync(join(home, ".config", "tabkyra", "host"), "utf8"), standalone);
+	assert.equal(readFileSync(heliumManifest, "utf8"), heliumBefore, "the registered browser's manifest is unchanged");
+	// Choosing it makes the link, and still leaves the working launcher alone.
+	const chosen = run(["setup", "--yes", "--no-wait", "--browser", "Chrome"]);
+	assert.match(chosen.out, /Chrome\s+registered/, chosen.out);
+	assert.equal(existsSync(join(chromeDir, "NativeMessagingHosts", "ai.tabkyra.bridge.json")), true);
+	assert.equal(readFileSync(join(home, ".config", "tabkyra", "host"), "utf8"), standalone);
+	assert.equal(run(["setup", "--browser", "Netscape"]).code, 2, "an unknown browser is a usage error");
 });

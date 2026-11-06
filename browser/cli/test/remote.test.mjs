@@ -477,7 +477,7 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 		const phished = await approve([["request", signed], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
 		assert.equal(phished.status, 401, "the passcode alone is refused for a new client");
 		assert.equal(phished.headers.get("location"), null, "and no authorization code is issued");
-		assert.match(await phished.text(), /polycarp browser token approval-code/);
+		assert.match(await phished.text(), /tabkyra token approval-code/);
 		const mint = () => /TK-[A-Z0-9]{4}-[A-Z0-9]{4}/.exec(run(["token", "approval-code"]).out)?.[0];
 		const ok = await approve([["request", signed], ["passcode", mint()], ["scope", "browser.read"], ["decision", "allow"]]);
 		assert.equal(ok.status, 302, "a freshly minted connect code approves the new client");
@@ -781,7 +781,7 @@ test("remote setup (funnel) runs the exact funnel command, writes remote.json an
 		assert.match(r.out, /Settings > Connectors > Add custom connector/);
 		assert.match(r.out, /grok\.com\/connectors > New Connector > Custom/);
 		assert.match(r.out, /Approve with your Polycarp passcode\./);
-		assert.match(r.out, /Check it with: polycarp browser remote status/);
+		assert.match(r.out, /Check it with: tabkyra remote status/);
 		assert.match(r.out, PASSCODE, "the passcode is printed");
 		const again = await runAsync(s, ["remote", "setup", "--no-service"]);
 		assert.equal(again.code, 0, again.out);
@@ -901,7 +901,7 @@ test("remote setup with a service requested and no working launcher exits 1 and 
 	const s = remoteScenario("no-launcher");
 	const r = s.run(["remote", "setup"]);
 	assert.equal(r.code, 1, r.out);
-	assert.match(r.out, /Run polycarp browser install first, then polycarp browser remote setup again\./);
+	assert.match(r.out, /Run tabkyra install first, then tabkyra remote setup again\./);
 	assert.equal(existsSync(s.serviceFile()), false);
 	assert.equal(s.hasRemoteJson(), false);
 	assert.ok(!s.calls().some((x) => x.startsWith("tailscale funnel")), s.calls().join("\n"));
@@ -931,7 +931,7 @@ test("remote setup --no-service opens Funnel only when serve already answers wit
 		const r = await runAsync(ready, ["remote", "setup", "--no-service", "--port", String(local.port)]);
 		assert.equal(r.code, 0, r.out);
 		assert.ok(ready.calls().includes(funnelCall(local.port)), ready.calls().join("\n"));
-		assert.doesNotMatch(r.out, /start polycarp browser serve now/);
+		assert.doesNotMatch(r.out, /start tabkyra serve now/);
 	} finally {
 		await local.close();
 	}
@@ -941,7 +941,7 @@ test("remote setup --no-service opens Funnel only when serve already answers wit
 	assert.equal(r.code, 0, r.out);
 	assert.ok(!idle.calls().some((x) => x.startsWith("tailscale funnel")), idle.calls().join("\n"));
 	assert.deepEqual(idle.remoteJson(), { publicUrl: FUNNEL_URL, port, route: "funnel" });
-	assert.match(r.out, /Start polycarp browser serve \(it reads remote\.json\), then run polycarp browser remote setup --no-service again to open Funnel\./);
+	assert.match(r.out, /Start tabkyra serve \(it reads remote\.json\), then run tabkyra remote setup --no-service again to open Funnel\./);
 	assert.doesNotMatch(r.out, /Funnel is open/);
 });
 
@@ -952,7 +952,7 @@ test("remote setup refuses a switch from Funnel to a custom URL and leaves remot
 	const before = readFileSync(join(s.config, "remote.json"), "utf8");
 	const r = s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--no-service"]);
 	assert.equal(r.code, 1, r.out);
-	assert.match(r.out, /Funnel from an earlier setup is on\. Run polycarp browser remote off first\./);
+	assert.match(r.out, /Funnel from an earlier setup is on\. Run tabkyra remote off first\./);
 	assert.equal(readFileSync(join(s.config, "remote.json"), "utf8"), before);
 	assert.deepEqual(s.remoteJson(), { publicUrl: FUNNEL_URL, port, route: "funnel" });
 });
@@ -963,7 +963,7 @@ test("remote setup says so when Funnel isn't enabled for the tailnet, and keeps 
 	try {
 		const r = await runAsync(s, ["remote", "setup", "--no-service", "--port", String(local.port)]);
 		assert.equal(r.code, 1, r.out);
-		assert.match(r.out, /Funnel isn't enabled for this tailnet or node yet\. Open https:\/\/login\.tailscale\.com\/f\/funnel\?node=n123, enable it, then run polycarp browser remote setup again\./);
+		assert.match(r.out, /Funnel isn't enabled for this tailnet or node yet\. Open https:\/\/login\.tailscale\.com\/f\/funnel\?node=n123, enable it, then run tabkyra remote setup again\./);
 		assert.ok(s.hasRemoteJson());
 	} finally {
 		await local.close();
@@ -1017,7 +1017,7 @@ test("remote setup refuses on an unreadable remote.json and changes nothing", ()
 	writeFileSync(join(s.config, "remote.json"), "{ not json");
 	const r = s.run(["remote", "setup", "--no-service"]);
 	assert.equal(r.code, 1, r.out);
-	assert.match(r.out, /Nothing was changed; run polycarp browser remote off first\./);
+	assert.match(r.out, /Nothing was changed; run tabkyra remote off first\./);
 	assert.equal(readFileSync(join(s.config, "remote.json"), "utf8"), "{ not json");
 	assert.ok(!s.calls().some((x) => x.startsWith("tailscale funnel")));
 });
@@ -1026,12 +1026,12 @@ test("remote setup --public-url refuses while Funnel on 8443 is on or can't be r
 	const on = remoteScenario("custom-stray", { serveStatus: JSON.stringify({ Web: { [`${DNS}:8443`]: { Handlers: { "/": { Proxy: "http://127.0.0.1:8787" } } } } }) });
 	const r = on.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--no-service"]);
 	assert.equal(r.code, 1, r.out);
-	assert.match(r.out, /Funnel on 8443 is on; run polycarp browser remote off first/);
+	assert.match(r.out, /Funnel on 8443 is on; run tabkyra remote off first/);
 	assert.equal(on.hasRemoteJson(), false);
 	const unreadable = remoteScenario("custom-unreadable", { serveStatus: "oops" });
 	const u = unreadable.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--no-service"]);
 	assert.equal(u.code, 1, u.out);
-	assert.match(u.out, /Funnel on 8443 is on \(Couldn't read tailscale serve status.*run polycarp browser remote off first/);
+	assert.match(u.out, /Funnel on 8443 is on \(Couldn't read tailscale serve status.*run tabkyra remote off first/);
 	assert.equal(unreadable.hasRemoteJson(), false);
 });
 
@@ -1041,7 +1041,7 @@ serviceTest("remote setup --no-service refuses while a service from an earlier s
 	writeFileSync(s.serviceFile(), "# an earlier service\n");
 	const r = s.run(["remote", "setup", "--no-service", "--port", "9124"]);
 	assert.equal(r.code, 1, r.out);
-	assert.match(r.out, /Run polycarp browser remote off first\. Nothing was changed\./);
+	assert.match(r.out, /Run tabkyra remote off first\. Nothing was changed\./);
 	assert.equal(s.hasRemoteJson(), false);
 	assert.equal(readFileSync(s.serviceFile(), "utf8"), "# an earlier service\n");
 });
@@ -1120,7 +1120,7 @@ test("remote status without remote.json fails and says to run setup", () => {
 	const s = remoteScenario("status-empty");
 	const r = s.run(["remote", "status"]);
 	assert.equal(r.code, 1);
-	assert.match(r.out, /not found\. Run polycarp browser remote setup/);
+	assert.match(r.out, /not found\. Run tabkyra remote setup/);
 });
 
 const stopCall = process.platform === "linux" ? "systemctl --user disable --now tabkyra-serve.service" : `launchctl bootout gui/${process.getuid?.()}/com.tabkyra.serve`;
@@ -1154,7 +1154,7 @@ serviceTest("remote off turns Funnel off first, then removes the service and rem
 	assert.equal(s.hasRemoteJson(), false);
 	assert.ok(existsSync(join(s.config, "oauth.json")), "grants stay");
 	assert.match(r.out, /oauth\.json/);
-	assert.match(r.out, /polycarp browser token revoke/);
+	assert.match(r.out, /tabkyra token revoke/);
 });
 
 serviceTest("remote off leaves the service running and the files in place when Funnel won't turn off", async () => {
@@ -1175,7 +1175,7 @@ serviceTest("remote off exits 1 and keeps the service file and remote.json when 
 	const r = s.run(["remote", "off"]);
 	assert.equal(r.code, 1, r.out);
 	assert.match(r.out, process.platform === "linux" ? /systemctl --user disable --now tabkyra-serve\.service failed: boom/ : /launchctl bootout failed: boom/);
-	assert.match(r.out, /then polycarp browser remote off again/);
+	assert.match(r.out, /then tabkyra remote off again/);
 	assert.ok(existsSync(s.serviceFile()), "the service file is kept");
 	assert.deepEqual(s.remoteJson(), { publicUrl: FUNNEL_URL, port, route: "funnel" });
 });
@@ -1260,9 +1260,9 @@ test("remote off with no remote.json closes a Polycarp Funnel on 8443, and says 
 
 test("remote lists its subcommands in help and rejects unknown flags", () => {
 	const help = cliRun(["remote", "--help"]).out;
-	assert.match(help, /polycarp browser remote setup \[--public-url https:\/\/host\] \[--port N\] \[--no-service\]/);
-	assert.match(help, /polycarp browser remote status \[--json\]/);
-	assert.match(help, /polycarp browser remote off/);
+	assert.match(help, /tabkyra remote setup \[--public-url https:\/\/host\] \[--port N\] \[--no-service\]/);
+	assert.match(help, /tabkyra remote status \[--json\]/);
+	assert.match(help, /tabkyra remote off/);
 	assert.equal(cliRun(["remote", "setup", "--bogus"]).code, 2);
 	assert.equal(cliRun(["remote"]).code, 2);
 });
@@ -1276,7 +1276,7 @@ test("remote setup --no-passcode makes and prints no passcode, and serve then ap
 	assert.doesNotMatch(ok.out, /OAuth passcode/);
 	assert.doesNotMatch(ok.out, /([a-zA-Z0-9]{5}-){3}[a-zA-Z0-9]{5}/, "no passcode-shaped string in the output");
 	assert.match(ok.out, /No passcode made \(--no-passcode\)/);
-	assert.match(ok.out, /Approve with a one-time connect code: polycarp browser token approval-code\./);
+	assert.match(ok.out, /Approve with a one-time connect code: tabkyra token approval-code\./);
 	assert.doesNotMatch(ok.out, /Approve with your Polycarp passcode/);
 	const oauthFile = join(s.config, "oauth.json");
 	assert.equal(existsSync(oauthFile) ? JSON.parse(readFileSync(oauthFile, "utf8")).passcode : undefined, undefined, "no passcode was stored");
@@ -1305,7 +1305,7 @@ test("serve with no passcode starts, says only a connect code can approve, and t
 			srv.on("exit", (code) => reject(new Error(`serve exited ${code}: ${out}`)));
 			setTimeout(() => reject(new Error(`serve didn't start: ${out}`)), 15_000);
 		});
-		assert.match(out, /only a connect code \(polycarp browser token approval-code\) can approve a connection/);
+		assert.match(out, /only a connect code \(tabkyra token approval-code\) can approve a connection/);
 		assert.doesNotMatch(out, /nobody can approve/);
 		const callback = "https://claude.ai/api/mcp/auth_callback";
 		const { client_id } = await (await fetch(`${base}/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_name: "Claude", redirect_uris: [callback] }) })).json();

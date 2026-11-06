@@ -35,8 +35,8 @@ const clients = new Map<string, Client>();
 let extensionReady = false;
 /** The browser profile behind this host (from the extension's hello). */
 let browserId: string | undefined;
-/** Which browser started this host, found once: its parent process. */
-const browserName = parentBrowserName();
+/** Which browser started this host: its parent process, asked once when the host starts (other commands never ask). */
+let browserName: string | undefined;
 let seq = 0;
 /** ChatGPT and Copilot sign-ins; made on the first request, so a host that never sees one opens nothing. */
 let subscriptions: SubscriptionService | undefined;
@@ -231,6 +231,7 @@ function dropExtension(): void {
 }
 
 export function runNativeHost(): void {
+	browserName = parentBrowserName();
 	// A closed pipe to the browser must not crash the host while it answers its clients.
 	process.stdout.on("error", () => undefined);
 	const dir = socketDir();

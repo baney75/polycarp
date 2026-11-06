@@ -49,7 +49,7 @@ test("the CLI's version is the extension manifest's", async () => {
 test("help lists every command the CLI dispatches, grouped, with the exit codes", () => {
 	const help = run("--help").out;
 	for (const name of ["setup", "status", "mcp", "skill", "serve", "token", "tunnel", "library", "allow", "ask", "allow-all", "doctor", "update", "install", "reload", "debug", "completion", "version"]) {
-		assert.match(help, new RegExp(`polycarp browser ${name}\\b`), `help lacks ${name}`);
+		assert.match(help, new RegExp(`tabkyra ${name}\\b`), `help lacks ${name}`);
 		// A listed command is one the dispatcher knows: it never says "Unknown command".
 		const r = run(name, "--definitely-not-a-flag");
 		assert.doesNotMatch(r.err, /Unknown command/, name);
@@ -65,7 +65,7 @@ test("help lists every command the CLI dispatches, grouped, with the exit codes"
 		tunnel: ["tailscale", "cloudflare"],
 		library: ["add", "search", "list", "cite", "export", "obsidian", "verify", "remove"],
 	}))
-		for (const sub of subs) assert.match(help, new RegExp(`polycarp browser ${command} [^\\n]*\\b${sub}\\b`), `help has no row for ${command} ${sub}`);
+		for (const sub of subs) assert.match(help, new RegExp(`tabkyra ${command} [^\\n]*\\b${sub}\\b`), `help has no row for ${command} ${sub}`);
 	const unknown = run("frobnicate");
 	assert.equal(unknown.code, 2);
 	assert.match(unknown.err, /Unknown command "frobnicate"/);
@@ -96,10 +96,10 @@ test("options are checked per subcommand, and a value option needs its value", (
 		assert.equal(r.code, 2, `tabkyra ${args.join(" ")} exited ${r.code}`);
 		assert.match(r.err, /takes no value/);
 	}
-	assert.match(run("pi-extension", "a", "b").err, /Usage: polycarp browser pi-extension \[dir\]/);
-	assert.match(run("serve", "--port").err, /needs a value\. Usage: polycarp browser serve \[--port N\] \[--public-url https:\/\/host\] \[--redirect-host a,b\] \[--allow-host a,b\]$/m);
-	assert.match(run("token", "create", "x", "--bogus").err, /Usage: polycarp browser token create <name> \[--scope a,b\]$/m);
-	assert.match(run("token", "revoke", "--bogus").err, /Usage: polycarp browser token revoke <id\|name\|client id\|grant id>$/m);
+	assert.match(run("pi-extension", "a", "b").err, /Usage: tabkyra pi-extension \[dir\]/);
+	assert.match(run("serve", "--port").err, /needs a value\. Usage: tabkyra serve \[--port N\] \[--public-url https:\/\/host\] \[--redirect-host a,b\] \[--allow-host a,b\]$/m);
+	assert.match(run("token", "create", "x", "--bogus").err, /Usage: tabkyra token create <name> \[--scope a,b\]$/m);
+	assert.match(run("token", "revoke", "--bogus").err, /Usage: tabkyra token revoke <id\|name\|client id\|grant id>$/m);
 	// The value of a value option isn't counted as an extra argument.
 	assert.equal(run("token", "list", "--json").code, 0);
 });
@@ -161,7 +161,7 @@ test("completions parse in each shell and complete commands, subcommands and fla
 	assert.doesNotMatch(bash, /\byolo\b/);
 	const bad = run("completion", "powershell");
 	assert.equal(bad.code, 2);
-	assert.match(bad.err, /polycarp browser completion zsh\|bash\|fish/);
+	assert.match(bad.err, /tabkyra completion zsh\|bash\|fish/);
 });
 
 test("read commands print JSON with --json, and exit 1 when not connected", () => {
@@ -217,7 +217,7 @@ test("help rows and the parsers agree on every flag, including setup's and updat
 	});
 	const { COMMANDS, LIBRARY_OPTIONS, argsProblem, helpRows, parseSetupArgs, parseUpdateArgs } = await import(out);
 	// setup and update parse their own options: every flag their help row shows is one they take.
-	const sample = { "--timeout": "5", "--channel": "stable", "--auto-check": "on" };
+	const sample = { "--timeout": "5", "--channel": "stable", "--auto-check": "on", "--browser": "Helium" };
 	for (const [name, parse, extra] of [["setup", parseSetupArgs, []], ["update", parseUpdateArgs, ["--check"]]]) {
 		for (const flag of COMMANDS.find((c) => c.name === name).flags) {
 			const args = [...extra.filter((e) => e !== flag), flag, ...(sample[flag] ? [sample[flag]] : [])];

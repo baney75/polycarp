@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { VERSION } from "./version.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export interface CslName {
 	family?: string;
@@ -631,7 +632,7 @@ const STYLE_ALIASES: Record<string, string> = { mla: "modern-language-associatio
 /** A formatted reference from doi.org's citation formatter (CSL styles). */
 export async function cite(key: string, style = "apa"): Promise<string> {
 	const item = loadLibrary().items.find((i) => i.id === key);
-	if (!item) throw new Error(`No source with key ${key}. Run polycarp browser library search.`);
+	if (!item) throw new Error(`No source with key ${key}. Run ${COMMAND_NAME} library search.`);
 	const csl = Object.hasOwn(STYLE_ALIASES, style) ? STYLE_ALIASES[style] : style;
 	if (!STYLES.has(csl)) throw new Error(`Unknown style ${style}. Use apa, mla, chicago, ieee, harvard or vancouver.`);
 	if (!item.DOI) throw new Error(`${key} has no DOI to format.`);
@@ -882,7 +883,7 @@ export function writeObsidian(vault: string, folder = "Sources"): { written: str
 			`${md(names(i, "; "))} (${year(i)}). ${i["container-title"] ? `*${md(i["container-title"])}*` : ""}`,
 			i.DOI ? `DOI: <https://doi.org/${doiPath(i.DOI)}>` : "",
 			v.retracted ? "\n> [!warning] Retracted\n> A retraction notice points at this DOI. Don't cite it as support." : "",
-			!v.retracted && v.complete === false ? "\n> [!caution] Retraction check incomplete\n> Run polycarp browser library verify before citing." : "",
+			!v.retracted && v.complete === false ? `\n> [!caution] Retraction check incomplete\n> Run ${COMMAND_NAME} library verify before citing.` : "",
 			oa ? `Open access copy: <${oa}>` : "",
 			i.tabkyra.quote ? `\n## Supporting quote\n\n> ${md(i.tabkyra.quote.text)}${i.tabkyra.quote.location ? `\n> (${md(i.tabkyra.quote.location)})` : ""}` : "",
 			i.tabkyra.note ? `\n## Notes\n\n${md(i.tabkyra.note)}` : "",
@@ -910,7 +911,7 @@ function line(i: LibraryItem): string {
 }
 
 export const LIBRARY_USAGE =
-	"Usage: polycarp browser library add <doi|arxiv id> [--quote TEXT] [--location TEXT] [--note TEXT] [--tag TAG] | list [--json] | search <words> [--json] | " +
+	`Usage: ${COMMAND_NAME} library add <doi|arxiv id> [--quote TEXT] [--location TEXT] [--note TEXT] [--tag TAG] | list [--json] | search <words> [--json] | ` +
 	"verify [key...] | cite <key> [--style apa|mla|chicago|ieee|harvard|vancouver] | export --format bibtex|ris|csl [--out FILE] | " +
 	"obsidian <vault> [--folder Sources] | remove <key>";
 
@@ -993,7 +994,7 @@ export async function runLibrary(args: string[]): Promise<number> {
 				return 3;
 			}
 			if (v.complete === false) {
-				console.log("  Retraction check incomplete (OpenAlex or Crossref didn't answer). Run polycarp browser library verify before citing.");
+				console.log(`  Retraction check incomplete (OpenAlex or Crossref didn't answer). Run ${COMMAND_NAME} library verify before citing.`);
 				return 4;
 			}
 			return 0;

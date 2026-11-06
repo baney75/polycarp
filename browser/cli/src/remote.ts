@@ -292,7 +292,7 @@ export interface ServeOptions {
 
 /** Serve MCP over Streamable HTTP on loopback. Each session is bound to the token that opened it. */
 export async function serve(options: ServeOptions): Promise<{ close: () => Promise<void>; url: string; sessionCount: () => number; closeSessions: () => void }> {
-	if (!LOOPBACK.has(options.host)) throw new Error(`polycarp browser serve binds to loopback only (got ${options.host}). Use ${COMMAND_NAME} tunnel to reach it from another device over TLS.`);
+	if (!LOOPBACK.has(options.host)) throw new Error(`${COMMAND_NAME} serve binds to loopback only (got ${options.host}). Use ${COMMAND_NAME} tunnel to reach it from another device over TLS.`);
 	if (options.acceptLinkTokens && options.oauth) throw new Error("A link token is never accepted on a public route: acceptLinkTokens can't be combined with a public URL.");
 	const sessions = new Map<string, { transport: StreamableHTTPServerTransport; tokenId: string; lastSeen: number }>();
 	const IDLE_MS = 30 * 60_000;
@@ -343,7 +343,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 
 	const http = createServer((req: IncomingMessage, res: ServerResponse) => {
 		handle(req, res).catch((err) => {
-			process.stderr.write(`[polycarp browser serve] ${err instanceof Error ? err.message : String(err)}\n`);
+			process.stderr.write(`[${COMMAND_NAME} serve] ${err instanceof Error ? err.message : String(err)}\n`);
 			if (!res.headersSent) deny(res, 500, "Internal error.");
 			else res.end();
 		});
@@ -369,7 +369,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		}
 		if (path !== "/mcp") return deny(res, 404, "Not found. The MCP endpoint is /mcp.");
 		const token = caller(req.headers.authorization);
-		if (!token) return deny(res, 401, oauth ? "Connect with OAuth or a valid, unrevoked bearer token." : "A valid, unrevoked bearer token is required (polycarp browser token create).");
+		if (!token) return deny(res, 401, oauth ? "Connect with OAuth or a valid, unrevoked bearer token." : `A valid, unrevoked bearer token is required (${COMMAND_NAME} token create).`);
 		const sessionId = req.headers["mcp-session-id"];
 		const existing = typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
 		if (existing) {

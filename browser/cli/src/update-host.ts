@@ -285,7 +285,7 @@ export async function computeStatus(force = false): Promise<HostUpdateStatus> {
 			canRollback = existsSync(previousDir());
 			rollbackTo = canRollback ? installedVersion(previousDir()) : undefined;
 		} else {
-			blocked = `This Polycarp runs from ${root}, which is neither a release install nor a git checkout. Run polycarp browser update in a terminal.`;
+			blocked = `This Polycarp runs from ${root}, which is neither a release install nor a git checkout. Run ${COMMAND_NAME} update in a terminal.`;
 		}
 	}
 	if (extension.location === "elsewhere") {

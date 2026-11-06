@@ -7,6 +7,7 @@
  */
 
 import { html, nothing, type TemplateResult } from "lit";
+import { hostCommand } from "../bridge/host-command.js";
 import {
 	type HostUpdateProgress,
 	type HostUpdateStatus,
@@ -259,7 +260,7 @@ function whatsNewCard(): TemplateResult | typeof nothing {
 			skipped.length
 				? html`<p class="text-muted-foreground">
 						Skills left alone because you edited them: ${skipped.map((s) => s.skill).join(", ")}. Run
-						<code class="font-mono">polycarp browser skill install &lt;name&gt; --force</code> to replace one.
+						<code class="font-mono">${hostCommand()} skill install &lt;name&gt; --force</code> to replace one.
 					</p>`
 				: nothing
 		}

@@ -37,8 +37,8 @@ import { VERSION } from "./version.ts";
 /** One help row. Padding counts visible characters, so color codes don't shift the column. */
 const cmd = (usage: string, what: string) => {
 	const [name, ...rest] = usage.split(" ");
-	const full = `polycarp browser ${usage}`;
-	const head = `  ${c.bold(`polycarp browser ${name}`)}${rest.length ? ` ${rest.join(" ")}` : ""}`;
+	const full = `${COMMAND_NAME} ${usage}`;
+	const head = `  ${c.bold(`${COMMAND_NAME} ${name}`)}${rest.length ? ` ${rest.join(" ")}` : ""}`;
 	// A long usage puts its description on the next line, in the same column.
 	if (full.length > 66) return `${head}\n${" ".repeat(70)}${what}`;
 	return `${head}${" ".repeat(68 - full.length)}${what}`;
@@ -56,7 +56,7 @@ function help(): string {
 			rows.push(
 				`  ${c.dim("Claude Code:")} claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
 				`  ${c.dim("Codex:")}       codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
-				`  ${c.dim("(polycarp browser setup adds these for you; polycarp browser doctor checks them.)")}`,
+				`  ${c.dim(`(${COMMAND_NAME} setup adds these for you; ${COMMAND_NAME} doctor checks them.)`)}`,
 			);
 		}
 	}
@@ -74,7 +74,7 @@ function help(): string {
 
 /** NOT_CONNECTED is written for agents; people at the terminal get the direct version. */
 const NOT_CONNECTED_HERE =
-	"Polycarp isn't connected. Open Helium or Chrome with the Polycarp extension loaded, or run `polycarp browser doctor` to see why.";
+	`Polycarp isn't connected. Open Helium or Chrome with the Polycarp extension loaded, or run \`${COMMAND_NAME} doctor\` to see why.`;
 const forPeople = (message: string) => (message === NOT_CONNECTED ? NOT_CONNECTED_HERE : message);
 
 /** "https://GitHub.com/x" or "github.com" -> "github.com"; undefined for anything that isn't a host. */
@@ -176,17 +176,17 @@ async function status(json: boolean): Promise<number> {
 	} else {
 		console.log(`${sym.fail} ${report.message}`);
 	}
-	if (!isInstalled()) console.log(`${sym.fail} Native host not registered ${sym.arrow} ${c.bold("polycarp browser setup")}`);
+	if (!isInstalled()) console.log(`${sym.fail} Native host not registered ${sym.arrow} ${c.bold(`${COMMAND_NAME} setup`)}`);
 	for (const h of report.hosts) {
 		// A browser that was never connected is not a failure: Connect sets up one browser at a time.
 		const mark = h.state === "current" ? sym.ok : h.state === "missing" ? sym.dot : sym.fail;
 		console.log(`${mark} ${h.browser.padEnd(13)} ${c.dim(h.state === "current" ? "host registered" : h.state === "missing" ? "not connected yet" : `host ${h.state}`)}`);
 	}
-	if (!report.connected) console.log(`\n${sym.arrow} Run ${c.bold("polycarp browser doctor")} for the exact fix.`);
+	if (!report.connected) console.log(`\n${sym.arrow} Run ${c.bold(`${COMMAND_NAME} doctor`)} for the exact fix.`);
 	return report.connected ? 0 : 1;
 }
 
-const UPDATE_USAGE = "Usage: polycarp browser update [--check] [--json] [--rollback] [--yes] [--channel stable|nightly] [--auto-check on|off]";
+const UPDATE_USAGE = `Usage: ${COMMAND_NAME} update [--check] [--json] [--rollback] [--yes] [--channel stable|nightly] [--auto-check on|off]`;
 /** The fixed command lines the native host runs for the side panel (cli/src/update-host.ts). */
 const HOST_UPDATE_ACTIONS: Record<string, HostRunAction> = {
 	"--host": "update",
@@ -223,7 +223,7 @@ async function main(): Promise<void> {
 	if (command && command !== "host") checkArgs(command, command === "link" && /^https?:\/\//.test(argv[1] ?? "") ? ["enroll", ...argv.slice(1)] : argv.slice(1));
 	// Bad setup or update options are refused before anything below touches the checkout.
 	const setupArgs = command === "setup" ? parseSetupArgs(argv.slice(1)) : undefined;
-	if (typeof setupArgs === "string") throw new UsageError(`${setupArgs} Usage: polycarp browser setup [--yes] [--no-wait] [--timeout <seconds>]`);
+	if (typeof setupArgs === "string") throw new UsageError(`${setupArgs} Usage: ${COMMAND_NAME} setup [--yes] [--no-wait] [--timeout <seconds>] [--browser <name>]`);
 	const updateArgs = command === "update" && argv[1] !== "--host" ? parseUpdateArgs(argv.slice(1)) : undefined;
 	if (typeof updateArgs === "string") throw new UsageError(`${updateArgs} ${UPDATE_USAGE}`);
 	// A checkout whose install or rollback a crash interrupted is repaired by any of these, so
@@ -242,7 +242,11 @@ async function main(): Promise<void> {
 	}
 	switch (command) {
 		case "setup": {
-			if (!setupArgs) throw new UsageError("Usage: polycarp browser setup [--yes] [--no-wait] [--timeout <seconds>]");
+			if (!setupArgs) throw new UsageError(`Usage: ${COMMAND_NAME} setup [--yes] [--no-wait] [--timeout <seconds>] [--browser <name>]`);
+			if (setupArgs.browser !== undefined) {
+				const known = browserDirs();
+				if (!known.some((b) => b.name === setupArgs.browser)) throw new UsageError(`Unknown browser "${setupArgs.browser}". Use one of: ${known.map((b) => b.name).join(", ")}.`);
+			}
 			process.exitCode = await runSetup(setupArgs);
 			return;
 		}
@@ -316,7 +320,7 @@ async function main(): Promise<void> {
 		}
 		case "allow": {
 			const host = siteHost(argv[1]);
-			if (!host) throw new UsageError("Which site? Give a host name, for example: polycarp browser allow github.com");
+			if (!host) throw new UsageError(`Which site? Give a host name, for example: ${COMMAND_NAME} allow github.com`);
 			const result = await withBridge("allow", (client) => client.call("permission.allow", { host }, 5000));
 			const stored = (result as { allowed?: string }).allowed ?? host;
 			console.log(`${sym.ok} Agents may open ${c.bold(stored)} and its subdomains.`);
@@ -364,18 +368,18 @@ async function main(): Promise<void> {
 			const spec = sub && Object.hasOwn(SKILL_SUB, sub) ? SKILL_SUB[sub] : undefined;
 			const badFlag = args.find((a) => a.startsWith("-") && !(spec?.flags ?? []).includes(flagName(a)));
 			if (spec && (badFlag || rest.length > spec.max)) {
-				throw new UsageError(`polycarp browser skill ${sub} ${badFlag ? `doesn't take ${badFlag}` : "takes fewer arguments"}. Flags: ${spec.flags.join(" ") || "none"}.`);
+				throw new UsageError(`${COMMAND_NAME} skill ${sub} ${badFlag ? `doesn't take ${badFlag}` : "takes fewer arguments"}. Flags: ${spec.flags.join(" ") || "none"}.`);
 			}
 			if (!sub || !spec) {
 				throw new UsageError(
-					'Usage: polycarp browser skill install [name...] [--all] [--force] | list [--json] | print [name] [--raw] | lint [path...] [--community] | apply <folder> [--yes] | revert <name> | match "<task>" [--json] [--top N] | eval [--json] [--update-baseline] [--cases <file>] [--base <checkout>] [--router <script>] | versions <name> | rollback <name> --to <version> [--yes] | edit <name> [--yes] [--draft-only] | refresh [--json] | write <name> [--file <file>] [--yes] | test <name|folder> [--cases <file>] | remove <name> | enable <name> | sync [--on|--off] | submit <name|folder> [--cases <file>] [--dry-run] [--confirm <code>] | catalog <checkout> --out <file> --serial N',
+					`Usage: ${COMMAND_NAME} skill install [name...] [--all] [--force] | list [--json] | print [name] [--raw] | lint [path...] [--community] | apply <folder> [--yes] | revert <name> | match "<task>" [--json] [--top N] | eval [--json] [--update-baseline] [--cases <file>] [--base <checkout>] [--router <script>] | versions <name> | rollback <name> --to <version> [--yes] | edit <name> [--yes] [--draft-only] | refresh [--json] | write <name> [--file <file>] [--yes] | test <name|folder> [--cases <file>] | remove <name> | enable <name> | sync [--on|--off] | submit <name|folder> [--cases <file>] [--dry-run] [--confirm <code>] | catalog <checkout> --out <file> --serial N`,
 				);
 			}
 			for (const name of VALUE_FLAGS) {
 				if (spec.flags.includes(name) && flag(name) && option(name) === undefined) throw new UsageError(`${name} needs a value.`);
 			}
 			if (sub === "submit") {
-				if (rest.length !== 1) throw new UsageError("Usage: polycarp browser skill submit <name|folder> [--cases <file>] [--note TEXT] [--dry-run] [--confirm <code>] [--repo owner/name] [--branch <branch>] [--json]");
+				if (rest.length !== 1) throw new UsageError(`Usage: ${COMMAND_NAME} skill submit <name|folder> [--cases <file>] [--note TEXT] [--dry-run] [--confirm <code>] [--repo owner/name] [--branch <branch>] [--json]`);
 				process.exitCode = await runSubmit({
 					target: rest[0],
 					cases: option("--cases"),
@@ -428,7 +432,7 @@ async function main(): Promise<void> {
 			// remote.json (polycarp browser remote setup) supplies what flags leave out; flags win.
 			const rawPublic = option("--public-url");
 			const saved = rawPublic === undefined ? loadRemoteConfig() : undefined;
-			if (saved) console.log(`Using ${remoteFile()} (polycarp browser remote off removes it).`);
+			if (saved) console.log(`Using ${remoteFile()} (${COMMAND_NAME} remote off removes it).`);
 			const port = Number(option("--port") ?? saved?.port ?? DEFAULT_PORT);
 			if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError("--port takes a port number.");
 			const list = (name: string) => (option(name) ?? "").split(",").map((x) => x.trim()).filter(Boolean);
@@ -444,8 +448,8 @@ async function main(): Promise<void> {
 			} else if (option("--redirect-host") !== undefined || option("--allow-host") !== undefined) {
 				throw new UsageError("--redirect-host and --allow-host need --public-url.");
 			}
-			if (oauth && !passcodeSet()) console.log(`${sym.warn} No OAuth passcode yet; only a connect code (polycarp browser token approval-code) can approve a connection. Run: polycarp browser token passcode`);
-			else if (!oauth && loadTokens().every((t) => t.revokedAt)) console.log(`${sym.warn} No tokens yet; every request will be refused. Create one: polycarp browser token create <name> --scope browser.read`);
+			if (oauth && !passcodeSet()) console.log(`${sym.warn} No OAuth passcode yet; only a connect code (${COMMAND_NAME} token approval-code) can approve a connection. Run: ${COMMAND_NAME} token passcode`);
+			else if (!oauth && loadTokens().every((t) => t.revokedAt)) console.log(`${sym.warn} No tokens yet; every request will be refused. Create one: ${COMMAND_NAME} token create <name> --scope browser.read`);
 			const { url } = await serve({ port, host: "127.0.0.1", oauth, allowedHosts });
 			console.log(`${sym.ok} MCP over HTTP at ${url} (loopback only; every request needs a token). Ctrl-C stops it.`);
 			if (oauth) console.log(`${sym.ok} OAuth on for ${oauth.publicUrl}/mcp: add that URL as a custom connector, then approve it with your passcode or a connect code.`);
@@ -455,13 +459,13 @@ async function main(): Promise<void> {
 		case "token": {
 			const [sub, name] = argv.slice(1).filter((a) => !a.startsWith("-") && a !== option("--scope"));
 			if (sub === "create") {
-				if (!name) throw new UsageError("Usage: polycarp browser token create <name> --scope browser.read,library.read");
+				if (!name) throw new UsageError(`Usage: ${COMMAND_NAME} token create <name> --scope browser.read,library.read`);
 				const scopes = (option("--scope") ?? "").split(",").map((x) => x.trim()).filter(Boolean);
 				try {
 					const { record, token } = createToken(name, scopes);
 					console.log(`${sym.ok} Token ${record.id} for ${record.name}: ${record.scopes.join(", ")}`);
 					console.log(`\n  ${token}\n`);
-					console.log(c.dim("Shown once. Give it to the agent as an Authorization: Bearer header. polycarp browser token revoke " + record.id + " ends it."));
+					console.log(c.dim(`Shown once. Give it to the agent as an Authorization: Bearer header. ${COMMAND_NAME} token revoke ` + record.id + " ends it."));
 				} catch (err) {
 					throw new UsageError(err instanceof Error ? err.message : String(err));
 				}
@@ -512,7 +516,7 @@ async function main(): Promise<void> {
 				return;
 			}
 			if (sub === "revoke") {
-				if (!name) throw new UsageError("Usage: polycarp browser token revoke <id|name|client id|grant id>");
+				if (!name) throw new UsageError(`Usage: ${COMMAND_NAME} token revoke <id|name|client id|grant id>`);
 				if (name.startsWith("o-")) {
 					if (revokeGrantById(name)) {
 						console.log(`${sym.ok} Ended grant ${name}.`);
@@ -537,7 +541,7 @@ async function main(): Promise<void> {
 				for (const [scope, { what, tools }] of Object.entries(SCOPES)) console.log(`${c.bold(scope.padEnd(18))} ${what}\n${"".padEnd(19)}${c.dim(tools.join(", "))}`);
 				return;
 			}
-			throw new UsageError("Usage: polycarp browser token create <name> --scope a,b | list | revoke <id|name|client id|grant id> | scopes | passcode | approval-code | clients");
+			throw new UsageError(`Usage: ${COMMAND_NAME} token create <name> --scope a,b | list | revoke <id|name|client id|grant id> | scopes | passcode | approval-code | clients`);
 		}
 		case "remote": {
 			const sub = argv.slice(1).find((a) => !a.startsWith("-") && a !== option("--public-url") && a !== option("--port"));
@@ -565,7 +569,7 @@ async function main(): Promise<void> {
 				process.exitCode = await remoteOff();
 				return;
 			}
-			throw new UsageError("Usage: polycarp browser remote setup [--public-url https://host] [--port N] [--no-service] [--no-passcode] | status [--json] | off");
+			throw new UsageError(`Usage: ${COMMAND_NAME} remote setup [--public-url https://host] [--port N] [--no-service] [--no-passcode] | status [--json] | off`);
 		}
 		case "hub": {
 			const rest = argv.slice(1).filter((a, i, all) => !a.startsWith("-") && !(VALUE_FLAGS.has(all[i - 1] ?? "") && !(all[i - 1] ?? "").includes("=")));
@@ -588,7 +592,7 @@ async function main(): Promise<void> {
 			};
 			if (sub === "setup") {
 				const publicUrl = publicOption();
-				if (!publicUrl) throw new UsageError("Usage: polycarp browser hub setup --public-url https://host [--port N] [--no-service] [--no-passcode] [--json]");
+				if (!publicUrl) throw new UsageError(`Usage: ${COMMAND_NAME} hub setup --public-url https://host [--port N] [--no-service] [--no-passcode] [--json]`);
 				const port = portOption();
 				if (port !== undefined && port < 1) throw new UsageError("--port takes a port number from 1 to 65535.");
 				process.exitCode = await hubSetup({ publicUrl, port, service: !flag("--no-service"), json: flag("--json"), passcode: !flag("--no-passcode") });
@@ -607,12 +611,12 @@ async function main(): Promise<void> {
 				return;
 			}
 			if (sub === "remove") {
-				if (!arg) throw new UsageError("Usage: polycarp browser hub remove <name|id>");
+				if (!arg) throw new UsageError(`Usage: ${COMMAND_NAME} hub remove <name|id>`);
 				process.exitCode = hubRemove(arg);
 				return;
 			}
 			if (sub === "prefer") {
-				if (!arg) throw new UsageError("Usage: polycarp browser hub prefer <name,name,...>");
+				if (!arg) throw new UsageError(`Usage: ${COMMAND_NAME} hub prefer <name,name,...>`);
 				process.exitCode = hubPrefer(arg);
 				return;
 			}
@@ -641,7 +645,7 @@ async function main(): Promise<void> {
 				break;
 			}
 			throw new UsageError(
-				"Usage: polycarp browser hub setup --public-url https://host | serve | code [--name N] [--manage] | devices | remove <name|id> | prefer <a,b> | status | off | token [--name hub] | tunnel [--port N]",
+				`Usage: ${COMMAND_NAME} hub setup --public-url https://host | serve | code [--name N] [--manage] | devices | remove <name|id> | prefer <a,b> | status | off | token [--name hub] | tunnel [--port N]`,
 			);
 		}
 		case "link": {
@@ -651,7 +655,7 @@ async function main(): Promise<void> {
 			if (enrolling) {
 				const target = rest[0] === "enroll" ? rest[1] : rest[0];
 				const code = option("--code");
-				if (!target || !code) throw new UsageError("Usage: polycarp browser link <hub-url> --code TK-XXXX-XXXX [--name N] [--scope a,b] [--no-service] [--json]");
+				if (!target || !code) throw new UsageError(`Usage: ${COMMAND_NAME} link <hub-url> --code TK-XXXX-XXXX [--name N] [--scope a,b] [--no-service] [--json]`);
 				let hubUrl: string;
 				try {
 					hubUrl = normalizeHubUrl(target);
@@ -686,7 +690,7 @@ async function main(): Promise<void> {
 				process.exitCode = await linkMintCode("approval", { manage: false, json: flag("--json") });
 				return;
 			}
-			throw new UsageError("Usage: polycarp browser link <hub-url> --code TK-XXXX-XXXX | run | status | off | busy on|off | code [--manage] | approval-code");
+			throw new UsageError(`Usage: ${COMMAND_NAME} link <hub-url> --code TK-XXXX-XXXX | run | status | off | busy on|off | code [--manage] | approval-code`);
 		}
 		case "theme": {
 			const rest = argv.slice(1).filter((a) => !a.startsWith("-"));
@@ -717,8 +721,8 @@ async function main(): Promise<void> {
 				process.exitCode = result.ok ? 0 : 1;
 				return;
 			}
-			if (sub !== "status") throw new UsageError("Usage: polycarp browser copilot-sdk install|status");
-			console.log(sdkInstalled() ? `${sym.ok} GitHub's Copilot SDK is installed.` : `${sym.warn} Not installed. Run \`polycarp browser copilot-sdk install\`.`);
+			if (sub !== "status") throw new UsageError(`Usage: ${COMMAND_NAME} copilot-sdk install|status`);
+			console.log(sdkInstalled() ? `${sym.ok} GitHub's Copilot SDK is installed.` : `${sym.warn} Not installed. Run \`${COMMAND_NAME} copilot-sdk install\`.`);
 			return;
 		}
 		case "pi-extension":
@@ -726,7 +730,7 @@ async function main(): Promise<void> {
 			return;
 		case "completion": {
 			const script = completionScript(argv[1] ?? "");
-			if (!script) throw new UsageError("Usage: polycarp browser completion zsh|bash|fish. For zsh: eval \"$(polycarp browser completion zsh)\" in ~/.zshrc");
+			if (!script) throw new UsageError(`Usage: ${COMMAND_NAME} completion zsh|bash|fish. For zsh: eval "$(${COMMAND_NAME} completion zsh)" in ~/.zshrc`);
 			process.stdout.write(script);
 			return;
 		}
@@ -743,13 +747,13 @@ async function main(): Promise<void> {
 			process.stdout.write(help());
 			return;
 		default:
-			throw new UsageError(`Unknown command "${command}". Run \`tabkyra --help\` to see the commands.`);
+			throw new UsageError(`Unknown command "${command}". Run \`${COMMAND_NAME} --help\` to see the commands.`);
 	}
 }
 
 main().catch((err) => {
 	const message = err instanceof Error ? err.message : String(err);
 	console.error(`${sym.fail} ${forPeople(message)}`);
-	if (!(err instanceof UsageError) && !(err instanceof UpdateError) && message !== NOT_CONNECTED) console.error(`${sym.arrow} Run ${c.bold("polycarp browser doctor")} to find the cause.`);
+	if (!(err instanceof UsageError) && !(err instanceof UpdateError) && message !== NOT_CONNECTED) console.error(`${sym.arrow} Run ${c.bold(`${COMMAND_NAME} doctor`)} to find the cause.`);
 	process.exit(err instanceof UsageError ? 2 : 1);
 });

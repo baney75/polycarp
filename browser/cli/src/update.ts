@@ -25,6 +25,7 @@ import { releaseSummary } from "./release-notes.ts";
 import { banner, c, confirm, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
 import { extractZip } from "./zip.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export const REPO = "baney75/tabkyra";
 export type Channel = "stable" | "nightly";
@@ -440,7 +441,7 @@ export function takeLock(root = installRoot()): () => void {
 		} else {
 			held = Date.now() - statSync(lock).mtimeMs < LOCK_STALE_MS;
 		}
-		if (held) throw new UpdateError(`Another polycarp browser update is running${pid > 0 ? ` (pid ${pid})` : ""}. Try again when it finishes.`);
+		if (held) throw new UpdateError(`Another ${COMMAND_NAME} update is running${pid > 0 ? ` (pid ${pid})` : ""}. Try again when it finishes.`);
 		// Move the dead lock aside first, so two takers can't both delete and recreate it.
 		const dead = join(root, `.lock-dead-${randomBytes(6).toString("hex")}`);
 		try {
@@ -449,7 +450,7 @@ export function takeLock(root = installRoot()): () => void {
 		} catch {
 			/* someone else took it over */
 		}
-		if (!take()) throw new UpdateError("Another polycarp browser update just started. Try again when it finishes.");
+		if (!take()) throw new UpdateError(`Another ${COMMAND_NAME} update just started. Try again when it finishes.`);
 	}
 	return () => rmSync(lock, { recursive: true, force: true });
 }
@@ -537,7 +538,7 @@ export function isManagedCopy(): boolean {
 
 function reloadHint(log: (line: string) => void): void {
 	log("");
-	log(`${sym.arrow} Reload Polycarp so the browser runs the new files: ${c.bold("polycarp browser reload")}, or the reload button on chrome://extensions.`);
+	log(`${sym.arrow} Reload Polycarp so the browser runs the new files: ${c.bold(`${COMMAND_NAME} reload`)}, or the reload button on chrome://extensions.`);
 	if (!isManagedCopy()) {
 		log(`  ${c.dim("First release install: in chrome://extensions remove the old Polycarp, then Load unpacked:")}`);
 		log(`  ${join(appDir(), "dist-chrome")}`);
@@ -591,7 +592,7 @@ export async function runUpdate(options: UpdateOptions): Promise<number> {
 			return 1;
 		}
 		if (!status.latest) log(`${sym.ok} No ${channel} release is published yet. ${c.dim(`(installed ${status.current})`)}`);
-		else if (status.available) log(`${sym.warn} Update available: ${c.bold(status.latest)} ${c.dim(`(installed ${status.current})`)} ${sym.arrow} ${c.bold("polycarp browser update")}`);
+		else if (status.available) log(`${sym.warn} Update available: ${c.bold(status.latest)} ${c.dim(`(installed ${status.current})`)} ${sym.arrow} ${c.bold(`${COMMAND_NAME} update`)}`);
 		else log(`${sym.ok} Up to date ${c.dim(`(${status.current}, latest ${channel} ${status.latest})`)}`);
 		return status.error ? 1 : status.available ? EXIT_UPDATE_AVAILABLE : 0;
 	}
@@ -634,7 +635,7 @@ export async function runUpdate(options: UpdateOptions): Promise<number> {
 		swapIn(staged);
 	});
 	log(`${sym.ok} Installed ${c.bold(release.version)} in ${appDir()}`);
-	if (existsSync(previousDir())) log(`${sym.ok} Kept ${installedVersion(previousDir()) ?? "the previous release"} for ${c.bold("polycarp browser update --rollback")}`);
+	if (existsSync(previousDir())) log(`${sym.ok} Kept ${installedVersion(previousDir()) ?? "the previous release"} for ${c.bold(`${COMMAND_NAME} update --rollback`)}`);
 	reinstallHost(log);
 	writeStatus({ ...status, current: release.version, available: false, checkedAt: Date.now() });
 	reloadHint(log);

@@ -28,6 +28,7 @@ import {
 import { checkPolycarpTheme, type PolycarpTheme, polycarpPayload } from "../../src/appearance/polycarp.ts";
 import { writeJsonPrivate } from "./files.ts";
 import { configDir } from "./oauth.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export const themeFile = () => join(configDir(), "theme.json");
 
@@ -241,6 +242,6 @@ export function runTheme(args: string[], json: boolean): number {
 		if (!json) console.log(`Theme reset to ${DEFAULT_PRESET}.${polycarpNote()}`);
 		return 0;
 	}
-	console.error("Usage: polycarp browser theme list | set <preset> | accent <#rrggbb> | reset [--json]");
+	console.error(`Usage: ${COMMAND_NAME} theme list | set <preset> | accent <#rrggbb> | reset [--json]`);
 	return 2;
 }

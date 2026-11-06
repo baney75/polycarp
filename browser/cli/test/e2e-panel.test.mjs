@@ -115,8 +115,8 @@ for (const width of [400, 320]) {
 				}),
 			);
 			const commands = boxes.map((b) => b.text);
-			assert.ok(commands.includes("polycarp browser remote setup"), JSON.stringify(commands));
-			assert.ok(commands.includes("polycarp browser hub setup --public-url https://ADDRESS"), JSON.stringify(commands));
+			assert.ok(commands.includes("tabkyra remote setup"), JSON.stringify(commands));
+			assert.ok(commands.includes("tabkyra hub setup --public-url https://ADDRESS"), JSON.stringify(commands));
 			for (const box of boxes) {
 				assert.equal(box.clipped, false, `${box.text} is cut off`);
 				assert.ok(box.right <= box.width, `${box.text} runs ${box.right - box.width}px past the panel`);

@@ -19,13 +19,13 @@ import {
 import {
 	connectorUrl,
 	countdown,
-	HELPER_OUT_OF_DATE,
+	helperOutOfDateMessage,
 	hubHost,
 	JOIN_WARNING,
 	joinScopesOf,
 	lastSeen,
 	linkCommand,
-	MALFORMED_CODE,
+	malformedCodeMessage,
 	validApprovalCode,
 	validDeviceCode,
 } from "../connect/format.js";
@@ -126,11 +126,11 @@ export class ConnectTab extends SettingsTab {
 		try {
 			if (kind === "approval") {
 				const made = await connectApprovalCode();
-				if (!validApprovalCode(made)) throw new Error(MALFORMED_CODE);
+				if (!validApprovalCode(made)) throw new Error(malformedCodeMessage());
 				this.approval = made;
 			} else {
 				const made = await connectDeviceCode();
-				if (!validDeviceCode(made)) throw new Error(MALFORMED_CODE);
+				if (!validDeviceCode(made)) throw new Error(malformedCodeMessage());
 				this.device = made;
 			}
 		} catch (err) {
@@ -163,7 +163,7 @@ export class ConnectTab extends SettingsTab {
 		}
 		const scopes = joinScopesOf(s);
 		if (!scopes) {
-			this.joinMessage = { ok: false, text: HELPER_OUT_OF_DATE };
+			this.joinMessage = { ok: false, text: helperOutOfDateMessage() };
 			return;
 		}
 		// What is confirmed is what is sent: editing a field clears the confirm, so the host the person agreed to cannot change.
@@ -257,7 +257,7 @@ export class ConnectTab extends SettingsTab {
 		return html`
 			<div class="flex flex-col gap-2 rounded-md border border-border bg-muted/40 p-3" data-connect-setup>
 				<p class="text-xs text-foreground">Polycarp's helper isn't connected. It runs on this computer and does the work here. Run this in a terminal, then reopen Settings.</p>
-				${this.command("Set up Polycarp", "polycarp browser setup")}
+				${this.command("Set up Polycarp", `${hostCommand()} setup`)}
 			</div>
 		`;
 	}
@@ -284,8 +284,8 @@ export class ConnectTab extends SettingsTab {
 						This computer has no public address yet, so those assistants can't reach your browser. Pick one command: the first for this
 						computer alone, the second for an always-on box that several of your computers connect to.
 					</p>
-					${this.command("One computer (needs Tailscale)", "polycarp browser remote setup")}
-					${this.command("Many devices, one address", "polycarp browser hub setup --public-url https://ADDRESS")}
+					${this.command("One computer (needs Tailscale)", `${hostCommand()} remote setup`)}
+					${this.command("Many devices, one address", `${hostCommand()} hub setup --public-url https://ADDRESS`)}
 					<div class="flex flex-col gap-1.5 items-start">
 						${Button({
 							size: "sm",
@@ -393,7 +393,7 @@ export class ConnectTab extends SettingsTab {
 											if (!validDeviceCode(made)) return;
 											try {
 												void copyText(
-													deviceSetupPrompt(extensionVersion(), made.hubUrl, made.code, hostCommand()),
+													deviceSetupPrompt(extensionVersion(), made.hubUrl, made.code),
 													"Setup prompt copied. Paste it into the agent on that device.",
 												);
 											} catch (err) {

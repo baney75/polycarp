@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { tabkyraBinary } from "./harness.ts";
 import { configDir } from "./files.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export function writeAtomic(path: string, text: string, mode: number): void {
 	mkdirSync(dirname(path), { recursive: true });
@@ -97,7 +98,7 @@ export const SERVE_SERVICE: ServiceSpec = {
 	args: ["serve"],
 	logName: "tabkyra-serve.log",
 	description: "Polycarp serve (MCP over HTTP for claude.ai, ChatGPT and grok.com)",
-	off: "polycarp browser remote off",
+	off: `${COMMAND_NAME} remote off`,
 	kept: "remote.json",
 };
 
@@ -107,7 +108,7 @@ export const HUB_SERVICE: ServiceSpec = {
 	args: ["hub", "serve"],
 	logName: "tabkyra-hub.log",
 	description: "Polycarp hub (one connector URL for many devices)",
-	off: "polycarp browser hub off",
+	off: `${COMMAND_NAME} hub off`,
 	kept: "hub.json",
 };
 
@@ -117,7 +118,7 @@ export const LINK_SERVICE: ServiceSpec = {
 	args: ["link", "run"],
 	logName: "tabkyra-link.log",
 	description: "Polycarp link (this device, behind a hub)",
-	off: "polycarp browser link off",
+	off: `${COMMAND_NAME} link off`,
 	kept: "link.json",
 };
 

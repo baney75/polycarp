@@ -3,6 +3,7 @@ import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, nothing, type TemplateResult } from "lit";
+import { hostCommand } from "../bridge/host-command.js";
 import type { HostCommunityStatus } from "../bridge/protocol.js";
 import {
 	COMMUNITY_STATUS_KEY,
@@ -92,7 +93,7 @@ export class SkillsTab extends SettingsTab {
 								})}
 							</div>`
 						: html`<p class="text-xs text-muted-foreground">
-								No word from the native host yet; community skills sync through it (polycarp browser doctor).
+								No word from the native host yet; community skills sync through it (${hostCommand()} doctor).
 							</p>`
 				}
 				${status?.error ? html`<p class="text-xs text-destructive">${status.error}</p>` : nothing}
@@ -441,7 +442,7 @@ export class SkillsTab extends SettingsTab {
 						Library <span class="font-normal text-muted-foreground">· ${this.searchQuery ? `${rows.length} of ${total}` : total}</span>
 					</h3>
 					<p class="text-xs text-muted-foreground">
-						Type / in the chat to run one. <code class="font-mono">polycarp browser skill install</code> also installs them for Claude Code, Codex and OpenCode.
+						Type / in the chat to run one. <code class="font-mono">${hostCommand()} skill install</code> also installs them for Claude Code, Codex and OpenCode.
 					</p>
 				</div>
 				${

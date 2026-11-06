@@ -3,6 +3,7 @@ import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { hostCommand } from "../bridge/host-command.js";
 import {
 	allowHost,
 	getAllowedHosts,
@@ -123,7 +124,7 @@ export class BridgeTab extends SettingsTab {
 					${details(
 						status.apiPresent
 							? 'The permission is granted, but "Allow user scripts" is off. Turn it on at chrome://extensions > Polycarp > Details.'
-							: 'The permission is granted, but the browser hides the API. Check "Allow user scripts" at chrome://extensions > Polycarp > Details, then restart Polycarp (polycarp browser reload; agent sessions reconnect).',
+							: `The permission is granted, but the browser hides the API. Check "Allow user scripts" at chrome://extensions > Polycarp > Details, then restart Polycarp (${hostCommand()} reload; agent sessions reconnect).`,
 					)}
 				`;
 				break;

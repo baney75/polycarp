@@ -24,6 +24,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { buildRouterIndex, matchSkills, type RouterSkill } from "./skill-router.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 /** Rank every task: the top skill (or "none") per task, plus timings. */
 export type Ranker = (
@@ -330,9 +331,9 @@ export function runEval(skills: RouterSkill[], cases: EvalCase[], baseline?: Bas
 			gate: "baseline",
 			ok: baseline !== undefined && unbased.length === 0 && regressions.length === 0 && underFloor.length === 0,
 			detail: !baseline
-				? "no baseline.json; run polycarp browser skill eval --update-baseline and commit it"
+				? `no baseline.json; run ${COMMAND_NAME} skill eval --update-baseline and commit it`
 				: unbased.length
-					? `no valid baseline (a number from 0 to 1) for ${unbased.join(", ")}; run polycarp browser skill eval --update-baseline and commit it`
+					? `no valid baseline (a number from 0 to 1) for ${unbased.join(", ")}; run ${COMMAND_NAME} skill eval --update-baseline and commit it`
 					: regressions.length || underFloor.length
 						? [
 								regressions.length ? `${tolerance ? `dropped more than ${tolerance} points` : "the baseline claims more than the router measures"}: ${regressions.map(([n, s]) => `${n} ${pct(s.accuracy)} (baseline ${pct(s.baseline ?? 0)})`).join(", ")}` : "",

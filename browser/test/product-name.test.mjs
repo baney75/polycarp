@@ -40,6 +40,10 @@ const PROSE = /(?<![/\w.@-])tabkyra (?:side panel|panel|command|extension|helper
 // "tabkyra setup" in text a person reads: the command to type is `polycarp browser setup`.
 const COMMAND = /(?<![/\w.@-])tabkyra (?=(?:setup|doctor|install|update|reload|status|allow|deny|skill|theme|serve|hub|link|remote|token|threads|sessions|tabs|library|debug|host|pi-extension|copilot-sdk|completion|version|help|tunnel|sessions|reload)\b)/;
 
+// The old name inside a sentence a person reads: "Use tabkyra to open...", "through tabkyra mcp". Comment lines are not read by anyone.
+const SENTENCE = /(?<![/\w.@-])tabkyra mcp\b|\bUse tabkyra\b/;
+const COMMENT = /^\s*(?:\/\/|\/?\*)/;
+
 test("no user-visible text says Tabkyra", () => {
 	const found = [];
 	for (const dir of TEXT_DIRS) {
@@ -50,7 +54,7 @@ test("no user-visible text says Tabkyra", () => {
 				.forEach((raw, i) => {
 					// "\nTabkyra" in source has no word boundary; read the escapes as the spaces they print as.
 					const line = raw.replace(/\\[nrt]/g, " ");
-					if (!CAPITAL.test(line) && !COMMAND.test(line) && !PROSE.test(line)) return;
+					if (!CAPITAL.test(line) && !COMMAND.test(line) && !PROSE.test(line) && !(SENTENCE.test(line) && !COMMENT.test(raw))) return;
 					if (raw.includes(MARKER) || ALLOW.has(rel)) return;
 					found.push(`${rel}:${i + 1}: ${raw.trim().slice(0, 100)}`);
 				});

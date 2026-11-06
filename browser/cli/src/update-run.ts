@@ -48,6 +48,7 @@ import {
 	writeLastUpdate,
 	writeStatus,
 } from "./update.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 export type { HostRunAction, ProgressEvent, ProgressRecord } from "./update-progress.ts";
 
@@ -271,7 +272,7 @@ export async function runHostAction(action: HostRunAction): Promise<number> {
 	try {
 		if (mode === "unmanaged") {
 			throw new UpdateError(
-				`This Polycarp runs from ${root}, which is neither a release install nor a git checkout, so it can't update itself from the side panel. Run polycarp browser update in a terminal.`,
+				`This Polycarp runs from ${root}, which is neither a release install nor a git checkout, so it can't update itself from the side panel. Run ${COMMAND_NAME} update in a terminal.`,
 			);
 		}
 		if (mode === "release") {

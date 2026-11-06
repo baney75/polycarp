@@ -1,5 +1,6 @@
 /** Community skills in the service worker: forwards the side panel's buttons to the native host. */
 
+import { hostCommand } from "../bridge/host-command.js";
 import { sendCommunityAction } from "../bridge/native.js";
 import { PANEL_COMMUNITY_MESSAGE } from "./status.js";
 
@@ -23,7 +24,7 @@ function onPanelMessage(
 	else
 		sendResponse({
 			ok: false,
-			message: "The Polycarp native host isn't connected. Run polycarp browser doctor in a terminal.",
+			message: `The Polycarp native host isn't connected. Run ${hostCommand()} doctor in a terminal.`,
 		});
 	return undefined;
 }

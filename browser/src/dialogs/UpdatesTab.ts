@@ -2,6 +2,7 @@ import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { hostCommand } from "../bridge/host-command.js";
 import {
 	phaseLabel,
 	requestUpdate,
@@ -114,7 +115,7 @@ export class UpdatesTab extends SettingsTab {
 							</div>`
 						: html`<p class="text-sm text-muted-foreground">
 								The native host hasn't reported yet. Updates need the Polycarp CLI: run
-								<code class="font-mono">polycarp browser doctor</code> in a terminal.
+								<code class="font-mono">${hostCommand()} doctor</code> in a terminal.
 							</p>`
 				}
 

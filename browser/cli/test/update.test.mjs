@@ -371,7 +371,7 @@ test("a held lock stops a second updater; a dead one is taken over", async () =>
 	// No pid written yet and fresh: another updater is between mkdir and writing its pid.
 	let r = await run(appCli(), "update", "--check");
 	assert.equal(r.code, 1, r.out);
-	assert.match(r.out, /Another polycarp browser update is running/);
+	assert.match(r.out, /Another tabkyra update is running/);
 	// A pid that no longer exists: taken over.
 	writeFileSync(join(lock, "pid"), "999999");
 	r = await run(appCli(), "update", "--check");

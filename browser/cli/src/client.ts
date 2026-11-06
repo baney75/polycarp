@@ -11,10 +11,11 @@ import { ERR, isIdempotent, MAX_FRAME_FROM_EXTENSION } from "../../src/bridge/pr
 import { encodeFrame, FrameParser } from "./framing.ts";
 import { assertSecurePath, socketDir } from "./paths.ts";
 import { VERSION } from "./version.ts";
+import { COMMAND_NAME } from "./self.ts";
 
 /** What every tool says when no browser is reachable: the agent can only ask the user. */
 export const NOT_CONNECTED =
-	"Polycarp isn't connected. Ask the user to open Helium/Chrome with the Polycarp extension loaded, or run `polycarp browser doctor`.";
+	`Polycarp isn't connected. Ask the user to open Helium/Chrome with the Polycarp extension loaded, or run \`${COMMAND_NAME} doctor\`.`;
 
 export class BridgeRpcError extends Error {
 	constructor(readonly rpc: RpcError) {
@@ -411,7 +412,7 @@ export class BridgeClient {
 					if (drops >= MAX_ATTEMPTS)
 						throw new BridgeRpcError({
 							code: ERR.INTERRUPTED,
-							message: `The browser connection dropped ${drops} times in a row during ${TOOL_NAMES[method] ?? method.replace(".", "_")}. Run \`polycarp browser doctor\` or ask the user to check the browser, then try again.`,
+							message: `The browser connection dropped ${drops} times in a row during ${TOOL_NAMES[method] ?? method.replace(".", "_")}. Run \`${COMMAND_NAME} doctor\` or ask the user to check the browser, then try again.`,
 						});
 					// Stop using the socket this request went out on (unless another call already moved on).
 					if (sent.socket && this.socket === sent.socket) this.retire(sent.socket);

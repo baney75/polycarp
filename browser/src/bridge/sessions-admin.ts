@@ -12,6 +12,7 @@ import {
 	sanitizeLabel,
 	takeNotices,
 } from "../browser/session.js";
+import { hostCommand } from "./host-command.js";
 import { ERR } from "./protocol.js";
 import { BridgeError } from "./tools.js";
 
@@ -73,7 +74,7 @@ async function describe(
 async function resolve(query: string, panel = false) {
 	const q = query.trim().toLowerCase();
 	if (!q)
-		throw new BridgeError(ERR.BAD_PARAMS, "Which session? Give its name (polycarp browser sessions lists them).");
+		throw new BridgeError(ERR.BAD_PARAMS, `Which session? Give its name (${hostCommand()} sessions lists them).`);
 	const all = (await listSessions()).filter((s) => panel || isAgentSession(s.id));
 	const exact = all.filter((s) =>
 		[nameOf(s), s.id, s.label, `Polycarp · ${s.label}`].some((v) => v.toLowerCase() === q),
@@ -83,7 +84,7 @@ async function resolve(query: string, panel = false) {
 	if (hits.length === 0)
 		throw new BridgeError(
 			ERR.NOT_FOUND,
-			`No agent session matches "${query}". polycarp browser sessions lists them.`,
+			`No agent session matches "${query}". ${hostCommand()} sessions lists them.`,
 		);
 	throw new BridgeError(
 		ERR.BAD_PARAMS,

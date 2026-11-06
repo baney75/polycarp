@@ -1,6 +1,7 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { html, LitElement, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
+import { hostCommand } from "../bridge/host-command.js";
 import { COMMAND_BOX_CLASS } from "../components/command-box.js";
 import { Toast } from "../components/Toast.js";
 import { request, SubscriptionRequestError, type SubscriptionStatus, subscriptionStatus } from "./client.js";
@@ -238,7 +239,7 @@ export class SubscriptionsSection extends LitElement {
 											: html`Subscription sign-ins aren't available: ${this.error?.replace(/\.?$/, ".")} Running this in a terminal usually fixes it.`
 									}
 								</p>
-								${this.command("Set up Polycarp", "polycarp browser setup")}
+								${this.command("Set up Polycarp", `${hostCommand()} setup`)}
 							</div>`
 						: nothing
 				}
@@ -280,7 +281,7 @@ export class SubscriptionsSection extends LitElement {
 					}${
 						s && !s.copilot.sdkInstalled
 							? html`<p class="text-xs text-muted-foreground">Copilot needs GitHub's Copilot SDK on this computer (about 160 MB).</p>
-									${this.command("Install the Copilot SDK", "polycarp browser copilot-sdk install")}`
+									${this.command("Install the Copilot SDK", `${hostCommand()} copilot-sdk install`)}`
 							: nothing
 					}`,
 				})}
