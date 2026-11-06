@@ -42,7 +42,9 @@ machines call them, and no person reads them:
 - the manifest `key` (it keeps the extension id)
 - `~/.config/tabkyra` and the other `tabkyra` folders and `TABKYRA_*` variables
 - the extension's stored data: storage keys, database names and the `TabkyraAppStorage` class
+- the name providers list: OpenAI and GitHub show the sign-in grant as "Tabkyra", so the sign-out text says "Tabkyra (Polycarp's earlier name)" (`agentName` and the OAuth app stay registered as they are)
 - the tab group title "Tabkyra · ..." that earlier versions made, which is still recognized and tidied
+`doctor`, `status` and the setup prompts print the name the helper was started as: `polycarp browser` inside the app, `tabkyra` for an npm link or checkout (`COMMAND_NAME` in `cli/src/self.ts`).
 Skills under `skills/` and the docs and README still say Tabkyra; they are not rewritten yet.
 
 ## Inside Polycarp (single executable)

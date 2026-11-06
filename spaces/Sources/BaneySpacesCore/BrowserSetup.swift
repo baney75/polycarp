@@ -19,6 +19,11 @@ public struct BrowserStatus: Equatable {
     public var browsers: [Browser] = []
     public var extensionConnected = false
     public var extensionVersion: String?
+    /// The extension's version in each browser that holds a connection, by browser name (the helper reads it from the host's
+    /// parent process). Empty with an older helper or extension that gives no name.
+    public var connections: [String: String] = [:]
+    /// Connected, but no browser can be named: show one line for the connection, not a row.
+    public var unattributed: Bool { extensionConnected && connections.isEmpty }
     public var agents: [Agent] = []
 
     public init() {}
@@ -34,6 +39,13 @@ public struct BrowserStatus: Equatable {
             let label = check["label"] as? String ?? ""
             if id.hasPrefix("host:") {
                 s.browsers.append(Browser(name: String(id.dropFirst(5)), registered: ok))
+            } else if id.hasPrefix("connected:"), ok {
+                let name = String(id.dropFirst(10))
+                var version = ""
+                if let open = label.lastIndex(of: "("), let close = label.lastIndex(of: ")"), open < close {
+                    version = String(label[label.index(after: open)..<close])
+                }
+                s.connections[name] = version == "unknown version" ? "" : version
             } else if id == "connected" {
                 s.extensionConnected = ok
                 if ok, let open = label.firstIndex(of: "("), let close = label.lastIndex(of: ")"), open < close {
@@ -114,41 +126,64 @@ public struct BrowserRow: Equatable, Identifiable {
 }
 
 public enum BrowserRows {
-    /// A loaded extension that is not the bundled version needs a Reload (or a fresh Load unpacked).
+    /// A version as its dot-separated numbers; anything else counts as zero.
+    static func parts(_ v: String) -> [Int] { v.split(separator: ".").map { Int($0.prefix(while: \.isNumber)) ?? 0 } }
+
+    /// The loaded extension is older than the bundled one: a reload (or a fresh load from the Application Support copy) helps.
+    /// A newer or different build, such as a standalone copy, is not stale: reloading it changes nothing.
     public static func stale(loaded: String?, current: String?) -> Bool {
-        guard let loaded, let current else { return false }
-        return loaded != current
+        guard let loaded, let current, !loaded.isEmpty, !current.isEmpty else { return false }
+        let a = parts(loaded), b = parts(current)
+        for i in 0..<max(a.count, b.count) {
+            let x = i < a.count ? a[i] : 0, y = i < b.count ? b[i] : 0
+            if x != y { return x < y }
+        }
+        return false
     }
 
-    /// One row per installed browser. The helper reports one connection and not which browser it is in, so it is shown on the
-    /// one registered browser, or on the one the person last clicked Connect on when several are registered.
-    public static func rows(_ status: BrowserStatus, lastClicked: String?, bundledVersion: String?) -> [BrowserRow] {
-        let registered = status.browsers.filter(\.registered)
-        return status.browsers.map { b in
-            let holds = status.extensionConnected && b.registered && (registered.count == 1 || b.name == lastClicked)
-            guard holds else { return BrowserRow(name: b.name, state: .connect) }
-            if stale(loaded: status.extensionVersion, current: bundledVersion), let l = status.extensionVersion, let c = bundledVersion {
-                return BrowserRow(name: b.name, state: .reload(loaded: l, current: c))
+    /// One row per installed browser, from which browser really holds a connection.
+    public static func rows(_ status: BrowserStatus, bundledVersion: String?) -> [BrowserRow] {
+        status.browsers.map { b in
+            guard let loaded = status.connections[b.name] else { return BrowserRow(name: b.name, state: .connect) }
+            if stale(loaded: loaded, current: bundledVersion), let c = bundledVersion {
+                return BrowserRow(name: b.name, state: .reload(loaded: loaded, current: c))
             }
             return BrowserRow(name: b.name, state: .connected)
         }
     }
 }
 
-/// The floating panel beside the browser: waiting for the drop, connected (then it closes by itself), or a stale copy.
+/// The floating panel beside the browser: waiting for the drop, connected (then it closes by itself), or an older copy loaded.
 public enum BrowserPanelState: Equatable {
     case waiting, connected, reload(loaded: String, current: String)
     public static let closeDelay: TimeInterval = 1.5
 
-    public static func next(_ status: BrowserStatus?, bundledVersion: String?) -> BrowserPanelState {
-        guard let status, status.extensionConnected else { return .waiting }
-        if BrowserRows.stale(loaded: status.extensionVersion, current: bundledVersion), let l = status.extensionVersion, let c = bundledVersion {
-            return .reload(loaded: l, current: c)
+    /// The state for the browser the panel was opened for. `connectedAtOpen` is whether something was already connected when it
+    /// opened, so with an older helper that names no browser, only a connection that appears afterwards counts.
+    public static func next(_ status: BrowserStatus?, bundledVersion: String?, browser: String, connectedAtOpen: Bool = false) -> BrowserPanelState {
+        guard let status else { return .waiting }
+        if let loaded = status.connections[browser] {
+            if BrowserRows.stale(loaded: loaded, current: bundledVersion), let c = bundledVersion { return .reload(loaded: loaded, current: c) }
+            return .connected
         }
-        return .connected
+        if status.unattributed && !connectedAtOpen { return .connected }
+        return .waiting
     }
     /// Only a connected, current extension closes the panel.
     public var closesItself: Bool { self == .connected }
+}
+
+/// Where the floating panel goes, in Cocoa coordinates (origin at the bottom left): beside the browser's window to its right if
+/// the screen has room, else to its left, else (a maximized window) at the window's bottom right corner, clear of the page's top
+/// bar where the Developer mode switch is.
+public enum BrowserPanelPlacement {
+    public static func place(size: CGSize, window w: CGRect, in visible: CGRect) -> CGPoint {
+        let gap: CGFloat = 12
+        let y = min(max(w.maxY - size.height - 40, visible.minY + 8), visible.maxY - size.height - 8)
+        if w.maxX + gap + size.width <= visible.maxX { return CGPoint(x: w.maxX + gap, y: y) }
+        if w.minX - gap - size.width >= visible.minX { return CGPoint(x: w.minX - gap - size.width, y: y) }
+        return CGPoint(x: min(w.maxX - size.width - 16, visible.maxX - size.width - 8), y: max(w.minY + 16, visible.minY + 8))
+    }
 }
 
 /// Where the bundled pieces are, and how a browser is opened on its extensions page.

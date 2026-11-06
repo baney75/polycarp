@@ -38,6 +38,8 @@ final class BrowserModel: ObservableObject {
         guard let helper, !refreshing else { return }
         refreshing = true
         pollQueue.async { [weak self] in
+            // A new app brings a new extension: the copy the browser loads is refreshed before anyone is asked to reload.
+            _ = self?.loadableFolder()
             let result = Self.run(helper, ["doctor", "--json"], timeout: 12)
             let parsed = BrowserStatus.parse(result.out)
             DispatchQueue.main.async {
@@ -58,16 +60,13 @@ final class BrowserModel: ObservableObject {
     /// The version of the extension shipped in this app.
     var bundledVersion: String? { extensionFolder.flatMap { ExtensionCopy.manifestVersion(of: $0) } }
 
-    /// The browser the person last clicked Connect on; the helper doesn't say which browser holds the connection.
-    var lastClicked: String? { UserDefaults.standard.string(forKey: "browserLastConnect") }
-
-    var rows: [BrowserRow] { status.map { BrowserRows.rows($0, lastClicked: lastClicked, bundledVersion: bundledVersion) } ?? [] }
+    /// One row per installed browser; each says whether it holds the connection (the helper names the browser).
+    var rows: [BrowserRow] { status.map { BrowserRows.rows($0, bundledVersion: bundledVersion) } ?? [] }
 
     /// Registers the helper with this one browser, opens its extensions page, and shows the panel with the folder to drag.
     func connect(_ browser: String) {
         guard let helper else { return }
         busy = true; message = nil
-        UserDefaults.standard.set(browser, forKey: "browserLastConnect")
         queue.async { [weak self] in
             // Write down what the helper may overwrite, once, for uninstall.sh to put back.
             let home = FileManager.default.homeDirectoryForCurrentUser
@@ -153,6 +152,11 @@ struct BrowserSettingsView: View {
     private var browsers: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Browsers").font(Chrome.font(13, .bold))
+            if let s = model.status, s.unattributed {
+                // An older extension or helper doesn't say which browser it is in: one line for the connection.
+                Label("Connected\(s.extensionVersion.map { " (extension \($0))" } ?? "")", systemImage: "checkmark.circle.fill")
+                    .font(Chrome.font(12, .medium)).foregroundStyle(Color.green)
+            }
             if model.status == nil {
                 Text("Looking…").font(Chrome.font(12)).foregroundStyle(.secondary)
             } else if model.rows.isEmpty {

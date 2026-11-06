@@ -401,6 +401,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             exit((try? app.unregister()) != nil ? 0 : 1)
         }
         linkCommandIfNeeded()
+        // A new app brings a new extension: refresh the copy the browser loads now, off the main thread, before anyone is told to reload.
+        DispatchQueue.global(qos: .utility).async { _ = BrowserModel.shared.loadableFolder() }
         NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(handleURL(_:reply:)),
                                                      forEventClass: AEEventClass(kInternetEventClass),
                                                      andEventID: AEEventID(kAEGetURL))
