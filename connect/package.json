@@ -1,0 +1,20 @@
+{
+	"name": "polycarp-connect",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Provisioning service for Polycarp Connect: hands out Cloudflare named tunnels. Traffic never passes through it.",
+	"type": "module",
+	"scripts": {
+		"test": "vitest run",
+		"typecheck": "tsc --noEmit",
+		"check": "npm run typecheck && npm test",
+		"deploy": "wrangler deploy"
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-plugin": "^1.6.0",
+		"@cloudflare/workers-types": "^5.20260815.1",
+		"typescript": "^5.8.0",
+		"vitest": "^4.1.0",
+		"wrangler": "^4.158.0"
+	}
+}

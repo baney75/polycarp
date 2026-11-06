@@ -1,0 +1,36 @@
+{
+	// Polycarp Connect: provisioning only. No traffic passes through this Worker.
+	// No secrets live in this file. Set them with `wrangler secret put` (see README.md):
+	//   CF_API_TOKEN, ADMIN_SECRET, IP_SALT
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "polycarp-connect",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-10-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": { "enabled": false },
+	"d1_databases": [
+		{
+			"binding": "DB",
+			// Replace after `wrangler d1 create polycarp-connect` (an id is not a secret).
+			"database_name": "polycarp-connect",
+			"database_id": "00000000-0000-0000-0000-000000000000",
+			"migrations_dir": "migrations"
+		}
+	],
+	"triggers": { "crons": ["17 4 * * *"] },
+	"vars": {
+		// The Cloudflare account and zone that hold the tunnel hostnames (ids, not secrets).
+		"CF_ACCOUNT_ID": "REPLACE_WITH_ACCOUNT_ID",
+		"CF_ZONE_ID": "REPLACE_WITH_ZONE_ID",
+		// Tunnel hostnames are pc-<20 random chars>.<this>. One label only: Universal SSL covers one.
+		"TUNNEL_HOST_SUFFIX": "dbaney.com",
+		"HARD_LIMIT": "1000",
+		"RESERVE": "10",
+		"INVITE_ONLY_ABOVE": "900",
+		// Set to "1" to make /v1/claim answer "paused" (kill switch). Existing connections keep working.
+		"PAUSED": "0",
+		"CLAIMS_PER_IP_PER_DAY": "10",
+		"STALE_DAYS": "60",
+		"CRON_BATCH": "12"
+	}
+}
