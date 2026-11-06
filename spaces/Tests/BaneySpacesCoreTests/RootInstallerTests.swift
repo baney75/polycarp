@@ -59,6 +59,13 @@ final class RootInstallerTests: XCTestCase {
         XCTAssertLessThan(upd, one, "the first-run message is the else branch")
     }
 
+    /// On Omarchy, Polycarp matches the system theme from the install on, and never overrides a choice already made.
+    func testLinuxInstallsTheCommandAndFollowsOmarchyOnlyIfFresh() throws {
+        let t = try installer()
+        XCTAssertTrue(t.contains("theme follow omarchy --if-fresh"))
+        XCTAssertTrue(t.contains(#"[ "$(uname -s)" = Linux ]"#))
+    }
+
     func testTestModeNeverQuitsOrOpensAnything() throws {
         let t = try installer()
         XCTAssertTrue(t.contains(#"if [ -z "$test_mode" ]; then"#))

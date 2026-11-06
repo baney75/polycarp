@@ -1,5 +1,5 @@
 #!/bin/bash
-# Installs Polycarp on a Mac:
+# Installs Polycarp on a Mac, and the polycarp command on Linux:
 #   curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash
 # Downloads the signed app, which holds workspaces, voice, browser agents and the `polycarp` command, and
 # opens it. No developer tools needed. POLYCARP_FROM_SOURCE=1 builds it on this Mac instead.
@@ -25,6 +25,7 @@ main() {
     green=$(tput setaf 2 2>/dev/null || true)
   else bold=""; dim=""; reset=""; green=""; fi
   LOG="$HOME/Library/Logs/polycarp-install.log"
+  [ "$(uname -s)" = Darwin ] || LOG="$HOME/.local/state/polycarp/install.log"
   mkdir -p "$(dirname "$LOG")"; : > "$LOG"
   WORK=$(mktemp -d)
   trap 'rm -rf "$WORK"' EXIT
@@ -48,7 +49,18 @@ main() {
 
   say ""; say "${bold}Polycarp${reset}  ${dim}Bear much fruit.${reset}"; say ""
 
-  [ "$(uname -s)" = Darwin ] || fail "This installer is for a Mac. The polycarp command runs elsewhere: cargo install --git $REPO polycarp"
+  # On Linux today this is the command and the theme; the one app follows. On Omarchy, Polycarp matches the system
+  # theme from the start, and you can still change anything.
+  if [ "$(uname -s)" = Linux ]; then
+    [ -x "$HOME/.cargo/bin/cargo" ] && PATH="$HOME/.cargo/bin:$PATH"
+    command -v cargo >/dev/null || fail "Building it needs Rust. Install it from https://rustup.rs, then run this again."
+    step "Building the polycarp command" cargo install --quiet --locked --git "$REPO" --branch "$REF" --root "$HOME/.local" polycarp
+    step "Matching your system theme, if you're on Omarchy" "$HOME/.local/bin/polycarp" theme follow omarchy --if-fresh
+    say ""; say "  ${bold}The polycarp command is installed.${reset} The app for Linux is on the way."; say ""
+    say "  ${dim}Change how it looks: polycarp theme list${reset}"; say ""
+    return 0
+  fi
+  [ "$(uname -s)" = Darwin ] || fail "This installer is for a Mac or Linux. The polycarp command runs elsewhere: cargo install --git $REPO polycarp"
   [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 13 ] || fail "Polycarp needs macOS 13 Ventura or later."
   local BIN="$HOME/.local/bin"
   # 1. Get the app. Nothing on this Mac changes until it is here and checked.
