@@ -14,6 +14,36 @@
 			"skill": "visual-explainer",
 			"value": 0.9412,
 			"reason": "Merging #19 (19 skills) with #26 (visual-explainer, mechanism-design) puts 34 skills in one catalog; the extra skills shift word weights (IDF), and the merged router routes visual-explainer at 94.1% against 100.0% on main. Accepted to land both (Donovan, 2026-10-26: \"Just merge it for now\"); to be won back in a follow-up."
+		},
+		{
+			"skill": "artifacts",
+			"value": 0.8571,
+			"reason": "Adding youtube, rumble, instagram and site-learning takes the catalog from 35 to 39 skills. The router's single-evidence bar and word weights both rise with catalog size (docs/skill-platform.md), so a borderline case falls under it: \"Write up the results as a briefing page with citations\". 0.9048 to 0.8571, one case. No description of these skills was changed."
+		},
+		{
+			"skill": "design-library",
+			"value": 0.9,
+			"reason": "Adding youtube, rumble, instagram and site-learning takes the catalog from 35 to 39 skills. The router's single-evidence bar and word weights both rise with catalog size (docs/skill-platform.md), so a borderline case falls under it: \"Save this palette as Harbor: navy 1F3A5F, sand F4EFE6, orange E07A2F\". 1 to 0.9, one case. No description of these skills was changed."
+		},
+		{
+			"skill": "maps",
+			"value": 0.9,
+			"reason": "Adding youtube, rumble, instagram and site-learning takes the catalog from 35 to 39 skills. The router's single-evidence bar and word weights both rise with catalog size (docs/skill-platform.md), so a borderline case falls under it: \"What time does the hardware store on Main Street close today?\". 1 to 0.9, one case. No description of these skills was changed."
+		},
+		{
+			"skill": "tabkyra",
+			"value": 0.7368,
+			"reason": "Adding youtube, rumble, instagram and site-learning takes the catalog from 35 to 39 skills. The router's single-evidence bar and word weights both rise with catalog size (docs/skill-platform.md), so a borderline case falls under it: \"Open my Gmail in the browser and tell me how many unread emails I have\" (score 4.829 against a bar of 4.856) and \"Read the comments under this YouTube video in my browser tab\", which the new youtube skill now answers. 0.8421 to 0.7368, one case. No description of these skills was changed."
+		},
+		{
+			"skill": "visual-explainer",
+			"value": 0.8824,
+			"reason": "Adding youtube, rumble, instagram and site-learning takes the catalog from 35 to 39 skills. The router's single-evidence bar and word weights both rise with catalog size (docs/skill-platform.md), so a borderline case falls under it: \"Show me how the auth middleware works as a diagram\". 0.9412 to 0.8824, one case. No description of these skills was changed."
+		},
+		{
+			"skill": "writing-voice",
+			"value": 0.8,
+			"reason": "Adding youtube, rumble, instagram and site-learning takes the catalog from 35 to 39 skills. The router's single-evidence bar and word weights both rise with catalog size (docs/skill-platform.md), so a borderline case falls under it: \"Pick up my style from my Proton sent folder and keep a short profile\". 0.9 to 0.8, one case. No description of these skills was changed."
 		}
 	]
 }
