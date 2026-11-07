@@ -33,7 +33,7 @@ final class DockRestartGateTests: XCTestCase {
         XCTAssertTrue(quit.contains("dock.stop(restoreSystemDock: !forInstall)"))
         XCTAssertTrue(quit.contains("DockRestart.handOffBeforeQuit()"), "what the quit owes outlives it")
         XCTAssertLessThan(try XCTUnwrap(quit.range(of: "DockRestart.isQuitting = true")).lowerBound, try XCTUnwrap(quit.range(of: "dock.stop")).lowerBound)
-        XCTAssertTrue(EntryPoint.runsBesideAnotherCopy.contains(DockRestartHelper.argument), "it mustn't wait on the next launch's lock")
+        XCTAssertFalse(EntryPoint.runsBesideAnotherCopy.contains(DockRestartHelper.argument), "the app no longer runs as the helper")
     }
 
     func testNothingEverForcesARestartPastTheGate() throws {
@@ -79,6 +79,28 @@ final class DockRestartGateTests: XCTestCase {
 
     func testTheDockIsNotAgedByLaunchDate() throws {
         XCTAssertFalse(try source("Sources/BaneySpaces/DockRestart.swift").contains("launchDate"), "nil for anything launchd starts")
+    }
+
+    func testTheHelperIsTheToolNotTheApp() throws {
+        // A process running the app's own executable makes macOS answer `open` with -600, so Polycarp couldn't start while one
+        // waited. That failed an install on 2026-11-06.
+        let code = try source("Sources/BaneySpaces/DockRestart.swift")
+        XCTAssertTrue(code.contains("DockRestartHelper.tool(inBundle: Bundle.main.bundleURL)"))
+        XCTAssertFalse(code.contains("Bundle.main.executableURL"))
+        XCTAssertFalse(code.contains("runHelper"))
+        XCTAssertFalse(try source("Sources/BaneySpaces/main.swift").contains("DockRestartHelper"))
+        XCTAssertTrue(try source("Sources/baneyspaces-cli/main.swift").contains("DockRestartHelper.run(names:"))
+        XCTAssertEqual(DockRestartHelper.tool(inBundle: URL(fileURLWithPath: "/A/Polycarp.app")).path, "/A/Polycarp.app/Contents/Resources/bin/polycarp-spaces")
+        XCTAssertTrue(try source("scripts/install-app.sh").contains("MacOS/$EXECUTABLE --restart-when-safe"), "an install clears a helper from an older build")
+    }
+
+    func testTheToolSeesAFullScreenWindowWithAndWithoutANotch() {
+        let display = CGRect(x: 0, y: 0, width: 1512, height: 982)
+        let belowNotch = CGRect(x: 0, y: 37, width: 1512, height: 945)
+        XCTAssertTrue(DockRestartHelper.looksFullScreen(top: display, frames: [display, belowNotch]))
+        XCTAssertTrue(DockRestartHelper.looksFullScreen(top: belowNotch, frames: [display, belowNotch]))
+        XCTAssertFalse(DockRestartHelper.looksFullScreen(top: CGRect(x: 0, y: 37, width: 1512, height: 900), frames: [display, belowNotch]))
+        XCTAssertFalse(DockRestartHelper.looksFullScreen(top: nil, frames: [display]), "nothing on screen is an ordinary desktop")
     }
 
     func testAnOldInstallMarkerDoesNotSkipARealQuit() {

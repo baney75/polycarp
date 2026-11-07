@@ -68,6 +68,9 @@ if [ "$IN_PLACE" = 0 ] && [ -z "$TEST" ]; then
   # Quit by bundle ID so the app brings every hidden window back before it exits.
   osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
   for _ in $(seq 1 50); do app_is_running || break; sleep 0.2; done
+  # A helper from a build that ran it as the app makes `open` fail with -600 while it waits. Builds since run it as the
+  # command-line tool, which doesn't. The new app restarts the Dock itself if that's still owed.
+  pgrep -f "MacOS/$EXECUTABLE --restart-when-safe" 2>/dev/null | while read -r pid; do kill "$pid" 2>/dev/null || true; done
   if app_is_running; then
     echo "$PRODUCT_NAME is still running; quit it from the menu bar and run this again." >&2
     exit 1

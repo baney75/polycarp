@@ -27,14 +27,14 @@ enum DockRestart {
         timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in try_() }
     }
 
-    /// The app is quitting, so what's owed can't wait here: a small copy of this program takes it over, waits for the same
+    /// The app is quitting, so what's owed can't wait here: the command-line tool takes it over, waits for the same
     /// gate and exits. Whatever else asks during the quit joins it.
     static func handOffBeforeQuit() {
         timer?.invalidate()
         timer = nil
-        guard !pending.isEmpty, let exe = Bundle.main.executableURL else { return }
+        guard !pending.isEmpty else { return }
         let helper = Process()
-        helper.executableURL = exe
+        helper.executableURL = DockRestartHelper.tool(inBundle: Bundle.main.bundleURL)
         helper.arguments = [DockRestartHelper.argument, pending.sorted().joined(separator: ",")]
         helper.standardOutput = FileHandle.nullDevice
         helper.standardError = FileHandle.nullDevice
@@ -46,21 +46,6 @@ enum DockRestart {
             Trace.log("dock restart: couldn't start the helper, \(error)")
             pending = []
         }
-    }
-
-    /// The helper's whole life: wait for the gate, restart, exit.
-    static func runHelper(_ names: Set<String>) -> Never {
-        watchSpaces()
-        // It can't know what the app saw just before quitting, so it starts by assuming a Space just changed. It waits as long
-        // as it takes: someone can stay in a full-screen app for hours, and a late setting beats a frozen screen.
-        lastSpaceChange = Date()
-        pending = names
-        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            try_()
-            if pending.isEmpty { exit(0) }
-        }
-        RunLoop.main.run()
-        exit(0)
     }
 
     /// A Space that just changed may still be sliding.

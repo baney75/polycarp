@@ -97,10 +97,6 @@ if instanceLock != nil {
 }
 
 // Left behind by a quit: restarts the Dock once it's safe, then exits (`DockRestart`).
-if let i = CommandLine.arguments.firstIndex(of: DockRestartHelper.argument), i + 1 < CommandLine.arguments.count {
-    _ = NSApplication.shared
-    DockRestart.runHelper(Set(CommandLine.arguments[i + 1].split(separator: ",").map(String.init)))
-}
 
 // `Polycarp --render <folder>` draws product images with sample windows, then exits.
 if let i = CommandLine.arguments.firstIndex(of: "--render"), i + 1 < CommandLine.arguments.count {
