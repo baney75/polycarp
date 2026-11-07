@@ -2,6 +2,19 @@ import CoreGraphics
 
 /// Screen math in Accessibility coordinates: the origin is the top-left corner of the primary
 /// display and y grows downward.
+/// When to look again at a window just parked, and what counts as it having come back.
+public enum ParkRecheck {
+    /// T3 Code's window was back 20 ms after the unhide.
+    public static let afterUnhide: Double = 0.12
+    public static let afterPlainMove: Double = 0.25
+
+    /// Only a window that belongs on a workspace not showing can have come back. One on a workspace you've since gone to is
+    /// supposed to be in sight.
+    public static func cameBack(_ frame: CGRect, screens: [CGRect], wantedAway: Bool) -> Bool {
+        wantedAway && !Geometry.isStranded(frame, screens: screens)
+    }
+}
+
 public enum Geometry {
     /// AppKit screen frames have a bottom-left origin. `primaryHeight` is the primary display's height.
     public static func toAX(_ rect: CGRect, primaryHeight: CGFloat) -> CGRect {
