@@ -192,6 +192,17 @@ enum Render {
         dock.strip = (4, "4Terminal")
         guard save(DockView(model: dock).padding(.vertical, 20).background(Color(white: 0.35)), "dock-strip.png", CGSize(width: 820, height: 0)) else { return 1 }
 
+        // The Background list, long enough to scroll, with an X on each row.
+        dock.strip = nil
+        dock.hover = .background
+        dock.backgroundApps = ["Claude", "Ghostty", "Grok Bot", "Helium", "Messages", "Obsidian", "Preview", "Proton Mail", "Shottr", "Xcode", "Calendar"].enumerated().map {
+            BackgroundApps.Entry(pid: Int32(90_000 + $0.offset), name: $0.element, state: $0.element == "Shottr" ? .hidden : .noWindow)
+        }
+        dock.backgroundOpen = true
+        guard save(DockView(model: dock, mode: .side).padding(20).background(Color(white: 0.35)), "dock-background.png", CGSize(width: 340, height: 0)) else { return 1 }
+        dock.backgroundOpen = false
+        dock.backgroundApps = []
+
         // The dock on the other edges: a side dock with a hover label, the top dock with the strip.
         dock.strip = nil
         dock.edge = .left

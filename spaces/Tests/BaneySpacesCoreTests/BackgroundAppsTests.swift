@@ -122,5 +122,15 @@ final class BackgroundAppsTests: XCTestCase {
         XCTAssertTrue(spaces.contains("for e in pendingLayout.values where model.workspace(of: e.window) == nil"),
                       "backgroundApps reads the pruned entries")
     }
-}
 
+    func testTheXAsksAnAppToQuitTheOrdinaryWay() throws {
+        // An app with something unsaved must get to ask, so never a force quit.
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let dock = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/WorkspaceDock.swift"), encoding: .utf8)
+        let quit = try XCTUnwrap(dock.range(of: "model.onQuitBackground = { app in").map { String(dock[$0.lowerBound...].prefix(300)) })
+        XCTAssertTrue(quit.contains("NSRunningApplication(processIdentifier: app.pid)?.terminate()"))
+        XCTAssertFalse(quit.contains("forceTerminate"))
+        XCTAssertTrue(dock.contains("accessibilityAction(named: \"Quit \\(app.name)\")"), "VoiceOver can reach it too")
+        XCTAssertTrue(dock.contains(".padding(.trailing, apps.count > 10 ? 12 : 0)"), "the scroller doesn't cover the X")
+    }
+}
