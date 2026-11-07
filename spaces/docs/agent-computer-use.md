@@ -60,7 +60,7 @@ fails the build instead of passing silently.
 | What | Workspace 9 on your Mac, with real apps | A throwaway macOS VM (Apple Virtualization, through Tart) |
 | For | Apps BaneySpaces starts for the agent as a separate process (a browser with its own profile, `open -n TextEdit` on a temp file), plus windows you lend | Untrusted sites, throwaway logins, long unattended jobs, the once-per-user apps above, anything that installs software, and benchmark runs that need a clean machine |
 | Speed | Instant, no VM | Boots in seconds from a warm suspended state; resets to clean by APFS clone |
-| Your data | The agent's apps run as your macOS user, so they can open your files: window rules don't protect files. That's why remote callers, untrusted content and anything that installs go to the sandbox | Not there at all: no iCloud, no keychain, no shared folders except one handoff folder per task |
+| Your data | The agent's apps run as your macOS user, so they can open your files: window rules don't protect files. That's why untrusted content and anything that installs go to the sandbox, and why a connector needs its own unticked permission and never gets more than Default (below) | Not there at all: no iCloud, no keychain, no shared folders except one handoff folder per task |
 | Network | Yours | Internet only: no LAN, no tailnet, no access to the Mac itself |
 | Screen | Its windows live on workspace 9 | Its window lives on workspace 9; you can watch it or never look |
 
@@ -114,7 +114,7 @@ window BaneySpaces doesn't place, and never BaneySpaces' own windows. `agent ope
 
 - What Full Access let in goes out with it: a process `agent open` started off the list, or one of Donovan's apps it
   claimed a window of, is refused on the agent workspace once the mode is no longer Full Access.
-- `agent open` from another machine (`remote on`) gets Default at most: Full Access is for agents on this Mac. Remote
+- `agent open` from another machine (`remote on`), and every call from a connector, gets Default at most: Full Access is for agents on this Mac. Remote
   `agent run` already runs any command as Donovan, so the mode doesn't change it.
 - What Full Access let in is kept (pid and start time) across a relaunch of BaneySpaces, and is refused by `agent move`
   and left out of `agent status` once the mode narrows.
@@ -150,7 +150,13 @@ baneyspaces mcp                                     # stdio MCP server with the 
 
 Output is one JSON envelope per command: `ok`, `data` or `error` with `code`, `retry` (`safe`,
 `after_snapshot`, `never`) and a `suggestion`. `remote` (tailnet, token) exposes the same tools to
-other machines, look-and-act in the sandbox only: a remote caller never drives a process on your Mac.
+other machines, look-and-act in the sandbox only.
+
+The connector is the one remote way onto the agent workspace, and it is off until you tick it. `polycarp browser serve` gives a
+session granted `computer.read` or `computer.act` its own `baneyspaces mcp --connector`, named from a fixed list (never `lend`). The
+app sends those calls to a second router capped at `forRemote`: Default at most, so Full Access on this Mac never reaches a connector,
+Read Only stops it, and it can't lend itself anything. What it can touch is what Default allows: the agent workspace, apps from the
+short list, windows you lent. Open and Save panels and documents from outside the handoff folder stay refused.
 
 Targets are a ref, a window id, or a pid. An app name resolves only when exactly one matching process
 has windows in scope; otherwise the command fails with `ambiguous` and lists the candidates.
