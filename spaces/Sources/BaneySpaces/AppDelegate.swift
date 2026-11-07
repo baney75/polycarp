@@ -55,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// A window dragged to the top of the screen opens the overview, in place of Mission Control.
     private lazy var topDrag: TopDragWatcher = {
         let t = TopDragWatcher()
+        t.onDragStart = { [weak self] id, p in self?.spaces.unfillForDrag(id, at: p) }
         t.onOpen = { [weak self] grab, p in
             guard let self, self.started else { return false }
             if self.spaces.switching { return nil }

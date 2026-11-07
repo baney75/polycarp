@@ -6,7 +6,7 @@ import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
 import { polycarpMark } from "../components/PolycarpMark.js";
 
 /** Where the dialog sends the person: the provider keys, or Connect (use Polycarp from claude.ai or ChatGPT). */
-export type WelcomeChoice = "provider" | "connect";
+export type WelcomeChoice = "provider" | "connect" | "dismissed";
 
 /**
  * Shown on first launch when no API keys are configured.
@@ -14,7 +14,7 @@ export type WelcomeChoice = "provider" | "connect";
  */
 export class WelcomeSetupDialog extends DialogBase {
 	private resolvePromise?: (choice: WelcomeChoice) => void;
-	private choice: WelcomeChoice = "provider";
+	private choice: WelcomeChoice = "dismissed";
 
 	protected modalWidth = "min(450px, 90vw)";
 	protected modalHeight = "auto";
@@ -46,7 +46,10 @@ export class WelcomeSetupDialog extends DialogBase {
 						${Button({
 							variant: "default",
 							className: "w-full",
-							onClick: () => this.close(),
+							onClick: () => {
+								this.choice = "provider";
+								this.close();
+							},
 							children: "Chat here",
 						})}
 						<p class="text-xs text-muted-foreground">Add a key from any AI provider, or a free one.</p>
