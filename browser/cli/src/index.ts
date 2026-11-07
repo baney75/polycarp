@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { claudeAllows, setClaudeAllows } from "./always-allow.ts";
 import { BridgeClient, BridgeRpcError, isConnectionError, listSockets, NOT_CONNECTED } from "./client.ts";
 import { runDoctor } from "./doctor.ts";
 import { runNativeHost } from "./host.ts";
@@ -54,8 +55,8 @@ function help(): string {
 		for (const spec of VISIBLE_COMMANDS.filter((x) => x.group === group)) for (const [usage, what] of helpRows(spec)) rows.push(cmd(usage, what));
 		if (group === "Agents") {
 			rows.push(
-				`  ${c.dim("Claude Code:")} claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
-				`  ${c.dim("Codex:")}       codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp`,
+				`  ${c.dim("Claude Code:")} claude mcp add --scope user polycarp -- ~/.config/tabkyra/tabkyra mcp`,
+				`  ${c.dim("Codex:")}       codex mcp add polycarp -- ~/.config/tabkyra/tabkyra mcp`,
 				`  ${c.dim(`(${COMMAND_NAME} setup adds these for you; ${COMMAND_NAME} doctor checks them.)`)}`,
 			);
 		}
@@ -324,6 +325,26 @@ async function main(): Promise<void> {
 			const result = await withBridge("allow", (client) => client.call("permission.allow", { host }, 5000));
 			const stored = (result as { allowed?: string }).allowed ?? host;
 			console.log(`${sym.ok} Agents may open ${c.bold(stored)} and its subdomains.`);
+			return;
+		}
+		case "claude-allow": {
+			const want = argv[1];
+			if (want !== "on" && want !== "off" && want !== "status") {
+				console.error("Usage: claude-allow on|off|status");
+				process.exitCode = 2;
+				return;
+			}
+			if (want === "status") {
+				process.stdout.write(`${JSON.stringify({ allowed: claudeAllows() })}\n`);
+				return;
+			}
+			const problem = setClaudeAllows(want === "on");
+			if (problem) {
+				console.error(problem);
+				process.exitCode = 1;
+				return;
+			}
+			console.log(want === "on" ? `${sym.warn} Claude Code now uses Polycarp's tools without asking.` : `${sym.ok} Claude Code asks before using Polycarp's tools.`);
 			return;
 		}
 		case "allow-all":

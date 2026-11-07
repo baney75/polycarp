@@ -214,8 +214,8 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 				continue;
 			}
 			let question = `Add Polycarp to ${c.bold(h.name)}?`;
-			if (h.configured === "stale") question = `${c.bold(h.name)}'s tabkyra entry points at a missing command. Replace it?`;
-			if (h.configured === "other") question = `${c.bold(h.name)}'s tabkyra entry runs ${h.currentCommand}. Replace it with this install?`;
+			if (h.configured === "stale") question = h.oldName ? `Move ${c.bold(h.name)}'s entry to its new name, polycarp?` : `${c.bold(h.name)}'s polycarp entry points at a missing command. Replace it?`;
+			if (h.configured === "other") question = `${c.bold(h.name)}'s polycarp entry runs ${h.currentCommand}. Replace it with this install?`;
 			// An entry running some other existing command may be the user's own wrapper:
 			// --yes doesn't replace it, and the interactive default is no.
 			const assumeYes = options.yes && h.configured !== "other";
@@ -237,7 +237,7 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 			continue;
 		}
 		if (h.snippet?.startsWith("{")) {
-			console.log(`  ${sym.dot} ${c.bold(h.name)}: ${replacing ? "replace the tabkyra entry in" : "add this to"} ${c.cyan(h.configFile ?? "its MCP config")}`);
+			console.log(`  ${sym.dot} ${c.bold(h.name)}: ${replacing ? "replace the Polycarp entry in" : "add this to"} ${c.cyan(h.configFile ?? "its MCP config")}`);
 			for (const line of h.snippet.split("\n")) console.log(`    ${line}`);
 		} else if (h.snippet) {
 			console.log(`  ${sym.dot} ${c.bold(h.name)}: run ${c.bold(h.snippet)}`);

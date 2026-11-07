@@ -271,6 +271,7 @@ export const COMMANDS: CommandSpec[] = [
 	{ name: "ask", what: "Agents ask before opening a site not yet allowed (default)", group: "Sites" },
 	{ name: "allow-all", what: "Agents may open any site without asking", group: "Sites" },
 	{ name: "yolo", what: "Old name of allow-all", group: "Sites", hidden: true },
+	{ name: "claude-allow", positional: 1, args: "on|off|status", what: "Claude Code uses Polycarp's tools without asking", group: "Sites" },
 	{ name: "doctor", what: "Check everything; one fix per problem", group: "Troubleshoot", flags: ["--json"] },
 	{
 		name: "update",

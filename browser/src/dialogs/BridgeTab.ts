@@ -198,7 +198,7 @@ export class BridgeTab extends SettingsTab {
 							await setPermissionMode("allow_all");
 							await this.load();
 						}} />
-						Allow any site
+						Always allow: agents can open any site
 					</label>
 				</div>
 

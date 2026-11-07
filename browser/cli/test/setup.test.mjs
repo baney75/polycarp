@@ -122,8 +122,8 @@ test("setup --yes registers the host, wires harnesses to the launcher, then show
 	assert.ok(out.indexOf("Connect your coding agents") < out.indexOf("Load unpacked"), "agents are wired before the wait");
 
 	const calls = readFileSync(harnessLog, "utf8");
-	assert.ok(calls.includes(`claude mcp add --scope user tabkyra -- ${launcher()} mcp`), calls);
-	assert.ok(calls.includes(`codex mcp add tabkyra -- ${launcher()} mcp`), calls);
+	assert.ok(calls.includes(`claude mcp add --scope user polycarp -- ${launcher()} mcp`), calls);
+	assert.ok(calls.includes(`codex mcp add polycarp -- ${launcher()} mcp`), calls);
 	// The launcher pins node by absolute path, so GUI-started harnesses need no PATH.
 	assert.match(readFileSync(launcher(), "utf8"), new RegExp(`exec "/[^"]+node" "${cli.replaceAll("/", "\\/")}" "\\$@"`));
 
@@ -139,12 +139,12 @@ test("an entry pointing at a missing command is stale, and setup replaces it", (
 	const claude = checks.find((c) => c.id === "mcp:claude");
 	assert.equal(claude.status, "fail");
 	assert.match(claude.label, /missing command/);
-	assert.match(claude.fix, /^claude mcp remove --scope user tabkyra && claude mcp add/);
+	assert.match(claude.fix, /^claude mcp remove --scope user polycarp && claude mcp add/);
 	assert.equal(checks.find((c) => c.id === "mcp:codex").status, "ok", "the launcher with args mcp is this CLI");
 
 	run(["setup", "--yes", "--no-wait"]);
 	const calls = readFileSync(harnessLog, "utf8");
-	assert.ok(calls.includes("claude mcp remove --scope user tabkyra"), calls);
+	assert.ok(calls.includes("claude mcp remove --scope user polycarp"), calls);
 	assert.ok(!calls.includes("codex mcp add"), "a current entry is left alone");
 });
 
@@ -178,7 +178,7 @@ test("setup without --yes and without a terminal never edits a harness config", 
 	fakeHarness("claude");
 	run(["setup", "--no-wait"]);
 	const calls = readFileSync(harnessLog, "utf8");
-	assert.ok(calls.includes("claude mcp get tabkyra"), calls);
+	assert.ok(calls.includes("claude mcp get polycarp"), calls);
 	assert.ok(!calls.includes("mcp add"), calls);
 });
 
@@ -241,3 +241,24 @@ test("second-S3: setup keeps a working launcher and writes links only for regist
 	assert.equal(readFileSync(join(home, ".config", "tabkyra", "host"), "utf8"), standalone);
 	assert.equal(run(["setup", "--browser", "Netscape"]).code, 2, "an unknown browser is a usage error");
 });
+
+test("an entry under the old name moves to polycarp, and nothing else is touched", () => {
+	writeFileSync(harnessLog, "");
+	const file = join(bin, "claude");
+	writeFileSync(
+		file,
+		`#!/bin/sh\necho "claude $*" >> "${harnessLog}"\nif [ "$2" = "get" ] && [ "$3" = "polycarp" ]; then exit 1; fi\nif [ "$2" = "get" ]; then printf '  Scope: User config (available in all your projects)\\n  Command: /old/tabkyra\\n  Args: mcp\\n'; fi\nexit 0\n`,
+	);
+	chmodSync(file, 0o755);
+	fakeHarness("codex", launcher());
+	const claude = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "mcp:claude");
+	assert.match(claude.label, /old name/);
+	assert.match(claude.fix, /^claude mcp remove --scope user tabkyra && claude mcp add --scope user polycarp/);
+
+	run(["setup", "--yes", "--no-wait"]);
+	const calls = readFileSync(harnessLog, "utf8");
+	assert.ok(calls.includes("claude mcp remove --scope user tabkyra"), calls);
+	assert.ok(calls.includes("claude mcp add --scope user polycarp"), calls);
+	assert.ok(!calls.includes("codex mcp add"), "a current entry is left alone");
+});
+

@@ -55,7 +55,9 @@ final class BrowserModel: ObservableObject {
             _ = self?.loadableFolder()
             if let before, let after = self?.loadedBuild(), before != after { _ = Self.run(helper, ["reload"], timeout: 8) }
             let result = Self.run(helper, ["doctor", "--json"], timeout: 12)
-            let parsed = BrowserStatus.parse(result.out)
+            var parsed = BrowserStatus.parse(result.out)
+            parsed?.anySite = BrowserStatus.anySite(fromStatus: Self.run(helper, ["status", "--json"], timeout: 6).out)
+            parsed?.claudeAllowed = BrowserStatus.claudeAllowed(fromStatus: Self.run(helper, ["claude-allow", "status"], timeout: 6).out)
             DispatchQueue.main.async {
                 self?.refreshing = false
                 if let parsed, parsed != self?.status { self?.status = parsed }
@@ -124,6 +126,25 @@ final class BrowserModel: ObservableObject {
     }
 
     /// The helper's own setup adds the MCP server to Claude Code and Codex (it edits nothing else).
+    /// Always allow: agents open any site without asking, or ask again.
+    func setAnySite(_ on: Bool) { runThenRefresh([on ? "allow-all" : "ask"], failure: "Changing site access failed") }
+
+    /// Always allow: Claude Code stops asking before Polycarp's tools, or asks again.
+    func setClaudeAllowed(_ on: Bool) { runThenRefresh(["claude-allow", on ? "on" : "off"], failure: "Changing Claude Code's permission failed") }
+
+    private func runThenRefresh(_ args: [String], failure: String) {
+        guard let helper else { return }
+        busy = true; message = nil
+        queue.async { [weak self] in
+            let result = Self.run(helper, args, timeout: 15)
+            DispatchQueue.main.async {
+                self?.busy = false
+                if result.code != 0 { self?.message = "\(failure): \(result.text)" }
+                self?.refresh()
+            }
+        }
+    }
+
     func addAgents() {
         guard let helper else { return }
         busy = true; message = nil

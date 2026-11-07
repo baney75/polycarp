@@ -183,7 +183,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	const allowedTools = options.allowedTools;
 
 	const server = new McpServer(
-		{ name: "tabkyra", version: VERSION },
+		{ name: "polycarp", version: VERSION },
 		{
 			instructions: [
 				"Polycarp drives the user's real Chromium browser in the background, under the user's command.",

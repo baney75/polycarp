@@ -58,4 +58,12 @@ final class BrowserStatusTests: XCTestCase {
         let welcome = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/WelcomeWindow.swift"), encoding: .utf8)
         XCTAssertTrue(welcome.contains("BrowserWelcomeRow()"))
     }
+
+    func testAlwaysAllowReadsWhatTheHelperSays() {
+        XCTAssertEqual(BrowserStatus.anySite(fromStatus: Data(#"{"connected":true,"permissionMode":"allow_all"}"#.utf8)), true)
+        XCTAssertEqual(BrowserStatus.anySite(fromStatus: Data(#"{"connected":true,"permissionMode":"ask"}"#.utf8)), false)
+        XCTAssertNil(BrowserStatus.anySite(fromStatus: Data(#"{"connected":false}"#.utf8)), "no browser answered: unknown, not off")
+        XCTAssertTrue(BrowserStatus.claudeAllowed(fromStatus: Data(#"{"allowed":true}"#.utf8)))
+        XCTAssertFalse(BrowserStatus.claudeAllowed(fromStatus: Data("not json".utf8)))
+    }
 }

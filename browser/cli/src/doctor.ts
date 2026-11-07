@@ -344,23 +344,23 @@ function harnessChecks(): Check[] {
 			const replace = h.configured === "stale" || h.configured === "other";
 			let fix: string;
 			if (h.addCommand) fix = replace && h.removeCommand ? `${shellJoin(h.removeCommand)} && ${shellJoin(h.addCommand)}` : shellJoin(h.addCommand);
-			else if (h.snippet?.startsWith("{")) fix = `${replace ? "Replace the tabkyra entry in" : "Add this to"} ${h.configFile}:\n${h.snippet}`;
+			else if (h.snippet?.startsWith("{")) fix = `${replace ? "Replace the Polycarp entry in" : "Add this to"} ${h.configFile}:\n${h.snippet}`;
 			else fix = h.snippet ?? "";
 			if (h.configured === undefined) {
 				return {
 					id,
 					status: "warn",
 					label: `${h.name}: couldn't tell whether Polycarp is configured`,
-					detail: h.note ?? (h.configFile ? `${h.configFile} could not be parsed.` : `\`${h.id} mcp get tabkyra\` failed or printed something unexpected.`),
-					fix: h.configFile ? `Check ${h.configFile}` : `${h.id} mcp get tabkyra`,
+					detail: h.note ?? (h.configFile ? `${h.configFile} could not be parsed.` : `\`${h.id} mcp get polycarp\` failed or printed something unexpected.`),
+					fix: h.configFile ? `Check ${h.configFile}` : `${h.id} mcp get polycarp`,
 				};
 			}
 			if (h.configured === "stale") {
-				return { id, status: "fail", label: `${h.name}: the tabkyra entry points at a missing command`, detail: h.currentCommand, fix };
+				return { id, status: "fail", label: h.oldName ? `${h.name}: Polycarp's entry is under its old name` : `${h.name}: the polycarp entry points at a missing command`, detail: h.currentCommand, fix };
 			}
 			if (h.configured === "other") {
 				// Could be the user's own wrapper; flag it, don't fail on it.
-				return { id, status: "warn", label: `${h.name}: the tabkyra entry runs a different command`, detail: h.currentCommand, fix };
+				return { id, status: "warn", label: `${h.name}: the polycarp entry runs a different command`, detail: h.currentCommand, fix };
 			}
 			return {
 				id,
