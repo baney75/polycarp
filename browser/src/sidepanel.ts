@@ -1,7 +1,6 @@
 import { icon } from "@mariozechner/mini-lit";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import "@mariozechner/mini-lit/dist/ThemeToggle.js";
-import { LIBRARY_SKILLS } from "virtual:library-skills";
 import {
 	Agent,
 	type AgentEvent,
@@ -106,7 +105,6 @@ import { chatToMarkdown } from "./utils/export-chat.js";
 import * as port from "./utils/port.js";
 import "./utils/i18n-extension.js";
 import { createArtifactViewer } from "./artifacts/viewers.js";
-import "./utils/live-reload.js";
 import { bridgeQuestions, watchBridgeQuestions } from "./ask/bridge-panel.js";
 import { updateNotice, watchUpdateStatus } from "./components/UpdateNotice.js";
 import { tabkyraTranscript } from "./transcript/render.js";
@@ -313,6 +311,7 @@ async function currentPageUrl(): Promise<string | undefined> {
 
 /** The bundled library, then community skills whose names it doesn't use. */
 async function libraryWithCommunity() {
+	const { LIBRARY_SKILLS } = await import("virtual:library-skills");
 	return [
 		...LIBRARY_SKILLS,
 		...communityLibrary(await readCommunityStatus(), new Set(LIBRARY_SKILLS.map((s) => s.name))),
@@ -376,6 +375,7 @@ async function findSkill(name: string): Promise<SkillRun | undefined> {
 	const url = await currentPageUrl();
 	const onSite = url ? (await storage.skills.list(url)).find((s) => s.name === name) : undefined;
 	if (onSite) return siteSkillRun(onSite);
+	const { LIBRARY_SKILLS } = await import("virtual:library-skills");
 	const lib = LIBRARY_SKILLS.find((s) => s.name === name);
 	if (lib) return { name, source: "library", instructions: lib.text };
 	const community = (await libraryWithCommunity()).find((s) => s.name === name);
@@ -1336,6 +1336,7 @@ const renderApp = () => {
 		</div>
 	`;
 
+	document.getElementById("panel-shell")?.remove();
 	render(appHtml, document.body);
 };
 
@@ -1460,16 +1461,7 @@ async function testSteps(): Promise<boolean> {
 // INIT
 // ============================================================================
 async function initApp() {
-	// Show loading
-	render(
-		html`
-			<div class="w-full h-full flex items-center justify-center bg-background text-foreground">
-				<div class="text-muted-foreground">Loading...</div>
-			</div>
-		`,
-		document.body,
-	);
-
+	performance.mark("panel:code");
 	// The saved colors, before anything is drawn in them; the system setting is followed while the mode is "match system".
 	await startAppearance();
 	followSystem();
@@ -1477,6 +1469,7 @@ async function initApp() {
 	for (const event of ["provider-key-saved", "provider-key-removed"])
 		document.addEventListener(event, () => void refreshProviderless());
 
+	performance.mark("panel:appearance");
 	// Load showJsonMode setting
 	const stored = await chrome.storage.local.get("showJsonMode");
 	const showJsonModeEnabled = (stored.showJsonMode as boolean) || false;
@@ -1497,6 +1490,7 @@ async function initApp() {
 	const homeTabParam = new URLSearchParams(window.location.search).get("tabId");
 	homeTabId = homeTabParam ? Number(homeTabParam) : undefined;
 
+	performance.mark("panel:window");
 	// Initialize port communication system (lifecycle only; background tracks open panels)
 	port.initialize(currentWindowId);
 
@@ -1535,6 +1529,7 @@ async function initApp() {
 	// In-page scripts use the userScripts API when the browser exposes it and fall back
 	// to an isolated content-script world otherwise, so no permission prompt is needed.
 
+	performance.mark("panel:models");
 	// Initialize default skills
 	const { initializeDefaultSkills } = await import("./tools/skill.js");
 	await initializeDefaultSkills();
@@ -1542,6 +1537,7 @@ async function initApp() {
 	// Proxy disabled — CORS is handled locally via declarativeNetRequest rules
 	await storage.settings.set("proxy.enabled", false);
 
+	performance.mark("panel:skills");
 	// Create ChatPanel. Artifacts open from the header button and from their tool cards, not a pill over the chat.
 	chatPanel = new ChatPanel();
 	chatPanel.showArtifactsPill = false;
@@ -1559,6 +1555,7 @@ async function initApp() {
 		Toast.error(`Removed subscription sign-in for ${cleared.join(", ")}. Add an API key in Settings.`);
 	}
 
+	performance.mark("panel:chatpanel");
 	// Which chat should this panel show?
 	//  - ?session=<id>  : explicit (a history-list click)
 	//  - ?new=true      : a fresh task on this tab (New chat)
@@ -1602,9 +1599,11 @@ async function initApp() {
 		}
 	}
 
+	performance.mark("panel:session");
 	// No session - create new agent with welcome message
 	await createAgent();
 
+	performance.mark("panel:agent");
 	// Add welcome message for new sessions
 	if (agent) {
 		const welcomeMessage = createWelcomeMessage(starters);
@@ -1614,6 +1613,7 @@ async function initApp() {
 	}
 
 	renderApp();
+	performance.mark("panel:rendered");
 	void watchUpdateStatus(renderApp).catch(() => {});
 	// External agents' questions (ask_user over the bridge) show above the chat.
 	void watchBridgeQuestions(renderApp).catch(() => {});
@@ -1632,6 +1632,9 @@ async function initApp() {
 		renderApp();
 	}
 }
+
+// The dev server's hot reload. In a real install this would try localhost every 2 seconds, forever.
+if (process.env.NODE_ENV === "development") void import("./utils/live-reload.js");
 
 // Register custom user message renderer early, before any session loads
 registerUserMessageRenderer();

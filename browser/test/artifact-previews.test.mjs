@@ -583,7 +583,7 @@ test("a large honest workbook still previews its first rows, and media is left o
 	assert.equal((await JSZip.loadAsync(capped)).file("xl/media/image1.png"), null);
 	const read = XLSX.read(capped, { type: "array", sheetRows: 5000 });
 	const sheet = read.Sheets.Big;
-	clampSheet(sheet);
+	clampSheet(sheet, XLSX.utils);
 	assert.equal(XLSX.utils.decode_range(sheet["!ref"]).e.r, 4999);
 });
 

@@ -1,4 +1,4 @@
-import JSZip from "jszip";
+import type JSZip from "jszip";
 
 /** Limits shared by the document previews. A file over a limit shows a message instead of a preview. */
 export const PREVIEW_LIMITS = {
@@ -177,7 +177,8 @@ export class SafeZip {
 		if (countZipEntries(bytes, PREVIEW_LIMITS.maxZipEntries) > PREVIEW_LIMITS.maxZipEntries) {
 			throw new PreviewLimitError("Archive has too many entries to preview");
 		}
-		const zip = await JSZip.loadAsync(bytes);
+		const { default: Zip } = await import("jszip");
+		const zip = await Zip.loadAsync(bytes);
 		if (Object.keys(zip.files).length > PREVIEW_LIMITS.maxZipEntries) {
 			throw new PreviewLimitError("Archive has too many entries to preview");
 		}

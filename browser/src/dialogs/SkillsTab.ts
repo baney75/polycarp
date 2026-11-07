@@ -1,4 +1,3 @@
-import { LIBRARY_SKILLS } from "virtual:library-skills";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { SettingsTab } from "@mariozechner/pi-web-ui";
@@ -27,6 +26,7 @@ export class SkillsTab extends SettingsTab {
 	private importConflicts: { skill: Skill; selected: boolean }[] = [];
 	private importedSkills: Skill[] = [];
 	private community: HostCommunityStatus | undefined;
+	private library: readonly { name: string; description: string; text: string }[] = [];
 	private readonly onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
 		if (area !== "local" || !(COMMUNITY_STATUS_KEY in changes)) return;
 		this.community = changes[COMMUNITY_STATUS_KEY].newValue as HostCommunityStatus | undefined;
@@ -39,6 +39,10 @@ export class SkillsTab extends SettingsTab {
 
 	async connectedCallback() {
 		super.connectedCallback();
+		void import("virtual:library-skills").then(({ LIBRARY_SKILLS }) => {
+			this.library = LIBRARY_SKILLS;
+			this.requestUpdate();
+		});
 		chrome.storage.onChanged.addListener(this.onStorageChanged);
 		this.community = await readCommunityStatus();
 		this.requestUpdate();
@@ -433,8 +437,8 @@ export class SkillsTab extends SettingsTab {
 	private renderLibrary(): TemplateResult {
 		const community = communityLibrary(this.community, new Set());
 		const siteNames = new Set(this.skills.map((s) => s.name));
-		const rows = libraryRows(LIBRARY_SKILLS, community, this.searchQuery, siteNames);
-		const total = libraryRows(LIBRARY_SKILLS, community, "", siteNames).length;
+		const rows = libraryRows(this.library, community, this.searchQuery, siteNames);
+		const total = libraryRows(this.library, community, "", siteNames).length;
 		return html`
 			<section class="flex flex-col gap-2" aria-labelledby="library-skills-heading">
 				<div>

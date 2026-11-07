@@ -3,7 +3,7 @@ import { DownloadButton } from "@mariozechner/mini-lit/dist/DownloadButton.js";
 import { ArtifactElement } from "@mariozechner/pi-web-ui";
 import { html, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import * as XLSX from "xlsx";
+import type * as XLSXTypes from "xlsx";
 import { DecodedContent, PREVIEW_LIMITS, PreviewLimitError } from "./preview/content.js";
 import { mimeTypeFor } from "./preview/file-types.js";
 import { cappedWorkbookZip, clampSheet, MAX_SHEETS } from "./preview/spreadsheet.js";
@@ -86,6 +86,8 @@ export class TkExcelArtifact extends ArtifactElement {
 			if (input[0] === 0x50 && input[1] === 0x4b) input = await cappedWorkbookZip(input);
 			// A newer content value started its own render while this one waited.
 			if (token !== this.renderToken) return;
+			const XLSX = await import("xlsx");
+			if (token !== this.renderToken) return;
 			const workbook = XLSX.read(input, { type: "array", sheetRows: PREVIEW_LIMITS.maxTableRows });
 			workbook.SheetNames = workbook.SheetNames.slice(0, MAX_SHEETS);
 
@@ -120,7 +122,7 @@ export class TkExcelArtifact extends ArtifactElement {
 					const build = () => {
 						if (built) return;
 						built = true;
-						sheetDiv.appendChild(this.renderExcelSheet(workbook.Sheets[sheetName]));
+						sheetDiv.appendChild(this.renderExcelSheet(XLSX, workbook.Sheets[sheetName]));
 					};
 					if (index === 0) build();
 					builders.push(build);
@@ -154,7 +156,7 @@ export class TkExcelArtifact extends ArtifactElement {
 			} else {
 				// Single sheet
 				const sheetName = workbook.SheetNames[0];
-				wrapper.appendChild(this.renderExcelSheet(workbook.Sheets[sheetName]));
+				wrapper.appendChild(this.renderExcelSheet(XLSX, workbook.Sheets[sheetName]));
 			}
 		} catch (error: any) {
 			if (token !== this.renderToken) return;
@@ -167,9 +169,9 @@ export class TkExcelArtifact extends ArtifactElement {
 	 * The sheet as a table built from cell values with textContent: no HTML from the file is
 	 * parsed, and the clamped range bounds the cells.
 	 */
-	private renderExcelSheet(worksheet: XLSX.WorkSheet): HTMLElement {
+	private renderExcelSheet(XLSX: typeof XLSXTypes, worksheet: XLSXTypes.WorkSheet): HTMLElement {
 		const sheetDiv = document.createElement("div");
-		clampSheet(worksheet);
+		clampSheet(worksheet, XLSX.utils);
 		const ref = worksheet["!ref"];
 		if (!ref) return sheetDiv;
 		const range = XLSX.utils.decode_range(ref);
@@ -193,7 +195,7 @@ export class TkExcelArtifact extends ArtifactElement {
 			if (r > range.s.r && (r - range.s.r) % 2 === 0) tr.className = "bg-muted/30";
 			for (let c = range.s.c; c <= range.e.c; c++) {
 				if (covered.has(`${r}:${c}`)) continue;
-				const cell = worksheet[XLSX.utils.encode_cell({ r, c })] as XLSX.CellObject | undefined;
+				const cell = worksheet[XLSX.utils.encode_cell({ r, c })] as XLSXTypes.CellObject | undefined;
 				const td = document.createElement("td");
 				const text = cell ? (cell.w ?? (cell.v === undefined || cell.v === null ? "" : String(cell.v))) : "";
 				td.textContent = text.length > MAX_CELL_CHARS ? `${text.slice(0, MAX_CELL_CHARS)}\u2026` : text;
