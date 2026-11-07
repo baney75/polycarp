@@ -995,7 +995,7 @@ final class BackgroundPosterSourceTests: XCTestCase {
         XCTAssertTrue(router.contains("PointerAudit.verdict("))
         // The span closes after the proof loop, not after the post.
         let loop = try XCTUnwrap(router.range(of: "} while !verdict.verified"))
-        let closing = try XCTUnwrap(router.range(of: "let events = tap.stop()"))
+        let closing = try XCTUnwrap(router.range(of: "let events = tap.snapshot ?? idle.events"))
         XCTAssertTrue(loop.lowerBound < closing.lowerBound)
     }
 
@@ -1013,11 +1013,19 @@ final class BackgroundPosterSourceTests: XCTestCase {
         XCTAssertTrue(router.contains("\"pointer_check\": .string(tap.available ? \"tap\" : \"idle_fallback\")"), "the result says which check ran")
     }
 
-    func testTheWatchRunsForASecondAfterTheLastPostNotJustUntilTheProof() throws {
+    func testTheWatchRunsForASecondAfterTheLastPostButTheAnswerDoesntWaitForIt() throws {
         let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
-        let tail = try XCTUnwrap(router.range(of: "while Date().timeIntervalSince(lastPostAt) < 1.0"))
-        let verdictCheck = try XCTUnwrap(router.range(of: "let events = tap.stop() ?? idle.events"))
-        XCTAssertTrue(tail.lowerBound < verdictCheck.lowerBound)
+        let handOff = try XCTUnwrap(router.range(of: "DispatchQueue.global(qos: .utility).async {"))
+        let tail = try XCTUnwrap(router.range(of: "while Date().timeIntervalSince(lastPost) < 1.0"))
+        let late = try XCTUnwrap(router.range(of: "if let late = frontFailure()"))
+        let answer = try XCTUnwrap(router.range(of: "guard verdict.verified else { return .failed(BackgroundRefusal.unverified(basis: verdict.basis)) }\n        BackgroundBreaker.shared.update { $0.proved"))
+        XCTAssertTrue(handOff.lowerBound < tail.lowerBound && tail.lowerBound < late.lowerBound, "a late activation is still judged, which shuts the app out of the route")
+        XCTAssertTrue(late.lowerBound < answer.lowerBound)
+        XCTAssertTrue(router.contains("watchHandedOff = true"), "the watch outlives the action's own cleanup")
+        XCTAssertTrue(router.contains("AgentActivity.shared.end(tailMark)"), "the window stays the agent's until the watch ends")
+        // A failure before the answer still fails the action.
+        let check = try XCTUnwrap(router.range(of: "if let e = frontFailure() { return .failed(e) }\n        let events = tap.snapshot ?? idle.events"))
+        XCTAssertTrue(check.lowerBound < handOff.lowerBound)
         XCTAssertGreaterThanOrEqual(router.components(separatedBy: "lastPostAt = Date()").count - 1, 3, "measured from every post")
     }
 

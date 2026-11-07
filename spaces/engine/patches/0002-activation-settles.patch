@@ -1,0 +1,121 @@
+diff --git a/crates/macos/src/system/renderer_activation.rs b/crates/macos/src/system/renderer_activation.rs
+index f1296b1..5b97cd9 100644
+--- a/crates/macos/src/system/renderer_activation.rs
++++ b/crates/macos/src/system/renderer_activation.rs
+@@ -66,7 +66,7 @@ fn enable_attribute(
+         )
+         .with_disposition(DeliverySemantics::not_delivered()));
+     }
+-    std::thread::sleep(deadline.remaining().min(settle_delay));
++    settle(application, deadline.remaining().min(settle_delay), deadline);
+     if deadline.is_expired() {
+         return Err(deadline
+             .timeout_error()
+@@ -75,6 +75,89 @@ fn enable_attribute(
+     Ok(())
+ }
+ 
++/// BaneySpaces addition (engine/patches/0002-activation-settles.patch). A flat two seconds cost every first look at
++/// every app, for a tree that a native app has complete at once. Only a web engine builds its tree after being asked, so
++/// this watches the windows' trees: a native tree that holds still is done, a web area with content must hold still for
++/// longer, and a window with next to nothing in it, or an empty web area, gets the old two seconds as its cap.
++fn settle(application: &crate::tree::AXElement, cap: Duration, deadline: Deadline) {
++    const POLL: Duration = Duration::from_millis(30);
++    if cap.is_zero() {
++        return;
++    }
++    let start = std::time::Instant::now();
++    let mut last = None;
++    let mut still_since = start;
++    loop {
++        let shape = sample_tree(application, deadline);
++        let now = std::time::Instant::now();
++        if last != Some(shape.elements) {
++            last = Some(shape.elements);
++            still_since = now;
++        }
++        let still = now.duration_since(still_since);
++        let settled = settled_after(shape).is_some_and(|quiet| still >= quiet);
++        if settled || now.duration_since(start) >= cap {
++            return;
++        }
++        std::thread::sleep(POLL);
++    }
++}
++
++/// How long this tree must hold still, or None while it can't be finished.
++fn settled_after(shape: TreeShape) -> Option<Duration> {
++    if shape.unknown || shape.empty_web_area || shape.elements < MIN_ELEMENTS {
++        None
++    } else if shape.web_area {
++        Some(QUIET_WEB)
++    } else {
++        Some(QUIET_NATIVE)
++    }
++}
++
++const QUIET_NATIVE: Duration = Duration::from_millis(100);
++const QUIET_WEB: Duration = Duration::from_millis(300);
++const MIN_ELEMENTS: usize = 5;
++const MAX_SAMPLED_ELEMENTS: usize = 300;
++
++#[derive(Clone, Copy, Default)]
++struct TreeShape {
++    elements: usize,
++    web_area: bool,
++    empty_web_area: bool,
++    /// The walk stopped short or a read failed, so it can't vouch for the tree holding still.
++    unknown: bool,
++}
++
++/// A bounded walk of the app's windows. Anything it can't read counts as not being there, so it waits longer, never less.
++fn sample_tree(application: &crate::tree::AXElement, deadline: Deadline) -> TreeShape {
++    let mut shape = TreeShape { unknown: true, ..TreeShape::default() };
++    let Ok(limit) = instant(deadline) else {
++        return shape;
++    };
++    let Ok(mut queue) = crate::tree::surface_read::elements(application, "AXWindows", limit) else {
++        return shape;
++    };
++    while let Some(element) = queue.pop() {
++        shape.elements += 1;
++        if shape.elements >= MAX_SAMPLED_ELEMENTS {
++            return shape;
++        }
++        let Ok(limit) = instant(deadline) else {
++            return shape;
++        };
++        let Ok(children) = crate::tree::surface_read::elements(&element, "AXChildren", limit) else {
++            return shape;
++        };
++        if crate::tree::surface_read::string(&element, "AXRole", limit).ok().flatten().as_deref() == Some("AXWebArea") {
++            shape.web_area = true;
++            shape.empty_web_area |= children.is_empty();
++        }
++        queue.extend(children);
++    }
++    shape.unknown = false;
++    shape
++}
++
+ fn activation_delivered(
+     application: &crate::tree::AXElement,
+     attribute: &str,
+@@ -150,6 +233,17 @@ mod tests {
+         assert_eq!(error.disposition, DeliverySemantics::not_delivered());
+     }
+ 
++    #[test]
++    fn a_tree_it_cannot_vouch_for_keeps_the_old_cap() {
++        let tree = |elements, web_area, empty_web_area, unknown| TreeShape { elements, web_area, empty_web_area, unknown };
++        assert_eq!(settled_after(tree(300, false, false, true)), None, "the walk stopped short");
++        assert_eq!(settled_after(tree(20, false, false, true)), None, "a read failed");
++        assert_eq!(settled_after(tree(3, false, false, false)), None, "next to nothing there");
++        assert_eq!(settled_after(tree(20, true, true, false)), None, "an empty web area");
++        assert_eq!(settled_after(tree(20, true, false, false)), Some(QUIET_WEB));
++        assert_eq!(settled_after(tree(20, false, false, false)), Some(QUIET_NATIVE));
++    }
++
+     #[test]
+     fn reported_success_with_disabled_readback_is_not_activation_success() {
+         let application = crate::tree::AXElement(std::ptr::null_mut());
