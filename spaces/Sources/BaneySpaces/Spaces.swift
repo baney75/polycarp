@@ -1452,6 +1452,8 @@ final class Spaces {
     private func apply(_ plan: SwitchPlan, moveFocus: Bool = true) {
         guard active else { return }
         let gen = generation
+        // What follows changes each app's windows on its own schedule. Held, they reach the screen as one change.
+        ScreenHold.begin()
         let screens = Windows.screens()
         // macOS reports the new front app a moment late. Right after a switch, the app that
         // switch brought forward is the one really in front.
@@ -1532,7 +1534,7 @@ final class Spaces {
         }
         clock.mark(.shown)
         let done = { [self] in
-            guard gen == generation, active else { return }
+            guard gen == generation, active else { return ScreenHold.end() }
             clock.mark(.focused)
             // An app busy coming back from hiding can miss the raise. Try again once it has had
             // a moment, unless another switch came first.
@@ -1559,6 +1561,7 @@ final class Spaces {
             }
             if moveFocus, !deferred.isEmpty || leavingParked != nil || target == nil { handedOffAt = Date() }
             clock.mark(.done)
+            ScreenHold.end()
             // Only a switch that really brought an app forward vouches for the next one's idea of
             // which app is in front.
             if moveFocus, Windows.focusedPid() == frontPid { settleUntil = Date().addingTimeInterval(0.3) }
