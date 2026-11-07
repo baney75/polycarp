@@ -928,6 +928,46 @@ index 3d2693150..520034e64 100644
  			// Assistant message - render inline tool messages during streaming
  			return html`
  				<div class="flex flex-col gap-3 mb-3">
+diff --git a/packages/web-ui/src/components/transcript-hook.ts b/packages/web-ui/src/components/transcript-hook.ts
+new file mode 100644
+index 000000000..0b51c2070
+--- /dev/null
++++ b/packages/web-ui/src/components/transcript-hook.ts
+@@ -0,0 +1,34 @@
++import type { AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
++import type { AssistantMessage, ToolResultMessage } from "@mariozechner/pi-ai";
++import type { TemplateResult } from "lit";
++
++export interface TranscriptContext {
++	tools: AgentTool[];
++	pendingToolCalls?: Set<string>;
++	toolResultsById: Map<string, ToolResultMessage>;
++	isStreaming: boolean;
++	onCostClick?: () => void;
++}
++
++/**
++ * An app-supplied transcript layout. `items` replaces MessageList's one-item-per-message
++ * rendering; `live` renders the assistant message still streaming. Either may return
++ * undefined to fall back to the built-in rendering.
++ */
++export interface TranscriptRenderer {
++	items(
++		messages: AgentMessage[],
++		ctx: TranscriptContext,
++	): Array<{ key: string; template: TemplateResult }> | undefined;
++	live?(message: AssistantMessage, ctx: TranscriptContext): TemplateResult | undefined;
++}
++
++let current: TranscriptRenderer | undefined;
++
++export function setTranscriptRenderer(renderer: TranscriptRenderer | undefined): void {
++	current = renderer;
++}
++
++export function getTranscriptRenderer(): TranscriptRenderer | undefined {
++	return current;
++}
 diff --git a/packages/web-ui/src/dialogs/AttachmentOverlay.ts b/packages/web-ui/src/dialogs/AttachmentOverlay.ts
 index 4ec7734c1..bfe191eb8 100644
 --- a/packages/web-ui/src/dialogs/AttachmentOverlay.ts
@@ -1571,6 +1611,260 @@ index 000000000..62d90cf66
 +export const loadXlsx = () => import("xlsx");
 +export const loadDocxPreview = () => import("docx-preview");
 +export const loadJSZip = () => import("jszip").then((lib) => lib.default);
+diff --git a/packages/web-ui/src/utils/message-queue.ts b/packages/web-ui/src/utils/message-queue.ts
+new file mode 100644
+index 000000000..daa256961
+--- /dev/null
++++ b/packages/web-ui/src/utils/message-queue.ts
+@@ -0,0 +1,248 @@
++import type { AgentMessage } from "@mariozechner/pi-agent-core";
++import type { Attachment } from "./attachment-utils.js";
++
++export interface QueuedMessage {
++	id: number;
++	input: string;
++	attachments?: Attachment[];
++	/** Set once "Send now" handed it to the running agent; cleared if the run ends first. */
++	steered?: AgentMessage;
++	/** Set by Send now: its press order. Pressed items lead the list, in press order. */
++	nowSeq?: number;
++}
++
++/** The parts of Agent the queue uses. */
++export interface QueueAgent {
++	state: { isStreaming: boolean; messages: AgentMessage[] };
++	steer(message: AgentMessage): void;
++	clearSteeringQueue(): void;
++	waitForIdle(): Promise<void>;
++}
++
++/**
++ * How a send went. "started": a prompt is running. "busy": another send or run got there
++ * first, so the item goes back in its place and waits for the next chance. "refused": it can't
++ * go (no key, no model), so the item goes back in its place and is held until Send now or ×.
++ */
++export type SendResult = "started" | "busy" | "refused";
++
++/**
++ * Messages the user sends while the agent runs, for one agent. The list is the only queue:
++ * when a run ends the first item goes out through `send` as an ordinary prompt. "Send now"
++ * during a run hands the item (after a page note, unless the same note already went this run)
++ * to the agent with steer(), which delivers it after the current tool call; it leaves the list
++ * once the agent injects it, and if the run ends first it goes out ahead of the rest. Items
++ * pressed with Send now lead the list in press order. A stopped or failed run holds the items
++ * that were waiting then (not pressed ones, not later ones) until Send now or ×.
++ */
++export class MessageQueue {
++	items: QueuedMessage[] = [];
++	/** Items that were waiting when a run was stopped or failed; they wait for Send now or ×. */
++	private held = new Set<number>();
++	private running: boolean;
++	private seq = 0;
++	private nowSeq = 0;
++	private draining = false;
++	/** A drain was asked for while one ran; run again when it finishes. */
++	private drainAgain = false;
++	private disposed = false;
++	/** The page note steered but not yet injected, so the same note isn't steered twice. */
++	private lastContext?: string;
++	private pendingContext: AgentMessage[] = [];
++	/** Send now presses still building their page context; the drain waits for them to decide. */
++	private sendNowPending = 0;
++
++	constructor(
++		readonly agent: QueueAgent,
++		private readonly send: (item: QueuedMessage) => Promise<SendResult>,
++		private readonly changed: () => void,
++		private readonly beforeSteer?: () => Promise<AgentMessage[]>,
++	) {
++		this.running = agent.state.isStreaming;
++	}
++
++	/** Something is held after a Stop or failure (the panel shows a note). */
++	get paused(): boolean {
++		return this.items.some((q) => this.held.has(q.id));
++	}
++
++	add(input: string, attachments?: Attachment[]): void {
++		// New items are never held: a Stop only holds what was waiting when it happened.
++		this.items = [...this.items, { id: ++this.seq, input, attachments }];
++		this.changed();
++	}
++
++	/** The user message for an item, shaped as Agent.prompt() builds one. */
++	static message(item: QueuedMessage): AgentMessage {
++		if (item.attachments && item.attachments.length > 0) {
++			return {
++				role: "user-with-attachments",
++				content: item.input,
++				attachments: item.attachments,
++				timestamp: Date.now(),
++			} as unknown as AgentMessage;
++		}
++		return { role: "user", content: [{ type: "text", text: item.input }], timestamp: Date.now() } as AgentMessage;
++	}
++
++	/** Send an item now: into the running turn, or next when nothing runs. Always resumes. */
++	async sendNow(id: number): Promise<void> {
++		const pending = (q: QueuedMessage) => q.id === id && !q.steered;
++		if (!this.items.some(pending)) return;
++		this.held.clear();
++		// Press order, recorded on the item at once: a Stop during the wait below must not hold it.
++		const nowSeq = ++this.nowSeq;
++		this.items = this.items.map((q) => (q.id === id ? { ...q, nowSeq } : q));
++		let context: AgentMessage[] = [];
++		if (this.running) {
++			this.sendNowPending++;
++			try {
++				context = (await this.beforeSteer?.().catch(() => [])) ?? [];
++			} finally {
++				this.sendNowPending--;
++			}
++		}
++		const item = this.items.find(pending);
++		if (!item) {
++			// Removed while its context was built; the drain stood down for it, so restart it.
++			if (!this.running) void this.drain();
++			return;
++		}
++		this.held.delete(id);
++		if (this.running) {
++			const message = MessageQueue.message(item);
++			// The page note goes unless it repeats the one already steered in this run.
++			const key = context.length > 0 ? JSON.stringify(context.map((m) => (m as { url?: string }).url ?? m)) : undefined;
++			if (key && key !== this.lastContext) {
++				for (const extra of context) this.agent.steer(extra);
++				this.lastContext = key;
++				this.pendingContext = context;
++			}
++			this.agent.steer(message);
++			this.items = this.items.map((q) => (q.id === id ? { ...q, steered: message, nowSeq } : q));
++			this.changed();
++			return;
++		}
++		// Nothing runs: it goes next, after items pressed before it.
++		this.items = this.ordered(this.items.map((q) => (q.id === id ? { ...q, nowSeq } : q)));
++		this.changed();
++		void this.drain();
++	}
++
++	/** Pressed items first, in press order; the rest keep their order. */
++	private ordered(items: QueuedMessage[]): QueuedMessage[] {
++		const pressed = items.filter((q) => q.nowSeq !== undefined).sort((x, y) => (x.nowSeq ?? 0) - (y.nowSeq ?? 0));
++		return [...pressed, ...items.filter((q) => q.nowSeq === undefined)];
++	}
++
++	/** The panel missed events (it was disconnected): take the run state from the agent again. */
++	sync(): void {
++		// A Send now message the agent injected while nobody listened is already sent.
++		const seen = new Set(this.agent.state.messages);
++		this.items = this.items.filter((q) => !q.steered || !seen.has(q.steered));
++		this.running = this.agent.state.isStreaming;
++		if (this.running) {
++			this.changed();
++			return;
++		}
++		// The run ended unheard: apply the end-of-run rules (a Stop still holds what waited).
++		this.onAgentEnd(this.agent.state.messages);
++	}
++
++	/** Try to send again (a send that held the panel ended without starting a run). */
++	kick(): void {
++		void this.drain();
++	}
++
++	remove(id: number): void {
++		this.items = this.items.filter((q) => q.id !== id || q.steered);
++		this.held.delete(id);
++		this.changed();
++	}
++
++	onAgentStart(): void {
++		this.running = true;
++		this.lastContext = undefined;
++		this.pendingContext = [];
++	}
++
++	/** A message the agent injected: a steered item is now in the transcript. */
++	onMessageStart(message: AgentMessage): void {
++		// Once the note is in the transcript, the panel's own page check takes over from here.
++		if (this.pendingContext.includes(message)) {
++			this.lastContext = undefined;
++			this.pendingContext = [];
++		}
++		if (!this.items.some((q) => q.steered === message)) return;
++		this.items = this.items.filter((q) => q.steered !== message);
++		this.changed();
++	}
++
++	/** The run is over; send the next item, or pause if the user stopped it or it failed. */
++	onAgentEnd(messages: AgentMessage[]): void {
++		this.running = false;
++		this.lastContext = undefined;
++		this.pendingContext = [];
++		// A steer that arrived after the last turn is never injected. It was asked for first, so
++		// it goes out first.
++		this.agent.clearSteeringQueue();
++		this.items = this.ordered(this.items.map((q) => (q.steered ? { ...q, steered: undefined } : q)));
++		const last = [...messages].reverse().find((m) => m.role === "assistant") as { stopReason?: string } | undefined;
++		// A Stop or failure holds what was waiting, except items the user pressed Send now on.
++		if (last?.stopReason === "aborted" || last?.stopReason === "error") {
++			for (const q of this.items) if (q.nowSeq === undefined) this.held.add(q.id);
++		}
++		this.changed();
++		void this.drain();
++	}
++
++	/** Forget everything (the panel switched to another session). */
++	dispose(): void {
++		this.disposed = true;
++		this.agent.clearSteeringQueue();
++		this.items = [];
++		this.held.clear();
++	}
++
++	/** Once the agent is idle, send the first item not held; the next waits for that run's end. */
++	private async drain(): Promise<void> {
++		if (this.draining) {
++			this.drainAgain = true;
++			return;
++		}
++		this.draining = true;
++		try {
++			await this.agent.waitForIdle();
++			// A Send now still building its context decides what goes next; it drains when done.
++			if (this.disposed || this.running || this.sendNowPending > 0) return;
++			const next = this.items.find((q) => !this.held.has(q.id));
++			if (!next) return;
++			this.items = this.items.filter((q) => q !== next);
++			this.changed();
++			let result: SendResult;
++			try {
++				result = await this.send(next);
++			} catch {
++				result = "refused";
++			}
++			if (result !== "started" && !this.disposed) {
++				// Back in its place: behind anything pressed while it was out.
++				this.items = this.ordered([next, ...this.items]);
++				if (result === "refused") this.held.add(next.id);
++				this.changed();
++			}
++		} finally {
++			this.draining = false;
++			// Can't spin: a refused item is held, and a busy one waits on waitForIdle or a run.
++			if (this.drainAgain) {
++				this.drainAgain = false;
++				void this.drain();
++			}
++		}
++	}
++
++	/** Whether the queue has something it would send now (nothing held, not mid-send). */
++	get hasSendable(): boolean {
++		return this.items.some((q) => !q.steered && !this.held.has(q.id));
++	}
++}
 diff --git a/packages/web-ui/src/utils/model-discovery.ts b/packages/web-ui/src/utils/model-discovery.ts
 index 299aa9aca..4c3ddd3cc 100644
 --- a/packages/web-ui/src/utils/model-discovery.ts
@@ -1588,3 +1882,32 @@ index 299aa9aca..4c3ddd3cc 100644
  		const client = new LMStudioClient({ baseUrl: `ws://${url.hostname}:${port}` });
  
  		// List all downloaded models
+diff --git a/packages/web-ui/src/utils/model-hooks.ts b/packages/web-ui/src/utils/model-hooks.ts
+new file mode 100644
+index 000000000..76862744d
+--- /dev/null
++++ b/packages/web-ui/src/utils/model-hooks.ts
+@@ -0,0 +1,23 @@
++import type { Model } from "@mariozechner/pi-ai";
++
++/** An app-supplied entry the model selector always lists first, with its own title. */
++export interface PinnedModel {
++	model: Model<any>;
++	title: string;
++	subtitle?: string;
++}
++
++let pinned: (() => PinnedModel[]) | undefined;
++
++/** Entries the model selector lists above every provider's models. */
++export function setPinnedModels(provider: (() => PinnedModel[]) | undefined): void {
++	pinned = provider;
++}
++
++export function getPinnedModels(): PinnedModel[] {
++	try {
++		return pinned?.() ?? [];
++	} catch {
++		return [];
++	}
++}

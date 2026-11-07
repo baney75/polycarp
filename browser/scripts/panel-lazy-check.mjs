@@ -140,6 +140,20 @@ try {
 		}
 	});
 
+	await check("opening an attachment draws the PDF, the spreadsheet and the Word file", async () => {
+		const tiles = page.locator("attachment-tile");
+		for (const [index, drawn] of [
+			[0, "canvas"],
+			[1, "table"],
+			[2, ".docx-wrapper-custom, .docx"],
+		]) {
+			await tiles.nth(index).locator("img, div").first().click({ timeout: 5000 });
+			await page.waitForSelector(drawn, { state: "attached", timeout: 15000 });
+			await page.keyboard.press("Escape");
+			await page.waitForTimeout(150);
+		}
+	});
+
 	await page.close();
 	const seed = await ctx.newPage();
 	await seed.goto(panel);
@@ -224,7 +238,7 @@ try {
 	await save("saved-rich", [
 		question("Show me"),
 		reply(
-			"Formula: $$E = mc^2$$\n\n```python\nprint('hello')\n```\n\n```rust\nfn main() { println!(\"hi\"); }\n```\n",
+			"Formula: $$E = mc^2$$\n\n```python\nprint('hello')\n```\n\n```haskell\nmain :: IO ()\nmain = putStrLn \"hi\"\n```\n\n```\nplain block with no language\n```\n",
 		),
 	]);
 	const code = "```python\nfor i in range(10):\n    print(i)\n```\n\n";
@@ -239,10 +253,34 @@ try {
 
 	const rich = await ctx.newPage();
 	rich.on("pageerror", (e) => errors.push(e.message));
-	await check("a saved chat draws its formula with KaTeX and highlights Python", async () => {
-		await rich.goto(`${panel}?session=saved-rich`);
-		await rich.waitForSelector(".katex", { timeout: 10000 });
-		await rich.waitForSelector(".hljs-keyword, .hljs-built_in", { timeout: 10000 });
+	await check(
+		"a saved chat draws its formula with KaTeX, highlights Python and Haskell, and shows a plain block",
+		async () => {
+			await rich.goto(`${panel}?session=saved-rich`);
+			await rich.waitForSelector(".katex", { timeout: 10000 });
+			await rich.waitForSelector("code.language-python .hljs-keyword, code.language-python .hljs-built_in", {
+				timeout: 10000,
+			});
+			// Outside the code block's own set: it arrives with the rest of the languages and the block is drawn again.
+			await rich.waitForSelector("code.language-haskell [class*='hljs-']", { timeout: 10000 });
+			const plain = await rich.locator("code.language-text").innerText({ timeout: 10000 });
+			assert.ok(plain.includes("plain block with no language"));
+		},
+	);
+	await check("a chat's cost view draws its chart with Chart.js", async () => {
+		await rich.keyboard.press("Meta+Shift+K");
+		await rich.waitForSelector("canvas#cost-chart", { state: "attached", timeout: 10000 });
+		await rich.waitForFunction(
+			() => {
+				const canvas = document.querySelector("canvas#cost-chart");
+				return canvas
+					?.getContext("2d")
+					.getImageData(0, 0, canvas.width, canvas.height)
+					.data.some((v) => v !== 0);
+			},
+			null,
+			{ timeout: 10000 },
+		);
 	});
 	await rich.close();
 

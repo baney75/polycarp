@@ -226,6 +226,12 @@ const lazyLibraries = {
 			const path = join(packageRoot, standIn[args.path]);
 			return args.importer === path ? undefined : { path };
 		});
+		// The chat's code blocks use highlight.js's core directly, and would never ask for a language they don't have.
+		b.onResolve({ filter: /^highlight\.js\/lib\/core$/ }, (args) =>
+			/[\\/]mini-lit[\\/]dist[\\/]CodeBlock\.js$/.test(args.importer)
+				? { path: join(packageRoot, standIn["highlight.js"]) }
+				: undefined,
+		);
 	},
 };
 
