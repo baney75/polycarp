@@ -25,8 +25,21 @@ public struct BrowserStatus: Equatable {
     /// Connected, but no browser can be named: show one line for the connection, not a row.
     public var unattributed: Bool { extensionConnected && connections.isEmpty }
     public var agents: [Agent] = []
+    /// Agents open any site without asking. Nil until the browser has answered.
+    public var anySite: Bool?
+    /// Claude Code uses Polycarp's tools without asking.
+    public var claudeAllowed = false
+    /// Claude Code has Polycarp's entry under its current name, so a rule for it would match.
+    public var claudeReady: Bool { agents.contains { $0.id == "claude" && $0.connected } }
 
     public init() {}
+
+    /// The site mode from the helper's `status --json`: nil when no browser answered.
+    public static func anySite(fromStatus data: Data) -> Bool? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let mode = root["permissionMode"] as? String else { return nil }
+        return mode == "allow_all"
+    }
 
     /// The helper's JSON. Nil when it isn't JSON of the shape `doctor --json` prints.
     public static func parse(_ data: Data) -> BrowserStatus? {

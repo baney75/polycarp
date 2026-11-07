@@ -4,6 +4,7 @@
  * after a yes and always points harnesses at the absolute path of the tabkyra launcher.
  */
 
+import { moveClaudeRules } from "./always-allow.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -206,7 +207,8 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 		}
 		const replacing = h.configured === "stale" || h.configured === "other";
 		if (h.addCommand) {
-			const commands = replacing && h.removeCommand ? [h.removeCommand, h.addCommand] : [h.addCommand];
+			// Moving to the new name, the new entry goes in first: a failed add must not cost a working entry.
+			const commands = !replacing || !h.removeCommand ? [h.addCommand] : h.oldName ? [h.addCommand, h.removeCommand] : [h.removeCommand, h.addCommand];
 			const shown = commands.map(shellJoin).join(" && ");
 			// Windows harness CLIs are .cmd shims that need a shell; print the command there instead.
 			if (process.platform === "win32") {
@@ -214,8 +216,8 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 				continue;
 			}
 			let question = `Add Polycarp to ${c.bold(h.name)}?`;
-			if (h.configured === "stale") question = `${c.bold(h.name)}'s tabkyra entry points at a missing command. Replace it?`;
-			if (h.configured === "other") question = `${c.bold(h.name)}'s tabkyra entry runs ${h.currentCommand}. Replace it with this install?`;
+			if (h.configured === "stale") question = h.oldName ? `Move ${c.bold(h.name)}'s entry to its new name, polycarp?` : `${c.bold(h.name)}'s polycarp entry points at a missing command. Replace it?`;
+			if (h.configured === "other") question = `${c.bold(h.name)}'s polycarp entry runs ${h.currentCommand}. Replace it with this install?`;
 			// An entry running some other existing command may be the user's own wrapper:
 			// --yes doesn't replace it, and the interactive default is no.
 			const assumeYes = options.yes && h.configured !== "other";
@@ -226,7 +228,9 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 			}
 			if (await confirm(`  ${sym.dot} ${question} ${c.dim(`(${shown})`)}`, { assumeYes, defaultYes: h.configured !== "other" })) {
 				const failedAt = commands.findIndex((command) => !runCommand(command));
-				if (failedAt === -1) console.log(`  ${sym.ok} ${h.name} is set up.`);
+				if (failedAt === -1) {
+					console.log(`  ${sym.ok} ${h.name} is set up.`);
+				}
 				else {
 					ok = false;
 					console.log(`  ${sym.fail} That failed. Run it yourself: ${c.bold(commands.slice(failedAt).map(shellJoin).join(" && "))}`);
@@ -237,11 +241,17 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 			continue;
 		}
 		if (h.snippet?.startsWith("{")) {
-			console.log(`  ${sym.dot} ${c.bold(h.name)}: ${replacing ? "replace the tabkyra entry in" : "add this to"} ${c.cyan(h.configFile ?? "its MCP config")}`);
+			console.log(`  ${sym.dot} ${c.bold(h.name)}: ${replacing ? "replace the Polycarp entry in" : "add this to"} ${c.cyan(h.configFile ?? "its MCP config")}`);
 			for (const line of h.snippet.split("\n")) console.log(`    ${line}`);
 		} else if (h.snippet) {
 			console.log(`  ${sym.dot} ${c.bold(h.name)}: run ${c.bold(h.snippet)}`);
 		}
+	}
+	// However the entry got its new name (this run, a pasted command, an earlier version), rules naming the old one move now.
+	if (harnesses().find((h) => h.id === "claude")?.configured === true) {
+		const moved = moveClaudeRules();
+		if (moved.rewritten) console.log(`  ${sym.ok} ${moved.rewritten} permission rule(s) in Claude Code's settings now name polycarp.`);
+		if (moved.elsewhere) console.log(`  ${sym.warn} ${c.dim("Claude Code's settings still mention mcp__tabkyra outside its permission rules (a hook, say). Those no longer match.")}`);
 	}
 	await offerSkill(options);
 	return ok;

@@ -37,7 +37,7 @@ helper's output all say so, and `polycarp browser <command>` is the command the 
 when "Tabkyra" appears in a user-visible string. These stay as they are on purpose, because agents and hooks on the owner's
 machines call them, and no person reads them:
 - the `tabkyra` command, as an alias for `polycarp browser`
-- the MCP server name `tabkyra` and every tool name
+- every MCP tool name. The server itself is `polycarp`, so Claude Code's qualified names are `mcp__polycarp__*`. `harness.ts` moves an entry under the old name `tabkyra` when it runs this helper, and `moveClaudeRules` moves the permission rules that named it
 - the native host name `ai.tabkyra.bridge`
 - the manifest `key` (it keeps the extension id)
 - `~/.config/tabkyra` and the other `tabkyra` folders and `TABKYRA_*` variables

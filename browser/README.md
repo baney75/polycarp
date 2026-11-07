@@ -129,31 +129,31 @@ your harness at it (JSON configs need the full path, not `~`):
 **Claude Code**
 
 ```bash
-claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp
+claude mcp add --scope user polycarp -- ~/.config/tabkyra/tabkyra mcp
 ```
 
 **Codex**
 
 ```bash
-codex mcp add tabkyra -- ~/.config/tabkyra/tabkyra mcp
+codex mcp add polycarp -- ~/.config/tabkyra/tabkyra mcp
 ```
 
 **OpenCode** (`~/.config/opencode/opencode.json`)
 
 ```json
-{ "mcp": { "tabkyra": { "type": "local", "command": ["/Users/you/.config/tabkyra/tabkyra", "mcp"], "enabled": true } } }
+{ "mcp": { "polycarp": { "type": "local", "command": ["/Users/you/.config/tabkyra/tabkyra", "mcp"], "enabled": true } } }
 ```
 
 **Cursor** (`~/.cursor/mcp.json`)
 
 ```json
-{ "mcpServers": { "tabkyra": { "command": "/Users/you/.config/tabkyra/tabkyra", "args": ["mcp"] } } }
+{ "mcpServers": { "polycarp": { "command": "/Users/you/.config/tabkyra/tabkyra", "args": ["mcp"] } } }
 ```
 
 **OMP** (`~/.omp/agent/mcp.json`)
 
 ```json
-{ "mcpServers": { "tabkyra": { "type": "stdio", "command": "/Users/you/.config/tabkyra/tabkyra", "args": ["mcp"], "enabled": true } } }
+{ "mcpServers": { "polycarp": { "type": "stdio", "command": "/Users/you/.config/tabkyra/tabkyra", "args": ["mcp"], "enabled": true } } }
 ```
 
 **pi** has no MCP client, so `tabkyra pi-extension` writes a native pi extension instead.

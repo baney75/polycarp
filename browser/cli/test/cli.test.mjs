@@ -40,7 +40,7 @@ test("the CLI's version is the extension manifest's", async () => {
 	const mcp = new Client({ name: "version-test", version: "0.0.0" });
 	await mcp.connect(new StdioClientTransport({ command: process.execPath, args: [cli, "mcp"], env: { HOME: home, PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: socketDir }, stderr: "ignore" }));
 	try {
-		assert.deepEqual(mcp.getServerVersion(), { name: "tabkyra", version: manifestVersion });
+		assert.deepEqual(mcp.getServerVersion(), { name: "polycarp", version: manifestVersion });
 	} finally {
 		await mcp.close();
 	}

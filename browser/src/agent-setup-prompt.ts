@@ -24,7 +24,7 @@ export function agentSetupPrompt(version: string, command = "tabkyra"): string {
 3. Run: ${command} setup --yes
    It registers the browser connection and adds the MCP server to Claude Code and Codex.
 4. Connect this harness, even if Polycarp already works in another one:
-   - Any MCP client: a stdio server named "tabkyra" that runs ~/.config/tabkyra/tabkyra with the argument "mcp". JSON configs need the full path, not ~.
+   - Any MCP client: a stdio server named "polycarp" that runs ~/.config/tabkyra/tabkyra with the argument "mcp". JSON configs need the full path, not ~.
    - pi has no MCP client: run ${command} pi-extension instead.
 5. Install the skills: ${command} skill install
    If this harness reads AGENTS.md instead of skill folders: cd back to the directory step 1 printed (my project, not the Polycarp clone); if you aren't sure it's my project's root, ask me. If its AGENTS.md already has a "## Browser: Polycarp" or "## Browser: Tabkyra" section (the same section under its earlier name), leave it as it is. Otherwise run ${command} skill print >> AGENTS.md

@@ -55,7 +55,9 @@ final class BrowserModel: ObservableObject {
             _ = self?.loadableFolder()
             if let before, let after = self?.loadedBuild(), before != after { _ = Self.run(helper, ["reload"], timeout: 8) }
             let result = Self.run(helper, ["doctor", "--json"], timeout: 12)
-            let parsed = BrowserStatus.parse(result.out)
+            var parsed = BrowserStatus.parse(result.out)
+            parsed?.anySite = BrowserStatus.anySite(fromStatus: Self.run(helper, ["status", "--json"], timeout: 6).out)
+            parsed?.claudeAllowed = ClaudeAllowRule.isOn(try? Data(contentsOf: Self.claudeSettings.resolvingSymlinksInPath()))
             DispatchQueue.main.async {
                 self?.refreshing = false
                 if let parsed, parsed != self?.status { self?.status = parsed }
@@ -124,6 +126,47 @@ final class BrowserModel: ObservableObject {
     }
 
     /// The helper's own setup adds the MCP server to Claude Code and Codex (it edits nothing else).
+    /// Always allow: agents open any site without asking, or ask again.
+    func setAnySite(_ on: Bool) { runThenRefresh([on ? "allow-all" : "ask"], failure: "Changing site access failed") }
+
+    /// Always allow: Claude Code stops asking before Polycarp's tools, or asks again.
+    func setClaudeAllowed(_ on: Bool) {
+        busy = true; message = nil
+        queue.async { [weak self] in
+            let file = Self.claudeSettings.resolvingSymlinksInPath()
+            let attributes = try? FileManager.default.attributesOfItem(atPath: file.path)
+            let ok = ClaudeAllowRule.applied(on, to: try? Data(contentsOf: file)).map { (data: Data) -> Bool in
+                try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                guard (try? data.write(to: file, options: .atomic)) != nil else { return false }
+                let mode = attributes?[.posixPermissions] ?? NSNumber(value: 0o600)
+                try? FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: file.path)
+                return true
+            } ?? false
+            DispatchQueue.main.async {
+                self?.busy = false
+                if !ok { self?.message = "\(file.path) isn't valid JSON, so it was left alone." }
+                self?.refresh()
+            }
+        }
+    }
+
+    private static var claudeSettings: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
+    }
+
+    private func runThenRefresh(_ args: [String], failure: String) {
+        guard let helper else { return }
+        busy = true; message = nil
+        queue.async { [weak self] in
+            let result = Self.run(helper, args, timeout: 15)
+            DispatchQueue.main.async {
+                self?.busy = false
+                if result.code != 0 { self?.message = "\(failure): \(result.text)" }
+                self?.refresh()
+            }
+        }
+    }
+
     func addAgents() {
         guard let helper else { return }
         busy = true; message = nil

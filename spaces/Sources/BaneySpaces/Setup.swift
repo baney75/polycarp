@@ -789,6 +789,8 @@ struct SetupView: View {
 
     // MARK: Agents
 
+    @ObservedObject private var browserModel = BrowserModel.shared
+
     @ViewBuilder private var agents: some View {
         SettingsGroup("Agent access") {
             SettingsBlock {
@@ -799,6 +801,21 @@ struct SetupView: View {
             }
             SettingsNote(model.agentAccess.detail, tone: model.agentAccess == .full ? .urgent : .quiet)
             SettingsNote("Only you change this, here or in the Polycarp menu. More access asks you first.")
+        }
+
+        SettingsGroup("Always allow") {
+            SettingsRow("Agents open any site without asking", help: browserModel.status?.anySite == nil ? "Open your browser to change this." : "Otherwise they ask you before each new site.") {
+                Toggle("Any site", isOn: binding({ browserModel.status?.anySite ?? false }, { browserModel.setAnySite($0) }))
+                    .labelsHidden().toggleStyle(.switch)
+                    .disabled(browserModel.busy || browserModel.status?.anySite == nil)
+            }
+            SettingsRow("Claude Code uses Polycarp without asking", help: browserModel.status?.claudeReady == true ? "Stops its prompt for Polycarp's tools. Its other tools still ask." : "Add Polycarp to Claude Code first, in Settings > Browser.") {
+                Toggle("Claude Code", isOn: binding({ browserModel.status?.claudeAllowed ?? false }, { browserModel.setClaudeAllowed($0) }))
+                    .labelsHidden().toggleStyle(.switch)
+                    .disabled(browserModel.busy || browserModel.status?.claudeReady != true)
+            }
+            SettingsNote("Page scripts run without asking. For the fastest ones, turn on Allow user scripts at chrome://extensions > Polycarp > Details.")
+            if let message = browserModel.message { SettingsNote(message, tone: .urgent) }
         }
 
         SettingsGroup("Sandbox") {

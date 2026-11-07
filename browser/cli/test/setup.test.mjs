@@ -122,8 +122,8 @@ test("setup --yes registers the host, wires harnesses to the launcher, then show
 	assert.ok(out.indexOf("Connect your coding agents") < out.indexOf("Load unpacked"), "agents are wired before the wait");
 
 	const calls = readFileSync(harnessLog, "utf8");
-	assert.ok(calls.includes(`claude mcp add --scope user tabkyra -- ${launcher()} mcp`), calls);
-	assert.ok(calls.includes(`codex mcp add tabkyra -- ${launcher()} mcp`), calls);
+	assert.ok(calls.includes(`claude mcp add --scope user polycarp -- ${launcher()} mcp`), calls);
+	assert.ok(calls.includes(`codex mcp add polycarp -- ${launcher()} mcp`), calls);
 	// The launcher pins node by absolute path, so GUI-started harnesses need no PATH.
 	assert.match(readFileSync(launcher(), "utf8"), new RegExp(`exec "/[^"]+node" "${cli.replaceAll("/", "\\/")}" "\\$@"`));
 
@@ -139,12 +139,12 @@ test("an entry pointing at a missing command is stale, and setup replaces it", (
 	const claude = checks.find((c) => c.id === "mcp:claude");
 	assert.equal(claude.status, "fail");
 	assert.match(claude.label, /missing command/);
-	assert.match(claude.fix, /^claude mcp remove --scope user tabkyra && claude mcp add/);
+	assert.match(claude.fix, /^claude mcp remove --scope user polycarp && claude mcp add/);
 	assert.equal(checks.find((c) => c.id === "mcp:codex").status, "ok", "the launcher with args mcp is this CLI");
 
 	run(["setup", "--yes", "--no-wait"]);
 	const calls = readFileSync(harnessLog, "utf8");
-	assert.ok(calls.includes("claude mcp remove --scope user tabkyra"), calls);
+	assert.ok(calls.includes("claude mcp remove --scope user polycarp"), calls);
 	assert.ok(!calls.includes("codex mcp add"), "a current entry is left alone");
 });
 
@@ -178,7 +178,7 @@ test("setup without --yes and without a terminal never edits a harness config", 
 	fakeHarness("claude");
 	run(["setup", "--no-wait"]);
 	const calls = readFileSync(harnessLog, "utf8");
-	assert.ok(calls.includes("claude mcp get tabkyra"), calls);
+	assert.ok(calls.includes("claude mcp get polycarp"), calls);
 	assert.ok(!calls.includes("mcp add"), calls);
 });
 
@@ -240,4 +240,75 @@ test("second-S3: setup keeps a working launcher and writes links only for regist
 	assert.equal(existsSync(join(chromeDir, "NativeMessagingHosts", "ai.tabkyra.bridge.json")), true);
 	assert.equal(readFileSync(join(home, ".config", "tabkyra", "host"), "utf8"), standalone);
 	assert.equal(run(["setup", "--browser", "Netscape"]).code, 2, "an unknown browser is a usage error");
+});
+
+test("an entry under the old name moves to polycarp, and nothing else is touched", () => {
+	writeFileSync(harnessLog, "");
+	const file = join(bin, "claude");
+	writeFileSync(
+		file,
+		`#!/bin/sh\necho "claude $*" >> "${harnessLog}"\nif [ "$2" = "get" ] && [ "$3" = "polycarp" ]; then exit 1; fi\nif [ "$2" = "get" ]; then printf '  Scope: User config (available in all your projects)\\n  Command: /old/tabkyra\\n  Args: mcp\\n'; fi\nexit 0\n`,
+	);
+	chmodSync(file, 0o755);
+	fakeHarness("codex", launcher());
+	const claude = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "mcp:claude");
+	assert.match(claude.label, /old name/);
+	assert.match(claude.fix, / setup$/, "setup moves the permission rules with the entry");
+
+	run(["setup", "--yes", "--no-wait"]);
+	const calls = readFileSync(harnessLog, "utf8");
+	assert.ok(calls.includes("claude mcp remove --scope user tabkyra"), calls);
+	assert.ok(calls.includes("claude mcp add --scope user polycarp"), calls);
+	assert.ok(calls.indexOf("claude mcp add") < calls.indexOf("claude mcp remove"), "the new entry goes in first");
+	assert.ok(!calls.includes("codex mcp add"), "a current entry is left alone");
+});
+
+test("an old-name entry running someone's own wrapper is left alone by --yes", () => {
+	writeFileSync(harnessLog, "");
+	const wrapper = join(bin, "my-wrapper");
+	writeFileSync(wrapper, "#!/bin/sh\n");
+	chmodSync(wrapper, 0o755);
+	const file = join(bin, "claude");
+	writeFileSync(
+		file,
+		`#!/bin/sh\necho "claude $*" >> "${harnessLog}"\nif [ "$2" = "get" ] && [ "$3" = "polycarp" ]; then exit 1; fi\nif [ "$2" = "get" ]; then printf '  Scope: User config (available in all your projects)\\n  Command: ${wrapper}\\n  Args: --mine\\n'; fi\nexit 0\n`,
+	);
+	chmodSync(file, 0o755);
+	fakeHarness("codex", launcher());
+	run(["setup", "--yes", "--no-wait"]);
+	const calls = readFileSync(harnessLog, "utf8");
+	assert.ok(!calls.includes("mcp remove"), calls);
+	assert.ok(!calls.includes("claude mcp add"), calls);
+});
+
+test("turning Claude Code's always-allow on takes a terminal, and its entry under the current name", () => {
+	fakeHarness("claude", launcher());
+	const noTerminal = run(["claude-allow", "on"]);
+	assert.notEqual(noTerminal.code, 0);
+	assert.match(noTerminal.out, /takes a person/);
+	const file = join(bin, "claude");
+	writeFileSync(file, `#!/bin/sh\nif [ "$2" = "get" ] && [ "$3" = "polycarp" ]; then exit 1; fi\nif [ "$2" = "get" ]; then printf '  Scope: User config (available in all your projects)\\n  Command: ${launcher()}\\n  Args: mcp\\n'; fi\nexit 0\n`);
+	chmodSync(file, 0o755);
+	const oldName = run(["claude-allow", "on"]);
+	assert.notEqual(oldName.code, 0);
+	assert.match(oldName.out, /current name/);
+});
+
+test("rules under the old name move even when the entry was moved by hand, and doctor says so until they have", () => {
+	writeFileSync(harnessLog, "");
+	fakeHarness("claude", launcher());
+	const settings = join(home, ".claude", "settings.json");
+	mkdirSync(join(home, ".claude"), { recursive: true });
+	writeFileSync(settings, JSON.stringify({ permissions: { deny: ["mcp__tabkyra__run_js", "mcp__tabkyra-work__run_js"] } }));
+	try {
+		const before = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "mcp:claude");
+		assert.equal(before.status, "warn", JSON.stringify(before));
+		assert.match(before.label, /1 permission rule/, "another server's rule doesn't count");
+		run(["setup", "--yes", "--no-wait"]);
+		assert.deepEqual(JSON.parse(readFileSync(settings, "utf8")).permissions.deny, ["mcp__polycarp__run_js", "mcp__tabkyra-work__run_js"]);
+		const after = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "mcp:claude");
+		assert.equal(after.status, "ok");
+	} finally {
+		rmSync(settings, { force: true });
+	}
 });

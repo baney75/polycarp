@@ -58,4 +58,40 @@ final class BrowserStatusTests: XCTestCase {
         let welcome = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/WelcomeWindow.swift"), encoding: .utf8)
         XCTAssertTrue(welcome.contains("BrowserWelcomeRow()"))
     }
+
+    func testAlwaysAllowReadsWhatTheHelperSays() {
+        XCTAssertEqual(BrowserStatus.anySite(fromStatus: Data(#"{"connected":true,"permissionMode":"allow_all"}"#.utf8)), true)
+        XCTAssertEqual(BrowserStatus.anySite(fromStatus: Data(#"{"connected":true,"permissionMode":"ask"}"#.utf8)), false)
+        XCTAssertNil(BrowserStatus.anySite(fromStatus: Data(#"{"connected":false}"#.utf8)), "no browser answered: unknown, not off")
+    }
+
+    func testClaudeAllowRuleChangesOnlyItsOneEntry() throws {
+        let before = Data(#"{"model":"opus","permissions":{"allow":["Bash(ls)"],"deny":["Read(x)"]}}"#.utf8)
+        let on = try XCTUnwrap(ClaudeAllowRule.applied(true, to: before))
+        XCTAssertTrue(ClaudeAllowRule.isOn(on))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: on) as? [String: Any])
+        XCTAssertEqual(root["model"] as? String, "opus")
+        let permissions = try XCTUnwrap(root["permissions"] as? [String: Any])
+        XCTAssertEqual(permissions["allow"] as? [String], ["Bash(ls)", "mcp__polycarp"])
+        XCTAssertEqual(permissions["deny"] as? [String], ["Read(x)"])
+        let again = try XCTUnwrap(ClaudeAllowRule.applied(true, to: on))
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: again) as? [String: Any])?["permissions"].flatMap { ($0 as? [String: Any])?["allow"] as? [String] }, ["Bash(ls)", "mcp__polycarp"], "not added twice")
+        let off = try XCTUnwrap(ClaudeAllowRule.applied(false, to: on))
+        XCTAssertFalse(ClaudeAllowRule.isOn(off))
+    }
+
+    func testClaudeAllowRuleLeavesABrokenFileAlone() {
+        XCTAssertNil(ClaudeAllowRule.applied(true, to: Data("{ not json".utf8)))
+        XCTAssertTrue(ClaudeAllowRule.isOn(ClaudeAllowRule.applied(true, to: nil)), "no file yet is fine")
+        XCTAssertFalse(ClaudeAllowRule.isOn(nil))
+    }
+
+    func testTheSwitchNeedsClaudeCodesEntryUnderItsCurrentName() {
+        var status = BrowserStatus()
+        XCTAssertFalse(status.claudeReady)
+        status.agents = [.init(id: "claude", name: "Claude Code", connected: false)]
+        XCTAssertFalse(status.claudeReady, "an entry under the old name reads as not connected")
+        status.agents = [.init(id: "claude", name: "Claude Code", connected: true)]
+        XCTAssertTrue(status.claudeReady)
+    }
 }

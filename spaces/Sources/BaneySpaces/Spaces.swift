@@ -1624,10 +1624,11 @@ final class Spaces {
     private func park(_ how: Concealment, parkedApps: Set<pid_t>, screens: [CGRect], gen: Int, then: @escaping () -> Void) {
         let spot = Geometry.hidingSpot(screens: screens)
         // Apps with a window here parked theirs already (`parkAlongside`).
-        let inSight = Windows.onScreenIDs()
+        // On a native full-screen Space the window server lists only that Space, so "not listed" says nothing about a window.
+        let inSight: Set<WindowID>? = DockSpaces.current().unsafe ? nil : Windows.onScreenIDs()
         let todo = how.park.compactMap { windows[$0] }.filter { !how.showApps.contains($0.pid) }.filter { w in
             // Hidden by its own app (a tool's reused window): nothing to park, and a record would say Polycarp put it away.
-            saved.frames[w.id] != nil || saved.hiddenApps.contains(w.pid) || inSight.contains(w.id)
+            saved.frames[w.id] != nil || saved.hiddenApps.contains(w.pid) || (inSight?.contains(w.id) ?? true)
                 || (NSRunningApplication(processIdentifier: w.pid)?.isHidden ?? false)
         }.filter { w in
             !w.isMinimized && (saved.frames[w.id] == nil || w.frame.map { !Geometry.isStranded($0, screens: screens) } == true)

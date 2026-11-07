@@ -20,6 +20,11 @@ import { COMPILED } from "./self.ts";
  */
 export type Configured = boolean | "stale" | "other" | undefined;
 
+/** What agents call the MCP server. Its tools keep their names. */
+export const MCP_NAME = "polycarp";
+/** The name it had. An entry under it is replaced, wherever the helper finds one. */
+export const OLD_MCP_NAME = "tabkyra";
+
 export type HarnessId = "claude" | "codex" | "opencode" | "cursor" | "omp" | "pi";
 
 export interface Harness {
@@ -31,6 +36,8 @@ export interface Harness {
 	/** The command the existing entry runs, when there is one. */
 	currentCommand?: string;
 	note?: string;
+	/** The entry found is under the old name. */
+	oldName?: boolean;
 	/** Command that removes a stale entry before re-adding it. */
 	removeCommand?: string[];
 	/** Command that adds the server, when the harness has one. */
@@ -75,6 +82,7 @@ function sameFile(a: string, b: string): boolean {
 export function classify(command: string | undefined, args: string[]): Configured {
 	if (!command) return undefined;
 	const resolved = isAbsolute(command) ? command : which(command);
+	if (resolved && basename(resolved) === "polycarp" && args.join(" ") === "browser mcp") return existsSync(resolved) ? true : "stale";
 	if (command === cliLauncherPath()) {
 		if (!launcherValid()) return "stale";
 		// The right launcher with other arguments is a deliberate customization, not breakage.
@@ -101,15 +109,36 @@ interface EntryState {
 	currentCommand?: string;
 	/** Why the state is what it is, when that isn't obvious. */
 	note?: string;
+	oldName?: boolean;
 }
 
-/** The tabkyra entry under `key` in a JSON config. Unparseable files are "unknown", not "configured". */
+/**
+ * An entry under the old name. One that runs this helper, or nothing any more, is moved. One that runs something else may
+ * be the person's own wrapper: it's reported like any other entry and left alone unless they say so.
+ */
+function oldEntry(state: Configured, command: string | undefined): EntryState {
+	return {
+		configured: state === "other" ? "other" : "stale",
+		currentCommand: command,
+		oldName: true,
+		note: "It's under the old name.",
+	};
+}
+
+/** The Polycarp entry under `key` in a JSON config. Unparseable files are "unknown", not "configured". */
 function jsonServerState(file: string, key: string, commandOf: (entry: Record<string, unknown>) => { command?: unknown; args?: unknown }): EntryState {
 	if (!existsSync(file)) return { configured: false };
 	const data = readJson(file);
 	if (!data) return { configured: undefined };
 	const servers = data[key] as Record<string, Record<string, unknown>> | undefined;
-	const entry = servers?.tabkyra;
+	const current = servers?.[MCP_NAME];
+	const old = servers?.[OLD_MCP_NAME];
+	if (!current && old && typeof old === "object") {
+		const { command, args } = commandOf(old);
+		const cmd = typeof command === "string" ? command : undefined;
+		return oldEntry(classify(cmd, Array.isArray(args) ? args.map(String) : []), cmd);
+	}
+	const entry = current;
 	if (!entry || typeof entry !== "object") return { configured: false };
 	const { command, args } = commandOf(entry);
 	const cmd = typeof command === "string" ? command : undefined;
@@ -124,14 +153,21 @@ function jsonServerState(file: string, key: string, commandOf: (entry: Record<st
 function cliServerState(binary: string, fields: { command: RegExp; args: RegExp; scope?: RegExp }): EntryState {
 	// Windows harness CLIs are .cmd shims that spawnSync can't run without a shell.
 	if (process.platform === "win32") return { configured: undefined, note: "Not checked on Windows." };
-	const result = spawnSync(binary, ["mcp", "get", "tabkyra"], { encoding: "utf8", timeout: 15000, cwd: homedir() });
+	const result = spawnSync(binary, ["mcp", "get", MCP_NAME], { encoding: "utf8", timeout: 15000, cwd: homedir() });
 	if (result.error || result.signal) return { configured: undefined };
-	if (result.status !== 0) return { configured: false };
+	if (result.status !== 0) {
+		const old = spawnSync(binary, ["mcp", "get", OLD_MCP_NAME], { encoding: "utf8", timeout: 15000, cwd: homedir() });
+		if (old.error || old.signal || old.status !== 0) return { configured: false };
+		const text = old.stdout ?? "";
+		const command = text.match(fields.command)?.[1]?.trim();
+		const args = (text.match(fields.args)?.[1] ?? "").trim().split(/\s+/).filter(Boolean);
+		return oldEntry(classify(command, args), command);
+	}
 	const out = result.stdout ?? "";
 	// Claude Code: only a user-scope entry serves every project.
 	if (fields.scope && !fields.scope.test(out)) {
 		const scope = out.match(/^\s*Scope:\s*(.+)$/m)?.[1]?.trim() ?? "another scope";
-		return { configured: undefined, note: `Claude Code has a tabkyra entry in ${scope}, not in user scope.` };
+		return { configured: undefined, note: `Claude Code has a polycarp entry in ${scope}, not in user scope.` };
 	}
 	const command = out.match(fields.command)?.[1]?.trim();
 	if (command === undefined) return { configured: undefined };
@@ -150,25 +186,25 @@ export function harnesses(binary = tabkyraBinary()): Harness[] {
 	const list: Harness[] = [];
 
 	const claude = which("claude");
+	const claudeEntry: EntryState = claude ? cliServerState(claude, { command: /^\s*Command:\s*(.+)$/m, args: /^\s*Args:\s*(.*)$/m, scope: /^\s*Scope:\s*User/m }) : { configured: undefined };
 	list.push({
 		id: "claude",
 		name: "Claude Code",
 		detected: Boolean(claude),
-		...(claude
-			? cliServerState(claude, { command: /^\s*Command:\s*(.+)$/m, args: /^\s*Args:\s*(.*)$/m, scope: /^\s*Scope:\s*User/m })
-			: { configured: undefined }),
-		addCommand: ["claude", "mcp", "add", "--scope", "user", "tabkyra", "--", binary, "mcp"],
-		removeCommand: ["claude", "mcp", "remove", "--scope", "user", "tabkyra"],
+		...claudeEntry,
+		addCommand: ["claude", "mcp", "add", "--scope", "user", MCP_NAME, "--", binary, "mcp"],
+		removeCommand: ["claude", "mcp", "remove", "--scope", "user", claudeEntry.oldName ? OLD_MCP_NAME : MCP_NAME],
 	});
 
 	const codex = which("codex");
+	const codexEntry: EntryState = codex ? cliServerState(codex, { command: /^\s*command:\s*(.+)$/m, args: /^\s*args:\s*(.*)$/m }) : { configured: undefined };
 	list.push({
 		id: "codex",
 		name: "Codex",
 		detected: Boolean(codex),
-		...(codex ? cliServerState(codex, { command: /^\s*command:\s*(.+)$/m, args: /^\s*args:\s*(.*)$/m }) : { configured: undefined }),
-		addCommand: ["codex", "mcp", "add", "tabkyra", "--", binary, "mcp"],
-		removeCommand: ["codex", "mcp", "remove", "tabkyra"],
+		...codexEntry,
+		addCommand: ["codex", "mcp", "add", MCP_NAME, "--", binary, "mcp"],
+		removeCommand: ["codex", "mcp", "remove", codexEntry.oldName ? OLD_MCP_NAME : MCP_NAME],
 	});
 
 	const opencodeFile = join(configHome, "opencode", "opencode.json");
@@ -178,7 +214,7 @@ export function harnesses(binary = tabkyraBinary()): Harness[] {
 		detected: Boolean(which("opencode")) || existsSync(join(configHome, "opencode")),
 		...jsonServerState(opencodeFile, "mcp", (e) => (Array.isArray(e.command) ? { command: e.command[0], args: e.command.slice(1) } : { command: e.command, args: e.args })),
 		configFile: opencodeFile,
-		snippet: snippet({ mcp: { tabkyra: { type: "local", command: [binary, "mcp"], enabled: true } } }),
+		snippet: snippet({ mcp: { [MCP_NAME]: { type: "local", command: [binary, "mcp"], enabled: true } } }),
 	});
 
 	const cursorFile = join(home, ".cursor", "mcp.json");
@@ -188,7 +224,7 @@ export function harnesses(binary = tabkyraBinary()): Harness[] {
 		detected: Boolean(which("cursor") || which("cursor-agent")) || existsSync(join(home, ".cursor")),
 		...jsonServerState(cursorFile, "mcpServers", (e) => ({ command: e.command, args: e.args })),
 		configFile: cursorFile,
-		snippet: snippet({ mcpServers: { tabkyra: { command: binary, args: ["mcp"] } } }),
+		snippet: snippet({ mcpServers: { [MCP_NAME]: { command: binary, args: ["mcp"] } } }),
 	});
 
 	const ompFile = join(home, ".omp", "agent", "mcp.json");
@@ -198,7 +234,7 @@ export function harnesses(binary = tabkyraBinary()): Harness[] {
 		detected: Boolean(which("omp")) || existsSync(join(home, ".omp")),
 		...jsonServerState(ompFile, "mcpServers", (e) => ({ command: e.command, args: e.args })),
 		configFile: ompFile,
-		snippet: snippet({ mcpServers: { tabkyra: { type: "stdio", command: binary, args: ["mcp"], enabled: true } } }),
+		snippet: snippet({ mcpServers: { [MCP_NAME]: { type: "stdio", command: binary, args: ["mcp"], enabled: true } } }),
 	});
 
 	// pi has no MCP client; `polycarp browser pi-extension` writes a native pi extension instead.
