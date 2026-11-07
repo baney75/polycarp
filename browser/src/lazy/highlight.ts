@@ -14,7 +14,9 @@ let all: Promise<unknown> | undefined;
 
 function loadAllLanguages() {
 	// The full build registers its languages on this same core.
-	all ??= import("highlight.js/lib/index.js").then(redrawAfterLoad);
+	all ??= import("highlight.js/lib/index.js").then(redrawAfterLoad, () => {
+		all = undefined;
+	});
 }
 
 export default {

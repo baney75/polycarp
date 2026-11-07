@@ -57,8 +57,8 @@ test("the panel opens with less than the budget, and without the libraries that 
 test("the panel's outline paints before any script, in the saved colors", () => {
 	const page = readFileSync(join(root, "static/sidepanel.html"), "utf8");
 	assert.ok(page.indexOf('id="panel-shell"') > 0 && page.indexOf('id="panel-shell"') < page.indexOf("sidepanel.js"));
-	assert.ok(readFileSync(join(root, "static/theme-loader.js"), "utf8").includes("tk-colors"));
-	assert.ok(readFileSync(join(root, "src/appearance/apply.ts"), "utf8").includes('"tk-colors"'));
+	assert.ok(readFileSync(join(root, "static/theme-loader.js"), "utf8").includes("tk-colors-dark"));
+	assert.ok(readFileSync(join(root, "src/appearance/apply.ts"), "utf8").includes('"tk-colors-dark"'));
 	assert.ok(readFileSync(join(root, "src/sidepanel.ts"), "utf8").includes('getElementById("panel-shell")?.remove()'));
 });
 
@@ -66,4 +66,11 @@ test("text shown before a library arrives can't become markup", async () => {
 	globalThis.document ??= { querySelectorAll: () => [] };
 	const { escapeHtml } = await import("../src/lazy/refresh.ts");
 	assert.equal(escapeHtml(`<img src=x onerror="a('b')">&`), "&#60;img src=x onerror=&#34;a(&#39;b&#39;)&#34;&#62;&#38;");
+});
+
+test("a library that failed to load can be tried again, since an update can replace files under an open panel", () => {
+	for (const file of ["src/dialogs/chart-lib.ts", "src/lazy/highlight.ts", "src/lazy/katex.ts"]) {
+		assert.match(readFileSync(join(root, file), "utf8"), /(lib|all|loading) = undefined;/, file);
+	}
+	assert.match(readFileSync(join(root, "../pi-mono/packages/web-ui/src/utils/lazy-documents.ts"), "utf8"), /pdfjs = undefined;/);
 });
