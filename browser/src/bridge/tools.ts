@@ -301,6 +301,18 @@ const editHandlers: Record<string, Handler> = {
 	"edits.add": async (ctx, params) => {
 		const kind = requireStr(params, "kind") as EditKind;
 		const who = ctx.session.groupName || ctx.clientId;
+		let host: string;
+		try {
+			host = normalizeHost(requireStr(params, "host"));
+		} catch (err) {
+			if (err instanceof SiteEditError) throw new BridgeError(ERR.BAD_PARAMS, err.message);
+			throw err;
+		}
+		// Changing a site takes the same permission as opening it: an agent can't edit what it may not visit.
+		const site = `https://${host}/`;
+		if (ctx.isGuarded(site))
+			throw new BridgeError(ERR.BAD_PARAMS, `${host} is a site agents never open, so they can't edit it.`);
+		await ctx.checkUrl(site);
 		try {
 			const edit = await changeEdits((state) => {
 				const next = addedEdit(

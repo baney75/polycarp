@@ -90,6 +90,11 @@ export function checkPattern(raw: string): string {
 	if (!pattern) throw new SiteEditError("Give a request pattern to block, like ||ads.example.com^ or /banner/.");
 	if (pattern.length > MAX_PATTERN) throw new SiteEditError(`A pattern is limited to ${MAX_PATTERN} characters.`);
 	if (/\s/.test(pattern)) throw new SiteEditError("A pattern has no spaces.");
+	// The browser refuses the whole list over one rule it can't take, and every block would stop with it.
+	if (!/^[\x21-\x7e]+$/.test(pattern))
+		throw new SiteEditError("Plain ASCII only in a pattern. Encode other characters as the URL does (%C3%BC).");
+	if (pattern.slice(2).includes("||") || (pattern.includes("||") && !pattern.startsWith("||")))
+		throw new SiteEditError("|| goes only at the start, for a domain: ||ads.example.com^");
 	// A bare "*", "|", "^" or the like would block everything the site loads.
 	if (pattern.replace(/[*|^/]/g, "").length < 3)
 		throw new SiteEditError("That pattern would block everything on the site. Name what to block.");
@@ -153,10 +158,15 @@ export function removed(state: SiteEditsState, id: string): SiteEditsState {
 	return { ...state, edits: state.edits.filter((e) => e.id !== id) };
 }
 
-/** One stylesheet for a document on `url`: every hide edit that is on and covers it. */
+/**
+ * One stylesheet for a document on `url`: every hide edit that is on and covers it, each its own rule. One selector the browser
+ * can't read drops only its own rule, never the other edits on the site.
+ */
 export function hideCss(state: SiteEditsState, url: string | undefined): string {
-	const selectors = state.edits.filter((e) => e.on && e.kind === "hide" && onHost(url, e.host)).map((e) => e.value);
-	return selectors.length ? `${selectors.join(",\n")} { display: none !important; }` : "";
+	return state.edits
+		.filter((e) => e.on && e.kind === "hide" && onHost(url, e.host))
+		.map((e) => `${e.value} { display: none !important; }`)
+		.join("\n");
 }
 
 /** The rule list the browser's network blocker takes for the block edits that are on. Ids come from `base`. */

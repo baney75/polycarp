@@ -14,8 +14,31 @@ const SITE_RULE_MAX = 50_999;
 const SCRIPT_PREFIX = "site-edit-";
 const AD_RULESET = "ads";
 
-/** What each tab's frames got last, so a change can take the old sheet back out. */
+/**
+ * What each tab's frames got last, so a change can take the old sheet back out. Kept in session storage too: the service
+ * worker stops when idle, and a new one must still know what it put into pages that stayed open.
+ */
 const applied = new Map<string, string>();
+const APPLIED_KEY = "tk-site-edits-applied";
+let restored: Promise<void> | undefined;
+
+function restoreApplied(): Promise<void> {
+	restored ??= (async () => {
+		try {
+			const data = await chrome.storage?.session?.get(APPLIED_KEY);
+			for (const [k, v] of Object.entries((data?.[APPLIED_KEY] as Record<string, string>) ?? {})) {
+				if (!applied.has(k)) applied.set(k, v);
+			}
+		} catch {
+			/* nothing saved, or no session storage here */
+		}
+	})();
+	return restored;
+}
+
+function persistApplied(): void {
+	void chrome.storage?.session?.set({ [APPLIED_KEY]: Object.fromEntries(applied) })?.catch(() => undefined);
+}
 
 async function injectCss(
 	tabId: number,
@@ -23,6 +46,7 @@ async function injectCss(
 	url: string | undefined,
 	state: SiteEditsState,
 ): Promise<void> {
+	await restoreApplied();
 	const key = `${tabId}:${frameId}`;
 	const css = hideCss(state, url);
 	const old = applied.get(key);
@@ -36,6 +60,7 @@ async function injectCss(
 		// A page the extension may not touch (the Web Store, a browser page) or a tab that closed.
 		applied.delete(key);
 	}
+	persistApplied();
 }
 
 async function syncBlocks(state: SiteEditsState): Promise<void> {
@@ -94,10 +119,28 @@ async function syncOpenTabs(state: SiteEditsState): Promise<void> {
 	);
 }
 
-/** Everything at once: at start-up and after every change. Each part fails on its own. */
-export async function syncSiteEdits(): Promise<void> {
-	const state = await load();
-	await Promise.allSettled([syncBlocks(state), syncAdBlock(state), syncScripts(state), syncOpenTabs(state)]);
+let running: Promise<void> | undefined;
+let again = false;
+
+/**
+ * Everything at once: at start-up and after every change. One run at a time, and a change during a run starts one more, from
+ * storage as it is then: two runs side by side could register a script the person had just turned off. Each part fails on its own.
+ */
+export function syncSiteEdits(): Promise<void> {
+	if (running) {
+		again = true;
+		return running;
+	}
+	running = (async () => {
+		do {
+			again = false;
+			const state = await load();
+			await Promise.allSettled([syncBlocks(state), syncAdBlock(state), syncScripts(state), syncOpenTabs(state)]);
+		} while (again);
+	})().finally(() => {
+		running = undefined;
+	});
+	return running;
 }
 
 let started = false;
@@ -106,7 +149,7 @@ export function startSiteEdits(): void {
 	if (started) return;
 	started = true;
 	chrome.webNavigation?.onCommitted?.addListener((d) => {
-		void load().then((state) => {
+		void Promise.all([load(), restoreApplied()]).then(([state]) => {
 			if (
 				state.edits.some((e) => e.kind === "hide" && e.on && onHost(d.url, e.host)) ||
 				applied.has(`${d.tabId}:${d.frameId}`)
@@ -119,6 +162,7 @@ export function startSiteEdits(): void {
 	});
 	chrome.tabs?.onRemoved?.addListener((tabId) => {
 		for (const key of [...applied.keys()]) if (key.startsWith(`${tabId}:`)) applied.delete(key);
+		persistApplied();
 	});
 	chrome.storage?.onChanged?.addListener((changes, area) => {
 		if (area === "local" && changes[STORAGE_KEY]) void syncSiteEdits();

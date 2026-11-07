@@ -56,6 +56,81 @@ test("an agent's script starts off, and only the person turns it on", () => {
 	assert.equal(h.edit.on, true);
 });
 
+test("one selector the browser can't read never switches off the other hides on the site", () => {
+	let s = store.added(empty, { host: "x.com", kind: "hide", value: ".ad", actor: "agent", who: "c" }, "1", 1).state;
+	s = store.added(s, { host: "x.com", kind: "hide", value: ".post:contains(Promoted)", actor: "agent", who: "c" }, "2", 2).state;
+	assert.equal(store.hideCss(s, "https://x.com/"), ".ad { display: none !important; }\n.post:contains(Promoted) { display: none !important; }");
+});
+
+test("a pattern the browser would refuse is refused here, since one bad rule stops every block", () => {
+	for (const bad of ["/werbung-ü/", "foo||bar"]) assert.throws(() => store.checkPattern(bad), store.SiteEditError, bad);
+	assert.equal(store.checkPattern("||ads.example.com^"), "||ads.example.com^");
+});
+
+test("an agent can't edit a site it may not open: the same check as opening it runs first", async () => {
+	installFakeChrome();
+	globalThis.chrome.runtime = { ...(globalThis.chrome.runtime ?? {}), getManifest: () => ({ version: "0" }) };
+	const { handlers } = await import(`../src/bridge/tools.ts?ctx=${Math.random()}`);
+	const asked = [];
+	const ctx = {
+		session: { groupName: "claude" },
+		clientId: "c1",
+		isGuarded: () => false,
+		checkUrl: async (url) => {
+			asked.push(url);
+			throw new Error("Not allowed to open mybank.com");
+		},
+	};
+	await assert.rejects(handlers["edits.add"](ctx, { kind: "hide", host: "mybank.com", value: ".fraud-alert" }), /Not allowed/);
+	assert.deepEqual(asked, ["https://mybank.com/"]);
+	assert.deepEqual((await store.load()).edits, [], "nothing stored");
+	const guarded = { ...ctx, isGuarded: () => true };
+	await assert.rejects(handlers["edits.add"](guarded, { kind: "hide", host: "polycarp.example", value: ".a" }), /never open/);
+	const allowed = { ...ctx, checkUrl: async () => undefined };
+	const r = await handlers["edits.add"](allowed, { kind: "hide", host: "x.com", value: ".ad" });
+	assert.equal(r.edit.addedBy, "agent:claude");
+});
+
+test("syncs never run side by side, so a script turned off can't come back", async () => {
+	installFakeChrome();
+	const scripts = new Map();
+	let gate;
+	globalThis.chrome.userScripts = {
+		async execute() {
+			return [];
+		},
+		async getScripts() {
+			return [...scripts.values()];
+		},
+		async register(list) {
+			// The first run waits here, after reading storage, while the person turns the script off.
+			if (gate) await gate;
+			for (const s of list) scripts.set(s.id, s);
+		},
+		async unregister({ ids }) {
+			for (const id of ids) scripts.delete(id);
+		},
+	};
+	globalThis.chrome.webNavigation.getAllFrames = async () => [];
+	const apply = await import(`../src/site-edits/apply.ts?ctx=${Math.random()}`);
+	const s1 = store.added(empty, { host: "x.com", kind: "script", value: "1", actor: "person", who: "you" }, "s1", 1).state;
+	await store.change(() => ({ state: s1, result: undefined }));
+	let open;
+	gate = new Promise((r) => {
+		open = r;
+	});
+	const first = apply.syncSiteEdits();
+	await new Promise((r) => setTimeout(r, 20));
+	await store.change((s) => ({ state: store.switched(s, "s1", false, "person"), result: undefined }));
+	const second = apply.syncSiteEdits();
+	// Let a second run finish if it can, before the first one goes on: the order that left a script registered.
+	await Promise.race([second, new Promise((r) => setTimeout(r, 60))]);
+	gate = undefined;
+	open();
+	await Promise.all([first, second]);
+	assert.equal(scripts.size, 0, "the last run read the person's off and left nothing registered");
+});
+
 test("the same edit twice is one edit, and there is a limit", () => {
 	const once = store.added(empty, { host: "x.com", kind: "hide", value: ".a", actor: "agent", who: "c" }, "1", 1).state;
 	assert.equal(store.added(once, { host: "www.x.com", kind: "hide", value: ".a", actor: "agent", who: "c" }, "2", 2).state.edits.length, 1);
