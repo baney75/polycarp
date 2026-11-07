@@ -32,7 +32,7 @@ enum LendConsent {
             alert.informativeText = "Agents will no longer be able to read or act on its windows."
         } else {
             alert.messageText = "Let agents use \(app)?"
-            alert.informativeText = "A program on this Mac asked. If you didn't start it, choose Don't Lend. Agents could read and act on \(app)'s windows as they are now for \(minutes) minutes, but never while you are using it."
+            alert.informativeText = "A program on this Mac asked. If you didn't start it, choose Don't Lend. Agents, and assistants you allowed computer use, could read and act on \(app)'s windows as they are now for \(minutes) minutes, but never while you are using it."
         }
         alert.addButton(withTitle: takeBack ? "Keep Lent" : "Don't Lend")   // first button: the default (Return)
         alert.addButton(withTitle: takeBack ? "Take Back" : "Lend")

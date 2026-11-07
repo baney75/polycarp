@@ -300,7 +300,7 @@ extension HandsRouter {
         let scope: ScopeKind
         switch decide(live, agent) {
         // Under Full Access one of Donovan's processes with a window claimed onto the agent workspace is his, like a lent one.
-        case .onAgentWorkspace: scope = AgentAccess.shared.current == .full && !owned.contains(w.pid) ? .full : .agentWorkspace
+        case .onAgentWorkspace: scope = access == .full && !owned.contains(w.pid) ? .full : .agentWorkspace
         case .lent: scope = .lent
         case .fullAccess: scope = .full
         case .denied: scope = .outside

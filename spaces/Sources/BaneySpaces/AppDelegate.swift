@@ -870,6 +870,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             open: { [weak self] args in self?.session.agent("open", args) ?? Wire.Reply(ok: false, error: "not ready") })
         // The agent cursor: drawn on the agent workspace while you look at it, and over a lent app.
         session.hands.host.cursorMark = { CursorController.shared.mark(window: $0) }
+        session.connectorHands.host = session.hands.host
+        session.connectorHands.host.open = { [weak self] args in self?.session.agent("open", args, remote: true) ?? Wire.Reply(ok: false, error: "not ready") }
         CursorController.shared.start(shown: { [weak self] in self.map { Set($0.spaces.model.shown.values).union([$0.spaces.model.current]) } ?? [1] }, agentWorkspace: { Spaces.agentWorkspace },
                                       agent: { [weak self] in self?.session.cursorAgent($0) ?? ("Agent", .working) },
                                       windowFrame: { WindowFrames.frame(of: $0) })

@@ -91,6 +91,9 @@ final class SessionController {
     var agentHost = AgentHost()
     /// The agent hands: snapshot and act on the agent workspace (see Hands/).
     let hands = HandsRouter()
+    /// The same hands for an assistant that came in through the connector: never more than Default, whatever this Mac allows
+    /// the agents on it. Its refs are its own.
+    let connectorHands = HandsRouter(cap: { $0.forRemote })
     /// Answers `baneyspaces sandbox …` (the app delegate sets it); called off the main thread.
     var sandboxHandler: ((Wire.Request) -> Wire.Reply)?
 
@@ -389,6 +392,10 @@ final class SessionController {
             let e = HandsEnvelope.failure(HandsError(.notRunning, "Polycarp hasn't finished starting (it needs Accessibility)",
                                                      suggestion: "Run `polycarp-spaces doctor`; allow Accessibility if it asks.", retry: .safe))
             return .init(ok: true, info: ["envelope": e.line])
+        }
+        if HandsCaller.isRemote(r.caller) {
+            Trace.log("hands: connector \(r.caller ?? "") asked")
+            return connectorHands.handleWire(r)
         }
         return hands.handleWire(r)
     }

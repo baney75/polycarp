@@ -14,14 +14,14 @@ enum HandsCLI {
     }
 
     /// Sends one request to the app and returns its envelope. Nothing here can fail without saying why.
-    static func send(_ request: HandsRequest, timeout: Double = 180) -> HandsEnvelope {
+    static func send(_ request: HandsRequest, timeout: Double = 180, caller: String? = nil) -> HandsEnvelope {
         guard remoteHost == nil else {
             return .failure(HandsError(.badArguments, "agent commands run on this Mac only", suggestion: "Run `polycarp-spaces agent …` on the machine whose apps you want to drive.", retry: .never))
         }
         guard let data = try? JSONEncoder().encode(request), let text = String(data: data, encoding: .utf8) else {
             return .failure(HandsError(.badArguments, "couldn't encode the request", suggestion: "Check the arguments.", retry: .never))
         }
-        guard let reply = Wire.call(Wire.Request(op: .hands, text: text), timeout: timeout) else {
+        guard let reply = Wire.call(Wire.Request(op: .hands, text: text, caller: caller), timeout: timeout) else {
             // Something answered the connection but the reply didn't come in time: the action may have landed. A socket
             // file with nobody behind it (a crash leaves one) is not running.
             if SocketClaim.anyLive(Wire.socketCandidates()) {
@@ -76,11 +76,12 @@ enum HandsCLI {
 /// `baneyspaces mcp`: a stdio MCP server, so `claude mcp add baneyspaces -- baneyspaces mcp` gives an agent
 /// the same tools (no lend: that is Donovan's).
 enum MCPCommand {
-    static func run() -> Never {
-        let session = "mcp:\(getpid())"
+    /// `connector`: this server belongs to one connector session (`polycarp browser serve`), so the app treats its calls as remote.
+    static func run(connector: Bool = false) -> Never {
+        let session = "\(connector ? "connector" : "mcp"):\(getpid())"
         let version = Wire.call(Wire.Request(op: .ping), timeout: 1)?.info?["version"] ?? "dev"
         let server = HandsMCP(version: version, session: session,
-                              perform: { HandsCLI.send($0) },
+                              perform: { HandsCLI.send($0, caller: connector ? HandsCaller.connector : nil) },
                               readImage: { FileManager.default.contents(atPath: $0) })
         setvbuf(stdout, nil, _IOLBF, 0)
         while let line = readLine(strippingNewline: true) {

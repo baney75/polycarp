@@ -1,5 +1,12 @@
 import Foundation
 
+/// Who is asking, as the socket sees it. The remote server names every caller "remote …", and `polycarp-spaces mcp --connector`
+/// names itself the same way; a local caller claiming it only loses access.
+public enum HandsCaller {
+    public static let connector = "remote connector"
+    public static func isRemote(_ caller: String?) -> Bool { caller?.hasPrefix("remote ") == true }
+}
+
 /// How much of this Mac agents may use, picked by Donovan in Settings > Agents and kept until he changes it.
 /// Every mode keeps the background-only rules: no app activation, no raised window, no global keys or clicks,
 /// nothing while he is using an app (30 s), and never an Open or Save panel.
