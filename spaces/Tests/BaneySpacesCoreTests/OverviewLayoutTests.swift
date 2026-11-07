@@ -68,6 +68,24 @@ final class OverviewLayoutTests: XCTestCase {
         }
     }
 
+    func testTheFloorHoldsAtEveryMixOfQuietAndBusy() {
+        // Review of #46: rows [4,3] with [1:1, 2:7, 3:7, 4:7, 5:7, 6:1, 7:1] gave one tile 6.9 times the area of another.
+        // Gaps make rows of different lengths differ by a little, so this allows 5% under an exact quarter.
+        for code in 0..<19683 {
+            var windows: [Int: Int] = [:]
+            var rest = code
+            for n in 1...9 {
+                windows[n] = [0, 1, 7][rest % 3]
+                rest /= 3
+            }
+            let plan = OverviewLayout.plan(windows: windows, current: 1, in: area)
+            let sizes = plan.tiles.values.map { $0.width * $0.height }
+            guard sizes.min()! < sizes.max()! / 4 * 0.95 else { continue }
+            XCTFail("\(windows.sorted { $0.key < $1.key }): \(sizes.min()!) against \(sizes.max()!)")
+            return
+        }
+    }
+
     func testNoSpaceAtAllDrawsNothingRatherThanANegativeSize() {
         var windows: [Int: Int] = [:]
         for n in 1...9 { windows[n] = 2 }
