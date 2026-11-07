@@ -86,10 +86,14 @@ public enum DockRestartHelper {
         }
     }
 
-    /// Whether a Polycarp other than the one that started this helper is running. It then owns the restart, through its own
-    /// gate and its knowledge of workspace switches, and two restarts must not land together.
-    public static func anotherAppOwnsIt(running: [Running], startedBy parent: Int32) -> Bool {
-        running.contains { $0.name == "Polycarp" && $0.pid != parent }
+    /// Whether a Polycarp other than the one that started this helper is really running. It then owns the restart, through
+    /// its own gate and its knowledge of workspace switches, and two restarts must not land together. One that has only just
+    /// appeared may be a one-shot such as `--check-settings`, which exits at once and would leave the restart with nobody.
+    public static func anotherAppOwnsIt(running: [Running], startedBy parent: Int32, now: Date = Date()) -> Bool {
+        running.contains { process in
+            guard process.name == "Polycarp", process.pid != parent, let started = process.started else { return false }
+            return now.timeIntervalSince(started) >= 5
+        }
     }
 
     /// The tool's whole life: wait for the gate, restart, exit. It waits as long as it takes, since someone can stay in a
@@ -136,8 +140,9 @@ public enum DockSpaces {
     }
 
     /// `displays` is `CGSCopyManagedDisplaySpaces`' answer. Type 0 is a desktop; 4 is full screen, Split View included.
-    public static func parse(displays: [[String: Any]], isAnimating: (String) -> Bool) -> State {
-        var state = State(unsafe: displays.isEmpty, animating: false, ids: [])
+    /// `isAnimating` is nil when macOS no longer has that call: a slide then can't be seen, so that's not knowing too.
+    public static func parse(displays: [[String: Any]], isAnimating: ((String) -> Bool)?) -> State {
+        var state = State(unsafe: displays.isEmpty || isAnimating == nil, animating: false, ids: [])
         for display in displays {
             guard let current = display["Current Space"] as? [String: Any], let type = current["type"] as? Int else {
                 state.unsafe = true
@@ -145,7 +150,11 @@ public enum DockSpaces {
             }
             if type != 0 { state.unsafe = true }
             state.ids.append(current["id64"] as? Int ?? current["ManagedSpaceID"] as? Int ?? -1)
-            if let id = display["Display Identifier"] as? String, isAnimating(id) { state.animating = true }
+            guard let id = display["Display Identifier"] as? String else {
+                state.unsafe = true
+                continue
+            }
+            if isAnimating?(id) == true { state.animating = true }
         }
         return state
     }
@@ -162,7 +171,7 @@ public enum DockSpaces {
         let connection = unsafeBitCast(c, to: Connection.self)()
         let animating = dlsym(skyLight, "SLSManagedDisplayIsAnimating").map { unsafeBitCast($0, to: IsAnimating.self) }
         let displays = unsafeBitCast(copy, to: CopySpaces.self)(connection)?.takeRetainedValue() as? [[String: Any]] ?? []
-        return parse(displays: displays) { animating?(connection, $0 as CFString) ?? false }
+        return parse(displays: displays, isAnimating: animating.map { call in { call(connection, $0 as CFString) } })
     }
 }
 

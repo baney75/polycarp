@@ -120,6 +120,11 @@ final class DockRestartGateTests: XCTestCase {
     func testNotKnowingIsUnsafe() {
         XCTAssertTrue(DockSpaces.parse(displays: []) { _ in false }.unsafe, "no answer, such as a sleeping display")
         XCTAssertTrue(DockSpaces.parse(displays: [display("a", type: nil)]) { _ in false }.unsafe)
+        // Review of #54, round 2: a slide can't be seen without the call or a display's identifier.
+        XCTAssertTrue(DockSpaces.parse(displays: [display("a", type: 0)], isAnimating: nil).unsafe, "macOS dropped the animation call")
+        var unnamed = display("a", type: 0)
+        unnamed["Display Identifier"] = nil
+        XCTAssertTrue(DockSpaces.parse(displays: [unnamed]) { _ in false }.unsafe, "a display with no identifier")
     }
 
     func testASlideOnAnyDisplayCounts() {
@@ -136,12 +141,20 @@ final class DockRestartGateTests: XCTestCase {
     }
 
     func testANewPolycarpOwnsTheRestart() {
-        let quitting = DockRestartHelper.Running(pid: 10, name: "Polycarp", started: nil)
-        let reopened = DockRestartHelper.Running(pid: 20, name: "Polycarp", started: nil)
-        let dock = DockRestartHelper.Running(pid: 30, name: "Dock", started: nil)
-        XCTAssertFalse(DockRestartHelper.anotherAppOwnsIt(running: [quitting, dock], startedBy: 10), "the one quitting doesn't")
-        XCTAssertFalse(DockRestartHelper.anotherAppOwnsIt(running: [dock], startedBy: 10))
-        XCTAssertTrue(DockRestartHelper.anotherAppOwnsIt(running: [quitting, reopened, dock], startedBy: 10))
+        let now = Date()
+        let quitting = DockRestartHelper.Running(pid: 10, name: "Polycarp", started: now.addingTimeInterval(-500))
+        let reopened = DockRestartHelper.Running(pid: 20, name: "Polycarp", started: now.addingTimeInterval(-30))
+        let dock = DockRestartHelper.Running(pid: 30, name: "Dock", started: now.addingTimeInterval(-500))
+        XCTAssertFalse(DockRestartHelper.anotherAppOwnsIt(running: [quitting, dock], startedBy: 10, now: now), "the one quitting doesn't")
+        XCTAssertFalse(DockRestartHelper.anotherAppOwnsIt(running: [dock], startedBy: 10, now: now))
+        XCTAssertTrue(DockRestartHelper.anotherAppOwnsIt(running: [quitting, reopened, dock], startedBy: 10, now: now))
+    }
+
+    func testAOneShotDoesNotTakeTheRestartAway() {
+        // `Polycarp --check-settings` exits at once. The helper leaving for it would lose the restart.
+        let now = Date()
+        let oneShot = DockRestartHelper.Running(pid: 20, name: "Polycarp", started: now.addingTimeInterval(-1))
+        XCTAssertFalse(DockRestartHelper.anotherAppOwnsIt(running: [oneShot], startedBy: 10, now: now))
     }
 
     func testTheKernelListsThisUsersProcesses() {
