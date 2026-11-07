@@ -254,6 +254,28 @@ enum ParkedApps {
 /// AXEnhancedUserInterface on (see `Window.withoutAnimation`), which is what put Chromium
 /// browsers and Ghostty here; the list learned before that was kept under "slowMovers" and is
 /// left behind.
+/// Apps that put a window back where it stood when they're unhidden, undoing a move made while hidden. T3 Code does, 20 ms after
+/// the unhide, and stays parked when moved in plain sight (measured 2026-11-06). These are moved without hiding first. Learned
+/// the first time it happens, and kept, so only that one switch shows it.
+enum UnhideUndoesMoves {
+    private static let key = "unhideUndoesMoves"
+
+    static var bundleIDs: Set<String> {
+        get { Set(UserDefaults.standard.array(forKey: key) as? [String] ?? []) }
+        set { UserDefaults.standard.set(newValue.sorted(), forKey: key) }
+    }
+
+    static func contains(_ pid: pid_t) -> Bool {
+        guard let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { return false }
+        return bundleIDs.contains(id)
+    }
+
+    static func remember(_ pid: pid_t) {
+        guard let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { return }
+        bundleIDs.insert(id)
+    }
+}
+
 enum SlowMovers {
     private static let key = "slowMovers2"
 
