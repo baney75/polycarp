@@ -47,12 +47,12 @@ enum Render {
         // Drawn by AppKit in an offscreen window (never shown), so colors match the live app.
         func save(_ view: some View, _ name: String, _ size: CGSize) -> Bool {
             let height: CGFloat? = size.height == 0 ? nil : size.height
-            let framed = view.frame(width: size.width, height: height).environment(\.colorScheme, Chrome.scheme)
+            let framed = view.frame(width: size.width, height: height).environment(\.colorScheme, Chrome.scheme).environment(\.controlActiveState, .key)
             let host = NSHostingView(rootView: framed)
             // Height 0 means "as tall as the content".
             let size = size.height == 0 ? CGSize(width: size.width, height: host.fittingSize.height) : size
-            let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless],
-                                  backing: .buffered, defer: false)
+            let window = RenderWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless],
+                                      backing: .buffered, defer: false)
             window.appearance = NSAppearance(named: Chrome.scheme == .dark ? .darkAqua : .aqua)
             window.contentView = host
             host.frame = NSRect(origin: .zero, size: size)
@@ -246,19 +246,19 @@ enum Render {
         // The launcher: the opening menu, then a search.
         let launcher = LauncherModel(actions: LauncherActions())
         launcher.prepare(scope: .root)
-        guard save(LauncherView(model: launcher).frame(height: 500).padding(30).background(Color(white: 0.3)), "launcher.png", CGSize(width: 760, height: 0)) else { return 1 }
+        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher.png", CGSize(width: 760, height: 0)) else { return 1 }
         launcher.query = "ma"
-        guard save(LauncherView(model: launcher).frame(height: 500).padding(30).background(Color(white: 0.3)), "launcher-search.png", CGSize(width: 760, height: 0)) else { return 1 }
+        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-search.png", CGSize(width: 760, height: 0)) else { return 1 }
         // A coding agent by name, offered in your terminal.
         launcher.agents = ["claude": "/usr/local/bin/claude", "codex": "/usr/local/bin/codex"]
         launcher.query = "claude"
-        guard save(LauncherView(model: launcher).frame(height: 500).padding(30).background(Color(white: 0.3)), "launcher-agents.png", CGSize(width: 760, height: 0)) else { return 1 }
+        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-agents.png", CGSize(width: 760, height: 0)) else { return 1 }
 
         // Bangs: typing "!", then a question for the default agent.
         launcher.query = "!y"
-        guard save(LauncherView(model: launcher).frame(height: 500).padding(30).background(Color(white: 0.3)), "launcher-bangs.png", CGSize(width: 760, height: 0)) else { return 1 }
+        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-bangs.png", CGSize(width: 760, height: 0)) else { return 1 }
         launcher.query = "sunset photos"
-        guard save(LauncherView(model: launcher).frame(height: 500).padding(30).background(Color(white: 0.3)), "launcher-web.png", CGSize(width: 760, height: 0)) else { return 1 }
+        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-web.png", CGSize(width: 760, height: 0)) else { return 1 }
 
         // The first thing a new person sees: permission not granted yet.
         let fresh = SetupModel()
@@ -276,4 +276,11 @@ enum Render {
         guard save(WelcomeView(model: welcome), "welcome.png", CGSize(width: 560, height: 0)) else { return 1 }
         return 0
     }
+}
+
+/// Draws its controls as they look in the window you're using. A window that's never on screen is otherwise inactive, and
+/// every switch and button comes out gray.
+private final class RenderWindow: NSWindow {
+    override var isKeyWindow: Bool { true }
+    override var isMainWindow: Bool { true }
 }

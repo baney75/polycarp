@@ -5,9 +5,10 @@
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { Api, Model } from "@mariozechner/pi-ai";
-import { setPinnedModels } from "@mariozechner/pi-web-ui";
+import { setModelNamer, setPinnedModels } from "@mariozechner/pi-web-ui";
 import { ApiKeyDialog } from "../dialogs/ApiKeyDialog.js";
 import { redactContext } from "../privacy/free-redact.js";
+import { modelDisplayName, providerDisplayName } from "./display.js";
 import {
 	FREE_CONSENT_KEY,
 	FREE_CONSENT_TEXT,
@@ -70,11 +71,12 @@ export function freeComposerText(
 
 export function installFreeMode(panelHost: FreePanelHost): void {
 	host = panelHost;
+	setModelNamer((model) => ({ name: modelDisplayName(model), provider: providerDisplayName(model.provider) }));
 	setPinnedModels(() => [
 		{
 			model: freeModeModel(),
 			title: FREE_MODEL_NAME,
-			subtitle: "Free · OpenRouter · providers may log prompts",
+			subtitle: "Free. Providers may log prompts.",
 		},
 	]);
 	// Warm the list (and its names) in the background; a day-old cache is refreshed.

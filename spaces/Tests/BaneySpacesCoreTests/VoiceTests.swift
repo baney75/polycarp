@@ -45,7 +45,7 @@ final class VoiceTests: XCTestCase {
     }
 
     func testMenuWordsAndOverlayFollowTheTauriTray() {
-        XCTAssertEqual(VoiceStatus.ready.menuLine(hotkeyLabel: "Right ⌘"), "Ready · hold Right ⌘ to speak")
+        XCTAssertEqual(VoiceStatus.ready.menuLine(hotkeyLabel: "Right ⌘"), "Ready · press Right ⌘ and speak")
         XCTAssertEqual(VoiceStatus.recording.menuLine(hotkeyLabel: ""), "Listening…")
         XCTAssertEqual(VoiceStatus.typing.menuLine(hotkeyLabel: ""), "Writing…")
         XCTAssertEqual(VoiceStatus.error.menuLine(hotkeyLabel: ""), "Needs attention")
@@ -330,7 +330,7 @@ final class VoiceTests: XCTestCase {
     func testAnErrorShowsItsReasonInTheMenu() {
         XCTAssertEqual(VoiceStatus.error.menuLine(hotkeyLabel: "x", detail: "Polycarp can't hear your key yet."), "Polycarp can't hear your key yet.")
         XCTAssertEqual(VoiceStatus.error.menuLine(hotkeyLabel: "x"), "Needs attention")
-        XCTAssertEqual(VoiceStatus.ready.menuLine(hotkeyLabel: "Right ⌘", detail: "ignored"), "Ready · hold Right ⌘ to speak")
+        XCTAssertEqual(VoiceStatus.ready.menuLine(hotkeyLabel: "Right ⌘", detail: "ignored"), "Ready · press Right ⌘ and speak")
     }
 
     func testTheNoticeNamesTheAppThatWasClosed() {

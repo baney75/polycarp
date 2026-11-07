@@ -16,7 +16,7 @@ export interface StarterPrompt {
 /** The empty chat's starter chips: what Polycarp does best, each a task that runs as is. */
 export const starters: StarterPrompt[] = [
 	{
-		label: "Summarize this page",
+		label: "Summarize page",
 		hint: "The tab you're on",
 		icon: FileText,
 		mode: "send",
@@ -24,7 +24,7 @@ export const starters: StarterPrompt[] = [
 			"Read the page in my current tab and summarize it: what it is, the key points, and anything I should act on. Quote the page where it matters.",
 	},
 	{
-		label: "Research with sources",
+		label: "Research a topic",
 		hint: "Every claim linked",
 		icon: Globe,
 		mode: "compose",
@@ -39,7 +39,7 @@ export const starters: StarterPrompt[] = [
 	},
 	{
 		label: "Compare tabs",
-		hint: "Pick tabs with @",
+		hint: "Pick which tabs",
 		icon: PanelsTopLeft,
 		mode: "compose",
 		prompt: "Compare these tabs side by side in a table: @",

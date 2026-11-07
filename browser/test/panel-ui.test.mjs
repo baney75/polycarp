@@ -108,7 +108,7 @@ test("starter chips: four, each a task that runs, none of the old odd ones", asy
 	const { starters } = await import("../src/tutorials.ts");
 	assert.deepEqual(
 		starters.map((s) => s.label),
-		["Summarize this page", "Research with sources", "Fill a form", "Compare tabs"],
+		["Summarize page", "Research a topic", "Fill a form", "Compare tabs"],
 	);
 	for (const s of starters) {
 		assert.ok(s.prompt.length > 20 && s.hint && s.icon, s.label);
@@ -157,9 +157,9 @@ test("native controls follow the theme: dark mode declares color-scheme dark", (
 	assert.match(dark, /accent-color: var\(--tk-brass\);/);
 });
 
-test("Settings > Providers reads top to bottom: Free mode, subscriptions, API keys with their search and list, custom providers", () => {
+test("Settings > Providers reads top to bottom: Free mode, API keys with their search and list, subscriptions, custom providers", () => {
 	const tab = readFileSync(new URL("../src/dialogs/ApiKeysTab.ts", import.meta.url), "utf8");
-	const order = ["Free mode: use the best free model", "<tabkyra-subscriptions>", ">API keys</h3>", 'placeholder="Find a provider"', "<tabkyra-provider-key", "${this.custom}"].map((s) => tab.indexOf(s));
+	const order = ["Free mode: use the best free model", ">API keys</h3>", 'placeholder="Find a provider"', "<tabkyra-provider-key", "<tabkyra-subscriptions>", "${this.custom}"].map((s) => tab.indexOf(s));
 	assert.ok(order.every((i) => i > 0), JSON.stringify(order));
 	assert.deepEqual([...order].sort((a, b) => a - b), order);
 });
