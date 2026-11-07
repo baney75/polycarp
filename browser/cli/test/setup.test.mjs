@@ -253,12 +253,43 @@ test("an entry under the old name moves to polycarp, and nothing else is touched
 	fakeHarness("codex", launcher());
 	const claude = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "mcp:claude");
 	assert.match(claude.label, /old name/);
-	assert.match(claude.fix, /^claude mcp remove --scope user tabkyra && claude mcp add --scope user polycarp/);
+	assert.match(claude.fix, /^claude mcp add --scope user polycarp .* && claude mcp remove --scope user tabkyra$/, "the new entry goes in first");
 
 	run(["setup", "--yes", "--no-wait"]);
 	const calls = readFileSync(harnessLog, "utf8");
 	assert.ok(calls.includes("claude mcp remove --scope user tabkyra"), calls);
 	assert.ok(calls.includes("claude mcp add --scope user polycarp"), calls);
 	assert.ok(!calls.includes("codex mcp add"), "a current entry is left alone");
+});
+
+test("an old-name entry running someone's own wrapper is left alone by --yes", () => {
+	writeFileSync(harnessLog, "");
+	const wrapper = join(bin, "my-wrapper");
+	writeFileSync(wrapper, "#!/bin/sh\n");
+	chmodSync(wrapper, 0o755);
+	const file = join(bin, "claude");
+	writeFileSync(
+		file,
+		`#!/bin/sh\necho "claude $*" >> "${harnessLog}"\nif [ "$2" = "get" ] && [ "$3" = "polycarp" ]; then exit 1; fi\nif [ "$2" = "get" ]; then printf '  Scope: User config (available in all your projects)\\n  Command: ${wrapper}\\n  Args: --mine\\n'; fi\nexit 0\n`,
+	);
+	chmodSync(file, 0o755);
+	fakeHarness("codex", launcher());
+	run(["setup", "--yes", "--no-wait"]);
+	const calls = readFileSync(harnessLog, "utf8");
+	assert.ok(!calls.includes("mcp remove"), calls);
+	assert.ok(!calls.includes("claude mcp add"), calls);
+});
+
+test("turning Claude Code's always-allow on takes a terminal, and its entry under the current name", () => {
+	fakeHarness("claude", launcher());
+	const noTerminal = run(["claude-allow", "on"]);
+	assert.notEqual(noTerminal.code, 0);
+	assert.match(noTerminal.out, /takes a person/);
+	const file = join(bin, "claude");
+	writeFileSync(file, `#!/bin/sh\nif [ "$2" = "get" ] && [ "$3" = "polycarp" ]; then exit 1; fi\nif [ "$2" = "get" ]; then printf '  Scope: User config (available in all your projects)\\n  Command: ${launcher()}\\n  Args: mcp\\n'; fi\nexit 0\n`);
+	chmodSync(file, 0o755);
+	const oldName = run(["claude-allow", "on"]);
+	assert.notEqual(oldName.code, 0);
+	assert.match(oldName.out, /current name/);
 });
 

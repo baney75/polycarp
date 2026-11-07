@@ -4,6 +4,7 @@
  * after a yes and always points harnesses at the absolute path of the tabkyra launcher.
  */
 
+import { moveClaudeRules } from "./always-allow.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -206,7 +207,8 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 		}
 		const replacing = h.configured === "stale" || h.configured === "other";
 		if (h.addCommand) {
-			const commands = replacing && h.removeCommand ? [h.removeCommand, h.addCommand] : [h.addCommand];
+			// Moving to the new name, the new entry goes in first: a failed add must not cost a working entry.
+			const commands = !replacing || !h.removeCommand ? [h.addCommand] : h.oldName ? [h.addCommand, h.removeCommand] : [h.removeCommand, h.addCommand];
 			const shown = commands.map(shellJoin).join(" && ");
 			// Windows harness CLIs are .cmd shims that need a shell; print the command there instead.
 			if (process.platform === "win32") {
@@ -226,7 +228,14 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 			}
 			if (await confirm(`  ${sym.dot} ${question} ${c.dim(`(${shown})`)}`, { assumeYes, defaultYes: h.configured !== "other" })) {
 				const failedAt = commands.findIndex((command) => !runCommand(command));
-				if (failedAt === -1) console.log(`  ${sym.ok} ${h.name} is set up.`);
+				if (failedAt === -1) {
+					console.log(`  ${sym.ok} ${h.name} is set up.`);
+					if (h.oldName && h.id === "claude") {
+						const moved = moveClaudeRules();
+						if (moved.rewritten) console.log(`    ${c.dim(`${moved.rewritten} permission rule(s) in Claude Code's settings now name polycarp.`)}`);
+						if (moved.elsewhere) console.log(`    ${sym.warn} ${c.dim("Claude Code's settings still mention mcp__tabkyra outside its permission rules (a hook, say). Those no longer match.")}`);
+					}
+				}
 				else {
 					ok = false;
 					console.log(`  ${sym.fail} That failed. Run it yourself: ${c.bold(commands.slice(failedAt).map(shellJoin).join(" && "))}`);

@@ -809,10 +809,10 @@ struct SetupView: View {
                     .labelsHidden().toggleStyle(.switch)
                     .disabled(browserModel.busy || browserModel.status?.anySite == nil)
             }
-            SettingsRow("Claude Code uses Polycarp without asking", help: "Stops its prompt for Polycarp's tools. Its other tools still ask.") {
+            SettingsRow("Claude Code uses Polycarp without asking", help: browserModel.status?.claudeReady == true ? "Stops its prompt for Polycarp's tools. Its other tools still ask." : "Add Polycarp to Claude Code first, in Settings > Browser.") {
                 Toggle("Claude Code", isOn: binding({ browserModel.status?.claudeAllowed ?? false }, { browserModel.setClaudeAllowed($0) }))
                     .labelsHidden().toggleStyle(.switch)
-                    .disabled(browserModel.busy || browserModel.status == nil)
+                    .disabled(browserModel.busy || browserModel.status?.claudeReady != true)
             }
             SettingsNote("Page scripts run without asking. For the fastest ones, turn on Allow user scripts at chrome://extensions > Polycarp > Details.")
             if let message = browserModel.message { SettingsNote(message, tone: .urgent) }

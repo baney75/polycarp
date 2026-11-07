@@ -343,7 +343,7 @@ function harnessChecks(): Check[] {
 			if (h.configured === true) return { id, status: "ok", label: `${h.name}: Polycarp MCP server configured` };
 			const replace = h.configured === "stale" || h.configured === "other";
 			let fix: string;
-			if (h.addCommand) fix = replace && h.removeCommand ? `${shellJoin(h.removeCommand)} && ${shellJoin(h.addCommand)}` : shellJoin(h.addCommand);
+			if (h.addCommand) fix = replace && h.removeCommand ? (h.oldName ? `${shellJoin(h.addCommand)} && ${shellJoin(h.removeCommand)}` : `${shellJoin(h.removeCommand)} && ${shellJoin(h.addCommand)}`) : shellJoin(h.addCommand);
 			else if (h.snippet?.startsWith("{")) fix = `${replace ? "Replace the Polycarp entry in" : "Add this to"} ${h.configFile}:\n${h.snippet}`;
 			else fix = h.snippet ?? "";
 			if (h.configured === undefined) {

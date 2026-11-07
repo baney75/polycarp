@@ -112,7 +112,20 @@ interface EntryState {
 	oldName?: boolean;
 }
 
-/** The tabkyra entry under `key` in a JSON config. Unparseable files are "unknown", not "configured". */
+/**
+ * An entry under the old name. One that runs this helper, or nothing any more, is moved. One that runs something else may
+ * be the person's own wrapper: it's reported like any other entry and left alone unless they say so.
+ */
+function oldEntry(state: Configured, command: string | undefined): EntryState {
+	return {
+		configured: state === "other" ? "other" : "stale",
+		currentCommand: command,
+		oldName: true,
+		note: "It's under the old name.",
+	};
+}
+
+/** The Polycarp entry under `key` in a JSON config. Unparseable files are "unknown", not "configured". */
 function jsonServerState(file: string, key: string, commandOf: (entry: Record<string, unknown>) => { command?: unknown; args?: unknown }): EntryState {
 	if (!existsSync(file)) return { configured: false };
 	const data = readJson(file);
@@ -120,7 +133,11 @@ function jsonServerState(file: string, key: string, commandOf: (entry: Record<st
 	const servers = data[key] as Record<string, Record<string, unknown>> | undefined;
 	const current = servers?.[MCP_NAME];
 	const old = servers?.[OLD_MCP_NAME];
-	if (!current && old && typeof old === "object") return { configured: "stale", oldName: true, note: "It's under the old name." };
+	if (!current && old && typeof old === "object") {
+		const { command, args } = commandOf(old);
+		const cmd = typeof command === "string" ? command : undefined;
+		return oldEntry(classify(cmd, Array.isArray(args) ? args.map(String) : []), cmd);
+	}
 	const entry = current;
 	if (!entry || typeof entry !== "object") return { configured: false };
 	const { command, args } = commandOf(entry);
@@ -140,9 +157,11 @@ function cliServerState(binary: string, fields: { command: RegExp; args: RegExp;
 	if (result.error || result.signal) return { configured: undefined };
 	if (result.status !== 0) {
 		const old = spawnSync(binary, ["mcp", "get", OLD_MCP_NAME], { encoding: "utf8", timeout: 15000, cwd: homedir() });
-		return !old.error && !old.signal && old.status === 0
-			? { configured: "stale", oldName: true, note: "It's under the old name." }
-			: { configured: false };
+		if (old.error || old.signal || old.status !== 0) return { configured: false };
+		const text = old.stdout ?? "";
+		const command = text.match(fields.command)?.[1]?.trim();
+		const args = (text.match(fields.args)?.[1] ?? "").trim().split(/\s+/).filter(Boolean);
+		return oldEntry(classify(command, args), command);
 	}
 	const out = result.stdout ?? "";
 	// Claude Code: only a user-scope entry serves every project.

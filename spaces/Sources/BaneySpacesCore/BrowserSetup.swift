@@ -29,6 +29,8 @@ public struct BrowserStatus: Equatable {
     public var anySite: Bool?
     /// Claude Code uses Polycarp's tools without asking.
     public var claudeAllowed = false
+    /// Claude Code has Polycarp's entry under its current name, so a rule for it would match.
+    public var claudeReady: Bool { agents.contains { $0.id == "claude" && $0.connected } }
 
     public init() {}
 
@@ -37,12 +39,6 @@ public struct BrowserStatus: Equatable {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let mode = root["permissionMode"] as? String else { return nil }
         return mode == "allow_all"
-    }
-
-    /// `claude-allow status`.
-    public static func claudeAllowed(fromStatus data: Data) -> Bool {
-        let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        return root?["allowed"] as? Bool ?? false
     }
 
     /// The helper's JSON. Nil when it isn't JSON of the shape `doctor --json` prints.
