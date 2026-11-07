@@ -21,7 +21,7 @@ import { which } from "./harness.ts";
 
 export const DEFAULT_PORT = 8787;
 const SERVE_PATH = "/polycarp";
-/** Where an earlier version published it: turned off with the new path, and not counted as someone else's. */
+/** Where an earlier version published it. Removed when it points at this serve (below); otherwise it counts as someone else's. */
 const OLD_SERVE_PATH = "/tabkyra";
 
 function configDir(): string {
@@ -44,7 +44,6 @@ export function tailscaleTunnel(options: { port: number; public: boolean; off: b
 	if (!bin) return { ok: false, message: "Tailscale isn't installed. Install it from tailscale.com and sign in, then run this again." };
 	const mode = options.public ? "funnel" : "serve";
 	if (options.off) {
-		run(bin, [mode, "--https=443", `--set-path=${OLD_SERVE_PATH}`, "off"]);
 		const r = run(bin, [mode, "--https=443", `--set-path=${SERVE_PATH}`, "off"]);
 		return { ok: r.code === 0, message: r.code === 0 ? `Stopped the Tailscale ${mode} for ${SERVE_PATH}.` : r.out };
 	}
@@ -72,22 +71,28 @@ export function tailscaleTunnel(options: { port: number; public: boolean; off: b
 			message: `Funnel is on for port 443 on this machine, so ${SERVE_PATH} would be public, not tailnet-only. Nothing was changed. Use --public if that's what you want, or turn Funnel off for port 443 in Tailscale first.`,
 		};
 	}
+	// Read what port 443 serves. The old path is ours only if it points at this serve; then it goes, so it can't stay behind, and
+	// Funnel can't publish it. One pointing anywhere else is someone's, like any other path.
+	let handlers: [string, { Proxy?: string }][] = [];
+	try {
+		const web = (JSON.parse(run(bin, ["serve", "status", "--json"]).out || "{}") as { Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }> }).Web ?? {};
+		handlers = Object.entries(web)
+			.filter(([hostPort]) => hostPort.endsWith(":443"))
+			.flatMap(([, v]) => Object.entries(v.Handlers ?? {}));
+	} catch {
+		if (options.public) return { ok: false, message: "Couldn't read tailscale serve status; not turning on Funnel." };
+	}
+	const oldIsOurs = handlers.some(([path, h]) => path === OLD_SERVE_PATH && h.Proxy === `http://127.0.0.1:${options.port}`);
 	if (options.public) {
 		// Funnel opens a whole host:port to the internet, not one path: refuse if anything else is served there.
-		const current = run(bin, ["serve", "status", "--json"]);
-		let others: string[] = [];
-		try {
-			const web = (JSON.parse(current.out || "{}") as { Web?: Record<string, { Handlers?: Record<string, unknown> }> }).Web ?? {};
-			others = Object.entries(web)
-				.filter(([hostPort]) => hostPort.endsWith(":443"))
-				.flatMap(([, v]) => Object.keys(v.Handlers ?? {}))
-				.filter((path) => path !== SERVE_PATH && path !== OLD_SERVE_PATH);
-		} catch {
-			return { ok: false, message: "Couldn't read tailscale serve status; not turning on Funnel." };
-		}
+		const others = handlers.map(([path]) => path).filter((path) => path !== SERVE_PATH && !(path === OLD_SERVE_PATH && oldIsOurs));
 		if (others.length) {
 			return { ok: false, message: `Port 443 also serves ${others.join(", ")} on this machine. Funnel would make those public too, so it wasn't turned on.` };
 		}
+	}
+	if (oldIsOurs) {
+		const gone = run(bin, ["serve", "--https=443", `--set-path=${OLD_SERVE_PATH}`, "off"]);
+		if (gone.code !== 0) return { ok: false, message: `Couldn't remove the old ${OLD_SERVE_PATH} path, so nothing else was changed: ${gone.out}` };
 	}
 	const r = run(bin, [mode, "--bg", "--yes", "--https=443", `--set-path=${SERVE_PATH}`, `http://127.0.0.1:${options.port}`]);
 	if (r.code !== 0) return { ok: false, message: r.out };

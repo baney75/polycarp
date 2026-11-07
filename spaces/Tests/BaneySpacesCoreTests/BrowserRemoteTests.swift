@@ -440,4 +440,12 @@ final class BrowserRemoteTests: XCTestCase {
         XCTAssertEqual(RemoteCommand.cloudflareLogin.arguments, ["remote", "cloudflare", "login", "--json"])
         XCTAssertGreaterThan(RemoteCommand.cloudflareLogin.timeout, 300, "longer than cloudflared's own five-minute wait")
     }
+
+    func testAConnectCodeComesFromTheHelpersOwnAnswer() {
+        XCTAssertEqual(RemoteCommand.approvalCode.arguments, ["token", "approval-code", "--json"])
+        XCTAssertEqual(RemoteCommand.parseApprovalCode(Data(#"{"ok":true,"kind":"approval","code":"TK-AB12","expiresAt":1}"#.utf8)), "TK-AB12")
+        XCTAssertNil(RemoteCommand.parseApprovalCode(Data(#"{"ok":false}"#.utf8)))
+        XCTAssertTrue(RemoteCopy.approvalNote.contains("connect code"), "a new assistant's page refuses the passcode")
+    }
 }
+

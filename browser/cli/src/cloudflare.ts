@@ -7,7 +7,8 @@
  * A named tunnel needs a domain on the account (Cloudflare's rule). Without one, Tailscale is the route that needs none.
  */
 import { spawn } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import { which } from "./harness.ts";
@@ -42,10 +43,21 @@ export function cloudflareSignedIn(): boolean {
 	return existsSync(join(cloudflaredDir(), "cert.pem"));
 }
 
-/** One tunnel per computer on an account, so two Macs signed in to one account don't fight over a name. */
+const tunnelNameFile = () => join(configDir(), "cloudflare-tunnel-name");
+
+/**
+ * This computer's tunnel, kept once made. Macs often share a hostname (MacBook-Pro.local), and another computer's tunnel of the same
+ * name has a key this one lacks, so the name carries a few random letters too.
+ */
 export function cloudflareTunnelName(machine = hostname()): string {
-	const slug = machine.toLowerCase().replace(/\.local$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-	return `polycarp-${slug || "mac"}`.slice(0, 60);
+	if (existsSync(tunnelNameFile())) {
+		const saved = readFileSync(tunnelNameFile(), "utf8").trim();
+		if (/^polycarp-[a-z0-9-]{1,60}$/.test(saved)) return saved;
+	}
+	const slug = machine.toLowerCase().replace(/\.local$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+	const name = `polycarp-${slug || "mac"}-${randomBytes(2).toString("hex")}`;
+	writeAtomic(tunnelNameFile(), `${name}\n`, 0o600);
+	return name;
 }
 
 /** A hostname someone typed, or a pasted address: lowercase, no scheme, no path. Undefined when it can't be one. */
@@ -87,7 +99,8 @@ export async function prepareCloudflare(bin: string, host: string, port: number)
 	const route = await runAsync(bin, ["tunnel", "route", "dns", id, host], 60_000);
 	if (route.code !== 0) return { ok: false, code: "cloudflare_dns", message: `Cloudflare wouldn't give this tunnel ${host}. If that name is already in use, pick another. Its words: ${route.out.slice(-300)}` };
 	// A sign-in covers one domain. A name on another one gets that domain added to the end instead of failing.
-	const added = /Added CNAME (\S+)/i.exec(route.out)?.[1]?.replace(/\.$/, "").toLowerCase();
+	// The same when an earlier wrong try left that record: cloudflared then says it's already there, under the wrong name.
+	const added = (/Added CNAME (\S+)/i.exec(route.out) ?? /(\S+) is already configured to route to your tunnel/i.exec(route.out))?.[1]?.replace(/\.$/, "").toLowerCase();
 	if (added && added !== host) {
 		return { ok: false, code: "cloudflare_zone", message: `Your Cloudflare sign-in is for a different domain, so Cloudflare made ${added} instead of ${host}. Remove that record, delete ${join(cloudflaredDir(), "cert.pem")}, and sign in again choosing the domain for ${host}.` };
 	}

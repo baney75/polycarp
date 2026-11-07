@@ -401,6 +401,11 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 		if (!bin) return fail("cloudflared_missing", "cloudflared isn't installed. Get it from developers.cloudflare.com/tunnel/downloads, then try again.");
 		if (!cloudflareSignedIn()) return fail("problem", `Sign in to Cloudflare first: ${COMMAND_NAME} remote cloudflare login.`, { code: "cloudflare_login" });
 		if (!options.service) return fail("problem", "The Cloudflare route runs as a service, so --no-service doesn't apply.");
+		// Funnel on 8443 would stay public and forward to this machine, whatever else is set up.
+		if (tailscaleBinary()) {
+			const stray = await strayFunnel();
+			if (stray.kind !== "none") return fail("port_busy", `Funnel on ${FUNNEL_PORT} is on${stray.kind === "unknown" ? ` (${stray.message})` : ""}; run ${COMMAND_NAME} remote off first. Nothing was changed.`, { code: "tailscale_port" });
+		}
 		cloudflaredBin = bin;
 		publicUrl = `https://${cloudflareHost}`;
 		route = "cloudflare";
@@ -454,7 +459,16 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 	}
 	// Every step from here on has made (or may have made) a passcode a later run won't print, so in JSON mode a throw is still a report.
 	let stage = "config";
+	let tunnelName: string | undefined;
 	try {
+		// Before anything is saved: a name Cloudflare refuses leaves this computer as it was, and a working tunnel keeps working.
+		if (route === "cloudflare" && cloudflareHost) {
+			stage = "cloudflare_tunnel";
+			const opened = await prepareCloudflare(cloudflaredBin, cloudflareHost, port);
+			if (!opened.ok) return fail("problem", opened.message, { code: opened.code });
+			tunnelName = opened.tunnel;
+			stage = "config";
+		}
 		saveRemoteConfig({ publicUrl, port, route, ...(previous?.redirectHosts ? { redirectHosts: previous.redirectHosts } : {}), ...(previous?.allowHosts ? { allowHosts: previous.allowHosts } : {}) });
 		say(`${sym.ok} Wrote ${c.dim(remoteFile())}`);
 		stage = "service";
@@ -482,13 +496,11 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 				{ code: "serve" },
 			);
 		}
-		if (route === "cloudflare" && cloudflareHost) {
+		if (route === "cloudflare" && tunnelName) {
 			stage = "cloudflare_tunnel";
-			const opened = await prepareCloudflare(cloudflaredBin, cloudflareHost, port);
-			if (!opened.ok) return fail("problem", opened.message, { code: opened.code });
 			const service = await installService(CLOUDFLARE_SERVICE);
 			if (!service.ok) return fail("problem", `The Cloudflare tunnel didn't start: ${service.message}`, { code: "service" });
-			say(`${sym.ok} Cloudflare tunnel ${opened.tunnel} on ${publicUrl} ${c.dim(`-> 127.0.0.1:${port}`)}`);
+			say(`${sym.ok} Cloudflare tunnel ${tunnelName} on ${publicUrl} ${c.dim(`-> 127.0.0.1:${port}`)}`);
 		}
 		stage = "funnel";
 		if (route === "funnel") {
@@ -711,7 +723,9 @@ export async function remoteOff(): Promise<number> {
 	}
 	if (badFile !== undefined) console.log(`${sym.warn} ${badFile}`);
 	let code = 0;
-	if (config?.route === "cloudflare") {
+	// By the service, not remote.json: a damaged or missing file must not leave a tunnel running.
+	const tunnelService = serviceFile(CLOUDFLARE_SERVICE);
+	if (config?.route === "cloudflare" || (tunnelService && existsSync(tunnelService))) {
 		const closed = closeCloudflare();
 		if (!closed.ok) {
 			console.error(`${sym.fail} ${closed.failure}`);
@@ -719,6 +733,9 @@ export async function remoteOff(): Promise<number> {
 		}
 		for (const note of closed.notes) console.log(`${sym.ok} ${note}`);
 		console.log(c.dim(`The tunnel and its DNS record stay in your Cloudflare account, so turning this on again reuses them. To remove the tunnel: cloudflared tunnel delete ${cloudflareTunnelName()}`));
+	}
+	if (config?.route === "cloudflare") {
+		// The tunnel is closed above; there's no Funnel to look for on this route.
 	} else if (config?.route === "funnel") {
 		const r = funnelOff(tailscaleBinary());
 		if (!r.ok) {

@@ -245,6 +245,7 @@ public enum RemoteFlow {
 public enum RemoteCommand: Equatable {
     case status, setup, off, newPasscode, cloudflareLogin
     case setupCloudflare(String)
+    case approvalCode
 
     public var arguments: [String] {
         switch self {
@@ -254,6 +255,7 @@ public enum RemoteCommand: Equatable {
         case .newPasscode: ["token", "passcode", "--json"]
         case .setupCloudflare(let host): ["remote", "setup", "--json", "--cloudflare", host]
         case .cloudflareLogin: ["remote", "cloudflare", "login", "--json"]
+        case .approvalCode: ["token", "approval-code", "--json"]
         }
     }
 
@@ -266,9 +268,17 @@ public enum RemoteCommand: Equatable {
         case .off: 60
         case .newPasscode: 15
         case .setupCloudflare: 180
+        case .approvalCode: 15
         // cloudflared's own sign-in waits five minutes for the person.
         case .cloudflareLogin: 320
         }
+    }
+
+    /// `{"ok":true,"kind":"approval","code":"…"}` from `token approval-code --json`.
+    public static func parseApprovalCode(_ data: Data) -> String? {
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              root["ok"] as? Bool == true, let code = root["code"] as? String, !code.isEmpty else { return nil }
+        return code
     }
 
     /// `{"ok":true,"passcode":"…"}` from `token passcode --json`.
@@ -378,7 +388,11 @@ public enum RemoteCopy {
     public static let unavailable = "This copy of Polycarp doesn't include the browser helper."
     public static let otherWays = "Other ways"
     public static let otherWaysHelp = "Use your own front door, like a server you already run"
-    public static let approvalNote = "When an assistant asks to connect, a page from this computer opens. Check the name, tick what it may do, type the passcode and press Allow. Only approve a connection you just started."
+    public static let approvalNote = "When an assistant asks to connect, a page from this computer opens. Check the name, tick what it may do, enter the connect code and press Allow. Only approve a connection you just started."
+    public static let connectCodeButton = "Make a connect code"
+    public static let connectCodeLabel = "Connect code"
+    public static let connectCodeNote = "A new assistant needs this once. It works for ten minutes. After that, your passcode approves that assistant again."
+    public static let connectCodeFailed = "Couldn't make a connect code. Try again."
     public static let menusNote = "Menus change; if you can't find it, look for connectors in the assistant's settings."
 
     public struct Assistant: Equatable, Identifiable {

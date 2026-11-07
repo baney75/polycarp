@@ -14,6 +14,8 @@ final class BrowserRemoteModel: ObservableObject {
     /// The approval passcode, from the run that made it. Memory only: shown until the person says they've saved it.
     @Published private(set) var passcode: String?
     @Published private(set) var note: String?
+    /// The one-time code that approves a new assistant. Memory only.
+    @Published private(set) var connectCode: String?
     @Published private(set) var copied: String?
     /// Status reads in a row that gave no usable answer.
     @Published private(set) var failedReads = 0
@@ -169,6 +171,20 @@ final class BrowserRemoteModel: ObservableObject {
                 guard let self else { return }
                 self.working = false
                 if let code { self.passcode = code } else { self.note = "Couldn't make a new passcode. Try again." }
+            }
+        }
+    }
+
+    func newConnectCode() {
+        guard available, !settingUp, !working else { return }
+        working = true; note = nil
+        queue.async { [weak self] in
+            let result = Self.run(.approvalCode)
+            let code = RemoteCommand.parseApprovalCode(result.out)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.working = false
+                if let code { self.connectCode = code } else { self.note = RemoteCopy.connectCodeFailed }
             }
         }
     }
@@ -531,6 +547,11 @@ struct BrowserRemoteView: View {
                 }
             }
             line(RemoteCopy.approvalNote)
+            if let code = model.connectCode {
+                copyRow(RemoteCopy.connectCodeLabel, code, label: "connect code", secret: true)
+                line(RemoteCopy.connectCodeNote)
+            }
+            Button(RemoteCopy.connectCodeButton) { model.newConnectCode() }.controlSize(.small).disabled(model.working)
             line(RemoteCopy.menusNote)
         }
     }

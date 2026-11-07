@@ -722,7 +722,9 @@ function cloudflared(s, { route = "ok", listed = false } = {}) {
 	const routeBody =
 		route === "taken"
 			? `echo "An A, AAAA, or CNAME record with that host already exists" >&2; exit 1`
-			: `echo "Added CNAME ${route === "ok" ? "$5" : route} which will route to this tunnel"`;
+			: route === "already"
+				? `echo "$5.other.example is already configured to route to your tunnel"`
+				: `echo "Added CNAME ${route === "ok" ? "$5" : route} which will route to this tunnel"`;
 	s.script(
 		"cloudflared",
 		`echo "cloudflared $*" >> ${log}
@@ -800,7 +802,8 @@ test("remote setup --cloudflare makes the tunnel and its record, runs both servi
 	assert.equal(report.connectorUrl, `https://${CF_HOST}/mcp`);
 	assert.match(report.passcode, PASSCODE);
 	const calls = cfCalls(s);
-	assert.ok(calls.some((x) => /^cloudflared tunnel create polycarp-/.test(x)), calls.join("\n"));
+	assert.ok(calls.some((x) => /^cloudflared tunnel create polycarp-.*-[0-9a-f]{4}$/.test(x)), calls.join("\n"));
+	assert.match(readFileSync(join(s.env.TABKYRA_CONFIG_DIR, "cloudflare-tunnel-name"), "utf8"), /^polycarp-/);
 	assert.ok(calls.includes(`cloudflared tunnel route dns ${CF_ID} ${CF_HOST}`), calls.join("\n"));
 	assert.ok(!calls.some((x) => x.includes("--overwrite-dns")), "a name in use is never taken over");
 	const config = readFileSync(join(s.env.TABKYRA_CONFIG_DIR, "cloudflared.yml"), "utf8");
@@ -828,6 +831,8 @@ test("a name already in use is refused in Cloudflare's words, and no tunnel star
 	assert.equal(report.code, "cloudflare_dns");
 	assert.match(report.message, /already exists/);
 	assert.equal(existsSync(cfService(s)), false);
+	assert.equal(s.remoteJsonExists(), false, "a refused name saves nothing, so the window can ask for another");
+	assert.equal(s.run(["remote", "status", "--json"]).json().connectorUrl, null);
 });
 
 test("a sign-in for another domain is caught, not left as a wrong record that looks fine", async () => {
@@ -838,6 +843,7 @@ test("a sign-in for another domain is caught, not left as a wrong record that lo
 	assert.equal(report.code, "cloudflare_zone");
 	assert.match(report.message, /different domain/);
 	assert.equal(existsSync(cfService(s)), false);
+	assert.equal(s.remoteJsonExists(), false);
 });
 
 test("a tunnel of that name whose key isn't here says how to clear it", async () => {
@@ -868,3 +874,22 @@ test("cloudflared removed after setup is its own state, ahead of the other check
 	rmSync(join(s.dir, "bin", "cloudflared"));
 	assert.equal(s.run(["remote", "status", "--json"]).json().state, "cloudflared_missing");
 });
+
+test("a retry after a wrong-domain try, when cloudflared says the record is already there, is still caught", async () => {
+	const s = scenario("cf-zone-retry", { tailscale: false });
+	cloudflared(s, { route: "already" });
+	signedIn(s);
+	const report = (await cloudflareSetup(s)).json();
+	assert.equal(report.code, "cloudflare_zone", JSON.stringify(report));
+});
+
+test("remote off stops a Cloudflare tunnel even with remote.json gone", async () => {
+	const s = scenario("cf-off-damaged", { tailscale: false });
+	cloudflared(s);
+	signedIn(s);
+	await cloudflareSetup(s);
+	rmSync(join(s.env.TABKYRA_CONFIG_DIR, "remote.json"));
+	assert.equal(s.run(["remote", "off"]).code, 0);
+	assert.equal(existsSync(cfService(s)), false);
+});
+
