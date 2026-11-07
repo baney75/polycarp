@@ -38,8 +38,12 @@ export const SCOPES: Record<string, { tools: string[]; what: string }> = {
 		tools: ["click", "type", "fill", "press", "hover", "scroll", "drag", "actions", "handle_dialog"],
 		what: "Click and type: can submit forms and act under the user's sign-in",
 	},
+	"browser.edit": {
+		tools: ["site_edit"],
+		what: "Change how sites look and load for you, on every visit: hide parts of pages, block requests on a site, ad blocking. Each one you can undo in the side panel",
+	},
 	"browser.script": {
-		tools: ["run_js"],
+		tools: ["run_js", "site_script"],
 		// Code runs as the user on the page: it can do anything browser.act can, and more.
 		what: "Run any code as you on pages the agent opens: can read, post, send and buy (includes everything browser.act can do)",
 	},

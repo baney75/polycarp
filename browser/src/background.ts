@@ -5,6 +5,7 @@ import { startGroupGestures } from "./browser/group-gestures.js";
 import { BrowserSession, cleanupOrphanGroups, listSessions } from "./browser/session.js";
 import { startCommunityWorker } from "./community/worker.js";
 import { startConnectRelay } from "./connect/relay.js";
+import { startSiteEdits } from "./site-edits/apply.js";
 import { startSubscriptionRelay } from "./subscriptions/relay.js";
 import { runningFromStore } from "./update/store-install.js";
 import { setPanelsOpening, startUpdateWorker } from "./update/worker.js";
@@ -37,6 +38,9 @@ if (!runningFromStore()) startUpdateWorker();
 
 // Community skills: the side panel's on, off and sync buttons go to the native host.
 startCommunityWorker();
+
+// Site edits: what hides, blocks or runs on each site, and ad blocking (Settings > Site edits).
+startSiteEdits();
 
 // ============================================================================
 // PER-TAB SIDE PANEL (Claude-in-Chrome model)

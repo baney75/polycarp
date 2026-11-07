@@ -42,7 +42,7 @@ test("countdown and last-seen read as a person would say them", () => {
 	assert.equal(linkCommand("https://h.example.com", "TK-ABCD-EFGH"), "polycarp browser link https://h.example.com --code TK-ABCD-EFGH");
 });
 
-test("Settings has six tabs, with Connect under Agents and Costs under About", () => {
+test("Settings has seven tabs, with Connect under Agents and Costs under About", () => {
 	const panel = read("src/sidepanel.ts");
 	const start = panel.indexOf("SettingsPage.open([");
 	const list = panel.slice(start, panel.indexOf("]);\n", start));
@@ -52,7 +52,7 @@ test("Settings has six tabs, with Connect under Agents and Costs under About", (
 		.map((line) => /^\t\t(?:new CombinedTab\("(\w+)"|new (\w+)\(|(providers),)/.exec(line))
 		.filter(Boolean)
 		.map((m) => m[1] ?? m[2] ?? m[3]);
-	assert.deepEqual(order, ["providers", "Agents", "SkillsTab", "Privacy", "AppearanceTab", "About"]);
+	assert.deepEqual(order, ["providers", "Agents", "SkillsTab", "SiteEditsTab", "Privacy", "AppearanceTab", "About"]);
 	assert.match(read("src/dialogs/BridgeTab.ts"), /getTabName\(\): string \{\s*return "Agents";/);
 	assert.match(read("src/dialogs/ConnectTab.ts"), /return "Connect";/);
 	assert.match(read("src/dialogs/AppearanceTab.ts"), /return "Appearance";/);
