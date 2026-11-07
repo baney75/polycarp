@@ -11,10 +11,15 @@ let loading: Promise<unknown> | undefined;
 export default {
 	renderToString(text: string, options?: KatexOptions) {
 		if (real) return real.renderToString(text, options);
-		loading ??= import("katex").then((lib) => {
-			real = lib.default;
-			redrawAfterLoad();
-		});
+		loading ??= import("katex").then(
+			(lib) => {
+				real = lib.default;
+				redrawAfterLoad();
+			},
+			() => {
+				loading = undefined;
+			},
+		);
 		return `<code>${escapeHtml(text)}</code>`;
 	},
 };

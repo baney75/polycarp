@@ -1590,10 +1590,10 @@ index 1f50a7d08..dad235a65 100644
  		Low: "Niedrig",
 diff --git a/packages/web-ui/src/utils/lazy-documents.ts b/packages/web-ui/src/utils/lazy-documents.ts
 new file mode 100644
-index 000000000..62d90cf66
+index 000000000..bf58d246b
 --- /dev/null
 +++ b/packages/web-ui/src/utils/lazy-documents.ts
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,24 @@
 +/**
 + * The document libraries load the first time something needs them, not when the panel opens: together
 + * they are most of what would otherwise be parsed on every open, and most chats never touch them.
@@ -1601,10 +1601,17 @@ index 000000000..62d90cf66
 +let pdfjs: Promise<typeof import("pdfjs-dist")> | undefined;
 +
 +export function loadPdfjs() {
-+	pdfjs ??= import("pdfjs-dist").then((lib) => {
-+		lib.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
-+		return lib;
-+	});
++	pdfjs ??= import("pdfjs-dist").then(
++		(lib) => {
++			lib.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
++			return lib;
++		},
++		(error) => {
++			// An update can replace the extension's files under an open panel. Let the next try load the new ones.
++			pdfjs = undefined;
++			throw error;
++		},
++	);
 +	return pdfjs;
 +}
 +
