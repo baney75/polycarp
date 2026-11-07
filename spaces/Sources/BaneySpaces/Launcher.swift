@@ -188,6 +188,8 @@ final class LauncherController: NSObject, NSWindowDelegate {
     /// `takeKeys: false` (opened by a link) shows it without taking the keyboard, so typing meant
     /// for another app never lands in it; a click on it takes the keyboard.
     func show(scope: LauncherModel.Scope = .root, takeKeys: Bool = true) {
+        let clock = OpenClock(panel == nil ? "launcher-first" : "launcher")
+        defer { clock.shown() }
         let p = panel ?? makePanel()
         panel = p
         model.prepare(scope: scope)

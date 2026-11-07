@@ -674,6 +674,8 @@ final class WorkspaceDock {
     }
 
     private func show(on screen: NSScreen, retried: Bool = false) {
+        let clock = OpenClock("dock")
+        defer { clock.shown() }
         tickState.edgeSince = nil
         tickState.awaySince = nil
         dismissSide()

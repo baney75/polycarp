@@ -386,6 +386,8 @@ final class ViewerController {
     func toggle() { isOpen ? model.onClose() : open() }
 
     func open() {
+        let clock = OpenClock(panel == nil ? "overview-first" : "overview")
+        defer { clock.shown() }
         if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
         isOpen = true
         openCount += 1
