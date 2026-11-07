@@ -56,6 +56,11 @@
 				"id": "cors_rules",
 				"enabled": true,
 				"path": "cors-rules.json"
+			},
+			{
+				"id": "ads",
+				"enabled": false,
+				"path": "ads-rules.json"
 			}
 		]
 	},

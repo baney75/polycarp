@@ -61,6 +61,7 @@ import { RecordSkillDialog } from "./dialogs/RecordSkillDialog.js";
 import { SessionCostDialog } from "./dialogs/SessionCostDialog.js";
 import { TabkyraSessionListDialog } from "./dialogs/SessionListDialog.js";
 import { SettingsPage } from "./dialogs/SettingsPage.js";
+import { SiteEditsTab } from "./dialogs/SiteEditsTab.js";
 import { SkillsTab } from "./dialogs/SkillsTab.js";
 import { UpdatesTab } from "./dialogs/UpdatesTab.js";
 import { type WelcomeChoice, WelcomeSetupDialog } from "./dialogs/WelcomeSetupDialog.js";
@@ -653,6 +654,7 @@ function openApiKeysDialog(show?: { tab: string; anchor?: string }): Promise<voi
 			{ tab: new ConnectTab(), heading: "Use from claude.ai or ChatGPT", id: "connect-heading" },
 		]),
 		new SkillsTab(),
+		new SiteEditsTab(),
 		new CombinedTab("Privacy", [{ tab: new PrivacyTab() }, { tab: new ProxyTab(), heading: "CORS proxy" }]),
 		new AppearanceTab(),
 		new CombinedTab("About", [

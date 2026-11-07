@@ -499,6 +499,11 @@ export const BRIDGE_METHODS = [
 	"bridge.activate",
 	"bridge.debug",
 	"bridge.bench",
+	"edits.list",
+	"edits.add",
+	"edits.off",
+	"edits.remove",
+	"edits.adblock",
 ] as const;
 
 export type BridgeMethod = (typeof BRIDGE_METHODS)[number];

@@ -46,6 +46,18 @@ import {
 } from "../browser/page.js";
 import { type BrowserSession, TabLimitError, takeNotices } from "../browser/session.js";
 import { isPdfTab, pdfText } from "../offscreen/pdf-client.js";
+import {
+	added as addedEdit,
+	change as changeEdits,
+	type EditKind,
+	guardedUnder,
+	load as loadEdits,
+	newId as newEditId,
+	normalizeHost,
+	removed as removedEdit,
+	SiteEditError,
+	switched as switchedEdit,
+} from "../site-edits/store.js";
 import { BridgeError, classify, detachedError, interruptedError, navigatedError } from "./errors.js";
 import { rankMatches } from "./find.js";
 import { getAllowedHosts, getPermissionMode } from "./permissions.js";
@@ -61,6 +73,8 @@ export interface HandlerContext {
 	checkUrl(url: string): Promise<void>;
 	/** Whether the URL is on a host an agent never opens (the OAuth approval address, issue #94). */
 	isGuarded(url: string): boolean;
+	/** The hosts behind `isGuarded`, as the CLI sent them ("host" or "host:port"). */
+	guardedHosts?: readonly string[];
 	/** Stable id of the calling client. */
 	clientId: string;
 	/** Push an event to the calling client only. */
@@ -277,7 +291,98 @@ function normalizeStep(step: Params, i: number): [string, Params] {
 	);
 }
 
+/** Site edits for agents. Everything an agent adds says it was an agent; a script it adds stays off for the person. */
+const editHandlers: Record<string, Handler> = {
+	"edits.list": async (_ctx, params) => {
+		const state = await loadEdits();
+		const host = str(params, "host");
+		const only = host ? normalizeHost(host) : undefined;
+		return {
+			adBlock: state.adBlock,
+			edits: state.edits.filter((e) => !only || e.host === only || only.endsWith(`.${e.host}`)),
+		};
+	},
+	"edits.add": async (ctx, params) => {
+		const kind = requireStr(params, "kind") as EditKind;
+		const who = ctx.session.groupName || ctx.clientId;
+		let host: string;
+		try {
+			host = normalizeHost(requireStr(params, "host"));
+		} catch (err) {
+			if (err instanceof SiteEditError) throw new BridgeError(ERR.BAD_PARAMS, err.message);
+			throw err;
+		}
+		// Changing a site takes the same permission as opening it: an agent can't edit what it may not visit. An edit also
+		// reaches the site's subdomains, so a site with a guarded one under it is refused too.
+		const site = `https://${host}/`;
+		const under = guardedUnder(host, ctx.guardedHosts ?? []);
+		if (ctx.isGuarded(site) || under)
+			throw new BridgeError(
+				ERR.BAD_PARAMS,
+				under && !ctx.isGuarded(site)
+					? `An edit on ${host} would reach ${under}, which agents never open.`
+					: `${host} is a site agents never open, so they can't edit it.`,
+			);
+		await ctx.checkUrl(site);
+		try {
+			const edit = await changeEdits((state) => {
+				const next = addedEdit(
+					state,
+					{
+						host: requireStr(params, "host"),
+						kind,
+						value: requireStr(params, "value"),
+						note: str(params, "note"),
+						actor: "agent",
+						who,
+					},
+					newEditId(),
+					Date.now(),
+				);
+				return { state: next.state, result: next.edit };
+			});
+			return {
+				edit,
+				note:
+					edit.kind === "script" && !edit.on
+						? "Saved, and off until the person turns it on in Settings > Sites: a script runs with their sign-in on every visit. Tell them it's waiting."
+						: "On now, for every visit. The person can undo it in Settings > Sites.",
+			};
+		} catch (err) {
+			if (err instanceof SiteEditError) throw new BridgeError(ERR.BAD_PARAMS, err.message);
+			throw err;
+		}
+	},
+	"edits.off": async (_ctx, params) => {
+		try {
+			await changeEdits((state) => ({
+				state: switchedEdit(state, requireStr(params, "id"), false, "agent"),
+				result: undefined,
+			}));
+		} catch (err) {
+			if (err instanceof SiteEditError) throw new BridgeError(ERR.BAD_PARAMS, err.message);
+			throw err;
+		}
+		return { off: requireStr(params, "id") };
+	},
+	"edits.remove": async (_ctx, params) => {
+		try {
+			await changeEdits((state) => ({ state: removedEdit(state, requireStr(params, "id")), result: undefined }));
+		} catch (err) {
+			if (err instanceof SiteEditError) throw new BridgeError(ERR.BAD_PARAMS, err.message);
+			throw err;
+		}
+		return { removed: requireStr(params, "id") };
+	},
+	"edits.adblock": async (_ctx, params) => {
+		const on = params.on === true;
+		await changeEdits((state) => ({ state: { ...state, adBlock: on }, result: undefined }));
+		return { adBlock: on };
+	},
+};
+
 export const handlers: Record<string, Handler> = {
+	...editHandlers,
 	/** For the MCP `status` tool: what this session may open and where its tabs are. */
 	status: async (ctx) => {
 		const [permissionMode, allowedHosts, tabs] = await Promise.all([
