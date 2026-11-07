@@ -20,6 +20,8 @@ const outDir = process.env.TABKYRA_OUT_DIR || join(packageRoot, "dist-chrome");
 // Pages are code split: the panel parses only what opening it needs, and the rest loads when it's used.
 const pageEntryPoints = {
 	sidepanel: join(packageRoot, "src/sidepanel.ts"),
+	// The hidden page that reads PDFs for get_page_text (src/offscreen/pdf-text.ts): pdf.js needs a worker a service worker can't start.
+	"pdf-text": join(packageRoot, "src/offscreen/pdf-text.ts"),
 };
 // Each of these stays one file. A service worker can't load code with import(), the worker and the microphone page have
 // nothing to share with the panel, and the store zip drops the debug page, which mustn't leave chunks behind.
