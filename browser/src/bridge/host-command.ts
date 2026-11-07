@@ -2,9 +2,10 @@ import { UPDATE_STATUS_KEY } from "./protocol.js";
 
 /**
  * What a person types to run the helper: "polycarp browser" when the helper is the one inside the Polycarp app, "tabkyra" for an
- * npm link or a checkout. The helper says which in its update status; until it has, "tabkyra" is the name that works everywhere.
+ * npm link or a checkout. The helper says which in its update status; until it has, the product's own name. Someone who just
+ * installed from the store has neither, so the screens that show this also say how to get the helper.
  */
-let command = "tabkyra";
+let command = "polycarp browser";
 
 function take(status: unknown): void {
 	const named = (status as { command?: unknown } | undefined)?.command;

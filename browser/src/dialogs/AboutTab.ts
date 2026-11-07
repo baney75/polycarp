@@ -47,7 +47,7 @@ export class AboutTab extends SettingsTab {
 				</div>
 
 				<p class="text-xs text-muted-foreground">
-					${link("https://github.com/baney75/tabkyra", "github.com/baney75/tabkyra")} · AGPL-3.0
+					${link("https://github.com/baney75/polycarp", "github.com/baney75/polycarp")} · AGPL-3.0
 				</p>
 			</div>
 		`;

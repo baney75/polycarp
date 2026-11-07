@@ -2,6 +2,13 @@
 
 Everything the developer dashboard asks for, ready to paste. Build the zip with `scripts/build-store.sh <out dir>`. Reasons for each permission are in [permissions.md](permissions.md).
 
+## Order of the first upload
+
+1. Build the zip and upload it as a draft. Don't submit it yet. Google assigns the id.
+2. Set `STORE_EXTENSION_ID` in `cli/src/install.ts` and `ExtensionStore.id` in `spaces/Sources/BaneySpaces/BrowserSetup.swift`, and merge.
+3. Run `scripts/tag-browser-release.sh` on that commit. It refuses without the id, because the setup prompt builds the helper from this tag.
+4. Submit the draft for review.
+
 ## Store listing tab
 
 **Title:** Polycarp
@@ -87,5 +94,5 @@ No account is needed.
 3. Ask: "Open example.com and tell me what the page says."
 4. Approve example.com when asked. A new tab group opens, and the agent reads the page in it.
 
-Connecting a coding agent needs the free Polycarp helper from https://dbaney.com/polycarp/. It isn't required to review the side panel.
+Connecting a coding agent needs the free Polycarp helper. Settings > Agents > Copy setup prompt gives a coding agent the steps to build it, and the Mac app at https://dbaney.com/polycarp/ includes it. It isn't required to review the side panel.
 ```

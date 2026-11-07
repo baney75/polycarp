@@ -67,7 +67,7 @@ function help(): string {
 		"",
 		`${c.dim("Flags:")} --help, --version. Read commands that list [--json] print JSON for scripts.`,
 		c.dim(EXIT_CODES),
-		`${c.dim("Docs:")} https://github.com/baney75/tabkyra`,
+		`${c.dim("Docs:")} https://github.com/baney75/polycarp`,
 		"",
 	].join("\n");
 }
