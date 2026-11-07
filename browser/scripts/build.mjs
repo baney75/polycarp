@@ -17,8 +17,13 @@ const targetBrowser = "chrome";
 // TABKYRA_OUT_DIR builds elsewhere (test/auth-policy.test.mjs builds a throwaway copy).
 const outDir = process.env.TABKYRA_OUT_DIR || join(packageRoot, "dist-chrome");
 
-const entryPoints = {
+// Pages are code split: the panel parses only what opening it needs, and the rest loads when it's used.
+const pageEntryPoints = {
 	sidepanel: join(packageRoot, "src/sidepanel.ts"),
+};
+// Each of these stays one file. A service worker can't load code with import(), the worker and the microphone page have
+// nothing to share with the panel, and the store zip drops the debug page, which mustn't leave chunks behind.
+const singleFileEntryPoints = {
 	debug: join(packageRoot, "src/debug.ts"),
 	background: join(packageRoot, "src/background.ts"),
 	// Speech to text on this device, in its own worker (src/dictation/worker.ts).
@@ -105,7 +110,8 @@ function stripClaudeCodeIdentity(source) {
 	return out;
 }
 
-const stripRemovedSignIns = {
+/** `required` is for the build that holds the providers; the other still strips anything it happens to load. */
+const stripRemovedSignIns = (required) => ({
 	name: "strip-removed-sign-ins",
 	setup(b) {
 		// Every transform must run on every build; a path that no longer matches would ship
@@ -125,7 +131,7 @@ const stripRemovedSignIns = {
 			return { contents: stripClaudeCodeIdentity(source), loader: "ts" };
 		});
 		b.onEnd((result) => {
-			if (result.errors.length) return;
+			if (result.errors.length || !required) return;
 			const missed = expected.filter((rel) => !applied.has(rel));
 			if (missed.length) {
 				return {
@@ -136,7 +142,7 @@ const stripRemovedSignIns = {
 			}
 		});
 	},
-};
+});
 
 /** A SKILL.md's frontmatter description: one line, or a YAML block (`>`, `|`) folded to one line. */
 function frontmatterDescription(text) {
@@ -164,7 +170,7 @@ function frontmatterDescription(text) {
  * no build can reach a CDN for code (src/dictation/worker.ts). The build fails if the default
  * moves, or if the file holding it is no longer the one bundled.
  */
-const localOnnxRuntime = {
+const localOnnxRuntime = (required) => ({
 	name: "local-onnx-runtime",
 	setup(b) {
 		let applied = false;
@@ -172,7 +178,7 @@ const localOnnxRuntime = {
 			applied = false;
 		});
 		b.onEnd((result) => {
-			if (!result.errors.length && !applied)
+			if (required && !result.errors.length && !applied)
 				return {
 					errors: [
 						{ text: "transformers.web.js wasn't bundled: the ONNX runtime's CDN default was not replaced" },
@@ -188,6 +194,37 @@ const localOnnxRuntime = {
 				);
 			applied = true;
 			return { contents: source.replace(cdn, "/ort/"), loader: "js" };
+		});
+	},
+});
+
+/**
+ * highlight.js with every language, and KaTeX, are called synchronously while drawing, so they can't simply become
+ * import(). In the panel these names mean small stand-ins that load the real library on first use (src/lazy/).
+ */
+const unusedInExtensions = {
+	name: "unused-in-extensions",
+	setup(b) {
+		// pi-ai's validator never builds Ajv in an extension: it needs eval, which the extension's CSP forbids
+		// (packages/ai/src/utils/validation.ts checks chrome.runtime.id first). Nothing else in the panel uses it.
+		b.onResolve({ filter: /^(ajv|ajv-formats)$/ }, (args) => ({
+			path: args.path,
+			namespace: "unused-in-extensions",
+		}));
+		b.onLoad({ filter: /.*/, namespace: "unused-in-extensions" }, () => ({
+			contents: 'export default function unused() { throw new Error("Ajv is not available in the extension"); }',
+			loader: "js",
+		}));
+	},
+};
+
+const lazyLibraries = {
+	name: "lazy-libraries",
+	setup(b) {
+		const standIn = { "highlight.js": "src/lazy/highlight.ts", katex: "src/lazy/katex.ts" };
+		b.onResolve({ filter: /^(highlight\.js|katex)$/ }, (args) => {
+			const path = join(packageRoot, standIn[args.path]);
+			return args.importer === path ? undefined : { path };
 		});
 	},
 };
@@ -244,9 +281,7 @@ function markedEntry() {
 }
 
 const buildOptions = {
-	plugins: [stripRemovedSignIns, librarySkills, localOnnxRuntime],
 	absWorkingDir: packageRoot,
-	entryPoints,
 	bundle: true,
 	outdir: outDir,
 	format: "esm",
@@ -295,6 +330,20 @@ const buildOptions = {
 		"lit/directives/unsafe-html.js": join(packageRoot, "node_modules/lit/directives/unsafe-html.js"),
 	},
 };
+
+const pageBuild = () => ({
+	...buildOptions,
+	entryPoints: pageEntryPoints,
+	plugins: [stripRemovedSignIns(true), unusedInExtensions, lazyLibraries, librarySkills, localOnnxRuntime(false)],
+	splitting: true,
+	// Beside the pages, not in a folder: PDF.js finds its worker relative to the file it's bundled into.
+	chunkNames: "[name]-[hash]",
+});
+const singleFileBuild = () => ({
+	...buildOptions,
+	entryPoints: singleFileEntryPoints,
+	plugins: [stripRemovedSignIns(false), librarySkills, localOnnxRuntime(true)],
+});
 
 // ============================================================================
 // VERSIONING
@@ -413,8 +462,7 @@ const run = async () => {
 	if (isWatch) {
 		info = buildInfo(packageRoot);
 		buildOptions.define.__TABKYRA_BUILD__ = JSON.stringify(info);
-		const ctx = await context(buildOptions);
-		await ctx.watch();
+		for (const options of [pageBuild(), singleFileBuild()]) await (await context(options)).watch();
 		copyStatic();
 
 		// Watch the entire static directory
@@ -440,7 +488,9 @@ const run = async () => {
 		if (!process.env.TABKYRA_NO_BUMP) bumpVersion();
 		info = buildInfo(packageRoot);
 		buildOptions.define.__TABKYRA_BUILD__ = JSON.stringify(info);
-		await build(buildOptions);
+		const [pages] = await Promise.all([build({ ...pageBuild(), metafile: true }), build(singleFileBuild())]);
+		// What fills each file, for scripts/panel-size.mjs and test/panel-size.test.mjs. Never in a real build: it's 5 MB.
+		if (process.env.TABKYRA_META) writeFileSync(join(outDir, "meta.json"), JSON.stringify(pages.metafile));
 		copyStatic();
 		// The stylesheet is generated by Tailwind; without it the side panel renders unstyled.
 		// `npm run build` also runs this step, but a direct invocation must produce a complete bundle.

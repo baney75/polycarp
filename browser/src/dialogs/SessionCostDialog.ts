@@ -3,13 +3,11 @@ import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
 import { icon } from "@mariozechner/mini-lit/dist/icons.js";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
-import { Chart, type ChartConfiguration, registerables } from "chart.js";
+import type { Chart, ChartConfiguration } from "chart.js";
 import type { PropertyValues } from "lit";
 import { html } from "lit";
 import { DollarSign } from "lucide";
-
-// Register Chart.js components
-Chart.register(...registerables);
+import { loadChart } from "./chart-lib.js";
 
 interface CostEntry {
 	messageIndex: number;
@@ -34,6 +32,7 @@ export class SessionCostDialog extends DialogBase {
 	private messages: AgentMessage[] = [];
 	private costEntries: CostEntry[] = [];
 	private chart?: Chart;
+	private chartLoading = false;
 	private static currentDialog?: SessionCostDialog;
 
 	protected modalWidth = "min(1200px, 95vw)";
@@ -102,8 +101,15 @@ export class SessionCostDialog extends DialogBase {
 		super.updated?.(_changedProperties);
 
 		// Render chart after DOM update
-		if (!this.chart && this.costEntries.length > 0) {
-			this.renderChart();
+		if (!this.chart && !this.chartLoading && this.costEntries.length > 0) {
+			this.chartLoading = true;
+			void loadChart()
+				.then(({ Chart: ChartClass }) => {
+					if (this.isConnected) this.renderChart(ChartClass);
+				})
+				.finally(() => {
+					this.chartLoading = false;
+				});
 		}
 	}
 
@@ -119,7 +125,7 @@ export class SessionCostDialog extends DialogBase {
 		}
 	}
 
-	private renderChart() {
+	private renderChart(ChartClass: typeof Chart) {
 		const canvas = this.querySelector("#cost-chart") as HTMLCanvasElement | null;
 		if (!canvas) return;
 
@@ -205,7 +211,7 @@ export class SessionCostDialog extends DialogBase {
 			},
 		};
 
-		this.chart = new Chart(canvas, config);
+		this.chart = new ChartClass(canvas, config);
 	}
 
 	protected override renderContent() {

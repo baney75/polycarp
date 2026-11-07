@@ -25,6 +25,12 @@ function paint(): void {
 	const vars = appearanceVariables(current, root.classList.contains("dark"), polycarp);
 	for (const [name, value] of Object.entries(vars)) root.style.setProperty(name, value);
 	applied = Object.keys(vars);
+	// For static/theme-loader.js, which runs before the stored theme can be read.
+	try {
+		localStorage.setItem("tk-colors", JSON.stringify(vars));
+	} catch {
+		// Storage is full or blocked: the first frame uses the stylesheet's colors.
+	}
 	// "Reduced" motion also stops the panel's animations, not only its transitions.
 	root.toggleAttribute("data-tk-reduced-motion", polycarp?.motion.reduced === true);
 }

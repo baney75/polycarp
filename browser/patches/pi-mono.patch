@@ -928,46 +928,75 @@ index 3d2693150..520034e64 100644
  			// Assistant message - render inline tool messages during streaming
  			return html`
  				<div class="flex flex-col gap-3 mb-3">
-diff --git a/packages/web-ui/src/components/transcript-hook.ts b/packages/web-ui/src/components/transcript-hook.ts
-new file mode 100644
-index 000000000..0b51c2070
---- /dev/null
-+++ b/packages/web-ui/src/components/transcript-hook.ts
-@@ -0,0 +1,34 @@
-+import type { AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
-+import type { AssistantMessage, ToolResultMessage } from "@mariozechner/pi-ai";
-+import type { TemplateResult } from "lit";
-+
-+export interface TranscriptContext {
-+	tools: AgentTool[];
-+	pendingToolCalls?: Set<string>;
-+	toolResultsById: Map<string, ToolResultMessage>;
-+	isStreaming: boolean;
-+	onCostClick?: () => void;
-+}
-+
-+/**
-+ * An app-supplied transcript layout. `items` replaces MessageList's one-item-per-message
-+ * rendering; `live` renders the assistant message still streaming. Either may return
-+ * undefined to fall back to the built-in rendering.
-+ */
-+export interface TranscriptRenderer {
-+	items(
-+		messages: AgentMessage[],
-+		ctx: TranscriptContext,
-+	): Array<{ key: string; template: TemplateResult }> | undefined;
-+	live?(message: AssistantMessage, ctx: TranscriptContext): TemplateResult | undefined;
-+}
-+
-+let current: TranscriptRenderer | undefined;
-+
-+export function setTranscriptRenderer(renderer: TranscriptRenderer | undefined): void {
-+	current = renderer;
-+}
-+
-+export function getTranscriptRenderer(): TranscriptRenderer | undefined {
-+	return current;
-+}
+diff --git a/packages/web-ui/src/dialogs/AttachmentOverlay.ts b/packages/web-ui/src/dialogs/AttachmentOverlay.ts
+index 4ec7734c1..bfe191eb8 100644
+--- a/packages/web-ui/src/dialogs/AttachmentOverlay.ts
++++ b/packages/web-ui/src/dialogs/AttachmentOverlay.ts
+@@ -1,12 +1,10 @@
+ import "@mariozechner/mini-lit/dist/ModeToggle.js";
+ import { icon } from "@mariozechner/mini-lit";
+ import { Button } from "@mariozechner/mini-lit/dist/Button.js";
+-import { renderAsync } from "docx-preview";
+ import { html, LitElement } from "lit";
+ import { state } from "lit/decorators.js";
+ import { Download, X } from "lucide";
+-import * as pdfjsLib from "pdfjs-dist";
+-import * as XLSX from "xlsx";
++import { loadDocxPreview, loadPdfjs, loadXlsx } from "../utils/lazy-documents.js";
+ import type { Attachment } from "../utils/attachment-utils.js";
+ import { i18n } from "../utils/i18n.js";
+ 
+@@ -316,6 +314,7 @@ export class AttachmentOverlay extends LitElement {
+ 			}
+ 
+ 			// Load the PDF
++			const pdfjsLib = await loadPdfjs();
+ 			this.currentLoadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+ 			pdf = await this.currentLoadingTask.promise;
+ 			this.currentLoadingTask = null;
+@@ -397,6 +396,7 @@ export class AttachmentOverlay extends LitElement {
+ 			container.appendChild(wrapper);
+ 
+ 			// Render the DOCX file into the wrapper
++			const { renderAsync } = await loadDocxPreview();
+ 			await renderAsync(arrayBuffer, wrapper as HTMLElement, undefined, {
+ 				className: "docx",
+ 				inWrapper: true,
+@@ -490,6 +490,7 @@ export class AttachmentOverlay extends LitElement {
+ 			const arrayBuffer = this.base64ToArrayBuffer(this.attachment.content);
+ 
+ 			// Read the workbook
++			const XLSX = await loadXlsx();
+ 			const workbook = XLSX.read(arrayBuffer, { type: "array" });
+ 
+ 			// Clear container
+@@ -518,7 +519,7 @@ export class AttachmentOverlay extends LitElement {
+ 					const sheetDiv = document.createElement("div");
+ 					sheetDiv.style.display = index === 0 ? "flex" : "none";
+ 					sheetDiv.className = "flex-1 overflow-auto";
+-					sheetDiv.appendChild(this.renderExcelSheet(workbook.Sheets[sheetName], sheetName));
++					sheetDiv.appendChild(this.renderExcelSheet(XLSX, workbook.Sheets[sheetName], sheetName));
+ 					sheetContents.push(sheetDiv);
+ 
+ 					// Tab click handler
+@@ -548,7 +549,7 @@ export class AttachmentOverlay extends LitElement {
+ 			} else {
+ 				// Single sheet
+ 				const sheetName = workbook.SheetNames[0];
+-				wrapper.appendChild(this.renderExcelSheet(workbook.Sheets[sheetName], sheetName));
++				wrapper.appendChild(this.renderExcelSheet(XLSX, workbook.Sheets[sheetName], sheetName));
+ 			}
+ 		} catch (error: any) {
+ 			console.error("Error rendering Excel:", error);
+@@ -556,7 +557,7 @@ export class AttachmentOverlay extends LitElement {
+ 		}
+ 	}
+ 
+-	private renderExcelSheet(worksheet: any, sheetName: string): HTMLElement {
++	private renderExcelSheet(XLSX: Awaited<ReturnType<typeof loadXlsx>>, worksheet: any, sheetName: string): HTMLElement {
+ 		const sheetDiv = document.createElement("div");
+ 
+ 		// Generate HTML table
 diff --git a/packages/web-ui/src/dialogs/ModelSelector.ts b/packages/web-ui/src/dialogs/ModelSelector.ts
 index 192c3c536..9cdc25848 100644
 --- a/packages/web-ui/src/dialogs/ModelSelector.ts
@@ -1235,6 +1264,100 @@ index 48284c742..583eabc9d 100644
  export { ArtifactsToolRenderer } from "./tools/artifacts/artifacts-tool-renderer.js";
  export { HtmlArtifact } from "./tools/artifacts/HtmlArtifact.js";
  export { ImageArtifact } from "./tools/artifacts/ImageArtifact.js";
+diff --git a/packages/web-ui/src/tools/artifacts/DocxArtifact.ts b/packages/web-ui/src/tools/artifacts/DocxArtifact.ts
+index 0d9e22c43..3814fd387 100644
+--- a/packages/web-ui/src/tools/artifacts/DocxArtifact.ts
++++ b/packages/web-ui/src/tools/artifacts/DocxArtifact.ts
+@@ -1,5 +1,5 @@
+ import { DownloadButton } from "@mariozechner/mini-lit/dist/DownloadButton.js";
+-import { renderAsync } from "docx-preview";
++import { loadDocxPreview } from "../../utils/lazy-documents.js";
+ import { html, type TemplateResult } from "lit";
+ import { customElement, property, state } from "lit/decorators.js";
+ import { i18n } from "../../utils/i18n.js";
+@@ -102,6 +102,7 @@ export class DocxArtifact extends ArtifactElement {
+ 			container.appendChild(wrapper);
+ 
+ 			// Render the DOCX file into the wrapper
++			const { renderAsync } = await loadDocxPreview();
+ 			await renderAsync(arrayBuffer, wrapper as HTMLElement, undefined, {
+ 				className: "docx",
+ 				inWrapper: true,
+diff --git a/packages/web-ui/src/tools/artifacts/ExcelArtifact.ts b/packages/web-ui/src/tools/artifacts/ExcelArtifact.ts
+index dd6d41d7b..602e9c58e 100644
+--- a/packages/web-ui/src/tools/artifacts/ExcelArtifact.ts
++++ b/packages/web-ui/src/tools/artifacts/ExcelArtifact.ts
+@@ -1,7 +1,7 @@
+ import { DownloadButton } from "@mariozechner/mini-lit/dist/DownloadButton.js";
+ import { html, type TemplateResult } from "lit";
+ import { customElement, property, state } from "lit/decorators.js";
+-import * as XLSX from "xlsx";
++import { loadXlsx } from "../../utils/lazy-documents.js";
+ import { i18n } from "../../utils/i18n.js";
+ import { ArtifactElement } from "./ArtifactElement.js";
+ 
+@@ -98,6 +98,7 @@ export class ExcelArtifact extends ArtifactElement {
+ 
+ 		try {
+ 			const arrayBuffer = this.base64ToArrayBuffer(this._content);
++			const XLSX = await loadXlsx();
+ 			const workbook = XLSX.read(arrayBuffer, { type: "array" });
+ 
+ 			container.innerHTML = "";
+@@ -125,7 +126,7 @@ export class ExcelArtifact extends ArtifactElement {
+ 					const sheetDiv = document.createElement("div");
+ 					sheetDiv.style.display = index === 0 ? "flex" : "none";
+ 					sheetDiv.className = "flex-1 overflow-auto";
+-					sheetDiv.appendChild(this.renderExcelSheet(workbook.Sheets[sheetName], sheetName));
++					sheetDiv.appendChild(this.renderExcelSheet(XLSX, workbook.Sheets[sheetName], sheetName));
+ 					sheetContents.push(sheetDiv);
+ 
+ 					// Tab click handler
+@@ -155,7 +156,7 @@ export class ExcelArtifact extends ArtifactElement {
+ 			} else {
+ 				// Single sheet
+ 				const sheetName = workbook.SheetNames[0];
+-				wrapper.appendChild(this.renderExcelSheet(workbook.Sheets[sheetName], sheetName));
++				wrapper.appendChild(this.renderExcelSheet(XLSX, workbook.Sheets[sheetName], sheetName));
+ 			}
+ 		} catch (error: any) {
+ 			console.error("Error rendering Excel:", error);
+@@ -163,7 +164,7 @@ export class ExcelArtifact extends ArtifactElement {
+ 		}
+ 	}
+ 
+-	private renderExcelSheet(worksheet: any, sheetName: string): HTMLElement {
++	private renderExcelSheet(XLSX: Awaited<ReturnType<typeof loadXlsx>>, worksheet: any, sheetName: string): HTMLElement {
+ 		const sheetDiv = document.createElement("div");
+ 
+ 		// Generate HTML table
+diff --git a/packages/web-ui/src/tools/artifacts/PdfArtifact.ts b/packages/web-ui/src/tools/artifacts/PdfArtifact.ts
+index e139c2a45..48b469e42 100644
+--- a/packages/web-ui/src/tools/artifacts/PdfArtifact.ts
++++ b/packages/web-ui/src/tools/artifacts/PdfArtifact.ts
+@@ -1,13 +1,10 @@
+ import { DownloadButton } from "@mariozechner/mini-lit/dist/DownloadButton.js";
+ import { html, type TemplateResult } from "lit";
+ import { customElement, property, state } from "lit/decorators.js";
+-import * as pdfjsLib from "pdfjs-dist";
++import { loadPdfjs } from "../../utils/lazy-documents.js";
+ import { i18n } from "../../utils/i18n.js";
+ import { ArtifactElement } from "./ArtifactElement.js";
+ 
+-// Configure PDF.js worker
+-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+-
+ @customElement("pdf-artifact")
+ export class PdfArtifact extends ArtifactElement {
+ 	@property({ type: String }) private _content = "";
+@@ -117,6 +114,7 @@ export class PdfArtifact extends ArtifactElement {
+ 			}
+ 
+ 			// Load the PDF
++			const pdfjsLib = await loadPdfjs();
+ 			this.currentLoadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+ 			pdf = await this.currentLoadingTask.promise;
+ 			this.currentLoadingTask = null;
 diff --git a/packages/web-ui/src/tools/artifacts/artifacts.ts b/packages/web-ui/src/tools/artifacts/artifacts.ts
 index 0a5474a7a..05f41d16d 100644
 --- a/packages/web-ui/src/tools/artifacts/artifacts.ts
@@ -1268,6 +1391,56 @@ index 0a5474a7a..05f41d16d 100644
  				element = new HtmlArtifact();
  				(element as HtmlArtifact).runtimeProviders = this.getHtmlArtifactRuntimeProviders();
  				if (this.sandboxUrlProvider) {
+diff --git a/packages/web-ui/src/utils/attachment-utils.ts b/packages/web-ui/src/utils/attachment-utils.ts
+index afe98e443..58e861509 100644
+--- a/packages/web-ui/src/utils/attachment-utils.ts
++++ b/packages/web-ui/src/utils/attachment-utils.ts
+@@ -1,12 +1,6 @@
+-import { parseAsync } from "docx-preview";
+-import JSZip from "jszip";
+ import type { PDFDocumentProxy } from "pdfjs-dist";
+-import * as pdfjsLib from "pdfjs-dist";
+-import * as XLSX from "xlsx";
+ import { i18n } from "./i18n.js";
+-
+-// Configure PDF.js worker - we'll need to bundle this
+-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
++import { loadDocxPreview, loadJSZip, loadPdfjs, loadXlsx } from "./lazy-documents.js";
+ 
+ export interface Attachment {
+ 	id: string;
+@@ -206,6 +200,7 @@ async function processPdf(
+ ): Promise<{ extractedText: string; preview?: string }> {
+ 	let pdf: PDFDocumentProxy | null = null;
+ 	try {
++		const pdfjsLib = await loadPdfjs();
+ 		pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+ 
+ 		// Extract text with page structure
+@@ -272,6 +267,7 @@ async function generatePdfPreview(pdf: PDFDocumentProxy): Promise<string | undef
+ async function processDocx(arrayBuffer: ArrayBuffer, fileName: string): Promise<{ extractedText: string }> {
+ 	try {
+ 		// Parse document structure
++		const { parseAsync } = await loadDocxPreview();
+ 		const wordDoc = await parseAsync(arrayBuffer);
+ 
+ 		// Extract structured text from document body
+@@ -363,6 +359,7 @@ function extractTextFromElement(element: any): string {
+ async function processPptx(arrayBuffer: ArrayBuffer, fileName: string): Promise<{ extractedText: string }> {
+ 	try {
+ 		// Load the PPTX file as a ZIP
++		const JSZip = await loadJSZip();
+ 		const zip = await JSZip.loadAsync(arrayBuffer);
+ 
+ 		// PPTX slides are stored in ppt/slides/slide[n].xml
+@@ -449,6 +446,7 @@ async function processPptx(arrayBuffer: ArrayBuffer, fileName: string): Promise<
+ async function processExcel(arrayBuffer: ArrayBuffer, fileName: string): Promise<{ extractedText: string }> {
+ 	try {
+ 		// Read the workbook
++		const XLSX = await loadXlsx();
+ 		const workbook = XLSX.read(arrayBuffer, { type: "array" });
+ 
+ 		let extractedText = `<excel filename="${fileName}">`;
 diff --git a/packages/web-ui/src/utils/i18n.ts b/packages/web-ui/src/utils/i18n.ts
 index 1f50a7d08..dad235a65 100644
 --- a/packages/web-ui/src/utils/i18n.ts
@@ -1375,286 +1548,43 @@ index 1f50a7d08..dad235a65 100644
  		Off: "Aus",
  		Minimal: "Minimal",
  		Low: "Niedrig",
-diff --git a/packages/web-ui/src/utils/message-queue.ts b/packages/web-ui/src/utils/message-queue.ts
+diff --git a/packages/web-ui/src/utils/lazy-documents.ts b/packages/web-ui/src/utils/lazy-documents.ts
 new file mode 100644
-index 000000000..daa256961
+index 000000000..62d90cf66
 --- /dev/null
-+++ b/packages/web-ui/src/utils/message-queue.ts
-@@ -0,0 +1,248 @@
-+import type { AgentMessage } from "@mariozechner/pi-agent-core";
-+import type { Attachment } from "./attachment-utils.js";
-+
-+export interface QueuedMessage {
-+	id: number;
-+	input: string;
-+	attachments?: Attachment[];
-+	/** Set once "Send now" handed it to the running agent; cleared if the run ends first. */
-+	steered?: AgentMessage;
-+	/** Set by Send now: its press order. Pressed items lead the list, in press order. */
-+	nowSeq?: number;
-+}
-+
-+/** The parts of Agent the queue uses. */
-+export interface QueueAgent {
-+	state: { isStreaming: boolean; messages: AgentMessage[] };
-+	steer(message: AgentMessage): void;
-+	clearSteeringQueue(): void;
-+	waitForIdle(): Promise<void>;
-+}
-+
++++ b/packages/web-ui/src/utils/lazy-documents.ts
+@@ -0,0 +1,17 @@
 +/**
-+ * How a send went. "started": a prompt is running. "busy": another send or run got there
-+ * first, so the item goes back in its place and waits for the next chance. "refused": it can't
-+ * go (no key, no model), so the item goes back in its place and is held until Send now or ×.
++ * The document libraries load the first time something needs them, not when the panel opens: together
++ * they are most of what would otherwise be parsed on every open, and most chats never touch them.
 + */
-+export type SendResult = "started" | "busy" | "refused";
++let pdfjs: Promise<typeof import("pdfjs-dist")> | undefined;
 +
-+/**
-+ * Messages the user sends while the agent runs, for one agent. The list is the only queue:
-+ * when a run ends the first item goes out through `send` as an ordinary prompt. "Send now"
-+ * during a run hands the item (after a page note, unless the same note already went this run)
-+ * to the agent with steer(), which delivers it after the current tool call; it leaves the list
-+ * once the agent injects it, and if the run ends first it goes out ahead of the rest. Items
-+ * pressed with Send now lead the list in press order. A stopped or failed run holds the items
-+ * that were waiting then (not pressed ones, not later ones) until Send now or ×.
-+ */
-+export class MessageQueue {
-+	items: QueuedMessage[] = [];
-+	/** Items that were waiting when a run was stopped or failed; they wait for Send now or ×. */
-+	private held = new Set<number>();
-+	private running: boolean;
-+	private seq = 0;
-+	private nowSeq = 0;
-+	private draining = false;
-+	/** A drain was asked for while one ran; run again when it finishes. */
-+	private drainAgain = false;
-+	private disposed = false;
-+	/** The page note steered but not yet injected, so the same note isn't steered twice. */
-+	private lastContext?: string;
-+	private pendingContext: AgentMessage[] = [];
-+	/** Send now presses still building their page context; the drain waits for them to decide. */
-+	private sendNowPending = 0;
-+
-+	constructor(
-+		readonly agent: QueueAgent,
-+		private readonly send: (item: QueuedMessage) => Promise<SendResult>,
-+		private readonly changed: () => void,
-+		private readonly beforeSteer?: () => Promise<AgentMessage[]>,
-+	) {
-+		this.running = agent.state.isStreaming;
-+	}
-+
-+	/** Something is held after a Stop or failure (the panel shows a note). */
-+	get paused(): boolean {
-+		return this.items.some((q) => this.held.has(q.id));
-+	}
-+
-+	add(input: string, attachments?: Attachment[]): void {
-+		// New items are never held: a Stop only holds what was waiting when it happened.
-+		this.items = [...this.items, { id: ++this.seq, input, attachments }];
-+		this.changed();
-+	}
-+
-+	/** The user message for an item, shaped as Agent.prompt() builds one. */
-+	static message(item: QueuedMessage): AgentMessage {
-+		if (item.attachments && item.attachments.length > 0) {
-+			return {
-+				role: "user-with-attachments",
-+				content: item.input,
-+				attachments: item.attachments,
-+				timestamp: Date.now(),
-+			} as unknown as AgentMessage;
-+		}
-+		return { role: "user", content: [{ type: "text", text: item.input }], timestamp: Date.now() } as AgentMessage;
-+	}
-+
-+	/** Send an item now: into the running turn, or next when nothing runs. Always resumes. */
-+	async sendNow(id: number): Promise<void> {
-+		const pending = (q: QueuedMessage) => q.id === id && !q.steered;
-+		if (!this.items.some(pending)) return;
-+		this.held.clear();
-+		// Press order, recorded on the item at once: a Stop during the wait below must not hold it.
-+		const nowSeq = ++this.nowSeq;
-+		this.items = this.items.map((q) => (q.id === id ? { ...q, nowSeq } : q));
-+		let context: AgentMessage[] = [];
-+		if (this.running) {
-+			this.sendNowPending++;
-+			try {
-+				context = (await this.beforeSteer?.().catch(() => [])) ?? [];
-+			} finally {
-+				this.sendNowPending--;
-+			}
-+		}
-+		const item = this.items.find(pending);
-+		if (!item) {
-+			// Removed while its context was built; the drain stood down for it, so restart it.
-+			if (!this.running) void this.drain();
-+			return;
-+		}
-+		this.held.delete(id);
-+		if (this.running) {
-+			const message = MessageQueue.message(item);
-+			// The page note goes unless it repeats the one already steered in this run.
-+			const key = context.length > 0 ? JSON.stringify(context.map((m) => (m as { url?: string }).url ?? m)) : undefined;
-+			if (key && key !== this.lastContext) {
-+				for (const extra of context) this.agent.steer(extra);
-+				this.lastContext = key;
-+				this.pendingContext = context;
-+			}
-+			this.agent.steer(message);
-+			this.items = this.items.map((q) => (q.id === id ? { ...q, steered: message, nowSeq } : q));
-+			this.changed();
-+			return;
-+		}
-+		// Nothing runs: it goes next, after items pressed before it.
-+		this.items = this.ordered(this.items.map((q) => (q.id === id ? { ...q, nowSeq } : q)));
-+		this.changed();
-+		void this.drain();
-+	}
-+
-+	/** Pressed items first, in press order; the rest keep their order. */
-+	private ordered(items: QueuedMessage[]): QueuedMessage[] {
-+		const pressed = items.filter((q) => q.nowSeq !== undefined).sort((x, y) => (x.nowSeq ?? 0) - (y.nowSeq ?? 0));
-+		return [...pressed, ...items.filter((q) => q.nowSeq === undefined)];
-+	}
-+
-+	/** The panel missed events (it was disconnected): take the run state from the agent again. */
-+	sync(): void {
-+		// A Send now message the agent injected while nobody listened is already sent.
-+		const seen = new Set(this.agent.state.messages);
-+		this.items = this.items.filter((q) => !q.steered || !seen.has(q.steered));
-+		this.running = this.agent.state.isStreaming;
-+		if (this.running) {
-+			this.changed();
-+			return;
-+		}
-+		// The run ended unheard: apply the end-of-run rules (a Stop still holds what waited).
-+		this.onAgentEnd(this.agent.state.messages);
-+	}
-+
-+	/** Try to send again (a send that held the panel ended without starting a run). */
-+	kick(): void {
-+		void this.drain();
-+	}
-+
-+	remove(id: number): void {
-+		this.items = this.items.filter((q) => q.id !== id || q.steered);
-+		this.held.delete(id);
-+		this.changed();
-+	}
-+
-+	onAgentStart(): void {
-+		this.running = true;
-+		this.lastContext = undefined;
-+		this.pendingContext = [];
-+	}
-+
-+	/** A message the agent injected: a steered item is now in the transcript. */
-+	onMessageStart(message: AgentMessage): void {
-+		// Once the note is in the transcript, the panel's own page check takes over from here.
-+		if (this.pendingContext.includes(message)) {
-+			this.lastContext = undefined;
-+			this.pendingContext = [];
-+		}
-+		if (!this.items.some((q) => q.steered === message)) return;
-+		this.items = this.items.filter((q) => q.steered !== message);
-+		this.changed();
-+	}
-+
-+	/** The run is over; send the next item, or pause if the user stopped it or it failed. */
-+	onAgentEnd(messages: AgentMessage[]): void {
-+		this.running = false;
-+		this.lastContext = undefined;
-+		this.pendingContext = [];
-+		// A steer that arrived after the last turn is never injected. It was asked for first, so
-+		// it goes out first.
-+		this.agent.clearSteeringQueue();
-+		this.items = this.ordered(this.items.map((q) => (q.steered ? { ...q, steered: undefined } : q)));
-+		const last = [...messages].reverse().find((m) => m.role === "assistant") as { stopReason?: string } | undefined;
-+		// A Stop or failure holds what was waiting, except items the user pressed Send now on.
-+		if (last?.stopReason === "aborted" || last?.stopReason === "error") {
-+			for (const q of this.items) if (q.nowSeq === undefined) this.held.add(q.id);
-+		}
-+		this.changed();
-+		void this.drain();
-+	}
-+
-+	/** Forget everything (the panel switched to another session). */
-+	dispose(): void {
-+		this.disposed = true;
-+		this.agent.clearSteeringQueue();
-+		this.items = [];
-+		this.held.clear();
-+	}
-+
-+	/** Once the agent is idle, send the first item not held; the next waits for that run's end. */
-+	private async drain(): Promise<void> {
-+		if (this.draining) {
-+			this.drainAgain = true;
-+			return;
-+		}
-+		this.draining = true;
-+		try {
-+			await this.agent.waitForIdle();
-+			// A Send now still building its context decides what goes next; it drains when done.
-+			if (this.disposed || this.running || this.sendNowPending > 0) return;
-+			const next = this.items.find((q) => !this.held.has(q.id));
-+			if (!next) return;
-+			this.items = this.items.filter((q) => q !== next);
-+			this.changed();
-+			let result: SendResult;
-+			try {
-+				result = await this.send(next);
-+			} catch {
-+				result = "refused";
-+			}
-+			if (result !== "started" && !this.disposed) {
-+				// Back in its place: behind anything pressed while it was out.
-+				this.items = this.ordered([next, ...this.items]);
-+				if (result === "refused") this.held.add(next.id);
-+				this.changed();
-+			}
-+		} finally {
-+			this.draining = false;
-+			// Can't spin: a refused item is held, and a busy one waits on waitForIdle or a run.
-+			if (this.drainAgain) {
-+				this.drainAgain = false;
-+				void this.drain();
-+			}
-+		}
-+	}
-+
-+	/** Whether the queue has something it would send now (nothing held, not mid-send). */
-+	get hasSendable(): boolean {
-+		return this.items.some((q) => !q.steered && !this.held.has(q.id));
-+	}
-+}
-diff --git a/packages/web-ui/src/utils/model-hooks.ts b/packages/web-ui/src/utils/model-hooks.ts
-new file mode 100644
-index 000000000..76862744d
---- /dev/null
-+++ b/packages/web-ui/src/utils/model-hooks.ts
-@@ -0,0 +1,23 @@
-+import type { Model } from "@mariozechner/pi-ai";
-+
-+/** An app-supplied entry the model selector always lists first, with its own title. */
-+export interface PinnedModel {
-+	model: Model<any>;
-+	title: string;
-+	subtitle?: string;
++export function loadPdfjs() {
++	pdfjs ??= import("pdfjs-dist").then((lib) => {
++		lib.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
++		return lib;
++	});
++	return pdfjs;
 +}
 +
-+let pinned: (() => PinnedModel[]) | undefined;
-+
-+/** Entries the model selector lists above every provider's models. */
-+export function setPinnedModels(provider: (() => PinnedModel[]) | undefined): void {
-+	pinned = provider;
-+}
-+
-+export function getPinnedModels(): PinnedModel[] {
-+	try {
-+		return pinned?.() ?? [];
-+	} catch {
-+		return [];
-+	}
-+}
++export const loadXlsx = () => import("xlsx");
++export const loadDocxPreview = () => import("docx-preview");
++export const loadJSZip = () => import("jszip").then((lib) => lib.default);
+diff --git a/packages/web-ui/src/utils/model-discovery.ts b/packages/web-ui/src/utils/model-discovery.ts
+index 299aa9aca..4c3ddd3cc 100644
+--- a/packages/web-ui/src/utils/model-discovery.ts
++++ b/packages/web-ui/src/utils/model-discovery.ts
+@@ -1,4 +1,3 @@
+-import { LMStudioClient } from "@lmstudio/sdk";
+ import type { Model } from "@mariozechner/pi-ai";
+ import { Ollama } from "ollama/browser";
+ 
+@@ -213,6 +212,7 @@ export async function discoverLMStudioModels(baseUrl: string, _apiKey?: string):
+ 		const port = url.port ? parseInt(url.port, 10) : 1234;
+ 
+ 		// Create LM Studio client
++		const { LMStudioClient } = await import("@lmstudio/sdk");
+ 		const client = new LMStudioClient({ baseUrl: `ws://${url.hostname}:${port}` });
+ 
+ 		// List all downloaded models
