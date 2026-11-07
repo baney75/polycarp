@@ -60,8 +60,10 @@ enum DockRestart {
         let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first
         // Until the old Dock has actually gone, its start reads as settled, so our own last restart counts too.
         let uptime = DockRestartGate.uptime(dockRunning: dock != nil, started: dock.flatMap { DockRestartGate.processStart(pid: $0.processIdentifier) }, lastKill: lastKill)
+        let spaces = DockSpaces.current()
+        if spaces.animating { lastSpaceChange = Date() }
         let quiet = lastSpaceChange.map { Date().timeIntervalSince($0) } ?? .infinity
-        switch DockRestartGate.decide(onFullScreenSpace: Windows.onFullScreenSpace(), switching: isSwitching(), dockUptime: uptime, sinceSpaceChange: quiet) {
+        switch DockRestartGate.decide(onFullScreenSpace: spaces.unsafe, switching: isSwitching(), dockUptime: uptime, sinceSpaceChange: quiet) {
         case .wait(let reason):
             if reason != lastReason { Trace.log("dock restart: waiting, \(reason.rawValue)") }
             lastReason = reason

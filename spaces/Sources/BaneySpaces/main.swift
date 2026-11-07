@@ -8,6 +8,10 @@ let crashLoopOneShots: Set<String> = [
     "--restore-shortcuts", "--restore-dock", "--check-settings", "--unregister-login",
 ]
 
+// An older build, replaced while it ran, asking for the helper it used to be. The app must not start for that; whatever it owed,
+// the next start of the Dock picks up. See `DockRestartHelper`.
+if CommandLine.arguments.contains(DockRestartHelper.argument) { exit(0) }
+
 // First, before AppKit, sockets, files, the Dock, hotkeys or settings: `--version` and `--help`
 // print and exit. Starting the app with `--version` used to start a whole second copy.
 if let answer = EntryPoint.immediate(arguments: CommandLine.arguments, info: Bundle.main.infoDictionary) {
@@ -96,7 +100,6 @@ if instanceLock != nil {
     }
 }
 
-// Left behind by a quit: restarts the Dock once it's safe, then exits (`DockRestart`).
 
 // `Polycarp --render <folder>` draws product images with sample windows, then exits.
 if let i = CommandLine.arguments.firstIndex(of: "--render"), i + 1 < CommandLine.arguments.count {

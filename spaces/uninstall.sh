@@ -35,7 +35,7 @@ problems=()
 problem() { problems+=("$*"); }
 running() {
   [ -z "$TEST" ] || return 1
-  # A helper waiting to restart the Dock (--restart-when-safe) runs from the app's path but isn't the app, and it is safe to leave.
+  # A helper an older build left waiting to restart the Dock (--restart-when-safe) runs from the app's path but isn't the app, and it is safe to leave.
   pgrep -fl "Polycarp.app/Contents/MacOS/Polycarp" 2>/dev/null | grep -vq -- --restart-when-safe \
     || pgrep -fl "$APP/Contents/MacOS/" 2>/dev/null | grep -vq -- --restart-when-safe
 }
