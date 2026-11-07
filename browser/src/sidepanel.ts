@@ -626,6 +626,8 @@ function refreshModelLabel(force = false) {
 	};
 }
 
+const WELCOME_SEEN_KEY = "tk-welcome-seen";
+
 async function hasAnyApiKey(): Promise<boolean> {
 	const providers = await storage.providerKeys.list();
 	return providers.length > 0;
@@ -1631,15 +1633,19 @@ async function initApp() {
 	void watchBridgeQuestions(renderApp).catch(() => {});
 
 	// If no API keys configured, show welcome dialog, open settings, then auto-select model
-	if (!(await hasAnyApiKey())) {
+	if (!(await hasAnyApiKey()) && !(await chrome.storage.local.get(WELCOME_SEEN_KEY))[WELCOME_SEEN_KEY]) {
+		// Once. Someone who drives this browser from their own agent has no keys and shouldn't be asked on every new chat.
+		await chrome.storage.local.set({ [WELCOME_SEEN_KEY]: true });
 		const choice: WelcomeChoice = await WelcomeSetupDialog.show();
-		// "Set up provider" lands on the API keys list, not the top of the tab (Free mode and subscriptions sit above it).
-		await openApiKeysDialog(
-			choice === "connect" ? { tab: "Agents", anchor: "connect-heading" } : { tab: "Providers" },
-		);
-		await refreshDiscoveredModels(storage, { wait: true }).catch(() => {});
-		await selectDefaultModelForAvailableProvider();
-		renderApp();
+		if (choice !== "dismissed") {
+			// "Set up provider" lands on the API keys list, not the top of the tab (Free mode and subscriptions sit above it).
+			await openApiKeysDialog(
+				choice === "connect" ? { tab: "Agents", anchor: "connect-heading" } : { tab: "Providers" },
+			);
+			await refreshDiscoveredModels(storage, { wait: true }).catch(() => {});
+			await selectDefaultModelForAvailableProvider();
+			renderApp();
+		}
 	}
 }
 

@@ -30,7 +30,7 @@ public enum FullScreenFill {
 
     /// A window this filled: where it was, and where it landed, which can fall short of the screen for an app that snaps to
     /// character cells or has a maximum size.
-    public struct Record: Equatable, Sendable {
+    public struct Record: Equatable, Sendable, Codable {
         public var from: CGRect
         public var landed: CGRect
         public init(from: CGRect, landed: CGRect) {
@@ -42,8 +42,31 @@ public enum FullScreenFill {
     /// Where a press sends a window. Still where this filled it: back where it was. Anywhere else, including somewhere the
     /// person dragged it since: it fills.
     public static func target(current: CGRect, fill: CGRect, record: Record?) -> CGRect {
-        if let record, isFilling(current, record.landed) { return record.from }
+        if let record, isFilling(current, record.landed), !isFilling(record.from, record.landed) { return record.from }
+        // Already this big with nowhere to go back to (sized by hand, or filled before the last launch). A press that
+        // refilled it would look like a dead button.
+        if isFilling(current, fill) { return smaller(fill) }
         return fill
+    }
+
+    /// A window's size when there's no earlier one to go back to: comfortably not the whole screen, centered.
+    public static func smaller(_ fill: CGRect) -> CGRect {
+        let size = CGSize(width: (fill.width * 0.72).rounded(), height: (fill.height * 0.8).rounded())
+        return CGRect(x: (fill.midX - size.width / 2).rounded(), y: (fill.midY - size.height / 2).rounded(),
+                      width: size.width, height: size.height)
+    }
+
+    /// Where a filled window goes when its title bar is dragged away: its earlier size, with the pointer over the same
+    /// share of the title bar. Nil for a window that isn't filled. Compares size only, since the drag has moved it.
+    public static func unfilled(current: CGRect, fill: CGRect, record: Record?, pointer: CGPoint) -> CGRect? {
+        func sameSize(_ a: CGRect, _ b: CGRect) -> Bool {
+            abs(a.width - b.width) <= 3 && abs(a.height - b.height) <= 3
+        }
+        guard sameSize(current, record?.landed ?? fill) else { return nil }
+        let from = record?.from
+        let size = from.flatMap { sameSize($0, current) ? nil : $0.size } ?? smaller(fill).size
+        let share = current.width > 0 ? min(max((pointer.x - current.minX) / current.width, 0), 1) : 0.5
+        return CGRect(x: (pointer.x - share * size.width).rounded(), y: current.minY, width: size.width, height: size.height)
     }
 
     /// Whether a click could be on a window's green button, from the window server's geometry alone: within the corner where
@@ -57,3 +80,21 @@ public enum FullScreenFill {
             && abs(a.width - b.width) <= tolerance && abs(a.height - b.height) <= tolerance
     }
 }
+
+/// A window on a workspace you aren't on, coming to the front. Polycarp puts away every window it leaves behind, parked or
+/// hidden. One that was neither wasn't on screen when you left: its own app had put it away, as a screenshot tool does with
+/// the one window it reuses for each capture. It coming back is that app showing something now, so it belongs where you are.
+public enum ReappearedWindow {
+    /// Whether a window is really put away. A record alone doesn't say so: a window parked while it showed, then hidden by
+    /// its own app, keeps its record, and when the app shows it again it's back in plain sight. So is a window whose app
+    /// undid the park. Just after a switch it may still be on its way out, and it counts as away.
+    public static func isAway(hasRecord: Bool, atHidingSpot: Bool, justSwitched: Bool) -> Bool {
+        hasRecord && (atHidingSpot || justSwitched)
+    }
+
+    public static func belongsHere(workspaceShown: Bool, onAgentWorkspace: Bool, parked: Bool, appHiddenByUs: Bool,
+                                   minimized: Bool, fullScreen: Bool, onScreen: Bool) -> Bool {
+        !workspaceShown && !onAgentWorkspace && !parked && !appHiddenByUs && !minimized && !fullScreen && onScreen
+    }
+}
+

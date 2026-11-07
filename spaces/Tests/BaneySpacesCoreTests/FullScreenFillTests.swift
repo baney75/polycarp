@@ -72,4 +72,65 @@ final class FullScreenFillTests: XCTestCase {
         XCTAssertTrue(code.contains("tapDisabledByTimeout"), "macOS turning the tap off is noticed")
         XCTAssertTrue(code.contains("swallowingUp"), "a swallowed press takes its release with it")
     }
+
+    func testAPressAlwaysDoesSomething() {
+        // Filled before Polycarp restarted, or sized by hand: no record of where it was. Seven presses of a green button
+        // that did nothing (Donovan, 2026-11-07).
+        let smaller = FullScreenFill.smaller(fill)
+        XCTAssertEqual(FullScreenFill.target(current: fill, fill: fill, record: nil), smaller)
+        XCTAssertNotEqual(smaller, fill)
+        XCTAssertTrue(fill.contains(smaller))
+        // A record that goes nowhere is the same as none.
+        let useless = FullScreenFill.Record(from: fill, landed: fill)
+        XCTAssertEqual(FullScreenFill.target(current: fill, fill: fill, record: useless), smaller)
+    }
+
+    func testARecordSurvivesARestart() throws {
+        let record = FullScreenFill.Record(from: small, landed: fill)
+        let data = try JSONEncoder().encode([UInt32(59): record])
+        XCTAssertEqual(try JSONDecoder().decode([UInt32: FullScreenFill.Record].self, from: data), [59: record])
+    }
+
+    func testDraggingAFilledWindowAwayGivesItsSizeBackUnderThePointer() throws {
+        let record = FullScreenFill.Record(from: small, landed: fill)
+        let moved = fill.offsetBy(dx: 0, dy: 30)
+        let grab = CGPoint(x: moved.midX, y: moved.minY + 10)
+        let next = try XCTUnwrap(FullScreenFill.unfilled(current: moved, fill: fill, record: record, pointer: grab))
+        XCTAssertEqual(next.size, small.size)
+        XCTAssertEqual(next.midX, grab.x, accuracy: 1, "the pointer stays over the same share of the title bar")
+        XCTAssertEqual(next.minY, moved.minY)
+    }
+
+    func testDraggingAFullSizeWindowWithNoRecordStillShrinksIt() throws {
+        let moved = fill.offsetBy(dx: 12, dy: 30)
+        let next = try XCTUnwrap(FullScreenFill.unfilled(current: moved, fill: fill, record: nil, pointer: CGPoint(x: moved.midX, y: moved.minY + 8)))
+        XCTAssertEqual(next.size, FullScreenFill.smaller(fill).size)
+    }
+
+    func testDraggingAnOrdinaryWindowLeavesItAlone() {
+        XCTAssertNil(FullScreenFill.unfilled(current: small, fill: fill, record: nil, pointer: CGPoint(x: small.midX, y: small.minY)))
+    }
+
+    func testAWindowItsOwnAppShowsAgainComesToYou() {
+        let reappeared = { (shown: Bool, agent: Bool, parked: Bool, hidden: Bool, minimized: Bool, full: Bool, on: Bool) in
+            ReappearedWindow.belongsHere(workspaceShown: shown, onAgentWorkspace: agent, parked: parked, appHiddenByUs: hidden,
+                                         minimized: minimized, fullScreen: full, onScreen: on)
+        }
+        XCTAssertTrue(reappeared(false, false, false, false, false, false, true), "a screenshot tool's result window")
+        XCTAssertFalse(reappeared(true, false, false, false, false, false, true), "already where you are")
+        XCTAssertFalse(reappeared(false, true, false, false, false, false, true), "an agent's window stays on its workspace")
+        XCTAssertFalse(reappeared(false, false, true, false, false, false, true), "one Polycarp parked is yours to go to")
+        XCTAssertFalse(reappeared(false, false, false, true, false, false, true), "so is one in an app Polycarp hid")
+        XCTAssertFalse(reappeared(false, false, false, false, true, false, true), "minimized")
+        XCTAssertFalse(reappeared(false, false, false, false, false, true, true), "native full screen has its own Space")
+        XCTAssertFalse(reappeared(false, false, false, false, false, false, false), "nothing on screen to bring")
+    }
+
+    func testARecordAloneDoesntMakeAWindowAway() {
+        // Parked while it showed, hidden by its own app, shown again: the record is still there and the window is in sight.
+        XCTAssertFalse(ReappearedWindow.isAway(hasRecord: true, atHidingSpot: false, justSwitched: false))
+        XCTAssertTrue(ReappearedWindow.isAway(hasRecord: true, atHidingSpot: true, justSwitched: false))
+        XCTAssertTrue(ReappearedWindow.isAway(hasRecord: true, atHidingSpot: false, justSwitched: true), "still on its way out")
+        XCTAssertFalse(ReappearedWindow.isAway(hasRecord: false, atHidingSpot: true, justSwitched: true))
+    }
 }

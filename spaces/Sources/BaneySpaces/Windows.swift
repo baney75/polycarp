@@ -322,6 +322,12 @@ enum Windows {
         return result
     }
 
+    /// The windows on screen right now, from the window server.
+    static func onScreenIDs() -> Set<WindowID> {
+        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+        return Set(info.compactMap { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value })
+    }
+
     /// Whether the window in front is in full screen, on its own macOS Space.
     static func frontIsFullScreen() -> Bool {
         guard let pid = focusedPid() else { return false }

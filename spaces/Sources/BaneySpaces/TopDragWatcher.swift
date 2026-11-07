@@ -129,6 +129,8 @@ final class TopDragWatcher {
     var onPress: (WindowID?) -> Void = { _ in }
     /// The pointer moved while the overview is open for a drag.
     var onMove: (CGPoint) -> Void = { _ in }
+    /// A window's title bar started moving, once per drag: a filled window shrinks here.
+    var onDragStart: (WindowID, CGPoint) -> Void = { _, _ in }
     /// The button came up with the overview open for `grab`. `drop` is false when the drag
     /// ended some other way (the watcher stopped, or a release it missed), so nothing moves.
     var onRelease: (_ grab: TopDrag.Grab, _ drop: Bool) -> Void = { _, _ in }
@@ -211,6 +213,7 @@ final class TopDragWatcher {
         let now = ProcessInfo.processInfo.systemUptime
         let resting = state.topSince != nil
         let top = state.tick(cursor: p, frame: frame, screens: TopDragWatcher.screens(), now: now)
+        if !wasDragging, state.moving { onDragStart(grab.window, p) }
         // The rest at the top and the decision it leads to, for top-drag-probe to read.
         if !resting, state.topSince != nil { Trace.log("topDrag dwell start window=\(grab.window)") }
         if let g = top, topEnabled {
