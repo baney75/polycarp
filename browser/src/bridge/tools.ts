@@ -49,6 +49,7 @@ import {
 	added as addedEdit,
 	change as changeEdits,
 	type EditKind,
+	guardedUnder,
 	load as loadEdits,
 	newId as newEditId,
 	normalizeHost,
@@ -71,6 +72,8 @@ export interface HandlerContext {
 	checkUrl(url: string): Promise<void>;
 	/** Whether the URL is on a host an agent never opens (the OAuth approval address, issue #94). */
 	isGuarded(url: string): boolean;
+	/** The hosts behind `isGuarded`, as the CLI sent them ("host" or "host:port"). */
+	guardedHosts?: readonly string[];
 	/** Stable id of the calling client. */
 	clientId: string;
 	/** Push an event to the calling client only. */
@@ -308,10 +311,17 @@ const editHandlers: Record<string, Handler> = {
 			if (err instanceof SiteEditError) throw new BridgeError(ERR.BAD_PARAMS, err.message);
 			throw err;
 		}
-		// Changing a site takes the same permission as opening it: an agent can't edit what it may not visit.
+		// Changing a site takes the same permission as opening it: an agent can't edit what it may not visit. An edit also
+		// reaches the site's subdomains, so a site with a guarded one under it is refused too.
 		const site = `https://${host}/`;
-		if (ctx.isGuarded(site))
-			throw new BridgeError(ERR.BAD_PARAMS, `${host} is a site agents never open, so they can't edit it.`);
+		const under = guardedUnder(host, ctx.guardedHosts ?? []);
+		if (ctx.isGuarded(site) || under)
+			throw new BridgeError(
+				ERR.BAD_PARAMS,
+				under && !ctx.isGuarded(site)
+					? `An edit on ${host} would reach ${under}, which agents never open.`
+					: `${host} is a site agents never open, so they can't edit it.`,
+			);
 		await ctx.checkUrl(site);
 		try {
 			const edit = await changeEdits((state) => {

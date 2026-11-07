@@ -149,7 +149,10 @@ export function startSiteEdits(): void {
 	if (started) return;
 	started = true;
 	chrome.webNavigation?.onCommitted?.addListener((d) => {
-		void Promise.all([load(), restoreApplied()]).then(([state]) => {
+		void Promise.all([load(), restoreApplied()]).then(async ([state]) => {
+			// The frame may have moved on while storage answered: a sheet for the old site never goes into the new one.
+			const now = await chrome.webNavigation.getFrame?.({ tabId: d.tabId, frameId: d.frameId }).catch(() => null);
+			if (now && now.url !== d.url) return;
 			if (
 				state.edits.some((e) => e.kind === "hide" && e.on && onHost(d.url, e.host)) ||
 				applied.has(`${d.tabId}:${d.frameId}`)

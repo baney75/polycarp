@@ -43,6 +43,56 @@ const MAX_SCRIPT = 50_000;
 export class SiteEditError extends Error {}
 
 /** "https://www.X.com/home" or "X.com" -> "x.com". Throws on anything that isn't a plain host. */
+/**
+ * Suffixes many unrelated sites share. An edit there would reach all of them, so it's refused. Not the whole public suffix list:
+ * the common ones, and every two-letter country code with a short second-level name (co.uk, com.au).
+ */
+const SHARED = new Set([
+	"github.io",
+	"gitlab.io",
+	"blogspot.com",
+	"wordpress.com",
+	"tumblr.com",
+	"substack.com",
+	"medium.com",
+	"vercel.app",
+	"netlify.app",
+	"pages.dev",
+	"workers.dev",
+	"herokuapp.com",
+	"web.app",
+	"firebaseapp.com",
+	"appspot.com",
+	"azurewebsites.net",
+	"cloudfront.net",
+	"s3.amazonaws.com",
+	"glitch.me",
+	"repl.co",
+	"fly.dev",
+	"onrender.com",
+	"ngrok.io",
+	"ngrok-free.app",
+	"trycloudflare.com",
+	"ts.net",
+]);
+
+export function sharedSuffix(host: string): boolean {
+	return SHARED.has(host) || /^(co|com|org|net|gov|edu|ac|or|ne|go)\.[a-z]{2}$/.test(host);
+}
+
+/** A guarded host ("host" or "host:port") that `host` or one of its subdomains is, if any: an edit on `host` would reach it. */
+export function guardedUnder(host: string, guarded: readonly string[]): string | undefined {
+	for (const entry of guarded) {
+		const h = entry
+			.toLowerCase()
+			.replace(/^\[|\]$/g, "")
+			.replace(/:\d+$/, "")
+			.replace(/\.$/, "");
+		if (h === host || h.endsWith(`.${host}`)) return h;
+	}
+	return undefined;
+}
+
 export function normalizeHost(raw: string): string {
 	let host = raw.trim().toLowerCase();
 	try {
@@ -53,6 +103,10 @@ export function normalizeHost(raw: string): string {
 	host = host.replace(/^www\./, "").replace(/\.$/, "");
 	if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host) || host.length > 253)
 		throw new SiteEditError(`${raw} isn't a site. Use one like example.com.`);
+	if (sharedSuffix(host))
+		throw new SiteEditError(
+			`${host} is shared by many sites, so an edit there would reach all of them. Name the site itself.`,
+		);
 	return host;
 }
 
@@ -81,7 +135,25 @@ export function checkSelectors(raw: string): string {
 		throw new SiteEditError(`Selectors are limited to ${MAX_SELECTORS} characters.`);
 	if (/[{};@\\]|url\s*\(|<\/?style/i.test(selectors))
 		throw new SiteEditError("Only selectors: no braces, semicolons, @ rules, backslashes or url().");
+	// An open comment, bracket, parenthesis or quote would run into the next edit's rule in the same sheet.
+	if (/\/\*|\*\//.test(selectors)) throw new SiteEditError("No comments in selectors.");
+	if (!balanced(selectors)) throw new SiteEditError("Unbalanced brackets, parentheses or quotes in the selectors.");
 	return selectors;
+}
+
+function balanced(text: string): boolean {
+	const stack: string[] = [];
+	let quote = "";
+	for (const ch of text) {
+		if (quote) {
+			if (ch === quote) quote = "";
+			continue;
+		}
+		if (ch === '"' || ch === "'") quote = ch;
+		else if (ch === "(" || ch === "[") stack.push(ch === "(" ? ")" : "]");
+		else if ((ch === ")" || ch === "]") && stack.pop() !== ch) return false;
+	}
+	return !quote && stack.length === 0;
 }
 
 /** A request pattern in the browser's own syntax (`||ads.example.com^`, `/banner/`), never the page itself. */
@@ -96,7 +168,12 @@ export function checkPattern(raw: string): string {
 	if (pattern.slice(2).includes("||") || (pattern.includes("||") && !pattern.startsWith("||")))
 		throw new SiteEditError("|| goes only at the start, for a domain: ||ads.example.com^");
 	// A bare "*", "|", "^" or the like would block everything the site loads.
-	if (pattern.replace(/[*|^/]/g, "").length < 3)
+	// So would a scheme alone ("https://") or a domain that starts with a wildcard ("||*ads").
+	if (
+		pattern.replace(/[*|^/]/g, "").length < 3 ||
+		/^\|?(https?|wss?):?\/*\*?$/i.test(pattern) ||
+		/^\|\|\*/.test(pattern)
+	)
 		throw new SiteEditError("That pattern would block everything on the site. Name what to block.");
 	return pattern;
 }

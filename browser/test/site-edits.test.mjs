@@ -131,6 +131,34 @@ test("syncs never run side by side, so a script turned off can't come back", asy
 	assert.equal(scripts.size, 0, "the last run read the person's off and left nothing registered");
 });
 
+test("a site shared by many others is refused, and so is a parent of a guarded site", () => {
+	for (const shared of ["github.io", "co.uk", "com.au", "vercel.app"]) assert.throws(() => store.normalizeHost(shared), /shared by many sites/, shared);
+	assert.equal(store.normalizeHost("someone.github.io"), "someone.github.io");
+	assert.equal(store.guardedUnder("example.com", ["login.example.com:443"]), "login.example.com");
+	assert.equal(store.guardedUnder("example.com", ["example.org"]), undefined);
+});
+
+test("an agent allowed on a site can't reach a guarded site under it", async () => {
+	installFakeChrome();
+	globalThis.chrome.runtime = { ...(globalThis.chrome.runtime ?? {}), getManifest: () => ({ version: "0" }) };
+	const { handlers } = await import(`../src/bridge/tools.ts?ctx=${Math.random()}`);
+	const ctx = {
+		session: { groupName: "claude" },
+		clientId: "c1",
+		guardedHosts: ["approve.example.com"],
+		isGuarded: (url) => new URL(url).hostname === "approve.example.com",
+		checkUrl: async () => undefined,
+	};
+	await assert.rejects(handlers["edits.add"](ctx, { kind: "hide", host: "example.com", value: ".a" }), /would reach approve\.example\.com/);
+	assert.deepEqual((await store.load()).edits, []);
+});
+
+test("selectors that would run into the next rule, and patterns that block everything, are refused", () => {
+	for (const bad of ["/*", ".a /*", ".a:not(.b", '[data-x="y', ".a)"]) assert.throws(() => store.checkSelectors(bad), store.SiteEditError, bad);
+	assert.equal(store.checkSelectors('a[href*="ad"]:not(.keep)'), 'a[href*="ad"]:not(.keep)');
+	for (const bad of ["https://", "|https:", "||*ads", "||*.doubleclick.net^", "wss://*"]) assert.throws(() => store.checkPattern(bad), /block everything/, bad);
+});
+
 test("the same edit twice is one edit, and there is a limit", () => {
 	const once = store.added(empty, { host: "x.com", kind: "hide", value: ".a", actor: "agent", who: "c" }, "1", 1).state;
 	assert.equal(store.added(once, { host: "www.x.com", kind: "hide", value: ".a", actor: "agent", who: "c" }, "2", 2).state.edits.length, 1);
