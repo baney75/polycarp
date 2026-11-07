@@ -23,8 +23,8 @@
     "toleranceOverRecorded": 0.25
   },
   "longDictation": {
-    "about": "66 s of speech: core/ffi/tests/speed.rs long_dictation_in_pieces. Wait after release.",
-    "allAtOnceMs": 2934,
-    "inPiecesMs": 57
+    "about": "One voice, 45 s and up, nine speakers: core/ffi/tests/speed.rs long_dictation_in_pieces. Wait after release.",
+    "allAtOnceMs": 2057,
+    "inPiecesMs": 80
   }
 }

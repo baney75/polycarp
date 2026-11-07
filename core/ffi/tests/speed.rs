@@ -243,6 +243,41 @@ fn long_dictation_in_pieces_is_as_accurate_and_waits_less_at_release() {
         mean(&whole_ms), mean(&whole_wer), mean(&release_ms), mean(&pieces_wer)
     );
     eprintln!("per voice, whole {whole_wer:.3?} pieces {pieces_wer:.3?}");
+    // Hesitating inside a sentence: each clip with a 700 ms silence at its quietest gap past the middle.
+    let ends = |t: &str| t.matches(['.', '?', '!']).count();
+    let mut extra_ends = 0;
+    let mut sentences = 0;
+    for clip in benchmark::load_clips().unwrap().iter() {
+        let middle = clip.samples.len() / 2;
+        let frames: Vec<f32> = clip.samples[middle..].chunks(320).map(|f| f.iter().map(|s| s * s).sum::<f32>()).collect();
+        let gap = middle + 320 * (0..frames.len().saturating_sub(5)).min_by(|a, b| frames[*a..*a + 5].iter().sum::<f32>().total_cmp(&frames[*b..*b + 5].iter().sum::<f32>())).unwrap();
+        let mut audio: Vec<f32> = vec![];
+        let mut plain: Vec<f32> = vec![];
+        for _ in 0..3 {
+            audio.extend_from_slice(&clip.samples[..gap]);
+            audio.extend(std::iter::repeat_n(0.0002, 11_200));
+            audio.extend_from_slice(&clip.samples[gap..]);
+            audio.extend(std::iter::repeat_n(0.0002, 8_000));
+            plain.extend_from_slice(&clip.samples);
+            plain.extend(std::iter::repeat_n(0.0002, 8_000));
+        }
+        let mut text = String::new();
+        let (mut done, mut heard) = (0, 16_000);
+        while heard < audio.len() {
+            heard = (heard + 1_600).min(audio.len());
+            if let Some(cut) = polycarp_voice::pieces::find_cut(&audio[done..heard], 16_000) {
+                polycarp_voice::pieces::join(&mut text, &engine.transcribe(&audio[done..done + cut], "en").unwrap());
+                done += cut;
+            }
+        }
+        polycarp_voice::pieces::join(&mut text, &engine.transcribe(&audio[done..], "en").unwrap());
+        let expected = ends(&engine.transcribe(&plain, "en").unwrap());
+        extra_ends += ends(&text).saturating_sub(expected);
+        sentences += expected;
+        eprintln!("hesitating: {}", text.chars().take(170).collect::<String>());
+    }
+    eprintln!("hesitating: {extra_ends} extra sentence ends against {sentences} real ones");
+    assert!(extra_ends * 5 <= sentences, "{extra_ends} false sentence ends in {sentences}");
     assert!(mean(&pieces_wer) <= mean(&whole_wer) + 0.01, "pieces {pieces_wer:?} against whole {whole_wer:?}");
     assert!(mean(&release_ms) < mean(&whole_ms) * 0.5, "{release_ms:?} ms at release against {whole_ms:?} ms");
 }
