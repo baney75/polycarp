@@ -2034,10 +2034,39 @@ struct SwitchClock {
 
     func log(to url: URL) {
         let parts = marks.map { "\($0.0.rawValue)=\(Int($0.1.rounded()))" }.joined(separator: " ")
-        let line = "\(Int(Date().timeIntervalSince1970)) ws=\(target) from=\(from) scan=\(scan) \(parts)\n"
+        TimingLog.append("\(Int(Date().timeIntervalSince1970)) ws=\(target) from=\(from) scan=\(scan) \(parts)", to: url)
+    }
+}
+
+/// The last 500 lines of timing.log.
+enum TimingLog {
+    private static let lock = NSLock()
+
+    static func append(_ line: String, to url: URL) {
+        lock.lock(); defer { lock.unlock() }
         var lines = ((try? String(contentsOf: url, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
-        lines.append(String(line.dropLast()))
+        lines.append(line)
         try? (lines.suffix(500).joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+    }
+}
+
+/// How long something took to appear, from the moment it was asked for until AppKit has drawn it and returned to the run
+/// loop. In timing.log as `open launcher=12`, so speed is measured on real use, not guessed.
+struct OpenClock {
+    private let what: String
+    private let start = CFAbsoluteTimeGetCurrent()
+
+    init(_ what: String) { self.what = what }
+
+    /// Call when it's on screen. The file write happens off the main thread, so this adds nothing to the next open.
+    func shown() {
+        DispatchQueue.main.async { [what, start] in
+            let ms = Int(((CFAbsoluteTimeGetCurrent() - start) * 1000).rounded())
+            let url = Spaces.folder.appendingPathComponent("timing.log")
+            DispatchQueue.global(qos: .utility).async {
+                TimingLog.append("\(Int(Date().timeIntervalSince1970)) open \(what)=\(ms)", to: url)
+            }
+        }
     }
 }
 

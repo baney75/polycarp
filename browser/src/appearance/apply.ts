@@ -27,7 +27,10 @@ function paint(): void {
 	applied = Object.keys(vars);
 	// For static/theme-loader.js, which runs before the stored theme can be read.
 	try {
-		localStorage.setItem("tk-colors", JSON.stringify(vars));
+		localStorage.setItem(
+			root.classList.contains("dark") ? "tk-colors-dark" : "tk-colors-light",
+			JSON.stringify(vars),
+		);
 	} catch {
 		// Storage is full or blocked: the first frame uses the stylesheet's colors.
 	}
