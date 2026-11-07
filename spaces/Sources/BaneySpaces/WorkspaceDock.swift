@@ -166,6 +166,11 @@ final class WorkspaceDock {
             self?.model.backgroundOpen = false
             self?.onOwnDisplay { $0.showBackgroundApp(app.pid) }
         }
+        model.onQuitBackground = { app in
+            // The ordinary quit, so an app with something unsaved can ask. It leaves the list when it's gone.
+            let asked = NSRunningApplication(processIdentifier: app.pid)?.terminate() ?? false
+            Trace.log("dock background: \(app.name) asked to quit (\(asked ? "sent" : "refused"))")
+        }
         model.onMove = { [weak self] ids, n in self?.spaces.move(ids, to: n) }
         model.liveWindows = { [weak self] n, refresh in
             guard let spaces = self?.spaces else { return [] }
@@ -1167,7 +1172,7 @@ final class DockModel: ObservableObject {
         }
     }
     /// The running apps with no window anywhere (`BackgroundApps`), for the "Background" tile.
-    @Published private(set) var backgroundApps: [BackgroundApps.Entry] = []
+    @Published var backgroundApps: [BackgroundApps.Entry] = []
     /// The Background list: opened by resting on, or clicking, the "Background" tile.
     @Published var backgroundOpen = false {
         didSet {
@@ -1181,6 +1186,7 @@ final class DockModel: ObservableObject {
     private var anySideOpen: Bool { strip != nil || more != nil || backgroundOpen }
     /// Picking a row: unhide the app and bring it to the workspace you're on.
     var onShowBackground: (BackgroundApps.Entry) -> Void = { _ in }
+    var onQuitBackground: (BackgroundApps.Entry) -> Void = { _ in }
 
     /// What the side panel shows: a tile's "+N" list, or an app's window strip.
     enum Side {
@@ -1897,12 +1903,17 @@ struct DockView: View {
             ScrollView(.vertical, showsIndicators: apps.count > 10) {
                 VStack(spacing: 2) {
                     ForEach(apps) { app in
-                        BackgroundRow(app: app, tint: Chrome.accent) {
+                        BackgroundRow(app: app, tint: Chrome.accent, action: {
                             guard model.clickCounts else { return }
                             model.onShowBackground(app)
-                        }
+                        }, quit: {
+                            guard model.clickCounts else { return }
+                            model.onQuitBackground(app)
+                        })
                     }
                 }
+                // Room for the scroller, which otherwise covers each row's X.
+                .padding(.trailing, apps.count > 10 ? 12 : 0)
             }
             .frame(height: CGFloat(min(apps.count, 10)) * 30)
         }
@@ -2373,12 +2384,15 @@ private struct MoreRow: View {
     }
 }
 
-/// One app in the Background list: its icon, name and why it's there.
+/// One app in the Background list: its icon, name and why it's there, and an X that quits it.
 private struct BackgroundRow: View {
     let app: BackgroundApps.Entry
     let tint: Color
     let action: () -> Void
+    let quit: () -> Void
     @State private var hovered = false
+    @State private var overX = false
+    @State private var quitting = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -2387,9 +2401,26 @@ private struct BackgroundRow: View {
             Text(app.name).font(Chrome.font(12.5, hovered ? .semibold : .regular))
                 .foregroundStyle(Chrome.wash(hovered ? 1 : 0.85)).lineLimit(1).truncationMode(.tail)
             Spacer(minLength: 6)
-            Text(app.state.label).font(Chrome.font(10, .medium)).foregroundStyle(Chrome.wash(0.4))
+            Text(quitting ? "quitting" : app.state.label).font(Chrome.font(10, .medium)).foregroundStyle(Chrome.wash(0.4))
+            Button {
+                quitting = true
+                quit()
+                // An app that won't go, or is asking something first, gets its row back.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) { quitting = false }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Chrome.wash(overX ? 1 : hovered ? 0.7 : 0.4))
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(Chrome.cell(overX ? 0.16 : 0)))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(quitting)
+            .onHover { overX = $0 }
+            .help("Quit \(app.name)")
         }
-        .padding(.horizontal, 8)
+        .padding(.leading, 8).padding(.trailing, 4)
         .frame(height: 28)
         .background(RowHighlight(on: hovered, tint: tint))
         .contentShape(Rectangle())
@@ -2399,6 +2430,7 @@ private struct BackgroundRow: View {
         .accessibilityLabel("\(app.name), \(app.state.label)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { action() }
+        .accessibilityAction(named: "Quit \(app.name)") { quit() }
     }
 }
 
