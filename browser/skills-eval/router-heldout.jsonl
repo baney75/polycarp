@@ -149,3 +149,6 @@
 {"task": "Study how this obscure forum's search and paging work and write them down for later", "skill": "site-learning"}
 {"task": "No skill exists for this site, so learn its layout and store a playbook", "skill": "site-learning"}
 {"task": "Pull the transcript from that YouTube talk and tell me where they discuss funding", "skill": "youtube"}
+{"task": "read the attached pdf link and summarize chapter 3", "skill": "pdf"}
+{"task": "what does page 7 of this pdf say", "skill": "pdf"}
+{"task": "get the table out of this pdf", "skill": "pdf"}

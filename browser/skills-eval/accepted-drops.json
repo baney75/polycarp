@@ -17,33 +17,43 @@
 		},
 		{
 			"skill": "artifacts",
-			"value": 0.8571,
-			"reason": "Adding youtube, rumble, instagram and site-learning takes the catalog from 35 to 39 skills. The router's single-evidence bar and word weights both rise with catalog size (docs/skill-platform.md), so a borderline case falls under it: \"Write up the results as a briefing page with citations\". 0.9048 to 0.8571, one case. No description of these skills was changed."
+			"value": 0.8095,
+			"reason": "Adding youtube, rumble, instagram, site-learning and pdf (with x-search and summarize just before) takes the catalog to 42 skills. A word counts as evidence only while at most two skills hold it, and the new skills share words like video, comments, browser and page, so one borderline case in each of these skills now routes to none or to a new skill (one tabkyra case, a YouTube comments task, goes to youtube, arguably right). Two router changes were measured and refused: freezing the single-evidence bar changed nothing, and counting three-skill words as evidence raised false invokes from 0% to 4.3%. Accepted on the 2026-10-26 precedent (Donovan: \"Just merge it for now\"); to be won back by a measured router redesign."
 		},
 		{
 			"skill": "design-library",
 			"value": 0.9,
-			"reason": "Adding youtube, rumble, instagram and site-learning takes the catalog from 35 to 39 skills. The router's single-evidence bar and word weights both rise with catalog size (docs/skill-platform.md), so a borderline case falls under it: \"Save this palette as Harbor: navy 1F3A5F, sand F4EFE6, orange E07A2F\". 1 to 0.9, one case. No description of these skills was changed."
+			"reason": "Adding youtube, rumble, instagram, site-learning and pdf (with x-search and summarize just before) takes the catalog to 42 skills. A word counts as evidence only while at most two skills hold it, and the new skills share words like video, comments, browser and page, so one borderline case in each of these skills now routes to none or to a new skill (one tabkyra case, a YouTube comments task, goes to youtube, arguably right). Two router changes were measured and refused: freezing the single-evidence bar changed nothing, and counting three-skill words as evidence raised false invokes from 0% to 4.3%. Accepted on the 2026-10-26 precedent (Donovan: \"Just merge it for now\"); to be won back by a measured router redesign."
 		},
 		{
 			"skill": "maps",
 			"value": 0.9,
-			"reason": "Adding youtube, rumble, instagram and site-learning takes the catalog from 35 to 39 skills. The router's single-evidence bar and word weights both rise with catalog size (docs/skill-platform.md), so a borderline case falls under it: \"What time does the hardware store on Main Street close today?\". 1 to 0.9, one case. No description of these skills was changed."
+			"reason": "Adding youtube, rumble, instagram, site-learning and pdf (with x-search and summarize just before) takes the catalog to 42 skills. A word counts as evidence only while at most two skills hold it, and the new skills share words like video, comments, browser and page, so one borderline case in each of these skills now routes to none or to a new skill (one tabkyra case, a YouTube comments task, goes to youtube, arguably right). Two router changes were measured and refused: freezing the single-evidence bar changed nothing, and counting three-skill words as evidence raised false invokes from 0% to 4.3%. Accepted on the 2026-10-26 precedent (Donovan: \"Just merge it for now\"); to be won back by a measured router redesign."
+		},
+		{
+			"skill": "rsi",
+			"value": 0.9375,
+			"reason": "Adding youtube, rumble, instagram, site-learning and pdf (with x-search and summarize just before) takes the catalog to 42 skills. A word counts as evidence only while at most two skills hold it, and the new skills share words like video, comments, browser and page, so one borderline case in each of these skills now routes to none or to a new skill (one tabkyra case, a YouTube comments task, goes to youtube, arguably right). Two router changes were measured and refused: freezing the single-evidence bar changed nothing, and counting three-skill words as evidence raised false invokes from 0% to 4.3%. Accepted on the 2026-10-26 precedent (Donovan: \"Just merge it for now\"); to be won back by a measured router redesign."
+		},
+		{
+			"skill": "summarize",
+			"value": 0.6667,
+			"reason": "Adding youtube, rumble, instagram, site-learning and pdf (with x-search and summarize just before) takes the catalog to 42 skills. A word counts as evidence only while at most two skills hold it, and the new skills share words like video, comments, browser and page, so one borderline case in each of these skills now routes to none or to a new skill (one tabkyra case, a YouTube comments task, goes to youtube, arguably right). Two router changes were measured and refused: freezing the single-evidence bar changed nothing, and counting three-skill words as evidence raised false invokes from 0% to 4.3%. Accepted on the 2026-10-26 precedent (Donovan: \"Just merge it for now\"); to be won back by a measured router redesign."
 		},
 		{
 			"skill": "tabkyra",
 			"value": 0.7368,
-			"reason": "Adding youtube, rumble, instagram and site-learning takes the catalog from 35 to 39 skills. The router's single-evidence bar and word weights both rise with catalog size (docs/skill-platform.md), so a borderline case falls under it: \"Open my Gmail in the browser and tell me how many unread emails I have\" (score 4.829 against a bar of 4.856) and \"Read the comments under this YouTube video in my browser tab\", which the new youtube skill now answers. 0.8421 to 0.7368, one case. No description of these skills was changed."
+			"reason": "Adding youtube, rumble, instagram, site-learning and pdf (with x-search and summarize just before) takes the catalog to 42 skills. A word counts as evidence only while at most two skills hold it, and the new skills share words like video, comments, browser and page, so one borderline case in each of these skills now routes to none or to a new skill (one tabkyra case, a YouTube comments task, goes to youtube, arguably right). Two router changes were measured and refused: freezing the single-evidence bar changed nothing, and counting three-skill words as evidence raised false invokes from 0% to 4.3%. Accepted on the 2026-10-26 precedent (Donovan: \"Just merge it for now\"); to be won back by a measured router redesign."
 		},
 		{
 			"skill": "visual-explainer",
 			"value": 0.8824,
-			"reason": "Adding youtube, rumble, instagram and site-learning takes the catalog from 35 to 39 skills. The router's single-evidence bar and word weights both rise with catalog size (docs/skill-platform.md), so a borderline case falls under it: \"Show me how the auth middleware works as a diagram\". 0.9412 to 0.8824, one case. No description of these skills was changed."
+			"reason": "Adding youtube, rumble, instagram, site-learning and pdf (with x-search and summarize just before) takes the catalog to 42 skills. A word counts as evidence only while at most two skills hold it, and the new skills share words like video, comments, browser and page, so one borderline case in each of these skills now routes to none or to a new skill (one tabkyra case, a YouTube comments task, goes to youtube, arguably right). Two router changes were measured and refused: freezing the single-evidence bar changed nothing, and counting three-skill words as evidence raised false invokes from 0% to 4.3%. Accepted on the 2026-10-26 precedent (Donovan: \"Just merge it for now\"); to be won back by a measured router redesign."
 		},
 		{
 			"skill": "writing-voice",
 			"value": 0.8,
-			"reason": "Adding youtube, rumble, instagram and site-learning takes the catalog from 35 to 39 skills. The router's single-evidence bar and word weights both rise with catalog size (docs/skill-platform.md), so a borderline case falls under it: \"Pick up my style from my Proton sent folder and keep a short profile\". 0.9 to 0.8, one case. No description of these skills was changed."
+			"reason": "Adding youtube, rumble, instagram, site-learning and pdf (with x-search and summarize just before) takes the catalog to 42 skills. A word counts as evidence only while at most two skills hold it, and the new skills share words like video, comments, browser and page, so one borderline case in each of these skills now routes to none or to a new skill (one tabkyra case, a YouTube comments task, goes to youtube, arguably right). Two router changes were measured and refused: freezing the single-evidence bar changed nothing, and counting three-skill words as evidence raised false invokes from 0% to 4.3%. Accepted on the 2026-10-26 precedent (Donovan: \"Just merge it for now\"); to be won back by a measured router redesign."
 		}
 	]
 }
