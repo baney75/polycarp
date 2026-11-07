@@ -2409,7 +2409,7 @@ private struct BackgroundRow: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) { quitting = false }
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(Chrome.font(9, .bold))
                     .foregroundStyle(Chrome.wash(overX ? 1 : hovered ? 0.7 : 0.4))
                     .frame(width: 20, height: 20)
                     .background(Circle().fill(Chrome.cell(overX ? 0.16 : 0)))
