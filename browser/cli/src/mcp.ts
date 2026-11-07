@@ -875,7 +875,9 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		(args) =>
 			library(() => {
 				const matches = matchTask(args.task, args.top ?? 3, bundledOnly);
-				if (matches.length === 0) return "none: no skill fits this task. Work without one.";
+				// A site no skill covers is what site-learning is for, but an agent only reads that after loading it: say so here.
+				if (matches.length === 0)
+					return 'none: no skill fits this task. Work without one. If the task is on one website you don\'t know, skill_read {"name":"site-learning"} shows how to work it out and save what you learn.';
 				const lines = matches.map((m) => `${m.name} (${m.score}): ${m.description}`);
 				return [...lines, `Next: skill_read {"name":"${matches[0].name}"}`].join("\n");
 			}),
