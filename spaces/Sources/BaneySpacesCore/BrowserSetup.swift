@@ -66,9 +66,10 @@ public struct BrowserStatus: Equatable {
 }
 
 /// A copy of the extension where a file dialog can reach it: the bundled one is inside Polycarp.app, which "Load unpacked"
-/// can't browse into. The copy is in the support folder, replaced whenever the app's version or the extension's changes (a
-/// new copy is built beside it and swapped in, so a failed copy leaves the old one). The manifest's key is copied with
-/// everything else, so the extension keeps its id.
+/// can't browse into. The copy is in the support folder, replaced whenever the app's version, the extension's or its build
+/// changes (a new copy is built beside it and swapped in, so a failed copy leaves the old one). Previews keep the same
+/// versions, so the build is what tells them apart: without it, no Preview reached the browser. The manifest's key is copied
+/// with everything else, so the extension keeps its id.
 public enum ExtensionCopy {
     public static let folderName = "Extension"
     public static let stampName = "Extension.stamp"
@@ -80,6 +81,13 @@ public enum ExtensionCopy {
         guard let data = try? Data(contentsOf: folder.appendingPathComponent("manifest.json")),
               let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         return m["version"] as? String
+    }
+
+    /// The `id` in a folder's build-info.json, different for every build.
+    public static func buildID(of folder: URL) -> String? {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("build-info.json")),
+              let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return info["id"] as? String
     }
 
     /// Every caller (the app at launch, the status poll, Connect) goes through `refresh`, and `refresh` runs one at a time: two
@@ -97,7 +105,7 @@ public enum ExtensionCopy {
         let fm = FileManager.default
         let dest = destination(supportDir: supportDir)
         let stampFile = supportDir.appendingPathComponent(stampName)
-        let stamp = "\(appVersion)|\(manifestVersion(of: source) ?? "?")"
+        let stamp = "\(appVersion)|\(manifestVersion(of: source) ?? "?")|\(buildID(of: source) ?? "?")"
         let complete = { fm.fileExists(atPath: dest.appendingPathComponent("manifest.json").path) }
         if complete(), (try? String(contentsOf: stampFile, encoding: .utf8)) == stamp { return dest }
         guard fm.fileExists(atPath: source.appendingPathComponent("manifest.json").path) else { return nil }
