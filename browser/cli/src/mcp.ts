@@ -153,7 +153,7 @@ function harnessName(): string {
 }
 
 /** Tool names an instruction sentence mentions; used to drop sentences about tools a session lacks. */
-const INSTRUCTION_TOOLS = ["status", "tabs_context", "session_info", "session_end", "tabs_release", "wait", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read", "ask_user", "threads_list", "thread_read", "thread_search", "search", "page_markdown", "map", "crawl"];
+const INSTRUCTION_TOOLS = ["status", "tabs_context", "session_info", "session_end", "tabs_release", "wait", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read", "ask_user", "threads_list", "thread_read", "thread_search", "search", "page_markdown", "map", "crawl", "site_edit", "site_script"];
 
 function mentionedTools(sentence: string): string[] {
 	return INSTRUCTION_TOOLS.filter((t) => new RegExp(`(^|[^a-z_])${t}([^a-z_]|$)`).test(sentence));
@@ -700,6 +700,41 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			args.requestId !== undefined && allowedTools && !allowedTools.has("run_js")
 				? { content: [{ type: "text" as const, text: "permission_denied: Reading response bodies needs the browser.script scope. Call read_network without requestId." }], isError: true }
 				: call("network.read", args),
+	);
+	server.registerTool(
+		"site_edit",
+		{
+			title: "Edit a site for the user",
+			description:
+				"Change how a site looks or loads on every visit: hide elements, block requests on that site, ad blocking. On at once; the user can undo each in Settings > Sites, so say what you changed. Test selectors with find first. Code goes through site_script. Example: {\"action\":\"hide\",\"host\":\"x.com\",\"value\":\"[aria-label=Trending]\",\"note\":\"hide trending\"}",
+			inputSchema: {
+				action: z.enum(["list", "hide", "block", "off", "remove", "adblock_on", "adblock_off"]).describe("What to do"),
+				host: z.string().optional().describe("Site, like x.com"),
+				value: z.string().optional().describe("hide: CSS selectors. block: a pattern like ||ads.example.com^"),
+				note: z.string().optional().describe("Why, for the user"),
+				id: z.string().optional().describe("off, remove: id from list"),
+			},
+		},
+		(args) => {
+			if (args.action === "list") return call("edits.list", { host: args.host });
+			if (args.action === "off" || args.action === "remove") return call(args.action === "off" ? "edits.off" : "edits.remove", { id: args.id });
+			if (args.action === "adblock_on" || args.action === "adblock_off") return call("edits.adblock", { on: args.action === "adblock_on" });
+			return call("edits.add", { kind: args.action, host: args.host, value: args.value, note: args.note });
+		},
+	);
+	server.registerTool(
+		"site_script",
+		{
+			title: "Propose a script for a site",
+			description:
+				"Save JavaScript that runs on a site after each load. It stays off until the user turns it on in Settings > Sites, since it runs signed in as them: tell them it waits. Test it with run_js first. Example: {\"host\":\"x.com\",\"code\":\"document.querySelector('[data-testid=sidebarColumn]')?.remove()\",\"note\":\"remove the sidebar\"}",
+			inputSchema: {
+				host: z.string().describe("Site, like x.com"),
+				code: z.string().describe("JavaScript, isolated world with DOM access"),
+				note: z.string().describe("What it does, for the user"),
+			},
+		},
+		(args) => call("edits.add", { kind: "script", host: args.host, value: args.code, note: args.note }),
 	);
 	server.registerTool(
 		"inspect_page",

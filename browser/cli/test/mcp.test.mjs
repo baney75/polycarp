@@ -65,8 +65,10 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// inspect_page and read_network's requestId/type add 593 (26,748 to 27,341): reading the JSON a
 	// page is built from and a map of the page, which took several run_js calls each before.
 	// search, page_markdown, map, crawl add ~1,740 (self-hosted SearXNG + Firecrawl; hosted api.firecrawl.dev refused).
+	// site_edit and site_script add ~1,800: hiding, blocking and ad blocking per site, and scripts the user turns on, which
+	// otherwise took a run_js on every visit and couldn't outlast the page.
 	const bytes = Buffer.byteLength(JSON.stringify(tools));
-	assert.ok(bytes <= 29200, `tools/list is ${bytes} bytes, over the 29,200 budget`);
+	assert.ok(bytes <= 31000, `tools/list is ${bytes} bytes, over the 31,000 budget`);
 	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2950, "instructions over 2,950 bytes");
 });
 
