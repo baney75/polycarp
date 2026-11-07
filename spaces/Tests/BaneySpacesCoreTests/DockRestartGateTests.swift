@@ -53,6 +53,34 @@ final class DockRestartGateTests: XCTestCase {
         XCTAssertTrue(install.contains("app_is_running"))
     }
 
+    func testADockOfUnknownAgeIsNotAMissingDock() {
+        // launchDate is nil for the Dock, so the 2026-11-06 build read every Dock as missing and waited forever: the Dock never
+        // took the hidden setting, and the macOS Dock and Polycarp's came up together.
+        let age = DockRestartGate.uptime(dockRunning: true, started: nil, lastKill: nil)
+        XCTAssertEqual(age, .infinity)
+        XCTAssertEqual(DockRestartGate.decide(onFullScreenSpace: false, switching: false, dockUptime: age), .restartNow)
+        XCTAssertNil(DockRestartGate.uptime(dockRunning: false, started: nil, lastKill: Date()), "no Dock is the only nil")
+    }
+
+    func testAYoungDockOrOurOwnLastRestartStillWaits() {
+        let now = Date()
+        XCTAssertEqual(DockRestartGate.uptime(dockRunning: true, started: now.addingTimeInterval(-1), lastKill: nil, now: now), 1)
+        XCTAssertEqual(DockRestartGate.uptime(dockRunning: true, started: now.addingTimeInterval(-500), lastKill: now.addingTimeInterval(-2), now: now), 2)
+    }
+
+    func testTheKernelKnowsWhenAProcessStarted() throws {
+        let mine = try XCTUnwrap(DockRestartGate.processStart(pid: getpid()))
+        XCTAssertLessThan(Date().timeIntervalSince(mine), 24 * 3600)
+        XCTAssertGreaterThan(Date().timeIntervalSince(mine), 0)
+        let launchd = try XCTUnwrap(DockRestartGate.processStart(pid: 1))
+        XCTAssertLessThan(launchd, mine, "launchd came first")
+        XCTAssertNil(DockRestartGate.processStart(pid: 999_999), "no such process")
+    }
+
+    func testTheDockIsNotAgedByLaunchDate() throws {
+        XCTAssertFalse(try source("Sources/BaneySpaces/DockRestart.swift").contains("launchDate"), "nil for anything launchd starts")
+    }
+
     func testAnOldInstallMarkerDoesNotSkipARealQuit() {
         XCTAssertTrue(InstallHandoff.isCurrent(markedAt: 1000, now: 1010))
         XCTAssertFalse(InstallHandoff.isCurrent(markedAt: 1000, now: 1200), "left behind by a failed install")

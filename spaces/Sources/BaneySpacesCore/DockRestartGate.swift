@@ -19,6 +19,25 @@ public enum DockRestartGate {
         case fullScreenShowing, switching, dockJustStarted, spaceJustChanged
     }
 
+    /// How long the Dock has been up, for `decide`. Nil only when no Dock is running. A running Dock of unknown age counts as
+    /// settled: this wait must always be able to end. `started` comes from `processStart`, because launchd starts the Dock and
+    /// `NSRunningApplication.launchDate` is nil for it. Using that left every restart waiting forever (2026-11-06).
+    public static func uptime(dockRunning: Bool, started: Date?, lastKill: Date?, now: Date = Date()) -> TimeInterval? {
+        guard dockRunning else { return nil }
+        return [started, lastKill].compactMap { $0 }.map { now.timeIntervalSince($0) }.min() ?? .infinity
+    }
+
+    /// When a process started, from the kernel, which knows for every process.
+    public static func processStart(pid: Int32) -> Date? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        let start = info.kp_proc.p_starttime
+        guard start.tv_sec > 0 else { return nil }
+        return Date(timeIntervalSince1970: Double(start.tv_sec) + Double(start.tv_usec) / 1_000_000)
+    }
+
     /// `dockUptime` nil means no Dock is running yet: it's between restarts, so that counts as just started.
     public static func decide(onFullScreenSpace: Bool, switching: Bool, dockUptime: TimeInterval?, sinceSpaceChange: TimeInterval = .infinity) -> Decision {
         if onFullScreenSpace { return .wait(.fullScreenShowing) }
