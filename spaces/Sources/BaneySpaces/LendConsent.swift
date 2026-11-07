@@ -99,16 +99,27 @@ enum AccessConsent {
     /// Main thread only. False for "Keep", a timeout, a second sheet while one is up, and any answer that did not
     /// come from a real click or key.
     static func ask(_ mode: AgentAccessMode) -> Bool {
+        confirm(title: mode == .full ? "Give agents full access to this Mac?" : "Switch agents to \(mode.title)?",
+                text: mode.detail + (mode == .full ? " It stays on until you change it in Settings > Agents or the Polycarp menu." : ""),
+                button: mode == .full ? "Give Full Access" : "Switch", log: mode.rawValue)
+    }
+
+    /// The same sheet for "Turn on everything", with the same rules, so one click decides it all.
+    static func askEverything() -> Bool {
+        confirm(title: AgentEverything.consentTitle, text: AgentEverything.consentBody, button: AgentEverything.consentButton, log: "everything")
+    }
+
+    private static func confirm(title: String, text: String, button confirmTitle: String, log: String) -> Bool {
         guard Thread.isMainThread, !showing else { return false }
         showing = true
         defer { showing = false }
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = mode == .full ? "Give agents full access to this Mac?" : "Switch agents to \(mode.title)?"
-        alert.informativeText = mode.detail + (mode == .full ? " It stays on until you change it in Settings > Agents or the Polycarp menu." : "")
+        alert.messageText = title
+        alert.informativeText = text
         alert.addButton(withTitle: "Keep \(AgentAccess.shared.current.title)")   // first button: the default (Return)
-        alert.addButton(withTitle: mode == .full ? "Give Full Access" : "Switch")
+        alert.addButton(withTitle: confirmTitle)
         let button = alert.buttons[1]
         button.isEnabled = false
         let enabledAt = ProcessInfo.processInfo.systemUptime + LendConsent.enableAfter
@@ -121,7 +132,7 @@ enum AccessConsent {
         let response = alert.runModal()
         guard response == .alertSecondButtonReturn, !timedOut else { return false }
         if let why = LendConsent.notByHand(alert: alert, button: button, enabledAt: enabledAt) {
-            Trace.log("agent access to \(mode.rawValue) refused: \(why)")
+            Trace.log("agent access to \(log) refused: \(why)")
             return false
         }
         return true
