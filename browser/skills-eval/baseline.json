@@ -30,11 +30,13 @@
 		"proton-pass": 1,
 		"reference": 0.7,
 		"rsi": 1,
+		"summarize": 0.8333,
 		"tabkyra": 0.8421,
 		"video-editing": 1,
 		"visual-explainer": 0.9412,
 		"world-data": 0.9,
 		"writing": 0.8889,
-		"writing-voice": 0.9
+		"writing-voice": 0.9,
+		"x-search": 1
 	}
 }

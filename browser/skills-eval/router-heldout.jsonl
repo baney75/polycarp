@@ -125,3 +125,9 @@
 {"task": "my claude.ai connector for polycarp can't reach this mac", "skill": "connector"}
 {"task": "which tunnel should I use for the polycarp connector, cloudflare or tailscale", "skill": "connector"}
 {"task": "let grok use this computer through polycarp", "skill": "connector"}
+{"task": "search twitter for posts from @nasa about the launch since last Friday", "skill": "x-search"}
+{"task": "find the replies under this tweet", "skill": "x-search"}
+{"task": "what's the latest on X about the strike, newest posts first", "skill": "x-search"}
+{"task": "tldr this url for me https://example.com/story", "skill": "summarize"}
+{"task": "give me the main points of this long article", "skill": "summarize"}
+{"task": "sum up this thread in three bullets", "skill": "summarize"}
