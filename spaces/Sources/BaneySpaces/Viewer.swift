@@ -3,7 +3,7 @@ import BaneySpacesCore
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The overview: all nine workspaces at once, laid out like the number keys' 3×3 grid.
+/// The overview: all nine workspaces at once, placed by `OverviewLayout`. The arrow keys still move as if on the number keys' 3×3 grid.
 /// Opens from the Mission Control key or ⌃↑ in place of Mission Control.
 final class ViewerModel: ObservableObject {
     /// A window card being dragged: what it is, where it came from, where the cursor is.
@@ -118,24 +118,44 @@ struct ViewerView: View {
         }
     }
 
-    /// Three rows share the screen's height, so a tile grows with the display.
+    /// Workspaces with windows share the screen by how many they hold, and empty ones wait in a strip (`OverviewLayout`).
     private func grid(in size: CGSize) -> some View {
-        let tileHeight: CGFloat = max(160, (size.height - 2 * 48 - 40 - 2 * 20) / 3)
-        return VStack(spacing: 18) {
-            VStack(spacing: 20) {
-                ForEach(0..<3, id: \.self) { row in gridRow(row, tileHeight: tileHeight) }
+        let area = CGRect(x: 48, y: 48, width: max(0, size.width - 96), height: max(0, size.height - 96 - 44))
+        let plan = OverviewLayout.plan(windows: model.tiles.mapValues(\.count), current: model.current, in: area)
+        return ZStack(alignment: .topLeading) {
+            ForEach(Array(plan.tiles.keys).sorted(), id: \.self) { n in
+                let r = plan.tiles[n]!
+                tile(n, height: r.height).frame(width: r.width, height: r.height).position(x: r.midX, y: r.midY)
             }
-            footer
+            ForEach(Array(plan.slots.keys).sorted(), id: \.self) { n in
+                let r = plan.slots[n]!
+                slot(n, size: r.width).position(x: r.midX, y: r.midY)
+            }
+            footer.frame(width: size.width).position(x: size.width / 2, y: size.height - 48 - 12)
         }
-        .padding(48)
-        .frame(maxWidth: 1600)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
     }
 
-    private func gridRow(_ row: Int, tileHeight: CGFloat) -> some View {
-        HStack(spacing: 20) {
-            ForEach(1...3, id: \.self) { col in tile(row * 3 + col, height: tileHeight) }
-        }
+    /// An empty workspace: its number, a click to go there and a place to drop a window.
+    private func slot(_ n: Int, size: CGFloat) -> some View {
+        let isTarget = model.dropTarget == n
+        let isHovered = model.drag == nil && model.highlighted == n
+        return Text("\(n)")
+            .font(Chrome.font(17, .semibold, rounded: true))
+            .foregroundStyle(isTarget || isHovered ? accent : Chrome.muted)
+            .frame(width: size, height: size)
+            .background(tileShape(isCurrent: false, isTarget: isTarget, isHovered: isHovered))
+            .scaleEffect(isTarget ? Chrome.grow(1.08) : 1)
+            .animation(Chrome.ease(0.12, .row), value: isTarget)
+            .background(GeometryReader { g in
+                Color.clear.preference(key: TileFrames.self, value: [n: g.frame(in: .named("viewer"))])
+            })
+            .contentShape(Chrome.shape(.overviewTile, continuous: false))
+            .onTapGesture { model.onPick(n) }
+            .onHover { inside in model.hover(n, inside) }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(tileLabel(n, entries: [], isCurrent: false))
+            .accessibilityAddTraits(.isButton)
     }
 
     /// The lifted card follows the cursor.
@@ -218,14 +238,14 @@ struct ViewerView: View {
         }
     }
 
-    /// Every window is listed; a full tile scrolls instead of hiding any. Rendered images can't
-    /// draw a scroll view, so they get the plain list.
-    @ViewBuilder private func windowList(_ n: Int, entries: [Spaces.Entry]) -> some View {
-        let list = VStack(spacing: 6) { ForEach(entries) { e in draggableCard(e, from: n) } }
-        if stillBackdrop {
-            list
-        } else {
-            ScrollView(.vertical) { list }.scrollIndicators(.automatic)
+    /// Every window has a card, and the cards fill the tile. They shrink as it fills, so none is ever hidden.
+    private func windowList(_ n: Int, entries: [Spaces.Entry]) -> some View {
+        GeometryReader { g in
+            let grid = OverviewLayout.cards(entries.count, in: g.size)
+            let columns = Array(repeating: GridItem(.fixed(grid.cardSize.width), spacing: OverviewLayout.cardGap), count: grid.columns)
+            LazyVGrid(columns: columns, alignment: .leading, spacing: OverviewLayout.cardGap) {
+                ForEach(entries) { e in draggableCard(e, from: n, size: grid.cardSize) }
+            }
         }
     }
 
@@ -246,9 +266,9 @@ struct ViewerView: View {
     }
 
     /// A window card in a tile. Click it to go to that window; drag it to another workspace.
-    private func draggableCard(_ e: Spaces.Entry, from n: Int) -> some View {
+    private func draggableCard(_ e: Spaces.Entry, from n: Int, size: CGSize) -> some View {
         let beingDragged = model.drag?.entry.id == e.id
-        return card(e, lifted: false)
+        return bigCard(e, size: size)
             .opacity(beingDragged ? 0.3 : 1)
             .onHover { inside in (inside ? NSCursor.openHand : NSCursor.arrow).set() }
             .gesture(
@@ -263,6 +283,29 @@ struct ViewerView: View {
                     }
             )
             .simultaneousGesture(TapGesture().onEnded { model.onPickWindow(e.id, n) })
+    }
+
+    /// A window in its tile: the app's icon large in the middle, with the app and title below. The title goes first when a
+    /// card gets small, then the app's name.
+    private func bigCard(_ e: Spaces.Entry, size: CGSize) -> some View {
+        let icon = min(56, max(18, size.height * 0.42))
+        let title = e.title.isEmpty || e.title == e.app ? "" : e.title
+        return VStack(spacing: max(2, min(8, size.height * 0.05))) {
+            Image(nsImage: model.icons[e.id] ?? NSRunningApplication(processIdentifier: e.pid)?.icon ?? NSImage())
+                .resizable().frame(width: icon, height: icon)
+            if size.height >= 52 {
+                Text(e.app).font(Chrome.font(13, .semibold)).lineLimit(1).truncationMode(.middle)
+            }
+            if size.height >= 84, !title.isEmpty {
+                Text(title).font(Chrome.font(12)).foregroundStyle(Chrome.muted).lineLimit(size.height >= 130 ? 2 : 1)
+                    .multilineTextAlignment(.center).truncationMode(.middle)
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(width: size.width, height: size.height)
+        .background(Chrome.shape(.overviewChip, continuous: false).fill(Chrome.cell(0.06)))
+        .contentShape(Chrome.shape(.overviewChip, continuous: false))
+        .help(title.isEmpty ? e.app : "\(e.app): \(title)")
     }
 
     private func card(_ e: Spaces.Entry, lifted: Bool) -> some View {
