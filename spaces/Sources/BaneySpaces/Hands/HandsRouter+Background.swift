@@ -100,7 +100,8 @@ extension HandsRouter {
         let activations = ActivationWatch()
         let tap = SessionTap()
         let idle = IdleWatch()
-        defer { activations.stop(); _ = tap.stop() }
+        var watchHandedOff = false
+        defer { if !watchHandedOff { activations.stop(); _ = tap.stop() } }
         guard let frontStart = frontPid() else { return .failed(BackgroundRefusal.frontUnknown(w.app)) }
 
         /// Hardware events in the span, as far as anything is listening (nil: nothing is, so nobody can be blamed or excused).
@@ -140,8 +141,9 @@ extension HandsRouter {
             BackgroundAX.windows(pid: w.pid).mapped.first { $0.id == w.id }.map { BackgroundAX.windowReading($0.element) }
         }
         var curRef = refReading(), curFocus = focusReading(), curWindow = windowReading()
+        // Reading the tree takes about 100 ms by itself, so this spans what it needs to.
         let tree1 = inlineTree(w)
-        Thread.sleep(forTimeInterval: 0.15)
+        Thread.sleep(forTimeInterval: 0.05)
         let tree2 = inlineTree(w)
         let noise: Set<String> = (tree1 != nil && tree2 != nil) ? ContentChange.noise(base1: tree1!, base2: tree2!) : []
         var baseEntries: [String: String] = tree1.map { ContentChange.entries(of: $0) } ?? [:]
@@ -200,7 +202,7 @@ extension HandsRouter {
                 let deadline = Date().addingTimeInterval(1.2)
                 var after: (ref: ElementReading?, focus: ElementReading?, window: WindowReading?, tree: JSONValue?) = (nil, nil, nil, nil)
                 repeat {
-                    Thread.sleep(forTimeInterval: 0.15)
+                    Thread.sleep(forTimeInterval: 0.05)
                     if spanFront() != .same { break }
                     let t = treeAfter()
                     after = (refReading(), focusReading(), windowReading(), t.tree)
@@ -227,7 +229,8 @@ extension HandsRouter {
             aimed += hover.screenPoints
             posted += hover.report.posted.count
             if let stopped = hover.report.stopped { return .failed(frontFailure() ?? stopped) }
-            Thread.sleep(forTimeInterval: 0.2)
+            // A hover's tint can animate, and pixels compare what's there. With no pixels in the proof it doesn't matter.
+            Thread.sleep(forTimeInterval: verifier.hasPixels ? 0.2 : 0.05)
             let shotBefore = verifier.hasPixels ? WindowShot.pixels(window: w.id, check: scopeCheck) : nil
             if verifier == .pixels, shotBefore == nil { return .failed(BackgroundRefusal.noVerifier(w.app)) }     // nothing is pressed yet
             let press = BackgroundPoster.pointer(drag ? InputScript.drag(path: path) : InputScript.click(at: path[0]), frame: frame, drag: drag,
@@ -238,7 +241,7 @@ extension HandsRouter {
             let minStroke = shotBefore.map { PointerPath.strokeMinimum(path: path, scale: $0.scale) } ?? DeliveryProof.minStrokePixels
             let deadline = Date().addingTimeInterval(1.2)
             repeat {
-                Thread.sleep(forTimeInterval: 0.15)
+                Thread.sleep(forTimeInterval: 0.05)
                 if spanFront() != .same { break }
                 let refAfter = refReading(), focusAfter = focusReading()
                 let t = treeAfter()
@@ -253,15 +256,25 @@ extension HandsRouter {
             landed = verdict.verified ? 1 : 0
         }
 
-        // The tail: a second after the last post (not after the proof) still counts. An app that comes forward late is caught here.
-        while Date().timeIntervalSince(lastPostAt) < 1.0 {
-            if spanFront() != .same { break }
-            Thread.sleep(forTimeInterval: 0.1)
-        }
         if let e = frontFailure() { return .failed(e) }
-        let events = tap.stop() ?? idle.events
+        let events = tap.snapshot ?? idle.events
         let pointerVerdict = PointerAudit.verdict(before: pointerBefore, after: BackgroundPoster.pointerLocation(), posted: aimed, tap: events, ownPid: Int64(getpid()))
         if let e = pointerVerdict.error { return .failed(e) }
+
+        // The tail: a second after the last post (not after the proof) still counts, but the agent doesn't wait for it. An
+        // app that comes forward late is shut out of the route here, so its next action is refused. The window stays marked
+        // as the agent's until then, so the focus watcher doesn't take a late activation for Donovan switching apps.
+        watchHandedOff = true
+        let tailMark = AgentActivity.shared.begin(pid: w.pid, window: w.id)
+        let lastPost = lastPostAt
+        DispatchQueue.global(qos: .utility).async {
+            defer { activations.stop(); _ = tap.stop(); AgentActivity.shared.end(tailMark) }
+            while Date().timeIntervalSince(lastPost) < 1.0 {
+                if spanFront() != .same { break }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            if let late = frontFailure() { Trace.log("hands: \(w.app) changed the front app after its answer: \(late.message)") }
+        }
 
         guard verdict.verified else { return .failed(BackgroundRefusal.unverified(basis: verdict.basis)) }
         BackgroundBreaker.shared.update { $0.proved(pid: w.pid, kind: kind) }

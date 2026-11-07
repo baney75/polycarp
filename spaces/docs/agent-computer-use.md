@@ -289,8 +289,10 @@ events may have landed.
 
 Guards while posting: every app the workspace activates is recorded (`didActivateApplicationNotification`) from
 planning until a second after the last post, and the front app is looked at synchronously before every step; either
-seeing a change stops posting (releases still balanced). Any activation in the span, the target's or another's, fails
-the action. If the target came forward and a hardware event was heard in the span it was Donovan (`user_activated`,
+seeing a change stops posting (releases still balanced). Any activation before the answer, the target's or another's,
+fails the action. The answer comes when the action is proven, not when the second is up: an activation after it can't
+fail an answer already given, so it's judged the same way once the second ends, and an app that came forward by itself
+is refused from its next action on. If the target came forward and a hardware event was heard in the span it was Donovan (`user_activated`,
 `in_use`): the action stops and the route is not blamed. If a tap was listening and heard no hardware, the app is shut
 out of the route for the run; if nothing was listening, only that process is. BaneySpaces does not follow any of
 them. A front app that cannot be read is not a pass. The real pointer is Donovan's: a listen-only session tap runs
