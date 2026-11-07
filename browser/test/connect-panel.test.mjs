@@ -198,7 +198,7 @@ test("a request the helper never answers fails with no_reply after 20 s (30 s fo
 	const err = await status;
 	assert.ok(err instanceof client.ConnectRequestError);
 	assert.equal(err.code, "no_reply");
-	assert.equal(err.message, "Polycarp's helper didn't answer. Update it: polycarp browser update");
+	assert.equal(err.message, "Polycarp's helper didn't answer. Update it: polycarp browser update (or tabkyra update if you built the helper yourself)");
 	assert.equal(client.isNoHost(err), false);
 	// A late answer for the forgotten request is ignored.
 	port.listener({ id: port.posted[0].id, result: { route: "none" } });
@@ -484,7 +484,7 @@ test("second-S2: on the link route the connector URL is the hub's own, shown onc
 
 test("first-F3/second-G2: a helper that lists no scopes in {id, what} form gets no Confirm; the confirm lists descriptions, never 'the hub's choice'", async () => {
 	const { joinScopesOf, helperOutOfDateMessage } = await import("../src/connect/format.ts");
-	assert.equal(helperOutOfDateMessage(), "Polycarp's helper is out of date. Run polycarp browser update, then try again.");
+	assert.equal(helperOutOfDateMessage(), "Polycarp's helper is out of date. Run polycarp browser update (or tabkyra update if you built the helper yourself), then try again.");
 	const rows = [{ id: "browser.read", what: "See the agent's own tabs and read pages" }];
 	assert.deepEqual(joinScopesOf({ joinScopes: rows }), rows);
 	for (const bad of [undefined, [], ["browser.read"], [{ id: "a" }], [{ id: "", what: "x" }], [rows[0], null], "browser.read"]) assert.equal(joinScopesOf({ joinScopes: bad }), undefined, JSON.stringify(bad));
@@ -497,4 +497,15 @@ test("second-G3: a confirm is dropped when a route or problem appears, and when 
 	const tab = read("src/dialogs/ConnectTab.ts");
 	assert.match(/private async load\(\)[\s\S]*?\n\t\}\n/.exec(tab)[0], /this\.status = await connectStatus\(\);[\s\S]*?if \(this\.status\.route !== "none" \|\| this\.status\.problem\) this\.confirming = undefined;/);
 	for (const field of ["hubUrl", "joinCode", "joinName"]) assert.match(tab, new RegExp(`this\\.${field} = \\(e\\.target as HTMLInputElement\\)\\.value;\\s*this\\.confirming = undefined;`), field);
+});
+
+test("a helper that hasn't said its name gets both commands, and the one name once it has", async () => {
+	const { builtHelperCommand, hostCommandText } = await import("../src/bridge/host-command.ts");
+	// Tests run with no extension storage, so the helper never reports here.
+	assert.equal(builtHelperCommand("setup"), "tabkyra setup");
+	assert.equal(hostCommandText("setup"), "polycarp browser setup (or tabkyra setup if you built the helper yourself)");
+	const panel = readFileSync(new URL("../src/dialogs/ConnectTab.ts", import.meta.url), "utf8");
+	assert.match(panel, /builtHelperCommand\("setup"\) \? this\.command\("If you built the helper yourself"/);
+	const host = readFileSync(new URL("../src/bridge/host-command.ts", import.meta.url), "utf8");
+	assert.match(host, /known = true/, "reporting a name ends the two-name text");
 });

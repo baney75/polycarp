@@ -6,10 +6,14 @@ import { UPDATE_STATUS_KEY } from "./protocol.js";
  * installed from the store has neither, so the screens that show this also say how to get the helper.
  */
 let command = "polycarp browser";
+let known = false;
 
 function take(status: unknown): void {
 	const named = (status as { command?: unknown } | undefined)?.command;
-	if (named === "polycarp browser" || named === "tabkyra") command = named;
+	if (named === "polycarp browser" || named === "tabkyra") {
+		command = named;
+		known = true;
+	}
 }
 
 try {
@@ -23,4 +27,17 @@ try {
 
 export function hostCommand(): string {
 	return command;
+}
+
+/** A helper built from the setup prompt answers to `tabkyra`, and one that hasn't reported yet could be either. */
+export function builtHelperCommand(subcommand: string): string | undefined {
+	return known ? undefined : `tabkyra ${subcommand}`;
+}
+
+/** The command for a sentence: the one name once the helper has said which, and both until then. */
+export function hostCommandText(subcommand: string): string {
+	const built = builtHelperCommand(subcommand);
+	return built
+		? `${command} ${subcommand} (or ${built} if you built the helper yourself)`
+		: `${command} ${subcommand}`;
 }

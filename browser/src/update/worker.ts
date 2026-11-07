@@ -12,7 +12,7 @@
  * AUTO_UPDATE_QUIET_MS, for every step.
  */
 
-import { hostCommand } from "../bridge/host-command.js";
+import { hostCommandText } from "../bridge/host-command.js";
 import { bridgeActivity, onUpdateMessages, sendUpdateAction, setGateReady, setInstallGate } from "../bridge/native.js";
 import {
 	type HostUpdateProgress,
@@ -403,7 +403,7 @@ function expectReply(action: UpdateAction): void {
 		await setProgress(
 			action,
 			"failed",
-			`The native host didn't answer. It may be older than this extension: update the CLI (${hostCommand()} update, or rebuild cli/ in a checkout), then reload Polycarp.`,
+			`The native host didn't answer. It may be older than this extension: update the CLI (${hostCommandText("update")}, or rebuild cli/ in a checkout), then reload Polycarp.`,
 		);
 		const pending = await getPending();
 		if (pending?.step === "sent" && pending.action === action) await chrome.storage.local.remove(PENDING_KEY);
@@ -472,7 +472,7 @@ function startPanelAction(
 			await setProgress(
 				action,
 				"failed",
-				`The Polycarp native host isn't connected. Run ${hostCommand()} doctor in a terminal.`,
+				`The Polycarp native host isn't connected. Run ${hostCommandText("doctor")} in a terminal.`,
 			);
 			sendResponse({ ok: false, message: "No native host" });
 			return;

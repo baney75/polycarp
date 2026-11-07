@@ -1,12 +1,12 @@
 /** Small text helpers for Settings > Connect. */
 
 import { CONNECT_CODE, HUB_ORIGIN } from "../agent-setup-prompt.js";
-import { hostCommand } from "../bridge/host-command.js";
+import { hostCommand, hostCommandText } from "../bridge/host-command.js";
 import type { ApprovalCode, ConnectStatus, DeviceCode, JoinScope } from "./types.js";
 
 /** Built when shown: the name the helper answers to arrives after this module loads. */
 export const malformedCodeMessage = (): string =>
-	`The helper answered with a malformed code. Try again, or update it: ${hostCommand()} update`;
+	`The helper answered with a malformed code. Try again, or update it: ${hostCommandText("update")}`;
 
 /**
  * A code reply is shown in a box the owner copies, and a device code also goes into a command they
@@ -79,7 +79,7 @@ export const JOIN_WARNING =
 
 /** Said when the helper's status has no scope list (a helper from before the list): joining is not offered. */
 export const helperOutOfDateMessage = (): string =>
-	`Polycarp's helper is out of date. Run ${hostCommand()} update, then try again.`;
+	`Polycarp's helper is out of date. Run ${hostCommandText("update")}, then try again.`;
 
 /** The scopes a join would grant, as the helper listed them; undefined when it listed none in the shape this panel reads. */
 export function joinScopesOf(status: Pick<ConnectStatus, "joinScopes">): JoinScope[] | undefined {
