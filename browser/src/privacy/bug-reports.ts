@@ -9,7 +9,7 @@ export const BUG_REPORTS_KEY = "privacy.bugReports";
 export const BUG_LOG_KEY = "privacy.bugLog";
 const MAX_ENTRIES = 20;
 /** A blank new-issue page: the report travels by the clipboard, never in the URL. */
-export const NEW_ISSUE_URL = "https://github.com/baney75/tabkyra/issues/new?labels=bug-report";
+export const NEW_ISSUE_URL = "https://github.com/baney75/polycarp/issues/new?labels=bug-report";
 
 export interface BugEntry {
 	at: string;

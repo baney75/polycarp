@@ -256,8 +256,12 @@ export class ConnectTab extends SettingsTab {
 	private noHostBox(): TemplateResult {
 		return html`
 			<div class="flex flex-col gap-2 rounded-md border border-border bg-muted/40 p-3" data-connect-setup>
-				<p class="text-xs text-foreground">Polycarp's helper isn't connected. It runs on this computer and does the work here. Run this in a terminal, then reopen Settings.</p>
+				<p class="text-xs text-foreground">Polycarp's helper isn't connected. It runs on this computer and does the work here. If you have it, run this in a terminal, then reopen Settings.</p>
 				${this.command("Set up Polycarp", `${hostCommand()} setup`)}
+				<p class="text-xs text-muted-foreground">
+					Don't have it? Copy the setup prompt above into your coding agent, or
+					<a class="underline" href="https://dbaney.com/polycarp/" target="_blank" rel="noopener noreferrer">get Polycarp for Mac</a>.
+				</p>
 			</div>
 		`;
 	}
