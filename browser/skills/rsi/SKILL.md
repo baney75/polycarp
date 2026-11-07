@@ -1,6 +1,6 @@
 ---
 name: rsi
-description: Recursive self-improvement for skills - after real work, turn what went wrong or what was learned into a small, tested edit to a skill (or a new skill), pass it through `tabkyra skill lint`, the user's yes or an optional adversarial review by an equal or stronger model, apply it with `tabkyra skill apply` (backed up, reversible), and offer it upstream to the Polycarp skill library. Use when the user types /rsi, says "improve your skills", "learn from this", "remember how to do this", wants a lesson or workaround kept for next time, after a task that needed retries or user corrections, or when a skill gave wrong or outdated steps.
+description: Recursive self-improvement for skills - after real work, turn what went wrong or what was learned into a small, tested edit to a skill (or a new skill), pass it through `tabkyra skill lint`, the user's yes or an optional adversarial review by an equal or stronger model, apply it with `tabkyra skill apply` (backed up, reversible), and offer it upstream to the Tabkyra skill library. Use when the user types /rsi, says "improve your skills", "learn from this", "remember how to do this", wants a lesson or workaround kept for next time, after a task that needed retries or user corrections, or when a skill gave wrong or outdated steps.
 license: AGPL-3.0
 ---
 

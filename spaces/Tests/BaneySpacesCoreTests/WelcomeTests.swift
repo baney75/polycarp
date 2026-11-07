@@ -3,12 +3,12 @@ import XCTest
 
 final class WelcomeTests: XCTestCase {
     func testPermissionsAreAskedInOrderAndOnlyAccessibilityIsRequired() {
-        XCTAssertEqual(Welcome.steps.map(\.kind), [.accessibility, .screenRecording, .inputMonitoring, .microphone])
+        XCTAssertEqual(Welcome.steps.map(\.kind), [.accessibility, .microphone, .screenRecording, .inputMonitoring])
         XCTAssertEqual(Welcome.steps.filter(\.isRequired).map(\.kind), [.accessibility])
         XCTAssertEqual(Welcome.next(granted: [], skipped: []), .accessibility)
-        XCTAssertEqual(Welcome.next(granted: [.accessibility], skipped: []), .screenRecording)
-        XCTAssertEqual(Welcome.next(granted: [.accessibility], skipped: [.screenRecording]), .inputMonitoring)
-        XCTAssertEqual(Welcome.next(granted: [.accessibility], skipped: [.screenRecording, .inputMonitoring]), .microphone)
+        XCTAssertEqual(Welcome.next(granted: [.accessibility], skipped: []), .microphone)
+        XCTAssertEqual(Welcome.next(granted: [.accessibility], skipped: [.microphone]), .screenRecording)
+        XCTAssertEqual(Welcome.next(granted: [.accessibility], skipped: [.microphone, .screenRecording]), .inputMonitoring)
         XCTAssertNil(Welcome.next(granted: [.accessibility], skipped: [.screenRecording, .inputMonitoring, .microphone]))
     }
 
@@ -53,10 +53,10 @@ final class WelcomeTests: XCTestCase {
 
     func testTheWalkIsPressFlipPressFlip() {
         XCTAssertEqual(Welcome.defaultAction(granted: [], skipped: []), .allow(.accessibility))
-        XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility], skipped: []), .allow(.screenRecording))
-        XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility, .screenRecording], skipped: []), .allow(.inputMonitoring))
-        XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility, .screenRecording, .inputMonitoring], skipped: []), .allow(.microphone))
-        XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility, .screenRecording, .inputMonitoring, .microphone], skipped: []), .finish)
+        XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility], skipped: []), .allow(.microphone))
+        XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility, .microphone], skipped: []), .allow(.screenRecording))
+        XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility, .microphone, .screenRecording], skipped: []), .allow(.inputMonitoring))
+        XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility, .microphone, .screenRecording, .inputMonitoring], skipped: []), .finish)
         XCTAssertEqual(Welcome.defaultAction(granted: [.accessibility], skipped: [.screenRecording, .inputMonitoring, .microphone]), .finish)
     }
 

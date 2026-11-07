@@ -1,6 +1,6 @@
 ---
 name: academic-research
-description: Find, read and verify scholarly sources (Google Scholar, Crossref, OpenAlex, arXiv, PubMed), check each one is real, unretracted and says what you claim, then save it to the Polycarp library and export it as BibTeX, RIS or CSL-JSON (Zotero, Word, LaTeX) or as Obsidian notes. Use when the user asks for papers, studies, journal articles, trials, peer-reviewed sources, a literature review, citations, a bibliography, "what does the research say", or to check whether a citation is real or retracted.
+description: Find, read and verify scholarly sources (Google Scholar, Crossref, OpenAlex, arXiv, PubMed), check each one is real, unretracted and says what you claim, then save it to the Tabkyra library and export it as BibTeX, RIS or CSL-JSON (Zotero, Word, LaTeX) or as Obsidian notes. Use when the user asks for papers, studies, journal articles, trials, peer-reviewed sources, a literature review, citations, a bibliography, "what does the research say", or to check whether a citation is real or retracted.
 license: AGPL-3.0
 ---
 

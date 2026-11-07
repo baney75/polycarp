@@ -130,8 +130,8 @@ test("pages that paint the theme background also set the theme text color, so di
 
 test("the Claude and Gemini MCP setup commands render as readable command blocks with a copy button", () => {
 	const source = readFileSync(new URL("../src/subscriptions/SubscriptionsSection.ts", import.meta.url), "utf8");
-	assert.match(source, /this\.command\("Claude Code", CLI_MCP_SETUP\.claude\)/);
-	assert.match(source, /this\.command\("Gemini CLI", CLI_MCP_SETUP\.gemini\)/);
+	assert.match(source, /this\.command\("Claude Code", cliMcpSetup\("claude", hostCommand\(\)\)\)/);
+	assert.match(source, /this\.command\("Gemini CLI", cliMcpSetup\("gemini", hostCommand\(\)\)\)/);
 	const block = source.slice(source.indexOf("private command("), source.indexOf("private row("));
 	// The look is shared with Settings > Connect (src/components/command-box.ts): it wraps anywhere, so a long command can't run off the panel.
 	assert.match(block, /<code class=\$\{COMMAND_BOX_CLASS\}>/);

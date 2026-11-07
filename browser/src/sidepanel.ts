@@ -89,6 +89,7 @@ import { planBadge } from "./subscriptions/plan-badge.js";
 import {
 	explainErrors,
 	isSubscriptionProvider,
+	knownSubscriptionProviders,
 	refreshSubscriptionModels,
 	registerSubscriptionApis,
 	routeSubscriptionModel,
@@ -998,14 +999,20 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			return await ApiKeyDialog.prompt(provider, isFreeModeModel(agent.state.model) ? FREE_KEY_NOTE : undefined);
 		},
 		onModelSelect: async () => {
-			const providers = [...(await getProvidersWithKeys()), ...(await refreshSubscriptionModels().catch(() => []))];
+			// Opens from what's known now, without waiting on the network or the helper: this used to take as long as the
+			// slowest provider's list, up to 4 seconds and more, with nothing on screen.
+			const withKeys = await getProvidersWithKeys();
+			let providers = [...withKeys, ...knownSubscriptionProviders()];
 			if (providers.length === 0) {
-				openApiKeysDialog();
-				return;
+				// Nothing known yet: a plan might still be signed in, and the alternative is a Settings page they don't need.
+				const brief = new Promise<string[]>((resolve) => setTimeout(() => resolve([]), 500));
+				providers = await Promise.race([refreshSubscriptionModels().catch(() => []), brief]);
+				if (providers.length === 0) {
+					openApiKeysDialog();
+					return;
+				}
 			}
-			// Cached lists are already registered; give stale providers a moment to refresh.
-			await refreshDiscoveredModels(storage, { wait: true, timeoutMs: 4000 }).catch(() => {});
-			ModelSelector.open(
+			const selector = ModelSelector.open(
 				agent.state.model,
 				(model) => {
 					// Free mode checks for an OpenRouter key first and explains how to get a free one.
@@ -1028,6 +1035,11 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 					},
 				},
 			);
+			// Fresh lists fill in the open picker when they arrive.
+			void Promise.all([
+				refreshSubscriptionModels().catch(() => knownSubscriptionProviders()),
+				refreshDiscoveredModels(storage, { wait: true, timeoutMs: 15000 }).catch(() => {}),
+			]).then(([subscriptions]) => selector.refreshed([...withKeys, ...subscriptions]));
 		},
 		onBeforeSend: async () => {
 			// Polycarp may be swapping in an update and about to reload; a run started then would be cut

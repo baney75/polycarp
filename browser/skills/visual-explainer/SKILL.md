@@ -1,6 +1,6 @@
 ---
 name: visual-explainer
-description: Build one self-contained HTML file of hand-drawn SVG diagrams, with short captions and no outside scripts, that shows how code works, a diff or PR, a system architecture, a data flow, a query path or an implementation plan, and check how it renders in Polycarp. Use when the user asks to visualize or diagram code, a codebase, a diff, a PR, a system, a pipeline, a state machine or a plan, wants an architecture diagram, a visual diff, a visual plan or a recap page of what shipped.
+description: Build one self-contained HTML file of hand-drawn SVG diagrams, with short captions and no outside scripts, that shows how code works, a diff or PR, a system architecture, a data flow, a query path or an implementation plan, and check how it renders in Tabkyra. Use when the user asks to visualize or diagram code, a codebase, a diff, a PR, a system, a pipeline, a state machine or a plan, wants an architecture diagram, a visual diff, a visual plan or a recap page of what shipped.
 license: MIT
 ---
 

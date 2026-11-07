@@ -1,6 +1,6 @@
 ---
 name: kyraskillmaker
-description: Write or rewrite an agent skill (SKILL.md) to Polycarp's standard, so that even a small model can follow it and get a strong result fast, and so it passes `tabkyra skill lint`. Use when the user asks to write, draft, create, make, fix, improve, review, shorten or port a skill or SKILL.md, or to turn a repeated task into a new skill, when the rsi skill picks a skill to change, or when a task keeps failing the same way and a skill would stop it.
+description: Write or rewrite an agent skill (SKILL.md) to Tabkyra's standard, so that even a small model can follow it and get a strong result fast, and so it passes `tabkyra skill lint`. Use when the user asks to write, draft, create, make, fix, improve, review, shorten or port a skill or SKILL.md, or to turn a repeated task into a new skill, when the rsi skill picks a skill to change, or when a task keeps failing the same way and a skill would stop it.
 license: AGPL-3.0
 ---
 

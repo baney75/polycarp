@@ -39,7 +39,7 @@ final class VoiceEngine: ObservableObject {
         if let w = waiting { return VoiceGate.message(w) ?? "Dictation is off" }
         guard let st = state else { return "Starting…" }
         if !st.enabled { return "Dictation is off" }
-        return st.status.menuLine(hotkeyLabel: st.hotkeyLabel, detail: st.detail)
+        return st.status.menuLine(hotkeyLabel: st.hotkeyLabel, detail: st.detail, tapToToggle: settings?.tapToToggle ?? false)
     }
 
     /// Level while recording, for the overlay. Not published: it changes many times a second.

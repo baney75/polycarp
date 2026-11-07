@@ -256,7 +256,8 @@ const librarySkills = {
 					const description = frontmatterDescription(text);
 					if (!description || /^[>|]/.test(description))
 						throw new Error(`${file}: no readable description in its frontmatter`);
-					return { name, description, text };
+					// Skills keep their old name in their own text, which agents route on. People read the product's.
+					return { name, description: description.replaceAll("Tabkyra", "Polycarp"), text };
 				});
 			return {
 				contents: `export const LIBRARY_SKILLS = ${JSON.stringify(skills)};`,

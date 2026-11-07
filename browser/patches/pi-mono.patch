@@ -1047,7 +1047,7 @@ index 4ec7734c1..bfe191eb8 100644
  
  		// Generate HTML table
 diff --git a/packages/web-ui/src/dialogs/ModelSelector.ts b/packages/web-ui/src/dialogs/ModelSelector.ts
-index 192c3c536..88618022b 100644
+index 192c3c536..68fe786bc 100644
 --- a/packages/web-ui/src/dialogs/ModelSelector.ts
 +++ b/packages/web-ui/src/dialogs/ModelSelector.ts
 @@ -1,5 +1,5 @@
@@ -1103,18 +1103,38 @@ index 192c3c536..88618022b 100644
  	private allowedProviders?: Set<string>;
  	private scrollContainerRef = createRef<HTMLDivElement>();
  	private searchInputRef = createRef<HTMLInputElement>();
-@@ -69,8 +90,10 @@ export class ModelSelector extends DialogBase {
+@@ -65,12 +86,14 @@ export class ModelSelector extends DialogBase {
+ 
+ 	protected override modalWidth = "min(400px, 90vw)";
+ 
+-	static async open(
++	static open(
  		currentModel: Model<any> | null,
  		onSelect: (model: Model<any>) => void,
  		allowedProviders?: string[],
+-	) {
 +		thinking?: ModelSelectorThinking,
- 	) {
++	): ModelSelector {
  		const selector = new ModelSelector();
 +		selector.thinking = thinking;
  		selector.currentModel = currentModel;
  		selector.onSelectCallback = onSelect;
  		if (allowedProviders) {
-@@ -182,10 +205,23 @@ export class ModelSelector extends DialogBase {
+@@ -78,6 +101,13 @@ export class ModelSelector extends DialogBase {
+ 		}
+ 		selector.open();
+ 		selector.loadCustomProviders();
++		return selector;
++	}
++
++	/** Lists that arrived after the picker opened: more providers, or a provider's fresh models. */
++	refreshed(allowedProviders?: string[]): void {
++		if (allowedProviders) this.allowedProviders = new Set(allowedProviders);
++		this.requestUpdate();
+ 	}
+ 
+ 	override async firstUpdated(changedProperties: PropertyValues): Promise<void> {
+@@ -182,10 +212,23 @@ export class ModelSelector extends DialogBase {
  		}
  	}
  
@@ -1142,7 +1162,7 @@ index 192c3c536..88618022b 100644
  	}
  
  	private handleSelect(model: Model<any>) {
-@@ -195,7 +231,7 @@ export class ModelSelector extends DialogBase {
+@@ -195,7 +238,7 @@ export class ModelSelector extends DialogBase {
  		}
  	}
  
@@ -1151,7 +1171,16 @@ index 192c3c536..88618022b 100644
  		// Collect all models from known providers
  		const allModels: Array<{ provider: string; id: string; model: any }> = [];
  		const knownProviders = getProviders();
-@@ -246,6 +282,33 @@ export class ModelSelector extends DialogBase {
+@@ -227,7 +270,7 @@ export class ModelSelector extends DialogBase {
+ 			if (query) {
+ 				const scored: Array<{ item: (typeof allModels)[0]; score: number }> = [];
+ 				for (const entry of filteredModels) {
+-					const searchText = `${entry.provider} ${entry.id} ${entry.model.name}`.toLowerCase();
++					const searchText = `${entry.provider} ${entry.id} ${entry.model.name} ${modelNames(entry.model).name}`.toLowerCase();
+ 					const score = subsequenceScore(query, searchText);
+ 					if (score > 0) {
+ 						scored.push({ item: entry, score });
+@@ -246,6 +289,33 @@ export class ModelSelector extends DialogBase {
  			filteredModels = filteredModels.filter(({ model }) => model.input.includes("image"));
  		}
  
@@ -1185,7 +1214,7 @@ index 192c3c536..88618022b 100644
  		// Sort: when not searching, current model first then by provider.
  		// When searching, preserve the score-based order from above,
  		// but still float the current model to the top.
-@@ -259,7 +322,7 @@ export class ModelSelector extends DialogBase {
+@@ -259,7 +329,7 @@ export class ModelSelector extends DialogBase {
  			});
  		}
  
@@ -1194,7 +1223,7 @@ index 192c3c536..88618022b 100644
  	}
  
  	private scrollToSelected() {
-@@ -281,6 +344,7 @@ export class ModelSelector extends DialogBase {
+@@ -281,6 +351,7 @@ export class ModelSelector extends DialogBase {
  			<!-- Header and Search -->
  			<div class="p-6 pb-4 flex flex-col gap-4 border-b border-border flex-shrink-0">
  				${DialogHeader({ title: i18n("Select Model") })}
@@ -1202,7 +1231,7 @@ index 192c3c536..88618022b 100644
  				${Input({
  					placeholder: i18n("Search models..."),
  					value: this.searchQuery,
-@@ -326,7 +390,7 @@ export class ModelSelector extends DialogBase {
+@@ -326,7 +397,7 @@ export class ModelSelector extends DialogBase {
  
  			<!-- Scrollable model list -->
  			<div class="flex-1 overflow-y-auto" ${ref(this.scrollContainerRef)}>
@@ -1211,7 +1240,7 @@ index 192c3c536..88618022b 100644
  					const isCurrent = modelsAreEqual(this.currentModel, model);
  					const isSelected = index === this.selectedIndex;
  					return html`
-@@ -345,18 +409,17 @@ export class ModelSelector extends DialogBase {
+@@ -345,18 +416,17 @@ export class ModelSelector extends DialogBase {
  						>
  							<div class="flex items-center justify-between gap-2 mb-1">
  								<div class="flex items-center gap-2 flex-1 min-w-0">

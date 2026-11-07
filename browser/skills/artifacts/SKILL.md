@@ -1,6 +1,6 @@
 ---
 name: artifacts
-description: Build a polished, self-contained HTML artifact (report, briefing, comparison table, dashboard, slide-style page) from research or data, with citations, accessible markup and no outside scripts, then open it in Polycarp and check how it actually renders before handing it over. Use when the user asks for a report, page, one-pager, visual summary, dashboard, printable or shareable page, static page, HTML file or "artifact", or when research results, a table of numbers or data need a readable deliverable.
+description: Build a polished, self-contained HTML artifact (report, briefing, comparison table, dashboard, slide-style page) from research or data, with citations, accessible markup and no outside scripts, then open it in Tabkyra and check how it actually renders before handing it over. Use when the user asks for a report, page, one-pager, visual summary, dashboard, printable or shareable page, static page, HTML file or "artifact", or when research results, a table of numbers or data need a readable deliverable.
 license: AGPL-3.0
 ---
 

@@ -147,8 +147,7 @@ struct WelcomeView: View {
             VStack(spacing: 8) {
                 ForEach(Welcome.steps(for: parts.current).filter(\.isRequired), id: \.kind) { row($0) }
                 tryIt
-                // Dictation is what most people came for, so it's asked before the agents' permissions.
-                ForEach(Welcome.steps(for: parts.current).filter { !$0.isRequired }.sorted { a, _ in a.kind == .microphone }, id: \.kind) { row($0) }
+                ForEach(Welcome.steps(for: parts.current).filter { !$0.isRequired }, id: \.kind) { row($0) }
                 loginRow
                 if parts.current.contains(.browser) { BrowserWelcomeRow() }
             }
@@ -185,6 +184,11 @@ struct WelcomeView: View {
             }
     }
 
+    private func firstSentence(_ text: String) -> String {
+        guard let end = text.range(of: ". ") else { return text }
+        return String(text[..<end.lowerBound]) + "."
+    }
+
     @ViewBuilder private func row(_ s: PermissionStep) -> some View {
         let done = model.granted.contains(s.kind)
         let isCurrent = model.current == s.kind
@@ -202,8 +206,9 @@ struct WelcomeView: View {
                     Spacer(minLength: 0)
                 }
                 if !done {
-                    Text(s.why).font(Chrome.font(12)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
-                        .lineLimit(isCurrent ? nil : 1)
+                    // The whole reason on the step you're on; its first sentence on the others.
+                    Text(isCurrent ? s.why : firstSentence(s.why)).font(Chrome.font(12)).foregroundStyle(Chrome.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if !done, isCurrent {
                     HStack(spacing: 10) {
