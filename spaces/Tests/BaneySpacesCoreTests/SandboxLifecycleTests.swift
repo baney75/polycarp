@@ -514,9 +514,15 @@ final class SandboxShutdownTests: XCTestCase {
 
     func testStopAllKeepsTheLockWhileAWarmBuildIsStillCloning() throws {
         let r = Rig.make(); defer { r.manager.shutdown(); try? FileManager.default.removeItem(at: r.dir) }
+        r.manager.warmStopWait = 0.2   // the build is held on purpose: at the real 60 s, two stops cost 2 minutes of CI
         let entered = DispatchSemaphore(value: 0)
         let resume = DispatchSemaphore(value: 0)
+        let count = NSLock()
+        var clones = 0
         r.tart.onClone = {
+            count.lock(); clones += 1; let nth = clones; count.unlock()
+            // The first clone is the working guest, inside up(): holding it made this test sit out the 5 minutes below.
+            guard nth == 2 else { return }
             entered.signal()
             _ = resume.wait(timeout: .now() + 300)
         }
