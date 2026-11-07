@@ -1,5 +1,26 @@
 import Foundation
 
+/// "Turn on everything": one decision for all of what agents may do here, so a person who wants that doesn't hunt for three switches.
+/// One sheet, one real click. It never includes the connector, which stays at Default, and never macOS's own permissions, which only
+/// the person can grant in System Settings.
+public enum AgentEverything {
+    public static let title = "Give agents everything"
+    public static let why = "Full Access to this Mac, any site in your browser, and no prompts for Polycarp's tools in Claude Code."
+    public static let button = "Turn On Everything…"
+    public static let on = "Everything is on"
+    public static let consentTitle = "Turn on everything for agents?"
+    public static let consentBody = "Agents can read and act on every window on every workspace and start any app. They can open any site in your browser without asking, and Claude Code stops asking before it uses Polycarp's tools. They still can't drive an Open or Save panel, and assistants on the web stay limited to what you tick for them. You can turn any of this off in Settings > Agents."
+    public static let consentButton = "Turn On Everything"
+    public static let openBrowser = "Full Access is on. Open your browser with Polycarp's extension, then turn on Any site in Settings > Agents."
+    public static let finishing = "Full Access is on. Finishing the rest…"
+    public static let browserPartOff = "Full Access is on. Any site and Claude Code's setting need Polycarp's Browser part, in Settings > General."
+
+    /// `anySite` is nil when no browser has answered. Claude Code counts only where it's set up, because the rule matches nothing otherwise.
+    public static func isOn(access: AgentAccessMode, anySite: Bool?, claudeAllowed: Bool, claudeReady: Bool) -> Bool {
+        access == .full && anySite == true && (claudeAllowed || !claudeReady)
+    }
+}
+
 /// Who is asking, as the socket sees it. The remote server names every caller "remote …", and `polycarp-spaces mcp --connector`
 /// names itself the same way; a local caller claiming it only loses access.
 public enum HandsCaller {

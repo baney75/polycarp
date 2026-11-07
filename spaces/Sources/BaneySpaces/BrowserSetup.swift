@@ -7,6 +7,8 @@ import SwiftUI
 final class BrowserModel: ObservableObject {
     static let shared = BrowserModel()
     @Published var status: BrowserStatus?
+    /// "Turn on everything" was confirmed before the first read of the browser's state.
+    private var everythingPending = false
     @Published var busy = false
     @Published var message: String?
     private var timer: Timer?
@@ -61,6 +63,10 @@ final class BrowserModel: ObservableObject {
             DispatchQueue.main.async {
                 self?.refreshing = false
                 if let parsed, parsed != self?.status { self?.status = parsed }
+                // Only while Full Access stands: a person who has since stepped back took the yes back with it.
+                if self?.everythingPending == true, self?.status != nil {
+                    if AgentAccess.shared.current == .full { self?.turnOnEverything() } else { self?.everythingPending = false; self?.message = nil }
+                }
             }
         }
     }
@@ -128,6 +134,26 @@ final class BrowserModel: ObservableObject {
     /// The helper's own setup adds the MCP server to Claude Code and Codex (it edits nothing else).
     /// Always allow: agents open any site without asking, or ask again.
     func setAnySite(_ on: Bool) { runThenRefresh([on ? "allow-all" : "ask"], failure: "Changing site access failed") }
+
+    /// What "Turn on everything" covers in the browser and Claude Code, after the person's yes. Each is the same switch as in Settings.
+    func turnOnEverything() {
+        guard PartsModel.shared.current.contains(.browser) else { message = AgentEverything.browserPartOff; return }
+        // Nothing has been read yet (a fresh Welcome): the yes stands, and the next read finishes it.
+        guard let status else {
+            everythingPending = true
+            message = AgentEverything.finishing
+            refresh()
+            return
+        }
+        everythingPending = false
+        message = nil
+        if status.claudeReady, !status.claudeAllowed { setClaudeAllowed(true) }
+        switch status.anySite {
+        case .some(false): setAnySite(true)
+        case .some(true): break
+        case nil: message = AgentEverything.openBrowser
+        }
+    }
 
     /// Always allow: Claude Code stops asking before Polycarp's tools, or asks again.
     func setClaudeAllowed(_ on: Bool) {

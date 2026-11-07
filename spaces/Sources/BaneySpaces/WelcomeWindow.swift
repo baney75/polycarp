@@ -22,6 +22,8 @@ final class WelcomeModel: ObservableObject {
     @Published var legacyNote = UserDefaults.standard.bool(forKey: LegacyRetirement.noteKey)
     @Published var loginNeedsApproval = false
     @Published var askedAccessibilityAt: Date?
+    /// "Allow All": each permission that comes through, or is skipped, opens the next one, until none is left.
+    @Published private(set) var walking = false
     private var timer: Timer?
 
     static func read() -> Set<PermissionKind> {
@@ -49,7 +51,14 @@ final class WelcomeModel: ObservableObject {
             if now != self.granted {
                 let gained = now.subtracting(self.granted)
                 self.granted = now
-                if !gained.isEmpty { NSApp.activate(ignoringOtherApps: true); self.onGained() }
+                if !gained.isEmpty {
+                    if self.walking {
+                        self.walkOn()
+                    } else {
+                        NSApp.activate(ignoringOtherApps: true)
+                        self.onGained()
+                    }
+                }
             }
             if self.looksStale { self.objectWillChange.send() }
             self.readLoginItem()
@@ -59,6 +68,22 @@ final class WelcomeModel: ObservableObject {
     }
 
     func stop() { timer?.invalidate(); timer = nil }
+
+    /// macOS grants each of these only by hand, so this can't do them at once. It takes the person through them with no more clicks here.
+    func allowAll() {
+        walking = true
+        walkOn()
+    }
+
+    private func walkOn() {
+        guard let next = current else {
+            walking = false
+            NSApp.activate(ignoringOtherApps: true)
+            onGained()
+            return
+        }
+        allow(next)
+    }
 
     /// Adds Polycarp to the list with macOS's own prompt, then opens that list, so what's left is one switch.
     func allow(_ kind: PermissionKind) {
@@ -110,12 +135,18 @@ final class WelcomeModel: ObservableObject {
         readLoginItem()
     }
 
-    func skip(_ kind: PermissionKind) { if Welcome.canSkip(kind) { skipped.insert(kind) } }
+    func skip(_ kind: PermissionKind) {
+        guard Welcome.canSkip(kind) else { return }
+        skipped.insert(kind)
+        if walking { walkOn() }
+    }
 }
 
 struct WelcomeView: View {
     @ObservedObject var model: WelcomeModel
     @ObservedObject private var parts = PartsModel.shared
+    @ObservedObject private var browser = BrowserModel.shared
+    @State private var fullAccess = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -145,11 +176,13 @@ struct WelcomeView: View {
     /// The permissions the chosen parts need, then the way in.
     @ViewBuilder private var walk: some View {
             VStack(spacing: 8) {
+                allowAllRow
                 ForEach(Welcome.steps(for: parts.current).filter(\.isRequired), id: \.kind) { row($0) }
                 tryIt
                 ForEach(Welcome.steps(for: parts.current).filter { !$0.isRequired }, id: \.kind) { row($0) }
                 loginRow
                 if parts.current.contains(.browser) { BrowserWelcomeRow() }
+                if parts.current.contains(.workspaces) { everythingRow }
             }
             .padding(.horizontal, 20)
 
@@ -168,6 +201,51 @@ struct WelcomeView: View {
                     .buttonStyle(WelcomeButtonStyle(large: true))
             }
             .padding(.horizontal, 28).padding(.vertical, 18)
+    }
+
+    /// Everything left at once. Shown only while there are at least two, because one is the button already on its row.
+    @ViewBuilder private var allowAllRow: some View {
+        let left = Welcome.steps(for: parts.current).filter { !model.granted.contains($0.kind) && !model.skipped.contains($0.kind) }.count
+        if left >= 2 {
+            HStack(spacing: 10) {
+                Text(model.walking ? "Turn on Polycarp in each list, and the next one opens." : "Want all of it? macOS asks for each, one after another.")
+                    .font(Chrome.font(12)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if !model.walking { Button("Allow All") { model.allowAll() } }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 4)
+        }
+    }
+
+    /// Off until chosen, and it never blocks starting. The sheet says what it covers.
+    private var everythingRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(AgentEverything.title).font(Chrome.font(13, .bold))
+                Text(AgentEverything.why).font(Chrome.font(12)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
+                if let message = browser.message { Text(message).font(Chrome.font(11)).foregroundStyle(Chrome.working).fixedSize(horizontal: false, vertical: true) }
+            }
+            Spacer(minLength: 8)
+            if everythingOn {
+                Image(systemName: "checkmark.circle.fill").font(Chrome.font(16)).foregroundStyle(Chrome.accent)
+            } else {
+                Button(AgentEverything.button) {
+                    // After the click's own event, as in Settings: the sheet's real-click check reads the current event.
+                    DispatchQueue.main.async {
+                        guard AgentAccess.shared.requestEverything() else { return }
+                        fullAccess = AgentAccess.shared.current == .full
+                        browser.turnOnEverything()
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { fullAccess = AgentAccess.shared.current == .full }
+    }
+
+    private var everythingOn: Bool {
+        AgentEverything.isOn(access: fullAccess ? .full : .standard, anySite: browser.status?.anySite, claudeAllowed: browser.status?.claudeAllowed ?? false, claudeReady: browser.status?.claudeReady ?? false)
     }
 
     /// Right under what makes it possible, not below the optional steps.
