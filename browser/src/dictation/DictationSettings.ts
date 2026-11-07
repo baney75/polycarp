@@ -83,8 +83,7 @@ export class DictationSettings extends LitElement {
 				${
 					auto
 						? html`<p class="text-xs text-foreground">
-								This device: <span class="font-medium">${auto.label}</span>, about ${auto.downloadMB} MB, for
-								${this.auto?.why}.
+								Best fit for this computer: <span class="font-medium">${auto.label}</span>, a ${auto.downloadMB >= 1000 ? `${(auto.downloadMB / 1000).toFixed(1)} GB` : `${auto.downloadMB} MB`} download.
 							</p>`
 						: html`<p class="text-xs text-muted-foreground">Checking this device…</p>`
 				}

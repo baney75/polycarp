@@ -68,10 +68,12 @@ export const COPILOT = {
  * driving their CLIs on the user's behalf. Polycarp offers the reverse: the user runs their own
  * Claude Code or Gemini CLI and connects it to Polycarp's MCP server.
  */
-export const CLI_MCP_SETUP = {
-	claude: "claude mcp add --scope user tabkyra -- ~/.config/tabkyra/tabkyra mcp",
-	gemini: "gemini mcp add --scope user tabkyra ~/.config/tabkyra/tabkyra mcp",
-} as const;
+/** The command that adds Polycarp to a coding CLI, under the helper's real name. The MCP server's name stays `tabkyra`. */
+export function cliMcpSetup(cli: "claude" | "gemini", helper: string): string {
+	return cli === "claude"
+		? `claude mcp add --scope user tabkyra -- ${helper} mcp`
+		: `gemini mcp add --scope user tabkyra ${helper} mcp`;
+}
 
 /** Responses API fields the ChatGPT plan route rejects (preview limitations page, read 2026-10-28). */
 export const SIWC_UNSUPPORTED_FIELDS = [

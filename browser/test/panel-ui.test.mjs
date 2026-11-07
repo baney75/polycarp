@@ -108,7 +108,7 @@ test("starter chips: four, each a task that runs, none of the old odd ones", asy
 	const { starters } = await import("../src/tutorials.ts");
 	assert.deepEqual(
 		starters.map((s) => s.label),
-		["Summarize this page", "Research with sources", "Fill a form", "Compare tabs"],
+		["Summarize page", "Research a topic", "Fill a form", "Compare tabs"],
 	);
 	for (const s of starters) {
 		assert.ok(s.prompt.length > 20 && s.hint && s.icon, s.label);
@@ -130,8 +130,8 @@ test("pages that paint the theme background also set the theme text color, so di
 
 test("the Claude and Gemini MCP setup commands render as readable command blocks with a copy button", () => {
 	const source = readFileSync(new URL("../src/subscriptions/SubscriptionsSection.ts", import.meta.url), "utf8");
-	assert.match(source, /this\.command\("Claude Code", CLI_MCP_SETUP\.claude\)/);
-	assert.match(source, /this\.command\("Gemini CLI", CLI_MCP_SETUP\.gemini\)/);
+	assert.match(source, /this\.command\("Claude Code", cliMcpSetup\("claude", hostCommand\(\)\)\)/);
+	assert.match(source, /this\.command\("Gemini CLI", cliMcpSetup\("gemini", hostCommand\(\)\)\)/);
 	const block = source.slice(source.indexOf("private command("), source.indexOf("private row("));
 	// The look is shared with Settings > Connect (src/components/command-box.ts): it wraps anywhere, so a long command can't run off the panel.
 	assert.match(block, /<code class=\$\{COMMAND_BOX_CLASS\}>/);
@@ -157,9 +157,9 @@ test("native controls follow the theme: dark mode declares color-scheme dark", (
 	assert.match(dark, /accent-color: var\(--tk-brass\);/);
 });
 
-test("Settings > Providers reads top to bottom: Free mode, subscriptions, API keys with their search and list, custom providers", () => {
+test("Settings > Providers reads top to bottom: Free mode, API keys with their search and list, subscriptions, custom providers", () => {
 	const tab = readFileSync(new URL("../src/dialogs/ApiKeysTab.ts", import.meta.url), "utf8");
-	const order = ["Free mode: use the best free model", "<tabkyra-subscriptions>", ">API keys</h3>", 'placeholder="Find a provider"', "<tabkyra-provider-key", "${this.custom}"].map((s) => tab.indexOf(s));
+	const order = ["Free mode: use the best free model", ">API keys</h3>", 'placeholder="Find a provider"', "<tabkyra-provider-key", "<tabkyra-subscriptions>", "${this.custom}"].map((s) => tab.indexOf(s));
 	assert.ok(order.every((i) => i > 0), JSON.stringify(order));
 	assert.deepEqual([...order].sort((a, b) => a - b), order);
 });

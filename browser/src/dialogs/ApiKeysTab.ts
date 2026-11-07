@@ -129,13 +129,9 @@ export class ApiKeysTab extends SettingsTab {
 						/>
 					</label>
 					<p class="text-xs text-muted-foreground">
-						Picks the free model that does Polycarp's browser tasks best and falls back to the next when one is busy.
-						Never costs money; needs a free OpenRouter key; limited per day. ${FREE_PRIVACY_NOTE}
+						Never costs money. Needs a free OpenRouter key and is limited per day. ${FREE_PRIVACY_NOTE}
 					</p>
 				</div>
-				<section class="flex flex-col gap-4 pt-5 border-t border-border">
-					<tabkyra-subscriptions></tabkyra-subscriptions>
-				</section>
 				<section class="flex flex-col gap-3 pt-5 border-t border-border" aria-labelledby="api-keys-heading">
 					<div>
 						<h3 id="api-keys-heading" class="text-sm font-semibold text-foreground mb-1">API keys</h3>
@@ -179,6 +175,9 @@ export class ApiKeysTab extends SettingsTab {
 									)
 						}
 					</div>
+				</section>
+				<section class="flex flex-col gap-4 pt-5 border-t border-border">
+					<tabkyra-subscriptions></tabkyra-subscriptions>
 				</section>
 				${
 					this.showAll || this.query.trim()

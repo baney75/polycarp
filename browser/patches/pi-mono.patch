@@ -478,10 +478,17 @@ index b8f6550ec..81a8566e6 100644
  							.onAbort=${() => session.abort()}
  							.onModelSelect=${() => {
 diff --git a/packages/web-ui/src/components/MessageEditor.ts b/packages/web-ui/src/components/MessageEditor.ts
-index f0987c4d1..6fc0c0a1c 100644
+index f0987c4d1..8e8d6454a 100644
 --- a/packages/web-ui/src/components/MessageEditor.ts
 +++ b/packages/web-ui/src/components/MessageEditor.ts
-@@ -11,6 +11,35 @@ import { i18n } from "../utils/i18n.js";
+@@ -5,12 +5,41 @@ import type { Model } from "@mariozechner/pi-ai";
+ import { html, LitElement } from "lit";
+ import { customElement, property, state } from "lit/decorators.js";
+ import { createRef, ref } from "lit/directives/ref.js";
+-import { Brain, Loader2, Paperclip, Send, Sparkles, Square } from "lucide";
++import { ArrowUp, Brain, ChevronDown, Loader2, Paperclip, Square } from "lucide";
+ import { type Attachment, loadAttachment } from "../utils/attachment-utils.js";
+ import { i18n } from "../utils/i18n.js";
  import "./AttachmentTile.js";
  import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
  
@@ -784,12 +791,14 @@ index f0987c4d1..6fc0c0a1c 100644
  						${
  							this.showModelSelector && this.currentModel
  								? html`
-@@ -365,9 +589,10 @@ export class MessageEditor extends LitElement {
+@@ -364,10 +588,11 @@ export class MessageEditor extends LitElement {
+ 											});
  										},
  										children: html`
- 											${icon(Sparkles, "sm")}
+-											${icon(Sparkles, "sm")}
 -											<span class="ml-1">${this.currentModel.id}</span>
-+											<span class="ml-1 min-w-0 truncate">${modelLabel ? modelLabel.content : this.currentModel.id}</span>
++											<span class="min-w-0 truncate">${modelLabel ? modelLabel.content : this.currentModel.id}</span>
++											${icon(ChevronDown, "xs")}
  										`,
 -										className: "h-8 text-xs truncate",
 +										title: modelLabel?.title ?? this.currentModel.id,
@@ -814,13 +823,13 @@ index f0987c4d1..6fc0c0a1c 100644
 +								: ""
  						}
 +						${Button({
-+							variant: "ghost",
++							variant: this.value.trim() || this.attachments.length > 0 ? "default" : "ghost",
 +							size: "icon",
 +							onClick: this.handleSend,
 +							disabled: (!this.value.trim() && this.attachments.length === 0) || this.processingFiles,
-+							children: html`<div style="transform: rotate(-45deg)">${icon(Send, "sm")}</div>`,
-+							className: "h-8 w-8",
-+							title: this.isStreaming ? i18n("Add to queue") : undefined,
++							children: icon(ArrowUp, "sm"),
++							className: "h-8 w-8 rounded-full",
++							title: this.isStreaming ? i18n("Add to queue") : "Send",
 +						})}
  					</div>
  				</div>
@@ -1038,23 +1047,41 @@ index 4ec7734c1..bfe191eb8 100644
  
  		// Generate HTML table
 diff --git a/packages/web-ui/src/dialogs/ModelSelector.ts b/packages/web-ui/src/dialogs/ModelSelector.ts
-index 192c3c536..9cdc25848 100644
+index 192c3c536..68fe786bc 100644
 --- a/packages/web-ui/src/dialogs/ModelSelector.ts
 +++ b/packages/web-ui/src/dialogs/ModelSelector.ts
-@@ -1,3 +1,4 @@
+@@ -1,5 +1,5 @@
 +import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
  import { icon } from "@mariozechner/mini-lit";
- import { Badge } from "@mariozechner/mini-lit/dist/Badge.js";
+-import { Badge } from "@mariozechner/mini-lit/dist/Badge.js";
  import { Button } from "@mariozechner/mini-lit/dist/Button.js";
-@@ -14,6 +15,7 @@ import type { AutoDiscoveryProviderType } from "../storage/stores/custom-provide
- import { formatModelCost } from "../utils/format.js";
+ import { DialogHeader } from "@mariozechner/mini-lit/dist/Dialog.js";
+ import { DialogBase } from "@mariozechner/mini-lit/dist/DialogBase.js";
+@@ -11,9 +11,22 @@ import { Brain, Image as ImageIcon } from "lucide";
+ import { Input } from "../components/Input.js";
+ import { getAppStorage } from "../storage/app-storage.js";
+ import type { AutoDiscoveryProviderType } from "../storage/stores/custom-providers-store.js";
+-import { formatModelCost } from "../utils/format.js";
  import { i18n } from "../utils/i18n.js";
  import { discoverModels } from "../utils/model-discovery.js";
-+import { getPinnedModels, type PinnedModel } from "../utils/model-hooks.js";
++import { getPinnedModels, modelNames, type PinnedModel } from "../utils/model-hooks.js";
++
++/** What a person compares models by, in words. */
++function modelFacts(model: Model<any>): string {
++	const context =
++		model.contextWindow >= 1_000_000
++			? `${Math.round(model.contextWindow / 1_000_000)}M`
++			: `${Math.round(model.contextWindow / 1000)}K`;
++	const cost =
++		model.cost.input === 0 && model.cost.output === 0
++			? "Free"
++			: `$${model.cost.input} in, $${model.cost.output} out per 1M tokens`;
++	return `${cost} · ${context} context`;
++}
  
  /**
   * Score a query against a text using subsequence matching.
-@@ -46,6 +48,13 @@ function subsequenceScore(query: string, text: string): number {
+@@ -46,6 +59,13 @@ function subsequenceScore(query: string, text: string): number {
  	return query.length / (query.length + gaps);
  }
  
@@ -1068,7 +1095,7 @@ index 192c3c536..9cdc25848 100644
  @customElement("agent-model-selector")
  export class ModelSelector extends DialogBase {
  	@state() currentModel: Model<any> | null = null;
-@@ -58,6 +67,7 @@ export class ModelSelector extends DialogBase {
+@@ -58,6 +78,7 @@ export class ModelSelector extends DialogBase {
  	@state() private customProviderModels: Model<any>[] = [];
  
  	private onSelectCallback?: (model: Model<any>) => void;
@@ -1076,21 +1103,45 @@ index 192c3c536..9cdc25848 100644
  	private allowedProviders?: Set<string>;
  	private scrollContainerRef = createRef<HTMLDivElement>();
  	private searchInputRef = createRef<HTMLInputElement>();
-@@ -69,8 +79,10 @@ export class ModelSelector extends DialogBase {
+@@ -65,12 +86,14 @@ export class ModelSelector extends DialogBase {
+ 
+ 	protected override modalWidth = "min(400px, 90vw)";
+ 
+-	static async open(
++	static open(
  		currentModel: Model<any> | null,
  		onSelect: (model: Model<any>) => void,
  		allowedProviders?: string[],
+-	) {
 +		thinking?: ModelSelectorThinking,
- 	) {
++	): ModelSelector {
  		const selector = new ModelSelector();
 +		selector.thinking = thinking;
  		selector.currentModel = currentModel;
  		selector.onSelectCallback = onSelect;
  		if (allowedProviders) {
-@@ -182,6 +194,25 @@ export class ModelSelector extends DialogBase {
+@@ -78,6 +101,13 @@ export class ModelSelector extends DialogBase {
+ 		}
+ 		selector.open();
+ 		selector.loadCustomProviders();
++		return selector;
++	}
++
++	/** Lists that arrived after the picker opened: more providers, or a provider's fresh models. */
++	refreshed(allowedProviders?: string[]): void {
++		if (allowedProviders) this.allowedProviders = new Set(allowedProviders);
++		this.requestUpdate();
+ 	}
+ 
+ 	override async firstUpdated(changedProperties: PropertyValues): Promise<void> {
+@@ -182,10 +212,23 @@ export class ModelSelector extends DialogBase {
  		}
  	}
  
+-	private formatTokens(tokens: number): string {
+-		if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(0)}M`;
+-		if (tokens >= 1000) return `${(tokens / 1000).toFixed(0)}`;
+-		return String(tokens);
 +	private renderThinkingLevels(): TemplateResult | string {
 +		const thinking = this.thinking;
 +		if (!thinking) return "";
@@ -1108,12 +1159,10 @@ index 192c3c536..9cdc25848 100644
 +				}),
 +			)}
 +		</div>`;
-+	}
-+
- 	private formatTokens(tokens: number): string {
- 		if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(0)}M`;
- 		if (tokens >= 1000) return `${(tokens / 1000).toFixed(0)}`;
-@@ -195,7 +226,7 @@ export class ModelSelector extends DialogBase {
+ 	}
+ 
+ 	private handleSelect(model: Model<any>) {
+@@ -195,7 +238,7 @@ export class ModelSelector extends DialogBase {
  		}
  	}
  
@@ -1122,7 +1171,16 @@ index 192c3c536..9cdc25848 100644
  		// Collect all models from known providers
  		const allModels: Array<{ provider: string; id: string; model: any }> = [];
  		const knownProviders = getProviders();
-@@ -246,6 +277,19 @@ export class ModelSelector extends DialogBase {
+@@ -227,7 +270,7 @@ export class ModelSelector extends DialogBase {
+ 			if (query) {
+ 				const scored: Array<{ item: (typeof allModels)[0]; score: number }> = [];
+ 				for (const entry of filteredModels) {
+-					const searchText = `${entry.provider} ${entry.id} ${entry.model.name}`.toLowerCase();
++					const searchText = `${entry.provider} ${entry.id} ${entry.model.name} ${modelNames(entry.model).name}`.toLowerCase();
+ 					const score = subsequenceScore(query, searchText);
+ 					if (score > 0) {
+ 						scored.push({ item: entry, score });
+@@ -246,6 +289,33 @@ export class ModelSelector extends DialogBase {
  			filteredModels = filteredModels.filter(({ model }) => model.input.includes("image"));
  		}
  
@@ -1139,10 +1197,24 @@ index 192c3c536..9cdc25848 100644
 +		const pinnedKeys = new Set(pinned.map((p) => `${p.provider}/${p.id}`));
 +		filteredModels = filteredModels.filter((m) => !pinnedKeys.has(`${m.provider}/${m.id}`));
 +
++		// Dated copies of one model share a name. A search can still find them by id.
++		if (!this.searchQuery) {
++			const newest = new Map<string, (typeof filteredModels)[number]>();
++			for (const entry of filteredModels) {
++				const key = `${entry.provider}/${modelNames(entry.model).name.replace(/ \(latest\)$/, "")}`;
++				const held = newest.get(key);
++				const isCurrent = modelsAreEqual(this.currentModel, entry.model);
++				if (!held || isCurrent || (entry.id > held.id && !modelsAreEqual(this.currentModel, held.model))) {
++					newest.set(key, entry);
++				}
++			}
++			filteredModels = [...newest.values()];
++		}
++
  		// Sort: when not searching, current model first then by provider.
  		// When searching, preserve the score-based order from above,
  		// but still float the current model to the top.
-@@ -259,7 +303,7 @@ export class ModelSelector extends DialogBase {
+@@ -259,7 +329,7 @@ export class ModelSelector extends DialogBase {
  			});
  		}
  
@@ -1151,7 +1223,7 @@ index 192c3c536..9cdc25848 100644
  	}
  
  	private scrollToSelected() {
-@@ -281,6 +325,7 @@ export class ModelSelector extends DialogBase {
+@@ -281,6 +351,7 @@ export class ModelSelector extends DialogBase {
  			<!-- Header and Search -->
  			<div class="p-6 pb-4 flex flex-col gap-4 border-b border-border flex-shrink-0">
  				${DialogHeader({ title: i18n("Select Model") })}
@@ -1159,7 +1231,7 @@ index 192c3c536..9cdc25848 100644
  				${Input({
  					placeholder: i18n("Search models..."),
  					value: this.searchQuery,
-@@ -326,7 +371,7 @@ export class ModelSelector extends DialogBase {
+@@ -326,7 +397,7 @@ export class ModelSelector extends DialogBase {
  
  			<!-- Scrollable model list -->
  			<div class="flex-1 overflow-y-auto" ${ref(this.scrollContainerRef)}>
@@ -1168,21 +1240,31 @@ index 192c3c536..9cdc25848 100644
  					const isCurrent = modelsAreEqual(this.currentModel, model);
  					const isSelected = index === this.selectedIndex;
  					return html`
-@@ -345,7 +390,7 @@ export class ModelSelector extends DialogBase {
+@@ -345,18 +416,17 @@ export class ModelSelector extends DialogBase {
  						>
  							<div class="flex items-center justify-between gap-2 mb-1">
  								<div class="flex items-center gap-2 flex-1 min-w-0">
 -									<span class="text-sm font-medium text-foreground truncate">${id}</span>
-+									<span class="text-sm font-medium text-foreground truncate">${pinned?.title ?? id}</span>
- 									${isCurrent ? html`<span class="text-green-500">✓</span>` : ""}
+-									${isCurrent ? html`<span class="text-green-500">✓</span>` : ""}
++									<span class="text-sm font-medium text-foreground truncate" title=${id}>${pinned?.title ?? modelNames(model).name}</span>
++									${isCurrent ? html`<span class="text-primary" aria-label="Current model">✓</span>` : ""}
  								</div>
- 								${Badge(provider, "outline")}
-@@ -356,7 +401,7 @@ export class ModelSelector extends DialogBase {
- 									<span class="${model.input.includes("image") ? "" : "opacity-30"}">${icon(ImageIcon, "sm")}</span>
- 									<span>${this.formatTokens(model.contextWindow)}K/${this.formatTokens(model.maxTokens)}K</span>
- 								</div>
+-								${Badge(provider, "outline")}
++								<span class="shrink-0 text-xs text-muted-foreground">${modelNames(model).provider}</span>
+ 							</div>
+-							<div class="flex items-center justify-between text-xs text-muted-foreground">
+-								<div class="flex items-center gap-2">
+-									<span class="${model.reasoning ? "" : "opacity-30"}">${icon(Brain, "sm")}</span>
+-									<span class="${model.input.includes("image") ? "" : "opacity-30"}">${icon(ImageIcon, "sm")}</span>
+-									<span>${this.formatTokens(model.contextWindow)}K/${this.formatTokens(model.maxTokens)}K</span>
+-								</div>
 -								<span>${formatModelCost(model.cost)}</span>
-+								<span>${pinned?.subtitle ?? formatModelCost(model.cost)}</span>
++							<div class="flex items-center justify-between gap-3 text-xs text-muted-foreground">
++								<span class="min-w-0">${pinned?.subtitle ?? modelFacts(model)}</span>
++								<span class="flex shrink-0 items-center gap-1.5">
++									${model.reasoning ? html`<span title=${i18n("Thinking")}>${icon(Brain, "sm")}</span>` : ""}
++									${model.input.includes("image") ? html`<span title=${i18n("Vision")}>${icon(ImageIcon, "sm")}</span>` : ""}
++								</span>
  							</div>
  						</div>
  					`;
@@ -1248,7 +1330,7 @@ index 71620552e..7a0727bba 100644
  
  							<!-- Layout -->
 diff --git a/packages/web-ui/src/index.ts b/packages/web-ui/src/index.ts
-index 48284c742..583eabc9d 100644
+index 48284c742..99417ae32 100644
 --- a/packages/web-ui/src/index.ts
 +++ b/packages/web-ui/src/index.ts
 @@ -10,7 +10,13 @@ export { ConsoleBlock } from "./components/ConsoleBlock.js";
@@ -1285,7 +1367,7 @@ index 48284c742..583eabc9d 100644
  // Dialogs
 -export { ModelSelector } from "./dialogs/ModelSelector.js";
 +export { ModelSelector, type ModelSelectorThinking } from "./dialogs/ModelSelector.js";
-+export { type PinnedModel, setPinnedModels } from "./utils/model-hooks.js";
++export { type PinnedModel, setModelNamer, setPinnedModels } from "./utils/model-hooks.js";
  export { PersistentStorageDialog } from "./dialogs/PersistentStorageDialog.js";
  export { ProvidersModelsTab } from "./dialogs/ProvidersModelsTab.js";
  export { SessionListDialog } from "./dialogs/SessionListDialog.js";
@@ -1482,7 +1564,7 @@ index afe98e443..58e861509 100644
  
  		let extractedText = `<excel filename="${fileName}">`;
 diff --git a/packages/web-ui/src/utils/i18n.ts b/packages/web-ui/src/utils/i18n.ts
-index 1f50a7d08..dad235a65 100644
+index 1f50a7d08..7cf94e51c 100644
 --- a/packages/web-ui/src/utils/i18n.ts
 +++ b/packages/web-ui/src/utils/i18n.ts
 @@ -22,6 +22,7 @@ declare module "@mariozechner/mini-lit" {
@@ -1518,7 +1600,18 @@ index 1f50a7d08..dad235a65 100644
  		Off: string;
  		Minimal: string;
  		Low: string;
-@@ -231,6 +241,7 @@ export const translations = {
+@@ -214,8 +224,8 @@ export const translations = {
+ 		"Input Required": "Input Required",
+ 		Cancel: "Cancel",
+ 		Confirm: "Confirm",
+-		"Select Model": "Select Model",
+-		"Search models...": "Search models...",
++		"Select Model": "Choose a model",
++		"Search models...": "Search models",
+ 		Format: "Format",
+ 		Thinking: "Thinking",
+ 		Vision: "Vision",
+@@ -231,13 +241,14 @@ export const translations = {
  		"✓ Valid": "✓ Valid",
  		"✗ Invalid": "✗ Invalid",
  		"Testing...": "Testing...",
@@ -1526,6 +1619,14 @@ index 1f50a7d08..dad235a65 100644
  		Update: "Update",
  		Test: "Test",
  		Remove: "Remove",
+ 		Save: "Save",
+ 		"Update API key": "Update API key",
+ 		"Enter API key": "Enter API key",
+-		"Type a message...": "Type a message...",
++		"Type a message...": "Ask about this page, or type / for skills",
+ 		"Failed to fetch file": "Failed to fetch file",
+ 		"Invalid source type": "Invalid source type",
+ 		PDF: "PDF",
 @@ -272,6 +283,15 @@ export const translations = {
  		"Call was aborted; no result.": "Call was aborted; no result.",
  		"No session available": "No session available",
@@ -1891,10 +1992,10 @@ index 299aa9aca..4c3ddd3cc 100644
  		// List all downloaded models
 diff --git a/packages/web-ui/src/utils/model-hooks.ts b/packages/web-ui/src/utils/model-hooks.ts
 new file mode 100644
-index 000000000..76862744d
+index 000000000..e5517d1fa
 --- /dev/null
 +++ b/packages/web-ui/src/utils/model-hooks.ts
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,34 @@
 +import type { Model } from "@mariozechner/pi-ai";
 +
 +/** An app-supplied entry the model selector always lists first, with its own title. */
@@ -1909,6 +2010,17 @@ index 000000000..76862744d
 +/** Entries the model selector lists above every provider's models. */
 +export function setPinnedModels(provider: (() => PinnedModel[]) | undefined): void {
 +	pinned = provider;
++}
++
++let namer: ((model: Model<any>) => { name: string; provider: string }) | undefined;
++
++/** Lets the app show people a model's name and maker instead of its id. */
++export function setModelNamer(next: typeof namer): void {
++	namer = next;
++}
++
++export function modelNames(model: Model<any>): { name: string; provider: string } {
++	return namer?.(model) ?? { name: model.id, provider: model.provider };
 +}
 +
 +export function getPinnedModels(): PinnedModel[] {

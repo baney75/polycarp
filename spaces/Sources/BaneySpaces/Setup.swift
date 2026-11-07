@@ -605,13 +605,13 @@ struct SetupView: View {
             if let problem = model.missionControlFailed {
                 SettingsNote("macOS's Mission Control is still on. \(problem) Polycarp tries again every few minutes.", tone: .urgent)
             }
-            SettingsRow("Drag a window to the top of the screen to open the overview", help: "Let go over a workspace to send the window there; at the top it fills the screen.") {
+            SettingsRow("Drag a window to the top to open the overview", help: "Drop it on a workspace to send it there.") {
                 Toggle("Drag to top", isOn: binding({ model.topDrag }, { model.setTopDrag($0) })).labelsHidden()
             }
         }
 
         SettingsGroup("Full screen") {
-            SettingsRow("The green button and ⌃⌘F fill the screen on the workspace", help: "Switching stays instant. Off, they use macOS full screen, a separate desktop that slides each time you switch. A video's own full-screen button always uses macOS's.") {
+            SettingsRow("The green button and ⌃⌘F fill the screen here", help: "Switching stays instant. macOS full screen slides each time.") {
                 Toggle("Fill the screen", isOn: Binding(get: { FullScreenGestures.isEnabled }, set: { UserDefaults.standard.set($0, forKey: FullScreenFill.enabledKey); model.objectWillChange.send() })).labelsHidden()
             }
         }

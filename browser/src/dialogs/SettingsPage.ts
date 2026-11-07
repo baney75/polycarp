@@ -59,9 +59,9 @@ export class SettingsPage extends PageBase {
 				type="button"
 				role="tab"
 				aria-selected=${selected ? "true" : "false"}
-				class="min-w-0 truncate whitespace-nowrap h-8 px-1 @[28rem]:px-3 rounded-full text-[13px] @[28rem]:text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+				class="shrink-0 whitespace-nowrap h-7 px-2 @[28rem]:px-3 rounded-md text-[12.5px] @[28rem]:text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring ${
 					selected
-						? "bg-[var(--tk-selected)] text-[var(--tk-on-selected)]"
+						? "bg-primary/25 font-medium text-foreground"
 						: "text-muted-foreground hover:text-foreground hover:bg-secondary/60"
 				}"
 				@click=${() => this.select(index)}
@@ -74,16 +74,12 @@ export class SettingsPage extends PageBase {
 	protected override fillsHeight = true;
 
 	protected renderContent(): TemplateResult {
-		const columns = this.tabs.length > 3 ? Math.ceil(this.tabs.length / 2) : this.tabs.length;
-		// Below 22rem (a panel narrower than about 350 px) a third row keeps the longest name whole.
-		const narrow = this.tabs.length > 6 ? Math.ceil(this.tabs.length / 3) : columns;
 		return html`
-			<div class="@container flex-shrink-0 border-b border-border px-3 py-2">
+			<div class="@container flex-shrink-0 border-b border-border px-2 py-1.5">
 				<div
 					role="tablist"
 					aria-label="Settings sections"
-					class="grid gap-1 [grid-template-columns:repeat(var(--tk-cols),minmax(0,1fr))] @max-[22rem]:[grid-template-columns:repeat(var(--tk-cols-narrow),minmax(0,1fr))] @[28rem]:flex @[28rem]:flex-wrap"
-					style="--tk-cols: ${columns}; --tk-cols-narrow: ${narrow}"
+					class="flex flex-wrap items-center justify-between gap-x-0.5 gap-y-1"
 				>
 					${this.tabs.map((tab, index) => this.renderTab(tab, index))}
 				</div>

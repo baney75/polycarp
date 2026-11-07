@@ -16,7 +16,7 @@ extension Chrome {
     /// The dock's "finished while you were away" count, and its legend in Settings.
     static var finished: Color { working }
     /// Quiet text: help lines, headers, units.
-    static var muted: Color { wash(0.62) }
+    static var muted: Color { wash(0.74) }
     /// The sidebar, one step below the pane.
     static var sunken: Color { role("sunken").opacity(look.palette.isDark ? 0.45 : 0.55) }
 }
@@ -65,7 +65,7 @@ struct SettingsRow<Control: View>: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(label).font(Chrome.font(13))
                     if let help {
-                        Text(help).font(Chrome.font(11)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
+                        Text(help).font(Chrome.font(11.5)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -96,7 +96,7 @@ struct SettingsNote: View {
     init(_ text: String, tone: Tone = .quiet) { self.text = text; self.tone = tone }
     var body: some View {
         SettingsBlock {
-            Text(text).font(Chrome.font(11)).fixedSize(horizontal: false, vertical: true)
+            Text(text).font(Chrome.font(11.5)).fixedSize(horizontal: false, vertical: true)
                 .foregroundStyle(tone == .urgent ? Chrome.urgent : tone == .done ? Chrome.done : Chrome.muted)
         }
     }

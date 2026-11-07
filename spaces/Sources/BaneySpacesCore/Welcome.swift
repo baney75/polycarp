@@ -30,6 +30,14 @@ public enum Welcome {
             settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
             after: "Turn on Polycarp in the list. This window updates by itself."),
         PermissionStep(
+            kind: .microphone,
+            title: "Let Silas hear you",
+            why: "Silas: hold a key, speak and it types. It listens only from when you press the key until you let go or tap again. Speech becomes text on this Mac, and the audio isn't saved or sent anywhere.",
+            isRequired: false,
+            settingsName: "Microphone",
+            settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+            after: "Choose Allow in the box macOS shows, or turn on Polycarp in the list. This window updates by itself."),
+        PermissionStep(
             kind: .screenRecording,
             title: "Let agents see their own work",
             why: "An agent can take a picture of a window on its own workspace, or one you've lent it, to check its work. With Full Access it can capture any window. Pictures go only to that agent.",
@@ -39,20 +47,12 @@ public enum Welcome {
             after: "Turn on Polycarp in the list. macOS may ask to reopen it, which is fine."),
         PermissionStep(
             kind: .inputMonitoring,
-            title: "Stay out of your way",
+            title: "Notice when you're at the keyboard",
             why: "While an agent acts, Polycarp checks whether you're using the keyboard or mouse, so the two of you don't collide. It only listens during that action and doesn't keep what you type.",
             isRequired: false,
             settingsName: "Input Monitoring",
             settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent",
             after: "Turn on Polycarp in the list. This window updates by itself."),
-        PermissionStep(
-            kind: .microphone,
-            title: "Let Silas hear you",
-            why: "Silas: hold a key, speak and it types. It listens only from when you press the key until you let go or tap again. Speech becomes text on this Mac, and the audio isn't saved or sent anywhere.",
-            isRequired: false,
-            settingsName: "Microphone",
-            settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-            after: "Choose Allow in the box macOS shows, or turn on Polycarp in the list. This window updates by itself."),
     ]
 
     /// The walk for the parts that are on. Workspaces asks for all it uses, Silas needs Accessibility to read its key and

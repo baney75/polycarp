@@ -123,7 +123,7 @@ struct WelcomeView: View {
                 Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 60, height: 60)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Welcome to Polycarp").font(Chrome.font(21, .bold))
-                    Text(parts.hasChosen ? (model.canStart ? "You're set. Everything else can wait." : "One switch and you're working.")
+                    Text(parts.hasChosen ? (model.canStart ? "You're ready. The rest is optional." : "One switch and you're working.")
                         : "Pick what you want. You can change this any time.")
                         .foregroundStyle(Chrome.muted)
                 }
@@ -145,7 +145,9 @@ struct WelcomeView: View {
     /// The permissions the chosen parts need, then the way in.
     @ViewBuilder private var walk: some View {
             VStack(spacing: 8) {
-                ForEach(Welcome.steps(for: parts.current), id: \.kind) { row($0) }
+                ForEach(Welcome.steps(for: parts.current).filter(\.isRequired), id: \.kind) { row($0) }
+                tryIt
+                ForEach(Welcome.steps(for: parts.current).filter { !$0.isRequired }, id: \.kind) { row($0) }
                 loginRow
                 if parts.current.contains(.browser) { BrowserWelcomeRow() }
             }
@@ -154,16 +156,6 @@ struct WelcomeView: View {
             if model.legacyNote {
                 Text(LegacyRetirement.welcomeNote).font(Chrome.font(12)).foregroundStyle(Chrome.muted)
                     .padding(.horizontal, 28).padding(.top, 12)
-            }
-
-            if model.canStart, parts.current.contains(.workspaces) {
-                HStack(spacing: 10) {
-                    Image(systemName: "leaf.fill").foregroundStyle(Chrome.accent)
-                    Text("Try it: press \(model.modifierSymbol())2. Add ⇧ to bring the window along.")
-                        .font(Chrome.font(13, .medium))
-                }
-                .padding(.horizontal, 28).padding(.top, 16)
-                .transition(.opacity)
             }
 
             HStack {
@@ -178,6 +170,25 @@ struct WelcomeView: View {
             .padding(.horizontal, 28).padding(.vertical, 18)
     }
 
+    /// Right under what makes it possible, not below the optional steps.
+    @ViewBuilder private var tryIt: some View {
+            if model.canStart, parts.current.contains(.workspaces) {
+                HStack(spacing: 10) {
+                    Image(systemName: "leaf.fill").foregroundStyle(Chrome.accent)
+                    Text("Try it: press \(model.modifierSymbol())2. Add ⇧ to bring the window along.")
+                        .font(Chrome.font(13, .medium))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .transition(.opacity)
+            }
+    }
+
+    private func firstSentence(_ text: String) -> String {
+        guard let end = text.range(of: ". ") else { return text }
+        return String(text[..<end.lowerBound]) + "."
+    }
+
     @ViewBuilder private func row(_ s: PermissionStep) -> some View {
         let done = model.granted.contains(s.kind)
         let isCurrent = model.current == s.kind
@@ -190,12 +201,14 @@ struct WelcomeView: View {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 8) {
                     Text(s.title).font(Chrome.font(13, .bold))
-                    if !s.isRequired { tag("Optional") }
-                    if wasSkipped { tag("Skipped for now") }
+                    if !s.isRequired { WelcomeTag(text: "Optional") }
+                    if wasSkipped { WelcomeTag(text: "Skipped for now") }
                     Spacer(minLength: 0)
                 }
-                if !done, isCurrent {
-                    Text(s.why).font(Chrome.font(12)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
+                if !done {
+                    // The whole reason on the step you're on; its first sentence on the others.
+                    Text(isCurrent ? s.why : firstSentence(s.why)).font(Chrome.font(12)).foregroundStyle(Chrome.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if !done, isCurrent {
                     HStack(spacing: 10) {
@@ -249,8 +262,15 @@ struct WelcomeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func tag(_ s: String) -> some View {
-        Text(s).font(Chrome.font(10, .medium)).foregroundStyle(Chrome.muted)
+}
+
+/// A small label on a welcome row. A type and not a helper named `tag`: from another view, that name is SwiftUI's own
+/// `.tag()` on the view itself, which puts the view inside itself and overflows the stack.
+private struct WelcomeTag: View {
+    let text: String
+
+    var body: some View {
+        Text(text).font(Chrome.font(10, .medium)).foregroundStyle(Chrome.muted)
             .padding(.horizontal, 6).padding(.vertical, 1)
             .background(Capsule().fill(Chrome.cell(0.08)))
     }
@@ -320,16 +340,16 @@ private struct BrowserWelcomeRow: View {
                 VStack(alignment: .leading, spacing: 7) {
                     HStack {
                         Text("Browser agents").font(Chrome.font(13, .bold))
-                        Text("optional").font(Chrome.font(10, .medium)).foregroundStyle(Chrome.muted)
+                        WelcomeTag(text: "Optional")
                     }
                     Text("Let Claude Code and Codex use your browser, in their own tab group. Set it up now or later in Settings > Browser.")
                         .font(Chrome.font(12)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
                     if model.status?.unattributed == true {
-                        Label("Connected", systemImage: "checkmark.circle.fill").font(Chrome.font(12, .medium)).foregroundStyle(Color.green)
+                        Label("Connected", systemImage: "checkmark.circle.fill").font(Chrome.font(12, .medium)).foregroundStyle(Chrome.accent)
                     }
                     ForEach(model.rows) { row in
                         if row.state == .connected {
-                            Label("\(row.name) is connected", systemImage: "checkmark.circle.fill").font(Chrome.font(12, .medium)).foregroundStyle(Color.green)
+                            Label("\(row.name) is connected", systemImage: "checkmark.circle.fill").font(Chrome.font(12, .medium)).foregroundStyle(Chrome.accent)
                         } else {
                             Button("Connect \(row.name)") { model.connect(row.name) }.disabled(model.busy)
                         }

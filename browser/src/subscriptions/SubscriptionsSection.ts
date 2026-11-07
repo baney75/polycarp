@@ -5,7 +5,7 @@ import { builtHelperCommand, hostCommand } from "../bridge/host-command.js";
 import { COMMAND_BOX_CLASS } from "../components/command-box.js";
 import { Toast } from "../components/Toast.js";
 import { request, SubscriptionRequestError, type SubscriptionStatus, subscriptionStatus } from "./client.js";
-import { CLI_MCP_SETUP, COPILOT, SIWC } from "./constants.js";
+import { COPILOT, cliMcpSetup, SIWC } from "./constants.js";
 import { refreshSubscriptionModels } from "./stream.js";
 
 /** chrome.storage.local flag: the "You're using your ChatGPT plan" note was shown once (no token in it). */
@@ -292,8 +292,9 @@ export class SubscriptionsSection extends LitElement {
 						Use your Claude Code or Gemini CLI subscription by running it with Polycarp's MCP server. Anthropic's and Google's
 						terms don't allow other apps to sign in with those plans, so Polycarp doesn't.
 					</p>
-					${this.command("Claude Code", CLI_MCP_SETUP.claude)}
-					${this.command("Gemini CLI", CLI_MCP_SETUP.gemini)}
+					${this.command("Claude Code", cliMcpSetup("claude", hostCommand()))}
+					${this.command("Gemini CLI", cliMcpSetup("gemini", hostCommand()))}
+					${builtHelperCommand("mcp") ? html`<p class="text-xs text-muted-foreground">Built the helper yourself? Use <code class="font-mono">tabkyra</code> in place of <code class="font-mono">${hostCommand()}</code>.</p>` : nothing}
 				</div>
 				${this.notice ? html`<p class="text-xs text-muted-foreground" role="status">${this.notice}</p>` : nothing}
 			</div>

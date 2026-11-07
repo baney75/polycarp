@@ -46,6 +46,7 @@ final class VoiceTests: XCTestCase {
 
     func testMenuWordsAndOverlayFollowTheTauriTray() {
         XCTAssertEqual(VoiceStatus.ready.menuLine(hotkeyLabel: "Right ⌘"), "Ready · hold Right ⌘ to speak")
+        XCTAssertEqual(VoiceStatus.ready.menuLine(hotkeyLabel: "Right ⌘", tapToToggle: true), "Ready · tap Right ⌘ to speak")
         XCTAssertEqual(VoiceStatus.recording.menuLine(hotkeyLabel: ""), "Listening…")
         XCTAssertEqual(VoiceStatus.typing.menuLine(hotkeyLabel: ""), "Writing…")
         XCTAssertEqual(VoiceStatus.error.menuLine(hotkeyLabel: ""), "Needs attention")

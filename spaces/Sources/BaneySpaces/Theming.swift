@@ -279,7 +279,7 @@ struct TileNumber: View {
         case .dot:
             Text("\(n)")
                 .font(Chrome.font(10.5, .bold, rounded: true))
-                .foregroundStyle(current ? Chrome.light() : tint.opacity(hovered ? 1 : 0.85))
+                .foregroundStyle(current ? Chrome.light() : hovered ? Chrome.wash() : Chrome.muted)
                 .frame(minWidth: 18, minHeight: 15)
                 .background(Chrome.pill().fill(current ? tint : Color.clear))
         case .numberBlock:

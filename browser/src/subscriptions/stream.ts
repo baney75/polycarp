@@ -48,6 +48,13 @@ export function isSubscriptionProvider(provider: string): boolean {
 }
 
 /** Register the signed-in accounts' models with pi-ai (so the model selector lists them); drop the rest. */
+/** The subscription providers from the last look, so a picker can open without asking again. */
+let lastAvailable: string[] = [];
+
+export function knownSubscriptionProviders(): string[] {
+	return lastAvailable;
+}
+
 export async function refreshSubscriptionModels(): Promise<string[]> {
 	const status = await trySubscriptionStatus(true);
 	const available: string[] = [];
@@ -112,6 +119,7 @@ export async function refreshSubscriptionModels(): Promise<string[]> {
 			resetProviderModels(COPILOT_PROVIDER);
 		}
 	} else resetProviderModels(COPILOT_PROVIDER);
+	lastAvailable = available;
 	return available;
 }
 

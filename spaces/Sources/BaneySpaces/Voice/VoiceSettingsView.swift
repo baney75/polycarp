@@ -65,7 +65,7 @@ struct VoiceSettingsView: View {
                 }
             }
             toggle("Tap once to start and again to stop", help: "Otherwise hold the key.", s.tapToToggle) { v in voice.update { $0.tapToToggle = v } }
-            toggle("Show the pill while dictating", s.showOverlay) { v in voice.update { $0.showOverlay = v } }
+            toggle("Show a listening indicator", s.showOverlay) { v in voice.update { $0.showOverlay = v } }
             toggle("Remove filler words", s.removeFillers) { v in voice.update { $0.removeFillers = v } }
             toggle("Learn from my edits", s.learnFromEdits) { v in voice.update { $0.learnFromEdits = v } }
             toggle("Sounds", s.sounds) { v in voice.update { $0.sounds = v } }
