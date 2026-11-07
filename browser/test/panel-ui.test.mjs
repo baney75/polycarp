@@ -254,7 +254,7 @@ test("Settings > Skills lists every library skill, bundled and community, with n
 	assert.equal(rows.find((r) => r.name === folders[0])?.summary, `${folders[0]} does a thing.`);
 	assert.deepEqual(libraryRows(bundled, [], "/osint").map((r) => r.name), ["osint"]);
 	const tab = readFileSync(new URL("../src/dialogs/SkillsTab.ts", import.meta.url), "utf8");
-	assert.match(tab, /libraryRows\(LIBRARY_SKILLS, community, this\.searchQuery, siteNames\)/);
+	assert.match(tab, /libraryRows\(this\.library, community, this\.searchQuery, siteNames\)/);
 	assert.doesNotMatch(tab, /variant: "destructive"/, "Delete is a quiet button, not a red slab on every card");
 });
 

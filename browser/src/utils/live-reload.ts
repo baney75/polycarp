@@ -28,3 +28,5 @@ const connectWebSocket = () => {
 	}
 };
 connectWebSocket();
+
+export {};
