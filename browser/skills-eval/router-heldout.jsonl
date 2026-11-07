@@ -121,3 +121,7 @@
 {"task": "Explain what a closure is in JavaScript", "skill": "none"}
 {"task": "Draw a bar chart in matplotlib of these five values", "skill": "none"}
 {"task": "Recommend a gear set for my first road bike", "skill": "none"}
+{"task": "connect polycarp to chatgpt as a custom connector", "skill": "connector"}
+{"task": "my claude.ai connector for polycarp can't reach this mac", "skill": "connector"}
+{"task": "which tunnel should I use for the polycarp connector, cloudflare or tailscale", "skill": "connector"}
+{"task": "let grok use this computer through polycarp", "skill": "connector"}

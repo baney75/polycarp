@@ -543,3 +543,13 @@
 {"task": "Describe the mechanism by which vaccines create immunity", "skill": "none"}
 {"task": "Here's my logo idea, draw it in SVG", "skill": "none"}
 {"task": "Draw it as a cartoon", "skill": "none"}
+{"task": "add polycarp as a connector in claude.ai", "skill": "connector"}
+{"task": "set up a tunnel so ChatGPT can reach polycarp on this computer", "skill": "connector"}
+{"task": "make a cloudflare tunnel for polycarp", "skill": "connector"}
+{"task": "turn on tailscale funnel for polycarp", "skill": "connector"}
+{"task": "my polycarp custom connector stopped working in claude", "skill": "connector"}
+{"task": "how do I add a custom connector for polycarp in grok", "skill": "connector"}
+{"task": "give the claude.ai connector computer use on my mac", "skill": "connector"}
+{"task": "use my mac remotely from claude.ai through a connector", "skill": "connector"}
+{"task": "create a tunnel on my own cloudflare account for the connector", "skill": "connector"}
+{"task": "fix the connector, claude says it can't reach my computer", "skill": "connector"}
