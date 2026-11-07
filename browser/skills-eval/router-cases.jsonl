@@ -577,13 +577,3 @@
 {"task": "summarize the comments on this hacker news post", "skill": "summarize"}
 {"task": "quick summary of this page please, keep the quotes exact", "skill": "summarize"}
 {"task": "what does this documentation page say, short version", "skill": "summarize"}
-{"task": "read this PDF and tell me what it says https://example.org/report.pdf", "skill": "pdf"}
-{"task": "summarize this pdf paper section by section", "skill": "pdf"}
-{"task": "what does page 12 of the PDF say", "skill": "pdf"}
-{"task": "extract the table on page 4 of this pdf", "skill": "pdf"}
-{"task": "the PDF won't read, it just comes back empty, is it a scan", "skill": "pdf"}
-{"task": "find the section on refunds in this contract pdf", "skill": "pdf"}
-{"task": "pull the numbers from the revenue table in the annual report pdf", "skill": "pdf"}
-{"task": "open the pdf in this tab and give me the main findings with page numbers", "skill": "pdf"}
-{"task": "what's in this user manual pdf about resetting the device", "skill": "pdf"}
-{"task": "read the whole PDF and quote the conclusion", "skill": "pdf"}

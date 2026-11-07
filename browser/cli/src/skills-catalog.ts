@@ -29,7 +29,6 @@ import SKILL_NOTES from "../../skills/notes/SKILL.md";
 import SKILL_OFFICE_DOCS from "../../skills/office-docs/SKILL.md";
 import SKILL_OSINT from "../../skills/osint/SKILL.md";
 import SKILL_PCB_DESIGN from "../../skills/pcb-design/SKILL.md";
-import SKILL_PDF from "../../skills/pdf/SKILL.md";
 import SKILL_PROTON from "../../skills/proton/SKILL.md";
 import SKILL_PROTON_PASS from "../../skills/proton-pass/SKILL.md";
 import SKILL_REFERENCE from "../../skills/reference/SKILL.md";
@@ -71,7 +70,6 @@ export const SKILLS: ReadonlyMap<string, string> = new Map([
 	["office-docs", SKILL_OFFICE_DOCS],
 	["osint", SKILL_OSINT],
 	["pcb-design", SKILL_PCB_DESIGN],
-	["pdf", SKILL_PDF],
 	["proton", SKILL_PROTON],
 	["proton-pass", SKILL_PROTON_PASS],
 	["reference", SKILL_REFERENCE],

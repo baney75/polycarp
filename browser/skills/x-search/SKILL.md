@@ -1,6 +1,6 @@
 ---
 name: x-search
-description: Find posts on X with X's search operators in the user's own account, and report each post's link, author, date and counts. Covers exact phrases, posts from or to an account, mentions, minimum likes, replies only, media or links, one post's replies and a full thread. Never posts or likes. Use when the user asks to search X or Twitter, find tweets or posts about something, find what someone tweeted or said on X, search tweet replies, get the replies to a tweet, follow a Twitter thread, see what people are saying on X, or find the most liked tweets on a topic.
+description: Find posts on x.com (Twitter) with its search operators in the user's own account, and report each post's URL, author, date and counts. Covers exact phrases, posts from or to an account, mentions, minimum likes, replies only, media, one post's replies and a full thread. Never posts or likes. Use when the user asks to search X or Twitter, find tweets or posts about something, find what someone tweeted, search tweet replies, get the replies to a tweet, follow a Twitter thread, see what people are saying on Twitter, or find the most liked tweets on a topic.
 license: AGPL-3.0
 ---
 

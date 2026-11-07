@@ -131,6 +131,3 @@
 {"task": "tldr this url for me https://example.com/story", "skill": "summarize"}
 {"task": "give me the main points of this long article", "skill": "summarize"}
 {"task": "sum up this thread in three bullets", "skill": "summarize"}
-{"task": "read the attached pdf link and summarize chapter 3", "skill": "pdf"}
-{"task": "what does page 7 of this pdf say", "skill": "pdf"}
-{"task": "get the table out of this pdf", "skill": "pdf"}

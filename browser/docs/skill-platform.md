@@ -187,7 +187,7 @@ false invokes at 2 of 14, over the 10% floor.
 
 With #19 and #26 merged (34 skills, measured 2026-10-26): tuned set of 545 cases, top-1 92.9% (421 of 453) and false invokes 0% (0 of 92); held-out top-1 87.7% over 106 cases and false invokes 5.9% (1 of 17). The merged catalog moved three skills below main's baseline, recorded in `accepted-drops.json`: kyraskillmaker 77.8% to 72.2%, mechanism-design 100% to 93.3%, visual-explainer 100% to 94.1%.
 
-With `x-search`, `summarize` and `pdf` added (38 skills, measured 2026-11-07): tuned set of 589 cases, top-1 92.8% (461 of 497) and false invokes 0% (0 of 92); held-out top-1 89.1% over 119 cases and false invokes 5.9% (1 of 17). No existing skill fell below its baseline. The new skills measure `x-search` 100%, `summarize` 83.3% and `pdf` 70%. `pdf` is lowest because "pdf" is held by four skills, so the word alone is no longer evidence. The words "open", "table" and "YouTube" stay out of the new descriptions: `tabkyra` and `artifacts` rely on them.
+With `x-search` and `summarize` added (37 skills, measured 2026-11-07): tuned set of 579 cases, top-1 93.2% (454 of 487) and false invokes 0% (0 of 92); held-out top-1 88.8% over 116 cases and false invokes 5.9% (1 of 17). No existing skill fell below its baseline. The new skills measure `x-search` 100%, `summarize` 83.3% and `pdf` 70%. `pdf` is lowest because "pdf" is held by four skills, so the word alone is no longer evidence. The words "open", "table" and "YouTube" stay out of the new descriptions: `tabkyra` and `artifacts` rely on them.
 
 With the 19 skills from pull request #19 (32 skills, measured 2026-10-26): on the tuned set of
 499 cases, top-1 93.3% (389 of 417) and false invokes 0% (0 of 82); on the 110 held-out cases,
