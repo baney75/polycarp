@@ -553,3 +553,37 @@
 {"task": "use my mac remotely from claude.ai through a connector", "skill": "connector"}
 {"task": "create a tunnel on my own cloudflare account for the connector", "skill": "connector"}
 {"task": "fix the connector, claude says it can't reach my computer", "skill": "connector"}
+{"task": "search X for posts about the new iPhone with at least 500 likes", "skill": "x-search"}
+{"task": "find tweets from @naval about wealth since 2026-01-01", "skill": "x-search"}
+{"task": "what are people saying on twitter about the Fed rate decision", "skill": "x-search"}
+{"task": "show me the latest posts on X about Starship, newest first", "skill": "x-search"}
+{"task": "find the replies to this tweet https://x.com/elonmusk/status/1234567890123456789", "skill": "x-search"}
+{"task": "search twitter for the exact phrase \"local first software\" with min_faves 100", "skill": "x-search"}
+{"task": "find posts that mention @openai but are not replies", "skill": "x-search"}
+{"task": "get me the most liked tweets from Paul Graham this year", "skill": "x-search"}
+{"task": "read this thread on x and list each post with its link", "skill": "x-search"}
+{"task": "look up what people replied to my last post on X", "skill": "x-search"}
+{"task": "find posts on x.com with images about the eclipse from last week", "skill": "x-search"}
+{"task": "search X for tweets linking to github.com/anthropics in English only", "skill": "x-search"}
+{"task": "summarize this article for me https://example.com/blog/post", "skill": "summarize"}
+{"task": "tl;dr of this page", "skill": "summarize"}
+{"task": "give me the key points of this blog post in 5 bullets", "skill": "summarize"}
+{"task": "can you sum up these three links into one paragraph", "skill": "summarize"}
+{"task": "summarize this link in one sentence https://example.com/about", "skill": "summarize"}
+{"task": "what's the gist of this long reddit thread", "skill": "summarize"}
+{"task": "summarize this YouTube video https://www.youtube.com/watch?v=abc123", "skill": "summarize"}
+{"task": "read this news article and tell me what it says in a couple of lines", "skill": "summarize"}
+{"task": "make a short summary of this wiki page", "skill": "summarize"}
+{"task": "summarize the comments on this hacker news post", "skill": "summarize"}
+{"task": "quick summary of this page please, keep the quotes exact", "skill": "summarize"}
+{"task": "what does this documentation page say, short version", "skill": "summarize"}
+{"task": "read this PDF and tell me what it says https://example.org/report.pdf", "skill": "pdf"}
+{"task": "summarize this pdf paper section by section", "skill": "pdf"}
+{"task": "what does page 12 of the PDF say", "skill": "pdf"}
+{"task": "extract the table on page 4 of this pdf", "skill": "pdf"}
+{"task": "the PDF won't read, it just comes back empty, is it a scan", "skill": "pdf"}
+{"task": "find the section on refunds in this contract pdf", "skill": "pdf"}
+{"task": "pull the numbers from the revenue table in the annual report pdf", "skill": "pdf"}
+{"task": "open the pdf in this tab and give me the main findings with page numbers", "skill": "pdf"}
+{"task": "what's in this user manual pdf about resetting the device", "skill": "pdf"}
+{"task": "read the whole PDF and quote the conclusion", "skill": "pdf"}
