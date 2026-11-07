@@ -296,6 +296,12 @@ final class AgentEverythingTests: XCTestCase {
         let browser = try HandsSourceTests.code("Sources/BaneySpaces/BrowserSetup.swift")
         let on = try XCTUnwrap(HandsSourceTests.block(after: "func turnOnEverything()", in: browser))
         XCTAssertFalse(on.contains("requestEverything") || on.contains("set(.full)"), "the browser part never widens access by itself")
+        XCTAssertTrue(on.contains("everythingPending = true"), "a yes before the first read isn't dropped")
+        // Each place that starts it asks first.
+        let welcome = try HandsSourceTests.code("Sources/BaneySpaces/WelcomeWindow.swift")
+        XCTAssertLessThan(try XCTUnwrap(welcome.range(of: "guard AgentAccess.shared.requestEverything() else { return }")).lowerBound, try XCTUnwrap(welcome.range(of: "browser.turnOnEverything()")).lowerBound)
+        let setup = try HandsSourceTests.code("Sources/BaneySpaces/Setup.swift")
+        XCTAssertLessThan(try XCTUnwrap(setup.range(of: "guard let self, AgentAccess.shared.requestEverything() else { return }")).lowerBound, try XCTUnwrap(setup.range(of: "BrowserModel.shared.turnOnEverything()")).lowerBound)
     }
 }
 

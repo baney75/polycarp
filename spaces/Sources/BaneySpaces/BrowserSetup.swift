@@ -7,6 +7,8 @@ import SwiftUI
 final class BrowserModel: ObservableObject {
     static let shared = BrowserModel()
     @Published var status: BrowserStatus?
+    /// "Turn on everything" was confirmed before the first read of the browser's state.
+    private var everythingPending = false
     @Published var busy = false
     @Published var message: String?
     private var timer: Timer?
@@ -61,6 +63,7 @@ final class BrowserModel: ObservableObject {
             DispatchQueue.main.async {
                 self?.refreshing = false
                 if let parsed, parsed != self?.status { self?.status = parsed }
+                if self?.everythingPending == true, self?.status != nil { self?.turnOnEverything() }
             }
         }
     }
@@ -131,8 +134,18 @@ final class BrowserModel: ObservableObject {
 
     /// What "Turn on everything" covers in the browser and Claude Code, after the person's yes. Each is the same switch as in Settings.
     func turnOnEverything() {
-        if status?.claudeReady == true, status?.claudeAllowed != true { setClaudeAllowed(true) }
-        switch status?.anySite {
+        guard PartsModel.shared.current.contains(.browser) else { message = AgentEverything.browserPartOff; return }
+        // Nothing has been read yet (a fresh Welcome): the yes stands, and the next read finishes it.
+        guard let status else {
+            everythingPending = true
+            message = AgentEverything.finishing
+            refresh()
+            return
+        }
+        everythingPending = false
+        message = nil
+        if status.claudeReady, !status.claudeAllowed { setClaudeAllowed(true) }
+        switch status.anySite {
         case .some(false): setAnySite(true)
         case .some(true): break
         case nil: message = AgentEverything.openBrowser

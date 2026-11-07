@@ -230,7 +230,12 @@ struct WelcomeView: View {
                 Image(systemName: "checkmark.circle.fill").font(Chrome.font(16)).foregroundStyle(Chrome.accent)
             } else {
                 Button(AgentEverything.button) {
-                    if AgentAccess.shared.requestEverything() { browser.turnOnEverything(); fullAccess = AgentAccess.shared.current == .full }
+                    // After the click's own event, as in Settings: the sheet's real-click check reads the current event.
+                    DispatchQueue.main.async {
+                        guard AgentAccess.shared.requestEverything() else { return }
+                        fullAccess = AgentAccess.shared.current == .full
+                        browser.turnOnEverything()
+                    }
                 }
             }
         }
