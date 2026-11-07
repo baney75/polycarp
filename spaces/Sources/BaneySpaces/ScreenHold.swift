@@ -39,8 +39,8 @@ enum ScreenHold {
             lock.lock()
             defer { lock.unlock() }
             guard held, generation == mine else { return }
-            Trace.log("screen hold: ended by its time limit")
             endLocked()
+            Trace.log("screen hold: ended by its time limit")
         }
     }
 

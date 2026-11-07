@@ -13,10 +13,12 @@ It switches the screen while it runs and ends where it started, so it runs only 
 Exits 3 for "couldn't run" and 1 when a switch has more than --max-steps changes. Recordings stay in --out:
 they show the real screen, so never publish them.
 """
-import argparse, json, os, re, subprocess, sys, tempfile, time
+import argparse, ctypes, json, os, re, subprocess, sys, tempfile, time
 import numpy as np
 
 W, H = 240, 156
+SETTLE = 0.35       # seconds after a key: later changes are the app's own (a video, a clock), not the switch
+MIN_FPS = 50        # below this, separate changes merge into one frame and a switch can look cleaner than it is
 CHANGE = 0.0025     # share of the frame that must differ for a frame to count as a change
 PIXEL = 18          # how far one gray pixel must move to count, over video noise
 
@@ -28,9 +30,27 @@ def idle_seconds():
 
 
 def screen_on():
-    out = subprocess.run(["pmset", "-g", "powerstate", "IODisplayWrangler"], capture_output=True, text=True).stdout
-    locked = subprocess.run(["python3", "-c", "import Quartz;d=Quartz.CGSessionCopyCurrentDictionary();print(bool(d and d.get('CGSSessionScreenIsLocked')))"], capture_output=True, text=True).stdout.strip()
-    return locked != "True"
+    """False when the display sleeps or the session is locked, and whenever that can't be read: a dark recording is no measurement."""
+    try:
+        cg = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+        cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+        cg.CGMainDisplayID.restype = ctypes.c_uint32
+        cg.CGDisplayIsAsleep.argtypes = [ctypes.c_uint32]
+        cg.CGDisplayIsAsleep.restype = ctypes.c_int32
+        if cg.CGDisplayIsAsleep(cg.CGMainDisplayID()):
+            return False
+        cg.CGSessionCopyCurrentDictionary.restype = ctypes.c_void_p
+        session = cg.CGSessionCopyCurrentDictionary()
+        if not session:
+            return False
+        cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+        cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+        key = cf.CFStringCreateWithCString(None, b"CGSSessionScreenIsLocked", 0x08000100)
+        cf.CFDictionaryGetValue.restype = ctypes.c_void_p
+        cf.CFDictionaryGetValue.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        return not cf.CFDictionaryGetValue(session, key)
+    except (OSError, AttributeError):
+        return False
 
 
 def go(n):
@@ -60,7 +80,7 @@ def analyze(times, gray, marks, start_at):
     diffs = (np.abs(gray[1:].astype(np.int16) - gray[:-1].astype(np.int16)) > PIXEL).mean(axis=(1, 2))
     for i, (target, at) in enumerate(marks):
         t0 = at - start_at
-        t1 = marks[i + 1][1] - start_at if i + 1 < len(marks) else t0 + 1.2
+        t1 = t0 + SETTLE
         idx = np.where((times[1:] >= t0) & (times[1:] < t1) & (diffs > CHANGE))[0]
         if len(idx) == 0:
             rows.append({"to": target, "steps": 0})
@@ -93,7 +113,7 @@ def main():
         print(f"untested live: idle {idle_seconds():.0f} s, needs {a.idle:.0f}")
         return 3
     if not screen_on():
-        print("untested live: the screen is locked")
+        print("untested live: the display is asleep, the session is locked, or that can't be read")
         return 3
     st = shotate("status")
     if not st.get("canRecord"):
@@ -153,6 +173,14 @@ def main():
               "span_ms_median": sorted(r.get("span_ms", 0) for r in good)[len(good) // 2] if good else None, "rows": rows}
     with open(os.path.join(a.out, "report.json"), "w") as f:
         json.dump(report, f, indent=1)
+    if len(good) < len(rows) or not rows:
+        print(json.dumps({k: v for k, v in report.items() if k != "rows"}))
+        print(f"untested live: {len(rows) - len(good)} of {len(rows)} switches showed no change, so this measured nothing. Is Polycarp running, and do the two workspaces look different?")
+        return 3
+    if report["fps"] < MIN_FPS:
+        print(json.dumps({k: v for k, v in report.items() if k != "rows"}))
+        print(f"untested live: recorded at {report['fps']} fps, under {MIN_FPS}, so separate changes merge into one frame")
+        return 3
     print(json.dumps({k: v for k, v in report.items() if k != "rows"}))
     for r in rows:
         print(r)
