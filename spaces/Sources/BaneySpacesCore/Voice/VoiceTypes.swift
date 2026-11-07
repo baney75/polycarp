@@ -13,7 +13,7 @@ public enum VoiceStatus: String, Codable, Sendable {
         return switch self {
         case .loading: "Loading model…"
         case .needsModel: "Choose a speech model"
-        case .ready: "Ready · hold \(hotkeyLabel) to speak"
+        case .ready: "Ready · press \(hotkeyLabel) and speak"
         case .recording: "Listening…"
         case .transcribing, .typing: "Writing…"
         case .error: "Needs attention"

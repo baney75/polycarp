@@ -58,12 +58,12 @@ test("Settings has six tabs, with Connect under Agents and Costs under About", (
 	assert.match(read("src/dialogs/AppearanceTab.ts"), /return "Appearance";/);
 });
 
-test("the welcome dialog offers Connect, and Chat here lands on the API keys list", () => {
+test("the welcome dialog offers Connect, and Chat here opens Providers at the top, with Free mode first", () => {
 	const welcome = read("src/dialogs/WelcomeSetupDialog.ts");
 	assert.match(welcome, /Use from claude\.ai or ChatGPT/);
 	assert.match(welcome, /Chat here/);
 	const panel = read("src/sidepanel.ts");
-	assert.match(panel, /choice === "connect"\s*\?\s*\{ tab: "Agents", anchor: "connect-heading" \}\s*:\s*\{ tab: "Providers", anchor: "api-keys-heading" \}/);
+	assert.match(panel, /choice === "connect"\s*\?\s*\{ tab: "Agents", anchor: "connect-heading" \}\s*:\s*\{ tab: "Providers" \}/);
 	assert.match(read("src/dialogs/ApiKeysTab.ts"), /id="api-keys-heading"/);
 });
 
@@ -89,9 +89,10 @@ test("every icon-only header button has an aria-label and a visible tooltip", ()
 	assert.match(panel, /label: "Theme"[^}]*openApiKeysDialog\(\{ tab: "Appearance" \}\)/);
 });
 
-test("Privacy keeps one sentence visible and every long explanation under Details, text unchanged", () => {
+test("Privacy keeps one sentence visible and every long explanation in a named disclosure, text unchanged", () => {
 	const text = read("src/dialogs/PrivacyTab.ts");
-	assert.equal((text.match(/>Details</g) ?? []).length + (text.match(/<summary[^>]*>Details/g) ?? []).length >= 2, true);
+	assert.equal((text.match(/<summary/g) ?? []).length >= 2, true);
+	assert.doesNotMatch(text, />Details</, "a disclosure says what it holds");
 	// The original explanations survive word for word.
 	for (const kept of [
 		"The side panel agent then runs only OpenRouter models, sent with zero data retention required and no",

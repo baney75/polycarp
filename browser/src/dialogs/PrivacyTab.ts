@@ -13,11 +13,11 @@ import { MIRROR_KEY } from "../threads/keys.js";
 import { SHARE_OLDER_KEY, SHARED_SINCE_KEY } from "../threads/store.js";
 
 /** One plain sentence stays visible; the full explanation is one click away and unchanged. */
-function explained(summary: string, detail: TemplateResult | string): TemplateResult {
+function explained(summary: string, more: string, detail: TemplateResult | string): TemplateResult {
 	return html`
 		<p class="text-xs text-muted-foreground">${summary}</p>
 		<details class="text-xs text-muted-foreground">
-			<summary class="cursor-pointer text-foreground">Details</summary>
+			<summary class="cursor-pointer text-foreground">${more}</summary>
 			<p class="mt-1">${detail}</p>
 		</details>
 	`;
@@ -123,6 +123,7 @@ export class PrivacyTab extends SettingsTab {
 					</label>
 					${explained(
 						"Your prompts go only to models that promise not to keep them, or to machines of your own.",
+						"How private mode works",
 						`The side panel agent then runs only OpenRouter models, sent with zero data retention required and no
 						fallback to other endpoints, and models on this computer or on the hosts you list below (a LAN or tailnet
 						machine counts only once you list it). Free mode then uses only free models with zero data retention, and
@@ -142,7 +143,7 @@ export class PrivacyTab extends SettingsTab {
 							/>
 						</label>
 						<details class="text-xs text-muted-foreground">
-							<summary class="cursor-pointer text-foreground">Details</summary>
+							<summary class="cursor-pointer text-foreground">What counts as your own</summary>
 							<p class="mt-1">Prefer names over IPs (for example mac.example.ts.net): a listed IP is trusted on every network, including one where it belongs to someone else.</p>
 						</details>
 					</div>
@@ -179,6 +180,7 @@ export class PrivacyTab extends SettingsTab {
 					}
 					${explained(
 						"Keeps a copy of your chats on this computer so your coding agents can look up what you asked Polycarp.",
+						"What is copied, and where",
 						`Keeps a copy of your side panel chats in ~/.local/share/tabkyra/threads (readable only by your user), so
 						agents like Claude Code and Codex can look up what you asked Polycarp, through Polycarp's MCP server or as files.
 						Keys pasted into a chat are removed from the copy, and chats from private mode are never copied. Turning
@@ -202,6 +204,7 @@ export class PrivacyTab extends SettingsTab {
 					</label>
 					${explained(
 						"Optional and off by default. Nothing is sent unless you send it.",
+						"What a report holds",
 						`Optional and off by default. Errors are kept in this browser with web addresses, emails and keys removed.
 						Nothing is sent: you review the report here, copy it, and paste it into a GitHub issue yourself.`,
 					)}

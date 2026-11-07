@@ -155,7 +155,7 @@ test("row labels: the REPL title, the page title, the artifact file", () => {
 	assert.equal(stepLabel(call("a", "repl", { title: "Find select-all-matching banner", code: "" })).label, "Find select-all-matching banner");
 	const n = stepLabel(call("b", "navigate", { url: "https://mail.google.com/" }), result("b", "navigate", { finalUrl: "https://mail.google.com/mail/u/0/", title: "Inbox - Gmail" }));
 	assert.deepEqual(n, { label: "Inbox - Gmail", detail: "mail.google.com" });
-	assert.equal(stepLabel(call("c", "navigate", { url: "https://a.test/" })).label, "Open https://a.test/");
+	assert.equal(stepLabel(call("c", "navigate", { url: "https://a.test/" })).label, "Open a.test");
 	assert.equal(stepLabel(call("d", "artifacts", { command: "create", filename: "r.md" })).label, "create r.md");
 	assert.equal(siteOf("https://www.example.com/x"), "example.com");
 });

@@ -194,7 +194,7 @@ final class LauncherController: NSObject, NSWindowDelegate {
         panel = p
         model.prepare(scope: scope)
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main ?? NSScreen.screens[0]
-        let size = NSSize(width: 700, height: 500)
+        let size = NSSize(width: 700, height: 512)
         // A little above center, where Spotlight sits.
         let origin = NSPoint(x: screen.visibleFrame.midX - size.width / 2,
                              y: screen.visibleFrame.minY + screen.visibleFrame.height * 0.62 - size.height / 2)
@@ -1481,7 +1481,11 @@ struct LauncherView: View {
         VStack(spacing: 0) {
             searchBar
             Rectangle().fill(Chrome.edge(0.08)).frame(height: Chrome.width(.launcherPanel))
-            results
+            // A row running under the footer fades out, so it reads as more below and not as a cut.
+            results.mask(VStack(spacing: 0) {
+                Chrome.wash(1)
+                LinearGradient(colors: [Chrome.wash(1), Chrome.wash(1).opacity(0)], startPoint: .top, endPoint: .bottom).frame(height: 18)
+            })
             Rectangle().fill(Chrome.edge(0.08)).frame(height: Chrome.width(.launcherPanel))
             footer
         }
@@ -1524,7 +1528,7 @@ struct LauncherView: View {
                             if i == 0 || model.items[i - 1].section != item.section {
                                 Text(item.section.uppercased())
                                     .font(Chrome.font(10, .bold)).tracking(0.8)
-                                    .foregroundStyle(Chrome.wash(0.4))
+                                    .foregroundStyle(Chrome.muted)
                                     .padding(.leading, 12).padding(.top, i == 0 ? 4 : 10).padding(.bottom, 2)
                             }
                             row(item, selected: i == model.selected)
@@ -1552,7 +1556,7 @@ struct LauncherView: View {
                 Text(item.title).font(Chrome.font(14, .semibold)).foregroundStyle(Chrome.wash()).lineLimit(1)
                 if !item.subtitle.isEmpty {
                     Text(item.subtitle).font(Chrome.font(11.5))
-                        .foregroundStyle(item.state == .failed ? Color.orange : Chrome.wash(0.5)).lineLimit(1)
+                        .foregroundStyle(item.state == .failed ? Color.orange : Chrome.muted).lineLimit(1)
                 }
             }
             Spacer(minLength: 8)
@@ -1563,7 +1567,7 @@ struct LauncherView: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 46)
-        .background(Chrome.shape(.launcherRow).fill(selected ? Chrome.cell(0.13) : .clear))
+        .background(Chrome.shape(.launcherRow).fill(selected ? Chrome.accent.opacity(0.22) : .clear))
         .overlay(alignment: .leading) {
             if selected { Chrome.pill().fill(Chrome.accent).frame(width: 3, height: 22).offset(x: 1) }
         }
@@ -1614,7 +1618,7 @@ struct LauncherView: View {
                 .background(Chrome.shape(.launcherKey, continuous: false).fill(Chrome.wash(0.1)))
             Text(what).font(Chrome.font(11))
         }
-        .foregroundStyle(Chrome.wash(0.5))
+        .foregroundStyle(Chrome.muted)
     }
 }
 

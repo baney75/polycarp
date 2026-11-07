@@ -215,7 +215,9 @@ export function stepLabel(call: TToolCall, result?: TMessage): { label: string; 
 			if (a.showTab !== undefined) return { label: `Show tab ${a.showTab}` };
 			if (a.switchToTab !== undefined) return { label: details.title ?? `Switch to tab ${a.switchToTab}` };
 			const url = details.finalUrl ?? str(a.url);
-			return { label: details.title ?? (url ? `Open ${url}` : "Navigate"), detail: siteOf(url) };
+			// A page title needs its site beside it. Without one, the site is the label, once.
+			if (details.title) return { label: details.title, detail: siteOf(url) };
+			return { label: url ? `Open ${siteOf(url) ?? url}` : "Navigate" };
 		}
 		case "skill":
 			return { label: `Skill ${str(a.action) ?? ""} ${str(a.name) ?? ""}`.replace(/\s+/g, " ").trim() };

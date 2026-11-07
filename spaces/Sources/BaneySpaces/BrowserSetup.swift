@@ -222,7 +222,7 @@ struct BrowserSettingsView: View {
                 if s.agents.isEmpty { SettingsNote("No agent found on this Mac.") }
                 if !s.addable.isEmpty {
                     SettingsRow("Let your agents use the browser") {
-                        Button(model.busy ? "Adding…" : "Add to Claude Code and Codex") { model.addAgents() }.disabled(model.busy)
+                        Button(model.busy ? "Adding…" : "Add to \(s.addable.map(\.name).joined(separator: " and "))") { model.addAgents() }.disabled(model.busy)
                     }
                 }
             }

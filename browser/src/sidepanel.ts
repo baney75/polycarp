@@ -619,7 +619,7 @@ function refreshModelLabel(force = false) {
 		if (text) return { content: `${text} · ${FREE_SHORT_NOTE}`, title: `${text}. ${FREE_PRIVACY_NOTE}` };
 		const parts = modelLabelParts(model);
 		return {
-			content: html`${parts.name}<span class="text-muted-foreground font-normal"> · ${parts.provider}</span>`,
+			content: parts.name,
 			title: parts.title,
 		};
 	};
@@ -1623,9 +1623,7 @@ async function initApp() {
 		const choice: WelcomeChoice = await WelcomeSetupDialog.show();
 		// "Set up provider" lands on the API keys list, not the top of the tab (Free mode and subscriptions sit above it).
 		await openApiKeysDialog(
-			choice === "connect"
-				? { tab: "Agents", anchor: "connect-heading" }
-				: { tab: "Providers", anchor: "api-keys-heading" },
+			choice === "connect" ? { tab: "Agents", anchor: "connect-heading" } : { tab: "Providers" },
 		);
 		await refreshDiscoveredModels(storage, { wait: true }).catch(() => {});
 		await selectDefaultModelForAvailableProvider();

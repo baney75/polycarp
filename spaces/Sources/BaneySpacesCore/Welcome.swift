@@ -39,7 +39,7 @@ public enum Welcome {
             after: "Turn on Polycarp in the list. macOS may ask to reopen it, which is fine."),
         PermissionStep(
             kind: .inputMonitoring,
-            title: "Stay out of your way",
+            title: "Notice when you're at the keyboard",
             why: "While an agent acts, Polycarp checks whether you're using the keyboard or mouse, so the two of you don't collide. It only listens during that action and doesn't keep what you type.",
             isRequired: false,
             settingsName: "Input Monitoring",
