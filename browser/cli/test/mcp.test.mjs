@@ -96,6 +96,10 @@ test("skill_match routes a task to one skill, or none, and skill_read returns th
 	assert.equal(one.content[0].text.split("\n").length, 2);
 	const none = await mcp.callTool({ name: "skill_match", arguments: { task: "write a haiku about autumn leaves" } });
 	assert.match(none.content[0].text, /^none: /);
+	// The unknown-site case: the reply points at site-learning, which an agent wouldn't otherwise reach.
+	assert.match(none.content[0].text, /skill_read \{"name":"site-learning"\}/);
+	const site = await mcp.callTool({ name: "skill_match", arguments: { task: "Find the three newest recipes about lentils on recipes.example.org" } });
+	assert.match(site.content[0].text, /site-learning/);
 	const read = await mcp.callTool({ name: "skill_read", arguments: { name: "academic-research" } });
 	assert.equal(read.content[0].text, readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "skills", "academic-research", "SKILL.md"), "utf8"));
 	for (const name of ["../academic-research", "no-such-skill", "Academic-Research"]) {
