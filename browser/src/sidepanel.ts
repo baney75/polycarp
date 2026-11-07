@@ -1637,14 +1637,15 @@ async function initApp() {
 		// Once. Someone who drives this browser from their own agent has no keys and shouldn't be asked on every new chat.
 		await chrome.storage.local.set({ [WELCOME_SEEN_KEY]: true });
 		const choice: WelcomeChoice = await WelcomeSetupDialog.show();
-		if (choice === "dismissed") return;
-		// "Set up provider" lands on the API keys list, not the top of the tab (Free mode and subscriptions sit above it).
-		await openApiKeysDialog(
-			choice === "connect" ? { tab: "Agents", anchor: "connect-heading" } : { tab: "Providers" },
-		);
-		await refreshDiscoveredModels(storage, { wait: true }).catch(() => {});
-		await selectDefaultModelForAvailableProvider();
-		renderApp();
+		if (choice !== "dismissed") {
+			// "Set up provider" lands on the API keys list, not the top of the tab (Free mode and subscriptions sit above it).
+			await openApiKeysDialog(
+				choice === "connect" ? { tab: "Agents", anchor: "connect-heading" } : { tab: "Providers" },
+			);
+			await refreshDiscoveredModels(storage, { wait: true }).catch(() => {});
+			await selectDefaultModelForAvailableProvider();
+			renderApp();
+		}
 	}
 }
 

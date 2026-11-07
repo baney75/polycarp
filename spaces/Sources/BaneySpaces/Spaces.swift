@@ -654,7 +654,10 @@ final class Spaces {
         let next = FullScreenFill.target(current: current, fill: fill, record: filled[w.id])
         let filling = next == fill
         w.setFrame(next)
-        filled[w.id] = filling ? FullScreenFill.Record(from: current, landed: w.frame ?? next) : nil
+        // At its largest size already, short of the screen (character cells, a maximum): the fill changed nothing.
+        let stuck = filling && filled[w.id] == nil && (w.frame.map { FullScreenFill.isFilling($0, current) } ?? false)
+        if stuck { w.setFrame(FullScreenFill.smaller(fill)) }
+        filled[w.id] = filling && !stuck ? FullScreenFill.Record(from: current, landed: w.frame ?? next) : nil
         saveFilled()
         // A green button on a window behind the front one: the click never reached it, so it comes forward here.
         AXUIElementPerformAction(w.element, kAXRaiseAction as CFString)
@@ -859,11 +862,15 @@ final class Spaces {
             return persist()
         }
         // A window its own app had put away, shown again now: a screenshot tool's result, say. It comes here, and you stay.
+        let away = ReappearedWindow.isAway(hasRecord: saved.frames[w.id] != nil,
+                                           atHidingSpot: w.frame.map { Geometry.isStranded($0, screens: Windows.screens()) } ?? true,
+                                           justSwitched: activatedAt.timeIntervalSince(max(leftAt, handedOffAt)) < 0.5)
         if ReappearedWindow.belongsHere(workspaceShown: model.isShown(n), onAgentWorkspace: n == Self.agentWorkspace,
-                                        parked: saved.frames[w.id] != nil, appHiddenByUs: saved.hiddenApps.contains(pid),
+                                        parked: away, appHiddenByUs: saved.hiddenApps.contains(pid),
                                         minimized: w.isMinimized, fullScreen: w.isFullScreen,
                                         onScreen: !Windows.allOffscreen([w.id])) {
             Trace.log("followFocus stayed: \(w.appName) showed a window it had put away; it comes here")
+            saved.frames[w.id] = nil
             model.assign(w.id, to: model.current, focus: true)
             lastKey[pid] = w.id
             noteFocus(w.id)
@@ -1617,7 +1624,12 @@ final class Spaces {
     private func park(_ how: Concealment, parkedApps: Set<pid_t>, screens: [CGRect], gen: Int, then: @escaping () -> Void) {
         let spot = Geometry.hidingSpot(screens: screens)
         // Apps with a window here parked theirs already (`parkAlongside`).
+        let inSight = Windows.onScreenIDs()
         let todo = how.park.compactMap { windows[$0] }.filter { !how.showApps.contains($0.pid) }.filter { w in
+            // Hidden by its own app (a tool's reused window): nothing to park, and a record would say Polycarp put it away.
+            saved.frames[w.id] != nil || saved.hiddenApps.contains(w.pid) || inSight.contains(w.id)
+                || (NSRunningApplication(processIdentifier: w.pid)?.isHidden ?? false)
+        }.filter { w in
             !w.isMinimized && (saved.frames[w.id] == nil || w.frame.map { !Geometry.isStranded($0, screens: screens) } == true)
         }.filter { w in
             // Visible until now: remember where it stood. No readable frame, no parking.

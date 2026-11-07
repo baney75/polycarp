@@ -85,6 +85,13 @@ public enum FullScreenFill {
 /// hidden. One that was neither wasn't on screen when you left: its own app had put it away, as a screenshot tool does with
 /// the one window it reuses for each capture. It coming back is that app showing something now, so it belongs where you are.
 public enum ReappearedWindow {
+    /// Whether a window is really put away. A record alone doesn't say so: a window parked while it showed, then hidden by
+    /// its own app, keeps its record, and when the app shows it again it's back in plain sight. So is a window whose app
+    /// undid the park. Just after a switch it may still be on its way out, and it counts as away.
+    public static func isAway(hasRecord: Bool, atHidingSpot: Bool, justSwitched: Bool) -> Bool {
+        hasRecord && (atHidingSpot || justSwitched)
+    }
+
     public static func belongsHere(workspaceShown: Bool, onAgentWorkspace: Bool, parked: Bool, appHiddenByUs: Bool,
                                    minimized: Bool, fullScreen: Bool, onScreen: Bool) -> Bool {
         !workspaceShown && !onAgentWorkspace && !parked && !appHiddenByUs && !minimized && !fullScreen && onScreen

@@ -92,7 +92,7 @@ test("the welcome dialog shows once, and its X opens nothing", () => {
 	const show = panel.indexOf("await WelcomeSetupDialog.show()");
 	assert.ok(seen > 0 && seen < show, "remembered before it can be closed by the panel going away");
 	assert.match(panel, /!\(await chrome\.storage\.local\.get\(WELCOME_SEEN_KEY\)\)\[WELCOME_SEEN_KEY\]/);
-	assert.match(panel, /choice === "dismissed"\) return/);
+	assert.match(panel, /choice !== "dismissed"\) \{/);
 	const dialog = readFileSync(join(root, "src/dialogs/WelcomeSetupDialog.ts"), "utf8");
 	assert.match(dialog, /private choice: WelcomeChoice = "dismissed"/);
 });

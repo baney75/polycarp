@@ -125,4 +125,12 @@ final class FullScreenFillTests: XCTestCase {
         XCTAssertFalse(reappeared(false, false, false, false, false, true, true), "native full screen has its own Space")
         XCTAssertFalse(reappeared(false, false, false, false, false, false, false), "nothing on screen to bring")
     }
+
+    func testARecordAloneDoesntMakeAWindowAway() {
+        // Parked while it showed, hidden by its own app, shown again: the record is still there and the window is in sight.
+        XCTAssertFalse(ReappearedWindow.isAway(hasRecord: true, atHidingSpot: false, justSwitched: false))
+        XCTAssertTrue(ReappearedWindow.isAway(hasRecord: true, atHidingSpot: true, justSwitched: false))
+        XCTAssertTrue(ReappearedWindow.isAway(hasRecord: true, atHidingSpot: false, justSwitched: true), "still on its way out")
+        XCTAssertFalse(ReappearedWindow.isAway(hasRecord: false, atHidingSpot: true, justSwitched: true))
+    }
 }
