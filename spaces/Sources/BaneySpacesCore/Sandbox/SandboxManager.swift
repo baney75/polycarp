@@ -143,6 +143,9 @@ public final class SandboxManager {
         self.handoffLimit = { [settings] in Int64(settings().handoffGB) << 30 }
     }
 
+    /// How long a stop waits for a warm build thread to leave. A test that holds the build on purpose shortens it.
+    var warmStopWait: TimeInterval = 60
+
     deinit { if lockFD >= 0 { close(lockFD) } }
 
     // MARK: ownership and startup cleanup
@@ -749,8 +752,8 @@ public final class SandboxManager {
         p?.kill()
         var buildDone = true
         if let group {
-            if group.wait(timeout: .now() + 60) == .timedOut {
-                fail("the warm build did not stop in 60 s")
+            if group.wait(timeout: .now() + warmStopWait) == .timedOut {
+                fail("the warm build did not stop in \(Int(warmStopWait)) s")
                 buildDone = false
             } else {
                 state.lock()
