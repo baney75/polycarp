@@ -90,14 +90,14 @@ public enum OverviewLayout {
         }
         guard !groups.isEmpty else { return [:] }
         let sums = groups.map { row in row.map { weight(windows[$0] ?? 0) }.reduce(0, +) }
-        // A row's height follows its weight per tile, softened so a busy row doesn't flatten a quiet one.
-        let shares = zip(groups, sums).map { row, sum in (sum / CGFloat(row.count)).squareRoot() }
-        let total = shares.reduce(0, +)
+        // A row is as tall as its share of all the weight, and a tile as wide as its share of the row, so every tile's area
+        // follows its own weight whichever row it lands in. Rows with fewer gaps come out a touch roomier.
+        let total = sums.reduce(0, +)
         let usableHeight = max(0, area.height - gap * CGFloat(groups.count - 1))
         var out: [Int: CGRect] = [:]
         var y = area.minY
         for (i, row) in groups.enumerated() {
-            let height = usableHeight * shares[i] / total
+            let height = usableHeight * sums[i] / total
             let usableWidth = max(0, area.width - gap * CGFloat(row.count - 1))
             var x = area.minX
             for n in row {
