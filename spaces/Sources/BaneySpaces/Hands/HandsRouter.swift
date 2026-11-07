@@ -28,11 +28,18 @@ struct HandsHost {
 final class HandsRouter {
     var host = HandsHost()
     private let lends = HandsLends.shared
+    private let cap: (AgentAccessMode) -> AgentAccessMode
+    /// The access this router works under: the Mac's setting, through its cap. Every decision below reads this one, so a
+    /// router for connectors can never act on Full Access (`HandsRouterAccessTests` holds the code to it).
+    var access: AgentAccessMode { cap(AgentAccess.shared.current) }
+
+    init(cap: @escaping (AgentAccessMode) -> AgentAccessMode = { $0 }) { self.cap = cap }
 
     /// What a snapshot's refs belong to. A ref is good only for this snapshot's window and process.
     private struct Snap { var window: UInt32; var pid: Int32; var app: String; var at: Date; var identity: [String: RefIdentity] }
     /// Windows that must never be used: they showed a document from outside the handoff folder.
-    private var refused: Set<UInt32> = []
+    private static var refused: Set<UInt32> = []
+    private static let refusedLock = NSLock()
     private var snaps: [String: Snap] = [:]
     private let lock = NSLock()
 
@@ -55,7 +62,7 @@ final class HandsRouter {
     func handle(_ req: HandsRequest) -> HandsEnvelope {
         lends.expire()
         if HandsTools.userOnly.contains(req.verb) { return .failure(HandsParse.askedForLend(req.string("app"))) }
-        if let e = AgentAccessGate.refusal(verb: req.verb, mode: AgentAccess.shared.current) { return .failure(e) }
+        if let e = AgentAccessGate.refusal(verb: req.verb, mode: access) { return .failure(e) }
         if req.verb != "windows", req.verb != "open", let problem = HandsEngine.shared.permissionProblem() { return .failure(problem) }
         switch req.verb {
         case "windows": return windows()
@@ -86,8 +93,8 @@ final class HandsRouter {
     }
 
     func decide(_ w: HandsWindow, _ agent: Int?) -> ScopeDecision {
-        let mode = AgentAccess.shared.current
-        lock.lock(); let bad = refused.contains(w.id); lock.unlock()
+        let mode = access
+        Self.refusedLock.lock(); let bad = Self.refused.contains(w.id); Self.refusedLock.unlock()
         // Under Full Access Donovan's documents are open to agents, so a window refused for showing one is usable again.
         if bad, mode != .full { return .denied(HandsError(.needsSandbox, "window \(w.id) showed a document of Donovan's", suggestion: "Open your own file from the handoff folder.", retry: .never)) }
         let book = lends.current()
@@ -111,7 +118,7 @@ final class HandsRouter {
     /// The same for a call that changes something: Read Only, set after the request was let in, stops it here too.
     func actingCheck(_ w: HandsWindow, ref: String? = nil) -> HandsEngine.Check {
         let scope = check(w, ref: ref)
-        return { AgentAccessGate.actingRefusal(mode: AgentAccess.shared.current) ?? scope() }
+        return { [self] in AgentAccessGate.actingRefusal(mode: access) ?? scope() }
     }
 
     private func refmapURL(_ sid: String) -> URL { HandsEngine.stateRoot.appendingPathComponent("snapshots/\(sid)/refmap.json") }
@@ -137,26 +144,29 @@ final class HandsRouter {
         return inspectProblem(now)
     }
 
-    /// Windows of a process BaneySpaces started for an agent are used only while they show nothing of Donovan's:
-    /// no document from outside the handoff folder (a restored one, or one opened through a panel), and never an
-    /// Open or Save panel, which would browse his files. Checked on every use, so a late window is covered too.
-    /// Under Full Access documents are open, but no window of any process is used while it is (or holds) a panel.
+    /// No window is used while it is or holds an Open or Save panel, which would browse his files, in any mode. Windows of a process
+    /// BaneySpaces started for an agent are also used only while they show no document from outside the handoff folder (a restored
+    /// one, or one opened through a panel). Checked on every use, so a late window is covered too.
     private func inspectProblem(_ w: HandsWindow) -> HandsError? {
-        let full = AgentAccess.shared.current == .full
         let (owned, seen) = onMain { (host.agentOwned(), host.inspect(w.id)) }
-        if full {
-            guard seen.panel else { return nil }
-            // Not remembered: one of Donovan's windows with a sheet up is usable again once the sheet closes.
+        let agentOwned = owned.contains(w.pid)
+        switch WindowInspection.decide(full: access == .full, agentOwned: agentOwned, panel: seen.panel, document: seen.document, handoff: Self.handoffFolder) {
+        case .usable:
+            return nil
+        case .panel:
+            // Remembered only for an agent's own process: one of Donovan's windows with a sheet up is usable again once the sheet closes.
+            if agentOwned, access != .full { remember(w.id) }
             return HandsError(.needsSandbox, "window \(w.id) of \(w.app) is or holds an Open or Save panel",
-                              suggestion: "Agents never drive an Open or Save panel, even with full access. Wait for it to close, or open the file with `polycarp-spaces agent open <app> <file>`.", retry: .never)
+                              suggestion: "Agents never drive an Open or Save panel. Wait for it to close, or open the file with `polycarp-spaces agent open <app> <file in the handoff folder>`.", retry: .never)
+        case .outsideDocument:
+            remember(w.id)
+            return HandsError(.needsSandbox, "window \(w.id) of \(w.app) shows a document from outside the handoff folder",
+                              suggestion: "Agents work only on files from the handoff folder. Open the file with `polycarp-spaces agent open <app> <file in the handoff folder>`.", retry: .never)
         }
-        guard owned.contains(w.pid) else { return nil }
-        var why: String?
-        if seen.panel { why = "window \(w.id) of \(w.app) is an Open or Save panel" }
-        else if let doc = seen.document, !doc.isEmpty, !HandoffPath.contains(document: doc, in: Self.handoffFolder) { why = "window \(w.id) of \(w.app) shows a document from outside the handoff folder" }
-        guard let why else { return nil }
-        lock.lock(); refused.insert(w.id); lock.unlock()
-        return HandsError(.needsSandbox, why, suggestion: "Agents work only on files from the handoff folder and never drive an Open or Save panel. Open the file with `polycarp-spaces agent open <app> <file>`.", retry: .never)
+    }
+
+    private func remember(_ id: UInt32) {
+        Self.refusedLock.lock(); Self.refused.insert(id); Self.refusedLock.unlock()
     }
 
     private func windowJSON(_ w: HandsWindow, _ scope: ScopeDecision) -> JSONValue {
@@ -170,7 +180,7 @@ final class HandsRouter {
 
     private func windows() -> HandsEnvelope {
         let (all, agent) = listWindows(fresh: true)
-        let mode = AgentAccess.shared.current
+        let mode = access
         let usable = all.map { ($0, decide($0, agent)) }.filter { $0.1.allowed }.map { (window: $0.0, scope: $0.1) }
             // Under Full Access every window is listed without reading each one (that would ask every app on the Mac);
             // a panel is still refused when the window is used.
@@ -455,7 +465,7 @@ final class HandsRouter {
         let files: [String]
         switch AgentOpenGate.check(app: display, bundle: bundle, targets: req.args["targets"]?.array?.compactMap(\.string) ?? [], handoff: Self.handoffFolder, appURL: url,
                                      probeFolder: ProbeAppTrust.folder, probeTrusted: bundle == AgentAppPolicy.canvasProbeBundle && ProbeAppTrust.trusted(url),
-                                     mode: AgentAccess.shared.current) {
+                                     mode: access) {
         case .failure(let e): return .failure(e)
         case .success(let f): files = f
         }

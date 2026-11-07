@@ -21,6 +21,8 @@ public struct HandsMCP {
     public var perform: (HandsRequest) -> HandsEnvelope
     /// Reads a screenshot file for the `shot` tool's image block.
     public var readImage: (String) -> Data?
+    /// The name this server answers `initialize` with.
+    public var name = HandsMCP.serverName
 
     public init(version: String, session: String, perform: @escaping (HandsRequest) -> HandsEnvelope, readImage: @escaping (String) -> Data? = { _ in nil }) {
         self.version = version; self.session = session; self.perform = perform; self.readImage = readImage
@@ -66,7 +68,7 @@ public struct HandsMCP {
             return reply(id: id, result: .object([
                 "protocolVersion": .string(asked),
                 "capabilities": .object(["tools": .object(["listChanged": false])]),
-                "serverInfo": .object(["name": .string(Self.serverName), "version": .string(version)]),
+                "serverInfo": .object(["name": .string(name), "version": .string(version)]),
                 "instructions": .string(Self.instructions),
             ]))
         case "ping":

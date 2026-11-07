@@ -2,7 +2,7 @@ import AppKit
 import BaneySpacesCore
 import SwiftUI
 
-/// Settings > Browser > "Use your browser from Claude, ChatGPT and Grok". Off until a person clicks Turn on. The bundled helper
+/// Settings > Browser > "Use Polycarp from Claude, ChatGPT and Grok". Off until a person clicks Turn on. The bundled helper
 /// does the work (`remote status|setup|off`, Tailscale Funnel on the person's own free account) and answers in JSON;
 /// `RemoteFlow` picks the one step to show. Reading status is all this does on its own.
 final class BrowserRemoteModel: ObservableObject {

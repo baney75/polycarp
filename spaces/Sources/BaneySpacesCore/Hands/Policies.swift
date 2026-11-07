@@ -85,6 +85,19 @@ public enum AgentOpenGate {
 }
 
 /// Which files an agent may hand to an app: only ones inside the agent handoff folder.
+/// Whether a window may be used, from what it shows. An Open or Save panel browses the person's files, so no agent drives one in
+/// any mode, on any window. A document is checked only on a process Polycarp started for an agent: a lent app is lent with what it
+/// shows, and Full Access opens documents.
+public enum WindowInspection: Equatable {
+    case usable, panel, outsideDocument
+
+    public static func decide(full: Bool, agentOwned: Bool, panel: Bool, document: String?, handoff: URL) -> WindowInspection {
+        if panel { return .panel }
+        guard !full, agentOwned, let document, !document.isEmpty, !HandoffPath.contains(document: document, in: handoff) else { return .usable }
+        return .outsideDocument
+    }
+}
+
 public enum HandoffPath {
     /// Whether what a window reports as its document (a file URL or a path) is inside the folder.
     public static func contains(document: String, in folder: URL) -> Bool {

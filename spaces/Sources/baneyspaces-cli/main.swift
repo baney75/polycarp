@@ -198,7 +198,7 @@ case "phone", "phones":
     PhoneCommand.run(rest)
 
 case "mcp":
-    MCPCommand.run()
+    MCPCommand.run(connector: rest.contains("--connector"))
 
 case "agent" where HandsTools.userOnly.contains(rest.first ?? ""):
     HandsCLI.lendOrReturn(rest)

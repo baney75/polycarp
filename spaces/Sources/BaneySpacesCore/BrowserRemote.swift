@@ -1,6 +1,6 @@
 import Foundation
 
-/// Settings > Browser > "Use your browser from Claude, ChatGPT and Grok". The bundled helper does the work (`remote setup`,
+/// Settings > Browser > "Use Polycarp from Claude, ChatGPT and Grok". The bundled helper does the work (`remote setup`,
 /// `remote status`, `remote off`) and answers in JSON; this reads the answer and decides which one step to show. No UI
 /// and no process here, so all of it is tested. The helper's states are the contract: nothing below reads a sentence.
 
@@ -220,12 +220,12 @@ public enum RemoteCommand: Equatable {
 
 /// Every sentence on screen, in one place so tests can hold it to the rules: plain words, no jargon.
 public enum RemoteCopy {
-    public static let title = "Use your browser from Claude, ChatGPT and Grok"
+    public static let title = "Use Polycarp from Claude, ChatGPT and Grok"
     public static let docsURL = URL(string: "https://github.com/baney75/polycarp/blob/main/browser/docs/remote.md#if-funnel-wont-work")!
     public static let tailscaleDownloadURL = URL(string: "https://tailscale.com/download")!
 
-    public static let intro = "Let the assistants you use on the web work in the browser on this computer. It's off until you turn it on."
-    public static let honest = "This runs on your own account. Agents you approve can use your signed-in browser, so only approve ones you trust."
+    public static let intro = "Let the assistants you use on the web work in this computer's browser and, if you allow it, in apps on its agent workspace. It's off until you turn it on."
+    public static let honest = "This runs on your own account. Assistants you approve can use your signed-in browser, so only approve ones you trust. Computer use stays off for each one unless you tick it when you approve it."
     public static let staysOn = "Your computer must stay on and signed in."
     public static let genericProblem = "Something is not working. Check again, or turn it off and start over."
     public static let startOverButton = "Turn off and start over"

@@ -15,7 +15,7 @@ import { runSetup } from "./setup.ts";
 import { sdkInstalled } from "./subscriptions/copilot.ts";
 import { installCopilotSdk } from "./subscriptions/install-sdk.ts";
 import { LIBRARY_USAGE, runLibrary } from "./library.ts";
-import { createToken, loadTokens, loadUsage, revokeToken, SCOPES, serve } from "./remote.ts";
+import { createToken, loadTokens, loadUsage, offeredScopes, revokeToken, SCOPES, serve } from "./remote.ts";
 import { listClients, mintApprovalCode, normalizePublicUrl, type OAuthConfig, passcodeSet, revokeClient, revokeGrantById, setPasscode } from "./oauth.ts";
 import { hubCode, hubDevices, hubOff, hubPrefer, hubRemove, hubServe, hubSetup, hubStatus } from "./hub-admin.ts";
 import { loadHubConfig } from "./hub-state.ts";
@@ -478,7 +478,7 @@ async function main(): Promise<void> {
 			let oauth: OAuthConfig | undefined;
 			if (rawPublic !== undefined || saved) {
 				try {
-					oauth = { publicUrl: normalizePublicUrl(rawPublic ?? saved?.publicUrl ?? ""), redirectHosts, scopes: SCOPES };
+					oauth = { publicUrl: normalizePublicUrl(rawPublic ?? saved?.publicUrl ?? ""), redirectHosts, scopes: offeredScopes() };
 				} catch (err) {
 					throw new UsageError(err instanceof Error ? err.message : String(err));
 				}

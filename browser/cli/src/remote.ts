@@ -18,6 +18,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { COMPUTER_ACT_TOOLS, COMPUTER_READ_TOOLS, computerHelper, openComputer } from "./computer.ts";
 import { createMcpServer } from "./mcp.ts";
 import { MAX_LINK_SESSIONS } from "./link-protocol.ts";
 import { handleOAuth, readBody } from "./oauth-http.ts";
@@ -42,6 +43,15 @@ export const SCOPES: Record<string, { tools: string[]; what: string }> = {
 		// Code runs as the user on the page: it can do anything browser.act can, and more.
 		what: "Run any code as you on pages the agent opens: can read, post, send and buy (includes everything browser.act can do)",
 	},
+	"computer.read": {
+		tools: COMPUTER_READ_TOOLS,
+		what: "See this computer's agent workspace and any app you lend: what the windows say, and pictures of them",
+	},
+	"computer.act": {
+		tools: COMPUTER_ACT_TOOLS,
+		// The app holds a connector to these windows whatever else is on (Hands router's cap, SECURITY.md).
+		what: "See those windows, click and type in them, and start apps from Polycarp's short list. Never your other windows, even with Full Access on",
+	},
 	"library.read": { tools: ["library_search", "library_cite"], what: "Search and cite the source library" },
 	"library.write": { tools: ["library_add"], what: "Add sources to the library (fetches from doi.org, OpenAlex, Crossref)" },
 	"threads.read": {
@@ -56,6 +66,12 @@ export const SCOPES: Record<string, { tools: string[]; what: string }> = {
 		what: "Read pages as markdown (and optional map/crawl) through the user's self-hosted Firecrawl (FIRECRAWL_API_URL); hosted api.firecrawl.dev is refused",
 	},
 };
+
+/** What this machine can grant: computer use needs Polycarp's Mac app, so elsewhere it isn't offered. */
+export function offeredScopes(): typeof SCOPES {
+	if (computerHelper()) return SCOPES;
+	return Object.fromEntries(Object.entries(SCOPES).filter(([name]) => !name.startsWith("computer."))) as typeof SCOPES;
+}
 
 export interface TokenRecord {
 	id: string;
@@ -414,13 +430,16 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		};
 		const allowed = toolsFor(scopes);
 		// Each session gets its own browser session (its own tab group), even under one token.
+		// Before the wait below: closeSessions() during it must reach this session too.
+		const born = generation;
+		const computer = await openComputer(allowed);
 		const { server, client } = createMcpServer({
 			name: `remote-${label}`,
 			session: `remote-${token.id}-${randomUUID().slice(0, 8)}`,
 			allowedTools: allowed,
 			remote: true,
+			computer,
 		});
-		const born = generation;
 		const transport = new StreamableHTTPServerTransport({
 			sessionIdGenerator: () => randomUUID(),
 			onsessioninitialized: (id) => {
@@ -437,6 +456,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		transport.onclose = () => {
 			if (transport.sessionId) sessions.delete(transport.sessionId);
 			client.close?.();
+			computer?.close();
 			notifySessions();
 		};
 		try {
@@ -445,6 +465,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		} finally {
 			// Initialization failed or never happened: give the slot back.
 			release();
+			if (!transport.sessionId) computer?.close();
 		}
 		recordUse(token.id);
 	}
