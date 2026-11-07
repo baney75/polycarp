@@ -390,6 +390,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 				deliveredResult = result && tabId !== undefined ? { result, tabId } : undefined;
 			},
 			isGuarded: (url: string) => isGuardedUrl(url, req.guardedHosts),
+			guardedHosts: req.guardedHosts ?? [],
 			checkUrl: async (url: string) => {
 				if (isGuardedUrl(url, req.guardedHosts)) throw guardedError(url);
 				if (!(await askPermission(state, url))) {

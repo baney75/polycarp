@@ -1,3 +1,5 @@
+import { PUBLIC_SUFFIX_RULES } from "./public-suffixes.js";
+
 /**
  * Site edits: changes to how a site looks or loads, kept per site and applied on every visit.
  *
@@ -43,6 +45,59 @@ const MAX_SCRIPT = 50_000;
 export class SiteEditError extends Error {}
 
 /** "https://www.X.com/home" or "X.com" -> "x.com". Throws on anything that isn't a plain host. */
+let suffixes: { shared: Set<string>; wild: Set<string>; except: Set<string> } | undefined;
+
+/**
+ * The Public Suffix List, read once. `shared` holds every rule, every wildcard rule's base ("*.sch.uk" gives sch.uk) and every
+ * name above one of them (s3.amazonaws.com gives amazonaws.com): an edit reaches subdomains, so an edit on any of those reaches
+ * sites that aren't the same owner's.
+ */
+function suffixRules() {
+	if (suffixes) return suffixes;
+	const shared = new Set<string>();
+	const wild = new Set<string>();
+	const except = new Set<string>();
+	const withParents = (name: string) => {
+		const labels = name.split(".");
+		for (let i = 0; i < labels.length; i++) shared.add(labels.slice(i).join("."));
+	};
+	for (const rule of PUBLIC_SUFFIX_RULES.split("\n")) {
+		if (rule.startsWith("!")) except.add(rule.slice(1));
+		else if (rule.startsWith("*.")) {
+			wild.add(rule.slice(2));
+			withParents(rule.slice(2));
+		} else withParents(rule);
+	}
+	suffixes = { shared, wild, except };
+	return suffixes;
+}
+
+/**
+ * Whether an edit on `host` would reach sites many owners share, by the Public Suffix List with its private section: `host`
+ * is a suffix (com, co.uk, github.io, uk.com), a wildcard's base or a name under one (kawasaki.jp, anything.kawasaki.jp), or a
+ * name above a suffix (amazonaws.com above s3.amazonaws.com). An exception rule (city.kawasaki.jp) is a site.
+ */
+export function sharedSuffix(host: string): boolean {
+	const { shared, wild, except } = suffixRules();
+	if (except.has(host)) return false;
+	if (shared.has(host)) return true;
+	const dot = host.indexOf(".");
+	return dot > 0 && wild.has(host.slice(dot + 1));
+}
+
+/** A guarded host ("host" or "host:port") that `host` or one of its subdomains is, if any: an edit on `host` would reach it. */
+export function guardedUnder(host: string, guarded: readonly string[]): string | undefined {
+	for (const entry of guarded) {
+		const h = entry
+			.toLowerCase()
+			.replace(/^\[|\]$/g, "")
+			.replace(/:\d+$/, "")
+			.replace(/\.$/, "");
+		if (h === host || h.endsWith(`.${host}`)) return h;
+	}
+	return undefined;
+}
+
 export function normalizeHost(raw: string): string {
 	let host = raw.trim().toLowerCase();
 	try {
@@ -53,6 +108,10 @@ export function normalizeHost(raw: string): string {
 	host = host.replace(/^www\./, "").replace(/\.$/, "");
 	if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host) || host.length > 253)
 		throw new SiteEditError(`${raw} isn't a site. Use one like example.com.`);
+	if (sharedSuffix(host))
+		throw new SiteEditError(
+			`${host} is shared by many sites, so an edit there would reach all of them. Name the site itself.`,
+		);
 	return host;
 }
 
@@ -81,7 +140,27 @@ export function checkSelectors(raw: string): string {
 		throw new SiteEditError(`Selectors are limited to ${MAX_SELECTORS} characters.`);
 	if (/[{};@\\]|url\s*\(|<\/?style/i.test(selectors))
 		throw new SiteEditError("Only selectors: no braces, semicolons, @ rules, backslashes or url().");
+	// An open comment, bracket, parenthesis or quote would run into the next edit's rule in the same sheet.
+	if (/\/\*|\*\//.test(selectors)) throw new SiteEditError("No comments in selectors.");
+	// A line break ends a CSS string early, so a quote that looks closed here wouldn't be in the sheet.
+	if (/[\r\n\f]/.test(selectors)) throw new SiteEditError("Selectors go on one line.");
+	if (!balanced(selectors)) throw new SiteEditError("Unbalanced brackets, parentheses or quotes in the selectors.");
 	return selectors;
+}
+
+function balanced(text: string): boolean {
+	const stack: string[] = [];
+	let quote = "";
+	for (const ch of text) {
+		if (quote) {
+			if (ch === quote) quote = "";
+			continue;
+		}
+		if (ch === '"' || ch === "'") quote = ch;
+		else if (ch === "(" || ch === "[") stack.push(ch === "(" ? ")" : "]");
+		else if ((ch === ")" || ch === "]") && stack.pop() !== ch) return false;
+	}
+	return !quote && stack.length === 0;
 }
 
 /** A request pattern in the browser's own syntax (`||ads.example.com^`, `/banner/`), never the page itself. */
@@ -95,8 +174,13 @@ export function checkPattern(raw: string): string {
 		throw new SiteEditError("Plain ASCII only in a pattern. Encode other characters as the URL does (%C3%BC).");
 	if (pattern.slice(2).includes("||") || (pattern.includes("||") && !pattern.startsWith("||")))
 		throw new SiteEditError("|| goes only at the start, for a domain: ||ads.example.com^");
-	// A bare "*", "|", "^" or the like would block everything the site loads.
-	if (pattern.replace(/[*|^/]/g, "").length < 3)
+	// A bare "*", "|", "^", a scheme ("https://", "|htt"), wildcards between letters ("h*t*t*p*") or a domain that starts with a
+	// wildcard ("||*ads") would block everything the site loads: the pattern must hold a run of three or more letters or digits
+	// that isn't part of a scheme name.
+	const named = (pattern.match(/[a-z0-9-]+/gi) ?? []).some(
+		(run) => run.length >= 3 && !"https".includes(run.toLowerCase()) && !"wss".includes(run.toLowerCase()),
+	);
+	if (!named || /^\|\|\*/.test(pattern))
 		throw new SiteEditError("That pattern would block everything on the site. Name what to block.");
 	return pattern;
 }

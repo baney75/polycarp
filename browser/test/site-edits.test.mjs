@@ -131,6 +131,41 @@ test("syncs never run side by side, so a script turned off can't come back", asy
 	assert.equal(scripts.size, 0, "the last run read the person's off and left nothing registered");
 });
 
+test("a site shared by many others is refused, and so is a parent of a guarded site", () => {
+	// From the Public Suffix List, both sections: the list's own entries, a wildcard rule (*.ck) and private suffixes.
+	for (const shared of ["github.io", "co.uk", "com.au", "vercel.app", "uk.com", "surge.sh", "blogspot.com", "anything.kawasaki.jp", "kawasaki.jp", "sch.uk", "nom.br", "amazonaws.com", "windows.net", "xn--55qx5d.cn", "https://\u516c\u53f8.cn/"]) {
+		assert.throws(() => store.normalizeHost(shared), /shared by many sites/, shared);
+	}
+	assert.equal(store.normalizeHost("city.kawasaki.jp"), "city.kawasaki.jp", "an exception to a wildcard rule is a site");
+	for (const site of ["someone.github.io", "bbc.co.uk", "x.com", "example.uk.com"]) assert.equal(store.normalizeHost(site), site);
+	assert.equal(store.guardedUnder("example.com", ["login.example.com:443"]), "login.example.com");
+	assert.equal(store.guardedUnder("example.com", ["example.org"]), undefined);
+});
+
+test("an agent allowed on a site can't reach a guarded site under it", async () => {
+	installFakeChrome();
+	globalThis.chrome.runtime = { ...(globalThis.chrome.runtime ?? {}), getManifest: () => ({ version: "0" }) };
+	const { handlers } = await import(`../src/bridge/tools.ts?ctx=${Math.random()}`);
+	const ctx = {
+		session: { groupName: "claude" },
+		clientId: "c1",
+		guardedHosts: ["approve.example.com"],
+		isGuarded: (url) => new URL(url).hostname === "approve.example.com",
+		checkUrl: async () => undefined,
+	};
+	await assert.rejects(handlers["edits.add"](ctx, { kind: "hide", host: "example.com", value: ".a" }), /would reach approve\.example\.com/);
+	assert.deepEqual((await store.load()).edits, []);
+});
+
+test("selectors that would run into the next rule, and patterns that block everything, are refused", () => {
+	for (const bad of ["/*", ".a /*", ".a:not(.b", '[data-x="y', ".a)"]) assert.throws(() => store.checkSelectors(bad), store.SiteEditError, bad);
+	assert.equal(store.checkSelectors('a[href*="ad"]:not(.keep)'), 'a[href*="ad"]:not(.keep)');
+	for (const bad of ["https://", "|https:", "||*ads", "||*.doubleclick.net^", "wss://*", "*http", "|http*", "https*://", "|htt", "h*t*t*p*", "||*"]) {
+		assert.throws(() => store.checkPattern(bad), /block everything/, bad);
+	}
+	assert.throws(() => store.checkSelectors('[data-x="\n"]'), /one line/);
+});
+
 test("the same edit twice is one edit, and there is a limit", () => {
 	const once = store.added(empty, { host: "x.com", kind: "hide", value: ".a", actor: "agent", who: "c" }, "1", 1).state;
 	assert.equal(store.added(once, { host: "www.x.com", kind: "hide", value: ".a", actor: "agent", who: "c" }, "2", 2).state.edits.length, 1);
