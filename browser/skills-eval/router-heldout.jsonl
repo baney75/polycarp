@@ -131,3 +131,21 @@
 {"task": "tldr this url for me https://example.com/story", "skill": "summarize"}
 {"task": "give me the main points of this long article", "skill": "summarize"}
 {"task": "sum up this thread in three bullets", "skill": "summarize"}
+{"task": "Look up sourdough tutorials on YouTube posted in the past month", "skill": "youtube"}
+{"task": "Get me the transcript of a YouTube lecture and cite the minutes", "skill": "youtube"}
+{"task": "Give me the newest videos a YouTube creator uploaded", "skill": "youtube"}
+{"task": "Find videos about solar panels on Rumble from today", "skill": "rumble"}
+{"task": "Pull the comment thread from a Rumble video", "skill": "rumble"}
+{"task": "Browse an Instagram account and tell me what it recently posted", "skill": "instagram"}
+{"task": "Search the hashtag on Instagram and give me the post links", "skill": "instagram"}
+{"task": "Explore this unfamiliar website, learn its search and save how it works for later", "skill": "site-learning"}
+{"task": "Learn how this site pages its results and keep a playbook", "skill": "site-learning"}
+{"task": "Open this news site's search, sort by newest, and tell me when each article was updated", "skill": "news-research"}
+{"task": "What is the best way to promote my Instagram", "skill": "none"}
+{"task": "What did that Rumble channel upload this week", "skill": "rumble"}
+{"task": "Check a Rumble clip's views and likes for me", "skill": "rumble"}
+{"task": "Show me the latest reels from that Instagram creator", "skill": "instagram"}
+{"task": "See which hashtags show up under an Instagram user's recent posts", "skill": "instagram"}
+{"task": "Study how this obscure forum's search and paging work and write them down for later", "skill": "site-learning"}
+{"task": "No skill exists for this site, so learn its layout and store a playbook", "skill": "site-learning"}
+{"task": "Pull the transcript from that YouTube talk and tell me where they discuss funding", "skill": "youtube"}

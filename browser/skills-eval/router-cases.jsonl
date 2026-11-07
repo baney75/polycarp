@@ -577,3 +577,60 @@
 {"task": "summarize the comments on this hacker news post", "skill": "summarize"}
 {"task": "quick summary of this page please, keep the quotes exact", "skill": "summarize"}
 {"task": "what does this documentation page say, short version", "skill": "summarize"}
+{"task": "Search YouTube for sourdough starter videos from the last week", "skill": "youtube"}
+{"task": "Find me a YouTube video on how to change a bike tire, nothing over 10 minutes", "skill": "youtube"}
+{"task": "What does this YouTube video say? https://www.youtube.com/watch?v=dQw4w9WgXcQ", "skill": "youtube"}
+{"task": "Get the transcript of this YouTube video and link the part about pricing", "skill": "youtube"}
+{"task": "Read the top comments on that YouTube video and tell me what people think", "skill": "youtube"}
+{"task": "List all the videos on the Veritasium YouTube channel, newest first", "skill": "youtube"}
+{"task": "Search inside the Kurzgesagt channel on YouTube for black holes", "skill": "youtube"}
+{"task": "Show me the most viewed YouTube videos about the Roman Empire this year", "skill": "youtube"}
+{"task": "What playlist videos are in this YouTube playlist and how long is each", "skill": "youtube"}
+{"task": "Summarize this youtube lecture and give me timestamps for each main point", "skill": "youtube"}
+{"task": "Look up long YouTube videos over 20 minutes about woodworking uploaded today", "skill": "youtube"}
+{"task": "When was this YouTube video posted and how many views does it have", "skill": "youtube"}
+{"task": "Find live streams on YouTube about the launch right now", "skill": "youtube"}
+{"task": "Check the YouTube channel's popular videos tab and list the top five", "skill": "youtube"}
+{"task": "Search Rumble for videos about homesteading from this week", "skill": "rumble"}
+{"task": "Find the newest videos on this Rumble channel", "skill": "rumble"}
+{"task": "What are the comments on this Rumble video? https://rumble.com/v7abcd1-example.html", "skill": "rumble"}
+{"task": "Look up Rumble videos about the election sorted by views", "skill": "rumble"}
+{"task": "List the latest uploads from the Rumble channel Bongino", "skill": "rumble"}
+{"task": "Search Rumble for short clips under 4 minutes about gardening", "skill": "rumble"}
+{"task": "Which Rumble channels cover woodworking", "skill": "rumble"}
+{"task": "Open this Rumble link and tell me the title, channel, date and views", "skill": "rumble"}
+{"task": "Find long Rumble videos about the Constitution from this year", "skill": "rumble"}
+{"task": "See what a rumble channel posted this month and give me links", "skill": "rumble"}
+{"task": "Find the most liked rumble videos on gold prices from last month", "skill": "rumble"}
+{"task": "Is there a Rumble video about the town hall meeting? search it", "skill": "rumble"}
+{"task": "Look at the Instagram profile of natgeo and tell me about the account", "skill": "instagram"}
+{"task": "What are the latest posts on this Instagram account", "skill": "instagram"}
+{"task": "Read the caption and comments on this Instagram post https://www.instagram.com/p/AbC123/", "skill": "instagram"}
+{"task": "Search Instagram for bakeries in Portland", "skill": "instagram"}
+{"task": "Browse the Instagram hashtag sourdough and list the top posts", "skill": "instagram"}
+{"task": "List the last 10 reels from this Instagram user with their captions", "skill": "instagram"}
+{"task": "Look at the Instagram account of the city museum and tell me if I'm logged in to Instagram", "skill": "instagram"}
+{"task": "Scroll through an Instagram profile and collect the post links without repeats", "skill": "instagram"}
+{"task": "What does this instagram reel say in the caption and how many likes", "skill": "instagram"}
+{"task": "Find recent Instagram posts tagged with a travel hashtag", "skill": "instagram"}
+{"task": "Open the instagram page for the coffee shop and read their bio and latest post", "skill": "instagram"}
+{"task": "See what hashtags this Instagram account uses in its posts", "skill": "instagram"}
+{"task": "I need you to learn how this website works so you can search it, it has no skill yet", "skill": "site-learning"}
+{"task": "Figure out how to search this site and how its pagination works, then save a playbook for it", "skill": "site-learning"}
+{"task": "Remember how this site works so next time you are faster", "skill": "site-learning"}
+{"task": "Learn the search address and result layout of this small forum and write a playbook", "skill": "site-learning"}
+{"task": "This site isn't covered by any skill, work out its filters and save what you learn", "skill": "site-learning"}
+{"task": "Save a playbook for this website so you can find it next time", "skill": "site-learning"}
+{"task": "Learn how this recipe site is laid out and how its results are paged, then save a playbook", "skill": "site-learning"}
+{"task": "Learn how to use this unfamiliar site properly and write a site playbook for it", "skill": "site-learning"}
+{"task": "The task on this site keeps failing, study the site's search and sort and note how it works", "skill": "site-learning"}
+{"task": "Explore this local marketplace site and write down how searching and paging works", "skill": "site-learning"}
+{"task": "Search the Reuters site for the latest articles on tariffs and sort by newest", "skill": "news-research"}
+{"task": "This news article is behind a paywall, what can you tell me about it", "skill": "news-research"}
+{"task": "Open the live blog on the election and summarize the latest entries with their times", "skill": "news-research"}
+{"task": "When was this news article published and was it updated afterward", "skill": "news-research"}
+{"task": "Find the AMP or print version of this article so it reads cleanly", "skill": "news-research"}
+{"task": "Use the news site's own search to find stories on the port strike from last week", "skill": "news-research"}
+{"task": "Is there a subscriber wall on this newspaper article, and if so tell me and stop", "skill": "news-research"}
+{"task": "Edit my YouTube video: trim the first ten seconds and add captions", "skill": "video-editing"}
+{"task": "How do I grow my Instagram following", "skill": "none"}

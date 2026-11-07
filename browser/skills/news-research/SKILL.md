@@ -1,6 +1,6 @@
 ---
 name: news-research
-description: Find what happened, when, and who says so, using primary sources, wire services and outlets across the political spectrum; build a dated timeline and separate confirmed facts from claims and opinion. Use when the user asks about current events, breaking news, what happened today or this week, the latest on a story, "what's going on with", a viral claim, photo or video, whether someone really said something, a quote's origin, or wants a news briefing or fact-check.
+description: Find what happened, when, and who says so, using primary sources, wire services and outlets across the political spectrum; build a dated timeline and separate confirmed facts from claims and opinion. Use when the user asks about current events, breaking news, what happened today or this week, the latest on a story, "what's going on with", a viral claim, photo or video, whether someone really said something, a quote's origin, or wants a news briefing or fact-check. Also use for a news site's paywall or subscriber wall, AMP view, live blog, or an article's published and updated times.
 license: AGPL-3.0
 ---
 
@@ -38,7 +38,9 @@ Climb as high as you can and say which rung each fact came from.
 2. **Search news.** In Tabkyra:
    `navigate {"url":"https://news.google.com/search?q=<terms>"}` then
    `get_page_text {"maxChars":5000}`. Add a wire search:
-   `https://apnews.com/search?q=<terms>` and `https://www.reuters.com/site-search/?query=<terms>`.
+   `https://apnews.com/search?q=<terms>&s=3` (`s=3` is newest first) and
+   `https://www.reuters.com/site-search/?query=<terms>`. Add `+when:1d` or `+when:7d` to a Google
+   News query to limit it to the last day or week. Its links redirect to the publisher.
 3. **Find the primary source.** Search for it directly with the `dorks` skill, for example
    `site:congress.gov "H.R. 1234"`, `site:sec.gov`, the agency's press page, or the
    speaker's own channel. Read it.
@@ -59,18 +61,40 @@ Climb as high as you can and say which rung each fact came from.
 8. **Write the briefing.** Lead with the confirmed facts in two or three sentences. Then a
    dated timeline. Then what each side says. Then open questions. Link every item.
 
+## Working on a news site itself
+
+- **The site's own search.** `find {"query":"search"}`, click it, `type` the terms, press Enter. Or
+  try `/search?q=<terms>` on the site. Change the sort control to Newest, then read the address with
+  `tabs_context` and reuse that pattern. Results hold headline, date and section: take the date from
+  the result, then confirm it on the article.
+- **Dates.** Page text often hides them. Read both times:
+  `get_page_html {"selector":"meta[property=\"article:published_time\"]"}` and the same for
+  `article:modified_time`. If a tag is missing, try `{"selector":"time"}`. Report both times with
+  their zone. "Updated" can make an old story look new: say what the update changed if the page does.
+- **Walls.** A paywall, a metered "free articles left" box, or a sign-in wall: stop on that article
+  and say so. Never use archive copies, cache links, or other tricks to read it. Use a wire report or
+  another outlet for the same fact. If the user subscribes, `tabs_show` and let them sign in.
+- **AMP and print views.** Use one only when the normal page reads badly (ads cover the text). Try
+  `find {"query":"print"}`, a `/print` or `?print` ending, or the page's AMP link. The same walls
+  still apply. Check the date again there.
+- **Live blogs.** One page, many timed entries, newest first. Read the pinned summary, then
+  `scroll {"to":"bottom"}` and read again, at most 5 times. Cite the entry's own time, not the
+  blog's start. Entries get corrected or deleted: say "as of" the time you read.
+- **Cookie banner.** If it covers the text, `tabs_show` and ask the user to choose.
+
 ## Done when
 
 - The key facts trace to a primary source or two independent reports, with links.
 - Contested stories include what at least two sides report, attributed by name.
-- Every statement has a label and a date.
+- Every statement has a label and a date, and each article's published and updated times are given.
 - The briefing says what is still unknown.
 
 ## When something goes wrong
 
 | Symptom | Fix |
 | --- | --- |
-| Paywall | Use the wire version or another outlet's report of the same fact. Don't try to get around the paywall. |
+| Paywall or sign-in wall | Stop on it. Use the wire version or another outlet's report of the same fact. Don't get around it. |
+| Date missing or odd | Read the `article:published_time` tag. A page with only "Updated" has an earlier first time you can't see: say so. |
 | Every outlet cites the same single source | Say so. That's one source, not many. |
 | Story is minutes old | Report it as developing, with times, and say what's not yet confirmed. |
 | Outlets disagree on a fact | Show both versions and who reports each. Go to the primary source if it exists. |
