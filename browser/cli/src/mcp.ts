@@ -439,10 +439,17 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"get_page_text",
 		{
 			title: "Get page text",
-			description: "Readable text of the page or one element. Cheaper than read_page when you only need to read. Example: {\"selector\":\"article\"}",
-			inputSchema: { tabId, selector, maxChars: z.number().int().optional().describe("Cap on returned characters") },
+			description: "Readable text of the page or one element. Cheaper than read_page when you only need to read. On a PDF: text by page. Example: {\"selector\":\"article\"}",
+			inputSchema: { tabId, selector, maxChars: z.number().int().optional().describe("Cap on returned characters"), pages: z.string().optional().describe('PDF: "3" or "3-7"') },
 		},
-		(args) => call("text", args),
+		(args) => {
+			// "3", "3-7", "3–7" (an en dash), "p3", "pp. 3-7".
+			const m = /^\s*(?:pp?\.?\s*)?(\d+)\s*(?:[-\u2013\u2014]\s*(\d+))?\s*$/i.exec(args.pages ?? "");
+			const { pages: _pages, ...rest } = args;
+			if (args.pages !== undefined && !m)
+				return { content: [{ type: "text" as const, text: `bad_params: pages takes one page or a range, like "3" or "3-7", not "${args.pages}".` }], isError: true };
+			return call("text", m ? { ...rest, firstPage: Number(m[1]), lastPage: Number(m[2] ?? m[1]) } : rest);
+		},
 	);
 	server.registerTool(
 		"get_page_html",

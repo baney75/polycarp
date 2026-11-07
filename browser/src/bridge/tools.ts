@@ -45,6 +45,7 @@ import {
 	waitFor,
 } from "../browser/page.js";
 import { type BrowserSession, TabLimitError, takeNotices } from "../browser/session.js";
+import { isPdfTab, pdfText } from "../offscreen/pdf-client.js";
 import {
 	added as addedEdit,
 	change as changeEdits,
@@ -555,6 +556,28 @@ export const handlers: Record<string, Handler> = {
 
 	text: async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, false);
+		// The PDF viewer has no page text to read: its text comes from the file, page by page.
+		if (!str(params, "selector") && (await isPdfTab(tabId))) {
+			const tab = await chrome.tabs.get(tabId);
+			const pdf = await pdfText(
+				tab.url ?? "",
+				num(params, "maxChars"),
+				num(params, "firstPage"),
+				num(params, "lastPage"),
+			);
+			const note = !pdf.read
+				? `There is no such page: this PDF has ${pdf.pages}.`
+				: pdf.empty.length === pdf.read
+					? "This PDF has no text layer (a scan or images of pages). Read it with screenshot, and say the text could not be checked."
+					: pdf.empty.length
+						? `Pages ${pdf.empty.join(", ")} have no text layer (images); read those with screenshot.`
+						: undefined;
+			return {
+				...(await tabSummary(tabId)),
+				pdf: { pages: pdf.pages, truncated: pdf.truncated, ...(note ? { note } : {}) },
+				text: pdf.text,
+			};
+		}
 		const text = await pageText(tabId, str(params, "selector"), num(params, "maxChars"));
 		return { ...(await tabSummary(tabId)), text };
 	},
