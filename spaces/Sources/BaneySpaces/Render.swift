@@ -270,6 +270,19 @@ enum Render {
         fresh.viewerKeys = true
         guard save(SetupView(model: fresh, close: {}).background(Color(nsColor: .windowBackgroundColor)),
                    "setup-first-run.png", SettingsSidebar.windowSize) else { return 1 }
+        // The connector's steps, with nothing set up. The choice, as someone with Tailscale signed in and no cloudflared sees it.
+        let remoteSteps: [(RemoteScreen, String)] = [
+            (.chooseRoute(RemoteRoutes(tailscaleInstalled: true, tailscaleSignedIn: true)), "remote-choose.png"),
+            (.getCloudflared(configured: false), "remote-get-cloudflared.png"),
+            (.cloudflareSignIn(waiting: false), "remote-cloudflare-signin.png"),
+            (.cloudflareAddress(problem: nil), "remote-cloudflare-address.png"),
+        ]
+        for (step, name) in remoteSteps {
+            let page = VStack(alignment: .leading, spacing: 12) { BrowserRemoteView(preview: step) }
+                .padding(20).frame(width: 620, alignment: .leading).background(Chrome.panel()).foregroundStyle(Chrome.wash())
+            guard save(page, name, CGSize(width: 620, height: 0)) else { return 1 }
+        }
+
         // The welcome window, as a new person sees it.
         let welcome = WelcomeModel()
         welcome.granted = [.accessibility]

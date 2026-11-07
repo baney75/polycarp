@@ -15,6 +15,8 @@ import { runSetup } from "./setup.ts";
 import { sdkInstalled } from "./subscriptions/copilot.ts";
 import { installCopilotSdk } from "./subscriptions/install-sdk.ts";
 import { LIBRARY_USAGE, runLibrary } from "./library.ts";
+import { cloudflareLogin, runCloudflareTunnel } from "./cloudflare.ts";
+import { printReport } from "./remote-state.ts";
 import { createToken, loadTokens, loadUsage, offeredScopes, revokeToken, SCOPES, serve } from "./remote.ts";
 import { listClients, mintApprovalCode, normalizePublicUrl, type OAuthConfig, passcodeSet, revokeClient, revokeGrantById, setPasscode } from "./oauth.ts";
 import { hubCode, hubDevices, hubOff, hubPrefer, hubRemove, hubServe, hubSetup, hubStatus } from "./hub-admin.ts";
@@ -585,7 +587,22 @@ async function main(): Promise<void> {
 			throw new UsageError(`Usage: ${COMMAND_NAME} token create <name> --scope a,b | list | revoke <id|name|client id|grant id> | scopes | passcode | approval-code | clients`);
 		}
 		case "remote": {
-			const sub = argv.slice(1).find((a) => !a.startsWith("-") && a !== option("--public-url") && a !== option("--port"));
+			const sub = argv.slice(1).find((a) => !a.startsWith("-") && a !== option("--public-url") && a !== option("--port") && a !== option("--cloudflare"));
+			if (sub === "cloudflare") {
+				const step = argv.slice(1).filter((a) => !a.startsWith("-"))[1];
+				if (step === "login") {
+					const r = await cloudflareLogin();
+					if (flag("--json")) printReport({ ok: r.state === "ready", ...r, passcodeSet: passcodeSet() });
+					else console.log(`${r.state === "ready" ? sym.ok : sym.fail} ${r.message}`);
+					process.exitCode = r.state === "ready" ? 0 : 1;
+					return;
+				}
+				if (step === "run") {
+					process.exitCode = await runCloudflareTunnel();
+					return;
+				}
+				throw new UsageError(`Usage: ${COMMAND_NAME} remote cloudflare login [--json]`);
+			}
 			if (sub === "setup") {
 				const rawPublic = option("--public-url");
 				const rawPort = option("--port");
@@ -599,7 +616,9 @@ async function main(): Promise<void> {
 						throw new UsageError(err instanceof Error ? err.message : String(err));
 					}
 				}
-				process.exitCode = await remoteSetup({ publicUrl, port, service: !flag("--no-service"), passcode: !flag("--no-passcode"), json: flag("--json") });
+				const cloudflare = option("--cloudflare");
+				if (cloudflare !== undefined && publicUrl) throw new UsageError("--cloudflare and --public-url are different routes: use one.");
+				process.exitCode = await remoteSetup({ publicUrl, cloudflare, port, service: !flag("--no-service"), passcode: !flag("--no-passcode"), json: flag("--json") });
 				return;
 			}
 			if (sub === "status") {
@@ -610,7 +629,7 @@ async function main(): Promise<void> {
 				process.exitCode = await remoteOff();
 				return;
 			}
-			throw new UsageError(`Usage: ${COMMAND_NAME} remote setup [--public-url https://host] [--port N] [--no-service] [--no-passcode] [--json] | status [--json] | off`);
+			throw new UsageError(`Usage: ${COMMAND_NAME} remote setup [--cloudflare name.yourdomain.com | --public-url https://host] [--port N] [--no-service] [--no-passcode] [--json] | status [--json] | off`);
 		}
 		case "hub": {
 			const rest = argv.slice(1).filter((a, i, all) => !a.startsWith("-") && !(VALUE_FLAGS.has(all[i - 1] ?? "") && !(all[i - 1] ?? "").includes("=")));

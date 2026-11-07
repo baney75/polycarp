@@ -2,12 +2,12 @@
  * `polycarp browser tunnel`: reach `polycarp browser serve` from another device or a cloud agent through a
  * tunnel the user owns, which terminates TLS. Nothing is exposed until the user runs one.
  *
- * - tailscale: `tailscale serve` publishes https://<this machine>.<tailnet>.ts.net/tabkyra
+ * - tailscale: `tailscale serve` publishes https://<this machine>.<tailnet>.ts.net/polycarp
  *   to the user's own tailnet only. `--public` uses `tailscale funnel` instead, which is
  *   reachable from the internet; the token is then the only lock, so it warns.
  * - cloudflare: a `cloudflared` quick tunnel (free, no account) gives a random
- *   https://*.trycloudflare.com URL. For a stable name the user creates a free Cloudflare
- *   account and a named tunnel themselves; Polycarp prints the steps and never makes accounts.
+ *   https://*.trycloudflare.com URL that changes each time. For a stable name, use
+ *   `remote setup --cloudflare <name>` on the person's own account (cloudflare.ts). Polycarp never makes accounts.
  *
  * Polycarp doesn't install either tool.
  */
@@ -20,7 +20,9 @@ import { join } from "node:path";
 import { which } from "./harness.ts";
 
 export const DEFAULT_PORT = 8787;
-const SERVE_PATH = "/tabkyra";
+const SERVE_PATH = "/polycarp";
+/** Where an earlier version published it: turned off with the new path, and not counted as someone else's. */
+const OLD_SERVE_PATH = "/tabkyra";
 
 function configDir(): string {
 	return process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
@@ -42,6 +44,7 @@ export function tailscaleTunnel(options: { port: number; public: boolean; off: b
 	if (!bin) return { ok: false, message: "Tailscale isn't installed. Install it from tailscale.com and sign in, then run this again." };
 	const mode = options.public ? "funnel" : "serve";
 	if (options.off) {
+		run(bin, [mode, "--https=443", `--set-path=${OLD_SERVE_PATH}`, "off"]);
 		const r = run(bin, [mode, "--https=443", `--set-path=${SERVE_PATH}`, "off"]);
 		return { ok: r.code === 0, message: r.code === 0 ? `Stopped the Tailscale ${mode} for ${SERVE_PATH}.` : r.out };
 	}
@@ -54,7 +57,7 @@ export function tailscaleTunnel(options: { port: number; public: boolean; off: b
 	}
 	if (!dns) return { ok: false, message: "Tailscale isn't connected. Run tailscale up, then try again." };
 	// Read the current serve config first and fail closed: changing serve without knowing
-	// whether Funnel is on for :443 could make /tabkyra public by surprise.
+	// whether Funnel is on for :443 could make this path public by surprise.
 	const statusRun = spawnSync(bin, ["serve", "status", "--json"], { encoding: "utf8", timeout: 30_000 });
 	let status443: { AllowFunnel?: Record<string, boolean> } | undefined;
 	try {
@@ -66,7 +69,7 @@ export function tailscaleTunnel(options: { port: number; public: boolean; off: b
 	if (!options.public && Object.entries(status443.AllowFunnel ?? {}).some(([hostPort, on]) => on && hostPort.endsWith(":443"))) {
 		return {
 			ok: false,
-			message: "Funnel is on for port 443 on this machine, so /tabkyra would be public, not tailnet-only. Nothing was changed. Use --public if that's what you want, or turn Funnel off for port 443 in Tailscale first.",
+			message: `Funnel is on for port 443 on this machine, so ${SERVE_PATH} would be public, not tailnet-only. Nothing was changed. Use --public if that's what you want, or turn Funnel off for port 443 in Tailscale first.`,
 		};
 	}
 	if (options.public) {
@@ -78,7 +81,7 @@ export function tailscaleTunnel(options: { port: number; public: boolean; off: b
 			others = Object.entries(web)
 				.filter(([hostPort]) => hostPort.endsWith(":443"))
 				.flatMap(([, v]) => Object.keys(v.Handlers ?? {}))
-				.filter((path) => path !== SERVE_PATH);
+				.filter((path) => path !== SERVE_PATH && path !== OLD_SERVE_PATH);
 		} catch {
 			return { ok: false, message: "Couldn't read tailscale serve status; not turning on Funnel." };
 		}

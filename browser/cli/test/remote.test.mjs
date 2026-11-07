@@ -180,14 +180,14 @@ test("tunnel tailscale serves the tailnet path; --public uses funnel; --off stop
 	const path = withNode(bin);
 	const on = cliRun(["tunnel", "tailscale", "--port", "8787"], { PATH: path });
 	assert.equal(on.code, 0, on.out);
-	assert.match(on.out, /https:\/\/mac\.example\.ts\.net\/tabkyra\/mcp/);
+	assert.match(on.out, /https:\/\/mac\.example\.ts\.net\/polycarp\/mcp/);
 	const pub = cliRun(["tunnel", "tailscale", "--public"], { PATH: path });
 	assert.match(pub.out, /anyone on the internet/);
 	cliRun(["tunnel", "tailscale", "--off"], { PATH: path });
 	const calls = readFileSync(log, "utf8");
-	assert.match(calls, /^serve --bg --yes --https=443 --set-path=\/tabkyra http:\/\/127\.0\.0\.1:8787$/m);
-	assert.match(calls, /^funnel --bg --yes --https=443 --set-path=\/tabkyra http:\/\/127\.0\.0\.1:8787$/m);
-	assert.match(calls, /^serve --https=443 --set-path=\/tabkyra off$/m);
+	assert.match(calls, /^serve --bg --yes --https=443 --set-path=\/polycarp http:\/\/127\.0\.0\.1:8787$/m);
+	assert.match(calls, /^funnel --bg --yes --https=443 --set-path=\/polycarp http:\/\/127\.0\.0\.1:8787$/m);
+	assert.match(calls, /^serve --https=443 --set-path=\/polycarp off$/m);
 });
 
 test("tunnel cloudflare without cloudflared says how to get it and exposes nothing", () => {

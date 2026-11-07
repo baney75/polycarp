@@ -57,6 +57,7 @@ export const VALUE_HINTS: Record<string, string> = {
 	"--router": "<script>",
 	"--port": "N",
 	"--public-url": "https://host",
+	"--cloudflare": "name.yourdomain.com",
 	"--redirect-host": "a,b",
 	"--allow-host": "a,b",
 	"--scope": "a,b",
@@ -235,9 +236,10 @@ export const COMMANDS: CommandSpec[] = [
 		what: "Remote access for web connectors",
 		group: "Remote",
 		subcommands: [
-			{ name: "setup", what: "Tailscale Funnel (or your own --public-url), a passcode and a service that keeps serve running", flags: ["--public-url", "--port", "--no-service", "--no-passcode", "--json"] },
+			{ name: "setup", what: "Tailscale Funnel (or a Cloudflare tunnel with --cloudflare, or your own --public-url), a passcode and a service that keeps serve running", flags: ["--cloudflare", "--public-url", "--port", "--no-service", "--no-passcode", "--json"] },
+			{ name: "cloudflare", args: "login", max: 1, what: "Sign in to your own Cloudflare account, in your browser", flags: ["--json"] },
 			{ name: "status", what: "Is it up and reachable from the internet?", flags: ["--json"] },
-			{ name: "off", what: "Stop the service, turn Funnel off and remove remote.json" },
+			{ name: "off", what: "Stop the service, close the tunnel or Funnel and remove remote.json" },
 		],
 	},
 	{

@@ -78,7 +78,7 @@ test("hub tunnel keeps Funnel off (calls serve, never funnel)", () => {
 	const argv = readFileSync(log, "utf8");
 	assert.match(argv, /^serve /m);
 	assert.doesNotMatch(argv, /^funnel /m);
-	assert.match(argv, /--set-path=\/tabkyra/);
+	assert.match(argv, /--set-path=\/polycarp/);
 	assert.match(argv, /http:\/\/127\.0\.0\.1:8787/);
 });
 
