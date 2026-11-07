@@ -3,7 +3,7 @@
 // a real service manager or ~/.config/tabkyra. Run with --experimental-strip-types (it imports src/remote-state.ts).
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -154,7 +154,7 @@ test("stateFromStatus: preflight when nothing is set up; problem, no_browser_con
 	assert.equal(stateFromStatus({ configured: true, checks: [fetchFail], extensionConnected: true }).code, undefined);
 	const closed = { state: "funnel_closed", message: "c" };
 	assert.deepEqual(stateFromStatus({ configured: true, checks: [ok], extensionConnected: true, tailscale: closed }), closed);
-	for (const state of ["funnel_closed", "tailscale_missing", "tailscale_signed_out", "funnel_not_allowed", "tailnet_lock", "port_busy", "ready", "on", "no_browser_connected"]) assert.ok(REMOTE_STATES.includes(state), state);
+	for (const state of ["cloudflared_missing", "funnel_closed", "tailscale_missing", "tailscale_signed_out", "funnel_not_allowed", "tailnet_lock", "port_busy", "ready", "on", "no_browser_connected"]) assert.ok(REMOTE_STATES.includes(state), state);
 });
 
 // ---------- remote status --json, nothing set up ----------
@@ -709,3 +709,203 @@ test("token passcode --json prints only the new passcode", () => {
 	assert.match(r.json().passcode, PASSCODE);
 	assert.equal(r.json().ok, true);
 });
+
+// ---------- the Cloudflare route: the person's own account, a named tunnel, no accounts made for them ----------
+
+const CF_HOST = "polycarp.example.com";
+const CF_ID = "c0ffee00-1234-4abc-8def-0123456789ab";
+
+/** A stub cloudflared. `route`: what `tunnel route dns` does: "ok", "taken", or a name it adds instead (a sign-in for another domain). */
+function cloudflared(s, { route = "ok", listed = false } = {}) {
+	const log = join(s.dir, "calls.log");
+	const home = s.home;
+	const routeBody =
+		route === "taken"
+			? `echo "An A, AAAA, or CNAME record with that host already exists" >&2; exit 1`
+			: route === "already"
+				? `echo "$5.other.example is already configured to route to your tunnel"`
+				: `echo "Added CNAME ${route === "ok" ? "$5" : route} which will route to this tunnel"`;
+	s.script(
+		"cloudflared",
+		`echo "cloudflared $*" >> ${log}
+case "$2" in
+login) /bin/mkdir -p ${home}/.cloudflared; : > ${home}/.cloudflared/cert.pem ;;
+list) if [ -e ${home}/.cloudflared/listed ]; then echo '[{"id":"${CF_ID}"}]'; else echo '[]'; fi ;;
+create) : > ${home}/.cloudflared/${CF_ID}.json; : > ${home}/.cloudflared/listed; echo "Created tunnel $3 with id ${CF_ID}" ;;
+route) ${routeBody} ;;
+esac
+`,
+	);
+	mkdirSync(join(home, ".cloudflared"), { recursive: true });
+	if (listed) writeFileSync(join(home, ".cloudflared", "listed"), "");
+}
+
+const signedIn = (s) => writeFileSync(join(s.home, ".cloudflared", "cert.pem"), "");
+const cfCalls = (s) => s.calls().filter((x) => x.startsWith("cloudflared "));
+const cfService = (s) => (process.platform === "darwin" ? join(s.home, "Library", "LaunchAgents", "com.polycarp.cloudflared.plist") : join(s.home, ".config", "systemd", "user", "polycarp-cloudflared.service"));
+
+async function cloudflareSetup(s, extra = []) {
+	s.launcher();
+	const local = await localServer(`https://${CF_HOST}/mcp`);
+	try {
+		const r = await s.runAsync(["remote", "setup", "--json", "--cloudflare", CF_HOST, "--port", String(local.port), ...extra]);
+		return { ...r, port: local.port };
+	} finally {
+		await local.close();
+	}
+}
+
+test("remote status --json says which routes are ready, for an app that offers the choice", () => {
+	const s = scenario("routes", { tailscale: false });
+	const none = s.run(["remote", "status", "--json"]).json();
+	assert.deepEqual(none.routes, { tailscale: { installed: false, signedIn: false }, cloudflare: { installed: false, signedIn: false } });
+	cloudflared(s);
+	assert.deepEqual(s.run(["remote", "status", "--json"]).json().routes.cloudflare, { installed: true, signedIn: false });
+	signedIn(s);
+	assert.deepEqual(s.run(["remote", "status", "--json"]).json().routes.cloudflare, { installed: true, signedIn: true });
+	assert.deepEqual(cfCalls(s), [], "reading status runs nothing of Cloudflare's");
+});
+
+test("remote setup --cloudflare without cloudflared is its own state and changes nothing", async () => {
+	const s = scenario("cf-missing", { tailscale: false });
+	const r = await cloudflareSetup(s);
+	assert.equal(r.code, 1);
+	assert.equal(r.json().state, "cloudflared_missing");
+	assert.equal(s.remoteJsonExists(), false);
+});
+
+test("remote setup --cloudflare before signing in says to sign in and changes nothing", async () => {
+	const s = scenario("cf-signed-out", { tailscale: false });
+	cloudflared(s);
+	const report = (await cloudflareSetup(s)).json();
+	assert.equal(report.code, "cloudflare_login");
+	assert.equal(s.remoteJsonExists(), false);
+	assert.deepEqual(cfCalls(s), []);
+});
+
+test("remote cloudflare login runs cloudflared's own sign-in, once", () => {
+	const s = scenario("cf-login", { tailscale: false });
+	cloudflared(s);
+	assert.equal(s.run(["remote", "cloudflare", "login", "--json"]).json().state, "ready");
+	assert.deepEqual(cfCalls(s), ["cloudflared tunnel login"]);
+	assert.equal(s.run(["remote", "cloudflare", "login", "--json"]).json().state, "ready");
+	assert.equal(cfCalls(s).length, 1, "already signed in: not asked again");
+});
+
+test("remote setup --cloudflare makes the tunnel and its record, runs both services, and reuses the tunnel next time", async () => {
+	const s = scenario("cf-on", { tailscale: false });
+	cloudflared(s);
+	signedIn(s);
+	const first = await cloudflareSetup(s);
+	const report = first.json();
+	assert.equal(report.state, "on", first.stdout);
+	assert.equal(report.connectorUrl, `https://${CF_HOST}/mcp`);
+	assert.match(report.passcode, PASSCODE);
+	const calls = cfCalls(s);
+	assert.ok(calls.some((x) => /^cloudflared tunnel create polycarp-.*-[0-9a-f]{4}$/.test(x)), calls.join("\n"));
+	assert.match(readFileSync(join(s.env.TABKYRA_CONFIG_DIR, "cloudflare-tunnel-name"), "utf8"), /^polycarp-/);
+	assert.ok(calls.includes(`cloudflared tunnel route dns ${CF_ID} ${CF_HOST}`), calls.join("\n"));
+	assert.ok(!calls.some((x) => x.includes("--overwrite-dns")), "a name in use is never taken over");
+	const config = readFileSync(join(s.env.TABKYRA_CONFIG_DIR, "cloudflared.yml"), "utf8");
+	assert.match(config, new RegExp(`hostname: ${CF_HOST}\\n    service: http://127\\.0\\.0\\.1:${first.port}\\n`));
+	assert.match(config, /- service: http_status:404/);
+	assert.equal(JSON.parse(readFileSync(join(s.env.TABKYRA_CONFIG_DIR, "remote.json"), "utf8")).route, "cloudflare");
+	assert.ok(existsSync(cfService(s)));
+
+	await cloudflareSetup(s);
+	assert.equal(cfCalls(s).filter((x) => x.includes("tunnel create")).length, 1, "the tunnel is made once");
+
+	const off = s.run(["remote", "off"]);
+	assert.equal(off.code, 0, off.stderr);
+	assert.match(off.stdout, /stay in your Cloudflare account/);
+	assert.equal(existsSync(cfService(s)), false);
+	assert.equal(existsSync(join(s.env.TABKYRA_CONFIG_DIR, "cloudflared.yml")), false);
+	assert.ok(!cfCalls(s).some((x) => x.includes("delete")), "nothing on the account is deleted");
+});
+
+test("a name already in use is refused in Cloudflare's words, and no tunnel starts", async () => {
+	const s = scenario("cf-taken", { tailscale: false });
+	cloudflared(s, { route: "taken" });
+	signedIn(s);
+	const report = (await cloudflareSetup(s)).json();
+	assert.equal(report.code, "cloudflare_dns");
+	assert.match(report.message, /already exists/);
+	assert.equal(existsSync(cfService(s)), false);
+	assert.equal(s.remoteJsonExists(), false, "a refused name saves nothing, so the window can ask for another");
+	assert.equal(s.run(["remote", "status", "--json"]).json().connectorUrl, null);
+});
+
+test("a sign-in for another domain is caught, not left as a wrong record that looks fine", async () => {
+	const s = scenario("cf-zone", { tailscale: false });
+	cloudflared(s, { route: `${CF_HOST}.other.example.` });
+	signedIn(s);
+	const report = (await cloudflareSetup(s)).json();
+	assert.equal(report.code, "cloudflare_zone");
+	assert.match(report.message, /different domain/);
+	assert.equal(existsSync(cfService(s)), false);
+	assert.equal(s.remoteJsonExists(), false);
+});
+
+test("a tunnel of that name whose key isn't here says how to clear it", async () => {
+	const s = scenario("cf-key", { tailscale: false });
+	cloudflared(s, { listed: true });
+	signedIn(s);
+	const report = (await cloudflareSetup(s)).json();
+	assert.equal(report.code, "cloudflare_tunnel");
+	assert.match(report.message, /cloudflared tunnel delete/);
+});
+
+test("a name that can't be a hostname is refused before anything runs", () => {
+	const s = scenario("cf-bad", { tailscale: false });
+	cloudflared(s);
+	signedIn(s);
+	for (const bad of ["nodots", "has space.example.com", "bad-.example.com"]) {
+		const report = s.run(["remote", "setup", "--json", "--cloudflare", bad]).json();
+		assert.equal(report.code, "cloudflare_dns", bad);
+	}
+	assert.deepEqual(cfCalls(s), []);
+});
+
+test("cloudflared removed after setup is its own state, ahead of the other checks", async () => {
+	const s = scenario("cf-gone", { tailscale: false });
+	cloudflared(s);
+	signedIn(s);
+	await cloudflareSetup(s);
+	rmSync(join(s.dir, "bin", "cloudflared"));
+	assert.equal(s.run(["remote", "status", "--json"]).json().state, "cloudflared_missing");
+});
+
+test("a retry after a wrong-domain try, when cloudflared says the record is already there, is still caught", async () => {
+	const s = scenario("cf-zone-retry", { tailscale: false });
+	cloudflared(s, { route: "already" });
+	signedIn(s);
+	const report = (await cloudflareSetup(s)).json();
+	assert.equal(report.code, "cloudflare_zone", JSON.stringify(report));
+});
+
+test("remote off stops a Cloudflare tunnel even with remote.json gone", async () => {
+	const s = scenario("cf-off-damaged", { tailscale: false });
+	cloudflared(s);
+	signedIn(s);
+	await cloudflareSetup(s);
+	rmSync(join(s.env.TABKYRA_CONFIG_DIR, "remote.json"));
+	assert.equal(s.run(["remote", "off"]).code, 0);
+	assert.equal(existsSync(cfService(s)), false);
+});
+
+test("remote setup again on the Cloudflare route keeps its name", async () => {
+	const s = scenario("cf-again", { tailscale: false });
+	cloudflared(s);
+	signedIn(s);
+	await cloudflareSetup(s);
+	s.launcher();
+	const local = await localServer(`https://${CF_HOST}/mcp`);
+	try {
+		const raw = JSON.parse(readFileSync(join(s.env.TABKYRA_CONFIG_DIR, "remote.json"), "utf8"));
+		const again = await s.runAsync(["remote", "setup", "--json", "--port", String(local.port)]);
+		assert.equal(again.json().connectorUrl, `${raw.publicUrl}/mcp`, again.stdout);
+	} finally {
+		await local.close();
+	}
+});
+

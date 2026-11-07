@@ -13,6 +13,7 @@ import SKILL_BIOLOGY from "../../skills/biology/SKILL.md";
 import SKILL_BRANDING from "../../skills/branding/SKILL.md";
 import SKILL_BUG from "../../skills/bug/SKILL.md";
 import SKILL_CHEMISTRY from "../../skills/chemistry/SKILL.md";
+import SKILL_CONNECTOR from "../../skills/connector/SKILL.md";
 import SKILL_DESIGN_LIBRARY from "../../skills/design-library/SKILL.md";
 import SKILL_DORKS from "../../skills/dorks/SKILL.md";
 import SKILL_EMAIL_ORGANIZATION from "../../skills/email-organization/SKILL.md";
@@ -51,6 +52,7 @@ export const SKILLS: ReadonlyMap<string, string> = new Map([
 	["branding", SKILL_BRANDING],
 	["bug", SKILL_BUG],
 	["chemistry", SKILL_CHEMISTRY],
+	["connector", SKILL_CONNECTOR],
 	["design-library", SKILL_DESIGN_LIBRARY],
 	["dorks", SKILL_DORKS],
 	["email-organization", SKILL_EMAIL_ORGANIZATION],

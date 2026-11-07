@@ -166,7 +166,7 @@ skill's new value in `baseline.json`, and sit below the base branch's value. The
 then becomes the skill's floor with no tolerance, in `skill eval` and in the base-code eval:
 it means "at least this", not "anything".
 
-Measured on 2026-10-25 (13 skills): on the tuned set of 280 cases, top-1 91.7% (209 of 228)
+Measured on 2026-10-25 (13 skills): on the tuned set of 555 cases, top-1 91.7% (209 of 228)
 and false invokes 0% (0 of 52); on the 49 held-out cases, top-1 94.9% (37 of 39) and false
 invokes 10% (1 of 10). The top-1 gate needs 206 of 228, so the margin is three cases.
 Matching takes about 0.2 ms at p95 and the index build about 20 ms on the CI runner (about

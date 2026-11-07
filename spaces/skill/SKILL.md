@@ -89,3 +89,7 @@ Scope rules, enforced by the app, not by your good behavior:
 - `shot --out name.png` writes only into BaneySpaces' own shots folder; pass a file name, not a path.
 - Snapshots and shots can hold private content. They stay on this Mac; don't paste them into logs, issues
   or other agents' prompts unless asked.
+
+## From an assistant on the web
+
+An assistant in claude.ai, ChatGPT or grok.com reaches these tools through the connector, as `computer_*`, only if the person ticked computer use when approving it. It is held to Default whatever Settings says: the agent workspace, apps on the short list, apps the person lends. To set it up, use the `connector` skill.

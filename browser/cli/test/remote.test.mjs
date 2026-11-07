@@ -180,14 +180,65 @@ test("tunnel tailscale serves the tailnet path; --public uses funnel; --off stop
 	const path = withNode(bin);
 	const on = cliRun(["tunnel", "tailscale", "--port", "8787"], { PATH: path });
 	assert.equal(on.code, 0, on.out);
-	assert.match(on.out, /https:\/\/mac\.example\.ts\.net\/tabkyra\/mcp/);
+	assert.match(on.out, /https:\/\/mac\.example\.ts\.net\/polycarp\/mcp/);
 	const pub = cliRun(["tunnel", "tailscale", "--public"], { PATH: path });
 	assert.match(pub.out, /anyone on the internet/);
 	cliRun(["tunnel", "tailscale", "--off"], { PATH: path });
 	const calls = readFileSync(log, "utf8");
-	assert.match(calls, /^serve --bg --yes --https=443 --set-path=\/tabkyra http:\/\/127\.0\.0\.1:8787$/m);
-	assert.match(calls, /^funnel --bg --yes --https=443 --set-path=\/tabkyra http:\/\/127\.0\.0\.1:8787$/m);
-	assert.match(calls, /^serve --https=443 --set-path=\/tabkyra off$/m);
+	assert.match(calls, /^serve --bg --yes --https=443 --set-path=\/polycarp http:\/\/127\.0\.0\.1:8787$/m);
+	assert.match(calls, /^funnel --bg --yes --https=443 --set-path=\/polycarp http:\/\/127\.0\.0\.1:8787$/m);
+	assert.match(calls, /^serve --https=443 --set-path=\/polycarp off$/m);
+});
+
+test("tunnel tailscale removes the old path when it's this serve, and --public refuses one that isn't", () => {
+	const bin = join(root, "bin-old-path");
+	mkdirSync(bin, { recursive: true });
+	const log = join(root, "tailscale-old.log");
+	const stub = (proxy) => {
+		writeFileSync(
+			join(bin, "tailscale"),
+			`#!/bin/sh\necho "$@" >> ${log}\nif [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.example.ts.net."}}'; fi\nif [ "$1 $2" = "serve status" ]; then echo '{"Web":{"mac.example.ts.net:443":{"Handlers":{"/tabkyra":{"Proxy":"${proxy}"}}}}}'; fi\n`,
+		);
+		chmodSync(join(bin, "tailscale"), 0o755);
+	};
+	const path = withNode(bin);
+	stub("http://127.0.0.1:9999");
+	writeFileSync(log, "");
+	const refused = cliRun(["tunnel", "tailscale", "--public", "--port", "8787"], { PATH: path });
+	assert.notEqual(refused.code, 0);
+	assert.match(refused.out, /also serves \/tabkyra/);
+	assert.doesNotMatch(readFileSync(log, "utf8"), /^funnel --bg/m, "someone else's path is never published");
+	stub("http://127.0.0.1:8787");
+	writeFileSync(log, "");
+	assert.equal(cliRun(["tunnel", "tailscale", "--public", "--port", "8787"], { PATH: path }).code, 0);
+	const calls = readFileSync(log, "utf8");
+	assert.ok(calls.indexOf("--set-path=/tabkyra off") !== -1 && calls.indexOf("--set-path=/tabkyra off") < calls.indexOf("funnel --bg"), calls);
+});
+
+test("tunnel tailscale --off takes down the old path too, and says when one isn't this serve", () => {
+	const bin = join(root, "bin-old-off");
+	mkdirSync(bin, { recursive: true });
+	const log = join(root, "tailscale-old-off.log");
+	const stub = (proxy) => {
+		writeFileSync(
+			join(bin, "tailscale"),
+			`#!/bin/sh\necho "$@" >> ${log}\nif [ "$1 $2" = "serve status" ]; then echo '{"Web":{"mac.example.ts.net:443":{"Handlers":{"/tabkyra":{"Proxy":"${proxy}"}}}}}'; fi\n`,
+		);
+		chmodSync(join(bin, "tailscale"), 0o755);
+	};
+	const path = withNode(bin);
+	stub("http://127.0.0.1:8787");
+	writeFileSync(log, "");
+	const off = cliRun(["tunnel", "tailscale", "--off", "--port", "8787"], { PATH: path });
+	assert.equal(off.code, 0, off.out);
+	assert.match(readFileSync(log, "utf8"), /^serve --https=443 --set-path=\/tabkyra off$/m);
+	assert.match(off.out, /\/tabkyra/);
+	stub("http://127.0.0.1:9999");
+	writeFileSync(log, "");
+	const other = cliRun(["tunnel", "tailscale", "--off", "--port", "8787"], { PATH: path });
+	assert.equal(other.code, 0, other.out);
+	assert.doesNotMatch(readFileSync(log, "utf8"), /--set-path=\/tabkyra off/);
+	assert.match(other.out, /left on/);
 });
 
 test("tunnel cloudflare without cloudflared says how to get it and exposes nothing", () => {
@@ -1285,7 +1336,7 @@ test("remote off with no remote.json closes a Polycarp Funnel on 8443, and says 
 
 test("remote lists its subcommands in help and rejects unknown flags", () => {
 	const help = cliRun(["remote", "--help"]).out;
-	assert.match(help, /tabkyra remote setup \[--public-url https:\/\/host\] \[--port N\] \[--no-service\]/);
+	assert.match(help, /tabkyra remote setup \[--cloudflare name\.yourdomain\.com\] \[--public-url https:\/\/host\] \[--port N\] \[--no-service\]/);
 	assert.match(help, /tabkyra remote status \[--json\]/);
 	assert.match(help, /tabkyra remote off/);
 	assert.equal(cliRun(["remote", "setup", "--bogus"]).code, 2);

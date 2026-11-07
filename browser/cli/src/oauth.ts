@@ -801,7 +801,7 @@ export function consentPage(config: OAuthConfig, d: ConsentDetails, error?: stri
 	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Approve Polycarp access</title>
 <style>${pageCss()}</style></head>
 <body><main><h1>Allow ${escape(d.clientName)} to use your browser through Polycarp?</h1>
-<p>It will work in its own tab group in your signed-in browser, with the permissions you tick. After you approve, you go back to <strong>${escape(d.redirectHost)}</strong>.</p>
+<p>It will work in its own tab group in your signed-in browser and, only if you tick computer use, on your agent workspace, with the permissions you tick. After you approve, you go back to <strong>${escape(d.redirectHost)}</strong>.</p>
 <p>Only approve a connection you started yourself, just now, in your own account. A link someone sent you could connect their account to your browser. This connection registered ${escape(d.registeredAgo)} and returns to <code>${escape(d.redirectUri)}</code>.</p>
 ${d.newClient ? `<p><strong>This is a new connector.</strong> Your passcode will not approve it. On the computer that runs Polycarp, run <code>${COMMAND_NAME} token approval-code</code> and enter the one-time connect code it prints.</p>` : ""}
 ${error ? `<p class="error">${escape(error)}</p>` : ""}${d.passcodeSet || d.newClient ? "" : `<p class="error">No passcode is set yet. Run ${COMMAND_NAME} token passcode on the computer that runs serve, or ${COMMAND_NAME} token approval-code for a one-time connect code.</p>`}

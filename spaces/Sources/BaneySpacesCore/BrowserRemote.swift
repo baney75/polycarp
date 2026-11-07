@@ -10,12 +10,31 @@ public enum RemoteState: String, CaseIterable, Equatable {
     case tailscaleSignedOut = "tailscale_signed_out"
     case funnelNotAllowed = "funnel_not_allowed"
     case funnelClosed = "funnel_closed"
+    case cloudflaredMissing = "cloudflared_missing"
     case tailnetLock = "tailnet_lock"
     case portBusy = "port_busy"
     case ready
     case on
     case noBrowserConnected = "no_browser_connected"
     case problem
+}
+
+/// The two ways an assistant can reach this computer, on the person's own account.
+public enum RemoteRoute: String, Equatable { case tailscale, cloudflare }
+
+/// Which routes are installed and signed in, from `remote status --json`.
+public struct RemoteRoutes: Equatable {
+    public var tailscaleInstalled, tailscaleSignedIn, cloudflareInstalled, cloudflareSignedIn: Bool
+    public init(tailscaleInstalled: Bool = false, tailscaleSignedIn: Bool = false, cloudflareInstalled: Bool = false, cloudflareSignedIn: Bool = false) {
+        self.tailscaleInstalled = tailscaleInstalled; self.tailscaleSignedIn = tailscaleSignedIn
+        self.cloudflareInstalled = cloudflareInstalled; self.cloudflareSignedIn = cloudflareSignedIn
+    }
+
+    init?(json: Any?) {
+        guard let root = json as? [String: Any], let t = root["tailscale"] as? [String: Any], let c = root["cloudflare"] as? [String: Any] else { return nil }
+        self.init(tailscaleInstalled: t["installed"] as? Bool ?? false, tailscaleSignedIn: t["signedIn"] as? Bool ?? false,
+                  cloudflareInstalled: c["installed"] as? Bool ?? false, cloudflareSignedIn: c["signedIn"] as? Bool ?? false)
+    }
 }
 
 /// One answer from `remote status --json` or `remote setup --json`.
@@ -35,14 +54,17 @@ public struct RemoteReport: Equatable {
     public var passcodeSet: Bool
     /// Status only: whether a browser has the extension connected. Nil when the answer didn't say.
     public var extensionConnected: Bool?
+    /// Status only. Nil from an older helper, which then goes straight to Tailscale, the only route it knew.
+    public var routes: RemoteRoutes?
 
     /// Status only: remote access is set up on this computer (the answer carries its address), whatever shape it is in.
     public var configured: Bool { connectorURL != nil }
 
     public init(ok: Bool = false, state: RemoteState, message: String = "", adminURL: URL? = nil, code: String? = nil,
-                connectorURL: String? = nil, passcode: String? = nil, passcodeSet: Bool = false, extensionConnected: Bool? = nil) {
+                connectorURL: String? = nil, passcode: String? = nil, passcodeSet: Bool = false, extensionConnected: Bool? = nil, routes: RemoteRoutes? = nil) {
         self.ok = ok; self.state = state; self.message = message; self.adminURL = adminURL; self.code = code
         self.connectorURL = connectorURL; self.passcode = passcode; self.passcodeSet = passcodeSet; self.extensionConnected = extensionConnected
+        self.routes = routes
     }
 
     /// The helper's JSON, or nil when it isn't an object with a `state`. An unknown state is a problem, so a newer helper
@@ -60,7 +82,8 @@ public struct RemoteReport: Equatable {
             connectorURL: string("connectorUrl").flatMap(connectorAddress),
             passcode: string("passcode"),
             passcodeSet: root["passcodeSet"] as? Bool ?? (root["passcode"] != nil),
-            extensionConnected: root["extensionConnected"] as? Bool)
+            extensionConnected: root["extensionConnected"] as? Bool,
+            routes: RemoteRoutes(json: root["routes"]))
     }
 
     /// An https address on tailscale.com (or a subdomain, like login.tailscale.com). Anything else is dropped, so a button
@@ -82,6 +105,14 @@ public struct RemoteReport: Equatable {
 public enum RemoteScreen: Equatable {
     case unavailable
     case checking
+    /// Nothing is set up and no route is picked: Tailscale or Cloudflare, each with a way to make an account.
+    case chooseRoute(RemoteRoutes)
+    /// `configured`: remote access is set up on the Cloudflare route and cloudflared went away.
+    case getCloudflared(configured: Bool)
+    /// `waiting`: cloudflared's sign-in is open in the browser.
+    case cloudflareSignIn(waiting: Bool)
+    /// The name to use. `problem`: the helper's words about the last try.
+    case cloudflareAddress(problem: String?)
     /// `configured`: remote access is already set up and only waiting on Tailscale, so the intro and "nothing was changed" are wrong.
     case getTailscale(configured: Bool)
     case signIn(configured: Bool)
@@ -115,14 +146,24 @@ public enum RemoteFlow {
     ///   is half done) except where status names something more basic. A success is a short bridge, not a lasting state: it
     ///   speaks for itself only until a status read answers, and for at most `setupGrace` seconds (`setupAge`) after that.
     /// - `readsFailing`: the last `readFailureLimit` status reads all failed.
+    /// - `chosen`: the route the person picked, while nothing is set up yet. `signingIn`: cloudflared's sign-in is running.
     public static func screen(helperAvailable: Bool, settingUp: Bool, status: RemoteReport?, setup: RemoteReport?, setupAge: TimeInterval = 0,
-                              readsFailing: Bool = false) -> RemoteScreen {
+                              readsFailing: Bool = false, chosen: RemoteRoute? = nil, signingIn: Bool = false) -> RemoteScreen {
         guard helperAvailable else { return .unavailable }
         if settingUp { return .turningOn }
         // Reads that keep failing come before the last good answer: an old "On" must not stay up while the helper is silent.
         if readsFailing { return .problem(RemoteCopy.helperSilent) }
         if let status, status.state == .on || status.state == .noBrowserConnected, let url = status.connectorURL {
             return .on(connectorURL: url, browserConnected: status.state == .on)
+        }
+        // Nothing set up: the choice comes first, then the chosen route's steps. A problem (no browser yet, a hub) comes ahead of both.
+        if let status, !status.configured, status.state != .problem, setup?.state != .on, let routes = status.routes {
+            if chosen == nil, setup == nil { return .chooseRoute(routes) }
+            if chosen == .cloudflare {
+                if !routes.cloudflareInstalled { return .getCloudflared(configured: false) }
+                if signingIn || !routes.cloudflareSignedIn { return .cloudflareSignIn(waiting: signingIn) }
+                return .cloudflareAddress(problem: setup.flatMap { $0.message.isEmpty ? nil : $0.message })
+            }
         }
         if let setup {
             if setup.state == .on, let url = setup.connectorURL {
@@ -139,7 +180,7 @@ public enum RemoteFlow {
     }
 
     /// Tailscale itself being gone is more basic than any refusal about Funnel or a busy connection.
-    private static let moreBasic: Set<RemoteState> = [.tailscaleMissing, .tailscaleSignedOut, .tailnetLock]
+    private static let moreBasic: Set<RemoteState> = [.tailscaleMissing, .tailscaleSignedOut, .tailnetLock, .cloudflaredMissing]
 
     /// The `setup` answer to keep once a status read arrives. A success was only a bridge: a status that confirms it ends it. A
     /// refusal about Tailscale itself ends once status no longer says the same thing, so signing in moves the window on.
@@ -156,6 +197,7 @@ public enum RemoteFlow {
         case .tailscaleSignedOut: .signIn(configured: configured)
         case .funnelNotAllowed: .funnelNotAllowed(adminURL: r.adminURL)
         case .funnelClosed: .funnelClosed
+        case .cloudflaredMissing: .getCloudflared(configured: configured)
         case .tailnetLock: .tailnetLock(configured: configured)
         case .portBusy: .portBusy(tailscaleSetting: r.code == "tailscale_port", detail: r.message)
         case .ready: .ready
@@ -182,13 +224,28 @@ public enum RemoteFlow {
     /// without one (a retry after a refusal) never clears it.
     public static func keepPasscode(current: String?, from report: RemoteReport) -> String? { report.passcode ?? current }
 
+    /// What a person typed as the tunnel's name, as the helper will take it: lowercase, with no scheme or path. Nil when it can't be a name.
+    public static func cloudflareHost(_ raw: String) -> String? {
+        var host = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for scheme in ["https://", "http://"] where host.hasPrefix(scheme) { host.removeFirst(scheme.count) }
+        if let slash = host.firstIndex(of: "/") { host = String(host[..<slash]) }
+        if host.hasSuffix(".") { host.removeLast() }
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard host.count <= 253, labels.count >= 2 else { return nil }
+        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
+        let fits = labels.allSatisfy { $0.count >= 1 && $0.count <= 63 && $0.allSatisfy(allowed.contains) && $0.first != "-" && $0.last != "-" }
+        return fits ? host : nil
+    }
+
     /// Clear a copied passcode only if nothing else has been copied since (the pasteboard's change count is the same).
     public static func shouldClearClipboard(copiedAt: Int, now: Int) -> Bool { copiedAt == now }
 }
 
 /// The helper's commands and what the app tells it. Exact arguments are pinned by tests, so a rename here fails loudly.
 public enum RemoteCommand: Equatable {
-    case status, setup, off, newPasscode
+    case status, setup, off, newPasscode, cloudflareLogin
+    case setupCloudflare(String)
+    case approvalCode
 
     public var arguments: [String] {
         switch self {
@@ -196,6 +253,9 @@ public enum RemoteCommand: Equatable {
         case .setup: ["remote", "setup", "--json"]
         case .off: ["remote", "off"]
         case .newPasscode: ["token", "passcode", "--json"]
+        case .setupCloudflare(let host): ["remote", "setup", "--json", "--cloudflare", host]
+        case .cloudflareLogin: ["remote", "cloudflare", "login", "--json"]
+        case .approvalCode: ["token", "approval-code", "--json"]
         }
     }
 
@@ -207,7 +267,18 @@ public enum RemoteCommand: Equatable {
         case .setup: 120
         case .off: 60
         case .newPasscode: 15
+        case .setupCloudflare: 180
+        case .approvalCode: 15
+        // cloudflared's own sign-in waits five minutes for the person.
+        case .cloudflareLogin: 320
         }
+    }
+
+    /// `{"ok":true,"kind":"approval","code":"…"}` from `token approval-code --json`.
+    public static func parseApprovalCode(_ data: Data) -> String? {
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              root["ok"] as? Bool == true, let code = root["code"] as? String, !code.isEmpty else { return nil }
+        return code
     }
 
     /// `{"ok":true,"passcode":"…"}` from `token passcode --json`.
@@ -221,6 +292,38 @@ public enum RemoteCommand: Equatable {
 /// Every sentence on screen, in one place so tests can hold it to the rules: plain words, no jargon.
 public enum RemoteCopy {
     public static let title = "Use Polycarp from Claude, ChatGPT and Grok"
+    public static let tailscaleSignupURL = URL(string: "https://login.tailscale.com/start")!
+    public static let cloudflareSignupURL = URL(string: "https://dash.cloudflare.com/sign-up")!
+    public static let cloudflaredDownloadURL = URL(string: "https://developers.cloudflare.com/tunnel/downloads/")!
+
+    public static let chooseTitle = "How should assistants reach this computer?"
+    public static let chooseBody = "Both are free and run on your own account. Polycarp never sees your account or makes one for you."
+    public static let tailscaleChoice = "No domain needed. The quickest way to start."
+    public static let cloudflareChoice = "The address is on your own domain, which has to be on your Cloudflare account."
+    public static let useTailscaleButton = "Use Tailscale"
+    public static let useCloudflareButton = "Use Cloudflare"
+    public static let createAccountButton = "Create a free account"
+    public static let chooseAgainButton = "Choose another way"
+
+    public static func routeStatus(installed: Bool, signedIn: Bool) -> String {
+        signedIn ? "Signed in on this computer" : installed ? "Installed, not signed in" : "Not on this computer yet"
+    }
+
+    public static let getCloudflaredTitle = "First, get cloudflared"
+    public static let getCloudflaredBody = "It's Cloudflare's free program for tunnels. Polycarp notices when it's installed."
+    public static let getCloudflaredButton = "Get cloudflared"
+    public static let cloudflaredCommand = "brew install cloudflared"
+    public static let copyCommandButton = "Copy brew command"
+
+    public static let cloudflareSignInTitle = "Sign in to Cloudflare"
+    public static let cloudflareSignInBody = "Your browser opens Cloudflare. Sign in and pick the domain to use. No domain there yet? Add one in Cloudflare, or use Tailscale, which doesn't need one."
+    public static let cloudflareSignInButton = "Sign in to Cloudflare"
+    public static let cloudflareWaiting = "Waiting for you to finish in your browser…"
+
+    public static let cloudflareAddressTitle = "Pick this computer's address"
+    public static let cloudflareAddressBody = "Any name on the domain you picked, like polycarp.yourdomain.com. Polycarp makes the tunnel and its DNS record on your account. A name already in use is left alone."
+    public static let cloudflareAddressPlaceholder = "polycarp.yourdomain.com"
+    public static let cloudflareAddressInvalid = "That can't be an address. Use one like polycarp.yourdomain.com."
     public static let docsURL = URL(string: "https://github.com/baney75/polycarp/blob/main/browser/docs/remote.md#if-funnel-wont-work")!
     public static let tailscaleDownloadURL = URL(string: "https://tailscale.com/download")!
 
@@ -284,8 +387,12 @@ public enum RemoteCopy {
     public static let helperSilent = "Polycarp's browser helper didn't answer. Quit and reopen Polycarp, then try again."
     public static let unavailable = "This copy of Polycarp doesn't include the browser helper."
     public static let otherWays = "Other ways"
-    public static let otherWaysHelp = "Use your own Cloudflare address instead of Tailscale"
-    public static let approvalNote = "When an assistant asks to connect, a page from this computer opens. Check the name, tick what it may do, type the passcode and press Allow. Only approve a connection you just started."
+    public static let otherWaysHelp = "Use your own front door, like a server you already run"
+    public static let approvalNote = "When an assistant asks to connect, a page from this computer opens. Check the name, tick what it may do, enter the connect code and press Allow. Only approve a connection you just started."
+    public static let connectCodeButton = "Make a connect code"
+    public static let connectCodeLabel = "Connect code"
+    public static let connectCodeNote = "A new assistant needs this once. It works for ten minutes. After that, your passcode approves that assistant again."
+    public static let connectCodeFailed = "Couldn't make a connect code. Try again."
     public static let menusNote = "Menus change; if you can't find it, look for connectors in the assistant's settings."
 
     public struct Assistant: Equatable, Identifiable {

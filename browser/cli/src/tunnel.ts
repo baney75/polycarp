@@ -2,12 +2,12 @@
  * `polycarp browser tunnel`: reach `polycarp browser serve` from another device or a cloud agent through a
  * tunnel the user owns, which terminates TLS. Nothing is exposed until the user runs one.
  *
- * - tailscale: `tailscale serve` publishes https://<this machine>.<tailnet>.ts.net/tabkyra
+ * - tailscale: `tailscale serve` publishes https://<this machine>.<tailnet>.ts.net/polycarp
  *   to the user's own tailnet only. `--public` uses `tailscale funnel` instead, which is
  *   reachable from the internet; the token is then the only lock, so it warns.
  * - cloudflare: a `cloudflared` quick tunnel (free, no account) gives a random
- *   https://*.trycloudflare.com URL. For a stable name the user creates a free Cloudflare
- *   account and a named tunnel themselves; Polycarp prints the steps and never makes accounts.
+ *   https://*.trycloudflare.com URL that changes each time. For a stable name, use
+ *   `remote setup --cloudflare <name>` on the person's own account (cloudflare.ts). Polycarp never makes accounts.
  *
  * Polycarp doesn't install either tool.
  */
@@ -20,7 +20,9 @@ import { join } from "node:path";
 import { which } from "./harness.ts";
 
 export const DEFAULT_PORT = 8787;
-const SERVE_PATH = "/tabkyra";
+const SERVE_PATH = "/polycarp";
+/** Where an earlier version published it. Removed when it points at this serve (below); otherwise it counts as someone else's. */
+const OLD_SERVE_PATH = "/tabkyra";
 
 function configDir(): string {
 	return process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
@@ -37,13 +39,45 @@ export interface TunnelResult {
 	ok: boolean;
 }
 
+/** What port 443 serves here, or undefined when Tailscale's answer can't be read. */
+function servedOn443(bin: string): [string, { Proxy?: string }][] | undefined {
+	try {
+		const web = (JSON.parse(run(bin, ["serve", "status", "--json"]).out || "{}") as { Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }> }).Web ?? {};
+		return Object.entries(web)
+			.filter(([hostPort]) => hostPort.endsWith(":443"))
+			.flatMap(([, v]) => Object.entries(v.Handlers ?? {}));
+	} catch {
+		return undefined;
+	}
+}
+
+/** Both paths, so a person who upgraded with the old one still published can turn it off. One pointing at another program is theirs, and is said out loud. */
+function tailscaleOff(bin: string, mode: string, port: number): TunnelResult {
+	const handlers = servedOn443(bin);
+	const has = (path: string) => handlers?.some(([p]) => p === path) ?? true;
+	const stopped: string[] = [];
+	const failures: string[] = [];
+	const current = run(bin, [mode, "--https=443", `--set-path=${SERVE_PATH}`, "off"]);
+	if (current.code === 0) stopped.push(SERVE_PATH);
+	// Tailscale refuses to turn off what isn't there, which is the state asked for.
+	else if (has(SERVE_PATH)) failures.push(current.out);
+	const old = handlers?.find(([p]) => p === OLD_SERVE_PATH)?.[1];
+	if (old?.Proxy === `http://127.0.0.1:${port}`) {
+		const r = run(bin, ["serve", "--https=443", `--set-path=${OLD_SERVE_PATH}`, "off"]);
+		if (r.code === 0) stopped.push(OLD_SERVE_PATH);
+		else failures.push(r.out);
+	}
+	if (failures.length) return { ok: false, message: failures.join(" ") };
+	const leftAlone = old && old.Proxy !== `http://127.0.0.1:${port}` ? ` ${OLD_SERVE_PATH} points at ${old.Proxy ?? "something else"}, so it was left on. If that's an old Polycarp, run this again with its --port.` : "";
+	return { ok: true, message: `${stopped.length ? `Stopped the Tailscale ${mode} for ${stopped.join(" and ")}.` : "Nothing of Polycarp's was published on Tailscale."}${leftAlone}` };
+}
+
 export function tailscaleTunnel(options: { port: number; public: boolean; off: boolean }): TunnelResult {
 	const bin = which("tailscale");
 	if (!bin) return { ok: false, message: "Tailscale isn't installed. Install it from tailscale.com and sign in, then run this again." };
 	const mode = options.public ? "funnel" : "serve";
 	if (options.off) {
-		const r = run(bin, [mode, "--https=443", `--set-path=${SERVE_PATH}`, "off"]);
-		return { ok: r.code === 0, message: r.code === 0 ? `Stopped the Tailscale ${mode} for ${SERVE_PATH}.` : r.out };
+		return tailscaleOff(bin, mode, options.port);
 	}
 	const status = run(bin, ["status", "--json"]);
 	let dns = "";
@@ -54,7 +88,7 @@ export function tailscaleTunnel(options: { port: number; public: boolean; off: b
 	}
 	if (!dns) return { ok: false, message: "Tailscale isn't connected. Run tailscale up, then try again." };
 	// Read the current serve config first and fail closed: changing serve without knowing
-	// whether Funnel is on for :443 could make /tabkyra public by surprise.
+	// whether Funnel is on for :443 could make this path public by surprise.
 	const statusRun = spawnSync(bin, ["serve", "status", "--json"], { encoding: "utf8", timeout: 30_000 });
 	let status443: { AllowFunnel?: Record<string, boolean> } | undefined;
 	try {
@@ -66,25 +100,25 @@ export function tailscaleTunnel(options: { port: number; public: boolean; off: b
 	if (!options.public && Object.entries(status443.AllowFunnel ?? {}).some(([hostPort, on]) => on && hostPort.endsWith(":443"))) {
 		return {
 			ok: false,
-			message: "Funnel is on for port 443 on this machine, so /tabkyra would be public, not tailnet-only. Nothing was changed. Use --public if that's what you want, or turn Funnel off for port 443 in Tailscale first.",
+			message: `Funnel is on for port 443 on this machine, so ${SERVE_PATH} would be public, not tailnet-only. Nothing was changed. Use --public if that's what you want, or turn Funnel off for port 443 in Tailscale first.`,
 		};
 	}
+	// Read what port 443 serves. The old path is ours only if it points at this serve; then it goes, so it can't stay behind, and
+	// Funnel can't publish it. One pointing anywhere else is someone's, like any other path.
+	const read = servedOn443(bin);
+	if (!read && options.public) return { ok: false, message: "Couldn't read tailscale serve status; not turning on Funnel." };
+	const handlers = read ?? [];
+	const oldIsOurs = handlers.some(([path, h]) => path === OLD_SERVE_PATH && h.Proxy === `http://127.0.0.1:${options.port}`);
 	if (options.public) {
 		// Funnel opens a whole host:port to the internet, not one path: refuse if anything else is served there.
-		const current = run(bin, ["serve", "status", "--json"]);
-		let others: string[] = [];
-		try {
-			const web = (JSON.parse(current.out || "{}") as { Web?: Record<string, { Handlers?: Record<string, unknown> }> }).Web ?? {};
-			others = Object.entries(web)
-				.filter(([hostPort]) => hostPort.endsWith(":443"))
-				.flatMap(([, v]) => Object.keys(v.Handlers ?? {}))
-				.filter((path) => path !== SERVE_PATH);
-		} catch {
-			return { ok: false, message: "Couldn't read tailscale serve status; not turning on Funnel." };
-		}
+		const others = handlers.map(([path]) => path).filter((path) => path !== SERVE_PATH && !(path === OLD_SERVE_PATH && oldIsOurs));
 		if (others.length) {
 			return { ok: false, message: `Port 443 also serves ${others.join(", ")} on this machine. Funnel would make those public too, so it wasn't turned on.` };
 		}
+	}
+	if (oldIsOurs) {
+		const gone = run(bin, ["serve", "--https=443", `--set-path=${OLD_SERVE_PATH}`, "off"]);
+		if (gone.code !== 0) return { ok: false, message: `Couldn't remove the old ${OLD_SERVE_PATH} path, so nothing else was changed: ${gone.out}` };
 	}
 	const r = run(bin, [mode, "--bg", "--yes", "--https=443", `--set-path=${SERVE_PATH}`, `http://127.0.0.1:${options.port}`]);
 	if (r.code !== 0) return { ok: false, message: r.out };

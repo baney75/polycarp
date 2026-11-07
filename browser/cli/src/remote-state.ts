@@ -8,6 +8,7 @@
  * - tailscale_missing / tailscale_signed_out: Tailscale isn't installed, or isn't signed in (or isn't running).
  * - funnel_not_allowed: Tailscale refused Funnel for this tailnet or computer; `adminUrl` is the page it printed.
  * - funnel_closed: set up, but Tailscale's Funnel isn't open for the saved address (status only; running setup again opens it).
+ * - cloudflared_missing: remote.json is on the Cloudflare route and cloudflared is gone.
  * - tailnet_lock: the tailnet has Tailnet Lock, and Funnel doesn't work on one.
  * - port_busy: something else uses the local port or Funnel's port 8443, so nothing was changed.
  * - ready: nothing is set up yet and nothing stands in the way.
@@ -20,6 +21,7 @@ export type RemoteState =
 	| "tailscale_signed_out"
 	| "funnel_not_allowed"
 	| "funnel_closed"
+	| "cloudflared_missing"
 	| "tailnet_lock"
 	| "port_busy"
 	| "ready"
@@ -32,6 +34,7 @@ export const REMOTE_STATES: readonly RemoteState[] = [
 	"tailscale_signed_out",
 	"funnel_not_allowed",
 	"funnel_closed",
+	"cloudflared_missing",
 	"tailnet_lock",
 	"port_busy",
 	"ready",
@@ -41,6 +44,12 @@ export const REMOTE_STATES: readonly RemoteState[] = [
 ];
 
 /** What `remote setup --json` prints (one object on stdout). `passcode` is present only when this run made it. */
+/** Which ways of reaching this computer are installed and signed in, for an app that offers the choice. */
+export interface RemoteRoutes {
+	tailscale: { installed: boolean; signedIn: boolean };
+	cloudflare: { installed: boolean; signedIn: boolean };
+}
+
 export interface SetupReport {
 	ok: boolean;
 	state: RemoteState;
@@ -48,7 +57,8 @@ export interface SetupReport {
 	adminUrl?: string;
 	/**
 	 * Why a `problem` or `port_busy` happened, when an app has something specific to say. problem: "launcher" (no working launcher yet:
-	 * connect a browser first), "hub", "service", "serve" (nothing answers on the local port), "funnel", "config"; on status also
+	 * connect a browser first), "hub", "service", "serve" (nothing answers on the local port), "funnel", "config", "cloudflare_login",
+	 * "cloudflare_tunnel", "cloudflare_dns" (that name is taken), "cloudflare_zone" (the sign-in covers another domain); on status also
 	 * "dns" (public DNS doesn't answer for the address yet; Tailscale takes minutes to publish a new one). port_busy:
 	 * "tailscale_port" (a Tailscale setting already uses 8443) or "local_port" (a program here uses the local port).
 	 */

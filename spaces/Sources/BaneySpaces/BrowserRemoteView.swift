@@ -14,9 +14,14 @@ final class BrowserRemoteModel: ObservableObject {
     /// The approval passcode, from the run that made it. Memory only: shown until the person says they've saved it.
     @Published private(set) var passcode: String?
     @Published private(set) var note: String?
+    /// The one-time code that approves a new assistant. Memory only.
+    @Published private(set) var connectCode: String?
     @Published private(set) var copied: String?
     /// Status reads in a row that gave no usable answer.
     @Published private(set) var failedReads = 0
+    /// The route picked on the first step, until it's on or turned off.
+    @Published private(set) var route: RemoteRoute?
+    @Published private(set) var signingIn = false
     private var setupAt: Date?
     /// Bumped by every click that changes things. A status read that started before the click is out of date and is dropped.
     private var generation = 0
@@ -31,7 +36,8 @@ final class BrowserRemoteModel: ObservableObject {
 
     var screen: RemoteScreen {
         RemoteFlow.screen(helperAvailable: available, settingUp: settingUp, status: status, setup: setup,
-                          setupAge: setupAt.map { Date().timeIntervalSince($0) } ?? 0, readsFailing: failedReads >= RemoteFlow.readFailureLimit)
+                          setupAge: setupAt.map { Date().timeIntervalSince($0) } ?? 0, readsFailing: failedReads >= RemoteFlow.readFailureLimit,
+                          chosen: route, signingIn: signingIn)
     }
     /// A Turn on just succeeded and the status reads haven't confirmed it yet (and the grace period isn't over).
     private var bridging: Bool {
@@ -84,11 +90,32 @@ final class BrowserRemoteModel: ObservableObject {
 
     // MARK: Acting (each one a click)
 
-    func turnOn() {
+    func choose(_ route: RemoteRoute?) {
+        self.route = route
+        setup = nil; setupAt = nil; note = nil
+    }
+
+    /// cloudflared's own sign-in, in the person's browser. Status notices the sign-in; this only says it's waiting.
+    func signInToCloudflare() {
+        guard available, !signingIn else { return }
+        signingIn = true; note = nil
+        queue.async { [weak self] in
+            let result = Self.run(.cloudflareLogin)
+            let parsed = RemoteReport.parse(result.out)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.signingIn = false
+                if parsed?.state != .ready { self.note = parsed?.message ?? RemoteCopy.helperSilent }
+                self.refresh()
+            }
+        }
+    }
+
+    func turnOn(cloudflare host: String? = nil) {
         guard available, !settingUp, !working else { return }
         settingUp = true; note = nil; generation += 1; failedReads = 0
         queue.async { [weak self] in
-            let result = Self.run(.setup)
+            let result = Self.run(host.map(RemoteCommand.setupCloudflare) ?? .setup)
             let parsed = RemoteReport.parse(result.out)
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -125,7 +152,7 @@ final class BrowserRemoteModel: ObservableObject {
                 guard let self else { return }
                 self.working = false
                 if result.code == 0 {
-                    self.setup = nil; self.setupAt = nil; self.passcode = nil; self.status = nil; self.failedReads = 0
+                    self.setup = nil; self.setupAt = nil; self.passcode = nil; self.status = nil; self.failedReads = 0; self.route = nil
                 } else {
                     self.note = RemoteCopy.turnOffFailed + (result.text.isEmpty ? "" : " \(result.text)")
                 }
@@ -144,6 +171,20 @@ final class BrowserRemoteModel: ObservableObject {
                 guard let self else { return }
                 self.working = false
                 if let code { self.passcode = code } else { self.note = "Couldn't make a new passcode. Try again." }
+            }
+        }
+    }
+
+    func newConnectCode() {
+        guard available, !settingUp, !working else { return }
+        working = true; note = nil
+        queue.async { [weak self] in
+            let result = Self.run(.approvalCode)
+            let code = RemoteCommand.parseApprovalCode(result.out)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.working = false
+                if let code { self.connectCode = code } else { self.note = RemoteCopy.connectCodeFailed }
             }
         }
     }
@@ -221,8 +262,12 @@ final class BrowserRemoteModel: ObservableObject {
 
 /// The guided flow: one step on screen, and it moves on by itself as Tailscale gets installed and signed in.
 struct BrowserRemoteView: View {
+    /// The render harness's step, in place of the live one.
+    var preview: RemoteScreen?
     @ObservedObject private var model = BrowserRemoteModel.shared
     @State private var assistant = RemoteCopy.assistants[0].name
+    @State private var cloudflareName = ""
+    @State private var nameRefused = false
 
     var body: some View {
         SettingsGroup(RemoteCopy.title) {
@@ -244,17 +289,65 @@ struct BrowserRemoteView: View {
     }
 
     @ViewBuilder private var content: some View {
-        switch model.screen {
+        switch preview ?? model.screen {
         case .unavailable:
             line(RemoteCopy.unavailable)
         case .checking:
             HStack(spacing: 8) { ProgressView().controlSize(.small); line("Looking…") }
+        case .chooseRoute(let routes):
+            line(RemoteCopy.intro)
+            Text(RemoteCopy.chooseTitle).font(Chrome.font(13, .semibold))
+            line(RemoteCopy.chooseBody)
+            routeChoice("Tailscale", RemoteCopy.tailscaleChoice, installed: routes.tailscaleInstalled, signedIn: routes.tailscaleSignedIn,
+                        use: RemoteCopy.useTailscaleButton, signup: RemoteCopy.tailscaleSignupURL) { model.choose(.tailscale) }
+            routeChoice("Cloudflare", RemoteCopy.cloudflareChoice, installed: routes.cloudflareInstalled, signedIn: routes.cloudflareSignedIn,
+                        use: RemoteCopy.useCloudflareButton, signup: RemoteCopy.cloudflareSignupURL) { model.choose(.cloudflare) }
+            footnotes
+        case .getCloudflared(let configured):
+            step(RemoteCopy.getCloudflaredTitle, RemoteCopy.getCloudflaredBody) {
+                HStack(spacing: 10) {
+                    Button(RemoteCopy.getCloudflaredButton) { NSWorkspace.shared.open(RemoteCopy.cloudflaredDownloadURL) }
+                    Button(RemoteCopy.copyCommandButton) { model.copy(RemoteCopy.cloudflaredCommand, label: "command") }
+                    if configured { turnOffButton } else { chooseAgain }
+                }
+            }
+            if configured { line(RemoteCopy.stillSetUp) }
+        case .cloudflareSignIn(let waiting):
+            step(RemoteCopy.cloudflareSignInTitle, RemoteCopy.cloudflareSignInBody) {
+                HStack(spacing: 10) {
+                    if waiting {
+                        ProgressView().controlSize(.small)
+                        line(RemoteCopy.cloudflareWaiting)
+                    } else {
+                        Button(RemoteCopy.cloudflareSignInButton) { model.signInToCloudflare() }
+                    }
+                    Button(RemoteCopy.createAccountButton) { NSWorkspace.shared.open(RemoteCopy.cloudflareSignupURL) }
+                    chooseAgain
+                }
+            }
+        case .cloudflareAddress(let problem):
+            step(RemoteCopy.cloudflareAddressTitle, RemoteCopy.cloudflareAddressBody) {
+                TextField(RemoteCopy.cloudflareAddressPlaceholder, text: $cloudflareName)
+                    .textFieldStyle(.roundedBorder)
+                    .font(Chrome.font(12))
+                    .autocorrectionDisabled()
+                    .onSubmit(turnOnCloudflare)
+                    .onChange(of: cloudflareName) { _ in nameRefused = false }
+                HStack(spacing: 10) {
+                    Button(RemoteCopy.turnOnButton, action: turnOnCloudflare)
+                    chooseAgain
+                }
+            }
+            if nameRefused { Text(RemoteCopy.cloudflareAddressInvalid).font(Chrome.font(11)).foregroundStyle(Chrome.working) }
+            if let problem { Text(problem).font(Chrome.font(11)).foregroundStyle(Chrome.working).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
+            passcodeShown
+            footnotes
         case .getTailscale(let configured):
             if !configured { line(RemoteCopy.intro) }
             step(RemoteCopy.getTailscaleTitle, RemoteCopy.getTailscaleBody) {
                 HStack(spacing: 10) {
                     Button(RemoteCopy.getTailscaleButton) { NSWorkspace.shared.open(RemoteCopy.tailscaleDownloadURL) }
-                    if configured { turnOffButton }
+                    if configured { turnOffButton } else { Button(RemoteCopy.createAccountButton) { NSWorkspace.shared.open(RemoteCopy.tailscaleSignupURL) }; chooseAgain }
                 }
             }
             if configured { line(RemoteCopy.stillSetUp) }
@@ -263,7 +356,7 @@ struct BrowserRemoteView: View {
             step(RemoteCopy.signInTitle, RemoteCopy.signInBody) {
                 HStack(spacing: 10) {
                     if model.tailscaleAppInstalled { Button(RemoteCopy.openTailscaleButton) { model.openTailscale() } }
-                    if configured { turnOffButton }
+                    if configured { turnOffButton } else { Button(RemoteCopy.createAccountButton) { NSWorkspace.shared.open(RemoteCopy.tailscaleSignupURL) }; chooseAgain }
                 }
             }
             if configured { line(RemoteCopy.stillSetUp) }
@@ -307,7 +400,10 @@ struct BrowserRemoteView: View {
         case .ready:
             line(RemoteCopy.intro)
             step(RemoteCopy.readyTitle, RemoteCopy.readyBody) {
-                Button(RemoteCopy.turnOnButton) { model.turnOn() }
+                HStack(spacing: 10) {
+                    Button(RemoteCopy.turnOnButton) { model.turnOn() }
+                    chooseAgain
+                }
             }
             footnotes
         case .turningOn:
@@ -355,6 +451,33 @@ struct BrowserRemoteView: View {
             line(body)
             actions()
         }
+    }
+
+    /// One way in: what it is, where it stands here, and both ways to start: an account you have, or a new one.
+    private func routeChoice(_ name: String, _ detail: String, installed: Bool, signedIn: Bool, use: String, signup: URL, action: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(name).font(Chrome.font(13, .semibold))
+                Text(RemoteCopy.routeStatus(installed: installed, signedIn: signedIn)).font(Chrome.font(11)).foregroundStyle(signedIn ? Chrome.done : Chrome.muted)
+            }
+            line(detail)
+            HStack(spacing: 10) {
+                Button(use, action: action)
+                if !signedIn { Button(RemoteCopy.createAccountButton) { NSWorkspace.shared.open(signup) } }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Chrome.shape(.settingsCell, continuous: false).fill(Chrome.cell(0.06)))
+    }
+
+    private var chooseAgain: some View {
+        Button(RemoteCopy.chooseAgainButton) { model.choose(nil) }.buttonStyle(.link).font(Chrome.font(11))
+    }
+
+    private func turnOnCloudflare() {
+        guard let host = RemoteFlow.cloudflareHost(cloudflareName) else { nameRefused = true; return }
+        model.turnOn(cloudflare: host)
     }
 
     private var turnOffButton: some View {
@@ -424,6 +547,11 @@ struct BrowserRemoteView: View {
                 }
             }
             line(RemoteCopy.approvalNote)
+            if let code = model.connectCode {
+                copyRow(RemoteCopy.connectCodeLabel, code, label: "connect code", secret: true)
+                line(RemoteCopy.connectCodeNote)
+            }
+            Button(RemoteCopy.connectCodeButton) { model.newConnectCode() }.controlSize(.small).disabled(model.working)
             line(RemoteCopy.menusNote)
         }
     }

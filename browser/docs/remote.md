@@ -2,11 +2,12 @@
 
 Web assistants can drive your own signed-in browser through Polycarp and, if you tick it when you
 approve one, apps on your Mac's agent workspace ([Computer use](#computer-use)). It runs on your computer and
-through your own free account with Tailscale: no account with us, no relay, no cost. The commands below
+through your own free account with Tailscale or Cloudflare: no account with us, no relay, no cost. The commands below
 also run as `polycarp browser`, for example `polycarp browser remote setup`.
 
 **In the Polycarp app, use Settings > Browser > "Use Polycarp from Claude, ChatGPT and Grok".** It
-walks you through it one step at a time: get Tailscale and sign in, then Turn on. If Tailscale needs
+walks you through it one step at a time. First pick Tailscale or Cloudflare; each has a button to create
+a free account if you don't have one. Then get the tool and sign in, then Turn on. If Tailscale needs
 you to allow Funnel for your computer, Polycarp asks you to after you click Turn on, and you try again.
 When it's on, the window shows the address and a passcode (once) and says how to add them in each
 assistant. Behind the buttons it runs the commands below. The rest of this page is the same thing for
@@ -32,6 +33,30 @@ the public URL answers. The DNS line matters: from inside your own tailnet, a ts
 even when Funnel isn't reaching the internet, so a passing public fetch alone can hide a broken
 Funnel. The computer must stay on, awake and signed in to the browser with Tabkyra loaded.
 
+## Tailscale or Cloudflare
+
+Both are free and run on your own account. Polycarp never makes an account and doesn't install either tool.
+
+- **Tailscale** needs no domain, so it's the quickest. The address is `https://<computer>.<tailnet>.ts.net:8443`.
+- **Cloudflare** puts the address on a domain you have on your Cloudflare account, because a Cloudflare tunnel with a
+  fixed name needs one. No domain there means Tailscale, or a domain added in Cloudflare first.
+
+From the terminal:
+
+```bash
+polycarp browser remote cloudflare login                        # your browser opens Cloudflare; pick the domain
+polycarp browser remote setup --cloudflare polycarp.example.com
+```
+
+`setup` makes a tunnel named `polycarp-<this computer>`, or reuses it, adds the DNS record and keeps both `serve` and
+`cloudflared` running as services. It never overwrites a DNS record: a name already in use is refused, in Cloudflare's own
+words. A sign-in covers one domain, so a name on another domain is refused too, and it says how to sign in for that one.
+`remote off` stops the tunnel and leaves the tunnel and its record on your account, so turning it on again reuses them;
+`cloudflared tunnel delete polycarp-<this computer>` removes the tunnel for good.
+
+To try it without an account, `polycarp browser tunnel cloudflare` gives a temporary `*.trycloudflare.com` address that
+changes each time it starts, so a connector added with it stops working at the next restart.
+
 ## Computer use
 
 Two permissions on the approval page, both unticked until you tick them: `computer.read` (see the
@@ -56,8 +81,9 @@ what you can, so tick this only for an assistant you'd let sit at your keyboard.
 
 `remote status --json` and `remote setup --json` print one JSON object, so an app never reads
 sentences. `state` is one of `tailscale_missing`, `tailscale_signed_out`, `funnel_not_allowed` (with
-`adminUrl`, the page Tailscale printed), `funnel_closed` (status only), `tailnet_lock`, `port_busy`, `ready`, `on` (with
+`adminUrl`, the page Tailscale printed), `funnel_closed` (status only), `cloudflared_missing`, `tailnet_lock`, `port_busy`, `ready`, `on` (with
 `connectorUrl`), `no_browser_connected` or `problem` (with `message`, and sometimes `code`).
+`status --json` also has `routes`: `tailscale` and `cloudflare`, each with `installed` and `signedIn`, read without changing anything.
 `setup --json` includes `passcode` only in the run that made it, even when that run then fails, so
 keep it. `token passcode --json` makes a new one.
 

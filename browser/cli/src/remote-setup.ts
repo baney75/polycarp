@@ -10,9 +10,10 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { get as httpGet } from "node:http";
 import { join } from "node:path";
+import { CLOUDFLARE_SERVICE, closeCloudflare, cloudflaredBinary, cloudflareSignedIn, cloudflareTunnelName, normalizeCloudflareHost, prepareCloudflare } from "./cloudflare.ts";
 import { launcherValid, tabkyraBinary, which } from "./harness.ts";
 import { connectionChecks } from "./doctor.ts";
-import { completeFunnelAdminUrl, funnelAdminUrl, printReport, type RemoteState, type SetupReport, stateFromStatus } from "./remote-state.ts";
+import { completeFunnelAdminUrl, funnelAdminUrl, printReport, type RemoteRoutes, type RemoteState, type SetupReport, stateFromStatus } from "./remote-state.ts";
 import { installService, removeService, run, serviceFile, serviceLogHint, sleep, writeAtomic } from "./service.ts";
 import { configDir, listClients, passcodeSet, setPasscode } from "./oauth.ts";
 import { hubFile } from "./hub-state.ts";
@@ -27,7 +28,7 @@ export const METADATA_PATH = "/.well-known/oauth-protected-resource/mcp";
 export interface RemoteConfig {
 	publicUrl: string;
 	port: number;
-	route: "funnel" | "custom";
+	route: "funnel" | "custom" | "cloudflare";
 	redirectHosts?: string[];
 	allowHosts?: string[];
 }
@@ -52,7 +53,7 @@ export function loadRemoteConfig(): RemoteConfig | undefined {
 	if (!raw || typeof raw !== "object") throw new Error(`${remoteFile()} isn't a Polycarp remote file.`);
 	if (typeof raw.publicUrl !== "string" || !raw.publicUrl) throw new Error(`${remoteFile()}: publicUrl is missing.`);
 	if (typeof raw.port !== "number" || !Number.isInteger(raw.port) || raw.port < 0 || raw.port > 65535) throw new Error(`${remoteFile()}: port must be a port number.`);
-	if (raw.route !== "funnel" && raw.route !== "custom") throw new Error(`${remoteFile()}: route must be funnel or custom.`);
+	if (raw.route !== "funnel" && raw.route !== "custom" && raw.route !== "cloudflare") throw new Error(`${remoteFile()}: route must be funnel, custom or cloudflare.`);
 	const redirectHosts = stringList(raw.redirectHosts, "redirectHosts");
 	const allowHosts = stringList(raw.allowHosts, "allowHosts");
 	return { publicUrl: raw.publicUrl, port: raw.port, route: raw.route, ...(redirectHosts ? { redirectHosts } : {}), ...(allowHosts ? { allowHosts } : {}) };
@@ -346,6 +347,8 @@ export async function waitForServe(port: number, publicUrl: string, totalMs: num
 export interface SetupOptions {
 	/** A normalized origin, or undefined for the Tailscale Funnel route. */
 	publicUrl?: string;
+	/** A name on a domain in the person's Cloudflare account: the named-tunnel route. */
+	cloudflare?: string;
 	port?: number;
 	service: boolean;
 	/** False (--no-passcode) mints and prints no passcode; the one-time connect code is the way in. For an agent's shell. */
@@ -388,7 +391,27 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 	let route: RemoteConfig["route"];
 	let funnelBin = "";
 	let funnelDns = "";
-	if (options.publicUrl) {
+	let cloudflaredBin = "";
+	// `remote setup` again on this route picks up where a failed run stopped, with the name it already has.
+	const cloudflareName = options.cloudflare ?? (previous?.route === "cloudflare" && !options.publicUrl ? new URL(previous.publicUrl).hostname : undefined);
+	const cloudflareHost = cloudflareName === undefined ? undefined : normalizeCloudflareHost(cloudflareName);
+	if (cloudflareName !== undefined && !cloudflareHost) return fail("problem", `${cloudflareName} isn't a name a tunnel can have. Use one like polycarp.yourdomain.com.`, { code: "cloudflare_dns" });
+	if (previous?.route === "cloudflare" && !cloudflareHost) return fail("problem", `A Cloudflare tunnel from an earlier setup is on. Run ${COMMAND_NAME} remote off first.`);
+	if (cloudflareHost) {
+		if (previous?.route === "funnel") return fail("problem", `Funnel from an earlier setup is on. Run ${COMMAND_NAME} remote off first.`);
+		const bin = cloudflaredBinary();
+		if (!bin) return fail("cloudflared_missing", "cloudflared isn't installed. Get it from developers.cloudflare.com/tunnel/downloads, then try again.");
+		if (!cloudflareSignedIn()) return fail("problem", `Sign in to Cloudflare first: ${COMMAND_NAME} remote cloudflare login.`, { code: "cloudflare_login" });
+		if (!options.service) return fail("problem", "The Cloudflare route runs as a service, so --no-service doesn't apply.");
+		// Funnel on 8443 would stay public and forward to this machine, whatever else is set up.
+		if (tailscaleBinary()) {
+			const stray = await strayFunnel();
+			if (stray.kind !== "none") return fail("port_busy", `Funnel on ${FUNNEL_PORT} is on${stray.kind === "unknown" ? ` (${stray.message})` : ""}; run ${COMMAND_NAME} remote off first. Nothing was changed.`, { code: "tailscale_port" });
+		}
+		cloudflaredBin = bin;
+		publicUrl = `https://${cloudflareHost}`;
+		route = "cloudflare";
+	} else if (options.publicUrl) {
 		if (previous?.route === "funnel") {
 			return fail("problem", `Funnel from an earlier setup is on. Run ${COMMAND_NAME} remote off first.`);
 		}
@@ -438,7 +461,16 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 	}
 	// Every step from here on has made (or may have made) a passcode a later run won't print, so in JSON mode a throw is still a report.
 	let stage = "config";
+	let tunnelName: string | undefined;
 	try {
+		// Before anything is saved: a name Cloudflare refuses leaves this computer as it was, and a working tunnel keeps working.
+		if (route === "cloudflare" && cloudflareHost) {
+			stage = "cloudflare_tunnel";
+			const opened = await prepareCloudflare(cloudflaredBin, cloudflareHost, port);
+			if (!opened.ok) return fail("problem", opened.message, { code: opened.code });
+			tunnelName = opened.tunnel;
+			stage = "config";
+		}
 		saveRemoteConfig({ publicUrl, port, route, ...(previous?.redirectHosts ? { redirectHosts: previous.redirectHosts } : {}), ...(previous?.allowHosts ? { allowHosts: previous.allowHosts } : {}) });
 		say(`${sym.ok} Wrote ${c.dim(remoteFile())}`);
 		stage = "service";
@@ -465,6 +497,12 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 				`Nothing is listening on 127.0.0.1:${port} yet, so ${route === "funnel" ? "Funnel was not opened" : "remote access isn't on"}. remote.json is kept. Start ${COMMAND_NAME} serve (it reads remote.json), then run ${COMMAND_NAME} remote setup --no-service again.`,
 				{ code: "serve" },
 			);
+		}
+		if (route === "cloudflare" && tunnelName) {
+			stage = "cloudflare_tunnel";
+			const service = await installService(CLOUDFLARE_SERVICE);
+			if (!service.ok) return fail("problem", `The Cloudflare tunnel didn't start: ${service.message}`, { code: "service" });
+			say(`${sym.ok} Cloudflare tunnel ${tunnelName} on ${publicUrl} ${c.dim(`-> 127.0.0.1:${port}`)}`);
 		}
 		stage = "funnel";
 		if (route === "funnel") {
@@ -552,6 +590,15 @@ export async function dnsCheck(host: string): Promise<Check> {
 	return { name, status: "fail", detail: `public DNS has no A record for ${host}` };
 }
 
+/** Which ways of reaching this computer are ready. Reads only; never signs in or installs anything. */
+export function remoteRoutes(): RemoteRoutes {
+	const tailscale = tailscaleReady();
+	return {
+		tailscale: { installed: tailscale.ok || tailscale.state !== "tailscale_missing", signedIn: tailscale.ok },
+		cloudflare: { installed: Boolean(cloudflaredBinary()), signedIn: cloudflareSignedIn() },
+	};
+}
+
 /** Read-only: can setup go ahead? ready, or the first thing in the way. Runs the same checks setup runs before it changes anything. */
 export async function preflight(): Promise<{ state: RemoteState; message: string; code?: string }> {
 	if (existsSync(hubFile())) return { state: "problem", message: `This install is set up as a hub (${hubFile()}), and an install has one public route. Run ${COMMAND_NAME} hub off first.`, code: "hub" };
@@ -589,7 +636,15 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 			tailscale = { state: "funnel_closed", message: `Tailscale Funnel isn't open for ${key}, so assistants can't reach this computer. Run ${COMMAND_NAME} remote setup to open it again.` };
 		}
 	}
-	if (tailscale) checks.push({ name: "tailscale", status: "fail", detail: tailscale.message });
+	// The same for the Cloudflare route: without cloudflared nothing else on it can work.
+	if (config?.route === "cloudflare" && !cloudflaredBinary()) {
+		tailscale = { state: "cloudflared_missing", message: "cloudflared isn't installed any more, so assistants can't reach this computer." };
+		checks.push({ name: "cloudflare", status: "fail", detail: tailscale.message });
+	} else if (config?.route === "cloudflare") {
+		const file = serviceFile(CLOUDFLARE_SERVICE);
+		const running = Boolean(file && existsSync(file));
+		checks.push({ name: "cloudflare", status: running ? "ok" : "fail", detail: running ? `tunnel ${cloudflareTunnelName()}` : `The tunnel's service is gone. Run ${COMMAND_NAME} remote setup --cloudflare ${new URL(config.publicUrl).hostname} again.` });
+	} else if (tailscale) checks.push({ name: "tailscale", status: "fail", detail: tailscale.message });
 	if (config && !tailscale) {
 		const passcode = passcodeSet();
 		checks.push({ name: "passcode", status: passcode ? "ok" : "warn", detail: passcode ? "set" : `not set; only a connect code (${COMMAND_NAME} token approval-code) can approve a connection. ${COMMAND_NAME} token passcode sets one.` });
@@ -628,6 +683,7 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 			message,
 			...(code ? { code } : {}),
 			route: config?.route ?? null,
+			routes: remoteRoutes(),
 			publicUrl: config?.publicUrl ?? null,
 			connectorUrl: config ? `${config.publicUrl}/mcp` : null,
 			passcodeSet: passcodeSet(),
@@ -669,7 +725,20 @@ export async function remoteOff(): Promise<number> {
 	}
 	if (badFile !== undefined) console.log(`${sym.warn} ${badFile}`);
 	let code = 0;
-	if (config?.route === "funnel") {
+	// By the service, not remote.json: a damaged or missing file must not leave a tunnel running.
+	const tunnelService = serviceFile(CLOUDFLARE_SERVICE);
+	if (config?.route === "cloudflare" || (tunnelService && existsSync(tunnelService))) {
+		const closed = closeCloudflare();
+		if (!closed.ok) {
+			console.error(`${sym.fail} ${closed.failure}`);
+			return 1;
+		}
+		for (const note of closed.notes) console.log(`${sym.ok} ${note}`);
+		console.log(c.dim(`The tunnel and its DNS record stay in your Cloudflare account, so turning this on again reuses them. To remove the tunnel: cloudflared tunnel delete ${cloudflareTunnelName()}`));
+	}
+	if (config?.route === "cloudflare") {
+		// The tunnel is closed above; there's no Funnel to look for on this route.
+	} else if (config?.route === "funnel") {
 		const r = funnelOff(tailscaleBinary());
 		if (!r.ok) {
 			console.error(`${sym.fail} ${r.message}`);

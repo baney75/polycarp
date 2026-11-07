@@ -12,7 +12,7 @@ final class BrowserRemoteTests: XCTestCase {
         for state in RemoteState.allCases {
             XCTAssertEqual(try report(#"{"state":"\#(state.rawValue)"}"#).state, state)
         }
-        XCTAssertEqual(RemoteState.allCases.count, 10, "the helper's REMOTE_STATES")
+        XCTAssertEqual(RemoteState.allCases.count, 11, "the helper's REMOTE_STATES")
     }
 
     func testAnUnknownStateIsAProblemNotABlankWindow() throws {
@@ -340,12 +340,12 @@ final class BrowserRemoteTests: XCTestCase {
         XCTAssertEqual(tab.components(separatedBy: "BrowserRemoteView()").count - 1, 1)
         let view = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/BrowserRemoteView.swift"), encoding: .utf8)
         XCTAssertTrue(view.contains("Self.run(.status)"))
-        XCTAssertEqual(view.components(separatedBy: "Self.run(.setup)").count - 1, 1, "setup runs from one place: turnOn()")
+        XCTAssertEqual(view.components(separatedBy: "RemoteCommand.setupCloudflare) ?? .setup)").count - 1, 1, "setup runs from one place: turnOn()")
         // Setup runs from the Turn on button and Try again only; the poll reads status.
         let from = try XCTUnwrap(view.range(of: "func refresh()")), to = try XCTUnwrap(view.range(of: "// MARK: Acting"))
         let pollBody = String(view[from.lowerBound..<to.lowerBound])
-        XCTAssertFalse(pollBody.contains("Self.run(.setup)") || pollBody.contains("turnOn()"))
-        for hosted in ["workers.dev", "cloudflared", "trycloudflare", "waitlist"] { XCTAssertFalse(view.contains(hosted), hosted) }
+        XCTAssertFalse(pollBody.contains("?? .setup)") || pollBody.contains("turnOn(") || pollBody.contains(".cloudflareLogin"))
+        for hosted in ["workers.dev", "trycloudflare", "waitlist"] { XCTAssertFalse(view.contains(hosted), hosted) }
         // A status read that began before a click is dropped (F10), the passcode shows on the Funnel refusal screen (S3), the intro is
         // on screen (S5), and a copied passcode is cleared by change count (S7).
         XCTAssertTrue(view.contains("guard started == self.generation"))
@@ -370,4 +370,82 @@ final class BrowserRemoteTests: XCTestCase {
         XCTAssertTrue(view.contains("RemoteFlow.shouldClearClipboard") && view.contains("RemoteFlow.passcodeClipboardSeconds") && view.contains("changeCount"))
         XCTAssertTrue(view.contains("RemoteCopy.newPasscodeNote") && view.contains("RemoteCopy.noPasscodeNote"))
     }
+
+    // MARK: The route choice
+
+    private func status(_ state: RemoteState = .ready, routes: RemoteRoutes? = RemoteRoutes(), url: String? = nil) -> RemoteReport {
+        RemoteReport(state: state, connectorURL: url, routes: routes)
+    }
+
+    private func pick(_ report: RemoteReport, _ chosen: RemoteRoute?, setup: RemoteReport? = nil, signingIn: Bool = false) -> RemoteScreen {
+        RemoteFlow.screen(helperAvailable: true, settingUp: false, status: report, setup: setup, chosen: chosen, signingIn: signingIn)
+    }
+
+    func testNothingSetUpAsksWhichRouteFirstEvenWhenTailscaleIsMissing() {
+        let routes = RemoteRoutes(cloudflareInstalled: true)
+        XCTAssertEqual(pick(status(.tailscaleMissing, routes: routes), nil), .chooseRoute(routes))
+        XCTAssertEqual(pick(status(.ready, routes: routes), nil), .chooseRoute(routes))
+    }
+
+    func testPickingTailscaleIsTheFlowItAlwaysWas() {
+        XCTAssertEqual(pick(status(.tailscaleMissing), .tailscale), .getTailscale(configured: false))
+        XCTAssertEqual(pick(status(.tailscaleSignedOut), .tailscale), .signIn(configured: false))
+        XCTAssertEqual(pick(status(.ready), .tailscale), .ready)
+    }
+
+    func testCloudflareWalksInstallThenSignInThenAddress() {
+        XCTAssertEqual(pick(status(), .cloudflare), .getCloudflared(configured: false))
+        let installed = RemoteRoutes(cloudflareInstalled: true)
+        XCTAssertEqual(pick(status(routes: installed), .cloudflare), .cloudflareSignIn(waiting: false))
+        XCTAssertEqual(pick(status(routes: installed), .cloudflare, signingIn: true), .cloudflareSignIn(waiting: true))
+        let signedIn = RemoteRoutes(cloudflareInstalled: true, cloudflareSignedIn: true)
+        XCTAssertEqual(pick(status(routes: signedIn), .cloudflare), .cloudflareAddress(problem: nil))
+        let taken = RemoteReport(state: .problem, message: "that name is in use", code: "cloudflare_dns")
+        XCTAssertEqual(pick(status(routes: signedIn), .cloudflare, setup: taken), .cloudflareAddress(problem: "that name is in use"))
+    }
+
+    func testAnOlderHelperGoesStraightToTailscale() {
+        XCTAssertEqual(pick(status(.tailscaleMissing, routes: nil), nil), .getTailscale(configured: false))
+    }
+
+    func testSomethingSetUpNeverAsksAgain() {
+        let on = status(.on, url: "https://a.example.com/mcp")
+        XCTAssertEqual(pick(on, nil), .on(connectorURL: "https://a.example.com/mcp", browserConnected: true))
+        let gone = status(.cloudflaredMissing, url: "https://a.example.com/mcp")
+        XCTAssertEqual(pick(gone, nil), .getCloudflared(configured: true))
+    }
+
+    func testAProblemComesAheadOfTheChoice() {
+        let noBrowser = RemoteReport(state: .problem, code: "launcher", routes: RemoteRoutes())
+        XCTAssertEqual(pick(noBrowser, nil), .needsBrowser)
+    }
+
+    func testTheHelperStatusCarriesTheRoutes() throws {
+        let data = Data(#"{"state":"ready","routes":{"tailscale":{"installed":true,"signedIn":false},"cloudflare":{"installed":true,"signedIn":true}}}"#.utf8)
+        let routes = try XCTUnwrap(RemoteReport.parse(data)?.routes)
+        XCTAssertEqual(routes, RemoteRoutes(tailscaleInstalled: true, tailscaleSignedIn: false, cloudflareInstalled: true, cloudflareSignedIn: true))
+        XCTAssertEqual(RemoteReport.parse(Data(#"{"state":"cloudflared_missing"}"#.utf8))?.state, .cloudflaredMissing)
+    }
+
+    func testATypedNameIsCleanedOrRefused() {
+        XCTAssertEqual(RemoteFlow.cloudflareHost("  HTTPS://Polycarp.Example.com/mcp "), "polycarp.example.com")
+        XCTAssertEqual(RemoteFlow.cloudflareHost("a.example.com."), "a.example.com")
+        for bad in ["", "nodots", "has space.example.com", "-bad.example.com", "a..example.com", "--cloudflare.x"] {
+            XCTAssertNil(RemoteFlow.cloudflareHost(bad), bad)
+        }
+    }
+
+    func testTheCloudflareCommandsAreExactlyWhatTheHelperTakes() {
+        XCTAssertEqual(RemoteCommand.setupCloudflare("a.example.com").arguments, ["remote", "setup", "--json", "--cloudflare", "a.example.com"])
+        XCTAssertEqual(RemoteCommand.cloudflareLogin.arguments, ["remote", "cloudflare", "login", "--json"])
+        XCTAssertGreaterThan(RemoteCommand.cloudflareLogin.timeout, 300, "longer than cloudflared's own five-minute wait")
+    }
+
+    func testAConnectCodeComesFromTheHelpersOwnAnswer() {
+        XCTAssertEqual(RemoteCommand.approvalCode.arguments, ["token", "approval-code", "--json"])
+        XCTAssertEqual(RemoteCommand.parseApprovalCode(Data(#"{"ok":true,"kind":"approval","code":"TK-AB12","expiresAt":1}"#.utf8)), "TK-AB12")
+        XCTAssertNil(RemoteCommand.parseApprovalCode(Data(#"{"ok":false}"#.utf8)))
+        XCTAssertTrue(RemoteCopy.approvalNote.contains("connect code"), "a new assistant's page refuses the passcode")
+    }
 }
+
