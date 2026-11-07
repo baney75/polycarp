@@ -460,8 +460,9 @@ export const handlers: Record<string, Handler> = {
 				num(params, "firstPage"),
 				num(params, "lastPage"),
 			);
-			const note =
-				pdf.empty.length === pdf.pages
+			const note = !pdf.read
+				? `There is no such page: this PDF has ${pdf.pages}.`
+				: pdf.empty.length === pdf.read
 					? "This PDF has no text layer (a scan or images of pages). Read it with screenshot, and say the text could not be checked."
 					: pdf.empty.length
 						? `Pages ${pdf.empty.join(", ")} have no text layer (images); read those with screenshot.`

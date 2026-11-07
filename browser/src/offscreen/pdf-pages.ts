@@ -10,6 +10,8 @@ export interface PdfPages {
 	/** Pages whose text layer is empty, by number. */
 	empty: number[];
 	truncated: boolean;
+	/** How many pages were read: the range asked for, inside the PDF. */
+	read: number;
 }
 
 interface PdfJs {
@@ -56,7 +58,7 @@ export async function pdfPages(
 			}
 			text += block;
 		}
-		return { pages, text: text.trimEnd(), empty, truncated };
+		return { pages, text: text.trimEnd(), empty, truncated, read: Math.max(0, to - from + 1) };
 	} finally {
 		await doc.destroy();
 	}

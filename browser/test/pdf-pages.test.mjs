@@ -57,3 +57,20 @@ test("a scan has no text on any page, which the caller turns into a plain warnin
 	const r = await pdfPages(pdfjs, makePdf(["", ""]));
 	assert.deepEqual(r.empty, [1, 2]);
 });
+
+test("a page past the end reads nothing and says how many there are", async () => {
+	const r = await pdfPages(pdfjs, makePdf(["One."]), 50000, 40, 40);
+	assert.equal(r.read, 0);
+	assert.equal(r.pages, 1);
+});
+
+test("the built extension has pdf.js's worker where the hidden page looks for it", async () => {
+	const { readFileSync } = await import("node:fs");
+	const build = readFileSync(new URL("../scripts/build.mjs", import.meta.url), "utf8");
+	// pdf-text.js is a top-level entry, and its worker URL is resolved next to it.
+	assert.match(build, /"pdf-text": join\(packageRoot, "src\/offscreen\/pdf-text\.ts"\)/);
+	assert.match(build, /join\(outDir, "pdfjs-dist\/build"\)/);
+	const page = readFileSync(new URL("../src/offscreen/pdf-text.ts", import.meta.url), "utf8");
+	assert.match(page, /new URL\("pdfjs-dist\/build\/pdf\.worker\.min\.mjs", import\.meta\.url\)/);
+});
+
