@@ -35,6 +35,7 @@ const tools = [
 require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
 	const m = JSON.parse(line);
 	const reply = (result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result }) + "\\n");
+	if (m.method === "initialize") return reply({ serverInfo: { name: process.env.FAKE_SERVER_NAME ?? "polycarp-connector" } });
 	if (m.method === "tools/list") return reply({ tools });
 	appendFileSync(${JSON.stringify(log)}, JSON.stringify(m.params) + "\\n");
 	if (m.params.name === "click") process.exit(3);
@@ -99,7 +100,7 @@ test("a session with no computer scope has no computer tools and starts no helpe
 test("computer.read sees reading tools only, through the helper's connector mode", async () => {
 	rmSync(log, { force: true });
 	const client = await connect(withHelper, token("looks", "computer.read"));
-	assert.deepEqual(await computerTools(client), ["computer_snapshot", "computer_windows"]);
+	assert.deepEqual(await computerTools(client), ["computer_snapshot", "computer_status", "computer_windows"]);
 	const answer = await client.callTool({ name: "computer_snapshot", arguments: { app: "TextEdit", interactive: true } });
 	assert.equal(answer.content[0].text, "did snapshot");
 	const lines = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
@@ -114,7 +115,7 @@ test("computer.read sees reading tools only, through the helper's connector mode
 test("computer.act adds acting, and a verb the helper has but this list doesn't name never appears", async () => {
 	const client = await connect(withHelper, token("acts", "computer.act"));
 	const tools = await computerTools(client);
-	assert.deepEqual(tools, ["computer_click", "computer_open"]);
+	assert.deepEqual(tools, ["computer_click", "computer_open", "computer_snapshot", "computer_status", "computer_windows"], "acting needs refs, so it reads too");
 	assert.ok(!tools.includes("computer_lend"), "lending is the person's alone");
 	assert.ok(!tools.includes("computer_brand_new_verb"));
 	const open = (await client.listTools()).tools.find((t) => t.name === "computer_open");
@@ -133,20 +134,35 @@ test("the instructions name the limits to a session that has the tools, and not 
 	await hasnt.close();
 });
 
-test("a helper that stops turns into an error on that call, not a hang", async () => {
+test("a helper older than the connector flag is never used: its calls wouldn't be capped", async () => {
+	rmSync(log, { force: true });
+	const old = join(bin, "old-spaces");
+	writeFileSync(old, `#!/bin/sh\nFAKE_SERVER_NAME=baneyspaces exec ${JSON.stringify(helper)} "$@"\n`);
+	chmodSync(old, 0o755);
+	const url = await serve({ POLYCARP_SPACES_BIN: old });
+	const client = await connect(url, token("old-helper", "computer.act"));
+	assert.deepEqual(await computerTools(client), ["computer_status"]);
+	assert.match((await client.callTool({ name: "computer_status", arguments: {} })).content[0].text, /isn't available/);
+	await client.close();
+});
+
+test("a helper that stops turns into an error on that call and the next, not a hang", async () => {
 	const client = await connect(withHelper, token("stops", "computer.act"));
 	const answer = await client.callTool({ name: "computer_click", arguments: { ref: "@a:e1" } });
 	assert.equal(answer.isError, true);
 	assert.match(answer.content[0].text, /stopped/);
+	const next = await client.callTool({ name: "computer_windows", arguments: {} });
+	assert.equal(next.isError, true);
+	assert.match(next.content[0].text, /stopped/);
 	await client.close();
 });
 
 test("with no helper on this machine the scope grants nothing and the session still works", async () => {
 	const url = await serve({ POLYCARP_SPACES_BIN: join(root, "nope") });
 	const client = await connect(url, token("nothing", "computer.act,browser.read"));
-	assert.deepEqual(await computerTools(client), []);
+	assert.deepEqual(await computerTools(client), ["computer_status"], "the session can say why");
 	assert.ok((await client.listTools()).tools.some((t) => t.name === "read_page"));
-	assert.doesNotMatch(client.getInstructions(), /computer_/);
+	assert.doesNotMatch(client.getInstructions(), /computer_open/);
 	await client.close();
 });
 

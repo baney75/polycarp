@@ -76,13 +76,24 @@ enum HandsCLI {
 /// `baneyspaces mcp`: a stdio MCP server, so `claude mcp add baneyspaces -- baneyspaces mcp` gives an agent
 /// the same tools (no lend: that is Donovan's).
 enum MCPCommand {
+    /// Asks on every call, because the app can be replaced under a running session: an app that doesn't say it caps connectors never
+    /// gets the call, since it would run it with whatever this Mac allows.
+    private static func connectorSend(_ request: HandsRequest) -> HandsEnvelope {
+        guard Wire.call(Wire.Request(op: .ping), timeout: 2)?.info?[HandsCaller.capKey] == HandsCaller.capValue else {
+            return .failure(HandsError(.notRunning, "the Polycarp app here can't take connector calls: it isn't running, or it's older than this helper",
+                                       suggestion: "Ask the person to open or update Polycarp on their Mac.", retry: .safe))
+        }
+        return HandsCLI.send(request, caller: HandsCaller.connector)
+    }
+
     /// `connector`: this server belongs to one connector session (`polycarp browser serve`), so the app treats its calls as remote.
     static func run(connector: Bool = false) -> Never {
         let session = "\(connector ? "connector" : "mcp"):\(getpid())"
         let version = Wire.call(Wire.Request(op: .ping), timeout: 1)?.info?["version"] ?? "dev"
-        let server = HandsMCP(version: version, session: session,
-                              perform: { HandsCLI.send($0, caller: connector ? HandsCaller.connector : nil) },
+        var server = HandsMCP(version: version, session: session,
+                              perform: { connector ? connectorSend($0) : HandsCLI.send($0) },
                               readImage: { FileManager.default.contents(atPath: $0) })
+        if connector { server.name = HandsCaller.connectorServerName }
         setvbuf(stdout, nil, _IOLBF, 0)
         while let line = readLine(strippingNewline: true) {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }

@@ -4,6 +4,11 @@ import Foundation
 /// names itself the same way; a local caller claiming it only loses access.
 public enum HandsCaller {
     public static let connector = "remote connector"
+    /// In `ping`'s answer from an app that holds a connector to `forRemote`. Without it the app is older than the cap, so a connector stops.
+    public static let capKey = "connector_cap"
+    public static let capValue = "default"
+    /// `serverInfo.name` from `mcp --connector`. A helper older than the flag ignores it and answers with its usual name, so `polycarp browser serve` won't use it.
+    public static let connectorServerName = "polycarp-connector"
     public static func isRemote(_ caller: String?) -> Bool { caller?.hasPrefix("remote ") == true }
 }
 

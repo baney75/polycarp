@@ -156,7 +156,9 @@ The connector is the one remote way onto the agent workspace, and it is off unti
 session granted `computer.read` or `computer.act` its own `baneyspaces mcp --connector`, named from a fixed list (never `lend`). The
 app sends those calls to a second router capped at `forRemote`: Default at most, so Full Access on this Mac never reaches a connector,
 Read Only stops it, and it can't lend itself anything. What it can touch is what Default allows: the agent workspace, apps from the
-short list, windows you lent. Open and Save panels and documents from outside the handoff folder stay refused.
+short list, windows you lent. No agent drives an Open or Save panel on any window, and an app started for an agent can't show a
+document from outside the handoff folder; a lent app is lent with what it shows. `serve` uses only a helper that answers as
+`polycarp-connector`, and that helper asks the app on every call whether it caps connectors, so an old part never runs a connector uncapped.
 
 Targets are a ref, a window id, or a pid. An app name resolves only when exactly one matching process
 has windows in scope; otherwise the command fails with `ambiguous` and lists the candidates.

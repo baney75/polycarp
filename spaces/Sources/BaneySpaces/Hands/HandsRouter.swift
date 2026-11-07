@@ -144,26 +144,29 @@ final class HandsRouter {
         return inspectProblem(now)
     }
 
-    /// Windows of a process BaneySpaces started for an agent are used only while they show nothing of Donovan's:
-    /// no document from outside the handoff folder (a restored one, or one opened through a panel), and never an
-    /// Open or Save panel, which would browse his files. Checked on every use, so a late window is covered too.
-    /// Under Full Access documents are open, but no window of any process is used while it is (or holds) a panel.
+    /// No window is used while it is or holds an Open or Save panel, which would browse his files, in any mode. Windows of a process
+    /// BaneySpaces started for an agent are also used only while they show no document from outside the handoff folder (a restored
+    /// one, or one opened through a panel). Checked on every use, so a late window is covered too.
     private func inspectProblem(_ w: HandsWindow) -> HandsError? {
-        let full = access == .full
         let (owned, seen) = onMain { (host.agentOwned(), host.inspect(w.id)) }
-        if full {
-            guard seen.panel else { return nil }
-            // Not remembered: one of Donovan's windows with a sheet up is usable again once the sheet closes.
+        let agentOwned = owned.contains(w.pid)
+        switch WindowInspection.decide(full: access == .full, agentOwned: agentOwned, panel: seen.panel, document: seen.document, handoff: Self.handoffFolder) {
+        case .usable:
+            return nil
+        case .panel:
+            // Remembered only for an agent's own process: one of Donovan's windows with a sheet up is usable again once the sheet closes.
+            if agentOwned, access != .full { remember(w.id) }
             return HandsError(.needsSandbox, "window \(w.id) of \(w.app) is or holds an Open or Save panel",
-                              suggestion: "Agents never drive an Open or Save panel, even with full access. Wait for it to close, or open the file with `polycarp-spaces agent open <app> <file>`.", retry: .never)
+                              suggestion: "Agents never drive an Open or Save panel. Wait for it to close, or open the file with `polycarp-spaces agent open <app> <file in the handoff folder>`.", retry: .never)
+        case .outsideDocument:
+            remember(w.id)
+            return HandsError(.needsSandbox, "window \(w.id) of \(w.app) shows a document from outside the handoff folder",
+                              suggestion: "Agents work only on files from the handoff folder. Open the file with `polycarp-spaces agent open <app> <file in the handoff folder>`.", retry: .never)
         }
-        guard owned.contains(w.pid) else { return nil }
-        var why: String?
-        if seen.panel { why = "window \(w.id) of \(w.app) is an Open or Save panel" }
-        else if let doc = seen.document, !doc.isEmpty, !HandoffPath.contains(document: doc, in: Self.handoffFolder) { why = "window \(w.id) of \(w.app) shows a document from outside the handoff folder" }
-        guard let why else { return nil }
-        Self.refusedLock.lock(); Self.refused.insert(w.id); Self.refusedLock.unlock()
-        return HandsError(.needsSandbox, why, suggestion: "Agents work only on files from the handoff folder and never drive an Open or Save panel. Open the file with `polycarp-spaces agent open <app> <file>`.", retry: .never)
+    }
+
+    private func remember(_ id: UInt32) {
+        Self.refusedLock.lock(); Self.refused.insert(id); Self.refusedLock.unlock()
     }
 
     private func windowJSON(_ w: HandsWindow, _ scope: ScopeDecision) -> JSONValue {

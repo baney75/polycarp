@@ -417,6 +417,7 @@ final class SessionController {
             info["hands"] = AXIsProcessTrusted() ? "ready" : "needs Accessibility"
             info["lent"] = HandsLends.shared.current().active(now: Date()).map(\.app).joined(separator: ", ")
             info["version"] = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+            info[HandsCaller.capKey] = HandsCaller.capValue
             info["polycarp_theme"] = Self.polycarpThemeStatus()
             return .init(ok: true, info: info)
         case .list:

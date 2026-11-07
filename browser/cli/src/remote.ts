@@ -50,7 +50,7 @@ export const SCOPES: Record<string, { tools: string[]; what: string }> = {
 	"computer.act": {
 		tools: COMPUTER_ACT_TOOLS,
 		// The app holds a connector to these windows whatever else is on (Hands router's cap, SECURITY.md).
-		what: "Click and type in those windows, and start apps from Polycarp's short list. Never your other windows, even with Full Access on",
+		what: "See those windows, click and type in them, and start apps from Polycarp's short list. Never your other windows, even with Full Access on",
 	},
 	"library.read": { tools: ["library_search", "library_cite"], what: "Search and cite the source library" },
 	"library.write": { tools: ["library_add"], what: "Add sources to the library (fetches from doi.org, OpenAlex, Crossref)" },
@@ -430,6 +430,8 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		};
 		const allowed = toolsFor(scopes);
 		// Each session gets its own browser session (its own tab group), even under one token.
+		// Before the wait below: closeSessions() during it must reach this session too.
+		const born = generation;
 		const computer = await openComputer(allowed);
 		const { server, client } = createMcpServer({
 			name: `remote-${label}`,
@@ -438,7 +440,6 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 			remote: true,
 			computer,
 		});
-		const born = generation;
 		const transport = new StreamableHTTPServerTransport({
 			sessionIdGenerator: () => randomUUID(),
 			onsessioninitialized: (id) => {
