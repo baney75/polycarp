@@ -65,7 +65,8 @@ const longest = async () => {
 };
 const results = {};
 const note = async (name, ms) => {
-	(results[name] ??= []).push(ms);
+	results[name] ??= [];
+	results[name].push(ms);
 	console.log(name.padEnd(24), String(ms).padStart(6), "ms ", await longest());
 };
 
