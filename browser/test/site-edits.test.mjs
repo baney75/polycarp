@@ -132,8 +132,12 @@ test("syncs never run side by side, so a script turned off can't come back", asy
 });
 
 test("a site shared by many others is refused, and so is a parent of a guarded site", () => {
-	for (const shared of ["github.io", "co.uk", "com.au", "vercel.app"]) assert.throws(() => store.normalizeHost(shared), /shared by many sites/, shared);
-	assert.equal(store.normalizeHost("someone.github.io"), "someone.github.io");
+	// From the Public Suffix List, both sections: the list's own entries, a wildcard rule (*.ck) and private suffixes.
+	for (const shared of ["github.io", "co.uk", "com.au", "vercel.app", "uk.com", "surge.sh", "blogspot.com", "anything.kawasaki.jp"]) {
+		assert.throws(() => store.normalizeHost(shared), /shared by many sites/, shared);
+	}
+	assert.equal(store.normalizeHost("city.kawasaki.jp"), "city.kawasaki.jp", "an exception to a wildcard rule is a site");
+	for (const site of ["someone.github.io", "bbc.co.uk", "x.com", "example.uk.com"]) assert.equal(store.normalizeHost(site), site);
 	assert.equal(store.guardedUnder("example.com", ["login.example.com:443"]), "login.example.com");
 	assert.equal(store.guardedUnder("example.com", ["example.org"]), undefined);
 });
@@ -156,7 +160,10 @@ test("an agent allowed on a site can't reach a guarded site under it", async () 
 test("selectors that would run into the next rule, and patterns that block everything, are refused", () => {
 	for (const bad of ["/*", ".a /*", ".a:not(.b", '[data-x="y', ".a)"]) assert.throws(() => store.checkSelectors(bad), store.SiteEditError, bad);
 	assert.equal(store.checkSelectors('a[href*="ad"]:not(.keep)'), 'a[href*="ad"]:not(.keep)');
-	for (const bad of ["https://", "|https:", "||*ads", "||*.doubleclick.net^", "wss://*"]) assert.throws(() => store.checkPattern(bad), /block everything/, bad);
+	for (const bad of ["https://", "|https:", "||*ads", "||*.doubleclick.net^", "wss://*", "*http", "|http*", "https*://"]) {
+		assert.throws(() => store.checkPattern(bad), /block everything/, bad);
+	}
+	assert.throws(() => store.checkSelectors('[data-x="\n"]'), /one line/);
 });
 
 test("the same edit twice is one edit, and there is a limit", () => {

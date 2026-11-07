@@ -1,3 +1,5 @@
+import { PUBLIC_SUFFIX_RULES } from "./public-suffixes.js";
+
 /**
  * Site edits: changes to how a site looks or loads, kept per site and applied on every visit.
  *
@@ -43,41 +45,34 @@ const MAX_SCRIPT = 50_000;
 export class SiteEditError extends Error {}
 
 /** "https://www.X.com/home" or "X.com" -> "x.com". Throws on anything that isn't a plain host. */
-/**
- * Suffixes many unrelated sites share. An edit there would reach all of them, so it's refused. Not the whole public suffix list:
- * the common ones, and every two-letter country code with a short second-level name (co.uk, com.au).
- */
-const SHARED = new Set([
-	"github.io",
-	"gitlab.io",
-	"blogspot.com",
-	"wordpress.com",
-	"tumblr.com",
-	"substack.com",
-	"medium.com",
-	"vercel.app",
-	"netlify.app",
-	"pages.dev",
-	"workers.dev",
-	"herokuapp.com",
-	"web.app",
-	"firebaseapp.com",
-	"appspot.com",
-	"azurewebsites.net",
-	"cloudfront.net",
-	"s3.amazonaws.com",
-	"glitch.me",
-	"repl.co",
-	"fly.dev",
-	"onrender.com",
-	"ngrok.io",
-	"ngrok-free.app",
-	"trycloudflare.com",
-	"ts.net",
-]);
+let suffixes: { exact: Set<string>; wild: Set<string>; except: Set<string> } | undefined;
 
+/** The Public Suffix List, read once: exact rules, "*.x" wildcards and "!x" exceptions. */
+function suffixRules() {
+	if (suffixes) return suffixes;
+	const exact = new Set<string>();
+	const wild = new Set<string>();
+	const except = new Set<string>();
+	for (const rule of PUBLIC_SUFFIX_RULES.split("\n")) {
+		if (rule.startsWith("!")) except.add(rule.slice(1));
+		else if (rule.startsWith("*.")) wild.add(rule.slice(2));
+		else exact.add(rule);
+	}
+	suffixes = { exact, wild, except };
+	return suffixes;
+}
+
+/**
+ * Whether `host` is a suffix many unrelated sites share (com, co.uk, github.io, uk.com, surge.sh), by the Public Suffix List,
+ * private section included. An edit there would reach all of them. Hosts are lowercase ASCII here (normalizeHost allows no
+ * other), and the list's non-ASCII rules never match one, which is the safe direction: such a host is refused anyway.
+ */
 export function sharedSuffix(host: string): boolean {
-	return SHARED.has(host) || /^(co|com|org|net|gov|edu|ac|or|ne|go)\.[a-z]{2}$/.test(host);
+	const { exact, wild, except } = suffixRules();
+	if (except.has(host)) return false;
+	if (exact.has(host)) return true;
+	const dot = host.indexOf(".");
+	return dot > 0 && wild.has(host.slice(dot + 1));
 }
 
 /** A guarded host ("host" or "host:port") that `host` or one of its subdomains is, if any: an edit on `host` would reach it. */
@@ -137,6 +132,8 @@ export function checkSelectors(raw: string): string {
 		throw new SiteEditError("Only selectors: no braces, semicolons, @ rules, backslashes or url().");
 	// An open comment, bracket, parenthesis or quote would run into the next edit's rule in the same sheet.
 	if (/\/\*|\*\//.test(selectors)) throw new SiteEditError("No comments in selectors.");
+	// A line break ends a CSS string early, so a quote that looks closed here wouldn't be in the sheet.
+	if (/[\r\n\f]/.test(selectors)) throw new SiteEditError("Selectors go on one line.");
 	if (!balanced(selectors)) throw new SiteEditError("Unbalanced brackets, parentheses or quotes in the selectors.");
 	return selectors;
 }
@@ -167,13 +164,10 @@ export function checkPattern(raw: string): string {
 		throw new SiteEditError("Plain ASCII only in a pattern. Encode other characters as the URL does (%C3%BC).");
 	if (pattern.slice(2).includes("||") || (pattern.includes("||") && !pattern.startsWith("||")))
 		throw new SiteEditError("|| goes only at the start, for a domain: ||ads.example.com^");
-	// A bare "*", "|", "^" or the like would block everything the site loads.
-	// So would a scheme alone ("https://") or a domain that starts with a wildcard ("||*ads").
-	if (
-		pattern.replace(/[*|^/]/g, "").length < 3 ||
-		/^\|?(https?|wss?):?\/*\*?$/i.test(pattern) ||
-		/^\|\|\*/.test(pattern)
-	)
+	// A bare "*", "|", "^", a scheme ("https://"), or a domain that starts with a wildcard ("||*ads") would block everything the
+	// site loads: what's left once wildcards, anchors, separators and scheme words are gone must name something.
+	const named = pattern.replace(/https?|wss?/gi, "").replace(/[*|^/:.]/g, "");
+	if (named.length < 3 || /^\|\|\*/.test(pattern))
 		throw new SiteEditError("That pattern would block everything on the site. Name what to block.");
 	return pattern;
 }

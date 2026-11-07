@@ -143,6 +143,15 @@ export function syncSiteEdits(): Promise<void> {
 	return running;
 }
 
+/** Same host: a page that only rewrote its own address (history.replaceState at load) is still the page that committed. */
+function sameHost(a: string, b: string): boolean {
+	try {
+		return new URL(a).host === new URL(b).host;
+	} catch {
+		return false;
+	}
+}
+
 let started = false;
 
 export function startSiteEdits(): void {
@@ -152,7 +161,7 @@ export function startSiteEdits(): void {
 		void Promise.all([load(), restoreApplied()]).then(async ([state]) => {
 			// The frame may have moved on while storage answered: a sheet for the old site never goes into the new one.
 			const now = await chrome.webNavigation.getFrame?.({ tabId: d.tabId, frameId: d.frameId }).catch(() => null);
-			if (now && now.url !== d.url) return;
+			if (now && !sameHost(now.url, d.url)) return;
 			if (
 				state.edits.some((e) => e.kind === "hide" && e.on && onHost(d.url, e.host)) ||
 				applied.has(`${d.tabId}:${d.frameId}`)
