@@ -3,6 +3,7 @@
  * one exact fix per failure. Exits 1 when any check fails.
  */
 
+import { claudeRulesLeft } from "./always-allow.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -340,10 +341,14 @@ function harnessChecks(): Check[] {
 		.filter((h) => h.detected)
 		.map((h): Check => {
 			const id = `mcp:${h.id}`;
-			if (h.configured === true) return { id, status: "ok", label: `${h.name}: Polycarp MCP server configured` };
+			if (h.configured === true) {
+				const left = h.id === "claude" ? claudeRulesLeft() : 0;
+				if (left) return { id, status: "warn", label: `${h.name}: ${left} permission rule(s) still name tabkyra`, detail: "They match nothing now: an allow prompts again, and a deny no longer denies.", fix: `${COMMAND_NAME} setup` };
+				return { id, status: "ok", label: `${h.name}: Polycarp MCP server configured` };
+			}
 			const replace = h.configured === "stale" || h.configured === "other";
 			let fix: string;
-			if (h.addCommand) fix = replace && h.removeCommand ? (h.oldName ? `${shellJoin(h.addCommand)} && ${shellJoin(h.removeCommand)}` : `${shellJoin(h.removeCommand)} && ${shellJoin(h.addCommand)}`) : shellJoin(h.addCommand);
+			if (h.addCommand) fix = replace && h.removeCommand ? (h.oldName ? `${COMMAND_NAME} setup` : `${shellJoin(h.removeCommand)} && ${shellJoin(h.addCommand)}`) : shellJoin(h.addCommand);
 			else if (h.snippet?.startsWith("{")) fix = `${replace ? "Replace the Polycarp entry in" : "Add this to"} ${h.configFile}:\n${h.snippet}`;
 			else fix = h.snippet ?? "";
 			if (h.configured === undefined) {

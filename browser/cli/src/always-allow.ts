@@ -54,6 +54,17 @@ function write(file: string, settings: Record<string, unknown>): void {
 	renameSync(temporary, target);
 }
 
+/** Permission rules still naming the old server: they match nothing, so an allow prompts and a deny stops denying. */
+export function claudeRulesLeft(home = homedir()): number {
+	try {
+		const permissions = (JSON.parse(readFileSync(settingsFile(home), "utf8")) as { permissions?: Record<string, unknown> }).permissions ?? {};
+		const old = `mcp__${OLD_MCP_NAME}`;
+		return ["allow", "deny", "ask"].flatMap((list) => (Array.isArray(permissions[list]) ? permissions[list] : [])).filter((rule) => rule === old || (typeof rule === "string" && rule.startsWith(`${old}__`))).length;
+	} catch {
+		return 0;
+	}
+}
+
 /**
  * After an entry moves to the new name, rules naming the old one no longer match anything: an allow prompts again, and worse,
  * a deny stops denying. Permission rules move with it. What else mentions it (a hook) is reported, not guessed at.
@@ -73,7 +84,8 @@ export function moveClaudeRules(home = homedir()): { rewritten: number; elsewher
 		const rules = permissions[list];
 		if (!Array.isArray(rules)) continue;
 		permissions[list] = rules.map((rule) => {
-			if (typeof rule !== "string" || !rule.startsWith(old)) return rule;
+			// `mcp__tabkyra` or `mcp__tabkyra__run_js`, never another server whose name starts the same way.
+			if (typeof rule !== "string" || !(rule === old || rule.startsWith(`${old}__`))) return rule;
 			rewritten += 1;
 			return `mcp__${MCP_NAME}${rule.slice(old.length)}`;
 		});

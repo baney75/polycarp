@@ -253,12 +253,13 @@ test("an entry under the old name moves to polycarp, and nothing else is touched
 	fakeHarness("codex", launcher());
 	const claude = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "mcp:claude");
 	assert.match(claude.label, /old name/);
-	assert.match(claude.fix, /^claude mcp add --scope user polycarp .* && claude mcp remove --scope user tabkyra$/, "the new entry goes in first");
+	assert.match(claude.fix, / setup$/, "setup moves the permission rules with the entry");
 
 	run(["setup", "--yes", "--no-wait"]);
 	const calls = readFileSync(harnessLog, "utf8");
 	assert.ok(calls.includes("claude mcp remove --scope user tabkyra"), calls);
 	assert.ok(calls.includes("claude mcp add --scope user polycarp"), calls);
+	assert.ok(calls.indexOf("claude mcp add") < calls.indexOf("claude mcp remove"), "the new entry goes in first");
 	assert.ok(!calls.includes("codex mcp add"), "a current entry is left alone");
 });
 
@@ -293,3 +294,21 @@ test("turning Claude Code's always-allow on takes a terminal, and its entry unde
 	assert.match(oldName.out, /current name/);
 });
 
+test("rules under the old name move even when the entry was moved by hand, and doctor says so until they have", () => {
+	writeFileSync(harnessLog, "");
+	fakeHarness("claude", launcher());
+	const settings = join(home, ".claude", "settings.json");
+	mkdirSync(join(home, ".claude"), { recursive: true });
+	writeFileSync(settings, JSON.stringify({ permissions: { deny: ["mcp__tabkyra__run_js", "mcp__tabkyra-work__run_js"] } }));
+	try {
+		const before = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "mcp:claude");
+		assert.equal(before.status, "warn", JSON.stringify(before));
+		assert.match(before.label, /1 permission rule/, "another server's rule doesn't count");
+		run(["setup", "--yes", "--no-wait"]);
+		assert.deepEqual(JSON.parse(readFileSync(settings, "utf8")).permissions.deny, ["mcp__polycarp__run_js", "mcp__tabkyra-work__run_js"]);
+		const after = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "mcp:claude");
+		assert.equal(after.status, "ok");
+	} finally {
+		rmSync(settings, { force: true });
+	}
+});

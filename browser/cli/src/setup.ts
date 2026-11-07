@@ -230,11 +230,6 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 				const failedAt = commands.findIndex((command) => !runCommand(command));
 				if (failedAt === -1) {
 					console.log(`  ${sym.ok} ${h.name} is set up.`);
-					if (h.oldName && h.id === "claude") {
-						const moved = moveClaudeRules();
-						if (moved.rewritten) console.log(`    ${c.dim(`${moved.rewritten} permission rule(s) in Claude Code's settings now name polycarp.`)}`);
-						if (moved.elsewhere) console.log(`    ${sym.warn} ${c.dim("Claude Code's settings still mention mcp__tabkyra outside its permission rules (a hook, say). Those no longer match.")}`);
-					}
 				}
 				else {
 					ok = false;
@@ -251,6 +246,12 @@ async function connectHarnesses(options: SetupOptions): Promise<boolean> {
 		} else if (h.snippet) {
 			console.log(`  ${sym.dot} ${c.bold(h.name)}: run ${c.bold(h.snippet)}`);
 		}
+	}
+	// However the entry got its new name (this run, a pasted command, an earlier version), rules naming the old one move now.
+	if (harnesses().find((h) => h.id === "claude")?.configured === true) {
+		const moved = moveClaudeRules();
+		if (moved.rewritten) console.log(`  ${sym.ok} ${moved.rewritten} permission rule(s) in Claude Code's settings now name polycarp.`);
+		if (moved.elsewhere) console.log(`  ${sym.warn} ${c.dim("Claude Code's settings still mention mcp__tabkyra outside its permission rules (a hook, say). Those no longer match.")}`);
 	}
 	await offerSkill(options);
 	return ok;
