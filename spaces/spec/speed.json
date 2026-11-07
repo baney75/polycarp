@@ -10,7 +10,7 @@
     "model": false
   },
   "transcribeRtf": {
-    "baseline": null
+    "baseline": 0.047
   },
   "browser": {
     "versionMs": 53.2,
@@ -21,5 +21,10 @@
     "arch": "arm64",
     "measuredWith": "scripts/browser-speed.mjs",
     "toleranceOverRecorded": 0.25
+  },
+  "longDictation": {
+    "about": "66 s of speech: core/ffi/tests/speed.rs long_dictation_in_pieces. Wait after release.",
+    "allAtOnceMs": 2934,
+    "inPiecesMs": 57
   }
 }
