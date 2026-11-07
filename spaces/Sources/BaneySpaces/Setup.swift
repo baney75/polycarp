@@ -348,6 +348,15 @@ final class SetupModel: ObservableObject {
         }
     }
 
+    /// Settings > Agents, "Turn On Everything…". Asks in one sheet; nothing changes on a no.
+    func turnOnEverything() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, AgentAccess.shared.requestEverything() else { return }
+            self.agentAccess = AgentAccess.shared.current
+            BrowserModel.shared.turnOnEverything()
+        }
+    }
+
     func installHooks() {
         onInstallHooks?()
         hooks = hooksInstalled()
@@ -801,6 +810,13 @@ struct SetupView: View {
             }
             SettingsNote(model.agentAccess.detail, tone: model.agentAccess == .full ? .urgent : .quiet)
             SettingsNote("Only you change this, here or in the Polycarp menu. More access asks you first.")
+            SettingsRow(AgentEverything.title, help: AgentEverything.why) {
+                if AgentEverything.isOn(access: model.agentAccess, anySite: browserModel.status?.anySite, claudeAllowed: browserModel.status?.claudeAllowed ?? false, claudeReady: browserModel.status?.claudeReady ?? false) {
+                    Text(AgentEverything.on).font(Chrome.font(12)).foregroundStyle(Chrome.muted)
+                } else {
+                    Button(AgentEverything.button) { model.turnOnEverything() }
+                }
+            }
         }
 
         SettingsGroup("Always allow") {

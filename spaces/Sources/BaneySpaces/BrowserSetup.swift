@@ -129,6 +129,16 @@ final class BrowserModel: ObservableObject {
     /// Always allow: agents open any site without asking, or ask again.
     func setAnySite(_ on: Bool) { runThenRefresh([on ? "allow-all" : "ask"], failure: "Changing site access failed") }
 
+    /// What "Turn on everything" covers in the browser and Claude Code, after the person's yes. Each is the same switch as in Settings.
+    func turnOnEverything() {
+        if status?.claudeReady == true, status?.claudeAllowed != true { setClaudeAllowed(true) }
+        switch status?.anySite {
+        case .some(false): setAnySite(true)
+        case .some(true): break
+        case nil: message = AgentEverything.openBrowser
+        }
+    }
+
     /// Always allow: Claude Code stops asking before Polycarp's tools, or asks again.
     func setClaudeAllowed(_ on: Bool) {
         busy = true; message = nil

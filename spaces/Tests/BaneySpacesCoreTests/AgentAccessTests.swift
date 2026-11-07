@@ -218,10 +218,12 @@ final class AgentAccessSurfaceTests: XCTestCase {
         let ask = try XCTUnwrap(request.range(of: "if new.widens(from: old), !AccessConsent.ask(new) { return false }"))
         XCTAssertTrue(ask.lowerBound < request.range(of: "set(new)")!.lowerBound, "asked before it changes")
         let consent = try HandsSourceTests.code("Sources/BaneySpaces/LendConsent.swift")
-        let sheet = try XCTUnwrap(HandsSourceTests.block(after: "static func ask(_ mode: AgentAccessMode)", in: consent))
+        let ask2 = try XCTUnwrap(HandsSourceTests.block(after: "static func ask(_ mode: AgentAccessMode)", in: consent))
+        XCTAssertTrue(ask2.contains("Give Full Access"))
+        let sheet = try XCTUnwrap(HandsSourceTests.block(after: "private static func confirm(", in: consent))
         XCTAssertTrue(sheet.contains("button.isEnabled = false"))
         XCTAssertTrue(sheet.contains("LendConsent.notByHand(alert: alert, button: button, enabledAt: enabledAt)"), "a hardware click on the button only")
-        XCTAssertTrue(sheet.range(of: "alert.addButton(withTitle: \"Keep")!.lowerBound < sheet.range(of: "Give Full Access")!.lowerBound, "the default button keeps")
+        XCTAssertTrue(sheet.range(of: "alert.addButton(withTitle: \"Keep")!.lowerBound < sheet.range(of: "alert.addButton(withTitle: confirmTitle)")!.lowerBound, "the default button keeps")
     }
 
     func testEveryEntryPointReadsTheMode() throws {
@@ -272,3 +274,28 @@ final class AgentAccessSurfaceTests: XCTestCase {
         XCTAssertTrue(decide.contains("if book.isLent(w, now: Date()) { return .lent }"), "a lend still wins (second-N4)")
     }
 }
+
+final class AgentEverythingTests: XCTestCase {
+    func testEverythingIsOnOnlyWhenEveryPartIs() {
+        XCTAssertTrue(AgentEverything.isOn(access: .full, anySite: true, claudeAllowed: true, claudeReady: true))
+        XCTAssertFalse(AgentEverything.isOn(access: .standard, anySite: true, claudeAllowed: true, claudeReady: true))
+        XCTAssertFalse(AgentEverything.isOn(access: .full, anySite: false, claudeAllowed: true, claudeReady: true))
+        XCTAssertFalse(AgentEverything.isOn(access: .full, anySite: nil, claudeAllowed: true, claudeReady: true), "no browser answered: not on")
+        XCTAssertFalse(AgentEverything.isOn(access: .full, anySite: true, claudeAllowed: false, claudeReady: true))
+        XCTAssertTrue(AgentEverything.isOn(access: .full, anySite: true, claudeAllowed: false, claudeReady: false), "no Claude Code here: nothing to ask of it")
+    }
+
+    func testTheSheetIsTheOnlyWayInAndItNeverCoversTheConnector() throws {
+        let access = try HandsSourceTests.code("Sources/BaneySpaces/Hands/AgentAccess.swift")
+        let request = try XCTUnwrap(HandsSourceTests.block(after: "func requestEverything()", in: access))
+        XCTAssertTrue(request.contains("guard AccessConsent.askEverything() else { return false }"), "a person's click comes first")
+        let consent = try HandsSourceTests.code("Sources/BaneySpaces/LendConsent.swift")
+        let confirm = try XCTUnwrap(HandsSourceTests.block(after: "private static func confirm(", in: consent))
+        XCTAssertTrue(confirm.contains("LendConsent.notByHand(alert: alert, button: button, enabledAt: enabledAt)"), "the same real-click check as every widening")
+        XCTAssertTrue(AgentEverything.consentBody.contains("assistants on the web stay limited"))
+        let browser = try HandsSourceTests.code("Sources/BaneySpaces/BrowserSetup.swift")
+        let on = try XCTUnwrap(HandsSourceTests.block(after: "func turnOnEverything()", in: browser))
+        XCTAssertFalse(on.contains("requestEverything") || on.contains("set(.full)"), "the browser part never widens access by itself")
+    }
+}
+
