@@ -33,7 +33,7 @@ final class DockRestartGateTests: XCTestCase {
         XCTAssertTrue(quit.contains("dock.stop(restoreSystemDock: !forInstall)"))
         XCTAssertTrue(quit.contains("DockRestart.handOffBeforeQuit()"), "what the quit owes outlives it")
         XCTAssertLessThan(try XCTUnwrap(quit.range(of: "DockRestart.isQuitting = true")).lowerBound, try XCTUnwrap(quit.range(of: "dock.stop")).lowerBound)
-        XCTAssertTrue(EntryPoint.runsBesideAnotherCopy.contains(DockRestartHelper.argument), "it mustn't wait on the next launch's lock")
+        XCTAssertFalse(EntryPoint.runsBesideAnotherCopy.contains(DockRestartHelper.argument), "the app no longer runs as the helper")
     }
 
     func testNothingEverForcesARestartPastTheGate() throws {
@@ -79,6 +79,90 @@ final class DockRestartGateTests: XCTestCase {
 
     func testTheDockIsNotAgedByLaunchDate() throws {
         XCTAssertFalse(try source("Sources/BaneySpaces/DockRestart.swift").contains("launchDate"), "nil for anything launchd starts")
+    }
+
+    func testTheHelperIsTheToolNotTheApp() throws {
+        // A process running the app's own executable makes macOS answer `open` with -600, so Polycarp couldn't start while one
+        // waited. That failed an install on 2026-11-06.
+        let code = try source("Sources/BaneySpaces/DockRestart.swift")
+        XCTAssertTrue(code.contains("DockRestartHelper.tool(inBundle: Bundle.main.bundleURL)"))
+        XCTAssertFalse(code.contains("Bundle.main.executableURL"))
+        XCTAssertFalse(code.contains("runHelper"))
+        let main = try source("Sources/BaneySpaces/main.swift")
+        XCTAssertFalse(main.contains("DockRestart.run"), "the app no longer waits as the helper")
+        XCTAssertLessThan(try XCTUnwrap(main.range(of: "contains(DockRestartHelper.argument) { exit(0) }")).lowerBound, try XCTUnwrap(main.range(of: "EntryPoint.immediate")).lowerBound, "an older build's request can't start the app")
+        XCTAssertTrue(try source("Sources/baneyspaces-cli/main.swift").contains("DockRestartHelper.run(names:"))
+        XCTAssertEqual(DockRestartHelper.tool(inBundle: URL(fileURLWithPath: "/A/Polycarp.app")).path, "/A/Polycarp.app/Contents/Resources/bin/polycarp-spaces")
+        let install = try source("scripts/install-app.sh")
+        XCTAssertTrue(install.contains("MacOS/$EXECUTABLE --restart-when-safe"), "an install clears a helper from an older build")
+        XCTAssertTrue(install.contains("--restart-when-safe\" 2>/dev/null || true; }"), "finding none must not end the install under pipefail")
+    }
+
+    private func display(_ id: String, type: Int?, space: Int = 1) -> [String: Any] {
+        var current: [String: Any] = ["id64": space]
+        if let type { current["type"] = type }
+        return ["Display Identifier": id, "Current Space": current]
+    }
+
+    func testAnOrdinaryDesktopOnEveryDisplayIsSafe() {
+        let state = DockSpaces.parse(displays: [display("a", type: 0, space: 1), display("b", type: 0, space: 2)]) { _ in false }
+        XCTAssertFalse(state.unsafe)
+        XCTAssertFalse(state.animating)
+        XCTAssertEqual(state.ids, [1, 2])
+    }
+
+    func testFullScreenOnAnyDisplayIsUnsafeWhicheverComesFirst() {
+        // Review of #54: judging by the front window called these an ordinary desktop.
+        XCTAssertTrue(DockSpaces.parse(displays: [display("a", type: 0), display("b", type: 4)]) { _ in false }.unsafe)
+        XCTAssertTrue(DockSpaces.parse(displays: [display("a", type: 4), display("b", type: 0)]) { _ in false }.unsafe)
+    }
+
+    func testNotKnowingIsUnsafe() {
+        XCTAssertTrue(DockSpaces.parse(displays: []) { _ in false }.unsafe, "no answer, such as a sleeping display")
+        XCTAssertTrue(DockSpaces.parse(displays: [display("a", type: nil)]) { _ in false }.unsafe)
+        // Review of #54, round 2: a slide can't be seen without the call or a display's identifier.
+        XCTAssertTrue(DockSpaces.parse(displays: [display("a", type: 0)], isAnimating: nil).unsafe, "macOS dropped the animation call")
+        var unnamed = display("a", type: 0)
+        unnamed["Display Identifier"] = nil
+        XCTAssertTrue(DockSpaces.parse(displays: [unnamed]) { _ in false }.unsafe, "a display with no identifier")
+    }
+
+    func testASlideOnAnyDisplayCounts() {
+        let state = DockSpaces.parse(displays: [display("a", type: 0), display("b", type: 0)]) { $0 == "b" }
+        XCTAssertTrue(state.animating)
+        let afterSlide = DockSpaces.parse(displays: [display("a", type: 0, space: 9)]) { _ in false }
+        XCTAssertNotEqual(afterSlide.ids, DockSpaces.parse(displays: [display("a", type: 0, space: 1)]) { _ in false }.ids, "two empty desktops differ")
+    }
+
+    func testTheWindowServerAnswersOnThisMac() throws {
+        try XCTSkipIf(CGSessionCopyCurrentDictionary() == nil, "no window server session here")
+        // It's a private call, so a macOS that drops it should fail here rather than leave every restart waiting.
+        XCTAssertFalse(DockSpaces.current().ids.isEmpty, "the window server named the Space on each display")
+    }
+
+    func testANewPolycarpOwnsTheRestart() {
+        let now = Date()
+        let quitting = DockRestartHelper.Running(pid: 10, name: "Polycarp", started: now.addingTimeInterval(-500))
+        let reopened = DockRestartHelper.Running(pid: 20, name: "Polycarp", started: now.addingTimeInterval(-30))
+        let dock = DockRestartHelper.Running(pid: 30, name: "Dock", started: now.addingTimeInterval(-500))
+        XCTAssertFalse(DockRestartHelper.anotherAppOwnsIt(running: [quitting, dock], startedBy: 10, now: now), "the one quitting doesn't")
+        XCTAssertFalse(DockRestartHelper.anotherAppOwnsIt(running: [dock], startedBy: 10, now: now))
+        XCTAssertTrue(DockRestartHelper.anotherAppOwnsIt(running: [quitting, reopened, dock], startedBy: 10, now: now))
+    }
+
+    func testAOneShotDoesNotTakeTheRestartAway() {
+        // `Polycarp --check-settings` exits at once. The helper leaving for it would lose the restart.
+        let now = Date()
+        let oneShot = DockRestartHelper.Running(pid: 20, name: "Polycarp", started: now.addingTimeInterval(-1))
+        XCTAssertFalse(DockRestartHelper.anotherAppOwnsIt(running: [oneShot], startedBy: 10, now: now))
+    }
+
+    func testTheKernelListsThisUsersProcesses() {
+        let mine = DockRestartHelper.runningProcesses()
+        let me = mine.first { $0.pid == getpid() }
+        XCTAssertNotNil(me)
+        XCTAssertNotNil(me?.started)
+        XCTAssertFalse(me?.name.isEmpty ?? true)
     }
 
     func testAnOldInstallMarkerDoesNotSkipARealQuit() {

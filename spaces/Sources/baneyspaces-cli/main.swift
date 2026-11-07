@@ -113,6 +113,11 @@ func hasSwitch(_ name: String, in args: [String], valued: Set<String>) -> Bool {
     return false
 }
 
+// A quit left this behind to restart the Dock once that's safe. See `DockRestartHelper`.
+if CommandLine.arguments.count == 3, CommandLine.arguments[1] == DockRestartHelper.argument {
+    DockRestartHelper.run(names: Set(CommandLine.arguments[2].split(separator: ",").map(String.init)))
+}
+
 var argv = Array(CommandLine.arguments.dropFirst())
 // Only in front of the command: `agent run -- tool --on staging` is the tool's own flag.
 if argv.first == "--on", argv.count > 1 {

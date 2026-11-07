@@ -322,18 +322,6 @@ enum Windows {
         return result
     }
 
-    /// Whether a full-screen Space is what the screen shows: the front window says so, or the topmost ordinary window on
-    /// screen is exactly the size of a full-screen frame. Accessibility can't always see an app on its own Space, hence both.
-    static func onFullScreenSpace() -> Bool {
-        if frontIsFullScreen() { return true }
-        let frames = fullScreenFrames()
-        let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-        guard let top = onScreen.first(where: { ($0[kCGWindowLayer as String] as? Int) == 0 }),
-              let box = top[kCGWindowBounds as String] as? NSDictionary,
-              let bounds = CGRect(dictionaryRepresentation: box) else { return false }
-        return frames.contains { abs($0.minX - bounds.minX) < 1 && abs($0.minY - bounds.minY) < 1 && abs($0.width - bounds.width) < 1 && abs($0.height - bounds.height) < 1 }
-    }
-
     /// Whether the window in front is in full screen, on its own macOS Space.
     static func frontIsFullScreen() -> Bool {
         guard let pid = focusedPid() else { return false }
