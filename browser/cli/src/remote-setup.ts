@@ -392,8 +392,10 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 	let funnelBin = "";
 	let funnelDns = "";
 	let cloudflaredBin = "";
-	const cloudflareHost = options.cloudflare === undefined ? undefined : normalizeCloudflareHost(options.cloudflare);
-	if (options.cloudflare !== undefined && !cloudflareHost) return fail("problem", `${options.cloudflare} isn't a name a tunnel can have. Use one like polycarp.yourdomain.com.`, { code: "cloudflare_dns" });
+	// `remote setup` again on this route picks up where a failed run stopped, with the name it already has.
+	const cloudflareName = options.cloudflare ?? (previous?.route === "cloudflare" && !options.publicUrl ? new URL(previous.publicUrl).hostname : undefined);
+	const cloudflareHost = cloudflareName === undefined ? undefined : normalizeCloudflareHost(cloudflareName);
+	if (cloudflareName !== undefined && !cloudflareHost) return fail("problem", `${cloudflareName} isn't a name a tunnel can have. Use one like polycarp.yourdomain.com.`, { code: "cloudflare_dns" });
 	if (previous?.route === "cloudflare" && !cloudflareHost) return fail("problem", `A Cloudflare tunnel from an earlier setup is on. Run ${COMMAND_NAME} remote off first.`);
 	if (cloudflareHost) {
 		if (previous?.route === "funnel") return fail("problem", `Funnel from an earlier setup is on. Run ${COMMAND_NAME} remote off first.`);

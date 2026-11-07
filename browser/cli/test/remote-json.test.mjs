@@ -893,3 +893,19 @@ test("remote off stops a Cloudflare tunnel even with remote.json gone", async ()
 	assert.equal(existsSync(cfService(s)), false);
 });
 
+test("remote setup again on the Cloudflare route keeps its name", async () => {
+	const s = scenario("cf-again", { tailscale: false });
+	cloudflared(s);
+	signedIn(s);
+	await cloudflareSetup(s);
+	s.launcher();
+	const local = await localServer(`https://${CF_HOST}/mcp`);
+	try {
+		const raw = JSON.parse(readFileSync(join(s.env.TABKYRA_CONFIG_DIR, "remote.json"), "utf8"));
+		const again = await s.runAsync(["remote", "setup", "--json", "--port", String(local.port)]);
+		assert.equal(again.json().connectorUrl, `${raw.publicUrl}/mcp`, again.stdout);
+	} finally {
+		await local.close();
+	}
+});
+

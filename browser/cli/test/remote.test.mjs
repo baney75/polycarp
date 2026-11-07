@@ -215,6 +215,32 @@ test("tunnel tailscale removes the old path when it's this serve, and --public r
 	assert.ok(calls.indexOf("--set-path=/tabkyra off") !== -1 && calls.indexOf("--set-path=/tabkyra off") < calls.indexOf("funnel --bg"), calls);
 });
 
+test("tunnel tailscale --off takes down the old path too, and says when one isn't this serve", () => {
+	const bin = join(root, "bin-old-off");
+	mkdirSync(bin, { recursive: true });
+	const log = join(root, "tailscale-old-off.log");
+	const stub = (proxy) => {
+		writeFileSync(
+			join(bin, "tailscale"),
+			`#!/bin/sh\necho "$@" >> ${log}\nif [ "$1 $2" = "serve status" ]; then echo '{"Web":{"mac.example.ts.net:443":{"Handlers":{"/tabkyra":{"Proxy":"${proxy}"}}}}}'; fi\n`,
+		);
+		chmodSync(join(bin, "tailscale"), 0o755);
+	};
+	const path = withNode(bin);
+	stub("http://127.0.0.1:8787");
+	writeFileSync(log, "");
+	const off = cliRun(["tunnel", "tailscale", "--off", "--port", "8787"], { PATH: path });
+	assert.equal(off.code, 0, off.out);
+	assert.match(readFileSync(log, "utf8"), /^serve --https=443 --set-path=\/tabkyra off$/m);
+	assert.match(off.out, /\/tabkyra/);
+	stub("http://127.0.0.1:9999");
+	writeFileSync(log, "");
+	const other = cliRun(["tunnel", "tailscale", "--off", "--port", "8787"], { PATH: path });
+	assert.equal(other.code, 0, other.out);
+	assert.doesNotMatch(readFileSync(log, "utf8"), /--set-path=\/tabkyra off/);
+	assert.match(other.out, /left on/);
+});
+
 test("tunnel cloudflare without cloudflared says how to get it and exposes nothing", () => {
 	// A PATH holding only node: a real cloudflared (Homebrew puts it beside node) can't be found.
 	const bin = join(root, "node-only");
