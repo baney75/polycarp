@@ -252,7 +252,7 @@ final class AgentAccessSurfaceTests: XCTestCase {
         XCTAssertTrue(act.contains("check: actingCheck(w, ref: ref))"), "Read Only at delivery (sol-F2)")
         let bg = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
         XCTAssertTrue(bg.contains("let scopeCheck = actingCheck(w, ref: ref)"), "and for keys and pointer, retries included")
-        XCTAssertTrue(bg.contains("AgentAccess.shared.current == .full && !owned.contains(w.pid) ? .full : .agentWorkspace"), "sol-F3")
+        XCTAssertTrue(bg.contains("access == .full && !owned.contains(w.pid) ? .full : .agentWorkspace"), "sol-F3")
         let session = try HandsSourceTests.code("Sources/BaneySpaces/Session/SessionController.swift")
         let open = try XCTUnwrap(HandsSourceTests.between("case \"open\":", "case \"lend-ask\":", in: session))
         XCTAssertTrue(open.contains("let mode = remote ? AgentAccess.shared.current.forRemote : AgentAccess.shared.current"), "second-G4")
