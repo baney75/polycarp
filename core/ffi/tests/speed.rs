@@ -189,3 +189,95 @@ fn writing_baselines_leaves_every_other_key_alone() {
     assert_eq!(measured["transcribeRtf"]["baseline"], json!(0.123));
     assert_eq!(measured["startToReadyMs"]["model"], json!(true));
 }
+
+/// A long dictation in one voice, transcribed in pieces at its pauses, against all at once: each of the speech set's
+/// speakers says their clip over and over with a pause between. Needs POLYCARP_BENCH_MODELS.
+#[test]
+fn long_dictation_in_pieces_is_as_accurate_and_waits_less_at_release() {
+    let _serial = SERIAL.lock();
+    let Some(source) = models_source() else {
+        eprintln!("long dictation: no POLYCARP_BENCH_MODELS, not measured");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(source, dir.path().join("models")).unwrap();
+    store::set_data_dir(Some(dir.path().to_path_buf()));
+    let mut engine = models::Engine::load("parakeet-v3").unwrap();
+    let _ = engine.transcribe(&vec![0.0; 16_000], "en").unwrap();
+    let (mut whole_ms, mut release_ms, mut whole_wer, mut pieces_wer) = (vec![], vec![], vec![], vec![]);
+    for clip in benchmark::load_clips().unwrap().iter() {
+        let mut audio: Vec<f32> = vec![];
+        let mut reference = String::new();
+        while (audio.len() as f32) < 45.0 * 16_000.0 {
+            audio.extend_from_slice(&clip.samples);
+            audio.extend(std::iter::repeat_n(0.0002, 8_000)); // 500 ms
+            reference.push_str(&clip.text);
+            reference.push(' ');
+        }
+        let t = Instant::now();
+        let whole = engine.transcribe(&audio, "en").unwrap();
+        whole_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+
+        // What the worker does, in order: look at the audio not yet done every tenth of a second.
+        let mut text = String::new();
+        let mut done = 0;
+        let mut heard = 16_000;
+        while heard < audio.len() {
+            heard = (heard + 1_600).min(audio.len());
+            if let Some(cut) = polycarp_voice::pieces::find_cut(&audio[done..heard], 16_000) {
+                let piece = engine.transcribe(&audio[done..done + cut], "en").unwrap();
+                polycarp_voice::pieces::join(&mut text, &piece);
+                done += cut;
+            }
+        }
+        let t = Instant::now();
+        let last = engine.transcribe(&audio[done..], "en").unwrap();
+        release_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+        polycarp_voice::pieces::join(&mut text, &last);
+        whole_wer.push(benchmark::wer(&reference, &whole) as f64);
+        pieces_wer.push(benchmark::wer(&reference, &text) as f64);
+    }
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+    eprintln!(
+        "long dictation, one voice, 45 s+: all at once {:.0} ms, wer {:.4}; in pieces {:.0} ms at release, wer {:.4}",
+        mean(&whole_ms), mean(&whole_wer), mean(&release_ms), mean(&pieces_wer)
+    );
+    eprintln!("per voice, whole {whole_wer:.3?} pieces {pieces_wer:.3?}");
+    // Hesitating inside a sentence: each clip with a 700 ms silence at its quietest gap past the middle.
+    let ends = |t: &str| t.matches(['.', '?', '!']).count();
+    let mut extra_ends = 0;
+    let mut sentences = 0;
+    for clip in benchmark::load_clips().unwrap().iter() {
+        let middle = clip.samples.len() / 2;
+        let frames: Vec<f32> = clip.samples[middle..].chunks(320).map(|f| f.iter().map(|s| s * s).sum::<f32>()).collect();
+        let gap = middle + 320 * (0..frames.len().saturating_sub(5)).min_by(|a, b| frames[*a..*a + 5].iter().sum::<f32>().total_cmp(&frames[*b..*b + 5].iter().sum::<f32>())).unwrap();
+        let mut audio: Vec<f32> = vec![];
+        let mut plain: Vec<f32> = vec![];
+        for _ in 0..3 {
+            audio.extend_from_slice(&clip.samples[..gap]);
+            audio.extend(std::iter::repeat_n(0.0002, 11_200));
+            audio.extend_from_slice(&clip.samples[gap..]);
+            audio.extend(std::iter::repeat_n(0.0002, 8_000));
+            plain.extend_from_slice(&clip.samples);
+            plain.extend(std::iter::repeat_n(0.0002, 8_000));
+        }
+        let mut text = String::new();
+        let (mut done, mut heard) = (0, 16_000);
+        while heard < audio.len() {
+            heard = (heard + 1_600).min(audio.len());
+            if let Some(cut) = polycarp_voice::pieces::find_cut(&audio[done..heard], 16_000) {
+                polycarp_voice::pieces::join(&mut text, &engine.transcribe(&audio[done..done + cut], "en").unwrap());
+                done += cut;
+            }
+        }
+        polycarp_voice::pieces::join(&mut text, &engine.transcribe(&audio[done..], "en").unwrap());
+        let expected = ends(&engine.transcribe(&plain, "en").unwrap());
+        extra_ends += ends(&text).saturating_sub(expected);
+        sentences += expected;
+        eprintln!("hesitating: {}", text.chars().take(170).collect::<String>());
+    }
+    eprintln!("hesitating: {extra_ends} extra sentence ends against {sentences} real ones");
+    assert!(extra_ends * 5 <= sentences, "{extra_ends} false sentence ends in {sentences}");
+    assert!(mean(&pieces_wer) <= mean(&whole_wer) + 0.01, "pieces {pieces_wer:?} against whole {whole_wer:?}");
+    assert!(mean(&release_ms) < mean(&whole_ms) * 0.5, "{release_ms:?} ms at release against {whole_ms:?} ms");
+}
