@@ -94,6 +94,12 @@ jobs:
         working-directory: spaces
     steps:
       - uses: actions/checkout@v4
+      # Rust builds the same crates every run. The engine isn't cached: its script rebuilds that tree from a pinned tarball.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: |
+            core/ffi
+          key: spaces
       - name: Check the install scripts
         run: bash -n install.sh && bash -n uninstall.sh && bash -n scripts/bundle.sh && bash -n scripts/build-engine.sh && bash -n scripts/build-core.sh && bash -n scripts/build-browser.sh
       - name: Build the hands engine
@@ -113,6 +119,12 @@ jobs:
         working-directory: spaces
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: |
+            core/ffi
+            cli -> ../spaces/build/cli-target
+          key: spaces-bundle
       # The helper is compiled with Bun from the esbuild bundle; the extension needs the pinned siblings.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
