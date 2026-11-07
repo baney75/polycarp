@@ -49,8 +49,11 @@ final class BrowserModel: ObservableObject {
         guard let helper, !refreshing, PartsModel.shared.current.contains(.browser) else { return }
         refreshing = true
         pollQueue.async { [weak self] in
-            // A new app brings a new extension: the copy the browser loads is refreshed before anyone is asked to reload.
+            // A new app brings a new extension: the copy the browser loads is refreshed, and a browser running the old one
+            // reloads. With no browser connected the command does nothing, and the browser reads the new copy when it starts.
+            let before = self?.loadedBuild()
             _ = self?.loadableFolder()
+            if let before, let after = self?.loadedBuild(), before != after { _ = Self.run(helper, ["reload"], timeout: 8) }
             let result = Self.run(helper, ["doctor", "--json"], timeout: 12)
             let parsed = BrowserStatus.parse(result.out)
             DispatchQueue.main.async {
@@ -78,6 +81,11 @@ final class BrowserModel: ObservableObject {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
         return ExtensionCopy.refresh(source: source, supportDir: Product.supportDir(home: home), appVersion: version)
+    }
+
+    /// The build in the folder the browser loads.
+    private func loadedBuild() -> String? {
+        ExtensionCopy.buildID(of: ExtensionCopy.destination(supportDir: Product.supportDir(home: FileManager.default.homeDirectoryForCurrentUser)))
     }
 
     /// The version of the extension shipped in this app.

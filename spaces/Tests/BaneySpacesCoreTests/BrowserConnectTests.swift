@@ -152,6 +152,25 @@ final class BrowserConnectTests: XCTestCase {
         return src
     }
 
+    func testANewBuildOfTheSameVersionReachesTheBrowser() throws {
+        // 2026-11-06: Previews keep the same versions, so Helium kept a five-hour-old copy with the old logo and the slow panel.
+        let root = fm.temporaryDirectory.appendingPathComponent("extcopy-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        let support = root.appendingPathComponent("Support", isDirectory: true)
+        let src = try fakeExtension(root, version: "1.1.10")
+        let info = src.appendingPathComponent("build-info.json")
+        try #"{"id":"one"}"#.write(to: info, atomically: true, encoding: .utf8)
+        let dest = try XCTUnwrap(ExtensionCopy.refresh(source: src, supportDir: support, appVersion: "0.3.0"))
+        XCTAssertEqual(ExtensionCopy.buildID(of: dest), "one")
+        try "b".write(to: src.appendingPathComponent("ort/file.js"), atomically: true, encoding: .utf8)
+        ExtensionCopy.refresh(source: src, supportDir: support, appVersion: "0.3.0")
+        XCTAssertEqual(try String(contentsOf: dest.appendingPathComponent("ort/file.js"), encoding: .utf8), "a", "the same build isn't copied again")
+        try #"{"id":"two"}"#.write(to: info, atomically: true, encoding: .utf8)
+        ExtensionCopy.refresh(source: src, supportDir: support, appVersion: "0.3.0")
+        XCTAssertEqual(ExtensionCopy.buildID(of: dest), "two")
+        XCTAssertEqual(try String(contentsOf: dest.appendingPathComponent("ort/file.js"), encoding: .utf8), "b")
+    }
+
     func testTheCopyIsMadeOnceAndRefreshedWhenTheVersionChanges() throws {
         let root = fm.temporaryDirectory.appendingPathComponent("extcopy-\(UUID().uuidString)", isDirectory: true)
         defer { try? fm.removeItem(at: root) }
@@ -203,7 +222,7 @@ final class BrowserConnectTests: XCTestCase {
         for i in 0..<200 {
             XCTAssertEqual(try? String(contentsOf: dest.appendingPathComponent("ort/f\(i).js"), encoding: .utf8), "file \(i)", "f\(i).js is whole")
         }
-        XCTAssertEqual(try String(contentsOf: support.appendingPathComponent(ExtensionCopy.stampName), encoding: .utf8), "2|1.0.0")
+        XCTAssertEqual(try String(contentsOf: support.appendingPathComponent(ExtensionCopy.stampName), encoding: .utf8), "2|1.0.0|?")
         XCTAssertEqual(try fm.contentsOfDirectory(atPath: support.path).sorted(), ["Extension", "Extension.stamp"], "no staging folder is left")
     }
 
