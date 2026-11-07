@@ -1,7 +1,7 @@
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { html, LitElement, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
-import { hostCommand } from "../bridge/host-command.js";
+import { builtHelperCommand, hostCommand } from "../bridge/host-command.js";
 import { COMMAND_BOX_CLASS } from "../components/command-box.js";
 import { Toast } from "../components/Toast.js";
 import { request, SubscriptionRequestError, type SubscriptionStatus, subscriptionStatus } from "./client.js";
@@ -240,6 +240,7 @@ export class SubscriptionsSection extends LitElement {
 									}
 								</p>
 								${this.command("Set up Polycarp", `${hostCommand()} setup`)}
+								${builtHelperCommand("setup") ? this.command("If you built the helper yourself", builtHelperCommand("setup") as string) : nothing}
 							</div>`
 						: nothing
 				}

@@ -4,7 +4,7 @@ import { html, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { live } from "lit/directives/live.js";
 import { deviceSetupPrompt, remoteSetupPrompt } from "../agent-setup-prompt.js";
-import { hostCommand } from "../bridge/host-command.js";
+import { builtHelperCommand, hostCommand } from "../bridge/host-command.js";
 import { COMMAND_BOX_CLASS } from "../components/command-box.js";
 import { Toast } from "../components/Toast.js";
 import {
@@ -258,6 +258,7 @@ export class ConnectTab extends SettingsTab {
 			<div class="flex flex-col gap-2 rounded-md border border-border bg-muted/40 p-3" data-connect-setup>
 				<p class="text-xs text-foreground">Polycarp's helper isn't connected. It runs on this computer and does the work here. If you have it, run this in a terminal, then reopen Settings.</p>
 				${this.command("Set up Polycarp", `${hostCommand()} setup`)}
+				${builtHelperCommand("setup") ? this.command("If you built the helper yourself", builtHelperCommand("setup") as string) : nothing}
 				<p class="text-xs text-muted-foreground">
 					Don't have it? Copy the setup prompt above into your coding agent, or
 					<a class="underline" href="https://dbaney.com/polycarp/" target="_blank" rel="noopener noreferrer">get Polycarp for Mac</a>.

@@ -25,7 +25,7 @@ import {
 	type ThinkingContent,
 	type ToolCall,
 } from "@mariozechner/pi-ai";
-import { hostCommand } from "../bridge/host-command.js";
+import { hostCommandText } from "../bridge/host-command.js";
 import { trySubscriptionStatus } from "./client.js";
 import {
 	CHATGPT_PROVIDER,
@@ -128,7 +128,7 @@ export async function routeSubscriptionModel(
 	const status = await trySubscriptionStatus(true);
 	if (!status)
 		throw new Error(
-			`Polycarp's native host isn't connected, so subscription sign-ins can't run. Run \`${hostCommand()} doctor\`.`,
+			`Polycarp's native host isn't connected, so subscription sign-ins can't run. Run ${hostCommandText("doctor")}.`,
 		);
 	const next: SimpleStreamOptions = { ...(options ?? {}), apiKey: status.proxy.secret };
 	if (model.provider === CHATGPT_PROVIDER) {

@@ -4,7 +4,7 @@
  * and nothing passing through holds a token: the host keeps those (cli/src/subscriptions).
  */
 
-import { hostCommand } from "../bridge/host-command.js";
+import { hostCommandText } from "../bridge/host-command.js";
 import { onSubscriptionMessage, sendSubscription } from "../bridge/native.js";
 import {
 	isExtensionPage,
@@ -61,7 +61,7 @@ export function startSubscriptionRelay(): void {
 					id: req.id,
 					error: {
 						code: "no_host",
-						message: `Polycarp's native host isn't connected. Run \`${hostCommand()} setup\` (or \`${hostCommand()} doctor\`), then try again.`,
+						message: `Polycarp's native host isn't connected. Run ${hostCommandText("setup")}, then try again.`,
 					},
 				} satisfies RelayReply);
 			}
