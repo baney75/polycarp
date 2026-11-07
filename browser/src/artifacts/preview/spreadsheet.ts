@@ -1,6 +1,5 @@
 /** Spreadsheet helpers for the Excel viewer: bounded input for SheetJS and bounded output. */
-import JSZip from "jszip";
-import * as XLSX from "xlsx";
+import type { utils as SheetUtils, WorkSheet } from "xlsx";
 import { PREVIEW_LIMITS, PreviewLimitError, SafeZip } from "./content.js";
 
 export const MAX_SHEETS = 50;
@@ -32,7 +31,7 @@ async function rebuild(bytes: Uint8Array, shared: Shared, depth: number): Promis
 		maxEntryBytes: PREVIEW_LIMITS.maxSpreadsheetEntryBytes,
 		maxTotalBytes: shared.bytesLeft,
 	});
-	const clean = new JSZip();
+	const clean = new (await import("jszip")).default();
 	for (const path of zip.list()) {
 		if (SKIP_PART.test(path)) continue;
 		const isZip = /\.zip$/i.test(path);
@@ -56,10 +55,10 @@ async function rebuild(bytes: Uint8Array, shared: Shared, depth: number): Promis
 }
 
 /** Shrink a sheet's range to the column and cell limits so sheet_to_html stays bounded. */
-export function clampSheet(ws: XLSX.WorkSheet) {
+export function clampSheet(ws: WorkSheet, utils: Pick<typeof SheetUtils, "decode_range" | "encode_range">) {
 	const ref = ws["!ref"];
 	if (!ref) return;
-	const range = XLSX.utils.decode_range(ref);
+	const range = utils.decode_range(ref);
 	const cols = Math.min(range.e.c - range.s.c + 1, PREVIEW_LIMITS.maxTableColumns);
 	const rows = Math.min(
 		range.e.r - range.s.r + 1,
@@ -68,7 +67,7 @@ export function clampSheet(ws: XLSX.WorkSheet) {
 	);
 	range.e.c = range.s.c + cols - 1;
 	range.e.r = range.s.r + rows - 1;
-	ws["!ref"] = XLSX.utils.encode_range(range);
+	ws["!ref"] = utils.encode_range(range);
 }
 
 const IWA_TOO_LARGE = "This Numbers file expands past the preview limit. Export it to XLSX to preview it.";
