@@ -995,7 +995,7 @@ final class BackgroundPosterSourceTests: XCTestCase {
         XCTAssertTrue(router.contains("PointerAudit.verdict("))
         // The span closes after the proof loop, not after the post.
         let loop = try XCTUnwrap(router.range(of: "} while !verdict.verified"))
-        let closing = try XCTUnwrap(router.range(of: "let events = tap.stop()"))
+        let closing = try XCTUnwrap(router.range(of: "let events = tap.snapshot ?? idle.events"))
         XCTAssertTrue(loop.lowerBound < closing.lowerBound)
     }
 
