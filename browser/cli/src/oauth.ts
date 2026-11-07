@@ -43,6 +43,7 @@ const CHATGPT_CALLBACK_PREFIX = "https://chatgpt.com/connector/oauth/";
 export const DEFAULT_REDIRECT_HOSTS = ["grok.com", "x.ai"];
 
 /** Checked on the consent page unless the owner unticks them. browser.script and threads.read must be ticked by hand. */
+// Never computer use: that is ticked by hand, on the page where the person approves the assistant.
 export const DEFAULT_GRANT = ["browser.read", "browser.navigate", "browser.act", "library.read", "library.write", "skills.read", "user.ask"];
 
 type AuthMethod = "none" | "client_secret_post" | "client_secret_basic";

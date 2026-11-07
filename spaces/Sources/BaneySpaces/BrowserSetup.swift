@@ -63,7 +63,10 @@ final class BrowserModel: ObservableObject {
             DispatchQueue.main.async {
                 self?.refreshing = false
                 if let parsed, parsed != self?.status { self?.status = parsed }
-                if self?.everythingPending == true, self?.status != nil { self?.turnOnEverything() }
+                // Only while Full Access stands: a person who has since stepped back took the yes back with it.
+                if self?.everythingPending == true, self?.status != nil {
+                    if AgentAccess.shared.current == .full { self?.turnOnEverything() } else { self?.everythingPending = false; self?.message = nil }
+                }
             }
         }
     }

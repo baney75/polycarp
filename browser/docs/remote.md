@@ -1,10 +1,11 @@
-# Use Polycarp's browser from claude.ai, ChatGPT and grok.com
+# Use Polycarp from claude.ai, ChatGPT and grok.com
 
-Web assistants can drive your own signed-in browser through Polycarp. It runs on your computer and
+Web assistants can drive your own signed-in browser through Polycarp and, if you tick it when you
+approve one, apps on your Mac's agent workspace ([Computer use](#computer-use)). It runs on your computer and
 through your own free account with Tailscale: no account with us, no relay, no cost. The commands below
 also run as `polycarp browser`, for example `polycarp browser remote setup`.
 
-**In the Polycarp app, use Settings > Browser > "Use your browser from Claude, ChatGPT and Grok".** It
+**In the Polycarp app, use Settings > Browser > "Use Polycarp from Claude, ChatGPT and Grok".** It
 walks you through it one step at a time: get Tailscale and sign in, then Turn on. If Tailscale needs
 you to allow Funnel for your computer, Polycarp asks you to after you click Turn on, and you try again.
 When it's on, the window shows the address and a passcode (once) and says how to add them in each
@@ -30,6 +31,26 @@ computer, whether public DNS resolves the name to an address outside the tailnet
 the public URL answers. The DNS line matters: from inside your own tailnet, a ts.net name works
 even when Funnel isn't reaching the internet, so a passing public fetch alone can hide a broken
 Funnel. The computer must stay on, awake and signed in to the browser with Tabkyra loaded.
+
+## Computer use
+
+Two permissions on the approval page, both unticked until you tick them: `computer.read` (see the
+agent workspace and apps you lend) and `computer.act` (see them too, click and type in them, and start
+apps from Polycarp's short list). The assistant gets `computer_*` tools, which run through
+`polycarp-spaces mcp --connector` on your Mac. They need the Polycarp app, so another machine doesn't
+offer them.
+
+A connector is held to Default whatever else is on. Full Access in Settings is for agents on your Mac:
+with it on, a connector still sees only the agent workspace and apps you lend, and starts only apps on
+the short list. It can't lend itself anything and can't drive an Open or Save panel in any window. An
+app Polycarp starts for it can't show a document from outside the handoff folder. Read Only stops it
+acting too. An app you lend is lent with what it shows, to every agent and connector with these
+permissions, until you take it back or the time runs out. If the Polycarp app or `polycarp-spaces` on
+this Mac is too old to enforce all this, the connector gets no computer tools.
+
+The agent's apps run as you. Those window rules keep it out of your other windows, but an app can reach
+what you can, so tick this only for an assistant you'd let sit at your keyboard. Revoke a connector with
+`polycarp browser token revoke` and everything it was granted ends.
 
 ## For an app
 

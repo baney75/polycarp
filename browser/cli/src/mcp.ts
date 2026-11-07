@@ -22,6 +22,7 @@ import { firecrawlCrawl, firecrawlMap, pageMarkdown } from "./firecrawl.ts";
 import { searxSearch } from "./searx.ts";
 import { selfExec, selfPrefix } from "./self.ts";
 import { VERSION } from "./version.ts";
+import { COMPUTER_INSTRUCTION, COMPUTER_STATUS_TOOL, type ComputerClient } from "./computer.ts";
 import { COMMAND_NAME } from "./self.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
@@ -176,6 +177,8 @@ export interface McpServerOptions {
 	 * it: they wait in the side panel (Settings > Agents) for the user.
 	 */
 	remote?: boolean;
+	/** A remote session's computer-use tools (computer.ts). Registered like the others, so `allowedTools` holds them too. */
+	computer?: ComputerClient;
 }
 
 /** The MCP server and its bridge client, before any transport is attached. */
@@ -211,7 +214,8 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				.filter((line) => !allowedTools || mentionedTools(line).every((t) => allowedTools.has(t)))
 				.concat(
 					allowedTools && !allowedTools.has("tabs_show") ? ["When a page needs a sign-in or captcha, stop and ask the user to handle it in their browser."] : [],
-					allowedTools ? [`This session's tools: ${[...allowedTools].sort().join(", ")}.`] : [],
+					options.computer?.tools.length ? [COMPUTER_INSTRUCTION] : [],
+					allowedTools ? [`This session's tools: ${[...allowedTools].sort().filter((t) => !t.startsWith("computer_") || t === COMPUTER_STATUS_TOOL || options.computer?.tools.some((c) => c.name === t)).join(", ")}.`] : [],
 				)
 				.join(" "),
 		},
@@ -861,6 +865,22 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	registerAskUser(server, client);
 	// threads_list, thread_read, thread_search (cli/src/threads.ts): past side panel chats.
 	registerThreadTools(server, client);
+
+	// A session granted computer use, whether or not it's available here. The local server has its own way to the hands.
+	if (allowedTools?.has(COMPUTER_STATUS_TOOL)) {
+		server.registerTool(
+			COMPUTER_STATUS_TOOL,
+			{ description: "Whether computer use is available in this session, and what to tell the user if it isn't.", inputSchema: {}, annotations: { readOnlyHint: true, openWorldHint: false } },
+			async () => ({
+				content: text(options.computer?.tools.length ? "Computer use is available: the agent workspace and apps the user has lent." : "Computer use isn't available right now: Polycarp's Mac app isn't on this computer, or it needs updating. Tell the user. Browser tools work as usual."),
+			}),
+		);
+	}
+	for (const tool of options.computer?.tools ?? []) {
+		server.registerTool(tool.name, { description: tool.description, inputSchema: tool.shape, annotations: { readOnlyHint: tool.readOnly, openWorldHint: false } }, (args: unknown) =>
+			options.computer!.call(tool.name, args),
+		);
+	}
 
 	stripSchemaDialect(server);
 

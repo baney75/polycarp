@@ -23,7 +23,7 @@ Tagline: **Bear much fruit.** When a line must explain the product: **Speak it. 
 | `icon-macos.svg` | Mac app icon, with the standard margin and corners |
 | `icon-full-bleed.svg` | iOS, Windows, Linux and web. The system adds its own corners |
 | `icon-android-foreground.svg` | Android adaptive icon foreground, on a `#59693F` background layer |
-| `browser/icon.svg`, `browser/icon-16.svg` | The browser extension: the branch and a pointer, and the branch alone below 24 px |
+| `browser/icon.svg`, `browser/icon-16.svg` | The browser extension: the branch and a pointer at 48 px and up, and the bolder branch alone at 16 and 32, which is what a toolbar shows |
 | `export/` | PNG sets per platform, `windows/polycarp.ico`, and `tray/` black-on-transparent template images |
 | `tools/` | The scripts that draw the marks and wordmark. `gen.py` takes an output folder |
 

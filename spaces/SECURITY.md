@@ -25,6 +25,9 @@ not a public issue.
   agent workspace work (agent open, agent run). A remote caller can't focus, type, move windows
   or change what you see. `remote off` closes it. The `--on HOST` client sends the token only to
   tailnet addresses.
+- **The connector.** `polycarp browser remote setup` is off until you run it. Each assistant you approve with your passcode gets only
+  what you tick. Computer use is two unticked permissions, and an assistant with them is held to Default whatever Settings says: the
+  agent workspace, apps on the short list, apps you lend. It can't lend, can't use Open or Save panels, and never gets Full Access.
 - **Agent access.** Settings > Agents sets what agent tools may use: Read Only, Default (the agent
   workspace and apps you lend) or Full Access (every window on every workspace, and any app, still
   from behind and never while you are using the app). Only a real click in BaneySpaces widens it;

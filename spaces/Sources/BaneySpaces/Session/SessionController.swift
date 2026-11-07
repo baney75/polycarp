@@ -91,6 +91,9 @@ final class SessionController {
     var agentHost = AgentHost()
     /// The agent hands: snapshot and act on the agent workspace (see Hands/).
     let hands = HandsRouter()
+    /// The same hands for an assistant that came in through the connector: never more than Default, whatever this Mac allows
+    /// the agents on it. Its refs are its own.
+    let connectorHands = HandsRouter(cap: { $0.forRemote })
     /// Answers `baneyspaces sandbox …` (the app delegate sets it); called off the main thread.
     var sandboxHandler: ((Wire.Request) -> Wire.Reply)?
 
@@ -390,6 +393,10 @@ final class SessionController {
                                                      suggestion: "Run `polycarp-spaces doctor`; allow Accessibility if it asks.", retry: .safe))
             return .init(ok: true, info: ["envelope": e.line])
         }
+        if HandsCaller.isRemote(r.caller) {
+            Trace.log("hands: connector \(r.caller ?? "") asked")
+            return connectorHands.handleWire(r)
+        }
         return hands.handleWire(r)
     }
 
@@ -410,6 +417,7 @@ final class SessionController {
             info["hands"] = AXIsProcessTrusted() ? "ready" : "needs Accessibility"
             info["lent"] = HandsLends.shared.current().active(now: Date()).map(\.app).joined(separator: ", ")
             info["version"] = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+            info[HandsCaller.capKey] = HandsCaller.capValue
             info["polycarp_theme"] = Self.polycarpThemeStatus()
             return .init(ok: true, info: info)
         case .list:

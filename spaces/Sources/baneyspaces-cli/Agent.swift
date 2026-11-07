@@ -14,14 +14,14 @@ enum HandsCLI {
     }
 
     /// Sends one request to the app and returns its envelope. Nothing here can fail without saying why.
-    static func send(_ request: HandsRequest, timeout: Double = 180) -> HandsEnvelope {
+    static func send(_ request: HandsRequest, timeout: Double = 180, caller: String? = nil) -> HandsEnvelope {
         guard remoteHost == nil else {
             return .failure(HandsError(.badArguments, "agent commands run on this Mac only", suggestion: "Run `polycarp-spaces agent …` on the machine whose apps you want to drive.", retry: .never))
         }
         guard let data = try? JSONEncoder().encode(request), let text = String(data: data, encoding: .utf8) else {
             return .failure(HandsError(.badArguments, "couldn't encode the request", suggestion: "Check the arguments.", retry: .never))
         }
-        guard let reply = Wire.call(Wire.Request(op: .hands, text: text), timeout: timeout) else {
+        guard let reply = Wire.call(Wire.Request(op: .hands, text: text, caller: caller), timeout: timeout) else {
             // Something answered the connection but the reply didn't come in time: the action may have landed. A socket
             // file with nobody behind it (a crash leaves one) is not running.
             if SocketClaim.anyLive(Wire.socketCandidates()) {
@@ -76,12 +76,24 @@ enum HandsCLI {
 /// `baneyspaces mcp`: a stdio MCP server, so `claude mcp add baneyspaces -- baneyspaces mcp` gives an agent
 /// the same tools (no lend: that is Donovan's).
 enum MCPCommand {
-    static func run() -> Never {
-        let session = "mcp:\(getpid())"
+    /// Asks on every call, because the app can be replaced under a running session: an app that doesn't say it caps connectors never
+    /// gets the call, since it would run it with whatever this Mac allows.
+    private static func connectorSend(_ request: HandsRequest) -> HandsEnvelope {
+        guard Wire.call(Wire.Request(op: .ping), timeout: 2)?.info?[HandsCaller.capKey] == HandsCaller.capValue else {
+            return .failure(HandsError(.notRunning, "the Polycarp app here can't take connector calls: it isn't running, or it's older than this helper",
+                                       suggestion: "Ask the person to open or update Polycarp on their Mac.", retry: .safe))
+        }
+        return HandsCLI.send(request, caller: HandsCaller.connector)
+    }
+
+    /// `connector`: this server belongs to one connector session (`polycarp browser serve`), so the app treats its calls as remote.
+    static func run(connector: Bool = false) -> Never {
+        let session = "\(connector ? "connector" : "mcp"):\(getpid())"
         let version = Wire.call(Wire.Request(op: .ping), timeout: 1)?.info?["version"] ?? "dev"
-        let server = HandsMCP(version: version, session: session,
-                              perform: { HandsCLI.send($0) },
+        var server = HandsMCP(version: version, session: session,
+                              perform: { connector ? connectorSend($0) : HandsCLI.send($0) },
                               readImage: { FileManager.default.contents(atPath: $0) })
+        if connector { server.name = HandsCaller.connectorServerName }
         setvbuf(stdout, nil, _IOLBF, 0)
         while let line = readLine(strippingNewline: true) {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
