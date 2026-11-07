@@ -47,6 +47,8 @@ final class DockRestartGateTests: XCTestCase {
     func testAWaitingHelperDoesNotBlockAnInstall() throws {
         let install = try source("scripts/install-app.sh")
         XCTAssertTrue(install.contains("grep -vq -- --restart-when-safe"))
+        let uninstall = try source("uninstall.sh")
+        XCTAssertTrue(uninstall.contains("grep -vq -- --restart-when-safe"), "the waiting helper doesn't stop an uninstall either")
         XCTAssertFalse(install.contains("pgrep -f \"$DEST/Contents/MacOS/$EXECUTABLE\""), "that matches the helper too")
         XCTAssertTrue(install.contains("app_is_running"))
     }

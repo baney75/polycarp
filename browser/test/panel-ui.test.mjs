@@ -342,6 +342,8 @@ test("Settings, the skill screens and the provider editor are pages, not overlay
 test("the short provider list loses nothing: a saved key stays, and custom providers never hide", () => {
 	const tab = readFileSync(new URL("../src/dialogs/ApiKeysTab.ts", import.meta.url), "utf8");
 	assert.match(tab, /this\.withKeys\.add\(this\.justSaved\)/);
-	assert.match(tab, /this\.showAll \|\| this\.hasCustom \|\| this\.query\.trim\(\)/);
+	assert.match(tab, /this\.showAll \|\| this\.hasCustom \|\| this\.query\.trim\(\) \? html`<div class="pt-5 border-t border-border">\$\{this\.custom\}/);
+	// Having a custom provider must not take away the way to reach the rest of the list.
+	assert.match(tab, /this\.showAll \|\| this\.query\.trim\(\)\s*\? nothing\s*: html`<button/);
 	assert.match(tab, /q \|\| this\.showAll \|\| this\.withKeys\.has\(p\) \|\| COMMON_PROVIDERS\.has\(p\)/);
 });

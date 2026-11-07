@@ -181,8 +181,8 @@ export class ApiKeysTab extends SettingsTab {
 					</div>
 				</section>
 				${
-					this.showAll || this.hasCustom || this.query.trim()
-						? html`<div class="pt-5 border-t border-border">${this.custom}</div>`
+					this.showAll || this.query.trim()
+						? nothing
 						: html`<button
 								type="button"
 								class="self-start text-sm text-muted-foreground underline underline-offset-2 cursor-pointer"
@@ -194,6 +194,7 @@ export class ApiKeysTab extends SettingsTab {
 								Show all providers
 							</button>`
 				}
+				${this.showAll || this.hasCustom || this.query.trim() ? html`<div class="pt-5 border-t border-border">${this.custom}</div>` : nothing}
 			</div>
 		`;
 	}
