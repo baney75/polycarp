@@ -45,32 +45,42 @@ const MAX_SCRIPT = 50_000;
 export class SiteEditError extends Error {}
 
 /** "https://www.X.com/home" or "X.com" -> "x.com". Throws on anything that isn't a plain host. */
-let suffixes: { exact: Set<string>; wild: Set<string>; except: Set<string> } | undefined;
+let suffixes: { shared: Set<string>; wild: Set<string>; except: Set<string> } | undefined;
 
-/** The Public Suffix List, read once: exact rules, "*.x" wildcards and "!x" exceptions. */
+/**
+ * The Public Suffix List, read once. `shared` holds every rule, every wildcard rule's base ("*.sch.uk" gives sch.uk) and every
+ * name above one of them (s3.amazonaws.com gives amazonaws.com): an edit reaches subdomains, so an edit on any of those reaches
+ * sites that aren't the same owner's.
+ */
 function suffixRules() {
 	if (suffixes) return suffixes;
-	const exact = new Set<string>();
+	const shared = new Set<string>();
 	const wild = new Set<string>();
 	const except = new Set<string>();
+	const withParents = (name: string) => {
+		const labels = name.split(".");
+		for (let i = 0; i < labels.length; i++) shared.add(labels.slice(i).join("."));
+	};
 	for (const rule of PUBLIC_SUFFIX_RULES.split("\n")) {
 		if (rule.startsWith("!")) except.add(rule.slice(1));
-		else if (rule.startsWith("*.")) wild.add(rule.slice(2));
-		else exact.add(rule);
+		else if (rule.startsWith("*.")) {
+			wild.add(rule.slice(2));
+			withParents(rule.slice(2));
+		} else withParents(rule);
 	}
-	suffixes = { exact, wild, except };
+	suffixes = { shared, wild, except };
 	return suffixes;
 }
 
 /**
- * Whether `host` is a suffix many unrelated sites share (com, co.uk, github.io, uk.com, surge.sh), by the Public Suffix List,
- * private section included. An edit there would reach all of them. Hosts are lowercase ASCII here (normalizeHost allows no
- * other), and the list's non-ASCII rules never match one, which is the safe direction: such a host is refused anyway.
+ * Whether an edit on `host` would reach sites many owners share, by the Public Suffix List with its private section: `host`
+ * is a suffix (com, co.uk, github.io, uk.com), a wildcard's base or a name under one (kawasaki.jp, anything.kawasaki.jp), or a
+ * name above a suffix (amazonaws.com above s3.amazonaws.com). An exception rule (city.kawasaki.jp) is a site.
  */
 export function sharedSuffix(host: string): boolean {
-	const { exact, wild, except } = suffixRules();
+	const { shared, wild, except } = suffixRules();
 	if (except.has(host)) return false;
-	if (exact.has(host)) return true;
+	if (shared.has(host)) return true;
 	const dot = host.indexOf(".");
 	return dot > 0 && wild.has(host.slice(dot + 1));
 }
@@ -164,10 +174,13 @@ export function checkPattern(raw: string): string {
 		throw new SiteEditError("Plain ASCII only in a pattern. Encode other characters as the URL does (%C3%BC).");
 	if (pattern.slice(2).includes("||") || (pattern.includes("||") && !pattern.startsWith("||")))
 		throw new SiteEditError("|| goes only at the start, for a domain: ||ads.example.com^");
-	// A bare "*", "|", "^", a scheme ("https://"), or a domain that starts with a wildcard ("||*ads") would block everything the
-	// site loads: what's left once wildcards, anchors, separators and scheme words are gone must name something.
-	const named = pattern.replace(/https?|wss?/gi, "").replace(/[*|^/:.]/g, "");
-	if (named.length < 3 || /^\|\|\*/.test(pattern))
+	// A bare "*", "|", "^", a scheme ("https://", "|htt"), wildcards between letters ("h*t*t*p*") or a domain that starts with a
+	// wildcard ("||*ads") would block everything the site loads: the pattern must hold a run of three or more letters or digits
+	// that isn't part of a scheme name.
+	const named = (pattern.match(/[a-z0-9-]+/gi) ?? []).some(
+		(run) => run.length >= 3 && !"https".includes(run.toLowerCase()) && !"wss".includes(run.toLowerCase()),
+	);
+	if (!named || /^\|\|\*/.test(pattern))
 		throw new SiteEditError("That pattern would block everything on the site. Name what to block.");
 	return pattern;
 }

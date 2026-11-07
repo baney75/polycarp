@@ -133,7 +133,7 @@ test("syncs never run side by side, so a script turned off can't come back", asy
 
 test("a site shared by many others is refused, and so is a parent of a guarded site", () => {
 	// From the Public Suffix List, both sections: the list's own entries, a wildcard rule (*.ck) and private suffixes.
-	for (const shared of ["github.io", "co.uk", "com.au", "vercel.app", "uk.com", "surge.sh", "blogspot.com", "anything.kawasaki.jp"]) {
+	for (const shared of ["github.io", "co.uk", "com.au", "vercel.app", "uk.com", "surge.sh", "blogspot.com", "anything.kawasaki.jp", "kawasaki.jp", "sch.uk", "nom.br", "amazonaws.com", "windows.net", "xn--55qx5d.cn", "https://\u516c\u53f8.cn/"]) {
 		assert.throws(() => store.normalizeHost(shared), /shared by many sites/, shared);
 	}
 	assert.equal(store.normalizeHost("city.kawasaki.jp"), "city.kawasaki.jp", "an exception to a wildcard rule is a site");
@@ -160,7 +160,7 @@ test("an agent allowed on a site can't reach a guarded site under it", async () 
 test("selectors that would run into the next rule, and patterns that block everything, are refused", () => {
 	for (const bad of ["/*", ".a /*", ".a:not(.b", '[data-x="y', ".a)"]) assert.throws(() => store.checkSelectors(bad), store.SiteEditError, bad);
 	assert.equal(store.checkSelectors('a[href*="ad"]:not(.keep)'), 'a[href*="ad"]:not(.keep)');
-	for (const bad of ["https://", "|https:", "||*ads", "||*.doubleclick.net^", "wss://*", "*http", "|http*", "https*://"]) {
+	for (const bad of ["https://", "|https:", "||*ads", "||*.doubleclick.net^", "wss://*", "*http", "|http*", "https*://", "|htt", "h*t*t*p*", "||*"]) {
 		assert.throws(() => store.checkPattern(bad), /block everything/, bad);
 	}
 	assert.throws(() => store.checkSelectors('[data-x="\n"]'), /one line/);

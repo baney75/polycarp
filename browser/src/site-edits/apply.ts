@@ -168,7 +168,12 @@ export function startSiteEdits(): void {
 			) {
 				// A new document starts with no sheet of ours.
 				applied.delete(`${d.tabId}:${d.frameId}`);
-				return injectCss(d.tabId, d.frameId, d.url, state);
+				await injectCss(d.tabId, d.frameId, d.url, state);
+				// The frame can still move on while the sheet goes in: then it comes back out.
+				const after = await chrome.webNavigation
+					.getFrame?.({ tabId: d.tabId, frameId: d.frameId })
+					.catch(() => null);
+				if (after && !sameHost(after.url, d.url)) await injectCss(d.tabId, d.frameId, after.url, state);
 			}
 		});
 	});
