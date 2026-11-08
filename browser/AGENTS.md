@@ -29,6 +29,16 @@ node cli/dist/index.js skill lint skills  # the skill gate
 throwaway headless Chromium. It is not in CI; run it after bridge or MCP changes (first
 time: `cd cli && npx playwright-core install chromium`).
 
+`(cd cli && npm run bench:dom)` is the DOM benchmark: 44 hand-written pages (`cli/test/dom-bench/pages/`), each with a task an
+agent would get, a `solve(t)` that uses only the MCP tools and finds every target by meaning (the `find` tool or a `read_page`
+snapshot searched by role and label, never a selector or id, never `run_js` to act), and a `check(page)` that reads the app's
+own state back through CDP. It shares its Chromium setup with the e2e test (`cli/test/e2e-harness.mjs`), is local like e2e and
+not in CI, and writes `cli/test/dom-bench/last-run.json`. `floor.json` is the ratchet: `passing` ids must keep passing within
+their `ms` ceiling (max of 2000 and 3x the measured time), or the run exits 1. `failing` holds each case the tools cannot do yet,
+with the real reason; those are the tool improvements to make. A fix moves its case to `passing` (`node test/dom-bench/run.mjs
+--update`, which refuses to drop a passing case), and nothing moves back. Do not simplify a page or switch a case to a selector
+to make it pass.
+
 A test that passed proves the logic, not what the user sees. Say which one you ran.
 
 ## Names that keep the old name
