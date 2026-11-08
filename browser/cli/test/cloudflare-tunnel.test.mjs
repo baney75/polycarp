@@ -186,13 +186,31 @@ test("cloudflareLoginForPanel sends the address it reads, waits for the certific
 		// Node, not sh: cloudflareLoginForPanel gives the child an empty PATH.
 		writeFileSync(
 			fake,
-			`#!${process.execPath}\nconst fs = require("node:fs");\nconsole.error("Please open: https://dash.cloudflare.com/argotunnel?aud=1");\nsetTimeout(() => { fs.mkdirSync(${JSON.stringify(join(process.env.HOME, ".cloudflared"))}, { recursive: true }); fs.writeFileSync(${JSON.stringify(cert)}, "not-a-real-cert"); }, 800);\nsetTimeout(() => {}, 30000);\n`,
+			`#!${process.execPath}\nconst fs = require("node:fs");\nconsole.error("Please open: https://dash.cloudflare.com/argotunnel?aud=1");\nsetTimeout(() => { fs.mkdirSync(${JSON.stringify(join(process.env.HOME, ".cloudflared"))}, { recursive: true }); fs.writeFileSync(${JSON.stringify(cert)}, "not-a-real-cert"); }, 800);\nsetTimeout(() => process.exit(0), 900);\n`,
 		);
 		chmodSync(fake, 0o755);
 		const seen = [];
 		const result = await cloudflareLoginForPanel(fake, (u) => seen.push(u), 20_000, 100);
 		assert.deepEqual(result, { ok: true });
 		assert.deepEqual(seen, ["https://dash.cloudflare.com/argotunnel?aud=1"]);
+	});
+});
+
+test("cloudflareLoginForPanel lets cloudflared finish writing the certificate before it stops it", async () => {
+	await inConfig("loginsettle", async (dir) => {
+		const fake = join(dir, "fake-cloudflared");
+		const home = join(process.env.HOME, ".cloudflared");
+		const cert = join(home, "cert.pem");
+		// Like cloudflared: the file appears, the write finishes a moment later, then it exits.
+		writeFileSync(
+			fake,
+			`#!${process.execPath}\nconst fs = require("node:fs");\nconsole.error("Please open: https://dash.cloudflare.com/argotunnel?aud=1");\nsetTimeout(() => { fs.mkdirSync(${JSON.stringify(home)}, { recursive: true }); fs.writeFileSync(${JSON.stringify(cert)}, "part"); }, 300);\nsetTimeout(() => { fs.appendFileSync(${JSON.stringify(cert)}, "-whole"); process.exit(0); }, 1500);\n`,
+		);
+		chmodSync(fake, 0o755);
+		const result = await cloudflareLoginForPanel(fake, () => {}, 20_000, 100);
+		assert.deepEqual(result, { ok: true });
+		// The test reads its own fake file; the code under test never does.
+		assert.equal(readFileSync(cert, "utf8"), "part-whole");
 	});
 });
 

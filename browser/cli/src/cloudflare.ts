@@ -110,7 +110,7 @@ export type LoginResult = { ok: true } | { ok: false; message: string };
  * certificate appears (presence only, never read) or the time runs out. cloudflared is also given no program to open a browser
  * with, so the person gets one tab, not two.
  */
-export async function cloudflareLoginForPanel(bin: string, onUrl: (url: string) => void, timeoutMs = LOGIN_TIMEOUT_MS, pollMs = 1000): Promise<LoginResult> {
+export async function cloudflareLoginForPanel(bin: string, onUrl: (url: string) => void, timeoutMs = LOGIN_TIMEOUT_MS, pollMs = 1000, settleMs = 15_000): Promise<LoginResult> {
 	const nothingToRun = mkdtempSync(join(tmpdir(), "polycarp-nopath-"));
 	let child: ReturnType<typeof spawn>;
 	try {
@@ -141,7 +141,13 @@ export async function cloudflareLoginForPanel(bin: string, onUrl: (url: string) 
 	try {
 		const deadline = Date.now() + timeoutMs;
 		while (Date.now() < deadline) {
-			if (cloudflareSignedIn()) return { ok: true };
+			if (cloudflareSignedIn()) {
+				// cloudflared writes the certificate and then exits on its own. Stopping it the moment the file appears could
+				// cut the write short, so give it time to finish.
+				const settle = Date.now() + settleMs;
+				while (!exited && Date.now() < settle) await sleep(Math.min(pollMs, 250));
+				return { ok: true };
+			}
 			if (exited) {
 				// It may exit just after writing the certificate.
 				await sleep(pollMs);
