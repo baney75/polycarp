@@ -11,7 +11,6 @@ import { RECORDER_MESSAGE } from "../offscreen/recorder-message.js";
 import { type CaptureBackend, CaptureError, CaptureManager, type CaptureOutput, type Run } from "./capture.js";
 import { cdpSend, ensureAttached, networkCapturing, screencastOwner, startScreencast, stopScreencast } from "./cdp.js";
 import { HAR_SIZE_CAP, HarBuilder } from "./har.js";
-import { passwordInTab } from "./password-frames.js";
 import { BrowserSession } from "./session.js";
 
 const VIDEO_MAX_BYTES = 32 * 1024 * 1024;
@@ -34,38 +33,12 @@ interface NetworkState {
 const networkStates = new Map<number, NetworkState>();
 let listening = false;
 
-/** Whether the tab has a password field in any frame (password-frames.ts); the frame the request came from is checked closest. */
-function passwordPage(tabId: number, frameId: string | undefined): Promise<boolean> {
-	return passwordInTab(
-		(method, params) => chrome.debugger.sendCommand({ tabId }, method, params) as Promise<unknown>,
-		frameId,
-	);
-}
-
 async function handleNetwork(state: NetworkState, method: string, params: Record<string, unknown>): Promise<void> {
 	if (state.halted) return;
 	const { builder, tabId } = state;
 	const id = String(params.requestId ?? "");
 	try {
-		let hint: { passwordPage?: boolean } | undefined;
-		if (method === "Network.requestWillBeSent") {
-			const request = (params.request ?? {}) as { method?: string; hasPostData?: boolean; postData?: string };
-			if (request.hasPostData || request.postData)
-				hint = {
-					passwordPage: await passwordPage(tabId, typeof params.frameId === "string" ? params.frameId : undefined),
-				};
-		}
-		builder.event(method, params, hint);
-		if (method === "Network.requestWillBeSent" && builder.wantsRequestBody(id)) {
-			try {
-				const post = (await chrome.debugger.sendCommand({ tabId }, "Network.getRequestPostData", {
-					requestId: id,
-				})) as { postData?: string };
-				if (post.postData !== undefined) builder.setRequestBody(id, post.postData);
-			} catch {
-				/* no body to read: the entry says a body was sent */
-			}
-		}
+		builder.event(method, params);
 		if (method === "Network.loadingFinished" && builder.wantsResponseBody(id)) {
 			try {
 				const body = (await chrome.debugger.sendCommand({ tabId }, "Network.getResponseBody", {
@@ -128,8 +101,8 @@ async function startNetwork(tabId: number, _id: string, onEnd: (why: string) => 
 		// Events already received finish first, but a stuck body read must not hold the stop.
 		await Promise.race([state.chain, new Promise((r) => setTimeout(r, 3000))]);
 		if (networkStates.get(tabId) === state) networkStates.delete(tabId);
-		// read_network may be using the domain too: only switch it off when it is not.
-		if (!networkCapturing(tabId))
+		// read_network or a newer capture of this tab may be using the domain too: only switch it off when neither is.
+		if (!networkCapturing(tabId) && !networkStates.has(tabId))
 			await chrome.debugger.sendCommand({ tabId }, "Network.disable").catch(() => undefined);
 	};
 	return {

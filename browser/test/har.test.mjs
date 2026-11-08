@@ -9,7 +9,6 @@ import {
 	isSecretHeader,
 	looksLikeToken,
 	redactHeaders,
-	redactRequestBody,
 	redactResponseBody,
 	redactUrl,
 	utf8Bytes,
@@ -55,7 +54,7 @@ const byteLength = (text) => Buffer.byteLength(text, "utf8");
 function request(
 	b,
 	id,
-	{ url, method = "GET", headers = {}, extraHeaders, postData, hasPostData, status = 200, mime = "text/html", responseHeaders = {}, hint, documentURL = `${ORIGIN}/`, wall = 1_700_000_000, at = 100, finish = true, requestExtra = {}, responseExtra = {}, paramsExtra = {} } = {},
+	{ url, method = "GET", headers = {}, extraHeaders, postData, hasPostData, status = 200, mime = "text/html", responseHeaders = {}, documentURL = `${ORIGIN}/`, wall = 1_700_000_000, at = 100, finish = true, requestExtra = {}, responseExtra = {}, paramsExtra = {} } = {},
 ) {
 	b.event(
 		"Network.requestWillBeSent",
@@ -68,7 +67,6 @@ function request(
 			...paramsExtra,
 			request: { url, method, headers, ...(postData !== undefined ? { postData } : {}), ...(hasPostData ? { hasPostData: true } : {}), ...requestExtra },
 		},
-		hint,
 	);
 	if (extraHeaders) b.event("Network.requestWillBeSentExtraInfo", { requestId: id, headers: extraHeaders });
 	b.event("Network.responseReceived", {
@@ -121,25 +119,6 @@ test("body rules: nothing to a sign-in address, no password field, 64 KB at most
 	assert.equal(isAuthPath("http://app.test/SignIn"), true);
 	assert.equal(isAuthPath("http://app.test/oauth/token"), true);
 	assert.equal(isAuthPath("http://app.test/api/orders"), false);
-	const login = redactRequestBody({ url: "http://app.test/auth/session", contentType: "application/json", text: json({ user: "ada", [PASSWORD]: "hunter2" }) });
-	assert.equal(login.text, undefined);
-	assert.match(login.comment, /sign-in/);
-	const body = redactRequestBody({ url: "http://app.test/api/profile", contentType: "application/json", text: json({ name: "Ada", [API_KEY]: SAMPLE_9, nested: { [PASSWORD]: SAMPLE_11 } }) });
-	assert.match(body.text, /"name":"Ada"/);
-	assert.ok(!body.text.includes(SAMPLE_9) && !body.text.includes(SAMPLE_11), body.text);
-	const encoded = redactRequestBody({ url: "http://app.test/api/profile", contentType: "application/x-www-form-urlencoded", text: form({ name: "Ada", [PASSWORD]: "hunter2", [TOKEN]: "t", city: "Rome" }) });
-	const fields = new URLSearchParams(encoded.text);
-	assert.deepEqual([fields.get("name"), fields.get("city")], ["Ada", "Rome"]);
-	assert.deepEqual([fields.get(PASSWORD), fields.get(TOKEN)], ["[redacted]", "[redacted]"]);
-	// A field with an innocent name that holds a token's shape.
-	const shaped = join("eyJhbGciOiJIUzI1NiJ9.", "eyJzdWIiOiIxMjM0NTY3ODkwIn0.", "abcdefghijk");
-	assert.ok(!redactRequestBody({ url: "http://app.test/x", contentType: "application/x-www-form-urlencoded", text: form({ note: shaped }) }).text.includes("eyJhbGci"));
-	const big = redactRequestBody({ url: "http://app.test/api/upload", contentType: "application/json", text: json({ a: "x".repeat(HAR_BODY_CAP) }) });
-	assert.equal(big.text, undefined);
-	assert.match(big.comment, /over 64 KB/);
-	const multipart = redactRequestBody({ url: "http://app.test/api/upload", contentType: "multipart/form-data; boundary=x", text: "--x\r\nContent-Disposition: form-data; name=f\r\n\r\nvalue\r\n--x--" });
-	assert.equal(multipart.text, undefined);
-	assert.equal(redactRequestBody({ url: "http://app.test/x", contentType: "application/json", text: "{not json" }).text, undefined);
 });
 
 test("a request becomes a HAR 1.2 entry with its timings, status and sizes", () => {
@@ -180,7 +159,7 @@ test("what the file must never hold is absent from every field, however it got t
 	// A login: the body never even gets read.
 	request(b, "2", { url: `${ORIGIN}/login`, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, postData: form({ user: "ada", [PASSWORD]: SAMPLE_4 }), hasPostData: true });
 	// A form on a page with a password field, posted to an innocent-looking address.
-	request(b, "3", { url: `${ORIGIN}/api/update`, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, postData: form({ f1: SAMPLE_5, f2: "x" }), hasPostData: true, hint: { passwordPage: true } });
+	request(b, "3", { url: `${ORIGIN}/api/update`, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, postData: form({ f1: SAMPLE_5, f2: "x" }), hasPostData: true });
 	// JSON with a secret name.
 	request(b, "4", { url: `${ORIGIN}/api/save`, method: "POST", headers: { "Content-Type": "application/json" }, postData: json({ title: "t", [API_KEY_CAMEL]: SAMPLE_7 }), hasPostData: true });
 	// An HTTP/2 request: Chrome reports its address again as the :path pseudo-header, and the page, the response and the
@@ -228,11 +207,13 @@ test("what the file must never hold is absent from every field, however it got t
 	for (const secret of ["URLTOKEN9", SAMPLE_6, SAMPLE_3, SAMPLE_8, "SETCOOKIE4", SAMPLE_10, SAMPLE_1, SAMPLE_2, SAMPLE_4, SAMPLE_5, SAMPLE_7, ...Object.values(h2Secrets)])
 		assert.ok(!file.includes(secret), `${secret} is in the HAR`);
 	// And the harmless parts are there, so the test is not passing on an empty file.
-	for (const kept of ["sort=asc", '\\"title\\":\\"t\\"', '\\"name\\":\\"Ada\\"']) assert.ok(file.includes(kept), `${kept} is missing`);
+	for (const kept of ["sort=asc", '\\"name\\":\\"Ada\\"']) assert.ok(file.includes(kept), `${kept} is missing`);
 	const entries = JSON.parse(file).log.entries;
 	assert.equal(entries.length, 6);
-	assert.match(entries[1].request.postData.comment, /sign-in/);
-	assert.match(entries[2].request.postData.comment, /password field/);
+	for (const n of [1, 2, 3, 5]) {
+		assert.equal(entries[n].request.postData.text, undefined, `entry ${n} stored a request body`);
+		assert.match(entries[n].request.postData.comment, /never written/);
+	}
 	// The h2 entry keeps its harmless parts: the path with its other parameters, and the plain headers.
 	const h2 = entries[4];
 	assert.equal(h2.request.headers.find((h) => h.name === ":path").value.split("?")[0], "/api/data");
@@ -240,7 +221,6 @@ test("what the file must never hold is absent from every field, however it got t
 	assert.equal(h2.request.headers.find((h) => h.name === ":method").value, "GET");
 	assert.equal(h2.request.headers.find((h) => h.name === "Accept").value, "application/json");
 	assert.ok(h2.response.content.text.includes('"name":"Ada"'));
-	assert.ok(entries[5].request.postData.text.includes('"title":"t2"'));
 });
 
 test("first-F1: on HTTP/2 and HTTP/3 the :path pseudo-header is an address and goes through the same redaction", () => {
@@ -287,16 +267,11 @@ test("sol-F2: a value that has a credential's shape is redacted under any header
 	assert.equal(q.get("id"), "123e4567-e89b-12d3-a456-426614174000");
 	// A fragment written as parameters is read the same way.
 	assert.ok(!redactUrl(`http://app.test/cb#${form({ state: shaped.hex })}`).includes(shaped.hex));
-	// JSON bodies, request and response, and forms.
+	// JSON response bodies.
 	const bodyOf = (value) => json({ title: "kept", nested: { note: value, list: [value, "ok"] } });
 	for (const shape of ["jwt", "hex", "mixed"]) {
-		const req = redactRequestBody({ url: "http://app.test/api/x", contentType: "application/json", text: bodyOf(shaped[shape]) });
-		assert.ok(!req.text.includes(shaped[shape]), `request ${shape}: ${req.text}`);
-		assert.ok(req.text.includes('"title":"kept"') && req.text.includes('"ok"'), req.text);
 		const res = redactResponseBody(bodyOf(shaped[shape]));
 		assert.ok(!res.text.includes(shaped[shape]), `response ${shape}: ${res.text}`);
-		const encoded = redactRequestBody({ url: "http://app.test/api/x", contentType: "application/x-www-form-urlencoded", text: form({ note: shaped[shape], city: "Rome" }) });
-		assert.ok(!encoded.text.includes(shaped[shape]) && encoded.text.includes("city=Rome"), `form ${shape}: ${encoded.text}`);
 	}
 	assert.ok(redactResponseBody(json({ id: "123e4567-e89b-12d3-a456-426614174000", name: "Ada" })).text.includes("123e4567"));
 });
@@ -307,16 +282,13 @@ test("sol-F4, first-F5: sizes are UTF-8 bytes: a 64 KB body cap and the file cap
 	// About 25,000 Chinese characters: under the cap in UTF-16 units, three times over it in bytes.
 	const wide = "\u4e2d".repeat(25_000);
 	assert.ok(wide.length < HAR_BODY_CAP && byteLength(wide) > HAR_BODY_CAP);
-	const req = redactRequestBody({ url: "http://app.test/api/x", contentType: "application/json", text: json({ a: wide }) });
-	assert.equal(req.text, undefined);
-	assert.match(req.comment, /over 64 KB/);
 	const res = redactResponseBody(json({ a: wide }));
 	assert.equal(res.text, undefined);
 	assert.match(res.comment, /over 64 KB/);
 	// Just inside the cap in bytes is kept.
 	const fits = "\u4e2d".repeat(20_000);
 	assert.ok(byteLength(json({ a: fits })) < HAR_BODY_CAP);
-	assert.ok(redactRequestBody({ url: "http://app.test/api/x", contentType: "application/json", text: json({ a: fits }) }).text);
+	assert.ok(redactResponseBody(json({ a: fits })).text);
 	// The request body size in the entry is bytes, too.
 	const b = new HarBuilder();
 	request(b, "w", { url: `${ORIGIN}/api/save`, method: "POST", headers: { "Content-Type": "application/json" }, postData: json({ a: "\u4e2d".repeat(100) }), hasPostData: true });
@@ -331,20 +303,6 @@ test("sol-F4, first-F5: sizes are UTF-8 bytes: a 64 KB body cap and the file cap
 	assert.ok(byteLength(file) <= cap, `${byteLength(file)} bytes against a cap of ${cap}`);
 	assert.ok(capped.count > 3 && capped.count < 200, `${capped.count} entries`);
 	assert.ok(capped.size <= cap && capped.size >= byteLength(file) - 1000, `size ${capped.size} for a file of ${byteLength(file)}`);
-});
-
-test("a body is asked for only when it may be stored", () => {
-	const b = new HarBuilder();
-	// A big body that was not sent inline: asked for. A sign-in or a password page: never.
-	const start = (id, url, method, hint) =>
-		b.event("Network.requestWillBeSent", { requestId: id, timestamp: 1, wallTime: 1, request: { url, method, headers: {}, ...(method === "POST" ? { hasPostData: true } : {}) } }, hint);
-	start("a", `${ORIGIN}/api/x`, "POST");
-	start("b", `${ORIGIN}/login`, "POST");
-	start("c", `${ORIGIN}/api/y`, "POST", { passwordPage: true });
-	start("d", `${ORIGIN}/api/z`, "GET");
-	assert.deepEqual(["a", "b", "c", "d"].map((id) => b.wantsRequestBody(id)), [true, false, false, false]);
-	b.setRequestBody("a", json({ ok: true }));
-	assert.equal(b.wantsRequestBody("a"), false);
 });
 
 test("a response body is wanted only for same-origin JSON that the page itself could read", () => {

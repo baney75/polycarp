@@ -18,10 +18,10 @@
  * `:path` pseudo-header. The page's URL, the response's own URL, the fragment and the initiator are never stored.
  *
  * The builder only reads events. The caller fetches the bodies the builder asks for
- * (`wantsRequestBody`, `wantsResponseBody`) and hands them back, so this runs and is tested without a browser.
+ * (`wantsResponseBody`) and hands them back, so this runs and is tested without a browser.
  */
 
-import { holdsCredential, isSecretName, maskJsonResponse, maskUrl } from "./mask-body.js";
+import { holdsCredential, maskJsonResponse, maskUrl } from "./mask-body.js";
 
 export const HAR_BODY_CAP = 64 * 1024;
 /** A capture stops growing here. The frame to the helper holds 60 MiB, and this leaves room for its envelope. */
@@ -159,24 +159,6 @@ export interface StoredBody {
 	comment?: string;
 }
 
-/** The part of a request body that may be stored. */
-export function redactRequestBody(input: { url: string; contentType?: string; text: string }): StoredBody {
-	if (isAuthPath(input.url)) return { comment: "body not stored: a sign-in or token address" };
-	const type = (input.contentType ?? "").toLowerCase();
-	if (utf8Bytes(input.text) > HAR_BODY_CAP) return { comment: `body not stored: over ${HAR_BODY_CAP / 1024} KB` };
-	if (/json/.test(type) || (!type && /^\s*[[{]/.test(input.text))) {
-		const masked = maskJsonResponse(input.text, looksLikeToken);
-		return masked === undefined ? { comment: "body not stored: not valid JSON" } : { text: masked };
-	}
-	if (type.includes("x-www-form-urlencoded")) {
-		const form = new URLSearchParams(input.text);
-		for (const [key, value] of [...form])
-			if (isSecretName(key) || SECRET_NAME.test(key) || credentialShaped(value)) form.set(key, REDACTED);
-		return { text: form.toString() };
-	}
-	return { comment: `body not stored: ${type || "untyped"} bodies are not kept` };
-}
-
 const JSON_TYPE = /^application\/(?:json|[\w.+-]*\+json)\b/i;
 
 function originOf(url: string | undefined): string | undefined {
@@ -295,12 +277,6 @@ export interface HarBuilderOptions {
 	maxBytes?: number;
 }
 
-/** What the caller knows about a request that the events do not say. */
-export interface RequestHint {
-	/** The page had a password field when the request went out: its body is never stored. */
-	passwordPage?: boolean;
-}
-
 export class HarBuilder {
 	readonly maxBytes: number;
 	private pending = new Map<string, Pending>();
@@ -334,7 +310,7 @@ export class HarBuilder {
 	}
 
 	/** Feed one DevTools Network event. */
-	event(method: string, params: Params, hint: RequestHint = {}): void {
+	event(method: string, params: Params): void {
 		const id = str(params.requestId);
 		if (!id) return;
 		switch (method) {
@@ -350,7 +326,7 @@ export class HarBuilder {
 					this.skipped++;
 					return;
 				}
-				this.start(id, params, hint);
+				this.start(id, params);
 				return;
 			}
 			case "Network.requestWillBeSentExtraInfo": {
@@ -394,7 +370,7 @@ export class HarBuilder {
 		}
 	}
 
-	private start(id: string, params: Params, hint: RequestHint): void {
+	private start(id: string, params: Params): void {
 		const request = rec(params.request);
 		const inline = str(request.postData);
 		const hasBody = request.hasPostData === true || inline.length > 0;
@@ -413,10 +389,8 @@ export class HarBuilder {
 		};
 		this.pending.set(id, p);
 		if (!hasBody) return;
-		// The body is read only when nothing says it is a credential; otherwise it is never looked at.
-		if (hint.passwordPage) p.body = { comment: "body not stored: the page has a password field" };
-		else if (isAuthPath(p.url)) p.body = { comment: "body not stored: a sign-in or token address" };
-		else if (inline) this.setRequestBody(id, inline);
+		// The body is never read: a password can sit under any field name, and a page can remove its form before anything could look.
+		p.body = { comment: "body not stored: request bodies are never written to the file" };
 	}
 
 	private respond(p: Pending, r: Params): void {
@@ -430,20 +404,6 @@ export class HarBuilder {
 			connectionId: num(r.connectionId),
 			timing: r.timing && typeof r.timing === "object" ? (r.timing as Params) : undefined,
 		};
-	}
-
-	/** Whether the caller should fetch this request's body: it has one that may be stored and is not in hand yet. */
-	wantsRequestBody(requestId: string): boolean {
-		const p = this.pending.get(requestId);
-		return !!p && p.hasBody && p.body === undefined;
-	}
-
-	/** Hand over a request body that was fetched. */
-	setRequestBody(requestId: string, text: string): void {
-		const p = this.pending.get(requestId);
-		if (!p) return;
-		p.bodySize = utf8Bytes(text);
-		p.body = redactRequestBody({ url: p.url, contentType: headerOf(p.headers, "content-type"), text });
 	}
 
 	/** Whether the caller should fetch this finished request's response body. */

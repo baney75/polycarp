@@ -893,10 +893,8 @@ Issues #94 and #97, follow-ups from #93.
   the agent is told the path, size and what the file leaves out. A "WebM" with no EBML header is refused.
 - **What a HAR never holds.** Credential headers and query parameters by name (Authorization, Cookie, Set-Cookie,
   Proxy-Authorization, and any name with token, key, secret or auth), by shape (`mask-body.ts`), in Location and
-  Referer; no request body for a sign-in, token or password address, nor from a page with a password field (asked
-  of the page when the request goes out, and "yes" when it can't be asked), nor for anything but JSON and url-encoded
-  forms, 64 KB at most, secret names masked; a response body only for same-origin JSON (the rule `read_network` uses),
-  masked. A cross-site frame's requests and other tabs' are not in it.
+  Referer; no request body at all, because a password can sit under any field name and a page can remove its form
+  before a check could look; a response body only for same-origin JSON (the rule `read_network` uses), masked. A cross-site frame's requests and other tabs' are not in it.
 - **Flight recorder.** A MediaRecorder stream can't be cut anywhere: only its first bytes describe it and a cluster
   plays only from a key frame. `WebmRing` reads the stream's elements, keeps the header, and drops clusters older than 60
   seconds only where the next starts at a key frame, so the saved file starts at 0 and plays. Chrome writes every

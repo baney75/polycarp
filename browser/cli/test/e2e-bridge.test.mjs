@@ -169,8 +169,6 @@ extraPages["/capture-login-page"] = `<!doctype html><title>Capture login</title>
 <form><input type="password" aria-label="Password"></form>`;
 
 // A page with no password field of its own that frames one on its own origin: the frame's request must not keep its body.
-extraPages["/capture-frame-page"] = `<!doctype html><title>Capture frame</title>
-<iframe id="login-frame" src="/capture-login-page" style="width:300px;height:120px"></iframe>`;
 
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
@@ -1424,38 +1422,24 @@ test("capture network: the tab's requests become a HAR on this computer, with th
 	assert.equal(data.request.queryString.find((q) => q.name === "sort").value, "asc");
 	assert.equal(data.request.queryString.find((q) => q.name === cat("to", "ken")).value, "[redacted]");
 	assert.ok(data.response.content.text.includes('"name":"Ada"'), "a same-origin JSON response is in the file, masked");
-	// A page's own request and the sign-in form: present as requests, their bodies are not.
-	assert.ok(entries.some((e) => e.request.method === "POST" && new URL(e.request.url).pathname === "/api/save" && e.request.postData.text.includes('"title":"kept"')));
+	// A page's own request and the sign-in form: present as requests, their bodies never.
+	assert.ok(entries.some((e) => e.request.method === "POST" && new URL(e.request.url).pathname === "/api/save" && e.request.postData.text === undefined && /never written/.test(e.request.postData.comment)));
 	const login = entries.find((e) => new URL(e.request.url).pathname === "/login");
 	assert.equal(login.request.postData.text, undefined);
 	for (const [name, secret] of Object.entries(CAPTURE_SECRETS)) assert.ok(!file.includes(secret), `${name} (${secret}) is in the HAR`);
 	assert.deepEqual((await captureOk({ action: "status" })).captures, [], "stopping ends the capture");
 });
 
-test("capture network: a page with a password field has no request body stored", async () => {
+test("capture network: a password sent as an ordinary field is not stored, even when the page removes its form as it sends", async () => {
 	await go("capture-login-page");
 	await captureOk({ action: "network_start" });
-	await js(`fetch("/api/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ f1: ${JSON.stringify(CAPTURE_SECRETS.pageForm)} }) }).then(() => 1)`, { world: "main" });
+	await js(`(() => { const sent = fetch("/api/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ f1: ${JSON.stringify(CAPTURE_SECRETS.pageForm)} }) }); document.querySelector("input[type=password]").remove(); return sent.then(() => 1); })()`, { world: "main" });
 	await until(async () => ((await captureOk({ action: "status" })).captures[0].entries ?? 0) >= 1, 10_000, "the request recorded");
 	const stopped = await captureOk({ action: "network_stop" });
 	const file = readFileSync(stopped.path, "utf8");
-	assert.ok(!file.includes(CAPTURE_SECRETS.pageForm), "the body of a request sent from a page with a password field is in the HAR");
+	assert.ok(!file.includes(CAPTURE_SECRETS.pageForm), "a request body is in the HAR");
 	const save = JSON.parse(file).log.entries.find((e) => new URL(e.request.url).pathname === "/api/save");
-	assert.match(save.request.postData.comment, /password field/);
-});
-
-test("capture network: a password field in a same-origin iframe keeps the bodies of its requests out of the HAR", async () => {
-	await go("capture-frame-page");
-	await until(async () => (await js(`document.getElementById("login-frame").contentDocument?.querySelector('input[type=password]') ? 1 : 0`, { world: "main" })) === 1, 10_000, "the frame loaded");
-	await captureOk({ action: "network_start" });
-	const secret = cat("FRAMEFORM", "SECRET8");
-	await js(`document.getElementById("login-frame").contentWindow.fetch("/api/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ f1: ${JSON.stringify(secret)} }) }).then(() => 1)`, { world: "main" });
-	await until(async () => ((await captureOk({ action: "status" })).captures[0].entries ?? 0) >= 1, 10_000, "the request recorded");
-	const stopped = await captureOk({ action: "network_stop" });
-	const file = readFileSync(stopped.path, "utf8");
-	assert.ok(!file.includes(secret), "the body of a request sent from a frame with a password field is in the HAR");
-	const save = JSON.parse(file).log.entries.find((e) => new URL(e.request.url).pathname === "/api/save");
-	assert.match(save.request.postData.comment, /password field/);
+	assert.match(save.request.postData.comment, /never written/);
 });
 
 test("capture: a recording of a background tab is a WebM that plays, and so is the flight recorder's", async () => {
