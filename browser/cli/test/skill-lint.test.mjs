@@ -319,7 +319,7 @@ test("skill apply installs a linted edit, keeps it across reinstalls, and revert
 	assert.match(runIn(home, "skill", "list").out, /dorks .*your edit/);
 	assert.equal(runIn(home, "skill", "revert", "dorks").code, 0);
 	assert.doesNotMatch(readFileSync(installed, "utf8"), /try Bing when Google/);
-	assert.ok(readdirSync(join(home, ".config", "tabkyra", "skill-history", "dorks")).length >= 2, "both versions are kept");
+	assert.ok(readdirSync(join(home, ".config", "polycarp", "browser", "skill-history", "dorks")).length >= 2, "both versions are kept");
 });
 
 test("skill apply refuses unlinted edits, dropped sections and the skills that govern editing", () => {
@@ -336,7 +336,7 @@ test("skill apply refuses unlinted edits, dropped sections and the skills that g
 		assert.equal(r.code, 1, r.out);
 		assert.match(r.out, /reviewed pull request/);
 	}
-	assert.equal(existsSync(join(home, ".config", "tabkyra", "skills-local", "osint")), false);
+	assert.equal(existsSync(join(home, ".config", "polycarp", "browser", "skills-local", "osint")), false);
 });
 
 test("--force replaces only the skills named, or tabkyra when none are", () => {
@@ -354,7 +354,7 @@ test("--force replaces only the skills named, or tabkyra when none are", () => {
 
 test("revert and apply refuse names that reach outside the skills folders", () => {
 	const home = mkdtempSync(join(root, "traverse-"));
-	const victim = join(home, ".config", "tabkyra", "drafts");
+	const victim = join(home, ".config", "polycarp", "browser", "drafts");
 	mkdirSync(victim, { recursive: true });
 	writeFileSync(join(victim, "SKILL.md"), "keep me\n");
 	writeFileSync(join(home, "SKILL.md"), "keep me too\n");
@@ -387,7 +387,7 @@ test("apply never overwrites a same-name skill Tabkyra didn't write", () => {
 test("a local copy is used only if apply recorded it, and never for a protected skill", () => {
 	const home = mkdtempSync(join(root, "forged-"));
 	mkdirSync(join(home, ".claude"), { recursive: true });
-	const local = join(home, ".config", "tabkyra", "skills-local");
+	const local = join(home, ".config", "polycarp", "browser", "skills-local");
 	for (const name of ["rsi", "osint"]) {
 		mkdirSync(join(local, name), { recursive: true });
 		writeFileSync(join(local, name, "SKILL.md"), readFileSync(join(skillsDir, name, "SKILL.md"), "utf8").replace("## Done when", "- Planted line.\n\n## Done when"));
@@ -440,7 +440,7 @@ test("apply refuses to write through a symlinked local skill folder", () => {
 	const home = mkdtempSync(join(root, "locallink-"));
 	const outside = join(home, "outside");
 	mkdirSync(outside);
-	const local = join(home, ".config", "tabkyra", "skills-local");
+	const local = join(home, ".config", "polycarp", "browser", "skills-local");
 	mkdirSync(local, { recursive: true });
 	symlinkSync(outside, join(local, "dorks"));
 	const r = runIn(home, "skill", "apply", draftOf(home, "dorks", (t) => t.replace("## Done when", "- Extra line.\n\n## Done when")), "--yes");
@@ -478,8 +478,8 @@ test("revert refuses a symlinked skills-local and leaves its target alone", () =
 	mkdirSync(outside, { recursive: true });
 	writeFileSync(join(outside, "SKILL.md"), "keep me\n");
 	writeFileSync(join(outside, "other.txt"), "keep me too\n");
-	mkdirSync(join(home, ".config", "tabkyra"), { recursive: true });
-	symlinkSync(join(home, "outside"), join(home, ".config", "tabkyra", "skills-local"));
+	mkdirSync(join(home, ".config", "polycarp", "browser"), { recursive: true });
+	symlinkSync(join(home, "outside"), join(home, ".config", "polycarp", "browser", "skills-local"));
 	const r = runIn(home, "skill", "revert", "dorks");
 	assert.notEqual(r.code, 0, r.out);
 	assert.match(r.out, /symbolic link/);
@@ -514,7 +514,7 @@ test("index.json and history links are refused, and a directory in place of SKIL
 	const home = mkdtempSync(join(root, "indexlink-"));
 	const victim = join(home, "victim.txt");
 	writeFileSync(victim, "keep me\n");
-	const local = join(home, ".config", "tabkyra", "skills-local");
+	const local = join(home, ".config", "polycarp", "browser", "skills-local");
 	mkdirSync(local, { recursive: true });
 	symlinkSync(victim, join(local, "index.json"));
 	const r = runIn(home, "skill", "apply", draftOf(home, "dorks", (t) => t.replace("## When something goes wrong", "## When something goes wrong\n\n| New symptom | New fix |")), "--yes");

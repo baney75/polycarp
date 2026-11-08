@@ -3,6 +3,7 @@ import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { bundledExtensionDir } from "./self.ts";
+import { envVar } from "./env.ts";
 
 /**
  * Socket directory: per user, outside $TMPDIR so every process finds the same path.
@@ -10,7 +11,8 @@ import { bundledExtensionDir } from "./self.ts";
  */
 export function socketDir(): string {
 	if (process.platform === "win32") return `\\\\.\\pipe\\tabkyra-bridge-${userInfo().username}`;
-	if (process.env.TABKYRA_SOCKET_DIR) return process.env.TABKYRA_SOCKET_DIR;
+	const override = envVar("SOCKET_DIR");
+	if (override) return override;
 	return `/tmp/tabkyra-bridge-${userInfo().username}`;
 }
 
@@ -45,7 +47,7 @@ export function repoRoot(): string {
 
 /** The unpacked extension folder users load in the browser. TABKYRA_EXTENSION_DIR overrides it (tests). */
 export function extensionDir(): string {
-	return process.env.TABKYRA_EXTENSION_DIR || bundledExtensionDir() || join(repoRoot(), "dist-chrome");
+	return envVar("EXTENSION_DIR") || bundledExtensionDir() || join(repoRoot(), "dist-chrome");
 }
 
 /** Files a loadable build must have; a half-written dist-chrome unloads the extension. */

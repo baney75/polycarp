@@ -221,7 +221,7 @@ export class ConnectService {
 	async handle(message: unknown, reply: Reply): Promise<void> {
 		const parsed = parseConnect(message);
 		if (!parsed.ok) {
-			process.stderr.write("[tabkyra-host] refused a connect frame\n");
+			process.stderr.write("[polycarp-host] refused a connect frame\n");
 			if (parsed.id !== undefined) reply({ type: "connect", id: parsed.id, error: { code: "bad_params", message: parsed.message } });
 			return;
 		}
@@ -232,7 +232,7 @@ export class ConnectService {
 		} catch (err) {
 			const code = err instanceof ConnectError ? err.code : "failed";
 			// The method only: params (a code, a hub address) stay out of the log.
-			process.stderr.write(`[tabkyra-host] connect ${call.method} failed (${code})\n`);
+			process.stderr.write(`[polycarp-host] connect ${call.method} failed (${code})\n`);
 			reply({ type: "connect", id, error: { code, message: safeMessage(err) } });
 		}
 	}

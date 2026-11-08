@@ -7,9 +7,11 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { tabkyraBinary } from "./harness.ts";
+import { launcherBinary } from "./harness.ts";
+import { ensureLauncherIsSelf } from "./install.ts";
 import { configDir } from "./files.ts";
 import { COMMAND_NAME } from "./self.ts";
+import { envVar } from "./env.ts";
 
 export function writeAtomic(path: string, text: string, mode: number): void {
 	mkdirSync(dirname(path), { recursive: true });
@@ -74,8 +76,9 @@ const systemdQuote = (text: string, execStart = false) => {
 
 /** The service reads remote.json (or hub.json, link.json) and oauth.json from the same directory as this shell; the socket directory only when it was moved. Both as absolute paths, since a service doesn't start in this shell's directory. */
 export function serviceEnvironment(): Record<string, string> {
-	const out: Record<string, string> = { TABKYRA_CONFIG_DIR: resolve(configDir()) };
-	if (process.env.TABKYRA_SOCKET_DIR) out.TABKYRA_SOCKET_DIR = resolve(process.env.TABKYRA_SOCKET_DIR);
+	const out: Record<string, string> = { POLYCARP_BROWSER_CONFIG_DIR: resolve(configDir()) };
+	const socket = envVar("SOCKET_DIR");
+	if (socket) out.POLYCARP_SOCKET_DIR = resolve(socket);
 	return out;
 }
 
@@ -90,36 +93,43 @@ export interface ServiceSpec {
 	off: string;
 	/** What setup keeps when a stop fails, for messages ("remote.json"). */
 	kept: string;
+	/** The names this service had before the rename. Installing retires a service under them; removing removes it. */
+	legacy?: { label: string; unit: string; logName: string };
 }
 
+const legacyNames = (name: string) => ({ label: `com.tabkyra.${name}`, unit: `tabkyra-${name}.service`, logName: `tabkyra-${name}.log` });
+
 export const SERVE_SERVICE: ServiceSpec = {
-	label: "com.tabkyra.serve",
-	unit: "tabkyra-serve.service",
+	label: "com.polycarp.serve",
+	unit: "polycarp-serve.service",
 	args: ["serve"],
-	logName: "tabkyra-serve.log",
+	logName: "polycarp-serve.log",
 	description: "Polycarp serve (MCP over HTTP for claude.ai, ChatGPT and grok.com)",
 	off: `${COMMAND_NAME} remote off`,
 	kept: "remote.json",
+	legacy: legacyNames("serve"),
 };
 
 export const HUB_SERVICE: ServiceSpec = {
-	label: "com.tabkyra.hub",
-	unit: "tabkyra-hub.service",
+	label: "com.polycarp.hub",
+	unit: "polycarp-hub.service",
 	args: ["hub", "serve"],
-	logName: "tabkyra-hub.log",
+	logName: "polycarp-hub.log",
 	description: "Polycarp hub (one connector URL for many devices)",
 	off: `${COMMAND_NAME} hub off`,
 	kept: "hub.json",
+	legacy: legacyNames("hub"),
 };
 
 export const LINK_SERVICE: ServiceSpec = {
-	label: "com.tabkyra.link",
-	unit: "tabkyra-link.service",
+	label: "com.polycarp.link",
+	unit: "polycarp-link.service",
 	args: ["link", "run"],
-	logName: "tabkyra-link.log",
+	logName: "polycarp-link.log",
 	description: "Polycarp link (this device, behind a hub)",
 	off: `${COMMAND_NAME} link off`,
 	kept: "link.json",
+	legacy: legacyNames("link"),
 };
 
 const plistPath = (spec: ServiceSpec) => join(homedir(), "Library", "LaunchAgents", `${spec.label}.plist`);
@@ -195,8 +205,105 @@ export function installServiceAsync(spec: ServiceSpec = SERVE_SERVICE, timeoutMs
 	return installWith(spec, (cmd, args) => runAsync(cmd, args, timeoutMs));
 }
 
-async function installWith(spec: ServiceSpec, exec: Runner): Promise<{ ok: boolean; message: string; file?: string }> {
-	const binary = tabkyraBinary();
+/** The service as it was named before the rename, shaped like a spec so the same file and log helpers work on it. */
+function legacySpec(spec: ServiceSpec): ServiceSpec | undefined {
+	return spec.legacy ? { ...spec, ...spec.legacy, legacy: undefined } : undefined;
+}
+
+/** True when a service under the old name is installed here. */
+export function legacyServiceInstalled(spec: ServiceSpec): boolean {
+	const old = legacySpec(spec);
+	const file = old ? serviceFile(old) : undefined;
+	return Boolean(file && existsSync(file));
+}
+
+/** Give the old log the new name, unless the new one exists already. A rename keeps the history. */
+function moveLegacyLog(spec: ServiceSpec): void {
+	if (process.platform !== "darwin" || !spec.legacy) return;
+	const from = launchdLog({ ...spec, logName: spec.legacy.logName });
+	const to = launchdLog(spec);
+	try {
+		if (existsSync(from) && !existsSync(to)) renameSync(from, to);
+	} catch {
+		/* the log is not worth failing a migration for */
+	}
+}
+
+interface Retired {
+	ok: boolean;
+	message?: string;
+	/** Bring the old service back, when the new one could not be installed. */
+	restore: () => Promise<void>;
+	/** Delete the old service's file and move its log: the new one is running. */
+	finish: () => Promise<void>;
+}
+
+const NOTHING_RETIRED: Retired = { ok: true, restore: async () => {}, finish: async () => {} };
+
+/**
+ * Stop the service under the old name, if one is installed, so the new one can take its port. Its file stays until `finish`,
+ * so a failed install can `restore` it and the person is no worse off.
+ */
+async function retireLegacy(spec: ServiceSpec, exec: Runner): Promise<Retired> {
+	const old = legacySpec(spec);
+	const file = old ? serviceFile(old) : undefined;
+	if (!old || !file || !existsSync(file)) return NOTHING_RETIRED;
+	if (process.platform === "darwin") {
+		const r = await exec("launchctl", ["bootout", launchdTarget(old)]);
+		// bootout also fails when the service was never loaded; that is already stopped.
+		if (r.code !== 0 && (await exec("launchctl", ["print", launchdTarget(old)])).code === 0) {
+			return { ...NOTHING_RETIRED, ok: false, message: `launchctl bootout ${launchdTarget(old)} failed: ${r.out}. The old ${old.label} service is still running, so nothing was changed.` };
+		}
+		await waitUntilUnloaded(old, exec);
+		return {
+			ok: true,
+			restore: async () => void (await exec("launchctl", ["bootstrap", `gui/${process.getuid?.() ?? 0}`, file])),
+			finish: async () => {
+				rmSync(file, { force: true });
+				moveLegacyLog(spec);
+			},
+		};
+	}
+	const r = await exec("systemctl", ["--user", "disable", "--now", old.unit]);
+	if (r.code !== 0) return { ...NOTHING_RETIRED, ok: false, message: `systemctl --user disable --now ${old.unit} failed: ${r.out}. The old service is still installed, so nothing was changed.` };
+	return {
+		ok: true,
+		restore: async () => void (await exec("systemctl", ["--user", "enable", "--now", old.unit])),
+		finish: async () => {
+			rmSync(file, { force: true });
+			await exec("systemctl", ["--user", "daemon-reload"]);
+		},
+	};
+}
+
+type InstallResult = { ok: boolean; message: string; file?: string };
+
+async function installWith(spec: ServiceSpec, exec: Runner): Promise<InstallResult> {
+	// The service runs the launcher. One that points at some other program (an old checkout, an npm link) would start old code.
+	ensureLauncherIsSelf();
+	const retired = await retireLegacy(spec, exec);
+	if (!retired.ok) return { ok: false, message: retired.message ?? "The old service could not be stopped." };
+	const result = await installFresh(spec, exec);
+	if (result.ok) await retired.finish();
+	else await retired.restore();
+	return result;
+}
+
+/** launchctl exits 5 (Input/output error) when asked to bootstrap while launchd is still tearing the same job down. */
+const BOOTSTRAP_RETRY_MS = 5000;
+const BOOTSTRAP_PAUSE_MS = 500;
+
+async function bootstrapWithRetry(spec: ServiceSpec, exec: Runner): Promise<{ code: number; out: string }> {
+	const deadline = Date.now() + BOOTSTRAP_RETRY_MS;
+	for (;;) {
+		const r = await exec("launchctl", ["bootstrap", `gui/${process.getuid?.() ?? 0}`, plistPath(spec)]);
+		if (r.code !== 5 || Date.now() + BOOTSTRAP_PAUSE_MS > deadline) return r;
+		await sleep(BOOTSTRAP_PAUSE_MS);
+	}
+}
+
+async function installFresh(spec: ServiceSpec, exec: Runner): Promise<InstallResult> {
+	const binary = launcherBinary();
 	const env = serviceEnvironment();
 	if (process.platform === "darwin") {
 		const log = launchdLog(spec);
@@ -204,7 +311,7 @@ async function installWith(spec: ServiceSpec, exec: Runner): Promise<{ ok: boole
 		writeAtomic(plistPath(spec), plistText(binary, env, log, spec), 0o644);
 		await exec("launchctl", ["bootout", launchdTarget(spec)]);
 		await waitUntilUnloaded(spec, exec);
-		const r = await exec("launchctl", ["bootstrap", `gui/${process.getuid?.() ?? 0}`, plistPath(spec)]);
+		const r = await bootstrapWithRetry(spec, exec);
 		return { ok: r.code === 0, file: plistPath(spec), message: r.code === 0 ? `Service installed (${plistPath(spec)}); logs in ${log}.` : `launchctl bootstrap failed: ${r.out}. Run: launchctl bootstrap gui/${process.getuid?.() ?? 0} ${plistPath(spec)}` };
 	}
 	if (process.platform === "linux") {
@@ -218,8 +325,31 @@ async function installWith(spec: ServiceSpec, exec: Runner): Promise<{ ok: boole
 	return { ok: false, message: `No service manager is set up for ${process.platform}. Keep it running yourself: ${binary} ${spec.args.join(" ")}` };
 }
 
+/**
+ * Services installed under the old tabkyra names are installed again under the polycarp ones (same arguments, the current
+ * launcher) and the old ones stopped and deleted. Runs from install, setup and update, never from a service itself: a service
+ * that retired its own old label would stop itself.
+ */
+export async function migrateLegacyServices(): Promise<Array<{ label: string } & InstallResult>> {
+	const out: Array<{ label: string } & InstallResult> = [];
+	for (const spec of [SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE]) {
+		if (!legacyServiceInstalled(spec)) continue;
+		out.push({ label: spec.label, ...(await installService(spec)) });
+	}
+	return out;
+}
+
 /** Stop and remove the user service. A failed stop keeps the service file so `remote off` can be run again. */
 export function removeService(spec: ServiceSpec = SERVE_SERVICE): { ok: boolean; notes: string[]; failure?: string } {
+	const result = removeOne(spec);
+	const old = legacySpec(spec);
+	if (!old || !result.ok) return result;
+	const gone = removeOne(old);
+	if (gone.ok) moveLegacyLog(spec);
+	return gone.ok ? { ok: true, notes: [...result.notes, ...gone.notes] } : gone;
+}
+
+function removeOne(spec: ServiceSpec): { ok: boolean; notes: string[]; failure?: string } {
 	if (process.platform === "darwin" && existsSync(plistPath(spec))) {
 		const r = run("launchctl", ["bootout", launchdTarget(spec)]);
 		// bootout also fails when the service was never loaded; that is already stopped.

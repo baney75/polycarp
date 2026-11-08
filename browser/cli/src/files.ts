@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { envVar } from "./env.ts";
 
 /** The parsed JSON file, or `fallback` when it doesn't exist. A file that exists but isn't JSON throws. */
 export function readJsonFile<T>(path: string, fallback: T): T {
@@ -101,7 +102,57 @@ export async function withFileLockAsync<T>(path: string, fn: () => Promise<T>, t
 	}
 }
 
-/** The Polycarp config directory. TABKYRA_CONFIG_DIR overrides it (tests use a temp one). */
+const EXT = process.platform === "win32" ? ".cmd" : "";
+
+/** What the native host launcher is called inside the config folder. */
+export const HOST_LAUNCHER_NAME = `polycarp-host${EXT}`;
+/** What the agent launcher is called inside the config folder. */
+export const CLI_LAUNCHER_NAME = `polycarp${EXT}`;
+/** Their names before the rename. The migration leaves a link under each, and an agent entry that names the old path is rewritten. */
+export const LEGACY_HOST_LAUNCHER_NAME = `host${EXT}`;
+export const LEGACY_CLI_LAUNCHER_NAME = `tabkyra${EXT}`;
+
+/** The folder config lives under: $XDG_CONFIG_HOME, else ~/.config. */
+export function configHome(): string {
+	return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+}
+
+/** The folder a person chose for the helper's config (POLYCARP_BROWSER_CONFIG_DIR, or the older TABKYRA_CONFIG_DIR), if any. POLYCARP_CONFIG_DIR is the app's folder, not this one. */
+export function configDirOverride(): string | undefined {
+	return process.env.POLYCARP_BROWSER_CONFIG_DIR || process.env.TABKYRA_CONFIG_DIR || undefined;
+}
+
+/** The helper's config directory: <config>/polycarp/browser, inside the app's own polycarp folder. Tests use a temp one through the override. */
 export function configDir(): string {
-	return process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
+	return configDirOverride() || join(configHome(), "polycarp", "browser");
+}
+
+/** The folder before the rename. Only the one-time migration (migrate.ts) and the old-entry checks read it. */
+export function legacyConfigDir(): string {
+	return join(configHome(), "tabkyra");
+}
+
+/** The folder user data lives under: $XDG_DATA_HOME, else ~/.local/share. */
+export function dataHome(): string {
+	return process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
+}
+
+/** The helper's data directory (the installed release, thread mirror, Copilot SDK): POLYCARP_HOME (or TABKYRA_HOME), else <data>/polycarp/browser. */
+export function dataDir(): string {
+	return envVar("HOME") || join(dataHome(), "polycarp", "browser");
+}
+
+/** The data folder before the rename. */
+export function legacyDataDir(): string {
+	return join(dataHome(), "tabkyra");
+}
+
+/** The Polycarp cache directory: POLYCARP_CACHE_DIR (or TABKYRA_CACHE_DIR), else $XDG_CACHE_HOME or ~/.cache, then polycarp. */
+export function cacheDir(): string {
+	return envVar("CACHE_DIR") || join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "polycarp");
+}
+
+/** The cache folder before the rename. */
+export function legacyCacheDir(): string {
+	return join(process.env.XDG_CACHE_HOME || join(homedir(), ".cache"), "tabkyra");
 }

@@ -20,7 +20,7 @@ const cli = join(here, "..", "dist", "index.js");
 const packageScript = join(here, "..", "..", "scripts", "release", "package.mjs");
 const tmp = mkdtempSync(join(tmpdir(), "tabkyra-update-"));
 const home = join(tmp, "home");
-const tabkyraHome = join(home, ".local", "share", "tabkyra");
+const tabkyraHome = join(home, ".local", "share", "polycarp", "browser");
 const keyFile = join(tmp, "release.pub");
 const key = throwawayKey();
 const otherKey = throwawayKey();
@@ -202,7 +202,7 @@ test("--check exits 100 with JSON when a newer release exists", async () => {
 	assert.equal(status.latest, "9.1.1");
 	assert.equal(status.available, true);
 	assert.equal(status.channel, "stable");
-	assert.ok(existsSync(join(home, ".config", "tabkyra", "update-status.json")), "the check is cached for the native host");
+	assert.ok(existsSync(join(home, ".config", "polycarp", "browser", "update-status.json")), "the check is cached for the native host");
 });
 
 test("from a checkout, update asks first and does nothing without a yes", async () => {
@@ -219,10 +219,10 @@ test("update --yes installs the signed release and registers the host from it", 
 	assert.match(r.out, /Checksum verified/);
 	assert.match(r.out, /Reload Polycarp/);
 	assert.equal(appVersion(), "9.1.1");
-	const launcher = readFileSync(join(home, ".config", "tabkyra", "host"), "utf8");
+	const launcher = readFileSync(join(home, ".config", "polycarp", "browser", "polycarp-host"), "utf8");
 	assert.ok(launcher.includes(appCli()), `launcher points at the release: ${launcher}`);
 	const hostManifest = JSON.parse(readFileSync(join(chromeDir, "NativeMessagingHosts", "ai.tabkyra.bridge.json"), "utf8"));
-	assert.equal(hostManifest.path, join(home, ".config", "tabkyra", "host"));
+	assert.equal(hostManifest.path, join(home, ".config", "polycarp", "browser", "polycarp-host"));
 });
 
 test("the installed CLI updates itself and keeps the last version", async () => {
@@ -305,7 +305,7 @@ test("nightly channel sees prereleases; stable does not", async () => {
 	assert.equal(nightly.code, 100, nightly.out);
 	assert.match(nightly.out, /9\.2\.0-nightly\.20261025/);
 	// A read-only check doesn't change the saved channel; an update does.
-	const settings = join(home, ".config", "tabkyra", "update.json");
+	const settings = join(home, ".config", "polycarp", "browser", "update.json");
 	assert.equal(existsSync(settings) ? JSON.parse(readFileSync(settings, "utf8")).channel : "stable", "stable");
 	const r = await run(appCli(), "update", "--channel", "nightly");
 	assert.equal(r.code, 0, r.out);
@@ -357,12 +357,12 @@ test("a rollback interrupted after its second rename keeps both releases", async
 });
 
 test("rollback from a checkout asks first and changes nothing without a yes", async () => {
-	const launcher = readFileSync(join(home, ".config", "tabkyra", "host"), "utf8");
+	const launcher = readFileSync(join(home, ".config", "polycarp", "browser", "polycarp-host"), "utf8");
 	const r = await run(cli, "update", "--rollback");
 	assert.equal(r.code, 1, r.out);
 	assert.match(r.out, /Roll back the release install/);
 	assert.equal(appVersion(), "9.3.1");
-	assert.equal(readFileSync(join(home, ".config", "tabkyra", "host"), "utf8"), launcher);
+	assert.equal(readFileSync(join(home, ".config", "polycarp", "browser", "polycarp-host"), "utf8"), launcher);
 });
 
 test("a held lock stops a second updater; a dead one is taken over", async () => {
@@ -387,7 +387,7 @@ test("usage errors exit 2", async () => {
 
 test("the native host tells the extension an update is available", async () => {
 	writeFileSync(
-		join(home, ".config", "tabkyra", "update-status.json"),
+		join(home, ".config", "polycarp", "browser", "update-status.json"),
 		JSON.stringify({ checkedAt: Date.now(), channel: "stable", current: appVersion(), latest: "9.4.0", available: true }),
 	);
 	// The host reads the installed version of the copy it runs from: the release in app/.
@@ -443,7 +443,7 @@ test("release mode from the side panel: the same signed install, streamed as ste
 	assert.ok(a.events.some((e) => e.phase === "skills"));
 	assert.equal(a.last.reload, true);
 	assert.equal(appVersion(), "9.5.0");
-	const record = JSON.parse(readFileSync(join(home, ".config", "tabkyra", "last-update.json"), "utf8"));
+	const record = JSON.parse(readFileSync(join(home, ".config", "polycarp", "browser", "last-update.json"), "utf8"));
 	assert.equal(record.kind, "update");
 	assert.equal(record.mode, "release");
 	assert.equal(record.from, from);

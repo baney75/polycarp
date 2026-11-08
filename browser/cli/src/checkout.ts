@@ -20,6 +20,7 @@ import type { InstallMode } from "../../src/bridge/protocol.ts";
 import { asBuildInfo, type BuildInfo, describeBuild } from "../../src/update/build.ts";
 import { EXTENSION_FILES, repoRoot } from "./paths.ts";
 import { appDir, isManagedCopy, takeLock, UpdateError } from "./update.ts";
+import { envVar } from "./env.ts";
 
 /** Commit subjects shown in "What's new". */
 export const MAX_COMMITS = 20;
@@ -50,7 +51,7 @@ export function isCheckout(root: string): boolean {
 	}
 }
 
-/** How the CLI that runs is installed: a release in ~/.local/share/tabkyra/app, a checkout, or neither. */
+/** How the CLI that runs is installed: a release in ~/.local/share/polycarp/browser/app, a checkout, or neither. */
 export interface ModeInfo {
 	mode: InstallMode;
 	/** Where updates install: the release folder, the checkout, or the folder this CLI runs from. */
@@ -85,7 +86,7 @@ interface RunResult {
  */
 export function toolEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = { ...process.env };
-	for (const key of ["TABKYRA_OUT_DIR", "TABKYRA_CLI_OUT_DIR", "TABKYRA_EXTENSION_DIR", "TABKYRA_NO_BUMP"]) delete env[key];
+	for (const key of ["OUT_DIR", "CLI_OUT_DIR", "EXTENSION_DIR", "NO_BUMP"]) for (const prefix of ["TABKYRA_", "POLYCARP_"]) delete env[`${prefix}${key}`];
 	const path = [dirname(process.execPath), ...(env.PATH ?? "").split(delimiter), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
 	env.PATH = [...new Set(path.filter(Boolean))].join(delimiter);
 	env.GIT_TERMINAL_PROMPT = "0";
@@ -423,7 +424,7 @@ function swapStep(root: string, op: Journal["op"]): void {
 		if (!existsSync(ext)) renameSync(join(source, "dist-chrome"), ext);
 	}
 	// Tests stop a swap here once, between the extension and the CLI (cli/test/checkout-update.test.mjs).
-	if (process.env.TABKYRA_TEST_SWAP_FAIL === "after-extension" && !swapFailInjected) {
+	if (envVar("TEST_SWAP_FAIL") === "after-extension" && !swapFailInjected) {
 		swapFailInjected = true;
 		throw new UpdateError("Stopped mid-swap (TABKYRA_TEST_SWAP_FAIL).");
 	}

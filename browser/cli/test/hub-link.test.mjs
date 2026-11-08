@@ -412,7 +412,7 @@ function stubbed(name) {
 		writeFileSync(join(bin, tool), `#!/bin/sh\necho "${tool} $*" >> ${log}\n${tool === "launchctl" ? 'case "$1" in\nprint) exit 1 ;;\nesac\n' : ""}`);
 		chmodSync(join(bin, tool), 0o755);
 	}
-	const launcher = join(m.env.HOME, ".config", "tabkyra", "tabkyra");
+	const launcher = join(m.config, "polycarp");
 	mkdirSync(dirname(launcher), { recursive: true });
 	writeFileSync(launcher, `#!/bin/sh\nexec "${process.execPath}" "$@"\n`);
 	chmodSync(launcher, 0o755);
@@ -472,7 +472,7 @@ test("hub setup refuses while remote.json exists, and changes nothing", () => {
 	assert.equal(existsSync(m.file("oauth.json")), false);
 });
 
-serviceTest("hub setup installs com.tabkyra.hub / tabkyra-hub.service running hub serve; link installs and removes its own", async () => {
+serviceTest("hub setup installs com.polycarp.hub / polycarp-hub.service running hub serve; link installs and removes its own", async () => {
 	const m = stubbed("setup-service");
 	const port = await freePort();
 	const publicUrl = "https://hub.example.com";
@@ -493,17 +493,17 @@ serviceTest("hub setup installs com.tabkyra.hub / tabkyra-hub.service running hu
 		});
 	const done = await run(["hub", "setup", "--public-url", publicUrl, "--port", String(port)]);
 	assert.equal(done.code, 0, done.out);
-	const unit = readFileSync(serviceFile(m, "com.tabkyra.hub", "tabkyra-hub.service"), "utf8");
+	const unit = readFileSync(serviceFile(m, "com.polycarp.hub", "polycarp-hub.service"), "utf8");
 	if (process.platform === "linux") {
 		assert.ok(unit.split("\n").includes(`ExecStart=${m.launcher} hub serve`), unit);
-		assert.deepEqual(m.calls(), ["systemctl --user daemon-reload", "systemctl --user enable tabkyra-hub.service", "systemctl --user restart tabkyra-hub.service"]);
+		assert.deepEqual(m.calls(), ["systemctl --user daemon-reload", "systemctl --user enable polycarp-hub.service", "systemctl --user restart polycarp-hub.service"]);
 	} else {
 		assert.ok(unit.includes(`<string>${m.launcher}</string>\n\t\t<string>hub</string>\n\t\t<string>serve</string>`), unit);
-		assert.ok(unit.includes("<string>com.tabkyra.hub</string>"));
+		assert.ok(unit.includes("<string>com.polycarp.hub</string>"));
 	}
 	const off = await run(["hub", "off"]);
 	assert.equal(off.code, 0, off.out);
-	assert.equal(existsSync(serviceFile(m, "com.tabkyra.hub", "tabkyra-hub.service")), false);
+	assert.equal(existsSync(serviceFile(m, "com.polycarp.hub", "polycarp-hub.service")), false);
 	assert.equal(existsSync(m.file("hub.json")), false);
 
 	// link: a hub that really answers /link/enroll.
@@ -511,7 +511,7 @@ serviceTest("hub setup installs com.tabkyra.hub / tabkyra-hub.service running hu
 	const code = hub.json(["hub", "code", "--json"]).code;
 	const l = await run(["link", hub.url, "--code", code, "--name", "laptop", "--scope", "browser.read,skills.read"]);
 	assert.equal(l.code, 0, l.out);
-	const linkUnit = readFileSync(serviceFile(m, "com.tabkyra.link", "tabkyra-link.service"), "utf8");
+	const linkUnit = readFileSync(serviceFile(m, "com.polycarp.link", "polycarp-link.service"), "utf8");
 	assert.ok(process.platform === "linux" ? linkUnit.split("\n").includes(`ExecStart=${m.launcher} link run`) : linkUnit.includes("<string>link</string>\n\t\t<string>run</string>"), linkUnit);
 	const link = readJson(m.file("link.json"));
 	assert.deepEqual([link.hubUrl, link.name, link.manage, link.scopes], [hub.url, "laptop", false, ["browser.read", "skills.read"]]);
@@ -520,7 +520,7 @@ serviceTest("hub setup installs com.tabkyra.hub / tabkyra-hub.service running hu
 	const off2 = await run(["link", "off"]);
 	assert.equal(off2.code, 0, off2.out);
 	assert.equal(existsSync(m.file("link.json")), false);
-	assert.equal(existsSync(serviceFile(m, "com.tabkyra.link", "tabkyra-link.service")), false);
+	assert.equal(existsSync(serviceFile(m, "com.polycarp.link", "polycarp-link.service")), false);
 });
 
 test("link refuses a hub URL that isn't https (except loopback), a bad scope and a missing code", async () => {

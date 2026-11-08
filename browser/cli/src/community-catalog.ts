@@ -28,6 +28,8 @@ import { lintCommunity, parseSites } from "./skill-community.ts";
 import { lintText, parseFrontmatter } from "./skill-lint.ts";
 import { VERSION } from "./version.ts";
 import { COMMAND_NAME } from "./self.ts";
+import { envVar } from "./env.ts";
+import { configDir } from "./files.ts";
 
 export const CATALOG_FILE = "community-catalog.json";
 export const CATALOG_SIG = "community-catalog.json.minisig";
@@ -146,7 +148,7 @@ export function trustedComment(serial: number): string {
 
 /** The key catalogs are checked with: the release key, or TABKYRA_UPDATE_PUBKEY (a file) for tests and forks, as for updates. */
 function releaseKeyText(): string {
-	const file = process.env.TABKYRA_UPDATE_PUBKEY;
+	const file = envVar("UPDATE_PUBKEY");
 	return file ? readFileSync(file, "utf8") : RELEASE_KEY;
 }
 
@@ -188,10 +190,6 @@ export function verifyCatalog(data: Buffer, signature: string, keyText = release
 }
 
 // --- The client's copy ---------------------------------------------------------------------
-
-function configDir(): string {
-	return process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
-}
 
 export function communityDir(): string {
 	return join(configDir(), "community");
@@ -334,7 +332,7 @@ export function removalReason(name: string): string | undefined {
 
 /** Where catalogs come from: TABKYRA_COMMUNITY_URL (an https URL, or a folder for tests and dry runs), else the release. */
 function source(): string {
-	return process.env.TABKYRA_COMMUNITY_URL || CATALOG_URL;
+	return envVar("COMMUNITY_URL") || CATALOG_URL;
 }
 
 function checkUrl(url: string): void {

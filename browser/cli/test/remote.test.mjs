@@ -76,7 +76,7 @@ test("token create refuses no scope, unknown scopes and wildcards", () => {
 		assert.equal(r.code, 2, `${scopes}: ${r.out}`);
 	}
 	const secret = token("hash-check", "browser.read");
-	const stored = readFileSync(join(env.HOME, ".config", "tabkyra", "tokens.json"), "utf8");
+	const stored = readFileSync(join(env.HOME, ".config", "polycarp", "browser", "tokens.json"), "utf8");
 	assert.ok(!stored.includes(secret), "the secret itself is never written");
 	assert.doesNotMatch(stored, /tkr_/, "only hashes are stored");
 });
@@ -259,7 +259,7 @@ test("token names can't collide or look like ids", () => {
 
 test("only an initialize request opens a session; unknown sessions get 404; serving never rewrites tokens.json", async () => {
 	const secret = token("probe", "library.read");
-	const file = join(env.HOME, ".config", "tabkyra", "tokens.json");
+	const file = join(env.HOME, ".config", "polycarp", "browser", "tokens.json");
 	const before = readFileSync(file, "utf8");
 	const headers = { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${secret}` };
 	const notInit = await fetch(url, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
@@ -347,7 +347,7 @@ test("a token can hold at most 8 sessions, and a malformed record doesn't break 
 	} finally {
 		for (const c of clients) await c.close().catch(() => {});
 	}
-	const file = join(env.HOME, ".config", "tabkyra", "tokens.json");
+	const file = join(env.HOME, ".config", "polycarp", "browser", "tokens.json");
 	const data = JSON.parse(readFileSync(file, "utf8"));
 	data.tokens.push({ id: "badbadba", name: "broken", scopes: ["library.read"], sha256: "zz", createdAt: "x" });
 	writeFileSync(file, JSON.stringify(data));
@@ -376,7 +376,7 @@ test("tailscale serve is refused while Funnel is on for 443; the cloudflare URL 
 	assert.match(res.out, /printed no URL in time, so it was stopped/);
 	assert.doesNotMatch(res.out, /reachable at https:\/\/api\./);
 	// The live child was stopped, and nothing is left for --off to find.
-	const pidFile = join(env.HOME, ".config", "tabkyra", "cloudflared.pid");
+	const pidFile = join(env.HOME, ".config", "polycarp", "browser", "cloudflared.pid");
 	assert.throws(() => readFileSync(pidFile, "utf8"), "the pid file is removed");
 });
 
@@ -604,7 +604,7 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 
 		// Retention caps never discard a live grant's spent tokens. serve reads oauth.json on every
 		// change, so the test adds records to it between requests.
-		const oauthPath = join(home, ".config", "tabkyra", "oauth.json");
+		const oauthPath = join(home, ".config", "polycarp", "browser", "oauth.json");
 		const newGrant = async () => {
 			const page = await (await fetch(`${base}/authorize?${q}`)).text();
 			const res = await approve([["request", /name="request" value="([^"]+)"/.exec(page)[1]], ["passcode", passcode], ["scope", "browser.read"], ["decision", "allow"]]);
@@ -658,7 +658,7 @@ test("serve --public-url: register, approve with the passcode, use only the tick
 		assert.ok(listed.some((cl) => cl.client_id === client_id));
 		assert.equal(run(["token", "revoke", client_id]).code, 0);
 		assert.ok(!JSON.parse(run(["token", "clients", "--json"]).out).some((cl) => cl.client_id === client_id), "the revoked client is gone");
-		const oauthFile = readFileSync(join(home, ".config", "tabkyra", "oauth.json"), "utf8");
+		const oauthFile = readFileSync(join(home, ".config", "polycarp", "browser", "oauth.json"), "utf8");
 		assert.doesNotMatch(oauthFile, /tko_|tkf_|tks_/, "only hashes are stored");
 		assert.doesNotMatch(oauthFile, new RegExp(passcode), "the passcode is stored as a hash");
 	} finally {
@@ -687,7 +687,7 @@ test("serve keeps answering while a CLI command holds the oauth.json lock, and t
 			srv.on("exit", (code) => reject(new Error(`serve exited ${code}: ${out}`)));
 			setTimeout(() => reject(new Error(`serve didn't start: ${out}`)), 15_000);
 		});
-		const lock = join(home, ".config", "tabkyra", "oauth.json.lock");
+		const lock = join(home, ".config", "polycarp", "browser", "oauth.json.lock");
 		writeFileSync(lock, "99999");
 		const register = fetch(`${base}/register`, {
 			method: "POST",
@@ -766,10 +766,10 @@ function remoteScenario(name, { lock = "Tailnet lock is NOT enabled.", serveStat
 		calls: () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []),
 		remoteJson: () => JSON.parse(readFileSync(join(scenarioEnv.TABKYRA_CONFIG_DIR, "remote.json"), "utf8")),
 		hasRemoteJson: () => existsSync(join(scenarioEnv.TABKYRA_CONFIG_DIR, "remote.json")),
-		serviceFile: () => (process.platform === "darwin" ? join(home, "Library", "LaunchAgents", "com.tabkyra.serve.plist") : join(home, ".config", "systemd", "user", "tabkyra-serve.service")),
+		serviceFile: () => (process.platform === "darwin" ? join(home, "Library", "LaunchAgents", "com.polycarp.serve.plist") : join(home, ".config", "systemd", "user", "polycarp-serve.service")),
 		/** The launcher `polycarp browser install` writes: an executable script that runs an existing file. */
 		launcher: (homeDir = home) => {
-			const path = join(homeDir, ".config", "tabkyra", "tabkyra");
+			const path = join(homeDir === home ? scenarioEnv.TABKYRA_CONFIG_DIR : join(homeDir, ".config", "polycarp", "browser"), "polycarp");
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(path, `#!/bin/sh\nexec "${process.execPath}" "$@"\n`);
 			chmodSync(path, 0o755);
@@ -929,18 +929,18 @@ serviceTest("remote setup installs a service that runs serve, opens Funnel only 
 			assert.ok(unit.split("\n").includes("Restart=always"), unit);
 			assert.ok(unit.split("\n").includes("RestartSec=10"), unit);
 			assert.ok(unit.split("\n").includes("WantedBy=default.target"), unit);
-			assert.ok(unit.split("\n").includes(`Environment=TABKYRA_CONFIG_DIR=${s.config}`), unit);
-			assert.ok(unit.split("\n").includes(`Environment=TABKYRA_SOCKET_DIR=${env.TABKYRA_SOCKET_DIR}`), unit);
-			assert.deepEqual(managerCalls(s), ["systemctl --user daemon-reload", "systemctl --user enable tabkyra-serve.service", "systemctl --user restart tabkyra-serve.service"]);
+			assert.ok(unit.split("\n").includes(`Environment=POLYCARP_BROWSER_CONFIG_DIR=${s.config}`), unit);
+			assert.ok(unit.split("\n").includes(`Environment=POLYCARP_SOCKET_DIR=${env.TABKYRA_SOCKET_DIR}`), unit);
+			assert.deepEqual(managerCalls(s), ["systemctl --user daemon-reload", "systemctl --user enable polycarp-serve.service", "systemctl --user restart polycarp-serve.service"]);
 		} else {
 			assert.ok(unit.includes(`<string>${binary}</string>\n\t\t<string>serve</string>`), unit);
-			assert.ok(unit.includes(`<key>TABKYRA_CONFIG_DIR</key>\n\t\t<string>${s.config}</string>`), unit);
+			assert.ok(unit.includes(`<key>POLYCARP_BROWSER_CONFIG_DIR</key>\n\t\t<string>${s.config}</string>`), unit);
 			assert.match(unit, /<key>RunAtLoad<\/key>\s*<true\/>/);
 			assert.match(unit, /<key>KeepAlive<\/key>\s*<true\/>/);
 			assert.match(unit, /<key>ThrottleInterval<\/key>\s*<integer>10<\/integer>/);
-			assert.ok(unit.includes(join(s.home, "Library", "Logs", "tabkyra-serve.log")));
+			assert.ok(unit.includes(join(s.home, "Library", "Logs", "polycarp-serve.log")));
 			const uid = process.getuid();
-			assert.deepEqual(managerCalls(s), [`launchctl bootout gui/${uid}/com.tabkyra.serve`, `launchctl print gui/${uid}/com.tabkyra.serve`, `launchctl bootstrap gui/${uid} ${s.serviceFile()}`]);
+			assert.deepEqual(managerCalls(s), [`launchctl bootout gui/${uid}/com.polycarp.serve`, `launchctl print gui/${uid}/com.polycarp.serve`, `launchctl bootstrap gui/${uid} ${s.serviceFile()}`]);
 		}
 		const calls = s.calls();
 		assert.ok(calls.indexOf(funnelCall(local.port)) > calls.findIndex((x) => /^(systemctl --user restart|launchctl bootstrap)/.test(x)), `Funnel opens after the service starts:\n${calls.join("\n")}`);
@@ -962,7 +962,7 @@ serviceTest("remote setup with a service that never answers exits 1, names the l
 	const r = s.run(["remote", "setup", "--port", String(port)]);
 	assert.equal(r.code, 1, r.out);
 	assert.match(r.out, /isn't answering on 127\.0\.0\.1:1 with https:\/\/mac\.example\.ts\.net:8443\/mcp after 15 seconds, so Funnel was not opened/);
-	assert.match(r.out, process.platform === "linux" ? /journalctl --user -u tabkyra-serve\.service/ : /tabkyra-serve\.log/);
+	assert.match(r.out, process.platform === "linux" ? /journalctl --user -u polycarp-serve\.service/ : /polycarp-serve\.log/);
 	assert.ok(!s.calls().some((x) => x.startsWith("tailscale funnel")), s.calls().join("\n"));
 	assert.ok(s.hasRemoteJson(), "remote.json is kept");
 });
@@ -1058,7 +1058,7 @@ test("the systemd unit escapes % and $ in ExecStart and % in environment values"
 	} finally {
 		await local.close();
 	}
-	const lines = readFileSync(join(home, ".config", "systemd", "user", "tabkyra-serve.service"), "utf8").split("\n");
+	const lines = readFileSync(join(home, ".config", "systemd", "user", "polycarp-serve.service"), "utf8").split("\n");
 	assert.ok(lines.includes(`ExecStart="${binary.replace("$", "$$$$").replace("%", "%%")}" serve`), lines.join("\n"));
 	assert.ok(lines.includes(`Environment="TABKYRA_CONFIG_DIR=${config.replace("%", "%%")}"`), lines.join("\n"));
 });
@@ -1199,7 +1199,7 @@ test("remote status without remote.json fails and says to run setup", () => {
 	assert.match(r.out, /not found\. Run tabkyra remote setup/);
 });
 
-const stopCall = process.platform === "linux" ? "systemctl --user disable --now tabkyra-serve.service" : `launchctl bootout gui/${process.getuid?.()}/com.tabkyra.serve`;
+const stopCall = process.platform === "linux" ? "systemctl --user disable --now polycarp-serve.service" : `launchctl bootout gui/${process.getuid?.()}/com.polycarp.serve`;
 const proxyStatus = (port) => JSON.stringify({ Web: { [`${DNS}:8443`]: { Handlers: { "/": { Proxy: `http://127.0.0.1:${port}` } } } } });
 
 /** Set up Funnel plus a service in a scenario whose tailscale already shows our handler on 8443. */
@@ -1250,7 +1250,7 @@ serviceTest("remote off exits 1 and keeps the service file and remote.json when 
 	s.failStop();
 	const r = s.run(["remote", "off"]);
 	assert.equal(r.code, 1, r.out);
-	assert.match(r.out, process.platform === "linux" ? /systemctl --user disable --now tabkyra-serve\.service failed: boom/ : /launchctl bootout failed: boom/);
+	assert.match(r.out, process.platform === "linux" ? /systemctl --user disable --now polycarp-serve\.service failed: boom/ : /launchctl bootout failed: boom/);
 	assert.match(r.out, /then tabkyra remote off again/);
 	assert.ok(existsSync(s.serviceFile()), "the service file is kept");
 	assert.deepEqual(s.remoteJson(), { publicUrl: FUNNEL_URL, port, route: "funnel" });

@@ -10,7 +10,9 @@ import { join } from "node:path";
 import { NATIVE_HOST_NAME, type UserScriptsStatus } from "../../src/bridge/protocol.ts";
 import { BridgeClient, listSockets } from "./client.ts";
 import { harnesses, launcherValid, shellJoin } from "./harness.ts";
-import { cliLauncherPath, extensionOrigins, hostTarget, installedBrowserDirs, launcherPath, manifestLauncherRuns, originsCurrent } from "./install.ts";
+import { legacyLeftovers } from "./migrate.ts";
+import { HUB_SERVICE, LINK_SERVICE, legacyServiceInstalled, SERVE_SERVICE } from "./service.ts";
+import { cliLauncherPath, extensionOrigins, hostTarget, installedBrowserDirs, launcherPath, legacyCliLauncherPaths, manifestLauncherRuns, originsCurrent } from "./install.ts";
 import { EXTENSION_FILES, extensionDir, repoRoot } from "./paths.ts";
 import { banner, c, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
@@ -95,6 +97,30 @@ function launcherCheck(): Check {
 				detail: `${cliLauncherPath()} is what harness configs run.`,
 				fix: `${COMMAND_NAME} install --force`,
 			};
+}
+
+/** Old tabkyra folders and services the migration did not take: reported, never deleted or merged. */
+function legacyChecks(): Check[] {
+	const out: Check[] = [];
+	const left = legacyLeftovers();
+	if (left.length) {
+		out.push({
+			id: "legacy-folders",
+			status: "warn",
+			label: "Old tabkyra folders are still here next to the polycarp ones",
+			detail: `${left.join(", ")}. Polycarp uses the new folders and did not merge these. Look through them, then delete what you don't need.`,
+		});
+	}
+	const services = [SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE].filter(legacyServiceInstalled);
+	if (services.length) {
+		out.push({
+			id: "legacy-services",
+			status: "warn",
+			label: `Services still under the old tabkyra names: ${services.map((s) => s.legacy?.label).join(", ")}`,
+			fix: `${COMMAND_NAME} install`,
+		});
+	}
+	return out;
 }
 
 /** `live`: browsers a running connection names, which count as installed even if their app can't be found. */
@@ -361,7 +387,7 @@ function harnessChecks(): Check[] {
 				};
 			}
 			if (h.configured === "stale") {
-				return { id, status: "fail", label: h.oldName ? `${h.name}: Polycarp's entry is under its old name` : `${h.name}: the polycarp entry points at a missing command`, detail: h.currentCommand, fix };
+				return { id, status: "fail", label: h.oldName ? `${h.name}: Polycarp's entry is under its old name` : h.currentCommand && legacyCliLauncherPaths().includes(h.currentCommand) ? `${h.name}: the polycarp entry points at the old launcher path` : `${h.name}: the polycarp entry points at a missing command`, detail: h.currentCommand, fix };
 			}
 			if (h.configured === "other") {
 				// Could be the user's own wrapper; flag it, don't fail on it.
@@ -380,7 +406,7 @@ function harnessChecks(): Check[] {
 
 export async function runDoctor(options: { json: boolean }): Promise<number> {
 	const connection = await connectionChecks();
-	const checks: Check[] = [nodeCheck(), buildCheck(), launcherCheck(), ...hostChecks(connection.holders), ...connection.checks, ...harnessChecks()];
+	const checks: Check[] = [nodeCheck(), buildCheck(), launcherCheck(), ...legacyChecks(), ...hostChecks(connection.holders), ...connection.checks, ...harnessChecks()];
 	const failed = checks.filter((check) => check.status === "fail").length;
 	if (options.json) {
 		process.stdout.write(`${JSON.stringify({ ok: failed === 0, version: VERSION, checks }, null, 2)}\n`);

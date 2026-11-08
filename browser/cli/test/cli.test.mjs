@@ -183,7 +183,7 @@ test("read commands print JSON with --json, and exit 1 when not connected", () =
 
 test("the launcher harnesses run turns on Node's compile cache without overriding the user's", () => {
 	run("install");
-	const launcher = join(home, ".config", "tabkyra", "tabkyra");
+	const launcher = join(home, ".config", "polycarp", "browser", "polycarp");
 	const text = readFileSync(launcher, "utf8");
 	assert.match(text, /: "\$\{NODE_COMPILE_CACHE:=.*node-compile-cache\}"\nexport NODE_COMPILE_CACHE\nexec /);
 	assert.ok(statSync(launcher).mode & 0o100);
@@ -193,9 +193,9 @@ test("the launcher harnesses run turns on Node's compile cache without overridin
 	const prefix = text.split("\n").slice(1, 3).join("\n");
 	const effective = (extra) => execFileSync("sh", ["-c", `${prefix}\nprintf %s "$NODE_COMPILE_CACHE"`], { env: { PATH: process.env.PATH, HOME: home, ...extra }, encoding: "utf8" });
 	assert.equal(effective({ NODE_COMPILE_CACHE: "/tmp/mine" }), "/tmp/mine");
-	assert.match(effective({}), /\.cache\/tabkyra\/node-compile-cache$/);
+	assert.match(effective({}), /\.cache\/polycarp\/node-compile-cache$/);
 	// The native host the browser starts keeps its environment as it was.
-	assert.doesNotMatch(readFileSync(join(home, ".config", "tabkyra", "host"), "utf8"), /NODE_COMPILE_CACHE/);
+	assert.doesNotMatch(readFileSync(join(home, ".config", "polycarp", "browser", "polycarp-host"), "utf8"), /NODE_COMPILE_CACHE/);
 });
 
 test("help rows and the parsers agree on every flag, including setup's and update's own parsers", async () => {
@@ -245,7 +245,7 @@ test("help rows and the parsers agree on every flag, including setup's and updat
 });
 
 test("token list and token list --json agree on when a token was last used", () => {
-	const dir = join(home, ".config", "tabkyra");
+	const dir = join(home, ".config", "polycarp", "browser");
 	mkdirSync(dir, { recursive: true });
 	const record = { id: "t1", name: "phone", scopes: ["browser.read"], sha256: "0".repeat(64), createdAt: "2026-10-01T00:00:00.000Z", lastUsedAt: "2026-10-20T00:00:00.000Z" };
 	writeFileSync(join(dir, "tokens.json"), JSON.stringify({ tokens: [record] }));

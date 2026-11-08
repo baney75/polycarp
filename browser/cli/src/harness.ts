@@ -9,7 +9,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, isAbsolute, join } from "node:path";
-import { cliLauncherPath, launcherWorks } from "./install.ts";
+import { cliLauncherPath, launcherWorks, legacyCliLauncherPaths } from "./install.ts";
 import { COMPILED } from "./self.ts";
 
 /**
@@ -61,7 +61,7 @@ export function which(name: string): string | undefined {
 }
 
 /** The absolute path harness configs run: the launcher `polycarp browser install` writes. */
-export function tabkyraBinary(): string {
+export function launcherBinary(): string {
 	return cliLauncherPath();
 }
 
@@ -83,6 +83,8 @@ export function classify(command: string | undefined, args: string[]): Configure
 	if (!command) return undefined;
 	const resolved = isAbsolute(command) ? command : which(command);
 	if (resolved && basename(resolved) === "polycarp" && args.join(" ") === "browser mcp") return existsSync(resolved) ? true : "stale";
+	// An entry written before the rename runs `~/.config/tabkyra/tabkyra`. Setup replaces it with the new launcher.
+	if (legacyCliLauncherPaths().includes(command) && args.join(" ") === "mcp") return "stale";
 	if (command === cliLauncherPath()) {
 		if (!launcherValid()) return "stale";
 		// The right launcher with other arguments is a deliberate customization, not breakage.
@@ -180,7 +182,7 @@ function snippet(value: unknown): string {
 	return JSON.stringify(value, null, 2).replace(/\[\s+([^[\]{}]*?)\s+\]/g, (_m, inner: string) => `[${inner.split(/,\s+/).join(", ")}]`);
 }
 
-export function harnesses(binary = tabkyraBinary()): Harness[] {
+export function harnesses(binary = launcherBinary()): Harness[] {
 	const home = homedir();
 	const configHome = process.env.XDG_CONFIG_HOME || join(home, ".config");
 	const list: Harness[] = [];
@@ -239,12 +241,12 @@ export function harnesses(binary = tabkyraBinary()): Harness[] {
 
 	// pi has no MCP client; `polycarp browser pi-extension` writes a native pi extension instead.
 	// Setup prints that command rather than running it, like the other print-only harnesses.
-	const piFile = join(home, ".pi", "agent", "extensions", "tabkyra.ts");
+	const piFile = join(home, ".pi", "agent", "extensions", "polycarp.ts");
 	list.push({
 		id: "pi",
 		name: "pi",
 		detected: Boolean(which("pi")) || existsSync(join(home, ".pi")),
-		configured: existsSync(piFile),
+		configured: existsSync(piFile) || existsSync(join(home, ".pi", "agent", "extensions", "tabkyra.ts")),
 		configFile: piFile,
 		snippet: `${binary} pi-extension`,
 	});

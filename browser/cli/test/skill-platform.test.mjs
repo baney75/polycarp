@@ -26,8 +26,8 @@ function run(home, args, extraEnv = {}) {
 }
 
 const newHome = () => mkdtempSync(join(root, "home-"));
-const local = (home, name) => join(home, ".config", "tabkyra", "skills-local", name, "SKILL.md");
-const history = (home, name) => join(home, ".config", "tabkyra", "skill-history", name);
+const local = (home, name) => join(home, ".config", "polycarp", "browser", "skills-local", name, "SKILL.md");
+const history = (home, name) => join(home, ".config", "polycarp", "browser", "skill-history", name);
 
 /** Apply `transform(current text)` to a skill as a local edit. */
 function applyEdit(home, name, transform) {
@@ -151,7 +151,7 @@ test("edit outside a terminal writes the exact source as a draft, prints the app
 	chmodSync(editor, 0o755);
 	const r = run(home, ["skill", "edit", "dorks"], { VISUAL: editor });
 	assert.equal(r.code, 0, r.out);
-	const draft = join(home, ".config", "tabkyra", "skill-drafts", "dorks", "SKILL.md");
+	const draft = join(home, ".config", "polycarp", "browser", "skill-drafts", "dorks", "SKILL.md");
 	assert.equal(readFileSync(draft, "utf8"), run(home, ["skill", "print", "dorks", "--raw"]).stdout);
 	assert.match(r.out, new RegExp(`tabkyra skill apply ${dirname(draft).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 	assert.equal(existsSync(marker), false, "no editor opens without a terminal");
@@ -168,7 +168,7 @@ test("edit outside a terminal writes the exact source as a draft, prints the app
 
 test("edit resumes a draft only if it was taken from the current version; a stale draft is kept aside and redrafted", () => {
 	const home = newHome();
-	const drafts = join(home, ".config", "tabkyra", "skill-drafts");
+	const drafts = join(home, ".config", "polycarp", "browser", "skill-drafts");
 	const draft = join(drafts, "dorks", "SKILL.md");
 	assert.equal(run(home, ["skill", "edit", "dorks"]).code, 0);
 	assert.equal(readFileSync(join(drafts, ".bases", "dorks"), "utf8").trim(), version(bundled("dorks")));
@@ -195,7 +195,7 @@ test("edit resumes a draft only if it was taken from the current version; a stal
 
 test("a stale draft the user edited is moved aside even when it matches the current text", () => {
 	const home = newHome();
-	const drafts = join(home, ".config", "tabkyra", "skill-drafts");
+	const drafts = join(home, ".config", "polycarp", "browser", "skill-drafts");
 	const draft = join(drafts, "dorks", "SKILL.md");
 	assert.equal(run(home, ["skill", "edit", "dorks"]).code, 0);
 	// The user edits the draft; then the very same text lands through another apply.
@@ -215,7 +215,7 @@ test("a stale draft the user edited is moved aside even when it matches the curr
 
 test("edit --draft-only never touches a draft with unapplied changes, and rsi uses nothing else", () => {
 	const home = newHome();
-	const drafts = join(home, ".config", "tabkyra", "skill-drafts");
+	const drafts = join(home, ".config", "polycarp", "browser", "skill-drafts");
 	const draft = join(drafts, "dorks", "SKILL.md");
 	// Fresh: writes the exact source and exits 0.
 	const fresh = run(home, ["skill", "edit", "dorks", "--draft-only"]);
@@ -254,7 +254,7 @@ test("edit refuses protected skills, unknown skills and names that reach outside
 		assert.equal(r.code, 1, `${name}: ${r.out}`);
 		assert.match(r.out, pattern);
 	}
-	assert.deepEqual(existsSync(join(home, ".config", "tabkyra", "skill-drafts")) ? readdirSync(join(home, ".config", "tabkyra", "skill-drafts")) : [], []);
+	assert.deepEqual(existsSync(join(home, ".config", "polycarp", "browser", "skill-drafts")) ? readdirSync(join(home, ".config", "polycarp", "browser", "skill-drafts")) : [], []);
 });
 
 /**
@@ -290,7 +290,7 @@ test("edit in a terminal opens the editor, shows the diff and applies only on ye
 	assert.match(no.out, /\+ - Lesson: from the editor\./);
 	assert.match(no.out, /Not applied/);
 	assert.equal(existsSync(local(home, "dorks")), false, "no means not applied");
-	rmSync(join(home, ".config", "tabkyra", "skill-drafts"), { recursive: true });
+	rmSync(join(home, ".config", "polycarp", "browser", "skill-drafts"), { recursive: true });
 	const yes = inTerminal(home, ["skill", "edit", "dorks"], { EDITOR: editor }, "y");
 	assert.match(yes.out, /Applied your edit of dorks/);
 	assert.match(readFileSync(local(home, "dorks"), "utf8"), /Lesson: from the editor\./);
@@ -337,14 +337,14 @@ test("edit refuses to apply when the skill changed while the editor was open", (
 	const now = readFileSync(local(home, "dorks"), "utf8");
 	assert.match(now, /landed during the edit/, "the change made meanwhile is kept");
 	assert.doesNotMatch(now, /from the editor/);
-	assert.match(readFileSync(join(home, ".config", "tabkyra", "skill-drafts", "dorks", "SKILL.md"), "utf8"), /from the editor/, "the draft is kept");
+	assert.match(readFileSync(join(home, ".config", "polycarp", "browser", "skill-drafts", "dorks", "SKILL.md"), "utf8"), /from the editor/, "the draft is kept");
 });
 
 test("an edit applied before the budget stays in use with a warning; a new apply must fit", () => {
 	const home = newHome();
 	// Lay out a local edit the way an older version applied it: over budget, no budget flag.
 	const big = bundled("dorks").replace("## Done when", `${Array.from({ length: 60 }, (_, i) => `- Older lesson ${i}.`).join("\n")}\n\n## Done when`);
-	const dir = join(home, ".config", "tabkyra", "skills-local");
+	const dir = join(home, ".config", "polycarp", "browser", "skills-local");
 	mkdirSync(join(dir, "dorks"), { recursive: true });
 	writeFileSync(join(dir, "dorks", "SKILL.md"), big);
 	const old = { dorks: { baseSha256: createHash("sha256").update(bundled("dorks")).digest("hex"), appliedAt: "2026-01-01T00:00:00.000Z" } };
@@ -368,7 +368,7 @@ test("an edit applied before the budget stays in use with a warning; a new apply
 
 test("an untouched draft is refreshed when the skill moves on, with or without --draft-only", () => {
 	const home = newHome();
-	const drafts = join(home, ".config", "tabkyra", "skill-drafts");
+	const drafts = join(home, ".config", "polycarp", "browser", "skill-drafts");
 	const draft = join(drafts, "dorks", "SKILL.md");
 	// rsi drafts and then makes no change; later the skill moves to a new version.
 	assert.equal(run(home, ["skill", "edit", "dorks", "--draft-only"]).code, 0);

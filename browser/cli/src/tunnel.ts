@@ -18,15 +18,13 @@ import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } 
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { which } from "./harness.ts";
+import { envVar } from "./env.ts";
+import { configDir } from "./files.ts";
 
 export const DEFAULT_PORT = 8787;
 const SERVE_PATH = "/polycarp";
 /** Where an earlier version published it. Removed when it points at this serve (below); otherwise it counts as someone else's. */
 const OLD_SERVE_PATH = "/tabkyra";
-
-function configDir(): string {
-	return process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
-}
 
 function run(cmd: string, args: string[]): { code: number; out: string } {
 	const r = spawnSync(cmd, args, { encoding: "utf8", timeout: 30_000 });
@@ -176,7 +174,7 @@ export async function cloudflareTunnel(options: { port: number; off: boolean; ti
 	const child = spawn(bin, ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${options.port}`], { detached: true, stdio: ["ignore", fd, fd] });
 	child.unref();
 	if (child.pid) writeFileSync(cloudflaredPidFile(), String(child.pid));
-	const deadline = Date.now() + (options.timeoutMs ?? (Number(process.env.TABKYRA_TUNNEL_TIMEOUT_MS) || 30_000));
+	const deadline = Date.now() + (options.timeoutMs ?? (Number(envVar("TUNNEL_TIMEOUT_MS")) || 30_000));
 	while (Date.now() < deadline) {
 		// The issued name, never api.trycloudflare.com from an error line.
 		const m = /https:\/\/(?!api\.)[a-z0-9]+(?:-[a-z0-9]+)+\.trycloudflare\.com/.exec(readFileSync(log, "utf8"));

@@ -44,8 +44,8 @@ test("a Cloudflare tunnel that is already running names the command to stop it, 
 	// A stand-in with the command line the tunnel check looks for.
 	const stand = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)", "cloudflared", "tunnel", "--url", "http://127.0.0.1:9"], { stdio: "ignore" });
 	try {
-		mkdirSync(join(home, ".config", "tabkyra"), { recursive: true });
-		writeFileSync(join(home, ".config", "tabkyra", "cloudflared.pid"), String(stand.pid));
+		mkdirSync(join(home, ".config", "polycarp", "browser"), { recursive: true });
+		writeFileSync(join(home, ".config", "polycarp", "browser", "cloudflared.pid"), String(stand.pid));
 		const r = await new Promise((resolve) => {
 			const child = spawn(process.execPath, [cli, "tunnel", "cloudflare"], { env: { PATH: "/usr/bin:/bin", HOME: home, NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] });
 			let out = "";
