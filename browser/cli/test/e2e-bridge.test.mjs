@@ -1253,7 +1253,7 @@ test("capture that stopped because the page crashed is reported, and resumes aft
 	const page = (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.type === "page" && t.url === `${pageUrl}edit`);
 	await cdp(page.webSocketDebuggerUrl, "Page.crash").catch(() => {});
 	await until(() => sw(`chrome.tabs.get(${id}).then(() => true)`), 5000, "the crashed tab");
-	await sw(`chrome.tabs.update(${id}, { url: ${JSON.stringify(`${pageUrl}edit`)} }).then(() => true)`);
+	await sw(`chrome.tabs.reload(${id}).then(() => true)`);
 	try {
 		await until(async () => (await js("document.readyState")) === "complete", 30_000, "the reloaded page");
 	} catch (err) {

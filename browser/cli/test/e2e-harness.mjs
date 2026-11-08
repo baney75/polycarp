@@ -148,10 +148,6 @@ export async function startHarness() {
 				"--remote-debugging-port=0",
 				// A headless browser on a CI runner has no GPU, and its GPU process dies on the runner's sandbox, which stalls a page crashed on purpose.
 				"--disable-gpu",
-				// Tabs under test sit behind others: keep them rendering, so IntersectionObserver and timers run.
-				"--disable-backgrounding-occluded-windows",
-				"--disable-renderer-backgrounding",
-				"--disable-background-timer-throttling",
 				`--disable-extensions-except=${extensionDir}`,
 				`--load-extension=${extensionDir}`,
 				"about:blank",
