@@ -1213,7 +1213,8 @@ test("a silent detach is reported once when read_console is the first call after
 	assert.equal((await readNetwork()).capture, undefined);
 });
 
-test("capture that stopped because the page crashed is reported, and resumes after the reload", async () => {
+// Page.crash takes the headless browser on the Linux runner down with it, so a crash can't be simulated there.
+test("capture that stopped because the page crashed is reported, and resumes after the reload", { skip: process.env.CI ? "Page.crash aborts headless Chromium on the CI runner" : false }, async () => {
 	await go("edit");
 	await readConsole();
 	await logInPage("before-crash");
