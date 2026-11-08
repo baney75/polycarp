@@ -190,8 +190,8 @@ export class TabkyraSessionListDialog extends DialogBase {
 			const a = document.createElement("a");
 			a.href = url;
 			const filename = sessionId
-				? `tabkyra-session-${exported[0]?.metadata.title?.replace(/[^a-z0-9]/gi, "-").toLowerCase() || "export"}.json`
-				: `tabkyra-sessions-${new Date().toISOString().split("T")[0]}.json`;
+				? `polycarp-session-${exported[0]?.metadata.title?.replace(/[^a-z0-9]/gi, "-").toLowerCase() || "export"}.json`
+				: `polycarp-sessions-${new Date().toISOString().split("T")[0]}.json`;
 			a.download = filename;
 			a.click();
 			URL.revokeObjectURL(url);

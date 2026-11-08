@@ -201,7 +201,7 @@ export class SkillsTab extends SettingsTab {
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement("a");
 		a.href = url;
-		a.download = `tabkyra-skills-${new Date().toISOString().split("T")[0]}.json`;
+		a.download = `polycarp-skills-${new Date().toISOString().split("T")[0]}.json`;
 		a.click();
 		URL.revokeObjectURL(url);
 	}

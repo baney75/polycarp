@@ -1258,18 +1258,16 @@ export async function waitFor(
 					tabId,
 					`(() => { const s = ${JSON.stringify(condition.selector ?? "")}; const t = ${JSON.stringify(condition.text ?? "")};
 					if (s && document.querySelector(s)) return true;
-					if (!t || !document.body) return false;
-					// innerText forces layout, which starves a background tab of the render step IntersectionObserver runs in.
-					// So it is read only when the raw text matches, and now and then for text CSS changes (text-transform).
-					if (!document.body.textContent.includes(t) && ${poll % 8 !== 0}) return false;
-					return document.body.innerText.includes(t); })()`,
+					if (t && (document.body?.innerText || "").includes(t)) return true;
+					return false; })()`,
 				);
 				if (found) return true;
 			}
 		} catch {
 			/* page is navigating; try again */
 		}
-		await new Promise((r) => setTimeout(r, 250));
+		// Back off: on Linux a background tab asked this often never runs its IntersectionObserver callbacks.
+		await new Promise((r) => setTimeout(r, Math.min(250 * 2 ** poll, 2000)));
 	}
 	return false;
 }
