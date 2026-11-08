@@ -4,6 +4,8 @@
  * changes the active tab except `tabs.show`.
  */
 
+import { CaptureError } from "../browser/capture.js";
+import { captures } from "../browser/capture-chrome.js";
 import {
 	answerDialog,
 	captureScreenshot,
@@ -448,6 +450,7 @@ export const handlers: Record<string, Handler> = {
 		const summary = await tabSummary(tabId);
 		const wasCurrent = ctx.session.currentTabId === tabId;
 		await ctx.session.release(tabId, { clearCurrent: true });
+		captures.tabClosed(tabId, "the tab was given to the user");
 		return {
 			released: tabId,
 			url: summary.url,
@@ -472,12 +475,15 @@ export const handlers: Record<string, Handler> = {
 	/** End the session: hand its tabs to the user (or close them) and forget it. */
 	"session.end": async (ctx, params) => {
 		const result = await ctx.session.end({ close: params.close === true });
+		await captures.sessionGone(ctx.session.id);
 		return { ended: true, ...result };
 	},
 
 	"tabs.show": async (ctx, params) => {
 		const tabId = num(params, "tabId") ?? ctx.session.currentTabId;
 		if (tabId === undefined) throw new BridgeError(ERR.NO_TAB, "You have no tab to show yet: navigate opens one.");
+		// The tab is shown so the user can sign in: what they type and see stays out of any capture.
+		captures.tabClosed(tabId, "the tab was shown to the user");
 		await ctx.session.show(tabId);
 		return tabSummary(tabId);
 	},
@@ -870,6 +876,25 @@ export const handlers: Record<string, Handler> = {
 			entries = entries.filter((e) => re.test(e.text));
 		}
 		return { ...(capture ? { capture } : {}), entries: entries.slice(-(num(params, "limit") ?? 100)) };
+	},
+
+	/**
+	 * Evidence from the session's own tabs: a HAR, a recording, a flight recorder (src/browser/capture.ts has the rules).
+	 * The result carries the file for the helper to write; the agent is told its path and size, never the content.
+	 */
+	capture: async (ctx, params) => {
+		const action = str(params, "action");
+		// A start resolves the tab like every other tool (own tabs only, never the approval page); the rest need none.
+		const tabId = action?.endsWith("_start") ? await resolveTab(ctx, params, true) : undefined;
+		try {
+			return await captures.run(
+				{ id: ctx.session.id, tabIds: ctx.session.tabIds },
+				{ action, id: str(params, "id"), tabId },
+			);
+		} catch (err) {
+			if (err instanceof CaptureError) throw new BridgeError(err.code, err.message);
+			throw err;
+		}
 	},
 
 	"network.read": async (ctx, params) => {

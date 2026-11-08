@@ -11,6 +11,7 @@ import { ASK_USER_INSTRUCTION, registerAskUser } from "./ask.ts";
 import { registerThreadTools, THREADS_INSTRUCTION } from "./threads.ts";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
+import { saveCapture, type IncomingCapture } from "./captures.ts";
 import { addSource, cite, search, summary } from "./library.ts";
 import { chooseSession } from "./session-name.ts";
 import { spawn } from "node:child_process";
@@ -116,19 +117,25 @@ export function formatContext(ctx: ContextResult): string {
 }
 
 /**
- * tools/list without each schema's "$schema" dialect line: it tells the model nothing and every
- * agent pays for it on every turn. Wraps the SDK's own handler; if the SDK moves it, the list
- * is sent unchanged (cli/test/mcp.test.mjs fails then, so the saving isn't lost silently).
+ * tools/list without each schema's "$schema" dialect line, and without the SDK's
+ * `"execution":{"taskSupport":"forbidden"}` on every tool (about 1.9 KB): the first tells the model
+ * nothing and the second is what an absent field already means (MCP tasks: forbidden is the
+ * default), and every agent pays for both on every turn. Wraps the SDK's own handler; if the SDK
+ * moves it, the list is sent unchanged (cli/test/mcp.test.mjs fails then, so the saving isn't lost silently).
  */
 function stripSchemaDialect(server: McpServer): void {
 	const handlers = (server.server as unknown as { _requestHandlers?: Map<string, (req: unknown, extra: unknown) => Promise<unknown>> })._requestHandlers;
 	const list = handlers?.get("tools/list");
 	if (!handlers || !list) return;
 	handlers.set("tools/list", async (req, extra) => {
-		const result = (await list(req, extra)) as { tools?: Array<{ inputSchema?: Record<string, unknown>; outputSchema?: Record<string, unknown> }> };
+		const result = (await list(req, extra)) as {
+			tools?: Array<{ inputSchema?: Record<string, unknown>; outputSchema?: Record<string, unknown>; execution?: { taskSupport?: string } }>;
+		};
 		for (const tool of result.tools ?? []) {
 			delete tool.inputSchema?.$schema;
 			delete tool.outputSchema?.$schema;
+			// Only the default: a tool that does support tasks would say so, and keeps its field.
+			if (tool.execution?.taskSupport === "forbidden" && Object.keys(tool.execution).length === 1) delete tool.execution;
 		}
 		return result;
 	});
@@ -708,6 +715,48 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			args.requestId !== undefined && allowedTools && !allowedTools.has("run_js")
 				? { content: [{ type: "text" as const, text: "permission_denied: Reading response bodies needs the browser.script scope. Call read_network without requestId." }], isError: true }
 				: call("network.read", args),
+	);
+	server.registerTool(
+		"capture",
+		{
+			title: "Capture evidence",
+			description: "Evidence from your tab as a file on this computer; you get its path and size, not the content. network_start/stop: HAR, secrets redacted. record_start/stop: WebM video, no sound. flight_start/save: holds the last 60 s of video; save when something breaks. status lists yours, cancel discards. Works on background tabs; stops itself after 10 min (flight 30). Example: {\"action\":\"network_start\"}",
+			inputSchema: {
+				action: z.enum(["network_start", "network_stop", "record_start", "record_stop", "flight_start", "flight_save", "status", "cancel"]).describe("What to do"),
+				id: z.string().optional().describe("Capture id; default: your only one of that kind"),
+				tabId,
+			},
+		},
+		async (args) => {
+			let result: Record<string, unknown> & { file?: IncomingCapture };
+			try {
+				result = (await client.call("capture", args)) as typeof result;
+			} catch (err) {
+				return errorResult(err);
+			}
+			const { file, ...rest } = result;
+			if (!file) return { content: text(result) };
+			// A stop gives up the browser's copy of the data, so a failed write must not lose it: the browser
+			// keeps the stopped capture for a few minutes, and the same stop with the same id returns it again.
+			const stop = args.action === "network_stop" || args.action === "record_stop";
+			let saved: { path: string; bytes: number };
+			try {
+				// The content stays here: the agent gets the path, the size and what the file leaves out.
+				saved = saveCapture(file);
+			} catch (err) {
+				const again =
+					stop && typeof rest.id === "string"
+						? ` The capture is still held in the browser for 5 minutes: call ${args.action} again with id ${rest.id} to retry the save.`
+						: args.action === "flight_save"
+							? " The flight recorder is still recording: call flight_save again to retry."
+							: "";
+				return { content: text(`The capture was not saved: ${errorMessage(err)}.${again}`), isError: true };
+			}
+			// The file is on disk: the browser can let go of its copy.
+			if (stop && typeof rest.id === "string")
+				await client.call("capture", { action: "cancel", id: rest.id }).catch(() => undefined);
+			return { content: text({ ...rest, path: saved.path, bytes: saved.bytes }) };
+		},
 	);
 	server.registerTool(
 		"site_edit",

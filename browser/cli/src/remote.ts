@@ -40,6 +40,10 @@ export const SCOPES: Record<string, { tools: string[]; what: string }> = {
 		tools: ["click", "type", "fill", "press", "hover", "scroll", "drag", "actions", "handle_dialog"],
 		what: "Click and type: can submit forms and act under the user's sign-in",
 	},
+	"browser.capture": {
+		tools: ["capture"],
+		what: "Record the agent's own tab: its network traffic as a redacted HAR file, a video of it, or the last minute of video. The files stay on this computer",
+	},
 	"browser.edit": {
 		tools: ["site_edit"],
 		what: "Change how sites look and load for you, on every visit: hide parts of pages, block requests on a site, ad blocking. Each one you can undo in the side panel",

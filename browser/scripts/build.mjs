@@ -22,6 +22,8 @@ const pageEntryPoints = {
 	sidepanel: join(packageRoot, "src/sidepanel.ts"),
 	// The hidden page that reads PDFs for get_page_text (src/offscreen/pdf-text.ts): pdf.js needs a worker a service worker can't start.
 	"pdf-text": join(packageRoot, "src/offscreen/pdf-text.ts"),
+	// The same hidden page encodes tab recordings (src/offscreen/recorder.ts): MediaRecorder isn't there in a service worker.
+	recorder: join(packageRoot, "src/offscreen/recorder.ts"),
 };
 // Each of these stays one file. A service worker can't load code with import(), the worker and the microphone page have
 // nothing to share with the panel, and the store zip drops the debug page, which mustn't leave chunks behind.
