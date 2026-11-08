@@ -146,6 +146,8 @@ export async function startHarness() {
 				"--use-mock-keychain",
 				"--password-store=basic",
 				"--remote-debugging-port=0",
+				// A headless browser on a CI runner has no GPU; its GPU process dies on the runner's sandbox and the crash test never recovers.
+				"--disable-gpu",
 				`--disable-extensions-except=${extensionDir}`,
 				`--load-extension=${extensionDir}`,
 				"about:blank",

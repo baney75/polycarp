@@ -324,6 +324,8 @@ before(async () => {
 			"--use-mock-keychain",
 			"--password-store=basic",
 			"--remote-debugging-port=0",
+			// A headless browser on a CI runner has no GPU; its GPU process dies on the runner's sandbox and the crash test never recovers.
+			"--disable-gpu",
 			// No crash dumps: the crash test crashes a page on purpose, and writing a dump is slow on a shared runner.
 			"--disable-breakpad",
 			`--disable-extensions-except=${extensionDir}`,
