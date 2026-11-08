@@ -25,14 +25,10 @@ vp.addEventListener("scroll", draw); draw();
 </script>`,
 	task: "Download invoice #742 from the list.",
 	async solve(t) {
-		// The row is not in the DOM until the list scrolls there. scroll {ref} only scrolls an element into
-		// view (the row does not exist yet) and scroll {dy} moves the window, so take the list's point from
-		// hover and wheel-scroll there until the row renders.
-		for (let i = 0; i < 40; i++) {
+		// The row is not in the DOM until the list scrolls there: scroll the list itself by ref and dy.
+		for (let i = 0; i < 10; i++) {
 			// The snapshot names every button "Download"; the row labels are only in the page text, in the
 			// same order, so the Nth "Invoice #" line belongs to the Nth Download button.
-			// The wheel animates: let it settle, then read.
-			await t.tool("wait", { ms: 700 });
 			const snap = await t.read("all", { maxNodes: 200 });
 			const rows = snap.text.split("\n").filter((l) => /^Invoice #\d+$/.test(l.trim()));
 			const idx = rows.findIndex((l) => l.trim() === "Invoice #742");
@@ -41,13 +37,13 @@ vp.addEventListener("scroll", draw); draw();
 				await t.tool("click", { ref: btns[idx].ref });
 				return;
 			}
-			// The list's ref goes stale once its rows re-render, so find it again each time.
-			const list = await t.locate("invoice list", { role: /list/i, name: /invoice/i });
-			// Rows are 40 px: jump by the distance from the last row seen to the target, which converges.
+			const list = snap.nodes.find((n) => /list/i.test(n.role) && /invoice/i.test(n.name));
+			if (!list) throw new Error("read_page lists no invoice list to scroll");
+			// Rows are 40 px: move by the distance from the last row seen to the target.
 			const last = Number(rows.at(-1)?.match(/\d+/)?.[0] ?? 1);
-			await t.wheel(list.ref, Math.max(40, (742 - last) * 40 - 120));
+			await t.tool("scroll", { ref: list.ref, dy: (742 - last) * 40 + 120 });
 		}
-		throw new Error("never found invoice #742 after 40 wheel scrolls of 1000 px over the list");
+		throw new Error("never found invoice #742 after 10 scrolls of the list");
 	},
 	check: async (page) => (await page.eval("window.__state.downloaded")) === 742,
 };

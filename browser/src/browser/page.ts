@@ -260,7 +260,19 @@ function refPrint(el: Element): string {
 		role === "searchbox" ||
 		role === "combobox";
 	const squash = (t: string | null) => (t ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
-	const text = editable ? "" : squash(el.textContent);
+	// A pane that scrolls (a list, a feed, a virtual grid) changes its text every time it scrolls or
+	// re-renders its rows; it is the same pane, so its text is left out. Keyed on its overflow style,
+	// not its size, so the print stays the same as content grows.
+	let pane = false;
+	if (!editable) {
+		try {
+			const s = el.ownerDocument.defaultView?.getComputedStyle(el);
+			pane = !!s && /(auto|scroll|overlay)/.test(`${s.overflowY} ${s.overflowX}`);
+		} catch {
+			/* no style here: treat it as an ordinary element */
+		}
+	}
+	const text = editable || pane ? "" : squash(el.textContent);
 	// The row a control sits in: a virtualized list reuses a row's "Delete" button for another
 	// row, and only the row's text or key tells them apart. A grid cell is not the row; with no
 	// row element, the nearest ancestor that carries a row key stands in.
@@ -1172,8 +1184,18 @@ export async function pageHtml(tabId: number, selector?: string, maxChars = 2000
 export async function scrollPage(
 	tabId: number,
 	options: { dx?: number; dy?: number; selector?: string; ref?: string; to?: "top" | "bottom" },
-): Promise<{ scrollX: number; scrollY: number; pageHeight: number }> {
-	const code = `(() => {
+): Promise<{
+	scrollX: number;
+	scrollY: number;
+	pageHeight: number;
+	scrolled?: "element";
+	scrollTop?: number;
+	scrollLeft?: number;
+	scrollHeight?: number;
+	clientHeight?: number;
+	atEnd?: boolean;
+}> {
+	const code = `(async () => {
 		const o = ${JSON.stringify(options)};
 		let target = null;
 		// A ref that no longer resolves falls back to a selector given with it, as click and fill do.
@@ -1183,6 +1205,34 @@ export async function scrollPage(
 		}
 		if (!target && o.selector) target = document.querySelector(o.selector);
 		if (!target && o.selector) throw new Error("Selector not found: " + o.selector + ". read_page or find gives refs.");
+		// A ref with an amount or an end scrolls the box that holds it (a list, a pane, a virtual grid), not the page.
+		if (target && (o.dx || o.dy || o.to)) {
+			const page = (el) => !el || el === document.body || el === document.documentElement;
+			const scrolls = (el) => {
+				const s = getComputedStyle(el);
+				return (/(auto|scroll|overlay)/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 1) ||
+					(/(auto|scroll|overlay)/.test(s.overflowX) && el.scrollWidth > el.clientWidth + 1);
+			};
+			let box = target;
+			while (!page(box) && !scrolls(box)) {
+				const root = box.getRootNode();
+				box = box.parentElement || (root instanceof ShadowRoot ? root.host : null);
+			}
+			if (!page(box)) {
+				if (o.to === "top") box.scrollTo(box.scrollLeft, 0);
+				else if (o.to === "bottom") box.scrollTo(box.scrollLeft, box.scrollHeight);
+				else box.scrollBy(o.dx || 0, o.dy || 0);
+				// Agent tabs sit in the background, where the frame that fires "scroll" comes late, and a list
+				// that draws its rows on scroll would still show the old ones to the next read. Fire it now,
+				// then give the page one frame (at most 150 ms) to draw.
+				box.dispatchEvent(new Event("scroll"));
+				await new Promise((done) => { requestAnimationFrame(() => setTimeout(done, 0)); setTimeout(done, 150); });
+				return { scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY), pageHeight: document.documentElement.scrollHeight,
+					scrolled: "element", scrollTop: Math.round(box.scrollTop), scrollLeft: Math.round(box.scrollLeft),
+					scrollHeight: box.scrollHeight, clientHeight: box.clientHeight, atEnd: box.scrollTop + box.clientHeight >= box.scrollHeight - 2 };
+			}
+			target = null;
+		}
 		if (target) target.scrollIntoView({ block: "center", behavior: "instant" });
 		else if (o.to === "top") window.scrollTo(0, 0);
 		else if (o.to === "bottom") window.scrollTo(0, document.documentElement.scrollHeight);
