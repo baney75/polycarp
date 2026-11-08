@@ -1249,7 +1249,7 @@ export async function waitFor(
 	timeoutMs = 10000,
 ): Promise<boolean> {
 	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
+	for (let poll = 0; Date.now() < deadline; poll++) {
 		try {
 			const tab = await chrome.tabs.get(tabId);
 			if (condition.urlIncludes && (tab.url ?? "").includes(condition.urlIncludes)) return true;
@@ -1258,8 +1258,11 @@ export async function waitFor(
 					tabId,
 					`(() => { const s = ${JSON.stringify(condition.selector ?? "")}; const t = ${JSON.stringify(condition.text ?? "")};
 					if (s && document.querySelector(s)) return true;
-					if (t && (document.body?.innerText || "").includes(t)) return true;
-					return false; })()`,
+					if (!t || !document.body) return false;
+					// innerText forces layout, which starves a background tab of the render step IntersectionObserver runs in.
+					// So it is read only when the raw text matches, and now and then for text CSS changes (text-transform).
+					if (!document.body.textContent.includes(t) && ${poll % 8 !== 0}) return false;
+					return document.body.innerText.includes(t); })()`,
 				);
 				if (found) return true;
 			}

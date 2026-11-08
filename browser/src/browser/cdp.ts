@@ -676,6 +676,9 @@ function installCaptureListener(): void {
 			noteCaptureStopped(tabId, `the page's inspector detached (${String(p.reason ?? "unknown reason")})`);
 		} else if (method === "Inspector.targetCrashed") {
 			noteCaptureStopped(tabId, "the page crashed");
+			// On Linux the crashed target's session never answers again: let go, so the next call attaches to the reloaded page.
+			forgetAttachment(tabId);
+			void chrome.debugger.detach({ tabId }).catch(() => undefined);
 		} else if (method === "Runtime.consoleAPICalled") {
 			const buf = consoleBuffers.get(tabId);
 			if (!buf) return;
