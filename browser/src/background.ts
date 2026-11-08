@@ -2,7 +2,7 @@ import { startBridge, trace } from "./bridge/native.js";
 import { installCdpListeners } from "./browser/cdp.js";
 import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard.js";
 import { startGroupGestures } from "./browser/group-gestures.js";
-import { BrowserSession, cleanupOrphanGroups, listSessions } from "./browser/session.js";
+import { BrowserSession, cleanupOrphanGroups } from "./browser/session.js";
 import { startCommunityWorker } from "./community/worker.js";
 import { startConnectRelay } from "./connect/relay.js";
 import { startSiteEdits } from "./site-edits/apply.js";
@@ -43,49 +43,40 @@ startCommunityWorker();
 startSiteEdits();
 
 // ============================================================================
-// PER-TAB SIDE PANEL (Claude-in-Chrome model)
+// ONE SIDE PANEL PER WINDOW
 // ============================================================================
-// The manifest declares no default side panel, so a tab shows the panel only when we
-// enable it for that tab. Each task lives on the tab its panel was opened on (its "home
-// tab"); every tab a task's session owns opens the same panel document via
-// `sidepanel.html?tabId=<homeTab>`. Switching to a tab no task owns leaves that tab with
-// no panel, so the panel is naturally confined to its task's tabs. Two tasks = two tabs,
-// each with its own panel; put them in two windows to see both at once.
-//
-// The one exception: tabkyra's agent runs inside the panel document, and Chrome tears
-// that document down when the panel is hidden. So while a task is mid-run we keep its
-// panel enabled on the window's active tab even if the user peeks at another tab, and
-// confine again once the run ends.
+// The panel is one document per window: `sidepanel.html` with no tab binding, enabled globally.
+// It stays open while the user moves between tabs, shows their conversation, and works on the
+// tab in front. Nothing here sets tab-specific options or disables the panel, because either
+// closes it, and Chrome tears the document (and any agent run inside it) down when it closes.
+// The manifest declares no default panel and no panel behavior, so the toolbar icon reaches
+// `action.onClicked` and this file is the only path that opens it.
 
 const PANEL_PATH = "sidepanel.html";
-const PANEL_BUSY_PREFIX = "sidepanel_busy_";
 const PANEL_TRACE_KEY = "sidepanel_trace";
 const SIDEPANEL_OPEN_KEY = "sidepanel_open_windows";
 
-// Desired per-tab panel path (undefined = disabled). Avoids redundant setOptions calls.
-const panelPathCache = new Map<number, string | undefined>();
-/**
- * Tabs the user just opened a fresh task on, until that task's session record names the tab.
- * The panel writes its session in steps, so for a moment the tab looks owned by no task; a
- * reconcile in that moment disabled (closed) the panel the user had just opened.
- */
-const pendingOpen = new Map<number, ReturnType<typeof setTimeout>>();
-/** How long a fresh open waits for its task to name the tab (tests shorten it). */
-const PENDING_OPEN_MS = (globalThis as { __TABKYRA_PENDING_OPEN_MS?: number }).__TABKYRA_PENDING_OPEN_MS ?? 10_000;
+/** How long a click counts as "opening" if the panel never connects (tests shorten it). */
+const OPENING_MS = (globalThis as { __TABKYRA_OPENING_MS?: number }).__TABKYRA_OPENING_MS ?? 5_000;
+/** Windows whose panel was just asked to open, until it connects or the window passes. */
+const opening = new Map<number, ReturnType<typeof setTimeout>>();
 // The update worker waits for these before it reloads Polycarp (src/update/worker.ts).
-setPanelsOpening(() => pendingOpen.size);
+setPanelsOpening(() => opening.size);
 
-function clearPendingOpen(tabId: number): void {
-	const timer = pendingOpen.get(tabId);
+function markOpening(windowId: number): void {
+	clearOpening(windowId);
+	opening.set(
+		windowId,
+		setTimeout(() => opening.delete(windowId), OPENING_MS),
+	);
+}
+
+function clearOpening(windowId: number): void {
+	const timer = opening.get(windowId);
 	if (timer === undefined) return;
 	clearTimeout(timer);
-	pendingOpen.delete(tabId);
+	opening.delete(windowId);
 }
-let openSidepanels = new Set<number>();
-
-chrome.storage.session.get(SIDEPANEL_OPEN_KEY, (data) => {
-	openSidepanels = new Set<number>((data[SIDEPANEL_OPEN_KEY] as number[]) || []);
-});
 
 let panelTrace: string[] = [];
 let traceFlush: ReturnType<typeof setTimeout> | undefined;
@@ -114,151 +105,30 @@ function recordPanelError(where: string, err: unknown): void {
 		.catch(() => undefined);
 }
 
-/** Home tab of the task running in this window's panel, if one is mid-run. */
-async function busyHomeTab(windowId: number): Promise<number | undefined> {
-	const key = `${PANEL_BUSY_PREFIX}${windowId}`;
-	const data = await chrome.storage.session.get(key);
-	const value = data[key];
-	return typeof value === "number" ? value : undefined;
+/** Make the window-wide panel the one every tab shows. Global options only, never per tab. */
+function setGlobalPanelOptions(): void {
+	chrome.sidePanel.setOptions({ path: PANEL_PATH, enabled: true }).catch((err) => recordPanelError("setOptions", err));
 }
-
-interface OwnedTab {
-	sessionId: string;
-	homeTabId: number;
-}
-
-/** Map every tab owned by a non-bridge session to its session's home tab (for the panel URL). */
-async function ownedTabs(windowId: number): Promise<Map<number, OwnedTab>> {
-	const map = new Map<number, OwnedTab>();
-	for (const s of await listSessions()) {
-		if (s.id.startsWith("bridge-") || s.windowId !== windowId) continue;
-		const homeTabId = s.homeTabId ?? s.tabIds[0];
-		if (homeTabId === undefined) continue;
-		for (const tabId of s.tabIds) map.set(tabId, { sessionId: s.id, homeTabId });
-		// The home tab may be owned by an agent session (the panel was opened on its tab);
-		// it still shows this task's panel.
-		map.set(homeTabId, { sessionId: s.id, homeTabId });
-	}
-	return map;
-}
-
-/** Apply the desired panel path to a tab, skipping redundant calls. */
-async function applyTab(tabId: number, path: string | undefined): Promise<void> {
-	if (panelPathCache.get(tabId) === path) return;
-	panelPathCache.set(tabId, path);
-	try {
-		if (path) await chrome.sidePanel.setOptions({ tabId, path, enabled: true });
-		else await chrome.sidePanel.setOptions({ tabId, enabled: false });
-		panelLog(`setOptions tab=${tabId} ${path ?? "disabled"}`);
-	} catch (err) {
-		panelPathCache.delete(tabId);
-		panelLog(`setOptions tab=${tabId} FAILED ${err instanceof Error ? err.message : String(err)}`);
-	}
-}
-
-/** Enable the panel on every tab each of this window's tasks owns. Only ever enables. */
-async function enableOwnedTabs(windowId: number): Promise<void> {
-	const owned = await ownedTabs(windowId);
-	for (const [tabId, info] of owned) await applyTab(tabId, `${PANEL_PATH}?tabId=${info.homeTabId}`);
-}
+setGlobalPanelOptions();
+chrome.runtime.onInstalled.addListener(setGlobalPanelOptions);
 
 /**
- * Decide what the given (active) tab should show. Owned tabs show their task's panel.
- * A foreign tab shows nothing, unless a task in this window is mid-run — then it keeps
- * that task's panel so switching tabs during a run doesn't tear the agent down.
+ * Open the window's panel, in the click's user-gesture tick (Chrome requires open() there), so
+ * nothing is awaited first. The global options are set once at start, not here: setting them
+ * again on a click while a run goes on in an open panel could reload it and end the run.
  */
-async function reconcileActiveTab(windowId: number, tabId: number): Promise<void> {
-	const owned = await ownedTabs(windowId);
-	const own = owned.get(tabId);
-	if (own) {
-		clearPendingOpen(tabId);
-		await applyTab(tabId, `${PANEL_PATH}?tabId=${own.homeTabId}`);
-		return;
-	}
-	// The panel just opened here is this tab's own task, before its record says so. It comes
-	// before a running task's claim: a fresh task's own tab shows its own panel.
-	if (pendingOpen.has(tabId)) return;
-	const runningHome = openSidepanels.has(windowId) ? await busyHomeTab(windowId) : undefined;
-	// The user may have opened a fresh task here while busyHomeTab was read.
-	if (pendingOpen.has(tabId)) return;
-	if (runningHome !== undefined) {
-		await applyTab(tabId, `${PANEL_PATH}?tabId=${runningHome}`);
-		return;
-	}
-	await applyTab(tabId, undefined);
+function openPanel(windowId: number, source: string): void {
+	markOpening(windowId);
+	chrome.sidePanel.open({ windowId }).catch((err) => {
+		clearOpening(windowId);
+		recordPanelError(`open(${source})`, err);
+	});
+	panelLog(`open window=${windowId} (${source})`);
 }
 
-/**
- * Open the panel on a tab the user deliberately clicked. A tab that already shows a panel
- * (its own task, or a running task kept visible while the user looks around) opens that
- * panel as is: re-pointing it would reload the panel document and kill the agent running
- * in it. Any other tab gets a fresh task bound to it.
- */
-function openPanelOnTab(tabId: number, source: string): void {
-	const existing = panelPathCache.get(tabId);
-	if (existing) {
-		chrome.sidePanel.open({ tabId }).catch((err) => recordPanelError(`open(${source})`, err));
-		panelLog(`open tab=${tabId} (${source}, existing ${existing})`);
-		return;
-	}
-	const path = `${PANEL_PATH}?tabId=${tabId}`;
-	panelPathCache.set(tabId, path);
-	clearPendingOpen(tabId);
-	pendingOpen.set(
-		tabId,
-		setTimeout(() => {
-			// The task never named this tab (it failed to start, or moved): decide normally.
-			pendingOpen.delete(tabId);
-			chrome.tabs
-				.get(tabId)
-				.then((tab) => (tab.active ? reconcileActiveTab(tab.windowId, tabId) : undefined))
-				.catch(() => undefined);
-		}, PENDING_OPEN_MS),
-	);
-	// Both calls must run in the click's user-gesture tick; Chrome applies them in order.
-	chrome.sidePanel.setOptions({ tabId, path, enabled: true }).catch((err) => recordPanelError("setOptions", err));
-	chrome.sidePanel.open({ tabId }).catch((err) => recordPanelError(`open(${source})`, err));
-	panelLog(`open tab=${tabId} (${source})`);
-}
-
-chrome.tabs.onActivated.addListener((info) => void reconcileActiveTab(info.windowId, info.tabId));
-chrome.tabs.onRemoved.addListener((tabId) => {
-	panelPathCache.delete(tabId);
-	clearPendingOpen(tabId);
-});
-
-chrome.storage.onChanged.addListener((changes, area) => {
-	if (area === "local" && "browser_sessions" in changes) void onSessionsChanged();
-	// Heartbeats share the prefix but say nothing about which tab shows the panel.
-	if (
-		area === "session" &&
-		Object.keys(changes).some((k) => k.startsWith(PANEL_BUSY_PREFIX) && !k.startsWith(`${PANEL_BUSY_PREFIX}beat_`))
-	)
-		void onActiveTabsChanged();
-});
-
-async function onSessionsChanged(): Promise<void> {
-	const windows = await chrome.windows.getAll({ windowTypes: ["normal"] }).catch(() => []);
-	for (const w of windows) {
-		if (w.id === undefined) continue;
-		await enableOwnedTabs(w.id);
-		const [active] = await chrome.tabs.query({ active: true, windowId: w.id }).catch(() => []);
-		if (active?.id !== undefined) await reconcileActiveTab(w.id, active.id);
-	}
-}
-
-async function onActiveTabsChanged(): Promise<void> {
-	const windows = await chrome.windows.getAll({ windowTypes: ["normal"] }).catch(() => []);
-	for (const w of windows) {
-		if (w.id === undefined) continue;
-		const [active] = await chrome.tabs.query({ active: true, windowId: w.id }).catch(() => []);
-		if (active?.id !== undefined) await reconcileActiveTab(w.id, active.id);
-	}
-}
-
-// Toolbar icon: open a task on the current tab.
+// Toolbar icon: open this window's panel.
 chrome.action.onClicked.addListener((tab: chrome.tabs.Tab) => {
-	if (tab?.id !== undefined) openPanelOnTab(tab.id, "action");
+	if (tab?.windowId !== undefined) openPanel(tab.windowId, "action");
 });
 
 // Listen for messages from userScripts (overlay in page).
@@ -278,8 +148,7 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 	if (!match) return;
 	const windowId = Number(match[1]);
 	panelLog(`panel connected window=${windowId}`);
-	openSidepanels.add(windowId);
-	void enableOwnedTabs(windowId);
+	clearOpening(windowId);
 	chrome.storage.session.get(SIDEPANEL_OPEN_KEY, (data) => {
 		const open = new Set<number>((data[SIDEPANEL_OPEN_KEY] as number[]) || []);
 		open.add(windowId);
@@ -287,7 +156,6 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 	});
 	port.onDisconnect.addListener(() => {
 		panelLog(`panel disconnected window=${windowId}`);
-		openSidepanels.delete(windowId);
 		chrome.storage.session.get(SIDEPANEL_OPEN_KEY, (data) => {
 			const open = new Set<number>((data[SIDEPANEL_OPEN_KEY] as number[]) || []);
 			open.delete(windowId);
@@ -296,9 +164,8 @@ chrome.runtime.onConnect.addListener((port: chrome.runtime.Port) => {
 	});
 });
 
-// Keyboard shortcut: open a task on the current tab (Chrome offers no per-tab close API).
+// Keyboard shortcut: same as the toolbar icon (Chrome offers no per-window close API).
 chrome.commands.onCommand.addListener((command: string, sender?: chrome.tabs.Tab) => {
 	if (command !== "toggle-sidepanel") return;
-	if (sender?.id !== undefined) openPanelOnTab(sender.id, "command");
-	else if (sender?.windowId !== undefined) chrome.sidePanel.open({ windowId: sender.windowId }).catch(() => undefined);
+	if (sender?.windowId !== undefined) openPanel(sender.windowId, "command");
 });

@@ -90,6 +90,11 @@ export function setPanelsOpening(count: () => number): void {
 	panelsOpening = count;
 }
 
+/** How many side panels are opening right now (what the idle check reads). */
+export function panelsOpeningNow(): number {
+	return panelsOpening();
+}
+
 let releaseGate: (() => void) | undefined;
 let acquiring: Promise<void> | undefined;
 let dropWanted = false;

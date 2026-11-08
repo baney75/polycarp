@@ -347,3 +347,17 @@ test("the short provider list loses nothing: a saved key stays, and custom provi
 	assert.match(tab, /this\.showAll \|\| this\.query\.trim\(\)\s*\? nothing\s*: html`<button/);
 	assert.match(tab, /q \|\| this\.showAll \|\| this\.withKeys\.has\(p\) \|\| COMMON_PROVIDERS\.has\(p\)/);
 });
+
+test("sending from the panel with another session's tab in front leaves that tab with its session", async () => {
+	const fake = installFakeChrome();
+	const { BrowserSession } = await import(`../src/browser/session.ts?ctx=share-${Math.random()}`);
+	const { shareActiveTab } = await import(`../src/browser/share-tab.ts?${Math.random()}`);
+	const agent = await BrowserSession.open("bridge-claude-shop", "claude · shop", 1, { agent: "claude", project: "shop" });
+	const t = (await agent.createTab("https://shop.example/")).id;
+	await chrome.tabs.update(t, { active: true });
+	const panel = await BrowserSession.open("saved-chat", "chat", 1);
+	// Window 1's tab in front is the agent's tab T; the panel sends a message.
+	assert.deepEqual(await shareActiveTab(panel, 1, true), { tabId: t, heldBy: "claude · shop" });
+	assert.ok(fake.table()["bridge-claude-shop"].tabIds.includes(t), "T stays in the bridge session");
+	assert.ok(!fake.table()["saved-chat"].tabIds.includes(t), "and the panel's chat did not take it");
+});
