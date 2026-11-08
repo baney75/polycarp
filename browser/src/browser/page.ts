@@ -1249,7 +1249,7 @@ export async function waitFor(
 	timeoutMs = 10000,
 ): Promise<boolean> {
 	const deadline = Date.now() + timeoutMs;
-	for (let poll = 0; Date.now() < deadline; poll++) {
+	while (Date.now() < deadline) {
 		try {
 			const tab = await chrome.tabs.get(tabId);
 			if (condition.urlIncludes && (tab.url ?? "").includes(condition.urlIncludes)) return true;
@@ -1266,8 +1266,7 @@ export async function waitFor(
 		} catch {
 			/* page is navigating; try again */
 		}
-		// Back off: on Linux a background tab asked this often never runs its IntersectionObserver callbacks.
-		await new Promise((r) => setTimeout(r, Math.min(250 * 2 ** poll, 2000)));
+		await new Promise((r) => setTimeout(r, 250));
 	}
 	return false;
 }
