@@ -1,11 +1,13 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { claudeAllows, setClaudeAllows } from "./always-allow.ts";
 import { harnesses } from "./harness.ts";
 import { BridgeClient, BridgeRpcError, isConnectionError, listSockets, NOT_CONNECTED } from "./client.ts";
 import { runDoctor } from "./doctor.ts";
+import { migrateLegacyPaths } from "./migrate.ts";
 import { runNativeHost } from "./host.ts";
-import { browserDirs, hostStatus, install, isInstalled } from "./install.ts";
+import { browserDirs, cliLauncherPath, hostStatus, install, isInstalled } from "./install.ts";
 import { runMcpServer } from "./mcp.ts";
 import { COMMAND_NAME, COMPILED } from "./self.ts";
 import { EXTENSION_FILES, extensionDir } from "./paths.ts";
@@ -33,10 +35,14 @@ import { runSubmit } from "./skill-submit.ts";
 import { banner, c, confirm, sym } from "./ui.ts";
 import { runUpdate, UpdateError } from "./update.ts";
 import { detectMode, recoverCheckoutQuietly } from "./checkout.ts";
+import { migrateLegacyServices } from "./service.ts";
 import { type HostRunAction, runHostAction } from "./update-run.ts";
 import { BUILD } from "../../src/update/build.ts";
 import { argsProblem, COMMANDS, completionScript, EXIT_CODES, helpRows, VALUE_FLAGS, VISIBLE_COMMANDS } from "./commands.ts";
 import { VERSION } from "./version.ts";
+
+/** A path under the home folder as ~/..., for help text. */
+const tildePath = (path: string) => (path.startsWith(`${homedir()}/`) ? `~${path.slice(homedir().length)}` : path);
 
 /** One help row. Padding counts visible characters, so color codes don't shift the column. */
 const cmd = (usage: string, what: string) => {
@@ -58,8 +64,8 @@ function help(): string {
 		for (const spec of VISIBLE_COMMANDS.filter((x) => x.group === group)) for (const [usage, what] of helpRows(spec)) rows.push(cmd(usage, what));
 		if (group === "Agents") {
 			rows.push(
-				`  ${c.dim("Claude Code:")} claude mcp add --scope user polycarp -- ~/.config/tabkyra/tabkyra mcp`,
-				`  ${c.dim("Codex:")}       codex mcp add polycarp -- ~/.config/tabkyra/tabkyra mcp`,
+				`  ${c.dim("Claude Code:")} claude mcp add --scope user polycarp -- ${tildePath(cliLauncherPath())} mcp`,
+				`  ${c.dim("Codex:")}       codex mcp add polycarp -- ${tildePath(cliLauncherPath())} mcp`,
 				`  ${c.dim(`(${COMMAND_NAME} setup adds these for you; ${COMMAND_NAME} doctor checks them.)`)}`,
 			);
 		}
@@ -174,7 +180,7 @@ async function status(json: boolean): Promise<number> {
 		const allowed = report.allowedHosts?.length ? report.allowedHosts.join(", ") : "none yet";
 		console.log(
 			report.permissionMode === "allow_all"
-				? `${sym.warn} Agents may open any site ${c.dim("(tabkyra ask turns prompts back on)")}`
+				? `${sym.warn} Agents may open any site ${c.dim(`(${COMMAND_NAME} ask turns prompts back on)`)}`
 				: `${sym.ok} Agents ask before opening a new site. Allowed: ${allowed}`,
 		);
 	} else {
@@ -225,6 +231,8 @@ async function main(): Promise<void> {
 	// `host` is spawned by the browser with its origin as an argument; leave it alone.
 	// `polycarp browser link https://hub...` is `link enroll`.
 	if (command && command !== "host") checkArgs(command, command === "link" && /^https?:\/\//.test(argv[1] ?? "") ? ["enroll", ...argv.slice(1)] : argv.slice(1));
+	// The folders and names from before the rename move once, before anything reads config. Help, version and completions never touch it.
+	if (command && !["--version", "-v", "version", "--help", "-h", "help", "completion"].includes(command)) migrateLegacyPaths();
 	// Bad setup or update options are refused before anything below touches the checkout.
 	const setupArgs = command === "setup" ? parseSetupArgs(argv.slice(1)) : undefined;
 	if (typeof setupArgs === "string") throw new UsageError(`${setupArgs} Usage: ${COMMAND_NAME} setup [--yes] [--no-wait] [--timeout <seconds>] [--browser <name>]`);
@@ -241,7 +249,7 @@ async function main(): Promise<void> {
 	}
 	// Inside Polycarp the app updates the helper; a release folder here would repoint the host away from the bundle.
 	if (COMPILED && command === "update") {
-		console.log(`${sym.dot} This tabkyra is part of Polycarp. Polycarp updates it; there is nothing to run here.`);
+		console.log(`${sym.dot} This helper is part of Polycarp. Polycarp updates it; there is nothing to run here.`);
 		return;
 	}
 	switch (command) {
@@ -310,6 +318,7 @@ async function main(): Promise<void> {
 				if (!match) throw new UsageError(`Unknown browser "${only}". Use one of: ${known.map((b) => b.name).join(", ")}.`);
 				if (!existsSync(match.dir)) throw new UsageError(`${only} has no profile folder on this computer (${match.dir}). Open it once, then run this again.`);
 			}
+			for (const r of await migrateLegacyServices()) console.log(r.ok ? `${sym.ok} Moved the ${r.label} service to its new name` : `${sym.warn} ${r.message}`);
 			const result = install({ force: flag("--force"), browser: only });
 			console.log(`${sym.ok} Launcher ${c.dim(result.launcher)}`);
 			for (const f of result.written) console.log(`${sym.ok} Wrote ${c.dim(f)}`);
@@ -373,7 +382,7 @@ async function main(): Promise<void> {
 			console.log(
 				mode === "ask"
 					? `${sym.ok} Agents will ask before opening a site you haven't allowed.`
-					: `${sym.warn} Agents may now open any site without asking. ${c.dim("Undo with: tabkyra ask")}`,
+					: `${sym.warn} Agents may now open any site without asking. ${c.dim(`Undo with: ${COMMAND_NAME} ask`)}`,
 			);
 			return;
 		}

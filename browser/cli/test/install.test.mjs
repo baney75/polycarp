@@ -53,7 +53,7 @@ test("install registers the host for Helium and Chrome, skips absent browsers", 
 		const host = JSON.parse(readFileSync(file, "utf8"));
 		assert.equal(host.name, "ai.tabkyra.bridge");
 		assert.deepEqual(host.allowed_origins, [`chrome-extension://${id}/`]);
-		assert.equal(host.path, join(home, ".config", "tabkyra", "host"));
+		assert.equal(host.path, join(home, ".config", "polycarp", "browser", "polycarp-host"));
 	}
 	assert.equal(existsSync(absent), false);
 });

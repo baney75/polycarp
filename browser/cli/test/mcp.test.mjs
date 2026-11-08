@@ -200,7 +200,7 @@ test("a scoped session reads bundled skills only, even when created without remo
 	);
 	for (const dir of [dorks, own]) assert.equal(spawnSync(process.execPath, [cli, "skill", "apply", dir, "--yes"], { env }).status, 0);
 	const before = process.env.TABKYRA_CONFIG_DIR;
-	process.env.TABKYRA_CONFIG_DIR = join(home, ".config", "tabkyra");
+	process.env.TABKYRA_CONFIG_DIR = join(home, ".config", "polycarp", "browser");
 	const open = async (options) => {
 		const { server } = createMcpServer(options);
 		const [a, b] = InMemoryTransport.createLinkedPair();
@@ -248,7 +248,7 @@ test("skill_match sees two same-size edits applied in quick succession", async (
 		const ask = async (task) => (await client.callTool({ name: "skill_match", arguments: { task } })).content[0].text;
 		// Both edits land within the same timestamp tick, as on a 1-second filesystem: pin every
 		// modification time to one value, so only the inode, ctime and content can tell.
-		const local = join(home, ".config", "tabkyra", "skills-local");
+		const local = join(home, ".config", "polycarp", "browser", "skills-local");
 		const paths = [local, join(local, "index.json"), join(local, "tide-chart"), join(local, "tide-chart", "SKILL.md")];
 		const pin = () => {
 			for (const p of paths) utimesSync(p, 1_700_000_000, 1_700_000_000);

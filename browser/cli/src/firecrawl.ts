@@ -7,12 +7,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { VERSION } from "./version.ts";
+import { envVar } from "./env.ts";
+import { configDir } from "./files.ts";
 
 const HOSTED = /(?:^|\.)(?:api\.)?firecrawl\.dev$/i;
-
-function configDir(): string {
-	return process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
-}
 
 /** Raw configured URL, or empty. */
 export function firecrawlApiUrlRaw(): string {

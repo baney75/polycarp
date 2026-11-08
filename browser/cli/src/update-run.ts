@@ -2,7 +2,7 @@
  * `polycarp browser update --host [--activate|--rollback|--reinstall]`: the update the native host runs
  * for the side panel, as a child process. It prints one JSON line per step ({phase, message})
  * and a last one with phase "done" or "failed"; the host forwards them to the extension. Each
- * line is also written to ~/.config/tabkyra/update-progress.json, so a host that restarts (the
+ * line is also written to ~/.config/polycarp/browser/update-progress.json, so a host that restarts (the
  * browser restarted it, or the extension reloaded) can pick up a run already going.
  *
  * An update has two steps, so the browser never runs a mix of old and new files for long:

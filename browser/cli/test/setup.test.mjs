@@ -23,7 +23,7 @@ const helium = () =>
 	process.platform === "darwin"
 		? join(home, "Library", "Application Support", "net.imput.helium")
 		: join(home, ".config", "net.imput.helium");
-const launcher = () => join(home, ".config", "tabkyra", "tabkyra");
+const launcher = () => join(home, ".config", "polycarp", "browser", "polycarp");
 
 /**
  * A fake `claude` or `codex`. `mcp get` answers with an entry running `configured` (with
@@ -221,9 +221,9 @@ test("second-S3: setup keeps a working launcher and writes links only for regist
 	mkdirSync(join(root, "apps", "Google Chrome.app"), { recursive: true });
 	// A working standalone launcher: the agent launcher and the host launcher both exec a file that exists.
 	const standalone = '#!/bin/sh\nexec "/bin/echo" "$@"\n';
-	for (const name of ["tabkyra", "host"]) {
-		writeFileSync(join(home, ".config", "tabkyra", name), standalone);
-		chmodSync(join(home, ".config", "tabkyra", name), 0o755);
+	for (const name of ["polycarp", "polycarp-host"]) {
+		writeFileSync(join(home, ".config", "polycarp", "browser", name), standalone);
+		chmodSync(join(home, ".config", "polycarp", "browser", name), 0o755);
 	}
 	const heliumManifest = join(helium(), "NativeMessagingHosts", "ai.tabkyra.bridge.json");
 	const heliumBefore = readFileSync(heliumManifest, "utf8");
@@ -231,14 +231,14 @@ test("second-S3: setup keeps a working launcher and writes links only for regist
 	assert.match(out, /Helium\s+already registered/, out);
 	assert.doesNotMatch(out, /Chrome\s+(registered|already)/, "setup does not touch a browser nobody registered or chose");
 	assert.equal(existsSync(join(chromeDir, "NativeMessagingHosts", "ai.tabkyra.bridge.json")), false, "no link for Chrome");
-	assert.equal(readFileSync(join(home, ".config", "tabkyra", "tabkyra"), "utf8"), standalone, "the working launcher is kept");
-	assert.equal(readFileSync(join(home, ".config", "tabkyra", "host"), "utf8"), standalone);
+	assert.equal(readFileSync(join(home, ".config", "polycarp", "browser", "polycarp"), "utf8"), standalone, "the working launcher is kept");
+	assert.equal(readFileSync(join(home, ".config", "polycarp", "browser", "polycarp-host"), "utf8"), standalone);
 	assert.equal(readFileSync(heliumManifest, "utf8"), heliumBefore, "the registered browser's manifest is unchanged");
 	// Choosing it makes the link, and still leaves the working launcher alone.
 	const chosen = run(["setup", "--yes", "--no-wait", "--browser", "Chrome"]);
 	assert.match(chosen.out, /Chrome\s+registered/, chosen.out);
 	assert.equal(existsSync(join(chromeDir, "NativeMessagingHosts", "ai.tabkyra.bridge.json")), true);
-	assert.equal(readFileSync(join(home, ".config", "tabkyra", "host"), "utf8"), standalone);
+	assert.equal(readFileSync(join(home, ".config", "polycarp", "browser", "polycarp-host"), "utf8"), standalone);
 	assert.equal(run(["setup", "--browser", "Netscape"]).code, 2, "an unknown browser is a usage error");
 });
 
@@ -311,4 +311,25 @@ test("rules under the old name move even when the entry was moved by hand, and d
 	} finally {
 		rmSync(settings, { force: true });
 	}
+});
+
+test("an entry that runs the old ~/.config/tabkyra/tabkyra launcher is rewritten to the new launcher", () => {
+	writeFileSync(harnessLog, "");
+	const old = join(home, ".config", "tabkyra", "tabkyra");
+	fakeHarness("claude", old);
+	fakeHarness("codex", old);
+	const claude = JSON.parse(run(["doctor", "--json"]).out).checks.find((c) => c.id === "mcp:claude");
+	assert.equal(claude.status, "fail");
+	assert.match(claude.label, /old launcher path/);
+
+	run(["setup", "--yes", "--no-wait"]);
+	const calls = readFileSync(harnessLog, "utf8");
+	for (const [tool, add] of [
+		["claude", `claude mcp add --scope user polycarp -- ${launcher()} mcp`],
+		["codex", `codex mcp add polycarp -- ${launcher()} mcp`],
+	]) {
+		assert.ok(calls.includes(add), `${tool} points at the new launcher:\n${calls}`);
+		assert.ok(calls.includes(`${tool} mcp remove`), `${tool}'s old entry is removed:\n${calls}`);
+	}
+	assert.ok(!calls.includes(`add polycarp -- ${old}`), "nothing is added that points at the old path");
 });

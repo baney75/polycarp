@@ -10,6 +10,9 @@ import { homedir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
 import { COMPILED, selfExec, selfPrefix } from "./self.ts";
+import { envVar } from "./env.ts";
+import { CLI_LAUNCHER_NAME, cacheDir, configDir, HOST_LAUNCHER_NAME, LEGACY_CLI_LAUNCHER_NAME, LEGACY_HOST_LAUNCHER_NAME, legacyConfigDir } from "./files.ts";
+import { migrateLegacyPaths } from "./migrate.ts";
 
 /** Stable id from the `key` in static/manifest.chrome.json: unpacked and bundled copies. */
 export const EXTENSION_ID = "kenehmggpggpiolepbjojeenmeapgfoc";
@@ -123,11 +126,12 @@ export function browserInstalled(name: string): boolean {
 	if (process.platform !== "darwin") return true;
 	const app = MAC_APPS[name];
 	if (!app) return true;
-	const dirs = process.env.TABKYRA_APPLICATIONS_DIRS ? process.env.TABKYRA_APPLICATIONS_DIRS.split(delimiter) : ["/Applications", join(homedir(), "Applications")];
+	const override = envVar("APPLICATIONS_DIRS");
+	const dirs = override ? override.split(delimiter) : ["/Applications", join(homedir(), "Applications")];
 	if (dirs.some((dir) => existsSync(join(dir, `${app}.app`)))) return true;
 	// An app outside the top of an Applications folder (Setapp, an external drive): ask by bundle id. Not under test overrides.
 	const id = MAC_BUNDLE_IDS[name];
-	return !process.env.TABKYRA_APPLICATIONS_DIRS && id !== undefined && knownToSpotlight(id);
+	return !override && id !== undefined && knownToSpotlight(id);
 }
 
 /**
@@ -145,20 +149,23 @@ export function registeredBrowserNames(): string[] {
 		.map(({ name }) => name);
 }
 
-function configDir(): string {
-	return join(homedir(), ".config", "tabkyra");
-}
+export { CLI_LAUNCHER_NAME, HOST_LAUNCHER_NAME, LEGACY_CLI_LAUNCHER_NAME, LEGACY_HOST_LAUNCHER_NAME };
 
 export function launcherPath(): string {
-	return join(configDir(), process.platform === "win32" ? "host.cmd" : "host");
+	return join(configDir(), HOST_LAUNCHER_NAME);
 }
 
 /**
- * The `tabkyra` command harness configs run: a launcher that pins Node by absolute path,
+ * The command harness configs run: a launcher that pins Node by absolute path,
  * so harnesses started from a GUI (Cursor, Claude Desktop) work without node on PATH.
  */
 export function cliLauncherPath(): string {
-	return join(configDir(), process.platform === "win32" ? "tabkyra.cmd" : "tabkyra");
+	return join(configDir(), CLI_LAUNCHER_NAME);
+}
+
+/** Where the agent launcher used to live: the old config folder, plus the old launcher name. Agent entries written then point here. */
+export function legacyCliLauncherPaths(): string[] {
+	return [...new Set([join(legacyConfigDir(), LEGACY_CLI_LAUNCHER_NAME), join(homedir(), ".config", "tabkyra", LEGACY_CLI_LAUNCHER_NAME)])];
 }
 
 /** Node by its PATH name when that is this same binary (survives upgrades), else execPath. */
@@ -203,12 +210,46 @@ function writeScript(path: string, args: string, options: { compileCache?: boole
 	} else {
 		// Node's compile cache (Node 22.1+; older versions ignore it): a small saving, about 10 ms
 		// of 120 on one machine, near run-to-run noise (`cli/eval/bridge-metrics.mjs --only launcher`).
-		const cache = join(homedir(), ".cache", "tabkyra", "node-compile-cache");
+		const cache = join(cacheDir(), "node-compile-cache");
 		// Only the launcher harnesses run; the native host's environment (and what it spawns) is unchanged.
 		const prefix = options.compileCache ? `: "\${NODE_COMPILE_CACHE:=${cache}}"\nexport NODE_COMPILE_CACHE\n` : "";
 		writeFileSync(path, `#!/bin/sh\n${prefix}exec "${node}" "${script}" ${args}"$@"\n`);
 		chmodSync(path, 0o755);
 	}
+}
+
+/** The program a launcher written by this process must run: the helper itself when compiled, else the script that is running. */
+function runningProgram(): string | undefined {
+	return COMPILED ? selfExec() : (selfPrefix()[0] ?? process.argv[1]);
+}
+
+/**
+ * Does the agent launcher run this process's program? One that names some other program (an old checkout, an npm link to a
+ * build that is gone) starts old code, and a service started from it would run that code too.
+ */
+export function launcherRunsSelf(path: string = cliLauncherPath()): boolean {
+	const program = runningProgram();
+	const named = absolutePathsIn(path);
+	if (!program || named === undefined) return false;
+	const same = (a: string, b: string) => {
+		try {
+			return realpathSync(a) === realpathSync(b);
+		} catch {
+			return a === b;
+		}
+	};
+	return named.some((p) => same(p, program));
+}
+
+/**
+ * Rewrite the agent launcher when it is missing or runs another program. Only that one: the host launcher is the browser's
+ * business and `install` decides about it. Returns true when it wrote.
+ */
+export function ensureLauncherIsSelf(): boolean {
+	if (launcherRunsSelf()) return false;
+	mkdirSync(configDir(), { recursive: true, mode: 0o700 });
+	writeScript(cliLauncherPath(), "", { compileCache: true });
+	return true;
 }
 
 function writeLauncher(): string {
@@ -250,6 +291,7 @@ export interface InstallOptions {
 }
 
 export function install(options: InstallOptions = {}): InstallResult {
+	migrateLegacyPaths();
 	const only = options.browsers ?? (options.browser !== undefined ? [options.browser] : undefined);
 	// A chosen set of browsers: working launchers (a standalone Polycarp's, say) stay as they are, so nothing else is repointed.
 	const keepLaunchers = options.keepLaunchers !== false && only !== undefined && launchersWork();

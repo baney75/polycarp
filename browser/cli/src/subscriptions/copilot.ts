@@ -17,6 +17,8 @@ import { COPILOT } from "../../../src/subscriptions/constants.ts";
 import { type Fetch, SubscriptionError } from "./siwc.ts";
 import { readPrivateJson, removeFile, subscriptionsDir, withFileLock, writePrivateJson } from "./store.ts";
 import { COMMAND_NAME } from "../self.ts";
+import { envVar } from "../env.ts";
+import { dataDir } from "../files.ts";
 
 export interface CopilotRecord {
 	login?: string;
@@ -276,7 +278,7 @@ export class CopilotAuth {
 
 /** Where `polycarp browser copilot-sdk install` puts the pinned SDK. */
 export function sdkInstallDir(): string {
-	return process.env.TABKYRA_COPILOT_SDK_DIR || join(homedir(), ".local", "share", "tabkyra", "copilot-sdk");
+	return envVar("COPILOT_SDK_DIR") || join(dataDir(), "copilot-sdk");
 }
 
 /** package.json paths the SDK may be resolved from, in order: the install dir, then the CLI's own node_modules. */

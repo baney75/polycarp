@@ -329,7 +329,7 @@ export async function sendStatus(send: Send, force = false): Promise<HostUpdateS
 		send(status);
 		return status;
 	} catch (err) {
-		process.stderr.write(`[tabkyra-host] update status failed: ${String(err)}\n`);
+		process.stderr.write(`[polycarp-host] update status failed: ${String(err)}\n`);
 		return undefined;
 	}
 }

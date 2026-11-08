@@ -1,5 +1,5 @@
 // Issue #94, host side: which hostnames the native host tells the extension an agent may not open.
-// Every config dir is a temp dir; nothing here touches ~/.config/tabkyra.
+// Every config dir is a temp dir; nothing here touches ~/.config/polycarp/browser.
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

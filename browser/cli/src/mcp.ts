@@ -24,6 +24,7 @@ import { selfExec, selfPrefix } from "./self.ts";
 import { VERSION } from "./version.ts";
 import { COMPUTER_INSTRUCTION, COMPUTER_STATUS_TOOL, type ComputerClient } from "./computer.ts";
 import { COMMAND_NAME } from "./self.ts";
+import { envVar } from "./env.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
@@ -144,7 +145,7 @@ function isNotConnected(err: unknown): boolean {
 const STATUS_TIMEOUT_MS = 20000;
 
 function harnessName(): string {
-	const explicit = process.env.TABKYRA_CLIENT_NAME;
+	const explicit = envVar("CLIENT_NAME");
 	if (explicit) return explicit;
 	if (process.env.CLAUDECODE || process.env.CLAUDE_CODE_ENTRYPOINT) return "claude";
 	if (process.env.CODEX_HOME || process.env.CODEX_SANDBOX) return "codex";
@@ -244,13 +245,13 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		const requestId = String(data.requestId);
 		const host = String(data.host);
 		let decision: "allow_once" | "allow_host" | "deny" = "deny";
-		if (process.env.TABKYRA_AUTO_ALLOW === "1") {
+		if (envVar("AUTO_ALLOW") === "1") {
 			await client.call("permission.respond", { requestId, decision: "allow_once" }).catch(() => undefined);
 			return;
 		}
 		try {
 			const answer = await server.server.elicitInput({
-				message: `tabkyra: the browser agent wants to open ${host}. Allow?`,
+				message: `Polycarp: the browser agent wants to open ${host}. Allow?`,
 				requestedSchema: {
 					type: "object",
 					properties: {
@@ -272,7 +273,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			// Client without elicitation support (headless runs): deny now instead of stalling
 			// the tool call; the error text tells the model how the user can allow the host.
 			process.stderr.write(
-				`[tabkyra] ${host} needs approval: run \`${COMMAND_NAME} allow ${host}\`, use the side panel (Settings > Agents), or set TABKYRA_AUTO_ALLOW=1.\n`,
+				`[polycarp] ${host} needs approval: run \`${COMMAND_NAME} allow ${host}\`, use the side panel (Settings > Agents), or set TABKYRA_AUTO_ALLOW=1.\n`,
 			);
 		}
 		await client.call("permission.respond", { requestId, decision }).catch(() => undefined);
@@ -1027,7 +1028,7 @@ export async function runMcpServer(options: { session?: string } = {}): Promise<
 	if (!isInstalled()) {
 		// First run from any harness completes setup; the extension reconnects on its alarm.
 		const result = install();
-		process.stderr.write(`[tabkyra] installed native host manifest (${result.written.length} browser dir(s))\n`);
+		process.stderr.write(`[polycarp] installed native host manifest (${result.written.length} browser dir(s))\n`);
 	}
 	const { server, client } = createMcpServer({ sessionFlag: options.session });
 	// Community skills, about daily, in the background: many harnesses keep this server running.
@@ -1038,5 +1039,5 @@ export async function runMcpServer(options: { session?: string } = {}): Promise<
 	const transport = new StdioServerTransport();
 	await server.connect(transport);
 	// Connect lazily on the first call, but try once now so a missing extension is reported early.
-	client.connect().catch((err) => process.stderr.write(`[tabkyra] ${err instanceof Error ? err.message : String(err)}\n`));
+	client.connect().catch((err) => process.stderr.write(`[polycarp] ${err instanceof Error ? err.message : String(err)}\n`));
 }

@@ -1,17 +1,19 @@
 /**
  * `polycarp browser setup`: build, register, wire up the harnesses, then load and connect.
  * Interactive by default; `--yes` accepts every offer. It edits a harness config only
- * after a yes and always points harnesses at the absolute path of the tabkyra launcher.
+ * after a yes and always points harnesses at the absolute path of the launcher.
  */
 
 import { moveClaudeRules } from "./always-allow.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { BridgeClient, listSockets } from "./client.ts";
 import { buildState, builtVersion, sourceVersion } from "./doctor.ts";
-import { harnesses, launcherValid, runCommand, shellJoin, tabkyraBinary, which } from "./harness.ts";
+import { migrateLegacyPaths } from "./migrate.ts";
+import { migrateLegacyServices } from "./service.ts";
+import { harnesses, launcherValid, runCommand, shellJoin, launcherBinary, which } from "./harness.ts";
 import { browserDirs, install, installedBrowserDirs, registeredBrowserNames } from "./install.ts";
 import { extensionDir, repoRoot } from "./paths.ts";
 import { installSkills, skillTargets } from "./skill.ts";
@@ -189,7 +191,7 @@ async function reloadExtension(socket: string): Promise<void> {
 
 /** Offer each detected harness the MCP server. Returns false if an attempted add failed. */
 async function connectHarnesses(options: SetupOptions): Promise<boolean> {
-	const binary = tabkyraBinary();
+	const binary = launcherBinary();
 	const found = harnesses(binary).filter((h) => h.detected);
 	if (found.length === 0) {
 		console.log(`  No coding harness found. Any MCP client can run: ${c.bold(`${binary} mcp`)}`);
@@ -384,6 +386,9 @@ export async function runSetup(options: SetupOptions): Promise<number> {
 	console.log(banner(`setup ${VERSION}`));
 	console.log(c.dim("You steer. Your agents work the tabs."));
 
+	migrateLegacyPaths();
+	for (const r of await migrateLegacyServices()) console.log(r.ok ? `  ${sym.ok} Moved the ${r.label} service to its new name` : `  ${sym.warn} ${r.message}`);
+
 	step(1, "Build the extension");
 	if (!(await ensureBuild(opts))) return 1;
 
@@ -392,7 +397,7 @@ export async function runSetup(options: SetupOptions): Promise<number> {
 	if (!launcherValid()) {
 		install({ browsers: setupBrowsers(opts), keepLaunchers: false });
 		if (!launcherValid()) {
-			console.log(`  ${sym.fail} Could not write the agent launcher at ${tabkyraBinary()}. Check that ~/.config/tabkyra is writable.`);
+			console.log(`  ${sym.fail} Could not write the agent launcher at ${launcherBinary()}. Check that ${dirname(launcherBinary())} is writable.`);
 			return 1;
 		}
 	}

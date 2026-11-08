@@ -17,7 +17,7 @@ import { WebSocket } from "ws";
 import { BridgeClient } from "./client.ts";
 import { normalizeCode, REQUEST_LOCK_MS } from "./codes.ts";
 import { LockTimeoutError, readJsonFile, withFileLock, withFileLockAsync, writeJsonPrivate } from "./files.ts";
-import { launcherValid, tabkyraBinary } from "./harness.ts";
+import { launcherValid, launcherBinary } from "./harness.ts";
 import { validDeviceName } from "./hub-state.ts";
 import {
 	CHUNK_BYTES,
@@ -314,7 +314,7 @@ export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: 
 	if (early) return early;
 	const scopes = options.scopes?.length ? [...new Set(options.scopes)] : [...DEFAULT_GRANT];
 	for (const s of scopes) if (!Object.hasOwn(SCOPES, s)) return failed(`Unknown scope ${s}. Scopes: ${Object.keys(SCOPES).join(", ")}.`, { type: "scopes" });
-	if (options.service && !service.valid()) return failed(`${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then link again (or pass --no-service). Nothing was changed.`, { type: "launcher" });
+	if (options.service && !service.valid()) return failed(`${launcherBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then link again (or pass --no-service). Nothing was changed.`, { type: "launcher" });
 	// Reserve before the hub sees the code: a competing join is refused here, with its code unspent.
 	let reservation: Awaited<ReturnType<typeof takeJoinReservation>>;
 	try {
