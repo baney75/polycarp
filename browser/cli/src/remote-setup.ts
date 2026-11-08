@@ -355,10 +355,22 @@ export interface SetupOptions {
 	passcode?: boolean;
 	/** One JSON object on stdout (a SetupReport) and no other output, for an app. The passcode is in it only when this run made it. */
 	json?: boolean;
+	/**
+	 * Takes the final SetupReport instead of printing it, and keeps every other line off stdout too. The native host's stdout is
+	 * its channel to the browser, so the Connect panel's setup uses this. Implies the JSON mode's behavior.
+	 */
+	report?: (report: SetupReport) => void;
+	/**
+	 * Move from this install's own Funnel route to the Cloudflare one (the Connect panel's button). remote.json stays until the
+	 * new route is saved, so the running serve is still known as ours and restarted, and Funnel is closed only after Cloudflare
+	 * has made the tunnel: any refusal before that leaves the Funnel route as it was.
+	 */
+	replaceFunnel?: boolean;
 }
 
 export async function remoteSetup(options: SetupOptions): Promise<number> {
-	const json = options.json === true;
+	const json = options.json === true || options.report !== undefined;
+	const emit = options.report ?? printReport;
 	/** The passcode this run made. A run that fails after making it still reports it, because a later run won't print it again. */
 	let madePasscode: string | undefined;
 	const say = (line: string) => {
@@ -368,7 +380,7 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 	const fail = (state: RemoteState, message: string, extra: { adminUrl?: string; code?: string; after?: string } = {}): number => {
 		if (json) {
 			const report: SetupReport = { ok: false, state, message, ...(extra.adminUrl ? { adminUrl: extra.adminUrl } : {}), ...(extra.code ? { code: extra.code } : {}), ...(madePasscode ? { passcode: madePasscode } : {}), passcodeSet: passcodeSet() };
-			printReport(report);
+			emit(report);
 			return 1;
 		}
 		console.error(`${sym.fail} ${message}`);
@@ -398,7 +410,7 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 	if (cloudflareName !== undefined && !cloudflareHost) return fail("problem", `${cloudflareName} isn't a name a tunnel can have. Use one like polycarp.yourdomain.com.`, { code: "cloudflare_dns" });
 	if (previous?.route === "cloudflare" && !cloudflareHost) return fail("problem", `A Cloudflare tunnel from an earlier setup is on. Run ${COMMAND_NAME} remote off first.`);
 	if (cloudflareHost) {
-		if (previous?.route === "funnel") return fail("problem", `Funnel from an earlier setup is on. Run ${COMMAND_NAME} remote off first.`);
+		if (previous?.route === "funnel" && !options.replaceFunnel) return fail("problem", `Funnel from an earlier setup is on. Run ${COMMAND_NAME} remote off first.`);
 		const bin = cloudflaredBinary();
 		if (!bin) return fail("cloudflared_missing", "cloudflared isn't installed. Get it from developers.cloudflare.com/tunnel/downloads, then try again.");
 		if (!cloudflareSignedIn()) return fail("problem", `Sign in to Cloudflare first: ${COMMAND_NAME} remote cloudflare login.`, { code: "cloudflare_login" });
@@ -406,7 +418,9 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 		// Funnel on 8443 would stay public and forward to this machine, whatever else is set up.
 		if (tailscaleBinary()) {
 			const stray = await strayFunnel();
-			if (stray.kind !== "none") return fail("port_busy", `Funnel on ${FUNNEL_PORT} is on${stray.kind === "unknown" ? ` (${stray.message})` : ""}; run ${COMMAND_NAME} remote off first. Nothing was changed.`, { code: "tailscale_port" });
+			// The Funnel being replaced is ours (it proxies only to Polycarp) and closes below; any other stays a refusal.
+			const replacing = options.replaceFunnel && previous?.route === "funnel" && stray.kind === "found" && stray.ours;
+			if (stray.kind !== "none" && !replacing) return fail("port_busy", `Funnel on ${FUNNEL_PORT} is on${stray.kind === "unknown" ? ` (${stray.message})` : ""}; run ${COMMAND_NAME} remote off first. Nothing was changed.`, { code: "tailscale_port" });
 		}
 		cloudflaredBin = bin;
 		publicUrl = `https://${cloudflareHost}`;
@@ -469,6 +483,11 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 			const opened = await prepareCloudflare(cloudflaredBin, cloudflareHost, port);
 			if (!opened.ok) return fail("problem", opened.message, { code: opened.code });
 			tunnelName = opened.tunnel;
+			if (options.replaceFunnel && previous?.route === "funnel") {
+				// The tunnel is ready, so now the old public route closes. If it won't, nothing is saved and Funnel keeps working.
+				const closed = funnelOff(tailscaleBinary());
+				if (!closed.ok) return fail("problem", `Funnel didn't turn off (${closed.message}), so the Cloudflare route wasn't saved and Funnel still works.`, { code: "funnel" });
+			}
 			stage = "config";
 		}
 		saveRemoteConfig({ publicUrl, port, route, ...(previous?.redirectHosts ? { redirectHosts: previous.redirectHosts } : {}), ...(previous?.allowHosts ? { allowHosts: previous.allowHosts } : {}) });
@@ -524,7 +543,7 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 				...(madePasscode ? { passcode: madePasscode } : {}),
 				passcodeSet: passcodeSet(),
 			};
-			printReport(report);
+			emit(report);
 			return 0;
 		}
 		console.log(`
@@ -713,6 +732,7 @@ function funnelOff(bin: string | undefined): { ok: boolean; message: string } {
 	}
 	return { ok: false, message: `Couldn't turn Funnel off: ${r.out}. The service and remote.json are kept; run tailscale funnel --https=${FUNNEL_PORT} off, then ${COMMAND_NAME} remote off again.` };
 }
+
 
 /** Funnel first, then the service, then the files: while Funnel is open, a serve with OAuth on loopback is the safe state. */
 export async function remoteOff(): Promise<number> {

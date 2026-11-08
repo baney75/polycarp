@@ -187,7 +187,7 @@ test("status: none, remote, hub (with devices) and link, and nothing secret in a
 		const passcode = setPasscode();
 		writeJson(join(dir, "remote.json"), { publicUrl: "https://tk.example.com", port: 8787, route: "custom" });
 		const { result } = await ask(new ConnectService(), "status");
-		assert.deepEqual(result, { route: "remote", publicUrl: "https://tk.example.com", passcodeSet: true, theme: { preset: "tabkyra" } });
+		assert.deepEqual(result, { route: "remote", publicUrl: "https://tk.example.com", remoteKind: "custom", passcodeSet: true, theme: { preset: "tabkyra" } });
 		assert.ok(!JSON.stringify(result).includes(passcode));
 	});
 	await inConfig("status-hub", async (dir) => {

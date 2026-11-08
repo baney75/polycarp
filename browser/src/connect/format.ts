@@ -2,7 +2,15 @@
 
 import { CONNECT_CODE, HUB_ORIGIN } from "../agent-setup-prompt.js";
 import { hostCommand, hostCommandText } from "../bridge/host-command.js";
-import type { ApprovalCode, ConnectStatus, DeviceCode, JoinScope } from "./types.js";
+import {
+	type ApprovalCode,
+	type ConnectStatus,
+	type DeviceCode,
+	type JoinScope,
+	TUNNEL_STEPS,
+	type TunnelStepId,
+	type TunnelStepState,
+} from "./types.js";
 
 /** Built when shown: the name the helper answers to arrives after this module loads. */
 export const malformedCodeMessage = (): string =>
@@ -94,3 +102,63 @@ export function joinScopesOf(status: Pick<ConnectStatus, "joinScopes">): JoinSco
 	}
 	return out;
 }
+
+/** Whether the Cloudflare setup form shows: no public address yet, or Tailscale Funnel (which it replaces). */
+export function tunnelFormOffered(s: ConnectStatus): "none" | "funnel" | undefined {
+	if (s.problem) return undefined;
+	if (s.route === "none") return "none";
+	if (s.route === "remote" && s.remoteKind === "funnel") return "funnel";
+	return undefined;
+}
+
+/**
+ * The only address the panel opens for Cloudflare sign-in: https on dash.cloudflare.com, with no credentials or port. The
+ * helper checks it too; the panel does not trust the helper's word for what it opens in a tab.
+ */
+export function safeSignInUrl(value: unknown): string | undefined {
+	if (typeof value !== "string" || value.length > 2000) return undefined;
+	try {
+		const url = new URL(value);
+		const ok =
+			url.protocol === "https:" &&
+			url.hostname === "dash.cloudflare.com" &&
+			url.port === "" &&
+			!url.username &&
+			!url.password;
+		return ok ? url.href : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export interface TunnelProgressView {
+	step: TunnelStepId;
+	state: TunnelStepState;
+	detail?: string;
+	url?: string;
+}
+
+/** A progress frame from the helper as the panel draws it, or undefined when it isn't one. */
+export function parseTunnelProgress(p: Record<string, unknown>): TunnelProgressView | undefined {
+	const step = (TUNNEL_STEPS as readonly unknown[]).includes(p.step) ? (p.step as TunnelStepId) : undefined;
+	const state =
+		p.state === "running" || p.state === "waiting" || p.state === "done" || p.state === "failed"
+			? p.state
+			: undefined;
+	if (!step || !state) return undefined;
+	const url = safeSignInUrl(p.url);
+	return {
+		step,
+		state,
+		...(typeof p.detail === "string" ? { detail: p.detail.slice(0, 500) } : {}),
+		...(url ? { url } : {}),
+	};
+}
+
+export const TUNNEL_STEP_LABELS: Record<TunnelStepId, string> = {
+	cloudflared: "Get cloudflared",
+	signin: "Sign in to Cloudflare",
+	route: "Turn off the old address",
+	tunnel: "Set up the tunnel",
+	check: "Check the address",
+};

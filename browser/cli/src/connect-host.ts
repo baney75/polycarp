@@ -33,8 +33,10 @@ import { deviceRows } from "./hub-admin.ts";
 import { devicesFile, devicesReadable, hubFile, loadHubConfig, mintConnectCode, validDeviceName } from "./hub-state.ts";
 import { type EnrollHooks, type EnrollResult, enrollDevice, HubCodeError, LinkError, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusyAsync } from "./link.ts";
 import { configDir, DEFAULT_GRANT, mintApprovalCode, passcodeSet } from "./oauth.ts";
+import { normalizeCloudflareHost } from "./cloudflare.ts";
 import { SCOPES } from "./remote.ts";
 import { loadRemoteConfig, remoteFile } from "./remote-setup.ts";
+import { setupTunnel, type TunnelHooks, TunnelError, type TunnelProgress } from "./tunnel-setup.ts";
 import { isAccent, isMode, loadPolycarpPayload, loadTheme, polycarpRefusal, PRESETS, saveTheme } from "./theme.ts";
 
 // ---------- parsing ----------
@@ -45,6 +47,7 @@ export type ConnectCall =
 	| { method: "deviceCode" }
 	| { method: "setBusy"; busy: boolean }
 	| { method: "joinHub"; hubUrl: string; code: string; name?: string }
+	| { method: "setupTunnel"; host: string }
 	| { method: "setTheme"; preset?: string; accent?: string | null; mode?: string };
 
 export type ParsedConnect = { ok: true; id: number; call: ConnectCall } | { ok: false; id?: number; message: string };
@@ -64,6 +67,8 @@ function onlyKeys(params: Record<string, unknown>, allowed: string[]): string | 
 	const extra = Object.keys(params).filter((k) => !allowed.includes(k));
 	return extra.length ? `Unexpected field ${JSON.stringify(extra[0].slice(0, 30))}.` : undefined;
 }
+
+const BAD_TUNNEL_HOST = "The address must be a name like polycarp.yourdomain.com.";
 
 /** The text a person sees for a hub address that isn't acceptable. */
 const BAD_HUB_URL = "The hub address must be https://host with nothing after it (http works only for localhost).";
@@ -117,6 +122,13 @@ export function parseConnect(message: unknown): ParsedConnect {
 			}
 			return call({ method, hubUrl, code, ...(typeof params.name === "string" ? { name: params.name } : {}) });
 		}
+		case "setupTunnel": {
+			const problem = onlyKeys(params, ["host"]);
+			if (problem) return fail(problem);
+			const host = typeof params.host === "string" && params.host.length <= 300 ? normalizeCloudflareHost(params.host) : undefined;
+			if (!host) return fail(BAD_TUNNEL_HOST);
+			return call({ method, host });
+		}
 		case "setTheme": {
 			const problem = onlyKeys(params, ["preset", "accent", "mode"]);
 			if (problem) return fail(problem);
@@ -151,6 +163,10 @@ export interface ConnectOptions {
 	/** The user service `joinHub` installs; tests pass a stand-in so no real service is touched. */
 	service?: EnrollHooks["service"];
 	now?: () => number;
+	/** Stand-ins for cloudflared, the sign-in and the setup, so a test runs `setupTunnel` without touching the machine. */
+	tunnel?: TunnelHooks;
+	/** How long `setupTunnel` retries its final check. Tests shorten it. */
+	tunnelCheckMs?: number;
 	/** How often `joinHub` tells the panel it is still working. The panel waits 30 seconds between frames. Tests shorten it. */
 	keepAliveMs?: number;
 }
@@ -186,6 +202,9 @@ export function safeMessage(err: unknown, file?: string): string {
 
 export class ConnectService {
 	private joining = false;
+	private settingUp = false;
+	private readonly tunnel?: TunnelHooks;
+	private readonly tunnelCheckMs?: number;
 	private readonly service?: EnrollHooks["service"];
 	private readonly now: () => number;
 	private readonly keepAliveMs: number;
@@ -194,6 +213,8 @@ export class ConnectService {
 		this.service = options.service;
 		this.now = options.now ?? Date.now;
 		this.keepAliveMs = options.keepAliveMs ?? 10_000;
+		this.tunnel = options.tunnel;
+		this.tunnelCheckMs = options.tunnelCheckMs;
 	}
 
 	/** Answer one frame from the side panel. Never throws; a bad frame gets an error and runs nothing. */
@@ -242,12 +263,36 @@ export class ConnectService {
 			}
 			case "joinHub":
 				return this.joinHub(call, progress);
+			case "setupTunnel":
+				return this.setupTunnel(call, progress);
 			case "setTheme":
 				try {
 					return saveTheme(call.preset, call.accent, call.mode);
 				} catch (err) {
 					throw new ConnectError("bad_params", safeMessage(err, join(configDir(), "theme.json")));
 				}
+		}
+	}
+
+	/** The Cloudflare button. One at a time; the host repeats the current step so the panel's wait never runs out during the sign-in. */
+	private async setupTunnel(call: Extract<ConnectCall, { method: "setupTunnel" }>, progress: (p: Record<string, unknown>) => void): Promise<{ publicUrl: string; connectorUrl: string }> {
+		if (this.settingUp) throw new ConnectError("busy", "Cloudflare setup is already running.");
+		this.settingUp = true;
+		let last: Record<string, unknown> | undefined;
+		const send = (p: TunnelProgress): void => {
+			last = { ...p };
+			progress(last);
+		};
+		const keepAlive = setInterval(() => last && progress(last), this.keepAliveMs);
+		try {
+			const done = await setupTunnel(call.host, send, this.tunnel, this.tunnelCheckMs !== undefined ? { checkTotalMs: this.tunnelCheckMs, checkEveryMs: Math.min(1000, this.tunnelCheckMs) } : {});
+			return { publicUrl: done.publicUrl, connectorUrl: `${done.publicUrl}/mcp` };
+		} catch (err) {
+			if (err instanceof TunnelError) throw new ConnectError("failed", err.message);
+			throw err;
+		} finally {
+			clearInterval(keepAlive);
+			this.settingUp = false;
 		}
 	}
 
@@ -269,6 +314,7 @@ export class ConnectService {
 		// The route is the public face of this computer; a link to a hub is reported beside it, not instead of it.
 		const route: ConnectRoute = hub ? "hub" : remote ? "remote" : link ? "link" : "none";
 		const publicUrl = hub?.publicUrl ?? remote?.publicUrl;
+		const remoteKind = !hub && remote ? remote.route : undefined;
 		let devices: ConnectDevice[] | undefined;
 		if (hub) {
 			// A bad hub-devices.json is a problem to show, not a reason to fail every call; the route stays "hub".
@@ -281,6 +327,7 @@ export class ConnectService {
 		return {
 			route,
 			...(publicUrl && route !== "link" ? { publicUrl } : {}),
+			...(remoteKind ? { remoteKind } : {}),
 			passcodeSet: tryLoad(join(configDir(), "oauth.json"), passcodeSet) ?? false,
 			...(link ? { link: { hubUrl: link.hubUrl, name: link.name, online: linkOnline(readLinkLive(), this.now()), busy: link.busy === true, manage: link.manage } } : {}),
 			...(devices ? { hub: { devices } } : {}),

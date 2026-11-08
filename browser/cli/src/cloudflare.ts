@@ -8,13 +8,14 @@
  */
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { homedir, hostname, tmpdir } from "node:os";
 import { join } from "node:path";
+import { downloadedCloudflared } from "./cloudflared-download.ts";
 import { which } from "./harness.ts";
 import { configDir } from "./files.ts";
 import { COMMAND_NAME } from "./self.ts";
-import { removeService, runAsync, type ServiceSpec, writeAtomic } from "./service.ts";
+import { removeService, runAsync, type ServiceSpec, sleep, writeAtomic } from "./service.ts";
 
 /** cloudflared's own sign-in waits on the person. Five minutes, then it counts as not done. */
 const LOGIN_TIMEOUT_MS = 300_000;
@@ -30,9 +31,17 @@ export const CLOUDFLARE_SERVICE: ServiceSpec = {
 	kept: "remote.json",
 };
 
-/** On PATH, or where the installers put it: a service's PATH is short. Tests set the applications folder, and stay on PATH alone. */
+/**
+ * On PATH, or where the installers put it (a service's PATH is short), or the copy Polycarp downloaded itself. The person's own
+ * install comes first. Tests set the applications folder, which skips the Homebrew paths; the downloaded copy lives in the config
+ * folder, which tests also point at a temp one.
+ */
 export function cloudflaredBinary(): string | undefined {
-	return which("cloudflared") ?? ["/opt/homebrew/bin/cloudflared", "/usr/local/bin/cloudflared"].find((path) => process.env.TABKYRA_APPLICATIONS_DIR === undefined && existsSync(path));
+	return (
+		which("cloudflared") ??
+		["/opt/homebrew/bin/cloudflared", "/usr/local/bin/cloudflared"].find((path) => process.env.TABKYRA_APPLICATIONS_DIR === undefined && existsSync(path)) ??
+		[downloadedCloudflared()].find((path) => existsSync(path))
+	);
 }
 
 const cloudflaredDir = () => join(homedir(), ".cloudflared");
@@ -75,6 +84,82 @@ export async function cloudflareLogin(): Promise<{ state: "ready" | "cloudflared
 	const r = await runAsync(bin, ["tunnel", "login"], LOGIN_TIMEOUT_MS);
 	if (cloudflareSignedIn()) return { state: "ready", message: "Signed in to Cloudflare." };
 	return { state: "problem", code: "cloudflare_login", message: r.code === 0 ? "Cloudflare didn't finish signing in. Try again." : `Signing in didn't finish: ${r.out.slice(-300)}` };
+}
+
+/**
+ * The sign-in address in what `cloudflared tunnel login` prints, or undefined. Only https on dash.cloudflare.com, with no
+ * credentials or port in it, passes: the panel opens this in a tab, so a word in cloudflared's output must never send a person elsewhere.
+ */
+export function extractLoginUrl(output: string): string | undefined {
+	for (const token of output.match(/https:\/\/[^\s"'<>]+/g) ?? []) {
+		try {
+			const url = new URL(token);
+			if (url.protocol === "https:" && url.hostname === "dash.cloudflare.com" && url.port === "" && !url.username && !url.password) return url.href;
+		} catch {
+			/* not an address */
+		}
+	}
+	return undefined;
+}
+
+export type LoginResult = { ok: true } | { ok: false; message: string };
+
+/**
+ * `cloudflared tunnel login` for the Connect panel. The native host's stdout is the channel to the browser, so nothing is
+ * inherited: the output is read here, the sign-in address is handed to `onUrl` for the panel to open, and the wait ends when the
+ * certificate appears (presence only, never read) or the time runs out. cloudflared is also given no program to open a browser
+ * with, so the person gets one tab, not two.
+ */
+export async function cloudflareLoginForPanel(bin: string, onUrl: (url: string) => void, timeoutMs = LOGIN_TIMEOUT_MS, pollMs = 1000, settleMs = 15_000): Promise<LoginResult> {
+	const nothingToRun = mkdtempSync(join(tmpdir(), "polycarp-nopath-"));
+	let child: ReturnType<typeof spawn>;
+	try {
+		child = spawn(bin, ["tunnel", "login"], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PATH: nothingToRun, BROWSER: "none" } });
+	} catch (err) {
+		rmSync(nothingToRun, { recursive: true, force: true });
+		return { ok: false, message: `Couldn't start cloudflared: ${err instanceof Error ? err.message : String(err)}` };
+	}
+	let out = "";
+	let sent = false;
+	let exited = false;
+	child.on("exit", () => {
+		exited = true;
+	});
+	child.on("error", () => {
+		exited = true;
+	});
+	for (const stream of [child.stdout, child.stderr]) {
+		stream?.on("data", (chunk: Buffer) => {
+			out = (out + chunk.toString("utf8")).slice(-4000);
+			const url = sent ? undefined : extractLoginUrl(out);
+			if (url) {
+				sent = true;
+				onUrl(url);
+			}
+		});
+	}
+	try {
+		const deadline = Date.now() + timeoutMs;
+		while (Date.now() < deadline) {
+			if (cloudflareSignedIn()) {
+				// cloudflared writes the certificate and then exits on its own. Stopping it the moment the file appears could
+				// cut the write short, so give it time to finish.
+				const settle = Date.now() + settleMs;
+				while (!exited && Date.now() < settle) await sleep(Math.min(pollMs, 250));
+				return { ok: true };
+			}
+			if (exited) {
+				// It may exit just after writing the certificate.
+				await sleep(pollMs);
+				return cloudflareSignedIn() ? { ok: true } : { ok: false, message: "cloudflared stopped before Cloudflare finished signing in. Try again." };
+			}
+			await sleep(pollMs);
+		}
+		return { ok: false, message: "Cloudflare sign-in wasn't finished in 5 minutes. Try again." };
+	} finally {
+		child.kill("SIGTERM");
+		rmSync(nothingToRun, { recursive: true, force: true });
+	}
 }
 
 export type CloudflareOpen = { ok: true; tunnel: string } | { ok: false; code: "cloudflare_tunnel" | "cloudflare_dns" | "cloudflare_zone"; message: string };
