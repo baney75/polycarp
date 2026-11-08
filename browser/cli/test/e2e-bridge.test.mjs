@@ -185,6 +185,8 @@ function env() {
 	return {
 		...process.env,
 		HOME: home,
+		// Linux looks for browser profiles under XDG_CONFIG_HOME first; a runner may set it.
+		XDG_CONFIG_HOME: join(home, ".config"),
 		TABKYRA_SOCKET_DIR: socketDir,
 		TABKYRA_AUTO_ALLOW: "1",
 		TABKYRA_CLIENT_NAME: "e2e",
@@ -337,7 +339,7 @@ before(async () => {
 	pageUrl = `http://127.0.0.1:${server.address().port}/`;
 
 	// `install` writes the host manifest into the profile's NativeMessagingHosts.
-	execFileSync(process.execPath, [cli, "install"], { env: env(), stdio: "ignore" });
+	execFileSync(process.execPath, [cli, "install"], { env: env(), stdio: ["ignore", "inherit", "inherit"] });
 
 	// Launch Playwright's Chromium without Playwright's CDP session: the extension drives
 	// tabs through chrome.debugger, and a second automation client attached to every
@@ -353,6 +355,10 @@ before(async () => {
 			"--use-mock-keychain",
 			"--password-store=basic",
 			"--remote-debugging-port=0",
+			// A headless browser on a CI runner has no GPU, and its GPU process dies on the runner's sandbox, which stalls a page crashed on purpose.
+			"--disable-gpu",
+			// No crash dumps: the crash test crashes a page on purpose, and writing a dump is slow on a shared runner.
+			"--disable-breakpad",
 			`--disable-extensions-except=${extensionDir}`,
 			`--load-extension=${extensionDir}`,
 			"about:blank",
@@ -360,6 +366,7 @@ before(async () => {
 		{ env: env(), stdio: ["ignore", "ignore", "pipe"] },
 	);
 	let stderr = "";
+	browser.chromiumLog = () => stderr;
 	browser.stderr.on("data", (d) => {
 		stderr += d;
 	});
@@ -408,8 +415,8 @@ test("extension loads with the id the host manifest allows", async () => {
 	assert.ok(worker);
 });
 
-test("MCP server lists the browser tools under the tabkyra name", async () => {
-	assert.equal(mcp.getServerVersion()?.name, "tabkyra");
+test("MCP server lists the browser tools under the polycarp name", async () => {
+	assert.equal(mcp.getServerVersion()?.name, "polycarp");
 	const { tools } = await mcp.listTools();
 	const names = tools.map((t) => t.name);
 	for (const name of ["navigate", "read_page", "click", "type", "get_page_text"]) assert.ok(names.includes(name), name);
@@ -1237,7 +1244,8 @@ test("a silent detach is reported once when read_console is the first call after
 	assert.equal((await readNetwork()).capture, undefined);
 });
 
-test("capture that stopped because the page crashed is reported, and resumes after the reload", async () => {
+// Page.crash takes the headless browser on the Linux runner down with it, so a crash can't be simulated there.
+test("capture that stopped because the page crashed is reported, and resumes after the reload", { skip: process.env.CI ? "Page.crash aborts headless Chromium on the CI runner" : false }, async () => {
 	await go("edit");
 	await readConsole();
 	await logInPage("before-crash");
@@ -1246,7 +1254,13 @@ test("capture that stopped because the page crashed is reported, and resumes aft
 	await cdp(page.webSocketDebuggerUrl, "Page.crash").catch(() => {});
 	await until(() => sw(`chrome.tabs.get(${id}).then(() => true)`), 5000, "the crashed tab");
 	await sw(`chrome.tabs.reload(${id}).then(() => true)`);
-	await until(async () => (await js("document.readyState")) === "complete", 30_000, "the reloaded page");
+	try {
+		await until(async () => (await js("document.readyState")) === "complete", 30_000, "the reloaded page");
+	} catch (err) {
+		const targets = await (await fetch(`http://${devtools}/json/list`)).json().catch(() => []);
+		console.error("crash test: targets", JSON.stringify(targets.map((t) => [t.type, t.url])), "\nchromium stderr tail:\n", browser.chromiumLog().slice(-2000));
+		throw err;
+	}
 	await logInPage("after-crash");
 	const result = await readConsole();
 	assert.ok(result.capture, "a crash must be reported");

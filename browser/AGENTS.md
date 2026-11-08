@@ -26,14 +26,14 @@ node cli/dist/index.js skill lint skills  # the skill gate
 ```
 
 `(cd cli && npm run test:e2e)` drives the extension, native host and MCP server in a
-throwaway headless Chromium. It is not in CI; run it after bridge or MCP changes (first
-time: `cd cli && npx playwright-core install chromium`).
+throwaway headless Chromium, and `(cd cli && npm run test:e2e:panel)` draws the side panel in one. Both
+run in CI as the `browser-e2e` job (with `bench:dom` below); run them after bridge, MCP or panel changes
+(first time: `cd cli && npx playwright-core install chromium`).
 
 `(cd cli && npm run bench:dom)` is the DOM benchmark: 44 hand-written pages (`cli/test/dom-bench/pages/`), each with a task an
 agent would get, a `solve(t)` that uses only the MCP tools and finds every target by meaning (the `find` tool or a `read_page`
 snapshot searched by role and label, never a selector or id, never `run_js` to act), and a `check(page)` that reads the app's
-own state back through CDP. It shares its Chromium setup with the e2e test (`cli/test/e2e-harness.mjs`), is local like e2e and
-not in CI, and writes `cli/test/dom-bench/last-run.json`. `floor.json` is the ratchet: `passing` ids must keep passing within
+own state back through CDP. It shares its Chromium setup with the e2e test (`cli/test/e2e-harness.mjs`), runs in the `browser-e2e` CI job without `--time`, and writes `cli/test/dom-bench/last-run.json`. `floor.json` is the ratchet: `passing` ids must keep passing within
 their `calls` ceiling (tool calls in `solve`; fewer tightens it), or the run exits 1. Wall time is reported; it gates only with
 `--time` (ceiling max of 2000 ms and 3x the measured time), on a quiet machine, because load swings it several fold. `failing` holds each case the tools cannot do yet,
 with the real reason; those are the tool improvements to make. A fix moves its case to `passing` (`node test/dom-bench/run.mjs

@@ -292,3 +292,45 @@ jobs:
           node scripts/check-theme.mjs
           node --import tsx --test test/*.test.mjs
           (cd cli && npx tsc --noEmit && npm test)
+
+  # The suites that drive the built extension in a real Chromium: the extension, native host and MCP server end to end
+  # (test:e2e), the side panel as drawn (test:e2e:panel), and the 44-page DOM benchmark held by cli/test/dom-bench/floor.json
+  # (bench:dom, gated on tool calls; --time stays off because a shared runner's clock is too noisy to gate on).
+  # Playwright's Chromium runs in the new headless mode, which loads extensions, so no display server is needed.
+  browser-e2e:
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      # Clones mini-lit/ and pi-mono/ into the repo root (gitignored).
+      - name: Check out the pinned siblings and install
+        run: ./browser/scripts/setup-siblings.sh
+      - name: Build the extension and the CLI
+        working-directory: browser
+        env:
+          TABKYRA_NO_BUMP: "1"
+        run: |
+          npm run build
+          (cd cli && npm run build)
+      - name: Install Playwright's Chromium
+        working-directory: browser/cli
+        run: npx playwright-core install --with-deps chromium
+      # Ubuntu 24.04 blocks the unprivileged user namespaces Chromium's sandbox needs; the tests launch Chromium directly.
+      - name: Let Chromium's sandbox start
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: End-to-end bridge test
+        working-directory: browser/cli
+        run: npm run test:e2e
+      - name: End-to-end side panel test
+        working-directory: browser/cli
+        run: npm run test:e2e:panel
+      - name: DOM benchmark against the floor
+        working-directory: browser/cli
+        run: npm run bench:dom
