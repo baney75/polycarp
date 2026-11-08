@@ -129,7 +129,8 @@ if (update) {
 			// Fewer calls tightens the ceiling; more never loosens it.
 			calls[r.id] = Math.min(calls[r.id] ?? r.calls, r.calls);
 		} else if (!passing.has(r.id)) {
-			failing[r.id] = r.error ?? "failed";
+			// A reason someone wrote stays: the run's own error is only for a case newly failing.
+			failing[r.id] ??= r.error ?? "failed";
 		}
 	}
 	const order = cases.map((c) => c.id);

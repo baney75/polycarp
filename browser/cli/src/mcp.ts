@@ -572,12 +572,12 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"scroll",
 		{
 			title: "Scroll",
-			description: "Scroll by dx/dy pixels, to the top or bottom, or until an element is in view. Example: {\"dy\":800} or {\"ref\":\"e30\"}",
+			description: "Scroll by dx/dy, to top or bottom, or bring a ref into view. A ref with dy or to scrolls the pane holding it. Example: {\"dy\":800}, {\"ref\":\"e30\",\"dy\":600}",
 			inputSchema: {
 				tabId,
 				dx: z.number().optional().describe("Horizontal pixels"),
 				dy: z.number().optional().describe("Vertical pixels; positive scrolls down"),
-				to: z.enum(["top", "bottom"]).optional().describe("Jump to the top or bottom of the page"),
+				to: z.enum(["top", "bottom"]).optional().describe("Jump to the top or bottom"),
 				ref,
 				selector,
 			},

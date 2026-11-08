@@ -14,9 +14,9 @@ acc.onclick = () => { window.__state.accepted = true; };
 </script>`,
 	task: "Read through the license agreement and accept it.",
 	async solve(t) {
-		// Paragraph text has no ref and scroll {ref}/{dy} act on the window: wheel over the box at the point hover reports (an actions scroll step: the scroll tool takes no x/y).
+		// The accept button enables only once the license box is read to the end: scroll that box by ref.
 		const box = await t.locate("license text region", { role: /region|group|generic/i, name: /license text/i });
-		await t.wheel(box.ref, 5000);
+		await t.tool("scroll", { ref: box.ref, to: "bottom" });
 		await t.click("I accept button", { role: "button", name: /i accept/i });
 	},
 	check: async (page) => (await page.eval("window.__state.accepted")) === true,

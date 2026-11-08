@@ -17,6 +17,7 @@
 		"masked-phone",
 		"disabled-submit",
 		"validation-error",
+		"virtual-list",
 		"infinite-scroll",
 		"nested-scroll",
 		"sticky-header",
@@ -44,8 +45,7 @@
 		"iframe-cross-origin": "read_page shows only the iframe node (\"cross-origin: read it with navigate to its URL\"); find lists nothing inside it, so the Confirm payment button has no ref",
 		"nested-iframes": "same-origin frame holding a cross-origin frame: read_page lists the inner iframe node only, so Approve request has no ref",
 		"html5-dnd": "draggable li rows are not elements in read_page or find (no ref, no point); drag takes screenshot pixels only. With coordinates supplied the drag works, so the gap is locating non-control rows",
-		"dblclick-edit": "table cells are not elements (read_page lists only the heading); click {clickCount:2} works at x/y, but nothing returns a position for a cell by its text",
-		"virtual-list": "flaky: passes only through a workaround (hover for a point, then an actions wheel step), 29 calls and 7 to 60 s; scroll {ref, dy} ignores dy and End/PageDown don't scroll a focused scroller"
+		"dblclick-edit": "table cells are not elements (read_page lists only the heading); click {clickCount:2} works at x/y, but nothing returns a position for a cell by its text"
 	},
 	"calls": {
 		"react-input": 5,
@@ -65,8 +65,9 @@
 		"masked-phone": 3,
 		"disabled-submit": 5,
 		"validation-error": 5,
+		"virtual-list": 5,
 		"infinite-scroll": 12,
-		"nested-scroll": 6,
+		"nested-scroll": 5,
 		"sticky-header": 4,
 		"carousel": 3,
 		"tabs": 7,
@@ -106,6 +107,7 @@
 		"masked-phone": 2000,
 		"disabled-submit": 2000,
 		"validation-error": 2000,
+		"virtual-list": 2000,
 		"infinite-scroll": 3027,
 		"nested-scroll": 2000,
 		"sticky-header": 2000,
