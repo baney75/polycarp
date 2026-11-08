@@ -78,7 +78,7 @@ function scenario(name, { lock = "Tailnet lock is NOT enabled.", status = `{"Sel
 		script: (name, body) => script(join(bin, name), body),
 		/** The launcher `polycarp browser install` writes: an executable script that runs an existing file. */
 		launcher: () => {
-			const path = join(home, ".config", "tabkyra", "tabkyra");
+			const path = join(home, "cfg", "polycarp");
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(path, `#!/bin/sh\nexec "${process.execPath}" "$@"\n`);
 			chmodSync(path, 0o755);

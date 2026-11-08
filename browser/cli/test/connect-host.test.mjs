@@ -1,7 +1,7 @@
 // Settings > Connect, host side. Two layers: the real native host as a process (strict framing,
 // nothing on stdout but frames, a bad frame answered and nothing run), and the connect service
 // called directly with a stand-in for the user service (so no launchd or systemd unit is made).
-// Every config dir is a temp dir; nothing here touches ~/.config/tabkyra.
+// Every config dir is a temp dir; nothing here touches ~/.config/polycarp/browser.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -824,7 +824,7 @@ exit 0
 	const host = startHost("hj", { PATH: `${bin}:${dirname(process.execPath)}` });
 	mkdirSync(host.m.config, { recursive: true, mode: 0o700 });
 	// A launcher that passes launcherValid(): an executable that names a script which exists.
-	const launcher = join(host.m.env.HOME, ".config", "tabkyra", "tabkyra");
+	const launcher = join(host.m.config, "polycarp");
 	mkdirSync(dirname(launcher), { recursive: true });
 	writeFileSync(launcher, `#!/bin/sh\nexec "${process.execPath}" "${cli}" "$@"\n`);
 	chmodSync(launcher, 0o755);
@@ -986,7 +986,7 @@ test("the native host keeps answering while a slow service manager runs", async 
 	}
 	const host = startHost("slowhost", { PATH: `${bin}:${dirname(process.execPath)}:/bin:/usr/bin` });
 	mkdirSync(host.m.config, { recursive: true, mode: 0o700 });
-	const launcher = join(host.m.env.HOME, ".config", "tabkyra", "tabkyra");
+	const launcher = join(host.m.config, "polycarp");
 	mkdirSync(dirname(launcher), { recursive: true });
 	writeFileSync(launcher, `#!/bin/sh\nexec "${process.execPath}" "${cli}" "$@"\n`);
 	chmodSync(launcher, 0o755);

@@ -22,6 +22,8 @@ import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { redactSecrets } from "../../src/privacy/bug-reports.ts";
 import type { Finding } from "./skill-lint.ts";
+import { envVar } from "./env.ts";
+import { configDir } from "./files.ts";
 
 /** At most this many sites per skill: a skill for "every site" isn't scoped. */
 export const MAX_SITES = 10;
@@ -154,7 +156,7 @@ export interface PersonalFinding {
 
 /**
  * Names that identify this user: the OS account, git's user.name and user.email, the GitHub
- * login (when the caller knows it), and any names listed in ~/.config/tabkyra/private.json
+ * login (when the caller knows it), and any names listed in ~/.config/polycarp/browser/private.json
  * ({"names": ["..."]}). Only names of 3 or more characters count, so a short one doesn't
  * match ordinary words.
  */
@@ -173,8 +175,8 @@ export function privateNames(extra: string[] = []): string[] {
 		const r = spawnSync("git", ["config", "--global", key], { encoding: "utf8", timeout: 3000 });
 		if (r.status === 0) add(r.stdout);
 	}
-	const configDir = process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
-	const file = join(configDir, "private.json");
+	const dir = configDir();
+	const file = join(dir, "private.json");
 	if (existsSync(file)) {
 		try {
 			const data = JSON.parse(readFileSync(file, "utf8")) as { names?: unknown };

@@ -128,9 +128,9 @@ function onExtensionMessage(message: ExtToHost): void {
 			// The local thread mirror; every field is checked in applyMirror.
 			try {
 				const what = applyMirror(message as unknown as Record<string, unknown>, browserId);
-				if (what.startsWith("refused")) process.stderr.write(`[tabkyra-host] thread mirror ${what}\n`);
+				if (what.startsWith("refused")) process.stderr.write(`[polycarp-host] thread mirror ${what}\n`);
 			} catch (err) {
-				process.stderr.write(`[tabkyra-host] thread mirror failed: ${err instanceof Error ? err.message : String(err)}\n`);
+				process.stderr.write(`[polycarp-host] thread mirror failed: ${err instanceof Error ? err.message : String(err)}\n`);
 			}
 			return;
 		case "update_action":
@@ -240,7 +240,7 @@ export function runNativeHost(): void {
 		chmodSync(dir, 0o700);
 		const st = statSync(dir);
 		if (st.uid !== process.getuid?.()) {
-			process.stderr.write(`[tabkyra-host] ${dir} is owned by another user; refusing to start\n`);
+			process.stderr.write(`[polycarp-host] ${dir} is owned by another user; refusing to start\n`);
 			process.exit(1);
 		}
 		sweepStaleSockets(dir);
@@ -258,7 +258,7 @@ export function runNativeHost(): void {
 			const { messages, error } = parser.push(chunk);
 			for (const m of messages) onClientMessage(client, m as ClientToHost);
 			if (error) {
-				process.stderr.write(`[tabkyra-host] bad frame from ${id}: ${String(error)}\n`);
+				process.stderr.write(`[polycarp-host] bad frame from ${id}: ${String(error)}\n`);
 				socket.destroy();
 			}
 		});
@@ -280,7 +280,7 @@ export function runNativeHost(): void {
 		const { messages, error } = parser.push(chunk);
 		for (const m of messages) onExtensionMessage(m as ExtToHost);
 		if (error) {
-			process.stderr.write(`[tabkyra-host] bad frame from extension, restarting: ${String(error)}\n`);
+			process.stderr.write(`[polycarp-host] bad frame from extension, restarting: ${String(error)}\n`);
 			stopping = true;
 			failOutstanding(`the browser's reply was lost (${error.message}); the bridge is restarting`);
 			dropExtension();

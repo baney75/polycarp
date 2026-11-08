@@ -15,6 +15,8 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { VERSION } from "./version.ts";
 import { COMMAND_NAME } from "./self.ts";
+import { envVar } from "./env.ts";
+import { configDir } from "./files.ts";
 
 export interface CslName {
 	family?: string;
@@ -72,7 +74,7 @@ interface Library {
 }
 
 export function libraryFile(): string {
-	const dir = process.env.TABKYRA_LIBRARY_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra", "library");
+	const dir = envVar("LIBRARY_DIR") || join(configDir(), "library");
 	return join(dir, "library.json");
 }
 
@@ -212,9 +214,9 @@ export function toDoi(input: string): string | undefined {
 // --- Fetching ----------------------------------------------------------------------------
 
 const base = {
-	doi: () => process.env.TABKYRA_DOI_BASE || "https://doi.org",
-	openalex: () => process.env.TABKYRA_OPENALEX_BASE || "https://api.openalex.org",
-	crossref: () => process.env.TABKYRA_CROSSREF_BASE || "https://api.crossref.org",
+	doi: () => envVar("DOI_BASE") || "https://doi.org",
+	openalex: () => envVar("OPENALEX_BASE") || "https://api.openalex.org",
+	crossref: () => envVar("CROSSREF_BASE") || "https://api.crossref.org",
 };
 const USER_AGENT = `tabkyra/${VERSION} (https://github.com/baney75/tabkyra)`;
 

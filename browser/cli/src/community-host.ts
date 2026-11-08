@@ -51,7 +51,7 @@ function sendStatus(send: Send, notes: string[] = []): void {
 	try {
 		send(communityStatus(notes));
 	} catch (err) {
-		process.stderr.write(`[tabkyra-host] community status failed: ${err instanceof Error ? err.message : String(err)}\n`);
+		process.stderr.write(`[polycarp-host] community status failed: ${err instanceof Error ? err.message : String(err)}\n`);
 	}
 }
 
@@ -64,7 +64,7 @@ async function sync(send: Send, due: boolean): Promise<void> {
 		const result = await syncCommunity({ due });
 		sendStatus(send, result.notes);
 	} catch (err) {
-		process.stderr.write(`[tabkyra-host] community sync failed: ${err instanceof Error ? err.message : String(err)}\n`);
+		process.stderr.write(`[polycarp-host] community sync failed: ${err instanceof Error ? err.message : String(err)}\n`);
 		sendStatus(send);
 	} finally {
 		syncing = false;
@@ -74,7 +74,7 @@ async function sync(send: Send, due: boolean): Promise<void> {
 export function handleCommunityAction(message: unknown, send: Send): void {
 	const action = parseCommunityAction(message);
 	if (!action) {
-		process.stderr.write("[tabkyra-host] refused a community_action frame\n");
+		process.stderr.write("[polycarp-host] refused a community_action frame\n");
 		return;
 	}
 	if (action === "sync") {

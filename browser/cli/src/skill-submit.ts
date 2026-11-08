@@ -28,6 +28,7 @@ import { SKILLS } from "./skills-catalog.ts";
 import { c, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
 import { COMMAND_NAME } from "./self.ts";
+import { envVar } from "./env.ts";
 
 export const DEFAULT_REPO = "baney75/tabkyra";
 
@@ -83,7 +84,7 @@ function run(cmd: string, args: string[], options: { cwd?: string; input?: strin
 
 /** A blobless, sparse clone of the target: only skills/, skills-eval/ and community/ are checked out. */
 function cloneTarget(repo: string, branch: string): string {
-	const url = process.env.TABKYRA_SUBMIT_REMOTE || `https://github.com/${repo}.git`;
+	const url = envVar("SUBMIT_REMOTE") || `https://github.com/${repo}.git`;
 	const dir = mkdtempSync(join(tmpdir(), "tabkyra-submit-"));
 	try {
 		run("git", ["-c", "advice.detachedHead=false", "clone", "--quiet", "--filter=blob:none", "--sparse", "--branch", branch, url, join(dir, "repo")]);

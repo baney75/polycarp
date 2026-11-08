@@ -9,6 +9,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ASK_BRIDGE_TIMEOUT_MS, ASK_LIMITS, ASK_USER_DESCRIPTION, type AskOutcome, noAnswer, outcomeText, validateAskParams } from "../../src/ask/core.ts";
 import { type BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
+import { envVar } from "./env.ts";
 
 /** The one line the server instructions add about it (dropped when a session lacks the tool). */
 export const ASK_USER_INSTRUCTION =
@@ -38,7 +39,7 @@ export const askUserInputSchema = {
 };
 
 /** How often a waiting call reports progress (tests shorten it). */
-const PROGRESS_EVERY_MS = Number(process.env.TABKYRA_ASK_PROGRESS_MS) || 15_000;
+const PROGRESS_EVERY_MS = Number(envVar("ASK_PROGRESS_MS")) || 15_000;
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 

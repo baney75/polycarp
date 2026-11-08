@@ -12,6 +12,7 @@ import { encodeFrame, FrameParser } from "./framing.ts";
 import { assertSecurePath, socketDir } from "./paths.ts";
 import { VERSION } from "./version.ts";
 import { COMMAND_NAME } from "./self.ts";
+import { envVar } from "./env.ts";
 
 /** What every tool says when no browser is reachable: the agent can only ask the user. */
 export const NOT_CONNECTED =
@@ -35,7 +36,7 @@ class NotSentError extends Error {
 /** Sends of one request, counting the first, when it is safe to resend. */
 const MAX_ATTEMPTS = 3;
 /** How long one call waits, in all, for a dropped bridge to come back (tests shorten it). */
-const RECONNECT_BUDGET_MS = Number(process.env.TABKYRA_RECONNECT_BUDGET_MS) || 40000;
+const RECONNECT_BUDGET_MS = Number(envVar("RECONNECT_BUDGET_MS")) || 40000;
 
 /** Bridge methods under the MCP tool names agents know them by. */
 const TOOL_NAMES: Record<string, string> = { evaluate: "run_js", dialog: "handle_dialog", snapshot: "read_page", text: "get_page_text", html: "get_page_html", inspect: "inspect_page" };

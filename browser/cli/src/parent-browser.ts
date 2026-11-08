@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import { readlinkSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { browserNameForApp } from "./install.ts";
+import { envVar } from "./env.ts";
 
 /**
  * A browser by its executable's name. On Linux `/proc/<pid>/exe` resolves wrapper scripts to the real binary, so these are the
@@ -49,7 +50,7 @@ export function browserFromExecutable(path: string): string | undefined {
 }
 
 export function parentBrowserName(ppid: number = process.ppid): string | undefined {
-	if (process.env.TABKYRA_PARENT_BROWSER) return process.env.TABKYRA_PARENT_BROWSER;
+	if (envVar("PARENT_BROWSER")) return envVar("PARENT_BROWSER");
 	try {
 		if (process.platform === "darwin") {
 			const path = execFileSync("/bin/ps", ["-o", "comm=", "-p", String(ppid)], { encoding: "utf8", timeout: 2000 }).trim();
