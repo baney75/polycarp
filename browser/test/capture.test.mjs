@@ -353,15 +353,16 @@ test("a session that is gone loses the files it was holding for a retry", async 
 });
 
 test("a stop that fails does not leave the capture listed as running", async () => {
-	const { backend, manager } = setup();
-	const a = await manager.run(alice, { action: "record_start", tabId: 10 });
+	const { manager } = setup();
+	await manager.run(alice, { action: "record_start", tabId: 10 });
 	const run = [...manager.captures.values()][0].run;
 	run.finish = async () => {
 		throw new Error("Nothing was recorded: no frame of the tab arrived.");
 	};
 	await assert.rejects(manager.run(alice, { action: "record_stop" }), /Nothing was recorded/);
-	assert.deepEqual((await manager.run(alice, { action: "status" })).captures, []);
-	assert.deepEqual(backend.log.discarded, [a.id]);
+	assert.equal((await manager.run(alice, { action: "status" })).captures[0].state, "ended");
+	run.finish = async () => ({ file: { kind: "webm", encoding: "base64", data: "AAAA", bytes: 3 }, notes: [], durationMs: 1 });
+	assert.equal((await manager.run(alice, { action: "record_stop" })).file.bytes, 3, "a retry can still get the file");
 });
 
 test("a capture cancelled while it is being saved returns no file and holds nothing", async () => {

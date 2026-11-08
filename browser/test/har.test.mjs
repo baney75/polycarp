@@ -378,6 +378,10 @@ test("a token that starts with a slash is a token, and a token in a path is mask
 	const url = redactUrl(`https://app.test/reset/${reset}/confirm`);
 	assert.ok(!url.includes(reset), url);
 	assert.ok(url.endsWith("/confirm") && url.includes("/reset/"), url);
+	const jwt = jwtLike("m");
+	assert.ok(!redactUrl(`https://app.test/magic/${jwt}`).includes(jwt));
+	assert.ok(!redactUrl("https://app.test/reset/MQ/c0xyz1-0123456789abcdef0123456789abcdef/").includes("0123456789abcdef"));
+	assert.equal(redactUrl("https://app.test/blog/a-long-readable-slug-of-words-that-goes-on"), "https://app.test/blog/a-long-readable-slug-of-words-that-goes-on");
 	assert.equal(redactUrl("https://app.test/items/123e4567-e89b-12d3-a456-426614174000"), "https://app.test/items/123e4567-e89b-12d3-a456-426614174000");
 });
 

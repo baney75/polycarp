@@ -327,11 +327,8 @@ export class CaptureManager {
 			try {
 				out = keepRunning ? await (run.snapshot ?? run.finish).call(run) : await run.finish();
 			} catch (err) {
-				// A stop that failed has already let the recording go: it must not stay listed as running.
-				if (!keepRunning && this.captures.delete(capture.id)) {
-					await run.discard().catch(() => undefined);
-					this.activity();
-				}
+				// A stop that failed must not stay listed as running. It stays held until the sweep, so a retry can still get the file.
+				if (!keepRunning) this.ended(capture, "stopping it failed");
 				throw err;
 			}
 			if (this.captures.get(capture.id) !== capture)

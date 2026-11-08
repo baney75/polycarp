@@ -102,7 +102,12 @@ export function redactHeaders(headers: Record<string, unknown> | undefined): Har
 	return out;
 }
 
-/** An address with credentials taken out of its query and fragment. */
+/** A path segment that carries a credential: its whole shape, or a long hex run inside it (`c0xyz1-0123...`). */
+function tokenSegment(segment: string): boolean {
+	return credentialShaped(segment) || /[0-9a-f]{20,}/i.test(segment);
+}
+
+/** An address with credentials taken out of its path, query and fragment. */
 export function redactUrl(url: string): string {
 	let masked = maskUrl(url);
 	try {
@@ -110,8 +115,8 @@ export function redactUrl(url: string): string {
 		let changed = false;
 		// A reset or magic link carries its token in the path.
 		const segments = u.pathname.split("/");
-		if (segments.some(looksLikeToken)) {
-			u.pathname = segments.map((s) => (looksLikeToken(s) ? REDACTED : s)).join("/");
+		if (segments.some(tokenSegment)) {
+			u.pathname = segments.map((s) => (tokenSegment(s) ? REDACTED : s)).join("/");
 			changed = true;
 		}
 		for (const [key, value] of [...u.searchParams])
