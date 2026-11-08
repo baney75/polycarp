@@ -113,12 +113,12 @@ setGlobalPanelOptions();
 chrome.runtime.onInstalled.addListener(setGlobalPanelOptions);
 
 /**
- * Open the window's panel. setOptions and open run in the click's user-gesture tick (Chrome
- * requires open() there and applies the calls in order), so nothing is awaited before them.
+ * Open the window's panel, in the click's user-gesture tick (Chrome requires open() there), so
+ * nothing is awaited first. The global options are set once at start, not here: setting them
+ * again on a click while a run goes on in an open panel could reload it and end the run.
  */
 function openPanel(windowId: number, source: string): void {
 	markOpening(windowId);
-	setGlobalPanelOptions();
 	chrome.sidePanel.open({ windowId }).catch((err) => {
 		clearOpening(windowId);
 		recordPanelError(`open(${source})`, err);

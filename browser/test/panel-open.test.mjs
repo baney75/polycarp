@@ -69,8 +69,8 @@ test("an icon click on any tab opens the window's global panel, not a tab-bound 
 		await settle(20);
 	}
 	assert.deepEqual(opens, [{ windowId: 1 }, { windowId: 1 }]);
-	assert.ok(setOptions.length >= 2);
-	for (const o of setOptions) assert.deepEqual(o, { path: "sidepanel.html", enabled: true });
+	// Options were set once at start; a click only opens, so it can't reload a panel mid-run.
+	assert.deepEqual(setOptions, []);
 });
 
 test("the keyboard command does what the icon click does", async () => {
@@ -83,7 +83,7 @@ test("the keyboard command does what the icon click does", async () => {
 	for (const fn of chrome.commands.onCommand.listeners) fn("some-other-command", { id: tab, windowId: 1 });
 	await settle(20);
 	assert.deepEqual(opens, [{ windowId: 1 }]);
-	assert.deepEqual(setOptions, [{ path: "sidepanel.html", enabled: true }]);
+	assert.deepEqual(setOptions, []);
 });
 
 test("switching tabs, with or without a task, never sets tab options or disables the panel", async () => {
