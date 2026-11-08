@@ -768,8 +768,8 @@ function remoteScenario(name, { lock = "Tailnet lock is NOT enabled.", serveStat
 		hasRemoteJson: () => existsSync(join(scenarioEnv.TABKYRA_CONFIG_DIR, "remote.json")),
 		serviceFile: () => (process.platform === "darwin" ? join(home, "Library", "LaunchAgents", "com.polycarp.serve.plist") : join(home, ".config", "systemd", "user", "polycarp-serve.service")),
 		/** The launcher `polycarp browser install` writes: an executable script that runs an existing file. */
-		launcher: (homeDir = home, folder = homeDir === home ? scenarioEnv.TABKYRA_CONFIG_DIR : join(homeDir, ".config", "polycarp", "browser")) => {
-			const path = join(folder, "polycarp");
+		launcher: (homeDir = home) => {
+			const path = join(homeDir === home ? scenarioEnv.TABKYRA_CONFIG_DIR : join(homeDir, ".config", "polycarp", "browser"), "polycarp");
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(path, `#!/bin/sh\nexec "${process.execPath}" "$@"\n`);
 			chmodSync(path, 0o755);
@@ -1049,9 +1049,8 @@ test("remote setup says so when Funnel isn't enabled for the tailnet, and keeps 
 test("the systemd unit escapes % and $ in ExecStart and % in environment values", { skip: process.platform !== "linux" }, async () => {
 	const s = remoteScenario("percent");
 	const home = join(s.home, "h$ome%x");
-	// The launcher lives in the chosen config folder, so that folder's name is what ExecStart has to escape.
-	const config = join(s.home, "c$fg%x");
-	const binary = s.launcher(home, config);
+	const binary = s.launcher(home);
+	const config = join(home, ".config", "polycarp", "browser");
 	const local = await localServer(`${FUNNEL_URL}/mcp`);
 	try {
 		const r = await runAsync(s, ["remote", "setup", "--port", String(local.port)], { HOME: home, TABKYRA_CONFIG_DIR: config });

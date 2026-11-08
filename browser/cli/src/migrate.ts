@@ -108,7 +108,7 @@ export function migrateLegacyPaths(): Migration {
 	try {
 		withFileLock(join(configHome(), ".polycarp-migration"), () => migrate(result), 20_000);
 	} catch {
-		/* a migration never stops the command it runs before; the next start tries again */
+		/* a migration never stops the command it runs before */
 	}
 	return result;
 }
