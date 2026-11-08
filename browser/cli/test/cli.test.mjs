@@ -262,6 +262,6 @@ test("a helper linked before the rename prints the name it answers to", () => {
 	const dir = mkdtempSync(join(tmpdir(), "linked-as-"));
 	symlinkSync(realpathSync(cli), join(dir, "tabkyra"));
 	const out = (env) => spawnSync(process.execPath, [join(dir, "tabkyra"), "--help"], { env: { ...process.env, ...env }, encoding: "utf8" }).stdout;
-	assert.match(out({ PATH: `${dir}:${process.env.PATH}` }), /tabkyra doctor/);
+	assert.match(out({ PATH: dir }), /tabkyra doctor/);
 	assert.doesNotMatch(out({ PATH: dirname(process.execPath) }), /tabkyra doctor/);
 });
