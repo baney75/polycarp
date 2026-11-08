@@ -3,12 +3,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
 	HAR_BODY_CAP,
+	HAR_ENVELOPE_BYTES,
 	HarBuilder,
 	isAuthPath,
 	isSecretHeader,
+	looksLikeToken,
 	redactHeaders,
 	redactRequestBody,
+	redactResponseBody,
 	redactUrl,
+	utf8Bytes,
 } from "../src/browser/har.ts";
 
 // Fake values, built at run time: written out as literals under password keys they read as leaked secrets to scanners.
@@ -41,12 +45,17 @@ const ACCESS_TOKEN = join("access", "_", TOKEN);
 const CLIENT_SECRET = join("client", "_", "secret");
 const form = (fields) => new URLSearchParams(fields).toString();
 const json = (value) => JSON.stringify(value);
+// Credential shapes, assembled at run time from neutral parts: none of these is a real value.
+const jwtLike = (tag) => join("ey", "J", tag, "head1234", ".", "ey", "J", tag, "body5678", ".", tag, "sign9012");
+const hexLike = (tag) => join(tag, "9f3a7c1e".repeat(5));
+const mixedLike = (tag) => join(tag, "Ab1-", "Cd2_".repeat(9));
+const byteLength = (text) => Buffer.byteLength(text, "utf8");
 
 /** The DevTools events of one request, in order. */
 function request(
 	b,
 	id,
-	{ url, method = "GET", headers = {}, postData, hasPostData, status = 200, mime = "text/html", responseHeaders = {}, hint, documentURL = `${ORIGIN}/`, wall = 1_700_000_000, at = 100, finish = true } = {},
+	{ url, method = "GET", headers = {}, extraHeaders, postData, hasPostData, status = 200, mime = "text/html", responseHeaders = {}, hint, documentURL = `${ORIGIN}/`, wall = 1_700_000_000, at = 100, finish = true, requestExtra = {}, responseExtra = {}, paramsExtra = {} } = {},
 ) {
 	b.event(
 		"Network.requestWillBeSent",
@@ -56,13 +65,16 @@ function request(
 			timestamp: at,
 			type: "XHR",
 			documentURL,
-			request: { url, method, headers, ...(postData !== undefined ? { postData } : {}), ...(hasPostData ? { hasPostData: true } : {}) },
+			...paramsExtra,
+			request: { url, method, headers, ...(postData !== undefined ? { postData } : {}), ...(hasPostData ? { hasPostData: true } : {}), ...requestExtra },
 		},
 		hint,
 	);
+	if (extraHeaders) b.event("Network.requestWillBeSentExtraInfo", { requestId: id, headers: extraHeaders });
 	b.event("Network.responseReceived", {
 		requestId: id,
 		response: {
+			...responseExtra,
 			status,
 			statusText: "OK",
 			headers: responseHeaders,
@@ -171,15 +183,154 @@ test("what the file must never hold is absent from every field, however it got t
 	request(b, "3", { url: `${ORIGIN}/api/update`, method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, postData: form({ f1: SAMPLE_5, f2: "x" }), hasPostData: true, hint: { passwordPage: true } });
 	// JSON with a secret name.
 	request(b, "4", { url: `${ORIGIN}/api/save`, method: "POST", headers: { "Content-Type": "application/json" }, postData: json({ title: "t", [API_KEY_CAMEL]: SAMPLE_7 }), hasPostData: true });
+	// An HTTP/2 request: Chrome reports its address again as the :path pseudo-header, and the page, the response and the
+	// initiator each carry addresses of their own. A credential-shaped value under an ordinary header name, in an
+	// ordinary query parameter and in an ordinary JSON field never has a secret name to give it away.
+	const h2Secrets = {
+		path: "H2PATHSECRET1",
+		pathShaped: jwtLike("p"),
+		fragment: "FRAGSECRET2",
+		documentUrl: "DOCSECRET3",
+		responseUrl: "RESPURLSECRET4",
+		headersText: "HEADERSTEXTSECRET5",
+		initiator: "INITSECRET6",
+		session: jwtLike("s"),
+		hex: hexLike("ab"),
+		mixed: mixedLike("m"),
+		scheme: "dXNlcjpwYXNzd29yZA",
+		queryShaped: hexLike("cd"),
+		bodyShaped: jwtLike("b"),
+	};
+	request(b, "5", {
+		url: `${ORIGIN}/api/data?${form({ sort: "asc", [TOKEN]: h2Secrets.path, next: h2Secrets.queryShaped })}`,
+		documentURL: `${ORIGIN}/page?${form({ [TOKEN]: h2Secrets.documentUrl })}`,
+		headers: { Accept: "application/json" },
+		extraHeaders: {
+			":method": "GET",
+			":scheme": "http",
+			":path": `/api/data?${form({ sort: "asc", [TOKEN]: h2Secrets.path, next: h2Secrets.pathShaped })}`,
+			"X-Session": h2Secrets.session,
+			"X-Trace": h2Secrets.hex,
+			"X-Blob": h2Secrets.mixed,
+			"X-Note": join("Bas", "ic ", h2Secrets.scheme),
+		},
+		requestExtra: { urlFragment: `#${form({ [ACCESS_TOKEN]: h2Secrets.fragment })}` },
+		paramsExtra: { initiator: { type: "script", url: `${ORIGIN}/app.js?${form({ [TOKEN]: h2Secrets.initiator })}` } },
+		responseExtra: {
+			url: `${ORIGIN}/api/data?${form({ [TOKEN]: h2Secrets.responseUrl })}`,
+			requestHeadersText: `GET /api/data?${form({ [TOKEN]: h2Secrets.headersText })} HTTP/2\r\n`,
+		},
+		mime: "application/json",
+	});
+	b.setResponseBody("5", json({ name: "Ada", note: h2Secrets.bodyShaped }));
+	request(b, "6", { url: `${ORIGIN}/api/save`, method: "POST", headers: { "Content-Type": "application/json" }, postData: json({ title: "t2", note: h2Secrets.bodyShaped, ref: h2Secrets.hex }), hasPostData: true });
 	const file = JSON.stringify(b.toHar(CREATOR));
-	for (const secret of ["URLTOKEN9", SAMPLE_6, SAMPLE_3, SAMPLE_8, "SETCOOKIE4", SAMPLE_10, SAMPLE_1, SAMPLE_2, SAMPLE_4, SAMPLE_5, SAMPLE_7])
+	for (const secret of ["URLTOKEN9", SAMPLE_6, SAMPLE_3, SAMPLE_8, "SETCOOKIE4", SAMPLE_10, SAMPLE_1, SAMPLE_2, SAMPLE_4, SAMPLE_5, SAMPLE_7, ...Object.values(h2Secrets)])
 		assert.ok(!file.includes(secret), `${secret} is in the HAR`);
 	// And the harmless parts are there, so the test is not passing on an empty file.
 	for (const kept of ["sort=asc", '\\"title\\":\\"t\\"', '\\"name\\":\\"Ada\\"']) assert.ok(file.includes(kept), `${kept} is missing`);
 	const entries = JSON.parse(file).log.entries;
-	assert.equal(entries.length, 4);
+	assert.equal(entries.length, 6);
 	assert.match(entries[1].request.postData.comment, /sign-in/);
 	assert.match(entries[2].request.postData.comment, /password field/);
+	// The h2 entry keeps its harmless parts: the path with its other parameters, and the plain headers.
+	const h2 = entries[4];
+	assert.equal(h2.request.headers.find((h) => h.name === ":path").value.split("?")[0], "/api/data");
+	assert.ok(h2.request.headers.find((h) => h.name === ":path").value.includes("sort=asc"));
+	assert.equal(h2.request.headers.find((h) => h.name === ":method").value, "GET");
+	assert.equal(h2.request.headers.find((h) => h.name === "Accept").value, "application/json");
+	assert.ok(h2.response.content.text.includes('"name":"Ada"'));
+	assert.ok(entries[5].request.postData.text.includes('"title":"t2"'));
+});
+
+test("first-F1: on HTTP/2 and HTTP/3 the :path pseudo-header is an address and goes through the same redaction", () => {
+	const secret = "PATHONLYSECRET";
+	const out = redactHeaders({ ":path": `/api/data?${form({ [TOKEN]: secret, sort: "asc" })}`, ":method": "GET", ":scheme": "https" });
+	const path = out.find((h) => h.name === ":path").value;
+	assert.ok(!path.includes(secret), path);
+	assert.equal(new URL(path, "https://x.test").searchParams.get(TOKEN), "[redacted]");
+	assert.equal(new URL(path, "https://x.test").searchParams.get("sort"), "asc");
+	assert.equal(out.find((h) => h.name === ":method").value, "GET");
+	// Any other header whose value is a path or an address is read the same way.
+	const other = redactHeaders({ "X-Original-Url": `https://app.test/a?${form({ [TOKEN]: secret })}`, "X-Forwarded-Uri": `/b?${form({ [ACCESS_TOKEN]: secret })}` });
+	for (const h of other) assert.ok(!h.value.includes(secret), `${h.name}: ${h.value}`);
+	// It reaches the entry through the extra-info event, as Chrome sends it.
+	const b = new HarBuilder();
+	request(b, "h2", { url: `${ORIGIN}/api/data?${form({ [TOKEN]: secret })}`, extraHeaders: { ":path": `/api/data?${form({ [TOKEN]: secret })}` } });
+	assert.ok(!JSON.stringify(b.toHar(CREATOR)).includes(secret));
+});
+
+test("sol-F2: a value that has a credential's shape is redacted under any header name, and in queries, forms and JSON", () => {
+	const shaped = { jwt: jwtLike("h"), hex: hexLike("ab"), mixed: mixedLike("z"), plain: join("Zq", "8fK3", "mP1xW", "7nRt", "Y2vB", "c9LdH", "4sJa", "0GeUo5") };
+	for (const [shape, value] of Object.entries(shaped)) assert.equal(looksLikeToken(value) || shape === "jwt", true, shape);
+	const out = Object.fromEntries(
+		redactHeaders({ "X-Session": shaped.jwt, "X-Trace": shaped.hex, "X-Blob": shaped.mixed, "X-Opaque": shaped.plain, "X-Auth-Scheme": "Bearer short", "X-Other": join("Bas", "ic dXNlcjpw"), "X-Embedded": `ids ${shaped.jwt} end` }).map((h) => [h.name, h.value]),
+	);
+	for (const [name, value] of Object.entries(out)) assert.equal(value, "[redacted]", name);
+	// What is not a credential stays: ids, languages, agents, cache rules, a trace parent, a word that starts like a scheme.
+	const kept = {
+		"X-Request-Id": "123e4567-e89b-12d3-a456-426614174000",
+		"Accept-Language": "en-US,en;q=0.9",
+		"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+		"Cache-Control": "no-cache, max-age=0",
+		Traceparent: join("00-", "4bf92f3577b34da6a3ce929d0e0e4736", "-00f067aa0ba902b7-01"),
+		"X-Plan": "Basically fine",
+		"X-Slug": "a-very-long-lowercase-article-slug-with-many-words",
+		"Content-Type": "application/json; charset=utf-8",
+	};
+	for (const h of redactHeaders(kept)) assert.equal(h.value, kept[h.name], h.name);
+	// Query values: the name is innocent, the value is not.
+	const url = redactUrl(`http://app.test/cb?${form({ next: shaped.jwt, ref: shaped.hex, blob: shaped.mixed, q: "shoes", id: "123e4567-e89b-12d3-a456-426614174000" })}`);
+	const q = new URL(url).searchParams;
+	for (const name of ["next", "ref", "blob"]) assert.match(q.get(name), /^\[(?:redacted|secret)\]$/, name);
+	assert.equal(q.get("q"), "shoes");
+	assert.equal(q.get("id"), "123e4567-e89b-12d3-a456-426614174000");
+	// A fragment written as parameters is read the same way.
+	assert.ok(!redactUrl(`http://app.test/cb#${form({ state: shaped.hex })}`).includes(shaped.hex));
+	// JSON bodies, request and response, and forms.
+	const bodyOf = (value) => json({ title: "kept", nested: { note: value, list: [value, "ok"] } });
+	for (const shape of ["jwt", "hex", "mixed"]) {
+		const req = redactRequestBody({ url: "http://app.test/api/x", contentType: "application/json", text: bodyOf(shaped[shape]) });
+		assert.ok(!req.text.includes(shaped[shape]), `request ${shape}: ${req.text}`);
+		assert.ok(req.text.includes('"title":"kept"') && req.text.includes('"ok"'), req.text);
+		const res = redactResponseBody(bodyOf(shaped[shape]));
+		assert.ok(!res.text.includes(shaped[shape]), `response ${shape}: ${res.text}`);
+		const encoded = redactRequestBody({ url: "http://app.test/api/x", contentType: "application/x-www-form-urlencoded", text: form({ note: shaped[shape], city: "Rome" }) });
+		assert.ok(!encoded.text.includes(shaped[shape]) && encoded.text.includes("city=Rome"), `form ${shape}: ${encoded.text}`);
+	}
+	assert.ok(redactResponseBody(json({ id: "123e4567-e89b-12d3-a456-426614174000", name: "Ada" })).text.includes("123e4567"));
+});
+
+test("sol-F4, first-F5: sizes are UTF-8 bytes: a 64 KB body cap and the file cap count what the file really takes", () => {
+	// utf8Bytes agrees with the encoder on ASCII, two- and three-byte characters, a pair, and a lone surrogate.
+	for (const text of ["", "plain", "caf\u00e9", "\u4e2d\u6587", "\u{1F600}", "a\ud800b", "\udc00"]) assert.equal(utf8Bytes(text), byteLength(text), JSON.stringify(text));
+	// About 25,000 Chinese characters: under the cap in UTF-16 units, three times over it in bytes.
+	const wide = "\u4e2d".repeat(25_000);
+	assert.ok(wide.length < HAR_BODY_CAP && byteLength(wide) > HAR_BODY_CAP);
+	const req = redactRequestBody({ url: "http://app.test/api/x", contentType: "application/json", text: json({ a: wide }) });
+	assert.equal(req.text, undefined);
+	assert.match(req.comment, /over 64 KB/);
+	const res = redactResponseBody(json({ a: wide }));
+	assert.equal(res.text, undefined);
+	assert.match(res.comment, /over 64 KB/);
+	// Just inside the cap in bytes is kept.
+	const fits = "\u4e2d".repeat(20_000);
+	assert.ok(byteLength(json({ a: fits })) < HAR_BODY_CAP);
+	assert.ok(redactRequestBody({ url: "http://app.test/api/x", contentType: "application/json", text: json({ a: fits }) }).text);
+	// The request body size in the entry is bytes, too.
+	const b = new HarBuilder();
+	request(b, "w", { url: `${ORIGIN}/api/save`, method: "POST", headers: { "Content-Type": "application/json" }, postData: json({ a: "\u4e2d".repeat(100) }), hasPostData: true });
+	assert.equal(b.toHar(CREATOR).log.entries[0].request.bodySize, byteLength(json({ a: "\u4e2d".repeat(100) })));
+	// The file cap: entries whose text is mostly Chinese. The file, as the helper writes it, stays under the cap.
+	const cap = 40_000;
+	const capped = new HarBuilder({ maxBytes: cap });
+	assert.equal(capped.size, HAR_ENVELOPE_BYTES, "the wrapper is counted before any entry");
+	for (let i = 0; i < 200; i++) request(capped, String(i), { url: `${ORIGIN}/api/item/${i}`, headers: { "X-Note": "\u4e2d".repeat(500) }, wall: 1_700_000_000 + i });
+	assert.equal(capped.full, true);
+	const file = JSON.stringify(capped.toHar(CREATOR));
+	assert.ok(byteLength(file) <= cap, `${byteLength(file)} bytes against a cap of ${cap}`);
+	assert.ok(capped.count > 3 && capped.count < 200, `${capped.count} entries`);
+	assert.ok(capped.size <= cap && capped.size >= byteLength(file) - 1000, `size ${capped.size} for a file of ${byteLength(file)}`);
 });
 
 test("a body is asked for only when it may be stored", () => {

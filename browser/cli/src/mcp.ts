@@ -727,16 +727,34 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			},
 		},
 		async (args) => {
+			let result: Record<string, unknown> & { file?: IncomingCapture };
 			try {
-				const result = (await client.call("capture", args)) as Record<string, unknown> & { file?: IncomingCapture };
-				const { file, ...rest } = result;
-				if (!file) return { content: text(result) };
-				// The content stays here: the agent gets the path, the size and what the file leaves out.
-				const saved = saveCapture(file);
-				return { content: text({ ...rest, path: saved.path, bytes: saved.bytes }) };
+				result = (await client.call("capture", args)) as typeof result;
 			} catch (err) {
 				return errorResult(err);
 			}
+			const { file, ...rest } = result;
+			if (!file) return { content: text(result) };
+			// A stop gives up the browser's copy of the data, so a failed write must not lose it: the browser
+			// keeps the stopped capture for a few minutes, and the same stop with the same id returns it again.
+			const stop = args.action === "network_stop" || args.action === "record_stop";
+			let saved: { path: string; bytes: number };
+			try {
+				// The content stays here: the agent gets the path, the size and what the file leaves out.
+				saved = saveCapture(file);
+			} catch (err) {
+				const again =
+					stop && typeof rest.id === "string"
+						? ` The capture is still held in the browser for 5 minutes: call ${args.action} again with id ${rest.id} to retry the save.`
+						: args.action === "flight_save"
+							? " The flight recorder is still recording: call flight_save again to retry."
+							: "";
+				return { content: text(`The capture was not saved: ${errorMessage(err)}.${again}`), isError: true };
+			}
+			// The file is on disk: the browser can let go of its copy.
+			if (stop && typeof rest.id === "string")
+				await client.call("capture", { action: "cancel", id: rest.id }).catch(() => undefined);
+			return { content: text({ ...rest, path: saved.path, bytes: saved.bytes }) };
 		},
 	);
 	server.registerTool(

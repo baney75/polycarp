@@ -8,11 +8,16 @@
  * - A capture belongs to the session that started it. Only that session sees it in `status`, stops
  *   it, saves it or cancels it; another session's id is "not found", the same as an id that never existed.
  * - A capture starts only on a tab the session owns, and ends, keeping what it has, the moment
- *   that stops being true (the tab closed, was given away, or the debugger left it).
+ *   that stops being true (the tab closed, was given away, or the debugger left it). If that happens
+ *   while the browser is still starting it, the start finishes by stopping what it started and
+ *   reporting the capture as cancelled: nothing runs without an owner.
  * - Nothing runs for long: 10 minutes for network and recordings, 30 for a flight recorder. An ended
  *   capture stays in memory for 30 minutes so its owner can still save it.
  * - Starting never reads the file's content back to the agent: results carry the file itself for
  *   the helper to write (`file`), and the helper tells the agent only the path and size.
+ * - A stop that returned its file is not forgotten until the write is known to have worked: the
+ *   answer is kept for RETRY_KEEP_MS, so asking again with the same id returns the same file, and the
+ *   helper's `cancel` with that id (sent once the file is on disk) frees it.
  */
 
 import { ERR } from "../bridge/protocol.js";
@@ -45,6 +50,8 @@ export const MAX_CAPTURE_MS = 10 * 60 * 1000;
 export const MAX_FLIGHT_MS = 30 * 60 * 1000;
 /** An ended capture keeps its data this long for its owner to save. */
 export const KEEP_ENDED_MS = 30 * 60 * 1000;
+/** A stopped capture's file stays here this long, in case the helper could not write it. */
+export const RETRY_KEEP_MS = 5 * 60 * 1000;
 export const MAX_PER_SESSION = 4;
 /** Encoding is the costly part: at most this many videos at once in the whole browser. */
 export const MAX_VIDEOS = 2;
@@ -135,6 +142,14 @@ interface Capture {
 	busy: boolean;
 }
 
+/** A stop that returned its file, kept for a retry. */
+interface Stopped {
+	sessionId: string;
+	kind: CaptureKind;
+	at: number;
+	answer: Record<string, unknown>;
+}
+
 export interface CaptureManagerOptions {
 	now?: () => number;
 	/** Called when the first capture starts and when the last one goes: the owner runs `sweep` on a timer between. */
@@ -159,6 +174,7 @@ const END: Partial<Record<CaptureAction, CaptureKind>> = {
 
 export class CaptureManager {
 	private captures = new Map<string, Capture>();
+	private stopped = new Map<string, Stopped>();
 	private readonly now: () => number;
 	private readonly newId: () => string;
 	private active = false;
@@ -243,19 +259,37 @@ export class CaptureManager {
 		};
 		this.captures.set(capture.id, capture);
 		this.activity();
+		let run: Run;
 		try {
 			const onEnd = (why: string) => this.ended(capture, why);
-			capture.run =
+			run =
 				kind === "network"
 					? await this.backend.startNetwork(tabId, capture.id, onEnd)
 					: await this.backend.startVideo(tabId, capture.id, kind, onEnd);
 		} catch (err) {
-			this.captures.delete(capture.id);
-			this.activity();
+			if (this.captures.get(capture.id) === capture) {
+				this.captures.delete(capture.id);
+				this.activity();
+			}
 			throw err;
 		}
-		// It may have ended while starting (the tab closed under it): it stays, ended, with what it has.
-		if (capture.state === "starting") capture.state = "running";
+		// The owner may have gone while the browser was starting it (the tab was released or closed,
+		// the debugger left, or the capture was cancelled). `ended` had no run to halt then, so the run
+		// that just came back would collect with nobody to stop it: stop it now and say so.
+		if (capture.state !== "starting" || this.captures.get(capture.id) !== capture) {
+			const why = capture.endedBy ?? "it was cancelled";
+			if (this.captures.get(capture.id) === capture) {
+				this.captures.delete(capture.id);
+				this.activity();
+			}
+			await run.discard().catch(() => undefined);
+			throw new CaptureError(
+				ERR.NOT_FOUND,
+				`The capture was cancelled before it started: ${why}. Nothing was recorded.`,
+			);
+		}
+		capture.run = run;
+		capture.state = "running";
 		return {
 			id: capture.id,
 			kind,
@@ -277,6 +311,10 @@ export class CaptureManager {
 		keepRunning: boolean,
 		params: CaptureParams,
 	): Promise<Record<string, unknown>> {
+		if (!keepRunning) {
+			const again = this.stoppedFor(session, kind, params.id);
+			if (again) return again.answer;
+		}
 		const capture = this.pick(session, params.id, kind);
 		if (capture.busy)
 			throw new CaptureError(ERR.BAD_PARAMS, `Capture ${capture.id} is being saved. Try again in a moment.`);
@@ -286,13 +324,10 @@ export class CaptureManager {
 		capture.busy = true;
 		try {
 			const out = keepRunning ? await (run.snapshot ?? run.finish).call(run) : await run.finish();
-			if (!keepRunning) {
-				this.captures.delete(capture.id);
-				this.activity();
-			} else capture.saves++;
+			if (keepRunning) capture.saves++;
 			const notes = [...out.notes];
 			if (capture.endedBy) notes.unshift(`The capture had ended early: ${capture.endedBy}. This is what it held.`);
-			return {
+			const answer = {
 				id: capture.id,
 				kind: capture.kind,
 				tabId: capture.tabId,
@@ -302,9 +337,27 @@ export class CaptureManager {
 				file: out.file,
 				...(notes.length ? { notes } : {}),
 			};
+			if (!keepRunning) {
+				// The browser let go of the data when it finished; this is the only copy until the file is written.
+				this.captures.delete(capture.id);
+				this.stopped.set(capture.id, { sessionId: capture.sessionId, kind: capture.kind, at: this.now(), answer });
+				this.activity();
+			}
+			return answer;
 		} finally {
 			capture.busy = false;
 		}
+	}
+
+	/** A stop this session already did whose file may not have been written: by id, else its only one of that kind when none is running. */
+	private stoppedFor(session: CaptureSession, kind: CaptureKind, id: string | undefined): Stopped | undefined {
+		if (id !== undefined) {
+			const s = this.stopped.get(id);
+			return s && s.sessionId === session.id && s.kind === kind ? s : undefined;
+		}
+		if (this.mine(session).some((c) => c.kind === kind)) return undefined;
+		const held = [...this.stopped.values()].filter((s) => s.sessionId === session.id && s.kind === kind);
+		return held.length === 1 ? held[0] : undefined;
 	}
 
 	/** The capture a stop or save means: by id, else the session's only one of that kind. */
@@ -353,6 +406,15 @@ export class CaptureManager {
 	}
 
 	private async cancel(session: CaptureSession, params: CaptureParams): Promise<Record<string, unknown>> {
+		if (params.id !== undefined) {
+			// The helper says the file is on disk: the kept copy is no longer needed.
+			const held = this.stopped.get(params.id);
+			if (held && held.sessionId === session.id) {
+				this.stopped.delete(params.id);
+				this.activity();
+				return { cancelled: [params.id] };
+			}
+		} else this.forgetStopped(session.id);
 		const targets = params.id !== undefined ? [this.owned(session, params.id)] : this.mine(session);
 		for (const c of targets) await this.drop(c);
 		return { cancelled: targets.map((c) => c.id) };
@@ -364,7 +426,15 @@ export class CaptureManager {
 		await c.run?.discard().catch(() => undefined);
 	}
 
-	/** A capture stopped on its own (debugger detached, tab closed, page replaced): keep what it has. */
+	private forgetStopped(sessionId: string): void {
+		for (const [id, s] of this.stopped) if (s.sessionId === sessionId) this.stopped.delete(id);
+		this.activity();
+	}
+
+	/**
+	 * A capture stopped on its own (debugger detached, tab closed, page replaced): keep what it has.
+	 * While it is still starting there is nothing to halt yet: `start` stops it when the browser answers.
+	 */
 	private ended(c: Capture, why: string): void {
 		if (c.state === "ended") return;
 		c.state = "ended";
@@ -381,6 +451,8 @@ export class CaptureManager {
 	/** Enforce the time limits and the ownership rule; call it every couple of seconds while `onActive(true)`. */
 	async sweep(): Promise<void> {
 		const now = this.now();
+		for (const [id, s] of this.stopped) if (now - s.at >= RETRY_KEEP_MS) this.stopped.delete(id);
+		this.activity();
 		for (const c of [...this.captures.values()]) {
 			if (c.state === "ended") {
 				if (now - (c.endedAt ?? now) >= KEEP_ENDED_MS && !c.busy) await this.drop(c);
@@ -399,11 +471,12 @@ export class CaptureManager {
 
 	/** Drop every capture of a session that is gone, with its data. */
 	async sessionGone(sessionId: string): Promise<void> {
+		this.forgetStopped(sessionId);
 		for (const c of [...this.captures.values()]) if (c.sessionId === sessionId) await this.drop(c);
 	}
 
 	private activity(): void {
-		const active = this.captures.size > 0;
+		const active = this.captures.size > 0 || this.stopped.size > 0;
 		if (active === this.active) return;
 		this.active = active;
 		this.options.onActive?.(active);

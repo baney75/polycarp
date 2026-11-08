@@ -168,6 +168,10 @@ extraPages["/capture-page"] = `<!doctype html><title>Capture</title>
 extraPages["/capture-login-page"] = `<!doctype html><title>Capture login</title>
 <form><input type="password" aria-label="Password"></form>`;
 
+// A page with no password field of its own that frames one on its own origin: the frame's request must not keep its body.
+extraPages["/capture-frame-page"] = `<!doctype html><title>Capture frame</title>
+<iframe id="login-frame" src="/capture-login-page" style="width:300px;height:120px"></iframe>`;
+
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
 
@@ -1436,6 +1440,20 @@ test("capture network: a page with a password field has no request body stored",
 	const stopped = await captureOk({ action: "network_stop" });
 	const file = readFileSync(stopped.path, "utf8");
 	assert.ok(!file.includes(CAPTURE_SECRETS.pageForm), "the body of a request sent from a page with a password field is in the HAR");
+	const save = JSON.parse(file).log.entries.find((e) => new URL(e.request.url).pathname === "/api/save");
+	assert.match(save.request.postData.comment, /password field/);
+});
+
+test("capture network: a password field in a same-origin iframe keeps the bodies of its requests out of the HAR", async () => {
+	await go("capture-frame-page");
+	await until(async () => (await js(`document.getElementById("login-frame").contentDocument?.querySelector('input[type=password]') ? 1 : 0`, { world: "main" })) === 1, 10_000, "the frame loaded");
+	await captureOk({ action: "network_start" });
+	const secret = cat("FRAMEFORM", "SECRET8");
+	await js(`document.getElementById("login-frame").contentWindow.fetch("/api/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ f1: ${JSON.stringify(secret)} }) }).then(() => 1)`, { world: "main" });
+	await until(async () => ((await captureOk({ action: "status" })).captures[0].entries ?? 0) >= 1, 10_000, "the request recorded");
+	const stopped = await captureOk({ action: "network_stop" });
+	const file = readFileSync(stopped.path, "utf8");
+	assert.ok(!file.includes(secret), "the body of a request sent from a frame with a password field is in the HAR");
 	const save = JSON.parse(file).log.entries.find((e) => new URL(e.request.url).pathname === "/api/save");
 	assert.match(save.request.postData.comment, /password field/);
 });

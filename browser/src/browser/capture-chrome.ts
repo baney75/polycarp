@@ -11,6 +11,7 @@ import { RECORDER_MESSAGE } from "../offscreen/recorder-message.js";
 import { type CaptureBackend, CaptureError, CaptureManager, type CaptureOutput, type Run } from "./capture.js";
 import { cdpSend, ensureAttached, networkCapturing, screencastOwner, startScreencast, stopScreencast } from "./cdp.js";
 import { HAR_SIZE_CAP, HarBuilder } from "./har.js";
+import { passwordInTab } from "./password-frames.js";
 import { BrowserSession } from "./session.js";
 
 const VIDEO_MAX_BYTES = 32 * 1024 * 1024;
@@ -33,35 +34,12 @@ interface NetworkState {
 const networkStates = new Map<number, NetworkState>();
 let listening = false;
 
-/**
- * Whether the page has a password field right now (open shadow roots too). A request sent from
- * such a page may carry the password under any name, so its body is not stored. If the page can't
- * be asked, the answer is yes.
- */
-const PASSWORD_PAGE = `(() => {
-	try {
-		const roots = [document];
-		for (let n = 0; roots.length && n < 400; n++) {
-			const root = roots.pop();
-			if (root.querySelector('input[type="password" i]')) return true;
-			for (const el of root.querySelectorAll("*")) if (el.shadowRoot) roots.push(el.shadowRoot);
-		}
-		return false;
-	} catch {
-		return true;
-	}
-})()`;
-
-async function passwordPage(tabId: number): Promise<boolean> {
-	try {
-		const r = (await chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
-			expression: PASSWORD_PAGE,
-			returnByValue: true,
-		})) as { result?: { value?: unknown } };
-		return r.result?.value !== false;
-	} catch {
-		return true;
-	}
+/** Whether the tab has a password field in any frame (password-frames.ts); the frame the request came from is checked closest. */
+function passwordPage(tabId: number, frameId: string | undefined): Promise<boolean> {
+	return passwordInTab(
+		(method, params) => chrome.debugger.sendCommand({ tabId }, method, params) as Promise<unknown>,
+		frameId,
+	);
 }
 
 async function handleNetwork(state: NetworkState, method: string, params: Record<string, unknown>): Promise<void> {
@@ -72,7 +50,10 @@ async function handleNetwork(state: NetworkState, method: string, params: Record
 		let hint: { passwordPage?: boolean } | undefined;
 		if (method === "Network.requestWillBeSent") {
 			const request = (params.request ?? {}) as { method?: string; hasPostData?: boolean; postData?: string };
-			if (request.hasPostData || request.postData) hint = { passwordPage: await passwordPage(tabId) };
+			if (request.hasPostData || request.postData)
+				hint = {
+					passwordPage: await passwordPage(tabId, typeof params.frameId === "string" ? params.frameId : undefined),
+				};
 		}
 		builder.event(method, params, hint);
 		if (method === "Network.requestWillBeSent" && builder.wantsRequestBody(id)) {

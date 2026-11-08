@@ -9,7 +9,13 @@
  * - a request body at all when the address looks like a sign-in or token endpoint (login, signin,
  *   auth, password, token, credential), when the page had a password field, or when it isn't JSON or a
  *   url-encoded form; in JSON and forms the values under secret names are replaced;
- * - more than 64 KB of any body, or a response body that isn't same-origin JSON with its secrets masked.
+ * - a value that has the shape of a credential (a JWT, a long hex or base64 token, a Bearer or Basic
+ *   scheme, a known key prefix) under any name: in a header, a query, a form or a JSON body;
+ * - more than 64 KB (UTF-8 bytes) of any body, or a response body that isn't same-origin JSON with its secrets masked.
+ *
+ * Every address that can enter the file goes through `redactUrl`: the request URL, the query string, a
+ * redirect's target, and any header whose value is a path or an address, which on HTTP/2 and HTTP/3 includes the
+ * `:path` pseudo-header. The page's URL, the response's own URL, the fragment and the initiator are never stored.
  *
  * The builder only reads events. The caller fetches the bodies the builder asks for
  * (`wantsRequestBody`, `wantsResponseBody`) and hands them back, so this runs and is tested without a browser.
@@ -20,7 +26,50 @@ import { holdsCredential, isSecretName, maskJsonResponse, maskUrl } from "./mask
 export const HAR_BODY_CAP = 64 * 1024;
 /** A capture stops growing here. The frame to the helper holds 60 MiB, and this leaves room for its envelope. */
 export const HAR_SIZE_CAP = 50_000_000;
+/** What the HAR's own wrapper (version, creator, comment) takes, counted against the size cap before any entry. */
+export const HAR_ENVELOPE_BYTES = 2048;
 export const REDACTED = "[redacted]";
+
+/** The size of a string as UTF-8, which is what the cap, the helper's file and the bridge frame all count (not UTF-16 units). */
+export function utf8Bytes(text: string): number {
+	let n = 0;
+	for (let i = 0; i < text.length; i++) {
+		const c = text.charCodeAt(i);
+		if (c < 0x80) n += 1;
+		else if (c < 0x800) n += 2;
+		else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length && (text.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+			n += 4;
+			i++;
+		} else n += 3;
+	}
+	return n;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A whole value that is one long opaque token: 32 or more hex digits, 32 or more letters and digits with
+ * both kinds present, or a base64 or base64url run with upper case, lower case and a digit. A UUID, a slug
+ * and a sentence are not.
+ */
+export function looksLikeToken(value: string): boolean {
+	const v = value.trim();
+	if (v.length < 32 || UUID.test(v)) return false;
+	if (/^[0-9a-f]+$/i.test(v)) return true;
+	const digit = /\d/.test(v);
+	if (/^[A-Za-z0-9]+$/.test(v)) return digit && /[A-Za-z]/.test(v);
+	return /^[A-Za-z0-9+/_-]+={0,2}$/.test(v) && digit && /[a-z]/.test(v) && /[A-Z]/.test(v);
+}
+
+/** Whether a value, wherever it sits, has the shape of a credential. */
+export function credentialShaped(value: string): boolean {
+	return holdsCredential(value) || looksLikeToken(value);
+}
+
+/** An authorization scheme at the start of a header value: what follows is a credential however short. */
+const SCHEME_VALUE = /^\s*(?:bearer|basic|digest|negotiate|ntlm|token)\s+\S/i;
+/** A path or an address: a token can ride in its query. */
+const ADDRESS_VALUE = /^\s*(?:[a-z][a-z0-9+.-]*:\/\/|\/)/i;
 
 export interface HarHeader {
 	name: string;
@@ -36,17 +85,20 @@ export function isSecretHeader(name: string): boolean {
 	return SECRET_HEADERS.has(n) || SECRET_NAME.test(n);
 }
 
-/** Headers whose value is an address: a token can ride in its query. */
-const URL_HEADERS = new Set(["location", "referer", "content-location"]);
+/** Headers whose value is an address, whatever it looks like. Others are read by their value (ADDRESS_VALUE). */
+const URL_HEADERS = new Set(["location", "referer", "content-location", ":path"]);
+
+function redactHeaderValue(name: string, value: string): string {
+	if (isSecretHeader(name)) return REDACTED;
+	if (URL_HEADERS.has(name.toLowerCase()) || ADDRESS_VALUE.test(value)) return redactUrl(value);
+	return SCHEME_VALUE.test(value) || credentialShaped(value) ? REDACTED : value;
+}
 
 /** DevTools gives headers as an object; a header sent twice is one value joined with newlines. */
 export function redactHeaders(headers: Record<string, unknown> | undefined): HarHeader[] {
 	const out: HarHeader[] = [];
 	for (const [name, raw] of Object.entries(headers ?? {})) {
-		const secret = isSecretHeader(name);
-		const address = URL_HEADERS.has(name.toLowerCase());
-		for (const value of String(raw).split("\n"))
-			out.push({ name, value: secret ? REDACTED : address ? redactUrl(value) : value });
+		for (const value of String(raw).split("\n")) out.push({ name, value: redactHeaderValue(name, value) });
 	}
 	return out;
 }
@@ -57,11 +109,24 @@ export function redactUrl(url: string): string {
 	try {
 		const u = new URL(masked, "https://relative.invalid");
 		let changed = false;
-		for (const key of new Set([...u.searchParams.keys()]))
-			if (SECRET_NAME.test(key)) {
+		for (const [key, value] of [...u.searchParams])
+			if (SECRET_NAME.test(key) || looksLikeToken(value)) {
 				u.searchParams.set(key, REDACTED);
 				changed = true;
 			}
+		if (u.hash.includes("=")) {
+			const fragment = new URLSearchParams(u.hash.slice(1));
+			let hit = false;
+			for (const [key, value] of [...fragment])
+				if (SECRET_NAME.test(key) || looksLikeToken(value)) {
+					fragment.set(key, REDACTED);
+					hit = true;
+				}
+			if (hit) {
+				u.hash = fragment.toString();
+				changed = true;
+			}
+		}
 		if (changed) masked = /^[a-z][a-z0-9+.-]*:/i.test(masked) ? u.toString() : `${u.pathname}${u.search}${u.hash}`;
 	} catch {
 		/* not an address: as masked */
@@ -98,15 +163,15 @@ export interface StoredBody {
 export function redactRequestBody(input: { url: string; contentType?: string; text: string }): StoredBody {
 	if (isAuthPath(input.url)) return { comment: "body not stored: a sign-in or token address" };
 	const type = (input.contentType ?? "").toLowerCase();
-	if (input.text.length > HAR_BODY_CAP) return { comment: `body not stored: over ${HAR_BODY_CAP / 1024} KB` };
+	if (utf8Bytes(input.text) > HAR_BODY_CAP) return { comment: `body not stored: over ${HAR_BODY_CAP / 1024} KB` };
 	if (/json/.test(type) || (!type && /^\s*[[{]/.test(input.text))) {
-		const masked = maskJsonResponse(input.text);
+		const masked = maskJsonResponse(input.text, looksLikeToken);
 		return masked === undefined ? { comment: "body not stored: not valid JSON" } : { text: masked };
 	}
 	if (type.includes("x-www-form-urlencoded")) {
 		const form = new URLSearchParams(input.text);
 		for (const [key, value] of [...form])
-			if (isSecretName(key) || SECRET_NAME.test(key) || holdsCredential(value)) form.set(key, REDACTED);
+			if (isSecretName(key) || SECRET_NAME.test(key) || credentialShaped(value)) form.set(key, REDACTED);
 		return { text: form.toString() };
 	}
 	return { comment: `body not stored: ${type || "untyped"} bodies are not kept` };
@@ -124,8 +189,8 @@ function originOf(url: string | undefined): string | undefined {
 
 /** A same-origin JSON response body that fits, with its secrets masked. */
 export function redactResponseBody(text: string): StoredBody {
-	if (text.length > HAR_BODY_CAP) return { comment: `body not stored: over ${HAR_BODY_CAP / 1024} KB` };
-	const masked = maskJsonResponse(text);
+	if (utf8Bytes(text) > HAR_BODY_CAP) return { comment: `body not stored: over ${HAR_BODY_CAP / 1024} KB` };
+	const masked = maskJsonResponse(text, looksLikeToken);
 	return masked === undefined ? { comment: "body not stored: not complete JSON" } : { text: masked };
 }
 
@@ -240,7 +305,7 @@ export class HarBuilder {
 	readonly maxBytes: number;
 	private pending = new Map<string, Pending>();
 	private done: HarEntry[] = [];
-	private bytes = 0;
+	private bytes = HAR_ENVELOPE_BYTES;
 	private skipped = 0;
 	private capped = false;
 
@@ -342,7 +407,7 @@ export class HarBuilder {
 			documentURL: str(params.documentURL) || undefined,
 			type: str(params.type) || undefined,
 			headers: rec(request.headers),
-			bodySize: hasBody ? inline.length : 0,
+			bodySize: hasBody ? utf8Bytes(inline) : 0,
 			hasBody,
 			dataLength: 0,
 		};
@@ -377,7 +442,7 @@ export class HarBuilder {
 	setRequestBody(requestId: string, text: string): void {
 		const p = this.pending.get(requestId);
 		if (!p) return;
-		p.bodySize = text.length;
+		p.bodySize = utf8Bytes(text);
 		p.body = redactRequestBody({ url: p.url, contentType: headerOf(p.headers, "content-type"), text });
 	}
 
@@ -418,7 +483,7 @@ export class HarBuilder {
 			return;
 		}
 		const entry = this.entry(p);
-		const size = JSON.stringify(entry).length + 1;
+		const size = utf8Bytes(JSON.stringify(entry)) + 1;
 		if (this.bytes + size > this.maxBytes) {
 			this.capped = true;
 			this.skipped++;
@@ -528,7 +593,7 @@ export class HarBuilder {
 			let room = this.maxBytes - this.bytes;
 			for (const p of this.pending.values()) {
 				const e = this.entry(p);
-				room -= JSON.stringify(e).length + 1;
+				room -= utf8Bytes(JSON.stringify(e)) + 1;
 				if (room < 0) break;
 				entries.push(e);
 			}

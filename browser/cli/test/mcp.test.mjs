@@ -3,7 +3,7 @@
 // with the one not-connected message instead of hanging.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -463,12 +463,34 @@ test("capture: the file is written here, privately, and the agent is told its pa
 
 		// Calls with no file pass straight through.
 		assert.deepEqual(JSON.parse((await run({ action: "status" })).text), answers.status);
-		assert.deepEqual(requests.map((r) => r.method), ["capture", "capture", "capture", "capture"]);
-		assert.deepEqual(requests.map((r) => r.params.action), ["network_stop", "record_stop", "flight_save", "status"]);
+		// A stop that was written tells the browser so, with its id, so it can let go of its copy.
+		assert.deepEqual(requests.map((r) => r.method), ["capture", "capture", "capture", "capture", "capture", "capture"]);
+		assert.deepEqual(requests.map((r) => r.params.action), ["network_stop", "cancel", "record_stop", "cancel", "flight_save", "status"]);
+		assert.deepEqual(requests.filter((r) => r.params.action === "cancel").map((r) => r.params.id), ["c1", "c2"]);
+
+		// first-F4: a stop whose file cannot be written is an error that says the capture is still held and how to ask again,
+		// and the browser is not told to let go of it. The captures folder is made unusable (a link), then put right.
+		const folder = join(config, "captures");
+		renameSync(folder, `${folder}.real`);
+		symlinkSync(`${folder}.real`, folder);
+		const lost = await run({ action: "network_stop" });
+		assert.equal(lost.isError, true);
+		assert.match(lost.text, /capture was not saved/);
+		assert.match(lost.text, /still held in the browser for 5 minutes: call network_stop again with id c1/);
+		assert.equal(requests.length, 7, "no release was sent for a file that is not on disk");
+		const flight = await run({ action: "flight_save" });
+		assert.match(flight.text, /still recording: call flight_save again/);
+		assert.ok(!/id c3/.test(flight.text));
+		rmSync(folder);
+		renameSync(`${folder}.real`, folder);
+		const retried = await run({ action: "network_stop", id: "c1" });
+		assert.notEqual(retried.isError, true, retried.text);
+		assert.ok(JSON.parse(retried.text).path.endsWith(".har"));
+		assert.deepEqual(requests.slice(7).map((r) => [r.params.action, r.params.id]), [["flight_save", undefined], ["network_stop", "c1"], ["cancel", "c1"]]);
 		// An action the tool does not have never reaches the browser.
 		const unknown = await client.callTool({ name: "capture", arguments: { action: "stream" } });
 		assert.equal(unknown.isError, true);
-		assert.equal(requests.length, 4);
+		assert.equal(requests.length, 10);
 	} finally {
 		await client.close().catch(() => {});
 		server.close();

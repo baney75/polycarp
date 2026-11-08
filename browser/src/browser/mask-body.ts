@@ -108,9 +108,10 @@ export function bodyShape(text: string, contentType = ""): string {
 
 /**
  * A complete JSON response with credentials masked in place, or undefined when the text isn't
- * complete JSON (then it isn't shown at all).
+ * complete JSON (then it isn't shown at all). `also` names more string values to mask (a caller's
+ * own idea of a credential's shape); keys are judged by `holdsCredential` alone.
  */
-export function maskJsonResponse(text: string): string | undefined {
+export function maskJsonResponse(text: string, also?: (value: string) => boolean): string | undefined {
 	try {
 		JSON.parse(text);
 	} catch {
@@ -163,7 +164,10 @@ export function maskJsonResponse(text: string): string | undefined {
 				lastKey = JSON.parse(token) as string;
 				// A credential used as a key (a session map keyed by token) is masked like a value.
 				out += holdsCredential(lastKey) ? `"${SECRET}"` : token;
-			} else out += holdsCredential(JSON.parse(token) as string) ? `"${SECRET}"` : token;
+			} else {
+				const value = JSON.parse(token) as string;
+				out += holdsCredential(value) || also?.(value) ? `"${SECRET}"` : token;
+			}
 			i = end;
 			continue;
 		}

@@ -5,6 +5,7 @@ import {
 	CaptureError,
 	CaptureManager,
 	KEEP_ENDED_MS,
+	RETRY_KEEP_MS,
 	MAX_CAPTURE_MS,
 	MAX_FLIGHT_MS,
 	MAX_PER_SESSION,
@@ -12,7 +13,7 @@ import {
 } from "../src/browser/capture.ts";
 
 /** A browser that records what it was asked and holds a little data per capture. */
-function fakeBackend() {
+function fakeBackend(options = {}) {
 	const log = { started: [], halted: [], discarded: [], finished: [], snapshots: [] };
 	const ownership = new Map();
 	const runFor = (id, kind) => ({
@@ -48,11 +49,13 @@ function fakeBackend() {
 		async startNetwork(tabId, id, onEnd) {
 			log.started.push(["network", tabId, id]);
 			onEnds.set(id, onEnd);
+			await options.hold; // a start that takes a while: the extension is attaching, or the encoder is loading
 			return runFor(id, "network");
 		},
 		async startVideo(tabId, id, mode, onEnd) {
 			log.started.push([mode, tabId, id]);
 			onEnds.set(id, onEnd);
+			await options.hold;
 			return runFor(id, mode);
 		},
 		async owns(sessionId, tabId) {
@@ -61,13 +64,21 @@ function fakeBackend() {
 	};
 }
 
-function setup() {
-	const backend = fakeBackend();
+function setup(backendOptions) {
+	const backend = fakeBackend(backendOptions);
 	let t = 1_000_000;
 	let n = 0;
-	const manager = new CaptureManager(backend, { now: () => t, newId: () => `c${++n}` });
-	return { backend, manager, advance: (ms) => (t += ms) };
+	const active = [];
+	const manager = new CaptureManager(backend, { now: () => t, newId: () => `c${++n}`, onActive: (a) => active.push(a) });
+	return { backend, manager, active, advance: (ms) => (t += ms) };
 }
+const gate = () => {
+	let open;
+	const hold = new Promise((resolve) => (open = resolve));
+	return { hold, open };
+};
+/** Let the manager run until it is waiting on the backend. */
+const settle = () => new Promise((resolve) => setImmediate(resolve));
 const alice = { id: "alice", tabIds: [10, 11, 12, 13, 14, 15] };
 const bob = { id: "bob", tabIds: [20, 21] };
 
@@ -241,4 +252,102 @@ test("actions are checked: an unknown action, and no tab", async () => {
 	await refused(manager.run(alice, { action: "stream" }), "bad_params", /action must be one of/);
 	await refused(manager.run(alice, {}), "bad_params");
 	await refused(manager.run(alice, { action: "network_start" }), "no_tab");
+});
+
+const STARTS = [
+	["network_start", "network"],
+	["record_start", "record"],
+	["flight_start", "flight"],
+];
+const LOSSES = {
+	"the tab is released or closed": (m) => m.tabClosed(10, "the tab was released"),
+	"the debugger leaves": (m, b, id) => b.onEnds.get(id)("the debugger was detached"),
+	"the session cancels it": (m, b, id, session) => m.run(session, { action: "cancel", id }),
+	"the session ends": (m, b, id, session) => m.sessionGone(session.id),
+};
+
+test("first-F2, sol-F1: a start that finishes after its owner is gone stops what it started and reports a cancelled capture", async () => {
+	for (const [action, kind] of STARTS)
+		for (const [loss, lose] of Object.entries(LOSSES)) {
+			const g = gate();
+			const { backend, manager, active } = setup({ hold: g.hold });
+			const starting = manager.run(alice, { action, tabId: 10 }).then(
+				(value) => ({ value }),
+				(error) => ({ error }),
+			);
+			await settle();
+			assert.equal(backend.log.started.length, 1, `${kind}/${loss}: the backend is starting`);
+			const id = backend.log.started[0][2];
+			await lose(manager, backend, id, alice);
+			g.open();
+			const outcome = await starting;
+			const label = `${kind} / ${loss}`;
+			assert.ok(outcome.error instanceof CaptureError, `${label}: reported, not started (${JSON.stringify(outcome.value)})`);
+			assert.equal(outcome.error.code, "not_found", label);
+			assert.match(outcome.error.message, /cancelled before it started.*Nothing was recorded/, label);
+			assert.deepEqual(backend.log.discarded, [id], `${label}: the run that came back was stopped and thrown away`);
+			assert.equal(manager.size, 0, `${label}: nothing is left`);
+			assert.deepEqual((await manager.run(alice, { action: "status" })).captures, [], label);
+			assert.equal(active.at(-1), false, `${label}: the sweep timer is off`);
+			await manager.sweep();
+			assert.deepEqual(backend.log.finished, [], label);
+		}
+});
+
+test("a start that nobody interrupted still runs, whatever the backend's delay", async () => {
+	const g = gate();
+	const { backend, manager } = setup({ hold: g.hold });
+	const starting = manager.run(alice, { action: "network_start", tabId: 10 });
+	await settle();
+	manager.tabClosed(11); // another tab: not ours
+	g.open();
+	const started = await starting;
+	assert.equal((await manager.run(alice, { action: "status" })).captures[0].state, "running");
+	assert.deepEqual(backend.log.discarded, []);
+	assert.equal(started.tabId, 10);
+});
+
+test("first-F4: a stop whose file could not be written can be asked again, and the same file comes back", async () => {
+	const { backend, manager, advance, active } = setup();
+	const a = await manager.run(alice, { action: "network_start", tabId: 10 });
+	const first = await manager.run(alice, { action: "network_stop", id: a.id });
+	assert.equal(first.file.kind, "har");
+	assert.deepEqual(backend.log.finished, [a.id]);
+	assert.deepEqual((await manager.run(alice, { action: "status" })).captures, [], "a stopped capture is not running, so status does not list it");
+	// The helper could not write it: it asks again, with the id or without.
+	const again = await manager.run(alice, { action: "network_stop", id: a.id });
+	assert.deepEqual(again, first);
+	assert.deepEqual(await manager.run(alice, { action: "network_stop" }), first, "the session's only stopped capture of that kind");
+	assert.deepEqual(backend.log.finished, [a.id], "the browser did not finish it twice");
+	assert.equal(active.at(-1), true, "the sweep timer stays on while a file is held");
+	// Another session can't have it, a different kind can't, and a new capture is not mistaken for it.
+	await refused(manager.run(bob, { action: "network_stop", id: a.id }), "not_found");
+	await refused(manager.run(alice, { action: "record_stop", id: a.id }), "not_found");
+	const next = await manager.run(alice, { action: "network_start", tabId: 11 });
+	assert.equal((await manager.run(alice, { action: "network_stop" })).id, next.id);
+	// The helper wrote the file and says so: the kept copy is released, and only the owner can.
+	await refused(manager.run(bob, { action: "cancel", id: a.id }), "not_found");
+	assert.deepEqual(await manager.run(alice, { action: "cancel", id: a.id }), { cancelled: [a.id] });
+	await refused(manager.run(alice, { action: "network_stop", id: a.id }), "not_found");
+	await manager.run(alice, { action: "cancel", id: next.id });
+	assert.equal(active.at(-1), false);
+	assert.deepEqual(backend.log.discarded, [], "releasing a kept file touches no browser state");
+	// One that nobody released goes after the retry window.
+	const c = await manager.run(alice, { action: "record_start", tabId: 12 });
+	await manager.run(alice, { action: "record_stop", id: c.id });
+	advance(RETRY_KEEP_MS - 1000);
+	await manager.sweep();
+	assert.equal((await manager.run(alice, { action: "record_stop", id: c.id })).id, c.id);
+	advance(1000);
+	await manager.sweep();
+	await refused(manager.run(alice, { action: "record_stop", id: c.id }), "not_found");
+	assert.equal(active.at(-1), false);
+});
+
+test("a session that is gone loses the files it was holding for a retry", async () => {
+	const { manager } = setup();
+	const a = await manager.run(alice, { action: "network_start", tabId: 10 });
+	await manager.run(alice, { action: "network_stop", id: a.id });
+	await manager.sessionGone("alice");
+	await refused(manager.run(alice, { action: "network_stop", id: a.id }), "not_found");
 });
