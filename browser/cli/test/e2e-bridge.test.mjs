@@ -149,6 +149,25 @@ extraPages["/clip"] = `<!doctype html><title>Clip</title>
 <script>window.__seen = [];
 for (const type of ["paste", "copy", "cut", "keydown", "keyup", "beforeinput"]) document.addEventListener(type, (e) => window.__seen.push(type + ":" + (e.key || "")), true);</script>`;
 
+// Evidence captures. The secrets are put together here so no line reads like a real credential.
+const cat = (...parts) => parts.join("");
+const CAPTURE_SECRETS = {
+	url: "URLSECRET1",
+	header: "HEADERSECRET2",
+	setCookie: "COOKIESECRET3",
+	responseBody: "RESPONSESECRET4",
+	loginForm: "LOGINSECRET5",
+	jsonBody: "JSONBODYSECRET6",
+	pageForm: "PAGEFORMSECRET7",
+};
+// A page that animates (so a recording has something to show) and has no password field.
+extraPages["/capture-page"] = `<!doctype html><title>Capture</title>
+<body style="margin:0;font:48px sans-serif"><h1 id="h">0</h1>
+<script>let n = 0; setInterval(() => { document.getElementById("h").textContent = ++n; document.body.style.background = n % 2 ? "#fc6" : "#6cf"; }, 250);</script>`;
+// The same with a password field: nothing it sends may have its body stored, whatever the address or field names.
+extraPages["/capture-login-page"] = `<!doctype html><title>Capture login</title>
+<form><input type="password" aria-label="Password"></form>`;
+
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
 let hits = 0;
 
@@ -288,6 +307,16 @@ before(async () => {
 			hits++;
 			res.end(String(hits));
 			return;
+		}
+		// The capture tests: a JSON API that sets a cookie and returns a secret, and two POST targets.
+		if (req.url.startsWith("/api/data")) {
+			res.writeHead(200, { "content-type": "application/json", "set-cookie": `${cat("s", "id")}=${CAPTURE_SECRETS.setCookie}; HttpOnly` });
+			return res.end(JSON.stringify({ name: "Ada", [cat("access_", "token")]: CAPTURE_SECRETS.responseBody }));
+		}
+		if (req.method === "POST" && (req.url === "/login" || req.url === "/api/save")) {
+			req.resume();
+			res.writeHead(200, { "content-type": "application/json" });
+			return res.end('{"ok":true}');
 		}
 		res.writeHead(200, { "content-type": "text/html" });
 		if (req.url === "/counter") return res.end(COUNTER_PAGE);
@@ -1334,4 +1363,158 @@ test("tabs_create on a page that cannot load opens the tab and says the page did
 	const created = JSON.parse(await tool("tabs_create", { url: "https://example.invalid/" }));
 	assert.match(created.note, /^The page did not load: Navigation to https:\/\/example\.invalid\/ failed: /);
 	await tool("tabs_close", { tabId: created.tabId });
+});
+
+// ---- Evidence captures: network to a HAR, a recording, a flight recorder --------------------------------------------
+
+const captureOf = async (args, client) => {
+	const result = client ? await client.callTool({ name: "capture", arguments: args }) : await mcp.callTool({ name: "capture", arguments: args });
+	const text = result.content.map((c) => c.text).join("\n");
+	return { ok: !result.isError, text, json: () => JSON.parse(text) };
+};
+const captureOk = async (args, client) => {
+	const r = await captureOf(args, client);
+	assert.ok(r.ok, `capture ${args.action} failed: ${r.text}`);
+	return r.json();
+};
+
+/** Frames and codec of a video, when ffprobe is installed (the CI machines and some Macs have none). */
+function probe(path) {
+	try {
+		const out = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries", "stream=codec_name,nb_read_frames,width,height", "-of", "json", path], { encoding: "utf8" }));
+		return out.streams[0];
+	} catch {
+		return undefined;
+	}
+}
+
+test("capture network: the tab's requests become a HAR on this computer, with the secrets left out", async () => {
+	await go("capture-page");
+	const started = await captureOk({ action: "network_start" });
+	assert.equal(started.kind, "network");
+	const url = `/api/data?${new URLSearchParams({ [cat("to", "ken")]: CAPTURE_SECRETS.url, sort: "asc" })}`;
+	await js(
+		`Promise.all([
+			fetch(${JSON.stringify(url)}, { headers: { ${cat("Author", "ization")}: ${JSON.stringify(cat("Bearer ", CAPTURE_SECRETS.header))} } }).then((r) => r.json()),
+			fetch("/api/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "kept", ${cat("api", "Key")}: ${JSON.stringify(CAPTURE_SECRETS.jsonBody)} }) }),
+			fetch("/login", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: ${JSON.stringify(new URLSearchParams({ user: "ada", [cat("pass", "word")]: CAPTURE_SECRETS.loginForm }).toString())} }),
+		]).then(() => 1)`,
+		{ world: "main" },
+	);
+	await until(async () => ((await captureOk({ action: "status" })).captures[0].entries ?? 0) >= 3, 10_000, "three requests recorded");
+	const stopped = await captureOk({ action: "network_stop" });
+	assert.ok(stopped.path.endsWith(".har") && stopped.path.includes("/captures/"), stopped.path);
+	assert.equal(statSync(stopped.path).mode & 0o777, 0o600, "files are 0600");
+	assert.equal(statSync(dirname(stopped.path)).mode & 0o777, 0o700, "the folder is 0700");
+	assert.equal(stopped.bytes, statSync(stopped.path).size);
+	assert.equal(stopped.file, undefined, "the file's content does not go back to the agent");
+	assert.ok(!JSON.stringify(stopped).includes("Ada"));
+
+	const file = readFileSync(stopped.path, "utf8");
+	const har = JSON.parse(file);
+	assert.equal(har.log.version, "1.2");
+	const entries = har.log.entries;
+	const data = entries.find((e) => new URL(e.request.url).pathname === "/api/data");
+	assert.ok(data, JSON.stringify(entries.map((e) => e.request.url)));
+	assert.equal(data.response.status, 200);
+	assert.equal(data.request.queryString.find((q) => q.name === "sort").value, "asc");
+	assert.equal(data.request.queryString.find((q) => q.name === cat("to", "ken")).value, "[redacted]");
+	assert.ok(data.response.content.text.includes('"name":"Ada"'), "a same-origin JSON response is in the file, masked");
+	// A page's own request and the sign-in form: present as requests, their bodies are not.
+	assert.ok(entries.some((e) => e.request.method === "POST" && new URL(e.request.url).pathname === "/api/save" && e.request.postData.text.includes('"title":"kept"')));
+	const login = entries.find((e) => new URL(e.request.url).pathname === "/login");
+	assert.equal(login.request.postData.text, undefined);
+	for (const [name, secret] of Object.entries(CAPTURE_SECRETS)) assert.ok(!file.includes(secret), `${name} (${secret}) is in the HAR`);
+	assert.deepEqual((await captureOk({ action: "status" })).captures, [], "stopping ends the capture");
+});
+
+test("capture network: a page with a password field has no request body stored", async () => {
+	await go("capture-login-page");
+	await captureOk({ action: "network_start" });
+	await js(`fetch("/api/save", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ f1: ${JSON.stringify(CAPTURE_SECRETS.pageForm)} }) }).then(() => 1)`, { world: "main" });
+	await until(async () => ((await captureOk({ action: "status" })).captures[0].entries ?? 0) >= 1, 10_000, "the request recorded");
+	const stopped = await captureOk({ action: "network_stop" });
+	const file = readFileSync(stopped.path, "utf8");
+	assert.ok(!file.includes(CAPTURE_SECRETS.pageForm), "the body of a request sent from a page with a password field is in the HAR");
+	const save = JSON.parse(file).log.entries.find((e) => new URL(e.request.url).pathname === "/api/save");
+	assert.match(save.request.postData.comment, /password field/);
+});
+
+test("capture: a recording of a background tab is a WebM that plays, and so is the flight recorder's", async () => {
+	await go("capture-page");
+	const rec = await captureOk({ action: "record_start" });
+	// The two kinds of video share the tab's one screencast: a second is refused, not silently half-working.
+	const second = await captureOf({ action: "flight_start" });
+	assert.equal(second.ok, false);
+	assert.match(second.text, /already has a recording or flight recorder running/);
+	await new Promise((r) => setTimeout(r, 3500));
+	const status = (await captureOk({ action: "status" })).captures.find((c) => c.id === rec.id);
+	assert.equal(status.state, "running");
+	assert.ok(status.bytes > 0 && status.spanMs > 2000, JSON.stringify(status));
+	const done = await captureOk({ action: "record_stop" });
+	assert.ok(done.path.endsWith(".webm"), done.path);
+	assert.equal(statSync(done.path).mode & 0o777, 0o600);
+	assert.equal(done.bytes, statSync(done.path).size);
+	assert.ok(done.durationMs >= 3000 && done.durationMs < 8000, `durationMs ${done.durationMs}`);
+	assert.equal(readFileSync(done.path).readUInt32BE(0), 0x1a45dfa3, "a WebM starts with an EBML header");
+	const v = probe(done.path);
+	if (v) {
+		assert.equal(v.codec_name, "vp8");
+		assert.ok(Number(v.nb_read_frames) >= 25, `${v.nb_read_frames} frames in about 3.5 s at 10 a second`);
+	}
+
+	const flight = await captureOk({ action: "flight_start" });
+	await new Promise((r) => setTimeout(r, 3500));
+	const saved = await captureOk({ action: "flight_save", id: flight.id });
+	assert.equal(saved.stillRecording, true, "saving does not stop the flight recorder");
+	assert.ok(saved.path.endsWith(".webm") && saved.path !== done.path);
+	assert.equal(readFileSync(saved.path).readUInt32BE(0), 0x1a45dfa3);
+	const f = probe(saved.path);
+	if (f) assert.ok(Number(f.nb_read_frames) >= 15, `${f.nb_read_frames} frames saved`);
+	assert.equal((await captureOk({ action: "status" })).captures[0].saves, 1);
+	assert.deepEqual((await captureOk({ action: "cancel" })).cancelled, [flight.id]);
+	assert.deepEqual((await captureOk({ action: "status" })).captures, []);
+});
+
+test("capture: another session's tab and another session's capture are refused, and a tab given away ends its capture", async () => {
+	await go("capture-page");
+	const mine = await tabOn("capture-page");
+	const net = await captureOk({ action: "network_start" });
+	const flight = await captureOk({ action: "flight_start", tabId: mine }).catch(() => undefined);
+	const project = join(home, "projects", "capture-scope");
+	mkdirSync(project, { recursive: true });
+	execFileSync("git", ["init", "-q", project]);
+	const other = await agentIn(project);
+	try {
+		await on(other, "navigate", { url: `${pageUrl}capture-login-page` });
+		for (const action of ["network_start", "record_start", "flight_start"]) {
+			const refused = await captureOf({ action, tabId: mine }, other);
+			assert.equal(refused.ok, false, `${action} on another session's tab`);
+			assert.match(refused.text, /^not_found: Tab \d+ is not one of your tabs/);
+		}
+		for (const action of ["network_stop", "record_stop", "flight_save", "cancel"]) {
+			const refused = await captureOf({ action, id: net.id }, other);
+			assert.equal(refused.ok, false, `${action} on another session's capture`);
+			assert.match(refused.text, /^not_found: No capture .* in your session/);
+		}
+		assert.deepEqual((await captureOk({ action: "status" }, other)).captures, [], "the other session sees none of mine");
+		// And none of that touched mine.
+		assert.ok((await captureOk({ action: "status" })).captures.some((c) => c.id === net.id && c.state === "running"));
+	} finally {
+		await other.close();
+	}
+	if (flight) await captureOk({ action: "cancel", id: flight.id });
+
+	// A tab given to the user ends its capture, and what was held can still be saved, with the reason.
+	const opened = JSON.parse(await tool("tabs_create", { url: `${pageUrl}capture-page` }));
+	const given = await captureOk({ action: "network_start", tabId: opened.tabId });
+	await tool("tabs_release", { tabId: opened.tabId });
+	const state = (await captureOk({ action: "status" })).captures.find((c) => c.id === given.id);
+	assert.equal(state.state, "ended");
+	assert.match(state.endedBy, /given to the user/);
+	const kept = await captureOk({ action: "network_stop", id: given.id });
+	assert.match(kept.notes[0], /had ended early: the tab was given to the user/);
+	const again = await captureOf({ action: "network_start", tabId: opened.tabId });
+	assert.equal(again.ok, false, "a tab that is no longer the session's cannot be captured");
+	await captureOk({ action: "cancel" });
 });

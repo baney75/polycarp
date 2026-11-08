@@ -174,6 +174,7 @@ connector, see [Remote MCP and tunnels](#remote-mcp-and-tunnels).
 | `click`, `type`, `fill`, `press`, `hover`, `scroll`, `drag`, `actions` | Act with real input events, by ref or by screenshot pixel |
 | `run_js`, `wait`, `read_console`, `read_network` | Scripts, waits and debugging |
 | `handle_dialog` | Answer an alert, confirm or prompt box. While one is open, other calls fail at once with its text |
+| `capture` | Evidence from its own tab, saved as files on your computer in `~/.config/tabkyra/captures` (0700, files 0600): `network_start`/`network_stop` a HAR with credentials left out, `record_start`/`record_stop` a WebM video with no sound, `flight_start`/`flight_save` the last minute of video. Works on a tab in the background; stops itself after 10 minutes (30 for the flight recorder). The agent is told the path and size, never the content. Remote sessions need the `browser.capture` scope |
 | `tabs_show` | Bring a tab in front of you, when you need to sign in or see it |
 | `ask_user` | Ask you 1 to 4 multiple-choice questions in the side panel and wait for your answer (you can always type your own). The toolbar icon shows a badge while one waits; it gives up after 5 minutes, or sooner if your harness's tool timeout is shorter (Claude Code: `MCP_TOOL_TIMEOUT`, in ms; Codex: `tool_timeout_sec` on the server). Giving up takes the question off the panel |
 | `library_add`, `library_search`, `library_cite` | Save verified sources and cite them (see [Library](#library)) |

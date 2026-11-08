@@ -1119,6 +1119,11 @@ function installScreencastListener(): void {
 	});
 }
 
+/** Who is casting this tab right now (the owner given to startScreencast), if anyone. */
+export function screencastOwner(tabId: number): string | undefined {
+	return screencasts.get(tabId)?.owner;
+}
+
 /** Stream compositor frames of a tab, visible or not, to `sink` until stopped. */
 export async function startScreencast(
 	tabId: number,
