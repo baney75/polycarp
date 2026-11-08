@@ -224,3 +224,11 @@ test("garbage stops the ring and keeps what was good", () => {
 	ring.push(cluster(2000));
 	assert.ok(inspect(ring.snapshot()).clusters.length >= 1, "the good part is still there");
 });
+
+test("the byte limit never leaves a delta frame at the front of the file", () => {
+	const big = (ms, key) => cluster(ms, { key });
+	const held = concat([HEADER, big(0, true), ...[1000, 2000, 3000, 4000].map((ms) => big(ms, false)), big(5000, true), big(6000, false)]);
+	const limit = new WebmRing({ windowMs: 600_000, maxBytes: Math.floor(held.length * 0.8) });
+	feed(limit, concat([held, cluster(7000, { key: false })]), 3);
+	assert.ok(inspect(limit.snapshot()).clusters[0].key, "the file starts at a key frame");
+});

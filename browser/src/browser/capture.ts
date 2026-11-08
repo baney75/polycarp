@@ -323,7 +323,16 @@ export class CaptureManager {
 			throw new CaptureError(ERR.BAD_PARAMS, `Capture ${capture.id} is still starting. Try again in a moment.`);
 		capture.busy = true;
 		try {
-			const out = keepRunning ? await (run.snapshot ?? run.finish).call(run) : await run.finish();
+			let out: CaptureOutput;
+			try {
+				out = keepRunning ? await (run.snapshot ?? run.finish).call(run) : await run.finish();
+			} catch (err) {
+				// A stop that failed must not stay listed as running. It stays held until the sweep, so a retry can still get the file.
+				if (!keepRunning) this.ended(capture, "stopping it failed");
+				throw err;
+			}
+			if (this.captures.get(capture.id) !== capture)
+				throw new CaptureError(ERR.NOT_FOUND, `Capture ${capture.id} was cancelled while it was being saved.`);
 			if (keepRunning) capture.saves++;
 			const notes = [...out.notes];
 			if (capture.endedBy) notes.unshift(`The capture had ended early: ${capture.endedBy}. This is what it held.`);

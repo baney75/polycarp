@@ -342,7 +342,7 @@ export class WebmRing {
 		// Over the byte limit: shed from the front, down to the next key frame when there is one.
 		while (this.bytes > this.maxBytes && this.clusters.length > 1) {
 			drop();
-			while (this.clusters.length > 1 && !this.clusters[0].keyframe && this.bytes > this.maxBytes) drop();
+			while (this.clusters.length > 1 && !this.clusters[0].keyframe) drop();
 		}
 	}
 }

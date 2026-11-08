@@ -96,7 +96,7 @@ try {
 }
 const byId = new Map(results.map((r) => [r.id, r]));
 const problems = [];
-// The runner's headless Chromium never fires IntersectionObserver for this background tab; it still gates local runs.
+// This page times out on the runner even with background rendering flags on; it still gates local runs.
 const notOnCi = new Set(process.env.CI ? ["infinite-scroll"] : []);
 for (const id of floor.passing.filter((x) => !notOnCi.has(x))) {
 	const r = byId.get(id);
