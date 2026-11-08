@@ -618,7 +618,9 @@ async function main(): Promise<void> {
 				}
 				const cloudflare = option("--cloudflare");
 				if (cloudflare !== undefined && publicUrl) throw new UsageError("--cloudflare and --public-url are different routes: use one.");
-				process.exitCode = await remoteSetup({ publicUrl, cloudflare, port, service: !flag("--no-service"), passcode: !flag("--no-passcode"), json: flag("--json") });
+				const replaceFunnel = flag("--replace-funnel");
+				if (replaceFunnel && cloudflare === undefined) throw new UsageError("--replace-funnel moves a Funnel route to Cloudflare, so it needs --cloudflare name.yourdomain.com.");
+				process.exitCode = await remoteSetup({ publicUrl, cloudflare, port, service: !flag("--no-service"), passcode: !flag("--no-passcode"), json: flag("--json"), replaceFunnel });
 				return;
 			}
 			if (sub === "status") {
@@ -629,7 +631,7 @@ async function main(): Promise<void> {
 				process.exitCode = await remoteOff();
 				return;
 			}
-			throw new UsageError(`Usage: ${COMMAND_NAME} remote setup [--cloudflare name.yourdomain.com | --public-url https://host] [--port N] [--no-service] [--no-passcode] [--json] | status [--json] | off`);
+			throw new UsageError(`Usage: ${COMMAND_NAME} remote setup [--cloudflare name.yourdomain.com | --public-url https://host] [--replace-funnel] [--port N] [--no-service] [--no-passcode] [--json] | status [--json] | off`);
 		}
 		case "hub": {
 			const rest = argv.slice(1).filter((a, i, all) => !a.startsWith("-") && !(VALUE_FLAGS.has(all[i - 1] ?? "") && !(all[i - 1] ?? "").includes("=")));

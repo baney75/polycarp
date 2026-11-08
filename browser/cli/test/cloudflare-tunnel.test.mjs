@@ -35,6 +35,9 @@ async function inConfig(name, fn) {
 	mkdirSync(join(dir, "nopath"), { recursive: true });
 	const tar = spawnSync("sh", ["-c", "command -v tar"], { encoding: "utf8" }).stdout.trim();
 	symlinkSync(tar, join(dir, "nopath", "tar"));
+	// GNU tar (Linux CI) runs gzip from PATH for -z; macOS bsdtar has it built in, and the Linux assets are raw binaries, so production never needs this.
+	const gzip = spawnSync("sh", ["-c", "command -v gzip"], { encoding: "utf8" }).stdout.trim();
+	if (gzip) symlinkSync(gzip, join(dir, "nopath", "gzip"));
 	process.env.PATH = join(dir, "nopath");
 	process.env.TABKYRA_APPLICATIONS_DIR = join(dir, "apps");
 	process.env.HOME = join(dir, "home");
@@ -211,8 +214,7 @@ function hooks(over = {}) {
 		cloudflared: async () => (calls.push("cloudflared"), { ok: true, path: "/fake/cloudflared", downloaded: false }),
 		signedIn: () => false,
 		login: async (_bin, onUrl) => (calls.push("login"), onUrl("https://dash.cloudflare.com/argotunnel?aud=1"), { ok: true }),
-		closeFunnel: () => (calls.push("closeFunnel"), { ok: true, message: "off" }),
-		setup: async (options) => void calls.push(`setup ${options.cloudflare} service=${options.service} passcode=${options.passcode}`),
+		setup: async (options) => void calls.push(`setup ${options.cloudflare} service=${options.service} passcode=${options.passcode} replaceFunnel=${options.replaceFunnel}`),
 		check: async () => (calls.push("check"), { ok: true, detail: "ok" }),
 		...over,
 	};
@@ -224,30 +226,37 @@ test("setupTunnel runs the five steps in order and reports the sign-in address",
 		const seen = [];
 		const done = await setupTunnel("polycarp.example.com", (p) => seen.push(p), h, { checkTotalMs: 100, checkEveryMs: 10 });
 		assert.deepEqual(done, { publicUrl: "https://polycarp.example.com" });
-		assert.deepEqual(h.calls, ["cloudflared", "login", "setup polycarp.example.com service=true passcode=false", "check"]);
+		assert.deepEqual(h.calls, ["cloudflared", "login", "setup polycarp.example.com service=true passcode=false replaceFunnel=false", "check"]);
 		assert.deepEqual(seen.filter((p) => p.state === "done").map((p) => p.step), ["cloudflared", "signin", "route", "tunnel", "check"]);
 		assert.ok(seen.some((p) => p.step === "signin" && p.state === "waiting" && p.url === "https://dash.cloudflare.com/argotunnel?aud=1"));
 	});
 });
 
-test("setupTunnel skips the sign-in when already signed in, and closes Funnel before setup when the route is Funnel", async () => {
+test("setupTunnel skips the sign-in when already signed in, and asks setup to replace Funnel when the route is Funnel", async () => {
 	await inConfig("funnel", async (dir) => {
 		mkdirSync(process.env.TABKYRA_CONFIG_DIR, { recursive: true });
 		writeFileSync(join(process.env.TABKYRA_CONFIG_DIR, "remote.json"), JSON.stringify({ publicUrl: "https://mac.tail.ts.net:8443", port: 8787, route: "funnel" }));
 		const h = hooks({ signedIn: () => true });
 		await setupTunnel("polycarp.example.com", () => {}, h, { checkTotalMs: 100, checkEveryMs: 10 });
-		assert.deepEqual(h.calls, ["cloudflared", "closeFunnel", "setup polycarp.example.com service=true passcode=false", "check"]);
+		// Funnel is closed inside setup, after the tunnel is made; the flow itself never touches it.
+		assert.deepEqual(h.calls, ["cloudflared", "setup polycarp.example.com service=true passcode=false replaceFunnel=true", "check"]);
 	});
 });
 
-test("setupTunnel skips setup when this host is already the Cloudflare route, and refuses a hub or a custom route first", async () => {
+test("setupTunnel runs setup again for the same Cloudflare name, refuses another name before setup, and refuses a custom route first", async () => {
 	await inConfig("same", async () => {
 		mkdirSync(process.env.TABKYRA_CONFIG_DIR, { recursive: true });
 		const file = join(process.env.TABKYRA_CONFIG_DIR, "remote.json");
 		writeFileSync(file, JSON.stringify({ publicUrl: "https://polycarp.example.com", port: 8787, route: "cloudflare" }));
 		const h = hooks({ signedIn: () => true });
 		await setupTunnel("polycarp.example.com", () => {}, h, { checkTotalMs: 100, checkEveryMs: 10 });
-		assert.deepEqual(h.calls, ["cloudflared", "check"]);
+		// A rerun resumes a half-finished setup, so setup runs again.
+		assert.deepEqual(h.calls, ["cloudflared", "setup polycarp.example.com service=true passcode=false replaceFunnel=false", "check"]);
+		const other = hooks({ signedIn: () => true });
+		const seen = [];
+		await assert.rejects(setupTunnel("other.example.com", (p) => seen.push(p), other), /already has a Cloudflare tunnel on https:\/\/polycarp\.example\.com/);
+		assert.equal(other.calls.some((c) => c.startsWith("setup")), false, "refused in the route step, before setup");
+		assert.equal(seen.find((p) => p.state === "failed").step, "route");
 		writeFileSync(file, JSON.stringify({ publicUrl: "https://front.example.com", port: 8787, route: "custom" }));
 		const none = hooks();
 		await assert.rejects(setupTunnel("polycarp.example.com", () => {}, none), TunnelError);

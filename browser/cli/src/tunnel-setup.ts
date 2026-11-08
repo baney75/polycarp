@@ -9,7 +9,7 @@ import type { TunnelStepId } from "../../src/connect/types.ts";
 import { cloudflareLoginForPanel, cloudflaredBinary, cloudflareSignedIn, normalizeCloudflareHost } from "./cloudflare.ts";
 import { downloadCloudflared } from "./cloudflared-download.ts";
 import { hubFile } from "./hub-state.ts";
-import { closeFunnelRoute, loadRemoteConfig, metadata, METADATA_PATH, remoteSetup, type SetupOptions } from "./remote-setup.ts";
+import { loadRemoteConfig, metadata, METADATA_PATH, remoteSetup, type SetupOptions } from "./remote-setup.ts";
 import type { SetupReport } from "./remote-state.ts";
 import { sleep } from "./service.ts";
 import { COMMAND_NAME } from "./self.ts";
@@ -37,7 +37,6 @@ export interface TunnelHooks {
 	cloudflared(): Promise<{ ok: true; path: string; downloaded: boolean } | { ok: false; message: string }>;
 	signedIn(): boolean;
 	login(bin: string, onUrl: (url: string) => void): Promise<{ ok: true } | { ok: false; message: string }>;
-	closeFunnel(): { ok: boolean; message: string };
 	setup(options: SetupOptions): Promise<void>;
 	check(publicUrl: string): Promise<{ ok: boolean; detail: string }>;
 }
@@ -65,7 +64,6 @@ export const realTunnelHooks: TunnelHooks = {
 	},
 	signedIn: cloudflareSignedIn,
 	login: (bin, onUrl) => cloudflareLoginForPanel(bin, onUrl),
-	closeFunnel: closeFunnelRoute,
 	async setup(options) {
 		let report: SetupReport | undefined;
 		const code = await remoteSetup({ ...options, report: (r) => (report = r) });
@@ -118,18 +116,16 @@ export async function setupTunnel(host: string, progress: (p: TunnelProgress) =>
 		if (!result.ok) throw new Error(result.message);
 	});
 
-	const sameHost = previous?.route === "cloudflare" && previous.publicUrl === publicUrl;
+	// Another Cloudflare name is a different route; the person turns it off first, as on the command line.
 	await run("route", async () => {
-		if (previous?.route === "funnel") {
-			const closed = hooks.closeFunnel();
-			if (!closed.ok) throw new Error(closed.message);
-		}
+		if (previous?.route === "cloudflare" && previous.publicUrl !== publicUrl)
+			throw new Error(`This computer already has a Cloudflare tunnel on ${previous.publicUrl}. Run ${COMMAND_NAME} remote off first.`);
 	});
 
+	// Always run: setup again on the same name picks up where a failed run stopped (a service that never started). Funnel, when
+	// it is the route now, closes inside setup only after Cloudflare has made the tunnel.
 	await run("tunnel", async () => {
-		// Already on this name: the tunnel is set up, so go straight to the check.
-		if (sameHost) return;
-		await hooks.setup({ cloudflare: name, service: true, passcode: false, ...(previous?.route === "funnel" ? { port: previous.port } : {}) });
+		await hooks.setup({ cloudflare: name, service: true, passcode: false, replaceFunnel: previous?.route === "funnel" });
 	});
 
 	await run("check", async () => {

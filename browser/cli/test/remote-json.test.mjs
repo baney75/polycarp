@@ -909,3 +909,108 @@ test("remote setup again on the Cloudflare route keeps its name", async () => {
 	}
 });
 
+
+// ---------- replacing Funnel with Cloudflare ----------
+
+/** A scenario whose Tailscale shows Polycarp's Funnel on `port`, with a signed-in cloudflared stub. The caller runs the Funnel setup. */
+async function funnelRouteScenario(name, cf) {
+	// The stub's serve status must name the serve's port, so the port is chosen first.
+	const port = await freePort();
+	const serveStatus = JSON.stringify({ TCP: { 8443: { HTTPS: true } }, Web: { [`${DNS}:8443`]: { Handlers: { "/": { Proxy: `http://127.0.0.1:${port}` } } } } });
+	const s = scenario(name, { serveStatus });
+	s.launcher();
+	cloudflared(s, cf);
+	signedIn(s);
+	return { s, port };
+}
+
+/** A stand-in serve on `port`: it says the Funnel address until remote.json names the Cloudflare route, then the Cloudflare one. */
+async function withServe(s, port, fn) {
+	const srv = createHttpServer((req, res) => {
+		if (req.url !== METADATA_PATH) {
+			res.statusCode = 404;
+			res.end("not here");
+			return;
+		}
+		let route = "";
+		try {
+			route = JSON.parse(readFileSync(join(s.env.TABKYRA_CONFIG_DIR, "remote.json"), "utf8")).route;
+		} catch {
+			/* no file yet */
+		}
+		res.setHeader("content-type", "application/json");
+		res.end(JSON.stringify({ resource: route === "cloudflare" ? `https://${CF_HOST}/mcp` : `${FUNNEL_URL}/mcp` }));
+	});
+	await new Promise((resolve) => srv.listen(port, "127.0.0.1", resolve));
+	try {
+		return await fn();
+	} finally {
+		await new Promise((resolve) => srv.close(resolve));
+	}
+}
+
+const funnelOffCalls = (s) => s.calls().filter((x) => /^tailscale funnel --https=8443 off/.test(x));
+const remoteRoute = (s) => JSON.parse(readFileSync(join(s.env.TABKYRA_CONFIG_DIR, "remote.json"), "utf8")).route;
+
+test("remote setup --cloudflare --replace-funnel moves a running Funnel route to Cloudflare, closing Funnel only after the tunnel is made", async () => {
+	const { s, port } = await funnelRouteScenario("rf-ok");
+	await withServe(s, port, async () => {
+		const first = await s.runAsync(["remote", "setup", "--json", "--port", String(port)]);
+		assert.equal(first.json().state, "on", first.stdout);
+		assert.equal(remoteRoute(s), "funnel");
+		assert.deepEqual(funnelOffCalls(s), []);
+		const r = await s.runAsync(["remote", "setup", "--json", "--no-passcode", "--cloudflare", CF_HOST, "--replace-funnel", "--port", String(port)]);
+		assert.equal(r.code, 0, r.stdout + r.stderr);
+		assert.equal(r.json().state, "on");
+		assert.equal(r.json().connectorUrl, `https://${CF_HOST}/mcp`);
+		assert.equal(remoteRoute(s), "cloudflare");
+		assert.equal(funnelOffCalls(s).length, 1, s.calls().join("\n"));
+		assert.ok(existsSync(cfService(s)));
+		// The order that keeps a working route: the DNS record exists before Funnel closes.
+		const calls = s.calls();
+		const dns = calls.findIndex((x) => x.startsWith("cloudflared tunnel route dns"));
+		const off = calls.findIndex((x) => /^tailscale funnel --https=8443 off/.test(x));
+		assert.ok(dns >= 0 && off > dns, calls.join("\n"));
+	});
+});
+
+test("a Cloudflare name that is taken leaves the Funnel route on: remote.json unchanged, Funnel never closed", async () => {
+	const { s, port } = await funnelRouteScenario("rf-taken", { route: "taken" });
+	await withServe(s, port, async () => {
+		const first = await s.runAsync(["remote", "setup", "--json", "--port", String(port)]);
+		assert.equal(first.json().state, "on", first.stdout);
+		const before = readFileSync(join(s.env.TABKYRA_CONFIG_DIR, "remote.json"), "utf8");
+		const r = await s.runAsync(["remote", "setup", "--json", "--no-passcode", "--cloudflare", CF_HOST, "--replace-funnel", "--port", String(port)]);
+		assert.equal(r.code, 1, r.stdout);
+		assert.equal(r.json().code, "cloudflare_dns");
+		assert.equal(readFileSync(join(s.env.TABKYRA_CONFIG_DIR, "remote.json"), "utf8"), before);
+		assert.equal(remoteRoute(s), "funnel");
+		assert.deepEqual(funnelOffCalls(s), [], s.calls().join("\n"));
+		assert.equal(existsSync(cfService(s)), false);
+	});
+});
+
+test("--cloudflare over a Funnel route without --replace-funnel is still refused and changes nothing", async () => {
+	const { s, port } = await funnelRouteScenario("rf-refused");
+	await withServe(s, port, async () => {
+		const first = await s.runAsync(["remote", "setup", "--json", "--port", String(port)]);
+		assert.equal(first.json().state, "on", first.stdout);
+		const before = readFileSync(join(s.env.TABKYRA_CONFIG_DIR, "remote.json"), "utf8");
+		const callsBefore = s.calls().length;
+		const r = await s.runAsync(["remote", "setup", "--json", "--no-passcode", "--cloudflare", CF_HOST, "--port", String(port)]);
+		assert.equal(r.code, 1);
+		assert.match(r.json().message, /Funnel from an earlier setup is on/);
+		assert.equal(readFileSync(join(s.env.TABKYRA_CONFIG_DIR, "remote.json"), "utf8"), before);
+		assert.deepEqual(funnelOffCalls(s), []);
+		assert.equal(cfCalls(s).length, 0);
+		assert.equal(s.calls().length >= callsBefore, true);
+	});
+});
+
+test("--replace-funnel without --cloudflare is refused with a clear message", () => {
+	const s = scenario("rf-usage", { tailscale: false });
+	const r = s.run(["remote", "setup", "--replace-funnel"]);
+	assert.equal(r.code, 2);
+	assert.match(r.stderr, /--replace-funnel .* needs --cloudflare/);
+	assert.equal(s.remoteJsonExists(), false);
+});
