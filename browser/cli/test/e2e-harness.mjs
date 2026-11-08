@@ -92,12 +92,15 @@ export async function startHarness() {
 
 	/** path -> html */
 	const store = new Map();
+	/** Paths a page asked for that the store lacks: a case whose page 404s measured nothing. */
+	const misses = [];
 	let origin = "";
 	let origin2 = "";
 	const serve = (self) => (req, res) => {
 		const path = req.url.split("?")[0];
 		const body = store.get(path);
 		if (body === undefined) {
+			if (path !== "/favicon.ico") misses.push(path);
 			res.writeHead(404, { "content-type": "text/plain" });
 			res.end("not found");
 			return;
@@ -226,6 +229,7 @@ export async function startHarness() {
 			pageTarget,
 			evaluate,
 			/** Register html (a string, or a map of path -> html) under `/${id}`; returns the entry URL. */
+			misses,
 			mount(id, html) {
 				const files = typeof html === "string" ? { "/": html } : html;
 				for (const [path, body] of Object.entries(files)) {

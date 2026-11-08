@@ -35,9 +35,13 @@ try {
 		let pass = false;
 		let error;
 		try {
+			h.misses.length = 0;
 			const url = h.mount(c.id, c.html);
 			await t.tool("navigate", { url });
-			await withTimeout(c.solve(t), 60_000, "solve");
+			await withTimeout(c.solve(t), 60_000, "solve").catch((err) => {
+				t.cancel();
+				throw err;
+			});
 			const page = { eval: (expr) => h.evaluate(expr, `${h.origin}/${c.id}/`) };
 			const end = Date.now() + 2500;
 			let why = "check returned false";
@@ -58,6 +62,11 @@ try {
 		} catch (err) {
 			error = String(err.message ?? err).split("\n")[0].slice(0, 300);
 		}
+		// Checked after a throw too: a case whose page 404s measured nothing, pass or fail.
+		if (h.misses.length) {
+			pass = false;
+			error = `the page asked for files the case does not serve: ${[...new Set(h.misses)].join(", ")}`;
+		}
 		// A dialog left open would freeze the next navigation.
 		await h.call("handle_dialog", { accept: false }).catch(() => {});
 		results.push({ id: c.id, pass, ms: Date.now() - start, calls: t.calls, error });
@@ -77,14 +86,23 @@ writeFileSync(join(here, "last-run.json"), `${JSON.stringify({ at: new Date().to
 let floor = { passing: [], failing: {}, calls: {}, ms: {} };
 try {
 	floor = JSON.parse(readFileSync(floorPath, "utf8"));
-} catch {
+} catch (err) {
+	// Only a missing file starts empty; a broken one (a merge conflict) must not pass as "no floor".
+	if (err.code !== "ENOENT") {
+		console.error(`floor.json is unreadable: ${err.message}`);
+		process.exit(1);
+	}
 	if (!update) console.log("no floor.json yet: run with --update to write one");
 }
 const byId = new Map(results.map((r) => [r.id, r]));
 const problems = [];
 for (const id of floor.passing) {
 	const r = byId.get(id);
-	if (!r) continue;
+	if (!r) {
+		// A passing case that vanished (file deleted, id renamed) is a drop, unless this run picked ids.
+		if (!wanted.length) problems.push(`${id} is in passing but no case has that id`);
+		continue;
+	}
 	if (!r.pass) problems.push(`${id} is in passing but failed: ${r.error}`);
 	else if (floor.calls?.[id] && r.calls > floor.calls[id]) problems.push(`${id} took ${r.calls} tool calls, over its ceiling of ${floor.calls[id]}`);
 	// Wall time swings several fold when the machine is busy, so it gates only on request (--time, on a quiet machine).

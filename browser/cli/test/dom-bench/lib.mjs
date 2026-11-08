@@ -36,17 +36,24 @@ const test = (pattern, value) => (pattern === undefined ? true : pattern instanc
 
 export function makeT(h) {
 	let calls = 0;
+	let cancelled = false;
 	const t = {
 		get calls() {
 			return calls;
 		},
 		/** An MCP tool call; throws on a tool error. */
+		/** After a timeout: the solve may still be running, and must not act on the next case's page. */
+		cancel() {
+			cancelled = true;
+		},
 		async tool(name, args = {}) {
+			if (cancelled) throw new Error("cancelled after timeout");
 			calls++;
 			return h.tool(name, args);
 		},
 		/** An MCP tool call that reports instead of throwing. */
 		async try(name, args = {}) {
+			if (cancelled) throw new Error("cancelled after timeout");
 			calls++;
 			return h.call(name, args);
 		},

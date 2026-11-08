@@ -13,6 +13,7 @@ new IntersectionObserver((es) => { if (es[0].isIntersecting && n < 100) setTimeo
 </script>`,
 	task: "Add Product 35 to the cart.",
 	async solve(t) {
+		// Wait for each batch by its last product, not a fixed sleep: a busy machine then takes no extra calls.
 		for (let i = 0; i < 12; i++) {
 			const hit = (await t.find("Add Product 35 to cart")).find((n) => /product 35 to cart/i.test(n.name));
 			if (hit) {
@@ -20,7 +21,7 @@ new IntersectionObserver((es) => { if (es[0].isIntersecting && n < 100) setTimeo
 				return;
 			}
 			await t.tool("scroll", { to: "bottom" });
-			await t.tool("wait", { ms: 300 });
+			await t.tool("wait", { text: `Product ${10 * (i + 2)}`, timeoutMs: 15000 });
 		}
 		throw new Error("Product 35 never loaded after 12 scrolls to the bottom");
 	},
