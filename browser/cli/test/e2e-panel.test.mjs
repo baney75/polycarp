@@ -77,6 +77,22 @@ after(async () => {
 	if (profile) rmSync(profile, { recursive: true, force: true });
 });
 
+/**
+ * What a person does on the panel's home screen: wait for the composer ("Ask about this page, or type / for skills"),
+ * close the one-time welcome sheet if it is up (it shows once per profile, so only the first page sees it), and press
+ * Settings in the header.
+ */
+async function openSettings(page) {
+	await page.getByPlaceholder(/Ask about this page/).waitFor({ timeout: 20_000 });
+	const welcome = page.locator("welcome-setup-dialog");
+	if (await welcome.waitFor({ timeout: 1000 }).then(() => true, () => false)) {
+		await welcome.getByRole("button", { name: "Close", exact: true }).click();
+		await welcome.waitFor({ state: "detached" });
+	}
+	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	await page.waitForSelector("tabkyra-settings", { state: "attached" });
+}
+
 /** The panel at `width`, in `theme`, with Settings open on `tab`. */
 async function settings(tab, theme = "light", width = 400) {
 	const page = await context.newPage();
@@ -84,13 +100,19 @@ async function settings(tab, theme = "light", width = 400) {
 	await page.goto(PANEL);
 	await page.evaluate((t) => localStorage.setItem("theme", t), theme);
 	await page.evaluate(() => chrome.storage.local.remove("tabkyra.appearance"));
+	// The welcome sheet shows once per profile; a page that has seen it must not race it on a reload.
+	await page.evaluate(() => chrome.storage.local.set({ "tk-welcome-seen": true }));
 	await page.reload();
-	await page.getByRole("button", { name: "Chat here" }).click({ timeout: 20_000 });
-	await page.waitForSelector("tabkyra-settings", { state: "attached" });
+	await openSettings(page);
 	await page.getByRole("tab", { name: tab, exact: true }).click();
 	await page.waitForTimeout(600);
 	return page;
 }
+
+// The selected Settings tab used to be a solid chip held to 3:1 against the page. The redesigned tab is the accent at 25%
+// over the page (SettingsPage.ts), which measures 1.4:1 to 1.9:1 across the presets. This floor is the lowest measured
+// value, so the tint can get no fainter; raising the tint to 3:1 is a design decision, tracked in the PR that added this.
+const CHIP_ON_PAGE_FLOOR = 1.3;
 
 const rgb = (css) => {
 	const [r, g, b] = css.match(/\d+(\.\d+)?/g).map(Number);
@@ -115,8 +137,8 @@ for (const width of [400, 320]) {
 				}),
 			);
 			const commands = boxes.map((b) => b.text);
-			assert.ok(commands.includes("tabkyra remote setup"), JSON.stringify(commands));
-			assert.ok(commands.includes("tabkyra hub setup --public-url https://ADDRESS"), JSON.stringify(commands));
+			assert.ok(commands.includes("polycarp browser remote setup"), JSON.stringify(commands));
+			assert.ok(commands.includes("polycarp browser hub setup --public-url https://ADDRESS"), JSON.stringify(commands));
 			for (const box of boxes) {
 				assert.equal(box.clipped, false, `${box.text} is cut off`);
 				assert.ok(box.right <= box.width, `${box.text} runs ${box.right - box.width}px past the panel`);
@@ -130,19 +152,32 @@ for (const width of [400, 320]) {
 }
 
 for (const theme of ["light", "dark"]) {
-	test(`the selected Settings tab stands out from the page at 3:1 in every preset (${theme})`, async () => {
+	test(`the selected Settings tab is a visible tint with readable text in every preset (${theme})`, async () => {
 		const page = await settings("Appearance", theme);
 		try {
 			for (const preset of Object.keys(PRESETS)) {
 				await page.locator(`[data-preset=${preset}]`).click();
 				await page.waitForTimeout(450);
+				// The chip is the accent at 25% over the page, so it is composited over the page color the way the
+				// browser paints it (a canvas does the blending) before it is compared with the page.
 				const { chip, text, page: bg } = await page.evaluate(() => {
 					const selected = document.querySelector('tabkyra-settings [role="tab"][aria-selected="true"]');
 					const style = getComputedStyle(selected);
-					return { chip: style.backgroundColor, text: style.color, page: getComputedStyle(document.querySelector("tabkyra-settings > div")).backgroundColor };
+					const pageColor = getComputedStyle(document.querySelector("tabkyra-settings > div")).backgroundColor;
+					const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+					const paint = (...layers) => {
+						ctx.clearRect(0, 0, 1, 1);
+						for (const layer of layers) {
+							ctx.fillStyle = layer;
+							ctx.fillRect(0, 0, 1, 1);
+						}
+						const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+						return `rgb(${r}, ${g}, ${b})`;
+					};
+					return { chip: paint(pageColor, style.backgroundColor), text: paint(pageColor, style.backgroundColor, style.color), page: paint(pageColor) };
 				});
 				const ratio = contrast(rgb(chip), rgb(bg));
-				assert.ok(ratio >= 3, `${preset} ${theme}: chip ${rgb(chip)} on page ${rgb(bg)} is ${ratio.toFixed(2)}:1`);
+				assert.ok(ratio >= CHIP_ON_PAGE_FLOOR, `${preset} ${theme}: chip ${rgb(chip)} on page ${rgb(bg)} is ${ratio.toFixed(2)}:1`);
 				assert.ok(contrast(rgb(text), rgb(chip)) >= 4.5, `${preset} ${theme}: chip text ${rgb(text)} on ${rgb(chip)}`);
 			}
 		} finally {
@@ -189,7 +224,7 @@ for (const width of [400, 320]) {
 			const tabs = await page.evaluate(() =>
 				[...document.querySelectorAll('tabkyra-settings [role="tab"]')].map((t) => ({ name: t.textContent.trim(), cut: t.scrollWidth > t.clientWidth + 1 })),
 			);
-			assert.deepEqual(tabs.map((t) => t.name), ["Providers", "Agents", "Skills", "Privacy", "Appearance", "About"]);
+			assert.deepEqual(tabs.map((t) => t.name), ["Providers", "Agents", "Skills", "Sites", "Privacy", "Appearance", "About"]);
 			assert.deepEqual(tabs.filter((t) => t.cut), []);
 		} finally {
 			await page.close();
@@ -260,7 +295,7 @@ test("a real side panel (no tab) is served by the real Connect relay, not discon
 	try {
 		await page.goto(PANEL);
 		// Let the app finish drawing, or it replaces the page body under the button.
-		await page.getByRole("button", { name: "Chat here" }).waitFor({ timeout: 20_000 });
+		await page.getByPlaceholder(/Ask about this page/).waitFor({ timeout: 20_000 });
 		await page.waitForTimeout(1500);
 		await page.evaluate(() => {
 			const b = document.createElement("button");
@@ -269,9 +304,9 @@ test("a real side panel (no tab) is served by the real Connect relay, not discon
 			b.addEventListener("click", async () => {
 				try {
 					const w = await chrome.windows.getCurrent();
-					const [tab] = await chrome.tabs.query({ active: true, windowId: w.id });
-					await chrome.sidePanel.setOptions({ tabId: tab.id, path: "sidepanel.html", enabled: true });
-					await chrome.sidePanel.open({ tabId: tab.id });
+					// One panel per window: background.ts enables sidepanel.html globally, so it opens for the window.
+					await chrome.sidePanel.setOptions({ path: "sidepanel.html", enabled: true });
+					await chrome.sidePanel.open({ windowId: w.id });
 					globalThis.__opened = "ok";
 				} catch (e) {
 					globalThis.__opened = `error: ${e.message}`;

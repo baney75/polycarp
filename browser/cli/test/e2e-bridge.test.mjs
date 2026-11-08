@@ -377,8 +377,8 @@ test("extension loads with the id the host manifest allows", async () => {
 	assert.ok(worker);
 });
 
-test("MCP server lists the browser tools under the tabkyra name", async () => {
-	assert.equal(mcp.getServerVersion()?.name, "tabkyra");
+test("MCP server lists the browser tools under the polycarp name", async () => {
+	assert.equal(mcp.getServerVersion()?.name, "polycarp");
 	const { tools } = await mcp.listTools();
 	const names = tools.map((t) => t.name);
 	for (const name of ["navigate", "read_page", "click", "type", "get_page_text"]) assert.ok(names.includes(name), name);
