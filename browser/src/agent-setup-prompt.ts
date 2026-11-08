@@ -20,7 +20,7 @@ export function agentSetupPrompt(version: string, command = "polycarp-browser"):
    - If it doesn't exist: mkdir -p ~/polycarp-src && cd ~/polycarp-src && git clone --depth 1 --branch browser-v${version} https://github.com/baney75/polycarp && cd polycarp
      If that tag doesn't exist, run the same clone without --branch browser-v${version} and tell me you used the newest code.
    - Then: (cd browser/cli && npm ci && npm run build && npm link)
-   The npm link gives the command the name polycarp-browser.${command === "polycarp-browser" ? "" : ` Once it succeeds, run "polycarp-browser" in place of "${command}" in every command below, whichever name this prompt started with.`} If npm link fails with a permissions error, run "node ~/polycarp-src/polycarp/browser/cli/dist/index.js" in place of "${command}" in every command below.
+   The npm link gives the command the name polycarp-browser, or tabkyra if the tag above is an older one: run command -v polycarp-browser, and use tabkyra if only that exists. Use the name that exists in place of "${command}" in every command below, whichever name this prompt started with. If npm link fails with a permissions error, run "node ~/polycarp-src/polycarp/browser/cli/dist/index.js" in place of "${command}" in every command below.
 3. Run: ${command} setup --yes
    It registers the browser connection and adds the MCP server to Claude Code and Codex.
 4. Connect this harness, even if Polycarp already works in another one:
@@ -79,7 +79,8 @@ export function deviceSetupPrompt(version: string, hubUrl: string, code: string)
 
 1. Find the command that runs Polycarp's helper on this computer. Run: polycarp browser doctor
    If that says the command isn't found, run: polycarp-browser doctor
-   Use whichever of the two runs, and write it as HELPER in every step below: HELPER is "polycarp browser" or "polycarp-browser", never both. If neither runs, stop and tell me to copy the setup prompt from Polycarp's Settings > Agents tab and run that first.
+   If that isn't found either, an older install may answer to: tabkyra doctor
+   Use the first one that runs, and write it as HELPER in every step below: HELPER is exactly one of "polycarp browser", "polycarp-browser" or "tabkyra". If neither runs, stop and tell me to copy the setup prompt from Polycarp's Settings > Agents tab and run that first.
 2. Run: HELPER link ${hubUrl} --code ${code}
    The code works once and expires 10 minutes after I copied this prompt. If the hub refuses it, tell me to get a new one in Settings > Connect > Add a device.
 3. Run: HELPER link status

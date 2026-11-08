@@ -2,7 +2,7 @@
 // table, --json on the read commands, and the documented exit codes.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -255,4 +255,13 @@ test("token list and token list --json agree on when a token was last used", () 
 	assert.equal(json.sha256, undefined, "token list --json must not print the token hash");
 	assert.match(run("token", "list").out, /phone .* last used 2026-10-20T00:00:00\.000Z/);
 	rmSync(join(dir, "tokens.json"));
+});
+
+test("a helper linked before the rename prints the name it answers to", () => {
+	if (process.platform === "win32") return;
+	const dir = mkdtempSync(join(tmpdir(), "linked-as-"));
+	symlinkSync(realpathSync(cli), join(dir, "tabkyra"));
+	const out = (env) => spawnSync(process.execPath, [join(dir, "tabkyra"), "--help"], { env: { ...process.env, ...env }, encoding: "utf8" }).stdout;
+	assert.match(out({ PATH: `${dir}:${process.env.PATH}` }), /tabkyra doctor/);
+	assert.doesNotMatch(out({ PATH: dirname(process.execPath) }), /tabkyra doctor/);
 });

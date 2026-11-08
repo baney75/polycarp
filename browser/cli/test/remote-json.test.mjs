@@ -303,7 +303,7 @@ test("remote setup --json with a service and no working launcher is a problem, n
 	const r = s.run(["remote", "setup", "--json"]);
 	assert.equal(r.code, 1);
 	assert.equal(r.json().state, "problem");
-	assert.match(r.json().message, /tabkyra install/);
+	assert.match(r.json().message, /polycarp-browser install/);
 	assert.equal(r.json().code, "launcher", "the app reads the code, not the sentence");
 });
 

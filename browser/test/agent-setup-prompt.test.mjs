@@ -116,12 +116,12 @@ test("every command in a prompt wears the one name the helper was started as, in
 		const stray = text.split("\n").filter((l) => new RegExp(`(?<![\\w/.~-])${other} (setup|doctor|skill|pi-extension|install)\\b`).test(l));
 		assert.deepEqual(stray, [], `${name} prompt mixes in ${other}`);
 	}
-	assert.match(standalone, /npm link gives the command the name polycarp-browser/);
+	assert.match(standalone, /npm link gives the command the name polycarp-browser, or tabkyra if the tag above is an older one: run command -v polycarp-browser/);
 	assert.match(prompt, /in place of "polycarp browser" in every command below/);
 	assert.throws(() => agentSetupPrompt("1.2.3", "polycarp"), /Unknown command name/);
 	// An older helper that still answers to `tabkyra` keeps working: its prompt switches to the new name after the link.
 	assert.match(agentSetupPrompt("1.2.3", "tabkyra"), /tabkyra setup --yes/);
-	assert.match(agentSetupPrompt("1.2.3", "tabkyra"), /run "polycarp-browser" in place of "tabkyra" in every command below/);
+	assert.match(agentSetupPrompt("1.2.3", "tabkyra"), /Use the name that exists in place of "tabkyra" in every command below/);
 	for (const make of [(c) => remoteSetupPrompt("1.2.3", c)]) {
 		assert.match(make("polycarp browser"), /polycarp browser doctor/);
 		assert.doesNotMatch(make("polycarp browser"), /(?<![\w/.~-])(?:tabkyra|polycarp-browser) doctor/);
@@ -139,7 +139,7 @@ test("second-S2: a prompt for another device doesn't carry this helper's name; t
 	const steps = same.split("\n").filter((l) => /^\d\./.test(l));
 	assert.match(steps[0], /Run: polycarp browser doctor/);
 	assert.match(same, /If that says the command isn't found, run: polycarp-browser doctor/);
-	assert.match(same, /write it as HELPER in every step below: HELPER is "polycarp browser" or "polycarp-browser", never both/);
+	assert.match(same, /write it as HELPER in every step below: HELPER is exactly one of "polycarp browser", "polycarp-browser" or "tabkyra"/);
 	assert.match(steps[1], /Run: HELPER link https:\/\/hub\.example\.com --code TK-ABCD-EFGH/);
 	assert.match(steps[2], /Run: HELPER link status/);
 	// Neither name appears as a command after step 1, so no step hardcodes the wrong one for the device.
@@ -150,7 +150,7 @@ test("second-S2: a prompt for another device doesn't carry this helper's name; t
 });
 
 test("first-F7: after npm link succeeds, a prompt that started as `polycarp browser` switches to `polycarp-browser` for every later command", () => {
-	assert.match(prompt, /Once it succeeds, run "polycarp-browser" in place of "polycarp browser" in every command below, whichever name this prompt started with\./);
+	assert.match(prompt, /Use the name that exists in place of "polycarp browser" in every command below, whichever name this prompt started with\./);
 	// The prompt that already says polycarp-browser has nothing to switch.
 	assert.doesNotMatch(standalone, /Once it succeeds/);
 	// The substitution for a failed npm link still follows.
