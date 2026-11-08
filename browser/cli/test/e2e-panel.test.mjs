@@ -119,6 +119,36 @@ const rgb = (css) => {
 	return `#${[r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
 };
 
+for (const [width, height] of [[400, 860], [760, 850], [400, 1200], [320, 620]]) {
+	test(`the welcome sits midway between the header and the composer at ${width} x ${height}`, async () => {
+		const page = await context.newPage();
+		try {
+			await page.setViewportSize({ width, height });
+			await page.goto(PANEL);
+			await page.evaluate(() => chrome.storage.local.set({ "tk-welcome-seen": true }));
+			await page.reload();
+			await page.waitForSelector(".welcome-container .tutorial-pill");
+			await page.waitForTimeout(1000); // The entrance animation moves the block.
+			const m = await page.evaluate(() => {
+				const box = document.querySelector(".welcome-container");
+				const scroller = box.closest(".overflow-y-auto");
+				const top = scroller.getBoundingClientRect().top;
+				return {
+					above: box.firstElementChild.getBoundingClientRect().top - top,
+					below: document.querySelector("message-editor").getBoundingClientRect().top - box.lastElementChild.getBoundingClientRect().bottom,
+					natural: box.lastElementChild.getBoundingClientRect().bottom - box.firstElementChild.getBoundingClientRect().top,
+					view: scroller.clientHeight,
+				};
+			});
+			assert.ok(m.above >= 0, `the block is cut off at the top: ${JSON.stringify(m)}`);
+			if (m.natural + 32 > m.view) return; // Too short a window to center: it scrolls from the top.
+			assert.ok(Math.abs(m.above - m.below) <= 32, `off center: ${JSON.stringify(m)}`);
+		} finally {
+			await page.close();
+		}
+	});
+}
+
 for (const width of [400, 320]) {
 	test(`Connect's command boxes show the whole command at ${width} px, and nothing runs past the panel`, async () => {
 		const page = await settings("Agents", "light", width);

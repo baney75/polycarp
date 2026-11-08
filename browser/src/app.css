@@ -144,7 +144,14 @@ body {
 	}
 }
 
+/* Centers the welcome between the header and the composer, whatever their heights.
+   1rem is the top padding of the list inside the scroller. */
+agent-interface .overflow-y-auto:has(.welcome-container) {
+	container-type: size;
+}
+
 .welcome-container {
+	min-height: calc(100cqb - 1rem);
 	position: relative;
 	animation: fadeInUp 0.8s ease-out;
 }
