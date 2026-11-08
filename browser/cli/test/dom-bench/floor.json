@@ -34,8 +34,10 @@
 		"iframe-same-origin",
 		"iframe-shadow",
 		"iframe-editor",
+		"html5-dnd",
 		"pointer-sortable",
 		"keyboard-widget",
+		"dblclick-edit",
 		"pagination",
 		"table-lookup",
 		"shadow-text",
@@ -43,9 +45,7 @@
 	],
 	"failing": {
 		"iframe-cross-origin": "read_page shows only the iframe node (\"cross-origin: read it with navigate to its URL\"); find lists nothing inside it, so the Confirm payment button has no ref",
-		"nested-iframes": "same-origin frame holding a cross-origin frame: read_page lists the inner iframe node only, so Approve request has no ref",
-		"html5-dnd": "draggable li rows are not elements in read_page or find (no ref, no point); drag takes screenshot pixels only. With coordinates supplied the drag works, so the gap is locating non-control rows",
-		"dblclick-edit": "table cells are not elements (read_page lists only the heading); click {clickCount:2} works at x/y, but nothing returns a position for a cell by its text"
+		"nested-iframes": "same-origin frame holding a cross-origin frame: read_page lists the inner iframe node only, so Approve request has no ref"
 	},
 	"calls": {
 		"react-input": 5,
@@ -82,8 +82,10 @@
 		"iframe-same-origin": 7,
 		"iframe-shadow": 5,
 		"iframe-editor": 5,
+		"html5-dnd": 6,
 		"pointer-sortable": 6,
 		"keyboard-widget": 4,
+		"dblclick-edit": 5,
 		"pagination": 9,
 		"table-lookup": 6,
 		"shadow-text": 6,
@@ -124,8 +126,10 @@
 		"iframe-same-origin": 2000,
 		"iframe-shadow": 2000,
 		"iframe-editor": 2000,
+		"html5-dnd": 2000,
 		"pointer-sortable": 2000,
 		"keyboard-widget": 2000,
+		"dblclick-edit": 2000,
 		"pagination": 2000,
 		"table-lookup": 2000,
 		"shadow-text": 2000,

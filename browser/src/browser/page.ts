@@ -465,6 +465,7 @@ function pageSnapshot(
 	filter: string,
 	live: (el: Element) => boolean,
 	print: (el: Element) => string,
+	textQuery = "",
 ): unknown {
 	const w = window as unknown as {
 		__tabkyraRefs?: unknown;
@@ -496,7 +497,7 @@ function pageSnapshot(
 			? w.__tabkyraRefSeq
 			: 1_000_000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900_000_000);
 	const interactiveSel =
-		"a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=switch],[role=textbox],[role=searchbox],[role=combobox],[role=slider],[role=spinbutton],[role=treeitem],[contenteditable=true],[onclick],[tabindex]:not([tabindex='-1'])";
+		"a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=switch],[role=textbox],[role=searchbox],[role=combobox],[role=slider],[role=spinbutton],[role=treeitem],[contenteditable=true],[onclick],[tabindex]:not([tabindex='-1']),[draggable=true]";
 	const headingSel = "h1,h2,h3,h4,h5,h6,label,[role=heading],[role=alert],[role=status],[role=dialog]";
 	const selector = filter === "interactive" ? interactiveSel : `${interactiveSel},${headingSel}`;
 	const tagOf = (el: Element) => el.tagName.toLowerCase();
@@ -540,7 +541,8 @@ function pageSnapshot(
 		if (tag === "label") return "label";
 		if (tag === "iframe" || tag === "frame") return "iframe";
 		if (el.getAttribute("contenteditable") === "true") return "textbox";
-		return "generic";
+		const plain: Record<string, string> = { li: "listitem", tr: "row", td: "cell", th: "columnheader", dt: "term", dd: "definition" };
+		return plain[tag] ?? "generic";
 	};
 	const nameOf = (el: Element): string => {
 		const root = el.getRootNode() as Document | ShadowRoot;
@@ -712,8 +714,30 @@ function pageSnapshot(
 		if (!isVisible(el)) return;
 		(box(el, at).onScreen ? inView : offView).push({ el, at });
 	};
+	const seen = new Set<Element>();
 	for (const at of roots)
-		for (const el of Array.from(at.root.querySelectorAll(selector))) if (!cross.has(el)) place(el, at);
+		for (const el of Array.from(at.root.querySelectorAll(selector)))
+			if (!cross.has(el)) {
+				seen.add(el);
+				place(el, at);
+			}
+	// find: also the rows, cells and terms whose text matches, so a table cell or a plain list row can be
+	// clicked, double-clicked or dragged by ref. Only for a query: listing every cell would bury the controls.
+	if (textQuery) {
+		const q = textQuery.toLowerCase().replace(/\s+/g, " ").trim();
+		const words = q.split(" ").filter((w) => w.length >= 3);
+		const textSel = "td,th,li,dt,dd,tr,[role=cell],[role=gridcell],[role=row],[role=listitem],[role=rowheader],[role=columnheader]";
+		let extra = 0;
+		for (const at of roots)
+			for (const el of Array.from(at.root.querySelectorAll(textSel))) {
+				if (extra >= 200 || seen.has(el)) continue;
+				const t = (el.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+				if (!t || t.length > 200 || !(t.includes(q) || words.some((w) => t.includes(w)))) continue;
+				seen.add(el);
+				place(el, at);
+				extra++;
+			}
+	}
 	// A frame Polycarp can't look into (another site) is still listed, so the agent knows it's there.
 	for (const { el, at } of crossFrames) place(el, at);
 	for (const { el, at } of [...inView, ...offView]) {
@@ -975,12 +999,12 @@ export async function inspectPage(tabId: number): Promise<Record<string, unknown
 
 export async function snapshot(
 	tabId: number,
-	options: { maxNodes?: number; maxTextChars?: number; filter?: "interactive" | "all" } = {},
+	options: { maxNodes?: number; maxTextChars?: number; filter?: "interactive" | "all"; textQuery?: string } = {},
 ): Promise<Snapshot> {
-	const { maxNodes = 300, maxTextChars = 20000, filter = "all" } = options;
+	const { maxNodes = 300, maxTextChars = 20000, filter = "all", textQuery = "" } = options;
 	const snap = await runInPage<Snapshot>(
 		tabId,
-		`(${pageSnapshot.toString()})(${maxNodes}, ${maxTextChars}, ${JSON.stringify(filter)}, ${refLive.toString()}, ${refPrint.toString()})`,
+		`(${pageSnapshot.toString()})(${maxNodes}, ${maxTextChars}, ${JSON.stringify(filter)}, ${refLive.toString()}, ${refPrint.toString()}, ${JSON.stringify(textQuery)})`,
 	);
 	if (typeof snap?.url === "string") snap.url = maskUrl(snap.url);
 	return snap;

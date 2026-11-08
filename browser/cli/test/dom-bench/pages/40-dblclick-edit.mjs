@@ -18,9 +18,9 @@ for (const td of document.querySelectorAll(".amt")) td.addEventListener("dblclic
 </script>`,
 	task: "Change the Food amount to 450 by editing its cell.",
 	async solve(t) {
-		const snap = await t.read("all");
-		const cell = snap.nodes.find((n) => /cell/i.test(n.role) && n.name === "400");
-		if (!cell) throw new Error("read_page lists no cell named 400 for the Food amount; table cells are not elements");
+		// The page text shows Food at 400; find gives table cells whose text matches.
+		const cell = (await t.find("400")).find((n) => /cell/i.test(n.role) && n.name === "400");
+		if (!cell) throw new Error("find lists no cell named 400 for the Food amount");
 		await t.tool("click", { ref: cell.ref, clickCount: 2 });
 		await t.tool("press", { key: "Control+a" });
 		await t.tool("type", { text: "450", submit: true });

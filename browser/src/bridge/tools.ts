@@ -627,7 +627,7 @@ export const handlers: Record<string, Handler> = {
 	find: async (ctx, params) => {
 		const query = requireStr(params, "query").toLowerCase();
 		const tabId = await resolveTab(ctx, params, false);
-		const snap = await snapshot(tabId, { filter: "all", maxNodes: 600, maxTextChars: 0 });
+		const snap = await snapshot(tabId, { filter: "all", maxNodes: 600, maxTextChars: 0, textQuery: query });
 		return { matches: rankMatches(snap.nodes, query, num(params, "limit") ?? 20) };
 	},
 
