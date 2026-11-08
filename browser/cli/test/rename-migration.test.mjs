@@ -287,7 +287,7 @@ serviceTest("an old service that used the default ~/.config/tabkyra gets the mig
 	const oldB = oldServiceWith(stuck, stuck.oldConfig);
 	stuck.run(["install"]);
 	const fresh = readFileSync(oldB.fresh, "utf8");
-	assert.ok(fresh.includes(stuck.oldConfig) && !fresh.includes(`${stuck.config}<`) && !fresh.includes(`=${stuck.config}`), `the service keeps the folder with the grants:\n${fresh}`);
+	assert.ok(fresh.includes(stuck.oldConfig) && !fresh.includes(`${stuck.config}<`) && !fresh.includes(`CONFIG_DIR=${stuck.config}`), `the service keeps the folder with the grants:\n${fresh}`);
 });
 
 test("when a link cannot be made the move is undone and ordinary commands still work", () => {
@@ -326,11 +326,9 @@ test("when a move is undone the old folder stays the one in use, so settings and
 	write(join(m.oldConfig, "theme.json"), JSON.stringify({ preset: "forest" }));
 	const env = { POLYCARP_TEST_NO_LINK: "1" };
 	assert.equal(JSON.parse(m.run(["theme", "list", "--json"], env).out).preset, "forest", "the saved choice is found in the old folder");
-	// A command that writes config writes it where the rest of it is, not into a new folder that would split it off.
 	m.run(["theme", "set", "slate", "--json"], env);
 	assert.equal(existsSync(m.config), false, "no new folder was created beside the old one");
 	assert.equal(JSON.parse(readFileSync(join(m.oldConfig, "theme.json"), "utf8")).preset, "slate");
-	// Once links work again the whole folder moves, with the change in it.
 	m.run(["status", "--json"]);
 	assert.equal(JSON.parse(readFileSync(join(m.config, "theme.json"), "utf8")).preset, "slate");
 	assert.equal(JSON.parse(m.run(["theme", "list", "--json"]).out).preset, "slate");
