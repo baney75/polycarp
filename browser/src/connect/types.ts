@@ -6,6 +6,14 @@
 
 export type ConnectRoute = "none" | "remote" | "hub" | "link";
 
+/** What a "remote" route runs on: Tailscale Funnel, the person's own front door, or a Cloudflare tunnel. */
+export type RemoteKind = "funnel" | "custom" | "cloudflare";
+
+/** The five steps of "Set up with Cloudflare", in order. */
+export const TUNNEL_STEPS = ["cloudflared", "signin", "route", "tunnel", "check"] as const;
+export type TunnelStepId = (typeof TUNNEL_STEPS)[number];
+export type TunnelStepState = "running" | "waiting" | "done" | "failed";
+
 export interface ConnectDevice {
 	name: string;
 	online: boolean;
@@ -20,6 +28,8 @@ export interface ConnectStatus {
 	route: ConnectRoute;
 	/** The public origin (remote and hub routes). The connector URL is this plus /mcp. */
 	publicUrl?: string;
+	/** Which kind of remote route is in use. Present when the route is "remote". */
+	remoteKind?: RemoteKind;
 	passcodeSet: boolean;
 	/** This device's link to a hub; present whenever link.json loads, whatever the route is (a hub box can link to itself). */
 	link?: { hubUrl: string; name: string; online: boolean; busy: boolean; manage: boolean };
@@ -62,7 +72,15 @@ export interface JoinResult {
 }
 
 /** Methods the side panel may call. Everything else is refused in the background worker and again in the host. */
-export const CONNECT_METHODS = ["status", "approvalCode", "deviceCode", "setBusy", "joinHub", "setTheme"] as const;
+export const CONNECT_METHODS = [
+	"status",
+	"approvalCode",
+	"deviceCode",
+	"setBusy",
+	"joinHub",
+	"setupTunnel",
+	"setTheme",
+] as const;
 export type ConnectMethod = (typeof CONNECT_METHODS)[number];
 
 export const CONNECT_PORT = "tabkyra-connect";
@@ -82,8 +100,8 @@ export interface Gesture {
 	at: number;
 }
 
-/** Methods that hand out a code or give a hub control of this browser: they need a gesture token. */
-export const GESTURE_METHODS: readonly string[] = ["approvalCode", "deviceCode", "joinHub"];
+/** Methods that hand out a code, give a hub control of this browser, or open a public tunnel: they need a gesture token. */
+export const GESTURE_METHODS: readonly string[] = ["approvalCode", "deviceCode", "joinHub", "setupTunnel"];
 
 /** How long a gesture token is good for. */
 export const GESTURE_MS = 5_000;

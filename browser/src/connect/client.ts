@@ -39,6 +39,8 @@ interface Waiter {
 export const REQUEST_TIMEOUT_MS = 20_000;
 /** joinHub talks to the hub, whose own timeout is 15 seconds. */
 export const JOIN_TIMEOUT_MS = 30_000;
+/** setupTunnel waits on the person's Cloudflare sign-in (5 minutes) and then DNS (about 1 minute). */
+export const SETUP_TIMEOUT_MS = 7 * 60_000;
 export const noReplyMessage = (): string => `Polycarp's helper didn't answer. Update it: ${hostCommandText("update")}`;
 
 let port: chrome.runtime.Port | undefined;
@@ -94,7 +96,8 @@ function mintGesture(method: string): Gesture | undefined {
 
 function request<T>(method: string, params?: Record<string, unknown>, onProgress?: Waiter["onProgress"]): Promise<T> {
 	const id = ++seq;
-	const limit = method === "joinHub" ? JOIN_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+	const limit =
+		method === "joinHub" ? JOIN_TIMEOUT_MS : method === "setupTunnel" ? SETUP_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
 	return new Promise<T>((resolve, reject) => {
 		let gesture: Gesture | undefined;
 		try {
@@ -141,6 +144,8 @@ export const connectJoinHub = (
 	request<JoinResult>("joinHub", { hubUrl, code, ...(name ? { name } : {}) }, (p) => {
 		if (typeof p.step === "string") onProgress(p.step);
 	});
+export const connectSetupTunnel = (host: string, onProgress: (progress: Record<string, unknown>) => void) =>
+	request<{ publicUrl: string; connectorUrl: string }>("setupTunnel", { host }, onProgress);
 /** Only the fields given are sent: no preset keeps the saved one, no accent keeps the saved accent, null clears it. */
 export const connectSetTheme = (change: {
 	preset?: string;

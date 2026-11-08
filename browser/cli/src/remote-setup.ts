@@ -355,10 +355,16 @@ export interface SetupOptions {
 	passcode?: boolean;
 	/** One JSON object on stdout (a SetupReport) and no other output, for an app. The passcode is in it only when this run made it. */
 	json?: boolean;
+	/**
+	 * Takes the final SetupReport instead of printing it, and keeps every other line off stdout too. The native host's stdout is
+	 * its channel to the browser, so the Connect panel's setup uses this. Implies the JSON mode's behavior.
+	 */
+	report?: (report: SetupReport) => void;
 }
 
 export async function remoteSetup(options: SetupOptions): Promise<number> {
-	const json = options.json === true;
+	const json = options.json === true || options.report !== undefined;
+	const emit = options.report ?? printReport;
 	/** The passcode this run made. A run that fails after making it still reports it, because a later run won't print it again. */
 	let madePasscode: string | undefined;
 	const say = (line: string) => {
@@ -368,7 +374,7 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 	const fail = (state: RemoteState, message: string, extra: { adminUrl?: string; code?: string; after?: string } = {}): number => {
 		if (json) {
 			const report: SetupReport = { ok: false, state, message, ...(extra.adminUrl ? { adminUrl: extra.adminUrl } : {}), ...(extra.code ? { code: extra.code } : {}), ...(madePasscode ? { passcode: madePasscode } : {}), passcodeSet: passcodeSet() };
-			printReport(report);
+			emit(report);
 			return 1;
 		}
 		console.error(`${sym.fail} ${message}`);
@@ -524,7 +530,7 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 				...(madePasscode ? { passcode: madePasscode } : {}),
 				passcodeSet: passcodeSet(),
 			};
-			printReport(report);
+			emit(report);
 			return 0;
 		}
 		console.log(`
@@ -712,6 +718,17 @@ function funnelOff(bin: string | undefined): { ok: boolean; message: string } {
 		if (state.kind === "disconnected" || (state.kind === "ok" && !state.web[`${state.dns}:${FUNNEL_PORT}`])) return { ok: true, message: `Tailscale Funnel on port ${FUNNEL_PORT} was already off.` };
 	}
 	return { ok: false, message: `Couldn't turn Funnel off: ${r.out}. The service and remote.json are kept; run tailscale funnel --https=${FUNNEL_PORT} off, then ${COMMAND_NAME} remote off again.` };
+}
+
+/**
+ * Closes this computer's Funnel route so a Cloudflare one can replace it (setup refuses while Funnel is on): Funnel off, then
+ * remote.json gone. The serve service stays; setup installs it again. Nothing here prints.
+ */
+export function closeFunnelRoute(): { ok: boolean; message: string } {
+	const closed = funnelOff(tailscaleBinary());
+	if (!closed.ok) return closed;
+	rmSync(remoteFile(), { force: true });
+	return closed;
 }
 
 /** Funnel first, then the service, then the files: while Funnel is open, a serve with OAuth on loopback is the safe state. */

@@ -7,13 +7,13 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { checkConnectRequest } from "../src/connect/check.ts";
 import { connectorUrl, countdown, lastSeen, linkCommand } from "../src/connect/format.ts";
-import { CONNECT_METHODS } from "../src/connect/types.ts";
+import { CONNECT_METHODS, GESTURE_METHODS } from "../src/connect/types.ts";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (f) => readFileSync(join(repo, f), "utf8");
 
 test("the relay passes only known methods with object params, and names the id of a refused one", () => {
-	assert.deepEqual([...CONNECT_METHODS], ["status", "approvalCode", "deviceCode", "setBusy", "joinHub", "setTheme"]);
+	assert.deepEqual([...CONNECT_METHODS], ["status", "approvalCode", "deviceCode", "setBusy", "joinHub", "setupTunnel", "setTheme"]);
 	assert.deepEqual(checkConnectRequest({ id: 1, method: "status" }), { ok: true, request: { id: 1, method: "status" } });
 	assert.deepEqual(checkConnectRequest({ id: 2, method: "setBusy", params: { busy: true } }).request.params, { busy: true });
 	for (const bad of [{ id: 3, method: "link.off" }, { id: 3, method: "__proto__" }, { id: 3, method: 5 }, { id: 3, method: "status", params: [] }, { id: 3, method: "status", params: "x" }, { id: 3, method: "status", params: null }]) {
@@ -509,4 +509,54 @@ test("a helper that hasn't said its name gets both commands, and the one name on
 	assert.match(panel, /builtHelperCommand\("setup"\) \? this\.command\("If you built the helper yourself"/);
 	const host = readFileSync(new URL("../src/bridge/host-command.ts", import.meta.url), "utf8");
 	assert.match(host, /known = true/, "reporting a name ends the two-name text");
+});
+
+// ---------- Set up with Cloudflare ----------
+
+test("setupTunnel needs a click gesture, and its request waits seven minutes", async () => {
+	assert.ok(GESTURE_METHODS.includes("setupTunnel"));
+	const { GestureGate } = await import("../src/connect/gate.ts");
+	const gate = new GestureGate(() => 1_000_000);
+	assert.equal(gate.allows("setupTunnel", undefined), false);
+	assert.equal(gate.allows("setupTunnel", { token: "t", at: 1_000_000 }), true);
+	const client = await import("../src/connect/client.ts?setup");
+	assert.equal(client.SETUP_TIMEOUT_MS, 7 * 60_000);
+	assert.match(read("src/connect/client.ts"), /method === "setupTunnel" \? SETUP_TIMEOUT_MS/);
+});
+
+test("the Cloudflare form shows for route none and Funnel, and not for Cloudflare, a custom address, a hub or a link", async () => {
+	const { tunnelFormOffered } = await import("../src/connect/format.ts");
+	const base = { passcodeSet: false, theme: { preset: "default" } };
+	assert.equal(tunnelFormOffered({ ...base, route: "none" }), "none");
+	assert.equal(tunnelFormOffered({ ...base, route: "remote", remoteKind: "funnel", publicUrl: "https://m.ts.net:8443" }), "funnel");
+	assert.equal(tunnelFormOffered({ ...base, route: "remote", remoteKind: "cloudflare", publicUrl: "https://p.example.com" }), undefined);
+	assert.equal(tunnelFormOffered({ ...base, route: "remote", remoteKind: "custom", publicUrl: "https://p.example.com" }), undefined);
+	assert.equal(tunnelFormOffered({ ...base, route: "hub", publicUrl: "https://hub.example.com" }), undefined);
+	assert.equal(tunnelFormOffered({ ...base, route: "link" }), undefined);
+	assert.equal(tunnelFormOffered({ ...base, route: "none", problem: "remote.json is unreadable." }), undefined);
+	const tab = read("src/dialogs/ConnectTab.ts");
+	assert.match(tab, /children: "Set up with Cloudflare"/);
+	assert.match(tab, /placeholder="polycarp\.yourdomain\.com"/);
+	assert.match(tab, /<span>Address<\/span>/);
+	assert.match(tab, /aria-live="polite" data-tunnel-steps/);
+	assert.match(tab, /claude\.ai often can't reach Tailscale Funnel addresses\. Setting up Cloudflare turns Funnel off\./);
+	assert.match(tab, /Uses your own Cloudflare account and a domain on it\. You sign in to Cloudflare once, in a new tab\./);
+	// Both branches of assistants() draw it: no address yet, and Funnel's connector URL.
+	assert.equal((tab.match(/\$\{this\.tunnelForm\(s\)\}/g) ?? []).length, 2);
+});
+
+test("the panel opens only https dash.cloudflare.com sign-in addresses", async () => {
+	const { safeSignInUrl, parseTunnelProgress } = await import("../src/connect/format.ts");
+	const good = "https://dash.cloudflare.com/argotunnel?aud=&callback=x";
+	assert.equal(safeSignInUrl(good), good);
+	for (const bad of ["http://dash.cloudflare.com/x", "https://dash.cloudflare.com.evil.example/x", "https://evil.example/", "https://u@dash.cloudflare.com/x", "https://dash.cloudflare.com:444/x", "javascript:alert(1)", "chrome://settings", "", 5, undefined]) {
+		assert.equal(safeSignInUrl(bad), undefined, String(bad));
+	}
+	// A progress frame with a bad address loses the address; unknown steps and states are dropped.
+	assert.deepEqual(parseTunnelProgress({ step: "signin", state: "waiting", url: "https://evil.example/" }), { step: "signin", state: "waiting" });
+	assert.equal(parseTunnelProgress({ step: "signin", state: "waiting", url: good }).url, good);
+	assert.equal(parseTunnelProgress({ step: "nope", state: "done" }), undefined);
+	assert.equal(parseTunnelProgress({ step: "check", state: "weird" }), undefined);
+	const tab = read("src/dialogs/ConnectTab.ts");
+	assert.match(tab, /const safe = safeSignInUrl\(url\);\s*if \(!safe\) return;\s*try \{\s*void chrome\.tabs\.create\(\{ url: safe \}\)/);
 });

@@ -54,6 +54,11 @@ words. A sign-in covers one domain, so a name on another domain is refused too, 
 `remote off` stops the tunnel and leaves the tunnel and its record on your account, so turning it on again reuses them;
 `cloudflared tunnel delete polycarp-<this computer>` removes the tunnel for good.
 
+Settings > Connect has a "Set up with Cloudflare" button that does the same: enter the address, sign in to Cloudflare in the
+tab it opens, and it makes the tunnel and checks the public address. If no `cloudflared` is installed it downloads its own
+(pinned release 2026.10.7, SHA-256 checked before anything is unpacked or run) to `~/.config/tabkyra/bin/cloudflared`; one on
+your PATH or in Homebrew's folders is used first. When Funnel is on, the button turns it off first.
+
 To try it without an account, `polycarp browser tunnel cloudflare` gives a temporary `*.trycloudflare.com` address that
 changes each time it starts, so a connector added with it stops working at the next restart.
 
