@@ -37,6 +37,7 @@
 - `cli/eval/bridge-metrics.mjs` (tools/list size and real token cost, cold start, calls across forced extension reloads and host kills, three clients at once, thirteen tab group behaviors) and a `sessions` suite in `cli/eval/skill-eval.mjs` (multitab, resume, parallel, handover, reload), on a shared throwaway browser (`cli/eval/fixture-browser.mjs`). Baseline in `docs/benchmarks.md`.
 
 ### Changed
+- The side panel is one panel per window and stays open when you switch tabs. The toolbar icon (and the keyboard shortcut) opens the same panel on any tab, it reopens your most recent chat instead of a blank one, and it works on the tab in front. Before, each tab got its own panel and a tab no task owned closed it. The worker no longer sets tab-specific panel options or disables the panel; a panel URL with an old `?tabId=` still loads. Tests: `test/panel-open.test.mjs`, `test/restore-chat.test.mjs`.
 - The welcome dialog has a way in from claude.ai or ChatGPT, and "Set up provider" opens the API keys. "Use from claude.ai or ChatGPT" opens Settings > Connect; "Set up provider" scrolls Providers to the keys instead of leaving them about 1,200 px down.
 - Settings > Bridge is now Settings > Agents everywhere it is named. The side panel, the CLI's messages, the README and the bundled skill agree; the tab keeps its place; its Page scripts row now says in one sentence what it does.
 - The composer's model button says "Add a provider" until a key or a subscription sign-in exists, instead of naming a model you can't use.
