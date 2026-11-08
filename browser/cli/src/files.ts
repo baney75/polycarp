@@ -4,7 +4,7 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { envVar } from "./env.ts";
@@ -122,10 +122,37 @@ export function configDirOverride(): string | undefined {
 	return process.env.POLYCARP_BROWSER_CONFIG_DIR || process.env.TABKYRA_CONFIG_DIR || undefined;
 }
 
-/** The helper's config directory: <config>/polycarp/browser, inside the app's own polycarp folder. Tests use a temp one through the override. */
-export function configDir(): string {
-	return configDirOverride() || join(configHome(), "polycarp", "browser");
+/** The helper's config directory once migrated: <config>/polycarp/browser, inside the app's own polycarp folder. */
+export function newConfigDir(): string {
+	return join(configHome(), "polycarp", "browser");
 }
+
+/**
+ * The helper's config directory. Tests use a temp one through the override. Until the move from the old folder has worked,
+ * the old folder stays the one in use (it holds the credentials and settings), so a failed migration strands nothing.
+ */
+export function configDir(): string {
+	const chosen = configDirOverride();
+	if (chosen) return chosen;
+	const fresh = newConfigDir();
+	return !pathExists(fresh) && isRealDir(legacyConfigDir()) ? legacyConfigDir() : fresh;
+}
+
+const pathExists = (path: string): boolean => {
+	try {
+		lstatSync(path);
+		return true;
+	} catch {
+		return false;
+	}
+};
+const isRealDir = (path: string): boolean => {
+	try {
+		return lstatSync(path).isDirectory();
+	} catch {
+		return false;
+	}
+};
 
 /** The folder before the rename. Only the one-time migration (migrate.ts) and the old-entry checks read it. */
 export function legacyConfigDir(): string {
@@ -137,9 +164,15 @@ export function dataHome(): string {
 	return process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
 }
 
-/** The helper's data directory (the installed release, thread mirror, Copilot SDK): POLYCARP_HOME (or TABKYRA_HOME), else <data>/polycarp/browser. */
-export function dataDir(): string {
+/** The helper's data directory once migrated: POLYCARP_HOME (or TABKYRA_HOME), else <data>/polycarp/browser. */
+export function newDataDir(): string {
 	return envVar("HOME") || join(dataHome(), "polycarp", "browser");
+}
+
+/** The helper's data directory (the installed release, thread mirror, Copilot SDK); the old folder stays in use until the move has worked. */
+export function dataDir(): string {
+	const fresh = newDataDir();
+	return !envVar("HOME") && !pathExists(fresh) && isRealDir(legacyDataDir()) ? legacyDataDir() : fresh;
 }
 
 /** The data folder before the rename. */

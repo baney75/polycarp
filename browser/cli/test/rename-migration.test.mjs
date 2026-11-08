@@ -3,7 +3,7 @@
 // built CLI against a throwaway HOME with stub launchctl and systemctl first on PATH. Nothing here touches the real
 // ~/.config/tabkyra, ~/.config/polycarp or a real service. Run with --experimental-strip-types (it imports src/env.ts).
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -300,4 +300,61 @@ test("when a link cannot be made the move is undone and ordinary commands still 
 	assert.equal(lstatSync(join(m.oldConfig, "tabkyra")).isFile(), true, "the launchers were not renamed either");
 	const check = JSON.parse(m.run(["doctor", "--json"], { POLYCARP_TEST_NO_LINK: "1" }).out).checks.find((c) => c.id === "legacy-folders");
 	assert.ok(check, "doctor reports the old folder");
+});
+
+test("two helpers migrating at the same moment leave a real launcher and a link to it, never a loop", async () => {
+	const m = box("race");
+	const chosen = join(m.dir, "mine");
+	write(join(chosen, "tabkyra"), '#!/bin/sh\nexec "/bin/echo" "$@"\n', 0o755);
+	write(join(chosen, "host"), '#!/bin/sh\nexec "/bin/echo" host "$@"\n', 0o755);
+	// Each waits half a second between its check and its rename, so the second one starts its check before the first one renames.
+	const env = { ...m.env, TABKYRA_CONFIG_DIR: chosen, POLYCARP_TEST_MIGRATE_PAUSE_MS: "500" };
+	const start = () => new Promise((resolve) => spawn(process.execPath, [cli, "status", "--json"], { env }).on("close", resolve));
+	const first = start();
+	await new Promise((resolve) => setTimeout(resolve, 150));
+	await Promise.all([first, start()]);
+	for (const [real, old] of [["polycarp", "tabkyra"], ["polycarp-host", "host"]]) {
+		assert.equal(lstatSync(join(chosen, real)).isFile(), true, `${real} is a real file`);
+		assert.equal(isLink(join(chosen, old)), true, `${old} is a link`);
+		assert.equal(readlinkSync(join(chosen, old)), real);
+		assert.match(readFileSync(join(chosen, old), "utf8"), /bin\/echo/, `${old} still reads through to the launcher`);
+	}
+});
+
+test("when a move is undone the old folder stays the one in use, so settings and credentials are still found", () => {
+	const m = oldMachine("stranded");
+	write(join(m.oldConfig, "theme.json"), JSON.stringify({ preset: "forest" }));
+	const env = { POLYCARP_TEST_NO_LINK: "1" };
+	assert.equal(JSON.parse(m.run(["theme", "list", "--json"], env).out).preset, "forest", "the saved choice is found in the old folder");
+	// A command that writes config writes it where the rest of it is, not into a new folder that would split it off.
+	m.run(["theme", "set", "slate", "--json"], env);
+	assert.equal(existsSync(m.config), false, "no new folder was created beside the old one");
+	assert.equal(JSON.parse(readFileSync(join(m.oldConfig, "theme.json"), "utf8")).preset, "slate");
+	// Once links work again the whole folder moves, with the change in it.
+	m.run(["status", "--json"]);
+	assert.equal(JSON.parse(readFileSync(join(m.config, "theme.json"), "utf8")).preset, "slate");
+	assert.equal(JSON.parse(m.run(["theme", "list", "--json"]).out).preset, "slate");
+});
+
+test("with XDG_CONFIG_HOME set elsewhere, what the old release kept in ~/.config/tabkyra moves too", () => {
+	const m = box("xdg");
+	const xdgConfig = join(m.dir, "xdg-config");
+	const xdgData = join(m.dir, "xdg-data");
+	write(join(xdgConfig, "tabkyra", "remote.json"), '{"port":8787}');
+	// Home-folder only, whatever XDG said: credentials, update settings, launchers.
+	write(join(m.home, ".config", "tabkyra", "subscriptions", "openai", "token.json"), "secret");
+	write(join(m.home, ".config", "tabkyra", "update.json"), '{"policy":"auto"}');
+	write(join(m.home, ".config", "tabkyra", "tabkyra"), '#!/bin/sh\nexec "/bin/echo" "$@"\n', 0o755);
+	write(join(xdgData, "tabkyra", "threads", "t.json"), "{}");
+	write(join(m.home, ".local", "share", "tabkyra", "copilot-sdk", "package.json"), "{}");
+	m.run(["status", "--json"], { XDG_CONFIG_HOME: xdgConfig, XDG_DATA_HOME: xdgData });
+	const config = join(xdgConfig, "polycarp", "browser");
+	assert.equal(readFileSync(join(config, "remote.json"), "utf8"), '{"port":8787}');
+	assert.equal(readFileSync(join(config, "subscriptions", "openai", "token.json"), "utf8"), "secret", "sign-ins move with the rest");
+	assert.equal(readFileSync(join(config, "update.json"), "utf8"), '{"policy":"auto"}');
+	assert.equal(lstatSync(join(config, "polycarp")).isFile(), true, "the home launcher became the polycarp launcher");
+	assert.match(readFileSync(join(m.home, ".config", "tabkyra", "tabkyra"), "utf8"), /bin\/echo/, "the old home path still reaches it");
+	const data = join(xdgData, "polycarp", "browser");
+	assert.equal(readFileSync(join(data, "threads", "t.json"), "utf8"), "{}");
+	assert.equal(readFileSync(join(data, "copilot-sdk", "package.json"), "utf8"), "{}", "the Copilot SDK moves too");
 });
