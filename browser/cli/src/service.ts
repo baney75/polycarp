@@ -8,7 +8,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, wri
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { launcherBinary } from "./harness.ts";
-import { ensureLauncherIsSelf } from "./install.ts";
+import { cliLauncherPath, ensureLauncherIsSelf } from "./install.ts";
 import { configDir, configDirOverride, legacyConfigDir } from "./files.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
@@ -80,9 +80,13 @@ const systemdQuote = (text: string, execStart = false) => {
  */
 export function serviceEnvironment(inherited: { config?: string; socket?: string } = {}): Record<string, string> {
 	const config = configDirOverride() ? configDir() : (inherited.config ?? configDir());
-	const out: Record<string, string> = { POLYCARP_BROWSER_CONFIG_DIR: resolve(config) };
+	// The older names too: after `update --rollback` the launcher runs a release that reads only those.
+	const out: Record<string, string> = { POLYCARP_BROWSER_CONFIG_DIR: resolve(config), TABKYRA_CONFIG_DIR: resolve(config) };
 	const socket = envVar("SOCKET_DIR") ?? inherited.socket;
-	if (socket) out.POLYCARP_SOCKET_DIR = resolve(socket);
+	if (socket) {
+		out.POLYCARP_SOCKET_DIR = resolve(socket);
+		out.TABKYRA_SOCKET_DIR = resolve(socket);
+	}
 	return out;
 }
 
@@ -330,9 +334,18 @@ type InstallResult = { ok: boolean; message: string; file?: string };
 
 async function installWith(spec: ServiceSpec, exec: Runner): Promise<InstallResult> {
 	// The service runs the launcher. One that points at some other program (an old checkout, an npm link) would start old code.
+	const launcher = cliLauncherPath();
+	const launcherBefore = readIfFile(launcher);
 	ensureLauncherIsSelf();
+	// The launcher is shared with every agent's config, so an install that is undone puts it back too.
+	const restoreLauncher = () => {
+		if (launcherBefore !== undefined && readIfFile(launcher) !== launcherBefore) writeAtomic(launcher, launcherBefore, 0o755);
+	};
 	const retired = await retireLegacy(spec, exec);
-	if (!retired.ok) return { ok: false, message: retired.message ?? "The old service could not be stopped." };
+	if (!retired.ok) {
+		restoreLauncher();
+		return { ok: false, message: retired.message ?? "The old service could not be stopped." };
+	}
 	const target = serviceFile(spec);
 	// A file already there under the new name is kept as it was if this install has to be undone.
 	const before = target ? readIfFile(target) : undefined;
@@ -350,6 +363,7 @@ async function installWith(spec: ServiceSpec, exec: Runner): Promise<InstallResu
 	}
 	// Failed: take the new service away completely before the old one comes back, so never both are enabled.
 	await undoFresh(spec, exec, target, before);
+	restoreLauncher();
 	const problem = await retired.restore();
 	return { ...result, message: problem ? `${result.message} The old service could not be restarted: ${problem}` : `${result.message} The old ${spec.legacy?.label ?? "service"} service was restored.` };
 }

@@ -565,7 +565,7 @@ export async function runUpdate(options: UpdateOptions): Promise<number> {
 	};
 	if (!options.check && !options.json) {
 		migrateLegacyPaths();
-		await migrateLegacyServices();
+		for (const r of await migrateLegacyServices()) if (!r.ok) log(`${sym.warn} ${r.message}`);
 	}
 	// A read-only --check never changes settings; --channel is remembered when updating.
 	if (!options.check && (options.channel || options.autoCheck !== undefined)) {

@@ -274,6 +274,8 @@ serviceTest("the new service keeps the folders the old service had saved, not th
 	assert.ok(fresh.includes(config), `config folder kept:\n${fresh}`);
 	assert.ok(fresh.includes(socket), `socket folder kept:\n${fresh}`);
 	assert.ok(new RegExp(`POLYCARP_BROWSER_CONFIG_DIR(</key>\\s*<string>|=)${config}`).test(fresh), "the saved config folder is the variable's value, not the shell's default");
+	for (const [name, value] of [["TABKYRA_CONFIG_DIR", config], ["TABKYRA_SOCKET_DIR", socket]])
+		assert.ok(new RegExp(`${name}(</key>\\s*<string>|=)${value}`).test(fresh), `${name} is there for a release rolled back to:\n${fresh}`);
 });
 
 serviceTest("an old service that used the default ~/.config/tabkyra gets the migrated folder, or keeps the old one when it could not move", () => {
