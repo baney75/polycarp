@@ -55,7 +55,7 @@ export class WelcomeMessageElement extends LitElement {
 
 	override render(): TemplateResult {
 		return html`
-			<div class="welcome-container flex flex-col items-center justify-end pb-3" style="min-height: calc(100dvh - 196px)">
+			<div class="welcome-container flex flex-col items-center justify-center">
 				<div class="flex flex-col items-center text-center mb-6 px-6">
 					${polycarpMark(64, "tile", "mb-4 rounded-[15px] shadow-[0_10px_30px_-12px_color-mix(in_srgb,var(--tk-brass)_55%,transparent)]")}
 					<h1 class="text-2xl font-semibold tracking-tight mb-1.5">Polycarp</h1>
