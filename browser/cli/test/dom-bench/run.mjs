@@ -1,5 +1,5 @@
 // The DOM benchmark: every case in pages/ driven through the MCP tools in a throwaway Chromium.
-// `node test/dom-bench/run.mjs [ids...] [--update]`. See browser/AGENTS.md for the ratchet.
+// `node test/dom-bench/run.mjs [ids...] [--update] [--time]`. See browser/AGENTS.md for the ratchet.
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,6 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const floorPath = join(here, "floor.json");
 const args = process.argv.slice(2);
 const update = args.includes("--update");
+const timed = args.includes("--time");
 const wanted = args.filter((a) => !a.startsWith("--"));
 
 const files = readdirSync(join(here, "pages")).filter((f) => f.endsWith(".mjs")).sort();
@@ -73,7 +74,7 @@ const passed = results.filter((r) => r.pass).length;
 console.log(`\n${passed}/${results.length} passed, ${results.length - passed} failed, ${results.reduce((a, r) => a + r.calls, 0)} tool calls, ${results.reduce((a, r) => a + r.ms, 0)} ms`);
 writeFileSync(join(here, "last-run.json"), `${JSON.stringify({ at: new Date().toISOString(), results }, null, "\t")}\n`);
 
-let floor = { passing: [], failing: {}, ms: {} };
+let floor = { passing: [], failing: {}, calls: {}, ms: {} };
 try {
 	floor = JSON.parse(readFileSync(floorPath, "utf8"));
 } catch {
@@ -85,7 +86,9 @@ for (const id of floor.passing) {
 	const r = byId.get(id);
 	if (!r) continue;
 	if (!r.pass) problems.push(`${id} is in passing but failed: ${r.error}`);
-	else if (floor.ms?.[id] && r.ms > floor.ms[id]) problems.push(`${id} took ${r.ms} ms, over its ceiling of ${floor.ms[id]} ms`);
+	else if (floor.calls?.[id] && r.calls > floor.calls[id]) problems.push(`${id} took ${r.calls} tool calls, over its ceiling of ${floor.calls[id]}`);
+	// Wall time swings several fold when the machine is busy, so it gates only on request (--time, on a quiet machine).
+	else if (timed && floor.ms?.[id] && r.ms > floor.ms[id]) problems.push(`${id} took ${r.ms} ms, over its ceiling of ${floor.ms[id]} ms`);
 }
 const newly = Object.keys(floor.failing).filter((id) => byId.get(id)?.pass);
 if (newly.length) console.log(`newly passing: ${newly.join(", ")} (move to passing with --update)`);
@@ -98,12 +101,15 @@ if (update) {
 	const passing = new Set(floor.passing);
 	const failing = { ...floor.failing };
 	const ms = { ...(floor.ms ?? {}) };
+	const calls = { ...(floor.calls ?? {}) };
 	for (const r of results) {
 		if (r.pass) {
 			passing.add(r.id);
 			delete failing[r.id];
 			// A ceiling that exists stays: updating never loosens it.
 			ms[r.id] ??= Math.max(2000, 3 * r.ms);
+			// Fewer calls tightens the ceiling; more never loosens it.
+			calls[r.id] = Math.min(calls[r.id] ?? r.calls, r.calls);
 		} else if (!passing.has(r.id)) {
 			failing[r.id] = r.error ?? "failed";
 		}
@@ -113,6 +119,7 @@ if (update) {
 	const out = {
 		passing: sort(passing),
 		failing: Object.fromEntries(sort(Object.keys(failing)).map((k) => [k, failing[k]])),
+		calls: Object.fromEntries(sort(Object.keys(calls).filter((k) => passing.has(k))).map((k) => [k, calls[k]])),
 		ms: Object.fromEntries(sort(Object.keys(ms).filter((k) => passing.has(k))).map((k) => [k, ms[k]])),
 	};
 	writeFileSync(floorPath, `${JSON.stringify(out, null, "\t")}\n`);

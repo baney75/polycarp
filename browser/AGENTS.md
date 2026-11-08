@@ -34,7 +34,8 @@ agent would get, a `solve(t)` that uses only the MCP tools and finds every targe
 snapshot searched by role and label, never a selector or id, never `run_js` to act), and a `check(page)` that reads the app's
 own state back through CDP. It shares its Chromium setup with the e2e test (`cli/test/e2e-harness.mjs`), is local like e2e and
 not in CI, and writes `cli/test/dom-bench/last-run.json`. `floor.json` is the ratchet: `passing` ids must keep passing within
-their `ms` ceiling (max of 2000 and 3x the measured time), or the run exits 1. `failing` holds each case the tools cannot do yet,
+their `calls` ceiling (tool calls in `solve`; fewer tightens it), or the run exits 1. Wall time is reported; it gates only with
+`--time` (ceiling max of 2000 ms and 3x the measured time), on a quiet machine, because load swings it several fold. `failing` holds each case the tools cannot do yet,
 with the real reason; those are the tool improvements to make. A fix moves its case to `passing` (`node test/dom-bench/run.mjs
 --update`, which refuses to drop a passing case), and nothing moves back. Do not simplify a page or switch a case to a selector
 to make it pass.
