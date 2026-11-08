@@ -7,6 +7,7 @@ extra change is an in-between frame someone can see: windows arriving one app at
 two workspaces overlapping, a window popping to the front.
 
     python3 scripts/switch-frames-probe.py 1 2 [--rounds 8] [--out DIR] [--max-steps N]
+    python3 scripts/switch-frames-probe.py --analyze switches.mp4   # count again, no switching
 
 It switches the screen while it runs and ends where it started, so it runs only after 10 idle minutes
 (--idle 0 overrides, for when you are watching it yourself), and stops switching as soon as input arrives.
@@ -21,10 +22,12 @@ SETTLE = 0.35       # seconds after a key: later changes are the app's own (a vi
 MIN_FPS = 50        # below this, separate changes merge into one frame and a switch can look cleaner than it is
 CHANGE = 0.0025     # share of the frame that must differ for a frame to count as a change
 PIXEL = 18          # how far one gray pixel must move to count, over video noise
+MENU_ROWS = 5       # the menu bar, left out: macOS redraws its app name a frame or three after the windows
+GAP = 0.4           # --analyze: changes closer than this belong to one switch
 
 
 def idle_seconds():
-    out = subprocess.run(["ioreg", "-c", "IOHIDSystem"], capture_output=True, text=True).stdout
+    out = subprocess.run(["/usr/sbin/ioreg", "-c", "IOHIDSystem"], capture_output=True, text=True).stdout
     m = re.search(r'"?HIDIdleTime"?\s*=\s*(\d+)', out)
     return int(m.group(1)) / 1e9 if m else 0.0
 
@@ -66,12 +69,63 @@ def shotate(*args):
 
 
 def frames(video):
+    """Frame times and small gray frames, menu bar cut off. Shotate records only when the screen changes,
+    so the times are uneven: a frame is a real composited screen, and a still screen gives none."""
     info = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "frame=pts_time", "-of", "csv=p=0", video], capture_output=True, text=True).stdout
     times = np.array([float(x.split(",")[0]) for x in info.split() if x.strip(",")])
-    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", video, "-vsync", "0", "-vf", f"scale={W}:{H}", "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True).stdout
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", video, "-fps_mode", "passthrough", "-vf", f"scale={W}:{H}", "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True).stdout
     data = np.frombuffer(raw, dtype=np.uint8)
-    n = len(data) // (W * H)
-    return times[:n], data[: n * W * H].reshape(n, H, W)
+    n = min(len(data) // (W * H), len(times))
+    if n < 2:
+        raise RuntimeError(f"ffmpeg read {n} frames from {video}")
+    return times[:n], data[: n * W * H].reshape(n, H, W)[:, MENU_ROWS:, :]
+
+
+def capture_fps(times):
+    """How close together the recorder can put two frames. The average is no use: a still screen records nothing."""
+    gaps = np.diff(times)
+    gaps = gaps[gaps > 0]
+    return round(1 / float(np.percentile(gaps, 5)), 1) if len(gaps) else 0.0
+
+
+def summary(rows, times):
+    good = [r for r in rows if r["steps"]]
+    steps = sorted(r["steps"] for r in good) or [0]
+    return {"fps": capture_fps(times), "switches": len(rows), "steps_median": steps[len(steps) // 2], "steps_max": steps[-1],
+            "clean_cuts": sum(r["steps"] == 1 for r in good), "in_between_total": sum(r.get("in_between", 0) for r in good),
+            "span_ms_median": sorted(r.get("span_ms", 0) for r in good)[len(good) // 2] if good else None}
+
+
+def strange_frames(gray, steps):
+    """Frames unlike both ends: something neither workspace shows, such as a bare desktop or both at once."""
+    before = gray[max(steps[0] - 1, 0)].astype(np.int16)
+    after = gray[min(steps[-1], len(gray) - 1)].astype(np.int16)
+    n = 0
+    for s in steps[:-1]:
+        f = gray[s].astype(np.int16)
+        if (np.abs(f - before) > PIXEL).mean() > CHANGE and (np.abs(f - after) > PIXEL).mean() > CHANGE:
+            n += 1
+    return n
+
+
+def analyze_saved(times, gray):
+    """No key times: a switch is a burst of changes that ends with much of the screen different."""
+    diffs = (np.abs(gray[1:].astype(np.int16) - gray[:-1].astype(np.int16)) > PIXEL).mean(axis=(1, 2))
+    bursts, cur = [], []
+    for i in np.where(diffs > CHANGE)[0] + 1:
+        if cur and times[i] - times[cur[-1]] > GAP:
+            bursts.append(cur)
+            cur = []
+        cur.append(int(i))
+    if cur:
+        bursts.append(cur)
+    rows = []
+    for b in bursts:
+        if (np.abs(gray[b[-1]].astype(np.int16) - gray[b[0] - 1].astype(np.int16)) > PIXEL).mean() <= 0.05:
+            continue
+        rows.append({"at": round(float(times[b[0]]), 2), "steps": len(b), "in_between": strange_frames(gray, b),
+                     "span_ms": round((times[b[-1]] - times[b[0]]) * 1000)})
+    return rows
 
 
 def analyze(times, gray, marks, start_at):
@@ -86,13 +140,7 @@ def analyze(times, gray, marks, start_at):
             rows.append({"to": target, "steps": 0})
             continue
         steps = idx + 1
-        before, after = gray[max(steps[0] - 1, 0)].astype(np.int16), gray[min(steps[-1], len(gray) - 1)].astype(np.int16)
-        # A frame unlike both ends: something neither workspace shows, such as a bare desktop or both at once.
-        strange = 0
-        for s in steps[:-1]:
-            f = gray[s].astype(np.int16)
-            if (np.abs(f - before) > PIXEL).mean() > CHANGE and (np.abs(f - after) > PIXEL).mean() > CHANGE:
-                strange += 1
+        strange = strange_frames(gray, steps)
         rows.append({"to": target, "steps": int(len(steps)), "in_between": strange, "first_ms": round((times[steps[0]] - t0) * 1000),
                      "span_ms": round((times[steps[-1]] - times[steps[0]]) * 1000), "frames": [int(s) for s in steps[:12]]})
     return rows
@@ -100,14 +148,24 @@ def analyze(times, gray, marks, start_at):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("a", type=int)
-    p.add_argument("b", type=int)
+    p.add_argument("a", type=int, nargs="?")
+    p.add_argument("b", type=int, nargs="?")
+    p.add_argument("--analyze", metavar="VIDEO", help="count the switches in a saved recording; switches nothing")
     p.add_argument("--rounds", type=int, default=8)
     p.add_argument("--gap", type=float, default=1.2)
     p.add_argument("--idle", type=float, default=600)
     p.add_argument("--out", default=tempfile.mkdtemp(prefix="switch-frames-"))
     p.add_argument("--max-steps", type=int, default=None)
     a = p.parse_args()
+    if a.analyze:
+        times, gray = frames(a.analyze)
+        rows = analyze_saved(times, gray)
+        print(json.dumps({"video": a.analyze, **summary(rows, times)}))
+        for r in rows:
+            print(r)
+        return 1 if a.max_steps is not None and rows and max(r["steps"] for r in rows) > a.max_steps else 0
+    if a.a is None or a.b is None:
+        p.error("name two workspaces, or --analyze a recording")
     os.makedirs(a.out, exist_ok=True)
     if idle_seconds() < a.idle:
         print(f"untested live: idle {idle_seconds():.0f} s, needs {a.idle:.0f}")
@@ -167,10 +225,7 @@ def main():
     rows = analyze(times, gray, marks, began + offset)
     good = [r for r in rows if r["steps"]]
     steps = sorted(r["steps"] for r in good) or [0]
-    report = {"video": path, "fps": round(len(times) / max(times[-1] - times[0], 0.001), 1), "switches": len(rows), "interrupted": interrupted,
-              "steps_median": steps[len(steps) // 2], "steps_max": steps[-1], "clean_cuts": sum(r["steps"] == 1 for r in good),
-              "in_between_total": sum(r.get("in_between", 0) for r in good),
-              "span_ms_median": sorted(r.get("span_ms", 0) for r in good)[len(good) // 2] if good else None, "rows": rows}
+    report = {"video": path, "interrupted": interrupted, **summary(rows, times), "rows": rows}
     with open(os.path.join(a.out, "report.json"), "w") as f:
         json.dump(report, f, indent=1)
     if len(good) < len(rows) or not rows:
@@ -190,4 +245,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except RuntimeError as e:
+        print(f"untested live: {e}")
+        sys.exit(3)
