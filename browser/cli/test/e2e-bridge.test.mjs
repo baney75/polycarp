@@ -1519,4 +1519,14 @@ test("capture: another session's tab and another session's capture are refused, 
 	const again = await captureOf({ action: "network_start", tabId: opened.tabId });
 	assert.equal(again.ok, false, "a tab that is no longer the session's cannot be captured");
 	await captureOk({ action: "cancel" });
+
+	// A tab shown to the user, usually to sign in, ends its capture too.
+	const shown = JSON.parse(await tool("tabs_create", { url: `${pageUrl}capture-page` }));
+	const watched = await captureOk({ action: "network_start", tabId: shown.tabId });
+	await tool("tabs_show", { tabId: shown.tabId });
+	const after = (await captureOk({ action: "status" })).captures.find((c) => c.id === watched.id);
+	assert.equal(after.state, "ended");
+	assert.match(after.endedBy, /shown to the user/);
+	await captureOk({ action: "cancel" });
+	await tool("tabs_close", { tabId: shown.tabId });
 });

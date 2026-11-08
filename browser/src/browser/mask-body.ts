@@ -163,7 +163,7 @@ export function maskJsonResponse(text: string, also?: (value: string) => boolean
 			if (top?.obj && top.key) {
 				lastKey = JSON.parse(token) as string;
 				// A credential used as a key (a session map keyed by token) is masked like a value.
-				out += holdsCredential(lastKey) ? `"${SECRET}"` : token;
+				out += holdsCredential(lastKey) || also?.(lastKey) ? `"${SECRET}"` : token;
 			} else {
 				const value = JSON.parse(token) as string;
 				out += holdsCredential(value) || also?.(value) ? `"${SECRET}"` : token;

@@ -6,11 +6,9 @@
  * - the value of Authorization, Cookie, Set-Cookie, Proxy-Authorization, or any header whose name
  *   contains token, key, secret or auth; the same names in a query string, plus whatever
  *   mask-body.ts treats as a credential (a token's shape, a password's name, an OAuth code);
- * - a request body at all when the address looks like a sign-in or token endpoint (login, signin,
- *   auth, password, token, credential), when the page had a password field, or when it isn't JSON or a
- *   url-encoded form; in JSON and forms the values under secret names are replaced;
+ * - any request body, whatever the address or page;
  * - a value that has the shape of a credential (a JWT, a long hex or base64 token, a Bearer or Basic
- *   scheme, a known key prefix) under any name: in a header, a query, a form or a JSON body;
+ *   scheme, a known key prefix) under any name: in a header, a query or a JSON response body;
  * - more than 64 KB (UTF-8 bytes) of any body, or a response body that isn't same-origin JSON with its secrets masked.
  *
  * Every address that can enter the file goes through `redactUrl`: the request URL, the query string, a
@@ -567,7 +565,7 @@ export class HarBuilder {
 				creator,
 				comment:
 					note ??
-					"Secrets are redacted: credential headers and query parameters, sign-in bodies, and values under secret names.",
+					"Secrets are redacted: credential headers and query parameters, and values under secret names. Request bodies are never stored.",
 				entries,
 			},
 		};

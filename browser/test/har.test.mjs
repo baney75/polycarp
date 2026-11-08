@@ -273,6 +273,11 @@ test("sol-F2: a value that has a credential's shape is redacted under any header
 		const res = redactResponseBody(bodyOf(shaped[shape]));
 		assert.ok(!res.text.includes(shaped[shape]), `response ${shape}: ${res.text}`);
 	}
+	// A token used as an object key, as in a map of sessions, is masked like a value.
+	for (const shape of ["jwt", "hex", "mixed"]) {
+		const res = redactResponseBody(json({ sessions: { [shaped[shape]]: { user: "kept" } } }));
+		assert.ok(!res.text.includes(shaped[shape]) && res.text.includes('"user":"kept"'), `key ${shape}: ${res.text}`);
+	}
 	assert.ok(redactResponseBody(json({ id: "123e4567-e89b-12d3-a456-426614174000", name: "Ada" })).text.includes("123e4567"));
 });
 

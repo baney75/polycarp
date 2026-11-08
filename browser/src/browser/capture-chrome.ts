@@ -115,7 +115,7 @@ async function startNetwork(tabId: number, _id: string, onEnd: (why: string) => 
 			const b = state.builder;
 			const har = b.toHar(creator());
 			const notes = [
-				"Secrets are redacted: credential headers and query parameters, sign-in and password-page bodies, values under secret names. JSON responses from the page's own origin are included (64 KB at most); other bodies are not.",
+				"Secrets are redacted: credential headers and query parameters, and values under secret names. Request bodies are never stored. JSON responses from the page's own origin are included (64 KB at most); other bodies are not.",
 				"Requests made by cross-site frames and by other tabs the page opened are not in it.",
 			];
 			if (b.full)

@@ -482,6 +482,8 @@ export const handlers: Record<string, Handler> = {
 	"tabs.show": async (ctx, params) => {
 		const tabId = num(params, "tabId") ?? ctx.session.currentTabId;
 		if (tabId === undefined) throw new BridgeError(ERR.NO_TAB, "You have no tab to show yet: navigate opens one.");
+		// The tab is shown so the user can sign in: what they type and see stays out of any capture.
+		captures.tabClosed(tabId, "the tab was shown to the user");
 		await ctx.session.show(tabId);
 		return tabSummary(tabId);
 	},
