@@ -5,6 +5,7 @@
 	"license": "AGPL-3.0",
 	"type": "module",
 	"bin": {
+		"polycarp-browser": "./dist/index.js",
 		"tabkyra": "./dist/index.js",
 		"sitegeist": "./dist/index.js"
 	},

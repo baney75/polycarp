@@ -27,5 +27,5 @@ export function bundledExtensionDir(): string | undefined {
 	return COMPILED ? join(dirname(process.execPath), "extension") : undefined;
 }
 
-/** The command a person types for this program: `polycarp browser` inside the app, `tabkyra` for an npm link or a checkout. */
-export const COMMAND_NAME: string = COMPILED ? "polycarp browser" : "tabkyra";
+/** The command a person types for this program: `polycarp browser` inside the app, `polycarp-browser` for an npm link or a checkout. */
+export const COMMAND_NAME: string = COMPILED ? "polycarp browser" : "polycarp-browser";

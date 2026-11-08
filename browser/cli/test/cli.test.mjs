@@ -49,7 +49,7 @@ test("the CLI's version is the extension manifest's", async () => {
 test("help lists every command the CLI dispatches, grouped, with the exit codes", () => {
 	const help = run("--help").out;
 	for (const name of ["setup", "status", "mcp", "skill", "serve", "token", "tunnel", "library", "allow", "ask", "allow-all", "doctor", "update", "install", "reload", "debug", "completion", "version"]) {
-		assert.match(help, new RegExp(`tabkyra ${name}\\b`), `help lacks ${name}`);
+		assert.match(help, new RegExp(`polycarp-browser ${name}\\b`), `help lacks ${name}`);
 		// A listed command is one the dispatcher knows: it never says "Unknown command".
 		const r = run(name, "--definitely-not-a-flag");
 		assert.doesNotMatch(r.err, /Unknown command/, name);
@@ -65,7 +65,7 @@ test("help lists every command the CLI dispatches, grouped, with the exit codes"
 		tunnel: ["tailscale", "cloudflare"],
 		library: ["add", "search", "list", "cite", "export", "obsidian", "verify", "remove"],
 	}))
-		for (const sub of subs) assert.match(help, new RegExp(`tabkyra ${command} [^\\n]*\\b${sub}\\b`), `help has no row for ${command} ${sub}`);
+		for (const sub of subs) assert.match(help, new RegExp(`polycarp-browser ${command} [^\\n]*\\b${sub}\\b`), `help has no row for ${command} ${sub}`);
 	const unknown = run("frobnicate");
 	assert.equal(unknown.code, 2);
 	assert.match(unknown.err, /Unknown command "frobnicate"/);
@@ -86,20 +86,20 @@ test("options are checked per subcommand, and a value option needs its value", (
 		["update", "--bogus"],
 	]) {
 		const r = run(...args);
-		assert.equal(r.code, 2, `tabkyra ${args.join(" ")} exited ${r.code}: ${r.out}${r.err}`);
+		assert.equal(r.code, 2, `polycarp-browser ${args.join(" ")} exited ${r.code}: ${r.out}${r.err}`);
 		assert.match(r.err, /Unknown option|needs a value|Usage/);
 	}
 	assert.match(run("serve", "--port").err, /--port needs a value/);
 	// A switch with a value is refused, not ignored: --off=1 used to run the tunnel instead.
 	for (const args of [["tunnel", "tailscale", "--off=1"], ["status", "--json=1"], ["install", "--force=yes"], ["version", "--json=true"], ["library", "list", "--json=1"], ["library", "search", "x", "--json=false"]]) {
 		const r = run(...args);
-		assert.equal(r.code, 2, `tabkyra ${args.join(" ")} exited ${r.code}`);
+		assert.equal(r.code, 2, `polycarp-browser ${args.join(" ")} exited ${r.code}`);
 		assert.match(r.err, /takes no value/);
 	}
-	assert.match(run("pi-extension", "a", "b").err, /Usage: tabkyra pi-extension \[dir\]/);
-	assert.match(run("serve", "--port").err, /needs a value\. Usage: tabkyra serve \[--port N\] \[--public-url https:\/\/host\] \[--redirect-host a,b\] \[--allow-host a,b\]$/m);
-	assert.match(run("token", "create", "x", "--bogus").err, /Usage: tabkyra token create <name> \[--scope a,b\]$/m);
-	assert.match(run("token", "revoke", "--bogus").err, /Usage: tabkyra token revoke <id\|name\|client id\|grant id>$/m);
+	assert.match(run("pi-extension", "a", "b").err, /Usage: polycarp-browser pi-extension \[dir\]/);
+	assert.match(run("serve", "--port").err, /needs a value\. Usage: polycarp-browser serve \[--port N\] \[--public-url https:\/\/host\] \[--redirect-host a,b\] \[--allow-host a,b\]$/m);
+	assert.match(run("token", "create", "x", "--bogus").err, /Usage: polycarp-browser token create <name> \[--scope a,b\]$/m);
+	assert.match(run("token", "revoke", "--bogus").err, /Usage: polycarp-browser token revoke <id\|name\|client id\|grant id>$/m);
 	// The value of a value option isn't counted as an extra argument.
 	assert.equal(run("token", "list", "--json").code, 0);
 });
@@ -107,7 +107,7 @@ test("options are checked per subcommand, and a value option needs its value", (
 test("completions parse in each shell and complete commands, subcommands and flags", (t) => {
 	const zsh = run("completion", "zsh");
 	assert.equal(zsh.code, 0);
-	assert.match(zsh.out, /^#compdef tabkyra/);
+	assert.match(zsh.out, /^#compdef polycarp-browser tabkyra/);
 	assert.match(zsh.out, /'completion:/);
 	const bash = run("completion", "bash").out;
 	const fish = run("completion", "fish").out;
@@ -128,6 +128,7 @@ test("completions parse in each shell and complete commands, subcommands and fla
 	assert.equal(complete("tabkyra skill apply sk"), "");
 	assert.equal(complete("tabkyra skill eval --cases ev"), "");
 	assert.match(execFileSync("bash", ["-c", `source "${file}"; complete -p tabkyra`], { encoding: "utf8" }), /-o bashdefault -o default -F _tabkyra tabkyra/);
+	assert.match(execFileSync("bash", ["-c", `source "${file}"; complete -p polycarp-browser`], { encoding: "utf8" }), /-o bashdefault -o default -F _tabkyra polycarp-browser/);
 	// fish: files only where paths go.
 	assert.match(fish, /__fish_seen_subcommand_from skill; and __fish_seen_subcommand_from list' -f/);
 	assert.doesNotMatch(fish, /__fish_seen_subcommand_from skill; and __fish_seen_subcommand_from lint' -f/);
@@ -161,7 +162,7 @@ test("completions parse in each shell and complete commands, subcommands and fla
 	assert.doesNotMatch(bash, /\byolo\b/);
 	const bad = run("completion", "powershell");
 	assert.equal(bad.code, 2);
-	assert.match(bad.err, /tabkyra completion zsh\|bash\|fish/);
+	assert.match(bad.err, /polycarp-browser completion zsh\|bash\|fish/);
 });
 
 test("read commands print JSON with --json, and exit 1 when not connected", () => {
@@ -233,7 +234,7 @@ test("help rows and the parsers agree on every flag, including setup's and updat
 			const sub = spec.subcommands ? [words[1]] : [];
 			for (const [, flag, hint] of usage.matchAll(/\[(--[a-z-]+)( [^\]]+)?\]/g)) {
 				const problem = argsProblem(spec.name, [...sub, flag, ...(hint ? ["v"] : [])]);
-				assert.ok(!problem || !/Unknown option|takes no value|needs a value/.test(problem), `help row "tabkyra ${usage}" shows ${flag}, which the parser refuses: ${problem}`);
+				assert.ok(!problem || !/Unknown option|takes no value|needs a value/.test(problem), `help row "polycarp-browser ${usage}" shows ${flag}, which the parser refuses: ${problem}`);
 			}
 		}
 	}

@@ -1,12 +1,12 @@
-/** The two names a person types for this program: the one the app's helper answers to, and the one an npm link or checkout has. */
-const COMMANDS = ["polycarp browser", "tabkyra"];
+/** The names a person types for this program: the one the app's helper answers to, the one an npm link or checkout has, and the older one a helper installed earlier may still answer to. */
+const COMMANDS = ["polycarp browser", "polycarp-browser", "tabkyra"];
 
 /**
  * A prompt the user pastes into their own agent (Claude Code, Codex, pi, OMP, OpenCode,
  * Cursor, ...). The agent installs the CLI, connects the MCP server and installs the skills.
  * Plain steps only: no piped installers, and nothing that asks for a key or password.
  */
-export function agentSetupPrompt(version: string, command = "tabkyra"): string {
+export function agentSetupPrompt(version: string, command = "polycarp-browser"): string {
 	if (!COMMANDS.includes(command)) throw new Error(`Unknown command name "${command}".`);
 	// Without the version the clone can't be pinned, so refuse rather than copy a broken prompt.
 	if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`No extension version to pin the CLI to (got "${version}").`);
@@ -20,16 +20,16 @@ export function agentSetupPrompt(version: string, command = "tabkyra"): string {
    - If it doesn't exist: mkdir -p ~/polycarp-src && cd ~/polycarp-src && git clone --depth 1 --branch browser-v${version} https://github.com/baney75/polycarp && cd polycarp
      If that tag doesn't exist, run the same clone without --branch browser-v${version} and tell me you used the newest code.
    - Then: (cd browser/cli && npm ci && npm run build && npm link)
-   The npm link gives the command the name tabkyra.${command === "tabkyra" ? "" : ` Once it succeeds, run "tabkyra" in place of "${command}" in every command below, whichever name this prompt started with.`} If npm link fails with a permissions error, run "node ~/polycarp-src/polycarp/browser/cli/dist/index.js" in place of "${command}" in every command below.
+   The npm link gives the command the name polycarp-browser.${command === "polycarp-browser" ? "" : ` Once it succeeds, run "polycarp-browser" in place of "${command}" in every command below, whichever name this prompt started with.`} If npm link fails with a permissions error, run "node ~/polycarp-src/polycarp/browser/cli/dist/index.js" in place of "${command}" in every command below.
 3. Run: ${command} setup --yes
    It registers the browser connection and adds the MCP server to Claude Code and Codex.
 4. Connect this harness, even if Polycarp already works in another one:
-   - Any MCP client: a stdio server named "polycarp" that runs ~/.config/tabkyra/tabkyra with the argument "mcp". JSON configs need the full path, not ~.
+   - Any MCP client: a stdio server named "polycarp" that runs ~/.config/polycarp/browser/polycarp with the argument "mcp". JSON configs need the full path, not ~.
    - pi has no MCP client: run ${command} pi-extension instead.
 5. Install the skills: ${command} skill install
    If this harness reads AGENTS.md instead of skill folders: cd back to the directory step 1 printed (my project, not the Polycarp clone); if you aren't sure it's my project's root, ask me. If its AGENTS.md already has a "## Browser: Polycarp" or "## Browser: Tabkyra" section (the same section under its earlier name), leave it as it is. Otherwise run ${command} skill print >> AGENTS.md
 6. Run ${command} doctor and fix anything it reports with the command it prints.
-7. Restart or reload MCP servers if this harness needs it, then call the status tool of the MCP server named tabkyra. Tell me whether it says connected.
+7. Restart or reload MCP servers if this harness needs it, then call the status tool of the MCP server named polycarp. Tell me whether it says connected.
 
 Don't ask me for API keys or passwords. Polycarp doesn't need them for this.`;
 }
@@ -42,7 +42,7 @@ const CLOSING = "Don't ask me for API keys or passwords. Polycarp doesn't need t
  * --no-passcode, so no long-lived passcode is made or printed into the agent's output, and the
  * prompt pipes nothing into a shell.
  */
-export function remoteSetupPrompt(version: string, command = "tabkyra"): string {
+export function remoteSetupPrompt(version: string, command = "polycarp-browser"): string {
 	if (!COMMANDS.includes(command)) throw new Error(`Unknown command name "${command}".`);
 	if (!/^\d+\.\d+\.\d+/.test(version)) throw new Error(`No extension version to pin the CLI to (got "${version}").`);
 	return `Set up Polycarp (https://github.com/baney75/polycarp) so claude.ai, ChatGPT or grok.com can use my browser through my own computer. The Polycarp extension ${version} is already loaded in my browser. Run each step yourself and show me any output you can't fix. Nothing here costs money or goes through anyone else's server.
@@ -68,7 +68,7 @@ export const CONNECT_CODE = /^TK-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/;
 
 /**
  * A prompt for an agent on another device: link it to this hub with a one-time connect code. That device may have
- * `polycarp browser` (the app) or only `tabkyra` (an npm link or checkout), so the prompt does not carry this
+ * `polycarp browser` (the app) or only `polycarp-browser` (an npm link or checkout), so the prompt does not carry this
  * helper's name: the agent finds out which one runs there and uses it for every later step.
  */
 export function deviceSetupPrompt(version: string, hubUrl: string, code: string): string {
@@ -78,8 +78,8 @@ export function deviceSetupPrompt(version: string, hubUrl: string, code: string)
 	return `Connect this computer's browser to my Polycarp hub at ${hubUrl}, so claude.ai, ChatGPT or grok.com can use it through my one connector. The Polycarp extension ${version} should already be loaded in my browser on this computer. Run each step yourself and show me any output you can't fix.
 
 1. Find the command that runs Polycarp's helper on this computer. Run: polycarp browser doctor
-   If that says the command isn't found, run: tabkyra doctor
-   Use whichever of the two runs, and write it as HELPER in every step below: HELPER is "polycarp browser" or "tabkyra", never both. If neither runs, stop and tell me to copy the setup prompt from Polycarp's Settings > Agents tab and run that first.
+   If that says the command isn't found, run: polycarp-browser doctor
+   Use whichever of the two runs, and write it as HELPER in every step below: HELPER is "polycarp browser" or "polycarp-browser", never both. If neither runs, stop and tell me to copy the setup prompt from Polycarp's Settings > Agents tab and run that first.
 2. Run: HELPER link ${hubUrl} --code ${code}
    The code works once and expires 10 minutes after I copied this prompt. If the hub refuses it, tell me to get a new one in Settings > Connect > Add a device.
 3. Run: HELPER link status

@@ -14,7 +14,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 const cli = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
 const NOT_CONNECTED =
-	"Polycarp isn't connected. Ask the user to open Helium/Chrome with the Polycarp extension loaded, or run `tabkyra doctor`.";
+	"Polycarp isn't connected. Ask the user to open Helium/Chrome with the Polycarp extension loaded, or run `polycarp-browser doctor`.";
 let root;
 let mcp;
 

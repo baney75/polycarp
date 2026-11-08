@@ -15,7 +15,7 @@ import { POLICY_LABELS, type UpdatePolicy } from "../update/logic.js";
 import { runningFromStore } from "../update/store-install.js";
 
 const MODE_LABELS: Record<string, string> = {
-	release: "Signed release (~/.local/share/tabkyra/app)",
+	release: "Signed release (~/.local/share/polycarp/browser/app)",
 	checkout: "Git checkout (pull, build, reload)",
 	unmanaged: "Neither (update in a terminal)",
 };

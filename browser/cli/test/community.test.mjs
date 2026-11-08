@@ -386,7 +386,7 @@ test("MCP skill_manage lists, writes (lint first, apply only when asked), remove
 		const prepared = await call({ action: "prepare_submit", name: "notion-navigation", cases: casesText.trim().split("\n").map((l) => JSON.parse(l)) });
 		assert.ok(!prepared.error, prepared.text);
 		assert.match(prepared.text, /Nothing was sent\. Show this whole preview to the user/);
-		assert.match(prepared.text, /run: tabkyra skill submit notion-navigation --confirm [0-9a-f]{10}/);
+		assert.match(prepared.text, /run: polycarp-browser skill submit notion-navigation --confirm [0-9a-f]{10}/);
 		assert.match((await call({ action: "remove", name: "notion-navigation" })).text, /Removed notion-navigation/);
 	} finally {
 		await mcp.close();

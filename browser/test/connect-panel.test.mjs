@@ -98,7 +98,7 @@ test("Privacy keeps one sentence visible and every long explanation in a named d
 		"The side panel agent then runs only OpenRouter models, sent with zero data retention required and no",
 		"Ollama cloud model) is still a cloud service: don't use one in private mode.",
 		"Prefer names over IPs (for example mac.example.ts.net): a listed IP is trusted on every network, including one where it belongs to someone else.",
-		"Keeps a copy of your side panel chats in ~/.local/share/tabkyra/threads (readable only by your user), so",
+		"Keeps a copy of your side panel chats in ~/.local/share/polycarp/browser/threads (readable only by your user), so",
 		"Nothing is sent: you review the report here, copy it, and paste it into a GitHub issue yourself.",
 	]) {
 		assert.ok(text.includes(kept), `missing: ${kept}`);
@@ -199,7 +199,7 @@ test("a request the helper never answers fails with no_reply after 20 s (30 s fo
 	const err = await status;
 	assert.ok(err instanceof client.ConnectRequestError);
 	assert.equal(err.code, "no_reply");
-	assert.equal(err.message, "Polycarp's helper didn't answer. Update it: polycarp browser update (or tabkyra update if you built the helper yourself)");
+	assert.equal(err.message, "Polycarp's helper didn't answer. Update it: polycarp browser update (or polycarp-browser update if you built the helper yourself)");
 	assert.equal(client.isNoHost(err), false);
 	// A late answer for the forgotten request is ignored.
 	port.listener({ id: port.posted[0].id, result: { route: "none" } });
@@ -485,7 +485,7 @@ test("second-S2: on the link route the connector URL is the hub's own, shown onc
 
 test("first-F3/second-G2: a helper that lists no scopes in {id, what} form gets no Confirm; the confirm lists descriptions, never 'the hub's choice'", async () => {
 	const { joinScopesOf, helperOutOfDateMessage } = await import("../src/connect/format.ts");
-	assert.equal(helperOutOfDateMessage(), "Polycarp's helper is out of date. Run polycarp browser update (or tabkyra update if you built the helper yourself), then try again.");
+	assert.equal(helperOutOfDateMessage(), "Polycarp's helper is out of date. Run polycarp browser update (or polycarp-browser update if you built the helper yourself), then try again.");
 	const rows = [{ id: "browser.read", what: "See the agent's own tabs and read pages" }];
 	assert.deepEqual(joinScopesOf({ joinScopes: rows }), rows);
 	for (const bad of [undefined, [], ["browser.read"], [{ id: "a" }], [{ id: "", what: "x" }], [rows[0], null], "browser.read"]) assert.equal(joinScopesOf({ joinScopes: bad }), undefined, JSON.stringify(bad));
@@ -503,8 +503,8 @@ test("second-G3: a confirm is dropped when a route or problem appears, and when 
 test("a helper that hasn't said its name gets both commands, and the one name once it has", async () => {
 	const { builtHelperCommand, hostCommandText } = await import("../src/bridge/host-command.ts");
 	// Tests run with no extension storage, so the helper never reports here.
-	assert.equal(builtHelperCommand("setup"), "tabkyra setup");
-	assert.equal(hostCommandText("setup"), "polycarp browser setup (or tabkyra setup if you built the helper yourself)");
+	assert.equal(builtHelperCommand("setup"), "polycarp-browser setup");
+	assert.equal(hostCommandText("setup"), "polycarp browser setup (or polycarp-browser setup if you built the helper yourself)");
 	const panel = readFileSync(new URL("../src/dialogs/ConnectTab.ts", import.meta.url), "utf8");
 	assert.match(panel, /builtHelperCommand\("setup"\) \? this\.command\("If you built the helper yourself"/);
 	const host = readFileSync(new URL("../src/bridge/host-command.ts", import.meta.url), "utf8");

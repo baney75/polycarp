@@ -75,7 +75,7 @@ test("a browser that was never connected is a warning with its own fix, not a fa
 	assert.ok(hosts.length >= 1);
 	for (const h of hosts) {
 		assert.equal(h.status, "warn", JSON.stringify(h));
-		assert.match(h.fix, /^tabkyra install --browser \w/);
+		assert.match(h.fix, /^polycarp-browser install --browser \w/);
 		assert.doesNotMatch(h.fix, /--force/);
 	}
 });
@@ -160,5 +160,5 @@ test("first-F6/sol-F5: the repair command for a two-word browser is quoted", { s
 	mkdirSync(join(support, "Google", "Chrome Beta"), { recursive: true });
 	mkdirSync(join(root, "apps", "Google Chrome Beta.app"), { recursive: true });
 	const beta = (await doctor()).find((c) => c.id === "host:Chrome Beta");
-	assert.equal(beta.fix, "tabkyra install --browser 'Chrome Beta'");
+	assert.equal(beta.fix, "polycarp-browser install --browser 'Chrome Beta'");
 });
