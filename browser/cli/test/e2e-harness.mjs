@@ -84,6 +84,8 @@ export async function startHarness() {
 	const env = () => ({
 		...process.env,
 		HOME: home,
+		// Linux looks for browser profiles under XDG_CONFIG_HOME first; a runner may set it.
+		XDG_CONFIG_HOME: join(home, ".config"),
 		TABKYRA_SOCKET_DIR: socketDir,
 		TABKYRA_AUTO_ALLOW: "1",
 		TABKYRA_CLIENT_NAME: "dom-bench",
@@ -129,7 +131,7 @@ export async function startHarness() {
 
 	try {
 		// `install` writes the host manifest into the profile's NativeMessagingHosts.
-		execFileSync(process.execPath, [cli, "install"], { env: env(), stdio: "ignore" });
+		execFileSync(process.execPath, [cli, "install"], { env: env(), stdio: ["ignore", "inherit", "inherit"] });
 
 		// Launch Playwright's Chromium without Playwright's CDP session: the extension drives
 		// tabs through chrome.debugger, and a second automation client attached to every
