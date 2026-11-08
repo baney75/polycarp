@@ -88,8 +88,9 @@ const URL_HEADERS = new Set(["location", "referer", "content-location", ":path"]
 
 function redactHeaderValue(name: string, value: string): string {
 	if (isSecretHeader(name)) return REDACTED;
-	if (URL_HEADERS.has(name.toLowerCase()) || ADDRESS_VALUE.test(value)) return redactUrl(value);
-	return SCHEME_VALUE.test(value) || credentialShaped(value) ? REDACTED : value;
+	if (URL_HEADERS.has(name.toLowerCase())) return redactUrl(value);
+	if (SCHEME_VALUE.test(value) || credentialShaped(value)) return REDACTED;
+	return ADDRESS_VALUE.test(value) ? redactUrl(value) : value;
 }
 
 /** DevTools gives headers as an object; a header sent twice is one value joined with newlines. */
@@ -107,6 +108,12 @@ export function redactUrl(url: string): string {
 	try {
 		const u = new URL(masked, "https://relative.invalid");
 		let changed = false;
+		// A reset or magic link carries its token in the path.
+		const segments = u.pathname.split("/");
+		if (segments.some(looksLikeToken)) {
+			u.pathname = segments.map((s) => (looksLikeToken(s) ? REDACTED : s)).join("/");
+			changed = true;
+		}
 		for (const [key, value] of [...u.searchParams])
 			if (SECRET_NAME.test(key) || looksLikeToken(value)) {
 				u.searchParams.set(key, REDACTED);
@@ -275,7 +282,11 @@ export interface HarBuilderOptions {
 	maxBytes?: number;
 }
 
+/** Most requests whose extra headers wait for their event; past this the oldest are forgotten. */
+const MAX_EARLY = 500;
+
 export class HarBuilder {
+	private readonly early = new Map<string, { request?: Params; response?: Params }>();
 	readonly maxBytes: number;
 	private pending = new Map<string, Pending>();
 	private done: HarEntry[] = [];
@@ -330,6 +341,7 @@ export class HarBuilder {
 			case "Network.requestWillBeSentExtraInfo": {
 				const p = this.pending.get(id);
 				if (p) p.extraHeaders = rec(params.headers);
+				else this.earlyExtra(id).request = rec(params.headers);
 				return;
 			}
 			case "Network.responseReceived": {
@@ -340,6 +352,7 @@ export class HarBuilder {
 			case "Network.responseReceivedExtraInfo": {
 				const p = this.pending.get(id);
 				if (p?.response) p.response.extraHeaders = rec(params.headers);
+				else this.earlyExtra(id).response = rec(params.headers);
 				return;
 			}
 			case "Network.dataReceived": {
@@ -368,6 +381,14 @@ export class HarBuilder {
 		}
 	}
 
+	/** DevTools may send a request's extra headers before the event they belong to; they wait here. */
+	private earlyExtra(id: string): { request?: Params; response?: Params } {
+		if (this.early.size >= MAX_EARLY && !this.early.has(id)) this.early.clear();
+		const held = this.early.get(id) ?? {};
+		this.early.set(id, held);
+		return held;
+	}
+
 	private start(id: string, params: Params): void {
 		const request = rec(params.request);
 		const inline = str(request.postData);
@@ -384,6 +405,7 @@ export class HarBuilder {
 			bodySize: hasBody ? utf8Bytes(inline) : 0,
 			hasBody,
 			dataLength: 0,
+			extraHeaders: this.early.get(id)?.request,
 		};
 		this.pending.set(id, p);
 		if (!hasBody) return;
@@ -401,7 +423,9 @@ export class HarBuilder {
 			remoteIPAddress: str(r.remoteIPAddress) || undefined,
 			connectionId: num(r.connectionId),
 			timing: r.timing && typeof r.timing === "object" ? (r.timing as Params) : undefined,
+			extraHeaders: this.early.get(p.requestId)?.response,
 		};
+		this.early.delete(p.requestId);
 	}
 
 	/** Whether the caller should fetch this finished request's response body. */
@@ -490,7 +514,9 @@ export class HarBuilder {
 			timings = { blocked: -1, dns: -1, connect: -1, ssl: -1, send: 0, wait: total, receive: 0 };
 		}
 		for (const k of Object.keys(timings)) timings[k] = Math.round(timings[k] * 100) / 100;
-		const time = Math.round(Object.values(timings).reduce((n, v) => n + (v > 0 ? v : 0), 0) * 100) / 100;
+		// HAR 1.2: ssl is part of connect, so it is not added again.
+		const time =
+			Math.round(Object.entries(timings).reduce((n, [k, v]) => n + (k !== "ssl" && v > 0 ? v : 0), 0) * 100) / 100;
 		const bodyLen = p.encodedLength ?? -1;
 		const requestBodySize = p.hasBody ? p.bodySize || Number(headerOf(reqHeaders, "content-length")) || -1 : 0;
 		const post = p.body;

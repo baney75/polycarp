@@ -34,7 +34,6 @@ const networkStates = new Map<number, NetworkState>();
 let listening = false;
 
 async function handleNetwork(state: NetworkState, method: string, params: Record<string, unknown>): Promise<void> {
-	if (state.halted) return;
 	const { builder, tabId } = state;
 	const id = String(params.requestId ?? "");
 	try {
@@ -206,6 +205,10 @@ async function startVideo(
 	const output = (a: Record<string, unknown>, extra: string[] = []): CaptureOutput => {
 		const notes = ["WebM video, no sound, 10 frames a second, at most 1280 by 800.", ...extra];
 		if (typeof a.truncated === "string") notes.unshift(`The recording stopped when ${a.truncated}.`);
+		if (a.stale === true)
+			notes.unshift(
+				"The recorder could not read the video after a point, so this file may stop before the moment you wanted.",
+			);
 		return {
 			file: { kind: "webm", encoding: "base64", data: String(a.data), bytes: Number(a.bytes) },
 			notes,
@@ -215,6 +218,7 @@ async function startVideo(
 	return {
 		async stats() {
 			const a = await recorder("status", id);
+			if (typeof a.truncated === "string") onEnd(a.truncated);
 			return { bytes: Number(a.bytes), spanMs: Number(a.spanMs) };
 		},
 		halt,

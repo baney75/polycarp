@@ -368,3 +368,41 @@ test("the size cap stops the capture: later requests are not recorded and the fi
 	request(b, "late", { url: `${ORIGIN}/api/late`, wall: 1_800_000_000 });
 	assert.equal(b.count, before, "nothing is added once the cap is reached");
 });
+
+test("a token that starts with a slash is a token, and a token in a path is masked", () => {
+	const token = `/${mixedLike("q")}`;
+	const out = redactHeaders({ "X-Session": token, "X-Next": "/account/settings" });
+	assert.equal(out[0].value, "[redacted]");
+	assert.equal(out[1].value, "/account/settings");
+	const reset = hexLike("ef");
+	const url = redactUrl(`https://app.test/reset/${reset}/confirm`);
+	assert.ok(!url.includes(reset), url);
+	assert.ok(url.endsWith("/confirm") && url.includes("/reset/"), url);
+	assert.equal(redactUrl("https://app.test/items/123e4567-e89b-12d3-a456-426614174000"), "https://app.test/items/123e4567-e89b-12d3-a456-426614174000");
+});
+
+test("extra headers that arrive before their event are kept, and masked", () => {
+	const b = new HarBuilder();
+	b.event("Network.requestWillBeSentExtraInfo", { requestId: "e", headers: { "X-Early": "req", Cookie: "sid=1" } });
+	b.event("Network.responseReceivedExtraInfo", { requestId: "e", headers: { "X-Late": "res", "Set-Cookie": "sid=2" } });
+	b.event("Network.requestWillBeSent", { requestId: "e", timestamp: 1, wallTime: 1, request: { url: `${ORIGIN}/a`, method: "GET", headers: {} } });
+	b.event("Network.responseReceived", { requestId: "e", response: { status: 200, statusText: "OK", headers: {}, mimeType: "text/html" } });
+	b.event("Network.loadingFinished", { requestId: "e", timestamp: 2, encodedDataLength: 1 });
+	const [entry] = b.toHar(CREATOR).log.entries;
+	assert.equal(entry.request.headers.find((h) => h.name === "X-Early").value, "req");
+	assert.equal(entry.response.headers.find((h) => h.name === "X-Late").value, "res");
+	assert.equal(entry.request.headers.find((h) => h.name === "Cookie").value, "[redacted]");
+	assert.equal(entry.response.headers.find((h) => h.name === "Set-Cookie").value, "[redacted]");
+});
+
+test("an entry's time does not count TLS twice: ssl is inside connect", () => {
+	const b = new HarBuilder();
+	const timing = { requestTime: 1, dnsStart: -1, dnsEnd: -1, connectStart: 0, connectEnd: 100, sslStart: 20, sslEnd: 100, sendStart: 100, sendEnd: 101, receiveHeadersEnd: 200 };
+	b.event("Network.requestWillBeSent", { requestId: "t", timestamp: 1, wallTime: 1, request: { url: `${ORIGIN}/a`, method: "GET", headers: {} } });
+	b.event("Network.responseReceived", { requestId: "t", response: { status: 200, statusText: "OK", headers: {}, mimeType: "text/html", timing } });
+	b.event("Network.loadingFinished", { requestId: "t", timestamp: 1.2, encodedDataLength: 1 });
+	const [e] = b.toHar(CREATOR).log.entries;
+	assert.equal(e.timings.ssl, 80);
+	const { ssl, ...rest } = e.timings;
+	assert.equal(e.time, Object.values(rest).reduce((n, v) => n + (v > 0 ? v : 0), 0));
+});

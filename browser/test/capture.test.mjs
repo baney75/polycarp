@@ -351,3 +351,34 @@ test("a session that is gone loses the files it was holding for a retry", async 
 	await manager.sessionGone("alice");
 	await refused(manager.run(alice, { action: "network_stop", id: a.id }), "not_found");
 });
+
+test("a stop that fails does not leave the capture listed as running", async () => {
+	const { backend, manager } = setup();
+	const a = await manager.run(alice, { action: "record_start", tabId: 10 });
+	const run = [...manager.captures.values()][0].run;
+	run.finish = async () => {
+		throw new Error("Nothing was recorded: no frame of the tab arrived.");
+	};
+	await assert.rejects(manager.run(alice, { action: "record_stop" }), /Nothing was recorded/);
+	assert.deepEqual((await manager.run(alice, { action: "status" })).captures, []);
+	assert.deepEqual(backend.log.discarded, [a.id]);
+});
+
+test("a capture cancelled while it is being saved returns no file and holds nothing", async () => {
+	const { manager } = setup();
+	await manager.run(alice, { action: "network_start", tabId: 10 });
+	const run = [...manager.captures.values()][0].run;
+	let release;
+	const original = run.finish;
+	run.finish = async () => {
+		await new Promise((r) => (release = r));
+		return original.call(run);
+	};
+	const stop = manager.run(alice, { action: "network_stop" });
+	await new Promise((r) => setTimeout(r, 0));
+	await manager.sessionGone("alice");
+	release();
+	await assert.rejects(stop, /cancelled/);
+	assert.equal(manager.size, 0);
+	assert.equal(manager.stopped.size, 0);
+});

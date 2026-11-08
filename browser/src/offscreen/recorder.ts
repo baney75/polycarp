@@ -44,12 +44,18 @@ interface Rec extends Options {
 	stoppedAt?: number;
 	truncated?: string;
 	done?: Promise<void>;
+	/** A save is waiting for the chunk it asked for. */
+	flushed?: () => void;
 }
 
 const recs = new Map<string, Rec>();
 const BITRATE = 600_000;
 /// A recording whose worker stopped talking (the worker restarted) is closed after this long.
 const SILENT_MS = 90_000;
+/// Longer than the worker keeps an ended capture (30 minutes), so nobody can still come for these bytes.
+const FORGET_MS = 35 * 60_000;
+/// A save does not wait longer than this for the encoder's newest chunk.
+const FLUSH_MS = 2_000;
 
 function fail(error: string): { ok: false; error: string } {
 	return { ok: false, error };
@@ -96,7 +102,12 @@ function startEncoder(r: Rec, first: ImageBitmap): void {
 	if (r.mode === "flight") r.ring = new WebmRing({ windowMs: r.windowMs, maxBytes: r.maxBytes });
 	recorder.ondataavailable = (e) => {
 		const blob = e.data;
-		if (!blob.size) return;
+		const flushed = r.flushed;
+		r.flushed = undefined;
+		if (!blob.size) {
+			flushed?.();
+			return;
+		}
 		r.queue = r.queue.then(async () => {
 			if (r.ring) r.ring.push(new Uint8Array(await blob.arrayBuffer()));
 			else if (r.bytes + blob.size <= r.maxBytes) {
@@ -107,6 +118,7 @@ function startEncoder(r: Rec, first: ImageBitmap): void {
 				void stopEncoder(r);
 			}
 		});
+		flushed?.();
 	};
 	r.done = new Promise((resolve) => {
 		recorder.onstop = () => resolve();
@@ -138,6 +150,10 @@ async function frame(r: Rec, jpeg: string | undefined): Promise<void> {
 	if (r.stopped) return;
 	if (jpeg) {
 		const bitmap = await createImageBitmap(jpegBlob(jpeg));
+		if (r.stopped) {
+			bitmap.close();
+			return;
+		}
 		const old = r.latest;
 		r.latest = bitmap;
 		old?.close();
@@ -188,11 +204,19 @@ async function handle(msg: Record<string, unknown>): Promise<Answer> {
 			await frame(r, typeof msg.jpeg === "string" ? msg.jpeg : undefined);
 			return { ok: true };
 		case "status":
-			return { ok: true, ...sizeSpan(r) };
+			return { ok: true, ...sizeSpan(r), ...(r.truncated ? { truncated: r.truncated } : {}) };
 		case "save": {
 			// A flight recorder's buffer as it stands; recording goes on.
 			if (!r.recorder || !r.ring) return fail("Nothing has been recorded yet.");
-			if (r.recorder.state === "recording") r.recorder.requestData();
+			if (r.recorder.state === "recording") {
+				// requestData answers through a later dataavailable: wait for it, so the newest second is in the file.
+				const recorder = r.recorder;
+				await new Promise<void>((resolve) => {
+					r.flushed = resolve;
+					recorder.requestData();
+					setTimeout(resolve, FLUSH_MS);
+				});
+			}
 			await r.queue;
 			const file = r.ring.snapshot();
 			if (!file) return fail("Nothing has been recorded yet: no full second of video is held.");
@@ -201,6 +225,7 @@ async function handle(msg: Record<string, unknown>): Promise<Answer> {
 				data: await toBlobBase64(new Blob([file as BlobPart], { type: "video/webm" })),
 				bytes: file.length,
 				durationMs: r.ring.spanMs,
+				...(r.ring.stopped ? { stale: true } : {}),
 			};
 		}
 		case "finish": {
@@ -249,13 +274,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 	return true;
 });
 
-// A worker that restarted never comes back for its recording: stop encoding, keep the bytes until asked (the
-// worker's own sweep throws them away after half an hour).
+// A worker that restarted never comes back for its recording: stop encoding, and free the bytes once nobody can ask.
 setInterval(() => {
 	const now = performance.now();
 	for (const r of recs.values())
 		if (!r.stopped && now - r.lastMessageAt > SILENT_MS) {
 			r.truncated ??= "the browser's background worker stopped sending frames";
 			void stopEncoder(r);
-		}
+		} else if (r.stopped && now - r.lastMessageAt > FORGET_MS) recs.delete(r.id);
 }, 15_000);
