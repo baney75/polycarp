@@ -324,6 +324,8 @@ before(async () => {
 			"--use-mock-keychain",
 			"--password-store=basic",
 			"--remote-debugging-port=0",
+			// No crash dumps: the crash test crashes a page on purpose, and writing a dump is slow on a shared runner.
+			"--disable-breakpad",
 			`--disable-extensions-except=${extensionDir}`,
 			`--load-extension=${extensionDir}`,
 			"about:blank",
@@ -331,6 +333,7 @@ before(async () => {
 		{ env: env(), stdio: ["ignore", "ignore", "pipe"] },
 	);
 	let stderr = "";
+	browser.chromiumLog = () => stderr;
 	browser.stderr.on("data", (d) => {
 		stderr += d;
 	});
@@ -1217,7 +1220,13 @@ test("capture that stopped because the page crashed is reported, and resumes aft
 	await cdp(page.webSocketDebuggerUrl, "Page.crash").catch(() => {});
 	await until(() => sw(`chrome.tabs.get(${id}).then(() => true)`), 5000, "the crashed tab");
 	await sw(`chrome.tabs.reload(${id}).then(() => true)`);
-	await until(async () => (await js("document.readyState")) === "complete", 30_000, "the reloaded page");
+	try {
+		await until(async () => (await js("document.readyState")) === "complete", 30_000, "the reloaded page");
+	} catch (err) {
+		const targets = await (await fetch(`http://${devtools}/json/list`)).json().catch(() => []);
+		console.error("crash test: targets", JSON.stringify(targets.map((t) => [t.type, t.url])), "\nchromium stderr tail:\n", browser.chromiumLog().slice(-2000));
+		throw err;
+	}
 	await logInPage("after-crash");
 	const result = await readConsole();
 	assert.ok(result.capture, "a crash must be reported");
