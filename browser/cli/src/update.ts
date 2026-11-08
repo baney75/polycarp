@@ -1,8 +1,8 @@
 /**
  * `polycarp browser update`: signed releases from GitHub, swapped in place, with one rollback.
  *
- *   ~/.local/share/tabkyra/app/        the installed release (dist-chrome/, cli/dist/index.js, release.json)
- *   ~/.local/share/tabkyra/previous/   the release before it, for `polycarp browser update --rollback`
+ *   ~/.local/share/polycarp/browser/app/        the installed release (dist-chrome/, cli/dist/index.js, release.json)
+ *   ~/.local/share/polycarp/browser/previous/   the release before it, for `polycarp browser update --rollback`
  *
  * A release has three assets: tabkyra-<version>.zip, SHA256SUMS and SHA256SUMS.minisig.
  * The signature over SHA256SUMS is checked against keys/tabkyra-release.pub (bundled into
@@ -26,6 +26,12 @@ import { banner, c, confirm, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
 import { extractZip } from "./zip.ts";
 import { COMMAND_NAME } from "./self.ts";
+import { envVar } from "./env.ts";
+import { configDir, dataDir } from "./files.ts";
+import { migrateLegacyPaths } from "./migrate.ts";
+import { migrateLegacyServices } from "./service.ts";
+
+export { configDir };
 
 export const REPO = "baney75/tabkyra";
 export type Channel = "stable" | "nightly";
@@ -40,11 +46,8 @@ export class UpdateError extends Error {}
 
 // ---- locations -------------------------------------------------------------
 
-export function configDir(): string {
-	return join(homedir(), ".config", "tabkyra");
-}
 export function installRoot(): string {
-	return process.env.TABKYRA_HOME || join(homedir(), ".local", "share", "tabkyra");
+	return dataDir();
 }
 export const appDir = () => join(installRoot(), "app");
 export const previousDir = () => join(installRoot(), "previous");
@@ -56,12 +59,12 @@ const lastUpdateFile = () => join(configDir(), "last-update.json");
 
 /** GitHub's API, or a test server. */
 function apiBase(): string {
-	return (process.env.TABKYRA_UPDATE_API || "https://api.github.com").replace(/\/$/, "");
+	return (envVar("UPDATE_API") || "https://api.github.com").replace(/\/$/, "");
 }
 
 /** The bundled release key; TABKYRA_UPDATE_PUBKEY (a file) replaces it for tests and forks. */
 function releaseKeyText(): string {
-	const file = process.env.TABKYRA_UPDATE_PUBKEY;
+	const file = envVar("UPDATE_PUBKEY");
 	return file ? readFileSync(file, "utf8") : RELEASE_KEY;
 }
 
@@ -96,7 +99,7 @@ function readSavedSettings(): UpdateSettings {
 /** Saved settings; TABKYRA_NO_UPDATE_CHECK turns the daily check off for this process. */
 export function readSettings(): UpdateSettings {
 	const settings = readSavedSettings();
-	if (process.env.TABKYRA_NO_UPDATE_CHECK) {
+	if (envVar("NO_UPDATE_CHECK")) {
 		settings.autoCheck = false;
 		settings.policy = "off";
 	}
@@ -560,6 +563,10 @@ export async function runUpdate(options: UpdateOptions): Promise<number> {
 	const log = (line: string) => {
 		if (!options.json) console.log(line);
 	};
+	if (!options.check && !options.json) {
+		migrateLegacyPaths();
+		await migrateLegacyServices();
+	}
 	// A read-only --check never changes settings; --channel is remembered when updating.
 	if (!options.check && (options.channel || options.autoCheck !== undefined)) {
 		const saved = readSavedSettings();
@@ -615,7 +622,7 @@ export async function runUpdate(options: UpdateOptions): Promise<number> {
 			log(`${sym.ok} The release install at ${target} is up to date ${c.dim(`(${installed})`)}`);
 			return 0;
 		}
-		log(`${sym.dot} This tabkyra runs from ${repoRoot()}, not from a release install.`);
+		log(`${sym.dot} This helper runs from ${repoRoot()}, not from a release install.`);
 		log(`  ${c.dim("A git checkout updates with git pull and a rebuild. The signed release installs to")} ${target}`);
 		log(`  ${c.dim("and the native host and agent launcher will point at it.")}`);
 		const ok = await confirm(`Install release ${status.latest} to ${target}?`, { assumeYes: options.yes, defaultYes: false });
@@ -645,7 +652,7 @@ export async function runUpdate(options: UpdateOptions): Promise<number> {
 async function rollback(log: (line: string) => void, yes: boolean): Promise<number> {
 	if (!isManagedCopy()) {
 		// Rolling back re-registers the native host and launcher from the release folder.
-		log(`${sym.dot} This tabkyra runs from ${repoRoot()}, not from the release install in ${appDir()}.`);
+		log(`${sym.dot} This helper runs from ${repoRoot()}, not from the release install in ${appDir()}.`);
 		log(`  ${c.dim("Rolling that install back also points the native host and agent launcher at it.")}`);
 		const ok = await confirm(`Roll back the release install in ${appDir()}?`, { assumeYes: yes, defaultYes: false });
 		if (!ok) return 1;

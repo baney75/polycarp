@@ -1,6 +1,6 @@
 /**
  * MCP `search`: query a self-hosted SearXNG. The base URL comes from SEARXNG_URL (or
- * ~/.config/tabkyra/search.json "searxngUrl"). No default host is baked in: set the env or
+ * ~/.config/polycarp/browser/search.json "searxngUrl"). No default host is baked in: set the env or
  * the config file. See config/search.example.json.
  */
 
@@ -8,6 +8,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { VERSION } from "./version.ts";
+import { envVar } from "./env.ts";
+import { configDir } from "./files.ts";
 
 export interface SearchHit {
 	title: string;
@@ -20,10 +22,6 @@ export interface SearchHit {
 export interface SearchResult {
 	query: string;
 	results: SearchHit[];
-}
-
-function configDir(): string {
-	return process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
 }
 
 /** Resolve the SearXNG base URL (no trailing slash). Empty when unset. */
@@ -46,7 +44,7 @@ export function requireSearxngUrl(): string {
 	const url = searxngUrl();
 	if (!url) {
 		throw new Error(
-			"SEARXNG_URL is not set (and ~/.config/tabkyra/search.json has no searxngUrl). Point it at your self-hosted SearXNG, for example http://127.0.0.1:8888. See config/search.example.json.",
+			"SEARXNG_URL is not set (and ~/.config/polycarp/browser/search.json has no searxngUrl). Point it at your self-hosted SearXNG, for example http://127.0.0.1:8888. See config/search.example.json.",
 		);
 	}
 	let parsed: URL;

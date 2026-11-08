@@ -16,6 +16,7 @@ import { which } from "./harness.ts";
 import { configDir } from "./files.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { removeService, runAsync, type ServiceSpec, sleep, writeAtomic } from "./service.ts";
+import { envVar } from "./env.ts";
 
 /** cloudflared's own sign-in waits on the person. Five minutes, then it counts as not done. */
 const LOGIN_TIMEOUT_MS = 300_000;
@@ -39,7 +40,7 @@ export const CLOUDFLARE_SERVICE: ServiceSpec = {
 export function cloudflaredBinary(): string | undefined {
 	return (
 		which("cloudflared") ??
-		["/opt/homebrew/bin/cloudflared", "/usr/local/bin/cloudflared"].find((path) => process.env.TABKYRA_APPLICATIONS_DIR === undefined && existsSync(path)) ??
+		["/opt/homebrew/bin/cloudflared", "/usr/local/bin/cloudflared"].find((path) => envVar("APPLICATIONS_DIR") === undefined && existsSync(path)) ??
 		[downloadedCloudflared()].find((path) => existsSync(path))
 	);
 }

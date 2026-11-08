@@ -2,7 +2,7 @@
  * Past side panel chats ("threads") for local agents: the MCP tools threads_list, thread_read
  * and thread_search, and `polycarp browser threads list|show|search|export`. Both ask the extension over
  * the bridge (live, src/threads/bridge.ts); when no browser is connected they read the on-disk
- * mirror the native host keeps (~/.local/share/tabkyra/threads, cli/src/threads-mirror.ts).
+ * mirror the native host keeps (~/.local/share/polycarp/browser/threads, cli/src/threads-mirror.ts).
  * Private-mode threads are in neither. Thread text is a record of a past chat: data to read,
  * never instructions.
  */

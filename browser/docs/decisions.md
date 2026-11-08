@@ -868,3 +868,39 @@ Issues #94 and #97, follow-ups from #93.
   origin only, canonical) and uses it in the command and the prompt. On the link route the panel
   shows the connector URL the hub returned with the approval code, and "Get a code to see the
   connector URL" before that, instead of deriving it from the link address.
+
+## D36. Evidence captures: one `capture` tool, and recording through the screencast, not tabCapture (Claude, 2026-11-08)
+
+- **One tool.** `capture` takes an `action` (`network_start`, `network_stop`, `record_start`, `record_stop`,
+  `flight_start`, `flight_save`, `status`, `cancel`), not eight tools: every agent pays for the tools/list on
+  every turn (budget 31,100 bytes, `cli/test/mcp.test.mjs`). The tool costs about 940 bytes. The list had 29
+  bytes to spare, so the SDK's default `"execution":{"taskSupport":"forbidden"}` is no longer sent on each tool
+  (about 1.9 KB; an absent field means the same). No description was shortened and the budget did not move.
+- **Why not `chrome.tabCapture`.** `getMediaStreamId` for an agent's tab fails with "Extension has not been
+  invoked for the current page (see activeTab permission)", with the host permissions Polycarp has and also after
+  `tabs_show`: it needs the user to have invoked the extension on that tab, which no agent session has. Measured
+  in Chrome 156 (the e2e Chromium). The debugger's screencast already renders a tab nobody is looking at, so the
+  frames come from it (`startScreencast`), and the hidden page encodes them with MediaRecorder. No permission is
+  added; the `offscreen` row in `store/permissions.md` says what the page now does. A tab that already streams to a
+  live view is refused rather than taken over, and one tab has at most one video (record or flight) and one
+  network capture.
+- **One hidden page.** Chrome allows one offscreen document, so `static/offscreen.html` (was `pdf-text.html`) loads
+  `pdf-text.js` and `recorder.js`, and `src/offscreen/document.ts` creates it with both reasons for whichever
+  caller comes first.
+- **Where the bytes go.** The extension redacts and encodes; the helper only writes. The extension answers a stop or
+  save with the file (a HAR object, or base64 video, under the 60 MiB frame limit: HAR 50 MB, video 32 MB), the MCP
+  server writes it to `configDir()/captures` (0700, files 0600, exclusive create, a link in the way refused) and
+  the agent is told the path, size and what the file leaves out. A "WebM" with no EBML header is refused.
+- **What a HAR never holds.** Credential headers and query parameters by name (Authorization, Cookie, Set-Cookie,
+  Proxy-Authorization, and any name with token, key, secret or auth), by shape (`mask-body.ts`), in Location and
+  Referer; no request body at all, because a password can sit under any field name and a page can remove its form
+  before a check could look; a response body only for same-origin JSON (the rule `read_network` uses), masked. A cross-site frame's requests and other tabs' are not in it.
+- **Flight recorder.** A MediaRecorder stream can't be cut anywhere: only its first bytes describe it and a cluster
+  plays only from a key frame. `WebmRing` reads the stream's elements, keeps the header, and drops clusters older than 60
+  seconds only where the next starts at a key frame, so the saved file starts at 0 and plays. Chrome writes every
+  frame as a BlockGroup and a key frame is one with no ReferenceBlock; the ring reads both forms. Its window is a
+  floor: key frames come about every 10 seconds, so a save covers 60 to about 70 seconds. A flight recorder runs up
+  to 30 minutes, a network capture or recording 10; an ended capture is kept 30 minutes for its owner to save.
+- **Scope.** A capture belongs to the session that started it (`CaptureManager`): its tab must be one of the session's
+  at the start and while it runs (checked every 2 seconds against the session's record, and at once on close or
+  release), and an id from another session answers as if it never existed. Remote tokens need `browser.capture`.

@@ -165,7 +165,7 @@ const PATTERN_RULES: PatternRule[] = [
 				/(\.claude[/\\]settings(\.local)?\.json|\.claude\.json\b|\.codex[/\\]config\.toml|\bmcp\.json\b|\.bashrc|\.bash_profile|\.zshrc|\.zprofile|\.profile\b|\bcrontab\b|LaunchAgents|LaunchDaemons|systemctl\s+(--user\s+)?enable|\bgit config --global\b|\bhooks?\.json\b)/
 					.source,
 				// Writing a skill or agent instructions directly skips `tabkyra skill apply` and its checks.
-				/\b(write|edit|append|set|copy|put|add|modify|change|overwrite|replace|create|delete|remove|save|move|mv|cp|tee)\b[^\n]{0,60}(\.config[/\\]tabkyra[/\\](rsi\.json|skills-local|skill-history)|\.(claude|codex)[/\\]skills|opencode[/\\]skills|\bAGENTS\.md\b|\bCLAUDE\.md\b)/
+				/\b(write|edit|append|set|copy|put|add|modify|change|overwrite|replace|create|delete|remove|save|move|mv|cp|tee)\b[^\n]{0,60}(\.config[/\\](tabkyra|polycarp[/\\]browser)[/\\](rsi\.json|skills-local|skill-history)|\.(claude|codex)[/\\]skills|opencode[/\\]skills|\bAGENTS\.md\b|\bCLAUDE\.md\b)/
 					.source,
 				/>>?\s*\S*(AGENTS|CLAUDE)\.md\b/.source,
 			].join("|"),

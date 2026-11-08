@@ -1,6 +1,6 @@
 /**
  * The native host's half of the thread mirror: it writes what the extension sends
- * (src/threads/mirror.ts) to ~/.local/share/tabkyra/threads/<browser>/, so any local agent or tool
+ * (src/threads/mirror.ts) to ~/.local/share/polycarp/browser/threads/<browser>/, so any local agent or tool
  * can read past side panel chats as files, even while the browser is closed. Each browser profile
  * (its lasting browserId, from the extension's hello) has its own folder, so two browsers never
  * delete or overwrite each other's copy:
@@ -17,6 +17,8 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { envVar } from "./env.ts";
+import { dataDir } from "./files.ts";
 
 const MAX_FILE = 20 * 1024 * 1024;
 
@@ -29,10 +31,11 @@ export interface ThreadIndexEntry {
 	model: string;
 }
 
-/** Where the mirror lives: TABKYRA_THREADS_DIR, else $XDG_DATA_HOME/tabkyra/threads, else ~/.local/share/tabkyra/threads. */
+/** Where the mirror lives: TABKYRA_THREADS_DIR, else <data>/polycarp/browser/threads (~/.local/share/polycarp/browser/threads). */
 export function threadsDir(): string {
-	if (process.env.TABKYRA_THREADS_DIR) return process.env.TABKYRA_THREADS_DIR;
-	return join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "tabkyra", "threads");
+	const override = envVar("THREADS_DIR");
+	if (override) return override;
+	return join(dataDir(), "threads");
 }
 
 /** A thread id that is safe as a file name: no separators, dots or traversal. */

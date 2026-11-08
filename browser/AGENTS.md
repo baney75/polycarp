@@ -51,7 +51,13 @@ machines call them, and no person reads them:
 - every MCP tool name. The server itself is `polycarp`, so Claude Code's qualified names are `mcp__polycarp__*`. `harness.ts` moves an entry under the old name `tabkyra` when it runs this helper, and `moveClaudeRules` moves the permission rules that named it
 - the native host name `ai.tabkyra.bridge`
 - the manifest `key` (it keeps the extension id)
-- `~/.config/tabkyra` and the other `tabkyra` folders and `TABKYRA_*` variables
+- the helper's folders are `~/.config/polycarp/browser`, `~/.local/share/polycarp/browser` and `~/.cache/polycarp`
+  (`~/.config/polycarp` itself is the app's). `cli/src/migrate.ts` moves the old `tabkyra` ones once and leaves a symlink
+  at the old config and data paths; `migrateLegacyServices` in `service.ts` moves `com.tabkyra.*` services to
+  `com.polycarp.*`. Read variables through `envVar("NAME")` (`cli/src/env.ts`): `POLYCARP_NAME` wins, `TABKYRA_NAME` is the
+  fallback. The helper's config folder is `POLYCARP_BROWSER_CONFIG_DIR` (or `TABKYRA_CONFIG_DIR`), never `POLYCARP_CONFIG_DIR`,
+  which is the app's. Tests and fixtures set the first one.
+- `/tmp/tabkyra-bridge-<user>` (the socket folder), the `x-tabkyra-hub-*` headers and `User-Agent: tabkyra-cli`, until the next change
 - the extension's stored data: storage keys, database names and the `TabkyraAppStorage` class
 - the name providers list: OpenAI and GitHub show the sign-in grant as "Tabkyra", so the sign-out text says "Tabkyra (Polycarp's earlier name)" (`agentName` and the OAuth app stay registered as they are)
 - the tab group title "Tabkyra · ..." that earlier versions made, which is still recognized and tidied

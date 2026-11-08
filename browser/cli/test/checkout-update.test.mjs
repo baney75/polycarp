@@ -32,7 +32,7 @@ function env(extra = {}) {
 	const e = {
 		...process.env,
 		HOME: home,
-		TABKYRA_HOME: join(home, ".local", "share", "tabkyra"),
+		TABKYRA_HOME: join(home, ".local", "share", "polycarp", "browser"),
 		TABKYRA_SOCKET_DIR: socketDir,
 		TABKYRA_UPDATE_API: "http://127.0.0.1:9/unused",
 		CLAUDE_CONFIG_DIR: claudeHome,
@@ -160,7 +160,7 @@ function runHostWith(extraEnv, cli, ...args) {
 const buildId = (dir) => JSON.parse(readFileSync(join(dir, "build-info.json"), "utf8"));
 const extBuild = (c) => buildId(join(c.checkout, "dist-chrome"));
 const cliBuild = (c) => buildId(join(c.checkout, "cli", "dist"));
-const lastUpdate = () => JSON.parse(readFileSync(join(home, ".config", "tabkyra", "last-update.json"), "utf8"));
+const lastUpdate = () => JSON.parse(readFileSync(join(home, ".config", "polycarp", "browser", "last-update.json"), "utf8"));
 
 test("checkout mode: a fast-forward pulls, sets up and builds aside; activation swaps it in and keeps the old build", async () => {
 	const c = makeCheckout();
@@ -327,7 +327,7 @@ test("skill refresh replaces unedited copies and reports edited ones", () => {
 	const marker = "<!-- Installed by `tabkyra skill install`; reinstalling replaces this file. -->";
 	const older = `---\nname: tabkyra\ndescription: old\n---\n${marker}\nold text\n`;
 	writeFileSync(plain, older);
-	const recordFile = join(home, ".config", "tabkyra", "skills-installed.json");
+	const recordFile = join(home, ".config", "polycarp", "browser", "skills-installed.json");
 	const record = JSON.parse(readFileSync(recordFile, "utf8"));
 	record[plain] = createHash("sha256").update(older).digest("hex");
 	writeFileSync(recordFile, JSON.stringify(record));
@@ -418,7 +418,7 @@ test("the host runs an update only for a bare {type, action} and streams its ste
 
 	h.send({ type: "update_action", action: "policy-auto" });
 	await h.waitFor((m) => m.type === "update_status" && m.policy === "auto", "policy auto");
-	assert.equal(JSON.parse(readFileSync(join(home, ".config", "tabkyra", "update.json"), "utf8")).policy, "auto");
+	assert.equal(JSON.parse(readFileSync(join(home, ".config", "polycarp", "browser", "update.json"), "utf8")).policy, "auto");
 	h.send({ type: "update_action", action: "policy-notify" });
 	await h.waitFor((m) => m.type === "update_status" && m.policy === "notify", "policy notify");
 
@@ -576,14 +576,14 @@ test("an install stopped before it changed anything is undone, and the staged bu
 test("a host that starts after an updater died says so instead of showing it as running", async (t) => {
 	const c = makeCheckout();
 	const disk = extBuild(c);
-	mkdirSync(join(home, ".config", "tabkyra"), { recursive: true });
-	writeFileSync(join(home, ".config", "tabkyra", "update-progress.json"), JSON.stringify({ pid: 999999, action: "update", phase: "building", message: "Building the CLI", at: Date.now() }));
+	mkdirSync(join(home, ".config", "polycarp", "browser"), { recursive: true });
+	writeFileSync(join(home, ".config", "polycarp", "browser", "update-progress.json"), JSON.stringify({ pid: 999999, action: "update", phase: "building", message: "Building the CLI", at: Date.now() }));
 	const h = startHost(c.cli);
 	t.after(() => h.host.kill());
 	h.send({ type: "hello", version: "1.2.0", protocol: 1, methods: [], build: disk, diskBuild: disk });
 	const failed = await h.waitFor((m) => m.type === "update_progress" && m.phase === "failed", "the stopped updater reported");
 	assert.match(failed.message, /stopped before it finished/);
-	rmSync(join(home, ".config", "tabkyra", "update-progress.json"), { force: true });
+	rmSync(join(home, ".config", "polycarp", "browser", "update-progress.json"), { force: true });
 });
 
 test("a skills record that can't be written doesn't stop the install", async () => {
@@ -618,22 +618,22 @@ test("the mismatch fix rebuilds HEAD on any branch, but not with local changes",
 test("an install whose updater died is reported with a reload, after repairing the swap", async (t) => {
 	const c = makeCheckout();
 	const disk = extBuild(c);
-	mkdirSync(join(home, ".config", "tabkyra"), { recursive: true });
-	writeFileSync(join(home, ".config", "tabkyra", "update-progress.json"), JSON.stringify({ pid: 999999, action: "activate", phase: "installing", message: "Swapping", at: Date.now() }));
+	mkdirSync(join(home, ".config", "polycarp", "browser"), { recursive: true });
+	writeFileSync(join(home, ".config", "polycarp", "browser", "update-progress.json"), JSON.stringify({ pid: 999999, action: "activate", phase: "installing", message: "Swapping", at: Date.now() }));
 	const h = startHost(c.cli);
 	t.after(() => h.host.kill());
 	h.send({ type: "hello", version: "1.2.0", protocol: 1, methods: [], build: disk, diskBuild: disk });
 	const failed = await h.waitFor((m) => m.type === "update_progress" && m.action === "activate" && m.phase === "failed", "the dead install reported");
 	assert.equal(failed.reload, true, "files may have changed: reload into what is installed");
 	assert.equal(failed.extensionBuild, disk.id);
-	rmSync(join(home, ".config", "tabkyra", "update-progress.json"), { force: true });
+	rmSync(join(home, ".config", "polycarp", "browser", "update-progress.json"), { force: true });
 });
 
 test("a dead install's result keeps its reload when a later host replays it", async () => {
 	const c = makeCheckout();
 	const disk = extBuild(c);
-	mkdirSync(join(home, ".config", "tabkyra"), { recursive: true });
-	writeFileSync(join(home, ".config", "tabkyra", "update-progress.json"), JSON.stringify({ pid: 999999, action: "activate", phase: "installing", message: "Swapping", at: Date.now() }));
+	mkdirSync(join(home, ".config", "polycarp", "browser"), { recursive: true });
+	writeFileSync(join(home, ".config", "polycarp", "browser", "update-progress.json"), JSON.stringify({ pid: 999999, action: "activate", phase: "installing", message: "Swapping", at: Date.now() }));
 	// The first host finds the dead updater and reports it.
 	const first = startHost(c.cli);
 	first.send({ type: "hello", version: "1.2.0", protocol: 1, methods: [], build: disk, diskBuild: disk });
@@ -647,7 +647,7 @@ test("a dead install's result keeps its reload when a later host replays it", as
 	assert.equal(replay.phase, "failed");
 	assert.equal(replay.reload, true, "a replay must not let the gate go onto a mixed install");
 	assert.equal(replay.extensionBuild, disk.id);
-	rmSync(join(home, ".config", "tabkyra", "update-progress.json"), { force: true });
+	rmSync(join(home, ".config", "polycarp", "browser", "update-progress.json"), { force: true });
 });
 
 test("an activation that fails mid-swap is recovered before it asks for a reload", async () => {

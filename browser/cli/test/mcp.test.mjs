@@ -3,7 +3,7 @@
 // with the one not-connected message instead of hanging.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -41,7 +41,7 @@ after(async () => {
 test("lists every tool with a description and documented parameters", async () => {
 	const { tools } = await mcp.listTools();
 	const names = tools.map((t) => t.name);
-	for (const name of ["status", "tabs_context", "navigate", "read_page", "click", "type", "fill", "screenshot", "actions"]) {
+	for (const name of ["status", "tabs_context", "navigate", "read_page", "click", "type", "fill", "screenshot", "actions", "capture"]) {
 		assert.ok(names.includes(name), `missing ${name}`);
 	}
 	for (const tool of tools) {
@@ -68,6 +68,11 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// get_page_text's PDF page range adds ~100: reading pages 30-40 of a long PDF without the first 29.
 	// site_edit and site_script add ~1,800: hiding, blocking and ad blocking per site, and scripts the user turns on, which
 	// otherwise took a run_js on every visit and couldn't outlast the page.
+	// capture adds ~940: network to a HAR, recording and a flight recorder in one tool with an action, not
+	// three or eight (docs/decisions.md, D36). The SDK puts `"execution":{"taskSupport":"forbidden"}` on every
+	// tool, which is what an absent field already means; dropping it from the list gives back ~1,860, so the
+	// budget stays where it was and no description was shortened for the new tool.
+	for (const tool of tools) assert.equal(tool.execution, undefined, `${tool.name} still carries the default execution field`);
 	const bytes = Buffer.byteLength(JSON.stringify(tools));
 	assert.ok(bytes <= 31100, `tools/list is ${bytes} bytes, over the 31,100 budget`);
 	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2950, "instructions over 2,950 bytes");
@@ -200,7 +205,7 @@ test("a scoped session reads bundled skills only, even when created without remo
 	);
 	for (const dir of [dorks, own]) assert.equal(spawnSync(process.execPath, [cli, "skill", "apply", dir, "--yes"], { env }).status, 0);
 	const before = process.env.TABKYRA_CONFIG_DIR;
-	process.env.TABKYRA_CONFIG_DIR = join(home, ".config", "tabkyra");
+	process.env.TABKYRA_CONFIG_DIR = join(home, ".config", "polycarp", "browser");
 	const open = async (options) => {
 		const { server } = createMcpServer(options);
 		const [a, b] = InMemoryTransport.createLinkedPair();
@@ -248,7 +253,7 @@ test("skill_match sees two same-size edits applied in quick succession", async (
 		const ask = async (task) => (await client.callTool({ name: "skill_match", arguments: { task } })).content[0].text;
 		// Both edits land within the same timestamp tick, as on a 1-second filesystem: pin every
 		// modification time to one value, so only the inode, ctime and content can tell.
-		const local = join(home, ".config", "tabkyra", "skills-local");
+		const local = join(home, ".config", "polycarp", "browser", "skills-local");
 		const paths = [local, join(local, "index.json"), join(local, "tide-chart"), join(local, "tide-chart", "SKILL.md")];
 		const pin = () => {
 			for (const p of paths) utimesSync(p, 1_700_000_000, 1_700_000_000);
@@ -374,6 +379,118 @@ test("ask_user goes over the bridge once and returns the panel's answer as text"
 		const asks = requests.filter((r) => r.method === "ask_user" && r.params.questions[0].question !== "slow?");
 		assert.equal(asks.length, 1, "asked once");
 		assert.equal(asks[0].params.questions[0].header, "Format", "sent the checked, trimmed questions");
+	} finally {
+		await client.close().catch(() => {});
+		server.close();
+	}
+});
+
+test("capture: the file is written here, privately, and the agent is told its path and size, never the content", async () => {
+	// A fake native host with the extension behind it: answers `capture` the way the worker does, with the file inside.
+	const dir = join(root, "capture-sock");
+	const config = join(root, "capture-config");
+	mkdirSync(dir, { mode: 0o700 });
+	const path = join(dir, `${process.pid}.sock`);
+	const frame = (m) => {
+		const body = Buffer.from(JSON.stringify(m));
+		const head = Buffer.alloc(4);
+		head.writeUInt32LE(body.length);
+		return Buffer.concat([head, body]);
+	};
+	const requests = [];
+	const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(200, 7)]);
+	const answers = {
+		network_stop: { id: "c1", kind: "network", entries: 1, notes: ["Secrets are redacted."], file: { kind: "har", encoding: "json", data: { log: { version: "1.2", comment: "HARBODY-MARKER", entries: [] } }, bytes: 70 } },
+		record_stop: { id: "c2", kind: "record", durationMs: 4000, file: { kind: "webm", encoding: "base64", data: webm.toString("base64"), bytes: webm.length } },
+		flight_save: { id: "c3", kind: "flight", file: { kind: "webm", encoding: "base64", data: Buffer.from("not a webm file, just text ".repeat(5)).toString("base64"), bytes: 135 } },
+		status: { captures: [{ id: "c1", kind: "network", state: "running" }] },
+	};
+	const server = createServer((socket) => {
+		let buffered = Buffer.alloc(0);
+		socket.on("data", (chunk) => {
+			buffered = Buffer.concat([buffered, chunk]);
+			while (buffered.length >= 4 && buffered.length >= 4 + buffered.readUInt32LE(0)) {
+				const msg = JSON.parse(buffered.subarray(4, 4 + buffered.readUInt32LE(0)).toString());
+				buffered = buffered.subarray(4 + buffered.readUInt32LE(0));
+				if (msg.type === "hello") socket.write(frame({ type: "welcome", clientId: "c1", hostVersion: "0", extensionConnected: true }));
+				else if (msg.type === "request") {
+					requests.push(msg);
+					socket.write(frame({ type: "response", id: msg.id, result: answers[msg.params.action] }));
+				}
+			}
+		});
+	});
+	await new Promise((r) => server.listen(path, r));
+	chmodSync(path, 0o600);
+	const client = new Client({ name: "tabkyra-mcp-capture", version: "0.0.0" });
+	try {
+		await client.connect(
+			new StdioClientTransport({
+				command: process.execPath,
+				args: [cli, "mcp"],
+				env: { HOME: join(root, "home"), PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: dir, TABKYRA_CONFIG_DIR: config },
+				stderr: "ignore",
+			}),
+		);
+		const run = async (args) => {
+			const r = await client.callTool({ name: "capture", arguments: args });
+			return { ...r, text: r.content.map((c) => c.text).join("\n") };
+		};
+		const har = await run({ action: "network_stop" });
+		assert.notEqual(har.isError, true, har.text);
+		const result = JSON.parse(har.text);
+		assert.ok(result.path.startsWith(join(config, "captures") + "/") && result.path.endsWith(".har"), result.path);
+		assert.equal(result.bytes, readFileSync(result.path).length);
+		assert.ok(!har.text.includes("HARBODY-MARKER") && result.file === undefined && result.data === undefined, "the content does not go back to the agent");
+		assert.equal(JSON.parse(readFileSync(result.path, "utf8")).log.comment, "HARBODY-MARKER", "but it is in the file");
+		assert.deepEqual(result.notes, ["Secrets are redacted."]);
+		assert.equal(statSync(result.path).mode & 0o777, 0o600);
+		assert.equal(statSync(join(config, "captures")).mode & 0o777, 0o700);
+
+		const video = await run({ action: "record_stop" });
+		const v = JSON.parse(video.text);
+		assert.ok(v.path.endsWith(".webm") && v.path !== result.path);
+		assert.deepEqual(readFileSync(v.path), webm);
+		assert.equal(statSync(v.path).mode & 0o777, 0o600);
+		assert.equal(v.durationMs, 4000);
+
+		// What the extension sends must be what it says: a "WebM" with no EBML header is refused and nothing is written.
+		const before = readdirSync(join(config, "captures")).length;
+		const bad = await run({ action: "flight_save" });
+		assert.equal(bad.isError, true);
+		assert.match(bad.text, /not a WebM/);
+		assert.equal(readdirSync(join(config, "captures")).length, before);
+
+		// Calls with no file pass straight through.
+		assert.deepEqual(JSON.parse((await run({ action: "status" })).text), answers.status);
+		// A stop that was written tells the browser so, with its id, so it can let go of its copy.
+		assert.deepEqual(requests.map((r) => r.method), ["capture", "capture", "capture", "capture", "capture", "capture"]);
+		assert.deepEqual(requests.map((r) => r.params.action), ["network_stop", "cancel", "record_stop", "cancel", "flight_save", "status"]);
+		assert.deepEqual(requests.filter((r) => r.params.action === "cancel").map((r) => r.params.id), ["c1", "c2"]);
+
+		// first-F4: a stop whose file cannot be written is an error that says the capture is still held and how to ask again,
+		// and the browser is not told to let go of it. The captures folder is made unusable (a link), then put right.
+		const folder = join(config, "captures");
+		renameSync(folder, `${folder}.real`);
+		symlinkSync(`${folder}.real`, folder);
+		const lost = await run({ action: "network_stop" });
+		assert.equal(lost.isError, true);
+		assert.match(lost.text, /capture was not saved/);
+		assert.match(lost.text, /still held in the browser for 5 minutes: call network_stop again with id c1/);
+		assert.equal(requests.length, 7, "no release was sent for a file that is not on disk");
+		const flight = await run({ action: "flight_save" });
+		assert.match(flight.text, /still recording: call flight_save again/);
+		assert.ok(!/id c3/.test(flight.text));
+		rmSync(folder);
+		renameSync(`${folder}.real`, folder);
+		const retried = await run({ action: "network_stop", id: "c1" });
+		assert.notEqual(retried.isError, true, retried.text);
+		assert.ok(JSON.parse(retried.text).path.endsWith(".har"));
+		assert.deepEqual(requests.slice(7).map((r) => [r.params.action, r.params.id]), [["flight_save", undefined], ["network_stop", "c1"], ["cancel", "c1"]]);
+		// An action the tool does not have never reaches the browser.
+		const unknown = await client.callTool({ name: "capture", arguments: { action: "stream" } });
+		assert.equal(unknown.isError, true);
+		assert.equal(requests.length, 10);
 	} finally {
 		await client.close().catch(() => {});
 		server.close();

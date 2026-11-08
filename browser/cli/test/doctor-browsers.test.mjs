@@ -105,7 +105,7 @@ test("install --browser refuses a name it doesn't know, and writes nothing", () 
 	const r = spawnSync(process.execPath, [cli, "install", "--browser", "chrome"], { env: env(), encoding: "utf8" });
 	assert.notEqual(r.status, 0);
 	assert.match(r.stderr + r.stdout, /Unknown browser "chrome"\. Use one of: Helium, Chrome/);
-	assert.equal(existsSync(join(root, "home", ".config", "tabkyra")), false, "no launcher was written");
+	assert.equal(existsSync(join(root, "home", ".config", "polycarp", "browser")), false, "no launcher was written");
 });
 
 const reset = async () => {

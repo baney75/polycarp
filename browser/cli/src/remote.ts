@@ -23,6 +23,8 @@ import { createMcpServer } from "./mcp.ts";
 import { MAX_LINK_SESSIONS } from "./link-protocol.ts";
 import { handleOAuth, readBody } from "./oauth-http.ts";
 import { liveGrantIds, type OAuthConfig, resourceMetadataUrl, verifyAccessToken } from "./oauth.ts";
+import { envVar } from "./env.ts";
+import { configDir } from "./files.ts";
 
 /** What each scope grants. Acting under the user's sign-in is its own scope, never implied. */
 export const SCOPES: Record<string, { tools: string[]; what: string }> = {
@@ -37,6 +39,10 @@ export const SCOPES: Record<string, { tools: string[]; what: string }> = {
 	"browser.act": {
 		tools: ["click", "type", "fill", "press", "hover", "scroll", "drag", "actions", "handle_dialog"],
 		what: "Click and type: can submit forms and act under the user's sign-in",
+	},
+	"browser.capture": {
+		tools: ["capture"],
+		what: "Record the agent's own tab: its network traffic as a redacted HAR file, a video of it, or the last minute of video. The files stay on this computer",
 	},
 	"browser.edit": {
 		tools: ["site_edit"],
@@ -94,10 +100,6 @@ export interface TokenRecord {
  * letters, digits, dot, dash and underscore, and this one has a colon.
  */
 export const LINK_TOKEN_NAME = "link:run";
-
-function configDir(): string {
-	return process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
-}
 
 function tokensFile(): string {
 	return join(configDir(), "tokens.json");

@@ -327,6 +327,8 @@ const DIALOG_SAFE = new Set([
 	// Read buffered messages only; they help explain the dialog.
 	"console.read",
 	"network.read",
+	// Saving what a capture holds is how an agent keeps the evidence of a page that broke (a dialog included).
+	"capture",
 ]);
 
 async function runRequest(state: ClientState, req: HostForwardedRequest): Promise<void> {
@@ -408,8 +410,11 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			},
 		};
 		// Reading a body asks the page's network stack, not just a buffer: not while a dialog holds it.
+		// A capture's start attaches to the page; saving or stopping reads what it holds, which is what a dialog calls for.
 		const dialogSafe =
-			DIALOG_SAFE.has(req.method) && !(req.method === "network.read" && req.params?.requestId !== undefined);
+			DIALOG_SAFE.has(req.method) &&
+			!(req.method === "network.read" && req.params?.requestId !== undefined) &&
+			!(req.method === "capture" && String(req.params?.action).endsWith("_start"));
 		if (!dialogSafe) {
 			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
 			if (openOn !== undefined) throw dialogError(openOn, openDialog(openOn) as PageDialog);

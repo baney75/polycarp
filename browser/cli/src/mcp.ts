@@ -11,6 +11,7 @@ import { ASK_USER_INSTRUCTION, registerAskUser } from "./ask.ts";
 import { registerThreadTools, THREADS_INSTRUCTION } from "./threads.ts";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
+import { saveCapture, type IncomingCapture } from "./captures.ts";
 import { addSource, cite, search, summary } from "./library.ts";
 import { chooseSession } from "./session-name.ts";
 import { spawn } from "node:child_process";
@@ -24,6 +25,7 @@ import { selfExec, selfPrefix } from "./self.ts";
 import { VERSION } from "./version.ts";
 import { COMPUTER_INSTRUCTION, COMPUTER_STATUS_TOOL, type ComputerClient } from "./computer.ts";
 import { COMMAND_NAME } from "./self.ts";
+import { envVar } from "./env.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
@@ -115,19 +117,25 @@ export function formatContext(ctx: ContextResult): string {
 }
 
 /**
- * tools/list without each schema's "$schema" dialect line: it tells the model nothing and every
- * agent pays for it on every turn. Wraps the SDK's own handler; if the SDK moves it, the list
- * is sent unchanged (cli/test/mcp.test.mjs fails then, so the saving isn't lost silently).
+ * tools/list without each schema's "$schema" dialect line, and without the SDK's
+ * `"execution":{"taskSupport":"forbidden"}` on every tool (about 1.9 KB): the first tells the model
+ * nothing and the second is what an absent field already means (MCP tasks: forbidden is the
+ * default), and every agent pays for both on every turn. Wraps the SDK's own handler; if the SDK
+ * moves it, the list is sent unchanged (cli/test/mcp.test.mjs fails then, so the saving isn't lost silently).
  */
 function stripSchemaDialect(server: McpServer): void {
 	const handlers = (server.server as unknown as { _requestHandlers?: Map<string, (req: unknown, extra: unknown) => Promise<unknown>> })._requestHandlers;
 	const list = handlers?.get("tools/list");
 	if (!handlers || !list) return;
 	handlers.set("tools/list", async (req, extra) => {
-		const result = (await list(req, extra)) as { tools?: Array<{ inputSchema?: Record<string, unknown>; outputSchema?: Record<string, unknown> }> };
+		const result = (await list(req, extra)) as {
+			tools?: Array<{ inputSchema?: Record<string, unknown>; outputSchema?: Record<string, unknown>; execution?: { taskSupport?: string } }>;
+		};
 		for (const tool of result.tools ?? []) {
 			delete tool.inputSchema?.$schema;
 			delete tool.outputSchema?.$schema;
+			// Only the default: a tool that does support tasks would say so, and keeps its field.
+			if (tool.execution?.taskSupport === "forbidden" && Object.keys(tool.execution).length === 1) delete tool.execution;
 		}
 		return result;
 	});
@@ -144,7 +152,7 @@ function isNotConnected(err: unknown): boolean {
 const STATUS_TIMEOUT_MS = 20000;
 
 function harnessName(): string {
-	const explicit = process.env.TABKYRA_CLIENT_NAME;
+	const explicit = envVar("CLIENT_NAME");
 	if (explicit) return explicit;
 	if (process.env.CLAUDECODE || process.env.CLAUDE_CODE_ENTRYPOINT) return "claude";
 	if (process.env.CODEX_HOME || process.env.CODEX_SANDBOX) return "codex";
@@ -244,13 +252,13 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		const requestId = String(data.requestId);
 		const host = String(data.host);
 		let decision: "allow_once" | "allow_host" | "deny" = "deny";
-		if (process.env.TABKYRA_AUTO_ALLOW === "1") {
+		if (envVar("AUTO_ALLOW") === "1") {
 			await client.call("permission.respond", { requestId, decision: "allow_once" }).catch(() => undefined);
 			return;
 		}
 		try {
 			const answer = await server.server.elicitInput({
-				message: `tabkyra: the browser agent wants to open ${host}. Allow?`,
+				message: `Polycarp: the browser agent wants to open ${host}. Allow?`,
 				requestedSchema: {
 					type: "object",
 					properties: {
@@ -272,7 +280,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			// Client without elicitation support (headless runs): deny now instead of stalling
 			// the tool call; the error text tells the model how the user can allow the host.
 			process.stderr.write(
-				`[tabkyra] ${host} needs approval: run \`${COMMAND_NAME} allow ${host}\`, use the side panel (Settings > Agents), or set TABKYRA_AUTO_ALLOW=1.\n`,
+				`[polycarp] ${host} needs approval: run \`${COMMAND_NAME} allow ${host}\`, use the side panel (Settings > Agents), or set TABKYRA_AUTO_ALLOW=1.\n`,
 			);
 		}
 		await client.call("permission.respond", { requestId, decision }).catch(() => undefined);
@@ -709,6 +717,48 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				: call("network.read", args),
 	);
 	server.registerTool(
+		"capture",
+		{
+			title: "Capture evidence",
+			description: "Evidence from your tab as a file on this computer; you get its path and size, not the content. network_start/stop: HAR, secrets redacted. record_start/stop: WebM video, no sound. flight_start/save: holds the last 60 s of video; save when something breaks. status lists yours, cancel discards. Works on background tabs; stops itself after 10 min (flight 30). Example: {\"action\":\"network_start\"}",
+			inputSchema: {
+				action: z.enum(["network_start", "network_stop", "record_start", "record_stop", "flight_start", "flight_save", "status", "cancel"]).describe("What to do"),
+				id: z.string().optional().describe("Capture id; default: your only one of that kind"),
+				tabId,
+			},
+		},
+		async (args) => {
+			let result: Record<string, unknown> & { file?: IncomingCapture };
+			try {
+				result = (await client.call("capture", args)) as typeof result;
+			} catch (err) {
+				return errorResult(err);
+			}
+			const { file, ...rest } = result;
+			if (!file) return { content: text(result) };
+			// A stop gives up the browser's copy of the data, so a failed write must not lose it: the browser
+			// keeps the stopped capture for a few minutes, and the same stop with the same id returns it again.
+			const stop = args.action === "network_stop" || args.action === "record_stop";
+			let saved: { path: string; bytes: number };
+			try {
+				// The content stays here: the agent gets the path, the size and what the file leaves out.
+				saved = saveCapture(file);
+			} catch (err) {
+				const again =
+					stop && typeof rest.id === "string"
+						? ` The capture is still held in the browser for 5 minutes: call ${args.action} again with id ${rest.id} to retry the save.`
+						: args.action === "flight_save"
+							? " The flight recorder is still recording: call flight_save again to retry."
+							: "";
+				return { content: text(`The capture was not saved: ${errorMessage(err)}.${again}`), isError: true };
+			}
+			// The file is on disk: the browser can let go of its copy.
+			if (stop && typeof rest.id === "string")
+				await client.call("capture", { action: "cancel", id: rest.id }).catch(() => undefined);
+			return { content: text({ ...rest, path: saved.path, bytes: saved.bytes }) };
+		},
+	);
+	server.registerTool(
 		"site_edit",
 		{
 			title: "Edit a site for the user",
@@ -1027,7 +1077,7 @@ export async function runMcpServer(options: { session?: string } = {}): Promise<
 	if (!isInstalled()) {
 		// First run from any harness completes setup; the extension reconnects on its alarm.
 		const result = install();
-		process.stderr.write(`[tabkyra] installed native host manifest (${result.written.length} browser dir(s))\n`);
+		process.stderr.write(`[polycarp] installed native host manifest (${result.written.length} browser dir(s))\n`);
 	}
 	const { server, client } = createMcpServer({ sessionFlag: options.session });
 	// Community skills, about daily, in the background: many harnesses keep this server running.
@@ -1038,5 +1088,5 @@ export async function runMcpServer(options: { session?: string } = {}): Promise<
 	const transport = new StdioServerTransport();
 	await server.connect(transport);
 	// Connect lazily on the first call, but try once now so a missing extension is reported early.
-	client.connect().catch((err) => process.stderr.write(`[tabkyra] ${err instanceof Error ? err.message : String(err)}\n`));
+	client.connect().catch((err) => process.stderr.write(`[polycarp] ${err instanceof Error ? err.message : String(err)}\n`));
 }

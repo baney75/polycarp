@@ -37,6 +37,8 @@ import { buildRouterIndex, matchSkills, oneLine, type RouterIndex, type RouterSk
 import { SKILLS } from "./skills-catalog.ts";
 import { banner, c, sym } from "./ui.ts";
 import { COMMAND_NAME } from "./self.ts";
+import { envVar } from "./env.ts";
+import { configDir } from "./files.ts";
 
 /** Written under the frontmatter, so a later install knows the file is ours to replace. */
 const MARKER = "<!-- Installed by `tabkyra skill install`; reinstalling replaces this file. -->"; // product-name allowlist: written into installed skills, lint recognizes it
@@ -112,15 +114,11 @@ export function skillTargets(): SkillTarget[] {
 // --- Local edits (overlays) ----------------------------------------------------------------
 //
 // `polycarp browser skill apply` (used by the rsi skill) keeps the user's edited copy of a skill in
-// ~/.config/tabkyra/skills-local/<name>/SKILL.md and records it in index.json with the
+// ~/.config/polycarp/browser/skills-local/<name>/SKILL.md and records it in index.json with the
 // bundled text it was based on. A local copy is used only when the index records it, it
 // passes lint, it isn't a protected skill, and it keeps every section of the bundled text;
 // otherwise install falls back to the bundled skill and says why. Install also says when
 // the bundled skill changed underneath an edit, so updates are never silently lost.
-
-function configDir(): string {
-	return process.env.TABKYRA_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "tabkyra");
-}
 
 export function localSkillsDir(): string {
 	return join(configDir(), "skills-local");

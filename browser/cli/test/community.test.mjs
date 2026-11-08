@@ -97,7 +97,7 @@ test("skill write runs the lint on every write and saves only with --yes", () =>
 	const preview = run(home, ["skill", "write", "notion-navigation"], {}, skillText);
 	assert.equal(preview.code, 3, preview.out);
 	assert.match(preview.out, /Nothing changed yet/);
-	assert.ok(!existsSync(join(home, ".config", "tabkyra", "skills-local", "notion-navigation")));
+	assert.ok(!existsSync(join(home, ".config", "polycarp", "browser", "skills-local", "notion-navigation")));
 	const saved = run(home, ["skill", "write", "notion-navigation", "--yes"], {}, skillText);
 	assert.equal(saved.code, 0, saved.out);
 	const list = JSON.parse(run(home, ["skill", "list", "--json"]).stdout);
@@ -273,7 +273,7 @@ test("sync verifies the signed catalog, and refuses tampered, unsigned, mis-sign
 	// Through all of that the verified catalog stayed in use.
 	assert.equal(JSON.parse(run(home, ["skill", "list", "--json"]).stdout).find((s) => s.name === "notion-navigation")?.provenance, "community, catalog 2");
 	// A file changed on disk after it was accepted is refused when read.
-	const kept = join(home, ".config", "tabkyra", "community", "community-catalog.json");
+	const kept = join(home, ".config", "polycarp", "browser", "community", "community-catalog.json");
 	writeFileSync(kept, readFileSync(kept, "utf8").replace("Quick Find", "Quick  Find"));
 	const after = run(home, ["skill", "list"]);
 	assert.ok(!/^notion-navigation/m.test(after.stdout), after.out);
@@ -328,7 +328,7 @@ test("a pulled skill is removed: not matched or read, installed copies deleted, 
 	const match = JSON.parse(run(home, ["skill", "match", "open my Weekly Sync page in Notion", "--json"]).stdout);
 	assert.notEqual(match[0].name, "notion-navigation");
 	// The user's copy is still on disk, never deleted by a sync.
-	assert.equal(readFileSync(join(home, ".config", "tabkyra", "skills-local", "notion-navigation", "SKILL.md"), "utf8"), edited);
+	assert.equal(readFileSync(join(home, ".config", "polycarp", "browser", "skills-local", "notion-navigation", "SKILL.md"), "utf8"), edited);
 });
 
 test("the catalog build refuses a skill that fails the rules, and a revoked skill still present", () => {
@@ -418,7 +418,7 @@ test("before the first catalog is published, a 404 is not an error and waits a d
 		const r = await runAsync(["skill", "sync"]);
 		assert.equal(r.code, 0, r.out);
 		assert.match(r.out, /No community catalog is published yet/);
-		const state = JSON.parse(readFileSync(join(home, ".config", "tabkyra", "community", "state.json"), "utf8"));
+		const state = JSON.parse(readFileSync(join(home, ".config", "polycarp", "browser", "community", "state.json"), "utf8"));
 		assert.equal(state.lastError, undefined);
 		assert.ok(state.lastCheck);
 		assert.ok(requests >= 1);
@@ -430,7 +430,7 @@ test("before the first catalog is published, a 404 is not an error and waits a d
 // --- Review round 1 (PR #56): each high finding gets a test that failed before its fix. -----
 
 const MARKER = "<!-- Installed by `tabkyra skill install`; reinstalling replaces this file. -->";
-const statePath = (home) => join(home, ".config", "tabkyra", "community", "state.json");
+const statePath = (home) => join(home, ".config", "polycarp", "browser", "community", "state.json");
 const editState = (home, fn) => writeFileSync(statePath(home), JSON.stringify(fn(JSON.parse(readFileSync(statePath(home), "utf8")))));
 
 test("first-F1/sol-F2: the MCP server's sync and every later sync delete installed copies of pulled skills", async () => {
@@ -537,7 +537,7 @@ test("sol-F3: a local copy of a community skill is used only while that skill is
 	assert.equal(run(home2, ["skill", "write", "notion-navigation", "--yes"], {}, edited).code, 0);
 	assert.equal(run(home2, ["skill", "sync", "--off"]).code, 0);
 	assert.ok(!JSON.parse(run(home2, ["skill", "list", "--json"]).stdout).some((s) => s.name === "notion-navigation"));
-	assert.equal(readFileSync(join(home2, ".config", "tabkyra", "skills-local", "notion-navigation", "SKILL.md"), "utf8"), edited);
+	assert.equal(readFileSync(join(home2, ".config", "polycarp", "browser", "skills-local", "notion-navigation", "SKILL.md"), "utf8"), edited);
 });
 
 test("sol-F4: a catalog can't pull a built-in skill or delete its installed copies", () => {

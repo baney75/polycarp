@@ -1,5 +1,5 @@
 /**
- * The updater's progress record (~/.config/tabkyra/update-progress.json): the last step of the
+ * The updater's progress record (~/.config/polycarp/browser/update-progress.json): the last step of the
  * running or last `polycarp browser update --host` run. The updater writes it (update-run.ts); a native
  * host that starts while it runs follows it (update-host.ts). Kept apart from update-run.ts so
  * the host doesn't load the skill catalog.

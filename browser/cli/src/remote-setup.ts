@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { get as httpGet } from "node:http";
 import { join } from "node:path";
 import { CLOUDFLARE_SERVICE, closeCloudflare, cloudflaredBinary, cloudflareSignedIn, cloudflareTunnelName, normalizeCloudflareHost, prepareCloudflare } from "./cloudflare.ts";
-import { launcherValid, tabkyraBinary, which } from "./harness.ts";
+import { launcherValid, launcherBinary, which } from "./harness.ts";
 import { connectionChecks } from "./doctor.ts";
 import { completeFunnelAdminUrl, funnelAdminUrl, printReport, type RemoteRoutes, type RemoteState, type SetupReport, stateFromStatus } from "./remote-state.ts";
 import { installService, removeService, run, serviceFile, serviceLogHint, sleep, writeAtomic } from "./service.ts";
@@ -20,6 +20,7 @@ import { hubFile } from "./hub-state.ts";
 import { DEFAULT_PORT } from "./tunnel.ts";
 import { c, sym } from "./ui.ts";
 import { COMMAND_NAME } from "./self.ts";
+import { envVar } from "./env.ts";
 
 /** Funnel's own port: keeps the OAuth paths at the root and anything on 443 private. */
 export const FUNNEL_PORT = 8443;
@@ -67,7 +68,7 @@ export function saveRemoteConfig(config: RemoteConfig): void {
 // ---------- Tailscale Funnel ----------
 
 /** Where the Tailscale Mac app keeps its command. It never puts `tailscale` on PATH. TABKYRA_APPLICATIONS_DIR replaces /Applications, for tests. */
-export const tailscaleAppPath = () => join(process.env.TABKYRA_APPLICATIONS_DIR || "/Applications", "Tailscale.app", "Contents", "MacOS", "Tailscale");
+export const tailscaleAppPath = () => join(envVar("APPLICATIONS_DIR") || "/Applications", "Tailscale.app", "Contents", "MacOS", "Tailscale");
 
 /**
  * The `tailscale` binary: on PATH, or the Tailscale Mac app's own copy at its fixed path, so a terminal and Polycarp's window
@@ -173,7 +174,7 @@ type FunnelOpen = { kind: "opened" } | { kind: "not_allowed"; url: string } | { 
 
 /** Longest `tailscale funnel` call, in ms. TABKYRA_FUNNEL_WAIT_MS shortens it for tests. */
 const funnelWaitMs = () => {
-	const n = Number(process.env.TABKYRA_FUNNEL_WAIT_MS);
+	const n = Number(envVar("FUNNEL_WAIT_MS"));
 	return Number.isFinite(n) && n > 0 ? n : 30_000;
 };
 
@@ -329,7 +330,7 @@ async function answersLikeTabkyra(port: number): Promise<boolean> {
 
 /** How long setup waits for serve to answer, in ms. TABKYRA_SERVE_WAIT_MS shortens it for tests. */
 const serveWaitMs = () => {
-	const n = Number(process.env.TABKYRA_SERVE_WAIT_MS);
+	const n = Number(envVar("SERVE_WAIT_MS"));
 	return Number.isFinite(n) && n > 0 ? n : 15_000;
 };
 
@@ -451,7 +452,7 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 		return fail("problem", `A service from an earlier setup is installed (${installed}), and --no-service would leave it running. Run ${COMMAND_NAME} remote off first. Nothing was changed.`);
 	}
 	if (options.service && !launcherValid()) {
-		return fail("problem", `${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then ${COMMAND_NAME} remote setup again.`, { code: "launcher" });
+		return fail("problem", `${launcherBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then ${COMMAND_NAME} remote setup again.`, { code: "launcher" });
 	}
 	// Whatever listens on the port must be Polycarp with OAuth for this URL, or Funnel would publish something else.
 	const probe = await probeLocal(port, publicUrl);
@@ -591,7 +592,7 @@ export async function metadata(url: string, timeoutMs: number, publicUrl: string
 export async function dnsCheck(host: string): Promise<Check> {
 	const name = "public DNS";
 	if (/^[\d.]+$/.test(host) || host.includes(":")) return { name, status: "ok", detail: `${host} is an address, no DNS to check` };
-	const doh = process.env.TABKYRA_DOH_URL || "https://cloudflare-dns.com/dns-query";
+	const doh = envVar("DOH_URL") || "https://cloudflare-dns.com/dns-query";
 	let answer: { Answer?: { type?: number; data?: string }[] };
 	try {
 		const url = new URL(doh);

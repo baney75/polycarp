@@ -40,11 +40,11 @@ test("compiled-mode install points the browser at the helper itself and the agen
 	const manifest = JSON.parse(readFileSync(join(chrome, "NativeMessagingHosts", "ai.tabkyra.bridge.json"), "utf8"));
 	assert.equal(manifest.path, process.execPath, "the manifest names the helper, not a script");
 	assert.deepEqual(manifest.allowed_origins, ["chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/"]);
-	for (const name of ["tabkyra", "host"]) {
-		const text = readFileSync(join(home, ".config", "tabkyra", name), "utf8");
+	for (const name of ["polycarp", "polycarp-host"]) {
+		const text = readFileSync(join(home, ".config", "polycarp", "browser", name), "utf8");
 		assert.equal(text.includes("node-compile-cache"), false);
-		assert.match(text, new RegExp(`^#!/bin/sh\\nexec "${process.execPath.replaceAll("/", "\\/")}" ${name === "host" ? "host " : ""}"\\$@"\\n$`));
-		assert.ok(statSync(join(home, ".config", "tabkyra", name)).mode & 0o100, `${name} is executable`);
+		assert.match(text, new RegExp(`^#!/bin/sh\\nexec "${process.execPath.replaceAll("/", "\\/")}" ${name === "polycarp-host" ? "host " : ""}"\\$@"\\n$`));
+		assert.ok(statSync(join(home, ".config", "polycarp", "browser", name)).mode & 0o100, `${name} is executable`);
 	}
 	// A second run changes nothing: the manifest is current.
 	assert.match(execFileSync(process.execPath, [join(bundleDir, "index.js"), "install"], { env, encoding: "utf8" }), /Current/);
@@ -115,9 +115,9 @@ test("the real executable reads the Polycarp theme from POLYCARP_CONFIG_DIR, and
 	assert.equal(run({ POLYCARP_CONFIG_DIR: "relative/path" }).polycarp, undefined);
 });
 
-test("the real executable keeps using the existing ~/.config/tabkyra data in place", { skip: !haveBun && "bun is not installed" }, () => {
+test("the real executable keeps using the existing ~/.config/polycarp/browser data in place", { skip: !haveBun && "bun is not installed" }, () => {
 	const { home, env } = sandbox("config");
-	const dir = join(home, ".config", "tabkyra");
+	const dir = join(home, ".config", "polycarp", "browser");
 	mkdirSync(join(dir, "library"), { recursive: true });
 	const saved = JSON.stringify({ preset: "forest" });
 	writeFileSync(join(dir, "theme.json"), saved);

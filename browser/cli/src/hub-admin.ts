@@ -5,7 +5,7 @@
  */
 
 import { existsSync, rmSync } from "node:fs";
-import { launcherValid, tabkyraBinary } from "./harness.ts";
+import { launcherValid, launcherBinary } from "./harness.ts";
 import { type HubConfig, hubFile, liveFile, loadDevices, loadHubConfig, mintConnectCode, readLive, removeDevice, removeHubConfig, saveHubConfig, setPrefer } from "./hub-state.ts";
 import { startHub } from "./hub-server.ts";
 import { printCode } from "./link.ts";
@@ -50,7 +50,7 @@ export async function hubSetup(options: HubSetupOptions): Promise<number> {
 		return fail(`${err instanceof Error ? err.message : String(err)} Nothing was changed.`);
 	}
 	const port = options.port ?? previous?.port ?? DEFAULT_PORT;
-	if (options.service && !launcherValid()) return fail(`${tabkyraBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then ${COMMAND_NAME} hub setup again. Nothing was changed.`);
+	if (options.service && !launcherValid()) return fail(`${launcherBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then ${COMMAND_NAME} hub setup again. Nothing was changed.`);
 	const probe = await probeLocal(port, options.publicUrl);
 	if (probe.state === "other" && !options.service) return fail(`Something already listens on 127.0.0.1:${port} and isn't a Polycarp server for ${options.publicUrl} (${probe.detail}). Nothing was changed.`);
 	let passcode: string | undefined;

@@ -3,7 +3,7 @@
  * credentials in protected local storage, written atomically with mode 0600, and never in
  * browser storage, logs or source control; the same rules serve the Copilot token.
  *
- * Layout under ~/.config/tabkyra/subscriptions (TABKYRA_SUBSCRIPTIONS_DIR overrides it, for tests):
+ * Layout under ~/.config/polycarp/browser/subscriptions (TABKYRA_SUBSCRIPTIONS_DIR overrides it, for tests):
  *   chatgpt-host-id            this host's stable ext_agent_host_id
  *   chatgpt/<client_id>.json   one record per issued client id (one ChatGPT account and workspace)
  *   chatgpt/active.json        which record is in use
@@ -27,9 +27,11 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { envVar } from "../env.ts";
+import { configDir } from "../files.ts";
 
 export function subscriptionsDir(): string {
-	return process.env.TABKYRA_SUBSCRIPTIONS_DIR || join(homedir(), ".config", "tabkyra", "subscriptions");
+	return envVar("SUBSCRIPTIONS_DIR") || join(configDir(), "subscriptions");
 }
 
 /** Create a directory closed to other users, and refuse one another user could have planted. */
