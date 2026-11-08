@@ -82,7 +82,7 @@ import { installBugCapture } from "./privacy/capture.js";
 import { assertPrivateProxy, PRIVATE_MODE_KEY, privateModel, TRUSTED_HOSTS_KEY } from "./privacy/private-mode.js";
 import { SYSTEM_PROMPT } from "./prompts/prompts.js";
 import { Recorder } from "./recording/recorder.js";
-import { pickChatToRestore } from "./restore-chat.js";
+import { chatsOfOtherWindows, pickChatToRestore, rememberChat, rememberedChat } from "./restore-chat.js";
 import { TabkyraAppStorage } from "./storage/app-storage.js";
 import type { Skill } from "./storage/stores/skills-store.js";
 import { trySubscriptionStatus } from "./subscriptions/client.js";
@@ -965,6 +965,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 			if (!currentSessionId && shouldSaveSession(messages)) {
 				currentSessionId = crypto.randomUUID();
+				void rememberChat(currentWindowId, currentSessionId).catch(() => {});
 				// Rename the unsaved browser session (id "tab-<homeTab>") to the saved id, keeping
 				// its home-tab binding and tab group, so the panel stays bound to the same tab.
 				// Queued after the relabel above so the two never interleave.
@@ -1581,11 +1582,19 @@ async function initApp() {
 	const urlParams = new URLSearchParams(window.location.search);
 	let sessionIdFromUrl = urlParams.get("session");
 	const isNewSession = urlParams.get("new") === "true";
+	// A new chat is not any saved chat: forget the old one until this one is saved.
+	if (isNewSession) void rememberChat(currentWindowId, undefined).catch(() => {});
 
 	if (!sessionIdFromUrl && !isNewSession && homeTabId === undefined && storage.sessions) {
 		// One panel per window: reopen the conversation the owner left, not a blank one.
 		const saved = await storage.sessions.getAllMetadata().catch(() => []);
-		const recent = pickChatToRestore({ session: null, newChat: false, saved });
+		const recent = pickChatToRestore({
+			session: null,
+			newChat: false,
+			saved,
+			remembered: await rememberedChat(currentWindowId).catch(() => undefined),
+			takenByOthers: await chatsOfOtherWindows(currentWindowId).catch(() => new Set<string>()),
+		});
 		if (recent) {
 			sessionIdFromUrl = recent;
 			updateUrl(recent);
@@ -1604,6 +1613,7 @@ async function initApp() {
 		const sessionData = await storage.sessions.loadSession(sessionIdFromUrl);
 		if (sessionData) {
 			currentSessionId = sessionIdFromUrl;
+			void rememberChat(currentWindowId, currentSessionId).catch(() => {});
 			const metadata = await storage.sessions.getMetadata(sessionIdFromUrl);
 			currentTitle = metadata?.title || "";
 
