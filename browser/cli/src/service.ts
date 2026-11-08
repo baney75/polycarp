@@ -4,12 +4,12 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { launcherBinary } from "./harness.ts";
 import { ensureLauncherIsSelf } from "./install.ts";
-import { configDir } from "./files.ts";
+import { configDir, configDirOverride, legacyConfigDir } from "./files.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
 
@@ -74,12 +74,53 @@ const systemdQuote = (text: string, execStart = false) => {
 	return /^[A-Za-z0-9_./:@+=,-]+$/.test(text) ? escaped : `"${escaped.replace(/(["\\])/g, "\\$1")}"`;
 };
 
-/** The service reads remote.json (or hub.json, link.json) and oauth.json from the same directory as this shell; the socket directory only when it was moved. Both as absolute paths, since a service doesn't start in this shell's directory. */
-export function serviceEnvironment(): Record<string, string> {
-	const out: Record<string, string> = { POLYCARP_BROWSER_CONFIG_DIR: resolve(configDir()) };
-	const socket = envVar("SOCKET_DIR");
+/**
+ * The service reads remote.json (or hub.json, link.json) and oauth.json from the same directory as this shell; the socket directory only when it was moved. Both as absolute paths, since a service doesn't start in this shell's directory.
+ * `inherited` is what a service being replaced had saved: used for a folder this shell does not choose itself.
+ */
+export function serviceEnvironment(inherited: { config?: string; socket?: string } = {}): Record<string, string> {
+	const config = configDirOverride() ? configDir() : (inherited.config ?? configDir());
+	const out: Record<string, string> = { POLYCARP_BROWSER_CONFIG_DIR: resolve(config) };
+	const socket = envVar("SOCKET_DIR") ?? inherited.socket;
 	if (socket) out.POLYCARP_SOCKET_DIR = resolve(socket);
 	return out;
+}
+
+const unxml = (text: string) => text.replace(/&#(\d+);/g, (_m, n: string) => String.fromCharCode(Number(n)));
+
+/** The folders an installed service had saved in its plist or unit (either variable name), or nothing. Never throws. */
+function savedFolders(spec: ServiceSpec): { config?: string; socket?: string } {
+	const file = serviceFile(spec);
+	const found = new Map<string, string>();
+	try {
+		if (!file || !existsSync(file)) return {};
+		const text = readFileSync(file, "utf8");
+		if (process.platform === "darwin") {
+			for (const m of text.matchAll(/<key>([A-Z_]+)<\/key>\s*<string>([^<]*)<\/string>/g)) found.set(m[1], unxml(m[2]));
+		} else {
+			for (const m of text.matchAll(/^Environment=(.*)$/gm)) {
+				let line = m[1].trim();
+				if (line.startsWith('"') && line.endsWith('"')) line = line.slice(1, -1).replace(/\\(["\\])/g, "$1");
+				const eq = line.indexOf("=");
+				if (eq > 0) found.set(line.slice(0, eq), line.slice(eq + 1).replace(/%%/g, "%"));
+			}
+		}
+	} catch {
+		return {};
+	}
+	const config = found.get("POLYCARP_BROWSER_CONFIG_DIR") ?? found.get("TABKYRA_CONFIG_DIR");
+	const socket = found.get("POLYCARP_SOCKET_DIR") ?? found.get("TABKYRA_SOCKET_DIR");
+	return { config: config && isAbsolute(config) ? migratedFolder(config) : undefined, socket: socket && isAbsolute(socket) ? socket : undefined };
+}
+
+/** The old default config folder now lives at the new one (the migration left a symlink); a folder that still holds the state stays as it is. */
+function migratedFolder(dir: string): string {
+	try {
+		if (resolve(dir) === resolve(legacyConfigDir()) && lstatSync(dir).isSymbolicLink()) return configDir();
+	} catch {
+		/* keep it */
+	}
+	return dir;
 }
 
 /** A user service: what runs (`tabkyra <args>`), and the names the service manager knows it by. */
@@ -232,13 +273,15 @@ function moveLegacyLog(spec: ServiceSpec): void {
 interface Retired {
 	ok: boolean;
 	message?: string;
-	/** Bring the old service back, when the new one could not be installed. */
-	restore: () => Promise<void>;
+	/** What the old service had saved for its folders, for the new one. */
+	saved: { config?: string; socket?: string };
+	/** Bring the old service back, when the new one could not be installed. Returns what went wrong, if anything. */
+	restore: () => Promise<string | undefined>;
 	/** Delete the old service's file and move its log: the new one is running. */
 	finish: () => Promise<void>;
 }
 
-const NOTHING_RETIRED: Retired = { ok: true, restore: async () => {}, finish: async () => {} };
+const NOTHING_RETIRED: Retired = { ok: true, saved: {}, restore: async () => undefined, finish: async () => {} };
 
 /**
  * Stop the service under the old name, if one is installed, so the new one can take its port. Its file stays until `finish`,
@@ -248,6 +291,8 @@ async function retireLegacy(spec: ServiceSpec, exec: Runner): Promise<Retired> {
 	const old = legacySpec(spec);
 	const file = old ? serviceFile(old) : undefined;
 	if (!old || !file || !existsSync(file)) return NOTHING_RETIRED;
+	const saved = savedFolders(old);
+	const failure = (r: { code: number; out: string }, what: string) => (r.code === 0 ? undefined : `${what} failed: ${r.out}`);
 	if (process.platform === "darwin") {
 		const r = await exec("launchctl", ["bootout", launchdTarget(old)]);
 		// bootout also fails when the service was never loaded; that is already stopped.
@@ -257,7 +302,11 @@ async function retireLegacy(spec: ServiceSpec, exec: Runner): Promise<Retired> {
 		await waitUntilUnloaded(old, exec);
 		return {
 			ok: true,
-			restore: async () => void (await exec("launchctl", ["bootstrap", `gui/${process.getuid?.() ?? 0}`, file])),
+			saved,
+			restore: async () => {
+				const uid = process.getuid?.() ?? 0;
+				return failure(await exec("launchctl", ["bootstrap", `gui/${uid}`, file]), `launchctl bootstrap gui/${uid} ${file}`);
+			},
 			finish: async () => {
 				rmSync(file, { force: true });
 				moveLegacyLog(spec);
@@ -268,7 +317,8 @@ async function retireLegacy(spec: ServiceSpec, exec: Runner): Promise<Retired> {
 	if (r.code !== 0) return { ...NOTHING_RETIRED, ok: false, message: `systemctl --user disable --now ${old.unit} failed: ${r.out}. The old service is still installed, so nothing was changed.` };
 	return {
 		ok: true,
-		restore: async () => void (await exec("systemctl", ["--user", "enable", "--now", old.unit])),
+		saved,
+		restore: async () => failure(await exec("systemctl", ["--user", "enable", "--now", old.unit]), `systemctl --user enable --now ${old.unit}`),
 		finish: async () => {
 			rmSync(file, { force: true });
 			await exec("systemctl", ["--user", "daemon-reload"]);
@@ -283,10 +333,52 @@ async function installWith(spec: ServiceSpec, exec: Runner): Promise<InstallResu
 	ensureLauncherIsSelf();
 	const retired = await retireLegacy(spec, exec);
 	if (!retired.ok) return { ok: false, message: retired.message ?? "The old service could not be stopped." };
-	const result = await installFresh(spec, exec);
-	if (result.ok) await retired.finish();
-	else await retired.restore();
-	return result;
+	const target = serviceFile(spec);
+	// A file already there under the new name is kept as it was if this install has to be undone.
+	const before = target ? readIfFile(target) : undefined;
+	// With no old service to bring back, a failed install behaves as it always did: the file stays for the person to bootstrap by hand.
+	if (retired === NOTHING_RETIRED) return installFresh(spec, exec);
+	let result: InstallResult;
+	try {
+		result = await installFresh(spec, exec, retired.saved);
+	} catch (err) {
+		result = { ok: false, message: `The new service could not be installed: ${err instanceof Error ? err.message : String(err)}` };
+	}
+	if (result.ok) {
+		await retired.finish();
+		return result;
+	}
+	// Failed: take the new service away completely before the old one comes back, so never both are enabled.
+	await undoFresh(spec, exec, target, before);
+	const problem = await retired.restore();
+	return { ...result, message: problem ? `${result.message} The old service could not be restarted: ${problem}` : `${result.message} The old ${spec.legacy?.label ?? "service"} service was restored.` };
+}
+
+const readIfFile = (path: string): string | undefined => {
+	try {
+		return lstatSync(path).isFile() ? readFileSync(path, "utf8") : undefined;
+	} catch {
+		return undefined;
+	}
+};
+
+/** Stop and disable the service this install wrote, and delete its file (or put back what was there). Best effort: each step runs. */
+async function undoFresh(spec: ServiceSpec, exec: Runner, file: string | undefined, before: string | undefined): Promise<void> {
+	try {
+		if (process.platform === "darwin") await exec("launchctl", ["bootout", launchdTarget(spec)]);
+		else if (process.platform === "linux") await exec("systemctl", ["--user", "disable", "--now", spec.unit]);
+	} catch {
+		/* keep going */
+	}
+	try {
+		if (file) {
+			if (before !== undefined) writeAtomic(file, before, 0o644);
+			else if (readIfFile(file) !== undefined) rmSync(file, { force: true });
+		}
+		if (process.platform === "linux") await exec("systemctl", ["--user", "daemon-reload"]);
+	} catch {
+		/* the file may be unwritable, which is why we are here */
+	}
 }
 
 /** launchctl exits 5 (Input/output error) when asked to bootstrap while launchd is still tearing the same job down. */
@@ -302,9 +394,9 @@ async function bootstrapWithRetry(spec: ServiceSpec, exec: Runner): Promise<{ co
 	}
 }
 
-async function installFresh(spec: ServiceSpec, exec: Runner): Promise<InstallResult> {
+async function installFresh(spec: ServiceSpec, exec: Runner, saved: { config?: string; socket?: string } = {}): Promise<InstallResult> {
 	const binary = launcherBinary();
-	const env = serviceEnvironment();
+	const env = serviceEnvironment(saved);
 	if (process.platform === "darwin") {
 		const log = launchdLog(spec);
 		mkdirSync(dirname(log), { recursive: true });

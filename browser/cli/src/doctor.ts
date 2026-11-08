@@ -107,8 +107,8 @@ function legacyChecks(): Check[] {
 		out.push({
 			id: "legacy-folders",
 			status: "warn",
-			label: "Old tabkyra folders are still here next to the polycarp ones",
-			detail: `${left.join(", ")}. Polycarp uses the new folders and did not merge these. Look through them, then delete what you don't need.`,
+			label: "Old tabkyra folders were not moved",
+			detail: `${left.join(", ")}. Either a polycarp folder already exists (nothing is merged) or a link to the new place could not be made. Look through them before deleting anything; a service may still use one.`,
 		});
 	}
 	const services = [SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE].filter(legacyServiceInstalled);

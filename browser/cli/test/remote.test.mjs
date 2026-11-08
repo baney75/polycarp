@@ -1060,7 +1060,7 @@ test("the systemd unit escapes % and $ in ExecStart and % in environment values"
 	}
 	const lines = readFileSync(join(home, ".config", "systemd", "user", "polycarp-serve.service"), "utf8").split("\n");
 	assert.ok(lines.includes(`ExecStart="${binary.replace("$", "$$$$").replace("%", "%%")}" serve`), lines.join("\n"));
-	assert.ok(lines.includes(`Environment="TABKYRA_CONFIG_DIR=${config.replace("%", "%%")}"`), lines.join("\n"));
+	assert.ok(lines.includes(`Environment="POLYCARP_BROWSER_CONFIG_DIR=${config.replace("%", "%%")}"`), lines.join("\n"));
 });
 
 test("remote setup accepts a port 8443 that is already ours, including its HTTPS TCP entry", async () => {

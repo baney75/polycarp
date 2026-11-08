@@ -35,7 +35,12 @@ const kind = (path: string): "dir" | "file" | "link" | undefined => {
 	}
 };
 
-/** Move `from` to `to` and leave a symlink at `from` when `link` is set. False if the move did not happen. */
+/**
+ * Move `from` to `to` and, when `link` is set, leave a link at `from` so an old binary, a browser registration or an agent
+ * entry that still names the old path keeps working. A directory gets a junction on Windows, which needs no special rights.
+ * If the link cannot be made the move is undone: a move nothing can follow would strand them, and the old place keeps
+ * working. `doctor` then lists the old folder (legacyLeftovers). False if nothing moved.
+ */
 function move(from: string, to: string, link: boolean): boolean {
 	try {
 		mkdirSync(dirname(to), { recursive: true });
@@ -43,15 +48,22 @@ function move(from: string, to: string, link: boolean): boolean {
 	} catch {
 		return false; // another process got there first, or the folder is in use (Windows)
 	}
-	if (link) {
+	if (!link) return true;
+	try {
+		if (envVar("TEST_NO_LINK")) throw new Error("links are refused (test)");
+		const isDir = kind(to) === "dir";
+		if (isDir && process.platform === "win32") symlinkSync(to, from, "junction");
+		// A relative target for a file in the same folder keeps the pair valid if the folder moves again.
+		else symlinkSync(dirname(from) === dirname(to) ? basename(to) : to, from);
+		return true;
+	} catch {
 		try {
-			// A relative target for a file in the same folder keeps the pair valid if the folder moves again.
-			symlinkSync(dirname(from) === dirname(to) ? basename(to) : to, from);
+			renameSync(to, from);
 		} catch {
-			/* no symlink rights (Windows); the move stands */
+			/* it stays at the new place, and the browser registration is repaired by install */
 		}
+		return false;
 	}
-	return true;
 }
 
 function moveFolder(from: string, to: string, link: boolean, result: Migration): void {
@@ -82,14 +94,12 @@ export function migrateLegacyPaths(): Migration {
 	return result;
 }
 
-/** Old folders still on disk next to the new ones: nothing was merged, so the person can look and delete. For `doctor`. */
+/** Old folders still in place as real folders: the new one exists too (nothing is merged), or a link could not be made. For `doctor`. */
 export function legacyLeftovers(): string[] {
-	const out: string[] = [];
-	const pairs: Array<[boolean, string, string]> = [
-		[!configDirOverride(), legacyConfigDir(), configDir()],
-		[!envVar("HOME"), legacyDataDir(), dataDir()],
-		[!envVar("CACHE_DIR"), legacyCacheDir(), cacheDir()],
+	const pairs: Array<[boolean, string]> = [
+		[!configDirOverride(), legacyConfigDir()],
+		[!envVar("HOME"), legacyDataDir()],
+		[!envVar("CACHE_DIR"), legacyCacheDir()],
 	];
-	for (const [default_, from, to] of pairs) if (default_ && kind(from) === "dir" && existsSync(to)) out.push(from);
-	return out;
+	return pairs.filter(([default_, from]) => default_ && kind(from) === "dir").map(([, from]) => from);
 }
