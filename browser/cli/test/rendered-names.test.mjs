@@ -53,7 +53,7 @@ test("a Cloudflare tunnel that is already running names the command to stop it, 
 			child.stderr.on("data", (d) => (out += d));
 			child.on("close", () => resolve(out));
 		});
-		assert.match(r, /A Cloudflare tunnel is already running\. Run tabkyra tunnel cloudflare --off first\./);
+		assert.match(r, /A Cloudflare tunnel is already running\. Run polycarp-browser tunnel cloudflare --off first\./);
 		assert.doesNotMatch(r, /\$\{/);
 	} finally {
 		stand.kill();

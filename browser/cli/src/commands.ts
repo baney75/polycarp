@@ -285,7 +285,7 @@ export const COMMANDS: CommandSpec[] = [
 	{ name: "install", what: "Re-register the native host with every browser, or with --browser <name> only that one", group: "Troubleshoot", flags: ["--force", "--browser"] },
 	{ name: "reload", what: "Reload the extension after rebuilding dist-chrome", group: "Troubleshoot" },
 	{ name: "debug", what: "Bridge state, request timings and a benchmark (JSON)", group: "Troubleshoot" },
-	{ name: "completion", positional: 1, args: "zsh|bash|fish", what: 'Completions for the tabkyra command name: eval "$(tabkyra completion zsh)"', group: "Troubleshoot", values: ["zsh", "bash", "fish"] }, // product-name allowlist: completions are for the tabkyra command name
+	{ name: "completion", positional: 1, args: "zsh|bash|fish", what: `Completions for ${COMMAND_NAME}: eval "$(${COMMAND_NAME} completion zsh)"`, group: "Troubleshoot", values: ["zsh", "bash", "fish"] }, // product-name allowlist: the alias is still completed
 	{ name: "version", what: "This CLI's version (also --version)", group: "Troubleshoot", flags: ["--json"] },
 	{ name: "help", selfParsed: true, what: "This help (also --help)", group: "Troubleshoot", hidden: true },
 	{ name: "host", selfParsed: true, what: "The native host the browser starts", group: "Troubleshoot", hidden: true },
@@ -371,8 +371,8 @@ export function completionScript(shell: string): string | undefined {
 	const pathFlags = [...PATH_VALUES].map(sh).join(" ");
 	if (shell === "zsh") {
 		const lines = [
-			"#compdef tabkyra",
-			'# completion for the tabkyra command name (zsh). Load it with: eval "$(tabkyra completion zsh)"', // product-name allowlist: completions are for the tabkyra command name
+			"#compdef polycarp-browser tabkyra",
+			`# completion for ${COMMAND_NAME} and the tabkyra alias (zsh). Load it with: eval "$(${COMMAND_NAME} completion zsh)"`, // product-name allowlist: the alias is still completed
 			"_tabkyra() {",
 			"  local -a commands subs flags",
 			"  local paths=0",
@@ -416,11 +416,11 @@ export function completionScript(shell: string): string | undefined {
 			"# compdef exists once compinit has run. If the zshrc runs it later (oh-my-zsh, zinit,",
 			"# prezto), register at the first prompt instead of running compinit a second time.",
 			"if (( $+functions[compdef] )); then",
-			"  compdef _tabkyra tabkyra",
+			"  compdef _tabkyra polycarp-browser tabkyra",
 			"else",
 			"  autoload -Uz add-zsh-hook",
 			"  _tabkyra_register() {",
-			"    (( $+functions[compdef] )) && compdef _tabkyra tabkyra",
+			"    (( $+functions[compdef] )) && compdef _tabkyra polycarp-browser tabkyra",
 			"    add-zsh-hook -d precmd _tabkyra_register",
 			"  }",
 			"  add-zsh-hook precmd _tabkyra_register",
@@ -438,7 +438,7 @@ export function completionScript(shell: string): string | undefined {
 				return `    ${sh(f)}) ${values ? `COMPREPLY=( $(compgen -W "${values}" -- "$cur") ); ` : ""}compopt +o default 2>/dev/null; return ;;`;
 			});
 		const lines = [
-			'# completion for the tabkyra command name (bash). Load it with: eval "$(tabkyra completion bash)"', // product-name allowlist: completions are for the tabkyra command name
+			`# completion for ${COMMAND_NAME} and the tabkyra alias (bash). Load it with: eval "$(${COMMAND_NAME} completion bash)"`, // product-name allowlist: the alias is still completed
 			"_tabkyra() {",
 			'  local cur="${COMP_WORDS[COMP_CWORD]}" prev="${COMP_WORDS[COMP_CWORD-1]}" paths=0',
 			"  COMPREPLY=()",
@@ -478,13 +478,13 @@ export function completionScript(shell: string): string | undefined {
 			"  # File names only where the command takes a path (compopt needs bash 4; older bash keeps them).",
 			'  [ "$paths" = 1 ] || compopt +o default 2>/dev/null',
 			"}",
-			"complete -o bashdefault -o default -F _tabkyra tabkyra",
+			"complete -o bashdefault -o default -F _tabkyra polycarp-browser tabkyra",
 			"",
 		);
 		return lines.join("\n");
 	}
 	if (shell === "fish") {
-		const lines = ["# completion for the tabkyra command name (fish). Load it with: tabkyra completion fish | source"]; // product-name allowlist: completions are for the tabkyra command name
+		const lines = [`# completion for ${COMMAND_NAME} and the tabkyra alias (fish). Load it with: ${COMMAND_NAME} completion fish | source`]; // product-name allowlist: the alias is still completed
 		for (const c of cmds) lines.push(`complete -c tabkyra -n __fish_use_subcommand -f -a ${sh(c.name)} -d '${desc(c.summary ?? c.what)}'`);
 		for (const c of cmds) {
 			const subs = c.subcommands ?? [];
@@ -504,6 +504,8 @@ export function completionScript(shell: string): string | undefined {
 			for (const f of c.flags ?? [])
 				lines.push(`complete -c tabkyra -n '__fish_seen_subcommand_from ${sh(c.name)}' -l ${sh(f.replace(/^--/, ""))}${VALUE_FLAGS.has(f) ? " -r" : ""}`);
 		}
+		// The same rules for the name a person types now; the alias above stays completed.
+		lines.push(...lines.slice(1).map((l) => l.replace("complete -c tabkyra ", "complete -c polycarp-browser ")));
 		lines.push("");
 		return lines.join("\n");
 	}

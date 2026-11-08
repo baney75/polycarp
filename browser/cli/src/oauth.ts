@@ -81,7 +81,7 @@ interface State {
 }
 
 export interface OAuthConfig {
-	/** The public origin clients reach, such as https://tabkyra.example.com. The MCP endpoint is <publicUrl>/mcp. */
+	/** The public origin clients reach, such as https://polycarp.example.com. The MCP endpoint is <publicUrl>/mcp. */
 	publicUrl: string;
 	/** Extra https hosts a client may register a redirect URI on. */
 	redirectHosts: string[];
@@ -113,7 +113,7 @@ export function normalizePublicUrl(raw: string): string {
 	try {
 		url = new URL(raw);
 	} catch {
-		throw new Error(`--public-url must be a URL like https://tabkyra.example.com (got ${raw}).`);
+		throw new Error(`--public-url must be a URL like https://polycarp.example.com (got ${raw}).`);
 	}
 	const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
 	if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) throw new Error("--public-url must use https.");

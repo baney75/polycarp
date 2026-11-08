@@ -1,10 +1,11 @@
 {
 	"name": "tabkyra",
 	"version": "0.1.0",
-	"description": "Bridge between coding harnesses (MCP, pi) and the Tabkyra browser extension",
+	"description": "Bridge between coding harnesses (MCP, pi) and the Polycarp browser extension",
 	"license": "AGPL-3.0",
 	"type": "module",
 	"bin": {
+		"polycarp-browser": "./dist/index.js",
 		"tabkyra": "./dist/index.js",
 		"sitegeist": "./dist/index.js"
 	},

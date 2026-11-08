@@ -153,7 +153,7 @@ test("edit outside a terminal writes the exact source as a draft, prints the app
 	assert.equal(r.code, 0, r.out);
 	const draft = join(home, ".config", "polycarp", "browser", "skill-drafts", "dorks", "SKILL.md");
 	assert.equal(readFileSync(draft, "utf8"), run(home, ["skill", "print", "dorks", "--raw"]).stdout);
-	assert.match(r.out, new RegExp(`tabkyra skill apply ${dirname(draft).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+	assert.match(r.out, new RegExp(`polycarp-browser skill apply ${dirname(draft).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
 	assert.equal(existsSync(marker), false, "no editor opens without a terminal");
 	assert.equal(existsSync(local(home, "dorks")), false);
 
@@ -309,7 +309,7 @@ test("edit --draft-only never opens an editor or asks, even in a terminal", (t) 
 	}
 	assert.equal(existsSync(marker), false, "no editor ran");
 	assert.doesNotMatch(r.out, /Apply\?/);
-	assert.match(r.out, /tabkyra skill apply \S+skill-drafts\/dorks/);
+	assert.match(r.out, /polycarp-browser skill apply \S+skill-drafts\/dorks/);
 	assert.equal(existsSync(local(home, "dorks")), false);
 	assert.equal(run(home, ["skill", "edit", "dorks", "--draft-only", "--yes"]).code, 0);
 	assert.equal(existsSync(local(home, "dorks")), false, "--yes doesn't make --draft-only apply");

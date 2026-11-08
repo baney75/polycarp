@@ -294,7 +294,7 @@ export class SubscriptionsSection extends LitElement {
 					</p>
 					${this.command("Claude Code", cliMcpSetup("claude", hostCommand()))}
 					${this.command("Gemini CLI", cliMcpSetup("gemini", hostCommand()))}
-					${builtHelperCommand("mcp") ? html`<p class="text-xs text-muted-foreground">Built the helper yourself? Use <code class="font-mono">tabkyra</code> in place of <code class="font-mono">${hostCommand()}</code>.</p>` : nothing}
+					${builtHelperCommand("mcp") ? html`<p class="text-xs text-muted-foreground">Built the helper yourself? Use <code class="font-mono">polycarp-browser</code> in place of <code class="font-mono">${hostCommand()}</code>.</p>` : nothing}
 				</div>
 				${this.notice ? html`<p class="text-xs text-muted-foreground" role="status">${this.notice}</p>` : nothing}
 			</div>
