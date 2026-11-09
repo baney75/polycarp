@@ -86,6 +86,7 @@ test("the community switch is off until the helper reports it on", () => {
 
 test("Allowed sites stores a hostname, because permissions compare hostnames only", () => {
 	const cases = {
+		"my_app.example.com": "my_app.example.com",
 		"example.com:8080": "example.com",
 		"HTTPS://Docs.Example.com:8443/a?b=1": "docs.example.com",
 		"http://example.com/": "example.com",

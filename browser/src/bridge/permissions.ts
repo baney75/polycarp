@@ -82,7 +82,7 @@ export function normalizeHostInput(input: string): { host: string } | { error: s
 	}
 	if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return refused;
 	const host = parsed.hostname.toLowerCase().replace(/\.$/, "");
-	return /^(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])$/.test(host) ? { host } : refused;
+	return /^(?:[a-z0-9_-]+(?:\.[a-z0-9_-]+)*|\[[0-9a-f:.]+\])$/.test(host) ? { host } : refused;
 }
 
 /** "docs.example.com" is covered by an entry for "example.com". */

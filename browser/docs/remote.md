@@ -168,7 +168,7 @@ setup refuses to switch while Funnel from an earlier setup is on.
 
 Paste `<public URL>/mcp` in each:
 
-- **claude.ai**: Settings > Agentsors > Add custom connector.
+- **claude.ai**: Settings > Connectors > Add custom connector.
 - **ChatGPT**: Settings > Apps & Connectors (turn on developer mode) > Create. Choose OAuth.
 - **grok.com**: grok.com/connectors > New Connector > Custom.
 
