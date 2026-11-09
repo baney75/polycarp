@@ -54,7 +54,7 @@ words. A sign-in covers one domain, so a name on another domain is refused too, 
 `remote off` stops the tunnel and leaves the tunnel and its record on your account, so turning it on again reuses them;
 `cloudflared tunnel delete polycarp-<this computer>` removes the tunnel for good.
 
-Settings > Connect has a "Set up with Cloudflare" button that does the same: enter the address, sign in to Cloudflare in the
+Settings > Agents has a "Set up with Cloudflare" button that does the same: enter the address, sign in to Cloudflare in the
 tab it opens, and it makes the tunnel and checks the public address. If no `cloudflared` is installed it downloads its own
 (pinned release 2026.10.7, SHA-256 checked before anything is unpacked or run) to `~/.config/tabkyra/bin/cloudflared`; one on
 your PATH or in Homebrew's folders is used first. When Funnel is on, the button moves to Cloudflare and turns Funnel off only after the tunnel is ready; in a terminal that is `remote setup --cloudflare <name> --replace-funnel`.
@@ -244,7 +244,7 @@ tabkyra link busy on                 # on a device: new sessions go elsewhere fi
 tabkyra hub status                   # hub.json, passcode, local answer, public DNS and fetch, devices
 ```
 
-Settings > Connect in the side panel does the same from the browser: it shows the connector URL,
+Settings > Agents in the side panel does the same from the browser: it shows the connector URL,
 makes a one-time code for the approval page, lists the devices (on the hub's computer), makes a
 connect code for another device, and joins a hub from a code. It asks Tabkyra's helper, so it needs
 `tabkyra setup` first. See D33 in [decisions.md](decisions.md).

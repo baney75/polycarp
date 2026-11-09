@@ -3,6 +3,7 @@ import { html, LitElement, nothing, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { builtHelperCommand, hostCommand } from "../bridge/host-command.js";
 import { COMMAND_BOX_CLASS } from "../components/command-box.js";
+import { helperInstallHint } from "../components/HelperInstallHint.js";
 import { Toast } from "../components/Toast.js";
 import { request, SubscriptionRequestError, type SubscriptionStatus, subscriptionStatus } from "./client.js";
 import { COPILOT, cliMcpSetup, SIWC } from "./constants.js";
@@ -235,12 +236,13 @@ export class SubscriptionsSection extends LitElement {
 								<p class="text-xs text-foreground">
 									${
 										this.noHost
-											? "Subscription sign-ins run in Polycarp's helper on this computer, which isn't connected. Run this in a terminal, then reopen Settings."
+											? "Subscription sign-ins run in Polycarp's helper on this computer, which isn't connected. If you have it, run this in a terminal, then reopen Settings."
 											: html`Subscription sign-ins aren't available: ${this.error?.replace(/\.?$/, ".")} Running this in a terminal usually fixes it.`
 									}
 								</p>
 								${this.command("Set up Polycarp", `${hostCommand()} setup`)}
 								${builtHelperCommand("setup") ? this.command("If you built the helper yourself", builtHelperCommand("setup") as string) : nothing}
+								${this.noHost ? html`<p class="text-xs text-muted-foreground" data-helper-install>${helperInstallHint()}</p>` : nothing}
 							</div>`
 						: nothing
 				}

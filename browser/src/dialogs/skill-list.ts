@@ -5,6 +5,47 @@
  */
 
 import { firstSentence } from "../composer/menus.js";
+import type { Skill } from "../storage/stores/skills-store.js";
+
+const SKILL_TEXT_FIELDS = [
+	"name",
+	"shortDescription",
+	"description",
+	"createdAt",
+	"lastUpdated",
+	"examples",
+	"library",
+] as const;
+
+/**
+ * Checks a parsed skills file before anything is saved. An empty domainPatterns list passes: the
+ * editor can save one, so an export must be able to come back in.
+ */
+export function validateImportedSkills(value: unknown): { skills: Skill[] } | { error: string } {
+	if (!Array.isArray(value)) return { error: "Invalid skills file: expected an array of skills" };
+	for (const [index, item] of value.entries()) {
+		const skill = (item ?? {}) as Record<string, unknown>;
+		const label = typeof skill.name === "string" && skill.name ? `"${skill.name}"` : `number ${index + 1}`;
+		const bad = SKILL_TEXT_FIELDS.find((field) => typeof skill[field] !== "string");
+		if (bad || !skill.name) return { error: `Invalid skills file: skill ${label} has no valid ${bad ?? "name"}.` };
+		const patterns = skill.domainPatterns;
+		if (!Array.isArray(patterns) || patterns.some((p) => typeof p !== "string"))
+			return { error: `Invalid skills file: skill ${label} has no valid domainPatterns list.` };
+	}
+	return { skills: value as Skill[] };
+}
+
+/** A skill saved before imports were checked can lack these fields; the list must still draw. */
+export function listableSkill(skill: Skill): Skill {
+	return {
+		...skill,
+		name: String(skill.name ?? ""),
+		domainPatterns: Array.isArray(skill.domainPatterns)
+			? skill.domainPatterns.filter((p) => typeof p === "string")
+			: [],
+		shortDescription: typeof skill.shortDescription === "string" ? skill.shortDescription : "",
+	};
+}
 
 export interface LibraryRow {
 	name: string;
