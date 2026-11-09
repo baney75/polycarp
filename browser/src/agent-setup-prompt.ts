@@ -82,7 +82,7 @@ export function deviceSetupPrompt(version: string, hubUrl: string, code: string)
    If that isn't found either, an older install may answer to: tabkyra doctor
    Use the first one that runs, and write it as HELPER in every step below: HELPER is exactly one of "polycarp browser", "polycarp-browser" or "tabkyra". If neither runs, stop and tell me to copy the setup prompt from Polycarp's Settings > Agents tab and run that first.
 2. Run: HELPER link ${hubUrl} --code ${code}
-   The code works once and expires 10 minutes after I copied this prompt. If the hub refuses it, tell me to get a new one in Settings > Connect > Add a device.
+   The code works once and expires 10 minutes after I copied this prompt. If the hub refuses it, tell me to get a new one in Settings > Agents > Add a device.
 3. Run: HELPER link status
    Tell me whether it says connected.
 

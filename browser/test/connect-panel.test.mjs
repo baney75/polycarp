@@ -244,7 +244,7 @@ test("a hub at http://[::1]:port passes the panel's shape checks, as it does the
 
 test("Join a hub asks for a Device code from Add a device, takes an optional name, and tells a silent helper after the link step", () => {
 	const tab = read("src/dialogs/ConnectTab.ts");
-	assert.match(tab, /a device code from Settings › Connect › Your devices › Add a device on the hub \(or a manager device\)/);
+	assert.match(tab, /a device code from Settings › Agents › Your devices › Add a device on the hub \(or a manager device\)/);
 	assert.match(tab, /<span>Device code<\/span>/);
 	assert.doesNotMatch(tab, /<span>Connect code<\/span>/);
 	assert.match(tab, /<span>Device name \(optional\)<\/span>/);

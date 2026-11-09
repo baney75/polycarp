@@ -291,6 +291,22 @@ test("Join hub asks for a Confirm that names the host and the scopes; after join
 	}
 });
 
+test("with no helper the community switch shows off, a refused change snaps back and says why, and Privacy has no proxy control", async () => {
+	const page = await settings("Skills");
+	try {
+		const toggle = page.getByRole("switch", { name: "Receive community skills" });
+		assert.equal(await toggle.isChecked(), false);
+		await toggle.click();
+		await page.getByText(/native host isn't connected/).waitFor({ timeout: 5000 });
+		assert.equal(await toggle.isChecked(), false, "the switch reverted");
+		await page.getByRole("tab", { name: "Privacy", exact: true }).click();
+		await page.waitForTimeout(300);
+		assert.equal(await page.getByText("CORS proxy", { exact: true }).count(), 0);
+	} finally {
+		await page.close();
+	}
+});
+
 test("the real Connect relay closes a port from the panel opened as a tab", async () => {
 	const page = await context.newPage();
 	try {

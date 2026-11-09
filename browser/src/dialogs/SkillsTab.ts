@@ -2,20 +2,23 @@ import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { SettingsTab } from "@mariozechner/pi-web-ui";
 import { html, nothing, type TemplateResult } from "lit";
+import { live } from "lit/directives/live.js";
 import { hostCommand } from "../bridge/host-command.js";
 import type { HostCommunityStatus } from "../bridge/protocol.js";
 import {
 	COMMUNITY_STATUS_KEY,
 	type CommunityAction,
 	communityLibrary,
+	communitySwitchOn,
 	PANEL_COMMUNITY_MESSAGE,
 	readCommunityStatus,
 } from "../community/status.js";
+import { helperInstallHint } from "../components/HelperInstallHint.js";
 import { Toast } from "../components/Toast.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
 import { getFaviconUrl } from "../utils/favicon.js";
-import { libraryRows, normalizeSkillQuery } from "./skill-list.js";
+import { libraryRows, listableSkill, normalizeSkillQuery, validateImportedSkills } from "./skill-list.js";
 
 export class SkillsTab extends SettingsTab {
 	label = "Skills";
@@ -54,20 +57,27 @@ export class SkillsTab extends SettingsTab {
 		chrome.storage.onChanged.removeListener(this.onStorageChanged);
 	}
 
-	private async sendCommunity(action: CommunityAction) {
+	private async sendCommunity(action: CommunityAction): Promise<boolean> {
 		try {
 			const reply = (await chrome.runtime.sendMessage({ type: PANEL_COMMUNITY_MESSAGE, action })) as
 				| { ok: boolean; message?: string }
 				| undefined;
-			if (!reply?.ok) Toast.error(reply?.message ?? "The Polycarp native host didn't answer.");
+			if (reply?.ok) return true;
+			Toast.error(reply?.message ?? "The Polycarp native host didn't answer.");
 		} catch (error) {
 			Toast.error((error as Error).message);
 		}
+		return false;
+	}
+
+	/** A refused change redraws the switch from the reported state, through live(), so it can't stay flipped. */
+	private async toggleCommunity(on: boolean) {
+		if (!(await this.sendCommunity(on ? "on" : "off"))) this.requestUpdate();
 	}
 
 	private renderCommunity(): TemplateResult {
 		const status = this.community;
-		const checked = status?.enabled ?? true;
+		const checked = communitySwitchOn(status);
 		const lastCheck = status?.lastCheck ? new Date(status.lastCheck).toLocaleString() : "never";
 		return html`
 			<section class="space-y-2" aria-labelledby="community-skills-heading">
@@ -78,8 +88,8 @@ export class SkillsTab extends SettingsTab {
 						type="checkbox"
 						role="switch"
 						class="tk-switch"
-						.checked=${checked}
-						@change=${(e: Event) => this.sendCommunity((e.target as HTMLInputElement).checked ? "on" : "off")}
+						.checked=${live(checked)}
+						@change=${(e: Event) => this.toggleCommunity((e.target as HTMLInputElement).checked)}
 					/>
 				</label>
 				<p class="text-xs text-muted-foreground">
@@ -97,7 +107,7 @@ export class SkillsTab extends SettingsTab {
 								})}
 							</div>`
 						: html`<p class="text-xs text-muted-foreground">
-								No word from the native host yet; community skills sync through it (${hostCommand()} doctor).
+								No word from Polycarp's helper yet; community skills sync through it. If you have it, run ${hostCommand()} doctor. ${helperInstallHint()}
 							</p>`
 				}
 				${status?.error ? html`<p class="text-xs text-destructive">${status.error}</p>` : nothing}
@@ -127,8 +137,8 @@ export class SkillsTab extends SettingsTab {
 		this.skills = await storage.skills
 			.list()
 			.then((list) =>
-				Promise.all(list.map((s) => storage.skills.get(s.name))).then(
-					(skills) => skills.filter(Boolean) as Skill[],
+				Promise.all(list.map((s) => storage.skills.get(s.name))).then((skills) =>
+					(skills.filter(Boolean) as Skill[]).map(listableSkill),
 				),
 			);
 		this.filterSkills();
@@ -216,12 +226,12 @@ export class SkillsTab extends SettingsTab {
 
 			try {
 				const text = await file.text();
-				const imported = JSON.parse(text) as Skill[];
-
-				if (!Array.isArray(imported)) {
-					Toast.error("Invalid skills file: expected an array of skills");
+				const checked = validateImportedSkills(JSON.parse(text));
+				if ("error" in checked) {
+					Toast.error(checked.error);
 					return;
 				}
+				const imported = checked.skills;
 
 				// Store imported skills for later
 				this.importedSkills = imported;
@@ -282,10 +292,11 @@ export class SkillsTab extends SettingsTab {
 	}
 
 	renderSkillInfo(skill: Skill) {
+		const favicon = getFaviconUrl(skill.domainPatterns[0]);
 		return html`
 			<div class="border border-border rounded-lg p-3 bg-card">
 				<div class="flex items-start gap-3">
-					<img src=${getFaviconUrl(skill.domainPatterns[0])} width="20" height="20" alt="" class="rounded mt-0.5" />
+					${favicon ? html`<img src=${favicon} width="20" height="20" alt="" class="rounded mt-0.5" />` : nothing}
 					<div class="flex-1 min-w-0 space-y-1">
 						<h4 class="text-sm font-semibold text-foreground">${skill.name}</h4>
 						<div class="text-xs text-muted-foreground font-mono break-words">
@@ -446,7 +457,7 @@ export class SkillsTab extends SettingsTab {
 						Library <span class="font-normal text-muted-foreground">· ${this.searchQuery ? `${rows.length} of ${total}` : total}</span>
 					</h3>
 					<p class="text-xs text-muted-foreground">
-						Type / in the chat to run one. <code class="font-mono">${hostCommand()} skill install</code> also installs them for Claude Code, Codex and OpenCode.
+						Type / in the chat to run one. <code class="font-mono">${hostCommand()} skill install</code> also installs them for Claude Code, Codex and OpenCode${this.community ? "." : ", once you have Polycarp's helper (see Settings > Agents)."}
 					</p>
 				</div>
 				${

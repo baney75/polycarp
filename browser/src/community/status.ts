@@ -17,6 +17,11 @@ export async function readCommunityStatus(): Promise<HostCommunityStatus | undef
 	return stored[COMMUNITY_STATUS_KEY] as HostCommunityStatus | undefined;
 }
 
+/** What the switch shows: on only when the helper has reported it on. No helper means nothing is being received. */
+export function communitySwitchOn(status: HostCommunityStatus | undefined): boolean {
+	return status?.enabled ?? false;
+}
+
 /**
  * The community skills the side panel can offer: none when the user turned them off, and none
  * whose name a bundled skill already has. The text starts with the header the MCP skill_read adds.

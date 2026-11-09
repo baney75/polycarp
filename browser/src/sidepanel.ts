@@ -14,7 +14,6 @@ import {
 	createExtractDocumentTool,
 	createStreamFn,
 	ModelSelector,
-	ProxyTab,
 	// PersistentStorageDialog,
 	setAppStorage,
 	setArtifactViewerFactory,
@@ -657,7 +656,7 @@ function openApiKeysDialog(show?: { tab: string; anchor?: string }): Promise<voi
 		]),
 		new SkillsTab(),
 		new SiteEditsTab(),
-		new CombinedTab("Privacy", [{ tab: new PrivacyTab() }, { tab: new ProxyTab(), heading: "CORS proxy" }]),
+		new CombinedTab("Privacy", [{ tab: new PrivacyTab() }]),
 		new AppearanceTab(),
 		new CombinedTab("About", [
 			{ tab: new AboutTab() },

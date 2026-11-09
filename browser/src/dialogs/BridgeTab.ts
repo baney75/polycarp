@@ -10,6 +10,7 @@ import {
 	getPendingRequests,
 	getPermissionMode,
 	isBridgeEnabled,
+	normalizeHostInput,
 	type PendingRequest,
 	type PermissionMode,
 	recordDecision,
@@ -19,8 +20,9 @@ import {
 } from "../bridge/permissions.js";
 import type { UserScriptsStatus } from "../bridge/protocol.js";
 import { listSessions } from "../browser/session.js";
-import { probeUserScripts } from "../browser/userscripts-status.js";
+import { probeUserScripts, userScriptsHiddenHelp } from "../browser/userscripts-status.js";
 import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
+import { runningFromStore } from "../update/store-install.js";
 
 /**
  * Settings > Agents: who may drive the browser from outside (omp, pi, Claude
@@ -35,6 +37,7 @@ export class BridgeTab extends SettingsTab {
 	@state() private pending: PendingRequest[] = [];
 	@state() private sessions: Array<{ id: string; label: string; tabs: number }> = [];
 	@state() private newHost = "";
+	@state() private newHostError = "";
 	@state() private userScripts?: UserScriptsStatus;
 	@state() private userScriptsNote = "";
 
@@ -124,7 +127,7 @@ export class BridgeTab extends SettingsTab {
 					${details(
 						status.apiPresent
 							? 'The permission is granted, but "Allow user scripts" is off. Turn it on at chrome://extensions > Polycarp > Details.'
-							: `The permission is granted, but the browser hides the API. Check "Allow user scripts" at chrome://extensions > Polycarp > Details, then restart Polycarp (${hostCommand()} reload; agent sessions reconnect).`,
+							: userScriptsHiddenHelp(runningFromStore(), hostCommand()),
 					)}
 				`;
 				break;
@@ -147,14 +150,15 @@ export class BridgeTab extends SettingsTab {
 	}
 
 	private async addHost() {
-		const host = this.newHost
-			.trim()
-			.toLowerCase()
-			.replace(/^https?:\/\//, "")
-			.split("/")[0];
-		if (!host) return;
-		await allowHost(host);
+		if (!this.newHost.trim()) return;
+		const result = normalizeHostInput(this.newHost);
+		if ("error" in result) {
+			this.newHostError = result.error;
+			return;
+		}
+		await allowHost(result.host);
 		this.newHost = "";
+		this.newHostError = "";
 		await this.load();
 	}
 
@@ -198,7 +202,7 @@ export class BridgeTab extends SettingsTab {
 							await setPermissionMode("allow_all");
 							await this.load();
 						}} />
-						Always allow: agents can open any site
+						Always allow: agents can open any site except Polycarp's own pages, its approval page and its local services
 					</label>
 				</div>
 
@@ -254,6 +258,7 @@ export class BridgeTab extends SettingsTab {
 							className: "text-sm flex-1",
 							onInput: (e: Event) => {
 								this.newHost = (e.target as HTMLInputElement).value;
+								this.newHostError = "";
 							},
 							onKeyDown: (e: KeyboardEvent) => {
 								if (e.key === "Enter") this.addHost();
@@ -261,6 +266,7 @@ export class BridgeTab extends SettingsTab {
 						})}
 						${Button({ size: "sm", variant: "secondary", children: "Add", onClick: () => this.addHost() })}
 					</div>
+					${this.newHostError ? html`<div class="text-xs text-destructive" role="alert">${this.newHostError}</div>` : ""}
 				</div>
 
 				${this.renderUserScripts()}

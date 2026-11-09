@@ -11,6 +11,7 @@ export class CostsTab extends SettingsTab {
 	private dateRange: "today" | "week" | "30days" | "90days" | "alltime" = "30days";
 	private totalCost = 0;
 	private loading = true;
+	private loadFailed = false;
 	private lineChart?: Chart;
 	private providerChart?: Chart;
 	private byProvider: Record<string, number> = {};
@@ -28,7 +29,7 @@ export class CostsTab extends SettingsTab {
 	protected updated(_changedProperties: PropertyValues): void {
 		super.updated?.(_changedProperties);
 		// Render charts after DOM update
-		if (!this.lineChart && !this.loading) {
+		if (!this.lineChart && !this.loading && !this.loadFailed) {
 			this.renderCharts();
 		}
 	}
@@ -65,6 +66,7 @@ export class CostsTab extends SettingsTab {
 
 	async loadCosts() {
 		const storage = getTabkyraStorage();
+		this.loadFailed = false;
 
 		try {
 			const now = new Date();
@@ -110,6 +112,7 @@ export class CostsTab extends SettingsTab {
 			}
 		} catch (err) {
 			console.error("Failed to load costs:", err);
+			this.loadFailed = true;
 		} finally {
 			this.loading = false;
 			this.requestUpdate();
@@ -320,12 +323,17 @@ export class CostsTab extends SettingsTab {
 				<!-- Summary Card -->
 				<div class="p-4 rounded-lg border border-border bg-background">
 					<div class="text-sm text-muted-foreground">${dateRangeLabels[this.dateRange]}</div>
-					<div class="text-2xl font-bold text-foreground">${formatCost(this.totalCost)}</div>
+					<div class="text-2xl font-bold text-foreground">${this.loadFailed ? "Unavailable" : formatCost(this.totalCost)}</div>
 				</div>
 
 				${
-					this.loading || this.totalCost > 0 || Object.keys(this.byProvider).length > 0
-						? html`
+					this.loadFailed
+						? html`<div class="p-6 rounded-lg border border-border bg-background text-center space-y-1" role="alert">
+								<p class="text-sm font-medium text-destructive">Couldn't load your costs</p>
+								<p class="text-xs text-muted-foreground">Your cost history wasn't read. Reopen Settings to try again.</p>
+							</div>`
+						: this.loading || this.totalCost > 0 || Object.keys(this.byProvider).length > 0
+							? html`
 						<!-- Stacked Bar Chart -->
 						<div class="p-4 rounded-lg border border-border bg-background">
 							<h3 class="text-sm font-medium mb-4">Daily cost by model</h3>
@@ -373,7 +381,7 @@ export class CostsTab extends SettingsTab {
 						</div>
 
 							`
-						: html`<div class="p-6 rounded-lg border border-border bg-background text-center space-y-1">
+							: html`<div class="p-6 rounded-lg border border-border bg-background text-center space-y-1">
 								<p class="text-sm font-medium text-foreground">No costs in this range</p>
 								<p class="text-xs text-muted-foreground">Costs show here after the side panel's agent uses a paid model. Free models cost nothing.</p>
 							</div>`

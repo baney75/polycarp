@@ -64,7 +64,7 @@ async function copyText(text: string, done: string): Promise<void> {
 }
 
 /**
- * Settings > Connect: use this browser from claude.ai, ChatGPT or grok.com, the devices behind one
+ * Settings > Agents, Connect section: use this browser from claude.ai, ChatGPT or grok.com, the devices behind one
  * connector, and joining a hub. Everything is asked of Polycarp's helper (the native host) through
  * the background worker; the panel never holds a token or the passcode.
  */
@@ -492,7 +492,7 @@ export class ConnectTab extends SettingsTab {
 								</ul>`
 						: isHub
 							? html`<p class="text-xs text-muted-foreground">The device list couldn't be read. See the message above.</p>`
-							: html`<p class="text-xs text-muted-foreground">This device manages the hub's codes. Open Settings > Connect on the hub's computer to see the device list.</p>`
+							: html`<p class="text-xs text-muted-foreground">This device manages the hub's codes. Open Settings > Agents on the hub's computer to see the device list.</p>`
 				}
 				${validDeviceCode(this.device) ? this.codeBox(this.device.code, this.device.expiresAt, "Device code") : nothing}
 				${
@@ -575,7 +575,7 @@ export class ConnectTab extends SettingsTab {
 		return this.section(
 			"Join a hub",
 			html`
-				<p class="text-xs text-muted-foreground">Already run a hub on another computer? Enter its address and a device code from Settings › Connect › Your devices › Add a device on the hub (or a manager device).</p>
+				<p class="text-xs text-muted-foreground">Already run a hub on another computer? Enter its address and a device code from Settings › Agents › Your devices › Add a device on the hub (or a manager device).</p>
 				<label class="flex flex-col gap-1 text-xs text-muted-foreground">
 					<span>Hub address</span>
 					<input class=${inputClass} placeholder="https://hub.example.com" autocomplete="off" spellcheck="false" .value=${this.hubUrl} @input=${(

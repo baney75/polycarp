@@ -66,6 +66,25 @@ export function hostOf(url: string): string {
 	}
 }
 
+/**
+ * What a person typed for Allowed sites, as the hostname permissions compare (a port or path can't
+ * narrow an entry; hostAllowed looks only at the hostname), or the reason it can't be one.
+ */
+export function normalizeHostInput(input: string): { host: string } | { error: string } {
+	const text = input.trim();
+	const refused = { error: `"${text}" isn't a site address. Enter one like example.com.` };
+	const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`;
+	let parsed: URL;
+	try {
+		parsed = new URL(withScheme);
+	} catch {
+		return refused;
+	}
+	if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return refused;
+	const host = parsed.hostname.toLowerCase().replace(/\.$/, "");
+	return /^(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])$/.test(host) ? { host } : refused;
+}
+
 /** "docs.example.com" is covered by an entry for "example.com". */
 export function hostAllowed(host: string, allowed: string[]): boolean {
 	return allowed.some((a) => host === a || host.endsWith(`.${a}`));
