@@ -10,6 +10,9 @@ import Foundation
 /// `config.toml` as easily as he can. So `enabled` comes only from what Settings saved. A `behavior.cursor.enabled`
 /// line in the file is ignored (and reported by `agent cursor status`) until the config system records who wrote
 /// each change, when it may count if the caller was `user` or `settings`.
+///
+/// `veil` is the "in use" veil over a window an agent is working in (`behavior.cursor.veil`, `on` or `off`). It is on by
+/// default, Settings switches it, and a `config.toml` line wins over Settings. The socket has no command for it.
 public struct CursorSettings: Codable, Equatable, Sendable {
     public var enabled = true
     public var theme = CursorTheme.defaultName
@@ -18,11 +21,12 @@ public struct CursorSettings: Codable, Equatable, Sendable {
     public var respectReduceMotion = true
     public var response: Double?
     public var damping: Double?
+    public var veil = true
 
     public static let userDefaultsKey = "cursor"
     public init() {}
 
-    private enum CodingKeys: String, CodingKey { case enabled, theme, preset, speed, respectReduceMotion, response, damping }
+    private enum CodingKeys: String, CodingKey { case enabled, theme, preset, speed, respectReduceMotion, response, damping, veil }
 
     /// Each field on its own: one unreadable takes its default and leaves the rest.
     public init(from decoder: Decoder) throws {
@@ -35,6 +39,7 @@ public struct CursorSettings: Codable, Equatable, Sendable {
         respectReduceMotion = (try? c.decodeIfPresent(Bool.self, forKey: .respectReduceMotion)) ?? respectReduceMotion
         response = try? c.decodeIfPresent(Double.self, forKey: .response)
         damping = try? c.decodeIfPresent(Double.self, forKey: .damping)
+        veil = (try? c.decodeIfPresent(Bool.self, forKey: .veil)) ?? veil
     }
 
     public static func load(from defaults: UserDefaults = .standard) -> CursorSettings {
@@ -72,6 +77,7 @@ public struct CursorSettings: Codable, Equatable, Sendable {
         if let v = file.respectReduceMotion { s.respectReduceMotion = v }
         if let v = file.response { s.response = v }
         if let v = file.damping { s.damping = v }
+        if let v = file.veil { s.veil = v }
         return s
     }
 }
@@ -86,6 +92,8 @@ public struct CursorConfigFile: Equatable, Sendable {
     public var respectReduceMotion: Bool?
     public var response: Double?
     public var damping: Double?
+    /// `behavior.cursor.veil`: `"on"` or `"off"` (true and false are read too).
+    public var veil: Bool?
     /// Keys that were in the file but are not honored there (the cursor's on/off switch: see `CursorSettings`).
     public var ignored: [String] = []
     public init() {}
@@ -127,10 +135,19 @@ public struct CursorConfigFile: Equatable, Sendable {
             case "animation.respect_reduce_motion": out.respectReduceMotion = bool(value)
             case "animation.cursor.glide.response": out.response = Double(value)
             case "animation.cursor.glide.damping": out.damping = Double(value)
+            case "behavior.cursor.veil": out.veil = onOff(value)
             default: break
             }
         }
         return out
+    }
+
+    private static func onOff(_ v: String) -> Bool? {
+        switch string(v) ?? v {
+        case "on", "true": return true
+        case "off", "false": return false
+        default: return nil
+        }
     }
 
     private static func bool(_ v: String) -> Bool? { v == "true" ? true : v == "false" ? false : nil }

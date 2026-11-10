@@ -185,6 +185,23 @@ final class CursorVisibilityTests: XCTestCase {
         XCTAssertFalse(CursorVisibility.wantsFrame(enabled: true, scope: "lent", windowWorkspace: 5, shown: [2, 3], agent: 9))
     }
 
+    func testTheWindowServersWordHidesItWhenCoveredGoneOrOutside() {
+        func d(_ v: WindowCover.Verdict?) -> CursorVisibility.Decision {
+            CursorVisibility.decide(enabled: true, scope: "agent_workspace", windowWorkspace: 9, shown: [9], agent: 9, frame: frame, displays: [screen], cover: v)
+        }
+        XCTAssertEqual(d(nil), .show, "no list: the workspace and display rules alone")
+        XCTAssertEqual(d(.visible(CursorWindow(id: 1, frame: screen))), .show)
+        XCTAssertEqual(d(.covered), .hidden(.covered))
+        XCTAssertEqual(d(.notOnScreen), .hidden(.notOnScreen))
+        XCTAssertEqual(d(.outsideWindow), .hidden(.outsideWindow))
+        // The workspace rule still comes first: a parked window is not watched, whatever the window server says.
+        XCTAssertEqual(CursorVisibility.decide(enabled: true, scope: "agent_workspace", windowWorkspace: 9, shown: [2], agent: 9, frame: frame, displays: [screen],
+                                               cover: .visible(CursorWindow(id: 1, frame: screen))), .hidden(.notWatching))
+        XCTAssertFalse(CursorVisibility.veilShown(enabled: true, scope: "agent_workspace", windowWorkspace: 9, shown: [2], agent: 9))
+        XCTAssertTrue(CursorVisibility.veilShown(enabled: true, scope: "lent", windowWorkspace: 3, shown: [3], agent: 9))
+        XCTAssertFalse(CursorVisibility.veilShown(enabled: false, scope: "lent", windowWorkspace: 3, shown: [3], agent: 9))
+    }
+
     func testTheHandsMeasureTheTargetOnlyWhenItWouldBeDrawn() {
         XCTAssertTrue(CursorVisibility.wantsFrame(enabled: true, scope: "agent_workspace", windowWorkspace: 9, shown: [9], agent: 9))
         XCTAssertFalse(CursorVisibility.wantsFrame(enabled: true, scope: "agent_workspace", windowWorkspace: 9, shown: [2], agent: 9), "no engine call while you are elsewhere")
@@ -315,6 +332,22 @@ final class CursorThemeTests: XCTestCase {
 }
 
 final class CursorSettingsTests: XCTestCase {
+    func testTheVeilIsOnByDefaultAndConfigTomlSwitchesIt() throws {
+        XCTAssertTrue(CursorSettings().veil)
+        XCTAssertEqual(CursorConfigFile.parse("[behavior.cursor]\nveil = \"off\"\n").veil, false)
+        XCTAssertEqual(CursorConfigFile.parse("behavior.cursor.veil = \"on\"\n").veil, true)
+        XCTAssertNil(CursorConfigFile.parse("behavior.cursor.veil = \"maybe\"\n").veil, "a bad value is ignored")
+        var saved = CursorSettings(); saved.veil = false
+        XCTAssertTrue(saved.applying(CursorConfigFile.parse("behavior.cursor.veil = \"on\"\n")).veil, "the file wins over Settings")
+        XCTAssertFalse(saved.applying(CursorConfigFile()).veil)
+        let d = UserDefaults(suiteName: "cursor-veil-\(UUID().uuidString)")!
+        saved.save(to: d)
+        XCTAssertFalse(CursorSettings.load(from: d).veil, "saved")
+        // A settings record from before the veil existed keeps it on.
+        let old = try JSONDecoder().decode(CursorSettings.self, from: Data("{\"enabled\":true,\"theme\":\"leaf\"}".utf8))
+        XCTAssertTrue(old.veil)
+    }
+
     func testItIsOnByDefaultWithTheDefaultTheme() {
         let s = CursorSettings()
         XCTAssertTrue(s.enabled)
@@ -396,21 +429,43 @@ final class FakeSurface: CursorSurface {
         case hide(String)
         case remove(String)
     }
+    /// The window side, kept apart so the cursor's own call order stays easy to read.
+    enum WindowCall: Equatable {
+        case place(UInt32, CGRect, Bool)
+        case showVeil(UInt32, [String])
+        case hideVeil(UInt32)
+        case gone(UInt32)
+    }
     private let lock = NSLock()
     private var log: [Call] = []
+    private var windowLog: [WindowCall] = []
+    /// The window each cursor call drew in.
+    private(set) var drawnIn: [UInt32] = []
+    var veilLooks: [VeilLook] = []
+    /// A pretend overlay window number for each target window that has one.
+    var overlayIDs: [UInt32: UInt32] = [:]
     var motions: [CursorMotion] = []
     var looks: [CursorLook] = []
     /// What each call costs, to prove the action doesn't wait for it.
     var cost: TimeInterval = 0
     var calls: [Call] { lock.lock(); defer { lock.unlock() }; return log }
+    var windowCalls: [WindowCall] { lock.lock(); defer { lock.unlock() }; return windowLog }
+    private func noteWindow(_ c: WindowCall) { lock.lock(); windowLog.append(c); lock.unlock() }
+    private func drew(_ w: CursorWindow) { lock.lock(); drawnIn.append(w.id); lock.unlock() }
     private func note(_ c: Call) { if cost > 0 { Thread.sleep(forTimeInterval: cost) }; lock.lock(); log.append(c); lock.unlock() }
     func configure(_ agent: String, look: CursorLook) { lock.lock(); looks.append(look); lock.unlock(); note(.configure(agent, look.name)) }
-    func appear(_ agent: String, at point: CGPoint) { note(.appear(agent, point)) }
-    func move(_ agent: String, motion: CursorMotion) { lock.lock(); motions.append(motion); lock.unlock(); note(.move(agent, motion.target)) }
-    func jump(_ agent: String, to point: CGPoint) { note(.jump(agent, point)) }
+    func appear(_ agent: String, at point: CGPoint, in window: CursorWindow) { drew(window); note(.appear(agent, point)) }
+    func move(_ agent: String, motion: CursorMotion, in window: CursorWindow) { drew(window); lock.lock(); motions.append(motion); lock.unlock(); note(.move(agent, motion.target)) }
+    func jump(_ agent: String, to point: CGPoint, in window: CursorWindow) { drew(window); note(.jump(agent, point)) }
     func act(_ agent: String, effect: CursorEffect, point: CGPoint, frame: CGRect, delay: TimeInterval) { note(.act(agent, effect, point, delay)) }
     func hide(_ agent: String) { note(.hide(agent)) }
     func remove(_ agent: String) { note(.remove(agent)) }
+    func place(_ window: CursorWindow, reorder: Bool) { noteWindow(.place(window.id, window.frame, reorder)) }
+    func showVeil(_ window: CursorWindow, look: VeilLook) { lock.lock(); veilLooks.append(look); lock.unlock(); noteWindow(.showVeil(window.id, look.agents.map(\.name))) }
+    func hideVeil(_ window: UInt32) { noteWindow(.hideVeil(window)) }
+    func windowGone(_ window: UInt32) { noteWindow(.gone(window)) }
+    func overlayWindow(for window: UInt32) -> UInt32? { lock.lock(); defer { lock.unlock() }; return overlayIDs[window] }
+    var overlayWindows: Set<UInt32> { lock.lock(); defer { lock.unlock() }; return Set(overlayIDs.values) }
 }
 
 final class CursorDirectorTests: XCTestCase {
@@ -622,7 +677,8 @@ final class CursorDirectorTests: XCTestCase {
         d.handsWillAct(event(at: CGPoint(x: 1300, y: 800))); drain()
         var env = CursorEnvironment(); env.current = 9; env.agentWorkspace = 9; env.displays = [CGRect(x: 0, y: 0, width: 800, height: 600)]
         d.setEnvironment(env); drain()
-        XCTAssertFalse(s.calls.suffix(3).contains(.appear("a", CGPoint(x: 1300, y: 800))))
+        let hidden = try! XCTUnwrap(s.calls.lastIndex(of: .hide("a")), "hidden when its display went: \(s.calls)")
+        XCTAssertFalse(s.calls[hidden...].contains(.appear("a", CGPoint(x: 1300, y: 800))), "not brought back where the display was")
         clock += 1
         d.handsWillAct(event(at: CGPoint(x: 100, y: 100))); drain()
         XCTAssertTrue(s.calls.contains(.appear("a", CGPoint(x: 100, y: 100))), "it reappears at the target, not at a place that is gone")
@@ -690,7 +746,10 @@ final class CursorDirectorTests: XCTestCase {
         clock += 1
         d.handsWillAct(lateEvent(id: 9, window: 12)); drain()
         d.handsFrame(actionID: 9, frame: nil); drain()
-        XCTAssertTrue(s.calls.contains(.move("a", CGPoint(x: 1000, y: 550))), "to window 12's center: \(s.calls)")
+        // Between two windows it lands in the new one (it used to glide across the screen to it).
+        XCTAssertTrue(s.calls.contains(.jump("a", CGPoint(x: 1000, y: 550))), "to window 12's center: \(s.calls)")
+        XCTAssertFalse(s.calls.contains(.move("a", CGPoint(x: 1000, y: 550))), "no flight across the screen")
+        XCTAssertEqual(s.drawnIn.last, 12, "drawn in window 12's overlay")
         XCTAssertEqual(s.calls.filter { if case .act = $0 { return true } else { return false } }.count, 1, "only the first action drew an effect")
         XCTAssertNil(d.lastMark(window: 12), "no evidence mark for a point the action never targeted")
         XCTAssertFalse(s.calls.contains(.hide("a")))
@@ -895,7 +954,7 @@ final class CursorSourceTests: XCTestCase {
         try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
             .split(separator: "\n", omittingEmptySubsequences: false).map { $0.components(separatedBy: "//")[0] }.joined(separator: "\n")
     }
-    static let renderer = ["CursorPanel", "AgentCursor", "OverlaySurface", "ShotComposite"].map { "Sources/BaneySpacesCursor/\($0).swift" }
+    static let renderer = ["CursorPanel", "AgentCursor", "OverlaySurface", "ShotComposite", "VeilLayer"].map { "Sources/BaneySpacesCursor/\($0).swift" }
 
     func testTheOverlayCanNeverBecomeKeyOrMainAndIgnoresTheMouse() throws {
         let panel = try Self.code("Sources/BaneySpacesCursor/CursorPanel.swift")
@@ -905,7 +964,14 @@ final class CursorSourceTests: XCTestCase {
         XCTAssertTrue(panel.contains("ignoresMouseEvents = true"))
         XCTAssertTrue(panel.contains(".nonactivatingPanel"))
         XCTAssertFalse(panel.contains("ignoresMouseEvents = false"))
-        XCTAssertTrue(panel.contains("orderFrontRegardless()"), "shown without activating")
+        XCTAssertTrue(panel.contains("panel.order(.above, relativeTo: Int(placement.id))"), "shown directly above its window, without activating")
+        XCTAssertFalse(panel.contains("canJoinAllSpaces"), "on its window's Space only")
+        XCTAssertFalse(panel.contains(".transient"), "`.transient` floats across Spaces and over full-screen apps")
+        XCTAssertFalse(panel.contains("moveToActiveSpace"), "it never follows you to another Space")
+        XCTAssertTrue(panel.contains("fullScreen ? [.managed, .ignoresCycle, .fullScreenAuxiliary] : [.managed, .ignoresCycle]"),
+                      "pinned to one Space, and over a full-screen Space only when its window is full screen")
+        XCTAssertFalse(panel.contains(".statusBar"), "at its window's level, not over every window")
+        XCTAssertTrue(panel.contains("masksToBounds = true"), "clipped to its window")
         XCTAssertTrue(panel.contains("sharingType = .none"), "out of captures unless `agent shot --cursor`")
     }
 
