@@ -1,11 +1,12 @@
 /**
  * The wire protocol on the device link (JSON text frames over a WebSocket from the device to the hub).
  *
- * hub to device: {t:"req", id, method, path:"/mcp", headers, body} and {t:"cancel", id}
+ * hub to device: {t:"req", id, method, path:"/mcp", headers, body}, {t:"cancel", id} and {t:"roster", devices}
  * device to hub: {t:"head", id, status, headers}, {t:"chunk", id, data}, {t:"end", id},
  *                {t:"error", id, message} and {t:"status", ...} (the heartbeat)
  *
- * Every frame is checked against these shapes on arrival; anything else is dropped.
+ * Every frame is checked against these shapes on arrival; anything else is dropped. A device from before the roster
+ * frame drops it too: its parser required an id on every hub frame, and a roster has none.
  */
 
 /**
@@ -58,13 +59,52 @@ export interface StatusFrame {
 	sessionCap: number;
 	/** The scopes this device allows at most (its link token's cap). */
 	scopes: string[];
+	/** Polycarp's computer-use helper is on this device. Absent from devices older than the roster. */
+	computer?: boolean;
+	/** process.platform: darwin, linux, win32. Absent from devices older than the roster. */
+	platform?: string;
+}
+
+/** Most devices a roster carries. */
+export const MAX_ROSTER_DEVICES = 200;
+
+/** One device as the hub tells its devices about it. lastSeen is null while it is online, or when it never connected. */
+export interface RosterDevice {
+	id: string;
+	name: string;
+	online: boolean;
+	lastSeen: string | null;
+	scopes: string[];
+	computer: boolean;
+	extension: boolean;
+	platform: string | null;
+}
+
+/** Every device enrolled on the hub, sent to each linked device when any of them changes and when it connects. Read-only data: it never changes what a device allows. */
+export interface RosterFrame {
+	t: "roster";
+	devices: RosterDevice[];
 }
 
 export type DeviceFrame = StatusFrame | { t: "head"; id: string; status: number; headers: Headers } | { t: "chunk"; id: string; data: string } | { t: "end"; id: string } | { t: "error"; id: string; message: string };
-export type HubFrame = ReqFrame | CancelFrame;
+export type HubFrame = ReqFrame | CancelFrame | RosterFrame;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isId = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(v);
+const isScopes = (v: unknown): v is string[] => Array.isArray(v) && v.length <= 64 && v.every((x) => typeof x === "string" && x.length <= 40);
+const isPlatform = (v: unknown): v is string => typeof v === "string" && /^[a-z0-9]{1,20}$/.test(v);
+/** Same shape as hub-state.ts validDeviceName, kept here so this file imports nothing. */
+const isDeviceName = (v: unknown): v is string => typeof v === "string" && /^[\w.][\w. -]{0,39}$/.test(v);
+
+function toRosterDevice(v: unknown): RosterDevice | undefined {
+	if (!isRecord(v)) return undefined;
+	const { id, name, online, lastSeen, scopes, computer, extension, platform } = v;
+	if (typeof id !== "string" || !/^[a-z0-9-]{6,40}$/.test(id) || !isDeviceName(name)) return undefined;
+	if (typeof online !== "boolean" || typeof computer !== "boolean" || typeof extension !== "boolean" || !isScopes(scopes)) return undefined;
+	if (lastSeen !== null && (typeof lastSeen !== "string" || lastSeen.length > 40)) return undefined;
+	if (platform !== null && !isPlatform(platform)) return undefined;
+	return { id, name, online, lastSeen, scopes: [...scopes], computer, extension, platform };
+}
 
 /** A string-to-string map with names and values small enough to be headers, or undefined. */
 function toHeaders(v: unknown): Headers | undefined {
@@ -94,8 +134,12 @@ export function parseDeviceFrame(text: string): DeviceFrame | undefined {
 		if (typeof version !== "string" || version.length > 40) return undefined;
 		if (browser !== null && (typeof browser !== "string" || browser.length > 40)) return undefined;
 		if (typeof sessionCap !== "number" || !Number.isInteger(sessionCap) || sessionCap < 1 || sessionCap > 10_000) return undefined;
-		if (!Array.isArray(scopes) || scopes.length > 64 || !scopes.every((x) => typeof x === "string" && x.length <= 40)) return undefined;
-		return { t: "status", extensionConnected, sessions, busy, version, browser: browser ?? null, sessionCap, scopes: scopes as string[] };
+		if (!isScopes(scopes)) return undefined;
+		// Newer fields are optional: a device from before them still reports, and a malformed one is left out rather than failing the frame.
+		const extra: Pick<StatusFrame, "computer" | "platform"> = {};
+		if (typeof v.computer === "boolean") extra.computer = v.computer;
+		if (isPlatform(v.platform)) extra.platform = v.platform;
+		return { t: "status", extensionConnected, sessions, busy, version, browser: browser ?? null, sessionCap, scopes: [...scopes], ...extra };
 	}
 	if (!isId(v.id)) return undefined;
 	if (v.t === "head") {
@@ -116,7 +160,13 @@ export function parseHubFrame(text: string): HubFrame | undefined {
 	} catch {
 		return undefined;
 	}
-	if (!isRecord(v) || !isId(v.id)) return undefined;
+	if (!isRecord(v)) return undefined;
+	if (v.t === "roster") {
+		if (!Array.isArray(v.devices) || v.devices.length > MAX_ROSTER_DEVICES) return undefined;
+		const devices = v.devices.map(toRosterDevice);
+		return devices.every((d) => d !== undefined) ? { t: "roster", devices: devices as RosterDevice[] } : undefined;
+	}
+	if (!isId(v.id)) return undefined;
 	if (v.t === "cancel") return { t: "cancel", id: v.id };
 	if (v.t !== "req") return undefined;
 	const headers = toHeaders(v.headers);

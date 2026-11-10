@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { WebSocket } from "ws";
 import { BridgeClient } from "./client.ts";
+import { computerHelper } from "./computer.ts";
 import { normalizeCode, REQUEST_LOCK_MS } from "./codes.ts";
 import { LockTimeoutError, readJsonFile, withFileLock, withFileLockAsync, writeJsonPrivate } from "./files.ts";
 import { launcherValid, launcherBinary } from "./harness.ts";
@@ -30,6 +31,7 @@ import {
 	MAX_LINK_SESSIONS,
 	parseHubFrame,
 	type ReqFrame,
+	type RosterDevice,
 	SILENT_MS,
 	type StatusFrame,
 } from "./link-protocol.ts";
@@ -458,9 +460,11 @@ export async function linkRun(): Promise<void> {
 	pruneLinkTokens();
 	const { token, record: linkToken } = createToken(LINK_TOKEN_NAME, cap, "link");
 	let sendStatus = () => {};
-	const local = await serve({ port: 0, host: "127.0.0.1", acceptLinkTokens: true, onSessionsChange: () => sendStatus() });
+	const local = await serve({ port: 0, host: "127.0.0.1", acceptLinkTokens: true, onSessionsChange: () => sendStatus(), hub: { self: { id: config.deviceId, name: config.name } } });
 	const localPort = Number(new URL(local.url).port);
 	const live: LiveState = { pid: process.pid, updatedAt: Date.now(), connected: false, lastConnectedAt: null, lastError: null, sessions: 0, requests: 0, streams: 0, extensionConnected: false, busy: false };
+	// Whether computer use can run here: the Mac helper is installed. What a caller may do with it is still the cap.
+	let computer = Boolean(computerHelper());
 	const writeLive = () => {
 		live.updatedAt = Date.now();
 		try {
@@ -595,7 +599,7 @@ export async function linkRun(): Promise<void> {
 			let last = "";
 			const status = async (force = false) => {
 				if (socket.readyState !== WebSocket.OPEN) return;
-				const frame: StatusFrame = { t: "status", extensionConnected: live.extensionConnected, sessions: local.sessionCount(), busy: live.busy, version: VERSION, browser: null, sessionCap: MAX_LINK_SESSIONS, scopes: cap };
+				const frame: StatusFrame = { t: "status", extensionConnected: live.extensionConnected, sessions: local.sessionCount(), busy: live.busy, version: VERSION, browser: null, sessionCap: MAX_LINK_SESSIONS, scopes: cap, computer, platform: process.platform };
 				const key = JSON.stringify(frame);
 				if (!force && key === last) return;
 				last = key;
@@ -606,6 +610,7 @@ export async function linkRun(): Promise<void> {
 			const refresh = async () => {
 				live.extensionConnected = await extensionConnected();
 				live.busy = readBusy();
+				computer = Boolean(computerHelper());
 				void status();
 			};
 			const cleanup = () => {
@@ -617,6 +622,8 @@ export async function linkRun(): Promise<void> {
 				// The hub forgot every session this connection carried, so nothing can reach them: close them,
 				// or they sit on the device's session cap and keep their tab groups until the idle sweep.
 				local.closeSessions();
+				// Peers seen through a hub that is gone are not known any more.
+				local.setRoster(undefined);
 				live.connected = false;
 				live.requests = 0;
 				live.streams = 0;
@@ -650,6 +657,11 @@ export async function linkRun(): Promise<void> {
 				if (isBinary) return;
 				const frame = parseHubFrame(data.toString("utf8"));
 				if (!frame) return;
+				// The hub's list of this owner's devices, for the devices tool. Data only: it changes nothing this device allows.
+				if (frame.t === "roster") {
+					local.setRoster(frame.devices as RosterDevice[]);
+					return;
+				}
 				if (frame.t === "cancel") {
 					const entry = active.get(frame.id);
 					if (!entry) return;

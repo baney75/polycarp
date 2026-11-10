@@ -39,9 +39,11 @@ import {
 	MAX_FRAME_BYTES,
 	MAX_INFLIGHT_PER_DEVICE,
 	MAX_LINK_SESSIONS,
+	MAX_ROSTER_DEVICES,
 	parseDeviceFrame,
 	PING_MS,
 	type ReqFrame,
+	type RosterDevice,
 	SILENT_MS,
 	type StatusFrame,
 } from "./link-protocol.ts";
@@ -108,6 +110,8 @@ interface Link {
 	blocked: Set<string>;
 	/** initialize requests sent and not yet finished: load the device hasn't reported. */
 	initsPending: number;
+	/** The last roster sent on this link, so an unchanged one isn't sent again. */
+	rosterSent?: string;
 }
 
 interface HubSession {
@@ -192,6 +196,9 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		}
 	})();
 	const callerInits = new Map<string, number>();
+	// What each device last reported and when its link last dropped, for the roster after it goes offline. This run only.
+	const lastStatus = new Map<string, Omit<StatusFrame, "t">>();
+	const offlineAt = new Map<string, string>();
 	const enrollLimit = new FailureLimiter(5, 20);
 	const authLimit = new FailureLimiter(30);
 	const headTimeoutMs = options.headTimeoutMs ?? DEFAULT_HEAD_TIMEOUT_MS;
@@ -320,8 +327,10 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 	function onDeviceFrame(link: Link, frame: DeviceFrame): void {
 		if (frame.t === "status") {
 			const versionChanged = link.status.version !== frame.version;
-			link.status = { extensionConnected: frame.extensionConnected, sessions: frame.sessions, busy: frame.busy, version: frame.version, browser: frame.browser, sessionCap: frame.sessionCap, scopes: frame.scopes };
+			const { t: _t, ...status } = frame;
+			link.status = status;
 			link.ready = true;
+			lastStatus.set(link.device.id, status);
 			// touchDevice never throws and waits only briefly for its lock.
 			if (versionChanged) touchDevice(link.device.id, { version: frame.version });
 			snapshotSoon();
@@ -388,7 +397,10 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		if (links.get(link.device.id) === link) links.delete(link.device.id);
 		for (const id of [...link.inflight.keys()]) failPending(link, id, 502, reason);
 		for (const [sid, s] of sessions) if (s.deviceId === link.device.id && s.linkInstance === link.instance) sessions.delete(sid);
-		touchDevice(link.device.id, { lastSeen: new Date().toISOString() });
+		const now = new Date().toISOString();
+		// A link replaced by a newer one isn't offline.
+		if (!links.has(link.device.id)) offlineAt.set(link.device.id, now);
+		touchDevice(link.device.id, { lastSeen: now });
 		snapshotSoon();
 	}
 
@@ -416,6 +428,9 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			dropLink(previous, "The device reconnected.");
 		}
 		links.set(device.id, link);
+		offlineAt.delete(device.id);
+		// The roster at once, so the device knows its peers before its first session; it shows this one offline until its status arrives.
+		sendRoster(link, roster());
 		// Informational: touchDevice never throws, and a held lock costs a moment, not the hub.
 		touchDevice(device.id, { lastSeen: new Date().toISOString() });
 		ws.on("message", (data: RawData, isBinary: boolean) => {
@@ -435,6 +450,19 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 	// ---------- Routing ----------
 
 	type Pick = { link: Link } | { status: number; message: string };
+	/** Why a named device can't take a call: no device by that name or id, or it isn't online and reporting. */
+	type Miss = { miss: "unknown" } | { miss: "offline"; device: DeviceRecord };
+
+	/** The enrolled device a name or id means: the id, then the exact name, then a name that matches in any case when only one does. */
+	function resolveDevice(target: string): DeviceRecord | undefined {
+		const devices = loadDevices().devices;
+		const exact = devices.find((d) => d.id === target) ?? devices.find((d) => d.name === target);
+		if (exact) return exact;
+		const loose = devices.filter((d) => d.name.toLowerCase() === target.toLowerCase());
+		return loose.length === 1 ? loose[0] : undefined;
+	}
+
+	const routable = (l: Link | undefined): l is Link => Boolean(l && l.ws.readyState === WebSocket.OPEN && l.ready);
 
 	/**
 	 * The device for a new session. Candidates are online devices that have reported (so their cap is
@@ -442,7 +470,16 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 	 * their own cap). Of those, ones with the extension connected win, then full scope coverage, not
 	 * busy, fewest sessions, `prefer` order, most recently seen.
 	 */
-	function pickLink(who: Caller): Pick {
+	function pickLink(who: Caller): Pick;
+	/** With a target (a device name or id): that device's link, with no ranking, or why it can't be used. */
+	function pickLink(who: Caller, target: string): { link: Link } | Miss;
+	function pickLink(who: Caller, target?: string): Pick | Miss {
+		if (target !== undefined) {
+			const device = resolveDevice(target);
+			if (!device) return { miss: "unknown" };
+			const link = links.get(device.id);
+			return routable(link) ? { link } : { miss: "offline", device };
+		}
 		const online = [...links.values()].filter((l) => l.ws.readyState === WebSocket.OPEN && l.ready);
 		if (!online.length) return { status: 503, message: offlineMessage() };
 		const wanted = who.scopes.filter((x) => Object.hasOwn(SCOPES, x));
@@ -742,6 +779,45 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 				browser: l?.status.browser ?? null,
 			};
 		});
+	/** Every enrolled device as its peers see it. What a device allows comes from its own last report; nothing here can change it. */
+	function roster(): RosterDevice[] {
+		let devices: DeviceRecord[] = [];
+		try {
+			devices = loadDevices().devices;
+		} catch {
+			return [];
+		}
+		return devices.slice(0, MAX_ROSTER_DEVICES).map((d) => {
+			const l = links.get(d.id);
+			const online = routable(l);
+			const status = online ? l.status : lastStatus.get(d.id);
+			return {
+				id: d.id,
+				name: d.name,
+				online,
+				lastSeen: online ? null : (offlineAt.get(d.id) ?? d.lastSeen ?? null),
+				scopes: status?.scopes ?? [],
+				computer: status?.computer === true,
+				extension: online ? l.status.extensionConnected : false,
+				platform: status?.platform ?? null,
+			};
+		});
+	}
+
+	function sendRoster(link: Link, devices: RosterDevice[]): void {
+		const text = JSON.stringify({ t: "roster", devices });
+		if (link.rosterSent === text || link.ws.readyState !== WebSocket.OPEN) return;
+		link.rosterSent = text;
+		sendText(link, text);
+	}
+
+	/** The roster to every linked device whose copy is out of date. */
+	function pushRoster(): void {
+		if (!links.size) return;
+		const devices = roster();
+		for (const link of links.values()) sendRoster(link, devices);
+	}
+
 	let snapshotTimer: NodeJS.Timeout | undefined;
 	const writeSnapshot = () => {
 		snapshotTimer = undefined;
@@ -750,6 +826,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		} catch {
 			/* informational */
 		}
+		pushRoster();
 	};
 	function snapshotSoon(): void {
 		snapshotTimer ??= setTimeout(writeSnapshot, 200);

@@ -20,7 +20,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { COMPUTER_ACT_TOOLS, COMPUTER_READ_TOOLS, computerHelper, openComputer } from "./computer.ts";
 import { createMcpServer } from "./mcp.ts";
-import { MAX_LINK_SESSIONS } from "./link-protocol.ts";
+import { MAX_LINK_SESSIONS, type RosterDevice } from "./link-protocol.ts";
 import { handleOAuth, readBody } from "./oauth-http.ts";
 import { liveGrantIds, type OAuthConfig, resourceMetadataUrl, verifyAccessToken } from "./oauth.ts";
 import { envVar } from "./env.ts";
@@ -324,13 +324,18 @@ export interface ServeOptions {
 	acceptLinkTokens?: boolean;
 	/** Called when the number of open or opening sessions changes (the link's heartbeat). */
 	onSessionsChange?: (count: number) => void;
+	/** This serve is `link run`'s, behind a hub: sessions get the devices tool, which answers from the last roster (setRoster). */
+	hub?: { self: { id: string; name: string } };
 }
 
 /** Serve MCP over Streamable HTTP on loopback. Each session is bound to the token that opened it. */
-export async function serve(options: ServeOptions): Promise<{ close: () => Promise<void>; url: string; sessionCount: () => number; closeSessions: () => void }> {
+export async function serve(options: ServeOptions): Promise<{ close: () => Promise<void>; url: string; sessionCount: () => number; closeSessions: () => void; setRoster: (devices: RosterDevice[] | undefined) => void }> {
 	if (!LOOPBACK.has(options.host)) throw new Error(`${COMMAND_NAME} serve binds to loopback only (got ${options.host}). Use ${COMMAND_NAME} tunnel to reach it from another device over TLS.`);
 	if (options.acceptLinkTokens && options.oauth) throw new Error("A link token is never accepted on a public route: acceptLinkTokens can't be combined with a public URL.");
 	const sessions = new Map<string, { transport: StreamableHTTPServerTransport; tokenId: string; lastSeen: number }>();
+	// The hub's last roster, shared by every session on this serve.
+	let roster: { devices: RosterDevice[]; at: number } | undefined;
+	const hub = options.hub ? { self: options.hub.self, roster: () => roster } : undefined;
 	const IDLE_MS = 30 * 60_000;
 	const pending = new Map<string, number>();
 	const MAX_SESSIONS_PER_TOKEN = 8;
@@ -459,6 +464,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 			allowedTools: allowed,
 			remote: true,
 			computer,
+			hub,
 		});
 		const transport = new StreamableHTTPServerTransport({
 			sessionIdGenerator: () => randomUUID(),
@@ -496,6 +502,9 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 	return {
 		url,
 		sessionCount: () => sessions.size + [...pending.values()].reduce((a, b) => a + b, 0),
+		setRoster: (devices) => {
+			roster = devices ? { devices, at: Date.now() } : undefined;
+		},
 		/** Close every open session (and any being set up): the link connection that carried them is gone. */
 		closeSessions: () => {
 			generation++;
