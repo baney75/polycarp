@@ -34,10 +34,10 @@ Don't use it, and do the task through the page (or stop), when:
 5. **Check it is same origin.** The path must be on the page's own host. If not, stop using this skill.
 6. **List every item.** Use the list request you saw in `read_network` when the page loaded, with `run_js` `fetch` and its paging, or read the pages. Keep only the ID and a short label.
 7. **Show the count and a sample.** Tell the user the count and 5 sample labels. If the action deletes, sends or can't be undone, call `ask_user` with the count and the sample. One yes covers exactly the items you counted. Items found later need a new yes.
-8. **Run one batch.** Up to 20 items per `run_js` call, with the script in the example below. It works one item at a time, waits 300 ms between items, and stops starting new ones after 50 seconds.
-9. **Handle limits.** On 429 or 503 the script waits for Retry-After, or else 1, 2, 4 ... seconds plus a random part, up to 20 seconds, and tries again up to 5 times. Any other error goes in `failed`.
+8. **Run one batch.** Up to 20 items per `run_js` call, with the script in the example below. It works one item at a time, waits 300 ms between items, gives each request 10 seconds, and never starts a request or a wait that would run past 50 seconds; what it didn't start goes in `left`.
+9. **Handle limits.** On 429 or 503 the script waits for Retry-After, or else 1, 2, 4 ... seconds plus a random part, up to 20 seconds, and tries again up to 5 times. Any other error goes in `failed`; `no answer` means the request may have gone through.
 10. **Keep the lists.** After each call, add `done` to your done list and `failed` to your failed list. Put `left` back in the queue. Run the next batch until the queue is empty.
-11. **Retry the failures once.** Run the failed items in one more batch. Leave the ones that fail again.
+11. **Retry the failures once.** List the items again first (step 6) and run only the failed ones still there or unchanged in one more batch. Leave the ones that fail again.
 12. **Count again.** List the items again, as in step 6. Any item still there goes back to step 8, at most 2 rounds.
 13. **Report.** Give the number done, the number failed and why, and the count left on the site.
 
@@ -45,8 +45,8 @@ Don't use it, and do the task through the page (or stop), when:
 
 Set `method`, `path` and `body` from step 4. The path starts with `/`, so the request stays on the page's host.
 
-```
-run_js {"code":"(async () => { const ids = ['a1','a2']; const out = {done:[], failed:[], left:[]}; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); const stopAt = Date.now() + 50000; for (const id of ids) { if (Date.now() > stopAt) { out.left.push(id); continue; } let wait = 1000; for (let tries = 1; ; tries++) { const res = await fetch('/api/items/' + encodeURIComponent(id), {method:'DELETE', credentials:'same-origin'}); if (res.ok) { out.done.push(id); break; } if ((res.status === 429 || res.status === 503) && tries < 6) { const after = Number(res.headers.get('Retry-After')); await sleep(after > 0 ? Math.min(after * 1000, 20000) : wait + Math.random() * wait); wait = Math.min(wait * 2, 20000); continue; } out.failed.push({id, status: res.status}); break; } await sleep(300); } return out; })()"}
+```bulk-batch
+run_js {"code":"(async () => { const ids = ['a1','a2']; const out = {done:[], failed:[], left:[]}; /* Worst case: a request starts only at or before stopAt (50 s) and gives up after 10 s, and no wait runs past stopAt, so the call returns by 50 + 10 = 60 s, 30 s inside the 90 s run_js limit. */ const stopAt = Date.now() + 50000; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); const pause = async (ms, from) => { if (Date.now() + ms > stopAt) { out.left.push(...ids.slice(from)); return false; } await sleep(ms); return true; }; for (let i = 0; i < ids.length; i++) { const id = ids[i]; if (Date.now() > stopAt) { out.left.push(...ids.slice(i)); return out; } let wait = 1000; for (let tries = 1; ; tries++) { let res; try { res = await fetch('/api/items/' + encodeURIComponent(id), {method:'DELETE', credentials:'same-origin', signal: AbortSignal.timeout(10000)}); } catch (e) { out.failed.push({id, status: 'no answer'}); break; } if (res.ok) { out.done.push(id); break; } if ((res.status === 429 || res.status === 503) && tries < 6) { const after = Number(res.headers.get('Retry-After')); const delay = after > 0 ? Math.min(after * 1000, 20000) : wait + Math.random() * wait; if (!(await pause(delay, i))) return out; wait = Math.min(wait * 2, 20000); continue; } out.failed.push({id, status: res.status}); break; } if (i + 1 < ids.length && !(await pause(300, i + 1))) return out; } return out; })()"}
 ```
 
 - If the page's request sent an anti-forgery header, read its value inside the same script from where the page keeps it (often a `meta` tag) and send it. Don't return it.
@@ -58,7 +58,7 @@ run_js {"code":"(async () => { const ids = ['a1','a2']; const out = {done:[], fa
 | --- | --- |
 | No request shows in `read_network` after the click | `read_network {}` with no type. Still none: the action isn't a request; click through the page. |
 | The request goes to another host | Stop using this skill; click through the page. |
-| `run_js` times out | Use 10 items per batch. |
+| `run_js` times out | The batch's result is lost and some of its items may be done. List the items again (step 6) and queue only those still there or unchanged. Never send the same ids again unchecked: a toggle would be undone. Then use 10 items per batch. |
 | Every item fails with the same status | Stop. Do one more item through the page and compare its request with yours. |
 | 429 keeps coming after 5 tries | Wait 60 seconds, then run a batch of 5. Still 429: tell the user and stop. |
 | The recount finds new items | Ask the user again before you act on them. |

@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..", "..");
@@ -209,4 +210,51 @@ test("skill-platform doc states the evidence rule at min(catalog size, 13) skill
 	const none = cases.filter((c) => c.skill === "none").length;
 	assert.match(doc, new RegExp(`tuned set of\\s+${cases.length} cases,`), `${cases.length} cases`);
 	assert.match(doc, new RegExp(`false invokes 0% \\(0 of ${none}\\)`), `${none} none cases`);
+});
+
+/** Runs the bulk-actions batch script (the `bulk-batch` block) with a fake clock and a fake fetch. */
+async function runBulkBatch(text, ids, answer) {
+	const call = fenced(text, "bulk-batch").trim();
+	assert.ok(call.startsWith("run_js "), "the block is one run_js call");
+	const code = JSON.parse(call.slice("run_js ".length)).code;
+	assert.ok(code.includes("['a1','a2']"), "the script's id list is where the skill says");
+	const start = 1_000_000;
+	let now = start;
+	let latestWaitEnd = start;
+	const sent = [];
+	const sandbox = {
+		Date: { now: () => now },
+		setTimeout: (fn, ms) => {
+			now += ms;
+			latestWaitEnd = Math.max(latestWaitEnd, now);
+			setImmediate(fn);
+		},
+		AbortSignal: { timeout: () => undefined },
+		fetch: async (url) => {
+			sent.push(url);
+			now += 500;
+			return answer(url);
+		},
+	};
+	const out = await runInNewContext(code.replace("['a1','a2']", JSON.stringify(ids)), sandbox);
+	return { out: JSON.parse(JSON.stringify(out)), elapsed: now - start, latestWait: latestWaitEnd - start, sent };
+}
+
+test("bulk-actions: a site that answers 429 with Retry-After 20 forever gets the batch back well inside 90 s", async () => {
+	const ids = Array.from({ length: 20 }, (_, i) => `id${i}`);
+	const tooMany = { ok: false, status: 429, headers: { get: (h) => (h.toLowerCase() === "retry-after" ? "20" : null) } };
+	const { out, elapsed, latestWait, sent } = await runBulkBatch(skill("bulk-actions"), ids, () => tooMany);
+	assert.ok(elapsed <= 60_000, `returned after ${elapsed} ms, past the 60 s worst case the script states`);
+	assert.ok(elapsed < 90_000, `returned after ${elapsed} ms, past the 90 s run_js limit`);
+	assert.ok(latestWait <= 50_000, `a wait ran to ${latestWait} ms, past the 50 s stop`);
+	assert.deepEqual(out.left, ids, "the item being retried and every unstarted item come back in left");
+	assert.deepEqual(out.done, []);
+	assert.deepEqual(out.failed, []);
+	assert.ok(sent.length >= 2, "it did retry before giving the batch back");
+});
+
+test("bulk-actions: the batch script does every item when the site answers ok", async () => {
+	const ids = ["a", "b", "c"];
+	const { out } = await runBulkBatch(skill("bulk-actions"), ids, () => ({ ok: true, status: 204, headers: { get: () => null } }));
+	assert.deepEqual(out, { done: ids, failed: [], left: [] });
 });
