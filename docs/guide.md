@@ -102,6 +102,14 @@ polycarp theme preview still-water --mode both
 
 It prints the path of a page you can open in any browser. Previews go in `previews/` in your settings folder unless you choose a file with `--out`. `--surface` previews one product's overrides.
 
+With no browser at hand (a Linux box, Omarchy, SSH, or an agent that reads images), ask for pictures instead:
+
+```sh
+polycarp theme preview still-water --format png
+```
+
+It writes one PNG for each product in each mode (the dock and window bar, the dictation pill, the browser panel, the site) and prints their paths. The text in them is a pixel font, so judge the colors, corners and contrast, not the typeface.
+
 ### Change one thing
 
 ```sh
@@ -116,6 +124,13 @@ polycarp theme get dark.accent
 
 `change` never edits a built-in theme. The first time, it makes `<name>-custom`, which extends the built-in, and switches to it.
 
+Give `change` several paths and values to change them together. They are all checked first, so one bad value changes nothing, and one `undo` takes the whole set back. `--theme` edits one of your themes without switching to it:
+
+```sh
+polycarp theme change shape.radius 0 shape.indicator bar dark.accent '#a9bb8a'
+polycarp theme change --theme mine type.size 15 motion.reduced true
+```
+
 ### Write your own
 
 ```sh
@@ -129,6 +144,17 @@ polycarp theme edit-path mine
 polycarp theme validate "$(polycarp theme edit-path mine)"
 polycarp theme set mine
 ```
+
+Or work on it from the terminal without opening the file: change a few values, look, and repeat until you like it, then switch to it. Nothing you use changes until `set`:
+
+```sh
+polycarp theme change --theme mine light.accent '#3f6b6a' shape.radius 4
+polycarp theme preview mine --format png --mode dark
+polycarp theme undo
+polycarp theme set mine
+```
+
+`polycarp theme export toml mine` prints the file to share; a built-in prints its source.
 
 To remove a theme later, switch away from it first, then run `polycarp theme delete mine`. `delete` refuses a theme that another of your themes extends, and names them. It also refuses while a theme file can't be read, since that file might extend it; `delete <name> --force` goes on anyway and keeps a copy in `history/`, and an unreadable theme can itself be deleted when only other unreadable themes are in the way. `create` won't replace an existing theme unless you add `--force`.
 
@@ -272,12 +298,13 @@ Any other MCP client can start the same command.
 | `theme_schema` | Read every field, range and rule. Start here |
 | `theme_current`, `theme_list`, `theme_show`, `theme_get` | See what exists and what's in force |
 | `theme_change` | Change one value |
+| `theme_change_many` | Change several values at once, in the current theme or one you name; one undo takes them all back |
 | `theme_apply` | Apply a whole theme, as an object or as TOML |
 | `theme_accent`, `theme_set` | Set the accent or switch themes |
 | `theme_validate` | Check a theme without applying it |
-| `theme_preview` | Write a page to show the person, always in the private previews folder |
-| `theme_export` | Get CSS or JSON |
-| `theme_create`, `theme_delete` | Start a new theme file, or clean one up |
+| `theme_preview` | Write PNGs to look at yourself (`format` png), or a page to show the person, always in the private previews folder |
+| `theme_export` | Get CSS, JSON or the theme's TOML file |
+| `theme_create`, `theme_delete` | Start a new theme file, or clean up one you made. A theme the agent didn't make in that session is refused unless it passes `force` |
 | `theme_off`, `theme_on` | Remove the theme files so apps that read them use their own look, or bring the theme back |
 | `theme_follow` | On Omarchy, match the system theme and follow it, keeping your changes on top (`target` omarchy, reset, off, or leave out to see the state and the changes) |
 | `theme_history`, `theme_undo`, `theme_reset` | See changes and go back |
@@ -285,11 +312,14 @@ Any other MCP client can start the same command.
 ### The workflow
 
 1. Read `theme_schema` and `theme_current`.
-2. Make the smallest change: `theme_change` for one value, `theme_apply` for a whole look.
+2. Make the smallest change: `theme_change` for one value, `theme_change_many` for several, `theme_apply` for a whole look.
 3. If it's refused, read the numbers and pick a better value. Don't work around the rule.
-4. Call `theme_preview` and show the person.
-5. Call `theme_undo` if they don't like it.
-6. If the person wants the apps' own look back, use `theme_off`.
+4. Call `theme_preview` with `format` png and look at each image. Change what looks wrong and preview again until it's right.
+5. Show the person, and `theme_set` the theme when they agree.
+6. Call `theme_undo` if they don't like it.
+7. If the person wants the apps' own look back, use `theme_off`.
+
+An agent may delete or replace only the themes it made in that session. Your other themes need `force`, which it should send only after you agree.
 
 ### Without MCP
 

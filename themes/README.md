@@ -184,16 +184,16 @@ density = "compact"
 | `polycarp theme current [--json]` | The theme, mode and accent in force, and any problem found |
 | `polycarp theme schema` | The JSON Schema for a theme file, every field described |
 | `polycarp theme get <path> [name]` | One resolved value, such as `dark.accent` or `surface.site.light.accent` |
-| `polycarp theme change <path> <value>` | Change one value. On a built-in, makes `<name>-custom` first |
+| `polycarp theme change <path> <value> [<path> <value> ...] [--theme <name>]` | Change one value, or several at once (all checked first, one entry in history). On a built-in, makes `<name>-custom` first. `--theme` edits that user theme instead of the current one and does not switch to it |
 | `polycarp theme apply <file\|-> [--name <n>] [--no-activate]` | Save a whole theme (TOML or JSON) and use it |
-| `polycarp theme preview [name] [--mode light\|dark\|both] [--surface <s>] [--out <file>]` | Write an HTML page showing the theme on product UI, by default into `<config>/previews/` (private to you). `--out` will not replace a file that is not itself a preview |
+| `polycarp theme preview [name] [--mode light\|dark\|both] [--surface <s>] [--format html\|png] [--out <file\|folder>]` | Write an HTML page showing the theme on product UI, by default into `<config>/previews/` (private to you). `--format png` writes one image per product and mode instead, `<name>-<product>-<mode>.png`, with no browser needed; `--out` is then a folder that exists. `--out` will not replace a file that is not itself a preview |
 | `polycarp theme set <name> [--mode auto\|light\|dark]` | Use a theme and write the files |
 | `polycarp theme accent <#rrggbb> [--mode light\|dark]` | Override the accent. `--clear` removes it |
 | `polycarp theme create <name> --extends <base> [--force]` | Write a new user theme. Not one that extends itself or loops. `undo` removes it or restores the old one; it refuses to remove one that another user theme extends, unless `--force` |
 | `polycarp theme edit-path <name>` | Print the file's path |
 | `polycarp theme delete <name> [--force]` | Delete a user theme. Not the current one, one it extends, or one that another user theme extends (it names them). An unreadable theme file also blocks it, since it might extend this one; `--force` goes on anyway and the copy in history lets `undo` bring it back. Deleting an unparsable theme is allowed when only other unreadable themes are in the way |
-| `polycarp theme validate <file>` | Exit 0 if the file is valid, 1 if not. Prints every problem |
-| `polycarp theme export <css\|json> [name] [--surface <name>]` | Print the resolved theme. With no name it is the current one in its forced mode, as in `current/`; JSON has `mode` |
+| `polycarp theme validate <file\|->` | Exit 0 if the file is valid, 1 if not. Prints every problem. A file's `name` must match its file name; with `-` the theme comes on standard input, that check is skipped and `--json` reports the name, so an app can ask before it imports a dropped file |
+| `polycarp theme export <css\|json\|toml> [name] [--surface <name>]` | Print the resolved theme. With no name it is the current one in its forced mode, as in `current/`; JSON has `mode`. `toml` prints the theme's own file as written (a built-in's source), unresolved, to share or import |
 | `polycarp theme undo [--force]` | Step back one change. Refuses if the theme file was edited after that change; `--force` saves the edited text in `history/` as a `.bak` copy, then undoes |
 | `polycarp theme history [--json]` | Past changes, newest first |
 | `polycarp theme off` | Turn the theme off: remove `current/theme.json` and `current/<surface>.css`; apps that read them use their own look when they next check. If a file can't be removed it exits 1 and names what remains. Records `enabled = false` in `[appearance]` and in history, so `undo` brings it back. Your themes stay |
@@ -249,6 +249,33 @@ no mode is set on the page, `@media (prefers-color-scheme: dark)` picks dark.
 When the mode is `light` or `dark` rather than `auto`, the files in `current/` are fixed to that mode.
 
 With `reduced = true`, every duration is written as 0. `theme show` still prints the values you wrote.
+
+## Working on a theme in a terminal
+
+On Omarchy, any other Linux, or over SSH, the same loop works with no window and no browser. These
+commands already make it interactive, so there is no separate editor:
+
+```sh
+polycarp theme create mine --extends omarchy-overrides   # or any theme: blocks, calm, ...
+polycarp theme change --theme mine light.accent '#3f6b6a' shape.radius 4 shape.indicator bar
+polycarp theme preview mine --format png --mode dark      # one PNG per product: look at them
+polycarp theme change --theme mine dark.muted '#c9cbb9'   # adjust, preview again, repeat
+polycarp theme undo                                       # step back one change
+polycarp theme set mine                                   # use it when you like it
+```
+
+- `change` with several pairs is one step: one `undo` takes the whole set back, and one bad value changes nothing
+  and names every bad path.
+- `--theme mine` edits your theme while the current one stays in force, so you can try things without your
+  desktop changing. Leave it out to edit the theme in force.
+- The PNGs are 720 by 420 and draw the dock and window bar, the dictation pill, the browser side panel with a
+  permission prompt, and the site, in the theme's colors, corners, borders, shadow, density and indicator. A
+  terminal that shows images can show them in place (in kitty or Ghostty, `kitty +kitten icat <file>`); any
+  image viewer works. The text is a pixel font, so judge colors and contrast, not the typeface.
+- To edit by hand instead, open `$(polycarp theme edit-path mine)` in your editor and run `polycarp theme validate`
+  on it after each save.
+- `polycarp theme export toml mine` prints the file to share. `polycarp theme apply <file> --no-activate` takes it
+  in on another machine.
 
 ## Undo, history and recovery
 
@@ -318,7 +345,9 @@ same behavior: the `polycarp theme` command with `--json`, or the `polycarp mcp`
    tables, when only one product should change.
 3. **Read refusals.** Everything is checked first, and a refusal changes nothing. A built-in's name is
    refused for `apply`. Fix what the errors say; do not look for a way around the contrast rules.
-4. **Preview.** `theme preview` writes one self-contained HTML file with no external requests, and prints its
+4. **Preview.** `theme preview --format png` writes one image per product and mode and lists them in
+   `data.images`; look at each one, change what is wrong (`theme change` takes several pairs at once), and
+   preview again until it is right. `theme preview` with no format writes one self-contained HTML file with no external requests, and prints its
    path. It shows the theme on product-shaped UI: the workspace dock (nine tiles, with the theme's indicator
    style), the dictation overlay, a browser side panel with a chat turn and a permission prompt, a settings
    form, code, buttons, a delete confirmation and status text. Light and dark go side by side by default.
@@ -343,7 +372,7 @@ Exit codes: 0 ok, 1 refused or invalid, 2 usage.
 `error.data.errors` is always a list of `{path, message}`, with `actual` and `needs` when there are figures
 (contrast ratios are numbers). For a bad value, `actual` is what was sent and `needs` says what is allowed.
 Codes: `invalid_args` (exit 2), `invalid_theme`, `contrast`, `invalid_value`, `unknown_theme`, `unknown_path`,
-`builtin_read_only`, `exists`, `current_theme`, `in_use`, `nothing_to_undo`, `changed_since`, `io_error`, `config_error`, `busy`, `no_omarchy`, `not_following`. Warnings and notes
+`builtin_read_only`, `exists`, `current_theme`, `in_use`, `not_yours` (MCP only), `nothing_to_undo`, `changed_since`, `io_error`, `config_error`, `busy`, `no_omarchy`, `not_following`. Warnings and notes
 (such as "a `-custom` theme was made") come in `data.warnings` and `data.notes`.
 
 ### `polycarp mcp`
@@ -357,6 +386,7 @@ descriptions give the workflow above. Each tool returns the `--json` envelope as
 | --- | --- |
 | `theme_schema`, `theme_list`, `theme_current`, `theme_show`, `theme_get` | `schema`, `list`, `current`, `show`, `get` |
 | `theme_set`, `theme_accent`, `theme_change`, `theme_apply` | `set`, `accent`, `change`, `apply` (`theme` is a JSON object or a TOML string) |
+| `theme_change_many` | `change` with several pairs: `changes` is a list of `{path, value}`, and `theme` names a user theme to edit instead of the current one |
 | `theme_create`, `theme_delete` | `create`, `delete`, so an agent can clean up the themes it made |
 | `theme_validate` | `validate`, for a draft theme passed in, without saving |
 | `theme_preview`, `theme_export` | `preview`, `export` |
@@ -364,6 +394,15 @@ descriptions give the workflow above. Each tool returns the `--json` envelope as
 | `theme_off`, `theme_on` | `off`, `on`. `theme_off` removes files, so its `destructiveHint` is true; `theme_on` only writes them |
 | `theme_undo`, `theme_history`, `theme_reset` | `undo`, `history`, `reset` |
 
+An agent may delete or replace (with `theme_apply`) only a user theme it made in that connection: with
+`theme_create`, a `theme_apply` that wrote a new file, or the `<name>-custom` copy a change makes of a built-in.
+Any other user theme is the person's, and those two calls refuse it with the code `not_yours` unless the agent
+passes `force` true, which it should do only after the person agrees. The server keeps that list in memory for
+the connection only. Editing values with `theme_change` and `theme_change_many` is not guarded: it keeps the
+file's comments and `theme_undo` reverses it.
+
+`theme_preview` takes `format` (`html`, the default, or `png`). With `png` the result's `data.images` lists
+`{surface, mode, path}` for each image, so an agent can look at each one and iterate before it shows the person.
 `theme_preview` takes no `out`: over MCP it writes only into `<config>/previews/`. Its annotations say it
 writes (`readOnlyHint` false), replaces nothing but its own pages (`destructiveHint` false) and repeats safely
 (`idempotentHint` true).

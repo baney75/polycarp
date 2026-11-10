@@ -17,6 +17,10 @@ One theme file drives every Polycarp product. Change it with the `polycarp theme
 3. **Make the smallest change.**
    - One value: `polycarp theme change <path> <value>`. On a built-in theme it makes `<name>-custom`
      that extends it and switches to it; it says so. The built-ins are never edited.
+   - Several values: `polycarp theme change <path> <value> <path> <value> ...` (MCP `theme_change_many`). All
+     are checked first and one `undo` takes them all back.
+   - A new theme without touching the one in use: `polycarp theme create <name> --extends <base>`, then
+     `polycarp theme change --theme <name> ...` (MCP `theme_change_many` with `theme`). Switch with `set` at the end.
    - A whole look: `polycarp theme apply <file|->` with TOML or JSON. Set `extends` and list only what changes.
    - One product only: use `surface.<product>.<section>.<key>` paths, or a `[surface.<product>]` table.
    - Only the brand color: `polycarp theme accent '#rrggbb'`. It keeps the color where it reads, moves it the
@@ -24,8 +28,12 @@ One theme file drives every Polycarp product. Change it with the `polycarp theme
 4. **Read refusals, then adjust.** A refusal changes nothing. With `--json`, `error.data.errors` lists each
    `path`, and for contrast the `actual` and `needs` ratios. Pick other colors. Never loosen the rules or
    edit the files in `current/` by hand.
-5. **Preview.** `polycarp theme preview` writes an HTML file (light and dark side by side) into the config
-   folder's `previews/` and prints its path. Open it and take a screenshot. Show the user.
+5. **Look, then repeat.** `polycarp theme preview <name> --format png` (MCP `theme_preview` with `format` png)
+   writes one image per product and mode into the config folder's `previews/` and lists them. Look at every image,
+   change what looks wrong, preview again, and repeat until it is right. Then show the user: the PNGs, or the HTML
+   page from `polycarp theme preview` (light and dark side by side). `set` the theme when they agree.
+   Over MCP you may delete or replace only themes you made in that session; any other theme needs `force`, and
+   only after the person agrees.
 6. **Undo.** If they dislike it, `polycarp theme undo` steps back one change, including the theme file. If someone hand-edited that file since, it refuses (`changed_since`); use `--force` (MCP `force`) only if the person agrees. The edited text is saved in `history/` first.
    `polycarp theme reset` always works (it also turns the theme on, with the default).
    If the person wants the apps' own look back, run `polycarp theme off` (MCP `theme_off`). It removes the theme files (apps that read them use their own look when they next check), keeps their themes, and `polycarp theme on` or `undo` brings the theme back. `set`, `accent`, `change` and an activating `apply` turn it on again and say so. Set `POLYCARP_CALLER=agent:<your name>` so history says it was you.

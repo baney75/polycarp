@@ -5,6 +5,7 @@
 
 use crate::theme::{self, ApiErr, Ctx};
 use serde_json::{json, Map, Value as Json};
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
 
@@ -17,15 +18,24 @@ customize them for the person you are helping.
 
 Workflow:
 1. Read theme_schema (every field, range, enum and contrast rule) and theme_current (what is in force).
-2. Make the smallest change that does it: theme_change for one value, theme_apply for a whole theme \
-(use `extends` and list only what changes), theme_accent for the brand color. Remove a theme you made \
-and no longer need with theme_delete. Use a [surface.*] section \
-only when one product should differ.
+2. Make the smallest change that does it: theme_change for one value, theme_change_many for several values \
+at once, theme_apply for a whole theme (use `extends` and list only what changes), theme_accent for the brand color. \
+Use a [surface.*] section only when one product should differ.
 3. If a call is refused, read error.data.errors (each has a path; contrast errors give actual and needs) \
 and adjust the colors. Do not try to get around the contrast rules.
-4. Call theme_preview and show the person the HTML file (open it and take a screenshot).
-5. If they dislike it, call theme_undo. theme_reset always works (it also turns the theme on, with the default). \
+4. Look before you show: call theme_preview with format \"png\" and look at every image it lists (one per product \
+and mode). Fix what looks wrong with another theme_change_many, preview again and look again. Repeat until it is right.
+5. Show the person. If they agree and the theme is not current yet, theme_set it. If they dislike a step, \
+call theme_undo. theme_reset always works (it also turns the theme on, with the default). \
 Also: if the person wants the apps' own look back, use `theme_off`.
+
+To build a new theme without touching the one in use: theme_create a name that extends a theme, edit it with \
+theme_change_many and its `theme` argument, preview it by name, theme_validate if you drafted a whole document, \
+then theme_set it.
+
+Themes you did not make in this session belong to the person: theme_delete and a theme_apply that would replace \
+one are refused unless you pass force true, which you do only after the person agrees. theme_delete removes \
+a theme you made and no longer need.
 Every result is {ok, data} or {ok:false, error:{code, message, suggestion, data:{errors}}}.";
 
 fn obj(props: Json, required: &[&str]) -> Json {
@@ -121,12 +131,28 @@ fn tools() -> Vec<Tool> {
             idempotent: true,
         },
         Tool {
+            name: "theme_change_many",
+            description: "Change several values in one call, all or nothing: every value is checked first and a refusal changes nothing, listing every bad path at once. It is one step in history, so one theme_undo takes all of it back. Without theme it edits the current theme like theme_change (a built-in gets a <name>-custom copy that becomes current). With theme it edits that user theme, current or not, and does not switch to it: use it on a theme you made with theme_create, then theme_preview it by name with format png, look, and repeat.",
+            schema: obj(json!({
+                "changes": {"type":"array","minItems":1,"description":"The values to change, each path once.",
+                    "items": {"type":"object","properties":{
+                        "path": {"type":"string","description":"As in theme_change: dark.accent, shape.radius, surface.site.light.accent, title."},
+                        "value": {"type":["string","number","boolean"],"description":"As in theme_change."}},
+                        "required":["path","value"],"additionalProperties":false}},
+                "theme": {"type":"string","description":"A user theme to edit instead of the current one. Built-in themes are refused."},
+            }), &["changes"]),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        Tool {
             name: "theme_apply",
-            description: "Save a whole theme under its name and make it current. Use it for a bigger redesign, or to change several values at once. Use `extends` and list only what changes. All or nothing: if any part is invalid, nothing is saved. A built-in theme's name is refused. Replaces a user theme of the same name; theme_undo brings the old one back.",
+            description: "Save a whole theme under its name and make it current. Use it for a bigger redesign. For a few values use theme_change_many. Use `extends` and list only what changes. All or nothing: if any part is invalid, nothing is saved. A built-in theme's name is refused. It replaces a user theme of the same name only if this session made that theme, or with force true after the person agrees; theme_undo brings the old one back.",
             schema: obj(json!({
                 "theme": theme_doc,
                 "name": {"type":"string","description":"Save under this name instead of the theme's own `name`."},
                 "activate": {"type":"boolean","description":"Make it current. Default true. false saves it for later."},
+                "force": {"type":"boolean","description":"Replace a user theme this session did not make. Only after the person agrees."},
             }), &["theme"]),
             read_only: false,
             destructive: true,
@@ -146,10 +172,10 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "theme_delete",
-            description: "Delete a user theme, for example one you made with theme_create or theme_apply and no longer need. Built-in themes, the current theme, a theme the current one extends and a theme another user theme extends are refused. An unreadable theme file also blocks it unless force is true. theme_undo brings it back.",
+            description: "Delete a user theme you made in this session with theme_create, theme_apply or theme_change and no longer need. A theme this session did not make is the person's: it is refused (code not_yours) unless force is true, which you pass only after the person agrees. Built-in themes, the current theme, a theme the current one extends and a theme another user theme extends are always refused. An unreadable theme file also blocks it unless force is true. theme_undo brings it back.",
             schema: obj(json!({
                 "name": {"type":"string","description":"The user theme to delete, a name from theme_list."},
-                "force": {"type":"boolean","description":"Delete even though a theme file could not be read, so it is unknown whether it extends this one. A copy is kept in history. A theme that is known to extend it still blocks."},
+                "force": {"type":"boolean","description":"Only after the person agrees: delete a theme this session did not make, and delete even though a theme file could not be read (a copy is kept in history). A theme that is known to extend it still blocks."},
             }), &["name"]),
             read_only: false,
             destructive: true,
@@ -177,11 +203,13 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "theme_preview",
-            description: "Write one self-contained HTML page that shows the theme on realistic product UI: the workspace dock, dictation overlay, browser side panel with a chat turn and a permission prompt, a settings form, code, buttons and status text. Writes only into the previews folder of the config folder, and returns the file path. Open it in a browser and take a screenshot to show the person. Call it after every change.",
+            description: "Show the theme on product UI, written only into the previews folder of the config folder. With format \"png\" it writes one image per product and mode (the dock and window bar, the dictation pill, the browser side panel with a permission prompt, the site) and returns data.images, a list of {surface, mode, path}: look at each image, fix what is wrong, and preview again. Needs no browser. With format \"html\" (the default) it writes one page with every product, to open in a browser and show the person. Call it after every change.",
             schema: obj(json!({
                 "name": name,
-                "mode": {"type":"string","enum":["light","dark","both"],"description":"Default both, side by side."},
-                "surface": surface,
+                "mode": {"type":"string","enum":["light","dark","both"],"description":"Default both: side by side in html, one image each in png."},
+                "surface": {"type":"string","enum":["spaces","voice","browser","site"],
+                    "description":"One product: spaces (Polycarp Spaces), voice (Silas), browser (the Polycarp browser helper) or site. Leave out for every product (png) or the theme without product overrides (html)."},
+                "format": {"type":"string","enum":["html","png"],"description":"png to look at it yourself, html to show the person. Default html."},
             }), &[]),
             read_only: false,
             destructive: false,
@@ -335,6 +363,28 @@ impl Args {
         self.text(k)?
             .ok_or_else(|| ApiErr::usage(format!("missing argument {k:?}")))
     }
+    /// `changes`: a list of {path, value}.
+    fn changes(&self) -> Result<Vec<(String, Json)>, ApiErr> {
+        let Some(Json::Array(list)) = self.map.get("changes") else {
+            return Err(ApiErr::usage(
+                "changes must be a list of {path, value} objects",
+            ));
+        };
+        list.iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let o = item
+                    .as_object()
+                    .filter(|o| o.len() == 2 && o.contains_key("path") && o.contains_key("value"));
+                match o.map(|o| (&o["path"], &o["value"])) {
+                    Some((Json::String(p), v)) => Ok((p.clone(), v.clone())),
+                    _ => Err(ApiErr::usage(format!(
+                        "changes[{i}] must be an object with exactly path (a string) and value"
+                    ))),
+                }
+            })
+            .collect()
+    }
     fn flag(&self, k: &str) -> Result<Option<bool>, ApiErr> {
         match self.map.get(k) {
             None | Some(Json::Null) => Ok(None),
@@ -344,8 +394,38 @@ impl Args {
     }
 }
 
+/// What one connection has done: the user themes it made, which it may replace or delete.
+/// Everything else on disk is the person's. It lasts as long as the connection.
+#[derive(Default)]
+struct Session {
+    made: BTreeSet<String>,
+}
+
+impl Session {
+    /// Notes a theme a successful call made: a new file from create or apply, or the
+    /// `<name>-custom` copy a change makes of a built-in.
+    fn note(&mut self, tool: &str, data: &Json) {
+        let made = match tool {
+            "theme_create" => data["name"].as_str(),
+            "theme_apply" if data["replaced"] == json!(false) => data["name"].as_str(),
+            "theme_change" | "theme_change_many" if data["created"] == json!(true) => {
+                data["theme"].as_str()
+            }
+            _ => None,
+        };
+        if let Some(n) = made {
+            self.made.insert(n.to_string());
+        }
+    }
+}
+
 /// Runs one tool. None means there is no such tool.
-fn call(name: &str, args: Option<&Json>, caller: &str) -> Option<theme::Envelope> {
+fn call(
+    name: &str,
+    args: Option<&Json>,
+    caller: &str,
+    session: &mut Session,
+) -> Option<theme::Envelope> {
     let tool = tools().into_iter().find(|t| t.name == name)?;
     let run = || -> theme::Res {
         let a = Args::new(&tool, args)?;
@@ -363,9 +443,23 @@ fn call(name: &str, args: Option<&Json>, caller: &str) -> Option<theme::Envelope
                 let v = a.map.get("value").cloned().unwrap_or(Json::Null);
                 theme::op_change(&c, a.need("path")?, &v)
             }
+            "theme_change_many" => {
+                let pairs = a.changes()?;
+                theme::op_change_many(&c, a.text("theme")?, &pairs)
+            }
             "theme_apply" => {
                 let doc = theme::doc_from_json(a.map.get("theme").unwrap_or(&Json::Null))?;
                 let activate = a.flag("activate")?.unwrap_or(true);
+                let target = match a.text("name")? {
+                    Some(n) => n.to_string(),
+                    None => doc.name().unwrap_or_default().to_string(),
+                };
+                if theme::user_theme_exists(&c, &target)
+                    && !session.made.contains(&target)
+                    && !a.flag("force")?.unwrap_or(false)
+                {
+                    return Err(theme::not_yours(&target, "replaced"));
+                }
                 theme::op_apply(&c, doc, a.text("name")?, activate)
             }
             "theme_create" => theme::op_create(
@@ -375,7 +469,13 @@ fn call(name: &str, args: Option<&Json>, caller: &str) -> Option<theme::Envelope
                 a.flag("force")?.unwrap_or(false),
             ),
             "theme_delete" => {
-                theme::op_delete(&c, a.need("name")?, a.flag("force")?.unwrap_or(false))
+                let target = a.need("name")?;
+                let force = a.flag("force")?.unwrap_or(false);
+                if theme::user_theme_exists(&c, target) && !session.made.contains(target) && !force
+                {
+                    return Err(theme::not_yours(target, "deleted"));
+                }
+                theme::op_delete(&c, target, force)
             }
             "theme_accent" => {
                 if a.flag("clear")?.unwrap_or(false) {
@@ -397,6 +497,7 @@ fn call(name: &str, args: Option<&Json>, caller: &str) -> Option<theme::Envelope
                 a.text("mode")?,
                 a.text("surface")?,
                 None,
+                a.text("format")?,
             ),
             "theme_export" => {
                 theme::op_export(&c, a.need("format")?, a.text("name")?, a.text("surface")?)
@@ -415,7 +516,11 @@ fn call(name: &str, args: Option<&Json>, caller: &str) -> Option<theme::Envelope
             _ => Err(ApiErr::usage("unknown tool")),
         }
     };
-    Some(theme::envelope(&run()))
+    let result = run();
+    if let Ok(out) = &result {
+        session.note(name, out.data());
+    }
+    Some(theme::envelope(&result))
 }
 
 fn reply(id: &Json, result: Json) -> Json {
@@ -428,6 +533,7 @@ fn rpc_error(id: &Json, code: i64, message: &str) -> Json {
 
 struct Server {
     client: String,
+    session: Session,
 }
 
 impl Server {
@@ -497,7 +603,8 @@ impl Server {
                     return Some(rpc_error(&id, -32602, "tools/call needs params.name"));
                 };
                 let args = params.and_then(|p| p.get("arguments"));
-                match call(name, args, &self.caller()) {
+                let caller = self.caller();
+                match call(name, args, &caller, &mut self.session) {
                     None => rpc_error(&id, -32602, &format!("unknown tool {name:?}")),
                     Some((env, ok)) => reply(
                         &id,
@@ -521,6 +628,7 @@ pub fn run(args: &[OsString]) -> i32 {
     }
     let mut server = Server {
         client: "unknown".into(),
+        session: Session::default(),
     };
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
