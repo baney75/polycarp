@@ -90,4 +90,17 @@ final class VoiceProblemsTests: XCTestCase {
         XCTAssertNil(VoiceCapture.cancelled.note)
         XCTAssertNotNil(VoiceCapture.timedOut.note)
     }
+
+    /// The fixture is real `pc_settings_get` output (core/ffi checks it against the core). Every key survives the trip
+    /// through Swift, with its value, since Settings sends the whole object back on each change.
+    func testSettingsFromTheCoreRoundTripKeyByKey() throws {
+        let data = try Data(contentsOf: Repo.root.appendingPathComponent("Tests/BaneySpacesCoreTests/Fixtures/voice-settings.json"))
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let back = try JSONEncoder().encode(JSONDecoder().decode(VoiceSettings.self, from: data))
+        let got = try XCTUnwrap(JSONSerialization.jsonObject(with: back) as? [String: Any])
+        for (k, v) in sent where !(v is NSNull) {
+            XCTAssertNotNil(got[k], "Swift drops \(k)")
+            XCTAssertEqual(got[k].map { "\($0)" }, "\(v)", k)
+        }
+    }
 }

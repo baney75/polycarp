@@ -28,25 +28,3 @@ struct SilasMarkView: View {
         .accessibilityLabel("Silas")
     }
 }
-
-enum SilasMark {
-    /// A template image (macOS tints it for the menu bar), the pen alone or with the listening dot.
-    static func templateImage(size: CGFloat = 18, recording: Bool = false) -> NSImage {
-        let image = NSImage(size: NSSize(width: size, height: size), flipped: true) { rect in
-            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            let s = rect.width / SilasMarkGeometry.grid
-            ctx.scaleBy(x: s, y: s)
-            ctx.setFillColor(NSColor.black.cgColor)
-            ctx.addPath(SilasMarkGeometry.pen())
-            ctx.fillPath(using: .evenOdd)
-            if recording {
-                ctx.addPath(SilasMarkGeometry.dot())
-                ctx.fillPath()
-            }
-            return true
-        }
-        image.isTemplate = true
-        image.accessibilityDescription = "Silas"
-        return image
-    }
-}

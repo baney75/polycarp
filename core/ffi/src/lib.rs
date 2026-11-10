@@ -792,6 +792,28 @@ mod tests {
         }
     }
 
+    /// Settings > Silas decodes `pc_settings_get` into Swift's `VoiceSettings` and sends it back whole. This fixture is
+    /// what `pc_settings_get` returns on a new install; the Swift test round-trips it key by key. A key added here
+    /// without the fixture (and so without Swift) fails, because Swift would drop it on every save.
+    #[test]
+    fn the_swift_settings_fixture_is_what_pc_settings_get_sends() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../spaces/Tests/BaneySpacesCoreTests/Fixtures/voice-settings.json");
+        let o = open();
+        let got = unsafe { json(pc_settings_get(o.core)) };
+        if std::env::var_os("POLYCARP_WRITE_FIXTURE").is_some() {
+            std::fs::write(&path, serde_json::to_string_pretty(&got).unwrap() + "\n").unwrap();
+        }
+        let fixture: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let keys = |v: &serde_json::Value| v.as_object().unwrap().keys().cloned().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(keys(&got), keys(&fixture), "pc_settings_get and the Swift fixture have different keys");
+        // The hotkey defaults differ by machine; every other value is the new-install default everywhere.
+        for (k, v) in got.as_object().unwrap() {
+            if !["hotkey", "hotkeyFallback"].contains(&k.as_str()) {
+                assert_eq!(&fixture[k], v, "{k}");
+            }
+        }
+    }
+
     #[test]
     fn hotkey_capture_times_out_without_a_key() {
         let o = open();

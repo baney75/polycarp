@@ -25,6 +25,10 @@ final class VoiceOverlay {
     private var learnedWork: DispatchWorkItem?
     private var noticeWork: DispatchWorkItem?
     private var face: Face = .idle
+    private var themeObserver: NSObjectProtocol?
+    private var announced: VoiceStatus?
+    /// `--render` only: faces are drawn into an image and the panel is never ordered in.
+    private var rendering = false
     private var notice: VoiceNotice?
     /// The microphone has sent a level: the dot fills. Until then it is a ring, so a slow-to-open device shows.
     private var heard = false
@@ -34,9 +38,20 @@ final class VoiceOverlay {
     private enum Face { case idle, recording, writing, typing, learned, notice }
 
     private static let pill = NSSize(width: 260, height: 64)
-    /// Room for an icon and two lines of a sentence like "A password field has the keyboard, so…".
-    private static let wide = NSSize(width: 360, height: 72)
-    private var size: NSSize { face == .notice ? Self.wide : Self.pill }
+    /// A notice is this wide and as tall as its text needs, up to three lines.
+    private static let noticeWidth: CGFloat = 380
+    private static let noticeTextX: CGFloat = 50
+    private var size: NSSize {
+        guard face == .notice, let n = notice else { return Self.pill }
+        let font = Chrome.nsFont(13, .medium)
+        let line = ceil(font.ascender - font.descender + font.leading) + 2
+        let text = min(Self.textHeight(n.message, font: font, width: Self.noticeWidth - Self.noticeTextX - 20), line * 3)
+        return NSSize(width: Self.noticeWidth, height: max(Self.pill.height, text + 30))
+    }
+
+    private static func textHeight(_ s: String, font: NSFont, width: CGFloat) -> CGFloat {
+        ceil((s as NSString).boundingRect(with: NSSize(width: width, height: 400), options: [.usesLineFragmentOrigin], attributes: [.font: font]).height)
+    }
 
     private final class Panel: NSPanel {
         override var canBecomeKey: Bool { false }
@@ -67,6 +82,18 @@ final class VoiceOverlay {
         icon.contentsGravity = .resizeAspect
         icon.contentsScale = 2
         accessibility()
+        // A theme or Dark Mode change while the pill is up redraws it in the new look at once.
+        themeObserver = NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.face != .idle else { return }
+            self.layout()
+        }
+    }
+
+    deinit { if let themeObserver { NotificationCenter.default.removeObserver(themeObserver) } }
+
+    private func announce(_ words: String) {
+        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+                             userInfo: [.announcement: words, .priority: NSAccessibilityPriorityLevel.high.rawValue])
     }
 
     private func accessibility() {
@@ -82,6 +109,9 @@ final class VoiceOverlay {
     }
 
     func status(_ s: VoiceStatus, enabled: Bool) {
+        // VoiceOver hears each phase once, with or without the pill.
+        if let words = VoiceAccess.announcement(from: announced, to: s) { announce(words) }
+        announced = s
         last = (s, enabled)
         // A notice stays up for its time; only a new dictation takes the pill from it.
         if face == .notice, s != .recording { return }
@@ -103,6 +133,7 @@ final class VoiceOverlay {
         noticeWork?.cancel()
         notice = n
         show(.notice, n.message)
+        announce(n.announcement)
         let w = DispatchWorkItem { [weak self] in
             guard let self, self.face == .notice else { return }
             self.notice = nil
@@ -120,6 +151,39 @@ final class VoiceOverlay {
         let w = DispatchWorkItem { [weak self] in self?.hide() }
         learnedWork = w
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.2, execute: w)
+    }
+
+    /// `--render` only: one face drawn offscreen at 2x over a plain backdrop. The panel never comes on screen.
+    func snapshot(_ s: VoiceStatus, notice n: VoiceNotice? = nil, heard: Bool = true, backdrop: NSColor) -> NSBitmapImageRep? {
+        rendering = true
+        if let n { notice(n) } else {
+            status(s, enabled: true)
+            if s == .recording {
+                self.heard = heard
+                // Before the first level the bars are flat, as they are live.
+                let n = bars.count
+                targets = (0..<n).map { (i: Int) -> CGFloat in
+                    guard heard else { return 0 }
+                    let level: Double = 0.15 + 0.55 * abs(sin(Double(i) * 0.7))
+                    return Self.shape(Float(level))
+                }
+                shown = (0..<n).map { (i: Int) -> CGFloat in targets[i] * Self.taper(i, of: n) }
+                latest = 0.45
+                layout()
+            }
+        }
+        timer?.invalidate()
+        let pad: CGFloat = 16, w = size.width + pad * 2, h = size.height + pad * 2
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(w * 2), pixelsHigh: Int(h * 2), bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let ctx = NSGraphicsContext(bitmapImageRep: rep)?.cgContext else { return nil }
+        ctx.scaleBy(x: 2, y: 2)
+        ctx.setFillColor(backdrop.cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        root.frame = CGRect(origin: .zero, size: size)
+        ctx.translateBy(x: pad, y: pad)
+        root.render(in: ctx)
+        return rep
     }
 
     // MARK: Faces
@@ -166,25 +230,47 @@ final class VoiceOverlay {
     }
 
     private func present() {
+        if rendering { return }
         place()
         panel.alphaValue = 1
         // Ordered in without becoming key or activating the app (a background app's panel).
         panel.orderFrontRegardless()
     }
 
-    /// Bottom center of the main display, 72 pt up, as the Tauri overlay sits.
+    /// Bottom center of the display holding the window you're typing into (`VoiceOverlayPlace`), 72 pt up.
     private func place() {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-        let f = screen.frame
-        panel.setFrame(NSRect(x: f.midX - size.width / 2, y: f.minY + 72, width: size.width, height: size.height), display: false)
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return }
+        let i = VoiceOverlayPlace.screen(window: Self.frontWindow(primaryHeight: screens[0].frame.height), pointer: NSEvent.mouseLocation,
+                                         screens: screens.map(\.frame))
+        panel.setFrame(VoiceOverlayPlace.frame(size: size, on: screens[i].frame), display: false)
         panel.contentView?.frame = NSRect(origin: .zero, size: size)
     }
 
-    private static func symbol(_ name: String, color: NSColor, size: CGFloat) -> CGImage? {
-        let config = NSImage.SymbolConfiguration(pointSize: size, weight: .semibold).applying(.init(paletteColors: [color]))
+    /// The frontmost app's front window, from the window list (bounds only: no Accessibility call, no prompt).
+    private static func frontWindow(primaryHeight: CGFloat) -> CGRect? {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        else { return nil }
+        for w in list where (w[kCGWindowOwnerPID as String] as? pid_t) == pid && (w[kCGWindowLayer as String] as? Int) == 0 {
+            if let b = w[kCGWindowBounds as String] as? NSDictionary, let r = CGRect(dictionaryRepresentation: b) {
+                return VoiceOverlayPlace.cocoa(r, primaryHeight: primaryHeight)
+            }
+        }
+        return nil
+    }
+
+    private static func symbol(_ name: String, colors: [NSColor], size: CGFloat) -> CGImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: size, weight: .semibold).applying(.init(paletteColors: colors))
         guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config) else { return nil }
         var rect = NSRect(origin: .zero, size: image.size)
         return image.cgImage(forProposedRect: &rect, context: nil, hints: [.ctm: AffineTransform(scale: 2)])
+    }
+
+    /// Bar `i` of `n` is scaled by this, so the wave tapers at the edges into a soft lozenge.
+    private static func taper(_ i: Int, of n: Int) -> CGFloat {
+        let angle: Double = (Double(i) + 0.5) / Double(n) * Double.pi
+        return CGFloat(sin(angle)) * 0.55 + 0.45
     }
 
     /// Speech levels sit low; lift quiet sounds so the bars feel alive (overlay.ts `shape`).
@@ -199,7 +285,9 @@ final class VoiceOverlay {
         root.borderColor = NSColor(Chrome.edge(0.12)).cgColor
         root.borderWidth = Chrome.width(.hudPanel)
         let isRec = face == .recording, isNotice = face == .notice
-        for b in bars { b.isHidden = !isRec; b.backgroundColor = tint; b.cornerRadius = 1.5 }
+        // The bars round off as much as the theme's panel does, up to a pill: a square theme gets square bars.
+        let barRound = min(1.5, Chrome.radius(.hudPanel))
+        for b in bars { b.isHidden = !isRec; b.backgroundColor = tint; b.cornerRadius = barRound }
         dot.isHidden = !isRec
         // A ring until the microphone sends its first level, then filled.
         dot.backgroundColor = heard ? tint : NSColor.clear.cgColor
@@ -230,13 +318,11 @@ final class VoiceOverlay {
         case .notice:
             let n = notice ?? VoiceNotice(kind: .error, message: "")
             let color = NSColor(n.kind == .error ? Chrome.urgent : Chrome.accent)
-            icon.contents = Self.symbol(n.symbol, color: color, size: 16)
-            icon.frame = CGRect(x: 18, y: h / 2 - 10, width: 20, height: 20)
-            let x: CGFloat = 48, textW = w - x - 18
-            // One line sits centered; two lines fill the middle.
-            let need = (n.message as NSString).boundingRect(with: NSSize(width: textW, height: 100), options: [.usesLineFragmentOrigin],
-                                                            attributes: [.font: font]).height
-            let textH = min(ceil(need), line * 2)
+            // The mark inside the symbol is cut out in the panel's color, so it reads as "!" and not a plain shape.
+            icon.contents = Self.symbol(n.symbol, colors: n.symbol.hasSuffix(".fill") ? [NSColor(Chrome.panel(1)), color] : [color], size: 17)
+            icon.frame = CGRect(x: 18, y: h / 2 - 11, width: 22, height: 22)
+            let x = Self.noticeTextX, textW = w - x - 20
+            let textH = min(Self.textHeight(n.message, font: font, width: textW), line * 3)
             label.frame = CGRect(x: x, y: (h - textH) / 2, width: textW, height: textH)
             label.alignmentMode = .left
         case .typing:
@@ -256,13 +342,27 @@ final class VoiceOverlay {
         guard face == .recording else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let ease: CGFloat = reduce ? 1 : 0.28
+        let reduce = Chrome.reduceMotion
+        if reduce {
+            // A still meter: bars of one height, lit from the left with the level. Nothing flows.
+            let lit = VoiceAccess.lit(level: latest, bars: bars.count)
+            let areaX: CGFloat = 38, slot = (size.width - 38 - 70) / CGFloat(bars.count), h: CGFloat = 14
+            let tint = NSColor(Chrome.accent)
+            for i in bars.indices {
+                bars[i].frame = CGRect(x: areaX + CGFloat(i) * slot + slot * 0.2, y: size.height / 2 - h / 2, width: slot * 0.6, height: h)
+                bars[i].backgroundColor = (i < lit ? tint : tint.withAlphaComponent(0.22)).cgColor
+            }
+            let s = Int(Date().timeIntervalSince(startedAt))
+            clock.string = String(format: "%d:%02d", s / 60, s % 60)
+            CATransaction.commit()
+            return
+        }
+        let ease: CGFloat = 0.28
         let areaX: CGFloat = 38, areaW: CGFloat = size.width - 38 - 70
         let slot = areaW / CGFloat(bars.count), maxH: CGFloat = 34
         for i in bars.indices {
             // The edges taper so the wave reads as a soft lozenge.
-            let edge = CGFloat(sin((Double(i) + 0.5) / Double(bars.count) * .pi)) * 0.55 + 0.45
+            let edge = Self.taper(i, of: bars.count)
             shown[i] += (targets[i] * edge - shown[i]) * ease
             let h = maxH * (0.14 + shown[i] * 0.86)
             bars[i].frame = CGRect(x: areaX + CGFloat(i) * slot + slot * 0.2, y: size.height / 2 - h / 2, width: slot * 0.6, height: h)

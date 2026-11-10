@@ -1,4 +1,5 @@
 import AppKit
+import BaneySpacesCore
 import SwiftUI
 
 /// The pieces every Settings section is built from, so the tabs look like one window: a soft rounded group, rows with the label on

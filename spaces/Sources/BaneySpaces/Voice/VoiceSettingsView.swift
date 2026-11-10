@@ -1,6 +1,7 @@
 import AppKit
 import BaneySpacesCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Settings > Silas: the dictation key, the speech model (choose, download, remove), the dictionary and History. The
 /// same controls as Silas's settings, home and dictionary pages, in Polycarp's Chrome. Every change goes to the voice
@@ -14,6 +15,11 @@ struct VoiceSettingsView: View {
     @State private var from = ""
     @State private var to = ""
     @State private var showHistory = false
+    @State private var historyPages = 1
+    @State private var expanded: Set<String> = []
+    @State private var confirmClear = false
+    @State private var copied: String?
+    @State private var importNote: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -28,7 +34,7 @@ struct VoiceSettingsView: View {
                 TimelineView(.periodic(from: .now, by: 30)) { t in SettingsGroup { SettingsNote(p.line(now: t.date)) } }
             }
         }
-        .onAppear { voice.reload() }
+        .onAppear { voice.reload(); voice.refreshMicrophones() }
         // Grants change in System Settings with no event; the reads never prompt.
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in voice.refreshPermissions() }
         .onDisappear { if capturing { voice.cancelHotkeyCapture() } }
@@ -97,10 +103,29 @@ struct VoiceSettingsView: View {
             if let n = captureNote { SettingsNote(n, tone: .urgent) }
             toggle("Tap once to start and again to stop", help: "Otherwise hold the key.", s.tapToToggle) { v in voice.update { $0.tapToToggle = v } }
             toggle("Show a listening indicator", s.showOverlay) { v in voice.update { $0.showOverlay = v } }
+            SettingsRow("Typing speed", help: VoiceOptions.speedHelp) {
+                Picker("Typing speed", selection: Binding(get: { s.typingSpeed }, set: { v in voice.update { $0.typingSpeed = v } })) {
+                    ForEach(VoiceOptions.speeds) { Text($0.label).tag($0.value ?? "") }
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 220)
+            }
+            toggle("Add a space after", help: VoiceOptions.trailingSpaceHelp, s.trailingSpace) { v in voice.update { $0.trailingSpace = v } }
+            toggle("Shift+Return for new lines", help: VoiceOptions.shiftReturnHelp, s.newlineAsShiftEnter) { v in voice.update { $0.newlineAsShiftEnter = v } }
             toggle("Remove filler words", s.removeFillers) { v in voice.update { $0.removeFillers = v } }
-            toggle("Learn from my edits", s.learnFromEdits) { v in voice.update { $0.learnFromEdits = v } }
+            toggle("Learn from my edits", help: VoiceOptions.learnHelp, s.learnFromEdits) { v in voice.update { $0.learnFromEdits = v } }
             toggle("Sounds", s.sounds) { v in voice.update { $0.sounds = v } }
-            SettingsNote("Text is typed as keystrokes. Polycarp never pastes and never touches your clipboard.")
+            SettingsRow("Microphone") {
+                Picker("Microphone", selection: Binding(get: { s.microphone ?? "" }, set: { v in voice.update { $0.microphone = v.isEmpty ? nil : v } })) {
+                    ForEach(VoiceOptions.microphones(voice.microphones, current: s.microphone)) { Text($0.label).tag($0.id) }
+                }.labelsHidden().frame(width: 220)
+            }
+            SettingsRow("Language", help: VoiceOptions.languageHelp) {
+                Picker("Language", selection: Binding(get: { s.language }, set: { v in voice.update { $0.language = v } })) {
+                    ForEach(VoiceOptions.languages + (VoiceOptions.languages.contains { $0.value == s.language } ? [] : [.init(s.language, s.language)])) {
+                        Text($0.label).tag($0.id)
+                    }
+                }.labelsHidden().frame(width: 220)
+            }
+            SettingsNote("Text is typed as keystrokes. Polycarp never pastes, and it touches your clipboard only when you click Copy in History.")
         }
     }
 
@@ -161,6 +186,10 @@ struct VoiceSettingsView: View {
                         .disabled(from.trimmingCharacters(in: .whitespaces).isEmpty || to.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
+            SettingsRow("Import a dictionary", help: "A dictionary exported from Silas, or a JSON word list.") {
+                Button("Import…", action: importDictionary)
+            }
+            if let n = importNote { SettingsNote(n) }
             if let d = voice.dictionary {
                 ForEach(d.terms, id: \.text) { t in
                     row(t.text) { voice.removeTerm(t.text) }
@@ -170,6 +199,15 @@ struct VoiceSettingsView: View {
                 }
             }
         }
+    }
+
+    private func importDictionary() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let json = try? String(contentsOf: url, encoding: .utf8) else { importNote = "Couldn't read that file."; return }
+        importNote = voice.importDictionary(json)
     }
 
     private func addTerm() {
@@ -183,15 +221,52 @@ struct VoiceSettingsView: View {
             SettingsRow(voice.history.isEmpty ? "Nothing yet" : "\(voice.history.count) saved") {
                 HStack {
                     if !voice.history.isEmpty {
-                        Button(showHistory ? "Hide" : "Show") { showHistory.toggle() }
-                        Button("Clear") { voice.clearHistory() }
+                        Button(showHistory ? "Hide" : "Show") { showHistory.toggle(); historyPages = 1 }
+                        Button("Clear") { confirmClear = true }
+                            .confirmationDialog(VoiceHistoryList.clearTitle(count: voice.history.count), isPresented: $confirmClear) {
+                                Button("Clear History", role: .destructive) { voice.clearHistory(); expanded = [] }
+                                Button("Cancel", role: .cancel) {}
+                            } message: { Text(VoiceHistoryList.clearMessage) }
                     }
                 }
             }
             if showHistory {
-                ForEach(voice.history.prefix(30)) { h in
-                    row(h.shown) { voice.deleteHistory(h.id) }
+                let shown = VoiceHistoryList.shown(total: voice.history.count, pages: historyPages)
+                LazyVStack(spacing: 0) {
+                    ForEach(voice.history.prefix(shown)) { h in historyRow(h) }
                 }
+                if let more = VoiceHistoryList.more(total: voice.history.count, shown: shown) {
+                    SettingsBlock { Button(more) { historyPages += 1 } }
+                }
+            }
+        }
+    }
+
+    /// One dictation: selectable text, two lines until Show all, Copy (the pasteboard is touched only by this click), and
+    /// Remove. Both buttons name the dictation for VoiceOver.
+    private func historyRow(_ h: VoiceHistoryItem) -> some View {
+        let open = expanded.contains(h.id)
+        return SettingsBlock {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(h.shown).font(Chrome.font(12)).lineLimit(open ? nil : 2).fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                    if VoiceHistoryList.isLong(h.shown) {
+                        Button(open ? "Show less" : "Show all") { if open { expanded.remove(h.id) } else { expanded.insert(h.id) } }
+                            .buttonStyle(.link).font(Chrome.font(11))
+                    }
+                }
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(h.shown, forType: .string)
+                    copied = h.id
+                } label: { Image(systemName: copied == h.id ? "checkmark" : "doc.on.doc") }
+                    .buttonStyle(.plain).foregroundStyle(Chrome.muted)
+                    .help("Copy").accessibilityLabel(VoiceHistoryList.copyLabel(h.shown))
+                Button { voice.deleteHistory(h.id) } label: { Image(systemName: "xmark.circle") }
+                    .buttonStyle(.plain).foregroundStyle(Chrome.muted)
+                    .help("Remove").accessibilityLabel(VoiceHistoryList.removeLabel(h.shown))
             }
         }
     }
@@ -202,7 +277,7 @@ struct VoiceSettingsView: View {
                 Text(text).font(Chrome.font(12)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Button(action: remove) { Image(systemName: "xmark.circle") }.buttonStyle(.plain).foregroundStyle(Chrome.muted)
-                    .accessibilityLabel("Remove")
+                    .accessibilityLabel(VoiceHistoryList.removeLabel(text))
             }
         }
     }
