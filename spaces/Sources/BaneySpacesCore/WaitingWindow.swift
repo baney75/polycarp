@@ -23,11 +23,12 @@ public enum WaitingWindow {
         }
     }
 
-    /// Whether the element waits on you rather than being a window you work in: anything modal,
-    /// and a dialog or alert by its subrole. A standard document window that isn't modal never is,
-    /// and neither are floating palettes or panels that don't block the app.
+    /// Whether the element waits on you rather than being a window you work in. A readable modal
+    /// flag decides: an About box, a Settings window or a Find panel is an `AXDialog` that blocks
+    /// nothing, and marking a tile for it would send you to a workspace for nothing. Only when the
+    /// flag can't be read does the subrole stand in: a dialog or alert is taken to wait on you.
     public static func asks(subrole: String?, modal: Bool?) -> Bool {
-        if modal == true { return true }
+        if let modal { return modal }
         return subrole == "AXDialog" || subrole == "AXSystemDialog"
     }
 
@@ -55,6 +56,12 @@ public enum WaitingWindow {
     /// Whether an agent's claim for an app's next window may take this one. A window that waits
     /// on you is never sent off on its own: it stays with its app's windows.
     public static func claimTakes(subrole: String?, modal: Bool?) -> Bool { !asks(subrole: subrole, modal: modal) }
+
+    /// Whether a claim keeps this window. A process an agent started is the agent's, all of it:
+    /// its modal goes with the claim (to the agent workspace) instead of staying on yours.
+    public static func claimKeeps(agentStartedProcess: Bool, subrole: String?, modal: Bool?) -> Bool {
+        agentStartedProcess || claimTakes(subrole: subrole, modal: modal)
+    }
 }
 
 /// The quiet mark on a dock tile whose workspace has a window waiting on you (`WaitingWindow`).

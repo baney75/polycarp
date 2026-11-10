@@ -10,10 +10,20 @@ final class WaitingWindowTests: XCTestCase {
 
     func testDialogsAlertsAndAnythingModalWaitOnYou() {
         XCTAssertTrue(WaitingWindow.asks(subrole: "AXDialog", modal: true))
+        // Only with the modal flag unreadable does the subrole stand in.
         XCTAssertTrue(WaitingWindow.asks(subrole: "AXDialog", modal: nil))
-        XCTAssertTrue(WaitingWindow.asks(subrole: "AXSystemDialog", modal: false))
+        XCTAssertTrue(WaitingWindow.asks(subrole: "AXSystemDialog", modal: nil))
         // A standard window that blocks its app is a dialog in all but name.
         XCTAssertTrue(WaitingWindow.asks(subrole: "AXStandardWindow", modal: true))
+    }
+
+    func testADialogThatBlocksNothingDoesNot() {
+        // An About box, a Settings window, a Find panel: AXDialog, not modal.
+        XCTAssertFalse(WaitingWindow.asks(subrole: "AXDialog", modal: false))
+        XCTAssertFalse(WaitingWindow.asks(subrole: "AXSystemDialog", modal: false))
+        let about = WaitingWindow.Seen(id: 60, pid: word, subrole: "AXDialog", modal: false)
+        XCTAssertEqual(DockAttention.marks([about], names: [:], parents: [word: [9]], shown: [2], recent: [2, 9]), [],
+                       "no mark, so no click that jumps workspaces for nothing")
     }
 
     func testDocumentWindowsAndPalettesDoNot() {
@@ -27,6 +37,19 @@ final class WaitingWindowTests: XCTestCase {
         XCTAssertFalse(WaitingWindow.claimTakes(subrole: "AXStandardWindow", modal: true))
         XCTAssertFalse(WaitingWindow.claimTakes(subrole: "AXDialog", modal: nil))
         XCTAssertTrue(WaitingWindow.claimTakes(subrole: "AXStandardWindow", modal: false))
+    }
+
+    func testAnAgentStartedProcessKeepsItsModalWithTheClaim() {
+        XCTAssertTrue(WaitingWindow.claimKeeps(agentStartedProcess: true, subrole: "AXStandardWindow", modal: true))
+        XCTAssertFalse(WaitingWindow.claimKeeps(agentStartedProcess: false, subrole: "AXStandardWindow", modal: true),
+                       "a lent app's modal stays with the app's windows")
+        XCTAssertTrue(WaitingWindow.claimKeeps(agentStartedProcess: false, subrole: "AXStandardWindow", modal: false))
+    }
+
+    func testALentAppsStandardModalOutOfSightIsMarked() {
+        // Standard subrole, modal: placed on the agent workspace with the app, and marked.
+        let modal = WaitingWindow.Seen(id: 70, pid: word, subrole: "AXStandardWindow", modal: true)
+        XCTAssertEqual(DockAttention.marks([modal], names: [word: "Microsoft Word"], parents: [word: [9]], shown: [2], recent: [2]).map(\.workspace), [9])
     }
 
     // MARK: Where it belongs
@@ -85,7 +108,8 @@ final class WaitingWindowTests: XCTestCase {
     func testTheAppWiresTheRuleTheMarkAndTheQuietDock() throws {
         let spaces = try source("Spaces.swift"), dock = try source("WorkspaceDock.swift"), windows = try source("Windows.swift")
         XCTAssertTrue(windows.contains("WaitingWindow.asks("), "the scan reports windows that wait on you")
-        XCTAssertTrue(spaces.contains("WaitingWindow.claimTakes("), "an agent's claim leaves a modal window with its app")
+        XCTAssertTrue(spaces.contains("WaitingWindow.claimKeeps(agentStartedProcess: c.newProcess"), "an agent's claim leaves a lent app's modal with its app")
+        XCTAssertTrue(windows.contains("if modal == true { asks.append("), "a standard window that is modal is reported too")
         XCTAssertTrue(spaces.contains("DockAttention.marks("), "the marks follow each scan and switch")
         XCTAssertTrue(spaces.contains("DockAttention.traceLines("), "trace.log says when a mark sets and clears")
         XCTAssertTrue(dock.contains("model.onFocusWaiting(waiting)"), "a marked tile's click goes to the waiting window")

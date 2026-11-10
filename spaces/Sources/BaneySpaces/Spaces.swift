@@ -443,9 +443,11 @@ final class Spaces {
                           && (c.title.map { w.title.isEmpty || w.title.localizedCaseInsensitiveContains($0) } ?? true)
                   }) else { continue }
             // A modal window (a standard window that blocks its app) waits on you: it stays with its
-            // app's windows, never sent off alone by a claim (`WaitingWindow.claimTakes`).
+            // app's windows, never sent off alone by a claim (`WaitingWindow.claimTakes`). A process
+            // the agent started is the agent's whole: its modal goes with the claim, not onto your
+            // workspace (`WaitingWindow.claimKeeps`).
             let modal = (w.element.value(kAXModalAttribute) as NSNumber?)?.boolValue
-            guard WaitingWindow.claimTakes(subrole: kAXStandardWindowSubrole as String, modal: modal) else {
+            guard WaitingWindow.claimKeeps(agentStartedProcess: c.newProcess, subrole: kAXStandardWindowSubrole as String, modal: modal) else {
                 let parents = Set(windows.values.filter { $0.pid == w.pid && $0.id != id }.compactMap { model.workspace(of: $0.id) })
                 switch WaitingWindow.place(asks: true, parents: parents, shown: Set(Workspaces.range.filter(model.isShown)), recent: recent) {
                 case .withParent(let n), .needsAttention(let n):

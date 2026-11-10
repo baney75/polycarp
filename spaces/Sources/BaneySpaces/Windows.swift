@@ -207,10 +207,15 @@ enum Windows {
             var found: [Window] = [], other: [WindowID] = [], asks: [WaitingWindow.Seen] = []
             for (el, id) in zip(elements, ids) {
                 guard let id, let subrole = el.string(kAXSubroleAttribute) else { continue }
-                if subrole == kAXStandardWindowSubrole as String { found.append(Window(id: id, element: el, pid: pid, appName: name)); continue }
-                other.append(id)
-                // Only the few elements that aren't standard windows pay for this read.
                 let modal = (el.value(kAXModalAttribute) as NSNumber?)?.boolValue
+                if subrole == kAXStandardWindowSubrole as String {
+                    found.append(Window(id: id, element: el, pid: pid, appName: name))
+                    // A standard window that blocks its app (a lent app's modal) waits on you too:
+                    // placed like any window, and marked when it is out of sight.
+                    if modal == true { asks.append(.init(id: id, pid: pid, subrole: subrole, modal: true)) }
+                    continue
+                }
+                other.append(id)
                 if WaitingWindow.asks(subrole: subrole, modal: modal) { asks.append(.init(id: id, pid: pid, subrole: subrole, modal: modal)) }
             }
             lock.lock()
