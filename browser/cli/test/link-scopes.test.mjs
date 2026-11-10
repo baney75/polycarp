@@ -8,6 +8,8 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { WebSocketServer } from "ws";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { loadTs } from "./helpers/bundle-ts.mjs";
 import { addDevice, cli, connect, createToken, DEFAULT_CAP, endProcess, freePort, INITIALIZE, machine, rawTools, sleep, startHub, teardown, tempRoot } from "./helpers/hub-fixture.mjs";
 
@@ -41,6 +43,20 @@ function deviceMachine(name, { helper }) {
 }
 const code = (hub, name) => hub.json(["hub", "code", "--name", name, "--json"]).code;
 const linkJson = (m) => (existsSync(m.file("link.json")) ? JSON.parse(readFileSync(m.file("link.json"), "utf8")) : undefined);
+
+/** POST raw bytes on an open hub session and read the JSON-RPC answer (JSON or one SSE event). */
+async function rawPost(url, secret, sessionId, body, contentType = "application/json") {
+	const res = await fetch(url, {
+		method: "POST",
+		headers: { authorization: `Bearer ${secret}`, "content-type": contentType, accept: "application/json, text/event-stream", "mcp-session-id": sessionId, "mcp-protocol-version": "2025-06-18" },
+		body,
+	});
+	const text = await res.text();
+	const trimmed = text.trimStart();
+	if (trimmed.startsWith("{") || trimmed.startsWith("[")) return JSON.parse(text);
+	const data = text.split("\n").find((l) => l.startsWith("data: "));
+	return data ? JSON.parse(data.slice(6)) : { status: res.status, text };
+}
 
 /** Run the CLI on a pseudo-terminal and type `answer` once the question shows. Undefined without python3. */
 function atTerminal(m, args, answer) {
@@ -153,16 +169,100 @@ test("under a real pseudo-terminal a typed yes grants nothing: every add path st
 	assert.deepEqual(linkJson(plain).scopes, DEFAULT_CAP);
 });
 
-test("a cap that already holds computer scopes keeps them, and removing one still works", async () => {
-	const m = deviceMachine("old-cap", { helper: true });
-	const scopes = [...DEFAULT_CAP, "computer.read", "computer.act"];
-	writeFileSync(m.file("link.json"), JSON.stringify({ hubUrl: "http://127.0.0.1:9", deviceId: "dv-oldoldoldold", secret: "s".repeat(43), name: "oldmac", manage: false, scopes }));
-	assert.deepEqual(JSON.parse(m.run(["link", "scopes", "--json"]).out).scopes, scopes);
-	const removed = m.run(["link", "scopes", "--remove", "computer.act"]);
-	assert.equal(removed.code, 0, removed.out);
-	assert.deepEqual(linkJson(m).scopes, [...DEFAULT_CAP, "computer.read"]);
-	assert.equal(m.run(["link", "scopes", "--add", "computer.act"]).code, 1, "and it can't be added back");
-	assert.deepEqual(linkJson(m).scopes, [...DEFAULT_CAP, "computer.read"]);
+test("computer scopes written into link.json by hand are never served, and the next write drops them", async () => {
+	const m = deviceMachine("hand-device", { helper: true });
+	const port = await freePort();
+	const wss = new WebSocketServer({ port, host: "127.0.0.1" });
+	cleanup.push(() => wss.close());
+	writeFileSync(m.file("link.json"), JSON.stringify({ hubUrl: `http://127.0.0.1:${port}`, deviceId: "dv-handhandhand", secret: "s".repeat(43), name: "handmac", manage: false, scopes: ["browser.read", "computer.act", "computer.read"] }));
+	const status = JSON.parse(m.run(["link", "status", "--json"]).out);
+	assert.deepEqual(status.notServed.map((x) => x.scope), ["computer.act", "computer.read"]);
+	assert.match(status.notServed[0].why, /owner's approval in the Polycarp app/);
+	const frames = [];
+	const connected = new Promise((resolve) =>
+		wss.on("connection", (ws) => {
+			ws.on("message", (data) => frames.push(JSON.parse(data.toString("utf8"))));
+			resolve(ws);
+		}),
+	);
+	let log = "";
+	const proc = spawn(process.execPath, [cli, "link", "run"], { env: m.env });
+	proc.stderr.on("data", (d) => (log += d));
+	cleanup.push(() => endProcess(proc));
+	const ws = await connected;
+	await waitFor(() => frames.some((f) => f.t === "status"), "the device's first status");
+	const token = JSON.parse(readFileSync(m.file("tokens.json"), "utf8")).tokens.find((t) => t.kind === "link" && !t.revokedAt);
+	assert.deepEqual(token.scopes, ["browser.read"], "the link token has no computer scope");
+	assert.deepEqual(frames.filter((f) => f.t === "status").at(-1).scopes, ["browser.read"], "nor does the status frame");
+	assert.match(log, /Not serving computer\.act \(computer use over a link needs the owner's approval/);
+	const hubHeaders = { "content-type": "application/json", accept: "application/json, text/event-stream", "x-polycarp-hub-scopes": "browser.read,computer.act,computer.read", "x-polycarp-hub-caller": "tester" };
+	ws.send(JSON.stringify({ t: "req", id: "i1", method: "POST", path: "/mcp", headers: hubHeaders, body: JSON.stringify(INITIALIZE) }));
+	await waitFor(() => frames.some((f) => f.t === "end" && f.id === "i1"), "the initialize");
+	const sid = frames.find((f) => f.t === "head" && f.id === "i1").headers["mcp-session-id"];
+	ws.send(JSON.stringify({ t: "req", id: "l1", method: "POST", path: "/mcp", headers: { ...hubHeaders, "mcp-session-id": sid }, body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list" }) }));
+	await waitFor(() => frames.some((f) => f.t === "end" && f.id === "l1"), "the tool list");
+	const body = frames.filter((f) => f.t === "chunk" && f.id === "l1").map((f) => f.data).join("");
+	const json = body.trimStart().startsWith("{") ? body : body.split("\n").find((l) => l.startsWith("data: ")).slice(6);
+	const tools = JSON.parse(json).result.tools.map((x) => x.name);
+	assert.ok(tools.includes("read_page"), tools.join(","));
+	assert.ok(!tools.some((x) => x.startsWith("computer_")), `a session asking for computer.act gets no computer tools: ${tools.join(",")}`);
+	// The local server always gets content-type application/json, whatever the caller sent, so it reads the body the guard read.
+	ws.send(JSON.stringify({ t: "req", id: "l2", method: "POST", path: "/mcp", headers: { ...hubHeaders, "content-type": "text/plain; charset=utf-16le", "mcp-session-id": sid }, body: JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list" }) }));
+	await waitFor(() => frames.some((f) => f.t === "end" && f.id === "l2"), "the second tool list");
+	assert.equal(frames.find((f) => f.t === "head" && f.id === "l2").status, 200, "the forwarded content-type was replaced");
+	await endProcess(proc);
+	// The next write drops them from the file.
+	assert.equal(m.run(["link", "scopes", "--add", "skills.read"]).code, 0);
+	assert.deepEqual(linkJson(m).scopes, ["browser.read", "skills.read"]);
+});
+
+test("after browser.script is removed, read_network with requestId is refused on the open session, and without it is not", async () => {
+	const hub = await hubFor("network-hub");
+	const device = await addDevice(root, hub, "netdev", { scope: "browser.read,browser.script" });
+	cleanup.push(() => device.kill());
+	const secret = createToken(hub, "netcaller", "browser.read,browser.script");
+	const { client, transport } = await connect(`${hub.url}/mcp`, secret);
+	cleanup.push(() => client.close());
+	assert.equal(device.run(["link", "scopes", "--remove", "browser.script"]).code, 0);
+	const withId = await client.callTool({ name: "read_network", arguments: { requestId: "1.1" } });
+	assert.equal(withId.isError, true);
+	assert.equal(withId.content[0].text, "netdev doesn't allow browser.script (allows: browser.read). Only its owner can add it, on netdev.");
+	const plain = await client.callTool({ name: "read_network", arguments: {} });
+	assert.doesNotMatch(plain.content[0].text, /doesn't allow/, "without requestId the call isn't refused for its scope");
+	const raw = await rawPost(`${hub.url}/mcp`, secret, transport.sessionId, JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "read_network", arguments: { requestId: "1.1" } } }));
+	assert.equal(raw.result?.isError, true, JSON.stringify(raw));
+});
+
+test("the call check inside the server reads the cap at each call, arguments included", async () => {
+	const mod = await loadTs(`export { createMcpServer } from "@src/mcp.ts"; export { liveCallCheck } from "@src/link.ts"; export { toolsFor } from "@src/remote.ts";`);
+	let cap = ["browser.read", "browser.script", "skills.read"];
+	const check = mod.liveCallCheck(() => cap);
+	assert.equal(check("skill_match", { task: "x" }), undefined);
+	assert.equal(check("read_network", { requestId: "1" }), undefined);
+	cap = ["browser.read", "skills.read"];
+	assert.match(check("read_network", { requestId: "1" }), /doesn't allow browser\.script \(allows: browser\.read, skills\.read\)/);
+	assert.equal(check("read_network", {}), undefined);
+	assert.equal(check("devices", undefined), undefined, "a tool no scope lists needs none");
+	// The same check, given to the server, is asked on every call: the session's tool list never changes, the answer does.
+	cap = ["browser.read", "skills.read"];
+	const { server, client: bridge } = mod.createMcpServer({ session: "unit-check", allowedTools: mod.toolsFor(cap), remote: true, callCheck: check });
+	const [a, b] = InMemoryTransport.createLinkedPair();
+	await server.connect(a);
+	const client = new Client({ name: "unit", version: "0" });
+	await client.connect(b);
+	try {
+		const ok = await client.callTool({ name: "skill_match", arguments: { task: "background check on a roofing contractor" } });
+		assert.match(ok.content[0].text, /^osint /);
+		cap = ["browser.read"];
+		const refused = await client.callTool({ name: "skill_match", arguments: { task: "background check on a roofing contractor" } });
+		assert.equal(refused.isError, true);
+		assert.match(refused.content[0].text, /doesn't allow skills\.read \(allows: browser\.read\)/);
+		cap = ["browser.read", "skills.read"];
+		assert.match((await client.callTool({ name: "skill_match", arguments: { task: "background check on a roofing contractor" } })).content[0].text, /^osint /, "read again at the next call");
+	} finally {
+		await client.close();
+		bridge.close?.();
+	}
 });
 
 test("the cap helpers: an empty stored cap allows nothing, removal is checked under the lock, calls are judged on the parsed method", async () => {
@@ -180,7 +280,13 @@ test("the cap helpers: an empty stored cap allows nothing, removal is checked un
 	const answers = JSON.parse(mod.refusedCall(batch, ["browser.read"]));
 	assert.deepEqual(answers.map((a) => [a.id, a.result.isError]), [[1, true], [2, true]]);
 	assert.equal(mod.refusedCall(call("tools\\/call"), ["skills.read"]), undefined, "allowed is let through");
-	assert.equal(mod.refusedCall("{not json tools/call", ["browser.read"]), undefined, "unparseable passes to the local server");
+	for (const body of ["{not json tools/call", Buffer.from(call("tools/call"), "utf16le").toString("utf8"), ""]) {
+		const closed = JSON.parse(mod.refusedCall(body, ["browser.read", "skills.read"]));
+		assert.equal(closed.error?.code, -32700, `a body that doesn't parse is refused, never forwarded: ${JSON.stringify(body)}`);
+	}
+	const network = (args) => `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"read_network","arguments":${JSON.stringify(args)}}}`;
+	assert.match(JSON.parse(mod.refusedCall(network({ requestId: "1" }), ["browser.read"])).result.content[0].text, /doesn't allow browser\.script/, "arguments count");
+	assert.equal(mod.refusedCall(network({}), ["browser.read"]), undefined);
 	// Two removals that both passed the unlocked two-scope look: one wins, the other is refused, one scope is left.
 	const m = deviceMachine("race-device", { helper: false });
 	const write = () => writeFileSync(m.file("link.json"), JSON.stringify({ hubUrl: "http://127.0.0.1:9", deviceId: "dv-raceraceracer", secret: "s".repeat(43), name: "race", manage: false, scopes: ["browser.read", "skills.read"] }));
@@ -216,15 +322,7 @@ test("remove narrows at once: the next call that needs it gets the cap error, an
 	assert.equal(refused.isError, true);
 	assert.equal(refused.content[0].text, "narrow doesn't allow skills.read (allows: browser.read). Only its owner can add it, on narrow.");
 	// The same call on the open session with its method written with an escaped slash, alone and in a batch, is refused too.
-	const raw = async (text) => {
-		const res = await fetch(`${hub.url}/mcp`, {
-			method: "POST",
-			headers: { authorization: `Bearer ${secret}`, "content-type": "application/json", accept: "application/json, text/event-stream", "mcp-session-id": transport.sessionId, "mcp-protocol-version": "2025-06-18" },
-			body: text,
-		});
-		const body = await res.text();
-		return JSON.parse(body.trimStart().startsWith("{") || body.trimStart().startsWith("[") ? body : body.split("\n").find((l) => l.startsWith("data: ")).slice(6));
-	};
+	const raw = (text, contentType) => rawPost(`${hub.url}/mcp`, secret, transport.sessionId, text, contentType);
 	const call = (method, id) => `{"jsonrpc":"2.0","id":${id},"method":"${method}","params":{"name":"skill_match","arguments":${JSON.stringify(task)}}}`;
 	for (const [i, method] of ["tools\\/call", "tools\\u002fcall", "tools/call"].entries()) {
 		const answer = await raw(call(method, 100 + i));
@@ -235,6 +333,10 @@ test("remove narrows at once: the next call that needs it gets the cap error, an
 	const entry = (Array.isArray(batch) ? batch : [batch]).find((a) => a.id === 201);
 	assert.equal(entry?.result?.isError, true, JSON.stringify(batch));
 	assert.match(entry.result.content[0].text, /doesn't allow skills\.read/);
+	// A body in another charset, which the guard can't read as UTF-8 JSON, never runs the removed tool.
+	const utf16 = await raw(Buffer.from(call("tools/call", 300), "utf16le"), "application/json; charset=utf-16le");
+	assert.doesNotMatch(JSON.stringify(utf16), /osint/, JSON.stringify(utf16));
+	assert.ok(utf16.error || utf16.result?.isError || utf16.status >= 400, JSON.stringify(utf16));
 	const fresh = await rawTools(`${hub.url}/mcp`, secret);
 	assert.ok(!fresh.tools.includes("skill_match") && fresh.tools.includes("read_page"), "a new session gets the narrower cap");
 	assert.equal(device.run(["link", "scopes", "--remove", "browser.read"]).code, 1, "the last scope can't be removed; link off stops serving");

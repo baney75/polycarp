@@ -34,7 +34,7 @@ import { devicesFile, devicesReadable, hubFile, loadHubConfig, mintConnectCode, 
 import { type EnrollHooks, type EnrollResult, enrollDevice, HubCodeError, LinkError, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusyAsync } from "./link.ts";
 import { configDir, DEFAULT_GRANT, mintApprovalCode, passcodeSet } from "./oauth.ts";
 import { normalizeCloudflareHost } from "./cloudflare.ts";
-import { offeredScopes, SCOPES } from "./remote.ts";
+import { SCOPES } from "./remote.ts";
 import { loadRemoteConfig, remoteFile } from "./remote-setup.ts";
 import { setupTunnel, type TunnelHooks, TunnelError, type TunnelProgress } from "./tunnel-setup.ts";
 import { isAccent, isMode, loadPolycarpPayload, loadTheme, polycarpRefusal, PRESETS, saveTheme } from "./theme.ts";
@@ -334,7 +334,6 @@ export class ConnectService {
 			theme: loadTheme(),
 			...polycarpField(),
 			...(route === "none" && !problems.length ? { joinScopes: DEFAULT_GRANT.map((id) => ({ id, what: SCOPES[id]?.what ?? id })) } : {}),
-			...(route === "none" && !problems.length ? optionalComputerScopes() : {}),
 			...(problems.length ? { problem: problems[0] } : {}),
 		};
 	}
@@ -481,12 +480,6 @@ export class ConnectService {
 			this.joining = false;
 		}
 	}
-}
-
-/** Computer use this computer could allow on a link, unticked: what joining does not grant. Empty without Polycarp's Mac app. */
-function optionalComputerScopes(): Pick<ConnectStatus, "optionalJoinScopes"> {
-	const offered = Object.entries(offeredScopes()).filter(([id]) => id.startsWith("computer."));
-	return offered.length ? { optionalJoinScopes: offered.map(([id, { what }]) => ({ id, what, ticked: false as const })) } : {};
 }
 
 /** What a hub's refusal of a code request says to a person: a fixed sentence for the status, never the hub's own words. */
