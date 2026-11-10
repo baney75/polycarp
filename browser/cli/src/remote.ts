@@ -258,6 +258,11 @@ export function authenticate(header: string | undefined): TokenRecord | undefine
 	});
 }
 
+/** The scope that grants a tool, or undefined for one no scope lists. */
+export function scopeOfTool(tool: string): string | undefined {
+	return Object.entries(SCOPES).find(([, v]) => v.tools.includes(tool))?.[0];
+}
+
 export function toolsFor(scopes: string[]): Set<string> {
 	return new Set(scopes.flatMap((s) => (Object.hasOwn(SCOPES, s) ? SCOPES[s].tools : [])));
 }
