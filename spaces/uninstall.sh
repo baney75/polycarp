@@ -149,17 +149,35 @@ elif shortcuts_off; then
   problem "macOS's screenshot or Spotlight shortcuts are still off (the app was already gone): turn them on in System Settings › Keyboard › Keyboard Shortcuts."
 fi
 
+# dock-record:begin
+# A saved record's own lines only. `defaults read` prints the lists and tables inside it (`_keys`,
+# `_ours`: what Polycarp wrote, not what was there before) on lines of their own, and a line-by-line
+# read would take those for the saved values.
+top_level() {
+  awk '{ if ($0 ~ /^[[:space:]]*[})]/) d--
+         opens = ($0 ~ /[{(][[:space:]]*$/)
+         if (d == 1 && !opens) print
+         if (opens) d++ }'
+}
+# dock-record:end
+
 # The Workspace Dock's own Dock settings, if the app wasn't there to put them back. Each goes
 # back only if it's still at BaneySpaces' value; a setting changed since is the person's.
 if [ -z "$TEST" ] && [ "$(defaults read com.apple.dock autohide-delay 2>/dev/null)" = "1000" ]; then
   step "Bringing the macOS Dock back"
-  saved=$(pref systemDockSaved)
+  saved=$(pref systemDockSaved | top_level)
   delay=$(printf '%s\n' "$saved" | sed -n 's/.*"autohide-delay" = "\{0,1\}\([0-9.]*\)"\{0,1\};.*/\1/p')
   if [ -n "$delay" ]; then defaults write com.apple.dock autohide-delay -float "$delay"; else defaults delete com.apple.dock autohide-delay; fi
   if [ "$(defaults read com.apple.dock autohide 2>/dev/null)" = "1" ]; then
     hide=$(printf '%s\n' "$saved" | sed -n 's/.*[^-]autohide = "\{0,1\}\([01]\)"\{0,1\};.*/\1/p')
     if [ -n "$hide" ]; then defaults write com.apple.dock autohide -bool "$([ "$hide" = 1 ] && echo true || echo false)"
     else defaults delete com.apple.dock autohide 2>/dev/null || true; fi
+  fi
+  # Bouncing, off while the Workspace Dock was on (`SystemDockSettings`): its saved value, else the default.
+  if [ "$(defaults read com.apple.dock no-bouncing 2>/dev/null)" = "1" ]; then
+    bounce=$(printf '%s\n' "$saved" | sed -n 's/.*"no-bouncing" = "\{0,1\}\([01]\)"\{0,1\};.*/\1/p')
+    if [ -n "$bounce" ]; then defaults write com.apple.dock no-bouncing -bool "$([ "$bounce" = 1 ] && echo true || echo false)"
+    else defaults delete com.apple.dock no-bouncing 2>/dev/null || true; fi
   fi
   killall Dock 2>/dev/null || true
 fi

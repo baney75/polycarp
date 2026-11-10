@@ -179,7 +179,9 @@ enum Windows {
     /// `notWindows` are listed elements whose subrole was read and isn't a standard window's
     /// (sheets, panels). One whose subrole couldn't be read is neither: it stays unplaced, so
     /// `UnplacedWindows` looks at it again.
-    static func all(owners: Set<pid_t>? = nil) -> (windows: [Window], unsure: Set<pid_t>, listed: Set<WindowID>, partial: Set<pid_t>, notWindows: Set<WindowID>) {
+    /// `asking` are the listed elements that wait on you (`WaitingWindow.asks`: a dialog, an alert,
+    /// anything modal), which stay with their app's windows and may mark a tile in the dock.
+    static func all(owners: Set<pid_t>? = nil) -> (windows: [Window], unsure: Set<pid_t>, listed: Set<WindowID>, partial: Set<pid_t>, notWindows: Set<WindowID>, asking: [WaitingWindow.Seen]) {
         // Only apps that own a window are asked. A running app with no windows is often frozen by
         // macOS and never answers, which would cost a full timeout on every scan.
         let candidates = owners.map { RunningApps.regular.intersection($0) } ?? RunningApps.regular
@@ -189,7 +191,7 @@ enum Windows {
             return (pid, app.localizedName ?? "App")
         }
         var results = [[Window]](repeating: [], count: apps.count)
-        var listedIDs = Set<WindowID>(), partial = Set<pid_t>(), notWindows = Set<WindowID>()
+        var listedIDs = Set<WindowID>(), partial = Set<pid_t>(), notWindows = Set<WindowID>(), asking: [WaitingWindow.Seen] = []
         let lock = NSLock()
         DispatchQueue.concurrentPerform(iterations: apps.count) { i in
             let (pid, name) = apps[i]
@@ -202,19 +204,29 @@ enum Windows {
             if listed == nil { lock.lock(); unsure.insert(pid); lock.unlock(); markUnresponsive(pid) } else { markResponsive(pid) }
             let elements = listed ?? []
             let ids = elements.map(\.windowID)
-            var found: [Window] = [], other: [WindowID] = []
+            var found: [Window] = [], other: [WindowID] = [], asks: [WaitingWindow.Seen] = []
             for (el, id) in zip(elements, ids) {
                 guard let id, let subrole = el.string(kAXSubroleAttribute) else { continue }
-                if subrole == kAXStandardWindowSubrole as String { found.append(Window(id: id, element: el, pid: pid, appName: name)) } else { other.append(id) }
+                let modal = (el.value(kAXModalAttribute) as NSNumber?)?.boolValue
+                if subrole == kAXStandardWindowSubrole as String {
+                    found.append(Window(id: id, element: el, pid: pid, appName: name))
+                    // A standard window that blocks its app (a lent app's modal) waits on you too:
+                    // placed like any window, and marked when it is out of sight.
+                    if modal == true { asks.append(.init(id: id, pid: pid, subrole: subrole, modal: true)) }
+                    continue
+                }
+                other.append(id)
+                if WaitingWindow.asks(subrole: subrole, modal: modal) { asks.append(.init(id: id, pid: pid, subrole: subrole, modal: modal)) }
             }
             lock.lock()
             results[i] = found
             listedIDs.formUnion(ids.compactMap { $0 })
             notWindows.formUnion(other)
+            asking.append(contentsOf: asks)
             if ids.contains(nil) { partial.insert(pid) }
             lock.unlock()
         }
-        return (results.flatMap { $0 }, unsure, listedIDs, partial, notWindows)
+        return (results.flatMap { $0 }, unsure, listedIDs, partial, notWindows, asking)
     }
 
     static func alive() -> Set<WindowID> { snapshot(apps: RunningApps.regular).alive }

@@ -155,10 +155,14 @@ It can sit on any side of the screen: choose **Bottom**, **Left**, **Right** or 
 top it sits under the menu bar and waits half a second before opening, so reaching for a menu
 doesn't bring it up. A dock with more tiles than the screen has room for shrinks to fit.
 
-While it's on, the macOS Dock stays out of sight. BaneySpaces saves the Dock's own hiding
-settings first and puts them back exactly when you turn the Workspace Dock off or quit. If
-BaneySpaces ever crashed with it on, open BaneySpaces again (or run the uninstaller) and the
-Dock comes back; by hand, `defaults delete com.apple.dock autohide-delay; killall Dock` gives the Dock its usual delay.
+While it's on, the macOS Dock stays out of sight, and its icons don't bounce: an app asking
+for you would otherwise pop its icon out of the hidden Dock once a minute. The Workspace Dock
+marks the workspace that app's window waits on instead (a dot on its tile; click the tile to go
+there with that window in front). BaneySpaces saves the Dock's own settings first and puts them
+back exactly when you turn the Workspace Dock off or quit. If BaneySpaces ever crashed with it on,
+open BaneySpaces again (or run the uninstaller) and the Dock comes back; by hand,
+`defaults delete com.apple.dock autohide-delay; defaults delete com.apple.dock no-bouncing; killall Dock`
+gives the Dock its usual delay and bouncing.
 
 ### Colors and looks
 
