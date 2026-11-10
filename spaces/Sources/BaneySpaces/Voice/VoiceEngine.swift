@@ -133,7 +133,7 @@ final class VoiceEngine: ObservableObject {
         settings = decode(pc_settings_get(core))
         models = decode(pc_models_list(core)) ?? models
         dictionary = decode(pc_dictionary_get(core))
-        history = decode(pc_history_get(core, 200)) ?? []
+        history = decode(pc_history_get(core, 0)) ?? []
         refreshSilas()
         onStateChange?()
     }
@@ -148,7 +148,7 @@ final class VoiceEngine: ObservableObject {
             }
             if let core { state = decode(pc_status(core)) ?? state }
         case "transcript":
-            if let core { history = decode(pc_history_get(core, 200)) ?? history }
+            if let core { history = decode(pc_history_get(core, 0)) ?? history }
             if let data = json.data(using: .utf8), let t = try? JSONDecoder().decode(Typed.self, from: data) {
                 if let gap = t.micGapMs { Trace.log("voice: key down to first sample \(gap) ms") }
                 if t.typed { notifyIfDue() }
@@ -290,7 +290,7 @@ final class VoiceEngine: ObservableObject {
     func deleteHistory(_ id: String) {
         guard let core else { return }
         _ = id.withCString { pc_history_delete(core, $0) }
-        history = decode(pc_history_get(core, 200)) ?? history
+        history = decode(pc_history_get(core, 0)) ?? history
     }
 
     func clearHistory() {

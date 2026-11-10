@@ -14,6 +14,10 @@ struct VoiceSettingsView: View {
     @State private var from = ""
     @State private var to = ""
     @State private var showHistory = false
+    @State private var historyPages = 1
+    @State private var expanded: Set<String> = []
+    @State private var confirmClear = false
+    @State private var copied: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -100,7 +104,7 @@ struct VoiceSettingsView: View {
             toggle("Remove filler words", s.removeFillers) { v in voice.update { $0.removeFillers = v } }
             toggle("Learn from my edits", s.learnFromEdits) { v in voice.update { $0.learnFromEdits = v } }
             toggle("Sounds", s.sounds) { v in voice.update { $0.sounds = v } }
-            SettingsNote("Text is typed as keystrokes. Polycarp never pastes and never touches your clipboard.")
+            SettingsNote("Text is typed as keystrokes. Polycarp never pastes, and it touches your clipboard only when you click Copy in History.")
         }
     }
 
@@ -183,15 +187,52 @@ struct VoiceSettingsView: View {
             SettingsRow(voice.history.isEmpty ? "Nothing yet" : "\(voice.history.count) saved") {
                 HStack {
                     if !voice.history.isEmpty {
-                        Button(showHistory ? "Hide" : "Show") { showHistory.toggle() }
-                        Button("Clear") { voice.clearHistory() }
+                        Button(showHistory ? "Hide" : "Show") { showHistory.toggle(); historyPages = 1 }
+                        Button("Clear") { confirmClear = true }
+                            .confirmationDialog(VoiceHistoryList.clearTitle(count: voice.history.count), isPresented: $confirmClear) {
+                                Button("Clear History", role: .destructive) { voice.clearHistory(); expanded = [] }
+                                Button("Cancel", role: .cancel) {}
+                            } message: { Text(VoiceHistoryList.clearMessage) }
                     }
                 }
             }
             if showHistory {
-                ForEach(voice.history.prefix(30)) { h in
-                    row(h.shown) { voice.deleteHistory(h.id) }
+                let shown = VoiceHistoryList.shown(total: voice.history.count, pages: historyPages)
+                LazyVStack(spacing: 0) {
+                    ForEach(voice.history.prefix(shown)) { h in historyRow(h) }
                 }
+                if let more = VoiceHistoryList.more(total: voice.history.count, shown: shown) {
+                    SettingsBlock { Button(more) { historyPages += 1 } }
+                }
+            }
+        }
+    }
+
+    /// One dictation: selectable text, two lines until Show all, Copy (the pasteboard is touched only by this click), and
+    /// Remove. Both buttons name the dictation for VoiceOver.
+    private func historyRow(_ h: VoiceHistoryItem) -> some View {
+        let open = expanded.contains(h.id)
+        return SettingsBlock {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(h.shown).font(Chrome.font(12)).lineLimit(open ? nil : 2).fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                    if VoiceHistoryList.isLong(h.shown) {
+                        Button(open ? "Show less" : "Show all") { if open { expanded.remove(h.id) } else { expanded.insert(h.id) } }
+                            .buttonStyle(.link).font(Chrome.font(11))
+                    }
+                }
+                Spacer()
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(h.shown, forType: .string)
+                    copied = h.id
+                } label: { Image(systemName: copied == h.id ? "checkmark" : "doc.on.doc") }
+                    .buttonStyle(.plain).foregroundStyle(Chrome.muted)
+                    .help("Copy").accessibilityLabel(VoiceHistoryList.copyLabel(h.shown))
+                Button { voice.deleteHistory(h.id) } label: { Image(systemName: "xmark.circle") }
+                    .buttonStyle(.plain).foregroundStyle(Chrome.muted)
+                    .help("Remove").accessibilityLabel(VoiceHistoryList.removeLabel(h.shown))
             }
         }
     }
@@ -202,7 +243,7 @@ struct VoiceSettingsView: View {
                 Text(text).font(Chrome.font(12)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Button(action: remove) { Image(systemName: "xmark.circle") }.buttonStyle(.plain).foregroundStyle(Chrome.muted)
-                    .accessibilityLabel("Remove")
+                    .accessibilityLabel(VoiceHistoryList.removeLabel(text))
             }
         }
     }
