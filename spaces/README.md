@@ -470,8 +470,8 @@ You, not an agent, lend an app from your workspaces. `baneyspaces agent lend Exc
 (Don't Lend is the default button) and only a real click on **Lend** lends it: a click posted by a program, or an
 accessibility press, is refused, and running the command (or an agent running it) lends nothing by itself. Nothing sent
 to the BaneySpaces socket lends. Run the command again for an app that is lent and the sheet offers **Take Back**. A lend names
-that process and its windows as they are then, is refused while you use the app (`in_use`: in front, or used in the last 30
-seconds), ends after 30 minutes (up to 8 hours) or, if you gave `--session`, when that session ends, and is listed in
+that process and its windows as they are then, can be asked for while you use the app (the sheet is yours to answer), lets agents
+read it at any time while actions on it wait until you have been out of it for 5 seconds (`in_use` if their `wait` runs out), ends after 30 minutes (up to 8 hours) or, if you gave `--session`, when that session ends, and is listed in
 `state.json` and `baneyspaces doctor`. Agents can't lend: the MCP server has no such tool and an agent's `lend` answers
 `needs_lend`. `agent move` moves only windows of apps BaneySpaces started for an agent; send your own window with its
 workspace key. `agent open` starts only apps verified to run a separate copy that restores nothing of yours (TextEdit and

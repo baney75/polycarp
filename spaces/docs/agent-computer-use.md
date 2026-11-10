@@ -93,9 +93,40 @@ Lending is the only way an agent touches a window you were already using, and on
 - A lend names one agent (the requester shown in the confirmation) and the specific windows you
   picked, not the whole app. Windows the app opens later aren't included. Another agent gets
   `needs_lend`.
-- It refuses agent actions while the window is in front or you used it in the last 30 s (`in_use`),
-  shows a lend badge, and returns when that agent's session ends (its MCP connection closes or its
-  `agent run` exits) or after 30 minutes.
+- While you are using the app, reads of a lent window work and actions on it wait (see "While Donovan uses an
+  app" below; a lent window is never on the agent workspace, so they always wait). It shows a lend badge, and returns
+  when that agent's session ends (its MCP connection closes or its `agent run` exits) or after 30 minutes.
+- Asking to lend an app you are using is not refused: the sheet is your decision.
+
+## While Donovan uses an app
+
+Decided 2026-11-10 (Donovan reported an agent telling him to "leave Word idle for 30 seconds"): agents work in the
+background without him babysitting them. An app is in use while it is in front, and for 5 s (`UserUse.quiet`) after it
+leaves the front.
+
+- **Reads never wait.** `windows`, `snapshot`, `find`, `get` and `shot` ignore in use entirely; every other scope rule
+  (agent workspace, lent, Full Access, Polycarp's own windows, unmanaged windows, the remote cap) is unchanged.
+  `windows` lists such a window with `in_use: true` and a short `in_use_note`.
+- **Actions wait on their own.** Every action (`click`, `type`, `set-value`, `press`, `click-at`, `drag`, `scroll`,
+  `select`, `toggle`, `open`) that meets an app in use waits on the caller's own thread, never the main thread or the
+  app's queue, looking again every 250 ms with Read Only and the whole scope decision checked at each look, so a
+  narrowing during the wait refuses at once. It goes ahead once the app is free, through the same check right before
+  delivery (which also refuses if Donovan came back to the app in between). The bound is `wait` seconds on each action,
+  0 to 120, 20 by default; 0 answers at once. On timeout the answer is `in_use`, retry `safe`, with the message
+  "<App> is in front" or "<App> left the front N s ago; free in M s", and a suggestion telling the agent to retry later
+  or work on another window, and not to ask Donovan to switch away unless he asked for the result right now. Read
+  Only refuses before any wait.
+- **Same app, other window.** `click` by ref, `set-value`, `select`, `toggle`, `scroll` and `type` go ahead while the app
+  is in use when the window is on the agent workspace and is neither the app's focused window nor its main window (both
+  read from accessibility when the decision is made and again right before delivery; one that can't be read counts as
+  focused). These verbs use only the engine's strict Headless accessibility path, which needs no keyboard focus and posts
+  no events; `type` there sets the element's selected text through accessibility and never posts keys (agent-desktop
+  5261b52, `crates/macos/src/actions/type_text.rs`). `press`, `click-at` and `drag` post events, so they always wait. A
+  lent or Full Access window on Donovan's workspaces is not on the agent workspace, so its actions always wait. The rule
+  is `InUseRule.decide` in the core.
+- Nothing else widens: no activation, no raise, no global events, no Open or Save panels, remote callers at Default at
+  most. If Donovan brings the app forward while events are being posted, the rest are not sent (`user_activated`), as
+  before.
 
 ## Access modes
 
@@ -105,11 +136,11 @@ Donovan picks how much agents may use in Settings > Agents (Donovan, 2026-11-04)
 | --- | --- |
 | Read Only | List, `snapshot`, `find`, `get` and `shot` the windows Default allows. Every verb that changes something (`click`, `type`, `set-value`, `press`, `click-at`, `drag`, `scroll`, `select`, `toggle`, `open`) and the session ops `agent open`, `run`, `move`, `on` and `off` answer `permission_denied` (retry never), checked again right before each action is delivered. |
 | Default | Everything above, on the agent workspace, in apps BaneySpaces starts from its short list, and in lent windows. |
-| Full Access | Read and act on every window BaneySpaces places, on every workspace (scope `full_access`), and `agent open` any app (browsers included) and any existing file or folder. An app off the list that isn't running starts on the agent workspace; one already running gets a new window there instead of a second copy, refused with `in_use` while Donovan is using it. |
+| Full Access | Read and act on every window BaneySpaces places, on every workspace (scope `full_access`), and `agent open` any app (browsers included) and any existing file or folder. An app off the list that isn't running starts on the agent workspace; one already running gets a new window there instead of a second copy, waiting while Donovan is using it. |
 
 Every mode keeps the background-only rules below: no activation, no raised window, no Space change, no global input,
-nothing while Donovan is using the app (`in_use`, 30 s), no Open or Save panel (or a window holding one), and no
-window BaneySpaces doesn't place, and never BaneySpaces' own windows. `agent open` takes no URL argument in any mode
+actions wait while Donovan is using the app (see "While Donovan uses an app"), no Open or Save panel (or a window
+holding one), and no window BaneySpaces doesn't place, and never BaneySpaces' own windows. `agent open` takes no URL argument in any mode
 (that waits for agent browser profiles).
 
 - What Full Access let in goes out with it: a process `agent open` started off the list, or one of Donovan's apps it

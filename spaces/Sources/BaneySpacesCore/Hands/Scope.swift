@@ -119,40 +119,21 @@ public enum ScopeDecision: Equatable, Sendable {
 }
 
 /// The one rule that keeps agents off the user's screen: an agent may read or act only on a window
-/// on the agent workspace, or on a window that is lent right now and that the user isn't using.
-/// Under Full Access (`mode`, Donovan's to set) every window BaneySpaces places is open too, but never one
-/// he is using. A window BaneySpaces doesn't place (a menu, a panel) is refused in every mode.
+/// on the agent workspace, or on a window that is lent right now. Under Full Access (`mode`, Donovan's to set)
+/// every window BaneySpaces places is open too. A window BaneySpaces doesn't place (a menu, a panel) is refused in
+/// every mode. Whether he is using the app is not part of scope: reads never look at it, and actions wait for it
+/// (`InUseRule`, `InUseWait`).
 public enum ScopeGuard {
-    public static func check(_ w: HandsWindow, agentWorkspace: Int?, lends: LendBook, now: Date, inUse: Bool = false,
+    public static func check(_ w: HandsWindow, agentWorkspace: Int?, lends: LendBook, now: Date,
                              mode: AgentAccessMode = .standard, selfPid: Int32? = nil) -> ScopeDecision {
         // BaneySpaces' own windows (Settings, the consent sheets) are never an agent's, in any mode.
         if let me = selfPid, w.pid == me {
             return .denied(HandsError(.permissionDenied, "window \(w.id) is Polycarp's own",
                                       suggestion: "Agents never use Polycarp's windows; its settings are Donovan's.", retry: .never))
         }
-        if let agent = agentWorkspace, w.workspace == agent {
-            // His hands are on this app (in front, or used in the last 30 s): the agent waits, even here.
-            if inUse {
-                return .denied(HandsError(.inUse, "\(w.app) is in front or was used in the last 30 s",
-                                          suggestion: "Wait until Donovan has been away from \(w.app) for 30 seconds.", retry: .safe))
-            }
-            return .onAgentWorkspace
-        }
-        if lends.isLent(w, now: now) {
-            if inUse {
-                return .denied(HandsError(.inUse, "\(w.app) is lent, but you are using it right now",
-                                          suggestion: "Wait until Donovan has been away from \(w.app) for 30 seconds, or work on the agent workspace with `polycarp-spaces agent open \(w.app)`.",
-                                          retry: .safe))
-            }
-            return .lent
-        }
-        if mode == .full, w.workspace != nil {
-            if inUse {
-                return .denied(HandsError(.inUse, "\(w.app) is in front or was used in the last 30 s",
-                                          suggestion: "Wait until Donovan has been away from \(w.app) for 30 seconds.", retry: .safe))
-            }
-            return .fullAccess
-        }
+        if let agent = agentWorkspace, w.workspace == agent { return .onAgentWorkspace }
+        if lends.isLent(w, now: now) { return .lent }
+        if mode == .full, w.workspace != nil { return .fullAccess }
         guard agentWorkspace != nil else {
             return .denied(HandsError(.agentWorkspaceOff,
                                       "there is no agent workspace, and \(w.app) isn't lent",
@@ -165,10 +146,10 @@ public enum ScopeGuard {
     }
 
     /// The windows an agent may use now.
-    public static func visible(_ windows: [HandsWindow], agentWorkspace: Int?, lends: LendBook, now: Date, inUse: (Int32) -> Bool = { _ in false },
+    public static func visible(_ windows: [HandsWindow], agentWorkspace: Int?, lends: LendBook, now: Date,
                                mode: AgentAccessMode = .standard, selfPid: Int32? = nil) -> [(window: HandsWindow, scope: ScopeDecision)] {
         windows.compactMap { w in
-            let d = check(w, agentWorkspace: agentWorkspace, lends: lends, now: now, inUse: inUse(w.pid), mode: mode, selfPid: selfPid)
+            let d = check(w, agentWorkspace: agentWorkspace, lends: lends, now: now, mode: mode, selfPid: selfPid)
             return d.allowed ? (w, d) : nil
         }
     }

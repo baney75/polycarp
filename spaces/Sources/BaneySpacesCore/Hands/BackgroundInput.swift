@@ -267,7 +267,8 @@ public enum BackgroundRefusal {
                    suggestion: "Run `polycarp-spaces agent windows` and take a new snapshot.", retry: .afterSnapshot)
     }
     public static func inUse(_ app: String) -> HandsError {
-        HandsError(.inUse, "\(app) is in front: Donovan is using it", suggestion: "Wait until he has been away from \(app) for 30 seconds.", retry: .safe)
+        HandsError(.inUse, "\(app) is in front: Donovan is using it",
+                   suggestion: "Retry later or work on another window meanwhile; reads work now. Do not ask Donovan to switch away from \(app) unless he asked for this result right now.", retry: .safe)
     }
     public static func notVisibleToInput(_ app: String, _ condition: WindowCondition) -> HandsError {
         HandsError(.notSupported, "\(app)'s window is \(condition == .minimized ? "minimized" : "hidden"); a process-addressed key or pointer event cannot be proven to reach it",
@@ -330,7 +331,7 @@ public enum BackgroundRefusal {
     }
     public static func userActivated(_ app: String) -> HandsError {
         HandsError(.inUse, "Donovan brought \(app) forward while events were being posted to it; the rest were not sent",
-                   suggestion: "Read the element back before doing anything else: part of the input may have landed. Wait until he has been away from \(app) for 30 seconds.", retry: .never)
+                   suggestion: "Read the element back before doing anything else: part of the input may have landed. Then retry later or work on another window; do not ask Donovan to switch away from \(app) unless he asked for this result right now.", retry: .never)
     }
     /// Some steps of a multi-key press were proved and one was not; the steps after it were not sent.
     public static func partial(landed: Int, of total: Int, basis: String) -> HandsError {

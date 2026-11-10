@@ -581,10 +581,11 @@ final class SessionController {
             // window is claimed for the agent workspace and made from behind; the process stays Donovan's.
             if !separate, let running = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundle && before.contains($0.processIdentifier) }) {
                 let pid = running.processIdentifier
-                // His hands are on it: nothing is claimed, opened or pressed.
+                // His hands are on it: nothing is claimed, opened or pressed. The hands' `open` waits for this before it asks
+                // (`HandsRouter.open`); this op runs on the main thread, so it never waits itself.
                 if UserActivity.shared.inUse(pid) {
-                    return .init(ok: false, error: "\(appName) is in front or was used in the last 30 s",
-                                 info: ["code": HandsErrorCode.inUse.rawValue, "suggestion": "Wait until Donovan has been away from \(appName) for 30 seconds."])
+                    let e = InUseWait.refusal(app: appName, state: UserActivity.shared.state(pid), waited: nil)
+                    return .init(ok: false, error: e.message, info: ["code": e.code.rawValue, "suggestion": e.suggestion])
                 }
                 AgentAccess.shared.grant(pid)
                 // Only as long as the claim (3 s for a running app): an activation the New Window press causes isn't followed.

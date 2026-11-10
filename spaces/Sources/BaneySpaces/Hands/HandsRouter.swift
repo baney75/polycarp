@@ -98,7 +98,8 @@ final class HandsRouter {
         // Under Full Access Donovan's documents are open to agents, so a window refused for showing one is usable again.
         if bad, mode != .full { return .denied(HandsError(.needsSandbox, "window \(w.id) showed a document of Donovan's", suggestion: "Open your own file from the handoff folder.", retry: .never)) }
         let book = lends.current()
-        let d = ScopeGuard.check(w, agentWorkspace: agent, lends: book, now: Date(), inUse: UserActivity.shared.inUse(w.pid), mode: mode, selfPid: getpid())
+        // Whether Donovan is using the app is not scope: reads never look at it, and actions wait for it (`awaitUse`).
+        let d = ScopeGuard.check(w, agentWorkspace: agent, lends: book, now: Date(), mode: mode, selfPid: getpid())
         // What Full Access let onto the agent workspace goes out with it. A window of that process Donovan lends later still counts as lent.
         if d == .onAgentWorkspace, mode != .full, AgentAccess.shared.grantedUnderFull(w.pid) {
             if book.isLent(w, now: Date()) { return .lent }
@@ -115,10 +116,53 @@ final class HandsRouter {
         { [self] in gate(w) ?? ref.flatMap { refProblem($0) } }
     }
 
-    /// The same for a call that changes something: Read Only, set after the request was let in, stops it here too.
-    func actingCheck(_ w: HandsWindow, ref: String? = nil) -> HandsEngine.Check {
+    /// The same for a call that changes something: Read Only, set after the request was let in, stops it here too, and so
+    /// does Donovan coming back to the app after the wait found it free (the in-use rule, read again at this moment).
+    func actingCheck(_ w: HandsWindow, ref: String? = nil, verb: String, delivery: InUseDelivery) -> HandsEngine.Check {
         let scope = check(w, ref: ref)
-        return { [self] in AgentAccessGate.actingRefusal(mode: access) ?? scope() }
+        return { [self] in AgentAccessGate.actingRefusal(mode: access) ?? scope() ?? inUseProblem(w, verb: verb, delivery: delivery) }
+    }
+
+    // MARK: in use
+
+    /// How Donovan's use of the app stands for this action, from facts read now. The app's focused and main windows are
+    /// read from accessibility only when they can change the answer.
+    func inUseVerdict(_ w: HandsWindow, agent: Int?, verb: String, delivery: InUseDelivery) -> (state: InUseState, verdict: InUseRule.Verdict) {
+        let state = UserActivity.shared.state(w.pid)
+        guard state.busy else { return (state, .proceed) }
+        let onAgentWorkspace = agent != nil && w.workspace == agent
+        var windows: (focused: Bool?, main: Bool?) = (nil, nil)
+        if onAgentWorkspace, InUseRule.semantic.contains(verb), delivery == .headlessAX { windows = BackgroundAX.isFocusedOrMain(w.id, pid: w.pid) }
+        return (state, InUseRule.decide(verb: verb, state: state, onAgentWorkspace: onAgentWorkspace,
+                                        isFocusedWindow: windows.focused, isMainWindow: windows.main, delivery: delivery))
+    }
+
+    /// The in-use check at the moment of delivery: nil to go ahead.
+    private func inUseProblem(_ w: HandsWindow, verb: String, delivery: InUseDelivery) -> HandsError? {
+        let (live, agent) = onMain { (host.live(w.id), host.agentWorkspace()) }
+        let (state, verdict) = inUseVerdict(live ?? w, agent: agent, verb: verb, delivery: delivery)
+        return verdict == .wait ? InUseWait.refusal(app: w.app, state: state, waited: nil) : nil
+    }
+
+    /// Before an action is dispatched: while Donovan is using the app, wait on this thread (never the main one, and never
+    /// on the process queue, so other callers and other apps go on) until it is free or `wait` seconds pass. Every look
+    /// checks Read Only and the whole scope decision again, so a narrowing during the wait refuses at once.
+    func awaitUse(_ w: HandsWindow, verb: String, delivery: InUseDelivery, wait: Int?) -> HandsError? {
+        let bound = Thread.isMainThread ? 0 : InUseRule.bound(wait)
+        let outcome = InUseWait.run(bound: bound, now: Date.init, sleep: { Thread.sleep(forTimeInterval: $0) }) { [self] in
+            let (live, agent) = onMain { (host.live(w.id), host.agentWorkspace()) }
+            guard let live else { return .refused(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows` and take a new snapshot.", retry: .afterSnapshot)) }
+            guard live.pid == w.pid else { return .refused(HandsError(.staleRef, "window \(w.id) belongs to a different process now", suggestion: "Take a new snapshot.", retry: .afterSnapshot)) }
+            let (state, verdict) = inUseVerdict(live, agent: agent, verb: verb, delivery: delivery)
+            return InUseWait.step(mode: access, scope: decide(live, agent), state: state, verdict: verdict)
+        }
+        switch outcome {
+        case .ready(let waited):
+            if waited >= InUseRule.poll { Trace.log("hands: \(verb) on \(w.app) waited \(Int(waited.rounded())) s for it to be free") }
+            return nil
+        case .refused(let e): return e
+        case .timedOut(let state, let waited): return InUseWait.refusal(app: w.app, state: state, waited: waited)
+        }
     }
 
     private func refmapURL(_ sid: String) -> URL { HandsEngine.stateRoot.appendingPathComponent("snapshots/\(sid)/refmap.json") }
@@ -169,11 +213,6 @@ final class HandsRouter {
         Self.refusedLock.lock(); Self.refused.insert(id); Self.refusedLock.unlock()
     }
 
-    private func windowJSON(_ w: HandsWindow, _ scope: ScopeDecision) -> JSONValue {
-        .object(["id": .int(Int(w.id)), "pid": .int(Int(w.pid)), "app": .string(w.app), "title": .string(w.title),
-                 "workspace": w.workspace.map(JSONValue.int) ?? .null, "scope": .string(scope.reason)])
-    }
-
     func targetJSON(_ w: HandsWindow, _ scope: ScopeDecision) -> JSONValue {
         .object(["pid": .int(Int(w.pid)), "window": .int(Int(w.id)), "app": .string(w.app), "scope": .string(scope.reason)])
     }
@@ -193,7 +232,8 @@ final class HandsRouter {
             "windows": .array(usable.map { u in
                 var w = u.window
                 w.title = titles[w.id] ?? ""
-                return windowJSON(w, u.scope)
+                // A window of an app Donovan is using is listed like any other, marked so the agent knows an action waits.
+                return HandsWindowList.entry(w, scope: u.scope, inUse: UserActivity.shared.state(w.pid))
             }),
         ]))
     }
@@ -369,6 +409,9 @@ final class HandsRouter {
         switch resolve(ref) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope)):
+            // Before the mark: an activation while it waits is Donovan's, never taken for the agent's.
+            // Every verb here goes through the engine's strict Headless accessibility path (`HandsEngine.act`).
+            if let e = awaitUse(w, verb: name, delivery: .headlessAX, wait: req.int("wait")) { return .failure(e) }
             // The mark covers the whole action, queue wait and engine call included, and a short tail after it.
             let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
             defer { AgentActivity.shared.end(token) }
@@ -393,7 +436,7 @@ final class HandsRouter {
                 }
             }
             // The scope and ref checks run again on the process queue, at the moment the call executes.
-            let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref))
+            let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX))
             switch reply {
             case .failed(let e): return .failure(e)
             case .ok(let engine):
@@ -469,12 +512,34 @@ final class HandsRouter {
         case .failure(let e): return .failure(e)
         case .success(let f): files = f
         }
+        // Full Access, an app off the list that is already running: its running copy is asked for a new window, so the
+        // session's `open` refuses it while Donovan is using it. Wait here, off the main thread, until it is free.
+        if access == .full, !AgentAppPolicy.needsSeparateInstance(bundle: bundle),
+           let running = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundle }) {
+            let pid = running.processIdentifier
+            let bound = Thread.isMainThread ? 0 : InUseRule.bound(req.int("wait"))
+            let outcome = InUseWait.run(bound: bound, now: Date.init, sleep: { Thread.sleep(forTimeInterval: $0) }) { [self] in
+                if let e = AgentAccessGate.actingRefusal(mode: access) { return .refused(e) }
+                // Narrowed from Full Access: the session's gate decides, and no running copy is claimed then.
+                guard access == .full else { return .ready }
+                let state = UserActivity.shared.state(pid)
+                return state.busy ? .busy(state) : .ready
+            }
+            switch outcome {
+            case .ready: break
+            case .refused(let e): return .failure(e)
+            case .timedOut(let state, let waited): return .failure(InUseWait.refusal(app: display, state: state, waited: waited))
+            }
+        }
         let pidsBefore = Set(NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundle }.map(\.processIdentifier))
         let known = Set(listWindows(fresh: true).windows.map(\.id))
         let reply = onMain { host.open([app] + files) }
         guard reply.ok else {
             let msg = reply.error ?? "couldn't open it"
             if msg.contains("agent workspace is off") { return .failure(HandsError(.agentWorkspaceOff, msg, suggestion: "Ask Donovan to run `polycarp-spaces agent on`.", retry: .never)) }
+            if reply.info?["code"] == HandsErrorCode.inUse.rawValue {
+                return .failure(HandsError(.inUse, msg, suggestion: reply.info?["suggestion"] ?? InUseWait.suggestion(app: display, waited: nil), retry: .safe))
+            }
             if msg.hasPrefix("no app called") { return .failure(HandsError(.appNotFound, msg, suggestion: "Use the app's name as in /Applications, or its bundle id.", retry: .safe)) }
             return .failure(HandsError(.actionFailed, msg, suggestion: "Try a different app.", retry: .never))
         }
@@ -530,10 +595,8 @@ final class HandsRouter {
         guard let seconds = LendBook.duration(duration) else {
             return .failure(HandsError(.badArguments, "couldn't read the time \(duration ?? "")", suggestion: "Use 10m, 2h or 90s.", retry: .safe))
         }
-        // Checked before the sheet: the sheet itself takes the front, so afterwards every app looks just left.
-        if UserActivity.shared.inUse(app.processIdentifier) {
-            return .failure(HandsError(.inUse, "\(name) is in front or was used in the last 30 s", suggestion: "Switch away from it, wait 30 seconds, and lend again.", retry: .safe))
-        }
+        // Whether Donovan is using the app doesn't stop the request: the sheet is his decision. After a lend, actions on it
+        // wait while he uses it (`awaitUse`).
         let ids = host.freshWindows().filter { $0.pid == app.processIdentifier }.map(\.id)
         guard !ids.isEmpty else {
             return .failure(HandsError(.windowNotFound, "\(name) has no window Polycarp tracks", suggestion: "Open a window in it first.", retry: .safe))
@@ -543,7 +606,7 @@ final class HandsRouter {
         }
         let entry = lends.lend(app: name, bundle: app.bundleIdentifier ?? "", pid: app.processIdentifier, windows: ids, session: session, for: seconds)
         let ending = session.isEmpty ? "" : " or session \(session) ends"
-        let note = "agents may use these windows until the time runs out" + ending + "; they are refused while the app is in use"
+        let note = "agents may use these windows until the time runs out" + ending + "; reads work at any time, and an action waits while you are using the app"
         return .success(.object(["lent": .string(name), "pid": .int(Int(app.processIdentifier)), "windows": .array(ids.map { .int(Int($0)) }),
                                  "until": .int(Int((entry?.until ?? Date()).timeIntervalSince1970)),
                                  "note": .string(note)]))

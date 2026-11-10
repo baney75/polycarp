@@ -76,10 +76,13 @@ final class UserActivity {
         lock.lock(); use.activated(pid, now: Date(), byAgent: byAgent); lock.unlock()
     }
 
-    /// In front now, or in front within the last 30 s.
-    func inUse(_ pid: pid_t) -> Bool {
+    /// In front now, or left the front less than `UserUse.quiet` seconds ago.
+    func inUse(_ pid: pid_t) -> Bool { state(pid).busy }
+
+    /// The same, with how long ago it left and how soon it is free.
+    func state(_ pid: pid_t) -> InUseState {
         let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
         lock.lock(); defer { lock.unlock() }
-        return use.inUse(pid, frontNow: front, now: Date())
+        return use.state(pid, frontNow: front, now: Date())
     }
 }

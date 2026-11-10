@@ -21,7 +21,8 @@ public enum HandsErrorCode: String, Codable, CaseIterable, Sendable {
     /// The app exists once per user and holds his data (Safari, Notes, Mail…): agent work on it belongs in
     /// the sandbox (phase 2), never on his Mac.
     case needsSandbox = "needs_sandbox"
-    /// A lent app the user is using right now (in front, or used in the last 30 s).
+    /// An action met an app the user is using (in front, or left the front less than `UserUse.quiet` seconds ago) and the
+    /// wait for it ran out. Reads never get it.
     case inUse = "in_use"
     /// The ref isn't known: from another session, or never printed by a snapshot.
     case unknownRef = "unknown_ref"

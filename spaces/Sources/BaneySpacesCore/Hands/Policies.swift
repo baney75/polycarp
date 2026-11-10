@@ -146,9 +146,10 @@ public enum ValueCheck {
     }
 }
 
-/// When the user last used each app, so a lent app he is using is left alone.
+/// When the user last used each app. Reads never look at it; an action on an app he is using waits (`InUseWait`).
 public struct UserUse: Equatable, Sendable {
-    public static let quiet: TimeInterval = 30
+    /// How long an app counts as in use after it leaves the front.
+    public static let quiet: TimeInterval = 5
     private var leftAt: [Int32: Date] = [:]
     private var front: Int32?
 
@@ -163,11 +164,17 @@ public struct UserUse: Equatable, Sendable {
         if !byAgent { leftAt[pid] = nil }
     }
 
-    /// Whether `pid` is in front (`frontNow`, read from the system), or was within the last 30 s.
-    public func inUse(_ pid: Int32, frontNow: Int32?, now: Date) -> Bool {
-        if frontNow == pid { return true }
-        if let t = leftAt[pid] { return now.timeIntervalSince(t) < Self.quiet }
-        return false
+    /// Whether `pid` is in front (`frontNow`, read from the system), or left it less than `quiet` seconds ago.
+    public func inUse(_ pid: Int32, frontNow: Int32?, now: Date) -> Bool { state(pid, frontNow: frontNow, now: now).busy }
+
+    /// The same, with how long ago it left and how soon it is free.
+    public func state(_ pid: Int32, frontNow: Int32?, now: Date) -> InUseState {
+        if frontNow == pid { return .front }
+        if let t = leftAt[pid] {
+            let ago = now.timeIntervalSince(t)
+            if ago < Self.quiet { return .recent(leftAgo: max(0, ago), freeIn: Self.quiet - max(0, ago)) }
+        }
+        return .free
     }
 }
 
