@@ -178,10 +178,20 @@ connector, see [Remote MCP and tunnels](#remote-mcp-and-tunnels).
 | `tabs_show` | Bring a tab in front of you, when you need to sign in or see it |
 | `ask_user` | Ask you 1 to 4 multiple-choice questions in the side panel and wait for your answer (you can always type your own). The toolbar icon shows a badge while one waits; it gives up after 5 minutes, or sooner if your harness's tool timeout is shorter (Claude Code: `MCP_TOOL_TIMEOUT`, in ms; Codex: `tool_timeout_sec` on the server). Giving up takes the question off the panel |
 | `library_add`, `library_search`, `library_cite` | Save verified sources and cite them (see [Library](#library)) |
+| `computer_status`, `computer_*` | On a Mac with Polycarp's app: native apps on the agent workspace, in the background, never taking focus (below) |
 
 Every tool's description documents its parameters and includes an example. `actions`
 batches up to 40 input steps (keys, clicks, drags, typing) in one call, which is what
 canvas apps need.
+
+**Computer use on this Mac.** When Polycarp's Mac app is installed, the same stdio server also offers
+`computer_windows`, `computer_snapshot`, `computer_click`, `computer_shot`, `computer_open` and the rest of
+the helper's tools, with the helper's own descriptions: it runs `polycarp-spaces mcp` (without
+`--connector`) the first time the agent lists its tools, so one MCP entry gives an agent the browser and the
+computer. They act on the agent workspace and apps you lend, or more if you chose Full Access in Polycarp
+Settings > Agents, and never take focus. Browser tools are for web pages; computer tools are for native apps.
+A helper that is missing, slow (over 2 seconds) or stopped never holds up the browser tools, and
+`computer_status` says why the computer tools aren't there. On Linux and Windows they are absent.
 
 ## Sessions and tab groups
 

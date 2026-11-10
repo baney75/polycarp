@@ -160,6 +160,12 @@ short list, windows you lent. No agent drives an Open or Save panel on any windo
 document from outside the handoff folder; a lent app is lent with what it shows. `serve` uses only a helper that answers as
 `polycarp-connector`, and that helper asks the app on every call whether it caps connectors, so an old part never runs a connector uncapped.
 
+An agent on this Mac doesn't need a second MCP entry for the hands. The browser's local stdio server (`polycarp browser mcp`)
+runs `baneyspaces mcp` without `--connector` the first time its tools are listed and offers every tool that helper lists as
+`computer_<name>`, with the helper's own descriptions and schemas, so the two can't drift. Being local, it gets the access mode
+Donovan set, Full Access included, exactly as a `baneyspaces mcp` registered by hand would. `lend` and `return` are never offered.
+A missing, slow (over 2 seconds) or stopped helper leaves the browser tools as they are, and `computer_status` says why.
+
 Targets are a ref, a window id, or a pid. An app name resolves only when exactly one matching process
 has windows in scope; otherwise the command fails with `ambiguous` and lists the candidates.
 
