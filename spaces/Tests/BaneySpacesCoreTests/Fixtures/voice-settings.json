@@ -1,0 +1,21 @@
+{
+  "autoUpdate": true,
+  "hotkey": "Dictation",
+  "hotkeyFallback": "CmdRight",
+  "hotkeyVersion": 2,
+  "language": "en",
+  "launchAtLogin": true,
+  "learnFromEdits": true,
+  "microphone": null,
+  "model": "parakeet-v3",
+  "modelSource": "default",
+  "newlineAsShiftEnter": true,
+  "onboarded": false,
+  "removeFillers": true,
+  "showOverlay": true,
+  "sounds": true,
+  "tapToToggle": true,
+  "trailingSpace": true,
+  "typingSpeed": "fast",
+  "updateChannel": "stable"
+}
