@@ -27,8 +27,8 @@ export const SIWC = {
 	discoveryUrl: "https://auth.openai.com/.well-known/openid-configuration",
 	/** First-time registration entrypoint; never saved and never used for a token exchange. */
 	dynamicClient: "dynamic_agent_client",
-	/** Our app's actual name, the same in every installation. */
-	agentName: "Tabkyra", // product-name allowlist: the name registered with the provider
+	/** Our app's actual name, the same in every installation. Sent only on first registration, so a host signed in before the rename keeps its saved client and its old name. */
+	agentName: "Polycarp",
 	scope: "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct",
 	/** The scope that allows ChatGPT plan usage; a valid ID token alone does not. */
 	planScope: "chatgpt.tokens.use.direct",

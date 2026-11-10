@@ -149,7 +149,7 @@ test("the only OAuth client ids are Polycarp's own: SIWC registers dynamically, 
 	const constants = readFileSync(join(repo, "src", "subscriptions", "constants.ts"), "utf8");
 	assert.match(constants, /dynamicClient: "dynamic_agent_client"/);
 	assert.match(constants, /clientId: "Ov23li1qDiu9lRXbvcFh"/);
-	assert.match(constants, /agentName: "Tabkyra"/);
+	assert.match(constants, /agentName: "Polycarp"/);
 	// No client secret for either: the SIWC open-source flow and GitHub's device flow need none.
 	// serve's authorization server (D30) issues and checks secrets for clients that register with
 	// it; it never sends one. It is exempt only while it makes no outbound request at all.
