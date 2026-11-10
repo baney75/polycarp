@@ -45,6 +45,11 @@ BaneySpaces workspace.
 
 ## Drive an app: snapshot, act on a ref, check
 
+Check for a programmatic route before you click. If the app has a scripting interface (AppleScript or JXA through
+`osascript`, a Shortcuts action through `shortcuts run`), a command-line tool, a file you can read or write, or a
+D-Bus service on Linux, use that: it is faster, works on many items at once, and is easier to check. Click through
+the app only when no such route does the job, or the user wants to watch it happen.
+
 `baneyspaces agent …` (or the MCP tools from `baneyspaces mcp`, same names) reads and acts on desktop apps
 from behind. It never raises a window, moves the pointer, types into the front app or switches Donovan's
 workspace. Every command prints one JSON envelope: `{"ok":true,"data":{…}}` or

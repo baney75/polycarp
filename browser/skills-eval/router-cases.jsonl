@@ -644,3 +644,20 @@
 {"task": "open the pdf in this tab and give me the main findings with page numbers", "skill": "pdf"}
 {"task": "what's in this user manual pdf about resetting the device", "skill": "pdf"}
 {"task": "read the whole PDF and quote the conclusion", "skill": "pdf"}
+{"task": "Delete all my saved posts on this forum, there are hundreds", "skill": "bulk-actions"}
+{"task": "Archive every one of my old repositories on GitHub", "skill": "bulk-actions"}
+{"task": "Mark all 300 notifications as read on this site", "skill": "bulk-actions"}
+{"task": "Remove every item from my Amazon wishlist", "skill": "bulk-actions"}
+{"task": "Bulk delete the 500 old drafts in my blog dashboard", "skill": "bulk-actions"}
+{"task": "Clear out all my old comments on Reddit", "skill": "bulk-actions"}
+{"task": "Move all my starred items into the archive folder, there are dozens", "skill": "bulk-actions"}
+{"task": "Delete every expired listing in my seller dashboard", "skill": "bulk-actions"}
+{"task": "Remove all the songs from this playlist at once", "skill": "bulk-actions"}
+{"task": "Hide all two hundred of these old orders from my order history", "skill": "bulk-actions"}
+{"task": "Go through the whole list and archive each one, it is too long to click", "skill": "bulk-actions"}
+{"task": "Reject all the pending friend requests in bulk", "skill": "bulk-actions"}
+{"task": "Update the status to done on every ticket in this board", "skill": "bulk-actions"}
+{"task": "Unfollow every account I follow that has not posted in a year", "skill": "bulk-actions"}
+{"task": "Delete this one post for me", "skill": "none"}
+{"task": "Write a bulk email to my customers announcing the sale", "skill": "writing"}
+{"task": "Unsubscribe me from all of these newsletters", "skill": "email-organization"}

@@ -161,6 +161,9 @@ function harnessName(): string {
 	return "mcp";
 }
 
+/** Where an agent doing one action on many items should look; skill_match rarely sees "all" or "every". */
+const BULK_ACTIONS_INSTRUCTION = 'For one action on many items, skill_read {"name":"bulk-actions"}.';
+
 /** Tool names an instruction sentence mentions; used to drop sentences about tools a session lacks. */
 const INSTRUCTION_TOOLS = ["status", "tabs_context", "session_info", "session_end", "tabs_release", "wait", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read", "ask_user", "threads_list", "thread_read", "thread_search", "search", "page_markdown", "map", "crawl", "site_edit", "site_script"];
 
@@ -248,25 +251,27 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"The browser is signed in as the user. Ask the user before you act under their sign-in: sending messages or email, posting, buying, booking, deleting, changing settings, or submitting forms that do any of these.",
 				"Do not enter passwords or payment details.",
 				"When a page needs a sign-in or captcha, call tabs_show and ask the user to do it.",
-				`Opening a new site may need the user's approval; if a site is denied ("Not allowed to open"), tell the user to allow it in the Polycarp side panel (Settings > Agents) or with \`${COMMAND_NAME} allow <host>\`; do not try to get around it.`,
+				`Opening a new site may need the user's approval; if a site is denied ("Not allowed to open"), tell the user to allow it in the side panel (Settings > Agents) or with \`${COMMAND_NAME} allow <host>\`; do not try to get around it.`,
 				"First call skill_match with the user's task (it needs no browser). If it names a skill, call skill_read for that one skill only and follow it; if it says none, work without one.",
-				"Call tabs_context before any browser tool: it shows your session, your tab group and tabs (including ones left from earlier work in this project) and news from the user. If it says Polycarp isn't connected, tell the user and stop browser work.",
+				"Call tabs_context before any browser tool: it shows your session, your tab group and tabs (including ones left from earlier work here) and news from the user. If it says Polycarp isn't connected, tell the user and stop browser work.",
 				"status adds the site permissions.",
 				"Your tabs are in your own group, never take focus, and you can't see the user's other tabs.",
 				"Loop: navigate(url) -> read_page {\"filter\":\"interactive\"} (refs) -> click/type/fill by ref -> read_page again to confirm the result. Refs expire when the page changes.",
 				"Prefer read_page/get_page_text over screenshots for reading, and wait over polling.",
 				"Reuse your current tab; tabs_create only when two pages must stay open. When done, tabs_close your tabs, tabs_release a tab the user should keep, or session_end.",
-				"For canvas apps (Excalidraw, tldraw, Figma-like) and multi-step input, batch steps with actions and check the closing screenshot; use the app's shortcuts and drags, not run_js on its internals.",
-				"To save a scholarly source, use library_add with its DOI; it verifies the source exists and isn't retracted before you cite it.",
+				"For canvas apps (Excalidraw, tldraw) and multi-step input, batch steps with actions and check the final screenshot; use the app's shortcuts and drags, not run_js on its internals.",
+				"To save a scholarly source, use library_add with its DOI: it checks it exists and isn't retracted.",
 				ASK_USER_INSTRUCTION,
 				THREADS_INSTRUCTION,
 				"A click that opens an alert/confirm/prompt box succeeds and says so: do not repeat it. If a call fails with dialog_open, a box froze the page: answer it with handle_dialog (Cancel is always safe; OK is fine when the box confirms exactly what the user asked for, otherwise ask the user before OK on anything that acts under their sign-in).",
-				"If a call fails with interrupted, the browser connection dropped while it ran: check the page with read_page before you repeat it.",
+				"If a call fails with interrupted, the browser connection dropped mid-call: check the page with read_page before you repeat it.",
 			]
 				// A scoped session hears only about the tools it has, so a small model isn't sent
 				// after a tool it can't call.
 				.filter((line) => !allowedTools || mentionedTools(line).every((t) => allowedTools.has(t)))
 				.concat(
+					// The skill runs the batch with run_js, so a session without it isn't sent there.
+					!allowedTools || (allowedTools.has("run_js") && allowedTools.has("skill_read")) ? [BULK_ACTIONS_INSTRUCTION] : [],
 					allowedTools && !allowedTools.has("tabs_show") ? ["When a page needs a sign-in or captcha, stop and ask the user to handle it in their browser."] : [],
 					options.computer?.tools.length ? [COMPUTER_INSTRUCTION] : [],
 					local?.present ? [LOCAL_COMPUTER_INSTRUCTION] : [],

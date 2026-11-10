@@ -303,6 +303,7 @@ test("a scoped session's instructions mention only its tools", async () => {
 	try {
 		const text = client.getInstructions() ?? "";
 		assert.doesNotMatch(text, /Call status before any browser tool|handle_dialog|tabs_show/);
+		assert.doesNotMatch(text, /bulk-actions/, "the bulk skill needs run_js, which this session lacks");
 		assert.match(text, /This session's tools: library_cite, library_search\./);
 		assert.match(text, /untrusted data/);
 	} finally {

@@ -152,3 +152,15 @@
 {"task": "read the attached pdf link and summarize chapter 3", "skill": "pdf"}
 {"task": "what does page 7 of this pdf say", "skill": "pdf"}
 {"task": "get the table out of this pdf", "skill": "pdf"}
+{"task": "Wipe all of my old Facebook posts from before 2020", "skill": "bulk-actions"}
+{"task": "Archive the 150 closed issues on this tracker in one go", "skill": "bulk-actions"}
+{"task": "Untag myself from every photo on this site", "skill": "bulk-actions"}
+{"task": "Delete all the empty folders in my cloud drive web app", "skill": "bulk-actions"}
+{"task": "Turn off notifications for every channel in this workspace", "skill": "bulk-actions"}
+{"task": "Remove all the members who left the company from this team page", "skill": "bulk-actions"}
+{"task": "Purge all the spam comments waiting in my moderation queue", "skill": "bulk-actions"}
+{"task": "Leave every Slack channel I have not opened in six months", "skill": "bulk-actions"}
+{"task": "Approve all 60 pending expense reports in this portal", "skill": "bulk-actions"}
+{"task": "Retire every outdated product listing in my Etsy shop", "skill": "bulk-actions"}
+{"task": "Close all the stale pull requests older than six months in this repo", "skill": "bulk-actions"}
+{"task": "Revoke access for every app connected to my account settings page", "skill": "bulk-actions"}

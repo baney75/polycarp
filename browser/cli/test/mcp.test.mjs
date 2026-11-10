@@ -106,6 +106,11 @@ test("skill_match routes a task to one skill, or none, and skill_read returns th
 	assert.match(none.content[0].text, /skill_read \{"name":"site-learning"\}/);
 	const site = await mcp.callTool({ name: "skill_match", arguments: { task: "Find the three newest recipes about lentils on recipes.example.org" } });
 	assert.match(site.content[0].text, /site-learning/);
+	// "Delete all of them" carries no word the router can weigh ("all" and "every" are stopwords), so
+	// the instructions name the bulk-actions skill, and skill_read has it.
+	assert.match(instructions, /For one action on many items, skill_read \{"name":"bulk-actions"\}/);
+	const bulk = await mcp.callTool({ name: "skill_read", arguments: { name: "bulk-actions" } });
+	assert.match(bulk.content[0].text, /^---\nname: bulk-actions\n/);
 	const read = await mcp.callTool({ name: "skill_read", arguments: { name: "academic-research" } });
 	assert.equal(read.content[0].text, readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "skills", "academic-research", "SKILL.md"), "utf8"));
 	for (const name of ["../academic-research", "no-such-skill", "Academic-Research"]) {
