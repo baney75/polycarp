@@ -212,6 +212,18 @@ test("skill refresh moves a recorded tabkyra copy to polycarp-browser", () => {
 	assert.equal(existsSync(file), false);
 });
 
+test("skill refresh reports an edited tabkyra copy instead of skipping it silently", () => {
+	const home = join(root, "rename-refresh-edited");
+	const ours = `---\nname: tabkyra\ndescription: old\n---\n${MARKER}\nold text\n`;
+	const { file } = oldCopy(home, `${ours}My own step.\n`, ours);
+	const r = run(home, "skill", "refresh", "--json");
+	assert.equal(r.code, 0, r.out);
+	const { skipped } = JSON.parse(r.out);
+	assert.deepEqual(skipped.map((s) => [s.skill, s.file]), [["tabkyra", file]]);
+	assert.match(skipped[0].reason, /old name tabkyra; polycarp-browser replaces it/);
+	assert.match(readFileSync(file, "utf8"), /My own step/, "the edited copy is kept");
+});
+
 test("the old skill name still reads as polycarp-browser", () => {
 	const r = run(join(root, "rename-print"), "skill", "print", "tabkyra");
 	assert.equal(r.code, 0, r.out);

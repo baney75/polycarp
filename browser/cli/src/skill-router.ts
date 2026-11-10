@@ -422,16 +422,19 @@ function readTask(index: RouterIndex, task: string): ReadTask {
 	text = browserAliases(text, index.names);
 	// Inline code around a skill name ("the `osint` skill", "`dorks` skill") reads as the bare name,
 	// and points at the skill: a name in code is never a person's ability.
-	text = text.replace(/`([a-z0-9-]+)`/g, (whole, inner: string) => (index.names.has(inner) ? `the ${inner}` : whole));
+	// A name as written, or as browserAliases left it ("polycarpbrowser" for "/polycarp-browser"), is the skill it names.
+	const nameOf = (word: string) => (index.names.has(word) ? word : index.nameKeys.get(word.replace(/-/g, "")));
+	text = text.replace(/`([a-z0-9-]+)`/g, (whole, inner: string) => (nameOf(inner) ? `the ${inner}` : whole));
 	let command: string | undefined;
 	let changesSkill = false;
 	const lead = /^\s*\/([a-z0-9-]+)(?=$|[\s:,;!?])/.exec(text);
-	if (lead && index.names.has(lead[1])) {
-		command = lead[1];
+	const leadName = lead ? nameOf(lead[1]) : undefined;
+	if (lead && leadName) {
+		command = leadName;
 		text = text.slice(lead[0].length);
 		// "/fix news-research": the skill after a command is its object.
 		const object = /^\s+([a-z0-9-]+)\b/.exec(text);
-		if (object && index.names.has(object[1])) {
+		if (object && nameOf(object[1])) {
 			text = text.slice(object[0].length);
 			changesSkill = true;
 		}

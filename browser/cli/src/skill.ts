@@ -639,7 +639,12 @@ export function refreshInstalledSkills(): RefreshResult {
 			const newFile = join(target.dir, now, "SKILL.md");
 			if (!existsSync(oldFile) || existsSync(newFile) || isLink(oldFile) || isLink(dirname(oldFile)) || isLink(newFile) || isLink(dirname(newFile))) continue;
 			const text = lstatSync(oldFile).isFile() ? readFileSync(oldFile, "utf8") : "";
-			if (!text.includes(MARKER) || record[oldFile] !== sha256(text)) continue;
+			if (!text.includes(MARKER)) continue;
+			if (record[oldFile] !== sha256(text)) {
+				// Edited: keep it, but say so, or the harness quietly ends up with two browser skills once `now` is installed.
+				result.skipped.push({ skill: old, file: oldFile, reason: `edited copy under the old name ${old}; ${now} replaces it, so move your changes there and delete it` });
+				continue;
+			}
 			mkdirSync(dirname(newFile), { recursive: true });
 			writeFileSync(newFile, skillFile(now));
 			recordInstalled([newFile]);

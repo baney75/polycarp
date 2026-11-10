@@ -391,6 +391,12 @@ test("naming a skill to use routes to it; naming it to change it doesn't", () =>
 	assert.equal(name("run the dorks skill to find PDFs"), "dorks");
 	assert.equal(name("use the tabkyra skill to fill the form"), "polycarp-browser");
 	assert.equal(name("use the polycarp-browser skill to fill the form"), "polycarp-browser");
+	assert.equal(name("use the `polycarp-browser` skill to fill the form"), "polycarp-browser");
+	assert.equal(name("/polycarp-browser fill the RSVP form"), "polycarp-browser");
+	assert.equal(name("/tabkyra fill the RSVP form"), "polycarp-browser");
+	assert.equal(name("/polycarp-browser"), "polycarp-browser", "the installed skill's own slash command");
+	// Backticks around the name point at the skill, so "skill" here isn't a request to make one.
+	assert.equal(name("Don't use the `polycarp-browser` skill; fetch the URL directly"), "none");
 	assert.equal(name("the proton-pass skill, please, for the deploy token"), "proton-pass");
 	assert.notEqual(name("Repair the osint skill, it keeps failing on small models"), "osint");
 	assert.notEqual(name("Update the dorks skill with a new operator"), "dorks");
