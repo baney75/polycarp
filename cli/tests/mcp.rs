@@ -130,7 +130,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 20] = [
+const TOOLS: [&str; 21] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -138,6 +138,7 @@ const TOOLS: [&str; 20] = [
     "theme_get",
     "theme_set",
     "theme_change",
+    "theme_change_many",
     "theme_apply",
     "theme_create",
     "theme_delete",
@@ -683,5 +684,190 @@ fn theme_off_and_on_work_over_mcp_with_honest_annotations() {
     assert!(sb.cfg().join("current/theme.json").is_file());
     let h = s.tool("theme_history", json!({}));
     assert!(h["structuredContent"]["data"]["entries"][1]["action"] == "theme off");
+    assert_eq!(s.finish(), 0);
+}
+
+fn data(r: &Value) -> &Value {
+    &r["structuredContent"]["data"]
+}
+
+fn code_of(r: &Value) -> &str {
+    r["structuredContent"]["error"]["code"]
+        .as_str()
+        .unwrap_or("")
+}
+
+#[test]
+fn the_instructions_say_how_to_iterate() {
+    let sb = Sandbox::new();
+    let mut s = sb.server();
+    let v = s.initialize("t");
+    let text = v["result"]["instructions"].as_str().unwrap();
+    for w in [
+        "theme_change_many",
+        "format \"png\"",
+        "look at every image",
+        "Repeat",
+        "theme_set",
+        "force true",
+    ] {
+        assert!(text.contains(w), "the instructions never say {w:?}");
+    }
+    assert_eq!(s.finish(), 0);
+}
+
+#[test]
+fn an_agent_iterates_on_a_new_theme_without_touching_the_one_in_use() {
+    let sb = Sandbox::new();
+    assert_eq!(sb.cli(&["set", "evening"])["ok"], true);
+    let mut s = sb.server();
+    s.initialize("iterate-test");
+    let r = s.tool("theme_create", json!({"name": "draft", "extends": "calm"}));
+    assert_eq!(r["isError"], false, "{r}");
+    let r = s.tool(
+        "theme_change_many",
+        json!({"theme": "draft", "changes": [
+            {"path": "shape.radius", "value": 2},
+            {"path": "shape.indicator", "value": "bar"},
+            {"path": "dark.accent", "value": "#a9bb8a"},
+        ]}),
+    );
+    assert_eq!(r["isError"], false, "{r}");
+    assert_eq!(data(&r)["current"], false);
+    assert_eq!(data(&r)["changes"].as_array().unwrap().len(), 3);
+    let r = s.tool(
+        "theme_preview",
+        json!({"name": "draft", "format": "png", "mode": "dark"}),
+    );
+    assert_eq!(r["isError"], false, "{r}");
+    let images = data(&r)["images"].as_array().unwrap();
+    assert_eq!(images.len(), 4, "one per product in dark mode");
+    for i in images {
+        let p = PathBuf::from(i["path"].as_str().unwrap());
+        assert!(p.starts_with(sb.cfg().join("previews")));
+        assert_eq!(&fs::read(&p).unwrap()[..4], b"\x89PNG");
+    }
+    // A bad batch names each path and changes nothing.
+    let before = fs::read_to_string(sb.cfg().join("themes/draft.toml")).unwrap();
+    let r = s.tool(
+        "theme_change_many",
+        json!({"theme": "draft", "changes": [{"path": "shape.radius", "value": 99}, {"path": "shape.nope", "value": 1}]}),
+    );
+    assert_eq!(r["isError"], true);
+    assert_eq!(
+        r["structuredContent"]["error"]["data"]["errors"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2,
+        "{r}"
+    );
+    assert_eq!(
+        fs::read_to_string(sb.cfg().join("themes/draft.toml")).unwrap(),
+        before
+    );
+    let r = s.tool(
+        "theme_change_many",
+        json!({"changes": [{"path": "shape.radius"}]}),
+    );
+    assert_eq!(code_of(&r), "invalid_args");
+    // The one in use never changed until the agent sets the new one.
+    assert_eq!(
+        s.tool("theme_current", json!({}))["structuredContent"]["data"]["theme"],
+        "evening"
+    );
+    let r = s.tool("theme_set", json!({"name": "draft"}));
+    assert_eq!(r["isError"], false, "{r}");
+    let r = s.tool("theme_undo", json!({}));
+    assert_eq!(r["isError"], false, "{r}");
+    assert_eq!(
+        s.tool("theme_current", json!({}))["structuredContent"]["data"]["theme"],
+        "evening"
+    );
+    assert_eq!(s.finish(), 0);
+}
+
+#[test]
+fn an_agent_cannot_delete_or_replace_a_theme_it_did_not_make_without_force() {
+    let sb = Sandbox::new();
+    assert_eq!(sb.cli(&["create", "mine", "--extends", "calm"])["ok"], true);
+    let mine = sb.cfg().join("themes/mine.toml");
+    let text = fs::read_to_string(&mine).unwrap();
+    let mut s = sb.server();
+    s.initialize("guard-test");
+
+    let r = s.tool("theme_delete", json!({"name": "mine"}));
+    assert_eq!(
+        (r["isError"].as_bool(), code_of(&r)),
+        (Some(true), "not_yours"),
+        "{r}"
+    );
+    assert!(mine.exists());
+    let doc = json!({"name": "mine", "title": "Mine", "extends": "blocks"});
+    let r = s.tool("theme_apply", json!({"theme": doc}));
+    assert_eq!(code_of(&r), "not_yours", "{r}");
+    let r = s.tool(
+        "theme_apply",
+        json!({"theme": {"name": "other", "title": "O", "extends": "blocks"}, "name": "mine"}),
+    );
+    assert_eq!(code_of(&r), "not_yours", "--name counts too: {r}");
+    assert_eq!(fs::read_to_string(&mine).unwrap(), text);
+
+    // What it made itself it may replace and delete.
+    assert_eq!(
+        s.tool("theme_create", json!({"name": "made", "extends": "calm"}))["isError"],
+        false
+    );
+    let r = s.tool(
+        "theme_apply",
+        json!({"theme": {"name": "made", "title": "Made", "extends": "blocks"}, "activate": false}),
+    );
+    assert_eq!(r["isError"], false, "{r}");
+    assert_eq!(
+        s.tool("theme_delete", json!({"name": "made"}))["isError"],
+        false
+    );
+    let r = s.tool(
+        "theme_apply",
+        json!({"theme": {"name": "fresh", "title": "Fresh", "extends": "calm"}, "activate": false}),
+    );
+    assert_eq!(r["isError"], false, "{r}");
+    assert_eq!(
+        s.tool("theme_delete", json!({"name": "fresh"}))["isError"],
+        false
+    );
+    // A -custom copy from a change on a built-in is the agent's too.
+    assert_eq!(
+        s.tool("theme_set", json!({"name": "calm"}))["isError"],
+        false
+    );
+    let r = s.tool("theme_change", json!({"path": "shape.radius", "value": 4}));
+    assert_eq!(data(&r)["theme"], "calm-custom");
+    assert_eq!(
+        s.tool("theme_set", json!({"name": "calm"}))["isError"],
+        false
+    );
+    assert_eq!(
+        s.tool("theme_delete", json!({"name": "calm-custom"}))["isError"],
+        false
+    );
+
+    // force true, which the agent sends only after the person agrees, goes ahead.
+    let r = s.tool("theme_delete", json!({"name": "mine", "force": true}));
+    assert_eq!(r["isError"], false, "{r}");
+    assert!(!mine.exists());
+    assert_eq!(s.finish(), 0);
+
+    // A new connection is a new session: it did not make calm's copy... which is gone; make one by hand.
+    assert_eq!(
+        sb.cli(&["create", "again", "--extends", "calm"])["ok"],
+        true
+    );
+    let mut s = sb.server();
+    s.initialize("guard-test-2");
+    assert_eq!(
+        code_of(&s.tool("theme_delete", json!({"name": "again"}))),
+        "not_yours"
+    );
     assert_eq!(s.finish(), 0);
 }

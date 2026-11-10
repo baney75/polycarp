@@ -3899,3 +3899,259 @@ fn deleting_an_unparsable_theme_keeps_its_exact_bytes() {
         "extends = [oops\n# mine\n"
     );
 }
+
+// --- several values at once, editing a theme by name, PNG previews, export toml ------------------
+
+#[test]
+fn change_takes_several_values_at_once_and_one_undo_takes_them_back() {
+    let b = Box::new();
+    let (c, v) = b.jrun(&[
+        "change",
+        "shape.radius",
+        "0",
+        "shape.density",
+        "compact",
+        "motion.fast",
+        "90",
+    ]);
+    assert_eq!(c, 0, "{v}");
+    let d = &v["data"];
+    assert_eq!(d["theme"], "polycarp-custom");
+    assert_eq!(d["created"], true);
+    assert_eq!(d["changes"].as_array().unwrap().len(), 3);
+    assert_eq!(d["changes"][0]["previous"], 10);
+    assert!(d.get("path").is_none(), "a batch has no single path: {d}");
+    assert_eq!(b.jrun(&["get", "shape.radius"]).1["data"]["value"], 0);
+    assert_eq!(
+        b.jrun(&["get", "shape.density"]).1["data"]["value"],
+        "compact"
+    );
+    let (_, h) = b.jrun(&["history"]);
+    let entries = h["data"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1, "one change, one history entry: {h}");
+    assert!(entries[0]["action"]
+        .as_str()
+        .unwrap()
+        .contains("shape.radius 0, shape.density compact, motion.fast 90"));
+    assert_eq!(b.jrun(&["undo"]).0, 0);
+    assert_eq!(b.jrun(&["get", "shape.radius"]).1["data"]["value"], 10);
+    assert_eq!(
+        b.jrun(&["get", "shape.density"]).1["data"]["value"],
+        "regular"
+    );
+    assert!(!b.cfg().join("themes/polycarp-custom.toml").exists());
+}
+
+#[test]
+fn a_batch_with_bad_values_names_every_one_and_changes_nothing() {
+    let b = Box::new();
+    assert_eq!(b.jrun(&["set", "calm"]).0, 0);
+    let before = b.snapshot();
+    let (c, v) = b.jrun(&[
+        "change",
+        "shape.radius",
+        "999",
+        "shape.density",
+        "huge",
+        "light.accent",
+        "#59693F",
+    ]);
+    assert_eq!(c, 1, "{v}");
+    let paths: Vec<&str> = v["error"]["data"]["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, ["shape.radius", "shape.density"], "{v}");
+    assert!(v["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("2 of the 3"));
+    assert_eq!(b.snapshot(), before);
+
+    // A path twice is a usage error.
+    let (c, _) = b.jrun(&["change", "shape.radius", "2", "shape.radius", "3"]);
+    assert_eq!(c, 2);
+    // An odd number of words is too.
+    let (c, _) = b.jrun(&["change", "shape.radius", "2", "shape.blur"]);
+    assert_eq!(c, 2);
+    // A contrast failure in one value refuses all of them.
+    let (c, v) = b.jrun(&["change", "shape.radius", "2", "light.muted", "#eeeeee"]);
+    assert_eq!(c, 1, "{v}");
+    assert_eq!(v["error"]["code"], "contrast");
+    assert_eq!(b.snapshot(), before);
+}
+
+#[test]
+fn change_with_theme_edits_that_theme_and_leaves_the_current_one_alone() {
+    let b = Box::new();
+    assert_eq!(b.jrun(&["create", "mine", "--extends", "calm"]).0, 0);
+    assert_eq!(b.jrun(&["set", "evening"]).0, 0);
+    let was = b.jrun(&["get", "shape.radius", "calm"]).1["data"]["value"].clone();
+    assert_ne!(was, 3);
+    let state = fs::read_to_string(b.state_file()).unwrap();
+    let (c, v) = b.jrun(&[
+        "change",
+        "--theme",
+        "mine",
+        "shape.radius",
+        "3",
+        "dark.accent",
+        "#a9bb8a",
+    ]);
+    assert_eq!(c, 0, "{v}");
+    assert_eq!(v["data"]["theme"], "mine");
+    assert_eq!(v["data"]["current"], false);
+    assert_eq!(v["data"]["created"], false);
+    assert_eq!(v["data"]["changes"][0]["previous"], was, "{v}");
+    assert_eq!(fs::read_to_string(b.state_file()).unwrap(), state);
+    assert_eq!(b.jrun(&["current"]).1["data"]["theme"], "evening");
+    assert_eq!(
+        b.jrun(&["get", "shape.radius", "mine"]).1["data"]["value"],
+        3
+    );
+    // The file keeps the comments `create` wrote.
+    let text = fs::read_to_string(b.cfg().join("themes/mine.toml")).unwrap();
+    assert!(text.contains("# Uncomment a line"), "{text}");
+    // undo puts the file back.
+    assert_eq!(b.jrun(&["undo"]).0, 0);
+    assert_eq!(
+        b.jrun(&["get", "shape.radius", "mine"]).1["data"]["value"],
+        was
+    );
+
+    let (c, v) = b.jrun(&["change", "--theme", "blocks", "shape.radius", "3"]);
+    assert_eq!(
+        (c, v["error"]["code"].as_str()),
+        (1, Some("builtin_read_only"))
+    );
+    let (c, v) = b.jrun(&["change", "--theme", "nope", "shape.radius", "3"]);
+    assert_eq!((c, v["error"]["code"].as_str()), (1, Some("unknown_theme")));
+}
+
+#[test]
+fn editing_a_base_of_the_current_theme_by_name_updates_what_products_read() {
+    let b = Box::new();
+    assert_eq!(b.jrun(&["create", "base", "--extends", "calm"]).0, 0);
+    assert_eq!(b.jrun(&["create", "child", "--extends", "base"]).0, 0);
+    assert_eq!(b.jrun(&["set", "child"]).0, 0);
+    assert_eq!(
+        b.jrun(&["change", "--theme", "base", "shape.radius", "5"])
+            .0,
+        0
+    );
+    let json = fs::read_to_string(b.cfg().join("current/theme.json")).unwrap();
+    let v: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["surfaces"]["spaces"]["shape"]["radius"], 5, "{json}");
+}
+
+fn png_size(path: &Path) -> (u32, u32) {
+    let b = fs::read(path).unwrap();
+    assert_eq!(&b[..8], b"\x89PNG\r\n\x1a\n", "{}", path.display());
+    let w = u32::from_be_bytes(b[16..20].try_into().unwrap());
+    let h = u32::from_be_bytes(b[20..24].try_into().unwrap());
+    (w, h)
+}
+
+#[test]
+fn png_preview_writes_one_image_per_product_and_mode() {
+    let b = Box::new();
+    let (c, v) = b.jrun(&["preview", "calm", "--format", "png"]);
+    assert_eq!(c, 0, "{v}");
+    let images = v["data"]["images"].as_array().unwrap();
+    assert_eq!(images.len(), 8);
+    let mut seen = std::collections::BTreeSet::new();
+    for i in images {
+        let p = PathBuf::from(i["path"].as_str().unwrap());
+        assert!(p.starts_with(b.cfg().join("previews")), "{}", p.display());
+        assert_eq!(png_size(&p), (720, 420));
+        seen.insert(fs::read(&p).unwrap());
+        assert_eq!(
+            p.file_name().unwrap().to_string_lossy(),
+            format!(
+                "calm-{}-{}.png",
+                i["surface"].as_str().unwrap(),
+                i["mode"].as_str().unwrap()
+            )
+        );
+    }
+    assert_eq!(seen.len(), 8, "every image is different");
+
+    let (c, v) = b.jrun(&[
+        "preview",
+        "calm",
+        "--format",
+        "png",
+        "--surface",
+        "site",
+        "--mode",
+        "dark",
+    ]);
+    assert_eq!(c, 0, "{v}");
+    assert_eq!(v["data"]["images"].as_array().unwrap().len(), 1);
+
+    // Running it again replaces its own images.
+    assert_eq!(b.jrun(&["preview", "calm", "--format", "png"]).0, 0);
+
+    // --out is a folder that exists, and a file there that is not a preview stays.
+    let out = b.root.join("out");
+    fs::create_dir_all(&out).unwrap();
+    fs::write(out.join("calm-site-dark.png"), b"mine").unwrap();
+    let (c, v) = b.jrun(&[
+        "preview",
+        "calm",
+        "--format",
+        "png",
+        "--out",
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!((c, v["error"]["code"].as_str()), (1, Some("exists")), "{v}");
+    assert_eq!(fs::read(out.join("calm-site-dark.png")).unwrap(), b"mine");
+    assert_eq!(
+        fs::read_dir(&out).unwrap().count(),
+        1,
+        "nothing else was written"
+    );
+    let (c, _) = b.jrun(&[
+        "preview",
+        "calm",
+        "--format",
+        "png",
+        "--out",
+        out.join("calm-site-dark.png").to_str().unwrap(),
+    ]);
+    assert_eq!(c, 1);
+    let (c, _) = b.jrun(&["preview", "calm", "--format", "gif"]);
+    assert_eq!(c, 2);
+}
+
+#[test]
+fn export_toml_prints_the_theme_file_as_written() {
+    let b = Box::new();
+    let (c, v) = b.jrun(&["export", "toml", "calm"]);
+    assert_eq!(c, 0, "{v}");
+    assert_eq!(
+        v["data"]["toml"].as_str().unwrap(),
+        fs::read_to_string(repo_theme("calm")).unwrap()
+    );
+    assert_eq!(v["data"]["source"], "built-in");
+    assert_eq!(b.jrun(&["create", "mine", "--extends", "calm"]).0, 0);
+    let (_, v) = b.jrun(&["export", "toml", "mine"]);
+    assert_eq!(
+        v["data"]["toml"].as_str().unwrap(),
+        fs::read_to_string(b.cfg().join("themes/mine.toml")).unwrap()
+    );
+    // Plain output is the file itself, so it can be redirected into one.
+    let o = b.run(&["theme", "export", "toml", "mine"]);
+    assert_eq!(
+        out(&o),
+        fs::read_to_string(b.cfg().join("themes/mine.toml")).unwrap()
+    );
+    let (c, v) = b.jrun(&["export", "toml", "nope"]);
+    assert_eq!((c, v["error"]["code"].as_str()), (1, Some("unknown_theme")));
+    assert_eq!(
+        b.jrun(&["export", "toml", "calm", "--surface", "site"]).0,
+        2
+    );
+}
