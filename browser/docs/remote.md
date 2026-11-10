@@ -251,6 +251,32 @@ makes a one-time code for the approval page, lists the devices (on the hub's com
 connect code for another device, and joins a hub from a code. It asks Polycarp's helper, so it needs
 `polycarp browser setup` first. See D33 in [decisions.md](decisions.md).
 
+### What a device allows
+
+A device's cap lives in its own `link.json`, and only that computer changes it. Nothing the hub
+sends can write it.
+
+```bash
+tabkyra link scopes                          # what this device allows
+tabkyra link scopes --remove browser.script  # narrower: the next call that needs it is refused
+tabkyra link scopes --add browser.script     # wider: applies once link run starts again
+```
+
+A narrower cap applies to the very next call, also on sessions already open: that call gets
+"laptop doesn't allow browser.script (allows: ...). Only its owner can add it, on laptop." The
+last scope can't be removed; `tabkyra link off` stops serving. A wider cap needs a new link token,
+so `link scopes --add` restarts the link service when there is one, and open sessions start over.
+
+Computer use (`computer.read`, `computer.act`) is never in the default grant. `link` and
+`link scopes --add` turn it on only after a yes typed in a terminal on this computer: `link` asks
+"May agents that come through the hub use this computer?" with No as the answer to Enter, and
+`--scope computer.act` or `--add computer.act` asks you to confirm. With no terminal (a script,
+`--json`, an agent's shell) a computer scope is refused and nothing changes. `computer.act` brings
+`computer.read` with it. A computer without Polycarp's Mac app (`polycarp-spaces`) can't claim
+either: "This computer can't serve computer.read: computer use needs Polycarp's Mac app, and it
+isn't on this computer." Joining a hub from the side panel never grants computer use; the panel
+shows it as an option, unticked, that you add with `link scopes --add` on that computer.
+
 ### How a session is routed
 
 A new session goes to an online device that has reported in, grants at least one of the caller's

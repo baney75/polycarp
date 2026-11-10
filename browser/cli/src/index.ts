@@ -23,7 +23,7 @@ import { createToken, loadTokens, loadUsage, offeredScopes, revokeToken, SCOPES,
 import { listClients, mintApprovalCode, normalizePublicUrl, type OAuthConfig, passcodeSet, revokeClient, revokeGrantById, setPasscode } from "./oauth.ts";
 import { hubCode, hubDevices, hubOff, hubPrefer, hubRemove, hubServe, hubSetup, hubStatus } from "./hub-admin.ts";
 import { loadHubConfig } from "./hub-state.ts";
-import { linkBusy, linkEnroll, linkMintCode, linkOff, linkRun, linkStatus, normalizeHubUrl, printCode } from "./link.ts";
+import { linkBusy, linkEnroll, linkMintCode, linkOff, linkRun, linkScopes, linkStatus, normalizeHubUrl, printCode } from "./link.ts";
 import { runTheme } from "./theme.ts";
 import { loadRemoteConfig, remoteFile, remoteOff, remoteSetup, remoteStatus } from "./remote-setup.ts";
 import { createHubToken, hubTunnel, HUB_SCOPES } from "./hub.ts";
@@ -753,6 +753,10 @@ async function main(): Promise<void> {
 				process.exitCode = linkBusy(arg);
 				return;
 			}
+			if (sub === "scopes") {
+				process.exitCode = await linkScopes({ add: option("--add"), remove: option("--remove"), json: flag("--json") });
+				return;
+			}
 			if (sub === "code") {
 				process.exitCode = await linkMintCode("connect", { manage: flag("--manage"), json: flag("--json") });
 				return;
@@ -761,7 +765,7 @@ async function main(): Promise<void> {
 				process.exitCode = await linkMintCode("approval", { manage: false, json: flag("--json") });
 				return;
 			}
-			throw new UsageError(`Usage: ${COMMAND_NAME} link <hub-url> --code TK-XXXX-XXXX | run | status | off | busy on|off | code [--manage] | approval-code`);
+			throw new UsageError(`Usage: ${COMMAND_NAME} link <hub-url> --code TK-XXXX-XXXX | run | status | off | busy on|off | scopes [--add <scope> | --remove <scope>] | code [--manage] | approval-code`);
 		}
 		case "theme": {
 			const rest = argv.slice(1).filter((a) => !a.startsWith("-"));
