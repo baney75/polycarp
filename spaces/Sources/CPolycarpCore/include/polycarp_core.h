@@ -33,7 +33,10 @@ extern "C" {
 typedef struct PcCore PcCore;
 
 /* Events: "status", "transcript", "learned", "model-progress", "benchmark-progress",
- * "benchmark-done", "benchmark-error", "show-main", "listener-returned". `json` is the payload. */
+ * "benchmark-done", "benchmark-error", "show-main", "listener-returned", "notice". `json` is the
+ * payload. "notice" is {kind, message}: kind "error" (a dictation failed; status turns error for a
+ * few seconds), "busy" (a press came while Silas was busy), or "stopped" (Escape stopped typing;
+ * the full text is in History). */
 typedef void (*PcEventFn)(void *user, const char *event, const char *json);
 /* Microphone level, 0..1, many times a second while recording. */
 typedef void (*PcLevelFn)(void *user, float level);
@@ -71,9 +74,14 @@ char *pc_settings_get(const PcCore *core);
 /* Replace the settings with JSON of the same shape. The model and its source are kept (use
  * pc_model_select). The hotkey must parse. Returns the stored settings, or NULL. */
 char *pc_settings_set(const PcCore *core, const char *json);
-/* Wait up to timeout_ms for the user to press the key to use as hotkey; returns its name or
- * NULL on timeout. Blocks: call off the main thread. */
+/* Wait up to timeout_ms for the user to press the key to use as hotkey; returns its name, or
+ * NULL with the reason in pc_last_error(): "No key pressed" on timeout, "cancelled" after Escape
+ * or pc_hotkey_capture_cancel, or a sentence when the key types text (letters, digits, Space,
+ * Return, Tab, Delete). Blocks: call off the main thread. */
 char *pc_hotkey_capture(const PcCore *core, uint32_t timeout_ms);
+/* End a pc_hotkey_capture in progress (it returns NULL with "cancelled"). PC_ERR_FAILED if none
+ * was running. */
+int pc_hotkey_capture_cancel(const PcCore *core);
 /* JSON array of microphone names. Never opens a microphone. */
 char *pc_microphones(void);
 
@@ -82,8 +90,13 @@ char *pc_models_list(const PcCore *core);
 /* Choose an installed model and load it. auto != 0 when setup picks for the user. */
 int pc_model_select(const PcCore *core, const char *id, int auto_pick);
 /* Download a model. Blocks; progress arrives as "model-progress" events. Call off the main
- * thread. */
+ * thread. Each file is checked against its published SHA-256 before the model counts as
+ * installed; a read that waits 30 s without a byte fails. After pc_model_download_cancel it
+ * returns PC_ERR_FAILED with "cancelled", the last event's stage is "cancelled", and nothing is
+ * left on disk. */
 int pc_model_download(const PcCore *core, const char *id);
+/* Stop a pc_model_download of id in progress. PC_ERR_FAILED if that model isn't downloading. */
+int pc_model_download_cancel(const PcCore *core, const char *id);
 /* Delete a downloaded model. Refuses while it is the active one. */
 int pc_model_delete(const PcCore *core, const char *id);
 

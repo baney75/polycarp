@@ -90,6 +90,11 @@ final class WelcomeModel: ObservableObject {
     func allow(_ kind: PermissionKind) {
         asked.insert(kind)
         if kind == .accessibility { askedAccessibilityAt = Date() }
+        Self.request(kind)
+    }
+
+    /// The request itself, shared with Settings > Silas's permission lines. One path for every pane.
+    static func request(_ kind: PermissionKind) {
         guard let id = PermissionID(kind) else { return }
         PermissionsModel.shared.perform(id)
     }

@@ -40,6 +40,9 @@ pub const PC_ERR_ARG: c_int = -1;
 pub const PC_ERR_FAILED: c_int = -2;
 pub const PC_ERR_PANIC: c_int = -3;
 
+/// What `pc_last_error` says when the user cancelled (`pc_hotkey_capture`, `pc_model_download`).
+pub use polycarp_voice::core::CANCELLED;
+
 /// `pc_open` flag: no global key listener and no background device pick. For tests and tools.
 pub const PC_HEADLESS: u32 = 1;
 
@@ -105,6 +108,10 @@ impl Host for FfiHost {
     // Messages the engine writes ("Polycarp can't hear your key yet…") name this app.
     fn product_name(&self) -> String {
         "Polycarp".into()
+    }
+    // Polycarp's permission lines and buttons are in its Settings, on the Silas tab.
+    fn permission_place(&self) -> Option<String> {
+        Some("Settings > Silas".into())
     }
 }
 
@@ -349,7 +356,9 @@ pub unsafe extern "C" fn pc_settings_set(core: *const PcCore, json: *const c_cha
 }
 
 /// Wait up to `timeout_ms` for the user to press the key to use as the hotkey; returns its
-/// name (as stored in settings) or NULL on timeout. Blocks: call off the main thread.
+/// name (as stored in settings), or NULL with the reason in `pc_last_error`: "No key pressed"
+/// on timeout, `cancelled` after Escape or `pc_hotkey_capture_cancel`, or a sentence when the key
+/// types text (letters, digits, Space, Return, Tab, Delete). Blocks: call off the main thread.
 ///
 /// # Safety
 /// `core` must be a live handle.
@@ -361,7 +370,23 @@ pub unsafe extern "C" fn pc_hotkey_capture(core: *const PcCore, timeout_ms: u32)
         *c.core.capture.lock() = Some(tx);
         let got = rx.recv_timeout(Duration::from_millis(timeout_ms as u64));
         c.core.capture.lock().take();
-        got.map_err(|_| "No key pressed".to_string())
+        got.map_err(|_| "No key pressed".to_string())?
+    })
+}
+
+/// End a `pc_hotkey_capture` in progress; it returns NULL with `cancelled`. 0 if one was
+/// running, `PC_ERR_FAILED` if none was.
+///
+/// # Safety
+/// `core` must be a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn pc_hotkey_capture_cancel(core: *const PcCore) -> c_int {
+    code(|| {
+        if handle(core)?.core.cancel_capture() {
+            Ok(())
+        } else {
+            Err("no key pick is running".into())
+        }
     })
 }
 
@@ -403,7 +428,10 @@ pub unsafe extern "C" fn pc_model_select(core: *const PcCore, id: *const c_char,
 }
 
 /// Download a model. Blocks until done; progress arrives as `model-progress` events. Call
-/// off the main thread. The first model downloaded becomes the active one.
+/// off the main thread. The first model downloaded becomes the active one. Every file is checked
+/// against its published SHA-256 before the model counts as installed; a read that waits 30 s
+/// without a byte fails. After `pc_model_download_cancel` it returns `PC_ERR_FAILED` with
+/// `cancelled`, the last event's stage is "cancelled", and nothing is left on disk.
 ///
 /// # Safety
 /// `core` must be a live handle; `id` a valid C string.
@@ -413,6 +441,23 @@ pub unsafe extern "C" fn pc_model_download(core: *const PcCore, id: *const c_cha
         let c = handle(core)?;
         let id = arg(id, "id")?;
         c.core.download_model(id).map_err(|e| e.to_string())
+    })
+}
+
+/// Stop a `pc_model_download` of `id` in progress. 0 if one was running, `PC_ERR_FAILED` if not.
+///
+/// # Safety
+/// `core` must be a live handle; `id` a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn pc_model_download_cancel(core: *const PcCore, id: *const c_char) -> c_int {
+    code(|| {
+        let c = handle(core)?;
+        let id = arg(id, "id")?;
+        if c.core.cancel_download(id) {
+            Ok(())
+        } else {
+            Err(format!("{id} isn't downloading"))
+        }
     })
 }
 
@@ -653,7 +698,7 @@ mod tests {
                 n += 1;
             }
         }
-        assert_eq!(n, 26, "an entry point was added or removed: update this count and the header");
+        assert_eq!(n, 28, "an entry point was added or removed: update this count and the header");
     }
 
     #[test]
@@ -753,6 +798,46 @@ mod tests {
         let p = unsafe { pc_hotkey_capture(o.core, 20) };
         assert!(p.is_null());
         assert!(last_error().contains("No key"));
+        assert_eq!(unsafe { pc_hotkey_capture_cancel(o.core) }, PC_ERR_FAILED, "nothing to cancel");
+    }
+
+    #[test]
+    fn the_cancel_button_ends_a_hotkey_capture() {
+        let o = open();
+        let core = o.core as usize;
+        let waiter = std::thread::spawn(move || {
+            let p = unsafe { pc_hotkey_capture(core as *const PcCore, 5_000) };
+            (p.is_null(), last_error())
+        });
+        // Cancel as soon as the capture is waiting.
+        let start = std::time::Instant::now();
+        while unsafe { pc_hotkey_capture_cancel(o.core) } != PC_OK {
+            assert!(start.elapsed() < Duration::from_secs(4), "the capture never started");
+            std::thread::yield_now();
+        }
+        let (null, e) = waiter.join().unwrap();
+        assert!(null);
+        assert_eq!(e, CANCELLED);
+    }
+
+    #[test]
+    fn messages_point_at_settings_not_buttons_polycarp_lacks() {
+        let h = FfiHost { cb: Callbacks { event: None, level: None, user: std::ptr::null_mut() }, open: Arc::new(Mutex::new(true)) };
+        let place = h.permission_place();
+        assert_eq!(place.as_deref(), Some("Settings > Silas"));
+        let m = polycarp_voice::core::key_access_message("Polycarp", place.as_deref());
+        if cfg!(target_os = "macos") {
+            assert!(m.contains("Settings > Silas") && !m.contains("home screen") && !m.contains("Fix Permission"), "{m}");
+        }
+    }
+
+    #[test]
+    fn a_download_that_isnt_running_cant_be_cancelled() {
+        let o = open();
+        let id = c("parakeet-v3");
+        assert_eq!(unsafe { pc_model_download_cancel(o.core, id.as_ptr()) }, PC_ERR_FAILED);
+        assert!(last_error().contains("isn't downloading"));
+        assert_eq!(unsafe { pc_model_download_cancel(o.core, std::ptr::null()) }, PC_ERR_ARG);
     }
 
     #[test]
