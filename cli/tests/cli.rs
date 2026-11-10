@@ -121,6 +121,16 @@ fn not_found_gives_127_and_names_the_tool() {
         assert!(err(&o).contains(var), "{sub}: {}", err(&o));
         assert!(err(&o).contains("Install"), "{sub}: {}", err(&o));
     }
+    // The browser helper is named as Polycarp's, never by its old name.
+    let o = s.run(&["browser", "x"]);
+    assert!(
+        err(&o).contains("Install the Polycarp browser helper from"),
+        "{}",
+        err(&o)
+    );
+    assert!(!err(&o).contains("Tabkyra"), "{}", err(&o));
+    let help = s.run(&["--help"]);
+    assert!(!out(&help).contains("Tabkyra") && !err(&help).contains("Tabkyra"));
     // The hint for Spaces points at the Polycarp repo, not at the old BaneySpaces one.
     let o = s.run(&["spaces", "x"]);
     assert!(

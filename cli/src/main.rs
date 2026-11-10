@@ -55,7 +55,7 @@ const SPACES: Tool = Tool {
 
 const BROWSER: Tool = Tool {
     sub: "browser",
-    product: "Tabkyra",
+    product: "the Polycarp browser helper",
     // Also the name the helper runs under (arg0), so `ps` shows `polycarp-browser mcp`.
     exe: "polycarp-browser",
     // The npm command's name before the rename: installs made then still have only it.
@@ -86,11 +86,11 @@ const VOICE: Tool = Tool {
 };
 
 const USAGE: &str = "\
-polycarp: one command for Polycarp Spaces, Tabkyra and Silas
+polycarp: one command for Polycarp Spaces, the Polycarp browser helper and Silas
 
 Usage:
   polycarp spaces [args...]    run the Spaces command
-  polycarp browser [args...]   run the Tabkyra command
+  polycarp browser [args...]   run the browser helper (polycarp-browser)
   polycarp voice               open Silas's settings in Polycarp (the Silas app only if Polycarp isn't installed)
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
   polycarp features            show or change which parts run (polycarp features --help)

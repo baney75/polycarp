@@ -504,7 +504,7 @@ final class BrowserPathTests: XCTestCase {
     }
 }
 
-final class InstallerTabkyraAndLoginPathTests: XCTestCase {
+final class InstallerLoginPathTests: XCTestCase {
     private func temp() -> URL {
         let d = FileManager.default.temporaryDirectory.appendingPathComponent("itl-\(UUID().uuidString)")
         try! FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
@@ -515,49 +515,6 @@ final class InstallerTabkyraAndLoginPathTests: XCTestCase {
         try! FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try! Data("#!/bin/sh\n\(body)\n".utf8).write(to: url)
         try! FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
-    }
-
-    /// Runs install-app.sh --in-place on a fake Polycarp.app in a temp HOME; returns that HOME.
-    private func install(path: String, tabkyraDirs: String) throws -> URL {
-        let home = temp()
-        let app = temp().appendingPathComponent("Polycarp.app")
-        script("exit 0", at: app.appendingPathComponent("Contents/Resources/browser/polycarp-browser"))
-        script("exit 0", at: app.appendingPathComponent("Contents/Resources/bin/polycarp-spaces"))
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/bash")
-        p.arguments = [Repo.root.appendingPathComponent("scripts/install-app.sh").path, "--in-place", app.path]
-        p.environment = ["HOME": home.path, "PATH": path, "SHELL": "/usr/bin/false", "POLYCARP_TABKYRA_DIRS": tabkyraDirs,
-                         "BANEYSPACES_DEST_DIR": temp().path, "BANEYSPACES_NO_LAUNCH": "1"]
-        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-        try p.run(); p.waitUntilExit()
-        return home
-    }
-
-    func testAWorkingTabkyraOnThePathKeepsTheName() throws {
-        let stubs = temp()
-        script("exit 0", at: stubs.appendingPathComponent("tabkyra"))
-        let home = try install(path: "\(stubs.path):/usr/bin:/bin", tabkyraDirs: temp().path)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".local/bin/tabkyra").path), "~/.local/bin/tabkyra was not made")
-    }
-
-    func testAWorkingTabkyraInTheHomebrewFolderKeepsTheName() throws {
-        let brew = temp()
-        script("exit 0", at: brew.appendingPathComponent("tabkyra"))
-        let home = try install(path: "/usr/bin:/bin", tabkyraDirs: brew.path)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".local/bin/tabkyra").path))
-    }
-
-    func testNoOtherTabkyraMeansPolycarpsLinkIsMade() throws {
-        let home = try install(path: "/usr/bin:/bin", tabkyraDirs: temp().path)
-        let link = home.appendingPathComponent(".local/bin/tabkyra")
-        XCTAssertTrue((try? FileManager.default.destinationOfSymbolicLink(atPath: link.path))?.hasSuffix("browser/polycarp-browser") == true)
-    }
-
-    func testABrokenTabkyraDoesNotKeepTheName() throws {
-        let brew = temp()
-        script("exit 1", at: brew.appendingPathComponent("tabkyra"))
-        let home = try install(path: "/usr/bin:/bin", tabkyraDirs: brew.path)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: home.appendingPathComponent(".local/bin/tabkyra").path))
     }
 
     func testTheLoginPathReadsWithinItsDeadlineEvenIfTheProfileLeavesAProcessBehind() {

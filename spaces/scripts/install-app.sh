@@ -18,9 +18,10 @@
 # copy, AeroSpace, Ghostdeck, Launch Services and ~/.local/bin are left alone and the app isn't
 # opened. (With --in-place, test mode leaves AeroSpace and Ghostdeck alone but makes the links.)
 # The browser command: the app carries the browser helper (Contents/Resources/browser/polycarp-browser), which `polycarp browser`
-# runs and `tabkyra` has always been. ~/.local/bin/tabkyra links to it only when no working tabkyra of someone else's
-# (npm link, Homebrew, a release checkout) is already there; POLYCARP_TAKE_OVER_TABKYRA=1 takes the name over anyway (the old
-# link is written down so uninstall.sh can put it back). Agents on other machines call `tabkyra`, so the name never goes missing.
+# runs. ~/.local/bin/polycarp-browser links to it: made when the name is free, moved along when it already links into a
+# Polycarp.app, and left alone (with a note) when it is a file or someone else's link. The old name `tabkyra` is no longer
+# made: a ~/.local/bin/tabkyra that links into a Polycarp.app is removed (or, where an earlier install took the name over,
+# put back to the link it replaced), and any other tabkyra (an npm link, Homebrew, a file) is never touched.
 # BANEYSPACES_NO_LAUNCH=1: install as usual but don't open the app.
 # The app's name, identifier and command names come from product.env, which sits beside this script
 # (scripts/ in the repo, Contents/Resources in the app).
@@ -146,64 +147,28 @@ done
 # The `polycarp` command comes with the app.
 ln -sf "$DEST/Contents/Resources/bin/polycarp" "$HOME/.local/bin/polycarp"
 
-# Runs a command for at most 5 seconds; true only when it exits 0 in time.
-runs_ok() {
-  "$@" >/dev/null 2>&1 &
-  local pid=$! rc=0
-  ( sleep 5; kill "$pid" 2>/dev/null ) >/dev/null 2>&1 &
-  local watcher=$!
-  wait "$pid" || rc=$?
-  kill "$watcher" 2>/dev/null || true
-  return "$rc"
-}
-# Prints the first working tabkyra that isn't ours: in the Homebrew and /usr/local folders (POLYCARP_TABKYRA_DIRS replaces
-# that list, for tests), on this shell's PATH, or on the login shell's PATH (3 seconds at most).
-working_tabkyra() {
-  local dir login="" cand
-  for dir in ${POLYCARP_TABKYRA_DIRS:-/opt/homebrew/bin /usr/local/bin}; do
-    cand="$dir/tabkyra"
-    [ -x "$cand" ] && runs_ok "$cand" --version && { echo "$cand"; return 0; }
-  done
-  login=$( ( "${SHELL:-/bin/zsh}" -l -c 'printf %s "$PATH"' 2>/dev/null & p=$!; ( sleep 3; kill "$p" 2>/dev/null ) >/dev/null 2>&1 & wait "$p" ) 2>/dev/null || true )
-  local IFS=:
-  for dir in $PATH $login; do
-    [ -n "$dir" ] || continue
-    cand="$dir/tabkyra"
-    [ "$cand" = "$HOME/.local/bin/tabkyra" ] && continue
-    [ -x "$cand" ] && runs_ok "$cand" --version && { echo "$cand"; return 0; }
-  done
-  return 1
-}
 HELPER="$DEST/Contents/Resources/browser/polycarp-browser"
-TABKYRA_LINK="$HOME/.local/bin/tabkyra"
+BROWSER_LINK="$HOME/.local/bin/polycarp-browser"
+OLD_LINK="$HOME/.local/bin/tabkyra"
+# True when $1 is a link to the helper inside some Polycarp.app: one this installer made.
+links_to_ours() {
+  [ -L "$1" ] && case "$(readlink "$1")" in *Polycarp.app/Contents/Resources/browser/polycarp-browser) true ;; *) false ;; esac
+}
 if [ -x "$HELPER" ]; then
-  if [ -L "$TABKYRA_LINK" ] && case "$(readlink "$TABKYRA_LINK")" in *Polycarp.app/Contents/Resources/browser/polycarp-browser) true ;; *) false ;; esac; then
-    ln -sf "$HELPER" "$TABKYRA_LINK"   # ours already: follow the app to where it is now
-  elif [ ! -e "$TABKYRA_LINK" ] && [ ! -L "$TABKYRA_LINK" ]; then
-    # A working tabkyra elsewhere (Homebrew, npm, the login PATH) keeps the name: agents depend on it.
-    if elsewhere=$(working_tabkyra); then
-      echo "note: a working tabkyra is already at $elsewhere, so ~/.local/bin/tabkyra was not made; \`polycarp browser\` runs the helper in this app. POLYCARP_TAKE_OVER_TABKYRA=1 scripts/install-app.sh takes the name over." >&2
-    else
-      ln -s "$HELPER" "$TABKYRA_LINK"
-    fi
-  elif [ "${POLYCARP_TAKE_OVER_TABKYRA:-}" = 1 ]; then
-    if [ -L "$TABKYRA_LINK" ]; then
-      mkdir -p "$HOME/Library/Application Support/$SUPPORT_FOLDER"
-      readlink "$TABKYRA_LINK" > "$HOME/Library/Application Support/$SUPPORT_FOLDER/tabkyra-previous-link"
-      ln -sf "$HELPER" "$TABKYRA_LINK"
-    else
-      echo "note: $TABKYRA_LINK is a file, not a link, so it was left alone; \`polycarp browser\` runs the same helper." >&2
-    fi
-  elif [ ! -L "$TABKYRA_LINK" ]; then
-    # A regular file is someone's own command, working or not: never touched.
-    echo "note: $TABKYRA_LINK is a file, not a link, so it was left alone; \`polycarp browser\` runs the helper in this app." >&2
-  elif ! runs_ok "$TABKYRA_LINK" --version; then
-    # A link that dangles or fails: the name is free, but where it pointed is written down first.
-    mkdir -p "$HOME/Library/Application Support/$SUPPORT_FOLDER"
-    readlink "$TABKYRA_LINK" > "$HOME/Library/Application Support/$SUPPORT_FOLDER/tabkyra-previous-link"
-    ln -sf "$HELPER" "$TABKYRA_LINK"
+  if links_to_ours "$BROWSER_LINK"; then
+    ln -sf "$HELPER" "$BROWSER_LINK"   # ours already: follow the app to where it is now
+  elif [ ! -e "$BROWSER_LINK" ] && [ ! -L "$BROWSER_LINK" ]; then
+    ln -s "$HELPER" "$BROWSER_LINK"
+  elif [ ! -L "$BROWSER_LINK" ]; then
+    echo "note: $BROWSER_LINK is a file, not a link, so it was left alone; \`polycarp browser\` runs the helper in this app." >&2
   else
-    echo "note: a working tabkyra is already at $TABKYRA_LINK, so it was left alone; \`polycarp browser\` runs the helper in this app. POLYCARP_TAKE_OVER_TABKYRA=1 scripts/install-app.sh takes the name over." >&2
+    echo "note: $BROWSER_LINK links to $(readlink "$BROWSER_LINK"), not to this app, so it was left alone; \`polycarp browser\` runs the helper in this app." >&2
+  fi
+  # The old name: only Polycarp's own link goes. Where an earlier install took the name over, the link it replaced comes back.
+  if links_to_ours "$OLD_LINK"; then
+    previous="$HOME/Library/Application Support/$SUPPORT_FOLDER/tabkyra-previous-link"
+    rm -f "$OLD_LINK"
+    if [ -s "$previous" ]; then ln -s "$(cat "$previous")" "$OLD_LINK" && rm -f "$previous"; fi
   fi
 fi
 # The Polycarp theme, unless a look was already chosen (install.sh does the same; a person who came by the disk image
