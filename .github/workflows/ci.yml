@@ -19,6 +19,7 @@ jobs:
       voice: ${{ steps.f.outputs.voice }}
       browser: ${{ steps.f.outputs.browser }}
       core: ${{ steps.f.outputs.core }}
+      spaces-linux: ${{ steps.f.outputs.spaces-linux }}
     steps:
       - uses: actions/checkout@v4
       - id: f
@@ -30,6 +31,8 @@ jobs:
             voice: ['voice/**', 'core/**', '.github/workflows/ci.yml']
             core: ['core/**', '.github/workflows/ci.yml']
             browser: ['browser/**', '.github/workflows/ci.yml']
+            # The spaces Rust workspace (core, the Linux daemon, the Windows crates it also builds) and what the Linux side shares.
+            spaces-linux: ['spaces/Cargo.toml', 'spaces/Cargo.lock', 'spaces/crates/**', 'spaces/spec/**', 'spaces/platforms/linux/**', 'spaces/platforms/windows/**', 'cli/**', '.github/workflows/ci.yml']
 
   cli:
     needs: changes
@@ -108,6 +111,28 @@ jobs:
         run: BANEYSPACES_ARM64_ONLY=1 scripts/build-core.sh
       - name: Test
         run: swift test
+
+  # The Linux side of spaces (Omarchy: Arch and Hyprland). nested.sh is not run here: it needs Hyprland, which Ubuntu 24.04's
+  # apt does not carry (packages.ubuntu.com has no hyprland in noble), plus a GPU render node and AT-SPI. It runs on an Omarchy seat.
+  spaces-linux:
+    needs: changes
+    if: needs.changes.outputs.spaces-linux == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: spaces
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: spaces, key: spaces-linux }
+      - name: Core, the conformance cases and the Linux daemon's pure parts
+        run: cargo test --workspace --locked
+      - name: Install and uninstall scripts against a throwaway HOME
+        run: platforms/linux/tests/omarchy-scripts.sh
 
   spaces-bundle:
     needs: changes
