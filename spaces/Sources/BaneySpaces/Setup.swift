@@ -915,7 +915,12 @@ struct SetupView: View {
         }
     }
 
-    @ViewBuilder private var appearanceTab: some View {
+    /// Theme files and pictures can be dropped anywhere on the tab.
+    private var appearanceTab: some View {
+        ThemeDropTarget(current: appearance.polycarp?.name) { appearanceSections }
+    }
+
+    @ViewBuilder private var appearanceSections: some View {
         SettingsGroup("Theme") {
             SettingsRow("Theme") {
                 Picker("Theme", selection: binding({ themes.pendingName ?? appearance.polycarp?.name ?? ThemeChoice.ownColors }, { themes.pick(name: $0) })) {
@@ -936,6 +941,9 @@ struct SetupView: View {
                     .pickerStyle(.segmented).labelsHidden().frame(width: 190)
                     .disabled(!themes.available || themes.pendingName == ThemeChoice.ownColors)
                 }
+            }
+            if ThemeCommand.shared.available {
+                SettingsBlock { ThemeShelf(current: themes.pendingName ?? appearance.polycarp?.name) { themes.pick(name: $0) } }
             }
             if !themes.available { SettingsNote("This copy of Polycarp doesn't include the theme command, so the theme can't change here.") }
             if let e = themes.error { SettingsNote(e, tone: .urgent) }

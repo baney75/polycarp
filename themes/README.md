@@ -29,6 +29,27 @@ polycarp theme undo                  # go back
 
 A user theme cannot use the name of a built-in theme.
 
+### In the Mac app
+
+Settings > Appearance shows every theme as a tile. Click one to use it. **Customize…** makes your own
+copy of a built-in (what `polycarp theme create <name> --extends <base>` does) and opens the editor;
+**Edit…** opens one of yours.
+
+- The editor lists every field `polycarp theme schema` names, with a control for its type: a color
+  well and hex field for colors, a slider for numbers, a menu for choices, a switch for on or off, and
+  a text box for fonts and easing. A field the CLI adds later shows up with no app update.
+- The light and dark previews beside it redraw as you drag: the dock, a panel, buttons, a settings row,
+  status colors and the agent cursor (whose colors are its own, so you see how it reads on the theme).
+- Any pair below WCAG AA (4.5:1 for text, 3:1 for marks) is listed, and marked beside both colors.
+- Undo and Redo work inside the editor. Revert goes back to the last save. **Save** runs
+  `polycarp theme change ... --theme <name>` with every edit at once, so the CLI checks it, shows why
+  it refuses, and one `polycarp theme undo` takes the save back.
+- Drop a `.toml` on the tab to add it. The CLI checks it first and its words are shown as they are.
+  A built-in is never replaced, and one of yours only after you say so.
+- Drag a tile to Finder to save its theme file.
+- Drop a picture on the tab or the editor to take its colors: an accent, the text on it, a selection
+  and a border, fitted so every pair still reads. Nothing changes until you use them.
+
 ## The format
 
 ```toml
