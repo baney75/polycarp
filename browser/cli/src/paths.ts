@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { lstatSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +24,30 @@ export function socketDirs(): string[] {
 	const override = envVar("SOCKET_DIR");
 	if (override) return [override];
 	return [`/tmp/polycarp-bridge-${user}`, `/tmp/tabkyra-bridge-${user}`];
+}
+
+/**
+ * Where a host also listens so a client from before the rename (it looks only in `tabkyra-bridge-<user>`) still finds it,
+ * or undefined: on Windows, under an override, or when that folder isn't private to this user (another user may have made
+ * it after a reboot cleared /tmp). Drop it with the fallback in socketDirs().
+ */
+export function legacySocketPath(pid: number): string | undefined {
+	if (process.platform === "win32" || envVar("SOCKET_DIR")) return undefined;
+	const dir = socketDirs()[1];
+	try {
+		mkdirSync(dir, { mode: 0o700 });
+	} catch {
+		/* already there: checked below */
+	}
+	try {
+		const st = lstatSync(dir);
+		if (!st.isDirectory() || st.uid !== process.getuid?.() || (st.mode & 0o777) !== 0o700) return undefined;
+	} catch {
+		return undefined;
+	}
+	const path = join(dir, `${pid}.sock`);
+	rmSync(path, { force: true });
+	return path;
 }
 
 export function socketPath(pid: number): string {

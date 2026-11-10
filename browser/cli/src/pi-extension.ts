@@ -48,7 +48,7 @@ function extensionSource(): string {
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { connect } from "node:net";
 import { userInfo } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
@@ -65,10 +65,14 @@ function encode(message: unknown): Buffer {
 	return Buffer.concat([header, body]);
 }
 
-function socketsIn(dir: string): string[] {
+function socketsIn(dir: string, i: number): string[] {
 	if (!existsSync(dir)) return [];
 	const st = statSync(dir);
-	if ((st.mode & 0o777) !== 0o700 || st.uid !== process.getuid?.()) throw new Error(\`\${dir} is not private to this user\`);
+	if ((st.mode & 0o777) !== 0o700 || st.uid !== process.getuid?.()) {
+		// Only the socket folder itself must be private; skip the old one rather than fail every tool.
+		if (i > 0) return [];
+		throw new Error(\`\${dir} is not private to this user\`);
+	}
 	return readdirSync(dir)
 		.filter((n) => n.endsWith(".sock"))
 		.filter((n) => {
@@ -83,7 +87,16 @@ function socketsIn(dir: string): string[] {
 }
 
 function newestSocket(): string | undefined {
-	return SOCKET_DIRS.flatMap(socketsIn).sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+	const seen = new Set<string>();
+	return SOCKET_DIRS.flatMap(socketsIn)
+		.filter((p) => {
+			// A host listens in both folders: count it once.
+			const name = basename(p);
+			if (seen.has(name)) return false;
+			seen.add(name);
+			return true;
+		})
+		.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
 }
 
 class Bridge {

@@ -13,7 +13,7 @@ import type { ClientToHost, ExtToHost, HostClientConnected, HostToClient, HostTo
 import { ERR, MAX_FRAME_FROM_EXTENSION, MAX_FRAME_TO_EXTENSION } from "../../src/bridge/protocol.ts";
 import { encodeFrame, FrameParser } from "./framing.ts";
 import { guardedHosts } from "./guarded-hosts.ts";
-import { socketDir, socketPath } from "./paths.ts";
+import { legacySocketPath, socketDir, socketPath } from "./paths.ts";
 import { ConnectService } from "./connect-host.ts";
 import { SubscriptionService } from "./subscriptions/service.ts";
 import { applyMirror } from "./threads-mirror.ts";
@@ -247,8 +247,9 @@ export function runNativeHost(): void {
 	}
 	const path = socketPath(process.pid);
 	rmSync(path, { force: true });
+	const legacyPath = legacySocketPath(process.pid);
 
-	const server = createServer((socket) => {
+	const onConnection = (socket: Socket) => {
 		const id = `c${++seq}-${process.pid}`;
 		const client: Client = { id, socket, outstanding: new Set(), lastDataAt: Date.now() };
 		clients.set(id, client);
@@ -268,10 +269,17 @@ export function runNativeHost(): void {
 		};
 		socket.on("close", drop);
 		socket.on("error", drop);
-	});
+	};
+	const server = createServer(onConnection);
 	server.listen(path, () => {
 		if (process.platform !== "win32") chmodSync(path, 0o600);
 	});
+	// A client from before the rename (a running `mcp`, a pi extension file written then) looks only in the old folder.
+	const legacyServer = legacyPath ? createServer(onConnection) : undefined;
+	if (legacyServer && legacyPath) {
+		legacyServer.on("error", () => undefined); // only a convenience: the new socket is the real one
+		legacyServer.listen(legacyPath, () => chmodSync(legacyPath, 0o600));
+	}
 
 	// stdin: frames from the extension
 	const parser = new FrameParser(MAX_FRAME_FROM_EXTENSION);
@@ -300,6 +308,10 @@ export function runNativeHost(): void {
 		// they send meanwhile is answered not_sent (onClientMessage), which they resend to the next host.
 		server.close();
 		rmSync(path, { force: true });
+		if (legacyServer && legacyPath) {
+			legacyServer.close();
+			rmSync(legacyPath, { force: true });
+		}
 		const started = Date.now();
 		const ended = new Set<Client>();
 		const exitWhenClosed = () => {

@@ -79,7 +79,15 @@ export function listSockets(dirs: readonly string[] = socketDirs()): string[] {
 		}
 		for (const n of readdirSync(dir)) if (n.endsWith(".sock")) found.push(join(dir, n));
 	});
+	// A host listens in both folders (paths.ts legacySocketPath): keep its socket in the first one.
+	const seen = new Set<string>();
 	return found
+		.filter((p) => {
+			const name = p.slice(p.lastIndexOf("/") + 1);
+			if (seen.has(name)) return false;
+			seen.add(name);
+			return true;
+		})
 		.filter((p) => {
 			const pid = Number.parseInt(p.slice(p.lastIndexOf("/") + 1), 10);
 			try {
