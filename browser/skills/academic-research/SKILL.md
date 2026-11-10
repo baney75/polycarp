@@ -1,6 +1,6 @@
 ---
 name: academic-research
-description: Find, read and verify scholarly sources (Google Scholar, Crossref, OpenAlex, arXiv, PubMed), check each one is real, unretracted and says what you claim, then save it to the Tabkyra library and export it as BibTeX, RIS or CSL-JSON (Zotero, Word, LaTeX) or as Obsidian notes. Use when the user asks for papers, studies, journal articles, trials, peer-reviewed sources, a literature review, citations, a bibliography, "what does the research say", or to check whether a citation is real or retracted.
+description: Find, read and verify scholarly sources (Google Scholar, Crossref, OpenAlex, arXiv, PubMed), check each one is real, unretracted and says what you claim, then save it to the Polycarp library and export it as BibTeX, RIS or CSL-JSON (Zotero, Word, LaTeX) or as Obsidian notes. Use when the user asks for papers, studies, journal articles, trials, peer-reviewed sources, a literature review, citations, a bibliography, "what does the research say", or to check whether a citation is real or retracted.
 license: AGPL-3.0
 ---
 
@@ -24,13 +24,13 @@ For news and current events, use `news-research`. For a broad multi-step questio
 
 | Need | Use |
 | --- | --- |
-| Search like a student | Tabkyra: `navigate {"url":"https://scholar.google.com/scholar?q=..."}` then `get_page_text {}` |
+| Search like a student | Polycarp: `navigate {"url":"https://scholar.google.com/scholar?q=..."}` then `get_page_text {}` |
 | Check a DOI and its metadata | `https://api.crossref.org/works/<DOI>` (JSON; a fetch tool works, no browser needed) |
 | Search open metadata, retraction flag, citations | `https://api.openalex.org/works?search=<terms>&per-page=10` |
 | Preprints | `https://export.arxiv.org/api/query?search_query=all:<terms>&max_results=10` |
 | Medicine and biology | `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=<terms>&retmode=json` |
-| Full text when open | The OpenAlex `open_access.oa_url`, or the publisher page in Tabkyra |
-| Save, verify, cite, export | `library_add`, `library_search`, `library_cite` (MCP), or `tabkyra library` |
+| Full text when open | The OpenAlex `open_access.oa_url`, or the publisher page in Polycarp |
+| Save, verify, cite, export | `library_add`, `library_search`, `library_cite` (MCP), or `polycarp browser library` |
 
 Google Scholar has no API and shows a captcha when hit fast. Search it at a human pace: one
 query, read, then the next. If a captcha appears, call `tabs_show` and ask the user to
@@ -58,22 +58,22 @@ solve it, then go on. Never try to get around it.
       supports your claim. Note its page or section.
 5. **Grade the evidence.** For each source write one line: study type, sample size if
    stated, and whether it supports, weakens or only relates to the claim.
-6. **Save each verified source to the library.** With the tabkyra MCP server:
+6. **Save each verified source to the library.** With the Polycarp MCP server:
    `library_add {"id":"<DOI>","quote":"<the supporting sentence>","location":"p. 12"}`.
-   From a shell: `tabkyra library add <DOI> --quote "..." --location "p. 12" --tag <project>`.
+   From a shell: `polycarp browser library add <DOI> --quote "..." --location "p. 12" --tag <project>`.
    The library fetches the record from the DOI registry and checks retractions again, so
    it doubles as step 4's check. Exit code 3 (or `"retracted": true`) means drop it as
    support. Exit code 4 (or `"complete": false`) means the retraction check didn't finish:
-   run `tabkyra library verify <citekey>` before citing it. If neither is available, write BibTeX into `references.bib` from the Crossref
+   run `polycarp browser library verify <citekey>` before citing it. If neither is available, write BibTeX into `references.bib` from the Crossref
    record.
 7. **Export what the user's tools read.**
-   - Obsidian: `tabkyra library obsidian <vault folder>` writes one note per source in
+   - Obsidian: `polycarp browser library obsidian <vault folder>` writes one note per source in
      `Sources/`, with the citekey, DOI link, quote and a retraction warning when needed.
      Link it from the note the user is working in with a `[[citekey]]` wikilink.
-   - Zotero, Word or LaTeX: `tabkyra library export --format bibtex --out refs.bib`
+   - Zotero, Word or LaTeX: `polycarp browser library export --format bibtex --out refs.bib`
      (or `--format ris`, `--format csl`). Zotero imports all three.
    - A formatted reference: `library_cite {"citekey":"...","style":"apa"}` or
-     `tabkyra library cite <citekey> --style mla`.
+     `polycarp browser library cite <citekey> --style mla`.
 8. **Answer.** Lead with what the evidence shows, then each source with its claim and
    location, then gaps: what you looked for and didn't find.
 

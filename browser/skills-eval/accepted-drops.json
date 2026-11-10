@@ -55,5 +55,11 @@
 			"value": 0.8,
 			"reason": "Adding youtube, rumble, instagram, site-learning and pdf (with x-search and summarize just before) takes the catalog to 42 skills. A word counts as evidence only while at most two skills hold it, and the new skills share words like video, comments, browser and page, so one borderline case in each of these skills now routes to none or to a new skill (one tabkyra case, a YouTube comments task, goes to youtube, arguably right). Two router changes were measured and refused: freezing the single-evidence bar changed nothing, and counting three-skill words as evidence raised false invokes from 0% to 4.3%. Accepted on the 2026-10-26 precedent (Donovan: \"Just merge it for now\"); to be won back by a measured router redesign."
 		}
+	],
+	"removed": [
+		{
+			"skill": "tabkyra",
+			"reason": "Renamed to polycarp-browser when the product became Polycarp. Its cases moved to the new name, and the router reads tabkyra, Polycarp and polycarp browser as that skill."
+		}
 	]
 }

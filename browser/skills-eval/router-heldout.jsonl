@@ -1,6 +1,6 @@
-{"task": "Log in to my utility company's portal and download last month's bill", "skill": "tabkyra"}
-{"task": "Click the Accept button on the cookie banner and read me the article on that page", "skill": "tabkyra"}
-{"task": "Fill in the RSVP form on the wedding site with two guests", "skill": "tabkyra"}
+{"task": "Log in to my utility company's portal and download last month's bill", "skill": "polycarp-browser"}
+{"task": "Click the Accept button on the cookie banner and read me the article on that page", "skill": "polycarp-browser"}
+{"task": "Fill in the RSVP form on the wedding site with two guests", "skill": "polycarp-browser"}
 {"task": "Find systematic reviews on vitamin D and depression and export them to BibTeX", "skill": "academic-research"}
 {"task": "Is this DOI real, and has the paper been retracted? 10.1038/nature12373", "skill": "academic-research"}
 {"task": "I need APA citations for four peer-reviewed papers on sleep deprivation", "skill": "academic-research"}
@@ -13,9 +13,9 @@
 {"task": "/autoresearch why did the Roman Republic fall", "skill": "autoresearch"}
 {"task": "Do thorough, in-depth research on which cities have the best transit and keep going until it's answered", "skill": "autoresearch"}
 {"task": "Raise the benchmark score of the parser and keep only changes that improve the metric", "skill": "autoresearch"}
-{"task": "/bug tabkyra screenshots are cut off at the bottom", "skill": "bug"}
-{"task": "The Tabkyra extension keeps disconnecting from the CLI; write up a bug report", "skill": "bug"}
-{"task": "Tabkyra's side panel crashed when I clicked Settings, file an issue on GitHub", "skill": "bug"}
+{"task": "/bug Polycarp screenshots are cut off at the bottom", "skill": "bug"}
+{"task": "The Polycarp extension keeps disconnecting from the CLI; write up a bug report", "skill": "bug"}
+{"task": "Polycarp's side panel crashed when I clicked Settings, file an issue on GitHub", "skill": "bug"}
 {"task": "Give me Google search operators to find PDFs about flood maps on fema.gov", "skill": "dorks"}
 {"task": "Write a dork that finds Excel files of school budgets on .gov sites", "skill": "dorks"}
 {"task": "Craft an advanced search that excludes Reddit and finds only intitle matches for the error", "skill": "dorks"}
@@ -23,8 +23,8 @@
 {"task": "The dorks skill gave my local 7B model a bad result; repair it for that tier", "skill": "fix"}
 {"task": "My small model got the bug skill wrong. Have a stronger model rewrite it and test it", "skill": "fix"}
 {"task": "Create a new skill that teaches agents to file expense reports", "skill": "kyraskillmaker"}
-{"task": "Rewrite my SKILL.md so it passes tabkyra skill lint and a small model can follow it", "skill": "kyraskillmaker"}
-{"task": "Port this Codex skill into Tabkyra's skill format", "skill": "kyraskillmaker"}
+{"task": "Rewrite my SKILL.md so it passes polycarp browser skill lint and a small model can follow it", "skill": "kyraskillmaker"}
+{"task": "Port this Codex skill into Polycarp's skill format", "skill": "kyraskillmaker"}
 {"task": "What's the latest on the wildfire evacuations today?", "skill": "news-research"}
 {"task": "Fact-check the viral claim that the city banned gas stoves this week", "skill": "news-research"}
 {"task": "Give me a news briefing on the election recount from wire services", "skill": "news-research"}

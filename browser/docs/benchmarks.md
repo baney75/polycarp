@@ -86,7 +86,7 @@ the MCP server, the bridge or the session model is compared with the same number
 
 Both use `cli/eval/fixture-browser.mjs`, which turns on developer mode in the throwaway
 profile: without it this Chromium disables an unpacked extension the moment it reloads, so a
-forced reload would unload Tabkyra for good.
+forced reload would unload Polycarp for good.
 
 ```bash
 npm run build && (cd cli && npm run build)
@@ -130,12 +130,12 @@ parallel counts cross-talk only when one agent's tool results show the other's f
 | --- | --- | --- |
 | Tools / tools/list + instructions bytes | 31 / 26,460 + 2,709 | 31 / 26,460 + 2,709 (no MCP change) |
 | Input tokens per turn (Haiku) | 11,471 | 11,471 |
-| `tabkyra mcp` start through the launcher, interleaved medians | 140 / 131 ms (both arms identical on main) | 119 ms without the compile cache, 108 ms with it |
+| `polycarp browser mcp` start through the launcher, interleaved medians | 140 / 131 ms (both arms identical on main) | 119 ms without the compile cache, 108 ms with it |
 | Duplicate clicks across reloads | 3 of 3 cycles | 3 of 3 |
 | Tab group behaviors | 5 of 13 | 5 of 13 |
 | Session tasks | 6/10 | 6/10 |
 | Skill suite, without / with the skill | 6/6 / 6/6 | 6/6 / 6/6 |
-| `tabkyra --version` | 0.1.0 | 1.1.9 |
+| `polycarp browser --version` | 0.1.0 | 1.1.9 |
 
 An earlier baseline on 9e37df3 (before ask_user) measured 30 tools and 10,473 tokens, with
 the same task and group results.
@@ -213,7 +213,7 @@ audio length: under 1 is faster than speech.
 | Moonshine tiny (English) | processor | 28 MB | 10.0% | 0.08 |
 | Whisper tiny | processor | 41 MB | 14.8% | 0.32 |
 
-The strong models missed one word, the name "Tabkyra" ("TabKara", "Tabgira"). Clean synthetic
+The strong models missed one word, the name "Polycarp" ("TabKara", "Tabgira"). Clean synthetic
 speech doesn't separate them; turbo's lead (large-v3 accuracy) shows on accents, noise and other
 languages, which these clips don't test. Turbo's first load took 177 s, almost all of it the
 download.

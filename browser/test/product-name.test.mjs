@@ -15,10 +15,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ALLOW = new Map([
 	// The setup prompt names the section heading and the clone folder that earlier setups made.
 	["src/agent-setup-prompt.ts", "earlier section heading and clone folder"],
-	// The skill gate: its rules and tests match on these words (the install marker, "the tabkyra skill"), and the lint, its
+	// The skill gate: its rules and tests match on these words (the install marker, the old skill name tabkyra), and the lint, its
 	// router and the catalog are maintainer-reviewed. They change only in a change that is about them.
 	["cli/src/skill-lint.ts", "skill lint matches the install marker"],
-	["cli/src/skill-router.ts", "router reads \"tabkyra skill\" as a skill name"],
+	["cli/src/skill-router.ts", "router reads tabkyra as the polycarp-browser skill's old name"],
 	["cli/src/skills-catalog.ts", "generated from skills/, which keep their names"],
 ]);
 const MARKER = "product-name allowlist";
@@ -132,9 +132,10 @@ test("renamed identifiers come back only as the named fallbacks", () => {
 	assert.deepEqual(Object.fromEntries(counts), Object.fromEntries(RENAMED_ALLOWED), `use com.polycarp.browser, polycarp-bridge, x-polycarp-hub or USER_AGENT:\n${found.join("\n")}`);
 });
 
-test("the helper's npm package installs only the polycarp-browser command", () => {
+test("the helper's npm package installs polycarp-browser and the polycarp command the skills name, and no old alias", () => {
 	const pkg = JSON.parse(readFileSync(join(root, "cli/package.json"), "utf8"));
-	assert.deepEqual(Object.keys(pkg.bin), ["polycarp-browser"], "no tabkyra or sitegeist alias");
+	assert.deepEqual(Object.keys(pkg.bin).sort(), ["polycarp", "polycarp-browser"], "no tabkyra or sitegeist alias");
 	const lock = JSON.parse(readFileSync(join(root, "cli/package-lock.json"), "utf8"));
-	assert.deepEqual(Object.keys(lock.packages[""].bin ?? {}), ["polycarp-browser"], "the lockfile agrees");
+	// npm writes the lockfile's names sorted, so the order is not part of the check.
+	assert.deepEqual(Object.keys(lock.packages[""].bin ?? {}).sort(), ["polycarp", "polycarp-browser"], "the lockfile agrees");
 });

@@ -16,7 +16,7 @@ Obsidian notes are Markdown files on disk; Notion lives in the browser. Archive,
 - Notion pages, checklists and databases.
 
 For Google Docs, Word or Sheets, use `office-docs`. For paper citations, use
-`tabkyra library obsidian` (`academic-research`).
+`polycarp browser library obsidian` (`academic-research`).
 
 ## Obsidian basics
 
@@ -30,7 +30,7 @@ For Google Docs, Word or Sheets, use `office-docs`. For paper citations, use
 1. **Find the vault.** `ls` its top folders; read two recent notes for the user's
    conventions (folders, property names, date format).
 2. **Search before you create.** `grep -ril "[topic]" "[vault]" --include=*.md | head`.
-   If a note on the topic exists, append to it instead of making a duplicate.
+   If a note on the topic exists, append to it rather than duplicate it.
 3. **Write the note.** Title as the file name, properties, then content; one idea per
    note, where the vault's conventions say or the inbox.
 4. **Link it.** Link two to five related notes from step 2, and link back from the

@@ -1,6 +1,6 @@
 ---
 name: artifacts
-description: Build a polished, self-contained HTML artifact (report, briefing, comparison table, dashboard, slide-style page) from research or data, with citations, accessible markup and no outside scripts, then open it in Tabkyra and check how it actually renders before handing it over. Use when the user asks for a report, page, one-pager, visual summary, dashboard, printable or shareable page, static page, HTML file or "artifact", or when research results, a table of numbers or data need a readable deliverable.
+description: Build a polished, self-contained HTML artifact (report, briefing, comparison table, dashboard, slide-style page) from research or data, with citations, accessible markup and no outside scripts, then open it in Polycarp and check how it actually renders before handing it over. Use when the user asks for a report, page, one-pager, visual summary, dashboard, printable or shareable page, static page, HTML file or "artifact", or when research results, a table of numbers or data need a readable deliverable.
 license: AGPL-3.0
 ---
 
@@ -19,7 +19,7 @@ To explain code, a diff, a system or an implementation plan with diagrams, use
 ## Steps
 
 1. **Write the one-sentence takeaway.** The page leads with it. If you can't write it, you
-   aren't ready to build.
+   aren't ready.
 2. **Outline the sections** in reading order: takeaway, key numbers, details, sources.
    Each section answers one question, and its heading states the answer ("Costs fell 12%"),
    not the topic ("Costs").
@@ -101,7 +101,7 @@ Write the tags yourself, in this order.
 ## Done when
 
 - The policy, script, network and console checks passed. If one failed, it is not done:
-  say the page is unsafe to open. Only a check that could not run may be named instead.
+  say the page is unsafe to open. Only a check that couldn't run may be named instead.
 - The first screen states the takeaway; every research fact has a working citation.
 - The user has the saved path.
 
@@ -109,7 +109,7 @@ Write the tags yourself, in this order.
 
 | Symptom | Fix |
 | --- | --- |
-| Permission prompt for 127.0.0.1 | Ask the user to allow it (`tabkyra allow 127.0.0.1`) |
+| Permission prompt for 127.0.0.1 | Ask the user to allow it (`polycarp browser allow 127.0.0.1`) |
 | Chart unreadable | Use a table |
 | Wider than 375px | Wrap wide tables and SVGs in an `overflow-x: auto` box |
 

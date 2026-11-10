@@ -1,4 +1,4 @@
-# Contributing to Tabkyra
+# Contributing to Polycarp
 
 Thanks for helping. Bug reports, fixes, docs and skills are all welcome. This page covers
 setup, the checks a pull request must pass, and how skill contributions are reviewed.
@@ -16,14 +16,14 @@ mkdir tabkyra-src && cd tabkyra-src
 git clone https://github.com/baney75/tabkyra && cd tabkyra
 ./scripts/setup-siblings.sh               # clones pi-mono and mini-lit, pins and patches them, installs
 (cd cli && npm install && npm run build && npm link)
-tabkyra setup                             # builds the extension, registers the host, connects
+polycarp-browser setup                    # builds the extension, registers the host, connects
 ```
 
 `./dev.sh` starts the watchers. After a change in `src/`, rebuild and reload with
-`npm run build && tabkyra reload`. Set `TABKYRA_NO_BUMP=1` to stop a build from bumping
+`npm run build && polycarp-browser reload`. Set `TABKYRA_NO_BUMP=1` to stop a build from bumping
 the version in `static/manifest.chrome.json`.
 
-Upstream code lives in the siblings. A change to pi-mono that Tabkyra needs goes in
+Upstream code lives in the siblings. A change to pi-mono that Polycarp needs goes in
 `patches/pi-mono.patch`.
 
 ## Checks
@@ -102,7 +102,7 @@ this repository.
 
 A skill that contains your own data (emails, phone numbers, addresses, account or student
 IDs, home paths, names you mark as private, or anything from your signed-in sites) is
-personal ([D6](docs/decisions.md)). Keep it on your machine with `tabkyra skill apply`.
+personal ([D6](docs/decisions.md)). Keep it on your machine with `polycarp-browser skill apply`.
 Don't open a pull request with it, in any form. If you're not sure, it's personal.
 
 ## Reporting bugs

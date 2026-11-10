@@ -236,7 +236,7 @@ test("edit --draft-only never touches a draft with unapplied changes, and rsi us
 	assert.equal(readFileSync(draft, "utf8"), unfinished);
 	// rsi drafts only through --draft-only, with no print-and-redirect fallback that could overwrite.
 	const rsi = bundled("rsi");
-	assert.match(rsi, /tabkyra skill edit <name> --draft-only/);
+	assert.match(rsi, /polycarp browser skill edit <name> --draft-only/);
 	assert.match(rsi, /holds unapplied\s+changes, stop and ask the user/);
 	assert.doesNotMatch(rsi, /print \S+ --raw >/);
 	assert.doesNotMatch(rsi, /mkdir -p ~\/\.config\/tabkyra\/skill-drafts/);

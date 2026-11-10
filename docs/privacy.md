@@ -41,7 +41,7 @@ These don't get your chats. Some carry a small piece of what the agent is workin
 ### What stays on your computer
 
 - **Chats, skills, settings and API keys** stay in the extension's storage in your browser. Your keys go only to the provider they belong to.
-- **Past chats for your coding agents.** A copy of your side panel chats, including what the agent read from pages, is kept in `~/.local/share/tabkyra/threads`, whichever AI you use and whether or not you've connected an agent, so your own coding agents can read it. Any program you run on your computer can read that folder, and what a coding agent reads from it goes to that agent's company. Keys are removed from the copy, and private mode chats are never copied. It's on by default. Turn it off in Settings > Privacy, which deletes the copies.
+- **Past chats for your coding agents.** A copy of your side panel chats, including what the agent read from pages, is kept in `~/.local/share/polycarp/browser/threads`, whichever AI you use and whether or not you've connected an agent, so your own coding agents can read it. Any program you run on your computer can read that folder, and what a coding agent reads from it goes to that agent's company. Keys are removed from the copy, and private mode chats are never copied. It's on by default. Turn it off in Settings > Privacy, which deletes the copies.
 - **Error reports** are off by default. When you turn them on, errors are kept on your computer with secrets removed. Nothing is sent. You read the report, copy it, and paste it into a GitHub issue yourself if you choose to.
 
 ### Limited Use
@@ -57,7 +57,7 @@ The use of information received from Google APIs will adhere to the [Chrome Web 
 
 ## Deleting your data
 
-- **Extension:** first turn off the chat copies in Settings > Privacy, or delete `~/.local/share/tabkyra/threads` yourself, since removing the extension can't reach that folder. Then remove the extension from your browser, which deletes everything it stored there. To delete only your chats, keys or settings, use its Settings. A chat you delete there can stay in the chat copy until you turn the copy off.
+- **Extension:** first turn off the chat copies in Settings > Privacy, or delete `~/.local/share/polycarp/browser/threads` yourself, since removing the extension can't reach that folder. Then remove the extension from your browser, which deletes everything it stored there. To delete only your chats, keys or settings, use its Settings. A chat you delete there can stay in the chat copy until you turn the copy off.
 - **Mac app:** run the uninstaller, then delete the `Polycarp` folder in `~/Library/Application Support`.
 - **Data you sent to an AI provider:** ask that provider. We never had it.
 

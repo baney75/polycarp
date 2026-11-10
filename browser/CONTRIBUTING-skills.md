@@ -1,13 +1,13 @@
 # Contributing a skill
 
-Found a better way to get around a site? Turn it into a community skill. Every Tabkyra user
+Found a better way to get around a site? Turn it into a community skill. Every Polycarp user
 gets it once a maintainer merges it. This page is for you and for your agent. The design is
 decision D27 in [docs/decisions.md](docs/decisions.md).
 
 ## What a community skill is
 
 A `SKILL.md` for one or a few sites, written to the `kyraskillmaker` standard
-(`tabkyra skill print kyraskillmaker`), in `community/skills/<name>/`. Its router cases go in
+(`polycarp browser skill print kyraskillmaker`), in `community/skills/<name>/`. Its router cases go in
 `community/cases/<name>.jsonl`. It differs from a built-in skill in four ways:
 
 - **Scoped.** A `## Sites` section lists its sites, one hostname per bullet (`- notion.so`).
@@ -25,20 +25,20 @@ A `SKILL.md` for one or a few sites, written to the `kyraskillmaker` standard
 
 Your agent does steps 1 to 4. Step 5 needs your yes.
 
-1. **Write it.** `tabkyra skill write <name> --file SKILL.md` lints it and shows the diff;
+1. **Write it.** `polycarp browser skill write <name> --file SKILL.md` lints it and shows the diff;
    `--yes` saves it as a local skill. (MCP: `skill_manage` with action `write`, then `apply:true` after you approve.)
 2. **Write the cases.** At least 8 tasks in your words that should pick it, plus near misses
    that should pick none, one JSON object per line:
    `{"task": "open my Weekly Sync page in Notion", "skill": "notion-navigation"}`.
-3. **Test it.** `tabkyra skill test <name> --cases cases.jsonl` runs the lint, the community
-   rules and the router. In a Tabkyra checkout it runs the full regression CI runs. Then use
+3. **Test it.** `polycarp browser skill test <name> --cases cases.jsonl` runs the lint, the community
+   rules and the router. In a Polycarp checkout it runs the full regression CI runs. Then use
    the skill on the real site and fix what goes wrong.
-4. **Preview the submission.** `tabkyra skill submit <name> --cases cases.jsonl`. It clones the
+4. **Preview the submission.** `polycarp browser skill submit <name> --cases cases.jsonl`. It clones the
    repository, runs the checks CI runs with your skill added, and prints the exact files and
    the pull request it would open. Nothing is sent. (MCP: `skill_manage` with action `prepare_submit`.)
 5. **Submit.** If you approve the preview, run the command it prints, with its
    `--confirm <code>`. The code covers that exact skill and those cases; any change needs a new
-   preview. Tabkyra forks `baney75/tabkyra` to your GitHub account with `gh`, pushes a branch
+   preview. Polycarp forks `baney75/tabkyra` to your GitHub account with `gh`, pushes a branch
    and opens the pull request. `--dry-run` does everything except the push.
 
 Submission needs `gh` signed in (`gh auth login`). It refuses personal data outright and
@@ -62,13 +62,13 @@ A maintainer reads the skill and merges it by hand. Nothing merges on its own.
 
 - Merged skills reach users in a signed catalog, checked about once a day. It is signed with
   the release key in CI; clients refuse an unsigned, tampered or older catalog.
-- Settings > Skills in the side panel, or `tabkyra skill sync --off`, turns community skills off.
+- Settings > Skills in the side panel, or `polycarp browser skill sync --off`, turns community skills off.
 - If you edit a community skill, your copy is kept and used while that community skill is in
-  use. A newer community version never overwrites it; `tabkyra skill list` says so, and
-  `tabkyra skill revert <name>` goes back. If the skill is pulled or you turn community skills
+  use. A newer community version never overwrites it; `polycarp browser skill list` says so, and
+  `polycarp browser skill revert <name>` goes back. If the skill is pulled or you turn community skills
   off, your copy is turned off too; the file stays.
-- `tabkyra skill remove <name>` turns a community skill off on your device;
-  `tabkyra skill enable <name>` turns it back on.
+- `polycarp browser skill remove <name>` turns a community skill off on your device;
+  `polycarp browser skill enable <name>` turns it back on.
 - To pull a merged skill, a maintainer deletes its folder and adds it with a reason to
-  `community/revoked.json`. Clients drop it at the next sync, delete the copies Tabkyra
+  `community/revoked.json`. Clients drop it at the next sync, delete the copies Polycarp
   installed, and turn off local copies of it.

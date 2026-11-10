@@ -46,7 +46,7 @@ and keep it current. It is your memory across the loop and the user's audit trai
    specialist source that fits: `academic-research` for studies, `news-research` for
    events, `osint` for companies and domains, official documentation for software.
    Record each query under `# Queries tried`.
-5. **Read, don't skim.** Open the two or three best results in Tabkyra
+5. **Read, don't skim.** Open the two or three best results in Polycarp
    (`navigate`, then `get_page_text`). Prefer primary sources.
 6. **Extract claims.** Each claim goes in the table with its URL, its rung (primary,
    wire, secondary, social) and the date you read it. Write claims in your own words.

@@ -21,7 +21,7 @@ licenses, not copies.
 
 ## Where it lives
 
-`~/.config/tabkyra/personal/design-library/`, unless the user names another folder they
+`~/.config/polycarp/browser/personal/design-library/`, unless the user names another folder they
 own. Don't use a team drive, a shared folder or a public repo. Layout:
 
 ```
@@ -36,16 +36,16 @@ design-library/
 
 Index line format: `- [type] [name] - [tags] - [date] - [source] - [path]`.
 Reference boards of other people's work don't go here; `reference` keeps them in
-`~/.config/tabkyra/personal/references/`.
+`~/.config/polycarp/browser/personal/references/`.
 
 ## Steps to save
 
 1. **Confirm it is the user's.** Save only what the user made, commissioned, or picked
    from a source whose license allows reuse. For anything else, use `reference`.
 2. **Create the folder privately** if missing:
-   `(umask 077 && mkdir -p ~/.config/tabkyra/personal/design-library/palettes) && chmod 700 ~/.config/tabkyra/personal ~/.config/tabkyra/personal/design-library`
+   `(umask 077 && mkdir -p ~/.config/polycarp/browser/personal/design-library/palettes) && chmod 700 ~/.config/polycarp/browser/personal ~/.config/polycarp/browser/personal/design-library`
    (swap `palettes` for the subfolder you need).
-3. **Search first.** `grep -i "[name or tag]" ~/.config/tabkyra/personal/design-library/index.md`.
+3. **Search first.** `grep -i "[name or tag]" ~/.config/polycarp/browser/personal/design-library/index.md`.
    If a close match exists, update it instead of adding a duplicate.
 4. **Write the entry** with the template for its type below.
 5. **Check palettes for contrast.** For each text and background pair:
@@ -115,7 +115,7 @@ Used in: [projects]
 The user says: "Save this palette as Harbor: navy 1F3A5F, sand F4EFE6, orange E07A2F."
 
 ```
-grep -i harbor ~/.config/tabkyra/personal/design-library/index.md     -> no match
+grep -i harbor ~/.config/polycarp/browser/personal/design-library/index.md     -> no match
 contrast 1F3A5F on FFFFFF -> 11.48   1F3A5F on F4EFE6 -> 10.03   E07A2F on FFFFFF -> 3.0
 ```
 

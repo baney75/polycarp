@@ -177,7 +177,7 @@ const PATTERN_RULES: PatternRule[] = [
 	{
 		rule: "safety-bypass",
 		pattern:
-			/(--dangerously[\w-]*|--no-verify\b|--ignore-certificate-errors|\bbypass ?permissions\b|\btabkyra (allow-all|yolo)\b|\bdisable (the )?(sandbox|safety|guard|guardrails?|confirmation|prompts?|lint)\b|\bskip (all |the )?(confirmation|approval|review|lint)s?\b|--yolo\b|--no-sandbox\b|\bchmod\s+777\b)/i,
+			/(--dangerously[\w-]*|--no-verify\b|--ignore-certificate-errors|\bbypass ?permissions\b|\b(?:tabkyra|polycarp(?:[- ]browser)?) (allow-all|yolo)\b|\bdisable (the )?(sandbox|safety|guard|guardrails?|confirmation|prompts?|lint)\b|\bskip (all |the )?(confirmation|approval|review|lint)s?\b|--yolo\b|--no-sandbox\b|\bchmod\s+777\b)/i,
 		message: "Turns off a permission prompt, sandbox, review or safety check.",
 		negatable: true,
 	},

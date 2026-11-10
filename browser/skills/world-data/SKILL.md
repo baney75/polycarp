@@ -25,8 +25,8 @@ For scholarly studies, use `academic-research`. For news about a figure, use `ne
 | --- | --- | --- |
 | World Bank | Economy, population, health, education by country | `https://api.worldbank.org/v2/country/JP/indicator/SP.DYN.LE00.IN?format=json&mrv=5` |
 | Our World in Data | Long trends, many topics, clear definitions | `https://ourworldindata.org/grapher/life-expectancy.csv?useColumnShortNames=true` and `.metadata.json` in place of `.csv` |
-| Google Data Commons | Joined data by place, US counties and cities | `https://datacommons.org/place/country/USA` or `https://datacommons.org/explore` in Tabkyra |
-| UN data | Official UN series, SDG indicators, population projections | `https://data.un.org`, `https://unstats.un.org/sdgs/dataportal`, `https://population.un.org/wpp/` in Tabkyra |
+| Google Data Commons | Joined data by place, US counties and cities | `https://datacommons.org/place/country/USA` or `https://datacommons.org/explore` in Polycarp |
+| UN data | Official UN series, SDG indicators, population projections | `https://data.un.org`, `https://unstats.un.org/sdgs/dataportal`, `https://population.un.org/wpp/` in Polycarp |
 
 World Bank country codes are ISO2 or ISO3 (`JP`, `JPN`); `mrv=5` returns the five most
 recent values. The first JSON element holds `lastupdated`. Find indicator codes at
@@ -44,7 +44,7 @@ recent values. The first JSON element holds `lastupdated`. Find indicator codes 
 4. **Pull from the second.** For Our World in Data, fetch the CSV and filter the rows:
    `curl -s "https://ourworldindata.org/grapher/life-expectancy.csv?useColumnShortNames=true" | grep '^Japan,' | tail -3`
    Then the `.metadata.json` for the unit, sources and `lastUpdated`.
-5. **For browser-only sources,** use Tabkyra: `navigate` to the page, `get_page_text
+5. **For browser-only sources,** use Polycarp: `navigate` to the page, `get_page_text
    {"maxChars":6000}`, and read the number, year and source note under the chart.
 6. **Compare.** If the two values differ by more than rounding, find why: different year,
    definition, estimate method or revision. Say which you'd use and why.
@@ -66,7 +66,7 @@ recent values. The first JSON element holds `lastupdated`. Find indicator codes 
 | Symptom | Fix |
 | --- | --- |
 | World Bank returns `null` for the latest year | Use `mrv=5` and take the latest non-null value; say which year |
-| The OWID grapher name is wrong (404) | Search `https://ourworldindata.org/search?q=[topic]` in Tabkyra and copy the chart's slug |
+| The OWID grapher name is wrong (404) | Search `https://ourworldindata.org/search?q=[topic]` in Polycarp and copy the chart's slug |
 | Data Commons explore gives a chart but no table | Open the chart's source link and read the original series |
 | Sources disagree a lot | Check definitions in the metadata; one may be an estimate or projection |
 | A captcha or bot check | `tabs_show` and ask the user, or use the API rows above |

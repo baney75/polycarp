@@ -319,13 +319,13 @@ test("mode detection: a copy that is neither a release nor a checkout refuses", 
 });
 
 test("skill refresh replaces unedited copies and reports edited ones", () => {
-	const install = spawnSync(process.execPath, [realCli, "skill", "install", "tabkyra", "academic-research"], { env: env(), encoding: "utf8" });
+	const install = spawnSync(process.execPath, [realCli, "skill", "install", "polycarp-browser", "academic-research"], { env: env(), encoding: "utf8" });
 	assert.equal(install.status, 0, install.stdout + install.stderr);
-	const plain = join(claudeHome, "skills", "tabkyra", "SKILL.md");
+	const plain = join(claudeHome, "skills", "polycarp-browser", "SKILL.md");
 	const edited = join(claudeHome, "skills", "academic-research", "SKILL.md");
 	// An older bundled text Polycarp wrote (recorded), and a hand edit (not recorded).
 	const marker = "<!-- Installed by `tabkyra skill install`; reinstalling replaces this file. -->";
-	const older = `---\nname: tabkyra\ndescription: old\n---\n${marker}\nold text\n`;
+	const older = `---\nname: polycarp-browser\ndescription: old\n---\n${marker}\nold text\n`;
 	writeFileSync(plain, older);
 	const recordFile = join(home, ".config", "polycarp", "browser", "skills-installed.json");
 	const record = JSON.parse(readFileSync(recordFile, "utf8"));

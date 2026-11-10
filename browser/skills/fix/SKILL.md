@@ -21,7 +21,7 @@ For a small lesson from your own work, use `rsi` instead.
 
 ## Steps
 
-1. **Check private mode.** If the user turned on private mode in Tabkyra, every model this
+1. **Check private mode.** If the user turned on private mode in Polycarp, every model this
    skill uses (author and tester) must be one private mode allows. If none is stronger
    than the model that failed, stop and tell the user. Never send the reference run, the
    recording or the conversation to a cloud model in private mode.
@@ -39,8 +39,8 @@ For a small lesson from your own work, use `rsi` instead.
 5. **Choose the author model.** It must be stronger than the model that failed. If you are
    the failing model, run the author through the harness: for example `claude -p --model
    opus` or `codex exec`. If no stronger model is available, stop and tell the user.
-6. **Draft the fix** in `~/.config/tabkyra/skill-drafts/<name>/SKILL.md`, starting from
-   `tabkyra skill print <name> --raw`. Write for the failing tier:
+6. **Draft the fix** in `~/.config/polycarp/browser/skill-drafts/<name>/SKILL.md`, starting from
+   `polycarp browser skill print <name> --raw`. Write for the failing tier:
    - small: one action per step, exact calls with real parameters, a table instead of a
      judgment, one worked example copied from the reference run, nothing optional;
    - mid or frontier: fix the cause from step 4 and add the reference as an example.
@@ -48,7 +48,7 @@ For a small lesson from your own work, use `rsi` instead.
    skill `<name>-lite` for the small tier instead of editing the original.
 7. **Keep it short.** The skill must stay under 150 lines. Cut words before adding
    sections.
-8. **Lint and preview:** `tabkyra skill apply ~/.config/tabkyra/skill-drafts/<name>`
+8. **Lint and preview:** `polycarp browser skill apply ~/.config/polycarp/browser/skill-drafts/<name>`
    (no `--yes`). It must exit 3 and show the diff.
 9. **Prove it on the failing model.** Run the task again with the model that failed,
    loading the draft, but only in a way that changes nothing: a test page, a draft that
@@ -59,10 +59,10 @@ For a small lesson from your own work, use `rsi` instead.
    steps are only for a draft that passed.
 10. **Get the user's yes.** Show the diff and the passing result.
 11. **Apply:** the same command with `--yes`.
-12. **Keep or share.** Read `submit` in `~/.config/tabkyra/rsi.json`:
+12. **Keep or share.** Read `submit` in `~/.config/polycarp/browser/rsi.json`:
     - a skill holding personal data is never shared, whatever the setting;
     - `"never"`: keep it local;
-    - `"ask"` (default): ask whether to propose it to the Tabkyra skill library;
+    - `"ask"` (default): ask whether to propose it to the Polycarp skill library;
     - `"auto"`: propose it.
     A proposal is a pull request to `baney75/tabkyra` that changes `skills/<name>/SKILL.md`.
     Its description names the failing tier and the cause, and describes the before and
@@ -75,7 +75,7 @@ For a small lesson from your own work, use `rsi` instead.
 
 - The failing model produced a good result with the fixed skill, or three tries failed and
   the user knows which step still fails.
-- The fix was applied with `tabkyra skill apply --yes` after the user's yes.
+- The fix was applied with `polycarp browser skill apply --yes` after the user's yes.
 - The skill is under 150 lines and lints clean.
 - It stayed local, or it was proposed according to `submit`, and never if it holds personal data.
 

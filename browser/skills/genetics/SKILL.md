@@ -30,7 +30,7 @@ For proteins, organisms and sequences, use `biology`. For papers, use `academic-
 | Variant (rsID) | `esummary.fcgi?db=snp&id=429358&retmode=json` (the rsID without `rs`) |
 | Variant consequence | `https://rest.ensembl.org/variation/human/rs429358?content-type=application/json` |
 | Clinical classification | `esearch.fcgi?db=clinvar&term=rs429358&retmode=json`, then `esummary.fcgi?db=clinvar&id=[id]&retmode=json` |
-| ClinVar page | `https://www.ncbi.nlm.nih.gov/clinvar/?term=rs429358` in Tabkyra |
+| ClinVar page | `https://www.ncbi.nlm.nih.gov/clinvar/?term=rs429358` in Polycarp |
 | Find a counselor (US) | `https://findageneticcounselor.nsgc.org` |
 
 E-utilities live at `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/`. Keep to three

@@ -35,7 +35,7 @@ Climb as high as you can and say which rung each fact came from.
 
 1. **Pin the question and date range.** "What did the Senate pass on X this week" is
    pinned. Note today's date; news ages fast.
-2. **Search news.** In Tabkyra:
+2. **Search news.** In Polycarp:
    `navigate {"url":"https://news.google.com/search?q=<terms>"}` then
    `get_page_text {"maxChars":5000}`. Add a wire search:
    `https://apnews.com/search?q=<terms>&s=3` (`s=3` is newest first) and

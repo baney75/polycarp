@@ -1,13 +1,13 @@
-# Tabkyra docs
+# Polycarp docs
 
 Start with the [README](../README.md) for setup and the safety model. Some documents below
-came from Sitegeist, the extension Tabkyra is built on. They still describe the side
+came from Sitegeist, the extension Polycarp is built on. They still describe the side
 panel's internals correctly, but they call the product Sitegeist.
 
-## Using Tabkyra
+## Using Polycarp
 
-- [../cli/README.md](../cli/README.md): every `tabkyra` command, harness setup and site permissions.
-- [updates.md](updates.md): how `tabkyra update` verifies signed releases, rollback, and the one-time signing key setup.
+- [../cli/README.md](../cli/README.md): every `polycarp browser` command, harness setup and site permissions.
+- [updates.md](updates.md): how `polycarp browser update` verifies signed releases, rollback, and the one-time signing key setup.
 - [auth-policy.md](auth-policy.md): why the side panel takes API keys only, with each provider's terms and the date they were checked.
 
 ## Security
@@ -31,7 +31,7 @@ panel's internals correctly, but they call the product Sitegeist.
 - [storage.md](storage.md): the IndexedDB stores for sessions, skills and costs.
 - [settings.md](settings.md): the key-value settings store.
 - [multi-window.md](multi-window.md): window-scoped session locking. The side panel is now bound to a tab, so parts of this are historical (see CHANGELOG).
-- [proxy.md](proxy.md): the CORS proxy design. The OAuth notes describe upstream; Tabkyra refuses those tokens.
+- [proxy.md](proxy.md): the CORS proxy design. The OAuth notes describe upstream; Polycarp refuses those tokens.
 - [i18n.md](i18n.md): how user-facing strings are translated with mini-lit.
 
 ## Project status

@@ -24,7 +24,7 @@ and attach the annotated image from this skill.
 
 | Source | Mark it with | Output |
 | --- | --- | --- |
-| Web page in Tabkyra | `run_js` to outline and number elements in the user's tab | `screenshot`, then `tabs_show` |
+| Web page in Polycarp | `run_js` to outline and number elements in the user's tab | `screenshot`, then `tabs_show` |
 | Image or screenshot file | ImageMagick `magick` | `name-annotated.png` |
 | PDF | `pdftoppm` to PNG, then `magick`; `pdftotext` for exact quotes | one PNG per marked page |
 | Public, shareable notes on a page | Hypothesis, `https://web.hypothes.is` | posted only with the user's yes |

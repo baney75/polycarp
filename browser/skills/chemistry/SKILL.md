@@ -28,9 +28,9 @@ For biology databases (genes, proteins), use `biology`. For the math itself, the
 | Name to CID | `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/aspirin/cids/JSON` |
 | Properties | `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/aspirin/property/MolecularFormula,MolecularWeight,IUPACName,SMILES/JSON` |
 | GHS hazards | `https://pubchem.ncbi.nlm.nih.gov/rest/pug_view/data/compound/2244/JSON?heading=GHS+Classification` |
-| Compound page | `https://pubchem.ncbi.nlm.nih.gov/compound/aspirin` in Tabkyra |
+| Compound page | `https://pubchem.ncbi.nlm.nih.gov/compound/aspirin` in Polycarp |
 | Thermochemistry, spectra | `https://webbook.nist.gov/cgi/cbook.cgi?Name=water&Units=SI` |
-| CAS number check | `https://commonchemistry.cas.org` in Tabkyra |
+| CAS number check | `https://commonchemistry.cas.org` in Polycarp |
 | SDS | The supplier's product page (Sigma-Aldrich, Fisher, the manufacturer) |
 
 ## Steps
@@ -43,7 +43,7 @@ For biology databases (genes, proteins), use `biology`. For the math itself, the
 4. **Read hazards.** Fetch the GHS URL and list the signal word and H-codes. The percent
    after a code is the share of supplier notices that report it; report codes above 50%
    as main hazards and note the rest.
-5. **Find the SDS** for handling, storage, PPE and first aid. In Tabkyra, open the
+5. **Find the SDS** for handling, storage, PPE and first aid. In Polycarp, open the
    supplier's product page for that CAS number and the SDS link. `get_page_text` on it and
    read sections 2 (hazards), 7 (handling and storage), 8 (exposure controls and PPE)
    and 4 (first aid).
@@ -69,7 +69,7 @@ For biology databases (genes, proteins), use `biology`. For the math itself, the
 
 | Symptom | Fix |
 | --- | --- |
-| PubChem returns `PUGREST.NotFound` | Try the IUPAC name, the CAS number, or search the compound page in Tabkyra |
+| PubChem returns `PUGREST.NotFound` | Try the IUPAC name, the CAS number, or search the compound page in Polycarp |
 | Property names rejected | Use names from PubChem's property table, such as `SMILES`, `XLogP`, `ExactMass` |
 | Values differ between sources | Prefer experimental over computed, and give both with sources |
 | The SDS page needs a sign-in | Try another supplier, or `tabs_show` and ask the user |

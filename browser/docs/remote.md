@@ -14,24 +14,24 @@ assistant. Behind the buttons it runs the commands below. The rest of this page 
 the terminal. One command sets it up.
 
 ```bash
-tabkyra remote setup
+polycarp browser remote setup
 ```
 
 It turns on Tailscale Funnel for this computer, sets an approval passcode (shown once), writes
-`remote.json` and installs a user service that keeps `tabkyra serve` running. Then it prints the
+`remote.json` and installs a user service that keeps `polycarp browser serve` running. Then it prints the
 connector URL, `https://<this-computer>.<your-tailnet>.ts.net:8443/mcp`.
 
 Check it any time:
 
 ```bash
-tabkyra remote status
+polycarp browser remote status
 ```
 
 Each line is ok, warn or fail: `remote.json`, the passcode, whether `serve` answers on this
 computer, whether public DNS resolves the name to an address outside the tailnet, and whether
 the public URL answers. The DNS line matters: from inside your own tailnet, a ts.net name works
 even when Funnel isn't reaching the internet, so a passing public fetch alone can hide a broken
-Funnel. The computer must stay on, awake and signed in to the browser with Tabkyra loaded.
+Funnel. The computer must stay on, awake and signed in to the browser with Polycarp loaded.
 
 ## Tailscale or Cloudflare
 
@@ -56,7 +56,7 @@ words. A sign-in covers one domain, so a name on another domain is refused too, 
 
 Settings > Agents has a "Set up with Cloudflare" button that does the same: enter the address, sign in to Cloudflare in the
 tab it opens, and it makes the tunnel and checks the public address. If no `cloudflared` is installed it downloads its own
-(pinned release 2026.10.7, SHA-256 checked before anything is unpacked or run) to `~/.config/tabkyra/bin/cloudflared`; one on
+(pinned release 2026.10.7, SHA-256 checked before anything is unpacked or run) to `~/.config/polycarp/browser/bin/cloudflared`; one on
 your PATH or in Homebrew's folders is used first. When Funnel is on, the button moves to Cloudflare and turns Funnel off only after the tunnel is ready; in a terminal that is `remote setup --cloudflare <name> --replace-funnel`.
 
 To try it without an account, `polycarp browser tunnel cloudflare` gives a temporary `*.trycloudflare.com` address that
@@ -113,10 +113,10 @@ app behave the same.
 
 ## What you need
 
-- Tabkyra installed and connected (`tabkyra setup`, then `tabkyra install` so the service has a
+- Polycarp installed and connected (`polycarp browser setup`, then `polycarp browser install` so the service has a
   launcher to start).
 - Tailscale on this computer, signed in. Free plan is enough. If Funnel isn't allowed for your
-  tailnet yet, `tabkyra remote setup` prints the Tailscale page that allows it and stops; allow it
+  tailnet yet, `polycarp browser remote setup` prints the Tailscale page that allows it and stops; allow it
   there, then run setup again.
 
 Funnel runs on its own port (8443), so the OAuth paths sit at the root of the URL, and anything
@@ -124,46 +124,46 @@ you serve on 443 stays private.
 
 ## If Funnel won't work
 
-`tabkyra remote setup` stops, without changing anything, when:
+`polycarp browser remote setup` stops, without changing anything, when:
 
 - Tailscale isn't installed.
 - The tailnet has Tailnet Lock on. Funnel doesn't work on a Tailnet Lock tailnet.
 - Port 8443 on this computer already serves something else, or forwards plain TCP.
-- A `remote.json` or a service from an earlier setup is in the way (`tabkyra remote off` clears it).
+- A `remote.json` or a service from an earlier setup is in the way (`polycarp browser remote off` clears it).
 
 The free way out is your own HTTPS front door. A Cloudflare named tunnel costs nothing (an
 account includes 1,000) and needs a domain on Cloudflare:
 
 ```bash
 cloudflared tunnel login
-cloudflared tunnel create tabkyra
-cloudflared tunnel route dns tabkyra tabkyra.<your domain>
+cloudflared tunnel create polycarp
+cloudflared tunnel route dns polycarp polycarp.<your domain>
 ```
 
-Point the tunnel at Tabkyra in `~/.cloudflared/config.yml`:
+Point the tunnel at Polycarp in `~/.cloudflared/config.yml`:
 
 ```yaml
-tunnel: tabkyra
+tunnel: polycarp
 credentials-file: /home/<you>/.cloudflared/<tunnel id>.json
 ingress:
-  - hostname: tabkyra.<your domain>
+  - hostname: polycarp.<your domain>
     service: http://127.0.0.1:8787
   - service: http_status:404
 ```
 
-Run it (`cloudflared tunnel run tabkyra`, or as a service with `cloudflared service install`),
-then tell Tabkyra the address:
+Run it (`cloudflared tunnel run polycarp`, or as a service with `cloudflared service install`),
+then tell Polycarp the address:
 
 ```bash
-tabkyra remote setup --public-url https://tabkyra.<your domain>
+polycarp browser remote setup --public-url https://polycarp.<your domain>
 ```
 
 `--public-url` takes an origin only (`https://host`, no path). Any HTTPS front door that forwards
 to `127.0.0.1:8787` works the same way. `--port N` changes the port; `--no-service` skips the
-service, and you start `tabkyra serve` yourself. Quick tunnels (`trycloudflare.com`) won't do:
+service, and you start `polycarp browser serve` yourself. Quick tunnels (`trycloudflare.com`) won't do:
 the name changes on every start.
 
-If you switch from Funnel to your own front door, run `tabkyra remote off` first so Funnel closes;
+If you switch from Funnel to your own front door, run `polycarp browser remote off` first so Funnel closes;
 setup refuses to switch while Funnel from an earlier setup is on.
 
 ## Add the connector
@@ -174,22 +174,22 @@ Paste `<public URL>/mcp` in each:
 - **ChatGPT**: Settings > Apps & Connectors (turn on developer mode) > Create. Choose OAuth.
 - **grok.com**: grok.com/connectors > New Connector > Custom.
 
-Each opens Tabkyra's approval page. Check the name and the site you return to, tick the
-permissions, enter your Tabkyra passcode and press Allow. Only approve a connection you just
-started. Lost the passcode? `tabkyra token passcode` makes a new one; approvals you already
+Each opens Polycarp's approval page. Check the name and the site you return to, tick the
+permissions, enter your Polycarp passcode and press Allow. Only approve a connection you just
+started. Lost the passcode? `polycarp browser token passcode` makes a new one; approvals you already
 gave keep working.
 
 ## Revoke
 
 ```bash
-tabkyra token clients            # connectors and their grants
-tabkyra token revoke tkc_...     # remove one client and every grant it holds
-tabkyra remote off               # close Funnel, stop the service, delete remote.json
+polycarp browser token clients   # connectors and their grants
+polycarp browser token revoke tkc_...  # remove one client and every grant it holds
+polycarp browser remote off      # close Funnel, stop the service, delete remote.json
 ```
 
 `remote off` leaves approvals in `oauth.json`. They can't be used while the URL is gone, but they
-become usable again if you set up later with the same URL. `tabkyra token clients` lists them and
-`tabkyra token revoke <client id>` ends them for good.
+become usable again if you set up later with the same URL. `polycarp browser token clients` lists them and
+`polycarp browser token revoke <client id>` ends them for good.
 
 On a custom route (`--public-url`), `remote off` can't close your front door: your own tunnel
 keeps forwarding to this computer. Stop it there, for example by stopping `cloudflared`.
@@ -198,7 +198,7 @@ keeps forwarding to this computer. Stop it there, for example by stopping `cloud
 
 - Anyone on the internet can reach the URL. Two things stand between them and your browser: the
   passcode on the approval page (five wrong tries per connection, then a 15-minute wait) and the
-  per-permission consent. Keep the passcode in a password manager the browser Tabkyra drives can't fill, and don't reuse it.
+  per-permission consent. Keep the passcode in a password manager the browser Polycarp drives can't fill, and don't reuse it.
 - An approval carries only the permissions you ticked; there is no wildcard. `browser.script`
   (run code in a page as you) and `threads.read` (your past chats) start unticked. Leave them off
   unless you need them.
@@ -212,44 +212,44 @@ keeps forwarding to this computer. Stop it there, for example by stopping `cloud
 
 One connector URL for claude.ai, ChatGPT and grok.com, and any number of your own computers behind
 it. The hub runs on an always-on box (a small server, a Raspberry Pi) and needs no browser. Each
-computer that has a browser with Tabkyra dials in. It is still your own server, with no relay and
+computer that has a browser with Polycarp dials in. It is still your own server, with no relay and
 no cost (D32).
 
 On the always-on box, with an HTTPS front door pointing at `127.0.0.1:8787` (a free Cloudflare
 named tunnel works, as in "If Funnel won't work" above):
 
 ```bash
-tabkyra hub setup --public-url https://tabkyra.<your domain>   # hub.json, a passcode (shown once), a service
-tabkyra hub code                                               # a one-time code, valid 10 minutes
+polycarp browser hub setup --public-url https://polycarp.<your domain>  # hub.json, a passcode (shown once), a service
+polycarp browser hub code                                      # a one-time code, valid 10 minutes
 ```
 
 On each computer with a browser:
 
 ```bash
-tabkyra link https://tabkyra.<your domain> --code TK-XXXX-XXXX [--name laptop] [--scope browser.read,browser.act]
+polycarp browser link https://polycarp.<your domain> --code TK-XXXX-XXXX [--name laptop] [--scope browser.read,browser.act]
 ```
 
-`link` enrolls the computer and installs a user service (`com.tabkyra.link` or
-`tabkyra-link.service`) that runs `tabkyra link run`. `--scope` is what this computer allows at
+`link` enrolls the computer and installs a user service (`com.polycarp.link` or
+`polycarp-link.service`) that runs `polycarp browser link run`. `--scope` is what this computer allows at
 most; without it, the default grant (no `browser.script`, no `threads.read`). Then add
-`https://tabkyra.<your domain>/mcp` once in each assistant, as above. Approve with your passcode,
-or with a one-time code from `tabkyra token approval-code` (or `tabkyra link approval-code` on a
+`https://polycarp.<your domain>/mcp` once in each assistant, as above. Approve with your passcode,
+or with a one-time code from `polycarp browser token approval-code` (or `polycarp browser link approval-code` on a
 manager device): the field reads "Passcode or connect code". A connector you have not approved
 before (a new client) needs the one-time code; the passcode alone is refused for it, so a link
 someone else sends you cannot be approved by typing the passcode (D34). Once a client is approved,
 later approvals for it take the passcode as before.
 
 ```bash
-tabkyra hub devices                  # online, extension, sessions, busy, last seen
-tabkyra hub prefer laptop,desktop    # who wins a tie
-tabkyra link busy on                 # on a device: new sessions go elsewhere first
-tabkyra hub status                   # hub.json, passcode, local answer, public DNS and fetch, devices
+polycarp browser hub devices         # online, extension, sessions, busy, last seen
+polycarp browser hub prefer laptop,desktop  # who wins a tie
+polycarp browser link busy on        # on a device: new sessions go elsewhere first
+polycarp browser hub status          # hub.json, passcode, local answer, public DNS and fetch, devices
 ```
 
 Settings > Agents in the side panel does the same from the browser: it shows the connector URL,
 makes a one-time code for the approval page, lists the devices (on the hub's computer), makes a
-connect code for another device, and joins a hub from a code. It asks Tabkyra's helper, so it needs
-`tabkyra setup` first. See D33 in [decisions.md](decisions.md).
+connect code for another device, and joins a hub from a code. It asks Polycarp's helper, so it needs
+`polycarp browser setup` first. See D33 in [decisions.md](decisions.md).
 
 ### How a session is routed
 
@@ -269,13 +269,13 @@ request on its session gets 404, the assistant starts a new session, and another
 ### Revoke
 
 ```bash
-tabkyra hub remove laptop    # the credential stops working, the live link closes within a second
-tabkyra link off             # on a device: stop the service, forget the hub, revoke its link token
-tabkyra hub off              # stop the hub service and remove hub.json (devices stay enrolled)
+polycarp browser hub remove laptop  # the credential stops working, the live link closes within a second
+polycarp browser link off    # on a device: stop the service, forget the hub, revoke its link token
+polycarp browser hub off     # stop the hub service and remove hub.json (devices stay enrolled)
 ```
 
-`hub code --manage` makes the device a manager: it can run `tabkyra link code` and
-`tabkyra link approval-code`, which ask the hub for codes over HTTPS with the device credential.
+`hub code --manage` makes the device a manager: it can run `polycarp browser link code` and
+`polycarp browser link approval-code`, which ask the hub for codes over HTTPS with the device credential.
 Use it only for a computer you would trust with the passcode.
 
 ### Security notes
@@ -288,10 +288,10 @@ Use it only for a computer you would trust with the passcode.
   codes are limited (five per source, 20 in all, per 15 minutes, so anyone can pause enrollment, and
   only enrollment, for 15 minutes); wrong approval codes count toward the passcode's limit and
   15-minute lockout. A valid device credential is never refused because of other people's failures.
-- Only one `tabkyra link run` can run on a device; a second refuses to start. When the link drops,
+- Only one `polycarp browser link run` can run on a device; a second refuses to start. When the link drops,
   the device closes the sessions it carried, and assistants simply start new ones.
 - The hub listens on loopback and answers only its public host. A device removed with
-  `tabkyra hub remove` loses its link within a second.
+  `polycarp browser hub remove` loses its link within a second.
 - Cost: free. Nothing here runs on anyone else's server.
 
 See D30, D31 and D32 in [decisions.md](decisions.md) for why each install is its own server.
