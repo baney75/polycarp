@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="media/brand/hero.png">
     <source media="(prefers-color-scheme: light)" srcset="media/brand/hero-light.png">
-    <img src="media/brand/hero.png" alt="Tabkyra: you steer, your agents work the tabs" width="760">
+    <img src="media/brand/hero.png" alt="Polycarp: you steer, your agents work the tabs" width="760">
   </picture>
 </p>
 
@@ -23,9 +23,9 @@
 
 ---
 
-Tabkyra is a Chromium extension and a small CLI. Your coding agent gets a browser that is
+Polycarp is a Chromium extension and a small CLI. Your coding agent gets a browser that is
 already signed in where you are signed in. It works in background tabs it owns, and it
-asks before it opens a site you haven't allowed. Tabkyra also ships agent skills that pass
+asks before it opens a site you haven't allowed. Polycarp also ships agent skills that pass
 a security lint, a verified source library, and a side panel agent of its own for when you
 want to chat with a page directly.
 
@@ -33,7 +33,7 @@ want to chat with a page directly.
 works the tabs.
 
 <p align="center">
-  <a href="media/demo.mp4"><img src="media/demo-poster.jpg" alt="Tabkyra demo video: the agent asks before a new site, works in its own tab group, fills a form, checks sources and lints skills" width="760"></a>
+  <a href="media/demo.mp4"><img src="media/demo-poster.jpg" alt="Polycarp demo video: the agent asks before a new site, works in its own tab group, fills a form, checks sources and lints skills" width="760"></a>
   <br><sub><a href="media/demo.mp4">Watch the 85-second demo</a> (MP4, no sound needed). Recorded from a real run by <code>scripts/demo/capture-video.mjs</code>; source in <a href="media/video"><code>media/video</code></a>.
   <br>Short version with music: <a href="media/hero.mp4">58-second hero cut</a> (<a href="media/hero-vertical.mp4">vertical 9:16</a>).</sub>
 </p>
@@ -44,27 +44,27 @@ messaging bridge, the CLI and MCP server, agent tab groups, per-tab side panels 
 foreground guard that keeps agent popups from stealing focus. The extension itself is
 **[Mario Zechner](https://github.com/badlogic)**'s
 [Sitegeist](https://github.com/badlogic/sitegeist), built on his
-[pi](https://github.com/badlogic/pi-mono) agent libraries. Tabkyra packages their work
+[pi](https://github.com/badlogic/pi-mono) agent libraries. Polycarp packages their work
 with one-command setup, a doctor, skills, a library and a new brand.
 
 **Contents:** [Quick start](#quick-start) · [Connect your agent](#connect-your-agent) ·
 [What your agent can do](#what-your-agent-can-do) · [Skills](#skills) ·
 [Library](#library) · [Free mode](#free-mode) · [Private mode and bug reports](#private-mode-and-bug-reports) ·
 [Remote MCP](#remote-mcp-and-tunnels) · [Safety model](#safety-model) ·
-[How it works](#how-it-works) · [FAQ](#faq) · [Support](#support-tabkyra) ·
+[How it works](#how-it-works) · [FAQ](#faq) · [Support](#support-polycarp) ·
 [Credits](#credits)
 
 ## Quick start
 
 You need Node 20+, git, and a Chromium 141+ browser such as Helium, Chrome or Brave (see
 [Which browsers?](#faq) for what has been tested). There is no store listing or published
-release yet, so Tabkyra installs from source.
+release yet, so Polycarp installs from source.
 
 ```bash
 mkdir tabkyra-src && cd tabkyra-src        # setup puts two build dependencies beside the clone
 git clone https://github.com/baney75/tabkyra && cd tabkyra
 (cd cli && npm install && npm run build && npm link)
-tabkyra setup
+polycarp-browser setup
 ```
 
 If `npm link` fails with a permissions error, skip it and run `node cli/dist/index.js setup`.
@@ -74,11 +74,11 @@ and [mini-lit](https://github.com/badlogic/mini-lit) next to the `tabkyra` folde
 why the clone goes in a folder of its own.
 
 On a Mac with a warm npm cache, a fresh clone reached "Connected" in 45 seconds with
-`tabkyra setup --yes`. A first install with a cold cache downloads more and can take a few
+`polycarp-browser setup --yes`. A first install with a cold cache downloads more and can take a few
 minutes.
 
-`tabkyra setup` builds the extension, registers the native host with every Chromium
-browser it finds, and offers to add Tabkyra to Claude Code and Codex and to install the
+`polycarp-browser setup` builds the extension, registers the native host with every Chromium
+browser it finds, and offers to add Polycarp to Claude Code and Codex and to install the
 skills. For OpenCode, Cursor and OMP it prints the config block to paste. Then it shows
 the one step the browser makes you do by hand:
 
@@ -88,24 +88,24 @@ the one step the browser makes you do by hand:
 │    and click Load unpacked.                                    │
 │ 2  Pick this folder:                                           │
 │    /path/to/tabkyra/dist-chrome                                │
-│ 3  Optional: click Details on Tabkyra and turn on              │
+│ 3  Optional: click Details on Polycarp and turn on             │
 │    Allow user scripts (faster page scripts).                   │
 ╰────────────────────────────────────────────────────────────────╯
-  ✓ Connected. Tabkyra can reach your browser (1.1.8).
+  ✓ Connected. Polycarp can reach your browser (1.1.8).
 ```
 
 Then ask your agent something like:
 
-> Use tabkyra to open news.ycombinator.com and list the top five stories.
+> Use Polycarp to open news.ycombinator.com and list the top five stories.
 
-If anything is off, `tabkyra doctor` checks each piece and prints the exact command
+If anything is off, `polycarp-browser doctor` checks each piece and prints the exact command
 that fixes it. For the side panel agent, press `Cmd+Shift+S` (`Ctrl+Shift+S`) and add a
 provider's API key, or pick [Free mode](#free-mode) with a free OpenRouter key.
 
 <p align="center">
-  <img src="media/demo.gif" alt="A scripted MCP client searches a library catalog, places a hold and reads the confirmation through Tabkyra's tools" width="860">
+  <img src="media/demo.gif" alt="A scripted MCP client searches a library catalog, places a hold and reads the confirmation through Polycarp's tools" width="860">
   <br><sub>Recorded headless by <code>scripts/demo/capture.mjs</code>: a scripted MCP client drives the real stack (MCP server, native host, extension).
-  The local site was allowed first with <code>tabkyra allow</code>. The page in each frame is the client's own <code>screenshot</code>, framed for display. <a href="media/demo-steps.png">Still frames</a>.</sub>
+  The local site was allowed first with <code>polycarp-browser allow</code>. The page in each frame is the client's own <code>screenshot</code>, framed for display. <a href="media/demo-steps.png">Still frames</a>.</sub>
 </p>
 
 ### Let your agent do the rest
@@ -115,51 +115,51 @@ dialog and Settings > Providers have the same button) and click
 **Copy setup prompt for your agent**. Paste it into Claude Code, Codex, pi, OMP or any
 agent with a shell. The agent reuses a working CLI or installs one from the tag that
 matches your extension's version (the default branch when no such tag exists, and it
-says so), connects itself, installs the skills, runs `tabkyra doctor` and calls `status`. The prompt has no piped installers, and it tells the agent not to ask you
+says so), connects itself, installs the skills, runs `polycarp-browser doctor` and calls `status`. The prompt has no piped installers, and it tells the agent not to ask you
 for keys or passwords. A test lints it like a skill
 ([test/agent-setup-prompt.test.mjs](test/agent-setup-prompt.test.mjs)).
 
 ## Connect your agent
 
-`tabkyra setup` does this for you and prints the exact paths for your machine.
-`tabkyra install` writes a launcher at `~/.config/tabkyra/tabkyra` that pins Node by
+`polycarp-browser setup` does this for you and prints the exact paths for your machine.
+`polycarp-browser install` writes a launcher at `~/.config/polycarp/browser/polycarp` that pins Node by
 absolute path, so an agent started from a GUI app doesn't need `node` on its PATH. Point
 your harness at it (JSON configs need the full path, not `~`):
 
 **Claude Code**
 
 ```bash
-claude mcp add --scope user polycarp -- ~/.config/tabkyra/tabkyra mcp
+claude mcp add --scope user polycarp -- ~/.config/polycarp/browser/polycarp mcp
 ```
 
 **Codex**
 
 ```bash
-codex mcp add polycarp -- ~/.config/tabkyra/tabkyra mcp
+codex mcp add polycarp -- ~/.config/polycarp/browser/polycarp mcp
 ```
 
 **OpenCode** (`~/.config/opencode/opencode.json`)
 
 ```json
-{ "mcp": { "polycarp": { "type": "local", "command": ["/Users/you/.config/tabkyra/tabkyra", "mcp"], "enabled": true } } }
+{ "mcp": { "polycarp": { "type": "local", "command": ["/Users/you/.config/polycarp/browser/polycarp", "mcp"], "enabled": true } } }
 ```
 
 **Cursor** (`~/.cursor/mcp.json`)
 
 ```json
-{ "mcpServers": { "polycarp": { "command": "/Users/you/.config/tabkyra/tabkyra", "args": ["mcp"] } } }
+{ "mcpServers": { "polycarp": { "command": "/Users/you/.config/polycarp/browser/polycarp", "args": ["mcp"] } } }
 ```
 
 **OMP** (`~/.omp/agent/mcp.json`)
 
 ```json
-{ "mcpServers": { "polycarp": { "type": "stdio", "command": "/Users/you/.config/tabkyra/tabkyra", "args": ["mcp"], "enabled": true } } }
+{ "mcpServers": { "polycarp": { "type": "stdio", "command": "/Users/you/.config/polycarp/browser/polycarp", "args": ["mcp"], "enabled": true } } }
 ```
 
-**pi** has no MCP client, so `tabkyra pi-extension` writes a native pi extension instead.
+**pi** has no MCP client, so `polycarp-browser pi-extension` writes a native pi extension instead.
 
-Any other MCP client can run the stdio server with `~/.config/tabkyra/tabkyra mcp`. For an
-agent on another machine, or to add Tabkyra to claude.ai, ChatGPT or grok.com as a
+Any other MCP client can run the stdio server with `~/.config/polycarp/browser/polycarp mcp`. For an
+agent on another machine, or to add Polycarp to claude.ai, ChatGPT or grok.com as a
 connector, see [Remote MCP and tunnels](#remote-mcp-and-tunnels).
 
 ## What your agent can do
@@ -174,7 +174,7 @@ connector, see [Remote MCP and tunnels](#remote-mcp-and-tunnels).
 | `click`, `type`, `fill`, `press`, `hover`, `scroll`, `drag`, `actions` | Act with real input events, by ref or by screenshot pixel |
 | `run_js`, `wait`, `read_console`, `read_network` | Scripts, waits and debugging |
 | `handle_dialog` | Answer an alert, confirm or prompt box. While one is open, other calls fail at once with its text |
-| `capture` | Evidence from its own tab, saved as files on your computer in `~/.config/tabkyra/captures` (0700, files 0600): `network_start`/`network_stop` a HAR with credentials left out, `record_start`/`record_stop` a WebM video with no sound, `flight_start`/`flight_save` the last minute of video. Works on a tab in the background; stops itself after 10 minutes (30 for the flight recorder). The agent is told the path and size, never the content. Remote sessions need the `browser.capture` scope |
+| `capture` | Evidence from its own tab, saved as files on your computer in `~/.config/polycarp/browser/captures` (0700, files 0600): `network_start`/`network_stop` a HAR with credentials left out, `record_start`/`record_stop` a WebM video with no sound, `flight_start`/`flight_save` the last minute of video. Works on a tab in the background; stops itself after 10 minutes (30 for the flight recorder). The agent is told the path and size, never the content. Remote sessions need the `browser.capture` scope |
 | `tabs_show` | Bring a tab in front of you, when you need to sign in or see it |
 | `ask_user` | Ask you 1 to 4 multiple-choice questions in the side panel and wait for your answer (you can always type your own). The toolbar icon shows a badge while one waits; it gives up after 5 minutes, or sooner if your harness's tool timeout is shorter (Claude Code: `MCP_TOOL_TIMEOUT`, in ms; Codex: `tool_timeout_sec` on the server). Giving up takes the question off the panel |
 | `library_add`, `library_search`, `library_cite` | Save verified sources and cite them (see [Library](#library)) |
@@ -186,10 +186,10 @@ canvas apps need.
 ## Sessions and tab groups
 
 Each agent works in a session: its own tab group, titled with the agent and the project,
-for example **Tabkyra · claude · dbaney.com**. The group is how you see what an agent is
+for example **Polycarp · claude · dbaney.com**. The group is how you see what an agent is
 doing, and what you do to it means something:
 
-| You | Tabkyra |
+| You | Polycarp |
 | --- | --- |
 | Drag a tab out of an agent's group, or ungroup it | The tab is yours. The agent loses it and is told on its next `tabs_context`. |
 | Drag one of your tabs into an agent's group | The agent may use it, and is told. |
@@ -200,8 +200,8 @@ doing, and what you do to it means something:
 Groups an agent hasn't touched for 30 minutes after it disconnected collapse on their own,
 and blank tabs left by an abandoned session are closed.
 
-**Which session an agent gets.** `tabkyra mcp` picks the session from, in order:
-`tabkyra mcp --session <name>`, `TABKYRA_SESSION`, then the project: the git root of the
+**Which session an agent gets.** `polycarp-browser mcp` picks the session from, in order:
+`polycarp-browser mcp --session <name>`, `TABKYRA_SESSION`, then the project: the git root of the
 folder the agent runs in (or the folder), as `<folder>-<4 hex>`. Restart Claude Code in the
 same repository and it finds the tabs it left; a different folder gets its own session. The
 harness is part of the session, so Claude Code and Codex in one project don't share tabs.
@@ -216,29 +216,29 @@ every client that gives it drives the same tabs (an agent and a recorder, say).
 **From the terminal.**
 
 ```bash
-tabkyra sessions                        # every agent session: group, tabs, connected or idle
-tabkyra sessions show shop-1a2b         # its tabs, times, and how to resume it
-tabkyra sessions rename shop-1a2b checkout
-tabkyra sessions focus checkout         # bring its group in front of you
-tabkyra sessions collapse checkout      # or expand
-tabkyra sessions release checkout       # its tabs are yours now; the session ends
-tabkyra sessions end checkout --close   # end it and close its tabs
-tabkyra tabs                            # every agent tab, by session
+polycarp-browser sessions               # every agent session: group, tabs, connected or idle
+polycarp-browser sessions show shop-1a2b  # its tabs, times, and how to resume it
+polycarp-browser sessions rename shop-1a2b checkout
+polycarp-browser sessions focus checkout  # bring its group in front of you
+polycarp-browser sessions collapse checkout  # or expand
+polycarp-browser sessions release checkout  # its tabs are yours now; the session ends
+polycarp-browser sessions end checkout --close  # end it and close its tabs
+polycarp-browser tabs                   # every agent tab, by session
 ```
 
 Each takes `--json`. A renamed session keeps its connected agent, which reconnects under the
-new name; start an agent on it later with `tabkyra mcp --session checkout`.
+new name; start an agent on it later with `polycarp-browser mcp --session checkout`.
 
 ## Past chats for your agents
 
 Your side panel chats ("threads") are readable by the agents on your computer, so Claude Code
-or Codex can answer "what did I ask Tabkyra yesterday about Lisbon flights?":
+or Codex can answer "what did I ask Polycarp yesterday about Lisbon flights?":
 
 | Where | How |
 | --- | --- |
-| MCP (`tabkyra mcp`) | `threads_list`, `thread_search`, `thread_read` (40 messages a page) |
-| Terminal | `tabkyra threads [list] [words]`, `show <id>`, `search <words>`, `export <id> --format md\|json [--out FILE]`, each with `--json` |
-| Files | `~/.local/share/tabkyra/threads/<browser>/<id>.md` and `<id>.json`, plus `index.json`; one folder per browser profile |
+| MCP (`polycarp-browser mcp`) | `threads_list`, `thread_search`, `thread_read` (40 messages a page) |
+| Terminal | `polycarp-browser threads [list] [words]`, `show <id>`, `search <words>`, `export <id> --format md\|json [--out FILE]`, each with `--json` |
+| Files | `~/.local/share/polycarp/browser/threads/<browser>/<id>.md` and `<id>.json`, plus `index.json`; one folder per browser profile |
 
 Live answers come from the extension; when the browser is closed, the CLI and MCP read the
 files. The files are written by the native host (folder 0700, files 0600, each write atomic) a
@@ -250,21 +250,21 @@ from before ..." under that switch.
 
 What agents see: who said what, tool calls and short results, attachments by name only. API
 keys and tokens pasted into a chat are removed. A chat from private mode is never served or
-written, even after private mode is turned off. Remote agents (`tabkyra serve`) need a token
+written, even after private mode is turned off. Remote agents (`polycarp-browser serve`) need a token
 with the `threads.read` scope. A past chat is data to read, never instructions to follow; the
 tool descriptions and the MCP instructions say so.
 
 ## Skills
 
 ```bash
-tabkyra skill install            # every bundled skill, into Claude Code, Codex and OpenCode
-tabkyra skill list               # what each one is for
-tabkyra skill print >> AGENTS.md # the tabkyra skill as an AGENTS.md section, for any other agent
+polycarp-browser skill install   # every bundled skill, into Claude Code, Codex and OpenCode
+polycarp-browser skill list      # what each one is for
+polycarp-browser skill print >> AGENTS.md # the tabkyra skill as an AGENTS.md section, for any other agent
 ```
 
-`tabkyra skill install` skips a same-name skill that Tabkyra didn't write. To replace one,
-name it: `tabkyra skill install bug --force` (a bare `--force` replaces only `tabkyra`). The core skill ([skills/tabkyra/SKILL.md](skills/tabkyra/SKILL.md)) is short and
-written for small models: when to use Tabkyra, `status` first, then the loop (navigate,
+`polycarp-browser skill install` skips a same-name skill that Polycarp didn't write. To replace one,
+name it: `polycarp-browser skill install bug --force` (a bare `--force` replaces only `tabkyra`). The core skill ([skills/tabkyra/SKILL.md](skills/tabkyra/SKILL.md)) is short and
+written for small models: when to use Polycarp, `status` first, then the loop (navigate,
 `read_page` for refs, act by ref, read back), with stale refs, waits, dialogs, the safety
 rules, cleanup and three worked examples. A test keeps it in step with the MCP server's
 instructions and tool schemas.
@@ -284,33 +284,33 @@ instructions and tool schemas.
 | `rsi` | `/rsi`: turn lessons from real work into small, linted, reviewed skill edits |
 | `fix` | `/fix`: rewrite a skill for the model tier that failed with it, and test the rewrite |
 | `adversarial-review` | Have a separate, equally capable model attack a change before it's accepted |
-| `bug` | `/bug`: a scrubbed, fingerprinted Tabkyra bug report, filed only with your yes |
-| `kyraskillmaker` | Write a skill to Tabkyra's standard |
+| `bug` | `/bug`: a scrubbed, fingerprinted Polycarp bug report, filed only with your yes |
+| `kyraskillmaker` | Write a skill to Polycarp's standard |
 
 ### Skill lint and CI
 
 A skill is text an agent follows with your sign-in, so every skill passes
-`tabkyra skill lint`. It refuses hidden text (invisible and bidi characters, lookalike
+`polycarp-browser skill lint`. It refuses hidden text (invisible and bidi characters, lookalike
 letters, HTML comments), instruction overrides, fake system turns, concealment from the
 user, piped remote code, instructions fetched at run time, secret handling, credential
 file reads, agent and shell config writes, safety bypasses, encoded blobs, remote images,
 suspicious links, missing structure, and any file besides `SKILL.md` and a license.
 
-The lint runs in CI on every pull request, in `tabkyra skill apply` (the only way `/rsi`
+The lint runs in CI on every pull request, in `polycarp-browser skill apply` (the only way `/rsi`
 changes a skill), and at install time for local edits. Red-team tests prove it still
 catches each attack, and CI also lints with the base branch's lint, so a pull request
 that weakens the lint must still pass the old one. CODEOWNERS asks for a maintainer's
 review on `skills/`, the lint and CI. The threat model, every rule and the known gaps are
 in [docs/skill-security.md](docs/skill-security.md).
 
-Agents find the right skill with the `skill_match` MCP tool (or `tabkyra skill match
+Agents find the right skill with the `skill_match` MCP tool (or `polycarp-browser skill match
 "<task>"`) and read only that one with `skill_read`, so a small model's context holds one
-skill, not all of them. `tabkyra skill edit`, `versions` and `rollback` change a skill on
+skill, not all of them. `polycarp-browser skill edit`, `versions` and `rollback` change a skill on
 your machine with a diff, a backup and the lint every time. CI scores the router on
 labeled cases and fails on a regression: [docs/skill-platform.md](docs/skill-platform.md).
 
-Your own edits stay on your machine. `tabkyra skill apply <folder> --yes` backs up the
-current version and installs the edit; `tabkyra skill revert <name>` goes back to the
+Your own edits stay on your machine. `polycarp-browser skill apply <folder> --yes` backs up the
+current version and installs the edit; `polycarp-browser skill revert <name>` goes back to the
 bundled text. The safety sections of a bundled skill can't be changed this way.
 
 ## Library
@@ -318,13 +318,13 @@ bundled text. The safety sections of a bundled skill can't be changed this way.
 A local source library in the spirit of Zotero. Every source is fetched from its DOI's
 registry and checked against OpenAlex and Crossref's retraction notices before it's saved.
 When a check can't finish, the source is saved marked "retraction check incomplete" until
-`tabkyra library verify` completes it.
+`polycarp-browser library verify` completes it.
 
 ```bash
-tabkyra library add 10.1037/0033-2909.132.3.354 --quote "..." --location "p. 354"
-tabkyra library cite cepeda2006distributed --style apa  # also mla, chicago, ieee, harvard, vancouver
-tabkyra library export --format bibtex --out refs.bib   # or ris, csl: Zotero, Word, LaTeX
-tabkyra library obsidian ~/Vault                        # one note per source in Sources/
+polycarp-browser library add 10.1037/0033-2909.132.3.354 --quote "..." --location "p. 354"
+polycarp-browser library cite cepeda2006distributed --style apa  # also mla, chicago, ieee, harvard, vancouver
+polycarp-browser library export --format bibtex --out refs.bib  # or ris, csl: Zotero, Word, LaTeX
+polycarp-browser library obsidian ~/Vault               # one note per source in Sources/
 ```
 
 `add` also takes a doi.org link or an arXiv id. An unregistered DOI is refused, and a
@@ -337,10 +337,10 @@ skill uses them.
 Free mode runs the side panel agent on OpenRouter's free models, at no cost. Pick **Free (best
 available)** at the top of the model list, or turn on **Settings > Providers > Free mode**. It
 needs a free OpenRouter key (sign up at [openrouter.ai/keys](https://openrouter.ai/keys)); without
-one, Tabkyra opens the key prompt and says so.
+one, Polycarp opens the key prompt and says so.
 
 - **Measured, not guessed.** Every free model that can call tools was run on four browser
-  tasks through Tabkyra's tools and scored by what the test site recorded
+  tasks through Polycarp's tools and scored by what the test site recorded
   (`cli/eval/free-models.mjs`). The ranking ships in `src/models/free-ranking.json`, and a test
   fails if its order doesn't match its scores. The leaders on 2026-10-28:
 
@@ -353,7 +353,7 @@ one, Tabkyra opens the key prompt and says so.
   | 5 | `poolside/laguna-s-2.1:free` | 6/8 | 8 | 198 |
   | 6 | `nvidia/nemotron-3.5-lightning:free` | 6/8 | 10.6 | 51.9 |
 
-- **Live.** Tabkyra rereads OpenRouter's free list about once a day and drops any model that
+- **Live.** Polycarp rereads OpenRouter's free list about once a day and drops any model that
   stopped being free or stopped taking tools. New free models rank after the measured ones.
 - **Never paid.** Each request names the two best free models plus OpenRouter's free router as
   fallbacks, so one rate limit doesn't fail the turn. Every model in it is checked free first,
@@ -368,7 +368,7 @@ one, Tabkyra opens the key prompt and says so.
 
 Both live in the side panel under **Settings > Privacy**, and both apply to the side
 panel agent. An external agent such as Claude Code uses its own model provider, which
-Tabkyra doesn't control.
+Polycarp doesn't control.
 
 - **Private mode** limits the side panel agent to OpenRouter, with zero data retention
   required on every request (`provider.zdr: true`, `data_collection: "deny"`, no
@@ -395,42 +395,42 @@ browser and costs them nothing. There's no account with us, no relay and no shar
 server.
 
 ```bash
-tabkyra remote setup     # Tailscale Funnel (free plan), an approval passcode, a service that keeps it running
-tabkyra remote status    # is it up and reachable from the internet?
+polycarp-browser remote setup  # Tailscale Funnel (free plan), an approval passcode, a service that keeps it running
+polycarp-browser remote status  # is it up and reachable from the internet?
 ```
 
 Setup prints the connector URL. Paste it into claude.ai (Settings > Connectors > Add custom
-connector), ChatGPT or grok.com. Each one opens Tabkyra's approval page, where you pick the
+connector), ChatGPT or grok.com. Each one opens Polycarp's approval page, where you pick the
 permissions and enter your passcode. Without Tailscale, a free Cloudflare named tunnel on
-your own domain works too: `tabkyra remote setup --public-url https://tabkyra.<your domain>`.
+your own domain works too: `polycarp-browser remote setup --public-url https://polycarp.<your domain>`.
 [docs/remote.md](docs/remote.md) has both routes, revoking and the security notes.
 
-Several computers with a browser? Run `tabkyra hub setup --public-url https://host` on an always-on box and
-`tabkyra link <hub URL> --code <code>` on each computer: one connector URL, and a session goes to a device
+Several computers with a browser? Run `polycarp-browser hub setup --public-url https://host` on an always-on box and
+`polycarp-browser link <hub URL> --code <code>` on each computer: one connector URL, and a session goes to a device
 that is online and least busy. See [Many devices, one connector](docs/remote.md#many-devices-one-connector).
 
 ### Other agents, with a token
 
 ```bash
-tabkyra token create laptop --scope browser.read,browser.navigate   # prints the token once
-tabkyra serve                                                       # loopback only, port 8787
-tabkyra tunnel tailscale        # https://<machine>.<tailnet>.ts.net/tabkyra/mcp, your tailnet only
-tabkyra tunnel cloudflare       # a cloudflared quick tunnel at a random trycloudflare.com URL
+polycarp-browser token create laptop --scope browser.read,browser.navigate  # prints the token once
+polycarp-browser serve                                              # loopback only, port 8787
+polycarp-browser tunnel tailscale        # https://<machine>.<tailnet>.ts.net/polycarp/mcp, your tailnet only
+polycarp-browser tunnel cloudflare  # a cloudflared quick tunnel at a random trycloudflare.com URL
 ```
 
-- `tabkyra serve` speaks MCP over Streamable HTTP at `/mcp` and refuses to bind anywhere
+- `polycarp-browser serve` speaks MCP over Streamable HTTP at `/mcp` and refuses to bind anywhere
   but loopback. TLS comes from the tunnel.
 - Every request needs a token, sent as an `Authorization: Bearer` header. Tokens are per
-  client, stored only as SHA-256 hashes, and end at once with `tabkyra token revoke`.
+  client, stored only as SHA-256 hashes, and end at once with `polycarp-browser token revoke`.
 - Scopes have no wildcard. A session sees only the tools its scopes grant
-  (`tabkyra token scopes` lists them). Acting under your sign-in (`browser.act`) and
+  (`polycarp-browser token scopes` lists them). Acting under your sign-in (`browser.act`) and
   running scripts (`browser.script`) are separate scopes, never implied by the others.
   So is asking you questions in the side panel (`user.ask`, the `ask_user` tool); the card
   names the token (`remote-<name>`), and the answer goes back only to that session.
-- `tabkyra tunnel tailscale --public` uses Funnel, which anyone on the internet can reach;
+- `polycarp-browser tunnel tailscale --public` uses Funnel, which anyone on the internet can reach;
   the token is then the only lock, and the command says so. A Cloudflare quick tunnel is
   public in the same way.
-- Tabkyra installs neither tool and makes no accounts. `--off` stops either tunnel.
+- Polycarp installs neither tool and makes no accounts. `--off` stops either tunnel.
 
 The token and scope checks are covered by tests. An end-to-end run through a real
 Tailscale and a real Cloudflare tunnel hasn't been recorded yet
@@ -442,8 +442,8 @@ Your browser is signed in as you, so the defaults are conservative.
 
 - **The agent asks before it opens a new site.** Claude Code and Codex show the prompt
   inline; otherwise answer it in the side panel under Settings > Agents. Run
-  `tabkyra allow <host>` to pre-approve a site, `tabkyra allow-all` to skip prompts and
-  `tabkyra ask` to turn them back on.
+  `polycarp-browser allow <host>` to pre-approve a site, `polycarp-browser allow-all` to skip prompts and
+  `polycarp-browser ask` to turn them back on.
 - **Page text is data, not instructions.** The MCP server tells every agent that page
   content is untrusted and that it must ask you before acting under your sign-in:
   sending, posting, buying, deleting or changing settings. It also tells the agent never
@@ -453,14 +453,14 @@ Your browser is signed in as you, so the defaults are conservative.
   It doesn't limit what the agent does on a site you've allowed, including running
   scripts there with `run_js`. Allow only sites you'd let the agent act on, and for
   high-stakes accounts, run agents in a separate browser profile that isn't signed in.
-- **Agents stay in their own tab group** ("Tabkyra · claude", "Tabkyra · codex"). Their
+- **Agents stay in their own tab group** ("Polycarp · claude", "Polycarp · codex"). Their
   tabs open in the background, they can't see your other tabs, and popups from their
   tabs don't steal focus. `tabs_show` is the only tool that changes what you see.
 - **Nothing listens on the network by default.** The browser starts the native host,
   which relays frames over a Unix socket in `/tmp/tabkyra-bridge-<user>/` (0700 directory,
   0600 socket). Other users can't reach it, and the client refuses sockets another user
   owns. Any program running as you can, which is the same trust level as your shell.
-  `tabkyra serve` is the one network listener, it's off until you run it, and it needs a
+  `polycarp-browser serve` is the one network listener, it's off until you run it, and it needs a
   token ([Remote MCP](#remote-mcp-and-tunnels)).
 - **Only this extension can make the browser start the host.** The host manifest's
   `allowed_origins` names one fixed extension id, `kenehmggpggpiolepbjojeenmeapgfoc`,
@@ -479,10 +479,10 @@ Found a hole? Please report it privately; see [SECURITY.md](SECURITY.md).
 
 ```mermaid
 flowchart LR
-  A["Your agent<br/>Claude Code, Codex, OpenCode, Cursor"] -- "MCP (stdio)" --> B["tabkyra mcp"]
+  A["Your agent<br/>Claude Code, Codex, OpenCode, Cursor"] -- "MCP (stdio)" --> B["polycarp-browser mcp"]
   B -- "Unix socket<br/>user-only" --> C["Native host<br/>started by the browser"]
-  C -- "Native messaging" --> D["Tabkyra extension"]
-  D -- "chrome.debugger,<br/>tab groups" --> E["Background tabs<br/>Tabkyra · claude"]
+  C -- "Native messaging" --> D["Polycarp extension"]
+  D -- "chrome.debugger,<br/>tab groups" --> E["Background tabs<br/>Polycarp · claude"]
   U(["You"]) -. "approve sites,<br/>watch, take over" .-> D
 ```
 
@@ -505,11 +505,11 @@ git pull                                   # on a branch
 # git fetch --tags && git checkout v<new version>
 ./scripts/setup-siblings.sh
 (cd cli && npm ci && npm run build)
-TABKYRA_NO_BUMP=1 npm run build && tabkyra reload
+TABKYRA_NO_BUMP=1 npm run build && polycarp-browser reload
 ```
 
-`tabkyra update` installs signed GitHub releases. It verifies a minisign signature and a
-checksum, swaps the release in, keeps the previous one for `tabkyra update --rollback`,
+`polycarp-browser update` installs signed GitHub releases. It verifies a minisign signature and a
+checksum, swaps the release in, keeps the previous one for `polycarp-browser update --rollback`,
 and changes nothing if any check fails. No signed release has been published yet, so for
 now it has nothing to install. Details are in [docs/updates.md](docs/updates.md).
 
@@ -539,10 +539,10 @@ group.
 **Can I watch it work?** Yes. Click its tab group, or have the agent call `tabs_show`.
 
 **Why does my agent stop and ask about a site?** That's the permission prompt. Approve
-it once or for good, or run `tabkyra allow <host>` ahead of time.
+it once or for good, or run `polycarp-browser allow <host>` ahead of time.
 
-**It says "Tabkyra isn't connected."** The browser isn't running with the extension
-loaded, or the extension hasn't reached the native host yet. `tabkyra doctor` says
+**It says "Polycarp isn't connected."** The browser isn't running with the extension
+loaded, or the extension hasn't reached the native host yet. `polycarp-browser doctor` says
 which one.
 
 **Which browsers?** Chromium 141 or newer. Tested: Chromium, headless, end to end (the e2e
@@ -550,16 +550,16 @@ test), and host registration for Helium and Chrome on macOS (the install test). 
 use in Helium or Chrome, and Brave, Edge, Arc, Vivaldi and Opera (registered the same way, on
 macOS and Linux), haven't been tried yet. Windows registry entries are written but untested.
 
-**Does it send my data anywhere?** Tabkyra itself collects nothing and has no server; the
-bridge never leaves your machine unless you run `tabkyra serve` and a tunnel. But whatever
+**Does it send my data anywhere?** Polycarp itself collects nothing and has no server; the
+bridge never leaves your machine unless you run `polycarp-browser serve` and a tunnel. But whatever
 an agent reads through it (page text, screenshots) goes to that agent's model provider, as
 with any tool the agent uses. The side panel likewise talks to the provider you configure,
 and [private mode](#private-mode-and-bug-reports) limits which ones it may use.
-`tabkyra library` looks up each source you add at its DOI registry (or arXiv), OpenAlex and
-Crossref, and `tabkyra update` checks GitHub for releases. The side panel also fetches
+`polycarp-browser library` looks up each source you add at its DOI registry (or arXiv), OpenAlex and
+Crossref, and `polycarp-browser update` checks GitHub for releases. The side panel also fetches
 model details from models.dev.
 
-**Can I add my own skill?** Yes, locally with `tabkyra skill apply`, or for everyone
+**Can I add my own skill?** Yes, locally with `polycarp-browser skill apply`, or for everyone
 through a pull request. [CONTRIBUTING.md](CONTRIBUTING.md) explains the gates. Skills with
 personal data are never submitted.
 
@@ -577,7 +577,7 @@ parent/
 `./scripts/setup-siblings.sh` clones them, checks out pi-mono at the pinned commit,
 applies `patches/pi-mono.patch`, builds the declarations and installs everything.
 `./dev.sh` starts the watchers. Rebuild and reload from the terminal with
-`npm run build && tabkyra reload`. A production build bumps the version in
+`npm run build && polycarp-browser reload`. A production build bumps the version in
 `static/manifest.chrome.json`; `TABKYRA_NO_BUMP=1` skips that.
 
 ```bash
@@ -594,9 +594,9 @@ node scripts/demo/capture.mjs           # re-record the README demo (needs ffmpe
 the rules coding agents follow in this repo. The brand (mark, palette, type, voice) is
 documented in [media/brand/BRAND.md](media/brand/BRAND.md).
 
-## Support Tabkyra
+## Support Polycarp
 
-Tabkyra is free and open source, and it will stay that way. If it saves you time, you can
+Polycarp is free and open source, and it will stay that way. If it saves you time, you can
 help pay the developer program fees that let Donovan's free software install without
 warnings. Every dollar in and out is listed on [dbaney.com/support](https://dbaney.com/support/).
 
@@ -618,8 +618,8 @@ use it.
   the original Sitegeist extension, its side panel agent and tools, and the
   [pi](https://github.com/badlogic/pi-mono) and [mini-lit](https://github.com/badlogic/mini-lit)
   libraries it runs on.
-- **Tabkyra** ([baney75/tabkyra](https://github.com/baney75/tabkyra)), by Donovan Baney:
-  the name and brand, `tabkyra setup` and `doctor`, the Helium host registration, the MCP
+- **Polycarp** ([baney75/tabkyra](https://github.com/baney75/tabkyra)), by Donovan Baney:
+  the name and brand, `polycarp-browser setup` and `doctor`, the Helium host registration, the MCP
   polish and the end-to-end test, the skills and the skill lint, the source library,
   private mode and bug reports, scoped remote MCP, signed updates, and the API-keys-only
   sign-in policy.
@@ -628,5 +628,5 @@ use it.
 
 ## License
 
-[AGPL-3.0](LICENSE), like upstream. If you run a modified Tabkyra for others over a
+[AGPL-3.0](LICENSE), like upstream. If you run a modified Polycarp for others over a
 network, the AGPL asks you to offer them its source.

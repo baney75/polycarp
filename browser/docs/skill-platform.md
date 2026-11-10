@@ -91,14 +91,14 @@ A catalog of 13 skills or fewer scores as before; on `main`'s 13 skills the only
 the 608 case texts is that "a Tabkyra skill" no longer asks for the tabkyra skill.
 
 The router indexes the skills in use: the bundled skills and the user's applied local
-copies (`tabkyra skill apply`). The index is built once per process and rebuilt only when
-`~/.config/tabkyra/skills-local` changes: each file's inode, change time, modification time
+copies (`polycarp browser skill apply`). The index is built once per process and rebuilt only when
+`~/.config/polycarp/browser/skills-local` changes: each file's inode, change time, modification time
 and size, plus a hash of `index.json`, so two same-size edits within one timestamp tick
 still rebuild it.
 
 ### Using it
 
-- `tabkyra skill match "<task>" [--json] [--top N]` prints the best skills with their scores
+- `polycarp browser skill match "<task>" [--json] [--top N]` prints the best skills with their scores
   and one-line descriptions, or `none`.
 - MCP `skill_match {"task": "..."}` returns the same in a few lines, ending with the
   `skill_read` call to make. `skill_read {"name": "..."}` returns one SKILL.md: the user's
@@ -106,7 +106,7 @@ still rebuild it.
   order: first `skill_match` with the user's task (it needs no browser), then `skill_read`
   only for the chosen skill, so only one skill enters the context; `status` comes before any
   browser tool, and a missing browser stops browser work only.
-- Remote sessions (`tabkyra serve`) see both tools only with the `skills.read` token scope.
+- Remote sessions (`polycarp browser serve`) see both tools only with the `skills.read` token scope.
   They match and read the bundled skills only, never the user's local skills or edits: a
   remote session can be a cloud agent off the user's devices, and personal skills stay on
   them (D6). Any session created with a tool scope (`allowedTools`) gets the same, whether
@@ -134,7 +134,7 @@ were tuned against `router-cases.jsonl`. Its gates measure regression on a tuned
 true accuracy on new phrasings. The held-out figures are the closer estimate of that, and
 they have lower floors.
 
-`tabkyra skill eval [--json] [--cases <file>]` runs every case against the bundled skills and
+`polycarp browser skill eval [--json] [--cases <file>]` runs every case against the bundled skills and
 checks seven gates. It exits 1 when any fails.
 
 | Gate | Requirement |
@@ -148,7 +148,7 @@ checks seven gates. It exits 1 when any fails.
 | held-out none | 10% or fewer of held-out `none` cases route to a skill |
 
 Cases that name a skill the catalog doesn't have are skipped and listed, so cases can land
-before or after their skill. `tabkyra skill eval --update-baseline` rewrites `baseline.json`
+before or after their skill. `polycarp browser skill eval --update-baseline` rewrites `baseline.json`
 from the current results. Commit it in the same pull request as the change that moved the
 numbers.
 
@@ -187,8 +187,8 @@ false invokes at 2 of 14, over the 10% floor.
 
 With #19 and #26 merged (34 skills, measured 2026-10-26): tuned set of 545 cases, top-1 92.9% (421 of 453) and false invokes 0% (0 of 92); held-out top-1 87.7% over 106 cases and false invokes 5.9% (1 of 17). The merged catalog moved three skills below main's baseline, recorded in `accepted-drops.json`: kyraskillmaker 77.8% to 72.2%, mechanism-design 100% to 93.3%, visual-explainer 100% to 94.1%.
 
-With `x-search` and `summarize` added (37 skills, measured 2026-11-07): tuned set of 579 cases, top-1 93.2% (454 of 487) and false invokes 0% (0 of 92); held-out top-1 88.8% over 116 cases and false invokes 5.9% (1 of 17). No existing skill fell below its baseline. The new skills measure `x-search` 100%, `summarize` 83.3% and `pdf` 70%. `pdf` is lowest because "pdf" is held by four skills, so the word alone is no longer evidence. The words "open", "table" and "YouTube" stay out of the new descriptions: `tabkyra` and `artifacts` rely on them.
-With `youtube`, `rumble`, `instagram` and `site-learning` added and `news-research` extended (39 skills, measured 2026-11-07): tuned set of 612 cases, top-1 92.5% (480 of 519) and false invokes 0% (0 of 93); held-out top-1 89.0% (113 of 127) over 145 cases and false invokes 5.6% (1 of 18). The larger catalog raises the single-evidence bar, so six older skills each lost one borderline case: artifacts, design-library, maps, tabkyra, visual-explainer and writing-voice. They are recorded in `accepted-drops.json`. One of the two `tabkyra` cases is a real overlap: "Read the comments under this YouTube video in my browser tab" now goes to `youtube`. Known gap on the new skills: the router reads a platform name as the topic, so "Download this YouTube video as an mp3 file", "Write a script for my cooking YouTube channel intro", "Design a logo for my bakery's Instagram page", "Post this photo to my Instagram story" and "Make a thumbnail for my YouTube video" route to the platform skill instead of none. They are not in the case files for that reason.
+With `x-search` and `summarize` added (37 skills, measured 2026-11-07): tuned set of 579 cases, top-1 93.2% (454 of 487) and false invokes 0% (0 of 92); held-out top-1 88.8% over 116 cases and false invokes 5.9% (1 of 17). No existing skill fell below its baseline. The new skills measure `x-search` 100%, `summarize` 83.3% and `pdf` 70%. `pdf` is lowest because "pdf" is held by four skills, so the word alone is no longer evidence. The words "open", "table" and "YouTube" stay out of the new descriptions: `polycarp browser` and `artifacts` rely on them.
+With `youtube`, `rumble`, `instagram` and `site-learning` added and `news-research` extended (39 skills, measured 2026-11-07): tuned set of 612 cases, top-1 92.5% (480 of 519) and false invokes 0% (0 of 93); held-out top-1 89.0% (113 of 127) over 145 cases and false invokes 5.6% (1 of 18). The larger catalog raises the single-evidence bar, so six older skills each lost one borderline case: artifacts, design-library, maps, tabkyra, visual-explainer and writing-voice. They are recorded in `accepted-drops.json`. One of the two `polycarp browser` cases is a real overlap: "Read the comments under this YouTube video in my browser tab" now goes to `youtube`. Known gap on the new skills: the router reads a platform name as the topic, so "Download this YouTube video as an mp3 file", "Write a script for my cooking YouTube channel intro", "Design a logo for my bakery's Instagram page", "Post this photo to my Instagram story" and "Make a thumbnail for my YouTube video" route to the platform skill instead of none. They are not in the case files for that reason.
 With `pdf` added as well (42 skills, measured 2026-11-07): tuned set of 646 cases, top-1 91.5% (506 of 553) and false invokes 0% (0 of 93); held-out top-1 89.0% over 136 positive cases and false invokes 5.6% (1 of 18). Eight older skills each lost a borderline case or two (`skills-eval/accepted-drops.json` says why). Two router changes were measured and refused: freezing the single-evidence bar changed nothing, and counting words held by three skills as evidence raised false invokes from 0% to 4.3%.
 
 With the 19 skills from pull request #19 (32 skills, measured 2026-10-26): on the tuned set of
@@ -200,12 +200,12 @@ top-1 88.5% (85 of 96) and false invokes 0% (0 of 14). The top-1 gate needs 376 
 The `skill-regression` job in `.github/workflows/ci.yml` builds the CLI without install
 scripts and runs:
 
-1. `tabkyra skill lint skills`, which includes the `budget` rule: every SKILL.md is 150
-   lines and 8,000 characters or fewer. `tabkyra skill apply` runs the same lint, so a local
+1. `polycarp browser skill lint skills`, which includes the `budget` rule: every SKILL.md is 150
+   lines and 8,000 characters or fewer. `polycarp browser skill apply` runs the same lint, so a local
    edit can't grow a skill past the budget either. A local edit applied before the budget
-   existed is still used when it's over; `tabkyra skill list` and `install` warn, naming the
+   existed is still used when it's over; `polycarp browser skill list` and `install` warn, naming the
    file and the rule, until it is trimmed and applied again.
-2. `tabkyra skill eval`, the seven gates above. `--router <script>` runs a router built
+2. `polycarp browser skill eval`, the seven gates above. `--router <script>` runs a router built
    from `cli/src/router-worker.ts` (`dist/router-worker.js`) in a child process instead of
    this one.
 3. `cli/test/skill-router.test.mjs`, `cli/test/skill-platform.test.mjs` and
@@ -231,7 +231,7 @@ router runs only inside the judge's sandboxed child process.
    again. Both decide with `.github/scripts/judge-label.mjs`, which fails closed when a push
    can't be compared.
 5. On every pull request, the judge job runs
-   `tabkyra skill eval --base <base files> --router <script>`.
+   `polycarp browser skill eval --base <base files> --router <script>`.
 
    | From the pull request (what is judged) | From the base branch (the judge) |
    | --- | --- |
@@ -289,26 +289,26 @@ router runs only inside the judge's sandboxed child process.
 A skill's version is the first 12 hex digits of the SHA-256 of its SKILL.md, so the same
 text has the same version wherever it is stored.
 
-- `tabkyra skill list --json` gives each skill's name, description, version and source
+- `polycarp browser skill list --json` gives each skill's name, description, version and source
   (`bundled` or `local`).
-- `tabkyra skill versions <name> [--json]` lists the bundled version, the applied local
-  version and every version in `~/.config/tabkyra/skill-history/<name>/` with the time it
+- `polycarp browser skill versions <name> [--json]` lists the bundled version, the applied local
+  version and every version in `~/.config/polycarp/browser/skill-history/<name>/` with the time it
   was kept and why (`backup` before an apply, `reverted`, or `<harness>-replaced`).
 
 ## Rollback
 
-`tabkyra skill rollback <name> --to <version|time> [--yes]` restores a version from
+`polycarp browser skill rollback <name> --to <version|time> [--yes]` restores a version from
 skill-history. `--to` takes 6 to 12 hex digits of a version or the time `versions` prints.
-The text goes through the same checks as `tabkyra skill apply`: lint, the protected skills
+The text goes through the same checks as `polycarp browser skill apply`: lint, the protected skills
 (`rsi`, `kyraskillmaker`) and the protected sections. Without `--yes` it prints the diff,
 changes nothing and exits 3. An unknown or ambiguous version is refused. A target that is
-the bundled text removes the local edit, as `tabkyra skill revert <name>` does, instead of
+the bundled text removes the local edit, as `polycarp browser skill revert <name>` does, instead of
 pinning a local copy that would stop bundled updates.
 
 ## Editor
 
-`tabkyra skill edit <name> [--yes]` copies the exact source in use (`print --raw`) to
-`~/.config/tabkyra/skill-drafts/<name>/SKILL.md` and records the version it was taken from
+`polycarp browser skill edit <name> [--yes]` copies the exact source in use (`print --raw`) to
+`~/.config/polycarp/browser/skill-drafts/<name>/SKILL.md` and records the version it was taken from
 in `skill-drafts/.bases/<name>`. An unfinished draft taken from the current version is
 resumed. A draft taken from an older version (an apply or rollback happened since) would
 undo those changes, so it is moved to `skill-drafts/.backups/<name>/`, with a warning, and a

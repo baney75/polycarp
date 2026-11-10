@@ -528,15 +528,15 @@ export class DataExporter {
 
 ## Threads for local agents
 
-The side panel's chats live in the `sessions` and `sessions-metadata` stores. Tabkyra reads
+The side panel's chats live in the `sessions` and `sessions-metadata` stores. Polycarp reads
 them from two more places (`src/threads/`):
 
 - **The service worker** opens the same database read-only (`src/threads/store.ts`; it never
   creates it) and answers `threads.list`, `threads.read` and `threads.search` for the bridge,
-  so `tabkyra mcp` and `tabkyra threads` work while no panel is open.
+  so `polycarp browser mcp` and `polycarp browser threads` work while no panel is open.
 - **A mirror on disk.** `TabkyraSessionsStore` announces every save, rename and delete; the
   worker waits 2 s for quiet, renders the thread (`src/threads/render.ts`) and sends it to the
-  native host, which writes `~/.local/share/tabkyra/threads/<browser>/<id>.md`, `<id>.json` and
+  native host, which writes `~/.local/share/polycarp/browser/threads/<browser>/<id>.md`, `<id>.json` and
   `index.json` (`cli/src/threads-mirror.ts`: folder 0700, files 0600, temp file then rename,
   ids of letters, digits, `-` and `_` only). A new host gets every thread again and drops files
   of deleted ones. Each browser profile writes its own folder (its `browserId`), so one browser's

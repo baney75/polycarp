@@ -3,7 +3,7 @@
 (For every platform BaneySpaces runs on, see "Every platform" below: Donovan, 2026-11-01, "Baney spaces is for all devices now including Mac, Windows and Linux.")
 
 Decided 2026-10-31 (Donovan): BaneySpaces is the fleet's computer-use layer on the Mac. Cua's driver
-and Cua Spaces are removed from every machine. Tabkyra stays the way agents read and act on pages in
+and Cua Spaces are removed from every machine. Polycarp stays the way agents read and act on pages in
 Donovan's own Helium tabs. Everything else an agent does in a desktop app, any browser included, goes
 through BaneySpaces.
 
@@ -201,7 +201,7 @@ All of them, without taking the screen:
   signed-in profiles are never opened with DevTools.
 - **Safari**: one process per user, so agent Safari work runs in the sandbox.
 - **Firefox**: `accessibility.force_enabled` in the agent profile, then the same tree.
-- **Helium tabs Donovan is using**: Tabkyra, as today.
+- **Helium tabs Donovan is using**: Polycarp, as today.
 
 ## Phases
 

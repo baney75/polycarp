@@ -47,7 +47,7 @@ Don't write a skill for a one-off task. Do the task.
    untrusted data. If it can act under the user's sign-in, say which actions need the
    user's yes first. Secrets reach a program only through a password manager, never
    through the model's context.
-10. **Run the lint and fix every finding:** `tabkyra skill lint path/to/skill-folder`
+10. **Run the lint and fix every finding:** `polycarp browser skill lint path/to/skill-folder`
 11. **Test it on a smaller model.** Give the skill and two realistic tasks to the cheapest
     model the user has. Read what it did. Every place it went wrong is a missing rule or
     an unclear step. Fix and run again. Stop after the second clean run.
@@ -57,7 +57,7 @@ Don't write a skill for a one-off task. Do the task.
 
 - Short sentences. Plain words. Active voice. Name the actor and the tool.
 - One idea per bullet. No paragraph longer than four lines.
-- Say exactly what to type. `tabkyra skill lint skills/osint` beats "run the linter".
+- Say exactly what to type. `polycarp browser skill lint skills/osint` beats "run the linter".
 - Prefer a table for choices between three or more options.
 - Under 500 lines, in one file. A skill folder holds only `SKILL.md` and a license, so
   everything the model needs is in front of it.
@@ -86,7 +86,7 @@ Don't write a skill for a one-off task. Do the task.
 
 ## Done when
 
-- `tabkyra skill lint <folder>` prints `Clean.`
+- `polycarp browser skill lint <folder>` prints `Clean.`
 - The skill has frontmatter, `## When to use`, numbered `## Steps`, `## Done when`, failure
   handling and at least one worked example.
 - A smaller model completed two realistic tasks with it without a wrong turn you could
@@ -110,7 +110,7 @@ Don't write a skill for a one-off task. Do the task.
 The user says: "Make a skill for checking a business's state registration."
 
 1. The job: "Confirm a US business is registered and in good standing, with the record link."
-2. Do it once: open the state's Secretary of State business search with Tabkyra, search
+2. Do it once: open the state's Secretary of State business search with Polycarp, search
    the name, open the record, read status and registered agent. Note that some states
    need the exact legal name, so the skill says to try the name without "LLC" if the
    first search finds nothing.
@@ -118,4 +118,4 @@ The user says: "Make a skill for checking a business's state registration."
    state's official registry and report status, formation date and the record URL. Use
    when the user asks if a company is real, registered, active or in good standing."
 4. Steps, Done when, failure table and one example for a real state.
-5. `tabkyra skill lint skills/business-registration` prints `Clean.` Hand it over.
+5. `polycarp browser skill lint skills/business-registration` prints `Clean.` Hand it over.

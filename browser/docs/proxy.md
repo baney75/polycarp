@@ -1,6 +1,6 @@
 # Proxy Architecture
 
-> Tabkyra no longer accepts Anthropic OAuth tokens (`sk-ant-oat-*`); see `auth-policy.md`. The OAuth notes below describe the upstream design.
+> Polycarp no longer accepts Anthropic OAuth tokens (`sk-ant-oat-*`); see `auth-policy.md`. The OAuth notes below describe the upstream design.
 
 ## Overview
 

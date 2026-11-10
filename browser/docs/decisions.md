@@ -4,14 +4,14 @@ Conventional defaults chosen while implementing the Done Criteria (DC-1 to DC-14
 owner's answers to the questions that changed the outcome. Newest last. Each entry names
 the criterion it serves.
 
-## D1. Tabkyra skill metadata lives in `skill.toml`, not in SKILL.md frontmatter (DC-3)
+## D1. Polycarp skill metadata lives in `skill.toml`, not in SKILL.md frontmatter (DC-3)
 
 DC-3 lists name, description, triggers, required tools, permissions, version and
 provenance as frontmatter. Harnesses read SKILL.md frontmatter, and some act on keys they
 recognize (Claude Code's `allowed-tools` pre-approves tools), so extra keys there are an
 escalation route. SKILL.md keeps `name`, `description` and `license`, which every harness
-reads the same way. The Tabkyra fields go in `skill.toml` in the same folder, which only
-Tabkyra reads and the lint validates. The installer copies only SKILL.md into harness
+reads the same way. The Polycarp fields go in `skill.toml` in the same folder, which only
+Polycarp reads and the lint validates. The installer copies only SKILL.md into harness
 folders. Same information, no new attack surface in the harness.
 
 ## D2. CAPTCHA handling (DC-10, DC-12)
@@ -23,7 +23,7 @@ Implementation default:
 - Off by default. Turned on once at setup, behind a plain warning that solving breaks
   most sites' terms and can get an account or IP flagged. The setting then syncs to the
   user's other devices.
-- Tabkyra ships no solver. When the setting is on, the agent may use a solver extension
+- Polycarp ships no solver. When the setting is on, the agent may use a solver extension
   the user installed themselves (Buster), one challenge at a time at human pace.
 - Allowed for search engines, the `ghost` skill and the `osint` skill's company and domain
   research. Never for buying, ticketing, account creation, posting, or any site the user
@@ -71,7 +71,7 @@ Pasting the prompt into each harness needs that harness signed in and calling a 
 That uses the owner's sign-ins and, for some harnesses, metered API use, which is not
 allowed without the owner. The default check runs the prompt's commands, unchanged, in a
 fresh container per harness with that harness's binary installed. It checks harness
-detection, skills folder, MCP config and `tabkyra doctor`. The model-in-the-loop
+detection, skills folder, MCP config and `polycarp browser doctor`. The model-in-the-loop
 transcripts are recorded as blocked until the owner signs in a harness for the run.
 
 ## D8. Stacked pull requests
@@ -82,19 +82,19 @@ on #13 and then review and merge #14 and #15: "Yes, review and merge".
 
 ## D9. Remote MCP and tunnels (DC-2, DC-9)
 
-`tabkyra serve` speaks MCP over Streamable HTTP and binds to loopback only; it refuses any
-other address. Every request needs a bearer token from `tabkyra token create`. Tokens are
+`polycarp browser serve` speaks MCP over Streamable HTTP and binds to loopback only; it refuses any
+other address. Every request needs a bearer token from `polycarp browser token create`. Tokens are
 per client, stored as SHA-256 hashes, revocable at once, and limited to named scopes
 (`browser.read`, `browser.navigate`, `browser.act`, `browser.script`, `library.read`,
 `library.write`). There is no wildcard. A session sees only its scopes' tools, and another
 token can't reuse it. The stdio server that a local harness runs keeps full access: it
 runs as the user, so a token there would protect nothing. TLS comes from the tunnel:
-`tabkyra tunnel tailscale` (tailnet only; `--public` uses Funnel and warns) or
-`tabkyra tunnel cloudflare` (a quick tunnel under the user's own `cloudflared`).
+`polycarp browser tunnel tailscale` (tailnet only; `--public` uses Funnel and warns) or
+`polycarp browser tunnel cloudflare` (a quick tunnel under the user's own `cloudflared`).
 
 ## D10. Appearance customization and the contribution network (owner, 2026-10-25)
 
-Users and their agents customize Tabkyra's look through a theme file: design tokens and
+Users and their agents customize Polycarp's look through a theme file: design tokens and
 CSS custom properties as data, checked by a linter. A theme can't contain code, URLs or
 selectors that hide controls. A modified build is still allowed (AGPL-3.0).
 
@@ -130,7 +130,7 @@ loads when the skill is invoked. Each first-party skill stays under 150 lines an
 day, because every well-specified skill exceeded it; the owner hasn't ruled on the number. Enforced by the lint's `budget` rule, and longer material is
 split into separate skills, not appendices. The
 router (DC-3) picks at most one skill per task for small models. The `rsi` and `fix`
-skills apply their edits with `tabkyra skill apply`, which runs the same lint, so an improvement can't bloat a skill past it (`fix` also aims for under 150 lines).
+skills apply their edits with `polycarp browser skill apply`, which runs the same lint, so an improvement can't bloat a skill past it (`fix` also aims for under 150 lines).
 
 ## D13. Local model providers (owner, 2026-10-25)
 
@@ -142,7 +142,7 @@ private mode only once the user lists it as their own (#15's rule in `src/privac
 
 ## D14. Fix submissions and tier variants (owner, 2026-10-25)
 
-`submit` in `~/.config/tabkyra/rsi.json` takes `"ask"` (default), `"auto"` or `"never"`.
+`submit` in `~/.config/polycarp/browser/rsi.json` takes `"ask"` (default), `"auto"` or `"never"`.
 The owner asked that users be able to submit fixes automatically, which overrides DC-5's
 confirm-each-submission default for users who choose `"auto"`. Auto submission still only
 opens a pull request: CI, adversarial review and a maintainer decide what enters the
@@ -154,7 +154,7 @@ variant by model tier.
 ## D15. Voice and mail skills (owner, 2026-10-25)
 
 The writing-voice skill learns the user's style only from the user's own mail and
-documents, read in place through their signed-in Tabkyra tabs or their Drive. It keeps
+documents, read in place through their signed-in Polycarp tabs or their Drive. It keeps
 just a style profile (sentence length, word choice, openings, sign-offs, a few short
 example lines), not the messages. The profile is a personal skill (D6): it stays on the
 user's devices and is never submitted, synced to shared storage or put in a bug report.
@@ -164,16 +164,16 @@ rules.
 
 ## D16. SDKs and vendor terms (owner, 2026-10-25: "we don't want to break ToS")
 
-No user should risk a ban for using Tabkyra.
+No user should risk a ban for using Polycarp.
 
 - **Harnesses the user runs** (Claude Code, Codex, pi, OMP, OpenCode, Cursor) connect to
-  Tabkyra as an MCP server, a pi extension or skills. The user's own harness, signed in
-  however its vendor allows, calls Tabkyra. Nothing is borrowed or impersonated, so this
+  Polycarp as an MCP server, a pi extension or skills. The user's own harness, signed in
+  however its vendor allows, calls Polycarp. Nothing is borrowed or impersonated, so this
   is the primary integration.
 - **pi** (`@mariozechner/pi-ai`, `pi-agent-core`, `pi-web-ui`, MIT) already powers the side
   panel with API keys. OMP is integrated through MCP config.
 - **Vendor agent SDKs** (Claude Agent SDK, Codex SDK) are used only with an API key the
-  user supplies and pays for, never with a subscription sign-in inside Tabkyra. Products
+  user supplies and pays for, never with a subscription sign-in inside Polycarp. Products
   built on these SDKs are expected to use API keys, and reusing a consumer sign-in in
   another app is what got the old Sitegeist sign-ins removed (docs/auth-policy.md).
 - `/fix` and `adversarial-review` run a stronger model by calling the user's own CLI
@@ -188,15 +188,15 @@ The owner asked for a `visual-explainer` skill adapted from nicobailon/visual-ex
   D12 budget, so upstream's `references/` files, its CSS/JS kit, its renderer and its
   slide and video tooling are not copied. Their rules (figure choice, grid layout, shape
   meanings, captions, motion restraint) are rewritten into one `SKILL.md`. The MIT notice
-  with Nico Bailon's copyright is at the end of that `SKILL.md`, because `tabkyra skill
+  with Nico Bailon's copyright is at the end of that `SKILL.md`, because `polycarp browser skill
   install` copies only `SKILL.md`, and also in `skills/visual-explainer/LICENSE`. The skill
-  is MIT; the rest of Tabkyra stays AGPL-3.0.
+  is MIT; the rest of Polycarp stays AGPL-3.0.
 - **Inline SVG, not Mermaid.** Upstream loads Mermaid, Chart.js and three.js from a CDN.
   The `artifacts` rules forbid outside scripts, and inlining Mermaid would add megabytes of
   layout code to every page for diagrams a model can draw by hand. Upstream itself makes
   hand-drawn SVG the default and Mermaid opt-in. A user's Mermaid source is redrawn as SVG
   and kept as text in the page.
-- **Upstream's checks are replaced by Tabkyra's**: serve the page's own folder,
+- **Upstream's checks are replaced by Polycarp's**: serve the page's own folder,
   `navigate`, start `read_console` and `read_network` and reload, `screenshot`, and
   `run_js` checks for captions, SVG labels, the script count and 375px overflow. The page's
   Content-Security-Policy (first in head: `default-src 'none'`, `script-src 'none'` or the
@@ -221,10 +221,10 @@ available"). Defaults chosen:
   notebook preview; the build aliases it, SheetJS, JSZip and highlight.js to one copy each.
   The previews add about 58 KB unminified (18 KB gzipped) to `sidepanel.js`. The build has
   no code splitting and AGENTS.md forbids dynamic imports, so nothing is lazy-loaded.
-- **Viewers live in Tabkyra, not the pi-mono patch.** pi-web-ui gains one hook,
+- **Viewers live in Polycarp, not the pi-mono patch.** pi-web-ui gains one hook,
   `setArtifactViewerFactory` (through `patches/pi-mono.patch`), which the artifacts panel
   asks before its built-in viewers; `src/artifacts/viewers.ts` answers it. The fork patch
-  stays small, and the viewers are ordinary Tabkyra source with Tabkyra's tests and review.
+  stays small, and the viewers are ordinary Polycarp source with Polycarp's tests and review.
 - **Spreadsheets** (`xlsm`, `xlsb`, `ods`, `numbers` and templates) go through the SheetJS
   build already bundled. CSV and TSV get a table with a toggle to the raw text.
 - **Untrusted input.** Nothing in a file runs or reaches the network: text is set as text,
@@ -245,8 +245,8 @@ available"). Defaults chosen:
 The owner asked for "a great update system" (2026-10-26) with Update now, checkout mode,
 Settings > Updates and an automatic choice defaulting to "Tell me". Defaults chosen:
 
-- **The mode comes from where the native host runs**: `~/.local/share/tabkyra/app` is a
-  release, a Tabkyra git checkout is a checkout, anything else updates only from a terminal.
+- **The mode comes from where the native host runs**: `~/.local/share/polycarp/browser/app` is a
+  release, a Polycarp git checkout is a checkout, anything else updates only from a terminal.
   The browser's extension folder is confirmed by its `build-info.json` (build ids are new for
   every build); if it differs from the host's folder, Update now refuses, because updating
   the host's folder would not change what the browser runs.
@@ -266,7 +266,7 @@ Settings > Updates and an automatic choice defaulting to "Tell me". Defaults cho
   what that means.
 - **Automatic updates never undo a rollback**: not the release rolled back from, and in a
   checkout only new commits. A failed automatic attempt isn't retried for the same version.
-- **Skill refresh only rewrites what Tabkyra wrote.** A hash record of installed files decides;
+- **Skill refresh only rewrites what Polycarp wrote.** A hash record of installed files decides;
   a copy without a record is refreshed only if it matched the old CLI's text right before the
   swap. Anything else is reported, never overwritten.
 - **What's new is plain text.** Release notes come from GitHub and are rendered as text, never
@@ -312,7 +312,7 @@ The owner asked to clean up the side panel chat, remove the in-chat Artifacts pi
 - **The `/` menu order** is site skills matching the current page, then the library, then site
   skills for other sites. A name shows once, in its first section.
 - **A library skill runs by loading its SKILL.md into the user message**, with a note that its
-  tool names are Tabkyra's MCP tools and the panel agent uses its own (navigate, repl).
+  tool names are Polycarp's MCP tools and the panel agent uses its own (navigate, repl).
 - **References resolve when the message first goes to the model** (prompt, queue and Send now
   all pass through `convertToLlm`), once per message, and are frozen on it. Messages loaded
   with a saved chat are never resolved again.
@@ -382,9 +382,9 @@ chosen:
   (`session_assigned`) so a reload can't swap it onto the first one's tabs. A restarted harness
   that connected before its old process hung up gets the base session back if it hasn't
   opened its `-2` yet. A name the user chose is shared on purpose.
-- **Group titles** are `Tabkyra · <agent> · <project or session name>`, plus an optional label
+- **Group titles** are `Polycarp · <agent> · <project or session name>`, plus an optional label
   the agent sets (session_info), sanitized as plain text, at most 32 characters, never
-  starting with "Tabkyra".
+  starting with "Polycarp".
 - **Gestures apply to agent sessions only.** Side panel chats keep their rules: their tabs are
   the user's already. A tab counts as moved out only once it was seen inside the group, so a
   tab still being grouped is never handed over by mistake. A closed window is not a gesture.
@@ -392,7 +392,7 @@ chosen:
   current tab, it has no current tab until it picks one or navigates.
 - **15 tabs per session**, refused with `tab_limit` and what to do. Popups the foreground
   guard adopts are not refused (they come from the page, not the agent).
-- **`tabkyra sessions` acts as the user**, like the side panel: any local process that can
+- **`polycarp browser sessions` acts as the user**, like the side panel: any local process that can
   reach the bridge socket can list, rename, end, focus or collapse agent sessions.
 
 ## D24. Past chats are readable by local agents, by default (Claude, 2026-10-27)
@@ -458,7 +458,7 @@ usage in tabkyra." Defaults chosen:
   that id, so a request that somehow skipped the gate fails instead of reaching a paid model.
 - **Best is measured, not guessed.** `cli/eval/free-models.mjs` runs every free, tool-capable
   model on four fixture tasks (shop, contact form with a confirm dialog, a forum thread with a
-  planted instruction, two-store price comparison) through Tabkyra's MCP tools in a headless
+  planted instruction, two-store price comparison) through Polycarp's MCP tools in a headless
   Chromium, scored by the fixture site's own state. `cli/eval/free-ranking.mjs` writes the
   result to `src/models/free-ranking.json` with its date and method; `test/free-mode.test.mjs`
   fails if the shipped order doesn't match the recorded scores. The eval drives the MCP tools,
@@ -479,7 +479,7 @@ usage in tabkyra." Defaults chosen:
   (50 requests a day, 1,000 after buying 10 credits, 20 a minute) and what to do.
 - **Gated free models are not worked around.** Some free models answer only for apps on
   OpenRouter's app list (`thinkingmachines/inkling:free` and `inkling-small:free` returned 403 "only available on
-  agentic harnesses"). Tabkyra sends its own identity and never borrows another app's (D16);
+  agentic harnesses"). Polycarp sends its own identity and never borrows another app's (D16);
   such a model scores 0 and is skipped.
 - **Private mode still wins.** In private mode Free mode uses only free models with a free
   zero-data-retention endpoint, never `openrouter/free` (it picks its model on OpenRouter's
@@ -493,7 +493,7 @@ usage in tabkyra." Defaults chosen:
 ## D27. Community skills: manage, contribute, review, sync (Claude, 2026-10-28)
 
 Owner, 2026-10-28: "make it so the skill system is easier for peoples llms to manage, and
-contrinute to the larger tabkyra community, ex if an llm finds a better way to navigate a site
+contrinute to the larger polycarp browser community, ex if an llm finds a better way to navigate a site
 like notion, it should make said skill, review it, and submit it for review to be merged, and
 then synced amongst those who use tabkyra." Defaults chosen:
 
@@ -519,7 +519,7 @@ then synced amongst those who use tabkyra." Defaults chosen:
   skill needs 8 or more cases and must route 75% of them to itself (`COMMUNITY_TOP1_MIN`).
   The 75% is Claude's number; the measured example (notion-navigation) routes 9 of 10, losing
   one to the built-in `notes` skill, which also covers Notion.
-- **Submission is the user's.** `tabkyra skill submit` always shows a preview and exits 3; it
+- **Submission is the user's.** `polycarp browser skill submit` always shows a preview and exits 3; it
   sends only with `--confirm <code>`, a hash of the target, the skill, its cases and the note,
   so a yes covers exactly what the user saw. D14's `"auto"` setting for `/fix` doesn't apply
   here: every community submission needs the user's yes. The MCP tool only prepares
@@ -538,8 +538,8 @@ then synced amongst those who use tabkyra." Defaults chosen:
   disagree, and any serial lower than the one it holds, so an old catalog can't be replayed to
   bring back a pulled skill. The kept file is verified again whenever it changes on disk.
 - **Sync about daily.** The native host syncs on each hello and hourly when the last good check
-  is over a day old, and `tabkyra mcp` on start and every 6 hours on the same rule. A failed or
-  refused fetch keeps the catalog in use and doesn't count as a check. `tabkyra skill sync`
+  is over a day old, and `polycarp browser mcp` on start and every 6 hours on the same rule. A failed or
+  refused fetch keeps the catalog in use and doesn't count as a check. `polycarp browser skill sync`
   checks now; `--off` (or the switch in Settings > Skills) turns community skills off and stops
   checking. The side panel gets the skills from the native host, never from the network.
 - **Local edits win, while their base is in use.** Editing a community skill keeps a local copy
@@ -555,7 +555,7 @@ then synced amongst those who use tabkyra." Defaults chosen:
   so a slow sync can't roll back a newer catalog. (Review of #56, first-F1, sol-F1, sol-F2, sol-F4.)
 - **Pulling a skill.** Delete its folder and list it in `community/revoked.json` with a reason.
   At the next sync the skill is no longer matched or read (`skill_read` gives the reason), the
-  copies Tabkyra installed into harnesses are deleted, and a local copy based on it is turned
+  copies Polycarp installed into harnesses are deleted, and a local copy based on it is turned
   off but left on disk.
 - **Built-in skills keep their path.** `skill submit` refuses a built-in skill's name; changes to
   those still go through a pull request to `skills/` (the `fix` skill).
@@ -569,23 +569,23 @@ and merge the codex login and copilot login thing". Sources and details: `docs/a
 
 - **Two sign-ins, each on the provider's documented third-party route.** OpenAI: Sign in with
   ChatGPT for open-source and locally hosted apps (dynamic registration, no secret). GitHub: the
-  Copilot SDK with Tabkyra's own OAuth App (`Ov23li1qDiu9lRXbvcFh`, device flow, no secret).
+  Copilot SDK with Polycarp's own OAuth App (`Ov23li1qDiu9lRXbvcFh`, device flow, no secret).
 - **No sign-in for Anthropic or Google.** Their terms forbid it, including driving their CLIs.
-  Settings shows how to run Claude Code or Gemini CLI with Tabkyra's MCP server instead.
+  Settings shows how to run Claude Code or Gemini CLI with Polycarp's MCP server instead.
 - **No OpenAI interest form.** OpenAI's docs send open-source, locally hosted apps to the docs and
-  paid or hosted apps to the form; Tabkyra is AGPL-3.0 and local. The form itself says "If you're
+  paid or hosted apps to the form; Polycarp is AGPL-3.0 and local. The form itself says "If you're
   an open source developer, explore our developer docs", and it asks for a commercial partner.
-  If Tabkyra ever ships a paid or hosted build, that build needs the form first.
+  If Polycarp ever ships a paid or hosted build, that build needs the form first.
 - **OAuth App, not a GitHub App.** GitHub's Copilot SDK setup page says both work and names the
   OAuth App in its steps; the owner approved an OAuth App. Expiring tokens are on, and the device
   flow refreshes them without a secret.
 - **Tokens only in the native host**, in 0600 files, never in browser storage, as OpenAI's docs
   require. The side panel reaches the providers through the host's loopback proxy with a
   per-process secret.
-- **The Copilot SDK is installed by the user** (`tabkyra copilot-sdk install`, pinned 1.0.28,
+- **The Copilot SDK is installed by the user** (`polycarp browser copilot-sdk install`, pinned 1.0.28,
   about 160 MB), not bundled: most users don't need it.
 - **The API-keys-only rule of AGENTS.md is replaced** by "API keys, plus sign-ins on a provider's
-  documented third-party route with Tabkyra's own registration".
+  documented third-party route with Polycarp's own registration".
 
 ## D29. Dictation: speech to text on the device, the model chosen by the device (Claude, 2026-10-29)
 
@@ -631,7 +631,7 @@ Owner, 2026-11-01: get the MCP working for claude.ai, grok.com, Grok Bot and Cha
 "maybe tailscale tunnels", and without paying for a tunnel.
 
 - claude.ai, ChatGPT and grok.com call a connector from their own servers and can't send a
-  static bearer header (ChatGPT supports only no auth or OAuth). So `tabkyra serve
+  static bearer header (ChatGPT supports only no auth or OAuth). So `polycarp browser serve
   --public-url` adds an OAuth 2.1 authorization server, ported from Waypost's (`src/oauth.ts`
   in baney75/waypost), which already works with claude.ai. Static `tkr_` tokens stay for header
   clients such as Grok Bot (`~/.grok/config.toml`, `url` plus a bearer header).
@@ -648,10 +648,10 @@ Owner, 2026-11-01: get the MCP working for claude.ai, grok.com, Grok Bot and Cha
   hourly refresh doesn't end the session or its tab group.
 - Rate limits count per client and per source, with high global caps that only bound scrypt
   work (run off the event loop, four at a time). A flood with forged source headers can still
-  fill a global cap for up to 15 minutes; `tabkyra token passcode` clears every limit. The
+  fill a global cap for up to 15 minutes; `polycarp browser token passcode` clears every limit. The
   passcode carries about 100 bits, so the caps don't guard against guessing.
 - The passcode field is a masked text field with `autocomplete="one-time-code"`, so a password
-  manager in the browser Tabkyra drives won't fill it for an agent tab. Blocking agent tabs
+  manager in the browser Polycarp drives won't fill it for an agent tab. Blocking agent tabs
   from the approval page in the extension is a follow-up.
 - Tailscale Funnel can't be the public route on Donovan's tailnet: Tailnet Lock rejects Funnel
   ingress (field note `lab-a/tailscale-funnel-never-reachable-on-a-tailnet-lock-tailnet`).
@@ -661,7 +661,7 @@ Owner, 2026-11-01: get the MCP working for claude.ai, grok.com, Grok Bot and Cha
 
 ## D31. Each install is its own single-owner server; no central relay (Claude, 2026-11-01)
 
-Many users will connect claude.ai, ChatGPT and grok.com to their own Tabkyra. `tabkyra remote
+Many users will connect claude.ai, ChatGPT and grok.com to their own Polycarp. `polycarp browser remote
 setup` (docs/remote.md) is the one command for it.
 
 - Each install is single-owner: its own OAuth server (D30), its own passcode, its own public
@@ -675,7 +675,7 @@ setup` (docs/remote.md) is the one command for it.
   already serves something else.
 - Otherwise: a Cloudflare named tunnel (free) or any HTTPS front door the user runs to
   `127.0.0.1:<port>`, given as `--public-url`.
-- `remote.json` in the config dir (0600) holds the route; `tabkyra serve` reads it when
+- `remote.json` in the config dir (0600) holds the route; `polycarp browser serve` reads it when
   `--public-url` is absent, and flags win. A user service (launchd or systemd, user level) keeps
   serve running.
 
@@ -684,9 +684,9 @@ setup` (docs/remote.md) is the one command for it.
 Owner, 2026-11-02: one public URL (for example `https://tabkyra.dbaney.com/mcp`) that claude.ai,
 ChatGPT and grok.com add once, with any number of his own computers behind it.
 
-- `tabkyra hub setup` turns an always-on box into the hub. It needs no browser. It serves the D30
+- `polycarp browser hub setup` turns an always-on box into the hub. It needs no browser. It serves the D30
   OAuth server and consent page (shared code, `oauth-http.ts`) and `/mcp`, and proxies each MCP
-  session to one of the owner's devices. A device runs `tabkyra link`, which dials out to the hub
+  session to one of the owner's devices. A device runs `polycarp browser link`, which dials out to the hub
   over a WebSocket, so devices need no inbound port or tunnel of their own.
 - Still D31: one owner, no relay run by the maintainer, no cost. The hub is the owner's own
   server; the maintainer runs nothing. An install has one public route, so `hub setup` refuses
@@ -753,7 +753,7 @@ ChatGPT and grok.com add once, with any number of his own computers behind it.
 - The panel reaches the helper through a `connect` native-messaging frame, parsed strictly in
   `cli/src/connect-host.ts`: exactly `{type, id, method, params?}`, a known method, and that
   method's own params. A frame that isn't exactly that is answered `bad_params` when it has an
-  id and runs nothing. The background worker (`src/connect/relay.ts`) only takes Tabkyra's own
+  id and runs nothing. The background worker (`src/connect/relay.ts`) only takes Polycarp's own
   pages and known method names; the host is the authority.
 - `status` reads local files only (hub.json, remote.json, link.json, the live snapshots, the
   theme), never the network, so the panel can ask every 10 seconds. It reports `route` as hub,
@@ -773,12 +773,12 @@ ChatGPT and grok.com add once, with any number of his own computers behind it.
   host answers "The hub answered with a malformed code." The panel checks again before drawing a
   code or the command that carries it.
 - A request the helper never answers (a helper older than the panel drops the frame) fails after
-  20 seconds, 30 for `joinHub`, with `no_reply` and "Update it: tabkyra update".
+  20 seconds, 30 for `joinHub`, with `no_reply` and "Update it: polycarp browser update".
 - The setup prompt for an agent runs `remote setup` and `hub setup` with `--no-passcode`, which
   mint and print no passcode, so no long-lived secret lands in an agent's output or transcript.
   The one-time connect code approves the connection (D32), and the owner can set a passcode later
-  with `tabkyra token passcode` in their own terminal.
-- `joinHub` runs the same enrollment as `tabkyra link <hub> --code`, including the service.
+  with `polycarp browser token passcode` in their own terminal.
+- `joinHub` runs the same enrollment as `polycarp browser link <hub> --code`, including the service.
   The address (https origin, or http on loopback; a pasted `/mcp` is dropped) and the code
   (`TK-XXXX-XXXX`, case and look-alike letters folded) are checked in the parser, before any
   file is read or any network call. It runs only when the route is none, one at a time.
@@ -791,7 +791,7 @@ ChatGPT and grok.com add once, with any number of his own computers behind it.
   sees no list: the hub has no endpoint that lists devices for a device credential, and adding
   one widens what a stolen manager credential reads. Not done; the list stays on the hub.
 - The side panel's colors are the approval and hub pages' presets (`src/appearance/palettes.ts`),
-  so the three match. That changes the default look from mini-lit's neutral palette to the Tabkyra
+  so the three match. That changes the default look from mini-lit's neutral palette to the Polycarp
   one for everyone on update; the choice is saved in `chrome.storage.local`. Text pairs reach
   4.5:1 and the focus ring 3:1 in both modes (`test/appearance.test.mjs`). Control edges (`--input`,
   also the off switch's track) are derived from the text color to reach 3:1 against the page and
@@ -815,10 +815,10 @@ Issues #94 and #97, follow-ups from #93.
 - Consent phishing: anyone can register a client against the public URL and send the owner its
   approval link. A client with no earlier grant (`approved_at` unset, no `last_used`, no token)
   is approved only by a live one-time connect code, which the owner mints on their computer
-  (`tabkyra token approval-code`), outside the browser an agent drives. The passcode is not even
+  (`polycarp browser token approval-code`), outside the browser an agent drives. The passcode is not even
   checked for such a client, so the refusal tells an attacker nothing about it. A wrong code counts
   toward the same lockout. Clients with a grant before this change count as approved, so existing
-  connectors keep working. Rejected: a separate `tabkyra token clients approve <id>` pending flow;
+  connectors keep working. Rejected: a separate `polycarp browser token clients approve <id>` pending flow;
   it adds a second state and a second command for the same out-of-browser step the connect code
   already is.
 
@@ -841,7 +841,7 @@ Issues #94 and #97, follow-ups from #93.
   read pages, and click and type in this browser as you", and each scope the link would allow with
   its description (`status.joinScopes`, `{id, what}` pairs from the host's `SCOPES`, the
   device's default grant, not the hub's choice). A helper that sends no list is out of date: no
-  Confirm, "run tabkyra update". Nothing is sent until Confirm, and what was confirmed is what is
+  Confirm, "run polycarp browser update". Nothing is sent until Confirm, and what was confirmed is what is
   sent; a route change, a problem, or an edit to the address, code or name clears the confirm.
   Success lists the scopes.
 - A join, from the panel or the CLI, takes `link.json.joining` (O_EXCL, under the short
@@ -856,7 +856,7 @@ Issues #94 and #97, follow-ups from #93.
 - The hub's words do not reach the panel. Enroll failures map by status to fixed sentences (wrong
   or expired code, rate limited, unreachable, refused); the hub-chosen device name must pass
   `validDeviceName` before anything is written; service-manager output is replaced by "run
-  tabkyra link status". A manager's `/link/code` refusal maps the same way (401 revoked, 403 not a
+  polycarp browser link status". A manager's `/link/code` refusal maps the same way (401 revoked, 403 not a
   manager, 429 rate limited, otherwise "refused"; the CLI still prints the hub's words). The
   device-code origin the hub returns is normalized before use, and the hub normalizes it before
   sending. Whatever else passes through from the library is our own sentence, cut at 200 characters.

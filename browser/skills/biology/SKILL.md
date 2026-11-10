@@ -31,7 +31,7 @@ use `academic-research`.
 | Protein details | `https://rest.uniprot.org/uniprotkb/P04637?format=json&fields=cc_function` |
 | Sequence | `https://rest.uniprot.org/uniprotkb/P04637.fasta` |
 | Taxonomy | `esearch.fcgi?db=taxonomy&term=Danio+rerio&retmode=json`, then `esummary.fcgi?db=taxonomy&id=7955&retmode=json` |
-| Sequence match | `https://blast.ncbi.nlm.nih.gov/Blast.cgi` in Tabkyra |
+| Sequence match | `https://blast.ncbi.nlm.nih.gov/Blast.cgi` in Polycarp |
 | Structure | `https://www.rcsb.org` (experimental), `https://alphafold.ebi.ac.uk/entry/P04637` (predicted) |
 | Domains | `https://www.ebi.ac.uk/interpro/` |
 
@@ -54,7 +54,7 @@ requests per second.
    user's or another person's test, or is unpublished lab data, ask first: "This sends the
    sequence to NCBI. Okay?" Without a yes, stop and offer a local route, such as BLAST+
    with a downloaded database. A sequence copied from a public record needs no question.
-6. **For a sequence question,** once step 5 clears, open BLAST in Tabkyra, paste the
+6. **For a sequence question,** once step 5 clears, open BLAST in Polycarp, paste the
    sequence with `fill`, pick the program (blastn for DNA, blastp for protein), submit,
    then `wait {"text":"Descriptions","timeoutMs":120000}` and read the top hits' identity
    and E-value.

@@ -27,8 +27,8 @@ For directions, travel times or "where is the nearest X", use `maps`.
 | Geocode | `https://nominatim.openstreetmap.org/search?q=[address]&format=jsonv2&limit=1` |
 | Reverse geocode | `https://nominatim.openstreetmap.org/reverse?lat=38.8977&lon=-77.0365&format=jsonv2` |
 | Feature query | `https://overpass-api.de/api/interpreter` with the query in `data` |
-| Build a query by hand | `https://overpass-turbo.eu` in Tabkyra |
-| View or edit GeoJSON | `https://geojson.io` in Tabkyra |
+| Build a query by hand | `https://overpass-turbo.eu` in Polycarp |
+| View or edit GeoJSON | `https://geojson.io` in Polycarp |
 
 Both public services ask for a User-Agent that names your tool, and Nominatim allows at
 most one request per second. Don't bulk-geocode more than a few hundred addresses; tell

@@ -41,7 +41,7 @@ around a login, paywall or captcha.
    licensed? lawsuits? complaints?"
 2. **List the starting identifiers:** full name, business name, domain, username, email
    domain, city. Each found identifier becomes a new lead.
-3. **Search official records first.** Use the table below in Tabkyra. Note the record URL
+3. **Search official records first.** Use the table below in Polycarp. Note the record URL
    and the date you read it.
 4. **Search the open web second.** Use the `dorks` skill:
    `"Acme Roofing" (lawsuit OR complaint OR scam)`, `site:bbb.org "Acme Roofing"`,

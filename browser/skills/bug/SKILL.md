@@ -11,8 +11,8 @@ versions, with the exact error. It never carries the user's personal data or sec
 
 ## When to use
 
-- `/bug`, or the user pressed Report in Tabkyra.
-- Something in Tabkyra (side panel, CLI, MCP tools, skills) failed or behaved wrong.
+- `/bug`, or the user pressed Report in Polycarp.
+- Something in Polycarp (side panel, CLI, MCP tools, skills) failed or behaved wrong.
 
 Not for problems with a website itself, or with the user's own code.
 
@@ -23,7 +23,7 @@ Not for problems with a website itself, or with the user's own code.
 2. **Reproduce it once,** if it's safe to repeat: the same tool call or command. Write the
    steps as a numbered list someone else can follow on a test page.
    Don't repeat anything that sends, posts, buys or deletes.
-3. **Collect facts.** Run `tabkyra status --json` and `tabkyra doctor --json` and keep:
+3. **Collect facts.** Run `polycarp browser status --json` and `polycarp browser doctor --json` and keep:
    extension version, CLI version, browser, OS, and each doctor line that failed. Copy the
    exact error message from the tool result or terminal.
 4. **Scrub.** Remove from everything you will file: emails, names, phone numbers,
@@ -79,6 +79,6 @@ Not for problems with a website itself, or with the user's own code.
 
 | Symptom | Fix |
 | --- | --- |
-| `tabkyra` isn't installed | Report the versions you can see in the side panel's About tab |
+| `polycarp browser` isn't installed | Report the versions you can see in the side panel's About tab |
 | The bug only happens on a private page | Describe the page type, not its content, and reproduce on a public page if you can |
 | `gh` asks to sign in | Don't sign in for the user; hand them the text |

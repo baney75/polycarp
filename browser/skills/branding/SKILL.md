@@ -31,7 +31,7 @@ launch, say an attorney should run a full search.
    Drop any that copy a competitor's sound or spelling.
 4. **Pick the trade classes.** Find the Nice classes for the goods or services (bakery
    goods are class 30, retail stores class 35, software class 9 and 42).
-5. **Search trademarks** for each of the top six names, in Tabkyra, one at a time:
+5. **Search trademarks** for each of the top six names, in Polycarp, one at a time:
    - US: `navigate {"url":"https://tmsearch.uspto.gov"}`, type the name, read results.
    - Worldwide: `https://branddb.wipo.int`, and for the EU `https://www.tmdn.org/tmview/`.
    Search the exact name, then close variants (plural, spacing, sound-alike spellings).
@@ -40,7 +40,7 @@ launch, say an attorney should run a full search.
    only clear names.
 7. **Check domains.** `whois [name].com`; "No match" means unregistered. Search the name
    on a web search for businesses using it without a registration.
-8. **Check handles** on the platforms the user cares about. In Tabkyra, `navigate` to each
+8. **Check handles** on the platforms the user cares about. In Polycarp, `navigate` to each
    profile URL and `get_page_text {"maxChars":1500}`: `https://www.instagram.com/[handle]/`,
    `https://x.com/[handle]`, `https://www.tiktok.com/@[handle]`,
    `https://www.youtube.com/@[handle]`, `https://github.com/[handle]`. A not-found message

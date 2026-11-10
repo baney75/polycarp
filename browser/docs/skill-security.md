@@ -8,13 +8,13 @@ the threat model for skills and the gates every skill passes.
 
 No text filter makes prompt injection impossible. Language models follow instructions
 wherever they appear, and an attacker can always phrase an instruction a pattern has
-never seen. Tabkyra makes injection hard to land and cheap to catch by layering
+never seen. Polycarp makes injection hard to land and cheap to catch by layering
 these defenses:
 
 1. **Skills ship only through review.** Bundled skills live in `skills/`, are compiled
    into the CLI, and change only through a pull request. CODEOWNERS requires a
    maintainer's review for `skills/`, the lint and CI.
-2. **Every skill passes `tabkyra skill lint`,** in CI, in `tabkyra skill apply` (the only
+2. **Every skill passes `polycarp browser skill lint`,** in CI, in `polycarp browser skill apply` (the only
    way `rsi` changes a skill), at install time for local edits, and on demand. The lint has no allowlist and no per-file exceptions.
 3. **Red-team tests prove the lint still catches each attack** (`cli/test/skill-lint.test.mjs`).
    Weakening a rule turns CI red.
@@ -43,7 +43,7 @@ these defenses:
 | `secret-exfiltration` | Printing, posting, saving or returning passwords, keys, tokens, cookies, card numbers; secret environment variables by name (`$OPENAI_API_KEY`); dumping the environment (`printenv`) |
 | `credential-files` | Reading `~/.ssh`, `~/.aws`, `.env`, browser cookie and login stores, keychain dumps |
 | `config-tamper` | Agent settings, hooks, MCP config, shell startup files, cron, launch agents; writing `rsi.json`, `skills-local`, `skill-history`, a harness's skills folder, `AGENTS.md` or `CLAUDE.md` |
-| `safety-bypass` | `--dangerously-*`, `--no-verify`, `tabkyra allow-all`, disabling prompts or sandboxes |
+| `safety-bypass` | `--dangerously-*`, `--no-verify`, `polycarp browser allow-all`, disabling prompts or sandboxes |
 | `encoded-blob` | Base64 or similar strings of 100+ characters |
 | `remote-image` | Any image that isn't a relative path inside the skill, including reference-style images |
 | `suspicious-link` | Plain http, raw IPs, link shorteners, punycode, protocol-relative `//host`, `data:`/`javascript:`/`file:` URLs, credentials in URLs |
@@ -75,21 +75,21 @@ value, which YAML would read as a mapping or a comment.
 
 ## Local edits
 
-`tabkyra skill apply <folder>` is the only way the `rsi` loop changes a skill. Without
+`polycarp browser skill apply <folder>` is the only way the `rsi` loop changes a skill. Without
 `--yes` it changes nothing: it lints the draft, refuses edits to `rsi` and
 `kyraskillmaker`, refuses an edit that drops a section, and prints the diff. With `--yes`
-it backs up the current version to `~/.config/tabkyra/skill-history/`, keeps the edit in
-`~/.config/tabkyra/skills-local/` and installs it, leaving alone any same-name skill
-Tabkyra didn't write. A local copy is used only while `index.json` records it, it passes
+it backs up the current version to `~/.config/polycarp/browser/skill-history/`, keeps the edit in
+`~/.config/polycarp/browser/skills-local/` and installs it, leaving alone any same-name skill
+Polycarp didn't write. A local copy is used only while `index.json` records it, it passes
 lint, it isn't a protected skill, it keeps every section of the bundled text, and its
 protected sections (safety, rules, ethics, purpose check, limits, done when) are exactly
 the bundled ones. Those sections are read-only to `skill apply`, because an added line
 can cancel a rule as surely as a removed one; they change only through a reviewed pull
-request. Headings inside code fences don't count. Tabkyra never writes through a symbolic
+request. Headings inside code fences don't count. Polycarp never writes through a symbolic
 link, in skills-local or in a harness's skills folder.
-Skill names are checked before they reach a path. `tabkyra skill install` keeps using
+Skill names are checked before they reach a path. `polycarp browser skill install` keeps using
 the edit while it passes lint, and warns when the bundled skill has changed since the edit
-was based on it. `tabkyra skill revert <name>` returns to the bundled text. By default the
+was based on it. `polycarp browser skill revert <name>` returns to the bundled text. By default the
 `rsi` loop shows the user each diff first. It applies a change on its own only when the
 user has turned on both adversarial review and auto-apply, and the reviewer approved.
 
@@ -113,12 +113,12 @@ user has turned on both adversarial review and auto-apply, and the reviewer appr
   `.github/`. A ruleset with a required workflow the pull request can't edit would close
   that gap.
 - An agent with a shell runs as the user and can write any file the user can, skills
-  included. `tabkyra skill apply` and the lint stop a skill's text from telling an agent
+  included. `polycarp browser skill apply` and the lint stop a skill's text from telling an agent
   to do that; the harness's own permission prompts are what stop a hijacked agent.
 
 ## Sources studied
 
-The bundled skills were written for Tabkyra, not forked. One is adapted:
+The bundled skills were written for Polycarp, not forked. One is adapted:
 `visual-explainer` rewrites the rules of nicobailon/visual-explainer (MIT) into one
 `SKILL.md`, with the MIT notice in its folder. Its kit scripts, renderer, CDN libraries,
 reader-reply loop and the reference that fetched older recipes from GitHub at run time
@@ -132,7 +132,7 @@ reasons given:
 | bitwarden/agent-access examples | Returns the password to the agent; install fetches the skill at run time |
 | NousResearch hermes-agent 1password skill | Stores a service token in a dotfile; examples print secrets |
 | uditgoenka/autoresearch (MIT) | Sends optional outbound webhooks; ML-specific loop |
-| snyk/agent-scan (Apache-2.0) | Sends skill content to a remote API; Tabkyra's gate runs offline |
+| snyk/agent-scan (Apache-2.0) | Sends skill content to a remote API; Polycarp's gate runs offline |
 
 Note for anyone adding a Bitwarden route: `@bitwarden/cli` 2026.4.0 on npm carried a
 credential stealer (StepSecurity, 2026-04-23). Pin a known-good version.

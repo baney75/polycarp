@@ -17,7 +17,7 @@ and its evidence, looks for how it fails. One real finding blocks the change.
 
 ## Steps
 
-1. **Check private mode.** If the user turned on private mode in Tabkyra, the reviewer
+1. **Check private mode.** If the user turned on private mode in Polycarp, the reviewer
    must be a model it allows (a local model or one the user listed). If none is strong
    enough, stop and tell the user. Don't send the brief to a cloud model.
 2. **Pick the reviewer.** A model at least as capable as the one that wrote the change,

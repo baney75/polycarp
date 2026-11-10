@@ -19,7 +19,7 @@ handle a reference such as `pass://Work/GitHub/token`.
   instead, and use this skill.
 
 Not for web sign-in forms. If a page needs a sign-in, hand the tab to the user with the
-tabkyra `tabs_show` tool and let them sign in.
+Polycarp `tabs_show` tool and let them sign in.
 
 ## The rules
 

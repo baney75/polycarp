@@ -23,7 +23,7 @@ Never place an order or pay for parts or boards. That is the user's step.
 
 1. **Write the requirement.** One line per block: input voltage, output, current, package
    the user can solder, quantity, budget.
-2. **Search distributors** in Tabkyra, one at a time:
+2. **Search distributors** in Polycarp, one at a time:
    `navigate {"url":"https://www.mouser.com/c/?q=AMS1117-3.3"}` then `get_page_text {"maxChars":6000}`.
    Others: `https://www.digikey.com/en/products/result?keywords=AMS1117-3.3`,
    `https://www.lcsc.com/search?q=AMS1117-3.3`, `https://octopart.com/search?q=AMS1117-3.3`.

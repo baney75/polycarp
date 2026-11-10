@@ -21,7 +21,7 @@ out of scope, even if the user can read that mail.
 
 ## Where the profile lives
 
-`~/.config/tabkyra/personal/voice-profile.md`: folder mode 700, file mode 600. One file,
+`~/.config/polycarp/browser/personal/voice-profile.md`: folder mode 700, file mode 600. One file,
 under 40 lines. Tell the user the path the first time.
 
 ## Steps
@@ -44,7 +44,7 @@ under 40 lines. Tell the user the path the first time.
    five, each under 15 words, with names, places, numbers and anything private removed,
    and none stating an opinion on politics, religion, health or work disputes.
 7. **Make the file private before writing it.** Run
-   `mkdir -p -m 700 ~/.config/tabkyra/personal && chmod 700 ~/.config/tabkyra/personal && (umask 077 && touch ~/.config/tabkyra/personal/voice-profile.md) && chmod 600 ~/.config/tabkyra/personal/voice-profile.md`,
+   `mkdir -p -m 700 ~/.config/polycarp/browser/personal && chmod 700 ~/.config/polycarp/browser/personal && (umask 077 && touch ~/.config/polycarp/browser/personal/voice-profile.md) && chmod 600 ~/.config/polycarp/browser/personal/voice-profile.md`,
    then write the profile into that file.
 8. **Show the profile** to the user and ask what is wrong. Fix it. Close the tab you
    created with `tabs_close {"tabId":[the id from step 3]}`. Close no other tab.
@@ -116,5 +116,5 @@ After 24 messages: short sentences (8 to 12 words), "Hey [name]," to friends and
 [name]," to clients, sign-off "Thanks," then first name, contractions always, no
 exclamation marks, never "per my last email", lists for anything with steps.
 
-Saved to `~/.config/tabkyra/personal/voice-profile.md` (31 lines, file 600, folder 700).
+Saved to `~/.config/polycarp/browser/personal/voice-profile.md` (31 lines, file 600, folder 700).
 Shown to the user, who adds that they never use "circle back". `tabs_close {"tabId":52}`.
