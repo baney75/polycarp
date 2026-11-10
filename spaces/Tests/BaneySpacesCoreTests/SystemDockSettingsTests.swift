@@ -62,7 +62,35 @@ final class SystemDockSettingsTests: XCTestCase {
 
     func testOurOwnLeftoverValuesAreNotSavedAsThePersons() {
         let rec = SystemDockSettings.record(existing: nil, current: SystemDockSettings.ours)
-        XCTAssertEqual(Set(rec.keys), [SystemDockSettings.keysKey])
+        XCTAssertEqual(Set(rec.keys), [SystemDockSettings.keysKey, SystemDockSettings.oursKey], "only the bookkeeping, no values of the person's")
+    }
+
+    func testARecordFromThisBuildIsFullyRestoredFromTheRecordAlone() {
+        let before: [String: NSNumber] = ["autohide": false as NSNumber, "no-bouncing": false as NSNumber]
+        let rec = SystemDockSettings.record(existing: nil, current: before)
+        // The record carries what restoring needs: every key, and the value Polycarp wrote to each.
+        XCTAssertEqual(Set(SystemDockSettings.listed(rec)), Set(SystemDockSettings.keys))
+        XCTAssertEqual(rec[SystemDockSettings.oursKey] as? [String: NSNumber], SystemDockSettings.ours)
+        // Restored with the Dock as this build left it, read from the record's own `_ours`.
+        let now = rec[SystemDockSettings.oursKey] as! [String: NSNumber]
+        let back = SystemDockSettings.restore(saved: rec, current: now)
+        XCTAssertEqual(Set(back.keys), ["autohide", "autohide-delay", "no-bouncing"])
+        XCTAssertEqual(back["no-bouncing"], .some(false as NSNumber))
+        XCTAssertEqual(back["autohide-delay"], .some(nil))
+    }
+
+    func testRestoreNeverConsultsTheKeysThisBuildWrites() {
+        // A key no build has today, written by some later one: its record alone brings it back.
+        let rec: [String: Any] = [SystemDockSettings.keysKey: ["later-key"], SystemDockSettings.oursKey: ["later-key": 7 as NSNumber],
+                                  "later-key": 3 as NSNumber]
+        XCTAssertEqual(SystemDockSettings.restore(saved: rec, current: ["later-key": 7 as NSNumber]), ["later-key": .some(3 as NSNumber)])
+    }
+
+    func testTheAppDropsTheRecordOnlyAfterEveryWriteReadsBack() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let s = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/WorkspaceDock.swift"), encoding: .utf8)
+        XCTAssertTrue(s.contains("current: current(SystemDockSettings.listed(saved))"), "reads every key the record lists")
+        XCTAssertTrue(s.contains("let landed = plan.allSatisfy { key, value in read(key) == value }\n        if landed {\n            UserDefaults.standard.removeObject(forKey: savedKey)"))
     }
 
     /// The app writes every key in this list and the uninstaller puts each one back.

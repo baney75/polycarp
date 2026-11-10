@@ -25,19 +25,25 @@ enum SystemDock {
         if changed { restartDock() }
     }
 
+    /// Puts back every key the record lists, from the record alone (`SystemDockSettings.restore`),
+    /// and drops the record only once each write reads back; otherwise it stays for the next try.
     static func restore() {
         guard let saved = UserDefaults.standard.dictionary(forKey: savedKey) else { return }
+        let plan = SystemDockSettings.restore(saved: saved, current: current(SystemDockSettings.listed(saved)))
         var changed = false
-        for (key, value) in SystemDockSettings.restore(saved: saved, current: current()) {
-            changed = write(key, value) || changed
+        for (key, value) in plan { changed = write(key, value) || changed }
+        let landed = plan.allSatisfy { key, value in read(key) == value }
+        if landed {
+            UserDefaults.standard.removeObject(forKey: savedKey)
+        } else {
+            Trace.log("dock restore: a macOS Dock setting didn't read back; keeping the saved record for the next try")
         }
-        UserDefaults.standard.removeObject(forKey: savedKey)
         if changed { restartDock() }
     }
 
-    private static func current() -> [String: NSNumber] {
+    private static func current(_ keys: [String] = SystemDockSettings.keys) -> [String: NSNumber] {
         var out: [String: NSNumber] = [:]
-        for key in SystemDockSettings.keys { if let v = read(key) { out[key] = v } }
+        for key in keys { if let v = read(key) { out[key] = v } }
         return out
     }
 

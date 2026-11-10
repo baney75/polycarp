@@ -20,9 +20,17 @@ public enum SystemDockSettings {
     ]
     public static var keys: [String] { ours.keys.sorted() }
 
-    /// Which keys a saved record covers. Records from before this list was kept covered these two.
+    /// Which keys a saved record covers, and the value Polycarp wrote to each. Restoring reads
+    /// both from the record alone, never from `ours`, so a build that knows fewer keys (a revert,
+    /// a downgrade) still puts back everything a newer one wrote, as long as it has this logic.
     public static let keysKey = "_keys"
+    public static let oursKey = "_ours"
+    /// What records from before `_keys` and `_ours` were kept covered, and the values written then.
     static let firstKeys = ["autohide", "autohide-delay"]
+    static let firstOurs: [String: NSNumber] = ["autohide": true as NSNumber, "autohide-delay": hiddenDelay as NSNumber]
+
+    /// The keys a record covers.
+    public static func listed(_ saved: [String: Any]) -> [String] { saved[keysKey] as? [String] ?? firstKeys }
 
     /// The record to keep before Polycarp writes its values. `existing` is the record already
     /// saved (nil when none); `current` the Dock's values now (a missing key is absent). A setting
@@ -37,23 +45,28 @@ public enum SystemDockSettings {
             // restores the macOS defaults.
             if (fresh["autohide-delay"] as? NSNumber)?.doubleValue == hiddenDelay { fresh = [:] }
             fresh[keysKey] = keys
+            fresh[oursKey] = ours
             return fresh
         }
         let covered = Set(rec[keysKey] as? [String] ?? firstKeys)
         for key in keys where !covered.contains(key) {
             if let v = current[key] { rec[key] = v } else { rec[key] = nil }
         }
-        rec[keysKey] = keys
+        var written = rec[oursKey] as? [String: NSNumber] ?? firstOurs
+        for (key, value) in ours { written[key] = value }
+        rec[keysKey] = Array(Set(listed(rec)).union(keys)).sorted()
+        rec[oursKey] = written
         return rec
     }
 
     /// What restoring writes, key by key: the saved value, or nil to remove the key. Only a
     /// setting still at Polycarp's value goes back; one the person changed since (⌥⌘D, System
     /// Settings) is their newer choice and stays.
+    /// Reads only the record: the keys it lists and the values it says Polycarp wrote.
     public static func restore(saved: [String: Any], current: [String: NSNumber]) -> [String: NSNumber?] {
-        let covered = Set(saved[keysKey] as? [String] ?? firstKeys)
+        let written = saved[oursKey] as? [String: NSNumber] ?? firstOurs
         var out: [String: NSNumber?] = [:]
-        for key in keys where covered.contains(key) && current[key] == ours[key] {
+        for key in listed(saved) where written[key] != nil && current[key] == written[key] {
             out[key] = .some(saved[key] as? NSNumber)
         }
         return out
