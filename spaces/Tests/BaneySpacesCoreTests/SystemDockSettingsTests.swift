@@ -99,4 +99,49 @@ final class SystemDockSettingsTests: XCTestCase {
         let script = try String(contentsOf: root.appendingPathComponent("uninstall.sh"), encoding: .utf8)
         for key in SystemDockSettings.keys { XCTAssertTrue(script.contains("com.apple.dock \(key)"), key) }
     }
+
+    /// The record lists what Polycarp wrote under `_ours`. The uninstaller's fallback must read
+    /// only what was there before: a key that was absent is deleted, not set to Polycarp's value.
+    func testTheUninstallerReadsOnlyTheSavedValuesNotOurs() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let script = try String(contentsOf: root.appendingPathComponent("uninstall.sh"), encoding: .utf8)
+        let begin = try XCTUnwrap(script.range(of: "# dock-record:begin")), end = try XCTUnwrap(script.range(of: "# dock-record:end"))
+        let function = String(script[begin.upperBound..<end.lowerBound])
+        XCTAssertTrue(script.contains("saved=$(pref systemDockSaved | top_level)"), "the Dock fallback reads through top_level")
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dock-record-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let plist = dir.appendingPathComponent("prefs.plist")
+        func values(_ record: [String: Any]) throws -> [String: String] {
+            try PropertyListSerialization.data(fromPropertyList: ["systemDockSaved": record], format: .xml, options: 0).write(to: plist)
+            let sh = function + """
+
+            saved=$(defaults read "$1" systemDockSaved | top_level)
+            printf 'delay=%s\\n' "$(printf '%s\\n' "$saved" | sed -n 's/.*"autohide-delay" = "\\{0,1\\}\\([0-9.]*\\)"\\{0,1\\};.*/\\1/p')"
+            printf 'hide=%s\\n' "$(printf '%s\\n' "$saved" | sed -n 's/.*[^-]autohide = "\\{0,1\\}\\([01]\\)"\\{0,1\\};.*/\\1/p')"
+            printf 'bounce=%s\\n' "$(printf '%s\\n' "$saved" | sed -n 's/.*"no-bouncing" = "\\{0,1\\}\\([01]\\)"\\{0,1\\};.*/\\1/p')"
+            """
+            let p = Process(), out = Pipe()
+            p.executableURL = URL(fileURLWithPath: "/bin/bash")
+            p.arguments = ["-c", sh, "bash", plist.path]
+            p.standardOutput = out
+            try p.run(); p.waitUntilExit()
+            let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            return Dictionary(uniqueKeysWithValues: text.split(separator: "\n").compactMap { line -> (String, String)? in
+                let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                return parts.count == 2 ? (String(parts[0]), String(parts[1])) : nil
+            })
+        }
+        let ours: [String: Any] = ["autohide": true, "autohide-delay": 1000, "no-bouncing": true]
+        // Nothing was set before: every key reads as absent, whatever `_ours` holds.
+        XCTAssertEqual(try values(["_keys": SystemDockSettings.keys, "_ours": ours]), ["delay": "", "hide": "", "bounce": ""])
+        // Values were set before: each reads once, as saved.
+        XCTAssertEqual(try values(["autohide": false, "autohide-delay": 0.5, "no-bouncing": false, "_keys": SystemDockSettings.keys, "_ours": ours]),
+                       ["delay": "0.5", "hide": "0", "bounce": "0"])
+        // The uninstaller's own reads are the ones tested here.
+        for pattern in [#"s/.*"autohide-delay" = "\{0,1\}\([0-9.]*\)"\{0,1\};.*/\1/p"#, #"s/.*[^-]autohide = "\{0,1\}\([01]\)"\{0,1\};.*/\1/p"#, #"s/.*"no-bouncing" = "\{0,1\}\([01]\)"\{0,1\};.*/\1/p"#] {
+            XCTAssertTrue(script.contains(pattern), pattern)
+        }
+    }
 }
