@@ -36,6 +36,8 @@ public struct VoiceState: Codable, Equatable, Sendable {
     public var hotkeyLabel: String
     public var enabled: Bool
     public var listener: Bool
+    /// Microphone and Accessibility as the core reads them; absent from older cores.
+    public var permissions: VoicePermissions?
 }
 
 /// `Settings` in core/voice/src/store.rs. Keys are camelCase on the wire.
