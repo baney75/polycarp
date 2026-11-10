@@ -71,7 +71,7 @@ Scope rules, enforced by the app, not by your good behavior:
 
 - In Default you may act on a window only if it is on the agent workspace or its app is lent. Anything else returns
   `outside_agent_workspace`; reads (snapshot, get, find, shot) are refused the same way.
-- Agent access is Donovan's: `baneyspaces agent mode` shows Read Only, Default or Full Access. Under Read Only only
+- Agent access is Donovan's: `baneyspaces agent mode` shows Read Only, Default or Full Access. Under Read Only only `workspaces`,
   `windows`, `snapshot`, `find`, `get` and `shot` work. Under Full Access windows on his workspaces show `scope: full_access`
   and work like a lent app. You cannot change the mode; ask him in words.
 - When Donovan is using an app (it is in front, or left the front under 5 s ago): **reads always work**, and `windows`
@@ -96,6 +96,24 @@ Scope rules, enforced by the app, not by your good behavior:
 - `shot --out name.png` writes only into BaneySpaces' own shots folder; pass a file name, not a path.
 - Snapshots and shots can hold private content. They stay on this Mac; don't paste them into logs, issues
   or other agents' prompts unless asked.
+
+## Work in the background
+
+Donovan should never have to deal with your windows. The recipe:
+
+```sh
+baneyspaces agent workspaces                         # which workspace is yours, and whether he is looking at it
+baneyspaces agent open TextEdit notes.txt            # data.window is the id; data.focus says if focus moved and came back
+baneyspaces agent arrange halves                     # stable layout for snapshots (agent workspace only)
+baneyspaces agent snapshot --window 4211 -i          # work: snapshot, act on a ref, check
+baneyspaces agent close --window 4211                # only windows you opened; answer a save sheet if one comes back
+```
+
+- A dialog your action opens comes back as `opened: {window, kind, title}`; snapshot that window id and answer it. `windows`
+  lists dialogs with `kind`, `parent` and `waiting`. A sheet without its own id is in its parent's snapshot (`in_sheet`).
+- Open and Save panels and macOS password or permission prompts are always refused. A dialog in an app Donovan also
+  uses is refused unless it appeared within 10 s of your own action.
+- `move --window N` brings a lent window onto the agent workspace. You never switch, create, rename or delete workspaces.
 
 ## From an assistant on the web
 

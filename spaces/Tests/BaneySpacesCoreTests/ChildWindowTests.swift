@@ -315,4 +315,10 @@ final class ChildWindowSourceTests: XCTestCase {
         XCTAssertLessThan(prompt.lowerBound, read.lowerBound, "a system prompt is never read")
         XCTAssertTrue(ws.contains("ChildWindowRule.decide(c, placed: placed, attributed: attributed, selfPid: getpid())"))
     }
+
+    /// The hands verb `move` must not take over the older `agent move <id | words>` session op.
+    func testTheCLIKeepsTheSessionMove() throws {
+        let main = try HandsSourceTests.code("Sources/baneyspaces-cli/main.swift")
+        XCTAssertTrue(main.contains("&& !(rest.first == \"move\" && !rest.contains(\"--window\")):"))
+    }
 }

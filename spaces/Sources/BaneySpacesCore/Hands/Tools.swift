@@ -125,7 +125,7 @@ public enum HandsTools {
             HandsParam("window", .integer, "Window id from `windows`.", required: true),
             HandsParam("frame", .string, "x,y,width,height in points from the top-left of the screen's usable area (optional)."),
         ], acts: true),
-        HandsTool(verb: "close", summary: "Close a window this session opened with `open`, through its close button, from behind. Anything else is refused, and no app is ever quit. If the app asks to save, the sheet appears in the result as opened: answer it (Don't Save, or Save to a file in the handoff folder).", params: [
+        HandsTool(verb: "close", summary: "Close a window this session opened with `open`, through its close button, from behind. Anything else is refused, and no app is ever quit. If the app asks to save, the sheet appears in the result as opened: answer it (Don't Save or Cancel; a Save panel stays refused, so save first through a document you opened from the handoff folder).", params: [
             HandsParam("window", .integer, "Window id that your `open` returned.", required: true),
         ], acts: true),
     ]

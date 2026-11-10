@@ -30,6 +30,7 @@ usage: \(me) <command>
                               (only a real click on Lend lends it; running this lends nothing by itself)
   mcp                         the same commands as a stdio MCP server (claude mcp add baneyspaces -- polycarp-spaces mcp)
   agent move <id | words>     send a window there (only windows of apps started for an agent)
+  agent move --window ID [--frame x,y,w,h]   the hands verb: a window you may use onto the agent workspace
   sandbox up|down|reset|status|view|guest   a throwaway macOS VM for agent work (sandbox help)
   phone ls|ui|shot|tap|swipe|type|key|shell|mirror   phones for agents (phone help)
   set <setting> <value>       appearance.theme omarchy|baneyspaces|minimal, appearance.palette auto|<name>,
@@ -204,7 +205,9 @@ case "agent" where HandsTools.userOnly.contains(rest.first ?? ""):
     HandsCLI.lendOrReturn(rest)
 
 // `--on HOST agent open …` is the session engine's own op (the hands run on this Mac only): it falls through to the arm below.
-case "agent" where HandsTools.tool(verb: rest.first ?? "") != nil && !(remoteHost != nil && rest.first == "open"):
+// `agent move <id | words>` stays the session op; `agent move --window N` is the hands verb.
+case "agent" where HandsTools.tool(verb: rest.first ?? "") != nil && !(remoteHost != nil && rest.first == "open")
+    && !(rest.first == "move" && !rest.contains("--window")):
     HandsCLI.run(rest)
 
 case "agent":
