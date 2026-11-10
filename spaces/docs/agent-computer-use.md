@@ -226,7 +226,7 @@ nightly builds ship for every platform; it gets tested on every platform before 
 | Agent workspace | Workspace 9, parked | A Hyprland special workspace, never shown unless you open it | Workspace 9, cloaked |
 | Focus following and its guard | FocusWatcher | Hyprland `activewindow` events | `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` |
 | Workspace Dock, launcher, ⌘Tab bar, overview | SwiftUI/AppKit | Omarchy shell (Quickshell) plugins, so they match Omarchy's look | Native overlay windows (Rust, `windows` crate) |
-| Agent hands | agent-desktop engine through its C library | agent-desktop's Linux adapter (AT-SPI) linked as a Rust crate | agent-desktop's Windows adapter (UI Automation) linked as a Rust crate |
+| Agent hands | agent-desktop engine through its C library | agent-desktop's Linux adapter (AT-SPI), built from the pinned source and run by the daemon as a child process (headless, after the scope guard) | agent-desktop's Windows adapter (UI Automation) linked as a Rust crate |
 | Sandbox | Tart macOS VM | A KVM VM (libvirt) | Hyper-V or Windows Sandbox |
 | Keys | ⌘1–9, ⌘⇧1–9 | Super+1–9, Super+Shift+1–9 (Omarchy's own bindings are rebound to BaneySpaces) | Win+1–9 is taken by the taskbar; Alt+1–9 and Alt+Shift+1–9 by default, changeable |
 
@@ -238,8 +238,11 @@ Code layout: `Sources/` stays the macOS app; `crates/baneyspaces-core` (Rust) ho
 workspace model, CLI/MCP and hands routing for Linux and Windows; `platforms/linux` and
 `platforms/windows` hold each shell; `spec/` is shared.
 
-Testing on every platform: Linux runs in a nested Hyprland session (`Hyprland` inside a headless
-output) in CI and on seat-a, then live on seat-b and seat-a; Windows runs in a Windows 11 VM on
+Testing on every platform: on Linux, CI (the `spaces-linux` job in the root `.github/workflows/ci.yml`)
+runs `cargo test --workspace` and `platforms/linux/tests/omarchy-scripts.sh` on Ubuntu; the nested
+Hyprland session (`platforms/linux/tests/nested.sh`, Hyprland inside a headless output) does not run
+in CI, because Ubuntu's apt carries no Hyprland, so it runs on an Omarchy seat (seat-a), then live on
+seat-b and seat-a; Windows runs in a Windows 11 VM on
 seat-a (KVM, resettable, never on desktop-a); macOS on the Mac (and the Mac mini node when it has a
 key). Each platform runs the hands probe and the bench in the same shape.
 
