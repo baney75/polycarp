@@ -41,12 +41,6 @@ export interface ConnectStatus {
 	polycarpRefused?: string;
 	/** What joining a hub would let the hub's owner do here (the scopes a new link allows). Present when the route is none. */
 	joinScopes?: JoinScope[];
-	/**
-	 * Computer use, which this computer could also allow: offered as optional and unticked, never part of joinScopes (what a
-	 * join grants). Present only when the route is none and Polycarp's Mac app is here. Nothing can turn them on yet, neither
-	 * the panel nor the CLI: that needs the owner's approval in the Polycarp app, which isn't built yet.
-	 */
-	optionalJoinScopes?: Array<JoinScope & { ticked: false }>;
 	/** A config file that is present but unreadable, in a sentence; the route reads as none until it is fixed. */
 	problem?: string;
 }

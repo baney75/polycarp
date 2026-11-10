@@ -1512,19 +1512,14 @@ test("onlyKeys keeps its own doc comment", () => {
 	assert.match(src, /\/\*\* `params` must hold only these keys\.[^\n]*\*\/\nfunction onlyKeys/);
 });
 
-test("status offers computer use as optional and unticked when Polycarp's Mac app is here, and never in joinScopes", async () => {
+test("status never offers computer use to a join, even where Polycarp's Mac app is here: nothing can turn it on yet", async () => {
 	await inConfig("status-computer", async (dir) => {
 		const helper = join(dir, "polycarp-spaces");
 		writeFileSync(helper, "");
 		process.env.POLYCARP_SPACES_BIN = helper;
 		const { result } = await ask(new ConnectService(), "status");
 		assert.deepEqual(result.joinScopes, DEFAULT_SCOPE_ROWS, "what a join grants is unchanged");
-		assert.deepEqual(
-			result.optionalJoinScopes.map((x) => [x.id, x.ticked]),
-			[
-				["computer.read", false],
-				["computer.act", false],
-			],
-		);
+		assert.equal(result.optionalJoinScopes, undefined);
+		assert.ok(!JSON.stringify(result).includes("computer."), "no computer scope anywhere in the status");
 	});
 });

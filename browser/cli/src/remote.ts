@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { COMPUTER_ACT_TOOLS, COMPUTER_READ_TOOLS, computerHelper, openComputer } from "./computer.ts";
-import { createMcpServer } from "./mcp.ts";
+import { argumentNeeds, type CallCheck, createMcpServer } from "./mcp.ts";
 import { MAX_LINK_SESSIONS, type RosterDevice } from "./link-protocol.ts";
 import { handleOAuth, readBody } from "./oauth-http.ts";
 import { liveGrantIds, type OAuthConfig, resourceMetadataUrl, verifyAccessToken } from "./oauth.ts";
@@ -263,6 +263,19 @@ export function scopeOfTool(tool: string): string | undefined {
 	return Object.entries(SCOPES).find(([, v]) => v.tools.includes(tool))?.[0];
 }
 
+/**
+ * The scope a call needs that `scopes` lacks, or undefined when they allow it: the tool's own scope (as toolsFor grants it),
+ * then any its arguments need (ARGUMENT_RULES in mcp.ts: read_network with requestId needs browser.script). A tool no scope
+ * lists (devices) needs none.
+ */
+export function missingScope(tool: string, args: unknown, scopes: string[]): string | undefined {
+	const tools = toolsFor(scopes);
+	const own = scopeOfTool(tool);
+	if (own && !tools.has(tool)) return own;
+	for (const needed of argumentNeeds(tool, args)) if (!tools.has(needed)) return scopeOfTool(needed) ?? needed;
+	return undefined;
+}
+
 export function toolsFor(scopes: string[]): Set<string> {
 	return new Set(scopes.flatMap((s) => (Object.hasOwn(SCOPES, s) ? SCOPES[s].tools : [])));
 }
@@ -331,6 +344,8 @@ export interface ServeOptions {
 	onSessionsChange?: (count: number) => void;
 	/** This serve is `link run`'s, behind a hub: sessions get the devices tool, which answers from the last roster (setRoster). */
 	hub?: { self: { id: string; name: string } };
+	/** Asked before every tool call on a session the link token opened: `link run`'s live cap, so a removal reaches open sessions. */
+	linkCallCheck?: CallCheck;
 }
 
 /** Serve MCP over Streamable HTTP on loopback. Each session is bound to the token that opened it. */
@@ -470,6 +485,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 			remote: true,
 			computer,
 			hub,
+			...(isLink && options.linkCallCheck ? { callCheck: options.linkCallCheck } : {}),
 		});
 		const transport = new StreamableHTTPServerTransport({
 			sessionIdGenerator: () => randomUUID(),

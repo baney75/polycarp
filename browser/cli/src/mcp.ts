@@ -192,6 +192,8 @@ export interface McpServerOptions {
 	localComputer?: LocalComputer;
 	/** This server runs on a device behind a hub (`link run`): the devices tool lists the owner's devices from the hub's last roster. */
 	hub?: McpHub;
+	/** Asked before every tool call; a string refuses it with that text. `link run` reads its live cap here, so a removal applies to open sessions. */
+	callCheck?: CallCheck;
 }
 
 /** What a session behind a hub knows about it: which device it runs on, and the hub's last roster (undefined until one arrives). */
@@ -231,6 +233,27 @@ export function describeDevices(hub: McpHub): Record<string, unknown> {
 		})),
 	};
 }
+
+/**
+ * Calls that need more than the tool itself: with `arg` set, `tool` also needs the tool `needs`, and so that tool's scope. A
+ * session without it is refused that call (the handlers below), and so is a call on a device whose cap lost it since
+ * (missingScope in remote.ts reads this same table).
+ */
+export const ARGUMENT_RULES: ReadonlyArray<{ tool: string; arg: string; needs: string }> = [
+	// A body can hold what the page fetched with the user's sign-in: as much as run_js could read.
+	{ tool: "read_network", arg: "requestId", needs: "run_js" },
+	// Naming the group changes what the user sees: a read-only session may look, not rename.
+	{ tool: "session_info", arg: "label", needs: "navigate" },
+];
+
+/** The tools this call needs beyond `tool` itself, by ARGUMENT_RULES. */
+export function argumentNeeds(tool: string, args: unknown): string[] {
+	const given = typeof args === "object" && args !== null ? (args as Record<string, unknown>) : {};
+	return ARGUMENT_RULES.filter((r) => r.tool === tool && given[r.arg] !== undefined).map((r) => r.needs);
+}
+
+/** A refusal for a tool call, or undefined to run it. Asked on every call, after the arguments are parsed, so it judges what runs. */
+export type CallCheck = (tool: string, args: unknown) => string | undefined;
 
 /** The MCP server and its bridge client, before any transport is attached. */
 export function createMcpServer(options: McpServerOptions = {}): { server: McpServer; client: BridgeClient } {
@@ -276,10 +299,24 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 	);
 	const allow = allowedTools ? (tool: string) => allowedTools.has(tool) : undefined;
-	if (allow) {
+	const check = options.callCheck;
+	// Handlers that go through the check, so the end of this function can prove none was missed.
+	const checked = new WeakSet<object>();
+	const guard = (name: string, handler: unknown): unknown => {
+		if (!check || typeof handler !== "function") return handler;
+		const run = handler as (...a: unknown[]) => unknown;
+		// With an input schema the SDK passes (args, extra); without one, (extra) alone.
+		const wrapped = (...a: unknown[]) => {
+			const why = check(name, a.length > 1 ? a[0] : undefined);
+			return why ? { content: [{ type: "text" as const, text: why }], isError: true } : run(...a);
+		};
+		checked.add(wrapped);
+		return wrapped;
+	};
+	if (allow || check) {
 		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
-		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, ...rest: unknown[]) =>
-			allow(String(name)) ? register(name, ...rest) : undefined;
+		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, cb: unknown) =>
+			!allow || allow(String(name)) ? register(name, config, guard(String(name), cb)) : undefined;
 	}
 	const choice = options.session ? { name: options.session, auto: false } : chooseSession({ flag: options.sessionFlag });
 	const client = new BridgeClient({
@@ -397,8 +434,8 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			inputSchema: { label: z.string().max(200).optional().describe('A name for your tab group, shown after your agent name; "" clears it') },
 		},
 		(args) =>
-			// Naming the group changes what the user sees: a read-only remote session may look, not rename.
-			args.label !== undefined && allowedTools && !allowedTools.has("navigate")
+			// Naming the group changes what the user sees: a read-only remote session may look, not rename (ARGUMENT_RULES).
+			allowedTools && argumentNeeds("session_info", args).some((t) => !allowedTools.has(t))
 				? { content: [{ type: "text" as const, text: "permission_denied: This session may read only, so it can't name its tab group. Call session_info without label." }], isError: true }
 				: call("session.info", args),
 	);
@@ -758,8 +795,8 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			},
 		},
 		(args) =>
-			// A body can hold what the page fetched with the user's sign-in: as much as run_js could read.
-			args.requestId !== undefined && allowedTools && !allowedTools.has("run_js")
+			// A body can hold what the page fetched with the user's sign-in: as much as run_js could read (ARGUMENT_RULES).
+			allowedTools && argumentNeeds("read_network", args).some((t) => !allowedTools.has(t))
 				? { content: [{ type: "text" as const, text: "permission_denied: Reading response bodies needs the browser.script scope. Call read_network without requestId." }], isError: true }
 				: call("network.read", args),
 	);
@@ -1051,6 +1088,18 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		const registered = table instanceof Map ? [...table.keys()].map(String) : Object.keys(table);
 		const leaked = registered.filter((t) => !allowedTools.has(t));
 		if (leaked.length) throw new Error(`Tools outside the session's scopes were registered: ${leaked.join(", ")}`);
+	}
+	if (check) {
+		// Every tool must run through the call check: one added another way would skip it.
+		const table = (server as unknown as { _registeredTools?: Record<string, { handler?: unknown; callback?: unknown }> })._registeredTools;
+		if (!table || typeof table !== "object") throw new Error("Can't verify that every tool call is checked; refusing to start this session.");
+		const unchecked = Object.entries(table)
+			.filter(([, tool]) => {
+				const h = tool?.handler ?? tool?.callback;
+				return !(typeof h === "function" && checked.has(h));
+			})
+			.map(([name]) => name);
+		if (unchecked.length) throw new Error(`Tools that skip the call check were registered: ${unchecked.join(", ")}`);
 	}
 	return { server, client };
 }
