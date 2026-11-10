@@ -13,7 +13,7 @@
  * A match needs MIN_SCORE and two pieces of evidence, or one word specific enough to reach
  * SINGLE_SCORE alone. Otherwise the answer is "none": a small model does better with no
  * skill than with the wrong one (docs/decisions.md D12). The constants are calibrated on
- * skills-eval/router-cases.jsonl; `tabkyra skill eval` reports how well they hold.
+ * skills-eval/router-cases.jsonl; `polycarp browser skill eval` reports how well they hold.
  */
 
 export interface RouterSkill {
@@ -261,7 +261,7 @@ function nameTerms(name: string, vocabulary: Set<string>): string[] {
 
 function parse(skill: RouterSkill, names: ReadonlySet<string>): Doc {
 	const description = frontmatterDescription(skill.text);
-	const clean = (t: string) => withoutOtherSkills(t, skill.name, names);
+	const clean = (t: string) => browserAliases(withoutOtherSkills(t, skill.name, names), names);
 	const kept = sentences(description).filter((s) => !redirects(s, names));
 	const useAt = kept.findIndex((s) => /\bUse when\b/.test(s));
 	const whatText = useAt < 0 ? kept : kept.slice(0, useAt);
@@ -347,7 +347,7 @@ const USE_GOVERNS = /\b(?:use|run|apply|follow|invoke|load)\s+(?:(?:the|this|tha
 /**
  * A negation that governs the mention, within a few words before it: "don't use the osint
  * skill", "never run my dorks skill", "without the osint skill", "instead of the dorks skill",
- * "skip the tabkyra skill", "not the osint skill". A "no" or "not" elsewhere ("no rush, use
+ * "skip the polycarp-browser skill", "not the osint skill". A "no" or "not" elsewhere ("no rush, use
  * the osint skill", "why not use the osint skill") doesn't.
  */
 const DET = "(?:(?:the|this|that|my|our|your|any)\\s+)?(?:[a-z0-9'-]+\\s+)?";
@@ -358,7 +358,21 @@ const EXCLUDES = new RegExp(
 		"\\bnot\\s+(?:(?:the|this|that|my|our|your)\\s+)?$",
 	].join("|"),
 );
-/** `tabkyra skill <subcommand>` is the Tabkyra CLI (read as "tabkyra cli"), not a mention of the tabkyra skill. */
+/**
+ * The browser skill's other names: the product ("Polycarp", "polycarp browser", which is also
+ * the command) and the skill's name before the rename ("tabkyra", also the old command). A task
+ * that says one of them means the polycarp-browser skill, so it reads as that name.
+ */
+const BROWSER_SKILL = "polycarp-browser";
+/** One word, as the old name was: the joined name the index keeps for a hyphenated name, so "browser" alone doesn't score twice. */
+const BROWSER_WORD = "polycarpbrowser";
+const BROWSER_ALIASES = /\b(?:tabkyra|polycarp(?:[- ]browser)?)\b/gi;
+
+/** The browser skill's other names, in a task or a skill's own text, as its one word (when the catalog has that skill). */
+function browserAliases(text: string, names: ReadonlySet<string>): string {
+	return names.has(BROWSER_SKILL) ? text.replace(BROWSER_ALIASES, BROWSER_WORD) : text;
+}
+/** `polycarp browser skill <subcommand>` (or `tabkyra skill ...`) is the CLI (read as "polycarpbrowser cli"), not a mention of the skill. */
 const CLI_SUBCOMMAND = /^\s+(?:install|list|print|lint|apply|revert|edit|eval|match|versions|rollback)\b/;
 
 /** "the osint skill", "this dorks skill": a determiner, and at most one word, right before the mention. */
@@ -398,12 +412,14 @@ interface ReadTask {
  *   word elsewhere ("the latest updates", "review what you find") doesn't count.
  * - It is ruled out when a negation governs it ("don't use the osint skill", "instead of the
  *   dorks skill", see EXCLUDES): that skill is never returned.
- * - `tabkyra skill install` and the other subcommands are the CLI, not the tabkyra skill.
+ * - "Polycarp", "polycarp browser" and "tabkyra" read as the polycarp-browser skill's name.
+ * - `polycarp browser skill install` and the other subcommands are the CLI, not the polycarp-browser skill.
  * - Otherwise ("use the osint skill on this landlord") it is a request for that skill.
  */
 function readTask(index: RouterIndex, task: string): ReadTask {
 	// Curly apostrophes and quotes (smart punctuation) read as straight ones: "don’t" is "don't".
 	let text = task.toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"');
+	text = browserAliases(text, index.names);
 	// Inline code around a skill name ("the `osint` skill", "`dorks` skill") reads as the bare name,
 	// and points at the skill: a name in code is never a person's ability.
 	text = text.replace(/`([a-z0-9-]+)`/g, (whole, inner: string) => (index.names.has(inner) ? `the ${inner}` : whole));
@@ -427,7 +443,7 @@ function readTask(index: RouterIndex, task: string): ReadTask {
 		const found = [...new Set(list.split(/\s*(?:,|\band\b|\bor\b)\s*/).map((t) => index.nameKeys.get(t.replace(/[- ]/g, ""))))];
 		const named = found.filter((name): name is string => name !== undefined);
 		const after = all.slice(offset + whole.length);
-		if (named.length === 1 && named[0] === "tabkyra" && CLI_SUBCOMMAND.test(after)) return "tabkyra cli";
+		if (named.length === 1 && named[0] === BROWSER_SKILL && CLI_SUBCOMMAND.test(after)) return `${BROWSER_WORD} cli`;
 		const before = all.slice(0, offset);
 		if (EXCLUDES.test(before)) {
 			for (const name of named) excluded.add(name);
@@ -442,11 +458,11 @@ function readTask(index: RouterIndex, task: string): ReadTask {
 		// employers want", "improve my writing skill". It names a subject, so it scores for neither
 		// that skill nor the skills whose job is skills.
 		if (command === undefined && !pointsAt && !edits && !uses) {
-			// "a Tabkyra skill", "an osint skill": a kind of skill to make, so the word "skill" stays.
+			// "a Polycarp skill", "an osint skill": a kind of skill to make, so the word "skill" stays.
 			return /\ban?\s+$/.test(before) ? ` ${list} ${noun} ` : " abilities ";
 		}
 		// "..., fix it" points back at the mention, unless a use-verb governs the mention: in
-		// "use the tabkyra skill to open the app and debug it", "it" is the app. Not limited to
+		// "use the polycarp-browser skill to open the app and debug it", "it" is the app. Not limited to
 		// the clause: "The autoresearch skill gave a weak report. Fix it" is a fix request.
 		const backReference = !uses && POINTS_BACK.test(after);
 		if (command !== undefined || edits || backReference) {

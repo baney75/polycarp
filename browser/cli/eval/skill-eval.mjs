@@ -4,7 +4,7 @@
 // and groups, not from the model's report. Per run: success, tool calls, wall time, tool errors.
 //
 // Suites:
-//   skill     shop, contact, forum: what skills/tabkyra/SKILL.md changes. Arms "baseline" (server
+//   skill     shop, contact, forum: what skills/polycarp-browser/SKILL.md changes. Arms "baseline" (server
 //             instructions only) and "skill" (the skill appended to the system prompt).
 //   sessions  multitab (two tabs at once), resume (a second harness process continues the first
 //             one's tab after an extension reload), parallel (two agents at once, no cross-talk),
@@ -25,7 +25,7 @@ import { join } from "node:path";
 import { cli, HARNESS_SESSION_VARS, launchFixtureBrowser, repo, sleep } from "./fixture-browser.mjs";
 import { startFixtureSite } from "./fixture-site.mjs";
 
-const skillText = readFileSync(join(repo, "skills", "tabkyra", "SKILL.md"), "utf8").replace(/^---\n[\s\S]*?\n---\n/, "");
+const skillText = readFileSync(join(repo, "skills", "polycarp-browser", "SKILL.md"), "utf8").replace(/^---\n[\s\S]*?\n---\n/, "");
 const arg = (name, fallback) => {
 	const i = process.argv.indexOf(name);
 	return i > 0 ? process.argv[i + 1] : fallback;

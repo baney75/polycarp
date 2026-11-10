@@ -57,7 +57,7 @@ user submits.
 
 ## D6. Personal and shared skills (owner note, DC-5)
 
-Every skill has a category in `skill.toml`: `personal` or `shared`. `tabkyra` classifies
+Every skill has a category in `skill.toml`: `personal` or `shared`. `polycarp-browser` classifies
 it automatically and the stricter answer wins. Anything matching personal data (emails,
 phone numbers, street addresses, account or student IDs, home paths, names the user marks
 as private, signed-in site data) makes it `personal`. Personal skills are never submitted,

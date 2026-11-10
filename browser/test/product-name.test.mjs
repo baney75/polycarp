@@ -15,10 +15,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ALLOW = new Map([
 	// The setup prompt names the section heading and the clone folder that earlier setups made.
 	["src/agent-setup-prompt.ts", "earlier section heading and clone folder"],
-	// The skill gate: its rules and tests match on these words (the install marker, "the tabkyra skill"), and the lint, its
+	// The skill gate: its rules and tests match on these words (the install marker, the old skill name tabkyra), and the lint, its
 	// router and the catalog are maintainer-reviewed. They change only in a change that is about them.
 	["cli/src/skill-lint.ts", "skill lint matches the install marker"],
-	["cli/src/skill-router.ts", "router reads \"tabkyra skill\" as a skill name"],
+	["cli/src/skill-router.ts", "router reads tabkyra as the polycarp-browser skill's old name"],
 	["cli/src/skills-catalog.ts", "generated from skills/, which keep their names"],
 ]);
 const MARKER = "product-name allowlist";

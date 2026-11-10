@@ -1,17 +1,17 @@
-{"task": "Open my Gmail in the browser and tell me how many unread emails I have", "skill": "tabkyra"}
-{"task": "Log into the staging dashboard in my browser and check whether the new chart renders", "skill": "tabkyra"}
-{"task": "Fill out the contact form on example.com with my name and email", "skill": "tabkyra"}
-{"task": "Click through the checkout flow on my local dev server at localhost:3000 and see if anything breaks", "skill": "tabkyra"}
-{"task": "Go to my GitHub notifications page and list the open review requests", "skill": "tabkyra"}
-{"task": "Check how the landing page I just built looks in a real browser", "skill": "tabkyra"}
-{"task": "In my signed-in Jira tab, find the ticket assigned to me with the highest priority", "skill": "tabkyra"}
-{"task": "Navigate to the Amazon order history page and read me the last three orders", "skill": "tabkyra"}
-{"task": "Take a screenshot of the pricing page after its JavaScript finishes loading", "skill": "tabkyra"}
-{"task": "Use the browser to click the Export button on the analytics site and download the CSV", "skill": "tabkyra"}
-{"task": "The web app needs a login; drive the page and test the signup form", "skill": "tabkyra"}
-{"task": "Read the comments under this YouTube video in my browser tab", "skill": "tabkyra"}
-{"task": "Scroll through my LinkedIn feed and summarize the first ten posts", "skill": "tabkyra"}
-{"task": "Test whether the dropdown menu on my React app opens when clicked", "skill": "tabkyra"}
+{"task": "Open my Gmail in the browser and tell me how many unread emails I have", "skill": "polycarp-browser"}
+{"task": "Log into the staging dashboard in my browser and check whether the new chart renders", "skill": "polycarp-browser"}
+{"task": "Fill out the contact form on example.com with my name and email", "skill": "polycarp-browser"}
+{"task": "Click through the checkout flow on my local dev server at localhost:3000 and see if anything breaks", "skill": "polycarp-browser"}
+{"task": "Go to my GitHub notifications page and list the open review requests", "skill": "polycarp-browser"}
+{"task": "Check how the landing page I just built looks in a real browser", "skill": "polycarp-browser"}
+{"task": "In my signed-in Jira tab, find the ticket assigned to me with the highest priority", "skill": "polycarp-browser"}
+{"task": "Navigate to the Amazon order history page and read me the last three orders", "skill": "polycarp-browser"}
+{"task": "Take a screenshot of the pricing page after its JavaScript finishes loading", "skill": "polycarp-browser"}
+{"task": "Use the browser to click the Export button on the analytics site and download the CSV", "skill": "polycarp-browser"}
+{"task": "The web app needs a login; drive the page and test the signup form", "skill": "polycarp-browser"}
+{"task": "Read the comments under this YouTube video in my browser tab", "skill": "polycarp-browser"}
+{"task": "Scroll through my LinkedIn feed and summarize the first ten posts", "skill": "polycarp-browser"}
+{"task": "Test whether the dropdown menu on my React app opens when clicked", "skill": "polycarp-browser"}
 {"task": "Find peer-reviewed studies on whether intermittent fasting improves insulin sensitivity", "skill": "academic-research"}
 {"task": "I need five scholarly sources on climate migration for my thesis, in APA format", "skill": "academic-research"}
 {"task": "Is this citation real? Smith et al. 2019, Journal of Applied Psychology, vol 104", "skill": "academic-research"}
@@ -69,19 +69,19 @@
 {"task": "Deep dive into the policy history of US student loans", "skill": "autoresearch"}
 {"task": "Investigate exhaustively: does a four-day work week raise productivity?", "skill": "autoresearch"}
 {"task": "/bug the side panel froze when I clicked Record", "skill": "bug"}
-{"task": "Tabkyra crashed when I opened the settings tab, please report it", "skill": "bug"}
-{"task": "The tabkyra MCP tools keep timing out; file an issue", "skill": "bug"}
-{"task": "File a bug report: tabkyra skill install wrote to the wrong folder", "skill": "bug"}
-{"task": "Tabkyra's read_page returned nothing on this site, report it", "skill": "bug"}
-{"task": "Something in Tabkyra is broken: the CLI hangs on tabkyra doctor", "skill": "bug"}
-{"task": "I pressed Report in Tabkyra, write it up", "skill": "bug"}
-{"task": "Write an issue for the Tabkyra extension disconnecting every few minutes", "skill": "bug"}
-{"task": "The tabkyra bridge behaved wrong and opened a tab in my window; open a GitHub issue", "skill": "bug"}
-{"task": "Report a Tabkyra bug: screenshots come back black", "skill": "bug"}
-{"task": "The Tabkyra side panel shows a blank screen after the update, can you report this", "skill": "bug"}
-{"task": "Tabkyra skill lint gives a false positive, file it", "skill": "bug"}
-{"task": "Draft a GitHub issue for the Tabkyra CLI error 'Bridge unavailable' after a reboot", "skill": "bug"}
-{"task": "Tabkyra hung while filling a form. Collect versions and the error and file a bug", "skill": "bug"}
+{"task": "Polycarp crashed when I opened the settings tab, please report it", "skill": "bug"}
+{"task": "The Polycarp MCP tools keep timing out; file an issue", "skill": "bug"}
+{"task": "File a bug report: polycarp browser skill install wrote to the wrong folder", "skill": "bug"}
+{"task": "Polycarp's read_page returned nothing on this site, report it", "skill": "bug"}
+{"task": "Something in Polycarp is broken: the CLI hangs on Polycarp doctor", "skill": "bug"}
+{"task": "I pressed Report in Polycarp, write it up", "skill": "bug"}
+{"task": "Write an issue for the Polycarp extension disconnecting every few minutes", "skill": "bug"}
+{"task": "The Polycarp bridge behaved wrong and opened a tab in my window; open a GitHub issue", "skill": "bug"}
+{"task": "Report a Polycarp bug: screenshots come back black", "skill": "bug"}
+{"task": "The Polycarp side panel shows a blank screen after the update, can you report this", "skill": "bug"}
+{"task": "Polycarp skill lint gives a false positive, file it", "skill": "bug"}
+{"task": "Draft a GitHub issue for the Polycarp CLI error 'Bridge unavailable' after a reboot", "skill": "bug"}
+{"task": "Polycarp hung while filling a form. Collect versions and the error and file a bug", "skill": "bug"}
 {"task": "Write Google dorks to find PDF annual reports from the city of Austin", "skill": "dorks"}
 {"task": "Search operators to find only .gov pages about lead pipe replacement", "skill": "dorks"}
 {"task": "My search returns nothing but SEO blogs; give me an advanced search query for the actual standard", "skill": "dorks"}
@@ -105,20 +105,20 @@
 {"task": "Haiku failed the academic-research skill steps; have a stronger model rewrite it and test it", "skill": "fix"}
 {"task": "Repair the bug skill: Llama keeps skipping the duplicate check", "skill": "fix"}
 {"task": "The skill output was poor on a local model, rewrite the skill and test until it passes", "skill": "fix"}
-{"task": "Fix the tabkyra skill so gpt-mini follows it correctly", "skill": "fix"}
+{"task": "Fix the polycarp-browser skill so gpt-mini follows it correctly", "skill": "fix"}
 {"task": "Rewrite this skill for the model tier that failed and verify it on that model", "skill": "fix"}
 {"task": "The autoresearch skill gave a weak report on my 8B model. Fix it", "skill": "fix"}
 {"task": "Use my recording to correct the proton-pass skill", "skill": "fix"}
 {"task": "After a failed run, have a stronger model improve the skill that caused it and test it on the weak one", "skill": "fix"}
 {"task": "Write a new skill for filing expense reports in Concur", "skill": "kyraskillmaker"}
 {"task": "Make a SKILL.md that teaches an agent to book meeting rooms", "skill": "kyraskillmaker"}
-{"task": "Review my skill draft and make it pass tabkyra skill lint", "skill": "kyraskillmaker"}
-{"task": "Port this Claude Code skill to Tabkyra's format", "skill": "kyraskillmaker"}
+{"task": "Review my skill draft and make it pass polycarp browser skill lint", "skill": "kyraskillmaker"}
+{"task": "Port this Claude Code skill to Polycarp's format", "skill": "kyraskillmaker"}
 {"task": "Shorten this skill so a small model can follow it", "skill": "kyraskillmaker"}
 {"task": "We keep making the same mistake when exporting invoices; turn the steps into a skill", "skill": "kyraskillmaker"}
 {"task": "Create an agent skill for checking flight prices", "skill": "kyraskillmaker"}
 {"task": "Improve the structure of my skill: it needs numbered steps and a done-when section", "skill": "kyraskillmaker"}
-{"task": "Rewrite this skill to the Tabkyra standard", "skill": "kyraskillmaker"}
+{"task": "Rewrite this skill to the Polycarp standard", "skill": "kyraskillmaker"}
 {"task": "Draft a skill file for summarizing Slack threads", "skill": "kyraskillmaker"}
 {"task": "Author a skill with When to use, Steps and Done when sections", "skill": "kyraskillmaker"}
 {"task": "Turn my notes on deploying to Fly.io into a reusable skill", "skill": "kyraskillmaker"}
@@ -171,7 +171,7 @@
 {"task": "Improve your skills based on what went wrong in this task", "skill": "rsi"}
 {"task": "Remember how to do this next time", "skill": "rsi"}
 {"task": "That took a lot of retries; write the lesson into the relevant skill", "skill": "rsi"}
-{"task": "The tabkyra skill gave outdated steps for this site; update it from what we observed", "skill": "rsi"}
+{"task": "The Polycarp skill gave outdated steps for this site; update it from what we observed", "skill": "rsi"}
 {"task": "I had to correct you twice; make sure a skill prevents that", "skill": "rsi"}
 {"task": "Turn today's lesson into a small tested edit to a skill", "skill": "rsi"}
 {"task": "Self-improve: capture what you learned in this session in a skill", "skill": "rsi"}
@@ -210,8 +210,8 @@
 {"task": "Compute the standard deviation of 3, 7, 9 and 12", "skill": "none"}
 {"task": "Convert 72 degrees Fahrenheit to Celsius", "skill": "none"}
 {"task": "Explain what this bash script does", "skill": "none"}
-{"task": "Check my bank's website in the browser and tell me when the next statement closes", "skill": "tabkyra"}
-{"task": "Open the admin page of my Shopify store and change nothing, just read me the low-stock items", "skill": "tabkyra"}
+{"task": "Check my bank's website in the browser and tell me when the next statement closes", "skill": "polycarp-browser"}
+{"task": "Open the admin page of my Shopify store and change nothing, just read me the low-stock items", "skill": "polycarp-browser"}
 {"task": "Find three meta-analyses on mindfulness and anxiety and format them in Chicago style", "skill": "academic-research"}
 {"task": "Is the Stanford prison experiment paper still considered valid, or was it retracted?", "skill": "academic-research"}
 {"task": "Have a different model tear apart my migration plan before I run it", "skill": "adversarial-review"}
@@ -220,14 +220,14 @@
 {"task": "Turn the notes into a polished one-page briefing I can open in the browser", "skill": "artifacts"}
 {"task": "Research exhaustively which heat pump brands last longest, with many sources", "skill": "autoresearch"}
 {"task": "/autoresearch the economics of vertical farming", "skill": "autoresearch"}
-{"task": "Tabkyra froze when I opened two windows; report the bug", "skill": "bug"}
-{"task": "The tabkyra doctor command crashes with a stack trace, file an issue", "skill": "bug"}
+{"task": "Polycarp froze when I opened two windows; report the bug", "skill": "bug"}
+{"task": "The Polycarp doctor command crashes with a stack trace, file an issue", "skill": "bug"}
 {"task": "Give me search operators to find only PDF court filings on uscourts.gov", "skill": "dorks"}
 {"task": "Advanced Google search for spreadsheets of state budget data", "skill": "dorks"}
 {"task": "The news-research skill gave my small model a bad result; fix it", "skill": "fix"}
 {"task": "/fix osint", "skill": "fix"}
 {"task": "Write a skill that teaches an agent to reconcile bank statements", "skill": "kyraskillmaker"}
-{"task": "Port my Cursor rule into a Tabkyra skill that passes lint", "skill": "kyraskillmaker"}
+{"task": "Port my Cursor rule into a Polycarp skill that passes lint", "skill": "kyraskillmaker"}
 {"task": "What's the latest on the hurricane heading for Florida?", "skill": "news-research"}
 {"task": "Is the viral claim that the bridge was sold to a foreign company true?", "skill": "news-research"}
 {"task": "Due diligence on the roofing company before I sign the contract", "skill": "osint"}
@@ -247,7 +247,7 @@
 {"task": "Fix the artifact upload in my GitHub Actions workflow", "skill": "none"}
 {"task": "Use the osint skill on the landlord at 12 Elm St", "skill": "osint"}
 {"task": "Run the dorks skill to find PDFs about flood maps", "skill": "dorks"}
-{"task": "Use the tabkyra skill to fill in the signup form", "skill": "tabkyra"}
+{"task": "Use the polycarp-browser skill to fill in the signup form", "skill": "polycarp-browser"}
 {"task": "Follow the proton-pass skill to give the deploy its token", "skill": "proton-pass"}
 {"task": "Apply the news-research skill to today's rail strike", "skill": "news-research"}
 {"task": "Invoke the artifacts skill for these quarterly numbers", "skill": "artifacts"}
@@ -259,23 +259,23 @@
 {"task": "Use the news-research skill for the latest updates on the rail strike", "skill": "news-research"}
 {"task": "Use the osint skill on the port authority's new contractor", "skill": "osint"}
 {"task": "Run the osint skill and review what you find on the landlord", "skill": "osint"}
-{"task": "Use the tabkyra skill to fill in my fixed address", "skill": "tabkyra"}
-{"task": "Rewrite the dorks skill to Tabkyra's skill standard", "skill": "kyraskillmaker"}
+{"task": "Use the polycarp-browser skill to fill in my fixed address", "skill": "polycarp-browser"}
+{"task": "Rewrite the dorks skill to Polycarp's skill standard", "skill": "kyraskillmaker"}
 {"task": "The proton-pass skill gave my small model a bad result, fix it", "skill": "fix"}
 {"task": "Don't use the osint skill, just search the news for the landlord", "skill": "none"}
 {"task": "Instead of the dorks skill, write me a plain search query", "skill": "none"}
-{"task": "Skip the tabkyra skill and fetch the URL directly", "skill": "none"}
-{"task": "tabkyra skill install wrote to the wrong folder, report it", "skill": "bug"}
-{"task": "tabkyra skill versions shows nothing for my local skill", "skill": "bug"}
-{"task": "how do I use tabkyra skill rollback", "skill": "none"}
+{"task": "Skip the polycarp-browser skill and fetch the URL directly", "skill": "none"}
+{"task": "polycarp browser skill install wrote to the wrong folder, report it", "skill": "bug"}
+{"task": "polycarp browser skill versions shows nothing for my local skill", "skill": "bug"}
+{"task": "how do I use polycarp browser skill rollback", "skill": "none"}
 {"task": "I have no idea who runs this website so use the osint skill", "skill": "osint"}
 {"task": "Why not use the osint skill on this landlord?", "skill": "osint"}
 {"task": "No rush, use the osint skill", "skill": "osint"}
-{"task": "Use the tabkyra skill to open localhost:3000 and debug it", "skill": "tabkyra"}
+{"task": "Use the polycarp-browser skill to open localhost:3000 and debug it", "skill": "polycarp-browser"}
 {"task": "Run the osint skill on the landlord and review it", "skill": "osint"}
 {"task": "Don’t use the osint skill, just search the news for the landlord", "skill": "none"}
 {"task": "Don’t run the dorks skill, write me a plain search query", "skill": "none"}
-{"task": "Don’t use the tabkyra skill; fetch the URL directly", "skill": "none"}
+{"task": "Don’t use the polycarp-browser skill; fetch the URL directly", "skill": "none"}
 {"task": "Don’t apply the osint skill, just tell me what you know about the landlord", "skill": "none"}
 {"task": "Don't use the `osint` skill; do a background check on this landlord.", "skill": "none"}
 {"task": "Mark up this screenshot of our checkout page with numbered callouts for each bug I listed", "skill": "annotation"}

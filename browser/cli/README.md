@@ -48,7 +48,7 @@ it needs no extra step. Reload the extension once after the first install.
 | `tabkyra pi-extension` | write `~/.pi/agent/extensions/tabkyra.ts` for pi |
 | `tabkyra skill install [name...] [--all] [--force]` | install the bundled skills into Claude Code, Codex and OpenCode; a same-name skill Tabkyra didn't write is left alone without `--force` |
 | `tabkyra skill list` | the bundled skills and what each is for |
-| `tabkyra skill print [name] [--raw]` | a skill as an AGENTS.md section (default `tabkyra`); `--raw` is the exact SKILL.md |
+| `tabkyra skill print [name] [--raw]` | a skill as an AGENTS.md section (default `polycarp-browser`); `--raw` is the exact SKILL.md |
 | `tabkyra skill lint [path...]` | check skills for hidden text, injection, remote code, secret handling and structure ([rules](../docs/skill-security.md)) |
 | `tabkyra skill apply <folder> [--yes]` | lint and diff an edited skill; `--yes` backs up the current one and installs the edit |
 | `tabkyra skill revert <name>` | drop your edit and go back to the bundled skill |

@@ -14,7 +14,7 @@ An assistant on the web reaches this computer through a tunnel on the person's o
 - The user asks for a tunnel, on Cloudflare or Tailscale, for Polycarp.
 - A connector stopped working.
 
-For driving the browser from an agent on this computer, use the `tabkyra` skill. No tunnel is needed.
+For driving the browser from an agent on this computer, use the `polycarp-browser` skill. No tunnel is needed.
 
 ## Rules
 

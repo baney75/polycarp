@@ -259,11 +259,11 @@ tool descriptions and the MCP instructions say so.
 ```bash
 polycarp-browser skill install   # every bundled skill, into Claude Code, Codex and OpenCode
 polycarp-browser skill list      # what each one is for
-polycarp-browser skill print >> AGENTS.md # the tabkyra skill as an AGENTS.md section, for any other agent
+polycarp-browser skill print >> AGENTS.md # the polycarp-browser skill as an AGENTS.md section, for any other agent
 ```
 
 `polycarp-browser skill install` skips a same-name skill that Polycarp didn't write. To replace one,
-name it: `polycarp-browser skill install bug --force` (a bare `--force` replaces only `tabkyra`). The core skill ([skills/tabkyra/SKILL.md](skills/tabkyra/SKILL.md)) is short and
+name it: `polycarp-browser skill install bug --force` (a bare `--force` replaces only `polycarp-browser`). The core skill ([skills/polycarp-browser/SKILL.md](skills/polycarp-browser/SKILL.md)) is short and
 written for small models: when to use Polycarp, `status` first, then the loop (navigate,
 `read_page` for refs, act by ref, read back), with stale refs, waits, dialogs, the safety
 rules, cleanup and three worked examples. A test keeps it in step with the MCP server's
@@ -271,7 +271,7 @@ instructions and tool schemas.
 
 | Skill | What it does |
 | --- | --- |
-| `tabkyra` | The browser loop, dialogs, safety rules and cleanup |
+| `polycarp-browser` | The browser loop, dialogs, safety rules and cleanup |
 | `academic-research` | Find papers, verify each DOI, metadata and retraction status, save BibTeX and Obsidian notes |
 | `osint` | Public-record research on companies, domains and people, with a purpose check |
 | `news-research` | Primary sources, wire services, more than one side, every statement labeled |

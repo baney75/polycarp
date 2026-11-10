@@ -53,13 +53,17 @@ How a task names a skill ("<name> skill") decides what the name does:
   "skip", "avoid", or "not the osint skill". That skill is never returned for the task. A
   "no" or "not" elsewhere ("no rush, use the osint skill", "why not use the osint skill",
   "I have no idea who runs this, so use the osint skill") rules nothing out.
-- **The CLI:** `tabkyra skill install` (or another subcommand) is the Tabkyra CLI, read as
-  "tabkyra cli", not a request for the tabkyra skill.
+- **The CLI:** `polycarp browser skill install` (or another subcommand, or the same after
+  `polycarp-browser` or the old `tabkyra`) is the Polycarp CLI, read as "polycarpbrowser cli",
+  not a request for the polycarp-browser skill.
+- **The browser skill's other names:** "Polycarp", "polycarp browser" and its old name
+  "tabkyra" read as `polycarp-browser`, in tasks and in skill text alike, so "the polycarp
+  skill" and "the tabkyra skill" ask for it.
 - **A subject, not a skill:** nothing points the mention at a skill: no "the", "this" or
   "that" before a singular mention, no use, edit or negation verb, no slash command and no
   backticks. "My biology skill", "what chemistry skills do employers want" and "improve my
   writing skill" (improve or refine with no determiner is about a person) score for no skill.
-  "A Tabkyra skill" (a kind of skill to make) keeps its words but asks for no skill. A plural
+  "A Polycarp skill" (a kind of skill to make) keeps its words but asks for no skill. A plural
   with one name ("the chemistry skills employers want") is a subject too.
 - **Lists:** several names before one "skills" ("use the osint and dorks skills", "the maps,
   osint or dorks skills", spaced or hyphenated) are read together, and the verb before the
@@ -88,7 +92,8 @@ which is still evidence, keeps gaining weight, so the bar grows in proportion: o
 clears it no more easily at 52 skills than at 32. Without that, adding 19 skills made one ordinary word in an old skill enough
 for a match ("a good name for a puppy" went to `fix`, "a bug in my login handler" to `bug`).
 A catalog of 13 skills or fewer scores as before; on `main`'s 13 skills the only change across
-the 608 case texts is that "a Tabkyra skill" no longer asks for the tabkyra skill.
+the 608 case texts is that "a Tabkyra skill" no longer asks for the tabkyra skill (now
+`polycarp-browser`).
 
 The router indexes the skills in use: the bundled skills and the user's applied local
 copies (`polycarp browser skill apply`). The index is built once per process and rebuilt only when

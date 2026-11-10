@@ -341,14 +341,14 @@ test("skill apply refuses unlinted edits, dropped sections and the skills that g
 	assert.equal(existsSync(join(home, ".config", "polycarp", "browser", "skills-local", "osint")), false);
 });
 
-test("--force replaces only the skills named, or tabkyra when none are", () => {
+test("--force replaces only the skills named, or polycarp-browser when none are", () => {
 	const home = mkdtempSync(join(root, "force-"));
-	for (const name of ["tabkyra", "osint"]) {
+	for (const name of ["polycarp-browser", "osint"]) {
 		mkdirSync(join(home, ".claude", "skills", name), { recursive: true });
 		writeFileSync(join(home, ".claude", "skills", name, "SKILL.md"), "---\nname: mine\ndescription: mine\n---\nmine\n");
 	}
 	runIn(home, "skill", "install", "--force");
-	assert.notEqual(readFileSync(join(home, ".claude", "skills", "tabkyra", "SKILL.md"), "utf8"), "---\nname: mine\ndescription: mine\n---\nmine\n");
+	assert.notEqual(readFileSync(join(home, ".claude", "skills", "polycarp-browser", "SKILL.md"), "utf8"), "---\nname: mine\ndescription: mine\n---\nmine\n");
 	assert.equal(readFileSync(join(home, ".claude", "skills", "osint", "SKILL.md"), "utf8"), "---\nname: mine\ndescription: mine\n---\nmine\n", "osint wasn't named");
 	runIn(home, "skill", "install", "osint", "--force");
 	assert.match(readFileSync(join(home, ".claude", "skills", "osint", "SKILL.md"), "utf8"), /^name: osint$/m);

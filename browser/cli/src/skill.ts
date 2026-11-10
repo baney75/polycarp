@@ -2,7 +2,7 @@
  * `polycarp browser skill install|list|print|lint|apply|revert|match|eval|versions|rollback|edit`:
  * teach agents to use Polycarp well.
  * The skill texts live in skills/<name>/SKILL.md and are bundled into the CLI at build time
- * (skills-catalog.ts), so every harness gets the same words the tests check. The tabkyra
+ * (skills-catalog.ts), so every harness gets the same words the tests check. The polycarp-browser
  * skill is tested against the MCP server's instructions (cli/test/skill.test.mjs); every
  * skill passes the lint in skill-lint.ts before it ships, installs or is applied. The router
  * (skill-router.ts) picks the skill for a task; docs/skill-platform.md describes the whole.
@@ -10,7 +10,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readSync, renameSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { which } from "./harness.ts";
@@ -47,6 +47,14 @@ const NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const isName = (n: string) => NAME.test(n) && n !== "none";
 /** The skills that govern skill editing change only through a reviewed pull request. */
 const PROTECTED_SKILLS = new Set(["rsi", "kyraskillmaker"]);
+/**
+ * Built-in skills that had another name in an earlier release, old name to new. The old name
+ * still finds the skill everywhere a name is given, an applied local copy moves to the new name,
+ * and install removes the copy it wrote under the old name.
+ */
+export const RENAMED_SKILLS: ReadonlyMap<string, string> = new Map([["tabkyra", "polycarp-browser"]]);
+/** The browser skill: the default for print and --force. */
+const BROWSER_SKILL = "polycarp-browser";
 
 export class SkillError extends Error {}
 
@@ -79,7 +87,7 @@ function communityBaseProblem(name: string): string | undefined {
 export function assertName(name: string): string {
 	if (!NAME.test(name) || name.length > 64) throw new SkillError(`"${name}" is not a skill name (lowercase-kebab-case).`);
 	if (name === "none") throw new SkillError('"none" is reserved: the router answers "none" when no skill fits.');
-	return name;
+	return RENAMED_SKILLS.get(name) ?? name;
 }
 
 export interface SkillTarget {
@@ -102,7 +110,7 @@ export function skillTargets(): SkillTarget[] {
 		name,
 		detected,
 		dir,
-		file: join(dir, "tabkyra", "SKILL.md"),
+		file: join(dir, BROWSER_SKILL, "SKILL.md"),
 	});
 	return [
 		target("claude", "Claude Code", Boolean(which("claude")) || existsSync(claudeHome), join(claudeHome, "skills")),
@@ -168,8 +176,9 @@ function writeIndex(index: LocalIndex): void {
 /** The folder for one local skill, proven to sit directly inside skills-local. */
 function localSkillDir(name: string): string {
 	const root = resolve(localSkillsDir());
-	const dir = resolve(root, assertName(name));
-	if (relative(root, dir) !== name) throw new SkillError(`${name} resolves outside ${root}.`);
+	const canonical = assertName(name);
+	const dir = resolve(root, canonical);
+	if (relative(root, dir) !== canonical) throw new SkillError(`${name} resolves outside ${root}.`);
 	return dir;
 }
 
@@ -254,6 +263,7 @@ function isLink(path: string): boolean {
 
 /** Local skill folders that index.json records, valid names only. */
 function localNames(): string[] {
+	migrateRenamedLocal();
 	if (!existsSync(localSkillsDir())) return [];
 	const index = readIndex();
 	return readdirSync(localSkillsDir()).filter((n) => isName(n) && index[n] && existsSync(join(localSkillsDir(), n, "SKILL.md")));
@@ -352,7 +362,7 @@ export function listSkills(): SkillInfo[] {
 // --- Rendering ---------------------------------------------------------------------------
 
 /** SKILL.md as installed: the text with the marker after the frontmatter. */
-export function skillFile(name = "tabkyra"): string {
+export function skillFile(name = BROWSER_SKILL): string {
 	const text = skillText(name);
 	const end = text.indexOf("\n---\n", 4);
 	if (!text.startsWith("---\n") || end < 0) return `${MARKER}\n${text}`;
@@ -360,13 +370,13 @@ export function skillFile(name = "tabkyra"): string {
 }
 
 /** The skill without frontmatter, as a section to paste into AGENTS.md or a system prompt. */
-export function agentsSnippet(name = "tabkyra"): string {
+export function agentsSnippet(name = BROWSER_SKILL): string {
 	const text = skillText(name);
 	const end = text.indexOf("\n---\n", 4);
 	const body = text.startsWith("---\n") && end >= 0 ? text.slice(end + 5) : text;
 	// One level down, so it nests under a project's own headings.
 	const nested = body.trim().replace(/^(#{2,5}) /gm, "#$1 ");
-	const heading = name === "tabkyra" ? "## Browser: Polycarp (MCP server `tabkyra`)" : `## Skill: ${name}`;
+	const heading = name === BROWSER_SKILL ? "## Browser: Polycarp (MCP server `polycarp`)" : `## Skill: ${name}`;
 	return `${nested.replace(/^# .*/, heading)}\n`;
 }
 
@@ -380,6 +390,8 @@ export interface InstallResult {
 	file: string;
 	state: InstallState;
 	backup?: string;
+	/** The copy an earlier install wrote under this skill's old name, removed now (RENAMED_SKILLS). */
+	retired?: string;
 }
 
 function stamp(): string {
@@ -398,12 +410,12 @@ function backUp(name: string, file: string, label: string): string {
 /**
  * Install skills (all, or `only`) into each detected harness. A file without our marker is
  * someone else's and is left alone, unless `force` names it: only skills named on the
- * command line, or tabkyra when none are. Anything replaced is backed up first.
+ * command line, or polycarp-browser when none are. Anything replaced is backed up first.
  */
 export function installSkills(options: { force: boolean; all: boolean; only?: string[] }): InstallResult[] {
 	const names = (options.only?.length ? options.only : defaultInstallNames()).map(assertName);
 	for (const name of names) skillText(name);
-	const forced = new Set(options.force ? (options.only?.length ? options.only : ["tabkyra"]) : []);
+	const forced = new Set(options.force ? (options.only?.length ? options.only.map(assertName) : [BROWSER_SKILL]) : []);
 	const results: InstallResult[] = [];
 	for (const target of skillTargets()) {
 		for (const skill of names) {
@@ -441,7 +453,65 @@ export function installSkills(options: { force: boolean; all: boolean; only?: st
 		}
 	}
 	recordInstalled(results.filter((r) => r.state === "written" || r.state === "current").map((r) => r.file));
+	for (const r of results) if (r.state === "written" || r.state === "current") r.retired = retireRenamedCopy(r.target, r.skill);
 	return results;
+}
+
+/**
+ * Remove, in one harness, the copy of `skill` that an earlier install wrote under its old name.
+ * Only a regular file that carries the marker and is exactly what install recorded for it in
+ * skills-installed.json goes, with its folder if that is left empty. A copy edited since, one
+ * from before the record existed, or anyone else's skill of that name stays.
+ */
+function retireRenamedCopy(target: SkillTarget, skill: string): string | undefined {
+	for (const [old, now] of RENAMED_SKILLS) {
+		if (now !== skill) continue;
+		const file = join(target.dir, old, "SKILL.md");
+		if (isLink(file) || isLink(dirname(file)) || !existsSync(file) || !lstatSync(file).isFile()) continue;
+		const text = readFileSync(file, "utf8");
+		if (!text.includes(MARKER) || readInstalledRecord()[file] !== sha256(text)) continue;
+		rmSync(file);
+		try {
+			rmdirSync(dirname(file));
+		} catch {
+			/* something else is in the folder: leave it */
+		}
+		forgetInstalled([file]);
+		return file;
+	}
+	return undefined;
+}
+
+/**
+ * Move an applied local copy of a renamed skill (skills-local/<old>) to the new name, once:
+ * its folder, its index entry, the name in its frontmatter and its history. Nothing moves when
+ * the new name already has a local copy or history, or a path is a link.
+ */
+let migratedLocal: string | undefined;
+function migrateRenamedLocal(): void {
+	const root = localSkillsDir();
+	if (migratedLocal === root) return;
+	migratedLocal = root;
+	try {
+		for (const [old, now] of RENAMED_SKILLS) {
+			const index = readIndex();
+			const from = join(root, old);
+			const to = join(root, now);
+			if (!index[old] || index[now] || existsSync(to) || isLink(from) || !existsSync(join(from, "SKILL.md"))) continue;
+			assertNoLinks([configDir(), root, join(from, "SKILL.md")]);
+			const file = join(from, "SKILL.md");
+			writeFileSync(file, readFileSync(file, "utf8").replace(new RegExp(`^name: ${old}$`, "m"), `name: ${now}`));
+			renameSync(from, to);
+			index[now] = index[old];
+			delete index[old];
+			writeIndex(index);
+			const oldHistory = join(historyDir(), old);
+			const newHistory = join(historyDir(), now);
+			if (existsSync(oldHistory) && !isLink(oldHistory) && !existsSync(newHistory)) renameSync(oldHistory, newHistory);
+		}
+	} catch {
+		/* best effort: an unreadable or linked folder keeps the old name, and lint reports it */
+	}
 }
 
 // --- Refresh after an update ---------------------------------------------------------------
@@ -478,6 +548,17 @@ function recordInstalled(files: string[]): void {
 	}
 }
 
+/** Drop these files from skills-installed.json (they were removed). Best effort. */
+function forgetInstalled(files: string[]): void {
+	try {
+		const record = readInstalledRecord();
+		for (const file of files) delete record[file];
+		saveInstalledRecord(record);
+	} catch {
+		/* a stale entry only names a file that is gone */
+	}
+}
+
 function writeInstalledRecord(files: string[]): void {
 	const record = readInstalledRecord();
 	for (const file of files) {
@@ -487,6 +568,10 @@ function writeInstalledRecord(files: string[]): void {
 			/* gone meanwhile */
 		}
 	}
+	saveInstalledRecord(record);
+}
+
+function saveInstalledRecord(record: Record<string, string>): void {
 	assertNoLinks([configDir(), installedRecordFile()]);
 	mkdirSync(configDir(), { recursive: true });
 	const tmp = `${installedRecordFile()}.${process.pid}.tmp`;
@@ -546,6 +631,22 @@ export function refreshInstalledSkills(): RefreshResult {
 		result.refreshed.push(file);
 	}
 	recordInstalled(written);
+	// A copy an earlier version wrote under a renamed skill's old name becomes the new one, when it is unedited.
+	for (const target of skillTargets()) {
+		if (!target.detected) continue;
+		for (const [old, now] of RENAMED_SKILLS) {
+			const oldFile = join(target.dir, old, "SKILL.md");
+			const newFile = join(target.dir, now, "SKILL.md");
+			if (!existsSync(oldFile) || existsSync(newFile) || isLink(oldFile) || isLink(dirname(oldFile)) || isLink(newFile) || isLink(dirname(newFile))) continue;
+			const text = lstatSync(oldFile).isFile() ? readFileSync(oldFile, "utf8") : "";
+			if (!text.includes(MARKER) || record[oldFile] !== sha256(text)) continue;
+			mkdirSync(dirname(newFile), { recursive: true });
+			writeFileSync(newFile, skillFile(now));
+			recordInstalled([newFile]);
+			retireRenamedCopy(target, now);
+			result.refreshed.push(newFile);
+		}
+	}
 	return result;
 }
 
@@ -782,8 +883,8 @@ export function twoStageRanker(primaryNames: ReadonlySet<string>, ranker: Ranker
  * The SKILL.md text in use for `name`: the applied local copy, or the bundled skill. With
  * `bundledOnly` (remote sessions) it is always the bundled text, and local-only skills don't exist.
  */
-export function readSkill(name: string, bundledOnly = false): string {
-	assertName(name);
+export function readSkill(given: string, bundledOnly = false): string {
+	const name = assertName(given);
 	if (bundledOnly) {
 		const text = SKILLS.get(name);
 		if (text === undefined) throw new SkillError(`No bundled skill named ${name}. Call skill_match.`);
@@ -1214,6 +1315,7 @@ function printInstall(results: InstallResult[]): void {
 		const current = mine.filter((r) => r.state === "current").map((r) => r.skill);
 		if (changed.length) console.log(`${sym.ok} ${target.name.padEnd(12)} wrote ${changed.join(", ")} ${c.dim(target.dir)}`);
 		if (current.length) console.log(`${sym.ok} ${target.name.padEnd(12)} current ${current.join(", ")}`);
+		for (const r of mine.filter((r) => r.retired)) console.log(`${sym.dot} ${target.name.padEnd(12)} removed ${c.dim(r.retired ?? "")}, the copy of ${r.skill} under its old name`);
 		for (const r of mine.filter((r) => r.backup)) console.log(`${sym.dot} ${target.name.padEnd(12)} replaced ${r.file}; the old file is in ${c.dim(r.backup ?? "")}`);
 		for (const r of mine.filter((r) => r.state === "linked")) {
 			console.log(`${sym.warn} ${target.name.padEnd(12)} left alone: ${c.dim(r.file)} is a symbolic link, and Polycarp won't write through one. Replace the link by hand to install it.`);
@@ -1617,7 +1719,7 @@ function runSkillCommand(sub: string | undefined, args: string[], flags: SkillFl
 		return reportApplied(plan, `Applied your edit of ${plan.name}.`);
 	}
 	if (sub === "print") {
-		const name = assertName(args[0] ?? "tabkyra");
+		const name = assertName(args[0] ?? BROWSER_SKILL);
 		if (!allNames().includes(name)) throw new SkillError(`No skill named ${name}.${gone(name)} Run ${COMMAND_NAME} skill list.`);
 		// --raw: the exact SKILL.md source in use, the starting point for an edit.
 		process.stdout.write(flags.raw ? skillText(name) : agentsSnippet(name));
