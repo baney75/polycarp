@@ -74,7 +74,12 @@ before(async () => {
 
 after(async () => {
 	await context?.close();
-	if (profile) rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+	// Best effort, as in e2e-bridge: Chromium helpers may still be writing to the profile.
+	try {
+		if (profile) rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+	} catch (err) {
+		console.error(`left ${profile}: ${err.message}`);
+	}
 });
 
 /**

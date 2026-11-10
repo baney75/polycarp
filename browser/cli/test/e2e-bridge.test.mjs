@@ -392,14 +392,22 @@ before(async () => {
 	await mcp.connect(new StdioClientTransport({ command: process.execPath, args: [cli, "mcp"], env: env(), stderr: "inherit" }));
 });
 
+function tidy(dir) {
+	try {
+		rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+	} catch (err) {
+		console.error(`left ${dir}: ${err.message}`);
+	}
+}
+
 after(async () => {
 	await mcp?.close().catch(() => {});
 	browser?.kill();
 	if (browser) await new Promise((r) => browser.once("exit", r));
 	server?.close();
-	// Chromium's helper processes can still write to the profile just after it exits (ENOTEMPTY): retry the removal.
-	if (home) rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-	if (socketDir) rmSync(socketDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+	// Chromium's helper processes can outlive it and keep writing to the profile (ENOTEMPTY). Every test has run by now,
+	// so removing these temp folders is best effort: a leftover one in /tmp is no failure.
+	for (const dir of [home, socketDir]) if (dir) tidy(dir);
 });
 
 test("extension loads with the id the host manifest allows", async () => {
