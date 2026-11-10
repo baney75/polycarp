@@ -134,7 +134,8 @@ test("renamed identifiers come back only as the named fallbacks", () => {
 
 test("the helper's npm package installs polycarp-browser and the polycarp command the skills name, and no old alias", () => {
 	const pkg = JSON.parse(readFileSync(join(root, "cli/package.json"), "utf8"));
-	assert.deepEqual(Object.keys(pkg.bin), ["polycarp-browser", "polycarp"], "no tabkyra or sitegeist alias");
+	assert.deepEqual(Object.keys(pkg.bin).sort(), ["polycarp", "polycarp-browser"], "no tabkyra or sitegeist alias");
 	const lock = JSON.parse(readFileSync(join(root, "cli/package-lock.json"), "utf8"));
-	assert.deepEqual(Object.keys(lock.packages[""].bin ?? {}), ["polycarp-browser", "polycarp"], "the lockfile agrees");
+	// npm writes the lockfile's names sorted, so the order is not part of the check.
+	assert.deepEqual(Object.keys(lock.packages[""].bin ?? {}).sort(), ["polycarp", "polycarp-browser"], "the lockfile agrees");
 });
