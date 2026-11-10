@@ -412,7 +412,13 @@ export function manifestLauncherRuns(path: string): boolean {
 
 /** Both launchers work: the agent launcher harness configs run and the host launcher the manifests name. */
 function launchersWork(): boolean {
-	return launcherWorks(cliLauncherPath()) && manifestLauncherRuns(hostTarget());
+	// A launcher that runs another copy works, but doctor fails it, so install must not keep it.
+	return (
+		launcherWorks(cliLauncherPath()) &&
+		manifestLauncherRuns(hostTarget()) &&
+		!launcherRunsOther(cliLauncherPath()) &&
+		!launcherRunsOther(launcherPath())
+	);
 }
 
 export type HostState = "current" | "stale" | "missing";
@@ -425,10 +431,10 @@ export function hostStatus(): Array<BrowserDir & { state: HostState; file: strin
 		const file = join(browser.dir, "NativeMessagingHosts", `${NATIVE_HOST_NAME}.json`);
 		let state: HostState = "missing";
 		if (existsSync(file)) {
-			// Current: it names the helper or a standalone launcher that still runs (down to the program the launcher execs), and the one extension id (doctor's test).
+			// Current: it names the helper or a launcher that runs this helper (down to the program the launcher execs), and the one extension id (doctor's test).
 			try {
 				const m = JSON.parse(readFileSync(file, "utf8")) as { path?: string; allowed_origins?: string[] };
-				const ok = typeof m.path === "string" && accepted.has(m.path) && manifestLauncherRuns(m.path) && originsCurrent(m.allowed_origins);
+				const ok = typeof m.path === "string" && accepted.has(m.path) && manifestLauncherRuns(m.path) && !launcherRunsOther(m.path) && originsCurrent(m.allowed_origins);
 				state = ok ? "current" : "stale";
 			} catch {
 				state = "stale";

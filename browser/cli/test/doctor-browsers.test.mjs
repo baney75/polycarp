@@ -189,4 +189,11 @@ test("a launcher that runs another copy of the helper fails doctor, with install
 	const launcher = checks.find((c) => c.id === "launcher");
 	assert.equal(launcher.status, "fail", JSON.stringify(launcher));
 	assert.match(launcher.fix, /install --force$/);
+
+	// The fix doctor gives for the browser clears both failures.
+	const [command, ...args] = hostCheck.fix.split(" ").slice(1);
+	assert.equal(spawnSync(process.execPath, [cli, command, ...args.map((a) => a.replace(/^'|'$/g, ""))], { env: env(), encoding: "utf8" }).status, 0);
+	checks = await doctor();
+	assert.equal(checks.find((c) => c.id === `host:${name}`).status, "ok");
+	assert.equal(checks.find((c) => c.id === "launcher").status, "ok");
 });
