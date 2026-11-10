@@ -23,7 +23,7 @@ import { parsePublicKey, SignatureError, verifyMinisign } from "./minisign.ts";
 import { EXTENSION_FILES, extensionDir, repoRoot } from "./paths.ts";
 import { releaseSummary } from "./release-notes.ts";
 import { banner, c, confirm, sym } from "./ui.ts";
-import { VERSION } from "./version.ts";
+import { USER_AGENT } from "./version.ts";
 import { extractZip } from "./zip.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
@@ -260,7 +260,7 @@ function checkUrl(url: string): URL {
 async function fetchBytes(url: string, max: number, timeoutMs = 60000): Promise<Buffer> {
 	checkUrl(url);
 	const response = await fetch(url, {
-		headers: { "User-Agent": `tabkyra-cli/${VERSION}`, Accept: "application/octet-stream" },
+		headers: { "User-Agent": USER_AGENT, Accept: "application/octet-stream" },
 		signal: AbortSignal.timeout(timeoutMs),
 		redirect: "follow",
 	});
@@ -284,7 +284,7 @@ export async function latestRelease(channel: Channel): Promise<Release | undefin
 	const url = `${apiBase()}/repos/${REPO}/releases?per_page=30`;
 	checkUrl(url);
 	const response = await fetch(url, {
-		headers: { "User-Agent": `tabkyra-cli/${VERSION}`, Accept: "application/vnd.github+json" },
+		headers: { "User-Agent": USER_AGENT, Accept: "application/vnd.github+json" },
 		signal: AbortSignal.timeout(15000),
 	});
 	if (!response.ok) throw new UpdateError(`GitHub answered ${response.status} ${response.statusText} for the release list`);

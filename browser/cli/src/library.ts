@@ -218,7 +218,7 @@ const base = {
 	openalex: () => envVar("OPENALEX_BASE") || "https://api.openalex.org",
 	crossref: () => envVar("CROSSREF_BASE") || "https://api.crossref.org",
 };
-const USER_AGENT = `tabkyra/${VERSION} (https://github.com/baney75/tabkyra)`;
+const USER_AGENT = `polycarp-browser/${VERSION} (https://github.com/baney75/polycarp)`;
 
 async function get(url: string, accept: string): Promise<Response> {
 	return fetch(url, { headers: { Accept: accept, "User-Agent": USER_AGENT }, redirect: "follow", signal: AbortSignal.timeout(20_000) });

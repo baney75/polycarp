@@ -284,7 +284,13 @@ for link in "$HOME/.local/bin/polycarp-spaces" "$HOME/.local/bin/baneyspaces" "$
     case "$(readlink "$link")" in *Polycarp.app/*) rm -f "$link" ;; esac
   fi
 done
-# The browser command, only if it links into Polycarp's helper; a tabkyra Polycarp took the name from is put back.
+# The browser command, only if it links into Polycarp's helper.
+browser_link="$HOME/.local/bin/polycarp-browser"
+if [ -L "$browser_link" ]; then
+  case "$(readlink "$browser_link")" in *Polycarp.app/Contents/Resources/browser/polycarp-browser) rm -f "$browser_link" ;; esac
+fi
+# Its old name, which earlier installs made: only Polycarp's link goes, and a tabkyra an earlier install took the name from is
+# put back.
 tabkyra_link="$HOME/.local/bin/tabkyra"
 if [ -L "$tabkyra_link" ]; then
   case "$(readlink "$tabkyra_link")" in
@@ -308,8 +314,13 @@ if [ -s "$STORE/index.tsv" ]; then
     if [ "$saved" = "-" ]; then rm -f "$target"; elif [ -f "$saved" ]; then cp "$saved" "$target"; fi
   done < "$STORE/index.tsv"
 fi
+# The current host name came with Polycarp, so a list written before the rename doesn't name it: Polycarp's own manifest goes.
+for m in "$HOME/Library/Application Support"/*/NativeMessagingHosts/com.polycarp.browser.json \
+  "$HOME/Library/Application Support"/*/*/NativeMessagingHosts/com.polycarp.browser.json; do
+  if [ -f "$m" ] && grep -q "Polycarp.app" "$m"; then rm -f "$m"; fi
+done
 # END restore-browser-previous
-# Links the installer repointed on request (install.sh's retire_tabkyra) go back to what they were.
+# Links an earlier installer repointed on request (install.sh's retire_tabkyra, since removed) go back to what they were.
 retired="$HOME/Library/Application Support/Polycarp/tabkyra-retired-links"
 if [ -s "$retired" ]; then
   while IFS=$'\t' read -r link target; do

@@ -49,7 +49,7 @@ import {
 	type HostUpdateProgress,
 	type HostUpdateStatus,
 	MAX_FRAME_FROM_EXTENSION,
-	NATIVE_HOST_NAME,
+	NATIVE_HOST_NAMES,
 	PROTOCOL_VERSION,
 	UPDATE_PROGRESS_KEY,
 	UPDATE_STATUS_KEY,
@@ -119,6 +119,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 
 let port: chrome.runtime.Port | undefined;
 let reconnectDelay = RECONNECT_MIN_MS;
+/** Which of NATIVE_HOST_NAMES the next connect tries: the current name, then the one a helper from before the rename registered. */
+let hostNameIndex = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 const clients = new Map<string, ClientState>();
 const pendingDecisions = new Map<string, (decision: PermissionDecision) => void>();
@@ -795,10 +797,11 @@ function onHostMessage(message: HostToExt): void {
 	}
 }
 
-function scheduleReconnect(): void {
+/** `now` tries again at once and leaves the backoff as it is (the fallback to the old host name). */
+function scheduleReconnect(now = false): void {
 	if (reconnectTimer) return;
-	const delay = reconnectDelay;
-	reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+	const delay = now ? 0 : reconnectDelay;
+	if (!now) reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
 	reconnectTimer = setTimeout(() => {
 		reconnectTimer = undefined;
 		connect();
@@ -809,17 +812,19 @@ function connect(): void {
 	if (port) return;
 	let next: chrome.runtime.Port;
 	try {
-		next = chrome.runtime.connectNative(NATIVE_HOST_NAME);
+		next = chrome.runtime.connectNative(NATIVE_HOST_NAMES[hostNameIndex]);
 	} catch (err) {
 		console.debug("[Bridge] connectNative failed:", err);
 		scheduleReconnect();
 		return;
 	}
 	port = next;
+	let talked = false;
 	next.onMessage.addListener((message: HostToExt) => {
 		// Reset the backoff only once a host actually talks, so a host that exits at once
 		// (crash loop) is retried ever more slowly instead of every second.
 		reconnectDelay = RECONNECT_MIN_MS;
+		talked = true;
 		onHostMessage(message);
 	});
 	next.onDisconnect.addListener(() => {
@@ -827,6 +832,10 @@ function connect(): void {
 		// "Specified native messaging host not found" means the CLI installer has not run yet.
 		console.debug("[Bridge] native host disconnected:", reason);
 		if (port === next) port = undefined;
+		// No host registered under this name (or not for this extension): try the next name, the old one straight away. A host
+		// that starts and dies keeps its name, so a crash loop still backs off.
+		const unregistered = !talked && /not found|forbidden/i.test(reason);
+		if (unregistered) hostNameIndex = (hostNameIndex + 1) % NATIVE_HOST_NAMES.length;
 		subscriptionHandler?.("disconnected");
 		connectHandler?.("disconnected");
 		// The host answered these "interrupted: it may have run" and the agent may repeat them
@@ -839,7 +848,7 @@ function connect(): void {
 		clients.clear();
 		cancelQuestionsFor(undefined);
 		void stopScreencastsOwnedBy(undefined).catch(() => undefined);
-		scheduleReconnect();
+		scheduleReconnect(unregistered && hostNameIndex > 0);
 	});
 	trace("native port connected");
 	// The hello says which build runs and which build the extension folder holds now, so the host

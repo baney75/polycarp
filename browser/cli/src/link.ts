@@ -34,7 +34,7 @@ import {
 	type StatusFrame,
 } from "./link-protocol.ts";
 import { configDir, DEFAULT_GRANT, normalizePublicUrl } from "./oauth.ts";
-import { createToken, HUB_CALLER_HEADER, HUB_SCOPES_HEADER, LINK_TOKEN_NAME, pruneLinkTokens, revokeLinkTokens, revokeToken, SCOPES, serve } from "./remote.ts";
+import { createToken, HUB_HEADERS, LINK_TOKEN_NAME, pruneLinkTokens, revokeLinkTokens, revokeToken, SCOPES, serve } from "./remote.ts";
 import { installService, installServiceAsync, LINK_SERVICE, removeService, serviceFile, serviceLogHint } from "./service.ts";
 import { splitText } from "./text-split.ts";
 import { c, sym } from "./ui.ts";
@@ -520,7 +520,7 @@ export async function linkRun(): Promise<void> {
 		if (full || active.has(id)) return sendFrame(socket, { t: "error", id, message: "This device is handling too many requests." });
 		// Only these headers reach the local server, whatever the hub sent; the bearer is this process's own link token.
 		const headers: Record<string, string> = {};
-		for (const name of [...FORWARD_REQUEST_HEADERS, HUB_SCOPES_HEADER, HUB_CALLER_HEADER]) if (frame.headers[name] !== undefined) headers[name] = frame.headers[name];
+		for (const name of [...FORWARD_REQUEST_HEADERS, ...HUB_HEADERS]) if (frame.headers[name] !== undefined) headers[name] = frame.headers[name];
 		headers.authorization = `Bearer ${token}`;
 		const body = Buffer.from(frame.body, "utf8");
 		if (body.length) headers["content-length"] = String(body.length);

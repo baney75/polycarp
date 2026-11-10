@@ -1077,7 +1077,7 @@ export async function runMcpServer(options: { session?: string } = {}): Promise<
 	if (!isInstalled()) {
 		// First run from any harness completes setup; the extension reconnects on its alarm.
 		const result = install();
-		process.stderr.write(`[polycarp] installed native host manifest (${result.written.length} browser dir(s))\n`);
+		process.stderr.write(`[polycarp] installed native host manifests (${result.written.length} file(s))\n`);
 	}
 	const { server, client } = createMcpServer({ sessionFlag: options.session });
 	// Community skills, about daily, in the background: many harnesses keep this server running.

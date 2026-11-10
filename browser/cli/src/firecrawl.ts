@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { VERSION } from "./version.ts";
+import { USER_AGENT } from "./version.ts";
 import { envVar } from "./env.ts";
 import { configDir } from "./files.ts";
 
@@ -76,7 +76,7 @@ async function firecrawlPost(path: string, body: Record<string, unknown>): Promi
 	const headers: Record<string, string> = {
 		Accept: "application/json",
 		"Content-Type": "application/json",
-		"User-Agent": `tabkyra-cli/${VERSION}`,
+		"User-Agent": USER_AGENT,
 	};
 	if (key) headers.Authorization = `Bearer ${key}`;
 	const res = await fetch(new URL(path, `${base}/`), {

@@ -55,11 +55,13 @@ const SPACES: Tool = Tool {
 
 const BROWSER: Tool = Tool {
     sub: "browser",
-    product: "Tabkyra",
-    exe: "tabkyra",
-    old_exes: &[],
+    product: "the Polycarp browser helper",
+    // Also the name the helper runs under (arg0), so `ps` shows `polycarp-browser mcp`.
+    exe: "polycarp-browser",
+    // The npm command's name before the rename: installs made then still have only it.
+    old_exes: &["tabkyra"],
     env: "POLYCARP_BROWSER_BIN",
-    // The helper inside Polycarp.app is one executable with no Node needed; `tabkyra` is the same program.
+    // The helper inside Polycarp.app is one executable with no Node needed; `polycarp-browser` on PATH is the same program.
     bundled: &[
         "~/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
         "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
@@ -84,11 +86,11 @@ const VOICE: Tool = Tool {
 };
 
 const USAGE: &str = "\
-polycarp: one command for Polycarp Spaces, Tabkyra and Silas
+polycarp: one command for Polycarp Spaces, the Polycarp browser helper and Silas
 
 Usage:
   polycarp spaces [args...]    run the Spaces command
-  polycarp browser [args...]   run the Tabkyra command
+  polycarp browser [args...]   run the browser helper (polycarp-browser)
   polycarp voice               open Silas's settings in Polycarp (the Silas app only if Polycarp isn't installed)
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
   polycarp features            show or change which parts run (polycarp features --help)
@@ -384,14 +386,16 @@ fn find(tool: &Tool) -> Result<PathBuf, Miss> {
             r => note(r),
         }
     }
-    // npm gives tabkyra.cmd, not tabkyra.exe. Say so instead of "not found".
+    // npm gives polycarp-browser.cmd, not polycarp-browser.exe. Say so instead of "not found".
     if shims_matter() {
         if let Some(path) = &path {
             for dir in env::split_paths(path).filter(|d| d.is_absolute()) {
-                for ext in ["cmd", "bat"] {
-                    let cand = dir.join(format!("{}.{ext}", tool.exe));
-                    if cand.is_file() {
-                        note(Err(Miss::Script(cand)));
+                for name in std::iter::once(&tool.exe).chain(tool.old_exes) {
+                    for ext in ["cmd", "bat"] {
+                        let cand = dir.join(format!("{name}.{ext}"));
+                        if cand.is_file() {
+                            note(Err(Miss::Script(cand)));
+                        }
                     }
                 }
             }

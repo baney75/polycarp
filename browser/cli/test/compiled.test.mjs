@@ -37,7 +37,7 @@ test("compiled-mode install points the browser at the helper itself and the agen
 	mkdirSync(chrome, { recursive: true });
 	const out = execFileSync(process.execPath, [join(bundleDir, "index.js"), "install"], { env, encoding: "utf8" });
 	assert.match(out, /Wrote/);
-	const manifest = JSON.parse(readFileSync(join(chrome, "NativeMessagingHosts", "ai.tabkyra.bridge.json"), "utf8"));
+	const manifest = JSON.parse(readFileSync(join(chrome, "NativeMessagingHosts", "com.polycarp.browser.json"), "utf8"));
 	assert.equal(manifest.path, process.execPath, "the manifest names the helper, not a script");
 	assert.deepEqual(manifest.allowed_origins, ["chrome-extension://kenehmggpggpiolepbjojeenmeapgfoc/"]);
 	for (const name of ["polycarp", "polycarp-host"]) {

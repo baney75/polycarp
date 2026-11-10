@@ -43,7 +43,7 @@ const doctor = (env) => {
 	}
 	return JSON.parse(out).checks;
 };
-const manifestFile = (dir) => join(dir, "NativeMessagingHosts", "ai.tabkyra.bridge.json");
+const manifestFile = (dir) => join(dir, "NativeMessagingHosts", "com.polycarp.browser.json");
 
 test("doctor reports only browsers that are installed", { skip: !mac && "app detection is a Mac thing" }, () => {
 	const { env } = sandbox("installed");
@@ -107,7 +107,7 @@ test("second-S1: a leftover manifest does not keep an uninstalled browser listed
 	const { dirs, env } = sandbox("leftover");
 	// Chrome's data folder holds the manifest an earlier install wrote; its app is gone.
 	mkdirSync(join(dirs.Chrome, "NativeMessagingHosts"), { recursive: true });
-	writeFileSync(manifestFile(dirs.Chrome), JSON.stringify({ name: "ai.tabkyra.bridge", path: process.execPath }));
+	writeFileSync(manifestFile(dirs.Chrome), JSON.stringify({ name: "com.polycarp.browser", path: process.execPath }));
 	const hosts = doctor(env).filter((c) => c.id.startsWith("host:"));
 	assert.deepEqual(hosts.map((c) => c.id), [`host:${first}`], "Chrome is not listed: no app");
 });

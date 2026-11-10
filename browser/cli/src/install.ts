@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
-import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
+import { NATIVE_HOST_NAME, NATIVE_HOST_NAMES } from "../../src/bridge/protocol.ts";
 import { COMPILED, selfExec, selfPrefix } from "./self.ts";
 import { VERSION } from "./version.ts";
 import { envVar } from "./env.ts";
@@ -146,7 +146,7 @@ export function installedBrowserDirs(live: readonly string[] = []): BrowserDir[]
 /** The browsers that already have one of our manifests, current or not: the ones this install has been registered with. */
 export function registeredBrowserNames(): string[] {
 	return browserDirs()
-		.filter(({ dir }) => existsSync(join(dir, "NativeMessagingHosts", `${NATIVE_HOST_NAME}.json`)))
+		.filter(({ dir }) => NATIVE_HOST_NAMES.some((host) => existsSync(join(dir, "NativeMessagingHosts", `${host}.json`))))
 		.map(({ name }) => name);
 }
 
@@ -261,10 +261,11 @@ function writeLauncher(): string {
 	return hostTarget();
 }
 
-export function manifestFor(launcher: string): string {
+/** The manifest for one host name: the current one unless asked (install also writes the old name, NATIVE_HOST_NAMES). */
+export function manifestFor(launcher: string, host: string = NATIVE_HOST_NAME): string {
 	return `${JSON.stringify(
 		{
-			name: NATIVE_HOST_NAME,
+			name: host,
 			description: "Polycarp browser bridge",
 			path: launcher,
 			type: "stdio",
@@ -297,20 +298,21 @@ export function install(options: InstallOptions = {}): InstallResult {
 	// A chosen set of browsers: working launchers (a standalone Polycarp's, say) stay as they are, so nothing else is repointed.
 	const keepLaunchers = options.keepLaunchers !== false && only !== undefined && launchersWork();
 	const launcher = keepLaunchers ? hostTarget() : writeLauncher();
-	const manifest = manifestFor(launcher);
 	const written: string[] = [];
 	const skipped: string[] = [];
 
 	if (process.platform === "win32") {
-		const file = join(configDir(), `${NATIVE_HOST_NAME}.json`);
-		writeFileSync(file, manifest);
-		for (const hive of ["Google\\Chrome", "BraveSoftware\\Brave-Browser", "Microsoft\\Edge", "Chromium"]) {
-			const key = `HKCU\\Software\\${hive}\\NativeMessagingHosts\\${NATIVE_HOST_NAME}`;
-			try {
-				execFileSync("reg", ["add", key, "/ve", "/t", "REG_SZ", "/d", file, "/f"], { stdio: "ignore" });
-				written.push(key);
-			} catch {
-				skipped.push(key);
+		for (const host of NATIVE_HOST_NAMES) {
+			const file = join(configDir(), `${host}.json`);
+			writeFileSync(file, manifestFor(launcher, host));
+			for (const hive of ["Google\\Chrome", "BraveSoftware\\Brave-Browser", "Microsoft\\Edge", "Chromium"]) {
+				const key = `HKCU\\Software\\${hive}\\NativeMessagingHosts\\${host}`;
+				try {
+					execFileSync("reg", ["add", key, "/ve", "/t", "REG_SZ", "/d", file, "/f"], { stdio: "ignore" });
+					written.push(key);
+				} catch {
+					skipped.push(key);
+				}
 			}
 		}
 		return { launcher, written, skipped };
@@ -320,14 +322,18 @@ export function install(options: InstallOptions = {}): InstallResult {
 		if (!existsSync(dir)) continue;
 		if (only !== undefined && !only.includes(name)) continue;
 		const hostsDir = join(dir, "NativeMessagingHosts");
-		const file = join(hostsDir, `${NATIVE_HOST_NAME}.json`);
-		if (!options.force && existsSync(file) && readFileSync(file, "utf8") === manifest) {
-			skipped.push(file);
-			continue;
+		// The old name too, so an extension built before the rename still finds the helper.
+		for (const host of NATIVE_HOST_NAMES) {
+			const file = join(hostsDir, `${host}.json`);
+			const manifest = manifestFor(launcher, host);
+			if (!options.force && existsSync(file) && readFileSync(file, "utf8") === manifest) {
+				skipped.push(file);
+				continue;
+			}
+			mkdirSync(hostsDir, { recursive: true });
+			writeFileSync(file, manifest);
+			written.push(file);
 		}
-		mkdirSync(hostsDir, { recursive: true });
-		writeFileSync(file, manifest);
-		written.push(file);
 	}
 	return { launcher, written, skipped };
 }

@@ -26,7 +26,7 @@ export const SILENT_MS = 60_000;
 /** One chunk frame carries at most this much text, well inside MAX_FRAME_BYTES. */
 export const CHUNK_BYTES = 256_000;
 
-/** The only request headers a hub forwards to a device (lower case), besides the two hub headers. */
+/** The only request headers a hub forwards to a device (lower case), besides the hub headers (remote.ts HUB_HEADERS). */
 export const FORWARD_REQUEST_HEADERS = ["content-type", "accept", "mcp-session-id", "mcp-protocol-version", "last-event-id"] as const;
 /** The only response headers a device sends back. */
 export const FORWARD_RESPONSE_HEADERS = ["content-type", "mcp-session-id", "cache-control", "mcp-protocol-version"] as const;

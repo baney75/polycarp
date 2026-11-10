@@ -36,7 +36,9 @@ describe("searx", () => {
 	});
 
 	it("queries the JSON API", async () => {
+		let agent;
 		const srv = createServer((req, res) => {
+			agent = req.headers["user-agent"];
 			assert.match(req.url, /\/search\?/);
 			assert.match(req.url, /format=json/);
 			res.writeHead(200, { "content-type": "application/json" });
@@ -45,9 +47,10 @@ describe("searx", () => {
 		await new Promise((r) => srv.listen(0, "127.0.0.1", r));
 		const { port } = srv.address();
 		process.env.SEARXNG_URL = `http://127.0.0.1:${port}`;
-		const out = await searxSearch("tabkyra");
+		const out = await searxSearch("polycarp");
 		srv.close();
-		assert.equal(out.query, "tabkyra");
+		assert.match(agent, /^polycarp-browser\/\d/, "the helper names itself polycarp-browser, not tabkyra-cli");
+		assert.equal(out.query, "polycarp");
 		assert.equal(out.results.length, 1);
 		assert.equal(out.results[0].url, "https://example.com/a");
 	});

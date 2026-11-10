@@ -45,11 +45,27 @@ A test that passed proves the logic, not what the user sees. Say which one you r
 ## Names that keep the old name
 The product is Polycarp: the manifest name, toolbar title, side panel, settings, onboarding, debug page, errors and the
 helper's output all say so, and `polycarp browser <command>` is the command the text gives. `test/product-name.test.mjs` fails
-when "Tabkyra" appears in a user-visible string. These stay as they are on purpose, because agents and hooks on the owner's
-machines call them, and no person reads them:
-- the `tabkyra` command, as an alias for `polycarp browser`
-- every MCP tool name. The server itself is `polycarp`, so Claude Code's qualified names are `mcp__polycarp__*`. `harness.ts` moves an entry under the old name `tabkyra` when it runs this helper, and `moveClaudeRules` moves the permission rules that named it
-- the native host name `ai.tabkyra.bridge`
+when "Tabkyra" appears in a user-visible string, and when a renamed identifier below comes back anywhere but its named fallback.
+
+Renamed, with a fallback for installs made before the rename. The fallbacks stay until no supported helper, extension or hub
+build predates the rename; then remove them in one change and lower the counts in `RENAMED_ALLOWED` (product-name test):
+- the native host is `com.polycarp.browser` (`NATIVE_HOST_NAME`). `install` also writes `ai.tabkyra.bridge`
+  (`LEGACY_NATIVE_HOST_NAME`), so an older extension connects; the extension asks for the new name, then the old one, and keeps
+  the one that answered. `doctor` and `status` check the new one. Polycarp.app records, parks and restores both
+  (`BrowserPrevious.hostNames`).
+- the socket folder is `/tmp/polycarp-bridge-<user>`; clients (`listSockets`, the generated pi extension) also look in
+  `/tmp/tabkyra-bridge-<user>`, where a host started by an older helper is. `POLYCARP_SOCKET_DIR` replaces both.
+- the hub headers are `x-polycarp-hub-scopes` and `x-polycarp-hub-caller`. A hub sends them under the old `x-tabkyra-hub-*`
+  names too, because an older device reads only those and without a scopes header gives the caller its link token's whole cap;
+  a device reads either, the new one first.
+- `User-Agent` is `polycarp-browser/<version>` (`USER_AGENT` in `cli/src/version.ts`).
+- the npm package installs only `polycarp-browser` (the `tabkyra` and `sitegeist` bin aliases are gone). `polycarp browser`
+  runs the helper as `polycarp-browser`, which is what `ps` shows, and still finds a `tabkyra` on PATH or in its older spots.
+  `COMMAND_NAME` says `tabkyra` only for an npm link made before the rename. Polycarp.app's installer still links
+  `~/.local/bin/tabkyra` (`spaces/scripts/install-app.sh`), and shell completion still covers that name.
+
+These stay as they are on purpose, because agents, hooks or stored data depend on them, and no person reads them:
+- every MCP tool name. The server itself is `polycarp`, so Claude Code's qualified names are `mcp__polycarp__*`. `harness.ts` moves an entry under the old name `tabkyra` when it runs this helper, and `moveClaudeRules` moves the permission rules that named it. An entry that runs `~/.config/tabkyra/tabkyra mcp`, or a `tabkyra` that no longer resolves, is stale and `setup` rewrites it
 - the manifest `key` (it keeps the extension id)
 - the helper's folders are `~/.config/polycarp/browser`, `~/.local/share/polycarp/browser` and `~/.cache/polycarp`
   (`~/.config/polycarp` itself is the app's). `cli/src/migrate.ts` moves the old `tabkyra` ones once and leaves a symlink
@@ -57,11 +73,11 @@ machines call them, and no person reads them:
   `com.polycarp.*`. Read variables through `envVar("NAME")` (`cli/src/env.ts`): `POLYCARP_NAME` wins, `TABKYRA_NAME` is the
   fallback. The helper's config folder is `POLYCARP_BROWSER_CONFIG_DIR` (or `TABKYRA_CONFIG_DIR`), never `POLYCARP_CONFIG_DIR`,
   which is the app's. Tests and fixtures set the first one.
-- `/tmp/tabkyra-bridge-<user>` (the socket folder), the `x-tabkyra-hub-*` headers and `User-Agent: tabkyra-cli`, until the next change
 - the extension's stored data: storage keys, database names and the `TabkyraAppStorage` class
 - the name OpenAI lists for a ChatGPT sign-in made before the rename: its saved client stays registered as "Tabkyra", so the unconfirmed-revoke note names it
-- the tab group title "Tabkyra · ..." that earlier versions made, which is still recognized and tidied
-Every command the CLI prints (`doctor`, `status`, errors, usage, services, the setup prompts) is built from `COMMAND_NAME` in `cli/src/self.ts`: `polycarp browser` inside the app, `polycarp-browser` for an npm link or checkout (`tabkyra` stays as a bin alias). The extension's commands for this computer come from `hostCommand()` (`src/bridge/host-command.ts`), which reads the name from the helper's update status; build them when shown, never in a module-level constant. A prompt for another device (`deviceSetupPrompt`) carries no name: the agent there finds which of the two runs. Write these strings as template literals; `cli/test/rendered-names.test.mjs` fails on a quoted string that holds `${COMMAND_NAME}`.
+- the tab group title "Tabkyra · ..." that earlier versions made, which is still recognized and tidied; new groups say "Polycarp · ..."
+- the `tabkyra` skill, the theme preset `tabkyra`, the npm package name `tabkyra` (`checkout.ts` finds a checkout by it), the bearer realm `tabkyra` and the keepalive alarm's name
+Every command the CLI prints (`doctor`, `status`, errors, usage, services, the setup prompts) is built from `COMMAND_NAME` in `cli/src/self.ts`: `polycarp browser` inside the app, `polycarp-browser` for an npm link or checkout. The extension's commands for this computer come from `hostCommand()` (`src/bridge/host-command.ts`), which reads the name from the helper's update status; build them when shown, never in a module-level constant. A prompt for another device (`deviceSetupPrompt`) carries no name: the agent there finds which of the two runs. Write these strings as template literals; `cli/test/rendered-names.test.mjs` fails on a quoted string that holds `${COMMAND_NAME}`.
 Skills under `skills/` and the docs and README still say Tabkyra; they are not rewritten yet.
 
 ## Inside Polycarp (single executable)

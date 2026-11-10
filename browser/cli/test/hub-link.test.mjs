@@ -148,8 +148,10 @@ test("scope intersection: the caller gets only what both their grant and the dev
 	assert.deepEqual(scripter.tools, toolsOf("browser.read"), "browser.script is not in the device's cap, so run_js is not offered");
 	assert.ok(!scripter.tools.includes("run_js"));
 
-	// Headers a public client sends under x-tabkyra-hub-* are dropped at the hub.
+	// Headers a public client sends under the hub header names, new or old, are dropped at the hub.
 	const spoof = await rawTools(url, createToken(hub, "spoofer", "browser.read"), {
+		"x-polycarp-hub-scopes": "browser.read,browser.act,browser.script,threads.read",
+		"x-polycarp-hub-caller": "someone-else",
 		"x-tabkyra-hub-scopes": "browser.read,browser.act,browser.script,threads.read",
 		"x-tabkyra-hub-caller": "someone-else",
 	});
@@ -164,7 +166,7 @@ test("scope intersection: the caller gets only what both their grant and the dev
 	assert.deepEqual(readOnly.tools, toolsOf("browser.read"), "the device's wider cap never widens a narrower caller");
 });
 
-test("a plain serve token ignores x-tabkyra-hub-* headers, and a link token works nowhere but link run", async () => {
+test("a plain serve token ignores the hub headers under either name, and a link token works nowhere but link run", async () => {
 	const m = machine(root, "plain-serve");
 	const secret = createToken(m, "narrow", "browser.read");
 	// A link-kind record with a known secret, as if copied from a device.
@@ -192,7 +194,7 @@ test("a plain serve token ignores x-tabkyra-hub-* headers, and a link token work
 			setTimeout(() => reject(new Error(`serve didn't start: ${out}`)), 15_000);
 		});
 	}
-	const forged = { "x-tabkyra-hub-scopes": "browser.script,browser.act,threads.read", "x-tabkyra-hub-caller": "evil" };
+	const forged = { "x-polycarp-hub-scopes": "browser.script,browser.act,threads.read", "x-polycarp-hub-caller": "evil", "x-tabkyra-hub-scopes": "browser.script,browser.act,threads.read", "x-tabkyra-hub-caller": "evil" };
 	const plain = await rawTools(`http://127.0.0.1:${port}/mcp`, secret, forged);
 	assert.deepEqual(plain.tools, toolsOf("browser.read"), "headers on an ordinary token are ignored");
 	for (const base of [`http://127.0.0.1:${port}`, `http://127.0.0.1:${publicPort}`]) {

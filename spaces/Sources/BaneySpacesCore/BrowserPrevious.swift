@@ -5,7 +5,12 @@ import Foundation
 /// puts them back, or removes the ones Polycarp made where there was nothing. Recorded once; a file that already points into
 /// Polycarp.app is never recorded as "previous". This only reads and copies: nothing of the browsers is changed or removed.
 public enum BrowserPrevious {
-    public static let hostName = "ai.tabkyra.bridge"
+    /// The native host name the helper registers (browser/src/bridge/protocol.ts NATIVE_HOST_NAME).
+    public static let hostName = "com.polycarp.browser"
+    /// The name from before the rename. The helper still writes it, so an older extension connects; it is recorded,
+    /// parked and restored like the new one.
+    public static let legacyHostName = "ai.tabkyra.bridge"
+    public static let hostNames = [hostName, legacyHostName]
     public static let indexName = "index.tsv"
 
     /// Every file `install --force` may write on a Mac (the list is `browserDirs()` in browser/cli/src/install.ts).
@@ -15,7 +20,9 @@ public enum BrowserPrevious {
                         "BraveSoftware/Brave-Browser", "Microsoft Edge", "Arc/User Data", "Vivaldi", "com.operasoftware.Opera"]
         let config = home.appendingPathComponent(".config/tabkyra", isDirectory: true)
         return [config.appendingPathComponent("host"), config.appendingPathComponent("tabkyra")]
-            + browsers.map { support.appendingPathComponent($0).appendingPathComponent("NativeMessagingHosts/\(hostName).json") }
+            + browsers.flatMap { browser in
+                hostNames.map { support.appendingPathComponent(browser).appendingPathComponent("NativeMessagingHosts/\($0).json") }
+            }
     }
 
     /// Writes down the current state of each path under `store`. Does nothing if it was done before.

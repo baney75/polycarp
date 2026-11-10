@@ -148,7 +148,7 @@ test("second-S1: a browser with a leftover data folder and no app is not listed,
 	const support = join(root, "home", "Library", "Application Support");
 	mkdirSync(join(support, "BraveSoftware", "Brave-Browser", "NativeMessagingHosts"), { recursive: true });
 	// A manifest an earlier install wrote proves nothing: the app is gone.
-	writeFileSync(join(support, "BraveSoftware", "Brave-Browser", "NativeMessagingHosts", "ai.tabkyra.bridge.json"), JSON.stringify({ name: "ai.tabkyra.bridge", path: "/bin/echo" }));
+	writeFileSync(join(support, "BraveSoftware", "Brave-Browser", "NativeMessagingHosts", "com.polycarp.browser.json"), JSON.stringify({ name: "com.polycarp.browser", path: "/bin/echo" }));
 	assert.equal((await doctor()).some((c) => c.id === "host:Brave"), false);
 	await fakeHost(process.pid, "Brave", "1.1.10");
 	assert.equal((await doctor()).some((c) => c.id === "host:Brave"), true, "a live connection names it");

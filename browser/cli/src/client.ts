@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type { ClientToHost, HostToClient, RpcError } from "../../src/bridge/protocol.ts";
 import { ERR, isIdempotent, MAX_FRAME_FROM_EXTENSION } from "../../src/bridge/protocol.ts";
 import { encodeFrame, FrameParser } from "./framing.ts";
-import { assertSecurePath, socketDir } from "./paths.ts";
+import { assertSecurePath, socketDirs } from "./paths.ts";
 import { VERSION } from "./version.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
@@ -62,15 +62,32 @@ export interface ClientOptions {
 	requestTimeoutMs?: number;
 }
 
-/** Live sockets, newest host first. */
-export function listSockets(): string[] {
-	const dir = socketDir();
-	if (process.platform === "win32") return [dir];
-	if (!existsSync(dir)) return [];
-	assertSecurePath(dir, "dir");
-	return readdirSync(dir)
-		.filter((n) => n.endsWith(".sock"))
-		.map((n) => join(dir, n))
+/**
+ * Live sockets, newest host first, from every folder in `dirs` (the socket folder and the one older helpers used). The first
+ * folder must be safe or this throws; a later one that isn't is skipped.
+ */
+export function listSockets(dirs: readonly string[] = socketDirs()): string[] {
+	if (process.platform === "win32") return [...dirs];
+	const found: string[] = [];
+	dirs.forEach((dir, i) => {
+		if (!existsSync(dir)) return;
+		try {
+			assertSecurePath(dir, "dir");
+		} catch (err) {
+			if (i === 0) throw err;
+			return;
+		}
+		for (const n of readdirSync(dir)) if (n.endsWith(".sock")) found.push(join(dir, n));
+	});
+	// A host listens in both folders (paths.ts legacySocketPath): keep its socket in the first one.
+	const seen = new Set<string>();
+	return found
+		.filter((p) => {
+			const name = p.slice(p.lastIndexOf("/") + 1);
+			if (seen.has(name)) return false;
+			seen.add(name);
+			return true;
+		})
 		.filter((p) => {
 			const pid = Number.parseInt(p.slice(p.lastIndexOf("/") + 1), 10);
 			try {

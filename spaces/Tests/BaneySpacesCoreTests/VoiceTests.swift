@@ -375,7 +375,7 @@ final class BrowserPreviousTests: XCTestCase {
 
     func testTheOldManifestAndLauncherAreWrittenDownOnce() throws {
         let h = home(), store = home()
-        let chrome = h.appendingPathComponent("Library/Application Support/Google/Chrome/NativeMessagingHosts/ai.tabkyra.bridge.json")
+        let chrome = h.appendingPathComponent("Library/Application Support/Google/Chrome/NativeMessagingHosts/com.polycarp.browser.json")
         write("old manifest", chrome)
         write("old launcher", h.appendingPathComponent(".config/tabkyra/host"))
         XCTAssertTrue(BrowserPrevious.record(home: h, store: store))
@@ -399,7 +399,7 @@ final class BrowserPreviousTests: XCTestCase {
 
     func testUninstallPutsThemBackOrRemovesWhatPolycarpMade() throws {
         let h = home(), store = home()
-        let chrome = h.appendingPathComponent("Library/Application Support/Google/Chrome/NativeMessagingHosts/ai.tabkyra.bridge.json")
+        let chrome = h.appendingPathComponent("Library/Application Support/Google/Chrome/NativeMessagingHosts/com.polycarp.browser.json")
         let host = h.appendingPathComponent(".config/tabkyra/host")
         let cli = h.appendingPathComponent(".config/tabkyra/tabkyra")
         write("old manifest", chrome); write("old launcher", host)
@@ -423,6 +423,76 @@ final class BrowserPreviousTests: XCTestCase {
     }
 }
 
+final class BrowserHostNameTests: XCTestCase {
+    private func home() -> URL {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("bh-\(UUID().uuidString)")
+        try! FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: d) }
+        return d
+    }
+    private func write(_ s: String, _ url: URL) {
+        try! FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try! Data(s.utf8).write(to: url)
+    }
+    private func hosts(_ h: URL, _ browser: String) -> URL {
+        h.appendingPathComponent("Library/Application Support/\(browser)/NativeMessagingHosts")
+    }
+    private func uninstallBlock(home h: URL, store: URL) throws -> Int32 {
+        let sh = try Repo.text("uninstall.sh")
+        let from = try XCTUnwrap(sh.range(of: "# BEGIN restore-browser-previous"))
+        let to = try XCTUnwrap(sh.range(of: "# END restore-browser-previous"))
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-c", "set -eu; STORE='\(store.path)'; \(String(sh[from.upperBound..<to.lowerBound]))"]
+        p.environment = ["HOME": h.path, "PATH": "/usr/bin:/bin"]
+        try p.run(); p.waitUntilExit()
+        return p.terminationStatus
+    }
+
+    func testTheHelperRegistersTheNewNameAndTheOldOneIsStillKnown() {
+        XCTAssertEqual(BrowserPrevious.hostName, "com.polycarp.browser")
+        XCTAssertEqual(BrowserPrevious.hostNames, ["com.polycarp.browser", "ai.tabkyra.bridge"])
+        let names = BrowserPrevious.paths(home: URL(fileURLWithPath: "/h")).map(\.lastPathComponent)
+        XCTAssertEqual(names.filter { $0 == "com.polycarp.browser.json" }.count, 10)
+        XCTAssertEqual(names.filter { $0 == "ai.tabkyra.bridge.json" }.count, 10)
+    }
+
+    func testBothNamesAreRecordedAndUninstallPutsTheOldBackAndRemovesTheNew() throws {
+        let h = home(), store = home()
+        let dir = hosts(h, "Google/Chrome")
+        let old = dir.appendingPathComponent("ai.tabkyra.bridge.json"), new = dir.appendingPathComponent("com.polycarp.browser.json")
+        write("old manifest", old)
+        XCTAssertTrue(BrowserPrevious.record(home: h, store: store))
+        let index = try String(contentsOf: store.appendingPathComponent("index.tsv"))
+        XCTAssertTrue(index.contains(old.path) && index.contains("\(new.path)\t-"), index)
+        write("{\"path\":\"/Applications/Polycarp.app/h\"}", old); write("{\"path\":\"/Applications/Polycarp.app/h\"}", new)
+        XCTAssertEqual(try uninstallBlock(home: h, store: store), 0)
+        XCTAssertEqual(try String(contentsOf: old), "old manifest")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: new.path))
+    }
+
+    func testAListFromBeforeTheRenameStillLosesPolycarpsNewManifestButNotAStandaloneOne() throws {
+        let h = home(), store = home()
+        let chrome = hosts(h, "Google/Chrome").appendingPathComponent("com.polycarp.browser.json")
+        let brave = hosts(h, "BraveSoftware/Brave-Browser").appendingPathComponent("com.polycarp.browser.json")
+        // An index from before the rename lists only the old name.
+        write("\(hosts(h, "Google/Chrome").appendingPathComponent("ai.tabkyra.bridge.json").path)\t-\n", store.appendingPathComponent("index.tsv"))
+        write("{\"path\":\"/Applications/Polycarp.app/h\"}", chrome)
+        write("{\"path\":\"/Users/x/.config/polycarp/browser/polycarp-host\"}", brave)
+        XCTAssertEqual(try uninstallBlock(home: h, store: store), 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: chrome.path), "Polycarp's own goes")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: brave.path), "a standalone helper's stays")
+    }
+
+    func testTurningBrowserOffParksBothNames() throws {
+        let h = home()
+        let dir = hosts(h, "Vivaldi")
+        for name in BrowserPrevious.hostNames { write("{\"path\":\"/Applications/Polycarp.app/x\"}", dir.appendingPathComponent("\(name).json")) }
+        XCTAssertEqual(BrowserHosts.setEnabled(false, home: h), 2)
+        XCTAssertEqual(BrowserHosts.setEnabled(true, home: h), 2)
+    }
+}
+
 final class BrowserPathTests: XCTestCase {
     func testTheHelperGetsTheLoginPathThenTheUsualFolders() {
         let p = BrowserBundle.path(base: "/usr/bin:/bin", loginPath: "/Users/x/.nvm/bin:/opt/homebrew/bin:/usr/bin", home: "/Users/x")
@@ -434,7 +504,7 @@ final class BrowserPathTests: XCTestCase {
     }
 }
 
-final class InstallerTabkyraAndLoginPathTests: XCTestCase {
+final class InstallerLoginPathTests: XCTestCase {
     private func temp() -> URL {
         let d = FileManager.default.temporaryDirectory.appendingPathComponent("itl-\(UUID().uuidString)")
         try! FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
@@ -445,49 +515,6 @@ final class InstallerTabkyraAndLoginPathTests: XCTestCase {
         try! FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try! Data("#!/bin/sh\n\(body)\n".utf8).write(to: url)
         try! FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
-    }
-
-    /// Runs install-app.sh --in-place on a fake Polycarp.app in a temp HOME; returns that HOME.
-    private func install(path: String, tabkyraDirs: String) throws -> URL {
-        let home = temp()
-        let app = temp().appendingPathComponent("Polycarp.app")
-        script("exit 0", at: app.appendingPathComponent("Contents/Resources/browser/polycarp-browser"))
-        script("exit 0", at: app.appendingPathComponent("Contents/Resources/bin/polycarp-spaces"))
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/bash")
-        p.arguments = [Repo.root.appendingPathComponent("scripts/install-app.sh").path, "--in-place", app.path]
-        p.environment = ["HOME": home.path, "PATH": path, "SHELL": "/usr/bin/false", "POLYCARP_TABKYRA_DIRS": tabkyraDirs,
-                         "BANEYSPACES_DEST_DIR": temp().path, "BANEYSPACES_NO_LAUNCH": "1"]
-        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-        try p.run(); p.waitUntilExit()
-        return home
-    }
-
-    func testAWorkingTabkyraOnThePathKeepsTheName() throws {
-        let stubs = temp()
-        script("exit 0", at: stubs.appendingPathComponent("tabkyra"))
-        let home = try install(path: "\(stubs.path):/usr/bin:/bin", tabkyraDirs: temp().path)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".local/bin/tabkyra").path), "~/.local/bin/tabkyra was not made")
-    }
-
-    func testAWorkingTabkyraInTheHomebrewFolderKeepsTheName() throws {
-        let brew = temp()
-        script("exit 0", at: brew.appendingPathComponent("tabkyra"))
-        let home = try install(path: "/usr/bin:/bin", tabkyraDirs: brew.path)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".local/bin/tabkyra").path))
-    }
-
-    func testNoOtherTabkyraMeansPolycarpsLinkIsMade() throws {
-        let home = try install(path: "/usr/bin:/bin", tabkyraDirs: temp().path)
-        let link = home.appendingPathComponent(".local/bin/tabkyra")
-        XCTAssertTrue((try? FileManager.default.destinationOfSymbolicLink(atPath: link.path))?.hasSuffix("browser/polycarp-browser") == true)
-    }
-
-    func testABrokenTabkyraDoesNotKeepTheName() throws {
-        let brew = temp()
-        script("exit 1", at: brew.appendingPathComponent("tabkyra"))
-        let home = try install(path: "/usr/bin:/bin", tabkyraDirs: brew.path)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: home.appendingPathComponent(".local/bin/tabkyra").path))
     }
 
     func testTheLoginPathReadsWithinItsDeadlineEvenIfTheProfileLeavesAProcessBehind() {

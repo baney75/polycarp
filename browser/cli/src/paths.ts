@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { lstatSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,13 +7,47 @@ import { envVar } from "./env.ts";
 
 /**
  * Socket directory: per user, outside $TMPDIR so every process finds the same path.
- * TABKYRA_SOCKET_DIR overrides it (tests run a private bridge this way).
+ * POLYCARP_SOCKET_DIR (or TABKYRA_SOCKET_DIR) overrides it (tests run a private bridge this way).
  */
 export function socketDir(): string {
-	if (process.platform === "win32") return `\\\\.\\pipe\\tabkyra-bridge-${userInfo().username}`;
+	return socketDirs()[0];
+}
+
+/**
+ * Where clients look for hosts: the socket directory, then the one a host started by a helper from before the rename made
+ * (`tabkyra-bridge-<user>`), so that host is still found while the browser runs it. An override is the only place.
+ * Drop the old one once no supported helper predates the rename.
+ */
+export function socketDirs(): string[] {
+	const user = userInfo().username;
+	if (process.platform === "win32") return [`\\\\.\\pipe\\polycarp-bridge-${user}`, `\\\\.\\pipe\\tabkyra-bridge-${user}`];
 	const override = envVar("SOCKET_DIR");
-	if (override) return override;
-	return `/tmp/tabkyra-bridge-${userInfo().username}`;
+	if (override) return [override];
+	return [`/tmp/polycarp-bridge-${user}`, `/tmp/tabkyra-bridge-${user}`];
+}
+
+/**
+ * Where a host also listens so a client from before the rename (it looks only in `tabkyra-bridge-<user>`) still finds it,
+ * or undefined: on Windows, under an override, or when that folder isn't private to this user (another user may have made
+ * it after a reboot cleared /tmp). Drop it with the fallback in socketDirs().
+ */
+export function legacySocketPath(pid: number): string | undefined {
+	if (process.platform === "win32" || envVar("SOCKET_DIR")) return undefined;
+	const dir = socketDirs()[1];
+	try {
+		mkdirSync(dir, { mode: 0o700 });
+	} catch {
+		/* already there: checked below */
+	}
+	try {
+		const st = lstatSync(dir);
+		if (!st.isDirectory() || st.uid !== process.getuid?.() || (st.mode & 0o777) !== 0o700) return undefined;
+	} catch {
+		return undefined;
+	}
+	const path = join(dir, `${pid}.sock`);
+	rmSync(path, { force: true });
+	return path;
 }
 
 export function socketPath(pid: number): string {
