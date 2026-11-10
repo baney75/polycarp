@@ -24,7 +24,7 @@ final class AgentAccessModeTests: XCTestCase {
 
     func testTheFullAccessTextSaysWhatStillHolds() {
         let d = AgentAccessMode.full.detail
-        for kept in ["bring an app forward", "move your pointer", "30 seconds", "Open or Save panel"] {
+        for kept in ["bring an app forward", "move your pointer", "waits until it has been out of the front for \(Int(UserUse.quiet)) seconds", "Open or Save panel"] {
             XCTAssertTrue(d.contains(kept), "Full Access says it keeps: \(kept)")
         }
     }
@@ -44,8 +44,11 @@ final class FullAccessScopeTests: XCTestCase {
     }
 
     func testFullAccessStillWaitsWhileDonovanUsesTheApp() {
-        guard case .denied(let e) = ScopeGuard.check(win(2), agentWorkspace: 9, lends: LendBook(), now: now, inUse: true, mode: .full) else { return XCTFail() }
-        XCTAssertEqual(e.code, .inUse)
+        XCTAssertEqual(ScopeGuard.check(win(2), agentWorkspace: 9, lends: LendBook(), now: now, mode: .full), .fullAccess, "in scope: reads work")
+        for verb in AgentAccessGate.changes {
+            XCTAssertEqual(InUseRule.decide(verb: verb, state: .front, onAgentWorkspace: false, isFocusedWindow: false, isMainWindow: false, delivery: .headlessAX), .wait,
+                           "\(verb) on one of his windows waits while he uses the app")
+        }
     }
 
     /// Review r1 (first-F4): Settings and the consent sheets are never an agent's.
@@ -251,9 +254,9 @@ final class AgentAccessSurfaceTests: XCTestCase {
         XCTAssertTrue(decide.contains("selfPid: getpid()"), "BaneySpaces' own windows (first-F4)")
         XCTAssertTrue(decide.contains("d == .onAgentWorkspace, mode != .full, AgentAccess.shared.grantedUnderFull(w.pid)"), "grants end with Full Access (first-F1)")
         let act = try XCTUnwrap(HandsSourceTests.block(after: "private func act(", in: router))
-        XCTAssertTrue(act.contains("check: actingCheck(w, ref: ref))"), "Read Only at delivery (sol-F2)")
+        XCTAssertTrue(act.contains("check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX))"), "Read Only at delivery (sol-F2)")
         let bg = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
-        XCTAssertTrue(bg.contains("let scopeCheck = actingCheck(w, ref: ref)"), "and for keys and pointer, retries included")
+        XCTAssertTrue(bg.contains("let scopeCheck = actingCheck(w, ref: ref, verb: name, delivery: .posted)"), "and for keys and pointer, retries included")
         XCTAssertTrue(bg.contains("access == .full && !owned.contains(w.pid) ? .full : .agentWorkspace"), "sol-F3")
         let session = try HandsSourceTests.code("Sources/BaneySpaces/Session/SessionController.swift")
         let open = try XCTUnwrap(HandsSourceTests.between("case \"open\":", "case \"lend-ask\":", in: session))

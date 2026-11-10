@@ -14,7 +14,9 @@ enum HandsCLI {
     }
 
     /// Sends one request to the app and returns its envelope. Nothing here can fail without saying why.
-    static func send(_ request: HandsRequest, timeout: Double = 180, caller: String? = nil) -> HandsEnvelope {
+    /// `timeout` defaults to 180 s plus the in-use wait the request asked for, so a long `wait` never looks like a lost answer.
+    static func send(_ request: HandsRequest, timeout: Double? = nil, caller: String? = nil) -> HandsEnvelope {
+        let timeout = timeout ?? 180 + (AgentAccessGate.changes.contains(request.verb) ? InUseRule.bound(request.int("wait")) : 0)
         guard remoteHost == nil else {
             return .failure(HandsError(.badArguments, "agent commands run on this Mac only", suggestion: "Run `polycarp-spaces agent …` on the machine whose apps you want to drive.", retry: .never))
         }

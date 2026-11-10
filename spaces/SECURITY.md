@@ -30,7 +30,10 @@ not a public issue.
   agent workspace, apps on the short list, apps you lend. It can't lend, can't use Open or Save panels, and never gets Full Access.
 - **Agent access.** Settings > Agents sets what agent tools may use: Read Only, Default (the agent
   workspace and apps you lend) or Full Access (every window on every workspace, and any app, still
-  from behind and never while you are using the app). Only a real click in BaneySpaces widens it;
+  from behind). In every mode agents may read a window of an app you are using, and an action on it waits
+  until the app has been out of the front for 5 seconds (up to the action's `wait`, 20 s by default); only
+  accessibility actions on a background window of that app on the agent workspace, which take no keyboard focus
+  and post no events, go ahead without waiting. Only a real click in BaneySpaces widens it;
   the socket can read it but never change it, and `agent open` from another machine never gets
   more than Default. `agent run` from another machine already runs any command as you, so the
   mode doesn't change what it can do.

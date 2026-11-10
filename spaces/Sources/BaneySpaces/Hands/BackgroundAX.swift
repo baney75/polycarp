@@ -92,6 +92,25 @@ enum BackgroundAX {
         return (window, el, w, w == nil)
     }
 
+    /// Whether `window` is the app's focused window and whether it is its main window (`AXFocusedWindow`, `AXMainWindow`),
+    /// for the in-use rule: an accessibility action on a window that is neither may go ahead while Donovan uses the app.
+    /// An app that says it has no such window answers false; one that can't be read, or a window that can't be mapped to an
+    /// id, answers nil, which never lets an action through.
+    static func isFocusedOrMain(_ window: UInt32, pid: pid_t) -> (focused: Bool?, main: Bool?) {
+        let a = app(pid)
+        func matches(_ attribute: String) -> Bool? {
+            var out: CFTypeRef?
+            switch AXUIElementCopyAttributeValue(a, attribute as CFString, &out) {
+            case .success:
+                guard let out, CFGetTypeID(out) == AXUIElementGetTypeID(), let id = windowID(of: out as! AXUIElement) else { return nil }
+                return id == window
+            case .noValue: return false
+            default: return nil
+            }
+        }
+        return (matches(kAXFocusedWindowAttribute), matches(kAXMainWindowAttribute))
+    }
+
     /// A reading of one element: what it is (role and frame), what it holds (hashed), what is selected.
     static func reading(of e: AXUIElement) -> ElementReading {
         let role = (copy(e, kAXRoleAttribute) as? String) ?? ""

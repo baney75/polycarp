@@ -143,13 +143,18 @@ final class ScopeGuardTests: XCTestCase {
         XCTAssertFalse(ScopeGuard.check(win(2, id: 9, pid: 5, app: "Notes", bundle: "com.apple.Notes"), agentWorkspace: 9, lends: b, now: now).allowed)
     }
 
-    func testALentAppTheUserIsUsingIsRefusedWithInUse() {
-        guard case .denied(let e) = ScopeGuard.check(win(2), agentWorkspace: 9, lends: book(), now: now, inUse: true) else { return XCTFail() }
+    /// 2026-11-10: in use is no longer scope. A lent app he is using stays in scope (reads work), and an action on it waits.
+    func testALentAppTheUserIsUsingStaysInScopeAndItsActionsWait() {
+        XCTAssertEqual(ScopeGuard.check(win(2), agentWorkspace: 9, lends: book(), now: now), .lent)
+        XCTAssertEqual(ScopeGuard.check(win(9), agentWorkspace: 9, lends: book(), now: now), .onAgentWorkspace)
+        for state in [InUseState.front, .recent(leftAgo: 1, freeIn: 4)] {
+            XCTAssertEqual(InUseRule.decide(verb: "click", state: state, onAgentWorkspace: false, isFocusedWindow: false, isMainWindow: false, delivery: .headlessAX), .wait,
+                           "his hands are on the lent app: the action waits")
+            XCTAssertEqual(InUseRule.decide(verb: "snapshot", state: state, onAgentWorkspace: false, isFocusedWindow: true, isMainWindow: true, delivery: .headlessAX), .proceed)
+        }
+        let e = InUseWait.refusal(app: "TextEdit", state: .front, waited: 20)
         XCTAssertEqual(e.code, .inUse)
         XCTAssertEqual(e.retry, .safe)
-        guard case .denied(let onAgentWorkspace) = ScopeGuard.check(win(9), agentWorkspace: 9, lends: book(), now: now, inUse: true) else { return XCTFail("his hands are on it, wherever it lives") }
-        XCTAssertEqual(onAgentWorkspace.code, .inUse)
-        XCTAssertEqual(ScopeGuard.check(win(9), agentWorkspace: 9, lends: book(), now: now, inUse: false), .onAgentWorkspace)
     }
 
     func testLendsEndByReturnTimeoutOrSession() {
@@ -340,14 +345,14 @@ final class PolicyTests: XCTestCase {
         XCTAssertEqual(ValueCheck.set(before: "a", after: "a", expected: "b").verified, false)
     }
 
-    func testTheUserUsingAnAppIsTrackedForThirtySeconds() {
+    func testTheUserUsingAnAppIsTrackedForFiveSeconds() {
         var u = UserUse()
         let t = Date(timeIntervalSince1970: 100)
         u.activated(1, now: t)
         XCTAssertTrue(u.inUse(1, frontNow: 1, now: t))
         u.activated(2, now: t.addingTimeInterval(5))
-        XCTAssertTrue(u.inUse(1, frontNow: 2, now: t.addingTimeInterval(20)), "left 15 s ago")
-        XCTAssertFalse(u.inUse(1, frontNow: 2, now: t.addingTimeInterval(36)))
+        XCTAssertTrue(u.inUse(1, frontNow: 2, now: t.addingTimeInterval(8)), "left 3 s ago")
+        XCTAssertFalse(u.inUse(1, frontNow: 2, now: t.addingTimeInterval(11)), "left 6 s ago")
         XCTAssertFalse(u.inUse(3, frontNow: 2, now: t))
         XCTAssertTrue(u.inUse(3, frontNow: 3, now: t), "front now counts even before an activation was seen")
     }
@@ -676,8 +681,8 @@ final class UserUseAfterAgentActivationTests: XCTestCase {
         let t = Date(timeIntervalSince1970: 100)
         u.activated(1, now: t)                       // he is in the lent app
         u.activated(2, now: t.addingTimeInterval(5), byAgent: true)   // an agent's action brings its own app forward
-        XCTAssertTrue(u.inUse(1, frontNow: 2, now: t.addingTimeInterval(20)), "he left it 15 s ago")
-        XCTAssertFalse(u.inUse(1, frontNow: 2, now: t.addingTimeInterval(40)), "and 35 s ago he didn't")
+        XCTAssertTrue(u.inUse(1, frontNow: 2, now: t.addingTimeInterval(8)), "he left it 3 s ago")
+        XCTAssertFalse(u.inUse(1, frontNow: 2, now: t.addingTimeInterval(11)), "and 6 s ago he didn't")
         XCTAssertFalse(u.inUse(2, frontNow: 1, now: t.addingTimeInterval(6)), "not recorded as his")
     }
 

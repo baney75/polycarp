@@ -39,8 +39,17 @@ public enum HandsTools {
     /// Not agent tools: lending an app is Donovan's decision (see `HandsParse.askedForLend`).
     public static let userOnly: Set<String> = ["lend", "return"]
 
-    public static let all: [HandsTool] = [
-        HandsTool(verb: "windows", summary: "List the windows an agent may use now: those on the agent workspace and those of lent apps, with their ids.", params: [], acts: false),
+    /// Every action takes it: how long to wait while Donovan is using the app (`InUseRule`, `InUseWait`).
+    public static let waitParam = HandsParam("wait", .integer, "Seconds to wait, 0 to \(InUseRule.maxWait) (default \(Int(InUseRule.defaultWait))), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.")
+
+    public static let all: [HandsTool] = base.map { t in
+        var t = t
+        if AgentAccessGate.changes.contains(t.verb) { t.params.append(waitParam) }
+        return t
+    }
+
+    static let base: [HandsTool] = [
+        HandsTool(verb: "windows", summary: "List the windows an agent may use now: those on the agent workspace and those of lent apps, with their ids. A window of an app Donovan is using carries in_use: true and in_use_note; reads on it work now, and an action on it waits.", params: [], acts: false),
         HandsTool(verb: "snapshot", summary: "Read the accessibility tree of one window and print a ref for each thing you can act on. Only the agent workspace and lent apps. Refs last until the next snapshot of that window changes the UI; after a stale_ref error take a new snapshot.", params: [
             HandsParam("app", .string, "App name or bundle id. With several windows on the agent workspace the newest is read; pass window to choose."),
             HandsParam("window", .integer, "Window id from `windows`, `open` or a previous snapshot."),
@@ -62,7 +71,7 @@ public enum HandsTools {
             HandsParam("property", .string, "value (default), text, title, role, bounds or states.", positional: true),
         ], acts: false),
         HandsTool(verb: "click", summary: "Click an element by ref, without moving the pointer or raising the window. Prints what it verified.", params: [refParam], acts: true),
-        HandsTool(verb: "type", summary: "Type text into an element by ref: sets the value when the element allows it, otherwise sends keys to that app only. Prints the value it read back.", params: [
+        HandsTool(verb: "type", summary: "Type text into an element by ref: inserts it at the element's selection through accessibility, never by posting keys. Prints the value it read back.", params: [
             refParam,
             HandsParam("text", .string, "The text.", required: true, positional: true, rest: true),
         ], acts: true),
@@ -226,6 +235,9 @@ public enum HandsParse {
     private static func validated(_ r: HandsRequest, _ tool: HandsTool) -> Result<HandsRequest, HandsError> {
         for p in tool.params where p.required && r.args[p.name] == nil {
             return .failure(usage(tool, "\(p.name) is missing"))
+        }
+        if let w = r.int("wait"), !(0...InUseRule.maxWait).contains(w) {
+            return .failure(usage(tool, "wait is seconds from 0 to \(InUseRule.maxWait), not \(w)"))
         }
         if tool.verb == "snapshot" || tool.verb == "find", r.args["app"] == nil, r.args["window"] == nil {
             return .failure(usage(tool, "say which window: app or window"))

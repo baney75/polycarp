@@ -29,7 +29,7 @@ extension HandsRouter {
         switch resolve(req.string("ref")) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope)):
-            return background(w, scope, name: "press", kind: .keys, ref: req.string("ref"), chords: chords, path: [], drag: false, session: req.session ?? "")
+            return background(w, scope, name: "press", kind: .keys, ref: req.string("ref"), chords: chords, path: [], drag: false, session: req.session ?? "", wait: req.int("wait"))
         }
     }
 
@@ -55,7 +55,7 @@ extension HandsRouter {
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope, _)):
-            return background(w, scope, name: name, kind: .pointer, ref: nil, chords: [], path: path, drag: drag, session: req.session ?? "")
+            return background(w, scope, name: name, kind: .pointer, ref: nil, chords: [], path: path, drag: drag, session: req.session ?? "", wait: req.int("wait"))
         }
     }
 
@@ -75,11 +75,14 @@ extension HandsRouter {
     }
 
     private func background(_ w: HandsWindow, _ scope: ScopeDecision, name: String, kind: InputKind, ref: String?,
-                            chords: [KeyChord], path: [CGPoint], drag: Bool, session: String) -> HandsEnvelope {
+                            chords: [KeyChord], path: [CGPoint], drag: Bool, session: String, wait: Int?) -> HandsEnvelope {
+        // Keys and the pointer are posted events: while Donovan uses the app they always wait (never the other-window rule).
+        // Before the mark, so an activation while it waits is his.
+        if let e = awaitUse(w, verb: name, delivery: .posted, wait: wait) { return .failure(e) }
         // The mark covers the whole action: the queue wait, the readings, the post and the proof, and a short tail.
         let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
         defer { AgentActivity.shared.end(token) }
-        let scopeCheck = actingCheck(w, ref: ref)
+        let scopeCheck = actingCheck(w, ref: ref, verb: name, delivery: .posted)
         if let e = scopeCheck() { return .failure(e) }
         guard BackgroundAX.serverWindow(w.id) != nil else {
             return .failure(HandsError(.windowNotFound, "the window server does not list window \(w.id)", suggestion: "Run `polycarp-spaces agent windows` and try again.", retry: .safe))

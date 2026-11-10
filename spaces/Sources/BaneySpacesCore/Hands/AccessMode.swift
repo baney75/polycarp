@@ -35,7 +35,8 @@ public enum HandsCaller {
 
 /// How much of this Mac agents may use, picked by Donovan in Settings > Agents and kept until he changes it.
 /// Every mode keeps the background-only rules: no app activation, no raised window, no global keys or clicks,
-/// nothing while he is using an app (30 s), and never an Open or Save panel.
+/// no action while he is using an app (it waits until the app has been out of the front `UserUse.quiet` seconds; reads
+/// never wait), and never an Open or Save panel.
 public enum AgentAccessMode: String, CaseIterable, Codable, Sendable {
     /// Agents may list, read and capture the windows Default allows, and change nothing.
     case readOnly = "read_only"
@@ -80,7 +81,7 @@ public enum AgentAccessMode: String, CaseIterable, Codable, Sendable {
         case .standard:
             return "Agents work on the agent workspace, in apps Polycarp starts for them (TextEdit, Preview, Calculator) and in apps you lend."
         case .full:
-            return "Agents can read and act on every window on every workspace and start any app. They still work from behind: they never bring an app forward, move your pointer, type into the app in front, touch an app you used in the last 30 seconds, or use an Open or Save panel."
+            return "Agents can read and act on every window on every workspace and start any app. They still work from behind: they never bring an app forward, move your pointer, type into the window you are using, or use an Open or Save panel, and an action in an app you are using waits until it has been out of the front for \(Int(UserUse.quiet)) seconds."
         }
     }
 }
