@@ -97,12 +97,28 @@ final class OverlayTests: XCTestCase {
         XCTAssertEqual(p.frame, CGRect(x: 300, y: 700 - 400, width: 400, height: 300), "the window's frame in AppKit's coordinates")
         XCTAssertEqual(p.level.rawValue, 3, "the window's own level, so it can sit directly above it")
         XCTAssertFalse(p.collectionBehavior.contains(.canJoinAllSpaces), "the window's Space only")
+        XCTAssertFalse(p.collectionBehavior.contains(.transient), "`.transient` floats across Spaces")
+        XCTAssertTrue(p.collectionBehavior.contains(.managed), "pinned to the Space it was ordered in on")
+        XCTAssertFalse(p.collectionBehavior.contains(.fullScreenAuxiliary), "never over another app's full-screen window")
         XCTAssertTrue(s.clipsToWindow(73), "a cursor never draws outside its window")
         // The window moves and resizes from the bottom-right: the panel follows, and the cursor stays put in the window.
         s.place(CursorWindow(id: 73, frame: CGRect(x: 340, y: 130, width: 500, height: 380), layer: 3), reorder: false)
         XCTAssertEqual(p.frame, CGRect(x: 340, y: 700 - 510, width: 500, height: 380))
         s.jump("a", to: CGPoint(x: 440, y: 230), in: CursorWindow(id: 73, frame: CGRect(x: 340, y: 130, width: 500, height: 380), layer: 3))
         XCTAssertEqual(s.pointInPanel("a"), CGPoint(x: 100, y: 380 - 100), "100 pt in from the left, 100 pt down from the top of the window")
+    }
+
+    /// Fails on the `.transient` panel, which joined full-screen Spaces whatever its window was.
+    func testAnOverlayJoinsAFullScreenSpaceOnlyWithAFullScreenWindow() {
+        let s = surface()
+        s.configure("a", look: look)
+        let full = CursorWindow(id: 74, frame: CGRect(x: 0, y: 0, width: 1000, height: 700), fullScreen: true)
+        s.appear("a", at: CGPoint(x: 400, y: 200), in: full)
+        let p = try! XCTUnwrap(s.panel(for: 74))
+        XCTAssertEqual(p.collectionBehavior, [.managed, .ignoresCycle, .fullScreenAuxiliary])
+        var windowed = full; windowed.fullScreen = false; windowed.frame = CGRect(x: 100, y: 100, width: 600, height: 400)
+        s.place(windowed, reorder: false)
+        XCTAssertEqual(p.collectionBehavior, [.managed, .ignoresCycle], "it left full screen: back to its one Space")
     }
 
     func testAGlideIsOneKeyframeAnimationEndingOnTheTarget() {

@@ -894,6 +894,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sandbox.start()
         sandbox.cleanupAtLaunch()
         session.onWorkingChange = { [weak self] in self?.dock.reload() }
+        // A status change with no new action (working to needs you) reaches the cursor and the veil at once.
+        session.onCursorAgentChange = { CursorController.shared.agentChanged($0) }
         // A moment after launch: setting up an observer per app costs the main thread a few
         // hundred milliseconds, which would otherwise land on your first workspace switch.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in

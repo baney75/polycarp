@@ -115,6 +115,9 @@ public final class CursorDirector: HandsEventListener {
         /// The windows on screen, front to back (`CGWindowListCopyWindowInfo`). Nil when the list can't be read: then
         /// nothing is checked for being covered and nothing follows its window.
         public var windows: () -> [ScreenWindow]? = { nil }
+        /// Where the follow check reads `windows`: never the director's queue (the main thread in the app), so 8 window
+        /// server round trips a second never land on it. Only the parsed list comes back.
+        public var windowQueue = DispatchQueue(label: "baney.cursor.windows", qos: .userInitiated)
         public var now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
         public init() {}
     }
@@ -390,9 +393,13 @@ public final class CursorDirector: HandsEventListener {
                 tracks[agent] = t
             }
         }
+        // Windows whose cursor or veil was stopped here: their overlay leaves at once, with no fade. You switched
+        // workspace (or turned it off), so the window under it is going or gone. Only the idle timeout fades.
+        var stopped: Set<UInt32> = []
         for (agent, t) in tracks {
             if !CursorVisibility.wantsFrame(enabled: env.settings.enabled, scope: t.scope, windowWorkspace: t.workspace, shown: env.shownWorkspaces, agent: env.agentWorkspace) {
                 // Not watchable any more: hide it, and forget where it stood (idle ones too: the windows were parked).
+                if t.shown { stopped.insert(t.window) }
                 hide(agent, forget: true)
                 continue
             }
@@ -402,12 +409,34 @@ public final class CursorDirector: HandsEventListener {
         }
         for (window, v) in veils {
             guard CursorVisibility.veilShown(enabled: env.settings.veil, scope: v.scope, windowWorkspace: v.workspace, shown: env.shownWorkspaces, agent: env.agentWorkspace) else {
+                if v.shown { stopped.insert(window) }
                 endVeil(window)
                 continue
             }
             // Reduce Motion, Reduce Transparency or a status changed.
             let l = veilLook(v.order, env)
             if v.shown, l != v.look, let p = placed[window] { surface.showVeil(p, look: l); veils[window]?.look = l }
+        }
+        let inUse = windowsInUse
+        for w in stopped where !inUse.contains(w) {
+            placed[w] = nil
+            surface.windowGone(w)
+        }
+    }
+
+    /// Called by the app when an agent session's name or status changes (working to needs you, say) with no new
+    /// action: its cursor's look and every veil naming it are made again.
+    public func agentChanged(_ session: String) {
+        queue.async { [self] in
+            let env = environment()
+            if let t = tracks[session], t.look != nil {
+                let l = look(for: session, env)
+                if l != t.look { surface.configure(session, look: l); tracks[session]?.look = l }
+            }
+            for (window, v) in veils where v.shown && v.order.contains(session) {
+                let l = veilLook(v.order, env)
+                if l != v.look, let p = placed[window] { surface.showVeil(p, look: l); veils[window]?.look = l }
+            }
         }
     }
 
@@ -470,21 +499,35 @@ public final class CursorDirector: HandsEventListener {
         guard !following, !windowsInUse.isEmpty else { return }
         following = true
         queue.asyncAfter(deadline: .now() + Self.followInterval) { [self] in
-            following = false
-            follow()
-            followSoon()
+            guard !windowsInUse.isEmpty else { following = false; return follow(nil) }
+            readWindows { [self] list in
+                following = false
+                follow(list)
+                followSoon()
+            }
         }
     }
 
-    /// One look at the window list now, as the follow timer does (for tests and the probe; it runs on the director's queue).
-    public func checkWindows() { queue.async { [self] in follow() } }
+    /// Reads the window list on `host.windowQueue`, never the director's queue, and hands the parsed list back to it.
+    private func readWindows(_ then: @escaping ([ScreenWindow]?) -> Void) {
+        let read = host.windows, queue = self.queue
+        host.windowQueue.async {
+            dispatchPrecondition(condition: .notOnQueue(queue))
+            let list = read()
+            queue.async { then(list) }
+        }
+    }
+
+    /// One look at the window list now, as the follow timer does (for tests and the probe). The list is read on
+    /// `host.windowQueue` and handled on the director's queue.
+    public func checkWindows() { readWindows { [self] in follow($0) } }
 
     /// Each window in use, against one read of the window list: moved, resized, raised or lowered, it is followed;
     /// minimized, closed, on another Space or parked, what is drawn over it hides.
-    private func follow() {
+    private func follow(_ read: [ScreenWindow]?) {
         let inUse = windowsInUse
         placed = placed.filter { inUse.contains($0.key) }
-        guard !inUse.isEmpty, let list = host.windows() else { return }
+        guard !inUse.isEmpty, let list = read else { return }
         let env = environment()
         for w in inUse {
             guard let p = WindowCover.place(w, windows: list, displays: env.displays) else {

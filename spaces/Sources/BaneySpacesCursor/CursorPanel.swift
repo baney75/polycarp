@@ -3,10 +3,17 @@ import BaneySpacesCore
 
 /// The window an agent's cursor and veil are drawn in: one per target window, the same frame and level as that window,
 /// ordered directly above it in the window server. Whatever covers the target covers the overlay too, and it lives on
-/// the target's macOS Space only. It is never the pointer and never takes one: it ignores the mouse, is never key or
+/// the target's macOS Space only (`behavior(fullScreen:)`). It is never the pointer and never takes one: it ignores the mouse, is never key or
 /// main, and `.nonactivatingPanel` keeps the app that owns it from being activated when it is shown (it is ordered in
 /// with `order(_:relativeTo:)`, which activates nothing).
 final class CursorPanel: NSPanel {
+    /// Pinned to the Space it was ordered in on, its window's: `.managed`, never `.canJoinAllSpaces`, `.transient`
+    /// (which floats across Spaces) or `.moveToActiveSpace`. Out of the window cycle. It may join a full-screen Space
+    /// only when its window is itself full screen, so it never shows over another app's full-screen window.
+    static func behavior(fullScreen: Bool) -> NSWindow.CollectionBehavior {
+        fullScreen ? [.managed, .ignoresCycle, .fullScreenAuxiliary] : [.managed, .ignoresCycle]
+    }
+
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
     override var acceptsFirstResponder: Bool { false }
@@ -25,8 +32,7 @@ final class CursorPanel: NSPanel {
         level = .normal
         // Out of screenshots and recordings of the display unless `agent shot --cursor` asks for it.
         sharingType = .none
-        // One Space (never `.canJoinAllSpaces`), out of the window cycle and Exposé, and allowed over a full-screen app.
-        collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary]
+        collectionBehavior = Self.behavior(fullScreen: false)
         animationBehavior = .none
         let host = NSView(frame: CGRect(origin: .zero, size: frame.size))
         host.wantsLayer = true
@@ -94,6 +100,7 @@ final class CursorOverlay {
         self.primaryTop = primaryTop
         panel = CursorPanel(frame: Self.appKitFrame(w.frame, top: primaryTop()))
         panel.level = NSWindow.Level(rawValue: w.layer)
+        panel.collectionBehavior = CursorPanel.behavior(fullScreen: w.fullScreen)
         root = panel.contentView!.layer!
         stage.bounds = .zero
         stage.anchorPoint = .zero
@@ -138,7 +145,8 @@ final class CursorOverlay {
             layoutLayers()
         }
         if old.layer != w.layer { panel.level = NSWindow.Level(rawValue: w.layer) }
-        if reorder || old.layer != w.layer { orderIn() }
+        if old.fullScreen != w.fullScreen { panel.collectionBehavior = CursorPanel.behavior(fullScreen: w.fullScreen) }
+        if reorder || old.layer != w.layer || old.fullScreen != w.fullScreen { orderIn() }
     }
 
     /// Directly above its window. It also orders the panel in when it is out, and activates nothing.

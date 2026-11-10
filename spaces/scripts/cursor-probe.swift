@@ -14,6 +14,12 @@
 //   - an action at a point under X draws nothing (no overlay update, the cursor hidden);
 //   - an action elsewhere in W draws again;
 //   - W moved: within 0.4 s the overlay has W's new frame and is still directly above it;
+//   - the overlay is on exactly the macOS Spaces W is on (one), never every Space (CGSCopySpacesForWindows);
+//   - on the display only: W sent to another macOS Space (the helper moves its own window there with
+//     CGSMoveWindowsToManagedSpace): within 0.4 s the overlay is off this Space's list and the cursor and veil are
+//     hidden; W comes back afterwards. With a single Space on the display, or when the window server refuses the
+//     move, the step says "not run" and counts neither way. A Space switch you make yourself (Control-arrow) needs
+//     posted keys, which the probe never sends: that one is checked by hand;
 //   - W ordered out: within 0.4 s the overlay is off screen and the cursor and veil are hidden.
 //
 // It drives the real director (registered with HandsEvents, and fed the way the router feeds it: an action with
@@ -39,6 +45,26 @@ import AppKit
 import BaneySpacesCore
 import BaneySpacesCursor
 import QuartzCore
+
+@_silgen_name("CGSMainConnectionID") func CGSMainConnectionID() -> Int32
+@_silgen_name("CGSCopySpacesForWindows") func CGSCopySpacesForWindows(_ cid: Int32, _ mask: Int32, _ windows: CFArray) -> Unmanaged<CFArray>?
+@_silgen_name("CGSCopyManagedDisplaySpaces") func CGSCopyManagedDisplaySpaces(_ cid: Int32) -> CFArray
+@_silgen_name("CGSMoveWindowsToManagedSpace") func CGSMoveWindowsToManagedSpace(_ cid: Int32, _ windows: CFArray, _ space: UInt64)
+
+/// The macOS Spaces a window is on (all of them, shown or not).
+func spaces(of window: Int) -> Set<UInt64> {
+    Set((CGSCopySpacesForWindows(CGSMainConnectionID(), 0x7, [window] as CFArray)?.takeRetainedValue() as? [NSNumber] ?? []).map(\.uint64Value))
+}
+
+/// Another ordinary (not full-screen) Space on the display that holds `space`, if the display has one.
+func otherUserSpace(than space: UInt64) -> UInt64? {
+    let displays = CGSCopyManagedDisplaySpaces(CGSMainConnectionID()) as? [[String: Any]] ?? []
+    for d in displays {
+        let ids = (d["Spaces"] as? [[String: Any]] ?? []).filter { ($0["type"] as? Int) == 0 }.compactMap { ($0["ManagedSpaceID"] as? NSNumber)?.uint64Value }
+        if ids.contains(space) { return ids.first { $0 != space } }
+    }
+    return nil
+}
 
 /// Forwards to the real overlay and times each call, so the main-thread cost of an action is known.
 final class TimedSurface: CursorSurface {
@@ -99,6 +125,8 @@ enum Helper {
         RunLoop.main.run()
     }
 
+    static var home: UInt64?
+
     static func handle(_ line: String) {
         let parts = line.split(separator: " ")
         switch parts.first {
@@ -108,6 +136,14 @@ enum Helper {
             let dx = CGFloat(Double(parts[1]) ?? 0), dy = CGFloat(Double(parts[2]) ?? 0)
             w.setFrameOrigin(CGPoint(x: w.frame.minX + dx, y: w.frame.minY - dy))
         case "hideW": w.orderOut(nil)
+        case "spaceW":
+            // Its own window only, to another Space on the same display; "spaceBack" returns it.
+            if let here = spaces(of: w.windowNumber).first, let there = otherUserSpace(than: here) {
+                home = here
+                CGSMoveWindowsToManagedSpace(CGSMainConnectionID(), [w.windowNumber] as CFArray, there)
+            }
+        case "spaceBack":
+            if let home { CGSMoveWindowsToManagedSpace(CGSMainConnectionID(), [w.windowNumber] as CFArray, home) }
         default: exit(0)
         }
     }
@@ -399,7 +435,34 @@ final class CursorProbe: NSObject {
                 let want = CGRect(x: now.minX, y: top - now.maxY, width: now.width, height: now.height)
                 let got = self.surface.inner.panel(for: self.targetW)?.frame ?? .null
                 self.check("W moved: the overlay has its new frame and is still directly above it", got == want && self.directlyAbove(), "overlay \(got), W \(want)")
-                self.tell("hideW")
+                let overlay = self.surface.inner.overlayWindow(for: self.targetW).map { spaces(of: Int($0)) } ?? []
+                let wSpaces = spaces(of: Int(self.targetW))
+                self.check("the overlay is on W's macOS Space only", overlay == wSpaces && overlay.count == 1, "overlay \(overlay.sorted()), W \(wSpaces.sorted())")
+                if self.orderOnly { self.tell("hideW"); return }
+                self.spaceHome = wSpaces.first
+                if let home = self.spaceHome, otherUserSpace(than: home) != nil { self.tell("spaceW") }
+            }),
+            (0.4, {
+                guard !self.orderOnly else { return }
+                guard let home = self.spaceHome, otherUserSpace(than: home) != nil else {
+                    print("  not run: W sent to another macOS Space (one Space on this display)"); return self.tell("hideW")
+                }
+                guard !spaces(of: Int(self.targetW)).contains(home) else {
+                    print("  not run: W sent to another macOS Space (the window server did not move it)"); return self.tell("hideW")
+                }
+                let overlay = self.surface.inner.overlayWindow(for: self.targetW)
+                let listed = overlay.map { id in self.list().contains { $0.id == id } } ?? false
+                self.check("W sent to another macOS Space: the overlay leaves this one, the cursor and veil hide",
+                           !listed && !self.surface.inner.isShown(self.agentID) && !self.surface.inner.veilShown(self.targetW))
+                self.spaceMoved = true
+                self.tell("spaceBack")
+            }),
+            (0.4, { if self.spaceMoved { self.act(at: clear) } }),
+            (0.3, {
+                if self.spaceMoved {
+                    self.check("W back on this Space: an action draws again, directly above it", self.surface.inner.isShown(self.agentID) && self.directlyAbove(), self.order())
+                }
+                if !self.orderOnly { self.tell("hideW") }
             }),
             (0.4, {
                 let overlay = self.surface.inner.overlayWindow(for: self.targetW)
@@ -414,12 +477,14 @@ final class CursorProbe: NSObject {
         run(0)
     }
     var actsBefore = 0
+    var spaceHome: UInt64?
+    var spaceMoved = false
 
     func reportOrder() {
         let keyMain = surface.inner.panels.contains { $0.isKeyWindow || $0.isMainWindow || $0.canBecomeKey || $0.canBecomeMain }
         check("the overlay never became key or main, and the front app never changed",
               !keyMain && NSWorkspace.shared.frontmostApplication?.processIdentifier == frontStart)
-        let ok = checks.allSatisfy(\.1) && checks.count >= 7
+        let ok = checks.allSatisfy(\.1) && checks.count >= 8
         print(ok ? "cursor-probe --order: pass" : "cursor-probe --order: FAIL")
         helper?.terminate()
         exit(ok ? 0 : 1)
@@ -467,7 +532,7 @@ final class CursorProbe: NSObject {
         if !drew { print("  FAIL: not enough was drawn: expected \(index) overlay updates and a moving, compared glide for nearly every action") }
         if !sampled { print("  FAIL: the pointer was sampled \(shared.samples) times; at least 1000 are needed to say it did not move") }
         if !onPlan { print("  FAIL: the drawn path left the plan, or the cursor did not end on its target") }
-        let windowsOK = checks.count >= 6 && checks.allSatisfy(\.1)
+        let windowsOK = checks.count >= 7 && checks.allSatisfy(\.1)
         if !windowsOK { print("  FAIL: a window check failed (above)") }
         let ok = windowsOK && drew && sampled && onPlan && over15 <= frames / 200 && over2 == 0 && shared.moves == 0 && keyOrMain == 0 && frontChanges == 0 && frames >= 100
         print(ok ? "cursor-probe: pass" : "cursor-probe: FAIL")

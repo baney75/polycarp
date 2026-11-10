@@ -966,6 +966,10 @@ final class CursorSourceTests: XCTestCase {
         XCTAssertFalse(panel.contains("ignoresMouseEvents = false"))
         XCTAssertTrue(panel.contains("panel.order(.above, relativeTo: Int(placement.id))"), "shown directly above its window, without activating")
         XCTAssertFalse(panel.contains("canJoinAllSpaces"), "on its window's Space only")
+        XCTAssertFalse(panel.contains(".transient"), "`.transient` floats across Spaces and over full-screen apps")
+        XCTAssertFalse(panel.contains("moveToActiveSpace"), "it never follows you to another Space")
+        XCTAssertTrue(panel.contains("fullScreen ? [.managed, .ignoresCycle, .fullScreenAuxiliary] : [.managed, .ignoresCycle]"),
+                      "pinned to one Space, and over a full-screen Space only when its window is full screen")
         XCTAssertFalse(panel.contains(".statusBar"), "at its window's level, not over every window")
         XCTAssertTrue(panel.contains("masksToBounds = true"), "clipped to its window")
         XCTAssertTrue(panel.contains("sharingType = .none"), "out of captures unless `agent shot --cursor`")

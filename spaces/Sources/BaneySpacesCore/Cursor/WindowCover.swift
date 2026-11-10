@@ -19,8 +19,11 @@ public struct CursorWindow: Equatable, Sendable {
     public var id: UInt32
     public var frame: CGRect
     public var layer: Int
-    public init(id: UInt32, frame: CGRect, layer: Int = 0) {
-        self.id = id; self.frame = frame; self.layer = layer
+    /// The window fills a display exactly, as a full-screen app's window does: only then may the overlay join a
+    /// full-screen Space (`.fullScreenAuxiliary`).
+    public var fullScreen: Bool
+    public init(id: UInt32, frame: CGRect, layer: Int = 0, fullScreen: Bool = false) {
+        self.id = id; self.frame = frame; self.layer = layer; self.fullScreen = fullScreen
     }
 }
 
@@ -53,7 +56,7 @@ public enum WindowCover {
         let w = windows[i]
         guard w.alpha > 0, w.bounds.width > 0, w.bounds.height > 0 else { return nil }
         if !displays.isEmpty, !displays.contains(where: { $0.intersects(w.bounds) }) { return nil }
-        return CursorWindow(id: w.id, frame: w.bounds, layer: w.layer)
+        return CursorWindow(id: w.id, frame: w.bounds, layer: w.layer, fullScreen: displays.contains(w.bounds))
     }
 
     /// The whole decision for one action: the window is on screen, the point is inside it and nothing in front of it

@@ -40,6 +40,14 @@ final class WindowCoverTests: XCTestCase {
         XCTAssertEqual(WindowCover.check(10, point: CGPoint(x: 600, y: 400), windows: [ScreenWindow(id: 10, pid: 100, bounds: w.bounds, alpha: 0)], displays: [screen]), .notOnScreen)
     }
 
+    func testOnlyAWindowThatFillsADisplayIsFullScreen() {
+        XCTAssertEqual(WindowCover.place(10, windows: [w], displays: [screen])?.fullScreen, false)
+        let full = ScreenWindow(id: 10, pid: 100, bounds: screen)
+        XCTAssertEqual(WindowCover.place(10, windows: [full], displays: [screen])?.fullScreen, true)
+        let zoomed = ScreenWindow(id: 10, pid: 100, bounds: CGRect(x: 0, y: 33, width: screen.width, height: screen.height - 33))
+        XCTAssertEqual(WindowCover.place(10, windows: [zoomed], displays: [screen])?.fullScreen, false, "zoomed under the menu bar is not full screen")
+    }
+
     func testAPointOutsideItsWindowIsNeverDrawn() {
         XCTAssertEqual(WindowCover.check(10, point: CGPoint(x: 1100, y: 400), windows: [w], displays: [screen]), .outsideWindow)
     }
@@ -62,6 +70,12 @@ final class CursorWindowTests: XCTestCase {
     let lock = NSLock()
     private var _windows: [ScreenWindow] = []
     var windowReads = 0
+    /// Reads made on the director's own queue (the main thread in the app).
+    var readsOnDirectorQueue = 0
+    var readsOnMainThread = 0
+    var status: DockAgent.State = .working
+    let readQueue = DispatchQueue(label: "cursor-window-tests.reads")
+    let directorKey = DispatchSpecificKey<Bool>()
     var windows: [ScreenWindow] {
         get { lock.lock(); defer { lock.unlock() }; return _windows }
         set { lock.lock(); _windows = newValue; lock.unlock() }
@@ -72,8 +86,17 @@ final class CursorWindowTests: XCTestCase {
     func make(idle: TimeInterval = 60, veilIdle: TimeInterval? = nil, change: (inout CursorEnvironment) -> Void = { _ in }) -> (CursorDirector, FakeSurface) {
         var host = CursorDirector.Host()
         host.now = { [unowned self] in self.clock }
-        host.agent = { session in (session == "b" ? "Grok" : "Claude", .working) }
-        host.windows = { [unowned self] in self.lock.lock(); self.windowReads += 1; defer { self.lock.unlock() }; return self._windows }
+        host.agent = { [unowned self] session in self.lock.lock(); defer { self.lock.unlock() }; return (session == "b" ? "Grok" : "Claude", self.status) }
+        host.windowQueue = readQueue
+        queue.setSpecific(key: directorKey, value: true)
+        host.windows = { [unowned self] in
+            let onDirector = DispatchQueue.getSpecific(key: self.directorKey) == true, onMain = Thread.isMainThread
+            self.lock.lock(); defer { self.lock.unlock() }
+            self.windowReads += 1
+            if onDirector { self.readsOnDirectorQueue += 1 }
+            if onMain { self.readsOnMainThread += 1 }
+            return self._windows
+        }
         let s = FakeSurface()
         let d = CursorDirector(surface: s, queue: queue, host: host, idleAfter: idle, veilIdleAfter: veilIdle)
         var env = CursorEnvironment()
@@ -89,7 +112,7 @@ final class CursorWindowTests: XCTestCase {
                          frame: CGRect(x: p.x - 20, y: p.y - 10, width: 40, height: 20), session: session, scope: scope, workspace: workspace)
     }
 
-    func drain() { queue.sync {} }
+    func drain() { queue.sync {}; readQueue.sync {}; queue.sync {} }
     func drew(_ s: FakeSurface) -> Bool { s.calls.contains { if case .appear = $0 { return true }; if case .act = $0 { return true }; return false } }
 
     // MARK: the guard
@@ -233,12 +256,59 @@ final class CursorWindowTests: XCTestCase {
         d2.handsWillAct(event(at: CGPoint(x: 300, y: 300))); drain()
         var env = CursorEnvironment(); env.current = 2; env.agentWorkspace = 9; env.displays = [screen]
         d2.setEnvironment(env); drain()
-        XCTAssertEqual(s2.windowCalls.last, .hideVeil(7), "you left the agent workspace")
+        XCTAssertTrue(s2.windowCalls.contains(.hideVeil(7)), "you left the agent workspace")
         let (d3, s3) = make()
         d3.handsWillAct(event(at: CGPoint(x: 300, y: 300))); drain()
         var on = CursorEnvironment(); on.current = 9; on.agentWorkspace = 9; on.displays = [screen]; on.settings.veil = false
         d3.setEnvironment(on); drain()
         XCTAssertTrue(s3.windowCalls.contains(.hideVeil(7)), "turned off in Settings")
+    }
+
+    /// Fails on the old reconcile, which only faded the veil: the overlay stayed over the window for the fade after you
+    /// switched workspace, while the window was parked out from under it.
+    func testSwitchingWorkspaceTakesTheOverlayAwayAtOnce() {
+        let (d, s) = make()
+        d.handsWillAct(event(at: CGPoint(x: 300, y: 300))); drain()
+        XCTAssertTrue(s.windowCalls.contains(.showVeil(7, ["Claude"])))
+        var env = CursorEnvironment(); env.current = 2; env.agentWorkspace = 9; env.displays = [screen]
+        d.setEnvironment(env); drain()
+        XCTAssertTrue(s.calls.contains(.hide("a")))
+        XCTAssertEqual(s.windowCalls.last, .gone(7), "the overlay leaves with no fade: \(s.windowCalls)")
+        let places = s.windowCalls.count
+        d.checkWindows(); drain()
+        XCTAssertEqual(s.windowCalls.count, places, "nothing is placed again over it")
+    }
+
+    /// Fails on the old follow check, which read the whole window list on the director's queue (the main thread).
+    func testTheFollowCheckNeverReadsTheWindowListOnTheDirectorsQueue() {
+        let (d, s) = make(veilIdle: 5)
+        d.handsWillAct(event(at: CGPoint(x: 300, y: 300))); drain()
+        XCTAssertTrue(s.windowCalls.contains(.showVeil(7, ["Claude"])))
+        lock.lock(); let actionReads = readsOnDirectorQueue, before = windowReads; lock.unlock()
+        d.checkWindows(); drain()
+        Thread.sleep(forTimeInterval: 0.45); drain()
+        lock.lock(); let after = windowReads, onDirector = readsOnDirectorQueue, onMain = readsOnMainThread; lock.unlock()
+        XCTAssertGreaterThanOrEqual(after - before, 3, "the check and the follow timer read")
+        XCTAssertEqual(onDirector, actionReads, "no follow read ran on the director's queue")
+        XCTAssertEqual(onMain, 0, "nor on the main thread")
+        let moved = CGRect(x: 140, y: 130, width: 600, height: 500)
+        windows = [ScreenWindow(id: 7, pid: 1, bounds: moved), w8]
+        d.checkWindows(); drain()
+        XCTAssertEqual(s.windowCalls.last, .place(7, moved, true), "the parsed list still reaches the director")
+    }
+
+    /// Fails on the old director, which made the veil's label again only on a new action.
+    func testAStatusChangeWithNoActionReachesTheVeilAndTheCursor() {
+        let (d, s) = make()
+        d.handsWillAct(event(at: CGPoint(x: 300, y: 300))); drain()
+        XCTAssertEqual(s.veilLooks.last?.agents.first?.label, "Claude · working")
+        lock.lock(); status = .asking; lock.unlock()
+        d.agentChanged("a"); drain()
+        XCTAssertTrue(s.veilLooks.last?.agents.first?.label.hasSuffix("needs you") == true, "\(s.veilLooks.map { $0.agents.map(\.label) })")
+        XCTAssertEqual(s.looks.last?.status, .asking, "the cursor's look too")
+        let shows = s.veilLooks.count
+        d.agentChanged("a"); d.agentChanged("z"); drain()
+        XCTAssertEqual(s.veilLooks.count, shows, "nothing changed, nothing drawn")
     }
 
     func testReduceMotionAndReduceTransparencyReachTheVeil() {

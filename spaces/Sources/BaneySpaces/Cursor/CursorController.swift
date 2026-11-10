@@ -72,6 +72,9 @@ final class CursorController: ObservableObject {
         director.setEnvironment(e)
     }
 
+    /// An agent session's name or status changed: its cursor and veils wear the new one.
+    func agentChanged(_ session: String) { director?.agentChanged(session) }
+
     func mark(window: UInt32) -> CursorMark? { director?.lastMark(window: window) }
 
     // MARK: settings

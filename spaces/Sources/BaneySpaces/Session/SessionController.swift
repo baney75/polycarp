@@ -106,6 +106,9 @@ final class SessionController {
     /// Which rows are working, asking or stopped changed, so the Workspace Dock's badges can follow.
     var onWorkingChange: () -> Void = {}
     private var lastWorking: [String: String] = [:]
+    /// Set by the app delegate: an agent session's name or status as the agent cursor shows it changed (keyed by its tty).
+    var onCursorAgentChange: (String) -> Void = { _ in }
+    private var lastCursorAgents: [String: String] = [:]
 
     /// Agents working, asking, stopped on an error or finished unseen, for the Workspace Dock: each with its window, so the
     /// dock can badge the app it runs in and go straight to it.
@@ -206,6 +209,15 @@ final class SessionController {
         let working = Dictionary(engine.items.filter { $0.activity == .working || !$0.notice.isEmpty }
             .map { ($0.id, $0.activity == .working ? "" : $0.notice) }) { a, _ in a }
         if working != lastWorking { lastWorking = working; onWorkingChange() }
+        let cursorAgents = Dictionary(engine.items.filter { !$0.tty.isEmpty }.map { item in
+            let a = cursorAgent(item.tty)
+            return (item.tty, "\(a.name)|\(a.status)")
+        }) { a, _ in a }
+        if cursorAgents != lastCursorAgents {
+            let changed = Set(cursorAgents.keys).union(lastCursorAgents.keys).filter { cursorAgents[$0] != lastCursorAgents[$0] }
+            lastCursorAgents = cursorAgents
+            for tty in changed.sorted() { onCursorAgentChange(tty) }
+        }
         lastUnseen = unseen
         if engine.items != lastItems { lastItems = engine.items; onItemsChange() }
         writeState()
