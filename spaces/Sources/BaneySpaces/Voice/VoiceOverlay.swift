@@ -26,6 +26,7 @@ final class VoiceOverlay {
     private var noticeWork: DispatchWorkItem?
     private var face: Face = .idle
     private var themeObserver: NSObjectProtocol?
+    private var announced: VoiceStatus?
     private var notice: VoiceNotice?
     /// The microphone has sent a level: the dot fills. Until then it is a ring, so a slow-to-open device shows.
     private var heard = false
@@ -77,6 +78,11 @@ final class VoiceOverlay {
 
     deinit { if let themeObserver { NotificationCenter.default.removeObserver(themeObserver) } }
 
+    private func announce(_ words: String) {
+        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+                             userInfo: [.announcement: words, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+    }
+
     private func accessibility() {
         panel.setAccessibilityRole(.group)
         panel.setAccessibilityLabel("Silas")
@@ -90,6 +96,9 @@ final class VoiceOverlay {
     }
 
     func status(_ s: VoiceStatus, enabled: Bool) {
+        // VoiceOver hears each phase once, with or without the pill.
+        if let words = VoiceAccess.announcement(from: announced, to: s) { announce(words) }
+        announced = s
         last = (s, enabled)
         // A notice stays up for its time; only a new dictation takes the pill from it.
         if face == .notice, s != .recording { return }
@@ -111,6 +120,7 @@ final class VoiceOverlay {
         noticeWork?.cancel()
         notice = n
         show(.notice, n.message)
+        announce(n.announcement)
         let w = DispatchWorkItem { [weak self] in
             guard let self, self.face == .notice else { return }
             self.notice = nil
@@ -281,8 +291,22 @@ final class VoiceOverlay {
         guard face == .recording else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let ease: CGFloat = reduce ? 1 : 0.28
+        let reduce = Chrome.reduceMotion
+        if reduce {
+            // A still meter: bars of one height, lit from the left with the level. Nothing flows.
+            let lit = VoiceAccess.lit(level: latest, bars: bars.count)
+            let areaX: CGFloat = 38, slot = (size.width - 38 - 70) / CGFloat(bars.count), h: CGFloat = 14
+            let tint = NSColor(Chrome.accent)
+            for i in bars.indices {
+                bars[i].frame = CGRect(x: areaX + CGFloat(i) * slot + slot * 0.2, y: size.height / 2 - h / 2, width: slot * 0.6, height: h)
+                bars[i].backgroundColor = (i < lit ? tint : tint.withAlphaComponent(0.22)).cgColor
+            }
+            let s = Int(Date().timeIntervalSince(startedAt))
+            clock.string = String(format: "%d:%02d", s / 60, s % 60)
+            CATransaction.commit()
+            return
+        }
+        let ease: CGFloat = 0.28
         let areaX: CGFloat = 38, areaW: CGFloat = size.width - 38 - 70
         let slot = areaW / CGFloat(bars.count), maxH: CGFloat = 34
         for i in bars.indices {
