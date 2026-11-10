@@ -48,7 +48,7 @@ Usage:
   polycarp theme create <name> --extends <base> [--force]
   polycarp theme edit-path <name>
   polycarp theme delete <name> [--force]
-  polycarp theme validate <file>
+  polycarp theme validate <file|->
   polycarp theme export <css|json|toml> [name] [--surface spaces|voice|browser|site]
   polycarp theme undo [--force]
   polycarp theme history [--json]
@@ -4521,7 +4521,16 @@ pub fn run(args: &[OsString]) -> i32 {
             op_delete(c, &p.pos[0], p.flag("force"))
         }),
         "validate" => cmd(rest, &[], &[], |c, p| {
-            exactly(p, 1, "one file")?;
+            exactly(p, 1, "a file, or - for standard input")?;
+            // Standard input has no file name to match, so only the theme itself is checked:
+            // what an app runs on a dropped file before it asks where to put it.
+            if p.pos[0] == "-" {
+                let doc = parse_doc(&read_input("-")?).map_err(|mut e| {
+                    e.message = "the theme is not valid".to_string();
+                    e
+                })?;
+                return op_validate(c, &doc, None, "the theme");
+            }
             let file = Path::new(&p.pos[0]);
             let src = fs::read_to_string(file).map_err(|e| {
                 ApiErr::new(

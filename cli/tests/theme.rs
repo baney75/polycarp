@@ -4155,3 +4155,26 @@ fn export_toml_prints_the_theme_file_as_written() {
         2
     );
 }
+
+#[test]
+fn validate_from_standard_input_names_the_theme_and_skips_the_file_name_check() {
+    let b = Box::new();
+    let good =
+        "name = \"drop\"\ntitle = \"Drop\"\nextends = \"calm\"\n\n[light]\naccent = \"#225588\"\n";
+    let o = b.run_stdin(&["theme", "validate", "-", "--json"], good);
+    let v: Value = serde_json::from_str(&out(&o)).unwrap();
+    assert_eq!(code(&o), 0, "{v}");
+    assert_eq!(v["data"]["name"], "drop");
+    assert_eq!(v["data"]["title"], "Drop");
+    // Problems come back the same way a file's do, and nothing is saved.
+    let bad = "name = \"drop\"\nextends = \"calm\"\n\n[light]\nmuted = \"#eeeeee\"\n";
+    let o = b.run_stdin(&["theme", "validate", "-", "--json"], bad);
+    let v: Value = serde_json::from_str(&out(&o)).unwrap();
+    assert_eq!(code(&o), 1, "{v}");
+    // Only the contrast is wrong: a file named something else would also fail on its name.
+    assert_eq!(v["error"]["code"], "contrast");
+    let errors = v["error"]["data"]["errors"].as_array().unwrap();
+    assert!(errors.iter().all(|e| e["path"] != "name"), "{v}");
+    assert!(errors.iter().any(|e| e["path"] == "light.muted"), "{v}");
+    assert!(!b.cfg().join("themes/drop.toml").exists());
+}

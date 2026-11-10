@@ -192,7 +192,7 @@ density = "compact"
 | `polycarp theme create <name> --extends <base> [--force]` | Write a new user theme. Not one that extends itself or loops. `undo` removes it or restores the old one; it refuses to remove one that another user theme extends, unless `--force` |
 | `polycarp theme edit-path <name>` | Print the file's path |
 | `polycarp theme delete <name> [--force]` | Delete a user theme. Not the current one, one it extends, or one that another user theme extends (it names them). An unreadable theme file also blocks it, since it might extend this one; `--force` goes on anyway and the copy in history lets `undo` bring it back. Deleting an unparsable theme is allowed when only other unreadable themes are in the way |
-| `polycarp theme validate <file>` | Exit 0 if the file is valid, 1 if not. Prints every problem |
+| `polycarp theme validate <file\|->` | Exit 0 if the file is valid, 1 if not. Prints every problem. A file's `name` must match its file name; with `-` the theme comes on standard input, that check is skipped and `--json` reports the name, so an app can ask before it imports a dropped file |
 | `polycarp theme export <css\|json\|toml> [name] [--surface <name>]` | Print the resolved theme. With no name it is the current one in its forced mode, as in `current/`; JSON has `mode`. `toml` prints the theme's own file as written (a built-in's source), unresolved, to share or import |
 | `polycarp theme undo [--force]` | Step back one change. Refuses if the theme file was edited after that change; `--force` saves the edited text in `history/` as a `.bak` copy, then undoes |
 | `polycarp theme history [--json]` | Past changes, newest first |
