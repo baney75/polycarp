@@ -4,10 +4,14 @@ import Foundation
 public enum VoiceAccess {
     /// Said when dictation moves into a new phase; nil when nothing new happened (typing right after writing is the
     /// same phase). Errors are said through the notice (`VoiceNotice.announcement`).
+    ///
+    /// Nothing is said when recording starts: the microphone is open by then, so on speakers Silas would hear
+    /// VoiceOver say it and type "Silas listening" at the top of every dictation. The start sound (Settings >
+    /// Silas > Sounds) is the cue for the start; the first words come once the microphone has closed.
     public static func announcement(from old: VoiceStatus?, to new: VoiceStatus) -> String? {
         guard old != new else { return nil }
         switch new {
-        case .recording: return "Silas, listening"
+        case .recording: return nil
         case .transcribing: return "Silas, writing"
         case .typing: return old == .transcribing ? nil : "Silas, writing"
         default: return nil

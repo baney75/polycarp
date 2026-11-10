@@ -2,8 +2,10 @@ import XCTest
 @testable import BaneySpacesCore
 
 final class VoiceAccessTests: XCTestCase {
-    func testVoiceOverHearsListeningWritingOnceEach() {
-        XCTAssertEqual(VoiceAccess.announcement(from: .ready, to: .recording), "Silas, listening")
+    func testVoiceOverHearsWritingOnceAndNothingWhileTheMicrophoneIsOpen() {
+        // Speech during recording would be picked up by the microphone and typed.
+        XCTAssertNil(VoiceAccess.announcement(from: .ready, to: .recording))
+        XCTAssertNil(VoiceAccess.announcement(from: .typing, to: .recording))
         XCTAssertEqual(VoiceAccess.announcement(from: .recording, to: .transcribing), "Silas, writing")
         XCTAssertNil(VoiceAccess.announcement(from: .transcribing, to: .typing), "the same phase, said once")
         XCTAssertEqual(VoiceAccess.announcement(from: .recording, to: .typing), "Silas, writing")
