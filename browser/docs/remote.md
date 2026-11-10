@@ -267,15 +267,20 @@ A narrower cap applies to the very next call, also on sessions already open: tha
 last scope can't be removed; `tabkyra link off` stops serving. A wider cap needs a new link token,
 so `link scopes --add` restarts the link service when there is one, and open sessions start over.
 
-Computer use (`computer.read`, `computer.act`) is never in the default grant. `link` and
-`link scopes --add` turn it on only after a yes typed in a terminal on this computer: `link` asks
-"May agents that come through the hub use this computer?" with No as the answer to Enter, and
-`--scope computer.act` or `--add computer.act` asks you to confirm. With no terminal (a script,
-`--json`, an agent's shell) a computer scope is refused and nothing changes. `computer.act` brings
-`computer.read` with it. A computer without Polycarp's Mac app (`polycarp-spaces`) can't claim
-either: "This computer can't serve computer.read: computer use needs Polycarp's Mac app, and it
-isn't on this computer." Joining a hub from the side panel never grants computer use; the panel
-shows it as an option, unticked, that you add with `link scopes --add` on that computer.
+Computer use (`computer.read`, `computer.act`) is never in the default grant, and the command line
+can't turn it on. `link --scope computer.act` and `link scopes --add computer.act` (or `computer.read`)
+are refused and change nothing: "computer.act can't be turned on from the command line: granting
+computer use over a link needs the owner's approval in the Polycarp app, and that approval isn't built
+yet." A yes typed at a terminal wouldn't show that the owner gave it, because an agent can run the
+command in a pseudo-terminal and type the yes itself. The approval in the Polycarp app is a follow-up.
+Joining a hub from the side panel never grants computer use either; the panel's status lists it as an
+option, unticked. A cap that already holds a computer scope, written by an earlier preview build, keeps
+it, and `link scopes --remove computer.act` still removes it. A computer without Polycarp's Mac app
+(`polycarp-spaces`) is told "This computer can't serve computer.read: computer use needs Polycarp's
+Mac app, and it isn't on this computer."
+
+A cap written as an empty list allows nothing; only a `link.json` with no `scopes` gets the default
+grant. Removals are checked under `link.json`'s lock, so two at once can't empty the cap.
 
 ### How a session is routed
 
