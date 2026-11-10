@@ -43,6 +43,10 @@ final class Spaces {
     /// window the scan missed (see `ScanCheck`) from a sheet or panel; and the on-screen windows
     /// scans couldn't place, each with its next look.
     private var notWindows = Set<WindowID>()
+    /// What the last scan listed that waits on you (`WaitingWindow`), and the workspaces the dock
+    /// marks for it (`DockAttention`), kept current after each scan and each switch.
+    private var asking: [WaitingWindow.Seen] = []
+    private(set) var attention: [DockAttention.Mark] = []
     private var unplaced = UnplacedWindows()
     private var heal: DispatchWorkItem?
     /// Windows that ignored every request to leave macOS full screen. Asking again only stalls.
@@ -174,14 +178,16 @@ final class Spaces {
             unplaced.keep(stray)
             scheduleHeal()
             clock.scan = "skip"
+            updateAttention()
             return
         }
         let firstScan = lastScan == nil
         clock.scan = firstScan ? "first" : full ? "full" : last(lastScan!, snap.appWindows, pids, offKnown)
         RunningApps.invalidate()
         let pidsNow = RunningApps.regular
-        let (list, unsure, listed, partial, nonStandard) = Windows.all(owners: snap.owners)
+        let (list, unsure, listed, partial, nonStandard, asks) = Windows.all(owners: snap.owners)
         notWindows = nonStandard
+        asking = asks
         // A window the app closed but kept isn't one any more, though the window server says it's alive.
         let answered = pidsNow.intersection(snap.owners).subtracting(unsure).subtracting(partial)
         let closed = closedWindows(listed: listed, answered: answered, offscreen: snap.offscreen)
@@ -271,6 +277,44 @@ final class Spaces {
                          known: knownWindows, now: now)
         placedBefore.formUnion(model.home.keys)
         scheduleHeal()
+        updateAttention()
+    }
+
+    /// Works out which workspaces have a window waiting on you out of sight, and says in
+    /// `trace.log` when a mark sets or clears. Nothing moves and you aren't taken anywhere.
+    private func updateAttention() {
+        let live = asking.filter { snapAlive(pid: $0.pid) }
+        var parents: [Int32: Set<Int>] = [:], names: [Int32: String] = [:]
+        for (id, ws) in model.home {
+            guard let w = windows[id] else { continue }
+            parents[w.pid, default: []].insert(ws)
+            names[w.pid] = w.appName
+        }
+        let marks = DockAttention.marks(live, names: names, parents: parents,
+                                        shown: Set(Workspaces.range.filter(model.isShown)), recent: recent)
+        guard marks != attention else { return }
+        for line in DockAttention.traceLines(from: attention, to: marks) { Trace.log(line) }
+        attention = marks
+        onChange?()
+    }
+
+    private func snapAlive(pid: Int32) -> Bool { NSRunningApplication(processIdentifier: pid).map { !$0.isTerminated } ?? false }
+
+    /// A click on a marked tile: that workspace, with the waiting window in front of its app.
+    func focusWaiting(_ mark: DockAttention.Mark) {
+        guard active else { return }
+        if switching { return enqueue { [weak self] in self?.focusWaiting(mark) } }
+        Trace.log("dock attention picked: \(mark.app) on workspace \(mark.workspace)")
+        if !model.isShown(mark.workspace) { switchTo(mark.workspace, announce: false) }
+        let raise = { [weak self] in
+            guard let self, self.active else { return }
+            let ax = AXUIElementCreateApplication(mark.pid)
+            AXUIElementSetMessagingTimeout(ax, 0.25)
+            let list: [AXUIElement] = ax.value(kAXWindowsAttribute) ?? []
+            if let el = list.first(where: { $0.windowID == mark.window }) { AXUIElementPerformAction(el, kAXRaiseAction as CFString) }
+            NSRunningApplication(processIdentifier: mark.pid)?.activate()
+        }
+        if switching { enqueue(raise) } else { raise() }
     }
 
     /// A window that opens in a parked app (see `ParkedApps`) while that app stays in the
@@ -398,6 +442,21 @@ final class Spaces {
                       ClaimRule.applies(windowPid: w.pid, frontPid: front, agentStartedProcess: c.newProcess)
                           && (c.title.map { w.title.isEmpty || w.title.localizedCaseInsensitiveContains($0) } ?? true)
                   }) else { continue }
+            // A modal window (a standard window that blocks its app) waits on you: it stays with its
+            // app's windows, never sent off alone by a claim (`WaitingWindow.claimTakes`).
+            let modal = (w.element.value(kAXModalAttribute) as NSNumber?)?.boolValue
+            guard WaitingWindow.claimTakes(subrole: kAXStandardWindowSubrole as String, modal: modal) else {
+                let parents = Set(windows.values.filter { $0.pid == w.pid && $0.id != id }.compactMap { model.workspace(of: $0.id) })
+                switch WaitingWindow.place(asks: true, parents: parents, shown: Set(Workspaces.range.filter(model.isShown)), recent: recent) {
+                case .withParent(let n), .needsAttention(let n):
+                    model.assign(id, to: n, focus: false)
+                    away = away || !model.isShown(n)
+                    Trace.log("claim skipped window \(id) of \(w.appName): it waits on you, so it joins the app's workspace \(n)")
+                case .ordinary:
+                    Trace.log("claim skipped window \(id) of \(w.appName): it waits on you")
+                }
+                continue
+            }
             drop(c, of: w.pid)
             model.assign(id, to: c.workspace, focus: false)
             Trace.log("claimed window \(id) of \(windows[id]?.appName ?? "?") for workspace \(c.workspace)")
@@ -1588,6 +1647,7 @@ final class Spaces {
     /// activation BaneySpaces didn't cause.
     private func finish() {
         switching = false
+        updateAttention()
         onChange?()
         while !switching, !queued.isEmpty {
             switch queued.removeFirst() {

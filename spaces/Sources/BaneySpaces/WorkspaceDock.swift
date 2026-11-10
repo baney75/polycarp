@@ -9,40 +9,36 @@ import UniformTypeIdentifiers
 enum SystemDock {
     private static let domain = "com.apple.dock" as CFString
     private static let savedKey = "systemDockSaved"
-    /// Long enough that the Dock never slides up by accident while the Workspace Dock is in use.
-    static let hiddenDelay = 1000.0
+    static let hiddenDelay = SystemDockSettings.hiddenDelay
 
     static var isHiddenByUs: Bool { UserDefaults.standard.dictionary(forKey: savedKey) != nil }
 
+    /// Saves what it is about to change (`SystemDockSettings.record`), then writes its values:
+    /// hidden, a long delay, and no bouncing, so an app asking for attention doesn't pop its icon
+    /// out of the hidden Dock. One Dock restart applies whatever changed.
     static func hide() {
-        if !isHiddenByUs {
-            // A setting that wasn't there is saved as absent, so restoring removes it again.
-            var saved: [String: Any] = [:]
-            for key in ["autohide", "autohide-delay"] { if let v = read(key) { saved[key] = v } }
-            // Already at BaneySpaces' own values (its saved copy was lost: a crash, wiped
-            // settings, another copy of the app): those aren't the person's. Save them as
-            // absent, which restores the macOS defaults.
-            if (saved["autohide-delay"] as? NSNumber)?.doubleValue == hiddenDelay { saved = [:] }
-            UserDefaults.standard.set(saved, forKey: savedKey)
-        }
-        // Both writes run; either one changing means the Dock must restart to notice.
-        let a = write("autohide", true as NSNumber)
-        let b = write("autohide-delay", hiddenDelay as NSNumber)
-        let changed = a || b
+        let rec = SystemDockSettings.record(existing: UserDefaults.standard.dictionary(forKey: savedKey), current: current())
+        UserDefaults.standard.set(rec, forKey: savedKey)
+        // Every write runs; any one changing means the Dock must restart to notice.
+        var changed = false
+        for key in SystemDockSettings.keys { changed = write(key, SystemDockSettings.ours[key]) || changed }
         if changed { restartDock() }
     }
 
     static func restore() {
         guard let saved = UserDefaults.standard.dictionary(forKey: savedKey) else { return }
         var changed = false
-        // Only a setting still at the value BaneySpaces wrote goes back; one the person changed
-        // since (⌥⌘D, System Settings) is their newer choice and stays.
-        let ours: [String: NSNumber] = ["autohide": true as NSNumber, "autohide-delay": hiddenDelay as NSNumber]
-        for key in ["autohide", "autohide-delay"] where read(key) == ours[key] {
-            changed = write(key, saved[key] as? NSNumber) || changed
+        for (key, value) in SystemDockSettings.restore(saved: saved, current: current()) {
+            changed = write(key, value) || changed
         }
         UserDefaults.standard.removeObject(forKey: savedKey)
         if changed { restartDock() }
+    }
+
+    private static func current() -> [String: NSNumber] {
+        var out: [String: NSNumber] = [:]
+        for key in SystemDockSettings.keys { if let v = read(key) { out[key] = v } }
+        return out
     }
 
     private static func read(_ key: String) -> NSNumber? {
@@ -161,6 +157,7 @@ final class WorkspaceDock {
         model.onSendHere = { [weak self] n in self?.onOwnDisplay { $0.moveFocused(to: n) } }
         model.onFocusApp = { [weak self] pid, n in self?.onOwnDisplay { $0.focusApp(pid, on: n, cycle: true) } }
         model.onFocusWindow = { [weak self] id, n in self?.onOwnDisplay { $0.focus(id, on: n) } }
+        model.onFocusWaiting = { [weak self] mark in self?.onOwnDisplay { $0.focusWaiting(mark) } }
         model.onShowBackground = { [weak self] app in
             Trace.log("dock background: \(app.name) picked (\(app.state.label))")
             self?.model.backgroundOpen = false
@@ -1153,6 +1150,11 @@ final class DockModel: ObservableObject {
     }
 
     @Published var tiles: [Tile] = []
+    /// Workspaces out of sight with a window waiting on you (`DockAttention`): their tiles carry a quiet mark.
+    @Published var attention: [DockAttention.Mark] = []
+    func attention(on n: Int) -> DockAttention.Mark? { attention.first { $0.workspace == n } }
+    /// A click on a marked tile: that workspace, with the waiting window in front.
+    var onFocusWaiting: (DockAttention.Mark) -> Void = { _ in }
     @Published var edge = WorkspaceDock.edge
     /// The longest the tiles can run along the edge on this screen; a longer dock shrinks to fit.
     @Published var maxLength: CGFloat = .infinity
@@ -1309,6 +1311,7 @@ final class DockModel: ObservableObject {
 
     func load(from spaces: Spaces) {
         spaces.refresh()
+        if attention != spaces.attention { attention = spaces.attention }
         replayOwedOn = []
         var byPid: [String: Spaces.Entry] = [:]
         var entries: [Int: [Spaces.Entry]] = [:]
@@ -1585,6 +1588,15 @@ private struct SettleIcon: View {
             .opacity(gone ? 0 : 1)
             .onAppear { gone = true }
             .animation(reduce ? nil : .easeOut(duration: DockMotion.duration(DockMotion.settle, reduceMotion: reduce)), value: gone)
+    }
+}
+
+/// The mark on a tile whose workspace has a window waiting on you: a small dot in the theme's
+/// accent, still at all times (no pulse, so Reduce Motion changes nothing).
+private struct AttentionDot: View {
+    var body: some View {
+        Circle().fill(Chrome.accent).frame(width: 6, height: 6)
+            .accessibilityHidden(true)
     }
 }
 
@@ -2008,13 +2020,16 @@ struct DockView: View {
         let hovered = isHovered(tile) || target
         let tint = Chrome.workspace(tile.id)
         let shape = Chrome.shape(.dockTile)
+        // A window waiting on you there: a quiet dot by the number, no motion, no sound; the tile's
+        // click goes to that window. Not on the workspace you're on, where it is already in sight.
+        let waiting = tile.isCurrent ? nil : model.attention(on: tile.id)
         return VStack(spacing: 5) {
             ZStack(alignment: .topLeading) {
                 shape.fill(tile.isCurrent ? Chrome.lit(tint, hovered ? 0.34 : 0.26) : Chrome.cell(hovered ? 0.13 : 0.06))
                     .overlay(shape.strokeBorder(tile.isCurrent || target ? Chrome.focusEdge(tint) : Chrome.edge(hovered ? 0.18 : 0.08),
                                                 lineWidth: target ? Chrome.width(.dockTile, focused: true) + 1 : Chrome.width(.dockTile, focused: tile.isCurrent)))
                     .onHover { model.setHover(.tile(tile.id), $0) }
-                    .onTapGesture { model.onPick(tile.id) }
+                    .onTapGesture { if let waiting { model.onFocusWaiting(waiting) } else { model.onPick(tile.id) } }
                 icons(tile).frame(width: tileSize, height: tileSize)
                 agentBadge(tile).frame(width: tileSize, height: tileSize, alignment: .topTrailing)
             }
@@ -2022,13 +2037,16 @@ struct DockView: View {
             .modifier(CenterReport(key: "tile:\(tile.id)"))
             // The number under the tile, lit for the workspace you're on, like the key that gets there.
             TileNumber(n: tile.id, tint: tint, current: tile.isCurrent, hovered: hovered)
+                .overlay(alignment: .topTrailing) { if waiting != nil { AttentionDot().offset(x: 5, y: -2) } }
                 .allowsHitTesting(false)
         }
+        .help(waiting.map { DockAttention.label(app: $0.app, workspace: $0.workspace) } ?? "")
         .modifier(HoverScale(scale: hovered ? Chrome.grow(1.06) : 1, anchor: .bottom, spring: .spring(response: 0.25, dampingFraction: 0.72)))
         .contextMenu { tileMenu(tile) }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(title(tile, shown: .max) + (tile.isCurrent ? ", current" : ""))
-        .accessibilityAction { model.onPick(tile.id) }
+        .accessibilityLabel(title(tile, shown: .max) + (tile.isCurrent ? ", current" : "")
+                            + (waiting.map { ", " + DockAttention.label(app: $0.app, workspace: $0.workspace) } ?? ""))
+        .accessibilityAction { if let waiting { model.onFocusWaiting(waiting) } else { model.onPick(tile.id) } }
     }
 
     /// A finished agent lights the tile's corner with a count in the theme's finished color; clicking it goes to the

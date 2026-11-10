@@ -161,6 +161,12 @@ if [ -z "$TEST" ] && [ "$(defaults read com.apple.dock autohide-delay 2>/dev/nul
     if [ -n "$hide" ]; then defaults write com.apple.dock autohide -bool "$([ "$hide" = 1 ] && echo true || echo false)"
     else defaults delete com.apple.dock autohide 2>/dev/null || true; fi
   fi
+  # Bouncing, off while the Workspace Dock was on (`SystemDockSettings`): its saved value, else the default.
+  if [ "$(defaults read com.apple.dock no-bouncing 2>/dev/null)" = "1" ]; then
+    bounce=$(printf '%s\n' "$saved" | sed -n 's/.*"no-bouncing" = "\{0,1\}\([01]\)"\{0,1\};.*/\1/p')
+    if [ -n "$bounce" ]; then defaults write com.apple.dock no-bouncing -bool "$([ "$bounce" = 1 ] && echo true || echo false)"
+    else defaults delete com.apple.dock no-bouncing 2>/dev/null || true; fi
+  fi
   killall Dock 2>/dev/null || true
 fi
 
