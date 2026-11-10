@@ -868,7 +868,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             inspect: { [weak self] in self?.spaces.handsInspect($0) ?? (nil, false) },
             agentOwned: { AgentOwned.shared.pids },
             askToLend: { app, minutes, takeBack in LendConsent.ask(app: app, minutes: minutes, takeBack: takeBack) },
-            open: { [weak self] args in self?.session.agent("open", args) ?? Wire.Reply(ok: false, error: "not ready") })
+            open: { [weak self] args in self?.session.agent("open", args) ?? Wire.Reply(ok: false, error: "not ready") },
+            workspaceRows: { [weak self] in self?.spaces.workspaceRows() ?? [] },
+            agentArea: { [weak self] in self?.spaces.agentArea() ?? .zero },
+            arrange: { [weak self] in self?.spaces.arrangeAgentWindows($0) ?? [:] },
+            move: { [weak self] id, n in self?.run { $0.move(id, to: n) } },
+            close: { [weak self] in self?.spaces.pressClose($0) ?? false })
         // The agent cursor: drawn on the agent workspace while you look at it, and over a lent app.
         session.hands.host.cursorMark = { CursorController.shared.mark(window: $0) }
         session.connectorHands.host = session.hands.host

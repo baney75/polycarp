@@ -279,31 +279,81 @@ public enum EngineRetry {
 /// A window as the accessibility tree shows it, as much of it as the panel check needs.
 public struct AXNodeInfo: Equatable, Sendable {
     public var role: String?, subrole: String?, identifier: String?, title: String?
+    /// A label's text (AXValue of a static text), when it was read.
+    public var value: String?
     public var children: [AXNodeInfo]
-    public init(role: String? = nil, subrole: String? = nil, identifier: String? = nil, title: String? = nil, children: [AXNodeInfo] = []) {
-        self.role = role; self.subrole = subrole; self.identifier = identifier; self.title = title; self.children = children
+    /// False when the node's children could not be read: the panel check then fails closed.
+    public var readable: Bool
+    public init(role: String? = nil, subrole: String? = nil, identifier: String? = nil, title: String? = nil, value: String? = nil,
+                children: [AXNodeInfo] = [], readable: Bool = true) {
+        self.role = role; self.subrole = subrole; self.identifier = identifier; self.title = title; self.value = value
+        self.children = children; self.readable = readable
     }
 }
 
-/// Windows an agent never works in: the Open and Save panels of the apps it starts. They browse Donovan's files.
+/// Windows an agent never works in: Open and Save panels. They browse Donovan's files.
+///
+/// 2026-11-10 (Donovan: "if a window pops up and it needs to press something on that window it should be able too"): a sheet
+/// alone no longer puts its window off limits. A sheet is a child the agent may answer with its window's scope
+/// (`ChildWindowRule`); only a sheet that is, or may be, an Open or Save panel still does.
 public enum PanelDetector {
-    /// Whether the window is such a panel, or has one (or any sheet) attached: a sheet is a child of its document
-    /// window, so the window is refused for every snapshot, action and ref while one is up.
+    static let panelTitles: Set<String> = ["open", "save", "save as", "export", "import", "choose"]
+    /// Labels a Save panel shows beside its name field and folder menu.
+    static let saveLabels: Set<String> = ["where", "save as", "tags", "export as"]
+
+    /// Whether the window is an Open or Save panel, or holds one (a sheet that is or may be one, or a panel element
+    /// within three levels). A sheet that is plainly something else (a "Save changes?" alert) leaves the window usable.
     public static func windowIsOffLimits(_ w: AXNodeInfo) -> Bool {
         if isOpenOrSavePanel(identifier: w.identifier, subrole: w.subrole, title: w.title) { return true }
-        func sheetOrPanel(_ n: AXNodeInfo, depth: Int) -> Bool {
-            if n.role == "AXSheet" || n.subrole == "AXSheet" { return true }
+        if isSheet(w) || w.subrole == "AXDialog" || w.subrole == "AXSystemDialog" { if looksLikeFilePanel(w) { return true } }
+        func holds(_ n: AXNodeInfo, depth: Int) -> Bool {
+            if isSheet(n) { return looksLikeFilePanel(n) }
             if isOpenOrSavePanel(identifier: n.identifier, subrole: n.subrole, title: n.title) { return true }
-            return depth < 3 && n.children.contains { sheetOrPanel($0, depth: depth + 1) }
+            return depth < 3 && n.children.contains { holds($0, depth: depth + 1) }
         }
-        return w.children.contains { sheetOrPanel($0, depth: 1) }
+        return w.children.contains { holds($0, depth: 1) }
     }
+
+    public static func isSheet(_ n: AXNodeInfo) -> Bool { n.role == "AXSheet" || n.subrole == "AXSheet" }
 
     public static func isOpenOrSavePanel(identifier: String?, subrole: String?, title: String?) -> Bool {
         let id = (identifier ?? "").lowercased()
         if id.contains("open-panel") || id.contains("save-panel") || id.contains("openpanel") || id.contains("savepanel") { return true }
         let t = (title ?? "").lowercased()
-        return (subrole == "AXDialog" || subrole == "AXSystemDialog") && ["open", "save", "save as", "export", "import", "choose"].contains(t)
+        return (subrole == "AXDialog" || subrole == "AXSystemDialog") && panelTitles.contains(t)
+    }
+
+    /// Whether a sheet or dialog is, or may be, a file panel. Fails closed: a subtree that could not be read counts as one.
+    /// Signs: a panel title or identifier anywhere, a file browser (AXBrowser, an outline inside a split group, a sidebar),
+    /// or a name field with a folder menu and a Save panel's labels ("Where", "Save As", "Tags").
+    public static func looksLikeFilePanel(_ n: AXNodeInfo) -> Bool {
+        if panelTitles.contains((n.title ?? "").lowercased()) { return true }
+        var textField = false, popUp = false, saveLabel = false, filePanel = false
+        func walk(_ x: AXNodeInfo, depth: Int, inSplit: Bool) {
+            guard !filePanel else { return }
+            if !x.readable { filePanel = true; return }
+            let id = (x.identifier ?? "").lowercased()
+            if isOpenOrSavePanel(identifier: x.identifier, subrole: x.subrole, title: x.title) || id.contains("nssavepanel") || id.contains("nsopenpanel")
+                || id.contains("filebrowser") || id.contains("sidebar") || x.role == "AXBrowser" || (inSplit && x.role == "AXOutline") {
+                filePanel = true; return
+            }
+            if x.role == "AXTextField" { textField = true }
+            if x.role == "AXPopUpButton" { popUp = true }
+            for text in [x.title, x.value] {
+                let t = (text ?? "").lowercased().trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: ":"))
+                if saveLabels.contains(t) { saveLabel = true }
+            }
+            guard depth < 6 else { return }
+            for c in x.children { walk(c, depth: depth + 1, inSplit: inSplit || x.role == "AXSplitGroup") }
+        }
+        walk(n, depth: 0, inSplit: false)
+        return filePanel || (textField && popUp && saveLabel)
+    }
+
+    /// The refusal for a window that is or holds an Open or Save panel. The same words wherever it is refused.
+    public static func refusal(window: UInt32, app: String) -> HandsError {
+        HandsError(.needsSandbox, "window \(window) of \(app) is or holds an Open or Save panel",
+                   suggestion: "Agents never drive an Open or Save panel. Wait for it to close, or open the file with `polycarp-spaces agent open <app> <file in the handoff folder>`.", retry: .never)
     }
 }
 

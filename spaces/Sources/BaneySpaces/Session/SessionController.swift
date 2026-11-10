@@ -93,7 +93,7 @@ final class SessionController {
     let hands = HandsRouter()
     /// The same hands for an assistant that came in through the connector: never more than Default, whatever this Mac allows
     /// the agents on it. Its refs are its own.
-    let connectorHands = HandsRouter(cap: { $0.forRemote })
+    let connectorHands = HandsRouter(cap: { $0.forRemote }, remote: true)
     /// Answers `baneyspaces sandbox …` (the app delegate sets it); called off the main thread.
     var sandboxHandler: ((Wire.Request) -> Wire.Reply)?
 

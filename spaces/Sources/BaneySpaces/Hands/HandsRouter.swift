@@ -21,6 +21,16 @@ struct HandsHost {
     var cursorMark: (UInt32) -> CursorMark? = { _ in nil }
     /// The session engine's `agent open <app> [files…]`.
     var open: ([String]) -> Wire.Reply = { _ in .init(ok: false, error: "not ready") }
+    /// `workspaces`: one row per workspace (number, shown, current, window count).
+    var workspaceRows: () -> [WorkspaceRow] = { [] }
+    /// The usable area of the screen the agent workspace shows on, in screen coordinates with the origin at the top left.
+    var agentArea: () -> CGRect = { .zero }
+    /// `arrange`: frames for agent workspace windows, applied without showing them; how each one was applied.
+    var arrange: ([UInt32: CGRect]) -> [UInt32: String] = { _ in [:] }
+    /// Sends a window to a workspace without going there (`Spaces.move`).
+    var move: (UInt32, Int) -> Void = { _, _ in }
+    /// Presses a window's close button from behind; false when it has none.
+    var close: (UInt32) -> Bool = { _ in false }
 }
 
 /// Runs one agent command: checks scope, calls the engine, returns evidence. Lives in the app process,
@@ -33,7 +43,15 @@ final class HandsRouter {
     /// router for connectors can never act on Full Access (`HandsRouterAccessTests` holds the code to it).
     var access: AgentAccessMode { cap(AgentAccess.shared.current) }
 
-    init(cap: @escaping (AgentAccessMode) -> AgentAccessMode = { $0 }) { self.cap = cap }
+    /// A router for connectors (another machine): the managing verbs (`WorkspaceVerbs.manage`) are never open to it.
+    let remote: Bool
+
+    init(cap: @escaping (AgentAccessMode) -> AgentAccessMode = { $0 }, remote: Bool = false) { self.cap = cap; self.remote = remote }
+
+    /// Which child windows appeared after which session's action (`ChildAttribution`), and what each session opened.
+    var attribution = ChildAttribution()
+    var sessionWindows = SessionWindows()
+    let childLock = NSLock()
 
     /// What a snapshot's refs belong to. A ref is good only for this snapshot's window and process.
     private struct Snap { var window: UInt32; var pid: Int32; var app: String; var at: Date; var identity: [String: RefIdentity] }
@@ -63,9 +81,14 @@ final class HandsRouter {
         lends.expire()
         if HandsTools.userOnly.contains(req.verb) { return .failure(HandsParse.askedForLend(req.string("app"))) }
         if let e = AgentAccessGate.refusal(verb: req.verb, mode: access) { return .failure(e) }
-        if req.verb != "windows", req.verb != "open", let problem = HandsEngine.shared.permissionProblem() { return .failure(problem) }
+        if remote, let e = WorkspaceVerbs.connectorRefusal(verb: req.verb) { return .failure(e) }
+        if req.verb != "windows", req.verb != "workspaces", req.verb != "open", let problem = HandsEngine.shared.permissionProblem() { return .failure(problem) }
         switch req.verb {
-        case "windows": return windows()
+        case "windows": return windows(session: req.session ?? "")
+        case "workspaces": return workspaces(req)
+        case "arrange": return arrange(req)
+        case "move": return move(req)
+        case "close": return close(req)
         case "snapshot": return snapshot(req)
         case "find": return find(req)
         case "get": return get(req)
@@ -92,7 +115,9 @@ final class HandsRouter {
         onMain { (fresh ? host.freshWindows() : host.windows(), host.agentWorkspace()) }
     }
 
-    func decide(_ w: HandsWindow, _ agent: Int?) -> ScopeDecision {
+    func decide(_ w: HandsWindow, _ agent: Int?, session: String = "") -> ScopeDecision {
+        // A window BaneySpaces doesn't place: usable only as a child of a window the agent may use (`ChildWindowRule`).
+        if w.workspace == nil { return childDecision(w.id, pid: w.pid, agent: agent, session: session)?.decision.scope ?? ScopeGuard.check(w, agentWorkspace: agent, lends: lends.current(), now: Date(), mode: access, selfPid: getpid()) }
         let mode = access
         Self.refusedLock.lock(); let bad = Self.refused.contains(w.id); Self.refusedLock.unlock()
         // Under Full Access Donovan's documents are open to agents, so a window refused for showing one is usable again.
@@ -112,14 +137,14 @@ final class HandsRouter {
     /// The scope check an engine call runs on its queue at the moment it executes, plus, for a call on a ref,
     /// the check that the ref still means what the snapshot said (the engine's saved refs are a file the
     /// agent could edit).
-    func check(_ w: HandsWindow, ref: String? = nil) -> HandsEngine.Check {
-        { [self] in gate(w) ?? ref.flatMap { refProblem($0) } }
+    func check(_ w: HandsWindow, ref: String? = nil, session: String = "") -> HandsEngine.Check {
+        { [self] in gate(w, session: session) ?? ref.flatMap { refProblem($0) } }
     }
 
     /// The same for a call that changes something: Read Only, set after the request was let in, stops it here too, and so
     /// does Donovan coming back to the app after the wait found it free (the in-use rule, read again at this moment).
-    func actingCheck(_ w: HandsWindow, ref: String? = nil, verb: String, delivery: InUseDelivery) -> HandsEngine.Check {
-        let scope = check(w, ref: ref)
+    func actingCheck(_ w: HandsWindow, ref: String? = nil, verb: String, delivery: InUseDelivery, session: String = "") -> HandsEngine.Check {
+        let scope = check(w, ref: ref, session: session)
         return { [self] in AgentAccessGate.actingRefusal(mode: access) ?? scope() ?? inUseProblem(w, verb: verb, delivery: delivery) }
     }
 
@@ -139,22 +164,22 @@ final class HandsRouter {
 
     /// The in-use check at the moment of delivery: nil to go ahead.
     private func inUseProblem(_ w: HandsWindow, verb: String, delivery: InUseDelivery) -> HandsError? {
-        let (live, agent) = onMain { (host.live(w.id), host.agentWorkspace()) }
-        let (state, verdict) = inUseVerdict(live ?? w, agent: agent, verb: verb, delivery: delivery)
+        let (placed, agent) = onMain { (host.live(w.id), host.agentWorkspace()) }
+        let (state, verdict) = inUseVerdict(placed ?? w, agent: agent, verb: verb, delivery: delivery)
         return verdict == .wait ? InUseWait.refusal(app: w.app, state: state, waited: nil) : nil
     }
 
     /// Before an action is dispatched: while Donovan is using the app, wait on this thread (never the main one, and never
     /// on the process queue, so other callers and other apps go on) until it is free or `wait` seconds pass. Every look
     /// checks Read Only and the whole scope decision again, so a narrowing during the wait refuses at once.
-    func awaitUse(_ w: HandsWindow, verb: String, delivery: InUseDelivery, wait: Int?) -> HandsError? {
+    func awaitUse(_ w: HandsWindow, verb: String, delivery: InUseDelivery, wait: Int?, session: String = "") -> HandsError? {
         let bound = Thread.isMainThread ? 0 : InUseRule.bound(wait)
         let outcome = InUseWait.run(bound: bound, now: Date.init, sleep: { Thread.sleep(forTimeInterval: $0) }) { [self] in
-            let (live, agent) = onMain { (host.live(w.id), host.agentWorkspace()) }
-            guard let live else { return .refused(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows` and take a new snapshot.", retry: .afterSnapshot)) }
+            let (placed, agent) = onMain { (host.live(w.id), host.agentWorkspace()) }
+            guard let live = placed ?? (w.workspace == nil ? childWindow(w.id) : nil) else { return .refused(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows` and take a new snapshot.", retry: .afterSnapshot)) }
             guard live.pid == w.pid else { return .refused(HandsError(.staleRef, "window \(w.id) belongs to a different process now", suggestion: "Take a new snapshot.", retry: .afterSnapshot)) }
             let (state, verdict) = inUseVerdict(live, agent: agent, verb: verb, delivery: delivery)
-            return InUseWait.step(mode: access, scope: decide(live, agent), state: state, verdict: verdict)
+            return InUseWait.step(mode: access, scope: decide(live, agent, session: session), state: state, verdict: verdict)
         }
         switch outcome {
         case .ready(let waited):
@@ -180,12 +205,13 @@ final class HandsRouter {
 
     /// The check right before an engine call: the window is still the same process's, and still in scope.
     /// A move to one of Donovan's workspaces or a revoked lend between resolving and dispatching stops the call.
-    func gate(_ w: HandsWindow) -> HandsError? {
-        let (now, agent) = onMain { (host.live(w.id), host.agentWorkspace()) }
-        guard let now else { return HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows` and take a new snapshot.", retry: .afterSnapshot) }
+    func gate(_ w: HandsWindow, session: String = "") -> HandsError? {
+        let (placed, agent) = onMain { (host.live(w.id), host.agentWorkspace()) }
+        guard let now = placed ?? (w.workspace == nil ? childWindow(w.id) : nil) else { return HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows` and take a new snapshot.", retry: .afterSnapshot) }
         guard now.pid == w.pid else { return HandsError(.staleRef, "window \(w.id) belongs to a different process now", suggestion: "Take a new snapshot.", retry: .afterSnapshot) }
-        if case .denied(let e) = decide(now, agent) { return e }
-        return inspectProblem(now)
+        if case .denied(let e) = decide(now, agent, session: session) { return e }
+        // A child's own panel check is part of its decision (`ChildWindowRule` rule 3).
+        return now.workspace == nil ? nil : inspectProblem(now)
     }
 
     /// No window is used while it is or holds an Open or Save panel, which would browse his files, in any mode. Windows of a process
@@ -200,8 +226,7 @@ final class HandsRouter {
         case .panel:
             // Remembered only for an agent's own process: one of Donovan's windows with a sheet up is usable again once the sheet closes.
             if agentOwned, access != .full { remember(w.id) }
-            return HandsError(.needsSandbox, "window \(w.id) of \(w.app) is or holds an Open or Save panel",
-                              suggestion: "Agents never drive an Open or Save panel. Wait for it to close, or open the file with `polycarp-spaces agent open <app> <file in the handoff folder>`.", retry: .never)
+            return PanelDetector.refusal(window: w.id, app: w.app)
         case .outsideDocument:
             remember(w.id)
             return HandsError(.needsSandbox, "window \(w.id) of \(w.app) shows a document from outside the handoff folder",
@@ -217,15 +242,18 @@ final class HandsRouter {
         .object(["pid": .int(Int(w.pid)), "window": .int(Int(w.id)), "app": .string(w.app), "scope": .string(scope.reason)])
     }
 
-    private func windows() -> HandsEnvelope {
+    private func windows(session: String) -> HandsEnvelope {
         let (all, agent) = listWindows(fresh: true)
         let mode = access
-        let usable = all.map { ($0, decide($0, agent)) }.filter { $0.1.allowed }.map { (window: $0.0, scope: $0.1) }
+        let usable = all.map { ($0, decide($0, agent, session: session)) }.filter { $0.1.allowed }.map { (window: $0.0, scope: $0.1) }
             // Under Full Access every window is listed without reading each one (that would ask every app on the Mac);
             // a panel is still refused when the window is used.
             .filter { mode == .full || inspectProblem($0.window) == nil }
             .sorted { $0.window.id < $1.window.id }
         let titles = onMain { host.titles(usable.map(\.window.id)) }
+        // The dialogs, alerts, sheets and palettes of the apps the agent may use, each decided by `ChildWindowRule`.
+        let kids = children(ofPids: Set(usable.map(\.window.pid)), all: all, agent: agent, session: session)
+        let waitingOn = Dictionary(grouping: kids.rows.filter { $0.facts.waiting }, by: \.facts.pid).mapValues { $0.map { JSONValue.int(Int($0.facts.id)) } }
         return .success(.object([
             "agent_workspace": agent.map(JSONValue.int) ?? .null,
             "access": .string(mode.rawValue),
@@ -233,8 +261,15 @@ final class HandsRouter {
                 var w = u.window
                 w.title = titles[w.id] ?? ""
                 // A window of an app Donovan is using is listed like any other, marked so the agent knows an action waits.
-                return HandsWindowList.entry(w, scope: u.scope, inUse: UserActivity.shared.state(w.pid))
-            }),
+                var e = HandsWindowList.entry(w, scope: u.scope, inUse: UserActivity.shared.state(w.pid))
+                if case .object(var o) = e {
+                    o["kind"] = "window"
+                    if kids.sheetsOn.contains(w.id) { o["sheet"] = .bool(true); o["sheet_note"] = "a sheet is up on this window: its elements are in this window's snapshot, marked sheet" }
+                    if let ids = waitingOn[w.pid] { o["waiting_on"] = .array(ids) }
+                    e = .object(o)
+                }
+                return e
+            } + kids.rows.map { ChildWindowList.entry($0.facts, decision: $0.decision, inUse: UserActivity.shared.state($0.facts.pid)) }),
         ]))
     }
 
@@ -247,10 +282,10 @@ final class HandsRouter {
         var (all, agent) = listWindows()
         if let id = req.int("window") {
             if !all.contains(where: { Int($0.id) == id }) { (all, agent) = listWindows(fresh: true) }
-            guard let w = all.first(where: { Int($0.id) == id }) else {
+            guard let w = all.first(where: { Int($0.id) == id }) ?? UInt32(exactly: id).flatMap({ childWindow($0) }) else {
                 return .failure(HandsError(.windowNotFound, "no window \(id) that Polycarp tracks", suggestion: "Run `polycarp-spaces agent windows` for the ids you can use.", retry: .safe))
             }
-            let d = decide(w, agent)
+            let d = decide(w, agent, session: req.session ?? "")
             if case .denied(let e) = d { return .failure(e) }
             return .success((w, d, nil))
         }
@@ -293,8 +328,8 @@ final class HandsRouter {
     }
 
     /// `register: false` for the snapshots taken as evidence: the agent never sees their refs, so they must not push its refs out.
-    func read(_ w: HandsWindow, interactive: Bool, compact: Bool, depth: UInt8 = 10, register: Bool = true) -> Result<JSONValue, HandsError> {
-        switch HandsEngine.shared.snapshot(window: w, interactive: interactive, compact: compact, depth: depth, evidence: !register, check: check(w)) {
+    func read(_ w: HandsWindow, interactive: Bool, compact: Bool, depth: UInt8 = 10, register: Bool = true, session: String = "") -> Result<JSONValue, HandsError> {
+        switch HandsEngine.shared.snapshot(window: w, interactive: interactive, compact: compact, depth: depth, evidence: !register, check: check(w, session: session)) {
         case .failed(let e): return .failure(e)
         case .ok(let data):
             // The engine must have read the window we asked for, never its neighbor.
@@ -312,12 +347,21 @@ final class HandsRouter {
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope, note)):
-            switch read(w, interactive: req.bool("interactive"), compact: req.bool("compact"), depth: UInt8(clamping: req.int("depth") ?? 10)) {
+            switch read(w, interactive: req.bool("interactive"), compact: req.bool("compact"), depth: UInt8(clamping: req.int("depth") ?? 10), session: req.session ?? "") {
             case .failure(let e): return .failure(e)
             case .success(let data):
                 var o = data.object ?? [:]
                 o["target"] = targetJSON(w, scope)
                 if let note { o["note"] = .string(note) }
+                // A sheet on this window: its elements are part of the tree, marked, so the agent can answer it.
+                if let tree = o["tree"] {
+                    let (marked, sheets) = SheetMark.mark(tree)
+                    if sheets > 0 {
+                        o["tree"] = marked
+                        o["sheets"] = .int(sheets)
+                        o["sheet_note"] = "a sheet is up on this window and blocks it: its elements are marked sheet and in_sheet"
+                    }
+                }
                 return .success(.object(o))
             }
         }
@@ -327,7 +371,7 @@ final class HandsRouter {
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, _, _)):
-            switch read(w, interactive: false, compact: true) {
+            switch read(w, interactive: false, compact: true, session: req.session ?? "") {
             case .failure(let e): return .failure(e)
             case .success(let data):
                 let role = req.string("role")?.lowercased(), name = req.string("name")?.lowercased()
@@ -353,7 +397,7 @@ final class HandsRouter {
 
     /// A ref is good for the snapshot that printed it: that snapshot's window, in that process. Any other
     /// window, a window that changed process, or one that left the agent's scope fails here.
-    func resolve(_ ref: String?) -> Result<(HandsWindow, ScopeDecision), HandsError> {
+    func resolve(_ ref: String?, session: String = "") -> Result<(HandsWindow, ScopeDecision), HandsError> {
         guard let ref, ref.hasPrefix("@s"), let colon = ref.firstIndex(of: ":") else {
             return .failure(HandsError(.badArguments, "\(ref ?? "") isn't a ref", suggestion: "Refs look like @s8f3k2p9:e5 and come from `polycarp-spaces agent snapshot`.", retry: .safe))
         }
@@ -363,23 +407,24 @@ final class HandsRouter {
             return .failure(HandsError(.unknownRef, "Polycarp didn't print \(ref)", suggestion: "Take a snapshot of the window and use the refs it prints.", retry: .afterSnapshot))
         }
         let (all, agent) = listWindows()
-        guard let w = all.first(where: { $0.id == snap.window }) else {
+        guard let w = all.first(where: { $0.id == snap.window }) ?? childWindow(snap.window) else {
             return .failure(HandsError(.staleRef, "window \(snap.window) is gone", suggestion: "Run `polycarp-spaces agent windows` and take a new snapshot.", retry: .afterSnapshot))
         }
         guard w.pid == snap.pid else {
             return .failure(HandsError(.staleRef, "window \(snap.window) now belongs to a different process than the snapshot's", suggestion: "Take a new snapshot.", retry: .afterSnapshot))
         }
-        let d = decide(w, agent)
+        let d = decide(w, agent, session: session)
         if case .denied(let e) = d { return .failure(e) }
         return .success((w, d))
     }
 
     private func get(_ req: HandsRequest) -> HandsEnvelope {
-        switch resolve(req.string("ref")) {
+        let session = req.session ?? ""
+        switch resolve(req.string("ref"), session: session) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope)):
             let ref = req.string("ref")!
-            switch HandsEngine.shared.get(window: w, ref: ref, property: req.string("property") ?? "value", check: check(w, ref: ref)) {
+            switch HandsEngine.shared.get(window: w, ref: ref, property: req.string("property") ?? "value", check: check(w, ref: ref, session: session)) {
             case .failed(let e): return .failure(e)
             case .ok(let d):
                 var o = d.object ?? [:]
@@ -399,27 +444,28 @@ final class HandsRouter {
         return act(req, .scroll, "scroll", direction: Int32(d), amount: UInt32(clamping: req.int("amount") ?? 3))
     }
 
-    func valueOf(_ w: HandsWindow, _ ref: String) -> String? {
-        if case .ok(let v) = HandsEngine.shared.get(window: w, ref: ref, property: "value", check: check(w, ref: ref)) { return v["value"]?.string ?? "" }
+    func valueOf(_ w: HandsWindow, _ ref: String, session: String = "") -> String? {
+        if case .ok(let v) = HandsEngine.shared.get(window: w, ref: ref, property: "value", check: check(w, ref: ref, session: session)) { return v["value"]?.string ?? "" }
         return nil
     }
 
     private func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, text: String? = nil, direction: Int32 = 1, amount: UInt32 = 3) -> HandsEnvelope {
         guard let ref = req.string("ref") else { return .failure(HandsError(.badArguments, "ref is missing", suggestion: "usage: polycarp-spaces agent \(name) <ref>", retry: .safe)) }
-        switch resolve(ref) {
+        let session = req.session ?? ""
+        switch resolve(ref, session: session) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope)):
             // Before the mark: an activation while it waits is Donovan's, never taken for the agent's.
             // Every verb here goes through the engine's strict Headless accessibility path (`HandsEngine.act`).
-            if let e = awaitUse(w, verb: name, delivery: .headlessAX, wait: req.int("wait")) { return .failure(e) }
+            if let e = awaitUse(w, verb: name, delivery: .headlessAX, wait: req.int("wait"), session: session) { return .failure(e) }
             // The mark covers the whole action, queue wait and engine call included, and a short tail after it.
             let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
             defer { AgentActivity.shared.end(token) }
             let writes = kind == .typeText || kind == .setValue
-            let beforeValue: String? = writes ? valueOf(w, ref) : nil
+            let beforeValue: String? = writes ? valueOf(w, ref, session: session) : nil
             // Tree before the action, to show what it changed.
             var before: JSONValue?
-            if !writes, kind != .toggle, case .success(let d) = read(w, interactive: false, compact: true, register: false) { before = d["tree"] }
+            if !writes, kind != .toggle, case .success(let d) = read(w, interactive: false, compact: true, register: false, session: session) { before = d["tree"] }
             // Scope again, at the moment of dispatch: the window may have moved since resolving.
             // Every action reports its target before dispatch. When the agent cursor will draw it (it is on, and Donovan is
             // looking at this window) the target's frame is measured on the process queue and follows as `frameMeasured`:
@@ -431,19 +477,21 @@ final class HandsRouter {
                                                  session: req.session ?? "", scope: scope.reason, workspace: w.workspace, direction: scrollDirection,
                                                  id: actionID, frameComing: wantsFrame))
             if wantsFrame {
-                HandsEngine.shared.measureBounds(window: w, ref: ref, within: HandsEngine.Budget.bounds, check: check(w, ref: ref)) {
+                HandsEngine.shared.measureBounds(window: w, ref: ref, within: HandsEngine.Budget.bounds, check: check(w, ref: ref, session: session)) {
                     HandsEvents.frameMeasured(actionID: actionID, frame: $0)
                 }
             }
+            // The child windows the app has now: one that appears after this is the action's (`ChildAttribution`).
+            let childrenBefore = noteAction(session: session, pid: w.pid)
             // The scope and ref checks run again on the process queue, at the moment the call executes.
-            let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX))
+            let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session))
             switch reply {
             case .failed(let e): return .failure(e)
             case .ok(let engine):
                 var evidence: JSONValue
                 var verified = engine["disposition"]?["delivery"]?.string == "delivered_verified"
                 if writes {
-                    if let after = valueOf(w, ref) {
+                    if let after = valueOf(w, ref, session: session) {
                         let before = beforeValue ?? ""
                         let expected = text ?? ""
                         let result: (ok: Bool, changed: Bool) = kind == .typeText
@@ -455,20 +503,23 @@ final class HandsRouter {
                                             "before_length": .int(before.count), "after_length": .int(after.count)])
                     } else { verified = false; evidence = .object(["kind": "value_readback", "error": "the value couldn't be read back"]) }
                 } else if kind == .toggle {
-                    if case .ok(let v) = HandsEngine.shared.get(window: w, ref: ref, property: "value", check: check(w, ref: ref)) {
+                    if case .ok(let v) = HandsEngine.shared.get(window: w, ref: ref, property: "value", check: check(w, ref: ref, session: session)) {
                         var o: [String: JSONValue] = ["kind": "state_readback", "value": v["value"] ?? .null]
-                        if case .ok(let s) = HandsEngine.shared.get(window: w, ref: ref, property: "states", check: check(w, ref: ref)) { o["states"] = s["value"] ?? .null }
+                        if case .ok(let s) = HandsEngine.shared.get(window: w, ref: ref, property: "states", check: check(w, ref: ref, session: session)) { o["states"] = s["value"] ?? .null }
                         evidence = .object(o)
                     } else { evidence = .object(["kind": "state_readback", "error": "the state couldn't be read back"]) }
-                } else if let before, case .success(let d) = read(w, interactive: false, compact: true, register: false), let after = d["tree"] {
+                } else if let before, case .success(let d) = read(w, interactive: false, compact: true, register: false, session: session), let after = d["tree"] {
                     let diff = AXDiff.between(before, after)
                     verified = verified || diff.changed
                     evidence = diff.json()
                 } else { evidence = .object(["kind": "ax_diff", "error": "the window couldn't be read after the action"]) }
-                return .success(.object([
+                var result: [String: JSONValue] = [
                     "action": .string(name), "ref": .string(ref), "verified": .bool(verified), "evidence": evidence,
                     "engine": engine, "target": targetJSON(w, scope),
-                ]))
+                ]
+                // A dialog or sheet the action raised: said here, so the agent need not poll.
+                if let opened = openedChildren(pid: w.pid, before: childrenBefore, session: session) { result["opened"] = opened }
+                return .success(.object(result))
             }
         }
     }
@@ -477,10 +528,10 @@ final class HandsRouter {
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope, _)):
-            if let e = gate(w) { return .failure(e) }
+            if let e = gate(w, session: req.session ?? "") { return .failure(e) }
             let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
             defer { AgentActivity.shared.end(token) }
-            switch WindowShot.capture(window: w.id, named: req.string("out"), cursor: req.bool("cursor") ? host.cursorMark(w.id) : nil, check: check(w)) {
+            switch WindowShot.capture(window: w.id, named: req.string("out"), cursor: req.bool("cursor") ? host.cursorMark(w.id) : nil, check: check(w, session: req.session ?? "")) {
             case .failure(let e): return .failure(e)
             case .success(let r):
                 return .success(.object([
@@ -504,9 +555,20 @@ final class HandsRouter {
         }
         let bundle = Bundle(url: url)?.bundleIdentifier ?? ""
         let display = url.deletingPathExtension().lastPathComponent
+        let session = req.session ?? ""
+        let targets = req.args["targets"]?.array?.compactMap(\.string) ?? []
+        // new_window: false reuses a window this session opened in the app, when no files are given; nothing starts.
+        if req.args["new_window"]?.bool == false, targets.isEmpty, AgentAccessGate.actingRefusal(mode: access) == nil {
+            let (all, agent) = listWindows(fresh: true)
+            let mine = childLocked { sessionWindows.windows(of: session) }
+            if let w = all.filter({ mine[$0.id] == $0.pid && matches($0, bundle.isEmpty ? display : bundle) && $0.workspace == agent && decide($0, agent).allowed }).max(by: { $0.id < $1.id }) {
+                return .success(.object(["window": .int(Int(w.id)), "pid": .int(Int(w.pid)), "app": .string(w.app), "workspace": agent.map(JSONValue.int) ?? .null,
+                                         "reused": .bool(true), "focus": .object(["changed": .bool(false), "returned": .bool(false)])]))
+            }
+        }
         try? FileManager.default.createDirectory(at: Self.handoffFolder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let files: [String]
-        switch AgentOpenGate.check(app: display, bundle: bundle, targets: req.args["targets"]?.array?.compactMap(\.string) ?? [], handoff: Self.handoffFolder, appURL: url,
+        switch AgentOpenGate.check(app: display, bundle: bundle, targets: targets, handoff: Self.handoffFolder, appURL: url,
                                      probeFolder: ProbeAppTrust.folder, probeTrusted: bundle == AgentAppPolicy.canvasProbeBundle && ProbeAppTrust.trusted(url),
                                      mode: access) {
         case .failure(let e): return .failure(e)
@@ -533,6 +595,9 @@ final class HandsRouter {
         }
         let pidsBefore = Set(NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundle }.map(\.processIdentifier))
         let known = Set(listWindows(fresh: true).windows.map(\.id))
+        // What is in front, and how often Polycarp has given the keyboard back, before the launch: the result says whether
+        // macOS brought the app forward and whether it was undone.
+        let (frontBefore, returnsBefore) = onMain { (NSWorkspace.shared.frontmostApplication?.processIdentifier, AgentLaunchFocus.shared.returns) }
         let reply = onMain { host.open([app] + files) }
         guard reply.ok else {
             let msg = reply.error ?? "couldn't open it"
@@ -547,16 +612,25 @@ final class HandsRouter {
         // process: an app that ran the launch inside Donovan's copy is not an agent's window.
         let separate = AgentAppPolicy.needsSeparateInstance(bundle: bundle)
         var window: HandsWindow?
-        // Inside the 8 s claim on its window (`claimNextWindow`), so a window seen here was placed by that claim.
-        let deadline = Date().addingTimeInterval(7.5)
-        while window == nil, Date() < deadline {
+        // Inside the 8 s claim on its window (`claimNextWindow`), so a window seen here was placed by that claim. At most
+        // `wait` seconds (7 when it says more or nothing); 0 looks once.
+        let deadline = Date().addingTimeInterval(min(InUseRule.bound(req.int("wait")), 7))
+        var looked = false
+        while window == nil, !looked || Date() < deadline {
+            looked = true
             let (all, agent) = listWindows(fresh: true)
             window = all.filter { matches($0, reply.info?["app"] ?? display) && !known.contains($0.id) && $0.workspace == agent && (!separate || !pidsBefore.contains($0.pid)) }.max { $0.id < $1.id }
             if window == nil { Thread.sleep(forTimeInterval: 0.15) }
         }
         var data: [String: JSONValue] = (reply.info ?? [:]).mapValues(JSONValue.string)
+        let (frontAfter, returnsAfter) = onMain { (NSWorkspace.shared.frontmostApplication?.processIdentifier, AgentLaunchFocus.shared.returns) }
+        data["focus"] = .object(["changed": .bool(frontAfter != frontBefore), "returned": .bool(returnsAfter > returnsBefore)])
+        if frontAfter != frontBefore { data["focus_note"] = "the app in front changed while it opened; Polycarp did not switch workspaces, and gives the keyboard back when an agent's launch takes it" }
         if let window {
             data["window"] = .int(Int(window.id)); data["pid"] = .int(Int(window.pid))
+            data["reused"] = .bool(false)
+            // Provenance: `close` closes only windows this session's `open` made.
+            childLocked { sessionWindows.record(session: session, window: window.id, pid: window.pid) }
         } else if separate, !pidsBefore.isEmpty, noNewProcess(bundle: bundle, before: pidsBefore) {
             return .failure(HandsError(.needsSandbox, "\(display) didn't start a separate copy, so nothing of it is the agent's",
                                        suggestion: "Close nothing; ask Donovan to quit \(display), or work in the sandbox.", retry: .never))
