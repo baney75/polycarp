@@ -19,6 +19,8 @@ final class VoiceEngine: ObservableObject {
     @Published private(set) var history: [VoiceHistoryItem] = []
     /// 0...1 download progress by model id.
     @Published private(set) var downloads: [String: Double] = [:]
+    /// Connected microphones by name (`pc_microphones`, which never opens one), read when Settings shows.
+    @Published private(set) var microphones: [String] = []
     @Published private(set) var lastError: String?
     /// The last dictation that failed, kept after the overlay clears it, for Settings > Silas.
     @Published private(set) var lastProblem: VoiceProblem?
@@ -268,6 +270,26 @@ final class VoiceEngine: ObservableObject {
         guard let core, let st: VoiceState = decode(pc_status(core)), st != state else { return }
         state = st
         onStateChange?()
+    }
+
+    func refreshMicrophones() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let p = pc_microphones()
+            let names = p.flatMap { try? JSONDecoder().decode([String].self, from: Data(String(cString: $0).utf8)) } ?? []
+            pc_string_free(p)
+            DispatchQueue.main.async { self?.microphones = names }
+        }
+    }
+
+    /// Merges an exported dictionary (Silas's own or a word list); returns what to tell the person.
+    func importDictionary(_ json: String) -> String {
+        guard let core else { return "The voice engine isn't running." }
+        let before = (dictionary?.terms.count ?? 0) + (dictionary?.corrections.count ?? 0)
+        guard let d: VoiceDictionary = json.withCString({ decode(pc_dictionary_import(core, $0)) }) else {
+            return "Couldn't import that file. \(lastCoreError())"
+        }
+        dictionary = d
+        return VoiceOptions.imported(before: before, after: d.terms.count + d.corrections.count)
     }
 
     func addTerm(_ t: String) {

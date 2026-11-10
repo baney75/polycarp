@@ -903,12 +903,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// The menu's Start Dictation / Stop Dictation: the same as pressing the dictation key once in tap mode.
+    @objc func toggleDictation() { VoiceEngine.shared.toggleRecording() }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         if !PartsModel.shared.hasChosen || !PartsModel.shared.current.contains(.workspaces) {
             if VoiceEngine.shared.partIsOn, let st = VoiceEngine.shared.state {
                 let silasItem = menu.addItem(withTitle: SilasName.menuTitle(VoiceEngine.shared.statusLine), action: nil, keyEquivalent: "")
                 silasItem.image = SilasMark.templateImage(size: 14, recording: st.status.isLive)
+                if let t = VoiceOptions.menuToggle(status: st.status, enabled: st.enabled, listener: st.listener) { menu.addItem(item(t, #selector(toggleDictation))) }
                 menu.addItem(.separator())
             }
             if let notice = updateNotice() { menu.addItem(menuItem(for: .update(notice))) }
@@ -936,6 +940,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let line = VoiceEngine.shared.statusLine
             let silasItem = menu.addItem(withTitle: SilasName.menuTitle(line), action: nil, keyEquivalent: "")
             silasItem.image = SilasMark.templateImage(size: 14, recording: st.status.isLive)
+            if let t = VoiceOptions.menuToggle(status: st.status, enabled: st.enabled, listener: st.listener) { menu.addItem(item(t, #selector(toggleDictation))) }
             menu.addItem(.separator())
         }
         spaces.refresh()
