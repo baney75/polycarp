@@ -213,9 +213,47 @@ never moves yours.
   workspace are told apart.
 - It shows on the agent workspace when you look at it, and over a lent app while the agent uses
   it. Anywhere else it stays hidden, and the action still runs.
+- It is drawn inside the window the agent is using and nowhere else (reported 2026-11-10: cursors
+  showed over windows they weren't using, on every Space and over full-screen apps). Each window an
+  agent acts in gets its own click-through overlay panel with that window's frame and level, ordered
+  directly above it in the window server (`order(.above, relativeTo:)`, checked on macOS 27.2), on
+  that window's Space only and clipped to its bounds. So whatever covers the window covers the
+  cursor, and it never draws outside the window. Before drawing, the window server's on-screen list
+  must show the window and nothing in front of it at the target point (`WindowCover`, pure and unit
+  tested). Only windows on the target's own level count, because higher ones (the menu bar, the
+  Dock's clear full-display window) already draw over the overlay. The target app's own sheets and
+  popovers count too, since they can't be told from a second document window, so the cursor hides
+  over a sheet. The reasons it hides are `covered`, `notOnScreen` and `outsideWindow` in
+  `CursorVisibility.Hidden`.
+- The overlay follows its window. While a cursor or veil is shown, one read of the on-screen list 8
+  times a second (`CursorDirector.followInterval`, and no timer at all when nothing is shown) moves
+  and resizes the overlay with the window, puts it back directly above the window when the window is
+  raised over it, and takes it away at once when the window is minimized, closed, moved to another
+  Space or parked. Between two windows the cursor lands in the new one instead of flying across the
+  screen. The rest of the app never counts an overlay as covering anything (`CursorOverlayWindows`,
+  read by `Windows.isCovered`).
+- While an agent works in a window, the window shows it is in use: a faint scrim in the status
+  color, a rim along the window's edge with a light in the agent's own hue and a white head
+  traveling around it, and a pill at the top center in the cursor badge's style ("Claude ·
+  working"; two agents in one window get a pill each, newest first). It appears on the agent's first
+  action in the window, shows even while the cursor itself is off or the target point is covered,
+  and fades 18 s (three times the cursor's idle time) after the agent's last action there, so it
+  doesn't flicker off while the agent thinks between actions. It is Core Animation only (the travel
+  is a repeating stroke animation the render server plays). Reduce Motion draws the rim still with
+  nothing traveling or pulsing, and Reduce Transparency drops the scrim and makes the pill opaque.
+  It is click-through: your clicks and keys still reach the window, which is how you take it back.
+  It's on by default, with a Settings switch beside the cursor's and `behavior.cursor.veil = "on"`
+  or `"off"` in `config.toml` (the file wins, and a veil turned off there is logged). The socket has
+  no command for it.
 - It never takes focus, clicks or keys. Screenshots and recordings of the agent workspace can
   include it or leave it out (`agent shot --cursor`), so the evidence in a result is the app
-  itself.
+  itself. `agent shot` captures the window by id (`SCContentFilter(desktopIndependentWindow:)`), so
+  neither the cursor nor the veil is in it.
+- `swift run -c release cursor-probe --order` proves the window rules against the real window
+  server with every window off all displays (the overlay directly above another app's window, a
+  window raised over it lying above the overlay, nothing drawn at a covered point, following a move,
+  leaving with the window). Plain `cursor-probe` runs the same checks on the display after its 100
+  glides, only when Donovan has been idle 10 minutes.
 - `baneyspaces agent cursor on|theme <name>|status` and a Settings switch. It's on by default. Only Donovan turns it
   off, in Settings: the cursor is how he sees agents work, so the socket refuses `agent cursor off` (and logs it) and
   a `behavior.cursor.enabled = false` line in `config.toml` is ignored. Agents may change its theme.

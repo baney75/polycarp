@@ -33,6 +33,8 @@ final class CursorController: ObservableObject {
         var host = CursorDirector.Host()
         host.agent = agent
         host.windowFrame = windowFrame
+        // One read of the on-screen list per action, and per follow tick while something is drawn.
+        host.windows = { ScreenWindows.onScreen() }
         // The director's work is the main thread's: layers are touched there. The hands only queue to it.
         let director = CursorDirector(surface: surface, queue: .main, host: host)
         self.surface = surface; self.director = director
@@ -40,6 +42,7 @@ final class CursorController: ObservableObject {
         // An off state in the saved settings is visible in the log: Settings is the only thing here that writes it, but
         // the defaults file is the user's and any process of the user can edit it.
         if !saved.enabled { Trace.log("agent cursor is off in the saved settings (turned off in Settings, or the defaults were edited)") }
+        logVeilIfOff()
         pushEnvironment()
         let nc = NotificationCenter.default
         observers.append(nc.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
@@ -64,6 +67,7 @@ final class CursorController: ObservableObject {
         e.shownWorkspaces = shownWorkspaces()
         e.agentWorkspace = agentWorkspace()
         e.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        e.reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         e.displays = surface.frames
         director.setEnvironment(e)
     }
@@ -82,8 +86,26 @@ final class CursorController: ObservableObject {
         fileStamp = s
         file = CursorConfigFile.read()
         settings = saved.applying(file)
+        logVeilIfOff()
         pushEnvironment()
     }
+
+    /// An agent can write config.toml as easily as Donovan can, so a veil turned off there is never silent.
+    private func logVeilIfOff() {
+        if file.veil == false { Trace.log("agent veil is off in config.toml (behavior.cursor.veil)") }
+        else if !saved.veil { Trace.log("agent veil is off in the saved settings") }
+    }
+
+    /// The "in use" veil's switch: Settings only. There is no socket command for it.
+    func setVeil(_ on: Bool) {
+        saved.veil = on
+        saved.save()
+        settings = saved.applying(file)
+        pushEnvironment()
+    }
+
+    /// Whether `config.toml` sets the veil (Settings shows the switch as set there).
+    var veilSetInFile: Bool { file.veil != nil }
 
     /// The switch is Donovan's: this is called by Settings only (the socket refuses `agent cursor off`, see
     /// `SocketPolicy`, and `command` below refuses it again).
@@ -117,7 +139,8 @@ final class CursorController: ObservableObject {
         func status() -> Wire.Reply {
             var info = ["enabled": settings.enabled ? "on" : "off", "theme": settings.theme,
                         "themes": CursorTheme.names.joined(separator: ", "),
-                        "glide": "response \(settings.spring.response) damping \(settings.spring.damping)" + (settings.spring.isInstant ? " (instant)" : "")]
+                        "glide": "response \(settings.spring.response) damping \(settings.spring.damping)" + (settings.spring.isInstant ? " (instant)" : ""),
+                        "veil": settings.veil ? "on" : "off"]
             if file.theme != nil { info["config_wins"] = "behavior.cursor.theme in " + CursorConfigFile.path() }
             if !file.ignored.isEmpty { info["config_ignored"] = file.ignored.joined(separator: ", ") + " (only Settings turns the cursor off)" }
             return Wire.Reply(ok: true, info: info)

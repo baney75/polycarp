@@ -677,7 +677,11 @@ struct SetupView: View {
                 .labelsHidden().disabled(!cursor.settings.enabled || cursor.themeSetInFile)
             }
             if cursor.themeSetInFile { SettingsNote("The look is set in config.toml (behavior.cursor.theme).") }
-            LearnMore("A small cursor with the agent's name glides to what it is working on, so you can follow it. It is drawn only while you look at the agent workspace (or at an app you lent). Its colors are its own. Agents can pick its look with polycarp-spaces agent cursor theme <name>.")
+            SettingsRow("Show when an agent is using a window", help: "A glowing edge and a name tag over the window. Clicks and keys still go to the window.") {
+                Toggle("In-use veil", isOn: binding({ cursor.settings.veil }, { cursor.setVeil($0) })).labelsHidden().disabled(cursor.veilSetInFile)
+            }
+            if cursor.veilSetInFile { SettingsNote("Set in config.toml (behavior.cursor.veil).") }
+            LearnMore("A small cursor with the agent's name glides to what it is working on, so you can follow it. It is drawn only inside the window the agent is using, only while that window is in sight, and never over a window in front of it. It shows on the agent workspace while you look at it, or over an app you lent. Its colors are its own. Agents can pick its look with polycarp-spaces agent cursor theme <name>, but only you can turn it or the veil off.")
         }
 
         if !model.finished.isEmpty {

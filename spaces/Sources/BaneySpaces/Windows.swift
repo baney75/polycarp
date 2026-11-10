@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import BaneySpacesCore
+import BaneySpacesCursor
 
 // Private but stable since macOS 10.x: the WindowServer number behind an Accessibility window.
 // Every window manager on the Mac relies on it; there is no public way to match the two.
@@ -378,6 +379,8 @@ enum Windows {
             guard (w[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
                   ((w[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) >= 1,
                   let n = (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value, !moving.contains(n),
+                  // The agent cursor's overlay sits right over its window and is clear: it hides nothing.
+                  !CursorOverlayWindows.contains(n),
                   !leaving.contains((w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? -1) else { return nil }
             return (w[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }
         }

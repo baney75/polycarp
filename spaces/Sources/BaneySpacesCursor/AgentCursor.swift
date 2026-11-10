@@ -8,7 +8,8 @@ import QuartzCore
 final class AgentCursor {
     let id: String
     private(set) var look: CursorLook
-    private(set) weak var display: CursorDisplay?
+    /// The overlay of the window it is drawn in.
+    private(set) weak var display: CursorOverlay?
     private(set) var isShown = false
     /// Where the arrow's tip is (the hands' coordinates), for putting it back after the displays change.
     private(set) var point: CGPoint = .zero
@@ -55,21 +56,24 @@ final class AgentCursor {
 
     // MARK: attaching
 
-    /// Puts the layers on a display's overlay (below the cursor: focus box, ripples, marks).
-    func attach(to d: CursorDisplay) {
+    /// Puts the layers on a window's overlay (below the cursor: focus box, ripples, marks).
+    func attach(to d: CursorOverlay) {
         if display === d { return }
         detach()
         display = d
-        scale = d.spec.scale
-        d.root.addSublayer(focus)
-        ripples.forEach { d.root.addSublayer($0) }
-        marks.forEach { d.root.addSublayer($0) }
-        d.root.addSublayer(root)
+        scale = d.scale
+        d.stage.addSublayer(focus)
+        ripples.forEach { d.stage.addSublayer($0) }
+        marks.forEach { d.stage.addSublayer($0) }
+        d.stage.addSublayer(root)
         applyScale()
     }
 
-    /// Takes the layers off the display. The mark shapes stay inside their containers (only the containers are on
-    /// the display's root), so they are still there when the cursor is attached again.
+    /// The window moved: the layers moved with it, and so did the point it stands on.
+    func shift(by dx: CGFloat, _ dy: CGFloat) { point = CGPoint(x: point.x + dx, y: point.y + dy) }
+
+    /// Takes the layers off the overlay. The mark shapes stay inside their containers (only the containers are on
+    /// the overlay's stage), so they are still there when the cursor is attached again.
     func detach() {
         if isShown { display?.cursorHidden(); isShown = false }
         let top: [CALayer] = [focus, root] + ripples + marks
@@ -81,7 +85,7 @@ final class AgentCursor {
     /// For checks: whether every mark shape is inside its container and every container on the display.
     var marksAreAttached: Bool {
         guard let d = display else { return false }
-        return zip(marks, markShapes).allSatisfy { $0.superlayer === d.root && $1.superlayer === $0 }
+        return zip(marks, markShapes).allSatisfy { $0.superlayer === d.stage && $1.superlayer === $0 }
     }
 
     /// For checks: the animations that change a layer's size or draw a stroke in (scale, growth, squish, trail).
@@ -126,9 +130,9 @@ final class AgentCursor {
         if marks.count != max(1, t.markCount), let d = display {
             (ripples + marks).forEach { $0.removeFromSuperlayer() }
             build(count: t.markCount)
-            ripples.forEach { d.root.addSublayer($0) }
-            marks.forEach { d.root.addSublayer($0) }
-            d.root.addSublayer(root)
+            ripples.forEach { d.stage.addSublayer($0) }
+            marks.forEach { d.stage.addSublayer($0) }
+            d.stage.addSublayer(root)
             applyScale()
         }
         noActions {

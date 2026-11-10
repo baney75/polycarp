@@ -15,6 +15,12 @@ public enum CursorVisibility {
         case noFrame
         /// The frame is not on any display.
         case offscreen
+        /// The target window is not on screen: minimized, closed, on another macOS Space, or parked off every display.
+        case notOnScreen
+        /// Another window in front of the target window covers the point.
+        case covered
+        /// The point is outside the target window, and a cursor never draws outside its window.
+        case outsideWindow
     }
 
     public enum Decision: Equatable, Sendable {
@@ -30,13 +36,27 @@ public enum CursorVisibility {
         return false
     }
 
+    /// `cover` is the window server's word on the target window at the frame's center (`WindowCover.check`); nil when
+    /// the window list couldn't be read, and then only the workspace and display rules apply.
     public static func decide(enabled: Bool, scope: String, windowWorkspace: Int?, shown: Set<Int>, agent: Int?,
-                              frame: CGRect?, displays: [CGRect]) -> Decision {
+                              frame: CGRect?, displays: [CGRect], cover: WindowCover.Verdict? = nil) -> Decision {
         let w = watching(enabled: enabled, scope: scope, windowWorkspace: windowWorkspace, shown: shown, agent: agent)
         guard case .show = w else { return w }
         guard let frame, !frame.isNull, !frame.isInfinite else { return .hidden(.noFrame) }
         let center = CGPoint(x: frame.midX, y: frame.midY)
-        return displays.contains { $0.contains(center) } ? .show : .hidden(.offscreen)
+        guard displays.contains(where: { $0.contains(center) }) else { return .hidden(.offscreen) }
+        switch cover {
+        case nil, .visible?: return .show
+        case .notOnScreen?: return .hidden(.notOnScreen)
+        case .covered?: return .hidden(.covered)
+        case .outsideWindow?: return .hidden(.outsideWindow)
+        }
+    }
+
+    /// Whether the "in use" veil may be drawn over a window: the same workspace rule as the cursor, with the veil's own
+    /// switch. It needs no frame: the veil covers the whole window.
+    public static func veilShown(enabled: Bool, scope: String, windowWorkspace: Int?, shown: Set<Int>, agent: Int?) -> Bool {
+        wantsFrame(enabled: enabled, scope: scope, windowWorkspace: windowWorkspace, shown: shown, agent: agent)
     }
 
     private static func watching(enabled: Bool, scope: String, windowWorkspace: Int?, shown: Set<Int>, agent: Int?) -> Decision {
