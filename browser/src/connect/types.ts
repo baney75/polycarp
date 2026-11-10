@@ -43,8 +43,8 @@ export interface ConnectStatus {
 	joinScopes?: JoinScope[];
 	/**
 	 * Computer use, which this computer could also allow: offered as optional and unticked, never part of joinScopes (what a
-	 * join grants). Present only when the route is none and Polycarp's Mac app is here. A join from the panel can't turn
-	 * them on: that needs a yes at this computer's terminal (`link scopes --add`).
+	 * join grants). Present only when the route is none and Polycarp's Mac app is here. Nothing can turn them on yet, neither
+	 * the panel nor the CLI: that needs the owner's approval in the Polycarp app, which isn't built yet.
 	 */
 	optionalJoinScopes?: Array<JoinScope & { ticked: false }>;
 	/** A config file that is present but unreadable, in a sentence; the route reads as none until it is fixed. */

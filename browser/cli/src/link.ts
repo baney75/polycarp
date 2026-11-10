@@ -12,7 +12,6 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { request as httpRequest } from "node:http";
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline/promises";
 import { StringDecoder } from "node:string_decoder";
 import { WebSocket } from "ws";
 import { BridgeClient } from "./client.ts";
@@ -146,20 +145,19 @@ export function normalizeHubUrl(raw: string): string {
 	return normalizePublicUrl(raw.replace(/\/mcp\/?$/, ""));
 }
 
-const capOf = (config: LinkConfig) => (config.scopes?.length ? config.scopes : DEFAULT_GRANT);
+/** What this device allows. Only an absent cap means the default grant; a stored empty list allows nothing. */
+export const capOf = (config: Pick<LinkConfig, "scopes">): string[] => config.scopes ?? DEFAULT_GRANT;
 
 // ---------- what this device allows ----------
 //
 // The cap lives in link.json and only this computer's own commands write it: no hub frame and no caller
-// can (link run never writes link.json). Narrowing is free and applies to the next call. Widening to
-// computer use, which lets agents that come through the hub see and act on this computer, needs a yes
-// typed at this computer's terminal; nothing without a terminal (the panel, a script, an agent's shell)
-// can give it.
+// can (link run never writes link.json). Narrowing is free and applies to the next call. The CLI never
+// adds computer use: a yes typed at a terminal can't show the owner gave it, because an agent can run
+// the command in a pseudo-terminal and type the yes itself. Granting computer use over a link needs the
+// owner's approval in the Polycarp app, which isn't built yet. A cap that already holds a computer scope
+// (an earlier preview build could write one) keeps it, and it can still be removed.
 
 const isComputerScope = (scope: string) => scope.startsWith("computer.");
-
-/** A person can answer here: both ends are a terminal. */
-const atTerminal = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
 /** Why a scope can't be on this device's cap, or undefined when it can be. */
 function scopeRefusal(scope: string): string | undefined {
@@ -168,30 +166,9 @@ function scopeRefusal(scope: string): string | undefined {
 	return undefined;
 }
 
-const computerNeedsYes = (scope: string) =>
-	`${scope} lets agents that come through the hub use this computer, so only a yes typed in a terminal on this computer turns it on (${COMMAND_NAME} link scopes --add ${scope}).`;
-
-/** One question at the terminal; `answers` maps what may be typed to a result, and an empty answer is the first entry's. */
-async function askAtTerminal<T>(question: string, answers: Array<[string[], T]>): Promise<T> {
-	const rl = createInterface({ input: process.stdin, output: process.stdout });
-	try {
-		const typed = (await rl.question(`${question} `)).trim().toLowerCase();
-		return (answers.find(([words]) => words.includes(typed)) ?? answers[0])[1];
-	} finally {
-		rl.close();
-	}
-}
-
-const yesAtTerminal = (question: string) =>
-	askAtTerminal(`${question} ${c.dim("[y/N]")}`, [
-		[["", "n", "no"], false],
-		[["y", "yes"], true],
-	]);
-
-/** What a hub caller could do here with these computer scopes, for the question. */
-function computerWords(scopes: string[]): string {
-	return scopes.includes("computer.act") ? "see this computer's agent workspace and apps you lend, and click and type in them" : "see this computer's agent workspace and apps you lend";
-}
+/** Why the CLI won't grant a computer scope. */
+export const computerNotGrantable = (scope: string) =>
+	`${scope} can't be turned on from the command line: granting computer use over a link needs the owner's approval in the Polycarp app, and that approval isn't built yet.`;
 
 async function hubPost(config: { hubUrl: string }, path: string, body: unknown, credential?: string): Promise<{ status: number; body: Record<string, unknown> }> {
 	const res = await fetch(`${config.hubUrl}${path}`, {
@@ -220,8 +197,6 @@ export interface EnrollOptions {
 	scopes?: string[];
 	service: boolean;
 	json: boolean;
-	/** The person said yes at this computer's terminal to the computer scopes in `scopes`. Only linkEnroll sets it. */
-	computerConsent?: boolean;
 }
 
 /** What enrolling did. `failed`: nothing was written. `linked`: link.json exists; `ok` is false when the service didn't start. */
@@ -378,11 +353,10 @@ export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: 
 	const early = checkLinked();
 	if (early) return early;
 	const scopes = options.scopes?.length ? [...new Set(options.scopes)] : [...DEFAULT_GRANT];
-	// Only what this computer can serve, and computer use only with the person's yes at its terminal.
+	// Only what this computer can serve, and never computer use: no CLI or panel path can show the owner granted it.
 	for (const s of scopes) {
-		const why = scopeRefusal(s);
+		const why = scopeRefusal(s) ?? (isComputerScope(s) ? computerNotGrantable(s) : undefined);
 		if (why) return failed(`${why} Nothing was changed.`, { type: "scopes" });
-		if (isComputerScope(s) && options.computerConsent !== true) return failed(`${computerNeedsYes(s)} Nothing was changed.`, { type: "scopes" });
 	}
 	if (options.service && !service.valid()) return failed(`${launcherBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then link again (or pass --no-service). Nothing was changed.`, { type: "launcher" });
 	// Reserve before the hub sees the code: a competing join is refused here, with its code unspent.
@@ -457,30 +431,7 @@ export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: 
 }
 
 export async function linkEnroll(options: EnrollOptions): Promise<number> {
-	let scopes = options.scopes;
-	let computerConsent = false;
-	// One question, default No, only when this computer can serve computer use and a person is at the terminal.
-	if (!options.json && atTerminal() && Object.keys(offeredScopes()).some(isComputerScope)) {
-		const named = (scopes ?? []).filter(isComputerScope);
-		if (named.length) {
-			computerConsent = await yesAtTerminal(`Let agents that come through the hub ${computerWords(named)}?`);
-			if (!computerConsent) {
-				console.error(`${sym.fail} Not linked: ${named.join(", ")} needs your yes. Nothing was changed.`);
-				return 1;
-			}
-		} else if (!scopes) {
-			const picked = await askAtTerminal(`May agents that come through the hub use this computer? ${c.dim("[N]o, [r]ead (see windows), read and [a]ct (click and type)")}`, [
-				[["", "n", "no"], [] as string[]],
-				[["r", "read"], ["computer.read"]],
-				[["a", "act"], ["computer.read", "computer.act"]],
-			]);
-			if (picked.length) {
-				scopes = [...DEFAULT_GRANT, ...picked];
-				computerConsent = true;
-			}
-		}
-	}
-	const result = await enrollDevice({ ...options, scopes, computerConsent }, { say: options.json ? undefined : (line) => console.log(line) });
+	const result = await enrollDevice(options, { say: options.json ? undefined : (line) => console.log(line) });
 	if (result.kind === "failed") {
 		if (options.json) console.log(JSON.stringify({ ok: false, error: result.error }));
 		else console.error(`${sym.fail} ${result.error}`);
@@ -494,10 +445,11 @@ export async function linkEnroll(options: EnrollOptions): Promise<number> {
 
 /**
  * The answer to a POST whose tools/call needs a scope outside `cap`, as JSON text, or undefined to let it through. A batch with
- * any such call is refused whole: each request in it gets the refusal, and nothing in it runs.
+ * any such call is refused whole: each request in it gets the refusal, and nothing in it runs. The body is always parsed and
+ * the decoded method checked, never the raw text, so an escaped method name (`tools\/call`, `tools\u002fcall`) is caught. A body
+ * that doesn't parse passes through: the local server rejects it too.
  */
-function refusedCall(body: string, cap: string[]): string | undefined {
-	if (!body.includes("tools/call")) return undefined;
+export function refusedCall(body: string, cap: string[]): string | undefined {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(body);
@@ -581,6 +533,7 @@ export async function linkRun(): Promise<void> {
 	const wsUrl = `${config.hubUrl.replace(/^http/, "ws")}/link`;
 	// The link token holds the cap link run started with; link.json can only narrow it from there until the next start.
 	const startCap = capOf(config);
+	if (!startCap.length) throw new Error(`${linkFile()} allows nothing, so there is nothing to serve. Run ${COMMAND_NAME} link scopes --add <scope>, or ${COMMAND_NAME} link off.`);
 	let lastCap = startCap;
 	/** What this device allows right now: the start cap, narrowed by link.json as it is now. Read on each request, so a removal applies to the next call. */
 	const liveCap = (): string[] => {
@@ -1001,7 +954,9 @@ export function linkBusy(value: string | undefined): number {
 
 // ---------- link scopes ----------
 
-/** Write this device's cap, under link.json's lock, from the config as it is now. Throws when it isn't linked. */
+const LAST_SCOPE = (cap: string[]) => `${cap.join(", ") || "Nothing"} is the only thing this device allows, and it can't be removed. To stop serving the hub, run ${COMMAND_NAME} link off.`;
+
+/** Write this device's cap, under link.json's lock, from the config as it is now. Throws a LinkError when it isn't linked or the cap would be empty. */
 async function writeCap(change: (cap: string[]) => string[]): Promise<string[]> {
 	let written: string[] = [];
 	await withFileLockAsync(
@@ -1010,6 +965,8 @@ async function writeCap(change: (cap: string[]) => string[]): Promise<string[]> 
 			const config = loadLinkConfig();
 			if (!config) throw new LinkError(`This device isn't linked. Run ${COMMAND_NAME} link <hub-url> --code <code>.`);
 			written = change([...capOf(config)]);
+			// Checked here, under the lock, on the config as it is now: two removals that each passed an earlier look can't leave it empty.
+			if (!written.length) throw new LinkError(LAST_SCOPE(capOf(config)));
 			writeJsonPrivate(linkFile(), { ...config, scopes: written });
 		},
 		REQUEST_LOCK_MS,
@@ -1017,9 +974,12 @@ async function writeCap(change: (cap: string[]) => string[]): Promise<string[]> 
 	return written;
 }
 
+/** Remove one scope from this device's cap under the lock. Refuses, with nothing written, when it would leave the cap empty. */
+export const removeScope = (scope: string): Promise<string[]> => writeCap((cap) => cap.filter((s) => s !== scope));
+
 /**
  * `link scopes`: show what this device allows, `--remove <scope>` (at once, no question) or `--add <scope>`. Adding computer use
- * needs a yes typed at this computer's terminal and is refused without one. Local only: nothing on the hub's side can call it.
+ * is always refused (computerNotGrantable); removing it works. Local only: nothing on the hub's side can call it.
  */
 export async function linkScopes(options: { add?: string; remove?: string; json: boolean }): Promise<number> {
 	const out = (ok: boolean, line: string, scopes?: string[]) => {
@@ -1043,8 +1003,8 @@ export async function linkScopes(options: { add?: string; remove?: string; json:
 		if (options.remove !== undefined) {
 			const scope = options.remove;
 			if (!capOf(config).includes(scope)) return out(true, `${sym.dot} This device doesn't allow ${scope}. Nothing was changed.`, [...capOf(config)]);
-			if (capOf(config).length === 1) return out(false, `${scope} is the only thing this device allows. To stop serving the hub, run ${COMMAND_NAME} link off.`);
-			const scopes = await writeCap((cap) => cap.filter((s) => s !== scope));
+			if (capOf(config).length === 1) return out(false, LAST_SCOPE(capOf(config)));
+			const scopes = await removeScope(scope);
 			return out(true, `${sym.ok} Removed ${scope}. This device allows: ${scopes.join(", ")}. The next call that needs it is refused.`, scopes);
 		}
 		if (options.add !== undefined) {
@@ -1052,13 +1012,7 @@ export async function linkScopes(options: { add?: string; remove?: string; json:
 			const why = scopeRefusal(scope);
 			if (why) return out(false, `${why} Nothing was changed.`);
 			if (capOf(config).includes(scope)) return out(true, `${sym.dot} This device already allows ${scope}.`, [...capOf(config)]);
-			if (isComputerScope(scope)) {
-				if (!atTerminal() || options.json) return out(false, `${computerNeedsYes(scope)} There is no terminal here to answer, so nothing was changed.`);
-				const wanted = scope === "computer.act" && !capOf(config).includes("computer.read") ? ["computer.read", "computer.act"] : [scope];
-				if (!(await yesAtTerminal(`Let agents that come through the hub ${computerWords(wanted)}?`))) return out(false, "Nothing was changed.");
-				const scopes = await writeCap((cap) => [...new Set([...cap, ...wanted])]);
-				return out(true, `${sym.ok} Added ${wanted.join(", ")}. This device allows: ${scopes.join(", ")}. ${await restartForCap()}`, scopes);
-			}
+			if (isComputerScope(scope)) return out(false, `${computerNotGrantable(scope)} Nothing was changed.`);
 			const scopes = await writeCap((cap) => [...new Set([...cap, scope])]);
 			return out(true, `${sym.ok} Added ${scope}. This device allows: ${scopes.join(", ")}. ${await restartForCap()}`, scopes);
 		}
@@ -1074,7 +1028,7 @@ export async function linkScopes(options: { add?: string; remove?: string; json:
 		return 0;
 	}
 	console.log(`${sym.dot} This device allows: ${cap.join(", ")}`);
-	if (offered.length) console.log(`${sym.dot} Computer use is off here. To let agents that come through the hub use this computer: ${COMMAND_NAME} link scopes --add ${offered[0]}`);
+	if (offered.length) console.log(`${sym.dot} Computer use is off here. It can't be turned on from the command line: it needs the owner's approval in the Polycarp app, which isn't built yet.`);
 	return 0;
 }
 
