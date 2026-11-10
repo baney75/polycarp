@@ -480,31 +480,32 @@ function readTask(index: RouterIndex, task: string): ReadTask {
 }
 
 /**
- * One action on many items: the task opens with a verb and a quantifier follows within three
- * words ("delete all my old posts", "leave every channel", "revoke access for every app").
- * Quantifiers are stopwords, so no word or pair carries this; it counts as one trigger phrase
- * for the bulk skill, which a skill with its own evidence still outranks ("archive all the
- * LinkedIn notifications in my Gmail" stays email-organization). Verbs that only read, list or
- * make something ("summarize all the comments", "list all the videos") don't count, and
- * neither does a task that names a file type ("rename all the .jpeg files"): those are files
- * on this computer, not a site's items.
+ * One action on many items: the task opens with a verb that changes items on a site and a
+ * quantifier follows within three words ("delete all my old posts", "leave every channel",
+ * "revoke access for every app"). Quantifiers are stopwords, so no word or pair carries this;
+ * it counts as one trigger phrase for the bulk skill, which a skill with its own evidence still
+ * outranks ("archive all the LinkedIn notifications in my Gmail" stays email-organization).
+ * Only the verbs in BULK_VERBS count, verbs that change a site's items: code work
+ * ("run all the tests", "add a docstring to every function", "fix every lint error") and
+ * reading ("summarize all the comments") open with other verbs. A task about local files or
+ * code doesn't count even with one of these verbs: one that names a file ("package.json",
+ * "img.png", ".tmp") or a code word ("remove all the unused imports in this file").
  */
 const BULK_SKILL = "bulk-actions";
 const QUANTIFIED_ACTION = /^\s*(?:please\s+)?([a-z]+)(?:\s+[a-z0-9']+){0,3}?\s+(?:all|every|each)\b/;
-const NOT_AN_ACTION = new Set(
+const BULK_VERBS = new Set(
 	(
-		"what which who whose how why when where is are was were do does did can could would should will " +
-		"i i'm i've we you it this that there here " +
-		"find list show read summarize summarise get pull export query give tell search look open count " +
-		"check verify compare translate explain describe review write draft draw make create build " +
-		"diagram chart plot map annotate format collect gather extract download save scrape fetch " +
-		"track monitor watch see note"
+		"delete remove archive hide unfollow unsubscribe cancel reject mark clear wipe purge untag leave mute decline " +
+		"approve close revoke retire move tag"
 	).split(" "),
 );
+const FILE_NAME =
+	/(?:^|[\s\w-])\.(?:json|jsonl|ya?ml|toml|ini|lock|md|txt|csv|tsv|log|tmp|bak|png|jpe?g|gif|webp|svg|heic|pdf|docx?|xlsx?|pptx?|zip|tar|gz|m?js|cjs|tsx?|jsx|py|rb|go|rs|java|swift|kt|c|h|cpp|sh|html?|css)\b/;
+const CODE_WORK = /\b(?:this|that|the|a|one) (?:file|folder|directory)\b|\b(?:imports?|functions?|methods?|variables?|codebase|source files?)\b/;
 
 function quantifiedAction(content: string): boolean {
 	const m = QUANTIFIED_ACTION.exec(content);
-	return m !== null && !NOT_AN_ACTION.has(m[1]) && !/(?:^|\s)\.[a-z0-9]{2,5}\b/.test(content);
+	return m !== null && BULK_VERBS.has(m[1]) && !FILE_NAME.test(content) && !CODE_WORK.test(content);
 }
 
 export interface RawScore {

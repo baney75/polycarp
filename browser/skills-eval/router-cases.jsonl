@@ -661,3 +661,10 @@
 {"task": "Delete this one post for me", "skill": "none"}
 {"task": "Write a bulk email to my customers announcing the sale", "skill": "writing"}
 {"task": "Unsubscribe me from all of these newsletters", "skill": "email-organization"}
+{"task": "Run all the tests and fix failures", "skill": "none"}
+{"task": "Add a docstring to every function", "skill": "none"}
+{"task": "Update all dependencies in package.json", "skill": "none"}
+{"task": "Fix every lint error", "skill": "none"}
+{"task": "Add a comment to each function", "skill": "none"}
+{"task": "Remove all the unused imports in this file", "skill": "none"}
+{"task": "Delete every .tmp file in the build folder", "skill": "none"}

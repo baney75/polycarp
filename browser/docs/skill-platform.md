@@ -34,11 +34,14 @@ four order signals:
 - a pair of neighbouring words shared with the skill ("literature review",
   "search operators"): +2 each. In a list such as "write, draft or port a skill", each item
   pairs with the list's last word;
-- one action on many items: a task that opens with a verb and has "all", "every" or "each"
-  within three words after it ("leave every channel", "revoke access for every app") gives
-  `bulk-actions` +2.5 and two pieces of evidence, as a strong trigger phrase would. Verbs
-  that read, list or make (`NOT_AN_ACTION` in `cli/src/skill-router.ts`) and tasks that name
-  a file type (".jpeg") don't count, and a skill with its own evidence still outranks it.
+- one action on many items: a task that opens with a verb that changes a site's items and has
+  "all", "every" or "each" within three words after it ("leave every channel", "revoke access
+  for every app") gives `bulk-actions` +2.5 and two pieces of evidence, as a strong trigger
+  phrase would. Only the verbs in `BULK_VERBS` (`cli/src/skill-router.ts`, verbs that change
+  a site's items) count, so code work ("run all the tests", "add a docstring to
+  every function") doesn't. A task that names a file ("package.json", "img.png") or a code
+  word ("the unused imports in this file") is local work and doesn't count either. A skill
+  with its own evidence still outranks it.
 
 Sentences that send the reader elsewhere ("Not for ...", "For news, use `news-research`")
 are left out, quoted phrases in them included, and backticked mentions of other skills are

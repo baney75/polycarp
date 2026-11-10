@@ -925,12 +925,25 @@ test("past 32 skills the single-evidence bar grows with a two-skill word's weigh
 	assert.ok(Math.abs(ratio(52).ratio - ratio(32).ratio) < 1e-9, `${ratio(32).ratio} vs ${ratio(52).ratio}`);
 });
 
-test("one verb on all or every item routes to bulk-actions; reading, listing and local files don't", () => {
+test("a site-changing verb on all or every item routes to bulk-actions; code work, reading and local files don't", () => {
 	const top = (task) => JSON.parse(run(["skill", "match", "--json", "--top", "1", task]).stdout)[0]?.name ?? "none";
 	for (const task of ["Mute every thread in this group", "Decline all 40 invites on this events page", "Delete every file in my Grok library"]) {
 		assert.equal(top(task), "bulk-actions", task);
 	}
-	for (const task of ["Summarize all the reviews on this product page", "List every open position on this careers page", "Rename all the .png files in my downloads"]) {
+	for (const task of [
+		"Summarize all the reviews on this product page",
+		"List every open position on this careers page",
+		"Rename all the .png files in my downloads",
+		// Code work opens with verbs the bulk skill doesn't name.
+		"Run every migration and then fix what breaks",
+		"Add a type annotation to all the exported helpers",
+		"Fix every warning the compiler prints",
+		// A file name with no space before its dot, or a code word, is local work even with a bulk verb.
+		"Retire every copy of img.png",
+		"Revoke all the links to img.png",
+		"Retire every key in settings.json",
+		"Remove every unused variable in this module",
+	]) {
 		assert.notEqual(top(task), "bulk-actions", task);
 	}
 });
