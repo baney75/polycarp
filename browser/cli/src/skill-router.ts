@@ -479,6 +479,34 @@ function readTask(index: RouterIndex, task: string): ReadTask {
 	return { command, invoked, excluded, changesSkill, content: text };
 }
 
+/**
+ * One action on many items: the task opens with a verb and a quantifier follows within three
+ * words ("delete all my old posts", "leave every channel", "revoke access for every app").
+ * Quantifiers are stopwords, so no word or pair carries this; it counts as one trigger phrase
+ * for the bulk skill, which a skill with its own evidence still outranks ("archive all the
+ * LinkedIn notifications in my Gmail" stays email-organization). Verbs that only read, list or
+ * make something ("summarize all the comments", "list all the videos") don't count, and
+ * neither does a task that names a file type ("rename all the .jpeg files"): those are files
+ * on this computer, not a site's items.
+ */
+const BULK_SKILL = "bulk-actions";
+const QUANTIFIED_ACTION = /^\s*(?:please\s+)?([a-z]+)(?:\s+[a-z0-9']+){0,3}?\s+(?:all|every|each)\b/;
+const NOT_AN_ACTION = new Set(
+	(
+		"what which who whose how why when where is are was were do does did can could would should will " +
+		"i i'm i've we you it this that there here " +
+		"find list show read summarize summarise get pull export query give tell search look open count " +
+		"check verify compare translate explain describe review write draft draw make create build " +
+		"diagram chart plot map annotate format collect gather extract download save scrape fetch " +
+		"track monitor watch see note"
+	).split(" "),
+);
+
+function quantifiedAction(content: string): boolean {
+	const m = QUANTIFIED_ACTION.exec(content);
+	return m !== null && !NOT_AN_ACTION.has(m[1]) && !/(?:^|\s)\.[a-z0-9]{2,5}\b/.test(content);
+}
+
 export interface RawScore {
 	name: string;
 	score: number;
@@ -493,6 +521,7 @@ export function scoreSkills(index: RouterIndex, task: string): RawScore[] {
 	const query = [...new Set(terms(content))];
 	const seq = words(content);
 	const queryPairs = pairsOf(content);
+	const bulk = quantifiedAction(content);
 	const out: RawScore[] = [];
 	for (const d of index.docs) {
 		if (excluded.has(d.name)) continue;
@@ -513,6 +542,10 @@ export function scoreSkills(index: RouterIndex, task: string): RawScore[] {
 		}
 		if (command === d.name || invoked.has(d.name)) {
 			score += COMMAND_BONUS;
+			evidence += 2;
+		}
+		if (bulk && d.name === BULK_SKILL) {
+			score += PHRASE_BONUS;
 			evidence += 2;
 		}
 		// A task about changing a named skill is evidence for the skills whose job is skills.

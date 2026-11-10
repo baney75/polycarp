@@ -924,3 +924,13 @@ test("past 32 skills the single-evidence bar grows with a two-skill word's weigh
 	// The word's weight relative to the bar is the same at 52 skills as at 32.
 	assert.ok(Math.abs(ratio(52).ratio - ratio(32).ratio) < 1e-9, `${ratio(32).ratio} vs ${ratio(52).ratio}`);
 });
+
+test("one verb on all or every item routes to bulk-actions; reading, listing and local files don't", () => {
+	const top = (task) => JSON.parse(run(["skill", "match", "--json", "--top", "1", task]).stdout)[0]?.name ?? "none";
+	for (const task of ["Mute every thread in this group", "Decline all 40 invites on this events page", "Delete every file in my Grok library"]) {
+		assert.equal(top(task), "bulk-actions", task);
+	}
+	for (const task of ["Summarize all the reviews on this product page", "List every open position on this careers page", "Rename all the .png files in my downloads"]) {
+		assert.notEqual(top(task), "bulk-actions", task);
+	}
+});

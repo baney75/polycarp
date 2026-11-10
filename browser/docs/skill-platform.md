@@ -19,7 +19,7 @@ Each skill is indexed from three parts of its SKILL.md:
 | when | the description from "Use when", plus the bullets under `## When to use` | 1.5 |
 
 Matching is BM25F over lowercased, lightly stemmed words with stopwords removed, plus
-three order signals:
+four order signals:
 
 - a slash command that names a skill: +6. It counts only as the task's first token, and not
   when followed by `/` or `.`, so paths like `ls /fix` or `cat /bug/report.txt` don't. Other
@@ -33,7 +33,12 @@ three order signals:
   just a word, scored as one;
 - a pair of neighbouring words shared with the skill ("literature review",
   "search operators"): +2 each. In a list such as "write, draft or port a skill", each item
-  pairs with the list's last word.
+  pairs with the list's last word;
+- one action on many items: a task that opens with a verb and has "all", "every" or "each"
+  within three words after it ("leave every channel", "revoke access for every app") gives
+  `bulk-actions` +2.5 and two pieces of evidence, as a strong trigger phrase would. Verbs
+  that read, list or make (`NOT_AN_ACTION` in `cli/src/skill-router.ts`) and tasks that name
+  a file type (".jpeg") don't count, and a skill with its own evidence still outranks it.
 
 Sentences that send the reader elsewhere ("Not for ...", "For news, use `news-research`")
 are left out, quoted phrases in them included, and backticked mentions of other skills are
