@@ -431,7 +431,8 @@ test("a device narrows the caller's scopes from either header name, the new one 
 		const json = body.trimStart().startsWith("{") ? body : body.split("\n").find((l) => l.startsWith("data: ")).slice(6);
 		return JSON.parse(json).result.tools.map((t) => t.name).sort();
 	};
-	const skillsOnly = ["skill_match", "skill_read"];
+	// Behind a hub the devices tool is there too: it needs no scope.
+	const skillsOnly = ["devices", "skill_match", "skill_read"];
 	assert.deepEqual(await toolsWith({ "x-polycarp-hub-scopes": "skills.read", "x-polycarp-hub-caller": "new-hub" }), skillsOnly);
 	assert.deepEqual(await toolsWith({ "x-tabkyra-hub-scopes": "skills.read", "x-tabkyra-hub-caller": "old-hub" }), skillsOnly, "a hub from before the rename still narrows");
 	assert.deepEqual(await toolsWith({ "x-polycarp-hub-scopes": "skills.read", "x-tabkyra-hub-scopes": "skills.read,browser.read" }), skillsOnly, "the new name wins");

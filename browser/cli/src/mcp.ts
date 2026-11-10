@@ -26,6 +26,7 @@ import { VERSION } from "./version.ts";
 import { COMPUTER_INSTRUCTION, COMPUTER_STATUS_TOOL, type ComputerClient, LOCAL_COMPUTER_INSTRUCTION, LocalComputer } from "./computer.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
+import type { RosterDevice } from "./link-protocol.ts";
 
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
@@ -189,11 +190,52 @@ export interface McpServerOptions {
 	computer?: ComputerClient;
 	/** The local stdio server's computer-use tools (computer.ts LocalComputer). Ignored for a scoped or remote session. */
 	localComputer?: LocalComputer;
+	/** This server runs on a device behind a hub (`link run`): the devices tool lists the owner's devices from the hub's last roster. */
+	hub?: McpHub;
+}
+
+/** What a session behind a hub knows about it: which device it runs on, and the hub's last roster (undefined until one arrives). */
+export interface McpHub {
+	self: { id: string; name: string };
+	roster: () => { devices: RosterDevice[]; at: number } | undefined;
+}
+
+/** The read-only tool that lists the owner's devices. It needs no scope: it says what each device allows, never more. */
+export const DEVICES_TOOL = "devices";
+
+const PLATFORM_NAMES: Record<string, string> = { darwin: "macOS", linux: "Linux", win32: "Windows" };
+
+/** The devices tool's answer: one entry per device, this one marked. */
+export function describeDevices(hub: McpHub): Record<string, unknown> {
+	const known = hub.roster();
+	const self = hub.self;
+	if (!known) {
+		return {
+			thisDevice: self.name,
+			devices: [{ name: self.name, id: self.id, thisDevice: true }],
+			note: "The hub hasn't sent its device list yet (it may be older than this device). Only this device is known.",
+		};
+	}
+	return {
+		thisDevice: self.name,
+		devices: known.devices.map((d) => ({
+			name: d.name,
+			id: d.id,
+			...(d.id === self.id ? { thisDevice: true } : {}),
+			platform: d.platform ? (PLATFORM_NAMES[d.platform] ?? d.platform) : "unknown",
+			online: d.online,
+			...(d.online ? {} : { lastSeen: d.lastSeen ?? "never connected" }),
+			allows: d.scopes,
+			browserExtension: d.extension,
+			computerUse: d.computer && d.scopes.some((s) => s.startsWith("computer.")),
+		})),
+	};
 }
 
 /** The MCP server and its bridge client, before any transport is attached. */
 export function createMcpServer(options: McpServerOptions = {}): { server: McpServer; client: BridgeClient } {
-	const allowedTools = options.allowedTools;
+	// Behind a hub every session may list the devices: the tool reads the roster and nothing else.
+	const allowedTools = options.allowedTools && options.hub ? new Set([...options.allowedTools, DEVICES_TOOL]) : options.allowedTools;
 	// Fail closed: the local helper runs without --connector, so a scoped or remote session never gets it.
 	const local = allowedTools || options.remote ? undefined : options.localComputer;
 
@@ -982,6 +1024,21 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	}
 
 	if (local) registerLocalComputer(server, local);
+
+	const hub = options.hub;
+	if (hub) {
+		server.registerTool(
+			DEVICES_TOOL,
+			{
+				title: "Devices",
+				description:
+					"The user's devices linked to this Polycarp hub: name, id, platform, online or when last seen, what each allows, and whether it has the browser extension and computer use. Call it before you use device to send a call to another device. Example: {}",
+				inputSchema: {},
+				annotations: { readOnlyHint: true, openWorldHint: false },
+			},
+			async () => ({ content: text(describeDevices(hub)) }),
+		);
+	}
 
 	stripSchemaDialect(server);
 	if (local) waitForLocalComputer(server, local);

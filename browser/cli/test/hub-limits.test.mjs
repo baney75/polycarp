@@ -31,9 +31,10 @@ const fakeDevice = async (hub, name, options) => {
 	cleanup.push(() => fake.ws.terminate());
 	return fake;
 };
+/** The tools a session through the hub has for these scopes, with the devices tool every hub session gets. */
 const toolsOf = (hub, ...scopes) => {
 	const table = hub.json(["token", "scopes", "--json"]);
-	return [...new Set(scopes.flatMap((x) => table[x].tools))].sort();
+	return [...new Set([...scopes.flatMap((x) => table[x].tools), "devices"])].sort();
 };
 const LIST = { jsonrpc: "2.0", id: 2, method: "tools/list" };
 

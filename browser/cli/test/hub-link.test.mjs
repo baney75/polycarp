@@ -31,6 +31,8 @@ async function deviceFor(hub, name, options) {
 
 const scopeTools = machine(root, "scope-table").json(["token", "scopes", "--json"]);
 const toolsOf = (...scopes) => [...new Set(scopes.flatMap((s) => scopeTools[s].tools))].sort();
+// A session through a hub also has the devices tool, which needs no scope.
+const hubToolsOf = (...scopes) => [...toolsOf(...scopes), "devices"].sort();
 
 // ---------- 1. Routing ----------
 
@@ -50,7 +52,7 @@ test("routing: a new session goes to the not-busy, least-busy device, and prefer
 		assert.equal(a.run(["link", "busy", "on"]).code, 0);
 		await hub.waitDevices((d) => d.alpha.busy, "alpha to report busy");
 		const first = await session();
-		assert.deepEqual((await first.listTools()).tools.map((t) => t.name).sort(), ["skill_match", "skill_read"]);
+		assert.deepEqual((await first.listTools()).tools.map((t) => t.name).sort(), ["devices", "skill_match", "skill_read"]);
 		const match = await first.callTool({ name: "skill_match", arguments: { task: "background check on a roofing contractor" } });
 		assert.match(match.content[0].text, /^osint /, "a tool call crosses the hub and the device link");
 		await hub.waitDevices((d) => d.beta.sessions === 1 && d.alpha.sessions === 0, "the first session on beta");
@@ -110,7 +112,7 @@ test("failover: when a device's link dies its sessions answer 404 and a new sess
 		assert.match(gone.json.error.message, /Unknown or expired session/);
 		const second = await connect(`${hub.url}/mcp`, secret);
 		try {
-			assert.deepEqual((await second.client.listTools()).tools.map((t) => t.name).sort(), ["skill_match", "skill_read"]);
+			assert.deepEqual((await second.client.listTools()).tools.map((t) => t.name).sort(), ["devices", "skill_match", "skill_read"]);
 			await hub.waitDevices((d) => d.beta.sessions === 1, "the new session on beta");
 		} finally {
 			await second.client.close();
@@ -142,10 +144,10 @@ test("scope intersection: the caller gets only what both their grant and the dev
 	await deviceFor(hub, "plain");
 	const url = `${hub.url}/mcp`;
 	const reader = await rawTools(url, createToken(hub, "reader", "browser.read,skills.read"));
-	assert.deepEqual(reader.tools, toolsOf("browser.read", "skills.read"), "a caller's read scope through the default cap sees only read tools");
+	assert.deepEqual(reader.tools, hubToolsOf("browser.read", "skills.read"), "a caller's read scope through the default cap sees only read tools");
 	assert.ok(!reader.tools.includes("click") && !reader.tools.includes("navigate"));
 	const scripter = await rawTools(url, createToken(hub, "scripter", "browser.read,browser.script"));
-	assert.deepEqual(scripter.tools, toolsOf("browser.read"), "browser.script is not in the device's cap, so run_js is not offered");
+	assert.deepEqual(scripter.tools, hubToolsOf("browser.read"), "browser.script is not in the device's cap, so run_js is not offered");
 	assert.ok(!scripter.tools.includes("run_js"));
 
 	// Headers a public client sends under the hub header names, new or old, are dropped at the hub.
@@ -155,15 +157,15 @@ test("scope intersection: the caller gets only what both their grant and the dev
 		"x-tabkyra-hub-scopes": "browser.read,browser.act,browser.script,threads.read",
 		"x-tabkyra-hub-caller": "someone-else",
 	});
-	assert.deepEqual(spoof.tools, toolsOf("browser.read"), "spoofed hub headers on the public /mcp change nothing");
+	assert.deepEqual(spoof.tools, hubToolsOf("browser.read"), "spoofed hub headers on the public /mcp change nothing");
 
 	// A device whose cap includes browser.script offers run_js only to a caller who holds it.
 	const hub2 = await hubFor("scope-hub2");
 	await deviceFor(hub2, "capable", { scope: "browser.read,browser.script,skills.read" });
 	const both = await rawTools(`${hub2.url}/mcp`, createToken(hub2, "both", "browser.read,browser.script"));
-	assert.deepEqual(both.tools, toolsOf("browser.read", "browser.script"));
+	assert.deepEqual(both.tools, hubToolsOf("browser.read", "browser.script"));
 	const readOnly = await rawTools(`${hub2.url}/mcp`, createToken(hub2, "ro", "browser.read"));
-	assert.deepEqual(readOnly.tools, toolsOf("browser.read"), "the device's wider cap never widens a narrower caller");
+	assert.deepEqual(readOnly.tools, hubToolsOf("browser.read"), "the device's wider cap never widens a narrower caller");
 });
 
 test("a plain serve token ignores the hub headers under either name, and a link token works nowhere but link run", async () => {
