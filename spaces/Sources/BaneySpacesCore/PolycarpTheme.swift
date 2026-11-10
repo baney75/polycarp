@@ -158,12 +158,14 @@ public struct PolycarpTheme: Equatable, Sendable {
     public static let minContrast = 4.5
 
     /// Parses and checks the text of `theme.json`. A problem is one plain sentence.
-    public static func parse(_ data: Data) -> Result<PolycarpTheme, PolycarpThemeError> {
+    /// `checkContrast: false` is for the theme editor's preview only, which must keep drawing while a color passes through a
+    /// pair that is too faint; it lists those pairs as warnings instead, and the CLI refuses them on Save.
+    public static func parse(_ data: Data, checkContrast: Bool = true) -> Result<PolycarpTheme, PolycarpThemeError> {
         guard data.count <= maxBytes else { return .failure(.init("over \(maxBytes) bytes")) }
         guard let any = try? JSONSerialization.jsonObject(with: data), let root = any as? [String: Any] else {
             return .failure(.init("not a JSON object"))
         }
-        do { return .success(try build(root)) } catch let e as PolycarpThemeError { return .failure(e) } catch { return .failure(.init("\(error)")) }
+        do { return .success(try build(root, checkContrast: checkContrast)) } catch let e as PolycarpThemeError { return .failure(e) } catch { return .failure(.init("\(error)")) }
     }
 
     /// `pairs()` in cli/src/theme.rs: text on its fills at `minContrast`, and the status colors on `sunken` at 3.0.
@@ -183,7 +185,7 @@ public struct PolycarpTheme: Equatable, Sendable {
     /// The `schema` this reads. A newer file may keep a key and change what it means, so it is refused, not guessed at.
     public static let schema = 1
 
-    private static func build(_ root: [String: Any]) throws -> PolycarpTheme {
+    private static func build(_ root: [String: Any], checkContrast: Bool) throws -> PolycarpTheme {
         guard let n = root["schema"] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue == n.doubleValue.rounded() else {
             throw PolycarpThemeError("schema is missing or not a whole number")
         }
@@ -214,7 +216,7 @@ public struct PolycarpTheme: Equatable, Sendable {
             all["on_accent"] = onAccent
             for (fa, fb, min) in cliPairs {
                 let r = all[fa]!.contrast(with: all[fb]!)
-                if r < min {
+                if r < min, checkContrast {
                     throw PolycarpThemeError("\(key).\(fa) on \(key).\(fb) is \(String(format: "%.2f", r)), needs \(min)")
                 }
             }
@@ -257,7 +259,7 @@ public struct PolycarpTheme: Equatable, Sendable {
             ui: try stack(type, "ui"), fontSize: try number(type, "size", 10, 24), fontWeight: try number(type, "weight", 300, 800),
             fast: try number(motion, "fast", 0, 1000), normal: try number(motion, "normal", 0, 1000), slow: try number(motion, "slow", 0, 1000),
             scaleFrom: try number(motion, "scale_from", 0.5, 1), reduced: reduced.boolValue)
-        try built.checkDrawnPairs()
+        if checkContrast { try built.checkDrawnPairs() }
         return built
     }
 

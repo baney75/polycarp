@@ -63,6 +63,10 @@ enum Render {
             let png = rep.representation(using: .png, properties: [:])
             return (try? png?.write(to: folder.appendingPathComponent(name))) != nil
         }
+        // BANEYSPACES_RENDER_THEME_EDITOR=<user theme> draws only the theme editor and the Appearance tab, light and dark.
+        if let name = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME_EDITOR"], !name.isEmpty {
+            return ThemeEditorRender.run(name) { save($0, $1, $2) }
+        }
         guard save(ViewerView(model: model, stillBackdrop: true), "overview.png", size) else { return 1 }
 
         // The same overview mid-drag: Mail's window on its way to workspace 6. A sample with no

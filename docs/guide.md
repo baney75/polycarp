@@ -85,6 +85,11 @@ polycarp theme current
 
 `--mode` takes `auto`, `light` or `dark`. `auto` follows your system.
 
+On a Mac, Settings > Appearance does the same with tiles: click one to use it, **Customize…** to make
+your own copy and edit it with live light and dark previews, drop a `.toml` to add a theme, drag a
+tile to Finder to save its file, or drop a picture to take its colors. See
+[themes/README.md](../themes/README.md#in-the-mac-app).
+
 | Theme | What it's like |
 | --- | --- |
 | `polycarp` | Warm paper and moss green. The default |
