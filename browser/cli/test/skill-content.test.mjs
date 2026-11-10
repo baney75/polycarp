@@ -3,7 +3,7 @@
 // them wrong: commands are run where the tool exists, and wording is pinned where it isn't.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -323,4 +323,18 @@ test("bulk-actions: the recount checks each item's state, and toggles are never 
 	assert.ok(text.includes("Never re-send an item that is in `done` without checking its state first."));
 	assert.ok(text.includes("For a toggle (star, follow, read or unread), prefer an endpoint or parameter that sets the state explicitly"));
 	assert.ok(text.includes("if only a toggle exists, send it only to items whose current state differs from the target."));
+});
+
+// The Spaces skill (spaces/skill/SKILL.md) ships in Polycarp.app beside this package; it has no lint of its own.
+const spacesSkill = join(repo, "..", "spaces", "skill", "SKILL.md");
+
+test("spaces: a scripting route is only for apps the agent may act on, and never takes focus", { skip: !existsSync(spacesSkill) && "no spaces checkout" }, () => {
+	const text = readFileSync(spacesSkill, "utf8").replace(/\s+/g, " ");
+	const i = text.indexOf("check for a programmatic route before you click");
+	assert.ok(i >= 0, "the programmatic-route paragraph");
+	const para = text.slice(text.lastIndexOf(". ", i) + 1, text.indexOf("Click through the app only when", i));
+	assert.ok(para.includes("For an app you may already act on (one you started with `agent open`, or one Donovan lent you)"), "limited to agent-opened or lent apps");
+	assert.ok(para.includes("never under Read Only"), "never under Read Only");
+	assert.ok(para.includes("A scripting route does not widen what the access mode allows"), "scripting doesn't widen the mode");
+	assert.ok(para.includes("`tell application ... to activate`, and anything else that takes focus or raises a window, is forbidden."), "focus is forbidden");
 });
