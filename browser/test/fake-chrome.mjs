@@ -234,8 +234,10 @@ export function installFakeChrome() {
 			getURL: (p) => p,
 			getManifest: () => ({ version: "0.0.0-test" }),
 			onMessage: event(),
-			connectNative() {
+			connectNative(name) {
 				const port = {
+					/** The native host name the extension asked for. */
+					name,
 					sent: [],
 					postMessage(m) {
 						port.sent.push(structuredClone(m));

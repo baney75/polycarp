@@ -7,13 +7,23 @@ import { envVar } from "./env.ts";
 
 /**
  * Socket directory: per user, outside $TMPDIR so every process finds the same path.
- * TABKYRA_SOCKET_DIR overrides it (tests run a private bridge this way).
+ * POLYCARP_SOCKET_DIR (or TABKYRA_SOCKET_DIR) overrides it (tests run a private bridge this way).
  */
 export function socketDir(): string {
-	if (process.platform === "win32") return `\\\\.\\pipe\\tabkyra-bridge-${userInfo().username}`;
+	return socketDirs()[0];
+}
+
+/**
+ * Where clients look for hosts: the socket directory, then the one a host started by a helper from before the rename made
+ * (`tabkyra-bridge-<user>`), so that host is still found while the browser runs it. An override is the only place.
+ * Drop the old one once no supported helper predates the rename.
+ */
+export function socketDirs(): string[] {
+	const user = userInfo().username;
+	if (process.platform === "win32") return [`\\\\.\\pipe\\polycarp-bridge-${user}`, `\\\\.\\pipe\\tabkyra-bridge-${user}`];
 	const override = envVar("SOCKET_DIR");
-	if (override) return override;
-	return `/tmp/tabkyra-bridge-${userInfo().username}`;
+	if (override) return [override];
+	return [`/tmp/polycarp-bridge-${user}`, `/tmp/tabkyra-bridge-${user}`];
 }
 
 export function socketPath(pid: number): string {

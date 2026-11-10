@@ -221,7 +221,7 @@ test("update --yes installs the signed release and registers the host from it", 
 	assert.equal(appVersion(), "9.1.1");
 	const launcher = readFileSync(join(home, ".config", "polycarp", "browser", "polycarp-host"), "utf8");
 	assert.ok(launcher.includes(appCli()), `launcher points at the release: ${launcher}`);
-	const hostManifest = JSON.parse(readFileSync(join(chromeDir, "NativeMessagingHosts", "ai.tabkyra.bridge.json"), "utf8"));
+	const hostManifest = JSON.parse(readFileSync(join(chromeDir, "NativeMessagingHosts", "com.polycarp.browser.json"), "utf8"));
 	assert.equal(hostManifest.path, join(home, ".config", "polycarp", "browser", "polycarp-host"));
 });
 

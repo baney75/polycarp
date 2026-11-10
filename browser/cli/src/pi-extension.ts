@@ -52,7 +52,9 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
-const SOCKET_DIR = process.env.POLYCARP_SOCKET_DIR || process.env.TABKYRA_SOCKET_DIR || \`/tmp/tabkyra-bridge-\${userInfo().username}\`;
+const SOCKET_OVERRIDE = process.env.POLYCARP_SOCKET_DIR || process.env.TABKYRA_SOCKET_DIR;
+// The socket folder, then the one a host started by a helper from before the rename made.
+const SOCKET_DIRS = SOCKET_OVERRIDE ? [SOCKET_OVERRIDE] : [\`/tmp/polycarp-bridge-\${userInfo().username}\`, \`/tmp/tabkyra-bridge-\${userInfo().username}\`];
 // One key per pi process: a reconnect (extension reload) must land on the same tabs.
 const SESSION_FALLBACK = \`p\${process.pid}-\${Date.now().toString(36)}\`;
 
@@ -63,11 +65,11 @@ function encode(message: unknown): Buffer {
 	return Buffer.concat([header, body]);
 }
 
-function newestSocket(): string | undefined {
-	if (!existsSync(SOCKET_DIR)) return undefined;
-	const st = statSync(SOCKET_DIR);
-	if ((st.mode & 0o777) !== 0o700 || st.uid !== process.getuid?.()) throw new Error(\`\${SOCKET_DIR} is not private to this user\`);
-	return readdirSync(SOCKET_DIR)
+function socketsIn(dir: string): string[] {
+	if (!existsSync(dir)) return [];
+	const st = statSync(dir);
+	if ((st.mode & 0o777) !== 0o700 || st.uid !== process.getuid?.()) throw new Error(\`\${dir} is not private to this user\`);
+	return readdirSync(dir)
 		.filter((n) => n.endsWith(".sock"))
 		.filter((n) => {
 			try {
@@ -77,8 +79,11 @@ function newestSocket(): string | undefined {
 				return false;
 			}
 		})
-		.map((n) => join(SOCKET_DIR, n))
-		.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+		.map((n) => join(dir, n));
+}
+
+function newestSocket(): string | undefined {
+	return SOCKET_DIRS.flatMap(socketsIn).sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
 }
 
 class Bridge {

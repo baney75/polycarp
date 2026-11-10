@@ -127,7 +127,7 @@ function migratedFolder(dir: string): string {
 	return dir;
 }
 
-/** A user service: what runs (`tabkyra <args>`), and the names the service manager knows it by. */
+/** A user service: what runs (`polycarp-browser <args>`), and the names the service manager knows it by. */
 export interface ServiceSpec {
 	label: string;
 	unit: string;

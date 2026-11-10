@@ -273,8 +273,22 @@ interface Caller {
 }
 
 /** Headers the hub sets on a request to a device: who the caller is and which scopes they hold. The device honors them only from its link token. */
-export const HUB_SCOPES_HEADER = "x-tabkyra-hub-scopes";
-export const HUB_CALLER_HEADER = "x-tabkyra-hub-caller";
+export const HUB_SCOPES_HEADER = "x-polycarp-hub-scopes";
+export const HUB_CALLER_HEADER = "x-polycarp-hub-caller";
+/**
+ * The same headers under the names from before the rename. A hub sends both: a device from before the rename reads only these,
+ * and with no scopes header it would give the caller its link token's whole cap. A device reads either, the new one first.
+ * Drop them once no supported hub or device predates the rename.
+ */
+export const LEGACY_HUB_SCOPES_HEADER = "x-tabkyra-hub-scopes";
+export const LEGACY_HUB_CALLER_HEADER = "x-tabkyra-hub-caller";
+/** Every hub header, new names and old: the ones a device forwards from the hub to its own server. */
+export const HUB_HEADERS = [HUB_SCOPES_HEADER, HUB_CALLER_HEADER, LEGACY_HUB_SCOPES_HEADER, LEGACY_HUB_CALLER_HEADER] as const;
+
+/** The hub headers for one request, under both names. */
+export function hubHeaders(scopes: string, caller: string): Record<string, string> {
+	return { [HUB_SCOPES_HEADER]: scopes, [HUB_CALLER_HEADER]: caller, [LEGACY_HUB_SCOPES_HEADER]: scopes, [LEGACY_HUB_CALLER_HEADER]: caller };
+}
 
 /** The scopes both lists hold, in `cap` order. A scope outside `cap` can never come back through the second list. */
 export function intersectScopes(cap: string[], asked: string[]): string[] {
@@ -420,9 +434,9 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		let scopes = token.scopes;
 		let label = token.name;
 		if (isLink) {
-			const asked = req.headers[HUB_SCOPES_HEADER];
+			const asked = req.headers[HUB_SCOPES_HEADER] ?? req.headers[LEGACY_HUB_SCOPES_HEADER];
 			if (asked !== undefined) scopes = intersectScopes(token.scopes, parseScopeHeader(asked));
-			label = safeCallerName(req.headers[HUB_CALLER_HEADER]) || token.name;
+			label = safeCallerName(req.headers[HUB_CALLER_HEADER] ?? req.headers[LEGACY_HUB_CALLER_HEADER]) || token.name;
 			if (scopes.length === 0) return deny(res, 403, "None of the caller's permissions are allowed on this device.");
 		}
 		pending.set(token.id, (pending.get(token.id) ?? 0) + 1);

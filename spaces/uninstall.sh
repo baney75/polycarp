@@ -308,6 +308,11 @@ if [ -s "$STORE/index.tsv" ]; then
     if [ "$saved" = "-" ]; then rm -f "$target"; elif [ -f "$saved" ]; then cp "$saved" "$target"; fi
   done < "$STORE/index.tsv"
 fi
+# The current host name came with Polycarp, so a list written before the rename doesn't name it: Polycarp's own manifest goes.
+for m in "$HOME/Library/Application Support"/*/NativeMessagingHosts/com.polycarp.browser.json \
+  "$HOME/Library/Application Support"/*/*/NativeMessagingHosts/com.polycarp.browser.json; do
+  if [ -f "$m" ] && grep -q "Polycarp.app" "$m"; then rm -f "$m"; fi
+done
 # END restore-browser-previous
 # Links the installer repointed on request (install.sh's retire_tabkyra) go back to what they were.
 retired="$HOME/Library/Application Support/Polycarp/tabkyra-retired-links"

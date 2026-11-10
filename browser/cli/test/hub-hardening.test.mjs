@@ -224,7 +224,7 @@ async function fakeHub(name) {
 		}
 	};
 	await waitFor(() => frames.some((f) => f.t === "status"), "the device's first status");
-	const hubHeaders = { "content-type": "application/json", accept: "application/json, text/event-stream", "x-tabkyra-hub-scopes": "skills.read", "x-tabkyra-hub-caller": "tester" };
+	const hubHeaders = { "content-type": "application/json", accept: "application/json, text/event-stream", "x-polycarp-hub-scopes": "skills.read", "x-polycarp-hub-caller": "tester" };
 	return { ws, frames, live, m, hubHeaders, send: (f) => ws.send(JSON.stringify(f)), heads: () => frames.filter((f) => f.t === "head") };
 }
 
@@ -396,4 +396,44 @@ test("thousands of forged-source failures don't slow later requests", async () =
 	for (let i = 0; i < 100; i++) await fetch(`${hub.url}/link/code`, { method: "POST", headers: { "x-forwarded-for": `172.17.0.${i}`, authorization: "Bearer dv-000000000000.nope" }, body: "{}" });
 	assert.ok(Date.now() - started < 3000, `100 more failures took ${Date.now() - started} ms`);
 	await alive(hub);
+});
+
+// ---------- the rename of the hub headers: x-tabkyra-hub-* to x-polycarp-hub-* ----------
+
+test("the hub sends its headers under the new names and the old ones, with the same values", async () => {
+	const hub = await hubFor("header-names-hub");
+	const fake = await fakeDevice(hub, "names", { answer: true });
+	const res = await rpc(`${hub.url}/mcp`, createToken(hub, "named-caller", "skills.read"), INITIALIZE);
+	assert.equal(res.status, 200);
+	const { headers } = fake.reqs().find((r) => r.method === "POST");
+	assert.equal(headers["x-polycarp-hub-scopes"], "skills.read");
+	assert.equal(headers["x-polycarp-hub-caller"], "named-caller");
+	// A device from before the rename reads only these; without them it would give the caller its whole cap.
+	assert.equal(headers["x-tabkyra-hub-scopes"], headers["x-polycarp-hub-scopes"]);
+	assert.equal(headers["x-tabkyra-hub-caller"], headers["x-polycarp-hub-caller"]);
+});
+
+test("a device narrows the caller's scopes from either header name, the new one first", async () => {
+	const fh = await fakeHub("header-names-device");
+	const base = { "content-type": "application/json", accept: "application/json, text/event-stream" };
+	let n = 0;
+	/** The tool names a device offers on a session opened with these hub headers. */
+	const toolsWith = async (hubHeaders) => {
+		const id = `h${++n}`;
+		fh.send({ t: "req", id, method: "POST", path: "/mcp", headers: { ...base, ...hubHeaders }, body: JSON.stringify(INITIALIZE) });
+		const head = await waitFor(() => fh.heads().find((h) => h.id === id), `the head of ${id}`);
+		assert.equal(head.status, 200);
+		const sid = head.headers["mcp-session-id"];
+		const list = `${id}-list`;
+		fh.send({ t: "req", id: list, method: "POST", path: "/mcp", headers: { ...base, ...hubHeaders, "mcp-session-id": sid }, body: JSON.stringify(LIST) });
+		await waitFor(() => fh.frames.some((f) => f.t === "end" && f.id === list), `the end of ${list}`);
+		const body = fh.frames.filter((f) => f.t === "chunk" && f.id === list).map((f) => f.data).join("");
+		const json = body.trimStart().startsWith("{") ? body : body.split("\n").find((l) => l.startsWith("data: ")).slice(6);
+		return JSON.parse(json).result.tools.map((t) => t.name).sort();
+	};
+	const skillsOnly = ["skill_match", "skill_read"];
+	assert.deepEqual(await toolsWith({ "x-polycarp-hub-scopes": "skills.read", "x-polycarp-hub-caller": "new-hub" }), skillsOnly);
+	assert.deepEqual(await toolsWith({ "x-tabkyra-hub-scopes": "skills.read", "x-tabkyra-hub-caller": "old-hub" }), skillsOnly, "a hub from before the rename still narrows");
+	assert.deepEqual(await toolsWith({ "x-polycarp-hub-scopes": "skills.read", "x-tabkyra-hub-scopes": "skills.read,browser.read" }), skillsOnly, "the new name wins");
+	assert.ok((await toolsWith({})).length > skillsOnly.length, "with no scopes header the link token's whole cap applies, which is why the hub sends both names");
 });

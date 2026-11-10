@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { VERSION } from "./version.ts";
+import { USER_AGENT } from "./version.ts";
 import { envVar } from "./env.ts";
 import { configDir } from "./files.ts";
 
@@ -72,7 +72,7 @@ export async function searxSearch(query: string, options: { categories?: string;
 	if (options.language) u.searchParams.set("language", options.language);
 	if (options.pageno && options.pageno > 1) u.searchParams.set("pageno", String(options.pageno));
 	const res = await fetch(u, {
-		headers: { Accept: "application/json", "User-Agent": `tabkyra-cli/${VERSION}` },
+		headers: { Accept: "application/json", "User-Agent": USER_AGENT },
 		signal: AbortSignal.timeout(30_000),
 		redirect: "follow",
 	});

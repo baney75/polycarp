@@ -1,7 +1,8 @@
 // The product is called Polycarp. Fails when "Tabkyra" appears in text a person can see: the extension's source, its static
-// pages, the helper's source, and the manifest. What stays on purpose (the `tabkyra` command alias, the MCP server and tool
-// names, the native host name ai.tabkyra.bridge, the manifest key, ~/.config/tabkyra) is written in AGENTS.md ("Names that
-// keep the old name") and is lowercase or an identifier, which this scan leaves alone.
+// pages, the helper's source, and the manifest. What stays on purpose (MCP tool names, the manifest key, stored data, the
+// fallbacks that keep older installs working) is written in AGENTS.md ("Names that keep the old name") and is lowercase or
+// an identifier, which this scan leaves alone. The renamed identifiers (native host, socket folder, hub headers, User-Agent,
+// npm command) are guarded below so the old ones come back only as the named fallbacks.
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
@@ -100,4 +101,40 @@ test("the extension's stored data keeps its names", () => {
 			if (/Polycarp/.test(line)) assert.match(line.trim(), /^(\/\/|\/?\*)/, `${relative(root, file)}: ${line.trim()}`);
 		}
 	}
+});
+
+// The identifiers renamed from tabkyra, and the code lines that may still hold the old one: each is a fallback for an install
+// made before the rename (AGENTS.md says how long they stay). Comments are not counted. A new use fails here.
+const RENAMED = /ai\.tabkyra\.bridge|tabkyra-bridge|x-tabkyra-hub|tabkyra-cli/;
+const RENAMED_ALLOWED = new Map([
+	["src/bridge/protocol.ts", 1], // LEGACY_NATIVE_HOST_NAME
+	["src/bridge/native.ts", 1], // the keepalive alarm's name, which no one sees
+	["cli/src/paths.ts", 2], // the old socket folder and pipe, searched after the new ones
+	["cli/src/pi-extension.ts", 1], // the same, in the generated pi extension
+	["cli/src/remote.ts", 2], // LEGACY_HUB_SCOPES_HEADER and LEGACY_HUB_CALLER_HEADER
+]);
+
+test("renamed identifiers come back only as the named fallbacks", () => {
+	const counts = new Map();
+	const found = [];
+	for (const dir of TEXT_DIRS) {
+		for (const file of walk(join(root, dir))) {
+			const rel = relative(root, file);
+			readFileSync(file, "utf8")
+				.split("\n")
+				.forEach((line, i) => {
+					if (!RENAMED.test(line) || COMMENT.test(line)) return;
+					counts.set(rel, (counts.get(rel) ?? 0) + 1);
+					found.push(`${rel}:${i + 1}: ${line.trim().slice(0, 100)}`);
+				});
+		}
+	}
+	assert.deepEqual(Object.fromEntries(counts), Object.fromEntries(RENAMED_ALLOWED), `use com.polycarp.browser, polycarp-bridge, x-polycarp-hub or USER_AGENT:\n${found.join("\n")}`);
+});
+
+test("the helper's npm package installs only the polycarp-browser command", () => {
+	const pkg = JSON.parse(readFileSync(join(root, "cli/package.json"), "utf8"));
+	assert.deepEqual(Object.keys(pkg.bin), ["polycarp-browser"], "no tabkyra or sitegeist alias");
+	const lock = JSON.parse(readFileSync(join(root, "cli/package-lock.json"), "utf8"));
+	assert.deepEqual(Object.keys(lock.packages[""].bin ?? {}), ["polycarp-browser"], "the lockfile agrees");
 });

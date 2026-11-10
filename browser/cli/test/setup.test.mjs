@@ -225,19 +225,19 @@ test("second-S3: setup keeps a working launcher and writes links only for regist
 		writeFileSync(join(home, ".config", "polycarp", "browser", name), standalone);
 		chmodSync(join(home, ".config", "polycarp", "browser", name), 0o755);
 	}
-	const heliumManifest = join(helium(), "NativeMessagingHosts", "ai.tabkyra.bridge.json");
+	const heliumManifest = join(helium(), "NativeMessagingHosts", "com.polycarp.browser.json");
 	const heliumBefore = readFileSync(heliumManifest, "utf8");
 	const { out } = run(["setup", "--yes", "--no-wait"]);
 	assert.match(out, /Helium\s+already registered/, out);
 	assert.doesNotMatch(out, /Chrome\s+(registered|already)/, "setup does not touch a browser nobody registered or chose");
-	assert.equal(existsSync(join(chromeDir, "NativeMessagingHosts", "ai.tabkyra.bridge.json")), false, "no link for Chrome");
+	assert.equal(existsSync(join(chromeDir, "NativeMessagingHosts", "com.polycarp.browser.json")), false, "no link for Chrome");
 	assert.equal(readFileSync(join(home, ".config", "polycarp", "browser", "polycarp"), "utf8"), standalone, "the working launcher is kept");
 	assert.equal(readFileSync(join(home, ".config", "polycarp", "browser", "polycarp-host"), "utf8"), standalone);
 	assert.equal(readFileSync(heliumManifest, "utf8"), heliumBefore, "the registered browser's manifest is unchanged");
 	// Choosing it makes the link, and still leaves the working launcher alone.
 	const chosen = run(["setup", "--yes", "--no-wait", "--browser", "Chrome"]);
 	assert.match(chosen.out, /Chrome\s+registered/, chosen.out);
-	assert.equal(existsSync(join(chromeDir, "NativeMessagingHosts", "ai.tabkyra.bridge.json")), true);
+	assert.equal(existsSync(join(chromeDir, "NativeMessagingHosts", "com.polycarp.browser.json")), true);
 	assert.equal(readFileSync(join(home, ".config", "polycarp", "browser", "polycarp-host"), "utf8"), standalone);
 	assert.equal(run(["setup", "--browser", "Netscape"]).code, 2, "an unknown browser is a usage error");
 });

@@ -2,7 +2,7 @@
  * Wire protocol of the Polycarp bridge. Shared by the extension (src/bridge) and
  * the CLI (cli/src), which imports this file directly.
  *
- *   harness ── stdio MCP ── `tabkyra mcp` ── unix socket ── native host ── native messaging ── extension
+ *   harness ── stdio MCP ── `polycarp-browser mcp` ── unix socket ── native host ── native messaging ── extension
  *
  * Both socket legs carry `[uint32 LE length][UTF-8 JSON]` frames. The native host
  * copies frames between the two and only adds/strips `clientId`.
@@ -11,7 +11,16 @@
 import type { BuildInfo } from "../update/build.js";
 import type { ExtensionLocation, Mismatch, UpdateAction, UpdatePolicy } from "../update/logic.js";
 
-export const NATIVE_HOST_NAME = "ai.tabkyra.bridge";
+/** The native messaging host the extension connects to and the helper registers. */
+export const NATIVE_HOST_NAME = "com.polycarp.browser";
+/**
+ * The name helpers and extensions used before the rename. The helper still registers it, so an extension that only knows it
+ * still connects, and the extension falls back to it, so a helper that only registered it is still reached. Drop it once
+ * no supported helper or extension build predates the rename.
+ */
+export const LEGACY_NATIVE_HOST_NAME = "ai.tabkyra.bridge";
+/** Every host name the helper registers, the current one first. */
+export const NATIVE_HOST_NAMES = [NATIVE_HOST_NAME, LEGACY_NATIVE_HOST_NAME] as const;
 export const PROTOCOL_VERSION = 1;
 
 /** Native messaging caps host->extension frames at 1 MiB; leave headroom. */

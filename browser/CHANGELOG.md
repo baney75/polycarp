@@ -38,6 +38,12 @@
 - `cli/eval/bridge-metrics.mjs` (tools/list size and real token cost, cold start, calls across forced extension reloads and host kills, three clients at once, thirteen tab group behaviors) and a `sessions` suite in `cli/eval/skill-eval.mjs` (multitab, resume, parallel, handover, reload), on a shared throwaway browser (`cli/eval/fixture-browser.mjs`). Baseline in `docs/benchmarks.md`.
 
 ### Changed
+- The helper and extension now use Polycarp names under the hood, and older installs keep working. The native host is
+  `com.polycarp.browser` (`install` still writes `ai.tabkyra.bridge`, and the extension falls back to it), the socket folder is
+  `/tmp/polycarp-bridge-<user>` (clients also look in the old one), the hub sends `x-polycarp-hub-*` headers beside the old
+  `x-tabkyra-hub-*` ones and a device reads either, the User-Agent is `polycarp-browser/<version>`, and `polycarp browser` runs
+  the helper as `polycarp-browser` in `ps`. Tests: `test/native-host-name.test.mjs`, `test/socket-dirs.test.mjs`,
+  `cli/test/install.test.mjs`, `cli/test/hub-hardening.test.mjs`, `test/product-name.test.mjs`.
 - The helper stores its files under Polycarp's names, and moves your old ones once. Config is now `~/.config/polycarp/browser`, data `~/.local/share/polycarp/browser`, the cache `~/.cache/polycarp`, the launchers `polycarp` and `polycarp-host`, the services `com.polycarp.serve`, `.hub` and `.link` (`polycarp-*.service` on Linux) and their logs `polycarp-*.log`. The first run moves `~/.config/tabkyra` and `~/.local/share/tabkyra` and leaves a symlink at each old path; if the new folder already exists nothing is merged and `doctor` names the old one. `install`, `setup` and `update` reinstall old `com.tabkyra.*` services under the new names, and setup rewrites agent entries that run `~/.config/tabkyra/tabkyra`. Every `TABKYRA_*` variable has a `POLYCARP_*` name that wins (`POLYCARP_BROWSER_CONFIG_DIR` for the config folder; `POLYCARP_CONFIG_DIR` stays the app's). The socket folder, the native host name and the `x-tabkyra-hub-*` headers keep their names for now. Tests: `cli/test/rename-migration.test.mjs`, `cli/test/setup.test.mjs`.
 - The side panel is one panel per window and stays open when you switch tabs. The toolbar icon (and the keyboard shortcut) opens the same panel on any tab, it reopens your most recent chat instead of a blank one, and it works on the tab in front. Before, each tab got its own panel and a tab no task owned closed it. The worker no longer sets tab-specific panel options or disables the panel; a panel URL with an old `?tabId=` still loads. Tests: `test/panel-open.test.mjs`, `test/restore-chat.test.mjs`.
 - The welcome dialog has a way in from claude.ai or ChatGPT, and "Set up provider" opens the API keys. "Use from claude.ai or ChatGPT" opens Settings > Connect; "Set up provider" scrolls Providers to the keys instead of leaving them about 1,200 px down.
@@ -101,6 +107,10 @@
 - The header's share button did nothing on the tab in front, which is nearly always the agent's already, and gave no feedback; hovered, it looked switched on (gold on gray). It is now a "Share this tab" pill that shows only for a tab the agent doesn't have, and hover no longer colors icons. `test/panel-ui.test.mjs` and the side panel test in `cli/test/e2e-bridge.test.mjs`.
 - Dollar amounts in the agent's answers rendered as math: "$89, a hand grinder ... $4 less" became one italic formula with the words run together. A `$` before a number is now a price; math such as `$2^{10}$` and code are unchanged.
 - Contrast: the tool row's host name (2.7:1 in light), the light theme's info toast (white on light gray) and the success toast (white on green, 3.3:1) now pass WCAG AA.
+
+### Removed
+- The npm package no longer installs the `tabkyra` and `sitegeist` commands; use `polycarp-browser`. Agent entries that ran
+  them are marked stale by `polycarp-browser doctor` and rewritten by `setup`.
 
 ## [1.1.9] - 2026-10-27
 

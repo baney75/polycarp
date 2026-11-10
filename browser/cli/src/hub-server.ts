@@ -5,7 +5,7 @@
  * from behind their own NATs. It needs no browser. Single-owner, like every install (D31).
  *
  * What crosses the hop: the caller's scopes and name, in two headers the hub always sets itself
- * (anything a public client sends under x-tabkyra-hub-* is dropped), and the MCP request. The
+ * (anything a public client sends under x-polycarp-hub-* or x-tabkyra-hub-* is dropped), and the MCP request. The
  * device narrows its own cap by those scopes (remote.ts), so a caller never gets more than both
  * the owner's grant and that device's cap allow. Device credentials and connect codes are stored
  * as SHA-256 only.
@@ -47,7 +47,7 @@ import {
 } from "./link-protocol.ts";
 import { handleOAuth, readBody, requestSource, sendJson } from "./oauth-http.ts";
 import { liveGrantIds, mintApprovalCode, normalizePublicUrl, type OAuthConfig, resourceMetadataUrl, verifyAccessToken } from "./oauth.ts";
-import { authenticate, HUB_CALLER_HEADER, HUB_SCOPES_HEADER, loadTokens, SCOPES, safeCallerName } from "./remote.ts";
+import { authenticate, hubHeaders, loadTokens, SCOPES, safeCallerName } from "./remote.ts";
 import { pageCss } from "./theme.ts";
 import { COMMAND_NAME } from "./self.ts";
 
@@ -381,7 +381,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 	function discardLateHead(link: Link, status: number, headers: Headers): void {
 		const id = headers["mcp-session-id"];
 		if (status < 200 || status >= 300 || !id || !SESSION_ID.test(id) || sessions.has(id)) return;
-		forward(link, { method: "DELETE", headers: { "mcp-session-id": id, [HUB_SCOPES_HEADER]: "", [HUB_CALLER_HEADER]: "hub" }, body: "" });
+		forward(link, { method: "DELETE", headers: { "mcp-session-id": id, ...hubHeaders("", "hub") }, body: "" });
 	}
 
 	function dropLink(link: Link, reason: string): void {
@@ -477,13 +477,13 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 
 	function requestHeaders(req: IncomingMessage, who: Caller): Headers {
 		const out: Headers = {};
-		// Built from a short list, so nothing a public client sends under x-tabkyra-hub-* (or anything else) can pass.
+		// Built from a short list, so nothing a public client sends under a hub header name (or anything else) can pass.
 		for (const name of FORWARD_REQUEST_HEADERS) {
 			const v = req.headers[name];
 			if (typeof v === "string" && v && !/[\r\n\0]/.test(v)) out[name] = v;
 		}
-		out[HUB_SCOPES_HEADER] = who.scopes.filter((s) => Object.hasOwn(SCOPES, s)).join(",");
-		out[HUB_CALLER_HEADER] = safeCallerName(who.name) || "caller";
+		// Under the old names too: a device from before the rename reads only those (remote.ts, LEGACY_HUB_SCOPES_HEADER).
+		Object.assign(out, hubHeaders(who.scopes.filter((s) => Object.hasOwn(SCOPES, s)).join(","), safeCallerName(who.name) || "caller"));
 		return out;
 	}
 
@@ -794,7 +794,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 				if (Date.now() - s.lastSeen <= SESSION_IDLE_MS && liveIds.has(s.callerId)) continue;
 				sessions.delete(sid);
 				const link = links.get(s.deviceId);
-				if (link && link.instance === s.linkInstance) forward(link, { method: "DELETE", headers: { "mcp-session-id": sid, [HUB_SCOPES_HEADER]: "", [HUB_CALLER_HEADER]: "hub" }, body: "" });
+				if (link && link.instance === s.linkInstance) forward(link, { method: "DELETE", headers: { "mcp-session-id": sid, ...hubHeaders("", "hub") }, body: "" });
 			}
 		}, 60_000),
 	);

@@ -26,7 +26,7 @@ import RELEASE_KEY from "../../keys/tabkyra-release.pub";
 import { parsePublicKey, SignatureError, verifyMinisign } from "./minisign.ts";
 import { lintCommunity, parseSites } from "./skill-community.ts";
 import { lintText, parseFrontmatter } from "./skill-lint.ts";
-import { VERSION } from "./version.ts";
+import { USER_AGENT } from "./version.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
 import { configDir } from "./files.ts";
@@ -349,7 +349,7 @@ async function fetchFile(base: string, name: string): Promise<Buffer> {
 	}
 	const url = `${base.replace(/\/$/, "")}/${name}`;
 	checkUrl(url);
-	const response = await fetch(url, { headers: { "User-Agent": `tabkyra-cli/${VERSION}` }, signal: AbortSignal.timeout(30000), redirect: "follow" });
+	const response = await fetch(url, { headers: { "User-Agent": USER_AGENT }, signal: AbortSignal.timeout(30000), redirect: "follow" });
 	if (response.status === 404) throw new NotPublished();
 	if (!response.ok) throw new CatalogError(`${response.status} ${response.statusText} for ${name}`);
 	checkUrl(response.url || url);
