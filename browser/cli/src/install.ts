@@ -366,6 +366,38 @@ function firstBytes(path: string, n: number): string {
  * What a browser's manifest names: a launcher script (every program it names must still be there) or the helper itself (it must
  * exist and be executable). A script that names nothing has nothing missing.
  */
+/** What this helper writes into its launchers: itself when compiled, else its script. */
+function thisProgram(): string | undefined {
+	return COMPILED ? selfExec() : (selfPrefix()[0] ?? process.argv[1]);
+}
+
+function realOr(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return path;
+	}
+}
+
+/**
+ * The program a launcher script runs when that is some other copy, such as an old npm link or another checkout, else
+ * undefined. Such a launcher works, so nothing else notices it; the panel then talks to code that may not know
+ * today's files (an old copy called a valid remote.json unreadable).
+ */
+export function launcherRunsOther(path: string): string | undefined {
+	const self = thisProgram();
+	if (!self) return undefined;
+	try {
+		if (firstBytes(path, 2) !== "#!" && !path.endsWith(".cmd")) return undefined;
+	} catch {
+		return undefined;
+	}
+	const named = absolutePathsIn(path);
+	if (!named?.length) return undefined;
+	const mine = realOr(self);
+	return named.some((p) => realOr(p) === mine) ? undefined : named[named.length - 1];
+}
+
 export function manifestLauncherRuns(path: string): boolean {
 	try {
 		if (!existsSync(path)) return false;

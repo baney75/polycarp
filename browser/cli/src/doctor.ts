@@ -12,7 +12,7 @@ import { BridgeClient, listSockets } from "./client.ts";
 import { harnesses, launcherValid, shellJoin } from "./harness.ts";
 import { legacyLeftovers } from "./migrate.ts";
 import { HUB_SERVICE, LINK_SERVICE, legacyServiceInstalled, SERVE_SERVICE } from "./service.ts";
-import { cliLauncherPath, extensionOrigins, hostTarget, installedBrowserDirs, launcherPath, legacyCliLauncherPaths, manifestLauncherRuns, originsCurrent } from "./install.ts";
+import { cliLauncherPath, extensionOrigins, hostTarget, installedBrowserDirs, launcherPath, launcherRunsOther, legacyCliLauncherPaths, manifestLauncherRuns, originsCurrent } from "./install.ts";
 import { EXTENSION_FILES, extensionDir, repoRoot } from "./paths.ts";
 import { banner, c, sym } from "./ui.ts";
 import { VERSION } from "./version.ts";
@@ -88,6 +88,16 @@ function buildCheck(): Check {
 }
 
 function launcherCheck(): Check {
+	const other = launcherValid() ? launcherRunsOther(cliLauncherPath()) : undefined;
+	if (other) {
+		return {
+			id: "launcher",
+			status: "fail",
+			label: "Agent launcher runs another copy",
+			detail: `${cliLauncherPath()} runs ${other}, not this helper.`,
+			fix: `${COMMAND_NAME} install --force`,
+		};
+	}
 	return launcherValid()
 		? { id: "launcher", status: "ok", label: "Agent launcher in place", detail: cliLauncherPath() }
 		: {
@@ -180,6 +190,8 @@ function hostChecks(live: readonly string[] = []): Check[] {
 		if (!accepted.includes(path)) return fail(`path is ${manifest.path}, expected ${accepted.join(" or ")}`);
 		// The file the manifest names must run: exist, be executable, and (for a launcher script) point at a program that is still there.
 		if (!manifestLauncherRuns(path)) return fail(`${path} is missing, not executable, or runs a program that is gone`);
+		const other = launcherRunsOther(path);
+		if (other) return fail(`${path} runs ${other}, not this helper`);
 		return { id: `host:${name}`, status: "ok", label: `${name}: native host registered`, detail: file };
 	});
 }
