@@ -25,6 +25,7 @@ final class VoiceOverlay {
     private var learnedWork: DispatchWorkItem?
     private var noticeWork: DispatchWorkItem?
     private var face: Face = .idle
+    private var themeObserver: NSObjectProtocol?
     private var notice: VoiceNotice?
     /// The microphone has sent a level: the dot fills. Until then it is a ring, so a slow-to-open device shows.
     private var heard = false
@@ -67,7 +68,14 @@ final class VoiceOverlay {
         icon.contentsGravity = .resizeAspect
         icon.contentsScale = 2
         accessibility()
+        // A theme or Dark Mode change while the pill is up redraws it in the new look at once.
+        themeObserver = NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.face != .idle else { return }
+            self.layout()
+        }
     }
+
+    deinit { if let themeObserver { NotificationCenter.default.removeObserver(themeObserver) } }
 
     private func accessibility() {
         panel.setAccessibilityRole(.group)
@@ -172,12 +180,27 @@ final class VoiceOverlay {
         panel.orderFrontRegardless()
     }
 
-    /// Bottom center of the main display, 72 pt up, as the Tauri overlay sits.
+    /// Bottom center of the display holding the window you're typing into (`VoiceOverlayPlace`), 72 pt up.
     private func place() {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-        let f = screen.frame
-        panel.setFrame(NSRect(x: f.midX - size.width / 2, y: f.minY + 72, width: size.width, height: size.height), display: false)
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return }
+        let i = VoiceOverlayPlace.screen(window: Self.frontWindow(primaryHeight: screens[0].frame.height), pointer: NSEvent.mouseLocation,
+                                         screens: screens.map(\.frame))
+        panel.setFrame(VoiceOverlayPlace.frame(size: size, on: screens[i].frame), display: false)
         panel.contentView?.frame = NSRect(origin: .zero, size: size)
+    }
+
+    /// The frontmost app's front window, from the window list (bounds only: no Accessibility call, no prompt).
+    private static func frontWindow(primaryHeight: CGFloat) -> CGRect? {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+        else { return nil }
+        for w in list where (w[kCGWindowOwnerPID as String] as? pid_t) == pid && (w[kCGWindowLayer as String] as? Int) == 0 {
+            if let b = w[kCGWindowBounds as String] as? NSDictionary, let r = CGRect(dictionaryRepresentation: b) {
+                return VoiceOverlayPlace.cocoa(r, primaryHeight: primaryHeight)
+            }
+        }
+        return nil
     }
 
     private static func symbol(_ name: String, color: NSColor, size: CGFloat) -> CGImage? {
@@ -199,7 +222,9 @@ final class VoiceOverlay {
         root.borderColor = NSColor(Chrome.edge(0.12)).cgColor
         root.borderWidth = Chrome.width(.hudPanel)
         let isRec = face == .recording, isNotice = face == .notice
-        for b in bars { b.isHidden = !isRec; b.backgroundColor = tint; b.cornerRadius = 1.5 }
+        // The bars round off as much as the theme's panel does, up to a pill: a square theme gets square bars.
+        let barRound = min(1.5, Chrome.radius(.hudPanel))
+        for b in bars { b.isHidden = !isRec; b.backgroundColor = tint; b.cornerRadius = barRound }
         dot.isHidden = !isRec
         // A ring until the microphone sends its first level, then filled.
         dot.backgroundColor = heard ? tint : NSColor.clear.cgColor
