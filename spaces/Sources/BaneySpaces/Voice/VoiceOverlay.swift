@@ -161,8 +161,13 @@ final class VoiceOverlay {
             if s == .recording {
                 self.heard = heard
                 // Before the first level the bars are flat, as they are live.
-                targets = (0..<bars.count).map { heard ? Self.shape(Float(0.15 + 0.55 * abs(sin(Double($0) * 0.7)))) : 0 }
-                shown = (0..<bars.count).map { i in targets[i] * (CGFloat(sin((Double(i) + 0.5) / Double(bars.count) * .pi)) * 0.55 + 0.45) }
+                let n = bars.count
+                targets = (0..<n).map { (i: Int) -> CGFloat in
+                    guard heard else { return 0 }
+                    let level: Double = 0.15 + 0.55 * abs(sin(Double(i) * 0.7))
+                    return Self.shape(Float(level))
+                }
+                shown = (0..<n).map { (i: Int) -> CGFloat in targets[i] * Self.taper(i, of: n) }
                 latest = 0.45
                 layout()
             }
@@ -262,6 +267,12 @@ final class VoiceOverlay {
         return image.cgImage(forProposedRect: &rect, context: nil, hints: [.ctm: AffineTransform(scale: 2)])
     }
 
+    /// Bar `i` of `n` is scaled by this, so the wave tapers at the edges into a soft lozenge.
+    private static func taper(_ i: Int, of n: Int) -> CGFloat {
+        let angle: Double = (Double(i) + 0.5) / Double(n) * Double.pi
+        return CGFloat(sin(angle)) * 0.55 + 0.45
+    }
+
     /// Speech levels sit low; lift quiet sounds so the bars feel alive (overlay.ts `shape`).
     static func shape(_ level: Float) -> CGFloat { CGFloat(min(1, pow(max(0, level), 0.6) * 1.15)) }
 
@@ -351,7 +362,7 @@ final class VoiceOverlay {
         let slot = areaW / CGFloat(bars.count), maxH: CGFloat = 34
         for i in bars.indices {
             // The edges taper so the wave reads as a soft lozenge.
-            let edge = CGFloat(sin((Double(i) + 0.5) / Double(bars.count) * .pi)) * 0.55 + 0.45
+            let edge = Self.taper(i, of: bars.count)
             shown[i] += (targets[i] * edge - shown[i]) * ease
             let h = maxH * (0.14 + shown[i] * 0.86)
             bars[i].frame = CGRect(x: areaX + CGFloat(i) * slot + slot * 0.2, y: size.height / 2 - h / 2, width: slot * 0.6, height: h)
