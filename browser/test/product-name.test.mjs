@@ -132,9 +132,9 @@ test("renamed identifiers come back only as the named fallbacks", () => {
 	assert.deepEqual(Object.fromEntries(counts), Object.fromEntries(RENAMED_ALLOWED), `use com.polycarp.browser, polycarp-bridge, x-polycarp-hub or USER_AGENT:\n${found.join("\n")}`);
 });
 
-test("the helper's npm package installs only the polycarp-browser command", () => {
+test("the helper's npm package installs polycarp-browser and the polycarp command the skills name, and no old alias", () => {
 	const pkg = JSON.parse(readFileSync(join(root, "cli/package.json"), "utf8"));
-	assert.deepEqual(Object.keys(pkg.bin), ["polycarp-browser"], "no tabkyra or sitegeist alias");
+	assert.deepEqual(Object.keys(pkg.bin), ["polycarp-browser", "polycarp"], "no tabkyra or sitegeist alias");
 	const lock = JSON.parse(readFileSync(join(root, "cli/package-lock.json"), "utf8"));
-	assert.deepEqual(Object.keys(lock.packages[""].bin ?? {}), ["polycarp-browser"], "the lockfile agrees");
+	assert.deepEqual(Object.keys(lock.packages[""].bin ?? {}), ["polycarp-browser", "polycarp"], "the lockfile agrees");
 });

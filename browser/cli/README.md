@@ -15,7 +15,7 @@ user can reach. The client refuses sockets and directories it does not own.
 ## Install
 
 ```bash
-npm link                      # from this directory; puts tabkyra (and the sitegeist alias) on PATH
+npm link                      # from this directory; puts polycarp-browser on PATH, and polycarp so `polycarp browser <command>` works without the app
 tabkyra setup                 # build, register, load, connect and wire up your harnesses
 ```
 
