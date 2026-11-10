@@ -23,6 +23,7 @@ enum Render {
             Appearance.shared.usePolycarp(theme)
         }
         VoiceEngine.shared.useRenderSample()
+        PermissionsModel.shared.useRenderSample()
         BrowserModel.shared.useRenderSample()
         // BANEYSPACES_RENDER_THEME=omarchy|minimal draws the same shots in that theme (a check, saved nowhere).
         if let t = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_THEME"], let id = ThemeID(rawValue: t) {
@@ -282,6 +283,18 @@ enum Render {
                 .padding(20).frame(width: 620, alignment: .leading).background(Chrome.panel()).foregroundStyle(Chrome.wash())
             guard save(page, name, CGSize(width: 620, height: 0)) else { return 1 }
         }
+
+        // The whole Permissions section, Optional open, at the section's width.
+        let pane = PermissionsPane(optionalOpen: true).padding(28).frame(width: SettingsSidebar.windowSize.width - SettingsSidebar.width)
+            .foregroundStyle(Chrome.wash()).tint(Chrome.accent).background(Chrome.panel())
+        guard save(pane, "permissions-pane.png", CGSize(width: SettingsSidebar.windowSize.width - SettingsSidebar.width, height: 0)) else { return 1 }
+
+        // The drag helper beside System Settings: the tile, then the check once the permission is on.
+        let helper = HelperViewModel()
+        helper.appURL = Bundle.main.bundleURL.pathExtension == "app" ? Bundle.main.bundleURL : URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
+        guard save(HelperView(model: helper), "permission-helper.png", PermissionHelper.size) else { return 1 }
+        helper.done = true
+        guard save(HelperView(model: helper), "permission-helper-done.png", PermissionHelper.size) else { return 1 }
 
         // The welcome window, as a new person sees it.
         let welcome = WelcomeModel()

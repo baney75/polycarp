@@ -85,29 +85,13 @@ final class WelcomeModel: ObservableObject {
         allow(next)
     }
 
-    /// Adds Polycarp to the list with macOS's own prompt, then opens that list, so what's left is one switch.
+    /// The same button as Settings > Permissions (`PermissionsModel.perform`): macOS's own box when it will show one, else
+    /// the list in System Settings with the drag helper beside it.
     func allow(_ kind: PermissionKind) {
         asked.insert(kind)
-        switch kind {
-        case .accessibility:
-            askedAccessibilityAt = Date()
-            let prompt = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-            _ = AXIsProcessTrustedWithOptions([prompt: true] as CFDictionary)
-        case .screenRecording: _ = CGRequestScreenCaptureAccess()
-        case .inputMonitoring: _ = CGRequestListenEventAccess()
-        case .microphone:
-            // macOS shows its own box while it has never been asked; the list opens only after a no.
-            let access: Welcome.MicrophoneAccess = switch AVCaptureDevice.authorizationStatus(for: .audio) {
-            case .authorized: .authorized
-            case .notDetermined: .notDetermined
-            default: .denied
-            }
-            if !Welcome.opensSettingsWhenAllowing(microphone: access) {
-                if access == .notDetermined { AVCaptureDevice.requestAccess(for: .audio) { _ in } }
-                return
-            }
-        }
-        if let url = URL(string: Welcome.step(kind).settingsURL) { NSWorkspace.shared.open(url) }
+        if kind == .accessibility { askedAccessibilityAt = Date() }
+        guard let id = PermissionID(kind) else { return }
+        PermissionsModel.shared.perform(id)
     }
 
     /// Reads the login item and, on the first look, turns it on unless the person already decided (Setup's rule, shared).
@@ -267,34 +251,23 @@ struct WelcomeView: View {
         return String(text[..<end.lowerBound]) + "."
     }
 
+    /// Settings > Permissions' row (`PermissionRowView`), with the walk's own words, its "Not now" and the old-grant fix.
     @ViewBuilder private func row(_ s: PermissionStep) -> some View {
         let done = model.granted.contains(s.kind)
         let isCurrent = model.current == s.kind
         let wasSkipped = model.skipped.contains(s.kind)
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: done ? "checkmark.circle.fill" : "circle")
-                .font(Chrome.font(16))
-                .foregroundStyle(done ? Chrome.accent : Color.secondary)
-                .frame(width: 22)
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
-                    Text(s.title).font(Chrome.font(13, .bold))
-                    if !s.isRequired { WelcomeTag(text: "Optional") }
-                    if wasSkipped { WelcomeTag(text: "Skipped for now") }
-                    Spacer(minLength: 0)
-                }
-                if !done {
-                    // The whole reason on the step you're on; its first sentence on the others.
-                    Text(isCurrent ? s.why : firstSentence(s.why)).font(Chrome.font(12)).foregroundStyle(Chrome.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+        if let id = PermissionID(s.kind) {
+            // This window's own read decides "done"; until then the row never says "On".
+            let live = PermissionsModel.shared.readNow(id)
+            PermissionRowView(entry: Permissions.entry(id), state: done ? .granted : live == .granted ? .notAsked : live,
+                              title: s.title,
+                              // The whole reason on the step you're on; its first sentence on the others.
+                              reason: isCurrent ? s.why : firstSentence(s.why),
+                              optional: !s.isRequired, emphasized: isCurrent, isDefault: isCurrent && !done,
+                              walk: .init(showsButton: isCurrent && !done, skip: Welcome.canSkip(s.kind) ? { model.skip(s.kind) } : nil)) {
+                model.allow(s.kind)
+            } accessory: {
                 if !done, isCurrent {
-                    HStack(spacing: 10) {
-                        Button("Allow in \(s.settingsName)") { model.allow(s.kind) }
-                            .keyboardShortcut(.defaultAction)
-                            .buttonStyle(WelcomeButtonStyle(large: false))
-                        if Welcome.canSkip(s.kind) { Button("Not now") { model.skip(s.kind) } }
-                    }
                     if model.asked.contains(s.kind) {
                         Text(s.after).font(Chrome.font(11)).foregroundStyle(Chrome.muted)
                     }
@@ -307,12 +280,12 @@ struct WelcomeView: View {
                         }
                         .padding(.top, 2)
                     }
+                } else if wasSkipped {
+                    WelcomeTag(text: "Skipped for now")
                 }
             }
+            .clipShape(Chrome.shape(.settingsCell, continuous: false))
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Chrome.shape(.settingsCell, continuous: false).fill(isCurrent ? Chrome.cell(0.08) : Color.clear))
     }
 
     /// Not a permission: a switch, on by default, that never blocks starting.

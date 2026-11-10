@@ -164,7 +164,7 @@ enum SettingsSidebar {
     static let allGroups: [Group] = [
         Group(header: nil, tabs: [.general, .keys, .dock, .appearance, .launcher]),
         Group(header: "Your tools", tabs: [.voice, .browser, .agents]),
-        Group(header: "System", tabs: [.automation, .updates]),
+        Group(header: "System", tabs: [.permissions, .automation, .updates]),
     ]
     static var order: [SettingsTab] { groups.flatMap(\.tabs) }
     static let width: CGFloat = 190

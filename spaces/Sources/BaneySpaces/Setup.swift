@@ -265,6 +265,12 @@ final class SetupModel: ObservableObject {
         SetupModel.openAccessibilitySettings()
     }
 
+    /// Settings > Permissions asked for Accessibility: after a while with no grant, the old-permission fix shows there.
+    func askedForAccessibility() {
+        askedAt = Date()
+        staleGrant = false
+    }
+
     /// Clears the old permission macOS kept for an earlier copy of BaneySpaces, then asks again.
     func fixPermission() {
         fixing = true
@@ -420,7 +426,7 @@ final class SetupModel: ObservableObject {
 /// The settings window's tabs. General comes first: it's where a new Mac starts.
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general = "General", keys = "Keys", dock = "Dock", appearance = "Appearance", launcher = "Launcher",
-         automation = "Automation", updates = "Updates", agents = "Agents", voice = "Silas", browser = "Browser"
+         automation = "Automation", permissions = "Permissions", updates = "Updates", agents = "Agents", voice = "Silas", browser = "Browser"
     var id: Self { self }
 
     var symbol: String? {
@@ -431,6 +437,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .appearance: "paintpalette"
         case .launcher: "magnifyingglass"
         case .automation: "gearshape.2"
+        case .permissions: "hand.raised"
         case .updates: "arrow.down.circle"
         case .agents: "cpu"
         case .voice: nil   // Silas draws its own pen (`SilasMark`); every consumer must handle the missing symbol
@@ -462,6 +469,8 @@ struct SetupView: View {
                     case .appearance: appearanceTab
                     case .launcher: launcher
                     case .automation: automation
+                    case .permissions: PermissionsPane(fix: .init(shown: model.staleGrant, busy: model.fixing, run: model.fixPermission),
+                                                       onAsk: { if $0 == .accessibility { model.askedForAccessibility() } })
                     case .updates: updates
                     case .agents: agents
                     case .voice: VoiceSettingsView()
@@ -512,23 +521,10 @@ struct SetupView: View {
 
         if parts.current.contains(.workspaces) || parts.current.contains(.voice) {
         SettingsGroup("Permissions") {
-            if !parts.current.contains(.workspaces) {
-                SettingsRow("Let Silas type for you", help: "Silas watches for its key and types what you said into the app you're in.") {
-                    if model.trusted { SettingsStatusLabel(text: "Allowed") }
-                    else { Button("Allow Polycarp", action: model.allow).buttonStyle(.borderedProminent) }
-                }
-            } else {
-            SettingsRow("Arrange windows", help: model.trusted ? "Polycarp can show, hide and move windows. It can't read what you type."
-                        : "Lets Polycarp show, hide and move windows. It can't read what you type.") {
-                if model.trusted { SettingsStatusLabel(text: "Allowed") }
-                else { Button("Allow Polycarp", action: model.allow).buttonStyle(.borderedProminent) }
-            }
-            }
-            if !model.trusted { SettingsNote("macOS opens its settings. Turn on Polycarp, then come back; this window updates by itself.") }
-            if !model.trusted && model.staleGrant {
-                SettingsRow("Already on, still not working?", help: "macOS kept an old permission from an earlier copy. Fixing removes it and asks again.") {
-                    Button(model.fixing ? "Fixing…" : "Fix Permission", action: model.fixPermission).disabled(model.fixing)
-                }
+            // Every permission, its state and its button live in the Permissions section.
+            SettingsRow(model.trusted ? "Accessibility is on" : "Polycarp needs Accessibility",
+                        help: "See and change every permission Polycarp uses in Permissions.") {
+                Button("Open Permissions") { model.tab = .permissions }
             }
             if model.aeroSpaceRunning {
                 SettingsRow("AeroSpace is running", help: "It uses the same keys. Polycarp starts as soon as it quits.") {
@@ -1233,7 +1229,7 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     func show() {
         model.justEnabled = false
-        if !model.ready { model.tab = .general }
+        if !model.ready { model.tab = model.trusted ? .general : .permissions }
         model.dockAgentStatus = WorkspaceDock.agentStatus
         model.reload()
         model.reloadParked()
