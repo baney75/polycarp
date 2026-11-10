@@ -113,7 +113,7 @@ fn not_found_gives_127_and_names_the_tool() {
     let s = Sandbox::new();
     for (sub, name, var) in [
         ("spaces", "polycarp-spaces", "POLYCARP_SPACES_BIN"),
-        ("browser", "tabkyra", "POLYCARP_BROWSER_BIN"),
+        ("browser", "polycarp-browser", "POLYCARP_BROWSER_BIN"),
     ] {
         let o = s.run(&[sub, "x"]);
         assert_eq!(code(&o), 127, "{sub}");
@@ -189,6 +189,30 @@ fn child_exit_code_comes_back() {
         .unwrap();
     assert_eq!(code(&o), 37);
     assert_eq!(out(&o), "[--version]\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_browser_helper_runs_as_polycarp_browser_and_an_old_tabkyra_is_still_found() {
+    let s = Sandbox::new();
+    let (old, new) = (s.dir("old"), s.dir("new"));
+    fs::create_dir_all(&old).unwrap();
+    fs::create_dir_all(&new).unwrap();
+    // A script never sees its arg0 (the kernel puts the script path there), so the stub is bash itself: `bash -c` prints the
+    // name it was run under, which is what `ps` shows. It must be polycarp-browser, never tabkyra.
+    std::os::unix::fs::symlink("/bin/bash", old.join("tabkyra")).unwrap();
+    let o = s
+        .cmd(&["browser", "-c", "echo \"$0\""])
+        .env("PATH", &old)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(out(&o), "polycarp-browser\n");
+    // With both on PATH, the new name wins.
+    stub(&new, "polycarp-browser", "echo new");
+    let both = std::env::join_paths([old, new]).unwrap();
+    let o = s.cmd(&["browser"]).env("PATH", both).output().unwrap();
+    assert_eq!(out(&o), "new\n");
 }
 
 #[cfg(unix)]
