@@ -212,49 +212,115 @@ test("skill-platform doc states the evidence rule at min(catalog size, 13) skill
 	assert.match(doc, new RegExp(`false invokes 0% \\(0 of ${none}\\)`), `${none} none cases`);
 });
 
-/** Runs the bulk-actions batch script (the `bulk-batch` block) with a fake clock and a fake fetch. */
-async function runBulkBatch(text, ids, answer) {
+/** A fake site for the bulk-actions batch script (the `bulk-batch` block): a fake clock and a fake fetch. */
+function bulkSite(text, answer) {
 	const call = fenced(text, "bulk-batch").trim();
 	assert.ok(call.startsWith("run_js "), "the block is one run_js call");
 	const code = JSON.parse(call.slice("run_js ".length)).code;
 	assert.ok(code.includes("['a1','a2']"), "the script's id list is where the skill says");
 	const start = 1_000_000;
-	let now = start;
+	const site = { now: start, sent: [], batches: 0 };
 	let latestWaitEnd = start;
-	const sent = [];
 	const sandbox = {
-		Date: { now: () => now },
+		Date: { now: () => site.now },
 		setTimeout: (fn, ms) => {
-			now += ms;
-			latestWaitEnd = Math.max(latestWaitEnd, now);
+			site.now += ms;
+			latestWaitEnd = Math.max(latestWaitEnd, site.now);
 			setImmediate(fn);
 		},
 		AbortSignal: { timeout: () => undefined },
 		fetch: async (url) => {
-			sent.push(url);
-			now += 500;
+			site.sent.push(url);
+			site.now += 500;
 			return answer(url);
 		},
 	};
-	const out = await runInNewContext(code.replace("['a1','a2']", JSON.stringify(ids)), sandbox);
-	return { out: JSON.parse(JSON.stringify(out)), elapsed: now - start, latestWait: latestWaitEnd - start, sent };
+	/** One run_js call: how long it took, how far past its own start any wait ran, and what it returned. */
+	site.batch = async (ids) => {
+		site.batches++;
+		const begin = site.now;
+		latestWaitEnd = begin;
+		const out = await runInNewContext(code.replace("['a1','a2']", JSON.stringify(ids)), sandbox);
+		return { out: JSON.parse(JSON.stringify(out)), elapsed: site.now - begin, latestWait: latestWaitEnd - begin };
+	};
+	return site;
 }
+
+const tooMany = { ok: false, status: 429, headers: { get: (h) => (h.toLowerCase() === "retry-after" ? "20" : null) } };
 
 test("bulk-actions: a site that answers 429 with Retry-After 20 forever gets the batch back well inside 90 s", async () => {
 	const ids = Array.from({ length: 20 }, (_, i) => `id${i}`);
-	const tooMany = { ok: false, status: 429, headers: { get: (h) => (h.toLowerCase() === "retry-after" ? "20" : null) } };
-	const { out, elapsed, latestWait, sent } = await runBulkBatch(skill("bulk-actions"), ids, () => tooMany);
+	const site = bulkSite(skill("bulk-actions"), () => tooMany);
+	const { out, elapsed, latestWait } = await site.batch(ids);
 	assert.ok(elapsed <= 60_000, `returned after ${elapsed} ms, past the 60 s worst case the script states`);
 	assert.ok(elapsed < 90_000, `returned after ${elapsed} ms, past the 90 s run_js limit`);
 	assert.ok(latestWait <= 50_000, `a wait ran to ${latestWait} ms, past the 50 s stop`);
 	assert.deepEqual(out.left, ids, "the item being retried and every unstarted item come back in left");
 	assert.deepEqual(out.done, []);
 	assert.deepEqual(out.failed, []);
-	assert.ok(sent.length >= 2, "it did retry before giving the batch back");
+	assert.deepEqual(out.limited, { status: 429, retryAfter: 20 }, "it says the site limited it, and for how long");
+	assert.ok(site.sent.length >= 2, "it did retry before giving the batch back");
+});
+
+test("bulk-actions: step 10 stops after two batches with no progress on a site that always answers 429", async () => {
+	const text = skill("bulk-actions");
+	const step10 = text.split("\n").find((l) => l.startsWith("10. "));
+	assert.ok(step10, "step 10");
+	for (const rule of [
+		"If a batch made no progress (`done` empty and `left` unchanged)",
+		"`wait` `retryAfter` seconds, or 60 if there is none, before the next batch",
+		"After two batches in a row with no progress, stop and tell the user what is left.",
+	]) {
+		assert.ok(step10.includes(rule), `step 10 says: ${rule}`);
+	}
+	assert.ok(text.includes("| A batch returns `limited` and no progress |"), "the table row matches step 10");
+
+	// Step 10 as written, run by a driver: batches of 20, requeue left, wait retryAfter (60 without
+	// one) after a batch with no progress, stop after two in a row.
+	const ids = Array.from({ length: 45 }, (_, i) => `id${i}`);
+	const site = bulkSite(text, () => tooMany);
+	let queue = [...ids];
+	const done = [];
+	const failed = [];
+	const waits = [];
+	let stale = 0;
+	while (queue.length) {
+		assert.ok(site.batches < 10, "the loop ends");
+		const batch = queue.slice(0, 20);
+		const { out } = await site.batch(batch);
+		done.push(...out.done);
+		failed.push(...out.failed);
+		queue = [...out.left, ...queue.slice(batch.length)];
+		const noProgress = out.done.length === 0 && JSON.stringify(out.left) === JSON.stringify(batch);
+		stale = noProgress ? stale + 1 : 0;
+		if (stale === 2) break;
+		if (noProgress) {
+			const ms = (out.limited?.retryAfter ?? 60) * 1000;
+			waits.push(ms);
+			site.now += ms;
+		}
+	}
+	assert.equal(site.batches, 2, "it stopped after the second batch with no progress");
+	assert.deepEqual(waits, [20_000], "it waited the site's Retry-After before the second batch");
+	assert.deepEqual(done, []);
+	assert.deepEqual(failed, []);
+	assert.deepEqual([...queue].sort(), [...ids].sort(), "every id is reported as left");
 });
 
 test("bulk-actions: the batch script does every item when the site answers ok", async () => {
 	const ids = ["a", "b", "c"];
-	const { out } = await runBulkBatch(skill("bulk-actions"), ids, () => ({ ok: true, status: 204, headers: { get: () => null } }));
+	const { out } = await bulkSite(skill("bulk-actions"), () => ({ ok: true, status: 204, headers: { get: () => null } })).batch(ids);
 	assert.deepEqual(out, { done: ids, failed: [], left: [] });
+});
+
+test("bulk-actions: the recount checks each item's state, and toggles are never re-sent blindly", () => {
+	const text = skill("bulk-actions");
+	const step = (n) => text.split("\n").find((l) => l.startsWith(`${n}. `)) ?? "";
+	assert.ok(step(6).includes("the field that shows the action's effect (read or unread, tag, folder, starred)"), "step 6 keeps the state field");
+	assert.ok(step(12).includes("Re-queue only items whose state still differs from the target"), "step 12 re-queues by state");
+	assert.ok(!/still there goes back/.test(step(12)), "step 12 no longer re-queues every item still listed");
+	assert.ok(step(13).startsWith("13. **Report by state.**"), "step 13 reports by state");
+	assert.ok(text.includes("Never re-send an item that is in `done` without checking its state first."));
+	assert.ok(text.includes("For a toggle (star, follow, read or unread), prefer an endpoint or parameter that sets the state explicitly"));
+	assert.ok(text.includes("if only a toggle exists, send it only to items whose current state differs from the target."));
 });
