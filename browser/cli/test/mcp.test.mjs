@@ -27,7 +27,8 @@ before(async () => {
 		new StdioClientTransport({
 			command: process.execPath,
 			args: [cli, "mcp"],
-			env: { HOME: join(root, "home"), PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: join(root, "sock") },
+			// No computer-use helper, even on a Mac with Polycarp installed: computer.test.mjs covers it.
+			env: { HOME: join(root, "home"), PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: join(root, "sock"), POLYCARP_SPACES_BIN: join(root, "no-helper") },
 			stderr: "ignore",
 		}),
 	);

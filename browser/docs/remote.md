@@ -68,7 +68,9 @@ Two permissions on the approval page, both unticked until you tick them: `comput
 agent workspace and apps you lend) and `computer.act` (see them too, click and type in them, and start
 apps from Polycarp's short list). The assistant gets `computer_*` tools, which run through
 `polycarp-spaces mcp --connector` on your Mac. They need the Polycarp app, so another machine doesn't
-offer them.
+offer them. An agent on the Mac itself gets them from the local stdio server without a connector or a
+token (README, "Computer use on this Mac"), with the access mode set in Settings > Agents; everything
+below is about remote callers only.
 
 A connector is held to Default whatever else is on. Full Access in Settings is for agents on your Mac:
 with it on, a connector still sees only the agent workspace and apps you lend, and starts only apps on

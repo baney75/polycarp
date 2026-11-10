@@ -23,7 +23,7 @@ import { firecrawlCrawl, firecrawlMap, pageMarkdown } from "./firecrawl.ts";
 import { searxSearch } from "./searx.ts";
 import { selfExec, selfPrefix } from "./self.ts";
 import { VERSION } from "./version.ts";
-import { COMPUTER_INSTRUCTION, COMPUTER_STATUS_TOOL, type ComputerClient } from "./computer.ts";
+import { COMPUTER_INSTRUCTION, COMPUTER_STATUS_TOOL, type ComputerClient, LOCAL_COMPUTER_INSTRUCTION, LocalComputer } from "./computer.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
 
@@ -187,11 +187,15 @@ export interface McpServerOptions {
 	remote?: boolean;
 	/** A remote session's computer-use tools (computer.ts). Registered like the others, so `allowedTools` holds them too. */
 	computer?: ComputerClient;
+	/** The local stdio server's computer-use tools (computer.ts LocalComputer). Ignored for a scoped or remote session. */
+	localComputer?: LocalComputer;
 }
 
 /** The MCP server and its bridge client, before any transport is attached. */
 export function createMcpServer(options: McpServerOptions = {}): { server: McpServer; client: BridgeClient } {
 	const allowedTools = options.allowedTools;
+	// Fail closed: the local helper runs without --connector, so a scoped or remote session never gets it.
+	const local = allowedTools || options.remote ? undefined : options.localComputer;
 
 	const server = new McpServer(
 		{ name: "polycarp", version: VERSION },
@@ -223,6 +227,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				.concat(
 					allowedTools && !allowedTools.has("tabs_show") ? ["When a page needs a sign-in or captcha, stop and ask the user to handle it in their browser."] : [],
 					options.computer?.tools.length ? [COMPUTER_INSTRUCTION] : [],
+					local?.present ? [LOCAL_COMPUTER_INSTRUCTION] : [],
 					allowedTools ? [`This session's tools: ${[...allowedTools].sort().filter((t) => !t.startsWith("computer_") || t === COMPUTER_STATUS_TOOL || options.computer?.tools.some((c) => c.name === t)).join(", ")}.`] : [],
 				)
 				.join(" "),
@@ -960,7 +965,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	// threads_list, thread_read, thread_search (cli/src/threads.ts): past side panel chats.
 	registerThreadTools(server, client);
 
-	// A session granted computer use, whether or not it's available here. The local server has its own way to the hands.
+	// A session granted computer use, whether or not it's available here. The local server has its own way to the hands, below.
 	if (allowedTools?.has(COMPUTER_STATUS_TOOL)) {
 		server.registerTool(
 			COMPUTER_STATUS_TOOL,
@@ -976,7 +981,10 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		);
 	}
 
+	if (local) registerLocalComputer(server, local);
+
 	stripSchemaDialect(server);
+	if (local) waitForLocalComputer(server, local);
 
 	if (allowedTools) {
 		// Every way of adding a tool must have gone through the gate above.
@@ -991,6 +999,41 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 }
 
 type ToolResult = { content: Content[]; isError?: boolean };
+
+/** computer_status, and each computer_* tool as soon as the helper has listed it (a late one tells the client the list changed). */
+function registerLocalComputer(server: McpServer, local: LocalComputer): void {
+	server.registerTool(
+		COMPUTER_STATUS_TOOL,
+		{
+			description: "Whether computer use (computer_* tools for native Mac apps) is available here, and what to tell the user if it isn't. Example: {}",
+			inputSchema: {},
+			annotations: { readOnlyHint: true, openWorldHint: false },
+		},
+		async () => ({ content: text(await local.status()) }),
+	);
+	const registered = new Set<string>();
+	local.onTools = () => {
+		for (const tool of local.tools) {
+			if (registered.has(tool.name)) continue;
+			registered.add(tool.name);
+			// The helper's answer goes back as it is: text, a shot's image, and its structured errors.
+			server.registerTool(tool.name, { description: tool.description, inputSchema: tool.shape, annotations: { readOnlyHint: tool.readOnly, openWorldHint: false } }, (args: unknown) =>
+				local.call(tool.name, args),
+			);
+		}
+	};
+}
+
+/** tools/list waits for the helper, at most LOCAL_LIST_BUDGET_MS, then answers with what it has. */
+function waitForLocalComputer(server: McpServer, local: LocalComputer): void {
+	const handlers = (server.server as unknown as { _requestHandlers?: Map<string, (req: unknown, extra: unknown) => Promise<unknown>> })._requestHandlers;
+	const list = handlers?.get("tools/list");
+	if (!handlers || !list) return;
+	handlers.set("tools/list", async (req, extra) => {
+		await local.ready();
+		return list(req, extra);
+	});
+}
 
 const caseSchema = z.object({ task: z.string().min(1).max(500), skill: z.string().min(1).max(64) });
 
@@ -1079,7 +1122,9 @@ export async function runMcpServer(options: { session?: string } = {}): Promise<
 		const result = install();
 		process.stderr.write(`[polycarp] installed native host manifests (${result.written.length} file(s))\n`);
 	}
-	const { server, client } = createMcpServer({ sessionFlag: options.session });
+	const localComputer = new LocalComputer();
+	const { server, client } = createMcpServer({ sessionFlag: options.session, localComputer });
+	process.stdin.on("end", () => localComputer.close());
 	// Community skills, about daily, in the background: many harnesses keep this server running.
 	// The whole reconciliation (skill.ts syncCommunity), not just the fetch: pulled skills lose their installed copies here too.
 	const sync = () => syncCommunity({ due: true }).catch(() => undefined);
