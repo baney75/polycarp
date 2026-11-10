@@ -121,7 +121,7 @@ public enum HandsTools {
             HandsParam("layout", .string, "full, halves, thirds, grid or frames.", required: true, positional: true),
             HandsParam("windows", .stringList, "Window ids in the order to place them (default: every agent workspace window you may use, oldest first). With frames: id=x,y,width,height in points from the top-left of the screen's usable area.", positional: true, rest: true),
         ], acts: true),
-        HandsTool(verb: "move", summary: "Move a window you may use onto the agent workspace (a lent window, or any window under Full Access, comes off Donovan's workspace), or give a window already there a new frame. Never onto a workspace Donovan is looking at, never one of his windows he hasn't lent, never a dialog (it goes with its app).", params: [
+        HandsTool(verb: "move", summary: "Move a window you may use onto the agent workspace (a lent window, or any window under Full Access, comes off Donovan's workspace), or give a window already there a new frame. A moved window goes back when its lend ends or Full Access is narrowed. Never onto a workspace Donovan is looking at, never one of his windows he hasn't lent, never a dialog (it goes with its app).", params: [
             HandsParam("window", .integer, "Window id from `windows`.", required: true),
             HandsParam("frame", .string, "x,y,width,height in points from the top-left of the screen's usable area (optional)."),
         ], acts: true),

@@ -46,7 +46,8 @@ public struct ChildWindowFacts: Equatable, Sendable {
 ///    placed like any other) and never a menu; and W's process has at least one window the agent may use now.
 /// 2. Ownership is plain: every placed window of that process is one the agent may use, or W first appeared within
 ///    10 s after an action by this agent session on a window of that process (`ChildAttribution`). An app split between
-///    the agent workspace and Donovan's can raise a dialog for his window; the agent never gets that one.
+///    the agent workspace and Donovan's can raise a dialog for his window; the agent never gets that one. A child whose
+///    window is known and not one the agent may use is refused whatever the timing says.
 /// 3. W is not an Open or Save panel (refused with `PanelDetector.refusal`), and not a system authentication, password,
 ///    keychain or permission prompt (SecurityAgent, coreauthd, UserNotificationCenter, TCC).
 /// 4. The in-use rule is unchanged: the child counts as its app, and it is never on the agent workspace, so its
@@ -144,6 +145,13 @@ public enum ChildWindowRule {
         }
         let ofPid = placed.filter { $0.window.pid == c.pid }
         let all = !ofPid.isEmpty && ofPid.allSatisfy { $0.scope.allowed }
+        // A sheet or dialog whose window is known belongs to that window: when it is not one the agent may use, the child
+        // is Donovan's, whoever acted last. Attribution only settles a child whose window is unknown.
+        if let p = c.parent, !usable.contains(where: { $0.window.id == p }) {
+            return .refused(.ownership, HandsError(.outsideAgentWorkspace,
+                "window \(c.id) is a \(kindName) of \(c.app) on window \(p), which is not one you may use, so it is Donovan's (rule 2)",
+                suggestion: "Leave it for Donovan. Work in a window of yours meanwhile.", retry: .never))
+        }
         guard all || attributed else {
             return .refused(.ownership, HandsError(.outsideAgentWorkspace,
                 "window \(c.id) is a \(kindName) of \(c.app), which also has windows you may not use, and it did not appear within \(Int(attributionWindow)) s after one of your actions in \(c.app), so it may be Donovan's (rule 2)",
@@ -250,6 +258,19 @@ public struct SessionWindows: Equatable, Sendable {
     public mutating func record(session: String, window: UInt32, pid: Int32) {
         guard !session.isEmpty else { return }
         opened[session, default: [:]][window] = pid
+    }
+
+    /// The session that owns this window, if any.
+    public func owner(of window: UInt32) -> String? { opened.first { $0.value[window] != nil }?.key }
+
+    /// `open`'s claim, made under one lock: the newest of `candidates` (the new windows this launch may have made) that no
+    /// other session owns, recorded for `session`. Nil when every candidate is another session's: that `open` could not
+    /// identify its window and owns none. A window is never recorded for two sessions.
+    public mutating func claim(_ candidates: [HandsWindow], session: String) -> HandsWindow? {
+        let free = candidates.filter { w in owner(of: w.id).map { $0 == session } ?? true }
+        guard let pick = free.max(by: { $0.id < $1.id }) else { return nil }
+        record(session: session, window: pick.id, pid: pick.pid)
+        return pick
     }
 
     public mutating func forget(window: UInt32) { for k in opened.keys { opened[k]?[window] = nil } }

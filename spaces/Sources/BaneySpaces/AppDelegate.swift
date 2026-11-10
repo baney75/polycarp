@@ -808,6 +808,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// A window an agent moved onto the agent workspace goes back where it came from once the lend or Full Access that let
+    /// it move ends (`MovedInWindows`). Main thread, from the lend and access change hooks.
+    private func sendBackMovedIn() {
+        let ended = HandsMovedIn.shared.settle(lends: HandsLends.shared.current(), now: Date(), mode: AgentAccess.shared.current)
+        guard !ended.isEmpty else { return }
+        let existing = Set(spaces.workspaceRows().map(\.number))
+        for e in ended {
+            // Only one still where the agent put it: one Donovan moved since stays where he put it.
+            guard let w = spaces.handsLive(e.window), w.pid == e.pid, w.workspace == e.to else { continue }
+            let to = MovedInWindows.destination(e, workspaces: existing, current: spaces.model.current, agentWorkspace: Spaces.agentWorkspace)
+            run { $0.move(e.window, to: to) }
+            Trace.log("hands: window \(e.window) went back to workspace \(to): the \(e.origin == .lent ? "lend" : "Full Access") that let an agent move it ended")
+        }
+    }
+
     private func run(_ action: (Spaces) -> Void) {
         guard stillTrusted() else { return NSSound.beep() }
         action(spaces)
@@ -886,12 +901,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // A lent app is parked, not hidden, while it is lent: the workspace is applied again.
                 self?.spaces.saveState()
                 self?.run { $0.reapply() }
+                self?.sendBackMovedIn()
             }
         }
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in HandsLends.shared.expire() }
         AgentAccess.shared.onChange = { [weak self] mode in
             guard let self else { return }
             if self.setup.model.agentAccess != mode { self.setup.model.agentAccess = mode }
+            self.sendBackMovedIn()
             self.spaces.saveState()
             self.updateIcon()
         }

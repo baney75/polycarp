@@ -23,9 +23,14 @@ extension HandsRouter {
     /// A window BaneySpaces doesn't place, as the engine and the scope checks see it; nil when no process lists it as a
     /// child window (closed, a menu, or unreadable).
     func childWindow(_ id: UInt32) -> HandsWindow? {
-        guard let pid = ChildWindowsAX.owner(id) else { return nil }
+        guard let owner = ChildWindowsAX.owner(id) else { return nil }
+        // Rule 3 before any accessibility read: a system prompt's window is named from the window server only, and its
+        // decision (`childDecision`) refuses it without reading it.
+        if ChildWindowsAX.isSystemPrompt(pid: owner.pid, serverName: owner.name) {
+            return HandsWindow(id: id, pid: owner.pid, app: owner.name.isEmpty ? "a system prompt" : owner.name, workspace: nil)
+        }
         let all = listWindows().windows
-        return readChildren(pid: pid, all: all).children.first { $0.id == id }?.window
+        return readChildren(pid: owner.pid, all: all).children.first { $0.id == id }?.window
     }
 
     /// The decision for one child window of `pid`, read now.
@@ -33,9 +38,11 @@ extension HandsRouter {
         let all = listWindows().windows
         let running = NSRunningApplication(processIdentifier: pid)
         let bundle = running?.bundleIdentifier ?? "", process = running?.executableURL?.lastPathComponent ?? ""
+        let serverName = ChildWindowsAX.owner(id).map { $0.pid == pid ? $0.name : "" } ?? ""
         // Rule 3 before reading anything of it: a system prompt's window is never read for an agent.
-        if ChildWindowRule.isSystemPrompt(bundle: bundle, processName: process) {
-            let facts = ChildWindowFacts(id: id, pid: pid, app: running?.localizedName ?? process, bundle: bundle, processName: process)
+        if ChildWindowsAX.isSystemPrompt(pid: pid, serverName: serverName) {
+            let named = ChildWindowRule.isSystemPrompt(bundle: bundle, processName: process) ? process : serverName
+            let facts = ChildWindowFacts(id: id, pid: pid, app: running?.localizedName ?? named, bundle: bundle, processName: named)
             return (facts, ChildWindowRule.decide(facts, placed: [], attributed: false, selfPid: getpid()))
         }
         guard let facts = readChildren(pid: pid, all: all).children.first(where: { $0.id == id }) else { return nil }
@@ -68,14 +75,25 @@ extension HandsRouter {
         let all = listWindows().windows
         let existing = Set(ChildWindowsAX.read(pid: pid, placed: Set(all.filter { $0.pid == pid }.map(\.id))).children.map(\.id))
         let now = Date()
-        childLocked { attribution.acted(session: session, pid: pid, at: now, existing: existing) }
-        watch(pid: pid)
+        // The action is recorded first, so a running watch sees it before deciding to stop; a pid has one watch at most.
+        let start = childLocked { () -> Bool in
+            attribution.acted(session: session, pid: pid, at: now, existing: existing)
+            return childWatchers.insert(pid).inserted
+        }
+        if start { watch(pid: pid) }
         return existing
     }
 
+    /// Looks every half second while an action on `pid` is under 10 s old; a later action extends this same watch.
     private func watch(pid: Int32) {
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            guard let self, self.childLocked({ self.attribution.watching(pid: pid, now: Date()) }) else { return }
+            guard let self else { return }
+            let go = self.childLocked { () -> Bool in
+                if self.attribution.watching(pid: pid, now: Date()) { return true }
+                self.childWatchers.remove(pid)
+                return false
+            }
+            guard go else { return }
             _ = self.readChildren(pid: pid, all: self.listWindows().windows)
             self.watch(pid: pid)
         }
@@ -170,21 +188,43 @@ extension HandsRouter {
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope, _)):
-            let agent = onMain { host.agentWorkspace() }
-            let shown = onMain { agent.map { n in host.workspaceRows().contains { $0.number == n && $0.shown } } ?? false }
-            if let e = WorkspaceVerbs.moveRefusal(window: w, scope: scope, agentWorkspace: agent, agentShown: shown) { return .failure(e) }
+            let before = onMain { () -> MoveState in
+                let agent = host.agentWorkspace()
+                return MoveState(agentWorkspace: agent, window: w, scope: scope, agentShown: agentShown(agent))
+            }
+            if let e = WorkspaceVerbs.moveRefusal(window: w, scope: scope, agentWorkspace: before.agentWorkspace, agentShown: before.agentShown) { return .failure(e) }
             if let e = awaitUse(w, verb: "move", delivery: .posted, wait: req.int("wait"), session: session) { return .failure(e) }
             if let e = actingCheck(w, verb: "move", delivery: .posted, session: session)() { return .failure(e) }
-            guard let n = agent else { return .failure(HandsError(.agentWorkspaceOff, "the agent workspace is off", suggestion: "Ask Donovan to run `polycarp-spaces agent on`.", retry: .never)) }
-            let from = w.workspace
-            if from != n {
-                // Checked again at the moment it moves: still not shown, still in scope.
-                let stillShown = onMain { host.workspaceRows().contains { $0.number == n && $0.shown } }
-                if let e = WorkspaceVerbs.moveRefusal(window: w, scope: decide(w, agent, session: session), agentWorkspace: agent, agentShown: stillShown) { return .failure(e) }
-                onMain { host.move(w.id, n) }
-                Trace.log("hands: moved window \(w.id) of \(w.app) from workspace \(from.map(String.init) ?? "?") to the agent workspace")
+            // After the wait: the agent workspace, the live window, its scope and whether it is shown, read together on the
+            // main thread and acted on in the same pass. The agent workspace may have been turned off or changed meanwhile.
+            let outcome = onMain { () -> (Result<MoveDecision.Go, HandsError>, from: Int?) in
+                let agent = host.agentWorkspace()
+                let live = host.live(w.id)
+                let now = live.map { decide($0, agent, session: session) }
+                    ?? .denied(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows`.", retry: .afterSnapshot))
+                let after = MoveState(agentWorkspace: agent, window: live, scope: now, agentShown: agentShown(agent))
+                let r = MoveDecision.decide(before: before, after: after)
+                if case .success(let go) = r, go.moves, let live, let from = live.workspace {
+                    // What it may do there ends with the lend or Full Access that let it move, and then it goes back.
+                    let origin = MovedInWindows.origin(scope: now, agentOwned: host.agentOwned().contains(live.pid))
+                    HandsMovedIn.shared.record(window: live.id, pid: live.pid, origin: origin, from: from, to: go.to)
+                    if origin == .fullAccess { AgentAccess.shared.grant(live.pid) }
+                    host.move(live.id, go.to)
+                }
+                return (r, live?.workspace)
             }
-            var data: [String: JSONValue] = ["window": .int(Int(w.id)), "app": .string(w.app), "from": from.map(JSONValue.int) ?? .null, "to": .int(n), "moved": .bool(from != n)]
+            let go: MoveDecision.Go
+            switch outcome.0 {
+            case .failure(let e): return .failure(e)
+            case .success(let g): go = g
+            }
+            let from = outcome.from
+            if go.moves { Trace.log("hands: moved window \(w.id) of \(w.app) from workspace \(from.map(String.init) ?? "?") to the agent workspace") }
+            var data: [String: JSONValue] = ["window": .int(Int(w.id)), "app": .string(w.app), "from": from.map(JSONValue.int) ?? .null, "to": .int(go.to), "moved": .bool(go.moves)]
+            if go.changed { data["note"] = "the agent workspace changed while the move waited; the window went to the new one" }
+            if go.moves, scope != .onAgentWorkspace {
+                data["goes_back"] = .string("it goes back to workspace \(from.map(String.init) ?? "?") when the lend or Full Access that let it move ends")
+            }
             if let text = req.string("frame"), let rel = AgentArrange.parseFrame("0=" + text)?.frame {
                 let area = onMain { host.agentArea() }
                 let f = AgentArrange.place(rel, in: area)
@@ -195,6 +235,11 @@ extension HandsRouter {
             }
             return .success(.object(data))
         }
+    }
+
+    /// Whether workspace `agent` is shown on a display now. Main thread.
+    private func agentShown(_ agent: Int?) -> Bool {
+        agent.map { n in host.workspaceRows().contains { $0.number == n && $0.shown } } ?? false
     }
 
     func close(_ req: HandsRequest) -> HandsEnvelope {

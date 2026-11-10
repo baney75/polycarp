@@ -42,7 +42,8 @@ not a public issue.
   it appeared within 10 seconds of that agent's own action). Open and Save panels, and macOS password, keychain and
   permission prompts (SecurityAgent, coreauthd, UserNotificationCenter, TCC), are always refused. Agents may lay out,
   move onto the agent workspace and close only what the rules already let them use: close only windows they opened, never
-  quitting an app, and move never takes a window off your workspaces unless you lent it or set Full Access. Agents never
+  quitting an app, and move never takes a window off your workspaces unless you lent it or set Full Access; such a window
+  goes back when the lend ends or Full Access is narrowed. Agents never
   switch, create, rename or delete workspaces. Connectors get none of these beyond the read-only workspace list.
 - **Hooks.** `baneyspaces hooks install` adds entries to `~/.claude/settings.json` and a file
   in `~/.grok/hooks`. It backs up the settings file once and removes only its own entries.

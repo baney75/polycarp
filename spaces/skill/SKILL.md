@@ -113,7 +113,9 @@ baneyspaces agent close --window 4211                # only windows you opened; 
   lists dialogs with `kind`, `parent` and `waiting`. A sheet without its own id is in its parent's snapshot (`in_sheet`).
 - Open and Save panels and macOS password or permission prompts are always refused. A dialog in an app Donovan also
   uses is refused unless it appeared within 10 s of your own action.
-- `move --window N` brings a lent window onto the agent workspace. You never switch, create, rename or delete workspaces.
+- `move --window N` brings a lent window onto the agent workspace. It stays yours only while the lend (or Full Access, for
+  a window it brought over) lasts: when the lend ends, is taken back, or Full Access is narrowed, the window is refused and
+  goes back to the workspace it came from. You never switch, create, rename or delete workspaces.
 
 ## From an assistant on the web
 

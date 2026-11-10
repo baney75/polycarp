@@ -52,6 +52,10 @@ final class HandsRouter {
     var attribution = ChildAttribution()
     var sessionWindows = SessionWindows()
     let childLock = NSLock()
+    /// The pids a child-window watch runs for: one watch per pid, which every action extends (`noteAction`).
+    var childWatchers = Set<Int32>()
+    /// One `open` per app at a time, so two sessions never race to claim the same new window. Under `childLock`.
+    var openGates: [String: NSLock] = [:]
 
     /// What a snapshot's refs belong to. A ref is good only for this snapshot's window and process.
     private struct Snap { var window: UInt32; var pid: Int32; var app: String; var at: Date; var identity: [String: RefIdentity] }
@@ -124,7 +128,10 @@ final class HandsRouter {
         if bad, mode != .full { return .denied(HandsError(.needsSandbox, "window \(w.id) showed a document of Donovan's", suggestion: "Open your own file from the handoff folder.", retry: .never)) }
         let book = lends.current()
         // Whether Donovan is using the app is not scope: reads never look at it, and actions wait for it (`awaitUse`).
-        let d = ScopeGuard.check(w, agentWorkspace: agent, lends: book, now: Date(), mode: mode, selfPid: getpid())
+        let base = ScopeGuard.check(w, agentWorkspace: agent, lends: book, now: Date(), mode: mode, selfPid: getpid())
+        // A window an agent moved onto the agent workspace keeps the scope that let it move: none once that ends.
+        let d = HandsMovedIn.shared.decide(w, base: base, lends: book, now: Date(), mode: mode)
+        if case .denied = d { return d }
         // What Full Access let onto the agent workspace goes out with it. A window of that process Donovan lends later still counts as lent.
         if d == .onAgentWorkspace, mode != .full, AgentAccess.shared.grantedUnderFull(w.pid) {
             if book.isLent(w, now: Date()) { return .lent }
@@ -593,6 +600,21 @@ final class HandsRouter {
             case .timedOut(let state, let waited): return .failure(InUseWait.refusal(app: display, state: state, waited: waited))
             }
         }
+        // One open of this app at a time: a second request waits here until the first has claimed its window.
+        let key = (bundle.isEmpty ? display : bundle).lowercased()
+        let gate = childLocked { () -> NSLock in
+            if let g = openGates[key] { return g }
+            let g = NSLock(); openGates[key] = g; return g
+        }
+        if Thread.isMainThread {
+            // The main thread never waits on another open (that one needs the main thread to finish).
+            guard gate.try() else {
+                return .failure(HandsError(.inUse, "another agent is opening \(display) right now", suggestion: "Retry in a moment.", retry: .safe))
+            }
+        } else {
+            gate.lock()
+        }
+        defer { gate.unlock() }
         let pidsBefore = Set(NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundle }.map(\.processIdentifier))
         let known = Set(listWindows(fresh: true).windows.map(\.id))
         // What is in front, and how often Polycarp has given the keyboard back, before the launch: the result says whether
@@ -619,7 +641,10 @@ final class HandsRouter {
         while window == nil, !looked || Date() < deadline {
             looked = true
             let (all, agent) = listWindows(fresh: true)
-            window = all.filter { matches($0, reply.info?["app"] ?? display) && !known.contains($0.id) && $0.workspace == agent && (!separate || !pidsBefore.contains($0.pid)) }.max { $0.id < $1.id }
+            let candidates = all.filter { matches($0, reply.info?["app"] ?? display) && !known.contains($0.id) && $0.workspace == agent && (!separate || !pidsBefore.contains($0.pid)) }
+            // Provenance: `close` closes only windows this session's `open` made. Claimed under the lock, never a window
+            // another session owns.
+            window = childLocked { sessionWindows.claim(candidates, session: session) }
             if window == nil { Thread.sleep(forTimeInterval: 0.15) }
         }
         var data: [String: JSONValue] = (reply.info ?? [:]).mapValues(JSONValue.string)
@@ -629,12 +654,13 @@ final class HandsRouter {
         if let window {
             data["window"] = .int(Int(window.id)); data["pid"] = .int(Int(window.pid))
             data["reused"] = .bool(false)
-            // Provenance: `close` closes only windows this session's `open` made.
-            childLocked { sessionWindows.record(session: session, window: window.id, pid: window.pid) }
         } else if separate, !pidsBefore.isEmpty, noNewProcess(bundle: bundle, before: pidsBefore) {
             return .failure(HandsError(.needsSandbox, "\(display) didn't start a separate copy, so nothing of it is the agent's",
                                        suggestion: "Close nothing; ask Donovan to quit \(display), or work in the sandbox.", retry: .never))
-        } else { data["note"] = .string("the window hasn't appeared yet; run `polycarp-spaces agent windows`") }
+        } else {
+            data["window_identified"] = .bool(false)
+            data["note"] = .string("Polycarp couldn't identify the window this open made (none appeared yet, or the only new one is another session's), so this session owns none of it; run `polycarp-spaces agent windows`")
+        }
         return .success(.object(data))
     }
 

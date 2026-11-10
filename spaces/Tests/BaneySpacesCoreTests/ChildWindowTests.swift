@@ -310,10 +310,31 @@ final class ChildWindowSourceTests: XCTestCase {
         XCTAssertTrue(router.contains("if remote, let e = WorkspaceVerbs.connectorRefusal(verb: req.verb) { return .failure(e) }"))
         let ws = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
         let child = try XCTUnwrap(HandsSourceTests.block(after: "func childDecision(", in: ws))
-        let prompt = try XCTUnwrap(child.range(of: "ChildWindowRule.isSystemPrompt(bundle: bundle, processName: process)"))
+        let prompt = try XCTUnwrap(child.range(of: "ChildWindowsAX.isSystemPrompt(pid: pid, serverName: serverName)"))
         let read = try XCTUnwrap(child.range(of: "readChildren(pid: pid, all: all)"))
         XCTAssertLessThan(prompt.lowerBound, read.lowerBound, "a system prompt is never read")
         XCTAssertTrue(ws.contains("ChildWindowRule.decide(c, placed: placed, attributed: attributed, selfPid: getpid())"))
+        // first-F3, sol-F5: resolving an unplaced window by id checks its owner before any accessibility read, and so does
+        // the collector itself.
+        let resolve = try XCTUnwrap(HandsSourceTests.block(after: "func childWindow(_ id: UInt32) -> HandsWindow?", in: ws))
+        let check = try XCTUnwrap(resolve.range(of: "ChildWindowsAX.isSystemPrompt(pid: owner.pid, serverName: owner.name)"))
+        let readKids = try XCTUnwrap(resolve.range(of: "readChildren("))
+        XCTAssertLessThan(check.lowerBound, readKids.lowerBound, "a system prompt is never read")
+        let ax = try HandsSourceTests.code("Sources/BaneySpaces/Hands/ChildWindowsAX.swift")
+        let collector = try XCTUnwrap(HandsSourceTests.block(after: "static func read(pid: pid_t, placed: Set<UInt32>) -> Reading", in: ax))
+        XCTAssertLessThan(try XCTUnwrap(collector.range(of: "isSystemPrompt(pid: pid)")).lowerBound, try XCTUnwrap(collector.range(of: "AXUIElementCreateApplication")).lowerBound)
+        // first-F4: one watch per pid.
+        let note = try XCTUnwrap(HandsSourceTests.block(after: "func noteAction(session: String, pid: Int32) -> Set<UInt32>", in: ws))
+        XCTAssertTrue(note.contains("childWatchers.insert(pid).inserted"))
+        XCTAssertTrue(note.contains("if start { watch(pid: pid) }"))
+        // first-F1: the moved-in rule is part of every placed window's decision, and a Full Access move is granted.
+        let decide2 = try XCTUnwrap(HandsSourceTests.block(after: "func decide(_ w: HandsWindow, _ agent: Int?, session: String = \"\")", in: router))
+        XCTAssertTrue(decide2.contains("HandsMovedIn.shared.decide(w, base: base"))
+        let move = try XCTUnwrap(HandsSourceTests.block(after: "func move(_ req: HandsRequest) -> HandsEnvelope", in: ws))
+        XCTAssertTrue(move.contains("if origin == .fullAccess { AgentAccess.shared.grant(live.pid) }"))
+        XCTAssertTrue(move.contains("MoveDecision.decide(before: before, after: after)"))
+        let app = try HandsSourceTests.code("Sources/BaneySpaces/AppDelegate.swift")
+        XCTAssertEqual(app.components(separatedBy: "sendBackMovedIn()").count - 1, 3, "defined once, called on lend and access changes")
     }
 
     /// The hands verb `move` must not take over the older `agent move <id | words>` session op.

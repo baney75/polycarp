@@ -2,12 +2,10 @@ import AppKit
 import ApplicationServices
 import BaneySpacesCore
 
-/// Reads an accessibility element into the shape the panel check needs. Only reads. A sheet's or dialog's subtree is read
-/// deeper than a window's, within a node budget; a subtree that could not be read, or ran past the budget, is marked
-/// unreadable, so the panel check fails closed on it.
+/// Reads an accessibility element into the shape the panel check needs. Only reads. The bounded read and its fail-closed
+/// rule are `AXTreeRead` in the core: a sheet or dialog any part of which was cut off is unreadable, so it is refused.
 enum HandsAXTree {
-    static let perLevel = 40
-    static let budget = 1500
+    static let perLevel = AXTreeRead.perLevel
 
     private static func copy(_ e: AXUIElement, _ attribute: String) -> (CFTypeRef?, AXError) {
         var out: CFTypeRef?
@@ -28,29 +26,10 @@ enum HandsAXTree {
         }
     }
 
-    /// A window read `depth` levels down; any sheet met on the way, or the window itself when it is a dialog, is read to
-    /// `childDepth` levels.
-    static func node(_ e: AXUIElement, depth: Int, childDepth: Int = 5) -> AXNodeInfo {
-        var left = budget
-        func read(_ el: AXUIElement, depth: Int, strict: Bool) -> AXNodeInfo {
-            left -= 1
-            let role = self.role(el)
-            let subrole = string(el, kAXSubroleAttribute)
-            let deep = strict || role == "AXSheet" || subrole == "AXSheet"
-            var n = AXNodeInfo(role: role, subrole: subrole, identifier: string(el, "AXIdentifier"), title: string(el, kAXTitleAttribute),
-                               value: role == "AXStaticText" ? string(el, kAXValueAttribute) : nil)
-            let reach = deep && !strict ? childDepth : depth
-            guard reach > 0 else { return n }
-            let (kids, readable) = children(el)
-            if !readable && deep { n.readable = false; return n }
-            if deep && (left <= 0 || kids.count > perLevel * 4) { n.readable = false; return n }
-            n.children = kids.prefix(perLevel).map { read($0, depth: reach - 1, strict: deep) }
-            if deep && left <= 0 { n.readable = false }
-            return n
-        }
-        let subrole = string(e, kAXSubroleAttribute)
-        let dialog = subrole == "AXDialog" || subrole == "AXSystemDialog" || role(e) == "AXSheet"
-        return read(e, depth: dialog ? childDepth : depth, strict: dialog)
+    /// A window read `depth` levels down; any sheet met on the way, or the window itself when it is a dialog (or `deep`
+    /// says so), is read to `AXTreeRead.childDepth` levels and must be read whole.
+    static func node(_ e: AXUIElement, depth: Int, deep: Bool? = nil) -> AXNodeInfo {
+        AXTreeRead.node(e, depth: depth, deep: deep, string: { string($0, $1) }, children: { children($0) })
     }
 }
 
@@ -65,6 +44,8 @@ enum ChildWindowsAX {
     }
 
     static func read(pid: pid_t, placed: Set<UInt32>) -> Reading {
+        // A system prompt's process is never read for an agent, by any path (rule 3).
+        if isSystemPrompt(pid: pid) { return Reading(children: [], sheetsOn: []) }
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.25)
         var raw: CFTypeRef?
@@ -82,9 +63,12 @@ enum ChildWindowsAX {
             AXUIElementCopyAttributeValue(el, kAXSubroleAttribute as CFString, &s)
             AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &r)
             let modal = AXUIElementCopyAttributeValue(el, kAXModalAttribute as CFString, &m) == .success ? (m as? Bool) : nil
+            // A sheet, dialog or alert (modal ones included) is read whole or refused.
+            let kind = ChildWindowRule.kind(role: r as? String, subrole: s as? String, modal: modal)
+            let deep = kind == .sheet || kind == .dialog || kind == .alert
             return ChildWindowFacts(id: id, pid: pid, app: name, bundle: bundle, processName: process, title: (t as? String) ?? "",
                                     role: r as? String, subrole: s as? String, modal: modal, parent: parent,
-                                    panel: PanelDetector.windowIsOffLimits(HandsAXTree.node(el, depth: 1)))
+                                    panel: PanelDetector.windowIsOffLimits(HandsAXTree.node(el, depth: 1, deep: deep ? true : nil)))
         }
         for el in list.prefix(64) {
             guard let id = BackgroundAX.windowID(of: el) else { continue }
@@ -103,6 +87,22 @@ enum ChildWindowsAX {
         return Reading(children: out, sheetsOn: sheetsOn)
     }
 
-    /// The process that owns a window number, from the window server.
-    static func owner(_ id: UInt32) -> pid_t? { BackgroundAX.serverWindow(id)?.pid }
+    /// The process that owns a window number, and its name, from the window server.
+    static func owner(_ id: UInt32) -> (pid: pid_t, name: String)? {
+        guard let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] else { return nil }
+        for w in list where (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value == id {
+            guard let pid = (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value else { return nil }
+            return (pid, w[kCGWindowOwnerName as String] as? String ?? "")
+        }
+        return nil
+    }
+
+    /// Whether `pid` shows macOS's authentication, password, keychain or permission prompts, by its bundle id, its
+    /// executable or the window server's owner name. Read without touching accessibility.
+    static func isSystemPrompt(pid: pid_t, serverName: String = "") -> Bool {
+        let running = NSRunningApplication(processIdentifier: pid)
+        let bundle = running?.bundleIdentifier ?? "", process = running?.executableURL?.lastPathComponent ?? ""
+        return ChildWindowRule.isSystemPrompt(bundle: bundle, processName: process)
+            || (!serverName.isEmpty && ChildWindowRule.isSystemPrompt(bundle: "", processName: serverName))
+    }
 }
