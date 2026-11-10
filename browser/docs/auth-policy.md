@@ -84,7 +84,7 @@ memory. The proxy checks the secret and its own `Host` header, and forwards only
   app. The refresh path is tested against a fake GitHub; a token that never expires simply never
   refreshes.
 - Sign-out deletes the token file. Revoking the grant on GitHub's side needs the app's secret,
-  so Settings points the user to `github.com/settings/applications`.
+  so Settings links the user to the app's own grant page, `github.com/settings/connections/applications/<client id>`.
 - Inference uses GitHub's Copilot SDK (`@github/copilot-sdk`, pinned to 1.0.28), installed by the
   user with `tabkyra copilot-sdk install` (about 160 MB, the SDK's runtime for the platform). The
   host creates `CopilotClient({ gitHubToken, useLoggedInUser: false, mode: "empty" })`, so it

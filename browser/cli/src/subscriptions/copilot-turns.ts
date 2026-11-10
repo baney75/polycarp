@@ -230,7 +230,7 @@ export class CopilotTurns {
 		}));
 		conv.session = await client.createSession({
 			model: req.model,
-			clientName: "Tabkyra", // product-name allowlist: the name GitHub knows this client by
+			clientName: "Polycarp",
 			streaming: true,
 			tools,
 			availableTools: tools.map((t) => t.name),

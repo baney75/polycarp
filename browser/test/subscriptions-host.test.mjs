@@ -129,7 +129,7 @@ test("SIWC: the authorization request has exactly the documented parameters", as
 	assert.equal(`${url.origin}${url.pathname}`, "https://auth.openai.com/api/accounts/authorize");
 	const p = url.searchParams;
 	assert.equal(p.get("client_id"), "dynamic_agent_client");
-	assert.equal(p.get("agent_name_hint"), "Tabkyra"); // the name registered with the provider
+	assert.equal(p.get("agent_name_hint"), "Polycarp");
 	assert.match(p.get("ext_agent_host_id"), /^urn:uuid:[0-9a-f-]{36}$/);
 	assert.equal(p.get("response_type"), "code");
 	assert.match(p.get("redirect_uri"), /^http:\/\/127\.0\.0\.1:\d+\/auth\/callback$/);

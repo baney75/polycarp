@@ -112,9 +112,9 @@ export class SubscriptionsSection extends LitElement {
 			const result = await request<{ revoked: boolean; revokeUrl?: string }>(`${which}.signout`);
 			if (which === "chatgpt" && !result.revoked)
 				this.notice =
-					"Signed out here, but OpenAI didn't confirm the session was revoked. You can disconnect \"Tabkyra (Polycarp's earlier name)\" in ChatGPT Settings."; // product-name allowlist: the name the provider lists
+					'Signed out here, but OpenAI didn\'t confirm the session was revoked. You can disconnect "Polycarp" in ChatGPT Settings (a sign-in from before the rename is listed as "Tabkyra").'; // product-name allowlist: the name OpenAI lists for older sign-ins
 			if (which === "copilot")
-				this.notice = `Signed out: the token is deleted from this computer. To remove "Tabkyra (Polycarp's earlier name)" from GitHub too, revoke it at ${COPILOT.revokeUrl}.`; // product-name allowlist: the name the provider lists
+				this.notice = `Signed out: the token is deleted from this computer. To remove its access on GitHub too, revoke it at ${COPILOT.revokeUrl}.`;
 			await refreshSubscriptionModels();
 		} catch (err) {
 			this.notice = err instanceof Error ? err.message : String(err);
