@@ -108,6 +108,24 @@ enum Render {
             guard save(SetupView(model: setup, close: {}).background(Color(nsColor: .windowBackgroundColor)),
                        "setup-\(tab.rawValue.lowercased()).png", SettingsSidebar.windowSize) else { return 1 }
         }
+        // Settings > Silas at full height, and each overlay face, for checks (never on screen).
+        guard save(ScrollView { VoiceSettingsView().padding(20) }.frame(height: 2600).background(Color(nsColor: .windowBackgroundColor)),
+                   "silas-settings.png", CGSize(width: 640, height: 2600)) else { return 1 }
+        let overlay = VoiceOverlay(), backdrop = NSColor(Chrome.scheme == .dark ? Color(nsColor: .darkGray) : Color(nsColor: .lightGray))
+        let faces: [(String, VoiceStatus, VoiceNotice?, Bool)] = [
+            ("silas-overlay-opening.png", .recording, nil, false),
+            ("silas-overlay-listening.png", .recording, nil, true),
+            ("silas-overlay-writing.png", .transcribing, nil, true),
+            ("silas-overlay-typing.png", .typing, nil, true),
+            ("silas-overlay-error.png", .error, VoiceNotice(kind: .error, message: "A password field has the keyboard, so Polycarp isn't listening. Click into another field and try again."), true),
+            ("silas-overlay-busy.png", .typing, VoiceNotice(kind: .busy, message: "Still typing your last dictation. Press Escape to stop it."), true),
+            ("silas-overlay-stopped.png", .ready, VoiceNotice(kind: .stopped, message: "Stopped typing. Your full text is in History."), true),
+        ]
+        for (name, st, n, heard) in faces {
+            overlay.status(.ready, enabled: true)
+            guard let rep = overlay.snapshot(st, notice: n, heard: heard, backdrop: backdrop),
+                  (try? rep.representation(using: .png, properties: [:])?.write(to: folder.appendingPathComponent(name))) != nil else { return 1 }
+        }
         setup.tab = .general
         // The ⌘Tab workspace switcher, second tile selected.
         let switcher = SwitcherModel()

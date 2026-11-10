@@ -61,12 +61,18 @@ final class VoiceEngine: ObservableObject {
 
     private var core: OpaquePointer?
     private var started = false
+    private var rendering = false
 
     private let dir = Product.voiceDir(home: FileManager.default.homeDirectoryForCurrentUser)
 
     /// `--render` only: sample settings, so Settings > Silas draws its real rows with no engine running.
     func useRenderSample() {
+        rendering = true
         let decoder = JSONDecoder()
+        microphones = ["MacBook Pro Microphone", "Shure MV7"]
+        history = (try? decoder.decode([VoiceHistoryItem].self, from: Data(#"[{"id":"1","ts":"2026-11-10T09:12:00Z","text":"Send the draft to Mark before lunch and ask whether the Thursday call still works for everyone on the team, since two people said they might be traveling that week and we may need to move it to Friday morning instead.","words":44,"latencyMs":310},{"id":"2","ts":"2026-11-10T09:10:00Z","text":"Thanks, that works for me.","words":5,"latencyMs":180}]"#.utf8))) ?? []
+        dictionary = try? decoder.decode(VoiceDictionary.self, from: Data(#"{"terms":[{"text":"Polycarp"}],"corrections":[{"from":"silence","to":"Silas"}]}"#.utf8))
+        lastProblem = VoiceProblem(message: "A password field has the keyboard, so Polycarp isn't listening. Click into another field and try again.", at: Date().addingTimeInterval(-180))
         state = try? decoder.decode(VoiceState.self, from: Data(#"{"status":"ready","detail":null,"model":"parakeet-v3","hotkey":"Dictation","hotkeyLabel":"the microphone key","enabled":true,"listener":true,"permissions":{"microphone":"granted","accessibility":"granted"}}"#.utf8))
         settings = try? decoder.decode(VoiceSettings.self, from: Data(#"{"hotkey":"Dictation","tapToToggle":true,"model":"parakeet-v3","modelSource":"default","language":"en","removeFillers":true,"trailingSpace":true,"typingSpeed":"fast","newlineAsShiftEnter":true,"learnFromEdits":true,"sounds":true,"showOverlay":true,"launchAtLogin":true,"microphone":null,"onboarded":true,"updateChannel":"stable","autoUpdate":true}"#.utf8))
         models = (try? decoder.decode([VoiceModel].self, from: Data(#"[{"id":"parakeet-v3","name":"Parakeet v3","tagline":"Fast and accurate on this Mac.","tier":"fast","languages":"English and 24 more","sizeMb":478,"recommended":true,"installed":true,"active":true},{"id":"cohere-int4","name":"Cohere Transcribe","tagline":"Best on long, careful speech.","tier":"best","languages":"English and 13 more","sizeMb":1420,"recommended":false,"installed":false,"active":false}]"#.utf8))) ?? []
@@ -273,6 +279,7 @@ final class VoiceEngine: ObservableObject {
     }
 
     func refreshMicrophones() {
+        if rendering { return }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let p = pc_microphones()
             let names = p.flatMap { try? JSONDecoder().decode([String].self, from: Data(String(cString: $0).utf8)) } ?? []

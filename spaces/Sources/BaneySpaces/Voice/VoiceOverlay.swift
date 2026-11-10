@@ -27,6 +27,8 @@ final class VoiceOverlay {
     private var face: Face = .idle
     private var themeObserver: NSObjectProtocol?
     private var announced: VoiceStatus?
+    /// `--render` only: faces are drawn into an image and the panel is never ordered in.
+    private var rendering = false
     private var notice: VoiceNotice?
     /// The microphone has sent a level: the dot fills. Until then it is a ring, so a slow-to-open device shows.
     private var heard = false
@@ -36,9 +38,20 @@ final class VoiceOverlay {
     private enum Face { case idle, recording, writing, typing, learned, notice }
 
     private static let pill = NSSize(width: 260, height: 64)
-    /// Room for an icon and two lines of a sentence like "A password field has the keyboard, so…".
-    private static let wide = NSSize(width: 360, height: 72)
-    private var size: NSSize { face == .notice ? Self.wide : Self.pill }
+    /// A notice is this wide and as tall as its text needs, up to three lines.
+    private static let noticeWidth: CGFloat = 380
+    private static let noticeTextX: CGFloat = 50
+    private var size: NSSize {
+        guard face == .notice, let n = notice else { return Self.pill }
+        let font = Chrome.nsFont(13, .medium)
+        let line = ceil(font.ascender - font.descender + font.leading) + 2
+        let text = min(Self.textHeight(n.message, font: font, width: Self.noticeWidth - Self.noticeTextX - 20), line * 3)
+        return NSSize(width: Self.noticeWidth, height: max(Self.pill.height, text + 30))
+    }
+
+    private static func textHeight(_ s: String, font: NSFont, width: CGFloat) -> CGFloat {
+        ceil((s as NSString).boundingRect(with: NSSize(width: width, height: 400), options: [.usesLineFragmentOrigin], attributes: [.font: font]).height)
+    }
 
     private final class Panel: NSPanel {
         override var canBecomeKey: Bool { false }
@@ -140,6 +153,34 @@ final class VoiceOverlay {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.2, execute: w)
     }
 
+    /// `--render` only: one face drawn offscreen at 2x over a plain backdrop. The panel never comes on screen.
+    func snapshot(_ s: VoiceStatus, notice n: VoiceNotice? = nil, heard: Bool = true, backdrop: NSColor) -> NSBitmapImageRep? {
+        rendering = true
+        if let n { notice(n) } else {
+            status(s, enabled: true)
+            if s == .recording {
+                self.heard = heard
+                // Before the first level the bars are flat, as they are live.
+                targets = (0..<bars.count).map { heard ? Self.shape(Float(0.15 + 0.55 * abs(sin(Double($0) * 0.7)))) : 0 }
+                shown = (0..<bars.count).map { i in targets[i] * (CGFloat(sin((Double(i) + 0.5) / Double(bars.count) * .pi)) * 0.55 + 0.45) }
+                latest = 0.45
+                layout()
+            }
+        }
+        timer?.invalidate()
+        let pad: CGFloat = 16, w = size.width + pad * 2, h = size.height + pad * 2
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(w * 2), pixelsHigh: Int(h * 2), bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let ctx = NSGraphicsContext(bitmapImageRep: rep)?.cgContext else { return nil }
+        ctx.scaleBy(x: 2, y: 2)
+        ctx.setFillColor(backdrop.cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        root.frame = CGRect(origin: .zero, size: size)
+        ctx.translateBy(x: pad, y: pad)
+        root.render(in: ctx)
+        return rep
+    }
+
     // MARK: Faces
 
     private func begin() {
@@ -184,6 +225,7 @@ final class VoiceOverlay {
     }
 
     private func present() {
+        if rendering { return }
         place()
         panel.alphaValue = 1
         // Ordered in without becoming key or activating the app (a background app's panel).
@@ -213,8 +255,8 @@ final class VoiceOverlay {
         return nil
     }
 
-    private static func symbol(_ name: String, color: NSColor, size: CGFloat) -> CGImage? {
-        let config = NSImage.SymbolConfiguration(pointSize: size, weight: .semibold).applying(.init(paletteColors: [color]))
+    private static func symbol(_ name: String, colors: [NSColor], size: CGFloat) -> CGImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: size, weight: .semibold).applying(.init(paletteColors: colors))
         guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config) else { return nil }
         var rect = NSRect(origin: .zero, size: image.size)
         return image.cgImage(forProposedRect: &rect, context: nil, hints: [.ctm: AffineTransform(scale: 2)])
@@ -265,13 +307,11 @@ final class VoiceOverlay {
         case .notice:
             let n = notice ?? VoiceNotice(kind: .error, message: "")
             let color = NSColor(n.kind == .error ? Chrome.urgent : Chrome.accent)
-            icon.contents = Self.symbol(n.symbol, color: color, size: 16)
-            icon.frame = CGRect(x: 18, y: h / 2 - 10, width: 20, height: 20)
-            let x: CGFloat = 48, textW = w - x - 18
-            // One line sits centered; two lines fill the middle.
-            let need = (n.message as NSString).boundingRect(with: NSSize(width: textW, height: 100), options: [.usesLineFragmentOrigin],
-                                                            attributes: [.font: font]).height
-            let textH = min(ceil(need), line * 2)
+            // The mark inside the symbol is cut out in the panel's color, so it reads as "!" and not a plain shape.
+            icon.contents = Self.symbol(n.symbol, colors: n.symbol.hasSuffix(".fill") ? [NSColor(Chrome.panel(1)), color] : [color], size: 17)
+            icon.frame = CGRect(x: 18, y: h / 2 - 11, width: 22, height: 22)
+            let x = Self.noticeTextX, textW = w - x - 20
+            let textH = min(Self.textHeight(n.message, font: font, width: textW), line * 3)
             label.frame = CGRect(x: x, y: (h - textH) / 2, width: textW, height: textH)
             label.alignmentMode = .left
         case .typing:
