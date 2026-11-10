@@ -536,6 +536,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         voiceStarted = true
         let voice = VoiceEngine.shared
         voice.onLevel = { [weak self] level in DispatchQueue.main.async { self?.voiceOverlay.level(level) } }
+        voice.onNotice = { [weak self] n in self?.voiceOverlay.notice(n) }
         voice.onLearned = { [weak self] from, to in
             // The pill's own switch covers this one too.
             if voice.settings?.showOverlay ?? true { self?.voiceOverlay.learned(from: from, to: to) }

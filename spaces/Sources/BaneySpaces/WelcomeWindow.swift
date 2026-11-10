@@ -88,9 +88,14 @@ final class WelcomeModel: ObservableObject {
     /// Adds Polycarp to the list with macOS's own prompt, then opens that list, so what's left is one switch.
     func allow(_ kind: PermissionKind) {
         asked.insert(kind)
+        if kind == .accessibility { askedAccessibilityAt = Date() }
+        Self.request(kind)
+    }
+
+    /// The request itself, shared with Settings > Silas's permission lines.
+    static func request(_ kind: PermissionKind) {
         switch kind {
         case .accessibility:
-            askedAccessibilityAt = Date()
             let prompt = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
             _ = AXIsProcessTrustedWithOptions([prompt: true] as CFDictionary)
         case .screenRecording: _ = CGRequestScreenCaptureAccess()

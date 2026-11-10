@@ -8,6 +8,8 @@ import SwiftUI
 struct VoiceSettingsView: View {
     @ObservedObject private var voice = VoiceEngine.shared
     @State private var capturing = false
+    /// Why the last key pick didn't take (refused or timed out); cleared by the next pick.
+    @State private var captureNote: String?
     @State private var newTerm = ""
     @State private var from = ""
     @State private var to = ""
@@ -16,12 +18,35 @@ struct VoiceSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             statusSection
+            if let p = voice.state?.permissions { permissionsSection(p) }
             if voice.offersSilasTrash { silasSection }
             if let s = voice.settings { keySection(s); modelSection(s); dictionarySection; historySection }
             else { SettingsGroup { SettingsNote("The voice engine isn't running.") } }
             if let e = voice.lastError { SettingsGroup { SettingsNote(e, tone: .urgent) } }
+            if let p = voice.lastProblem, p.message != voice.lastError {
+                // Kept after the overlay clears it, so a failure seen out of the corner of an eye can be read here.
+                TimelineView(.periodic(from: .now, by: 30)) { t in SettingsGroup { SettingsNote(p.line(now: t.date)) } }
+            }
         }
         .onAppear { voice.reload() }
+        // Grants change in System Settings with no event; the reads never prompt.
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in voice.refreshPermissions() }
+        .onDisappear { if capturing { voice.cancelHotkeyCapture() } }
+    }
+
+    /// One line each for the two permissions dictation needs, with the one button that moves it forward. The full
+    /// permissions tab will hold these too; this is the part Silas's own messages point at.
+    private func permissionsSection(_ p: VoicePermissions) -> some View {
+        SettingsGroup("Permissions") {
+            ForEach([VoicePermissionLine.microphone(p.microphone), .accessibility(p.accessibility)], id: \.title) { line in
+                SettingsRow(line.title, help: line.help) {
+                    HStack {
+                        SettingsStatusLabel(text: line.state, done: line.allowed)
+                        if let b = line.button { Button(b) { voice.allow(line.kind) } }
+                    }
+                }
+            }
+        }
     }
 
     private var statusSection: some View {
@@ -53,17 +78,23 @@ struct VoiceSettingsView: View {
 
     private func keySection(_ s: VoiceSettings) -> some View {
         SettingsGroup("Dictation key") {
-            SettingsRow("Key", help: voice.state?.listener == true ? (s.hotkey == "Dictation" ? "The key with the microphone on the top row. If your keyboard has none, pick another." + (s.hotkeyFallback == nil ? "" : " Right ⌘ also works until you first press it.") : nil) : "Turn dictation on first to pick another key.") {
+            SettingsRow("Key", help: VoiceKeyHelp.text(listener: voice.state?.listener == true, userEnabled: voice.userEnabled && voice.state?.enabled != false,
+                                                       waiting: voice.waiting, accessibility: voice.state?.permissions?.accessibility,
+                                                       hotkey: s.hotkey, hasFallback: s.hotkeyFallback != nil)) {
                 HStack {
                     Picker("Key", selection: Binding(get: { s.hotkey }, set: { k in voice.update { $0.hotkey = k } })) {
                         ForEach(VoiceHotkeys.presets + (VoiceHotkeys.presets.contains(s.hotkey) ? [] : [s.hotkey]), id: \.self) { Text(label($0)).tag($0) }
                     }.labelsHidden().frame(width: 130)
                     Button(capturing ? "Press a key…" : "Pick another key") {
                         capturing = true
-                        voice.captureHotkey { _ in capturing = false }
+                        captureNote = nil
+                        voice.captureHotkey { outcome in capturing = false; captureNote = outcome.note }
                     }.disabled(capturing || voice.state?.listener != true)
+                    // Escape also cancels.
+                    if capturing { Button("Cancel") { voice.cancelHotkeyCapture() } }
                 }
             }
+            if let n = captureNote { SettingsNote(n, tone: .urgent) }
             toggle("Tap once to start and again to stop", help: "Otherwise hold the key.", s.tapToToggle) { v in voice.update { $0.tapToToggle = v } }
             toggle("Show a listening indicator", s.showOverlay) { v in voice.update { $0.showOverlay = v } }
             toggle("Remove filler words", s.removeFillers) { v in voice.update { $0.removeFillers = v } }
@@ -98,6 +129,7 @@ struct VoiceSettingsView: View {
                     HStack {
                         if let p = voice.downloads[m.id] {
                             ProgressView(value: p).frame(width: 90)
+                            Button("Cancel") { voice.cancelDownload(model: m.id) }
                         } else if m.active {
                             SettingsStatusLabel(text: "In use")
                         } else if m.installed {

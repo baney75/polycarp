@@ -5,7 +5,9 @@ import BaneySpacesCore
 /// and overlay.ts (16 bars that flow right to left, eased, tapered at the edges; a ticking clock; the learned
 /// "from → to" for a couple of seconds). A native panel with Core Animation layers, no web view. It never takes focus
 /// or clicks: non-activating, ignores the mouse, can't become key or main, and joins every Space including
-/// full-screen ones, like the Tauri overlay (`order_overlay`). Colors, corner radius and durations come from `Chrome`.
+/// full-screen ones, like the Tauri overlay (`order_overlay`). Colors, fonts, corner radius and durations come from
+/// `Chrome`. A notice (a failed dictation, a press while busy, Escape stopping the typing) takes the pill for a few
+/// seconds with an icon and up to two lines, then whatever is still going on shows again.
 final class VoiceOverlay {
     private let panel: NSPanel
     private let root = CALayer()
@@ -13,17 +15,28 @@ final class VoiceOverlay {
     private let dot = CALayer()
     private let clock = CATextLayer()
     private let label = CATextLayer()
+    private let hint = CATextLayer()
+    private let icon = CALayer()
     private var latest: Float = 0
     private var targets = [CGFloat](repeating: 0, count: 16)
     private var shown = [CGFloat](repeating: 0, count: 16)
     private var timer: Timer?
     private var startedAt = Date()
     private var learnedWork: DispatchWorkItem?
+    private var noticeWork: DispatchWorkItem?
     private var face: Face = .idle
+    private var notice: VoiceNotice?
+    /// The microphone has sent a level: the dot fills. Until then it is a ring, so a slow-to-open device shows.
+    private var heard = false
+    /// What the engine last said, to show again when a notice ends.
+    private var last: (status: VoiceStatus, enabled: Bool) = (.ready, true)
 
-    private enum Face { case idle, recording, writing, learned }
+    private enum Face { case idle, recording, writing, typing, learned, notice }
 
-    private static let size = NSSize(width: 260, height: 64)
+    private static let pill = NSSize(width: 260, height: 64)
+    /// Room for an icon and two lines of a sentence like "A password field has the keyboard, so…".
+    private static let wide = NSSize(width: 360, height: 72)
+    private var size: NSSize { face == .notice ? Self.wide : Self.pill }
 
     private final class Panel: NSPanel {
         override var canBecomeKey: Bool { false }
@@ -31,7 +44,7 @@ final class VoiceOverlay {
     }
 
     init() {
-        panel = Panel(contentRect: NSRect(origin: .zero, size: Self.size), styleMask: [.borderless, .nonactivatingPanel],
+        panel = Panel(contentRect: NSRect(origin: .zero, size: Self.pill), styleMask: [.borderless, .nonactivatingPanel],
                       backing: .buffered, defer: false)
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -40,17 +53,19 @@ final class VoiceOverlay {
         panel.hidesOnDeactivate = false
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
-        let host = NSView(frame: NSRect(origin: .zero, size: Self.size))
+        let host = NSView(frame: NSRect(origin: .zero, size: Self.pill))
         host.wantsLayer = true
         host.layer = root
         root.cornerCurve = .continuous
         panel.contentView = host
         bars = (0..<16).map { _ in CALayer() }
         for b in bars { root.addSublayer(b) }
-        for l in [dot, clock, label] { root.addSublayer(l) }
+        for l in [dot, clock, label, hint, icon] { root.addSublayer(l) }
         dot.cornerRadius = 4
-        for t in [clock, label] { t.contentsScale = 2; t.alignmentMode = .left }
+        for t in [clock, label, hint] { t.contentsScale = 2; t.alignmentMode = .left }
         clock.alignmentMode = .right
+        icon.contentsGravity = .resizeAspect
+        icon.contentsScale = 2
         accessibility()
     }
 
@@ -61,18 +76,42 @@ final class VoiceOverlay {
 
     // MARK: Driven by the engine
 
-    func level(_ v: Float) { latest = v }
+    func level(_ v: Float) {
+        latest = v
+        if !heard, face == .recording { heard = true; layout() }
+    }
 
     func status(_ s: VoiceStatus, enabled: Bool) {
+        last = (s, enabled)
+        // A notice stays up for its time; only a new dictation takes the pill from it.
+        if face == .notice, s != .recording { return }
         guard enabled else { return hide() }
         switch s {
         case .recording:
             if face != .recording { begin() }
         case .transcribing: show(.writing, "Writing…")
-        case .typing: show(.writing, "Typing…")
+        case .typing: show(.typing, "Typing…")
         default:
             if face != .learned { hide() }
         }
+    }
+
+    /// Shown even with the listening indicator turned off: the person pressed the key and needs to know why nothing
+    /// happened.
+    func notice(_ n: VoiceNotice) {
+        learnedWork?.cancel()
+        noticeWork?.cancel()
+        notice = n
+        show(.notice, n.message)
+        let w = DispatchWorkItem { [weak self] in
+            guard let self, self.face == .notice else { return }
+            self.notice = nil
+            self.face = .idle
+            // Still typing shows the typing face again; anything else hides the pill.
+            self.status(self.last.status, enabled: self.last.enabled)
+        }
+        noticeWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + n.seconds, execute: w)
     }
 
     func learned(from: String, to: String) {
@@ -87,7 +126,10 @@ final class VoiceOverlay {
 
     private func begin() {
         learnedWork?.cancel()   // a pending hide of the learned pill must not hide a live recording
+        noticeWork?.cancel()
+        notice = nil
         face = .recording
+        heard = false
         startedAt = Date()
         targets = [CGFloat](repeating: 0, count: 16)
         shown = targets
@@ -134,7 +176,15 @@ final class VoiceOverlay {
     private func place() {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let f = screen.frame
-        panel.setFrame(NSRect(x: f.midX - Self.size.width / 2, y: f.minY + 72, width: Self.size.width, height: Self.size.height), display: false)
+        panel.setFrame(NSRect(x: f.midX - size.width / 2, y: f.minY + 72, width: size.width, height: size.height), display: false)
+        panel.contentView?.frame = NSRect(origin: .zero, size: size)
+    }
+
+    private static func symbol(_ name: String, color: NSColor, size: CGFloat) -> CGImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: size, weight: .semibold).applying(.init(paletteColors: [color]))
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config) else { return nil }
+        var rect = NSRect(origin: .zero, size: image.size)
+        return image.cgImage(forProposedRect: &rect, context: nil, hints: [.ctm: AffineTransform(scale: 2)])
     }
 
     /// Speech levels sit low; lift quiet sounds so the bars feel alive (overlay.ts `shape`).
@@ -148,22 +198,57 @@ final class VoiceOverlay {
         root.cornerRadius = Chrome.radius(.hudPanel)
         root.borderColor = NSColor(Chrome.edge(0.12)).cgColor
         root.borderWidth = Chrome.width(.hudPanel)
-        let isRec = face == .recording
+        let isRec = face == .recording, isNotice = face == .notice
         for b in bars { b.isHidden = !isRec; b.backgroundColor = tint; b.cornerRadius = 1.5 }
         dot.isHidden = !isRec
-        dot.backgroundColor = tint
+        // A ring until the microphone sends its first level, then filled.
+        dot.backgroundColor = heard ? tint : NSColor.clear.cgColor
+        dot.borderColor = tint
+        dot.borderWidth = heard ? 0 : 1.5
         clock.isHidden = !isRec
         label.isHidden = isRec
+        hint.isHidden = face != .typing
+        icon.isHidden = !isNotice
+        let font = Chrome.nsFont(13, .medium), small = Chrome.nsFont(11)
         for t in [clock, label] {
             t.foregroundColor = text
-            t.font = NSFont.systemFont(ofSize: 13, weight: .medium)
-            t.fontSize = 13
+            t.font = font
+            t.fontSize = font.pointSize
         }
-        let h = Self.size.height
+        hint.foregroundColor = NSColor(Chrome.muted).cgColor
+        hint.font = small
+        hint.fontSize = small.pointSize
+        hint.string = "Press Esc to stop"
+        hint.alignmentMode = .center
+        let w = size.width, h = size.height
+        let line = ceil(font.ascender - font.descender + font.leading) + 2
         dot.frame = CGRect(x: 18, y: h / 2 - 4, width: 8, height: 8)
-        clock.frame = CGRect(x: Self.size.width - 62, y: h / 2 - 9, width: 44, height: 18)
-        label.frame = CGRect(x: 22, y: h / 2 - 9, width: Self.size.width - 44, height: 18)
-        label.alignmentMode = .center
+        clock.frame = CGRect(x: w - 62, y: h / 2 - 9, width: 44, height: 18)
+        label.isWrapped = isNotice
+        label.truncationMode = .end
+        switch face {
+        case .notice:
+            let n = notice ?? VoiceNotice(kind: .error, message: "")
+            let color = NSColor(n.kind == .error ? Chrome.urgent : Chrome.accent)
+            icon.contents = Self.symbol(n.symbol, color: color, size: 16)
+            icon.frame = CGRect(x: 18, y: h / 2 - 10, width: 20, height: 20)
+            let x: CGFloat = 48, textW = w - x - 18
+            // One line sits centered; two lines fill the middle.
+            let need = (n.message as NSString).boundingRect(with: NSSize(width: textW, height: 100), options: [.usesLineFragmentOrigin],
+                                                            attributes: [.font: font]).height
+            let textH = min(ceil(need), line * 2)
+            label.frame = CGRect(x: x, y: (h - textH) / 2, width: textW, height: textH)
+            label.alignmentMode = .left
+        case .typing:
+            let lineSmall = ceil(small.ascender - small.descender) + 2
+            let top = (h + line + lineSmall) / 2
+            label.frame = CGRect(x: 22, y: top - line, width: w - 44, height: line)
+            hint.frame = CGRect(x: 22, y: top - line - lineSmall, width: w - 44, height: lineSmall)
+            label.alignmentMode = .center
+        default:
+            label.frame = CGRect(x: 22, y: (h - line) / 2, width: w - 44, height: line)
+            label.alignmentMode = .center
+        }
         draw()
     }
 
@@ -173,14 +258,14 @@ final class VoiceOverlay {
         CATransaction.setDisableActions(true)
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let ease: CGFloat = reduce ? 1 : 0.28
-        let areaX: CGFloat = 38, areaW: CGFloat = Self.size.width - 38 - 70
+        let areaX: CGFloat = 38, areaW: CGFloat = size.width - 38 - 70
         let slot = areaW / CGFloat(bars.count), maxH: CGFloat = 34
         for i in bars.indices {
             // The edges taper so the wave reads as a soft lozenge.
             let edge = CGFloat(sin((Double(i) + 0.5) / Double(bars.count) * .pi)) * 0.55 + 0.45
             shown[i] += (targets[i] * edge - shown[i]) * ease
             let h = maxH * (0.14 + shown[i] * 0.86)
-            bars[i].frame = CGRect(x: areaX + CGFloat(i) * slot + slot * 0.2, y: Self.size.height / 2 - h / 2, width: slot * 0.6, height: h)
+            bars[i].frame = CGRect(x: areaX + CGFloat(i) * slot + slot * 0.2, y: size.height / 2 - h / 2, width: slot * 0.6, height: h)
         }
         let s = Int(Date().timeIntervalSince(startedAt))
         clock.string = String(format: "%d:%02d", s / 60, s % 60)

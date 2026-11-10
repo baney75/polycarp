@@ -20,6 +20,8 @@ final class VoiceEngine: ObservableObject {
     /// 0...1 download progress by model id.
     @Published private(set) var downloads: [String: Double] = [:]
     @Published private(set) var lastError: String?
+    /// The last dictation that failed, kept after the overlay clears it, for Settings > Silas.
+    @Published private(set) var lastProblem: VoiceProblem?
     /// Why the key isn't being listened to, if it isn't (`VoiceGate`). Silas running clears itself when Silas quits;
     /// the person's own Off stays until the person turns dictation on, across restarts.
     @Published private(set) var waiting: VoiceGate.Reason?
@@ -47,6 +49,8 @@ final class VoiceEngine: ObservableObject {
     /// A word was learned from an edit: (from, to).
     var onLearned: ((String, String) -> Void)?
     var onStateChange: (() -> Void)?
+    /// A dictation failed, a press came while busy, or Escape stopped the typing: the overlay shows it.
+    var onNotice: ((VoiceNotice) -> Void)?
     /// Dictation would take over now but Silas is still running: the watcher asks it to quit.
     var onSilasInTheWay: (() -> Void)?
     /// Silas is installed (/Applications or ~/Applications) and Settings may offer to move it; set by `reload`.
@@ -61,7 +65,7 @@ final class VoiceEngine: ObservableObject {
     /// `--render` only: sample settings, so Settings > Silas draws its real rows with no engine running.
     func useRenderSample() {
         let decoder = JSONDecoder()
-        state = try? decoder.decode(VoiceState.self, from: Data(#"{"status":"ready","detail":null,"model":"parakeet-v3","hotkey":"Dictation","hotkeyLabel":"the microphone key","enabled":true,"listener":true}"#.utf8))
+        state = try? decoder.decode(VoiceState.self, from: Data(#"{"status":"ready","detail":null,"model":"parakeet-v3","hotkey":"Dictation","hotkeyLabel":"the microphone key","enabled":true,"listener":true,"permissions":{"microphone":"granted","accessibility":"granted"}}"#.utf8))
         settings = try? decoder.decode(VoiceSettings.self, from: Data(#"{"hotkey":"Dictation","tapToToggle":true,"model":"parakeet-v3","modelSource":"default","language":"en","removeFillers":true,"trailingSpace":true,"typingSpeed":"fast","newlineAsShiftEnter":true,"learnFromEdits":true,"sounds":true,"showOverlay":true,"launchAtLogin":true,"microphone":null,"onboarded":true,"updateChannel":"stable","autoUpdate":true}"#.utf8))
         models = (try? decoder.decode([VoiceModel].self, from: Data(#"[{"id":"parakeet-v3","name":"Parakeet v3","tagline":"Fast and accurate on this Mac.","tier":"fast","languages":"English and 24 more","sizeMb":478,"recommended":true,"installed":true,"active":true},{"id":"cohere-int4","name":"Cohere Transcribe","tagline":"Best on long, careful speech.","tier":"best","languages":"English and 13 more","sizeMb":1420,"recommended":false,"installed":false,"active":false}]"#.utf8))) ?? []
     }
@@ -145,7 +149,16 @@ final class VoiceEngine: ObservableObject {
             if let core { state = decode(pc_status(core)) ?? state }
         case "transcript":
             if let core { history = decode(pc_history_get(core, 200)) ?? history }
-            if let data = json.data(using: .utf8), let t = try? JSONDecoder().decode(Typed.self, from: data), t.typed { notifyIfDue() }
+            if let data = json.data(using: .utf8), let t = try? JSONDecoder().decode(Typed.self, from: data) {
+                if let gap = t.micGapMs { Trace.log("voice: key down to first sample \(gap) ms") }
+                if t.typed { notifyIfDue() }
+            }
+        case "notice":
+            if let data = json.data(using: .utf8), let n = try? JSONDecoder().decode(VoiceNotice.self, from: data) {
+                if n.keeps { lastProblem = VoiceProblem(message: n.message, at: Date()) }
+                Trace.log("voice: \(n.kind.rawValue): \(n.message)")
+                onNotice?(n)
+            }
         case "benchmark-done", "benchmark-error":
             // A benchmark may have switched the model: the tab must not keep showing the old one "In use".
             reload()
@@ -157,6 +170,7 @@ final class VoiceEngine: ObservableObject {
         case "model-progress":
             if let data = json.data(using: .utf8), let p = try? JSONDecoder().decode(Progress.self, from: data) {
                 if p.stage == "error" { downloads[p.id] = nil; fail(p.message ?? "The download failed.") }
+                else if p.stage == "cancelled" { downloads[p.id] = nil }
                 else if p.total > 0 { downloads[p.id] = Double(p.downloaded) / Double(p.total) }
             }
         case "show-main":
@@ -166,7 +180,7 @@ final class VoiceEngine: ObservableObject {
         }
     }
 
-    private struct Typed: Decodable { var typed: Bool }
+    private struct Typed: Decodable { var typed: Bool; var micGapMs: Int? }
     private struct StatusEvent: Decodable { var status: VoiceStatus; var detail: String? }
     private struct Learned: Decodable { struct C: Decodable { var from: String; var to: String }; var learned: [C] }
     private struct Progress: Decodable { var id: String; var downloaded: Int64; var total: Int64; var stage: String; var message: String? }
@@ -201,11 +215,18 @@ final class VoiceEngine: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.downloads[id] = nil
-                if let message { self.fail(message) }
+                // Cancel is the person's own choice, not a problem; a finished download clears the old failure.
+                if let message { if message != "cancelled" { self.fail(message) } } else { self.lastError = nil }
                 self.reload()
                 self.start()   // a first model may be the last thing dictation was waiting for
             }
         }
+    }
+
+    /// Stops a download in progress; the core removes what it had written.
+    func cancelDownload(model id: String) {
+        guard let core else { return }
+        _ = id.withCString { pc_model_download_cancel(core, $0) }
     }
 
     func delete(model id: String) {
@@ -214,18 +235,39 @@ final class VoiceEngine: ObservableObject {
         reload()
     }
 
-    /// Waits up to ten seconds for the key the person presses; the result becomes the hotkey.
-    func captureHotkey(done: @escaping (Bool) -> Void) {
-        guard let core else { return done(false) }
+    /// Waits up to ten seconds for the key the person presses; a key that can be the hotkey becomes it. Escape or
+    /// `cancelHotkeyCapture` ends the wait; a key that types text is refused with the reason.
+    func captureHotkey(done: @escaping (VoiceCapture) -> Void) {
+        guard let core else { return done(.timedOut) }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let p = pc_hotkey_capture(core, 10_000)
             let key = p.map { String(cString: $0) }
             pc_string_free(p)
+            // The core keeps its message per thread: read it here.
+            let outcome = VoiceCapture.outcome(key: key, error: key == nil ? String(cString: pc_last_error()) : "")
             DispatchQueue.main.async {
-                if let key { self?.update { $0.hotkey = key } }
-                done(key != nil)
+                if case .picked(let k) = outcome { self?.update { $0.hotkey = k } }
+                done(outcome)
             }
         }
+    }
+
+    func cancelHotkeyCapture() {
+        guard let core else { return }
+        _ = pc_hotkey_capture_cancel(core)
+    }
+
+    /// A permission line's button: macOS's own box the first time, else its list in System Settings (Welcome's code).
+    func allow(_ kind: PermissionKind) {
+        WelcomeModel.request(kind)
+        refreshPermissions()
+    }
+
+    /// Re-reads the two grants, which change in System Settings with no event. The core's reads never prompt.
+    func refreshPermissions() {
+        guard let core, let st: VoiceState = decode(pc_status(core)), st != state else { return }
+        state = st
+        onStateChange?()
     }
 
     func addTerm(_ t: String) {
