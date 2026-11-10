@@ -7,9 +7,10 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, isAbsolute, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { NATIVE_HOST_NAME } from "../../src/bridge/protocol.ts";
 import { COMPILED, selfExec, selfPrefix } from "./self.ts";
+import { VERSION } from "./version.ts";
 import { envVar } from "./env.ts";
 import { CLI_LAUNCHER_NAME, cacheDir, configDir, HOST_LAUNCHER_NAME, LEGACY_CLI_LAUNCHER_NAME, LEGACY_HOST_LAUNCHER_NAME, legacyConfigDir } from "./files.ts";
 import { migrateLegacyPaths } from "./migrate.ts";
@@ -379,12 +380,35 @@ function realOr(path: string): string {
 	}
 }
 
+/** The version a copy of the helper says it is: its build-info.json, its bundled extension, or its checkout's manifest. */
+function copyVersion(program: string): string | undefined {
+	const dir = dirname(realOr(program));
+	for (const file of [join(dir, "build-info.json"), join(dir, "extension", "manifest.json"), join(dir, "..", "..", "static", "manifest.chrome.json")]) {
+		try {
+			const version = (JSON.parse(readFileSync(file, "utf8")) as { version?: unknown }).version;
+			if (typeof version === "string") return version;
+		} catch {
+			// The next place, or no version at all.
+		}
+	}
+	return undefined;
+}
+
+/** True when version a is lower than version b, compared as dotted numbers. */
+function older(a: string, b: string): boolean {
+	const x = a.split(".").map((n) => Number.parseInt(n, 10) || 0);
+	const y = b.split(".").map((n) => Number.parseInt(n, 10) || 0);
+	for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0);
+	return false;
+}
+
 /**
- * The program a launcher script runs when that is some other copy, such as an old npm link or another checkout, else
- * undefined. Such a launcher works, so nothing else notices it; the panel then talks to code that may not know
- * today's files (an old copy called a valid remote.json unreadable).
+ * The program and version when a launcher script runs an older copy of the helper, such as an npm link to a checkout
+ * from before the rename, else undefined. Such a launcher works, so nothing else notices it, while the panel talks to code
+ * that doesn't know today's files (an old copy called a valid remote.json unreadable). A current standalone copy, or one
+ * with no version to read, is someone's own setup and is left alone.
  */
-export function launcherRunsOther(path: string): string | undefined {
+export function launcherRunsOlder(path: string): { program: string; version: string } | undefined {
 	const self = thisProgram();
 	if (!self) return undefined;
 	try {
@@ -395,7 +419,10 @@ export function launcherRunsOther(path: string): string | undefined {
 	const named = absolutePathsIn(path);
 	if (!named?.length) return undefined;
 	const mine = realOr(self);
-	return named.some((p) => realOr(p) === mine) ? undefined : named[named.length - 1];
+	if (named.some((p) => realOr(p) === mine)) return undefined;
+	const program = named[named.length - 1];
+	const version = copyVersion(program);
+	return version && older(version, VERSION) ? { program, version } : undefined;
 }
 
 export function manifestLauncherRuns(path: string): boolean {
@@ -412,12 +439,12 @@ export function manifestLauncherRuns(path: string): boolean {
 
 /** Both launchers work: the agent launcher harness configs run and the host launcher the manifests name. */
 function launchersWork(): boolean {
-	// A launcher that runs another copy works, but doctor fails it, so install must not keep it.
+	// A launcher that runs an older copy works, but doctor fails it, so install must not keep it.
 	return (
 		launcherWorks(cliLauncherPath()) &&
 		manifestLauncherRuns(hostTarget()) &&
-		!launcherRunsOther(cliLauncherPath()) &&
-		!launcherRunsOther(launcherPath())
+		!launcherRunsOlder(cliLauncherPath()) &&
+		!launcherRunsOlder(launcherPath())
 	);
 }
 
@@ -431,10 +458,10 @@ export function hostStatus(): Array<BrowserDir & { state: HostState; file: strin
 		const file = join(browser.dir, "NativeMessagingHosts", `${NATIVE_HOST_NAME}.json`);
 		let state: HostState = "missing";
 		if (existsSync(file)) {
-			// Current: it names the helper or a launcher that runs this helper (down to the program the launcher execs), and the one extension id (doctor's test).
+			// Current: it names the helper or a launcher that still runs and isn't an older copy (down to the program the launcher execs), and the one extension id (doctor's test).
 			try {
 				const m = JSON.parse(readFileSync(file, "utf8")) as { path?: string; allowed_origins?: string[] };
-				const ok = typeof m.path === "string" && accepted.has(m.path) && manifestLauncherRuns(m.path) && !launcherRunsOther(m.path) && originsCurrent(m.allowed_origins);
+				const ok = typeof m.path === "string" && accepted.has(m.path) && manifestLauncherRuns(m.path) && !launcherRunsOlder(m.path) && originsCurrent(m.allowed_origins);
 				state = ok ? "current" : "stale";
 			} catch {
 				state = "stale";

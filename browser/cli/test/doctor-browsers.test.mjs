@@ -165,7 +165,7 @@ test("first-F6/sol-F5: the repair command for a two-word browser is quoted", { s
 
 // Twice on Donovan's Mac an old npm-linked copy rewrote the launchers. They still ran, so doctor passed, while the
 // panel talked to old code that called a valid remote.json unreadable.
-test("a launcher that runs another copy of the helper fails doctor, with install --force as the fix", async () => {
+test("a launcher that runs an older copy of the helper fails doctor, with install --force as the fix", async () => {
 	const name = (await doctor()).find((c) => c.id.startsWith("host:")).id.slice("host:".length);
 	const r = spawnSync(process.execPath, [cli, "install", "--browser", name], { env: env(), encoding: "utf8" });
 	assert.equal(r.status, 0, r.stderr);
@@ -176,6 +176,8 @@ test("a launcher that runs another copy of the helper fails doctor, with install
 	const other = join(root, "old-checkout", "index.js");
 	mkdirSync(dirname(other), { recursive: true });
 	writeFileSync(other, "");
+	// The pre-rename checkout on the Mac was 1.1.9 against 1.1.10.
+	writeFileSync(join(dirname(other), "build-info.json"), JSON.stringify({ version: "0.0.1" }));
 	const host = checks.find((c) => c.id === "launcher").detail.replace(/[^/]+$/, "polycarp-host");
 	for (const [file, args] of [[checks.find((c) => c.id === "launcher").detail, ""], [host, "host "]]) {
 		assert.ok(existsSync(file), file);
@@ -185,7 +187,7 @@ test("a launcher that runs another copy of the helper fails doctor, with install
 	checks = await doctor();
 	const hostCheck = checks.find((c) => c.id === `host:${name}`);
 	assert.equal(hostCheck.status, "fail", JSON.stringify(hostCheck));
-	assert.match(hostCheck.detail, /old-checkout\/index\.js, not this helper/);
+	assert.match(hostCheck.detail, /older copy, .*old-checkout\/index\.js \(0\.0\.1; this helper is /);
 	const launcher = checks.find((c) => c.id === "launcher");
 	assert.equal(launcher.status, "fail", JSON.stringify(launcher));
 	assert.match(launcher.fix, /install --force$/);
