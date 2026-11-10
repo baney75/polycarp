@@ -397,8 +397,9 @@ after(async () => {
 	browser?.kill();
 	if (browser) await new Promise((r) => browser.once("exit", r));
 	server?.close();
-	if (home) rmSync(home, { recursive: true, force: true });
-	if (socketDir) rmSync(socketDir, { recursive: true, force: true });
+	// Chromium's helper processes can still write to the profile just after it exits (ENOTEMPTY): retry the removal.
+	if (home) rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+	if (socketDir) rmSync(socketDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 test("extension loads with the id the host manifest allows", async () => {

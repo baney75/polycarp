@@ -74,7 +74,7 @@ before(async () => {
 
 after(async () => {
 	await context?.close();
-	if (profile) rmSync(profile, { recursive: true, force: true });
+	if (profile) rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 /**
