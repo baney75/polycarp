@@ -168,6 +168,12 @@ extraPages["/capture-page"] = `<!doctype html><title>Capture</title>
 extraPages["/capture-login-page"] = `<!doctype html><title>Capture login</title>
 <form><input type="password" aria-label="Password"></form>`;
 
+// The in-use veil: a white page with a bar across the top, under where the veil's pill sits.
+extraPages["/veil"] = `<!doctype html><title>Polycarp veil</title>
+<style>html,body{margin:0;background:#fff}#top{position:fixed;top:0;left:0;width:100%;height:64px;border:0;background:#fff}</style>
+<button id="top" onclick="document.getElementById('r').textContent='top clicked'">Top bar</button>
+<p id="r" style="margin:120px 40px">untouched</p>`;
+
 // A page with no password field of its own that frames one on its own origin: the frame's request must not keep its body.
 
 /** Clicks that reached the page's server: a replayed click shows up here twice. */
@@ -1552,4 +1558,114 @@ test("capture: another session's tab and another session's capture are refused, 
 	assert.match(after.endedBy, /shown to the user/);
 	await captureOk({ action: "cancel" });
 	await tool("tabs_close", { tabId: shown.tabId });
+});
+
+// ---- the in-use veil ------------------------------------------------------------------------
+
+/** The page target for a URL, over the DevTools endpoint (a second client beside the extension's). */
+async function pageTarget(part) {
+	return until(async () => (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.type === "page" && t.url.includes(part)), 10_000, `the page ${part}`);
+}
+
+async function inPage(target, expression) {
+	const r = await cdp(target.webSocketDebuggerUrl, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+	return r.result.value;
+}
+
+/** What the page itself can see of the veil: an element after <body>, if one is there. */
+const VEIL_PROBE = `(() => { const el = document.documentElement.lastElementChild; if (!el || el.localName === "body") return null; const cs = getComputedStyle(el); return { tag: el.localName, attrs: el.attributes.length, open: el.shadowRoot !== null, kids: el.childNodes.length, position: cs.position, pointer: cs.pointerEvents, z: cs.zIndex }; })()`;
+
+/** RGBA of one pixel of a base64 JPEG or PNG, decoded by the browser itself. */
+async function pixel(base64, mime, x, y) {
+	return sw(`(async () => { const blob = await (await fetch("data:${mime};base64,${base64}")).blob(); const bm = await createImageBitmap(blob); const c = new OffscreenCanvas(bm.width, bm.height); const g = c.getContext("2d"); g.drawImage(bm, 0, 0); return Array.from(g.getImageData(${x}, ${y}, 1, 1).data); })()`);
+}
+
+/** The center of the veil's Take over button, read in the extension's own world (the page can't). */
+async function takeOverPoint(tabId) {
+	return sw(`chrome.scripting.executeScript({ target: { tabId: ${tabId} }, world: "ISOLATED", func: () => { const v = globalThis.__polycarpVeil; if (!v) return null; const r = v.box.querySelector(".take").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; } }).then((r) => r[0].result)`);
+}
+
+test("the in-use veil: drawn over the agent's page, unseen by every read and screenshot, never in the way of the agent's click, and Take over gives the tab back", async () => {
+	await connected();
+	const project = join(home, "projects", "veil-shop");
+	mkdirSync(project, { recursive: true });
+	execFileSync("git", ["init", "-q", project]);
+	const agent = await agentIn(project);
+	try {
+		// Long enough that nothing in this part fades.
+		await sw("globalThis.__POLYCARP_VEIL_IDLE_MS = 120000");
+		const tabId = JSON.parse(await on(agent, "navigate", { url: `${pageUrl}veil?v=1` })).tabId;
+		const target = await pageTarget("/veil?v=1");
+		const host = await until(() => inPage(target, VEIL_PROBE), 10_000, "the veil to be drawn");
+		// What the page can see: one element with a random name, no attributes, a closed root, fixed, click-through.
+		assert.match(host.tag, /^[a-z]{5}-[a-z]{6}$/);
+		assert.deepEqual({ ...host, tag: undefined }, { tag: undefined, attrs: 0, open: false, kids: 0, position: "fixed", pointer: "none", z: "2147483647" });
+		const pageText = await inPage(target, "document.documentElement.outerHTML + '\\n' + document.documentElement.innerText + '\\n' + document.body.innerText");
+		for (const secret of ["Claude", "claude", "veil-shop", "Take over", "working"]) assert.ok(!pageText.includes(secret), `the page can read "${secret}"`);
+		assert.equal(await inPage(target, "Object.keys(window).filter((k) => /polycarp|veil/i.test(k)).length"), 0, "a page-visible global");
+		assert.equal(await inPage(target, "document.getElementById('top').getBoundingClientRect().top"), 0, "the veil moved the page");
+
+		// No read the agent makes sees it.
+		const html = await on(agent, "get_page_html");
+		assert.ok(html.includes("Top bar") && !html.includes(host.tag), "get_page_html shows the veil's element");
+		const inspect = await on(agent, "inspect_page");
+		assert.ok(!inspect.includes(host.tag), "inspect_page lists the veil's element");
+		for (const name of ["read_page", "get_page_text"])
+			assert.doesNotMatch(await on(agent, name, {}), /Take over|Claude|veil-shop|working/, `${name} sees the veil`);
+		assert.match(await on(agent, "find", { query: "Take over" }), /^No elements match/, "find sees the veil's button");
+
+		// The screenshot shows the page without it; a capture straight from the page (the control) shows the glow.
+		const shot = await agent.callTool({ name: "screenshot", arguments: {} });
+		const image = shot.content.find((c) => c.type === "image");
+		const height = Number(shot.content.find((c) => c.type === "text").text.match(/^\d+x(\d+)/)[1]);
+		const [r1, g1, b1] = await pixel(image.data, image.mimeType, 1, Math.round(height / 2));
+		assert.ok(r1 > 235 && g1 > 235 && b1 > 235, `the agent's screenshot shows the veil at the left edge: ${[r1, g1, b1]}`);
+		assert.ok(await inPage(target, VEIL_PROBE), "the veil did not come back after the screenshot");
+		await new Promise((r) => setTimeout(r, 400));
+		const direct = await cdp(target.webSocketDebuggerUrl, "Page.captureScreenshot", { format: "png", fromSurface: true });
+		const [r2, , b2] = await pixel(direct.data, "image/png", 1, Math.round(height / 2));
+		assert.ok(b2 - r2 > 40, `the control capture shows no veil, so the check above proves nothing: ${[r2, b2]}`);
+
+		// The agent clicks right where the Take over button is: the click reaches the page, and the tab stays the agent's.
+		const point = await takeOverPoint(tabId);
+		assert.ok(point && point.y < 64, JSON.stringify(point));
+		await on(agent, "click", { x: point.x, y: point.y });
+		assert.match(await on(agent, "get_page_text"), /top clicked/);
+		assert.match(await on(agent, "tabs_context"), /veil\?v=1/);
+
+		// The user clicks Take over: the tab leaves the group, the agent is told, the veil goes.
+		for (const type of ["mousePressed", "mouseReleased"])
+			await cdp(target.webSocketDebuggerUrl, "Input.dispatchMouseEvent", { type, x: point.x, y: point.y, button: "left", clickCount: 1 });
+		await until(async () => (await groupsOf()).find((t) => t.id === tabId)?.group === null, 10_000, "the tab to leave the group");
+		await until(async () => (await inPage(target, VEIL_PROBE)) === null, 5_000, "the veil to go");
+		assert.match(await on(agent, "tabs_context"), /The user took tab \d+ .*out of your group; it's theirs now/);
+		assert.equal(await inPage(target, "document.getElementById('r').textContent"), "top clicked", "Take over clicked the page under it");
+
+		// A new tab: the veil fades once the session has been quiet for the idle time.
+		const second = JSON.parse(await on(agent, "navigate", { url: `${pageUrl}veil?v=2` })).tabId;
+		const target2 = await pageTarget("/veil?v=2");
+		await until(() => inPage(target2, VEIL_PROBE), 10_000, "the veil on the new tab");
+		await sw("globalThis.__POLYCARP_VEIL_IDLE_MS = 1500");
+		await on(agent, "read_page", {});
+		await new Promise((r) => setTimeout(r, 900));
+		assert.ok(await inPage(target2, VEIL_PROBE), "faded before the idle time");
+		await until(async () => (await inPage(target2, VEIL_PROBE)) === null, 6_000, "the veil to fade");
+		// The next call draws it again; tabs_release takes it away at once.
+		await sw("globalThis.__POLYCARP_VEIL_IDLE_MS = 120000");
+		await on(agent, "read_page", {});
+		await until(() => inPage(target2, VEIL_PROBE), 5_000, "the veil to come back");
+		await on(agent, "tabs_release", { tabId: second });
+		await until(async () => (await inPage(target2, VEIL_PROBE)) === null, 1_500, "the veil to go on release");
+
+		// Turned off in Settings > Agents: no veil.
+		await sw("chrome.storage.local.set({ veil_enabled: false })");
+		await on(agent, "navigate", { url: `${pageUrl}veil?v=3` });
+		const target3 = await pageTarget("/veil?v=3");
+		await on(agent, "read_page", {});
+		await new Promise((r) => setTimeout(r, 500));
+		assert.equal(await inPage(target3, VEIL_PROBE), null, "drawn while turned off");
+	} finally {
+		await sw("chrome.storage.local.remove('veil_enabled').then(() => { globalThis.__POLYCARP_VEIL_IDLE_MS = undefined; })").catch(() => undefined);
+		await agent.close();
+	}
 });

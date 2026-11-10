@@ -904,3 +904,40 @@ Issues #94 and #97, follow-ups from #93.
 - **Scope.** A capture belongs to the session that started it (`CaptureManager`): its tab must be one of the session's
   at the start and while it runs (checked every 2 seconds against the session's record, and at once on close or
   release), and an id from another session answers as if it never existed. Remote tokens need `browser.capture`.
+
+## D37. The in-use veil: drawn in the page, invisible to the agent, idle after 15 seconds (Claude, 2026-11-10)
+
+The owner asked that a tab or window an agent uses be blocked out "with a cool thing to show its being used".
+
+- **Where it is drawn.** Inside the page, because an extension can't draw over browser UI: one element appended to
+  `<html>` (after `<body>`, so no body text or walk reaches it) with a closed shadow root, injected with
+  `chrome.scripting` into the extension's isolated world (`src/browser/veil-page.ts`). Its styles are `:host` rules
+  marked important, which beat any important rule the page writes for it; it is fixed, covers the viewport, and has
+  `pointer-events: none`, so it moves nothing and every click goes through. Only the pill's "Take over" button takes
+  pointer events. Not a top-layer popover: a popover's attribute and open state are visible to the page, and a page's
+  own dialog still opens above it.
+- **What a page can still detect.** That an element with a random custom-element name (new per document) and no
+  attributes is the last child of `<html>`; its computed style (fixed, highest z-index, no pointer events); that
+  `elementFromPoint` over the button returns that element between agent calls; and that it comes back (at most five
+  times) when removed. It cannot read the agent or project name, the colors, or the text: they live in the closed
+  shadow root and the isolated world, never in an attribute or a page global. A fixed tag name was rejected because it
+  would let any page tell Polycarp is driving it with one query; a random name per document leaves it guessing from
+  structure.
+- **What the agent can't see.** `get_page_html` cuts the element out and `inspect_page` doesn't count it (both read
+  the tab's tag from session storage, `veil-shared.ts`). `read_page`, `find` and `get_page_text` never reach it: they
+  read `<body>`, open shadow roots and interactive selectors. A screenshot conceals it for the capture (`setCaptureCover`
+  in `cdp.ts`, awaited before `Page.captureScreenshot`); a screencast or recording conceals it while it runs. While a
+  call that hit-tests or sends pointer input runs (click, hover, drag, type, scroll, fill, actions), the button takes no
+  pointer events, so neither the agent's `elementFromPoint` checks nor its CDP clicks can land on it. `run_js` code
+  that walks `document.documentElement` can still find the element; that is the agent's own code.
+- **Idle time: 15 seconds.** Between two tool calls the model thinks, typically a few seconds and sometimes over ten
+  (not measured here; a reasoned default). Fifteen should keep it steady through a task and gone soon after one stops.
+  `VEIL_IDLE_MS` in `veil-state.ts` is the one place to change it. Ending,
+  releasing, taking over, a client leaving and closing the tab remove it at once, with no fade.
+- **Take over** calls `userTook` and ungroups the tab, the path a drag out of the group takes, so the agent hears the
+  same notice. The button answers only a trusted click on a veil the worker drew, in a top frame.
+- **Theme.** The worker builds the panel's own tokens (`appearanceVariables`) for light and dark from the saved choice
+  and the cached Polycarp theme. The panel now mirrors its Light / Dark / System switch to `tabkyra.mode` in
+  extension storage so the veil follows it; before the panel opens once after this change, "System" is assumed.
+  The group colors are Chrome's tab group colors, as custom properties.
+

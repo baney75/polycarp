@@ -3,6 +3,7 @@ import { installCdpListeners } from "./browser/cdp.js";
 import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard.js";
 import { startGroupGestures } from "./browser/group-gestures.js";
 import { BrowserSession, cleanupOrphanGroups } from "./browser/session.js";
+import { startVeil } from "./browser/veil.js";
 import { startCommunityWorker } from "./community/worker.js";
 import { startConnectRelay } from "./connect/relay.js";
 import { startSiteEdits } from "./site-edits/apply.js";
@@ -17,6 +18,8 @@ installCdpListeners();
 startForegroundGuard();
 setGuardLogger(trace);
 startGroupGestures(trace);
+// The glow and pill over a page an agent is working in (Settings > Agents turns it off).
+startVeil(trace);
 
 // Groups from before an extension reload have no owning session any more; give the tabs back.
 cleanupOrphanGroups().catch(() => undefined);

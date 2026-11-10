@@ -262,7 +262,7 @@ test("a response the page itself couldn't read stays unread: same origin only", 
 
 test("inspect_page reports storage and cookie names, never their values", () => {
 	const page = readFileSync(new URL("../src/browser/page.ts", import.meta.url), "utf8");
-	const inspect = page.slice(page.indexOf("function pageInspect()"), page.indexOf("export async function inspectPage("));
+	const inspect = page.slice(page.indexOf("function pageInspect("), page.indexOf("export async function inspectPage("));
 	assert.ok(inspect.length > 100);
 	assert.doesNotMatch(inspect, /getItem|\.value\b|split\("="\)\[1\]/, "no storage values, field values or cookie values");
 });

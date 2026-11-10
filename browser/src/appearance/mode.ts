@@ -1,5 +1,7 @@
 /** Light, dark or follow the system: the same setting mini-lit's theme toggle keeps (localStorage "theme", the `dark` class). */
 
+import { MODE_MIRROR_KEY } from "../browser/veil-shared.js";
+
 export type Mode = "light" | "dark" | "system";
 
 export function currentMode(): Mode {
@@ -27,6 +29,16 @@ export function setMode(mode: Mode): void {
 	if (mode === "system") localStorage.removeItem("theme");
 	else localStorage.setItem("theme", mode);
 	showMode();
+	mirrorMode();
+}
+
+/** Copy the setting where the service worker reads it: the in-use veil on agents' pages follows it (browser/veil.ts). */
+export function mirrorMode(): void {
+	try {
+		void chrome.storage.local.set({ [MODE_MIRROR_KEY]: currentMode() }).catch(() => undefined);
+	} catch {
+		// Not an extension page (tests): nothing to mirror to.
+	}
 }
 
 /** Follow the system setting while the mode is "system". */

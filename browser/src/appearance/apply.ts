@@ -5,7 +5,7 @@
  */
 
 import { connectStatus } from "../connect/client.js";
-import { currentMode, pinMode, setMode } from "./mode.js";
+import { currentMode, mirrorMode, pinMode, setMode } from "./mode.js";
 import type { ThemeChoice } from "./palettes.js";
 import { checkPolycarpTheme, type PolycarpTheme, parsePolycarpTheme } from "./polycarp.js";
 import { APPEARANCE_KEY, appearanceVariables, parseChoice } from "./tokens.js";
@@ -180,6 +180,7 @@ export async function startAppearance(): Promise<void> {
 		applyPolycarp(cache);
 	}
 	paint();
+	mirrorMode();
 	if (!saved) void seedFromHelper().catch(() => {});
 	new MutationObserver(paint).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
 	watchPolycarp();
