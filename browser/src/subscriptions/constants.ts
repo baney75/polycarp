@@ -27,7 +27,7 @@ export const SIWC = {
 	discoveryUrl: "https://auth.openai.com/.well-known/openid-configuration",
 	/** First-time registration entrypoint; never saved and never used for a token exchange. */
 	dynamicClient: "dynamic_agent_client",
-	/** Our app's actual name, the same in every installation. Sent only on first registration, so a host signed in before the rename keeps its saved client and its old name. */
+	/** Our app's name, sent only with a first registration. A host registered before the rename keeps its saved client, which OpenAI still lists as Tabkyra. */ // product-name allowlist: the name OpenAI lists for older sign-ins
 	agentName: "Polycarp",
 	scope: "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct",
 	/** The scope that allows ChatGPT plan usage; a valid ID token alone does not. */
@@ -59,7 +59,7 @@ export const COPILOT = {
 	sdkPackage: "@github/copilot-sdk",
 	sdkVersion: "1.0.28",
 	/** Where a user reviews or revokes Polycarp's access (revoking needs the app's secret, which Polycarp has none of). */
-	revokeUrl: "https://github.com/settings/applications",
+	revokeUrl: "https://github.com/settings/connections/applications/Ov23li1qDiu9lRXbvcFh",
 	termsUrl: "https://docs.github.com/en/copilot/how-tos/copilot-sdk/authenticate-copilot-sdk/authenticate-copilot-sdk",
 } as const;
 

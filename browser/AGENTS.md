@@ -59,6 +59,7 @@ machines call them, and no person reads them:
   which is the app's. Tests and fixtures set the first one.
 - `/tmp/tabkyra-bridge-<user>` (the socket folder), the `x-tabkyra-hub-*` headers and `User-Agent: tabkyra-cli`, until the next change
 - the extension's stored data: storage keys, database names and the `TabkyraAppStorage` class
+- the name OpenAI lists for a ChatGPT sign-in made before the rename: its saved client stays registered as "Tabkyra", so the unconfirmed-revoke note names it
 - the tab group title "Tabkyra · ..." that earlier versions made, which is still recognized and tidied
 Every command the CLI prints (`doctor`, `status`, errors, usage, services, the setup prompts) is built from `COMMAND_NAME` in `cli/src/self.ts`: `polycarp browser` inside the app, `polycarp-browser` for an npm link or checkout (`tabkyra` stays as a bin alias). The extension's commands for this computer come from `hostCommand()` (`src/bridge/host-command.ts`), which reads the name from the helper's update status; build them when shown, never in a module-level constant. A prompt for another device (`deviceSetupPrompt`) carries no name: the agent there finds which of the two runs. Write these strings as template literals; `cli/test/rendered-names.test.mjs` fails on a quoted string that holds `${COMMAND_NAME}`.
 Skills under `skills/` and the docs and README still say Tabkyra; they are not rewritten yet.
