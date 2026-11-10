@@ -288,6 +288,20 @@ export interface ScreenshotOptions {
 const SCREENSHOT_TIMEOUT_MS = 20000;
 
 /**
+ * Something drawn over a tab's page that no capture may show: the in-use veil (veil.ts). A
+ * screenshot conceals it for the capture; a screencast (live view or recording) for as long as
+ * it runs. `conceal(..., true)` resolves once the page no longer paints it.
+ */
+export interface CaptureCover {
+	conceal(tabId: number, reason: "shot" | "cast", on: boolean): Promise<void>;
+}
+let cover: CaptureCover | undefined;
+
+export function setCaptureCover(next: CaptureCover | undefined): void {
+	cover = next;
+}
+
+/**
  * CSS pixels per screenshot pixel of each tab's last viewport screenshot. Agents read
  * coordinates off screenshots, so point-taking tools convert through this instead of
  * asking the model to do the arithmetic.
@@ -371,7 +385,12 @@ export async function captureScreenshot(
 			timeoutMs,
 		);
 	});
+	let concealed = false;
 	try {
+		if (cover) {
+			await cover.conceal(tabId, "shot", true);
+			concealed = true;
+		}
 		const data = await Promise.race([capture(), timeout]);
 		const mimeType = format === "png" ? "image/png" : "image/jpeg";
 		const img = await resizeImage(data, mimeType, options.maxWidth ?? Math.min(css.width, 1280));
@@ -379,6 +398,7 @@ export async function captureScreenshot(
 		return { ...img, cssWidth: Math.round(css.width), cssHeight: Math.round(css.height) };
 	} finally {
 		clearTimeout(timer);
+		if (concealed) void cover?.conceal(tabId, "shot", false).catch(() => undefined);
 	}
 }
 
@@ -1110,6 +1130,7 @@ function installScreencastListener(): void {
 		if (source.tabId === undefined) return;
 		const cast = screencasts.get(source.tabId);
 		screencasts.delete(source.tabId);
+		if (cast) void cover?.conceal(source.tabId, "cast", false).catch(() => undefined);
 		cast?.ended?.(`debugger detached: ${reason}`);
 	});
 	chrome.tabs.onRemoved.addListener((tabId) => {
@@ -1143,6 +1164,7 @@ export async function startScreencast(
 		lastAckAt: 0,
 	};
 	screencasts.set(tabId, cast);
+	await cover?.conceal(tabId, "cast", true).catch(() => undefined);
 	await send(tabId, "Page.enable");
 	if (options.initScript) {
 		const { identifier } = await send<{ identifier: string }>(tabId, "Page.addScriptToEvaluateOnNewDocument", {
@@ -1165,6 +1187,7 @@ export async function stopScreencast(tabId: number): Promise<boolean> {
 	const cast = screencasts.get(tabId);
 	if (!cast) return false;
 	screencasts.delete(tabId);
+	void cover?.conceal(tabId, "cast", false).catch(() => undefined);
 	await sendRaw(tabId, "Page.stopScreencast").catch(() => undefined);
 	if (cast.scriptId)
 		await sendRaw(tabId, "Page.removeScriptToEvaluateOnNewDocument", { identifier: cast.scriptId }).catch(

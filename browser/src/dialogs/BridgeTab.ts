@@ -21,6 +21,7 @@ import {
 import type { UserScriptsStatus } from "../bridge/protocol.js";
 import { listSessions } from "../browser/session.js";
 import { probeUserScripts, userScriptsHiddenHelp } from "../browser/userscripts-status.js";
+import { isVeilEnabled, setVeilEnabled } from "../browser/veil-shared.js";
 import { agentSetupPromptButton } from "../components/AgentSetupPrompt.js";
 import { runningFromStore } from "../update/store-install.js";
 
@@ -32,6 +33,7 @@ import { runningFromStore } from "../update/store-install.js";
 @customElement("bridge-tab")
 export class BridgeTab extends SettingsTab {
 	@state() private enabled = true;
+	@state() private veil = true;
 	@state() private mode: PermissionMode = "ask";
 	@state() private hosts: string[] = [];
 	@state() private pending: PendingRequest[] = [];
@@ -68,6 +70,7 @@ export class BridgeTab extends SettingsTab {
 
 	private async load() {
 		this.enabled = await isBridgeEnabled();
+		this.veil = await isVeilEnabled();
 		this.mode = await getPermissionMode();
 		this.hosts = await getAllowedHosts();
 		this.pending = await getPendingRequests();
@@ -183,6 +186,26 @@ export class BridgeTab extends SettingsTab {
 						.checked=${this.enabled}
 						@change=${async (e: Event) => {
 							await setBridgeEnabled((e.target as HTMLInputElement).checked);
+							await this.load();
+						}}
+					/>
+				</label>
+
+				<label class="flex items-start justify-between gap-3 text-sm text-foreground cursor-pointer">
+					<span class="space-y-1">
+						<span class="block">Show when an agent is using a tab</span>
+						<span class="block text-xs text-muted-foreground">
+							A soft glow in the group's color and a small label at the top of the page while an agent
+							works in it. Clicks go through to the page; Take over in the label gives you the tab back.
+						</span>
+					</span>
+					<input
+						type="checkbox"
+						role="switch"
+						class="tk-switch"
+						.checked=${this.veil}
+						@change=${async (e: Event) => {
+							await setVeilEnabled((e.target as HTMLInputElement).checked);
 							await this.load();
 						}}
 					/>

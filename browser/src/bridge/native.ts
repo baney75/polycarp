@@ -12,6 +12,7 @@ import { openDialog, type PageDialog, stopScreencastsOwnedBy } from "../browser/
 import { setCdpMessageHandler } from "../browser/inject.js";
 import { BrowserSession, listSessions, pruneSessions, type SessionMeta, sanitizeLabel } from "../browser/session.js";
 import { probeUserScripts } from "../browser/userscripts-status.js";
+import { veilBegin, veilEnd, veilSessionGone } from "../browser/veil.js";
 import { COMMUNITY_STATUS_KEY } from "../community/status.js";
 import { handleThreads } from "../threads/bridge.js";
 import { resyncMirror, startThreadMirror } from "../threads/mirror.js";
@@ -258,6 +259,8 @@ async function onClientDisconnected(clientId: string): Promise<void> {
 	// Hand the session on, so the last of them to leave suspends or drops it.
 	for (const c of successors) c.session ??= state?.session;
 	if (state?.session && successors.length === 0) {
+		// Nobody is working in its tabs any more.
+		veilSessionGone(state.session.id);
 		// A session that never opened a tab has nothing to re-adopt; drop it instead of piling up.
 		if (!(await state.session.closeIfEmpty())) await state.session.suspend();
 	}
@@ -372,6 +375,8 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	// In flight from here, before the first await, so the update idle gate sees it at once.
 	state.inFlight = { method: req.method, since: Date.now() };
 	state.lastActivityAt = Date.now();
+	/** The session and the tab the in-use veil counted this call on (src/browser/veil.ts). */
+	let veiled: { session: BrowserSession; tabId: number | undefined } | undefined;
 	try {
 		if (!(await isBridgeEnabled())) {
 			throw new BridgeError(ERR.DISABLED, "The Polycarp bridge is disabled in Settings > Agents.");
@@ -421,6 +426,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
 			if (openOn !== undefined) throw dialogError(openOn, openDialog(openOn) as PageDialog);
 		}
+		veiled = { session, tabId: await veilBegin(session, req.method, req.params).catch(() => undefined) };
 		const work = handler(ctx, req.params ?? {});
 		const result = await withTimeout(
 			dialogSafe
@@ -446,6 +452,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		if (stack) trace(`${req.method} ${error.code}: ${stack.split("\n").slice(0, 6).join(" | ")}`);
 		reply(undefined, error);
 	} finally {
+		if (veiled) veilEnd(veiled.session, req.method, veiled.tabId);
 		state.abort = undefined;
 		state.inFlight = undefined;
 		state.lastActivityAt = Date.now();
@@ -844,7 +851,10 @@ function connect(): void {
 			state.closed = true;
 			state.abort?.();
 		}
-		for (const state of clients.values()) void state.session?.suspend();
+		for (const state of clients.values()) {
+			if (state.session) veilSessionGone(state.session.id);
+			void state.session?.suspend();
+		}
 		clients.clear();
 		cancelQuestionsFor(undefined);
 		void stopScreencastsOwnedBy(undefined).catch(() => undefined);

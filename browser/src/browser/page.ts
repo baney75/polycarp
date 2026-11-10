@@ -8,6 +8,7 @@
 import { cdpSend, isRestrictedUrl } from "./cdp.js";
 import { maskUrl } from "./mask-body.js";
 import { isUserScriptsGated, userScriptsApi } from "./userscripts-status.js";
+import { veilTag } from "./veil-shared.js";
 
 const SNAPSHOT_WORLD_ID = "tabkyra-snapshot";
 const SNAPSHOT_CSP = "script-src 'unsafe-eval' 'unsafe-inline'; default-src 'none';";
@@ -829,8 +830,9 @@ function pageSnapshot(
  * values), frames, web components, script hosts and storage key names (never values).
  * Self-contained: it runs in the page.
  */
-function pageInspect(): unknown {
-	const all = Array.from(document.querySelectorAll("*"));
+function pageInspect(veil: string): unknown {
+	// The in-use veil (veil.ts) is Polycarp's, not the page's: it is not counted.
+	const all = Array.from(document.querySelectorAll("*")).filter((el) => !veil || el.localName !== veil);
 	const has = (sel: string) => !!document.querySelector(sel);
 	const scripts = Array.from(document.scripts);
 	const srcs = scripts.map((x) => x.src).filter(Boolean);
@@ -965,7 +967,10 @@ function pageInspect(): unknown {
 }
 
 export async function inspectPage(tabId: number): Promise<Record<string, unknown>> {
-	const map = await runInPage<Record<string, unknown>>(tabId, `(${pageInspect.toString()})()`);
+	const map = await runInPage<Record<string, unknown>>(
+		tabId,
+		`(${pageInspect.toString()})(${JSON.stringify((await veilTag(tabId)) ?? "")})`,
+	);
 	// Addresses can carry tokens (/reset?token=..., an embed's ?secret=...).
 	if (typeof map.url === "string") map.url = maskUrl(map.url);
 	for (const f of (map.forms ?? []) as Array<{ action: string }>) f.action = maskUrl(f.action);
@@ -1171,11 +1176,16 @@ export async function pageText(tabId: number, selector?: string, maxChars = 5000
 }
 
 export async function pageHtml(tabId: number, selector?: string, maxChars = 200000): Promise<string> {
+	// The in-use veil (veil.ts) is Polycarp's own element, not the page's: it is cut out.
+	const veil = (await veilTag(tabId)) ?? "";
 	const code = `(() => {
 		const sel = ${JSON.stringify(selector ?? "")};
 		const el = sel ? document.querySelector(sel) : document.documentElement;
 		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
-		return el.outerHTML.slice(0, ${maxChars});
+		const veil = ${JSON.stringify(veil)} ? document.querySelector(${JSON.stringify(veil || "x")}) : null;
+		let out = el.outerHTML;
+		if (veil && el !== veil && el.contains(veil)) out = out.replace(veil.outerHTML, "");
+		return out.slice(0, ${maxChars});
 	})()`;
 	return runInPage<string>(tabId, code);
 }
