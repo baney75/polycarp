@@ -197,6 +197,25 @@ final class HandsRouter {
         }
     }
 
+    /// The one place `move`, `arrange` and `close` change something: on the main thread, the acting mode, and every target's
+    /// live window, scope and in-use condition are read again, and `perform` runs in that same pass only when all of them
+    /// pass (`MutationGate`). `perform` gets the agent workspace as read in that pass.
+    func mutateOnMain<T>(_ ws: [HandsWindow], verb: String, session: String, perform: (_ agent: Int?) -> Result<T, HandsError>) -> Result<T, HandsError> {
+        onMain {
+            let agent = host.agentWorkspace()
+            let targets = ws.map { w -> MutationTarget in
+                let live = host.live(w.id)
+                let scope = live.map { decide($0, agent, session: session) } ?? .denied(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows`.", retry: .afterSnapshot))
+                let inUse = live.flatMap { l -> HandsError? in
+                    let (state, verdict) = inUseVerdict(l, agent: agent, verb: verb, delivery: .posted)
+                    return verdict == .wait ? InUseWait.refusal(app: w.app, state: state, waited: nil) : nil
+                }
+                return MutationTarget(window: w, live: live, scope: scope, inUse: inUse)
+            }
+            return MutationGate.run(mode: access, targets: targets) { perform(agent) }
+        }
+    }
+
     private func refmapURL(_ sid: String) -> URL { HandsEngine.stateRoot.appendingPathComponent("snapshots/\(sid)/refmap.json") }
 
     private func refProblem(_ ref: String) -> HandsError? {
@@ -249,8 +268,19 @@ final class HandsRouter {
         .object(["pid": .int(Int(w.pid)), "window": .int(Int(w.id)), "app": .string(w.app), "scope": .string(scope.reason)])
     }
 
+    /// Gives each pending `open` (one that ended before its window appeared) the first unowned new window of its app.
+    func resolvePendingOpens(all: [HandsWindow], agent: Int?) {
+        let now = Date()
+        childLocked {
+            for app in Set(sessionWindows.pending.map(\.app)) {
+                sessionWindows.resolvePending(app: app, appWindows: all.filter { matches($0, app) && $0.workspace == agent }, now: now)
+            }
+        }
+    }
+
     private func windows(session: String) -> HandsEnvelope {
         let (all, agent) = listWindows(fresh: true)
+        resolvePendingOpens(all: all, agent: agent)
         let mode = access
         let usable = all.map { ($0, decide($0, agent, session: session)) }.filter { $0.1.allowed }.map { (window: $0.0, scope: $0.1) }
             // Under Full Access every window is listed without reading each one (that would ask every app on the Mac);
@@ -567,6 +597,7 @@ final class HandsRouter {
         // new_window: false reuses a window this session opened in the app, when no files are given; nothing starts.
         if req.args["new_window"]?.bool == false, targets.isEmpty, AgentAccessGate.actingRefusal(mode: access) == nil {
             let (all, agent) = listWindows(fresh: true)
+            resolvePendingOpens(all: all, agent: agent)
             let mine = childLocked { sessionWindows.windows(of: session) }
             if let w = all.filter({ mine[$0.id] == $0.pid && matches($0, bundle.isEmpty ? display : bundle) && $0.workspace == agent && decide($0, agent).allowed }).max(by: { $0.id < $1.id }) {
                 return .success(.object(["window": .int(Int(w.id)), "pid": .int(Int(w.pid)), "app": .string(w.app), "workspace": agent.map(JSONValue.int) ?? .null,
@@ -644,7 +675,9 @@ final class HandsRouter {
             let candidates = all.filter { matches($0, reply.info?["app"] ?? display) && !known.contains($0.id) && $0.workspace == agent && (!separate || !pidsBefore.contains($0.pid)) }
             // Provenance: `close` closes only windows this session's `open` made. Claimed under the lock, never a window
             // another session owns.
-            window = childLocked { sessionWindows.claim(candidates, session: session) }
+            // A pending claim of another session's earlier open of this app is served first and blocks this one meanwhile.
+            let appWindows = all.filter { matches($0, key) && $0.workspace == agent }
+            window = childLocked { sessionWindows.claim(candidates, session: session, app: key, appWindows: appWindows, now: Date()) }
             if window == nil { Thread.sleep(forTimeInterval: 0.15) }
         }
         var data: [String: JSONValue] = (reply.info ?? [:]).mapValues(JSONValue.string)
@@ -659,6 +692,8 @@ final class HandsRouter {
                                        suggestion: "Close nothing; ask Donovan to quit \(display), or work in the sandbox.", retry: .never))
         } else {
             data["window_identified"] = .bool(false)
+            // Its window may still come: the first unowned new window of this app is this session's when it does (30 s).
+            childLocked { sessionWindows.addPending(session: session, app: key, known: known, at: Date()) }
             data["note"] = .string("Polycarp couldn't identify the window this open made (none appeared yet, or the only new one is another session's), so this session owns none of it; run `polycarp-spaces agent windows`")
         }
         return .success(.object(data))

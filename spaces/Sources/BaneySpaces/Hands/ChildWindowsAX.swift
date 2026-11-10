@@ -41,6 +41,8 @@ enum ChildWindowsAX {
         var children: [ChildWindowFacts]
         /// Placed windows that hold a sheet without a window number of its own: its elements are in that window's snapshot.
         var sheetsOn: Set<UInt32>
+        /// The app's main or focused placed window at this look, for children whose own window is unknown.
+        var hint: UInt32? = nil
     }
 
     static func read(pid: pid_t, placed: Set<UInt32>) -> Reading {
@@ -55,7 +57,7 @@ enum ChildWindowsAX {
         let running = NSRunningApplication(processIdentifier: pid)
         let name = running?.localizedName ?? "App", bundle = running?.bundleIdentifier ?? ""
         let process = running?.executableURL?.lastPathComponent ?? ""
-        var out: [ChildWindowFacts] = [], seen = Set<UInt32>(), sheetsOn = Set<UInt32>()
+        var sheetsOn = Set<UInt32>()
         func facts(_ el: AXUIElement, id: UInt32, parent: UInt32?) -> ChildWindowFacts {
             AXUIElementSetMessagingTimeout(el, 0.25)
             var t: CFTypeRef?, s: CFTypeRef?, r: CFTypeRef?, m: CFTypeRef?
@@ -63,28 +65,46 @@ enum ChildWindowsAX {
             AXUIElementCopyAttributeValue(el, kAXSubroleAttribute as CFString, &s)
             AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &r)
             let modal = AXUIElementCopyAttributeValue(el, kAXModalAttribute as CFString, &m) == .success ? (m as? Bool) : nil
-            // A sheet, dialog or alert (modal ones included) is read whole or refused.
+            // A sheet, dialog or alert (modal ones included) is read whole and checked as a possible file panel, or refused.
             let kind = ChildWindowRule.kind(role: r as? String, subrole: s as? String, modal: modal)
             let deep = kind == .sheet || kind == .dialog || kind == .alert
             return ChildWindowFacts(id: id, pid: pid, app: name, bundle: bundle, processName: process, title: (t as? String) ?? "",
                                     role: r as? String, subrole: s as? String, modal: modal, parent: parent,
-                                    panel: PanelDetector.windowIsOffLimits(HandsAXTree.node(el, depth: 1, deep: deep ? true : nil)))
+                                    panel: PanelDetector.childIsOffLimits(HandsAXTree.node(el, depth: 1, deep: deep ? true : nil), kind: kind))
         }
+        // First every listed window and its attached sheets, then the children with their parents (`ChildCollect`), so a
+        // sheet listed before its window still gets that window.
+        var listed: [ChildCollect.Listed] = [], elements: [UInt32: AXUIElement] = [:]
         for el in list.prefix(64) {
             guard let id = BackgroundAX.windowID(of: el) else { continue }
             if placed.contains(id) {
+                var sheets: [UInt32] = []
                 for c in HandsAXTree.children(el).list.prefix(HandsAXTree.perLevel) where HandsAXTree.role(c) == "AXSheet" {
                     if let sid = BackgroundAX.windowID(of: c), sid != id {
-                        if seen.insert(sid).inserted { out.append(facts(c, id: sid, parent: id)) }
+                        sheets.append(sid)
+                        if elements[sid] == nil { elements[sid] = c }
                     } else {
                         sheetsOn.insert(id)
                     }
                 }
-                continue
+                listed.append(.init(id: id, placed: true, sheets: sheets))
+            } else {
+                var p: CFTypeRef?
+                let axParent: UInt32? = AXUIElementCopyAttributeValue(el, kAXParentAttribute as CFString, &p) == .success && p != nil
+                    && CFGetTypeID(p!) == AXUIElementGetTypeID() ? BackgroundAX.windowID(of: p as! AXUIElement) : nil
+                listed.append(.init(id: id, placed: false, axParent: axParent))
+                elements[id] = el
             }
-            if seen.insert(id).inserted { out.append(facts(el, id: id, parent: nil)) }
         }
-        return Reading(children: out, sheetsOn: sheetsOn)
+        let out = ChildCollect.assemble(listed).compactMap { c in elements[c.id].map { facts($0, id: c.id, parent: c.parent) } }
+        // The app's main or focused window now: the parent a child without one is first seen with.
+        func windowAttr(_ a: String) -> UInt32? {
+            var v: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(app, a as CFString, &v) == .success, let v, CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
+            return BackgroundAX.windowID(of: v as! AXUIElement)
+        }
+        let hint = out.contains { $0.parent == nil } ? ChildCollect.hint(main: windowAttr(kAXMainWindowAttribute), focused: windowAttr(kAXFocusedWindowAttribute), placed: placed) : nil
+        return Reading(children: out, sheetsOn: sheetsOn, hint: hint)
     }
 
     /// The process that owns a window number, and its name, from the window server.

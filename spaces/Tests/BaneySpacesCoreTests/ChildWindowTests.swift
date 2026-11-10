@@ -61,7 +61,10 @@ final class ChildWindowRuleTests: XCTestCase {
         XCTAssertEqual(e.retry, .never)
         XCTAssertTrue(e.message.contains("rule 2"))
         XCTAssertTrue(e.suggestion.contains("Leave it for Donovan"))
-        XCTAssertEqual(ChildWindowRule.decide(dialog(), placed: split, attributed: true), .usable(scope: .onAgentWorkspace, parent: nil, ownership: "after_your_action"))
+        // Review round 2 (first-F2): with its window unknown, a split app's dialog is refused even after the agent's action;
+        // with its window known to be the agent's, the action settles it.
+        XCTAssertFalse(ChildWindowRule.decide(dialog(), placed: split, attributed: true).allowed)
+        XCTAssertEqual(ChildWindowRule.decide(dialog(parent: 7), placed: split, attributed: true), .usable(scope: .onAgentWorkspace, parent: 7, ownership: "after_your_action"))
     }
 
     func testTheParentsScopeIsTakenWhenKnown() {
@@ -334,7 +337,13 @@ final class ChildWindowSourceTests: XCTestCase {
         XCTAssertTrue(move.contains("if origin == .fullAccess { AgentAccess.shared.grant(live.pid) }"))
         XCTAssertTrue(move.contains("MoveDecision.decide(before: before, after: after)"))
         let app = try HandsSourceTests.code("Sources/BaneySpaces/AppDelegate.swift")
-        XCTAssertEqual(app.components(separatedBy: "sendBackMovedIn()").count - 1, 3, "defined once, called on lend and access changes")
+        XCTAssertEqual(app.components(separatedBy: "sendBackMovedIn()").count - 1, 5, "defined once, called on lend and access changes, on the 30 s tick and after launch")
+        XCTAssertLessThan(try XCTUnwrap(app.range(of: "_ = HandsMovedIn.shared")).lowerBound, try XCTUnwrap(app.range(of: "self.session.start(")).lowerBound,
+                          "moved-in records are loaded before the session socket takes requests")
+        // sol-sol-F5: the three managing verbs change things only through the one gate.
+        for call in ["mutateOnMain(chosen, verb: \"arrange\"", "mutateOnMain([w], verb: \"move\"", "mutateOnMain([w], verb: \"close\""] { XCTAssertTrue(ws.contains(call), call) }
+        XCTAssertFalse(ws.contains("onMain { host.arrange(frames) }"))
+        XCTAssertFalse(ws.contains("onMain({ host.close(w.id) })"))
     }
 
     /// The hands verb `move` must not take over the older `agent move <id | words>` session op.

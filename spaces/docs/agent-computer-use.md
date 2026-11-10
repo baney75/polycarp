@@ -154,7 +154,13 @@ A sheet with no window number of its own is part of its window's snapshot, marke
 
 A sheet no longer locks its window by itself. Only a file panel does: a sheet or dialog with a panel title, a panel
 identifier, a file browser or a split outline, a name field with a Where or Tags popup, or one that could not be read
-(`PanelDetector.looksLikeFilePanel`). A save changes alert ("Don't Save", "Cancel") is usable.
+(`PanelDetector.looksLikeFilePanel`). A save changes alert ("Don't Save", "Cancel") is usable. Every child recognized as a
+sheet, dialog or alert, modal ones with an unknown subrole included, is read whole (`AXTreeRead`) and checked this way
+(`PanelDetector.childIsOffLimits`); a read cut off by the per-level, depth or node limit refuses it.
+
+Each child's window is found after the app's whole window list is read (`ChildCollect`): a sheet's window, else
+AXParent, else the app's main or focused window when the child was first seen. A child whose window is known and not
+yours is refused; a child whose window is still unknown is usable only when every window of that app is yours.
 
 ## The agent manages its own workspace
 
@@ -164,7 +170,9 @@ verbs, in MCP and the CLI, all on the agent workspace only:
 - `workspaces` (read only): each workspace's number and whether it is shown, which one is the agent's, whether
   Donovan is looking at it (`agent_workspace_shown`), and where each window you may use is. No names or titles.
 - `open` returns the window id (waiting up to `wait`, at most 7 s within the claim), takes `new_window` (false reuses
-  this session's window of that app), and reports `focus: {changed, returned}` when the launch took the keyboard and
+  this session's window of that app; one open per app runs at a time and never takes a window another session owns; an
+  open that ends with `window_identified: false` keeps a 30 s pending claim, so the first new window of that app is
+  still its own and no other session's open can take it meanwhile), and reports `focus: {changed, returned}` when the launch took the keyboard and
   BaneySpaces gave it back. URLs stay refused until agent browser profiles exist.
 - `arrange full | halves | thirds | grid | frames id=x,y,w,h …`: agent workspace windows only. A parked window keeps
   its new size and takes the position when the workspace is shown.
@@ -174,12 +182,16 @@ verbs, in MCP and the CLI, all on the agent workspace only:
   A moved window grants nothing by being on the agent workspace (`MovedInWindows`): it is usable only while its lend lasts
   (or, for one Full Access brought over, while the mode is Full Access, and its process is granted so the narrowing rule
   applies), and when that ends it is refused and goes back to the workspace it came from (his current one if that is
-  gone). The older `agent move <id | words>` session op is unchanged.
+  gone). The entry is dropped only once the window is read back off the agent workspace, and the book is saved
+  (`moved-in.json`, with each process's start time), so a relaunch keeps it: lends are not saved, so a lent window's
+  entry is denied and sent back at launch, and an entry whose process has quit is dropped. The older
+  `agent move <id | words>` session op is unchanged.
 - `close --window N`: only windows this session opened (provenance per session), through the close button; never
   quits an app. A save sheet that follows comes back as `opened`.
 
 Agents never switch which workspace is shown, never create, delete or rename one, and never focus a window. Read Only
-refuses `arrange`, `move` and `close`; connectors get `workspaces` only (`WorkspaceVerbs.connectorRefusal`).
+refuses `arrange`, `move` and `close`, checked again with each target's scope and in use in the main-thread pass that
+makes the change (`MutationGate`; `arrange` applies every frame or none); connectors get `workspaces` only (`WorkspaceVerbs.connectorRefusal`).
 
 ## Access modes
 

@@ -152,6 +152,13 @@ public enum ChildWindowRule {
                 "window \(c.id) is a \(kindName) of \(c.app) on window \(p), which is not one you may use, so it is Donovan's (rule 2)",
                 suggestion: "Leave it for Donovan. Work in a window of yours meanwhile.", retry: .never))
         }
+        // A child whose window is unknown is the agent's only when every window of that process is: on a split app it may
+        // be Donovan's, whatever the timing says.
+        if c.parent == nil, !all {
+            return .refused(.ownership, HandsError(.outsideAgentWorkspace,
+                "window \(c.id) is a \(kindName) of \(c.app), which also has windows you may not use, and which window it belongs to is unknown, so it may be Donovan's (rule 2)",
+                suggestion: "Leave it for Donovan. Work in a window of yours meanwhile.", retry: .never))
+        }
         guard all || attributed else {
             return .refused(.ownership, HandsError(.outsideAgentWorkspace,
                 "window \(c.id) is a \(kindName) of \(c.app), which also has windows you may not use, and it did not appear within \(Int(attributionWindow)) s after one of your actions in \(c.app), so it may be Donovan's (rule 2)",
@@ -166,7 +173,7 @@ public enum ChildWindowRule {
 /// first seen outside the 10 s after an action is never attributed later, and one that was there before the action never is.
 public struct ChildAttribution: Equatable, Sendable {
     struct Action: Equatable, Sendable { var session: String; var at: Date; var before: Set<UInt32> }
-    struct Seen: Equatable, Sendable { var pid: Int32; var session: String?; var at: Date }
+    struct Seen: Equatable, Sendable { var pid: Int32; var session: String?; var at: Date; var parent: UInt32? = nil }
     private var actions: [Int32: Action] = [:]
     private var seen: [UInt32: Seen] = [:]
 
@@ -180,13 +187,21 @@ public struct ChildAttribution: Equatable, Sendable {
 
     /// The child windows `pid` has at `at`. Each one seen for the first time is the latest action's, when it came within
     /// the window and was not there before it; otherwise nobody's, for good.
-    public mutating func observed(_ ids: Set<UInt32>, pid: Int32, at: Date) {
+    /// `parents` is each child's window as known when it is first seen: its own (a sheet's window, AXParent) or else the app's
+    /// main or focused window at that moment. Kept, so a later look still knows which window raised it.
+    public mutating func observed(_ ids: Set<UInt32>, pid: Int32, at: Date, parents: [UInt32: UInt32] = [:]) {
         for id in ids where seen[id] == nil {
             var owner: String?
             if let a = actions[pid], !a.before.contains(id), at >= a.at, at.timeIntervalSince(a.at) <= ChildWindowRule.attributionWindow { owner = a.session }
-            seen[id] = Seen(pid: pid, session: owner, at: at)
+            seen[id] = Seen(pid: pid, session: owner, at: at, parent: parents[id])
         }
         if seen.count > 2048 { seen = seen.filter { at.timeIntervalSince($0.value.at) < 3600 } }
+    }
+
+    /// The window it belonged to when first seen, when that was known.
+    public func parent(of id: UInt32, pid: Int32) -> UInt32? {
+        guard let s = seen[id], s.pid == pid else { return nil }
+        return s.parent
     }
 
     /// Whether this session's action raised it.
@@ -263,10 +278,56 @@ public struct SessionWindows: Equatable, Sendable {
     /// The session that owns this window, if any.
     public func owner(of window: UInt32) -> String? { opened.first { $0.value[window] != nil }?.key }
 
-    /// `open`'s claim, made under one lock: the newest of `candidates` (the new windows this launch may have made) that no
-    /// other session owns, recorded for `session`. Nil when every candidate is another session's: that `open` could not
-    /// identify its window and owns none. A window is never recorded for two sessions.
-    public mutating func claim(_ candidates: [HandsWindow], session: String) -> HandsWindow? {
+    /// An `open` that ended without identifying its window: the first unowned new window of that app goes to it when it
+    /// appears, and while it is live no other session's `open` claims an unowned new window of that app.
+    public struct Pending: Equatable, Sendable {
+        public var session: String
+        /// The app, as `open` keys it (bundle id, or name), lowercased.
+        public var app: String
+        /// The windows that existed before that launch: never its window.
+        public var known: Set<UInt32>
+        public var at: Date
+    }
+    public static let pendingLife: TimeInterval = 30
+    public private(set) var pending: [Pending] = []
+
+    public mutating func addPending(session: String, app: String, known: Set<UInt32>, at: Date) {
+        guard !session.isEmpty else { return }
+        pending.append(Pending(session: session, app: app.lowercased(), known: known, at: at))
+    }
+
+    private mutating func expirePending(now: Date) { pending.removeAll { now.timeIntervalSince($0.at) > Self.pendingLife } }
+
+    public func livePending(app: String, now: Date) -> [Pending] {
+        pending.filter { $0.app == app.lowercased() && now.timeIntervalSince($0.at) <= Self.pendingLife }.sorted { $0.at < $1.at }
+    }
+
+    /// Gives each live pending claim for `app`, oldest first, the first unowned window of `appWindows` (the app's windows on
+    /// the agent workspace now) that was not there before its launch. Returns what was given.
+    @discardableResult
+    public mutating func resolvePending(app: String, appWindows: [HandsWindow], now: Date) -> [(session: String, window: HandsWindow)] {
+        expirePending(now: now)
+        var given: [(session: String, window: HandsWindow)] = []
+        for p in livePending(app: app, now: now) {
+            guard let w = appWindows.filter({ !p.known.contains($0.id) && owner(of: $0.id) == nil }).min(by: { $0.id < $1.id }) else { continue }
+            record(session: p.session, window: w.id, pid: w.pid)
+            pending.removeAll { $0 == p }
+            given.append((p.session, w))
+        }
+        return given
+    }
+
+    /// `open`'s claim, made under one lock. Pending claims of `app` are served first (`resolvePending`, from `appWindows`,
+    /// which defaults to `candidates`); while another session's is still live this one gets nothing. Otherwise the newest of
+    /// `candidates` (the new windows this launch may have made) that no other session owns, recorded for `session`. Nil
+    /// means this `open` could not identify its window and owns none; a window is never recorded for two sessions, and a
+    /// request with no session is never handed one (`close` would refuse it).
+    public mutating func claim(_ candidates: [HandsWindow], session: String, app: String = "", appWindows: [HandsWindow]? = nil, now: Date = Date()) -> HandsWindow? {
+        guard !session.isEmpty else { return nil }
+        if !app.isEmpty {
+            resolvePending(app: app, appWindows: appWindows ?? candidates, now: now)
+            if livePending(app: app, now: now).contains(where: { $0.session != session }) { return nil }
+        }
         let free = candidates.filter { w in owner(of: w.id).map { $0 == session } ?? true }
         guard let pick = free.max(by: { $0.id < $1.id }) else { return nil }
         record(session: session, window: pick.id, pid: pick.pid)
@@ -406,5 +467,90 @@ public enum WorkspaceList {
             }),
             "note": .string("Agents never change which workspace is shown and never create, rename or delete workspaces. Work on the agent workspace; while it is shown Donovan is looking at it."),
         ])
+    }
+}
+
+/// How the collector finds each child window's parent (`ChildWindowsAX.read`): every window the app lists is looked at
+/// first, and only then are children built, so a sheet listed before its window still gets that window.
+public enum ChildCollect {
+    public struct Listed: Equatable, Sendable {
+        public var id: UInt32
+        /// Placed by BaneySpaces (a document window), so it can be a parent.
+        public var placed: Bool
+        /// The sheets attached to it that have a window number of their own.
+        public var sheets: [UInt32]
+        /// Its AXParent, when that is a window.
+        public var axParent: UInt32?
+        public init(id: UInt32, placed: Bool, sheets: [UInt32] = [], axParent: UInt32? = nil) {
+            self.id = id; self.placed = placed; self.sheets = sheets; self.axParent = axParent
+        }
+    }
+
+    public struct Child: Equatable, Sendable {
+        public var id: UInt32
+        /// Its own window: a sheet's, or AXParent. Nil when unknown.
+        public var parent: UInt32?
+        public init(id: UInt32, parent: UInt32?) { self.id = id; self.parent = parent }
+    }
+
+    /// The children, in listing order, each with its parent once every listed window has been seen.
+    public static func assemble(_ listed: [Listed]) -> [Child] {
+        let placed = Set(listed.filter(\.placed).map(\.id))
+        var sheetOf: [UInt32: UInt32] = [:]
+        for w in listed where w.placed { for s in w.sheets where s != w.id && sheetOf[s] == nil { sheetOf[s] = w.id } }
+        var out: [Child] = [], seen = Set<UInt32>()
+        func add(_ id: UInt32, axParent: UInt32?) {
+            guard !placed.contains(id), seen.insert(id).inserted else { return }
+            let ax = axParent.flatMap { placed.contains($0) && $0 != id ? $0 : nil }
+            out.append(Child(id: id, parent: sheetOf[id] ?? ax))
+        }
+        for w in listed {
+            if w.placed { for s in w.sheets { add(s, axParent: nil) } } else { add(w.id, axParent: w.axParent) }
+        }
+        return out
+    }
+
+    /// The parent an unattached child is first seen with: the app's main window, else its focused one, when that is one of
+    /// the app's placed windows.
+    public static func hint(main: UInt32?, focused: UInt32?, placed: Set<UInt32>) -> UInt32? {
+        [main, focused].compactMap { $0 }.first { placed.contains($0) }
+    }
+}
+
+/// `move`, `arrange` and `close`, at the moment they change something: the acting mode (Read Only refuses), every target's
+/// live window, scope and in-use condition, all read in the one main-thread pass that makes the change. Nothing is changed
+/// unless every target passes, so `arrange` applies all of its frames or none.
+public struct MutationTarget: Equatable, Sendable {
+    public var window: HandsWindow
+    /// The window now; nil when it is gone.
+    public var live: HandsWindow?
+    public var scope: ScopeDecision
+    /// The in-use refusal when Donovan is using the app now.
+    public var inUse: HandsError?
+    public init(window: HandsWindow, live: HandsWindow?, scope: ScopeDecision, inUse: HandsError?) {
+        self.window = window; self.live = live; self.scope = scope; self.inUse = inUse
+    }
+}
+
+public enum MutationGate {
+    public static func refusal(mode: AgentAccessMode, targets: [MutationTarget]) -> HandsError? {
+        if let e = AgentAccessGate.actingRefusal(mode: mode) { return e }
+        for t in targets {
+            guard let live = t.live else {
+                return HandsError(.windowNotFound, "window \(t.window.id) is gone", suggestion: "Run `polycarp-spaces agent windows`.", retry: .afterSnapshot)
+            }
+            guard live.pid == t.window.pid else {
+                return HandsError(.staleRef, "window \(t.window.id) belongs to a different process now", suggestion: "Take a new snapshot.", retry: .afterSnapshot)
+            }
+            if case .denied(let e) = t.scope { return e }
+            if let e = t.inUse { return e }
+        }
+        return nil
+    }
+
+    /// Runs `perform` only when nothing refuses.
+    public static func run<T>(mode: AgentAccessMode, targets: [MutationTarget], perform: () -> Result<T, HandsError>) -> Result<T, HandsError> {
+        if let e = refusal(mode: mode, targets: targets) { return .failure(e) }
+        return perform()
     }
 }

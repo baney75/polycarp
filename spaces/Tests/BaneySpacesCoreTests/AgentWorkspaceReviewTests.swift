@@ -37,6 +37,10 @@ final class MovedInWindowTests: XCTestCase {
         XCTAssertEqual(MovedInWindows.destination(ended[0], workspaces: Set(1...9), current: 4, agentWorkspace: 9), 2, "back where it came from")
         XCTAssertEqual(MovedInWindows.destination(ended[0], workspaces: [1, 4, 9], current: 4, agentWorkspace: 9), 4, "that workspace is gone: his current one")
         XCTAssertEqual(MovedInWindows.destination(ended[0], workspaces: Set(1...9), current: 4, agentWorkspace: 2), 4, "never onto the agent workspace")
+        XCTAssertEqual(book.entries.count, 1, "kept, denied, until it is read back off the agent workspace")
+        XCTAssertFalse(book.decide(there, base: .onAgentWorkspace, lends: lends, now: now, mode: .standard).allowed, "denied while it goes back, even if lent again")
+        XCTAssertEqual(book.settle(lends: lends, now: later, mode: .standard).map(\.window), [8], "tried again until read back")
+        book.returned(window: 8)
         XCTAssertTrue(book.entries.isEmpty)
     }
 
@@ -94,7 +98,7 @@ final class ChildParentOwnershipTests: XCTestCase {
         XCTAssertEqual(ChildWindowRule.decide(mine, placed: placed, attributed: true).scope, .onAgentWorkspace, "a sheet on the agent's window, after its action")
         XCTAssertFalse(ChildWindowRule.decide(mine, placed: placed, attributed: false).allowed, "rule 2 still needs its action on a split app")
         var unknown = sheet; unknown.parent = nil
-        XCTAssertTrue(ChildWindowRule.decide(unknown, placed: placed, attributed: true).allowed, "parent unknown: attribution settles it")
+        XCTAssertFalse(ChildWindowRule.decide(unknown, placed: placed, attributed: true).allowed, "parent unknown on a split app: refused (round 2)")
         XCTAssertFalse(ChildWindowRule.decide(unknown, placed: placed, attributed: false).allowed)
     }
 }

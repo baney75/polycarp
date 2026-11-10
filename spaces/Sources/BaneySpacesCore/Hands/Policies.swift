@@ -314,6 +314,18 @@ public enum PanelDetector {
         return w.children.contains { holds($0, depth: 1) }
     }
 
+    /// A child window recognized as a sheet, dialog or alert (by role, subrole or AXModal): off limits when any part of its
+    /// read was cut off, or when it is or may be a file panel. Anything else goes through `windowIsOffLimits`.
+    public static func childIsOffLimits(_ n: AXNodeInfo, kind: ChildWindowKind?) -> Bool {
+        switch kind {
+        case .sheet?, .dialog?, .alert?:
+            return !n.readable || isOpenOrSavePanel(identifier: n.identifier, subrole: "AXDialog", title: n.title) || looksLikeFilePanel(n)
+                || windowIsOffLimits(n)
+        default:
+            return windowIsOffLimits(n)
+        }
+    }
+
     public static func isSheet(_ n: AXNodeInfo) -> Bool { n.role == "AXSheet" || n.subrole == "AXSheet" }
 
     public static func isOpenOrSavePanel(identifier: String?, subrole: String?, title: String?) -> Bool {

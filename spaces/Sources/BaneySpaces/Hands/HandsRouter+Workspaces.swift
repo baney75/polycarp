@@ -14,9 +14,16 @@ extension HandsRouter {
     /// One process's child windows, read now (off the main thread), each seen by the attribution book.
     func readChildren(pid: Int32, all: [HandsWindow]) -> ChildWindowsAX.Reading {
         let placed = Set(all.filter { $0.pid == pid }.map(\.id))
-        let r = ChildWindowsAX.read(pid: pid, placed: placed)
+        var r = ChildWindowsAX.read(pid: pid, placed: placed)
         let now = Date()
-        childLocked { attribution.observed(Set(r.children.map(\.id)), pid: pid, at: now) }
+        // Each child's window as first seen: its own, else the app's main or focused window at that look.
+        var firstParents: [UInt32: UInt32] = [:]
+        for c in r.children { if let p = c.parent ?? r.hint { firstParents[c.id] = p } }
+        let known = childLocked { () -> [UInt32: UInt32] in
+            attribution.observed(Set(r.children.map(\.id)), pid: pid, at: now, parents: firstParents)
+            return r.children.reduce(into: [:]) { m, c in if let p = attribution.parent(of: c.id, pid: pid) { m[c.id] = p } }
+        }
+        for i in r.children.indices where r.children[i].parent == nil { r.children[i].parent = known[r.children[i].id] }
         return r
     }
 
@@ -59,7 +66,7 @@ extension HandsRouter {
     func children(ofPids pids: Set<Int32>, all: [HandsWindow], agent: Int?, session: String)
         -> (rows: [(facts: ChildWindowFacts, decision: ChildWindowRule.Decision)], sheetsOn: Set<UInt32>) {
         let list = Array(pids)
-        var readings = [ChildWindowsAX.Reading](repeating: .init(children: [], sheetsOn: []), count: list.count)
+        var readings = [ChildWindowsAX.Reading](repeating: .init(children: [], sheetsOn: [], hint: nil), count: list.count)
         let lock = NSLock()
         DispatchQueue.concurrentPerform(iterations: list.count) { i in
             let r = readChildren(pid: list[i], all: all)
@@ -169,9 +176,13 @@ extension HandsRouter {
         for w in chosen {
             if let e = awaitUse(w, verb: "arrange", delivery: .posted, wait: req.int("wait"), session: session) { return .failure(e) }
         }
-        // Read Only, a narrowed scope or Donovan back in the app since the wait: checked again right before.
-        for w in chosen { if let e = actingCheck(w, verb: "arrange", delivery: .posted, session: session)() { return .failure(e) } }
-        let applied = onMain { host.arrange(frames) }
+        // Read Only, a narrowed scope or Donovan back in the app since the wait: checked again for every window in the pass
+        // that applies the frames, and no frame is applied unless all of them pass.
+        let applied: [UInt32: String]
+        switch mutateOnMain(chosen, verb: "arrange", session: session, perform: { _ in .success(host.arrange(frames)) }) {
+        case .failure(let e): return .failure(e)
+        case .success(let a): applied = a
+        }
         return .success(.object([
             "layout": .string(layout.rawValue),
             "area": .object(["x": .int(Int(area.minX)), "y": .int(Int(area.minY)), "width": .int(Int(area.width)), "height": .int(Int(area.height))]),
@@ -197,8 +208,8 @@ extension HandsRouter {
             if let e = actingCheck(w, verb: "move", delivery: .posted, session: session)() { return .failure(e) }
             // After the wait: the agent workspace, the live window, its scope and whether it is shown, read together on the
             // main thread and acted on in the same pass. The agent workspace may have been turned off or changed meanwhile.
-            let outcome = onMain { () -> (Result<MoveDecision.Go, HandsError>, from: Int?) in
-                let agent = host.agentWorkspace()
+            var fromSeen: Int?
+            let result = mutateOnMain([w], verb: "move", session: session) { agent -> Result<MoveDecision.Go, HandsError> in
                 let live = host.live(w.id)
                 let now = live.map { decide($0, agent, session: session) }
                     ?? .denied(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows`.", retry: .afterSnapshot))
@@ -211,14 +222,15 @@ extension HandsRouter {
                     if origin == .fullAccess { AgentAccess.shared.grant(live.pid) }
                     host.move(live.id, go.to)
                 }
-                return (r, live?.workspace)
+                fromSeen = live?.workspace
+                return r
             }
             let go: MoveDecision.Go
-            switch outcome.0 {
+            switch result {
             case .failure(let e): return .failure(e)
             case .success(let g): go = g
             }
-            let from = outcome.from
+            let from = fromSeen
             if go.moves { Trace.log("hands: moved window \(w.id) of \(w.app) from workspace \(from.map(String.init) ?? "?") to the agent workspace") }
             var data: [String: JSONValue] = ["window": .int(Int(w.id)), "app": .string(w.app), "from": from.map(JSONValue.int) ?? .null, "to": .int(go.to), "moved": .bool(go.moves)]
             if go.changed { data["note"] = "the agent workspace changed while the move waited; the window went to the new one" }
@@ -247,13 +259,20 @@ extension HandsRouter {
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope, _)):
+            resolvePendingOpens(all: listWindows().windows, agent: onMain { host.agentWorkspace() })
             if let e = childLocked({ WorkspaceVerbs.closeRefusal(window: w, session: session, opened: sessionWindows) }) { return .failure(e) }
             if let e = awaitUse(w, verb: "close", delivery: .posted, wait: req.int("wait"), session: session) { return .failure(e) }
             let before = noteAction(session: session, pid: w.pid)
             if let e = actingCheck(w, verb: "close", delivery: .posted, session: session)() { return .failure(e) }
             let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
             defer { AgentActivity.shared.end(token) }
-            guard onMain({ host.close(w.id) }) else {
+            // Read Only, scope and in use, read again in the pass that presses the button.
+            let pressed: Bool
+            switch mutateOnMain([w], verb: "close", session: session, perform: { _ in .success(host.close(w.id)) }) {
+            case .failure(let e): return .failure(e)
+            case .success(let p): pressed = p
+            }
+            guard pressed else {
                 return .failure(HandsError(.notSupported, "window \(w.id) of \(w.app) has no close button Polycarp can press",
                                            suggestion: "Leave it open; Polycarp never quits an app for an agent.", retry: .never))
             }
