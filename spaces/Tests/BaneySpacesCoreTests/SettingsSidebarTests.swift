@@ -44,7 +44,7 @@ final class SettingsSidebarTests: XCTestCase {
         let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
         XCTAssertTrue(kit.contains(#"tabs: [.general, .keys, .dock, .appearance, .launcher]"#))
         XCTAssertTrue(kit.contains(#"header: "Your tools", tabs: [.voice, .browser, .agents]"#))
-        XCTAssertTrue(kit.contains(#"header: "System", tabs: [.automation, .updates]"#))
+        XCTAssertTrue(kit.contains(#"header: "System", tabs: [.permissions, .automation, .updates]"#))
     }
 
     func testTheWindowIsOneFixedSizeAndHasNoDoneButtonOrRefit() throws {

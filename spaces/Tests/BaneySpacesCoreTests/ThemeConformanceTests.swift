@@ -143,7 +143,8 @@ final class ThemeConformanceTests: XCTestCase {
 
     /// The files that draw a surface. `Theming.swift` is the theme layer: the only place a shipped
     /// value of the BaneySpaces theme may be written down.
-    private let surfaceFiles = ["WorkspaceDock", "WorkspaceSwitcher", "Launcher", "Viewer", "SwitchHUD", "Setup", "Appearance"]
+    private let surfaceFiles = ["WorkspaceDock", "WorkspaceSwitcher", "Launcher", "Viewer", "SwitchHUD", "Setup", "Appearance",
+                                "Permissions/PermissionsPane", "Permissions/DragHelper"]
 
     /// What an agent shows keeps its own colors (the agent cursor, the spinner and its badges), so
     /// agent activity is never mistaken for yours: the dock's source from this line on.
