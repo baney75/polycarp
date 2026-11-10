@@ -219,4 +219,30 @@ public enum DockStray {
         guard let hiddenAt else { return true }
         return now - hiddenAt > after
     }
+
+    /// Which dock-owned window a panel is: the dock's own, the "+N" list or window strip beside it,
+    /// or one the dock no longer holds (a panel rebuilt or released while still drawn).
+    public enum Kind: String, Sendable { case dock, list, orphan }
+
+    /// The invariant behind `dock stray:` in trace.log: once the dock is down and its slide-out is
+    /// over, no dock-owned window is on screen; and a window the dock no longer holds is never on
+    /// screen, up or down. `windows` is every dock-owned window with whether it is on screen; the
+    /// result is the indexes of those to take away.
+    public static func strays(shown: Bool, windows: [(kind: Kind, up: Bool)], hiddenAt: TimeInterval?, now: TimeInterval) -> [Int] {
+        windows.indices.filter { i in
+            let w = windows[i]
+            guard w.up else { return false }
+            if w.kind == .orphan { return true }
+            return isStray(shown: shown, panelUp: true, hiddenAt: hiddenAt, now: now)
+        }
+    }
+
+    /// The trace line for one stray taken away.
+    public static func traceLine(_ kind: Kind, hiddenAt: TimeInterval?, now: TimeInterval) -> String {
+        let since = hiddenAt.map { String(format: "%.1fs after the dock went down", now - $0) } ?? "with the dock never shown"
+        switch kind {
+        case .orphan: return "dock stray: a dock panel the dock no longer holds was on screen; ordered out"
+        case .dock, .list: return "dock stray: the \(kind == .dock ? "dock" : "list") panel was still on screen \(since); ordered out"
+        }
+    }
 }

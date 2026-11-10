@@ -250,6 +250,25 @@ final class WorkspaceDock {
         shownOn = nil
     }
 
+    /// One owner for every dock window: each `DockPanel` this app has is the dock's, its list's,
+    /// or an orphan. Down (past the slide-out), none may be on screen, and an orphan never may
+    /// (`DockStray.strays`). Each one found says `dock stray:` in trace.log and is taken away.
+    private func sweepStrays(now: TimeInterval) {
+        let mine = NSApp.windows.compactMap { $0 as? DockPanel }
+        guard !mine.isEmpty else { return }
+        let seen = mine.map { w -> (kind: DockStray.Kind, up: Bool) in
+            (w === panel ? .dock : w === sidePanel ? .list : .orphan, w.isVisible)
+        }
+        for i in DockStray.strays(shown: isShown, windows: seen, hiddenAt: hiddenAt, now: now) {
+            let w = mine[i]
+            Trace.log(DockStray.traceLine(seen[i].kind, hiddenAt: hiddenAt, now: now))
+            w.parent?.removeChildWindow(w)
+            w.orderOut(nil)
+            if seen[i].kind == .list { removeSideMonitors(); sideClosing = false; w.alphaValue = 1 }
+            if seen[i].kind == .orphan { w.contentView = nil }
+        }
+    }
+
     /// `restoreSystemDock` puts the macOS Dock back: when the Workspace Dock is turned off, and
     /// when BaneySpaces quits or loses its permission.
     func stop(restoreSystemDock: Bool) {
@@ -288,6 +307,7 @@ final class WorkspaceDock {
 
     private func tick() {
         guard isRunning else { return }
+        sweepStrays(now: ProcessInfo.processInfo.systemUptime)
         // A pinned dock takes drags from other apps too, though it doesn't come and go.
         let carrying = outsideDrag.update(buttonsDown: NSEvent.pressedMouseButtons != 0) { NSPasteboard(name: .drag).changeCount }
         // A drag that ended without leaving the dock or dropping (Escape) is over too.
@@ -377,8 +397,7 @@ final class WorkspaceDock {
         for action in actions {
             switch action {
             case .orderOutStray:
-                Trace.log("dock panel still up after the dock went down; putting it away")
-                panel?.orderOut(nil)
+                sweepStrays(now: uptime)
             case .hideForViewer:
                 Trace.log("dock down: overview open")
                 hide()
@@ -685,8 +704,8 @@ final class WorkspaceDock {
         let edge = WorkspaceDock.edge
         model.maxLength = (edge.isVertical ? screen.visibleFrame.height : screen.frame.width) - 32
         model.load(from: spaces)
-        // Off, the dock has no panel and a reveal builds none.
-        guard let p = dockSwitch.panelForReveal() else { return }
+        // Off, the dock has no panel and a reveal builds none; the model mustn't think it's up.
+        guard let p = dockSwitch.panelForReveal() else { model.shown = false; return }
         isShown = true
         p.contentView?.layoutSubtreeIfNeeded()
         let size = p.contentView?.fittingSize ?? .zero
@@ -740,6 +759,8 @@ final class WorkspaceDock {
             Trace.log("dock panel not on screen; rebuilding it")
             self.dismissSide()
             p.orderOut(nil)
+            // Its SwiftUI view goes with it, so nothing keeps drawing into a panel the dock forgot.
+            p.contentView = nil
             self.dockSwitch.forgetPanel()
             self.isShown = false
             self.show(on: screen, retried: true)
@@ -1492,6 +1513,8 @@ final class DockModel: ObservableObject {
     func reset() {
         if let drag, !drag.carried { NSCursor.pop() }
         drag = nil
+        // A drop's settling icon doesn't play again on the next show.
+        settling = nil
         cancelled.released()
         fileDrag = nil
         heldTarget = nil
