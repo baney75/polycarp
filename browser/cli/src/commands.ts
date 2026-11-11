@@ -239,10 +239,14 @@ export const COMMANDS: CommandSpec[] = [
 		what: "Remote access for web connectors",
 		group: "Remote",
 		subcommands: [
-			{ name: "setup", what: "Tailscale Funnel (or a Cloudflare tunnel with --cloudflare, or your own --public-url), a passcode and a service that keeps serve running", flags: ["--cloudflare", "--replace-funnel", "--public-url", "--port", "--no-service", "--no-passcode", "--json"] },
+			{
+				name: "setup",
+				what: "Tailscale Funnel (or a Cloudflare tunnel with --cloudflare, or your own --public-url), a passcode and a service that keeps serve running. In a terminal it asks and waits; --no-wait stops instead",
+				flags: ["--cloudflare", "--replace-funnel", "--public-url", "--port", "--no-service", "--no-passcode", "--tailscale", "--no-wait", "--no-input", "--yes", "--connect-code", "--json"],
+			},
 			{ name: "cloudflare", args: "login", max: 1, what: "Sign in to your own Cloudflare account, in your browser", flags: ["--json"] },
 			{ name: "status", what: "Is it up and reachable from the internet?", flags: ["--json"] },
-			{ name: "off", what: "Stop the service, close the tunnel or Funnel and remove remote.json" },
+			{ name: "off", what: "Stop the service, close the tunnel or Funnel and remove remote.json", flags: ["--json"] },
 		],
 	},
 	{
@@ -252,7 +256,7 @@ export const COMMANDS: CommandSpec[] = [
 		group: "Remote",
 		subcommands: [
 			{ name: "tailscale", what: "Reach serve from your tailnet over HTTPS (--public: Funnel)", flags: ["--port", "--public", "--off"] },
-			{ name: "cloudflare", what: "A free cloudflared quick tunnel", flags: ["--port", "--off"] },
+			{ name: "cloudflare", what: "A quick tunnel for local testing with a token; claude.ai, ChatGPT and grok.com can't use it (use remote setup)", flags: ["--port", "--off"] },
 		],
 	},
 	{

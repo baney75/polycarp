@@ -5,11 +5,12 @@
  * - tailscale: `tailscale serve` publishes https://<this machine>.<tailnet>.ts.net/polycarp
  *   to the user's own tailnet only. `--public` uses `tailscale funnel` instead, which is
  *   reachable from the internet; the token is then the only lock, so it warns.
- * - cloudflare: a `cloudflared` quick tunnel (free, no account) gives a random
- *   https://*.trycloudflare.com URL that changes each time. For a stable name, use
- *   `remote setup --cloudflare <name>` on the person's own account (cloudflare.ts). Polycarp never makes accounts.
+ * - cloudflare: a `cloudflared` quick tunnel (no account) gives a random https://*.trycloudflare.com URL that changes
+ *   each time. It is for local testing with a token only: quick tunnels don't carry SSE, so claude.ai, ChatGPT and grok.com
+ *   can't use one (docs/decisions.md, D30). For those, `remote setup` (cloudflare.ts for a named tunnel). Polycarp never makes accounts.
  *
- * Polycarp doesn't install either tool.
+ * Both tools are found the way `remote setup` finds them: on PATH, the Tailscale Mac app's own copy, and the cloudflared
+ * Polycarp downloaded. This command downloads nothing.
  */
 
 import { COMMAND_NAME } from "./self.ts";
@@ -17,10 +18,11 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { which } from "./harness.ts";
+import { cloudflaredBinary } from "./cloudflare.ts";
+import { tailscaleBinary } from "./remote-setup.ts";
 import { envVar } from "./env.ts";
 import { configDir } from "./files.ts";
-import { windowsProcessImage, windowsTool } from "./tool-paths.ts";
+import { windowsProcessImage } from "./tool-paths.ts";
 
 export const DEFAULT_PORT = 8787;
 const SERVE_PATH = "/polycarp";
@@ -72,7 +74,7 @@ function tailscaleOff(bin: string, mode: string, port: number): TunnelResult {
 }
 
 export function tailscaleTunnel(options: { port: number; public: boolean; off: boolean }): TunnelResult {
-	const bin = process.platform === "win32" ? windowsTool("tailscale") : which("tailscale");
+	const bin = tailscaleBinary();
 	if (!bin) return { ok: false, message: "Tailscale isn't installed. Install it from tailscale.com and sign in, then run this again." };
 	const mode = options.public ? "funnel" : "serve";
 	if (options.off) {
@@ -164,12 +166,11 @@ export async function cloudflareTunnel(options: { port: number; off: boolean; ti
 		return { ok: true, message: "Stopped the Cloudflare tunnel." };
 	}
 	if (ourCloudflared() !== undefined) return { ok: false, message: `A Cloudflare tunnel is already running. Run ${COMMAND_NAME} tunnel cloudflare --off first.` };
-	const bin = process.platform === "win32" ? windowsTool("cloudflared") : which("cloudflared");
+	const bin = cloudflaredBinary();
 	if (!bin) {
 		return {
 			ok: false,
-			message:
-				"cloudflared isn't installed. Install it from Cloudflare (developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads), then run this again. A quick tunnel needs no account.",
+			message: `cloudflared isn't installed. A quick tunnel is for local testing with a token; claude.ai, ChatGPT and grok.com can't use one. For them, run ${COMMAND_NAME} remote setup, which can get cloudflared for you.`,
 		};
 	}
 	mkdirSync(configDir(), { recursive: true });
@@ -183,7 +184,7 @@ export async function cloudflareTunnel(options: { port: number; off: boolean; ti
 	while (Date.now() < deadline) {
 		// The issued name, never api.trycloudflare.com from an error line.
 		const m = /https:\/\/(?!api\.)[a-z0-9]+(?:-[a-z0-9]+)+\.trycloudflare\.com/.exec(readFileSync(log, "utf8"));
-		if (m) return { ok: true, url: `${m[0]}/mcp`, message: `MCP is reachable at ${m[0]}/mcp by anyone who has a token. The URL changes each time; for a fixed name, set up a named tunnel in your own Cloudflare account.` };
+		if (m) return { ok: true, url: `${m[0]}/mcp`, message: `MCP is reachable at ${m[0]}/mcp by anyone who has a token, for local testing. claude.ai, ChatGPT and grok.com can't use a quick tunnel (it doesn't carry their event stream, and the address changes each time); for them, run ${COMMAND_NAME} remote setup.` };
 		await new Promise((r) => setTimeout(r, 250));
 	}
 	// No URL in time: stop it, so nothing is left exposed without the user knowing the address.

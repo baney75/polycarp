@@ -7,6 +7,7 @@
 //   fail      it prints `funnelText` and exits 1 (the CheckFunnelAccess fallback prints a tailscale.com/s/... link; other failures print anything).
 //   hang      it prints a line and never finishes, with no page on the output.
 //   silent0   it exits 0 without turning Funnel on and without printing anything.
+//   refuse2   the first two calls print the page and exit 1, as if Funnel isn't allowed yet; the third turns it on, as once a person allows it.
 // (The tests run it with a PATH that has no system dirs, so it uses shell builtins and absolute paths.)
 // `funnel --https=8443 off` turns Funnel off (or fails when funnelOffFails). `serve status --json` shows AllowFunnel while it is on.
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
@@ -30,6 +31,7 @@ export function writeTailscaleStub(file, { dir, log, dns, lock = "Tailnet lock i
 		fail: `echo '${funnelText}'; exit 1`,
 		hang: `echo "starting"; /bin/sleep 300; exit 0`,
 		silent0: "exit 0",
+		refuse2: `n=0; [ -f ${dir}/funnel-tries ] && read n < ${dir}/funnel-tries; n=$((n+1)); echo $n > ${dir}/funnel-tries; if [ $n -le 2 ]; then printf '${page}'; exit 1; fi; echo "Available on the internet:"; echo on > ${dir}/funnel-on; exit 0`,
 	}[funnel];
 	if (funnelBody === undefined) throw new Error(`unknown funnel mode ${funnel}`);
 	const off = funnelOffFails ? "echo 'boom' >&2; exit 1" : `/bin/rm -f ${dir}/funnel-on; exit 0`;
