@@ -49,7 +49,8 @@ public enum HandsTools {
     }
 
     static let base: [HandsTool] = [
-        HandsTool(verb: "windows", summary: "List the windows an agent may use now: those on the agent workspace and those of lent apps, with their ids. A window of an app Donovan is using carries in_use: true and in_use_note; reads on it work now, and an action on it waits.", params: [], acts: false),
+        HandsTool(verb: "windows", summary: "List the windows an agent may use now: those on the agent workspace and those of lent apps, with their ids, plus the dialogs, alerts, sheets and palettes those apps raised (kind, parent, waiting: true when the app is blocked until it is answered). A dialog you may not use is listed with usable: false and the rule that refused it. A window of an app Donovan is using carries in_use: true and in_use_note; reads on it work now, and an action on it waits.", params: [], acts: false),
+        HandsTool(verb: "workspaces", summary: "Read only. List the workspaces (number, name, shown or not, which one is the agent workspace) and where each window you may use is. Use it before `move` or `arrange`, or to see whether Donovan is looking at the agent workspace (agent_workspace_shown). Agents never switch, create, rename or delete workspaces.", params: [], acts: false),
         HandsTool(verb: "snapshot", summary: "Read the accessibility tree of one window and print a ref for each thing you can act on. Only the agent workspace and lent apps. Refs last until the next snapshot of that window changes the UI; after a stale_ref error take a new snapshot.", params: [
             HandsParam("app", .string, "App name or bundle id. With several windows on the agent workspace the newest is read; pass window to choose."),
             HandsParam("window", .integer, "Window id from `windows`, `open` or a previous snapshot."),
@@ -111,9 +112,21 @@ public enum HandsTools {
             HandsParam("out", .string, "A file name (no folder) for the PNG; it is written in Polycarp's own shots folder."),
             HandsParam("cursor", .boolean, "Draw the agent cursor where it last acted in this window, if it did in the last 30 seconds and was on screen. Off by default, so the picture is the app itself."),
         ], acts: true),
-        HandsTool(verb: "open", summary: "Open an app, or files from the agent handoff folder in it, on the agent workspace, without switching the user to it. Apps that hold the user's own data (Safari, Notes, Mail, Messages, Calendar, Photos) answer needs_sandbox.", params: [
+        HandsTool(verb: "open", summary: "Start work in the background: open an app, or files from the agent handoff folder in it, on the agent workspace, without activating it or switching what Donovan sees. It answers with the new window's id once the window exists (it waits up to `wait` seconds, at most 7), and focus: {changed, returned} says whether macOS brought the app forward and Polycarp gave the keyboard back. Each call makes a fresh window by default (a separate copy, or New Window from behind in a running copy under Full Access; Donovan's windows never move); new_window: false reuses a window this session already opened in that app. Apps that hold the user's own data (Safari, Notes, Mail, Messages, Calendar, Photos) answer needs_sandbox; URLs wait for agent browser profiles.", params: [
             HandsParam("app", .string, "App name or bundle id.", required: true, positional: true),
             HandsParam("targets", .stringList, "Files in the agent handoff folder to open in it. URLs need an agent browser profile (a later phase).", positional: true, rest: true),
+            HandsParam("new_window", .boolean, "true (default): always a fresh window. false: reuse a window this session opened in the app, when there is one and no files are given."),
+        ], acts: true),
+        HandsTool(verb: "arrange", summary: "Lay out the agent workspace's windows so screenshots and reads are stable: full, halves, thirds, grid, or frames with explicit frames. Only windows on the agent workspace; while it is out of sight they keep their new size and take the position when it is shown. Never touches Donovan's workspaces.", params: [
+            HandsParam("layout", .string, "full, halves, thirds, grid or frames.", required: true, positional: true),
+            HandsParam("windows", .stringList, "Window ids in the order to place them (default: every agent workspace window you may use, oldest first). With frames: id=x,y,width,height in points from the top-left of the screen's usable area.", positional: true, rest: true),
+        ], acts: true),
+        HandsTool(verb: "move", summary: "Move a window you may use onto the agent workspace (a lent window, or any window under Full Access, comes off Donovan's workspace), or give a window already there a new frame. A moved window goes back when its lend ends or Full Access is narrowed. Never onto a workspace Donovan is looking at, never one of his windows he hasn't lent, never a dialog (it goes with its app).", params: [
+            HandsParam("window", .integer, "Window id from `windows`.", required: true),
+            HandsParam("frame", .string, "x,y,width,height in points from the top-left of the screen's usable area (optional)."),
+        ], acts: true),
+        HandsTool(verb: "close", summary: "Close a window this session opened with `open`, through its close button, from behind. Anything else is refused, and no app is ever quit. If the app asks to save, the sheet appears in the result as opened: answer it (Don't Save or Cancel; a Save panel stays refused, so save first through a document you opened from the handoff folder).", params: [
+            HandsParam("window", .integer, "Window id that your `open` returned.", required: true),
         ], acts: true),
     ]
 
@@ -148,6 +161,14 @@ public enum HandsParse {
         return HandsError(.needsLend, "agents can't lend apps; \(name) is not on the agent workspace",
                           suggestion: "Ask Donovan to lend it: he runs `polycarp-spaces agent lend \(name)` in a terminal he types in, or picks it in the Polycarp menu under Lend to Agents. Or do the work on the agent workspace with `polycarp-spaces agent open \(name)` (apps that hold his data go to the sandbox).",
                           retry: .never)
+    }
+
+    /// The session a command line request carries (second-F7): `$BANEYSPACES_SESSION` when set, else the terminal, else
+    /// "default", which every caller without a terminal shares. What `close`, `new_window: false` and dialog attribution
+    /// count as "yours" is this session's.
+    public static func cliSession(environment: [String: String], tty: String) -> String {
+        if let s = environment["BANEYSPACES_SESSION"], !s.isEmpty { return s }
+        return tty.isEmpty ? "default" : tty
     }
 
     public static func command(_ words: [String], session: String? = nil) -> Result<HandsRequest, HandsError> {
@@ -238,6 +259,21 @@ public enum HandsParse {
         }
         if let w = r.int("wait"), !(0...InUseRule.maxWait).contains(w) {
             return .failure(usage(tool, "wait is seconds from 0 to \(InUseRule.maxWait), not \(w)"))
+        }
+        if tool.verb == "arrange" {
+            guard let layout = r.string("layout").flatMap({ AgentArrange.Layout(rawValue: $0.lowercased()) }) else {
+                return .failure(usage(tool, "layout is full, halves, thirds, grid or frames, not \(r.string("layout") ?? "")"))
+            }
+            let items = r.args["windows"]?.array?.compactMap(\.string) ?? []
+            if layout == .frames {
+                if items.isEmpty { return .failure(usage(tool, "frames needs id=x,y,width,height for each window")) }
+                if let bad = items.first(where: { AgentArrange.parseFrame($0) == nil }) { return .failure(usage(tool, "\(bad) isn't id=x,y,width,height")) }
+            } else if let bad = items.first(where: { UInt32($0) == nil }) {
+                return .failure(usage(tool, "\(bad) isn't a window id"))
+            }
+        }
+        if tool.verb == "move", let f = r.string("frame"), AgentArrange.parseFrame("0=" + f) == nil {
+            return .failure(usage(tool, "frame is x,y,width,height, not \(f)"))
         }
         if tool.verb == "snapshot" || tool.verb == "find", r.args["app"] == nil, r.args["window"] == nil {
             return .failure(usage(tool, "say which window: app or window"))

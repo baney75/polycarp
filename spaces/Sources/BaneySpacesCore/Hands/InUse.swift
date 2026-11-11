@@ -40,7 +40,7 @@ public enum InUseDelivery: Equatable, Sendable {
 /// window of the agent workspace that is neither the app's focused window nor its main window.
 public enum InUseRule {
     /// The verbs that only read: in use never applies to them.
-    public static let reads: Set<String> = ["windows", "snapshot", "find", "get", "shot"]
+    public static let reads: Set<String> = ["windows", "workspaces", "snapshot", "find", "get", "shot"]
     /// The verbs that act through accessibility on an element and need no keyboard focus.
     public static let semantic: Set<String> = ["click", "set-value", "select", "toggle", "scroll", "type"]
     /// How long an action waits when the caller says nothing, and the most it may ask for.

@@ -37,6 +37,14 @@ not a public issue.
   the socket can read it but never change it, and `agent open` from another machine never gets
   more than Default. `agent run` from another machine already runs any command as you, so the
   mode doesn't change what it can do.
+- **Dialogs and the agent workspace.** An agent may answer a dialog, alert, sheet or palette only when it belongs to an
+  app whose windows the agent may already use and is clearly the agent's (every placed window of that app is usable, or
+  it appeared within 10 seconds of that agent's own action). Open and Save panels, and macOS password, keychain and
+  permission prompts (SecurityAgent, coreauthd, UserNotificationCenter, TCC), are always refused. Agents may lay out,
+  move onto the agent workspace and close only what the rules already let them use: close only windows they opened, never
+  quitting an app, and move never takes a window off your workspaces unless you lent it or set Full Access; such a window
+  goes back when the lend ends or Full Access is narrowed. Agents never
+  switch, create, rename or delete workspaces. Connectors get none of these beyond the read-only workspace list.
 - **Hooks.** `baneyspaces hooks install` adds entries to `~/.claude/settings.json` and a file
   in `~/.grok/hooks`. It backs up the settings file once and removes only its own entries.
 - Settings and window positions stay in `~/Library/Application Support/BaneySpaces` and its

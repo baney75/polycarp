@@ -647,7 +647,8 @@ final class EngineRetryTests: XCTestCase {
     }
 }
 
-/// Sheets are children of their document window, so a window with one attached is off limits.
+/// Sheets are children of their document window. Until 2026-11-10 any sheet put the window off limits; now only one that is,
+/// or may be, an Open or Save panel does (`PanelSheetTests` holds the rest).
 final class AttachedSheetTests: XCTestCase {
     func window(children: [AXNodeInfo]) -> AXNodeInfo { AXNodeInfo(role: "AXWindow", subrole: "AXStandardWindow", identifier: nil, title: "Untitled", children: children) }
 
@@ -656,9 +657,10 @@ final class AttachedSheetTests: XCTestCase {
         XCTAssertFalse(PanelDetector.windowIsOffLimits(tree))
     }
 
-    func testAnAttachedSheetMakesTheWholeWindowOffLimits() {
+    func testAnAttachedSaveSheetMakesTheWholeWindowOffLimits() {
         XCTAssertTrue(PanelDetector.windowIsOffLimits(window(children: [AXNodeInfo(role: "AXScrollArea"), AXNodeInfo(role: "AXSheet", title: "Save")])))
-        XCTAssertTrue(PanelDetector.windowIsOffLimits(window(children: [AXNodeInfo(role: "AXGroup", children: [AXNodeInfo(role: "AXSheet")])])), "a sheet below a group")
+        XCTAssertTrue(PanelDetector.windowIsOffLimits(window(children: [AXNodeInfo(role: "AXGroup", children: [AXNodeInfo(role: "AXSheet", readable: false)])])), "an unreadable sheet below a group")
+        XCTAssertFalse(PanelDetector.windowIsOffLimits(window(children: [AXNodeInfo(role: "AXGroup", children: [AXNodeInfo(role: "AXSheet", children: [AXNodeInfo(role: "AXButton", title: "OK")])])])), "an alert sheet no longer locks the window")
         XCTAssertTrue(PanelDetector.windowIsOffLimits(window(children: [AXNodeInfo(role: "AXGroup", identifier: "save-panel")])), "a panel descendant")
     }
 
@@ -671,7 +673,7 @@ final class AttachedSheetTests: XCTestCase {
         let spaces = try HandsSourceTests.code("Sources/BaneySpaces/Spaces.swift")
         let inspect = try XCTUnwrap(HandsSourceTests.block(after: "func handsInspect(", in: spaces))
         XCTAssertTrue(inspect.contains("AXUIElementSetMessagingTimeout(e, 0.25)"))
-        XCTAssertTrue(inspect.contains("PanelDetector.windowIsOffLimits(info(e, children: true))"))
+        XCTAssertTrue(inspect.contains("PanelDetector.windowIsOffLimits(HandsAXTree.node(e, depth: 1))"))
     }
 }
 
@@ -882,7 +884,7 @@ final class HandsSourceTests: XCTestCase {
         let begin = try XCTUnwrap(act.range(of: "AgentActivity.shared.begin(pid: w.pid, window: w.id)"))
         let end = try XCTUnwrap(act.range(of: "defer { AgentActivity.shared.end(token) }"))
         let engine = try XCTUnwrap(act.range(of: "HandsEngine.shared.act("))
-        let firstRead = try XCTUnwrap(act.range(of: "valueOf(w, ref)"))
+        let firstRead = try XCTUnwrap(act.range(of: "valueOf(w, ref, session: session)"))
         XCTAssertTrue(begin.lowerBound < firstRead.lowerBound, "the mark starts before the first engine call, queue wait included")
         XCTAssertTrue(begin.lowerBound < end.lowerBound && end.lowerBound < engine.lowerBound, "released by defer, so every exit ends it")
         XCTAssertFalse(router.contains("mark(pid: w.pid)"), "no fixed-length mark")
@@ -896,9 +898,9 @@ final class HandsSourceTests: XCTestCase {
 
     func testScopeIsCheckedAtResolveAndAtTheMomentEveryEngineCallExecutes() throws {
         let router = try Self.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
-        XCTAssertTrue(router.contains("let d = decide(w, agent)"), "resolve checks")
-        XCTAssertTrue(router.contains("if case .denied(let e) = decide(now, agent) { return e }"), "gate checks the live window")
-        XCTAssertTrue(router.contains("{ [self] in gate(w) ?? ref.flatMap { refProblem($0) } }"), "the check closure is scope, then the ref's identity")
+        XCTAssertTrue(router.contains("let d = decide(w, agent, session: session)"), "resolve checks")
+        XCTAssertTrue(router.contains("if case .denied(let e) = decide(now, agent, session: session) { return e }"), "gate checks the live window")
+        XCTAssertTrue(router.contains("{ [self] in gate(w, session: session) ?? ref.flatMap { refProblem($0) } }"), "the check closure is scope, then the ref's identity")
         // Every engine call the router makes hands the engine a check; none is made bare.
         let calls = router.components(separatedBy: "HandsEngine.shared.").dropFirst()
         XCTAssertGreaterThanOrEqual(calls.count, 6)
@@ -907,7 +909,7 @@ final class HandsSourceTests: XCTestCase {
             XCTAssertTrue(c.prefix(260).contains("check: check(w") || c.prefix(260).contains("check: actingCheck(w"), "an engine call without a check: \(c.prefix(80))")
         }
         let acting = try XCTUnwrap(Self.block(after: "func actingCheck(", in: router))
-        XCTAssertTrue(acting.contains("let scope = check(w, ref: ref)") && acting.contains("?? scope()"), "actingCheck still runs the scope check")
+        XCTAssertTrue(acting.contains("let scope = check(w, ref: ref, session: session)") && acting.contains("?? scope()"), "actingCheck still runs the scope check")
         // ...and the engine runs it on the queue, right before the work, not when the call was enqueued.
         let engine = try Self.code("Sources/BaneySpaces/Hands/HandsEngine.swift")
         let run = try XCTUnwrap(Self.block(after: "private func run(window", in: engine))
@@ -1018,14 +1020,14 @@ final class HandsSourceTests: XCTestCase {
         XCTAssertEqual(shot.components(separatedBy: "if outcome.isCancelled { return }").count - 1, 3, "a capture whose caller gave up is dropped")
         XCTAssertTrue(shot.contains("outcome.cancel()"))
         let router = try Self.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
-        XCTAssertTrue(router.contains("WindowShot.capture(window: w.id, named: req.string(\"out\"), cursor: req.bool(\"cursor\") ? host.cursorMark(w.id) : nil, check: check(w))"))
+        XCTAssertTrue(router.contains("WindowShot.capture(window: w.id, named: req.string(\"out\"), cursor: req.bool(\"cursor\") ? host.cursorMark(w.id) : nil, check: check(w, session: req.session ?? \"\"))"))
     }
 
     func testEveryWindowOfAnAgentProcessIsInspectedOnEveryUse() throws {
         let router = try Self.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
         let gate = try XCTUnwrap(Self.block(after: "func gate(", in: router))
         XCTAssertTrue(gate.contains("inspectProblem(now)"))
-        let inspect = try XCTUnwrap(Self.block(after: "private func inspectProblem(", in: router))
+        let inspect = try XCTUnwrap(Self.block(after: "func inspectProblem(", in: router))
         XCTAssertTrue(inspect.contains("WindowInspection.decide(") && inspect.contains("panel: seen.panel") && inspect.contains("document: seen.document") && inspect.contains("handoff: Self.handoffFolder"))
         XCTAssertTrue(inspect.contains("remember(w.id)"))
         // Under Full Access the list skips reading every window (documents are open then); panels are refused at use (#167).
@@ -1073,7 +1075,7 @@ final class AgentRunLaunchTests: XCTestCase {
             XCTAssertTrue(helper.contains(needed), needed)
         }
         XCTAssertEqual(session.components(separatedBy: "adoptAgentStartedProcess(").count - 1, 3, "the definition, `agent open` and `agent run`")
-        XCTAssertTrue(session.contains("if startedNew {") && session.contains("adoptAgentStartedProcess(pid, workspace: n, title: name"))
+        XCTAssertTrue(session.contains("if MovedInWindows.ProcessOrigin(startedNew: startedNew).ownsWholeProcess {") && session.contains("adoptAgentStartedProcess(pid, workspace: n, title: name"))
         let engine = try HandsSourceTests.code("Sources/BaneySpaces/Session/Engine.swift")
         XCTAssertTrue(engine.contains("opened(app.processIdentifier, name, true)") && engine.contains("opened(running.processIdentifier, name, false)"),
                       "only a Terminal this run started is new")

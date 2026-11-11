@@ -13,7 +13,9 @@ public struct HandsMCP {
     `scroll`, `select`, `toggle`), then read the evidence in the result and `get` or snapshot again to check. \
     Refs go stale when the UI changes: on a stale_ref error take a new snapshot. Only windows on the agent \
     workspace or of apps Donovan has lent are allowed; anything else returns outside_agent_workspace (you cannot lend). \
-    Never ask the user to switch away from what they are doing.
+    Never ask the user to switch away from what they are doing. \
+    Work in the background: `open` the app (it returns the window id), `arrange` the agent workspace, act; when an action's \
+    result says `opened`, a dialog or sheet came up: snapshot that window and answer it; then `close` what you opened.
     """
 
     public var version: String

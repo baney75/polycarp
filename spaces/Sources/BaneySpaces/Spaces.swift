@@ -492,12 +492,60 @@ final class Spaces {
         guard let e = windows[id]?.element else { return (nil, false) }
         // An app that doesn't answer must not hold the main thread: short timeout, and anything unreadable is off limits.
         AXUIElementSetMessagingTimeout(e, 0.25)
-        func info(_ el: AXUIElement, children: Bool) -> AXNodeInfo {
-            AXNodeInfo(role: el.string(kAXRoleAttribute), subrole: el.string(kAXSubroleAttribute), identifier: el.string("AXIdentifier"), title: el.string(kAXTitleAttribute),
-                       children: children ? ((el.value(kAXChildrenAttribute) as [AXUIElement]?) ?? []).prefix(40).map { info($0, children: false) } : [])
+        // A sheet is a child of its window: one level down, and a sheet's own elements deeper, so a Save or Open panel
+        // shown as a sheet still puts the window off limits while a "Save changes?" sheet does not (`PanelDetector`).
+        return (e.string("AXDocument"), PanelDetector.windowIsOffLimits(HandsAXTree.node(e, depth: 1)))
+    }
+
+    /// The usable area of the screen the agent workspace shows on (the main one), for `arrange`.
+    func agentArea() -> CGRect {
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        return NSScreen.screens.first.map { Geometry.toAX($0.visibleFrame, primaryHeight: primaryHeight) } ?? .zero
+    }
+
+    /// `arrange` and `move --frame`: gives agent workspace windows these frames without showing them. A window in sight
+    /// (the agent workspace is shown) takes the frame now. A parked one takes the size now and the place when its workspace
+    /// is shown (its record), and is put back at the hiding spot if the resize brought it into view. One of a hidden app
+    /// moves while it is still off screen. Anything not on the agent workspace is skipped.
+    func arrangeAgentWindows(_ frames: [WindowID: CGRect]) -> [WindowID: String] {
+        guard active, let agent = Self.agentWorkspace else { return frames.mapValues { _ in "skipped: no agent workspace" } }
+        var out: [WindowID: String] = [:]
+        let screens = Windows.screens()
+        for (id, f) in frames {
+            guard model.workspace(of: id) == agent, let w = windows[id] else { out[id] = "skipped: not on the agent workspace"; continue }
+            if model.isShown(agent) {
+                w.setFrame(f)
+                out[id] = "now"
+            } else if saved.frames[id] != nil {
+                saved.frames[id] = f
+                w.setSize(f.size)
+                if let b = Windows.serverWindows()[id]?.bounds, !Geometry.isStranded(b, screens: screens) { w.setOrigin(Geometry.hidingSpot(screens: screens)) }
+                out[id] = "size now, place when shown"
+            } else if saved.hiddenApps.contains(w.pid), Windows.allOffscreen([id]) {
+                w.setFrame(f)
+                out[id] = "now, while hidden"
+            } else {
+                out[id] = "skipped: neither parked nor hidden"
+            }
         }
-        // A sheet (a Save or Open panel on a document) is a child of its window: look one level down.
-        return (e.string("AXDocument"), PanelDetector.windowIsOffLimits(info(e, children: true)))
+        persist()
+        Trace.log("hands: arranged \(frames.count) agent windows")
+        return out
+    }
+
+    /// `close`: presses the window's close button from behind (no raise, no activation). False when it has none.
+    func pressClose(_ id: WindowID) -> Bool {
+        guard let w = windows[id], Windows.isResponsive(w.pid) else { return false }
+        AXUIElementSetMessagingTimeout(w.element, 0.25)
+        guard let button: AXUIElement = w.element.value(kAXCloseButtonAttribute) else { return false }
+        return AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
+    }
+
+    /// `workspaces`: one row per workspace.
+    func workspaceRows() -> [WorkspaceRow] {
+        Workspaces.range.map { n in
+            WorkspaceRow(number: n, name: nil, shown: model.isShown(n), current: model.current == n, windows: model.windows(on: n).count)
+        }
     }
 
     /// Whether workspace `n` holds any window: `agent on N` refuses a workspace someone is using.

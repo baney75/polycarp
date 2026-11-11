@@ -33,7 +33,7 @@ final class InUseTests: XCTestCase {
                 }
             }
         }
-        XCTAssertEqual(InUseRule.reads, ["windows", "snapshot", "find", "get", "shot"])
+        XCTAssertEqual(InUseRule.reads, ["windows", "workspaces", "snapshot", "find", "get", "shot"], "workspaces only reads too")
     }
 
     /// The scope rule no longer knows about in use at all, and the router doesn't hand it in.
@@ -41,7 +41,7 @@ final class InUseTests: XCTestCase {
         let scope = try HandsSourceTests.code("Sources/BaneySpacesCore/Hands/Scope.swift")
         XCTAssertFalse(scope.contains("inUse"), "ScopeGuard must not refuse for in use (reads ignore it)")
         let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
-        let decide = try XCTUnwrap(HandsSourceTests.block(after: "func decide(_ w: HandsWindow, _ agent: Int?)", in: router))
+        let decide = try XCTUnwrap(HandsSourceTests.block(after: "func decide(_ w: HandsWindow, _ agent: Int?, session: String = \"\")", in: router))
         XCTAssertFalse(decide.contains("UserActivity"), "decide is the scope for reads and actions alike")
     }
 
@@ -63,7 +63,7 @@ final class InUseTests: XCTestCase {
 
     func testTheRouterListsWindowsInUseWithTheMark() throws {
         let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
-        let windows = try XCTUnwrap(HandsSourceTests.block(after: "private func windows() -> HandsEnvelope", in: router))
+        let windows = try XCTUnwrap(HandsSourceTests.block(after: "private func windows(session: String) -> HandsEnvelope", in: router))
         XCTAssertTrue(windows.contains("HandsWindowList.entry(w, scope: u.scope, inUse: UserActivity.shared.state(w.pid))"))
     }
 
@@ -221,16 +221,16 @@ final class InUseTests: XCTestCase {
     func testTheRouterWaitsBeforeEveryAction() throws {
         let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
         let act = try XCTUnwrap(HandsSourceTests.block(after: "private func act(", in: router))
-        let wait = try XCTUnwrap(act.range(of: "awaitUse(w, verb: name, delivery: .headlessAX, wait: req.int(\"wait\"))"))
+        let wait = try XCTUnwrap(act.range(of: "awaitUse(w, verb: name, delivery: .headlessAX, wait: req.int(\"wait\"), session: session)"))
         XCTAssertLessThan(wait.lowerBound, try XCTUnwrap(act.range(of: "AgentActivity.shared.begin")).lowerBound)
         let awaitUse = try XCTUnwrap(HandsSourceTests.block(after: "func awaitUse(", in: router))
         XCTAssertTrue(awaitUse.contains("Thread.isMainThread ? 0 : InUseRule.bound(wait)"), "never blocks the main thread")
-        XCTAssertTrue(awaitUse.contains("InUseWait.step(mode: access, scope: decide(live, agent)"), "Read Only and the whole scope at every look")
+        XCTAssertTrue(awaitUse.contains("InUseWait.step(mode: access, scope: decide(live, agent, session: session)"), "Read Only and the whole scope at every look")
         let acting = try XCTUnwrap(HandsSourceTests.block(after: "func actingCheck(", in: router))
         XCTAssertTrue(acting.contains("inUseProblem(w, verb: verb, delivery: delivery)"), "checked again at delivery")
         let bg = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
         let background = try XCTUnwrap(HandsSourceTests.block(after: "private func background(", in: bg))
-        let bgWait = try XCTUnwrap(background.range(of: "awaitUse(w, verb: name, delivery: .posted, wait: wait)"))
+        let bgWait = try XCTUnwrap(background.range(of: "awaitUse(w, verb: name, delivery: .posted, wait: wait, session: session)"))
         XCTAssertLessThan(bgWait.lowerBound, try XCTUnwrap(background.range(of: "AgentActivity.shared.begin")).lowerBound)
         let open = try XCTUnwrap(HandsSourceTests.block(after: "private func open(", in: router))
         let openWait = try XCTUnwrap(open.range(of: "InUseWait.run("))

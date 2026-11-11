@@ -93,7 +93,7 @@ final class SessionController {
     let hands = HandsRouter()
     /// The same hands for an assistant that came in through the connector: never more than Default, whatever this Mac allows
     /// the agents on it. Its refs are its own.
-    let connectorHands = HandsRouter(cap: { $0.forRemote })
+    let connectorHands = HandsRouter(cap: { $0.forRemote }, remote: true)
     /// Answers `baneyspaces sandbox …` (the app delegate sets it); called off the main thread.
     var sandboxHandler: ((Wire.Request) -> Wire.Reply)?
 
@@ -612,7 +612,7 @@ final class SessionController {
                 } else { asked = false }
                 guard asked else {
                     h.unclaim(pid)
-                    return .init(ok: true, info: ["workspace": "\(n)", "app": appName, "pid": "\(pid)",
+                    return .init(ok: true, info: ["workspace": "\(n)", "app": appName, "pid": "\(pid)", SessionWindows.noWindowKey: "1",
                                                   "note": "\(appName) is already running and has no New Window command; with full access its windows are open to agents where they are"])
                 }
                 return .init(ok: true, info: ["workspace": "\(n)", "app": appName, "pid": "\(pid)", "note": "\(appName) is already running; its new window opens on the agent workspace in a moment"])
@@ -624,6 +624,8 @@ final class SessionController {
             AgentActivity.shared.markLaunch(bundle: bundle, excluding: before, for: 10)
             AgentLaunchFocus.shared.watch(bundle: bundle, excluding: before, for: 10)
             var claimed = false
+            // The hands request this launch is for (set by `HandsRouter.open` around this call), told the pid on completion.
+            let launchToken = AgentLaunches.shared.current
             /// A new window from behind through the app's own New Window command, claimed first.
             func newWindow(_ app: NSRunningApplication) -> Bool {
                 h.claim(app.processIdentifier, n, false, nil)
@@ -655,6 +657,7 @@ final class SessionController {
             func finished(_ app: NSRunningApplication?) {
                 DispatchQueue.main.async {
                     guard let app else { AgentActivity.shared.clearLaunch(bundle: bundle); return }
+                    if !before.contains(app.processIdentifier) { AgentLaunches.shared.launched(launchToken, pid: app.processIdentifier) }
                     claimLaunch(app)
                 }
             }
@@ -677,12 +680,11 @@ final class SessionController {
             guard !cmd.isEmpty else { return .init(ok: false, error: "usage: polycarp-spaces agent run [--dir DIR] -- <command>") }
             let dir = args.firstIndex(of: "--dir").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
             guard engine.newAgentTerminal(in: dir, command: cmd, opened: { [weak self] pid, name, startedNew in
-                if startedNew {
+                if MovedInWindows.ProcessOrigin(startedNew: startedNew).ownsWholeProcess {
                     // A Terminal this run started: the same treatment as an app `agent open` started.
                     self?.adoptAgentStartedProcess(pid, workspace: n, title: name, host: h, grantAccess: false)
                 } else {
-                    // Your running Terminal: yours, so only its next window is claimed.
-                    AgentOwned.shared.add(pid)
+                    // Your running Terminal: yours, never agent-owned (sol-sol-F2), so only its next window is claimed.
                     h.claim(pid, n, false, name)
                 }
             }) else {

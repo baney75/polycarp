@@ -6,11 +6,10 @@ import Foundation
 /// and `baneyspaces mcp`. The command only parses and prints: every action runs inside the BaneySpaces
 /// app (which holds Accessibility) and comes back as one JSON envelope.
 enum HandsCLI {
-    /// The session lends belong to: the agent's own (`--session`), else its terminal, the same default
-    /// `event` uses, so the agent ending its session returns what it borrowed.
+    /// The session a request belongs to (`HandsParse.cliSession`): `$BANEYSPACES_SESSION`, else its terminal, the same
+    /// default `event` uses, else "default".
     static func defaultSession() -> String {
-        let tty = controllingTTY()
-        return tty.isEmpty ? "default" : tty
+        HandsParse.cliSession(environment: ProcessInfo.processInfo.environment, tty: controllingTTY())
     }
 
     /// Sends one request to the app and returns its envelope. Nothing here can fail without saying why.

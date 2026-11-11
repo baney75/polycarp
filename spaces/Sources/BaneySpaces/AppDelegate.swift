@@ -808,6 +808,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// A window an agent moved onto the agent workspace goes back where it came from once the lend or Full Access that let
+    /// it move ends (`MovedInWindows`). Main thread, from the lend and access change hooks.
+    private func sendBackMovedIn() {
+        let back = HandsMovedIn.shared.settle(lends: HandsLends.shared.current(), now: Date(), mode: AgentAccess.shared.current)
+        guard !back.isEmpty else { return }
+        let existing = Set(spaces.workspaceRows().map(\.number))
+        for e in back {
+            // Not in the model yet (a launch before the first scan): it stays denied and is tried again on the next tick.
+            guard let w = spaces.handsLive(e.window), w.pid == e.pid else { continue }
+            // Off the workspace the agent put it on (sent back, or Donovan moved it): done.
+            guard w.workspace == e.to else { HandsMovedIn.shared.returned(window: e.window); continue }
+            let to = MovedInWindows.destination(e, workspaces: existing, current: spaces.model.current, agentWorkspace: Spaces.agentWorkspace)
+            run { $0.move(e.window, to: to) }
+            Trace.log("hands: window \(e.window) going back to workspace \(to): the \(e.origin == .lent ? "lend" : "Full Access") that let an agent move it ended")
+            // Dropped only once it is read back off the agent workspace; until then it stays denied.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self, let now = self.spaces.handsLive(e.window), now.pid == e.pid, now.workspace != e.to else { return }
+                HandsMovedIn.shared.returned(window: e.window)
+            }
+        }
+    }
+
     private func run(_ action: (Spaces) -> Void) {
         guard stillTrusted() else { return NSSound.beep() }
         action(spaces)
@@ -859,6 +881,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The agent hands: what the scope guard needs from the workspaces, and what to do when a lend changes.
         // The engine's state folder is set here, once, on the main thread, before any engine queue exists.
         HandsEngine.prepareEnvironment()
+        // The windows agents moved in before a relaunch: loaded and settled before the session socket takes any request.
+        _ = HandsMovedIn.shared
         session.hands.host = HandsHost(
             agentWorkspace: { Spaces.agentWorkspace },
             windows: { [weak self] in self?.spaces.handsWindows(fresh: false) ?? [] },
@@ -868,7 +892,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             inspect: { [weak self] in self?.spaces.handsInspect($0) ?? (nil, false) },
             agentOwned: { AgentOwned.shared.pids },
             askToLend: { app, minutes, takeBack in LendConsent.ask(app: app, minutes: minutes, takeBack: takeBack) },
-            open: { [weak self] args in self?.session.agent("open", args) ?? Wire.Reply(ok: false, error: "not ready") })
+            open: { [weak self] args in self?.session.agent("open", args) ?? Wire.Reply(ok: false, error: "not ready") },
+            workspaceRows: { [weak self] in self?.spaces.workspaceRows() ?? [] },
+            agentArea: { [weak self] in self?.spaces.agentArea() ?? .zero },
+            arrange: { [weak self] in self?.spaces.arrangeAgentWindows($0) ?? [:] },
+            move: { [weak self] id, n in self?.run { $0.move(id, to: n) } },
+            close: { [weak self] in self?.spaces.pressClose($0) ?? false })
         // The agent cursor: drawn on the agent workspace while you look at it, and over a lent app.
         session.hands.host.cursorMark = { CursorController.shared.mark(window: $0) }
         session.connectorHands.host = session.hands.host
@@ -881,12 +910,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // A lent app is parked, not hidden, while it is lent: the workspace is applied again.
                 self?.spaces.saveState()
                 self?.run { $0.reapply() }
+                self?.sendBackMovedIn()
             }
         }
-        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in HandsLends.shared.expire() }
+        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            HandsLends.shared.expire()
+            // Retries any window still on its way back (one not scanned yet at launch, or one whose move didn't take).
+            self?.sendBackMovedIn()
+        }
+        // What a relaunch found on its way back goes now, once the first scan has the windows.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.sendBackMovedIn() }
         AgentAccess.shared.onChange = { [weak self] mode in
             guard let self else { return }
             if self.setup.model.agentAccess != mode { self.setup.model.agentAccess = mode }
+            self.sendBackMovedIn()
             self.spaces.saveState()
             self.updateIcon()
         }

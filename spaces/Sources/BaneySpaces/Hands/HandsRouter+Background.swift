@@ -26,7 +26,7 @@ extension HandsRouter {
         case .failure(let e): return .failure(e)
         case .success(let c): chords = c
         }
-        switch resolve(req.string("ref")) {
+        switch resolve(req.string("ref"), session: req.session ?? "") {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope)):
             return background(w, scope, name: "press", kind: .keys, ref: req.string("ref"), chords: chords, path: [], drag: false, session: req.session ?? "", wait: req.int("wait"))
@@ -78,21 +78,27 @@ extension HandsRouter {
                             chords: [KeyChord], path: [CGPoint], drag: Bool, session: String, wait: Int?) -> HandsEnvelope {
         // Keys and the pointer are posted events: while Donovan uses the app they always wait (never the other-window rule).
         // Before the mark, so an activation while it waits is his.
-        if let e = awaitUse(w, verb: name, delivery: .posted, wait: wait) { return .failure(e) }
+        if let e = awaitUse(w, verb: name, delivery: .posted, wait: wait, session: session) { return .failure(e) }
         // The mark covers the whole action: the queue wait, the readings, the post and the proof, and a short tail.
         let token = AgentActivity.shared.begin(pid: w.pid, window: w.id)
         defer { AgentActivity.shared.end(token) }
-        let scopeCheck = actingCheck(w, ref: ref, verb: name, delivery: .posted)
+        let scopeCheck = actingCheck(w, ref: ref, verb: name, delivery: .posted, session: session)
         if let e = scopeCheck() { return .failure(e) }
         guard BackgroundAX.serverWindow(w.id) != nil else {
             return .failure(HandsError(.windowNotFound, "the window server does not list window \(w.id)", suggestion: "Run `polycarp-spaces agent windows` and try again.", retry: .safe))
         }
+        // The child windows the app has now: one that appears after this is the action's (`ChildAttribution`).
+        let childrenBefore = noteAction(session: session, pid: w.pid)
         let reply = HandsEngine.shared.transaction(window: w, check: scopeCheck) { [self] cancelled in
             transact(w, scope, name: name, kind: kind, ref: ref, chords: chords, path: path, drag: drag, session: session, scopeCheck: scopeCheck, cancelled: cancelled)
         }
         switch reply {
         case .failed(let e): return .failure(e)
-        case .ok(let data): return .success(data)
+        case .ok(let data):
+            // A dialog or sheet the keys or the click raised: said here, so the agent need not poll.
+            guard let opened = openedChildren(pid: w.pid, before: childrenBefore, session: session), case .object(var o) = data else { return .success(data) }
+            o["opened"] = opened
+            return .success(.object(o))
         }
     }
 

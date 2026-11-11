@@ -128,19 +128,86 @@ leaves the front.
   most. If Donovan brings the app forward while events are being posted, the rest are not sent (`user_activated`), as
   before.
 
+## Windows that come from windows
+
+Decided 2026-11-10 (Donovan: "if a window pops up and it needs to press something on that window it should be able
+to"). BaneySpaces places only standard windows, so a dialog an app opens was refused as unmanaged. Now a window W that
+BaneySpaces does not place is usable, with its parent's scope, only when all of these hold (`ChildWindowRule.decide` in
+`BaneySpacesCore/Hands/ChildWindows.swift`, checked in this order):
+
+1. W is not a system prompt: SecurityAgent, coreauthd, UserNotificationCenter or TCC, by bundle or process name, and
+   such a window is refused before any attribute of it is read (`rule3_system_prompt`).
+2. W is not an Open or Save panel (`rule3_open_save_panel`, the existing message).
+3. W is a child: `AXSheet`, `AXDialog`, `AXSystemDialog`, `AXFloatingWindow` or modal; never a standard window or a
+   menu (`rule1_not_a_child`).
+4. W's process has at least one window the agent may use right now: agent workspace, lent or Full Access
+   (`rule1_no_usable_window`).
+5. Ownership is clear: every placed window of that process is usable, or W first appeared within 10 s after an action
+   of this agent session on a window of that process (`ChildAttribution`, `rule2_ownership`). So Donovan's own dialog in
+   an app split across his workspace and the agent's is refused.
+
+The in-use rule applies unchanged and the dialog counts as its app; a child is never on the agent workspace, so its
+actions wait while Donovan is using the app. `windows` lists children with `kind` (dialog, alert, sheet, floating),
+`parent` and `waiting` (the same meaning as the dock's waiting rule in `WaitingWindow.asks`, to be unified once both
+land), and a refused child without its title. An action that opens a child says so: `opened: {window, kind, title}`.
+A sheet with no window number of its own is part of its window's snapshot, marked `sheet` and `in_sheet`.
+
+A sheet no longer locks its window by itself. Only a file panel does: a sheet or dialog with a panel title, a panel
+identifier, a file browser or a split outline, a name field with a Where or Tags popup, or one that could not be read
+(`PanelDetector.looksLikeFilePanel`). A save changes alert ("Don't Save", "Cancel") is usable. Every child recognized as a
+sheet, dialog or alert, modal ones with an unknown subrole included, is read whole (`AXTreeRead`) and checked this way
+(`PanelDetector.childIsOffLimits`); a read cut off by the per-level, depth or node limit refuses it.
+
+Each child's window is found after the app's whole window list is read (`ChildCollect`): a sheet's window, else
+AXParent, else the app's main or focused window when the child was first seen. A child whose window is known and not
+yours is refused; a child whose window is still unknown is usable only when every window of that app is yours.
+
+## The agent manages its own workspace
+
+Decided 2026-11-10 (Donovan: "make it so spaces can be managed by the agents so they can start windows in a BG"). New
+verbs, in MCP and the CLI, all on the agent workspace only:
+
+- `workspaces` (read only): each workspace's number and whether it is shown, which one is the agent's, whether
+  Donovan is looking at it (`agent_workspace_shown`), and where each window you may use is. No names or titles.
+- `open` returns the window id (waiting up to `wait`, at most 7 s within the claim), takes `new_window` (false reuses
+  this session's window of that app; one open per app runs at a time and never takes a window another session owns. Each
+  open is tied to its own launch: a new process's open takes only that process's windows, also after it replied with
+  `window_identified: false` (for 30 s); an open of an app already running takes a window only while it is that app's
+  only open, and overlapping opens of it (and any in the 30 s after) get none. A window no open owns stays usable under
+  the scope rules; `close` just won't close it), and reports `focus: {changed, returned}` when the launch took the keyboard and
+  BaneySpaces gave it back. URLs stay refused until agent browser profiles exist.
+- `arrange full | halves | thirds | grid | frames id=x,y,w,h …`: agent workspace windows only. A parked window keeps
+  its new size and takes the position when the workspace is shown.
+- `move --window N [--frame x,y,w,h]`: onto the agent workspace only; a window on Donovan's workspaces only if lent or
+  under Full Access; never while the agent workspace is shown. The agent workspace, the window, its scope and whether it is
+  shown are read again together right before it moves, so a workspace turned off or changed during the wait is honored.
+  A moved window grants nothing by being on the agent workspace (`MovedInWindows`): it is usable only while its lend lasts
+  (or, for one Full Access brought over, while the mode is Full Access, and its process is granted so the narrowing rule
+  applies), and when that ends it is refused and goes back to the workspace it came from (his current one if that is
+  gone). The entry is dropped only once the window is read back off the agent workspace, and the book is saved
+  (`moved-in.json`, with each process's start time), so a relaunch keeps it: lends are not saved, so a lent window's
+  entry is denied and sent back at launch, and an entry whose process has quit is dropped. The older
+  `agent move <id | words>` session op is unchanged.
+- `close --window N`: only windows this session opened (provenance per session), through the close button; never
+  quits an app. A save sheet that follows comes back as `opened`.
+
+Agents never switch which workspace is shown, never create, delete or rename one, and never focus a window. Read Only
+refuses `arrange`, `move` and `close`, checked again with each target's scope and in use in the main-thread pass that
+makes the change (`MutationGate`; `arrange` applies every frame or none); connectors get `workspaces` only (`WorkspaceVerbs.connectorRefusal`).
+
 ## Access modes
 
 Donovan picks how much agents may use in Settings > Agents (Donovan, 2026-11-04). The mode stays until he changes it.
 
 | Mode | Agents may |
 | --- | --- |
-| Read Only | List, `snapshot`, `find`, `get` and `shot` the windows Default allows. Every verb that changes something (`click`, `type`, `set-value`, `press`, `click-at`, `drag`, `scroll`, `select`, `toggle`, `open`) and the session ops `agent open`, `run`, `move`, `on` and `off` answer `permission_denied` (retry never), checked again right before each action is delivered. |
+| Read Only | List, `snapshot`, `find`, `get` and `shot` the windows Default allows. Every verb that changes something (`click`, `type`, `set-value`, `press`, `click-at`, `drag`, `scroll`, `select`, `toggle`, `open`, `arrange`, `move`, `close`) and the session ops `agent open`, `run`, `move`, `on` and `off` answer `permission_denied` (retry never), checked again right before each action is delivered. |
 | Default | Everything above, on the agent workspace, in apps BaneySpaces starts from its short list, and in lent windows. |
 | Full Access | Read and act on every window BaneySpaces places, on every workspace (scope `full_access`), and `agent open` any app (browsers included) and any existing file or folder. An app off the list that isn't running starts on the agent workspace; one already running gets a new window there instead of a second copy, waiting while Donovan is using it. |
 
 Every mode keeps the background-only rules below: no activation, no raised window, no Space change, no global input,
 actions wait while Donovan is using the app (see "While Donovan uses an app"), no Open or Save panel (or a window
-holding one), and no window BaneySpaces doesn't place, and never BaneySpaces' own windows. `agent open` takes no URL argument in any mode
+holding one), and no window BaneySpaces doesn't place unless it is a child the rules above allow, and never BaneySpaces' own windows. `agent open` takes no URL argument in any mode
 (that waits for agent browser profiles).
 
 - What Full Access let in goes out with it: a process `agent open` started off the list, or one of Donovan's apps it

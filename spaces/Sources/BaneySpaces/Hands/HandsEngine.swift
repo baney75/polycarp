@@ -100,6 +100,24 @@ final class HandsEngine {
     /// Runs `work` on the window's process queue, waiting at most `budget`. The focus guard is held from here
     /// until the work has finished or been dropped; `check` runs on the queue right before `work`. A call
     /// that outlives its budget is told `timeout`, and if it hasn't started it never will.
+    /// sol-F1: runs `work` on the process's queue, after any transaction on it, so it never lands between another action's
+    /// readings before and after. Nil when the queue isn't free within `wait`; work that starts after that sees `cancelled()`
+    /// true and must do nothing.
+    func serialized<T>(pid: Int32, wait: TimeInterval, _ work: @escaping (_ cancelled: @escaping () -> Bool) -> T) -> T? {
+        let lock = NSLock(), done = DispatchSemaphore(value: 0)
+        var out: T?, gaveUp = false
+        let cancelled = { () -> Bool in lock.lock(); defer { lock.unlock() }; return gaveUp }
+        queue(for: pid).async {
+            defer { done.signal() }
+            if cancelled() { return }
+            let r = work(cancelled)
+            lock.lock(); out = r; lock.unlock()
+        }
+        if done.wait(timeout: .now() + wait) == .timedOut { lock.lock(); gaveUp = true; lock.unlock(); return nil }
+        lock.lock(); defer { lock.unlock() }
+        return out
+    }
+
     private func run(window w: HandsWindow, budget: TimeInterval, mutating: Bool, check: @escaping Check, _ work: @escaping (_ cancelled: () -> Bool) -> Reply) -> Reply {
         let box = Box()
         let done = DispatchSemaphore(value: 0)
