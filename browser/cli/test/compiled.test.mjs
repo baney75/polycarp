@@ -54,6 +54,9 @@ test("compiled-mode update says Polycarp does it and changes nothing", () => {
 	const { env } = sandbox("update");
 	const out = execFileSync(process.execPath, [join(bundleDir, "index.js"), "update"], { env, encoding: "utf8" });
 	assert.match(out, /part of Polycarp/);
+	// It names the one command that does update it, not "nothing to run here".
+	assert.match(out, /Run `polycarp update`/);
+	assert.doesNotMatch(out, /nothing to run/);
 });
 
 // ---- the real executable ----

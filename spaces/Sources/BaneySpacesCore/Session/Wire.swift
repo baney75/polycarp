@@ -60,6 +60,10 @@ public enum Wire {
             /// Local callers only (Remote.allows never lets it through), and slow: the app answers it
             /// off the main thread.
             case sandbox
+            /// The app's own updater, for `polycarp-spaces update` and `polycarp update`: `text` is status,
+            /// check (ask GitHub again) or now (install the release on offer). The reply's `info` is an
+            /// `UpdateReport`. Local callers only (`Remote.allows` never lets it through).
+            case update
         }
         public var op: Op
         public var target: String?

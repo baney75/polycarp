@@ -42,6 +42,8 @@ cargo install --git https://github.com/baney75/polycarp polycarp
 polycarp doctor
 ```
 
+`polycarp update` is not supported on Windows yet; it prints the build-from-source steps. `polycarp version` works.
+
 ## The command
 
 `polycarp` comes with the Mac app. On Linux and Windows it comes from the install steps above. It reaches each part from one place:
@@ -54,7 +56,9 @@ polycarp doctor
 | `polycarp voice` | Opens the Voice settings in Polycarp, or Silas if Polycarp isn't installed |
 | `polycarp theme <command>` | Chooses and checks the theme |
 | `polycarp mcp` | Serves the theme commands to an agent |
-| `polycarp doctor` | Shows which apps were found |
+| `polycarp doctor` | Shows which apps were found, and whether their builds match |
+| `polycarp version [--json] [--check]` | Lists every part with its version and commit, and says whether they all match |
+| `polycarp update [--check] [--dry-run] [--yes]` | Brings every part on this device to the newest commit together. See [Updating](https://github.com/baney75/polycarp#updating) |
 | `polycarp --version` | Prints the version |
 | `polycarp --help` | Prints the usage |
 

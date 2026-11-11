@@ -5,12 +5,19 @@ Polycarp updates from the side panel. The native host checks once a day; the pan
 itself once no agent is running. Settings > About (Updates) shows what runs and offers Check now,
 Update now and Roll back. `polycarp-browser update` does the release install from a terminal.
 
+**Inside Polycarp, use `polycarp update`.** It updates the helper and the extension together with the app, the
+commands and the skill, from a clean copy of `origin/main`, and `polycarp version` shows whether they match
+([Updating](../../README.md#updating) in the main README). This page describes the browser part's own updater, which
+the standalone browser uses. The helper inside Polycarp.app has no updater of its own (`polycarp-browser update` there
+says to run `polycarp update`), and a helper that `polycarp update` built on Linux runs from that clean copy, which
+is not on a branch, so the side panel's Update now refuses there and `polycarp update` is the way.
+
 What "update" does depends on how Polycarp runs (the install mode):
 
 | Mode | When | Update now does | Roll back does |
 | --- | --- | --- | --- |
 | **Release** | the native host runs from `~/.local/share/polycarp/browser/app` | downloads the newest signed GitHub release, verifies it ([checks](#what-an-update-checks-before-it-touches-a-file)) and unpacks it to `staged/`; once idle, swaps it in | swaps back to the release before it |
-| **Checkout** | the native host runs from a git checkout of Polycarp (how Donovan runs it) | `git fetch`, `git pull --ff-only` on main, `./scripts/setup-siblings.sh`, builds the extension and the CLI into `.tabkyra-update/next/`; once idle, swaps them in | swaps back to the build before it (the git checkout stays where it is) |
+| **Checkout** | the native host runs from a git checkout of Polycarp that is on main (a standalone browser checkout; a full Polycarp install uses `polycarp update` instead) | `git fetch`, `git pull --ff-only` on main, `./scripts/setup-siblings.sh`, builds the extension and the CLI into `.tabkyra-update/next/`; once idle, swaps them in | swaps back to the build before it (the git checkout stays where it is) |
 | Unmanaged | anything else (an npm install, a copied folder) | refuses: run `polycarp-browser update` in a terminal | |
 
 ## The side panel
@@ -82,6 +89,10 @@ What "update" does depends on how Polycarp runs (the install mode):
     same version.
 
 ### Checkout mode
+
+This mode updates the browser part alone, in the checkout it runs from. It does not touch the app, the `polycarp`
+command or the spaces command, so in a full Polycarp install the parts would stop matching: there, run
+`polycarp update`, which never builds in your working checkout.
 
 The checkout is the folder the native host runs from (its `cli/dist/index.js`). The host
 compares the `build-info.json` the browser serves from the extension folder with the one in

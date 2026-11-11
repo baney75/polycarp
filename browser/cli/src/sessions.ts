@@ -27,6 +27,14 @@ interface Described {
 	lastUsedAt: string | null;
 }
 
+/** `reload --if-idle` exits with this when an agent is working (EX_TEMPFAIL: try again later). */
+export const RELOAD_BUSY = 75;
+
+/** The sessions an agent is attached to right now: a reload would cut each of them off mid-call. */
+export function agentsWorking(sessions: ReadonlyArray<{ name: string; connected: number }>): string[] {
+	return sessions.filter((s) => s.connected > 0).map((s) => s.name);
+}
+
 /** A usage error: exit 2. */
 export class SessionsUsageError extends Error {}
 

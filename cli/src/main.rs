@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 mod features;
 mod mcp;
 mod theme;
+mod update;
+mod version;
 
 struct Tool {
     /// Subcommand name.
@@ -97,6 +99,8 @@ Usage:
   polycarp mcp                 serve the theme commands to an agent over MCP (stdio)
   polycarp doctor              show which tools were found
   polycarp --version
+  polycarp version [--json] [--check]   every part, its commit, and whether they match
+  polycarp update [--check] [--dry-run] [--yes] [--source <checkout>]
   polycarp --help
 
 The apps must already be installed. Each tool can be set with
@@ -121,8 +125,19 @@ fn main() {
         Some("features") => features::run(&rest),
         Some("mcp") => mcp::run(&rest),
         Some("doctor") => doctor(),
+        Some("version") => version::run(&rest, &version_device(&ask_helper)),
+        Some("update") => update::run(
+            &rest,
+            &update::Device {
+                home: home(),
+                app: polycarp_app(),
+                spaces: find(&SPACES).ok(),
+                config: theme::config_dir(),
+                parts: &|| version::gather(&version_device(&ask_helper)),
+            },
+        ),
         Some("--version") | Some("-V") => {
-            println!("polycarp {}", env!("CARGO_PKG_VERSION"));
+            println!("{}", version::own_version_line());
             0
         }
         Some("--help") | Some("-h") => {
@@ -728,6 +743,11 @@ fn doctor() -> i32 {
             let _ = writeln!(out, "{line}");
         }
     }
+    // The same one line `polycarp version` ends with. It informs; it does not change the exit code.
+    if printing {
+        let parts = version::gather(&version_device(&ask_helper));
+        let _ = writeln!(out, "{}", version::compare(&parts).line());
+    }
     let _ = out.flush();
     if ok {
         0
@@ -736,12 +756,38 @@ fn doctor() -> i32 {
     }
 }
 
+/// What `polycarp version`, `doctor` and `update` look at. Nothing here runs the spaces command or
+/// the voice app: their builds are read from files.
+fn version_device(ask: &dyn Fn(&Path, &[&str]) -> Option<String>) -> version::Device<'_> {
+    version::Device {
+        exe: env::current_exe().ok(),
+        home: home(),
+        app: polycarp_app(),
+        spaces: find(&SPACES).ok(),
+        browser: find(&BROWSER).ok(),
+        ask,
+    }
+}
+
+fn ask_helper(p: &Path, args: &[&str]) -> Option<String> {
+    capture(p, args)
+}
+
 /// The tool's version, or None if it can't start, fails, prints nothing or takes past the limit.
+fn first_version_line(p: &Path) -> Option<String> {
+    capture(p, &["--version"])?
+        .lines()
+        .next()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+}
+
+/// What a tool prints for `args`, or None if it can't start, fails or takes past the limit.
 /// The limit covers reading too: a tool that leaves a background process holding its output
 /// open can't stall `doctor`.
-fn first_version_line(p: &Path) -> Option<String> {
+fn capture(p: &Path, args: &[&str]) -> Option<String> {
     let mut child = Command::new(p)
-        .arg("--version")
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -776,8 +822,5 @@ fn first_version_line(p: &Path) -> Option<String> {
             None => std::thread::sleep(Duration::from_millis(20)),
         }
     }
-    text.lines()
-        .next()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
+    Some(text)
 }

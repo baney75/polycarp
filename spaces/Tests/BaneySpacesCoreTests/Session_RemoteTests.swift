@@ -8,6 +8,9 @@ final class RemoteTests: XCTestCase {
         XCTAssertTrue(Remote.allows(Wire.Request(op: .agent, text: "run")))
         XCTAssertTrue(Remote.allows(Wire.Request(op: .agent, text: "open")))
         XCTAssertTrue(Remote.allows(Wire.Request(op: .agent)), "status by default")
+        for sub in ["status", "check", "now"] {
+            XCTAssertFalse(Remote.allows(Wire.Request(op: .update, text: sub)), "another machine never updates or restarts this one")
+        }
         for op in [Wire.Request.Op.focus, .send, .open, .notify, .event, .remote] {
             XCTAssertFalse(Remote.allows(Wire.Request(op: op)), "\(op) changes what you see")
         }

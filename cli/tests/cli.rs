@@ -1288,3 +1288,289 @@ fn voice_falls_back_to_silas_only_when_polycarp_is_not_installed() {
         "{args}"
     );
 }
+
+// ---- polycarp version and polycarp update ----
+
+#[cfg(unix)]
+const OTHER_COMMIT: &str = "bbbbbbb2222222222222222222222222222222bb";
+
+fn json(o: &Output) -> serde_json::Value {
+    serde_json::from_str(&out(o)).unwrap_or_else(|e| panic!("not JSON ({e}): {}", out(o)))
+}
+
+fn part<'a>(v: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    v["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == name)
+        .unwrap_or_else(|| panic!("no part named {name} in {v}"))
+}
+
+#[test]
+fn version_lists_the_command_and_says_what_is_not_installed() {
+    let s = Sandbox::new();
+    let o = s.run(&["version", "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let v = json(&o);
+    let me = part(&v, "polycarp command");
+    assert_eq!(me["installed"], true);
+    assert_eq!(me["version"], env!("CARGO_PKG_VERSION"));
+    // The commit in the list is the one `--version` prints.
+    let line = out(&s.run(&["--version"]));
+    if let Some(commit) = me["commit"].as_str() {
+        assert_eq!(commit.len(), 40, "{commit}");
+        assert!(line.contains(&commit[..7]), "{line}");
+    }
+    for name in [
+        "spaces command",
+        "browser helper",
+        "extension",
+        "voice core",
+        "agent skill",
+    ] {
+        let p = part(&v, name);
+        assert_eq!(p["installed"], false, "{name}");
+        assert!(p["state"].as_str().is_some_and(|t| !t.is_empty()), "{name}");
+    }
+    assert!(v["verdict"].as_str().unwrap().starts_with("versions: "));
+    // The table says the same, and a missing part is not an error.
+    let o = s.run(&["version"]);
+    assert_eq!(code(&o), 0);
+    let t = out(&o);
+    assert!(
+        t.contains("browser helper") && t.contains("not installed"),
+        "{t}"
+    );
+    assert!(t.lines().last().unwrap().starts_with("versions: "), "{t}");
+    assert_eq!(code(&s.run(&["version", "--bogus"])), 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn version_check_names_the_part_from_another_commit_and_never_runs_spaces() {
+    let s = Sandbox::new();
+    let log = s.dir("calls");
+    // The stamp a real Linux build carries, here inside a script: it is read from the file, not by running it.
+    stub(
+        &s.dir("bin"),
+        "polycarp-spaces",
+        &format!(
+            "# polycarp-build|v1|{OTHER_COMMIT}|2026-11-01T00:00:00Z|0|0.1.0|end|\necho called >> '{}'",
+            log.display()
+        ),
+    );
+    stub(
+        &s.dir("bin"),
+        "polycarp-browser",
+        &format!(
+            "case \"$1\" in\n\
+             version) echo '{{\"version\":\"1.2.3\",\"commit\":\"{OTHER_COMMIT}\",\"commitDate\":\"2026-11-01T00:00:00Z\",\"dirty\":false}}';;\n\
+             status) echo '{{\"connected\":true,\"extensions\":[{{\"browser\":\"Helium\",\"version\":\"1.2.3\",\"commit\":\"{OTHER_COMMIT}\",\"commitDate\":\"\",\"dirty\":false}},{{\"browser\":\"Chrome\",\"version\":\"1.2.2\",\"commit\":\"\",\"dirty\":false}}]}}';;\n\
+             esac"
+        ),
+    );
+    let o = s
+        .cmd(&["version", "--json", "--check"])
+        .env("PATH", s.dir("bin"))
+        .output()
+        .unwrap();
+    let v = json(&o);
+    assert_eq!(code(&o), 1, "{v}");
+    assert_eq!(v["match"], false);
+    assert_eq!(part(&v, "spaces command")["commit"], OTHER_COMMIT);
+    assert_eq!(part(&v, "browser helper")["version"], "1.2.3");
+    assert_eq!(part(&v, "extension (Helium)")["commit"], OTHER_COMMIT);
+    assert_eq!(part(&v, "extension (Chrome)")["installed"], true);
+    // Chrome's extension reports no commit at all: it is always named.
+    let odd: Vec<&str> = v["odd"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["name"].as_str().unwrap())
+        .collect();
+    assert!(odd.contains(&"extension (Chrome)"), "{odd:?}");
+    let verdict = v["verdict"].as_str().unwrap();
+    assert!(
+        verdict.contains("do not all match") && verdict.contains("polycarp update"),
+        "{verdict}"
+    );
+    assert!(!log.exists(), "version ran the spaces command");
+    // Without --check the same list exits 0.
+    let o = s
+        .cmd(&["version"])
+        .env("PATH", s.dir("bin"))
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0);
+    // doctor ends with the same one line, and its exit code is still about the tools only.
+    let o = s
+        .cmd(&["doctor"])
+        .env("PATH", s.dir("bin"))
+        .output()
+        .unwrap();
+    let t = out(&o);
+    assert!(t.lines().any(|l| l == verdict), "{t}");
+    assert!(!log.exists(), "doctor ran the spaces command");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn version_reads_the_app_from_its_info_plist() {
+    let s = Sandbox::new();
+    let app = s.dir("home").join("Applications/Polycarp.app/Contents");
+    fs::create_dir_all(&app).unwrap();
+    fs::write(
+        app.join("Info.plist"),
+        format!(
+            "<plist><dict>\n<key>CFBundleShortVersionString</key><string>0.9.1</string>\n\
+             <key>PolycarpCommit</key><string>{OTHER_COMMIT}</string>\n\
+             <key>PolycarpCommitDate</key><string>2026-11-01T00:00:00Z</string>\n\
+             <key>PolycarpCommitDirty</key><string>1</string>\n</dict></plist>"
+        ),
+    )
+    .unwrap();
+    let v = json(&s.run(&["version", "--json"]));
+    let p = part(&v, "app");
+    assert_eq!(p["version"], "0.9.1");
+    assert_eq!(p["commit"], OTHER_COMMIT);
+    assert_eq!(p["dirty"], true);
+    // The voice core is linked into the app, so it is the app's build.
+    assert_eq!(part(&v, "voice core")["commit"], OTHER_COMMIT);
+}
+
+/// A folder with git in it and nothing else, so `update` can ask git about a checkout.
+#[cfg(unix)]
+fn git_only_path(s: &Sandbox) -> Option<PathBuf> {
+    use std::os::unix::fs::symlink;
+    let git = std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|d| d.join("git"))
+        .find(|p| p.is_file())?;
+    let dir = s.dir("gitbin");
+    fs::create_dir_all(&dir).unwrap();
+    let _ = symlink(git, dir.join("git"));
+    Some(dir)
+}
+
+/// An empty git repo whose origin is `origin`. Nothing is ever fetched from it.
+#[cfg(unix)]
+fn checkout(s: &Sandbox, name: &str, origin: &str, path: &Path) -> PathBuf {
+    let dir = s.dir(name);
+    fs::create_dir_all(&dir).unwrap();
+    for args in [vec!["init", "-q"], vec!["remote", "add", "origin", origin]] {
+        let ok = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(&args)
+            .env("PATH", path)
+            .env("HOME", s.dir("home"))
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?}");
+    }
+    dir.canonicalize().unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn update_dry_run_prints_the_plan_and_changes_nothing() {
+    let s = Sandbox::new();
+    let Some(path) = git_only_path(&s) else {
+        return;
+    };
+    let repo = checkout(&s, "src", "https://github.com/baney75/polycarp.git", &path);
+    let cache = s.dir("cache");
+    let run = |args: &[&str]| {
+        s.cmd(args)
+            .env("PATH", &path)
+            .env("POLYCARP_CACHE_DIR", &cache)
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let o = run(&["update", "--dry-run", "--source", repo.to_str().unwrap()]);
+    let t = out(&o);
+    assert_eq!(code(&o), 0, "{t}{}", err(&o));
+    assert!(
+        t.starts_with("polycarp update, source install: origin/main of "),
+        "{t}"
+    );
+    assert!(
+        t.contains(&format!(
+            "git -C {} fetch origin +refs/heads/main:refs/remotes/origin/main",
+            repo.display()
+        )),
+        "{t}"
+    );
+    assert!(
+        t.contains("worktree add --detach --force") && t.contains(&cache.display().to_string()),
+        "{t}"
+    );
+    assert!(t.contains("version --check"), "{t}");
+    assert!(t.trim_end().ends_with("dry run: nothing was run."), "{t}");
+    // Nothing was fetched, built, remembered or created.
+    assert!(
+        !repo.join(".git/FETCH_HEAD").exists(),
+        "the dry run fetched"
+    );
+    assert!(!cache.exists(), "the dry run made the clean copy");
+    assert!(
+        !s.dir("home").join(".config/polycarp/source.toml").exists(),
+        "the dry run recorded the source"
+    );
+
+    // No --yes and no terminal: refused, and still nothing ran.
+    let o = run(&["update", "--source", repo.to_str().unwrap()]);
+    assert_eq!(code(&o), 2, "{}", out(&o));
+    assert!(
+        err(&o).contains("no terminal") && err(&o).contains("--yes"),
+        "{}",
+        err(&o)
+    );
+    assert!(!repo.join(".git/FETCH_HEAD").exists() && !cache.exists());
+    assert!(!s.dir("home").join(".config/polycarp/source.toml").exists());
+
+    // A checkout of something else is refused before anything runs, even with --yes.
+    let other = checkout(&s, "other", "https://github.com/someone/else.git", &path);
+    let o = run(&["update", "--yes", "--source", other.to_str().unwrap()]);
+    assert_eq!(code(&o), 1, "{}", out(&o));
+    assert!(
+        err(&o).contains("not the Polycarp repo") && err(&o).contains("Nothing was run"),
+        "{}",
+        err(&o)
+    );
+    assert!(!other.join(".git/FETCH_HEAD").exists() && !cache.exists());
+    assert!(
+        !s.dir("home").join(".config/polycarp/source.toml").exists(),
+        "a refused source was recorded"
+    );
+}
+
+#[test]
+fn update_without_a_known_install_says_how_to_point_it_at_a_checkout() {
+    let s = Sandbox::new();
+    for args in [
+        &["update"][..],
+        &["update", "--dry-run"],
+        &["update", "--check"],
+        &["update", "--yes"],
+    ] {
+        let o = s.run(args);
+        assert_eq!(code(&o), 2, "{args:?}: {}", out(&o));
+        let e = err(&o);
+        if cfg!(windows) {
+            assert!(
+                e.contains("not supported on Windows yet") && e.contains("baneyspaces-windows"),
+                "{e}"
+            );
+        } else {
+            assert!(e.contains("polycarp update --source"), "{e}");
+        }
+    }
+    assert_eq!(code(&s.run(&["update", "--bogus"])), 2);
+    assert_eq!(code(&s.run(&["update", "--source"])), 2);
+    let o = s.run(&["update", "--help"]);
+    assert_eq!(code(&o), 0);
+    assert!(out(&o).contains("--dry-run"));
+}

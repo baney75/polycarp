@@ -368,6 +368,10 @@ Spotlight.
 
 ### Updates
 
+One command updates every part of Polycarp together, the app included: `polycarp update`. See
+[Updating](../README.md#updating) in the main README. For an app installed from the download it uses the app's own
+updater, described here; `polycarp-spaces update --check` and `--now` reach the same updater from a terminal.
+
 BaneySpaces looks for a new version once a day and, when there is one, the menu bar menu shows **Update to BaneySpaces …** (the row is there only while
 a release is waiting) and so does **Settings > Updates**. Check by hand there with **Check for Updates Now…**. Nothing installs until you press **Update Now** in the window that
 shows what changed. The update installs the same way the first install did, into the folder the

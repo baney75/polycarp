@@ -505,23 +505,21 @@ window in front. Protocol and design notes are in
 
 ## Updating
 
-From a source checkout, update the code, then rebuild. A local build can bump
-`static/manifest.chrome.json`, so restore it before updating:
+Inside Polycarp, one command updates the helper and the extension with every other part:
 
 ```bash
-git restore static/manifest.chrome.json
-git pull                                   # on a branch
-# or, if the setup prompt checked out a release tag:
-# git fetch --tags && git checkout v<new version>
-./scripts/setup-siblings.sh
-(cd cli && npm ci && npm run build)
-TABKYRA_NO_BUMP=1 npm run build && polycarp-browser reload
+polycarp update
 ```
 
-`polycarp-browser update` installs signed GitHub releases. It verifies a minisign signature and a
-checksum, swaps the release in, keeps the previous one for `polycarp-browser update --rollback`,
-and changes nothing if any check fails. No signed release has been published yet, so for
-now it has nothing to install. Details are in [docs/updates.md](docs/updates.md).
+It builds from a clean copy of `origin/main`, never from the checkout you work in, and reloads the extension when no
+agent is working. [Updating](../README.md#updating) in the main README has the details for a Mac, Linux and Windows,
+and `polycarp version` shows whether the helper and each browser's extension match the rest.
+
+`polycarp-browser update` is the standalone browser's own updater. It installs signed GitHub releases: it verifies a
+minisign signature and a checksum, swaps the release in, keeps the previous one for
+`polycarp-browser update --rollback`, and changes nothing if any check fails. No signed release has been published
+yet, so for now it has nothing to install. The helper inside Polycarp.app has nothing of its own to update and says
+to run `polycarp update`. Details are in [docs/updates.md](docs/updates.md).
 
 ## Documentation
 

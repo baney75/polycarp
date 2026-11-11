@@ -123,3 +123,102 @@ public enum Updates {
         }
     }
 }
+
+/// What the app's updater knows, as it crosses the socket for `polycarp-spaces update`. The updater in
+/// the app fills it in; the command reads it back and turns it into a line and an exit code.
+public struct UpdateReport: Equatable, Sendable {
+    public enum State: String, Sendable {
+        /// The last check found nothing newer on the channel.
+        case current
+        /// A newer release is on offer.
+        case available
+        /// The installer is running; the app restarts when it is done.
+        case installing
+        /// No check has finished since the app started, or the last one failed (`problem`).
+        case unknown
+    }
+
+    public var state: State
+    /// This build, as the app describes it: "0.2.1 (abc1234)".
+    public var build: String
+    public var channel: UpdateChannel
+    /// The release on offer or installing: its name and, when known, its commit.
+    public var name: String?
+    public var commit: String?
+    /// How many checks have finished since the app started. A caller that asks for a check waits
+    /// for this to go up, so it never reads the answer of an older check.
+    public var checks: Int
+    public var problem: String?
+
+    public init(state: State, build: String, channel: UpdateChannel, name: String? = nil, commit: String? = nil,
+                checks: Int = 0, problem: String? = nil) {
+        self.state = state; self.build = build; self.channel = channel; self.name = name; self.commit = commit
+        self.checks = checks; self.problem = problem
+    }
+
+    public var info: [String: String] {
+        var out = ["state": state.rawValue, "build": build, "channel": channel.rawValue, "checks": String(checks)]
+        out["name"] = name
+        out["commit"] = commit
+        out["problem"] = problem
+        return out
+    }
+
+    /// Nil when the reply is not an update report (an older app that does not know the request).
+    public init?(info: [String: String]?) {
+        guard let info, let state = info["state"].flatMap(State.init), let build = info["build"],
+              let channel = info["channel"].flatMap(UpdateChannel.init) else { return nil }
+        self.init(state: state, build: build, channel: channel, name: info["name"], commit: info["commit"],
+                  checks: info["checks"].flatMap { Int($0) } ?? 0, problem: info["problem"])
+    }
+
+    /// One line for a person.
+    public var line: String {
+        let offered = [name, commit.map { "(\($0.prefix(7)))" }].compactMap { $0 }.joined(separator: " ")
+        switch state {
+        case .current: return "up to date: Polycarp \(build) is the newest on the \(channel.rawValue) channel"
+        case .available: return "update available: \(offered.isEmpty ? "a newer release" : offered). You have \(build)"
+        case .installing: return "an update is installing: \(offered.isEmpty ? "a newer release" : offered). Polycarp restarts when it is done"
+        case .unknown: return "could not check for updates: \(problem ?? "no check has finished yet")"
+        }
+    }
+
+    /// `update --check`: 0 up to date, 100 an update is waiting (or installing), 1 the check failed.
+    public var exitCode: Int32 {
+        switch state {
+        case .current: return 0
+        case .available, .installing: return 100
+        case .unknown: return 1
+        }
+    }
+}
+
+/// Which build a command inside Polycarp.app belongs to, read from the app's Info.plist on disk.
+public enum InstalledBuild {
+    /// The `.app` folder that holds `executable` (through any link), or nil outside an app.
+    public static func app(holding executable: String) -> URL? {
+        var url = URL(fileURLWithPath: executable).resolvingSymlinksInPath()
+        while url.path != "/" {
+            if url.pathExtension == "app" { return url }
+            url.deleteLastPathComponent()
+        }
+        return nil
+    }
+
+    /// "polycarp-spaces 0.2.1 (abc1234)", with "-dirty" after the commit when files had changed, or
+    /// "polycarp-spaces (not inside Polycarp.app)" for a bare build.
+    public static func line(executable: String, name: String) -> String {
+        guard let app = app(holding: executable),
+              let info = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist")) as? [String: Any] else {
+            return "\(name) (not inside Polycarp.app)"
+        }
+        return line(info: info, name: name)
+    }
+
+    public static func line(info: [String: Any], name: String) -> String {
+        let version = info["CFBundleShortVersionString"] as? String ?? "0"
+        guard let commit = info["PolycarpCommit"] as? String, commit.count >= 7, commit.allSatisfy(\.isHexDigit) else { return "\(name) \(version)" }
+        let dirty = (info["PolycarpCommitDirty"] as? String) == "1" ? "-dirty" : ""
+        return "\(name) \(version) (\(commit.prefix(7))\(dirty))"
+    }
+}

@@ -44,17 +44,71 @@ bears much fruit, for apart from me you can do nothing."
 
 ## The command
 
-`polycarp` is one command that hands off to the three apps. The apps must already be installed. Install it with `cargo install --path cli`.
+`polycarp` is one command that hands off to the three apps. It comes with the Mac app and with the install
+script; [Updating](#updating) keeps it current with everything else.
 
 ```
 polycarp spaces ls          # runs baneyspaces ls
 polycarp browser --version  # runs tabkyra --version
 polycarp voice              # opens Silas's settings in Polycarp (the Silas app only if Polycarp isn't installed)
-polycarp doctor             # shows which tools it found
+polycarp doctor             # shows which tools it found, and whether their builds match
+polycarp version            # every part, the commit it was built from, and whether they all match
+polycarp update             # brings every part to the newest commit together
 polycarp mcp                # serves the theme tools to an agent over MCP (stdio)
 ```
 
 Build it with `cd cli && cargo build`. See [cli/](cli/).
+
+## Updating
+
+Polycarp is several parts on one device: the `polycarp` command, the app, the `polycarp-spaces` command, the browser
+helper, the extension in each browser, the voice core and the agent skill. They are built from one repo and are meant to
+come from the same commit. Two commands keep them that way:
+
+```sh
+polycarp version    # what is installed, and whether it all matches
+polycarp update     # bring every part to the newest commit, together
+```
+
+`polycarp version` lists each part with its version, the commit it was built from and where it is, then says in one
+line whether every installed part comes from the same commit. A part that isn't installed is listed as such and is not
+an error. `--json` prints the same as JSON; `--check` exits 0 when they match and 1 when one differs, and names it.
+`polycarp doctor` ends with the same line.
+
+`polycarp update` shows its steps and asks once before it runs them. `--dry-run` prints the steps and runs nothing,
+`--yes` skips the question (needed where there is no terminal), and `--check` only says whether an update is waiting
+(exit 0 when up to date, 100 when there is one). It stops at the first step that fails, shows that step's output, says
+whether anything installed was changed, and can be run again.
+
+What it does depends on how Polycarp got onto the device:
+
+| Install | What `polycarp update` does |
+| --- | --- |
+| **Mac app from the download or the install script** | Asks the app's own updater (`polycarp-spaces update --now`): the same check, signature check and installer as **Settings > Updates > Update Now**. The app restarts itself when it is done. |
+| **Built from source, Mac** | Fetches `origin/main`, makes a clean copy of it in `~/Library/Caches/polycarp`, and runs `make -C spaces install` there: the app with the command, the helper, the extension and the skill inside, installed and restarted. Then it reloads the extension unless an agent is working in the browser. |
+| **Built from source, Linux** | The same clean copy (in `~/.cache/polycarp`), then: the `polycarp` command into `~/.local/bin`; on Hyprland the spaces daemon, the engine and `spaces/platforms/linux/omarchy/install.sh`; with Node, the browser helper and the extension; then the daemon is stopped and Hyprland reloaded, which starts the new one. |
+| **Windows** | Not supported yet: it prints the build-from-source steps from [spaces/platforms/windows/README.md](spaces/platforms/windows/README.md) and exits 2. `polycarp version` works. |
+
+For a source install, tell it once where your checkout is:
+
+```sh
+polycarp update --source ~/src/polycarp
+```
+
+It remembers the path in `source.toml` in Polycarp's config folder (`~/.config/polycarp` on a Mac and Linux), and from
+then on `polycarp update` is enough. Only `origin/main` is ever installed, and only from the clean copy: never a
+branch, never files you have changed, never the checkout you work in, which is used for `git fetch` and nothing else.
+It refuses a checkout whose `origin` is not this repo. When every installed part is already at that commit it says so
+and stops before building anything. On Linux the browser helper and the extension run from the clean copy, so keep
+that folder; a deleted one is rebuilt by the next update.
+
+A source build needs what the first build needed: Rust everywhere; on a Mac Apple's command line tools, Bun and Node;
+on Linux Node for the browser part.
+
+The older per-part ways still exist and say when this is the better one: the app's **Settings > Updates**
+([spaces/README.md](spaces/README.md#updates)), and the standalone browser's updater
+([browser/docs/updates.md](browser/docs/updates.md)). `polycarp browser update` inside Polycarp.app tells you to run
+`polycarp update`.
 
 ## Plan
 

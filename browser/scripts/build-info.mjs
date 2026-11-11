@@ -8,16 +8,23 @@ import { join } from "node:path";
 
 /** id is new for every build; commit and version say what it was built from. */
 export function buildInfo(repo) {
+	const git = (args, env = process.env) =>
+		execFileSync("git", args, { cwd: repo, encoding: "utf8", env, stdio: ["ignore", "pipe", "ignore"] }).trim();
 	let commit = "";
+	let commitDate = "";
+	let dirty = false;
 	try {
-		commit = execFileSync("git", ["rev-parse", "HEAD"], {
-			cwd: repo,
-			encoding: "utf8",
-			stdio: ["ignore", "pipe", "ignore"],
-		}).trim();
+		commit = git(["rev-parse", "HEAD"]);
+		// The same shape the app's Info.plist and the polycarp command carry, so the three compare.
+		commitDate = git(["log", "-1", "--format=%cd", "--date=format-local:%Y-%m-%dT%H:%M:%SZ"], {
+			...process.env,
+			TZ: "UTC",
+		});
+		// Tracked files of the whole checkout: build output and the sibling checkouts are untracked or ignored.
+		dirty = git(["status", "--porcelain", "--untracked-files=no"]) !== "";
 	} catch {
 		// Not a git checkout (an unpacked source archive): the version still identifies it.
 	}
 	const version = JSON.parse(readFileSync(join(repo, "static", "manifest.chrome.json"), "utf8")).version;
-	return { id: randomUUID(), commit, version, builtAt: new Date().toISOString() };
+	return { id: randomUUID(), commit, commitDate, dirty, version, builtAt: new Date().toISOString() };
 }

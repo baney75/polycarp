@@ -286,7 +286,7 @@ export const COMMANDS: CommandSpec[] = [
 		flags: UPDATE_FLAGS,
 	},
 	{ name: "install", what: "Re-register the native host with every browser, or with --browser <name> only that one", group: "Troubleshoot", flags: ["--force", "--browser"] },
-	{ name: "reload", what: "Reload the extension after rebuilding dist-chrome", group: "Troubleshoot" },
+	{ name: "reload", what: "Reload the extension after rebuilding dist-chrome", group: "Troubleshoot", flags: ["--if-idle"] },
 	{ name: "debug", what: "Bridge state, request timings and a benchmark (JSON)", group: "Troubleshoot" },
 	{ name: "completion", positional: 1, args: "zsh|bash|fish", what: `Completions for ${COMMAND_NAME}: eval "$(${COMMAND_NAME} completion zsh)"`, group: "Troubleshoot", values: ["zsh", "bash", "fish"] }, // product-name allowlist: the alias is still completed
 	{ name: "version", what: "This CLI's version (also --version)", group: "Troubleshoot", flags: ["--json"] },
