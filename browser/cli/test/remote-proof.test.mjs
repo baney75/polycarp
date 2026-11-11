@@ -31,8 +31,10 @@ const KEY = readFileSync(join(certDir, "key.pem"));
  * The public side. stream: "now" answers an authenticated initialize as SSE at once; "held" holds the first bytes 10 seconds, the
  * way a buffering proxy does. Records the Host and SNI of every request and the bearer tokens it saw.
  */
-async function fakePublic({ stream = "now", onAuthed, authMeta = "full", resource = "ours", listen = "127.0.0.1" } = {}) {
-	const seen = { hosts: [], sni: [], tokens: [], authed: 0 };
+// gateway: how many requests a tunnel that hasn't connected answers first, the way Cloudflare's edge does (530 by default, or
+// gatewayStatus; "drop" closes the connection with no answer). Infinity never connects.
+async function fakePublic({ stream = "now", onAuthed, authMeta = "full", resource = "ours", listen = "127.0.0.1", gateway = 0, gatewayStatus = 530 } = {}) {
+	const seen = { hosts: [], sni: [], tokens: [], authed: 0, gateway: 0 };
 	let publicUrl = "";
 	const timers = new Set();
 	const srv = createHttpsServer({ cert: CERT, key: KEY }, (req, res) => {
@@ -42,6 +44,12 @@ async function fakePublic({ stream = "now", onAuthed, authMeta = "full", resourc
 			res.writeHead(status, { "content-type": "application/json", ...headers });
 			res.end(JSON.stringify(body));
 		};
+		if (seen.gateway < gateway) {
+			seen.gateway++;
+			if (gatewayStatus === "drop") return req.socket.destroy();
+			res.writeHead(gatewayStatus, { "content-type": "text/html" });
+			return res.end("<html><body>error code: 1033</body></html>");
+		}
 		if (req.method === "GET" && req.url === METADATA_PATH) {
 			// "421": a serve started for another name. "other": another connector's metadata.
 			if (resource === "421") return json(421, { error: "misdirected" });
@@ -551,6 +559,80 @@ test("setup fails on a real fault at the public address (a refused certificate, 
 	} finally {
 		await pub.close();
 		await nowhere.close();
+		await local.close();
+	}
+});
+
+test("a gateway status or no answer past TLS is a tunnel that hasn't connected yet: pending, while a 421 stays a fault", async () => {
+	for (const status of [502, 503, 504, 521, 522, 523, 530, "drop"]) {
+		const pub = await fakePublic({ gateway: Infinity, gatewayStatus: status });
+		const doh = await fakeDoh();
+		try {
+			const m = machine(`gw-${status}`, pub.publicUrl, doh.url);
+			const r = await m.run(["remote", "test", "--json"]);
+			assert.equal(r.code, 1, r.stdout + r.stderr);
+			for (const name of ["resource_metadata", "auth_metadata", "auth_challenge"]) {
+				const c = byName(r.json(), name);
+				assert.equal(c.status, "fail", `${status} ${name}`);
+				assert.equal(c.pending, true, `${status} ${name}: ${c.detail}`);
+				assert.match(c.next, /hasn't connected|remote fix/, `${status} ${name}`);
+			}
+			if (status !== "drop") assert.match(byName(r.json(), "resource_metadata").detail, new RegExp(`answered ${status}`));
+			assert.equal(pub.seen.tokens.length, 0, "no probe token is used while the tunnel isn't through");
+		} finally {
+			await pub.close();
+			await doh.close();
+		}
+	}
+});
+
+test("setup keeps polling while the tunnel answers 530, and is on once it connects", async () => {
+	const pub = await fakePublic({ gateway: 2 });
+	const doh = await fakeDoh();
+	const local = await localServe(pub.publicUrl);
+	try {
+		const m = machine("gw-then-up", undefined, doh.url);
+		const wait = { TABKYRA_PUBLIC_WAIT_MS: "5000", TABKYRA_PUBLIC_POLL_MS: "200" };
+		const r = await m.run(["remote", "setup", "--json", "--no-service", "--public-url", pub.publicUrl, "--port", String(local.port)], wait);
+		assert.equal(r.code, 0, r.stdout + r.stderr);
+		assert.equal(r.json().state, "on");
+		assert.equal(byName(r.json(), "resource_metadata").status, "ok");
+		assert.equal(pub.seen.gateway, 2);
+	} finally {
+		await pub.close();
+		await doh.close();
+		await local.close();
+	}
+});
+
+test("setup that sees 530 until the deadline fails: the tunnel hasn't connected, with what to do next", async () => {
+	const pub = await fakePublic({ gateway: Infinity });
+	const doh = await fakeDoh();
+	const local = await localServe(pub.publicUrl);
+	try {
+		const m = machine("gw-never", undefined, doh.url);
+		const wait = { TABKYRA_PUBLIC_WAIT_MS: "1500", TABKYRA_PUBLIC_POLL_MS: "200" };
+		const started = Date.now();
+		const r = await m.run(["remote", "setup", "--json", "--no-service", "--public-url", pub.publicUrl, "--port", String(local.port)], wait);
+		assert.ok(Date.now() - started >= 1300, "it polled to the deadline");
+		assert.ok(pub.seen.gateway > 6, `it asked more than once (${pub.seen.gateway} answers)`);
+		// A failure whose next a person runs: exit 3, as every setup report with a next.
+		assert.equal(r.code, 3, r.stdout + r.stderr);
+		const report = r.json();
+		assert.equal(report.ok, false);
+		assert.equal(report.state, "problem");
+		assert.equal(report.code, "resource_metadata");
+		assert.match(report.message, /tunnel .*hasn't connected/);
+		assert.match(report.message, /answered 530/);
+		assert.deepEqual(report.next, { kind: "run_command", command: "polycarp-browser remote fix" });
+		assert.equal(byName(report, "resource_metadata").pending, true);
+		assert.ok(existsSync(join(m.env.TABKYRA_CONFIG_DIR, "remote.json")), "remote.json is kept");
+		const t = await m.run(["remote", "setup", "--no-service", "--public-url", pub.publicUrl, "--port", String(local.port)], wait);
+		assert.equal(t.code, 3, t.stdout);
+		assert.match(t.stdout + t.stderr, /hasn't connected/);
+	} finally {
+		await pub.close();
+		await doh.close();
 		await local.close();
 	}
 });

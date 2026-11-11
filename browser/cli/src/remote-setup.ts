@@ -55,7 +55,7 @@ import { configDir, listClients, mintApprovalCode, passcodeSet, setPasscode } fr
 import { hubFile } from "./hub-state.ts";
 import { DohAnswerError, dohAddresses } from "./doh.ts";
 import { isIP } from "node:net";
-import { answersFromOutside, type ProofCheck, privateAddress, publicChecks, realFault } from "./remote-test.ts";
+import { answersFromOutside, type ProofCheck, privateAddress, publicChecks, realFault, tunnelPending } from "./remote-test.ts";
 import { DEFAULT_PORT } from "./tunnel.ts";
 import { tailscaleAppPath, tailscaleBinary } from "./tailscale.ts";
 
@@ -809,21 +809,41 @@ async function runSetup(options: SetupOptions): Promise<number> {
 			const linger = lingerWarning();
 			if (linger) say(`${sym.warn} ${linger}`);
 		}
-		if (route === "cloudflare" && wait) await waitForPublic(publicUrl, say);
+		// One deadline for both waits below: the name becoming public, then the tunnel behind it connecting.
+		const publicDeadline = Date.now() + waitMs("PUBLIC_WAIT_MS", 5 * 60_000);
+		if (route === "cloudflare" && wait) await waitForPublic(publicUrl, say, publicDeadline);
 		const connectorUrl = `${publicUrl}/mcp`;
 		// The proof, as `remote test` gives it: what an assistant sees from outside. Only what a new name looks like for a few minutes
 		// waits: no public address yet, or nothing answering yet (a timeout or a refusal). Anything else is a fault and fails setup:
 		// a refused certificate, a 421, another connector's metadata, a stream held back, a sign-in that can't start.
 		stage = "proof";
-		const proof = await publicChecks(publicUrl);
-		const up = answersFromOutside(proof);
-		say(`\nFrom the internet, as an assistant sees it:`);
-		for (const line of proofLines(proof)) say(line);
 		// A private address literal (--public-url http://127.0.0.1:...) is a deliberate local setup: no assistant on the internet
 		// reaches it, and setup says so instead of failing.
 		const host = new URL(publicUrl).hostname.replace(/^\[|\]$/g, "");
 		const localOnly = isIP(host) !== 0 && privateAddress(host);
+		let proof = await publicChecks(publicUrl);
+		// The name resolves and has a certificate, but the tunnel or gateway in front of serve answers 502 to 530 or nothing: right
+		// after the tunnel's service starts it does that for a minute. Keep asking to the deadline; no person is needed for it.
+		if (!localOnly && tunnelPending(proof) && !realFault(proof)) {
+			const every = waitMs("PUBLIC_POLL_MS", 5000);
+			say(`Waiting for the tunnel in front of ${publicUrl} to connect (${tunnelPending(proof)?.detail}), up to ${duration(Math.max(0, publicDeadline - Date.now()))}.`);
+			while (tunnelPending(proof) && !realFault(proof) && Date.now() + every < publicDeadline) {
+				await sleep(every);
+				proof = await publicChecks(publicUrl);
+			}
+		}
+		const up = answersFromOutside(proof);
+		say(`\nFrom the internet, as an assistant sees it:`);
+		for (const line of proofLines(proof)) say(line);
 		const fault = localOnly ? undefined : realFault(proof);
+		const stuck = localOnly || fault ? undefined : tunnelPending(proof);
+		if (stuck) {
+			return fail("problem", `${connectorUrl} isn't usable from the internet: the tunnel in front of serve hasn't connected by the deadline (${stuck.name}: ${stuck.detail}). Run ${COMMAND_NAME} remote fix to restart it, then ${COMMAND_NAME} remote test. remote.json is kept.`, {
+				code: stuck.name,
+				checks: proof,
+				next: { kind: "run_command", command: `${COMMAND_NAME} remote fix` },
+			});
+		}
 		if (fault) {
 			const where = up ? `${connectorUrl} answers from the internet, but` : `${connectorUrl} isn't usable from the internet:`;
 			return fail("problem", `${where} ${fault.name} failed: ${fault.detail}. ${fault.next ?? ""} remote.json is kept.`.replace(/\s+remote\.json/, " remote.json"), { code: fault.name, checks: proof });
@@ -896,10 +916,10 @@ Check it with: ${COMMAND_NAME} remote status`);
 }
 
 /** In a terminal, after a Cloudflare setup: a new DNS name takes minutes, so check the public address for up to 5 minutes. */
-async function waitForPublic(publicUrl: string, say: (line: string) => void): Promise<void> {
+async function waitForPublic(publicUrl: string, say: (line: string) => void, deadline: number): Promise<void> {
 	const every = waitMs("PUBLIC_POLL_MS", 5000);
-	const total = waitMs("PUBLIC_WAIT_MS", 5 * 60_000);
 	const start = Date.now();
+	const total = Math.max(0, deadline - start);
 	say(`Waiting for ${publicUrl} to answer from the internet (a new name takes a few minutes), up to ${duration(total)}. Ctrl-C stops; setup is saved.`);
 	let shownAt = start;
 	for (;;) {
@@ -910,8 +930,8 @@ async function waitForPublic(publicUrl: string, say: (line: string) => void): Pr
 			say(`${sym.ok} ${publicUrl} answers from the internet.`);
 			return;
 		}
-		// A real fault doesn't go away by waiting; the proof after this names it.
-		if (realFault(checks)) return;
+		// A real fault doesn't go away by waiting, and a tunnel still connecting is the proof's own wait; the proof names either.
+		if (realFault(checks) || tunnelPending(checks)) return;
 		if (Date.now() + every >= start + total) {
 			const failed = checks.find((x) => x.status !== "ok");
 			say(`${sym.warn} ${publicUrl} isn't answering yet (${failed?.detail ?? "no answer"}). DNS can take longer; check with ${COMMAND_NAME} remote test.`);
