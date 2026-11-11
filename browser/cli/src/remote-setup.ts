@@ -452,6 +452,9 @@ async function waitForTailscale(ports: number[], first: FunnelPlan, say: (line: 
 	return plan;
 }
 
+/** The step that writes the launcher without registering Polycarp with browsers the person never set up. */
+const launcherStep = () => `${COMMAND_NAME} install --browser <name> for the browser you use Polycarp in (it writes the launcher and registers only that browser; plain install registers every browser on this computer)`;
+
 /**
  * In a terminal: the service runs the agent launcher, so setup writes that one file. Not `install`: that registers the native
  * host with every browser on the machine, and setup must not add Polycarp to browsers the person never set up.
@@ -465,7 +468,7 @@ async function ensureLauncher(say: (line: string) => void): Promise<void> {
 		say(`${sym.warn} The launcher couldn't be written: ${err instanceof Error ? err.message : String(err)}`);
 	}
 	if (launcherValid()) return;
-	say(`Run ${COMMAND_NAME} install in another terminal. Waiting for it. Ctrl-C stops; nothing else has changed.`);
+	say(`Run ${launcherStep()} in another terminal. Waiting for it. Ctrl-C stops; nothing else has changed.`);
 	const every = waitMs("TAILSCALE_POLL_MS", 2000);
 	const deadline = Date.now() + waitMs("TAILSCALE_WAIT_MS", 30 * 60_000);
 	while (!launcherValid() && Date.now() < deadline) await sleep(every);
@@ -694,7 +697,7 @@ async function runSetup(options: SetupOptions): Promise<number> {
 	if (options.service && !launcherValid()) {
 		if (wait) await ensureLauncher(say);
 		if (!launcherValid()) {
-			return fail("problem", `${launcherBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then ${COMMAND_NAME} remote setup again.`, {
+			return fail("problem", `${launcherBinary()} isn't a working launcher, so the service would have nothing to start. Run ${launcherStep()} first, then ${COMMAND_NAME} remote setup again.`, {
 				code: "launcher",
 				next: { kind: "run_command", command: `${COMMAND_NAME} install` },
 			});
