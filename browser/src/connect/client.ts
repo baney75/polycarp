@@ -14,6 +14,9 @@ import {
 	GESTURE_METHODS,
 	type Gesture,
 	type JoinResult,
+	type RemoteAnswer,
+	type RemoteFixAnswer,
+	type TunnelResult,
 } from "./types.js";
 
 export class ConnectRequestError extends Error {
@@ -145,7 +148,17 @@ export const connectJoinHub = (
 		if (typeof p.step === "string") onProgress(p.step);
 	});
 export const connectSetupTunnel = (host: string, onProgress: (progress: Record<string, unknown>) => void) =>
-	request<{ publicUrl: string; connectorUrl: string }>("setupTunnel", { host }, onProgress);
+	request<TunnelResult>("setupTunnel", { host }, onProgress);
+/**
+ * "Use Polycarp from Claude, ChatGPT and Grok" (remote-flow.ts). Each takes no parameters: the host decides every command
+ * line itself, so nothing the page holds reaches one. Long ones send a keep-alive frame every 10 seconds, which rearms the wait.
+ */
+export const connectRemoteState = () => request<RemoteAnswer>("remoteState");
+export const connectRemoteSetup = () => request<RemoteAnswer>("remoteSetup");
+export const connectRemoteFunnel = () => request<RemoteAnswer>("remoteFunnel");
+export const connectRemoteTest = () => request<RemoteAnswer>("remoteTest");
+export const connectRemoteFixPlan = () => request<RemoteFixAnswer>("remoteFixPlan");
+export const connectRemoteFix = () => request<RemoteFixAnswer>("remoteFix");
 /** Only the fields given are sent: no preset keeps the saved one, no accent keeps the saved accent, null clears it. */
 export const connectSetTheme = (change: {
 	preset?: string;

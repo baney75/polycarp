@@ -277,7 +277,7 @@ function openFunnelProcess(bin: string, port: number): Promise<FunnelOpen> {
 }
 
 /** Open Funnel on 8443 and confirm Tailscale really has it on for this machine before saying so. */
-async function openFunnel(bin: string, dns: string, port: number): Promise<FunnelOpen> {
+export async function openFunnel(bin: string, dns: string, port: number): Promise<FunnelOpen> {
 	const result = await openFunnelProcess(bin, port);
 	if (result.kind !== "opened") return result;
 	const after = readTailscale(bin);

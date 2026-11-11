@@ -33,10 +33,21 @@ import { deviceRows } from "./hub-admin.ts";
 import { devicesFile, devicesReadable, hubFile, loadHubConfig, mintConnectCode, validDeviceName } from "./hub-state.ts";
 import { type EnrollHooks, type EnrollResult, enrollDevice, HubCodeError, LinkError, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusyAsync } from "./link.ts";
 import { configDir, DEFAULT_GRANT, mintApprovalCode, passcodeSet } from "./oauth.ts";
+import { checkViews } from "./remote-panel.ts";
+
+const tryPasscodeSet = (): boolean => {
+	try {
+		return passcodeSet();
+	} catch {
+		return false;
+	}
+};
 import { normalizeCloudflareHost } from "./cloudflare.ts";
 import { SCOPES } from "./remote.ts";
 import { loadRemoteConfig, remoteFile } from "./remote-setup.ts";
 import { setupTunnel, type TunnelHooks, TunnelError, type TunnelProgress } from "./tunnel-setup.ts";
+import { remoteFix, remoteOpenFunnel, remoteSetupTailscale, remoteState, remoteTest, type FunnelSeam, type RunSelf } from "./remote-panel.ts";
+import type { RemoteAnswer, RemoteFixAnswer, TunnelResult } from "../../src/connect/types.ts";
 import { isAccent, isMode, loadPolycarpPayload, loadTheme, polycarpRefusal, PRESETS, saveTheme } from "./theme.ts";
 
 // ---------- parsing ----------
@@ -48,7 +59,8 @@ export type ConnectCall =
 	| { method: "setBusy"; busy: boolean }
 	| { method: "joinHub"; hubUrl: string; code: string; name?: string }
 	| { method: "setupTunnel"; host: string }
-	| { method: "setTheme"; preset?: string; accent?: string | null; mode?: string };
+	| { method: "setTheme"; preset?: string; accent?: string | null; mode?: string }
+	| { method: "remoteState" | "remoteSetup" | "remoteFunnel" | "remoteTest" | "remoteFixPlan" | "remoteFix" };
 
 export type ParsedConnect = { ok: true; id: number; call: ConnectCall } | { ok: false; id?: number; message: string };
 
@@ -94,7 +106,13 @@ export function parseConnect(message: unknown): ParsedConnect {
 	switch (method) {
 		case "status":
 		case "approvalCode":
-		case "deviceCode": {
+		case "deviceCode":
+		case "remoteState":
+		case "remoteSetup":
+		case "remoteFunnel":
+		case "remoteTest":
+		case "remoteFixPlan":
+		case "remoteFix": {
 			const problem = onlyKeys(params, []);
 			return problem ? fail(problem) : call({ method });
 		}
@@ -169,6 +187,17 @@ export interface ConnectOptions {
 	tunnelCheckMs?: number;
 	/** How often `joinHub` tells the panel it is still working. The panel waits 30 seconds between frames. Tests shorten it. */
 	keepAliveMs?: number;
+	/** Stand-ins for the remote flow's work (the Tailscale setup, Funnel, the outside checks, `remote fix`), so a test touches nothing. */
+	remote?: RemoteHooks;
+}
+
+/** What the remote flow's methods run. Production uses remote-panel.ts as it is. */
+export interface RemoteHooks {
+	state?: () => Promise<RemoteAnswer>;
+	setup?: () => Promise<RemoteAnswer>;
+	funnel?: FunnelSeam;
+	test?: () => Promise<RemoteAnswer>;
+	runSelf?: RunSelf;
 }
 
 type Reply = (frame: HostConnect) => void;
@@ -179,7 +208,45 @@ const MINT_FILE = "connect-mints.json";
 const NOT_MANAGER = `This device isn't a manager, so it can't ask the hub for codes. Link it with a code from ${COMMAND_NAME} hub code --manage, or run the command on the hub.`;
 const NO_ROUTE = `This computer has no public address yet. Run ${COMMAND_NAME} remote setup (one computer) or ${COMMAND_NAME} hub setup --public-url https://host (many devices) first.`;
 
-const GENERIC_FAILURE = `That didn't work on this computer. Try again, or run the matching ${COMMAND_NAME} command in a terminal.`;
+/**
+ * What a person reads when a method fails for a reason the host can't put in its own words (an exception from a library, which
+ * may quote a file). One sentence per method, naming the terminal command that shows the whole reason, so no failure reads
+ * the same as another. A Node error code (EACCES, ENOENT) is safe to show and is added after it.
+ */
+export function failureFor(method: ConnectMethod | undefined, err?: unknown): string {
+	const errno = (err as { code?: unknown } | undefined)?.code;
+	const tag = typeof errno === "string" && /^[A-Z][A-Z0-9_]{1,30}$/.test(errno) ? ` (${errno})` : "";
+	const see = (command: string) => `Run ${COMMAND_NAME} ${command} in a terminal to see why.${tag}`;
+	switch (method) {
+		case "status":
+			return `Polycarp's helper couldn't read this computer's connection settings. ${see("remote status")}`;
+		case "approvalCode":
+			return `The connect code couldn't be made. ${see("token approval-code")}`;
+		case "deviceCode":
+			return `The device code couldn't be made. ${see("hub code")}`;
+		case "setBusy":
+			return `Busy couldn't be changed on this computer. ${see("link status")}`;
+		case "joinHub":
+			return `Joining the hub stopped on this computer. ${see("link status")}`;
+		case "setupTunnel":
+			return `Cloudflare setup stopped on this computer. ${see("remote setup --cloudflare <name>")}`;
+		case "setTheme":
+			return `The theme couldn't be saved on this computer.${tag} Try again in a moment.`;
+		case "remoteState":
+			return `Polycarp's helper couldn't check Tailscale and Cloudflare on this computer. ${see("remote status")}`;
+		case "remoteSetup":
+			return `Tailscale setup stopped on this computer. ${see("remote setup --tailscale")}`;
+		case "remoteFunnel":
+			return `Funnel couldn't be opened from here. ${see("remote setup --tailscale")}`;
+		case "remoteTest":
+			return `The checks from the internet couldn't run. ${see("remote test")}`;
+		case "remoteFixPlan":
+		case "remoteFix":
+			return `Repair stopped on this computer. ${see("remote fix")}`;
+		default:
+			return `Polycarp's helper couldn't do that on this computer.${tag} Try again in a moment.`;
+	}
+}
 const unreadable = (file: string) => `${file} is unreadable. Fix it or move it aside.`;
 
 /** The longest sentence that passes through from the library or a hub; the panel shows it as written. */
@@ -192,17 +259,20 @@ const cap = (text: string): string => (text.length > MAX_PASSTHROUGH ? `${text.s
  * can carry a file's contents (a JSON parse error quotes the start of the file) or a path, so it
  * becomes a fixed sentence, naming `file` when the failure is about reading one.
  */
-export function safeMessage(err: unknown, file?: string): string {
+export function safeMessage(err: unknown, file?: string, method?: ConnectMethod): string {
 	// Text that quotes the hub or the network never passes: a hub can echo a request header, and the credential is in it.
 	if (err instanceof HubCodeError) return hubCodeFailure(err.status).message;
 	if (err instanceof ConnectError || err instanceof CodeLimitError || err instanceof LinkError) return cap(err.message);
 	if (err instanceof LockTimeoutError) return "Another Polycarp window is busy with that. Try again in a moment.";
-	return file ? unreadable(file) : GENERIC_FAILURE;
+	return file ? unreadable(file) : failureFor(method, err);
 }
 
 export class ConnectService {
 	private joining = false;
 	private settingUp = false;
+	private opening = false;
+	private fixing = false;
+	private readonly remote: RemoteHooks;
 	private readonly tunnel?: TunnelHooks;
 	private readonly tunnelCheckMs?: number;
 	private readonly service?: EnrollHooks["service"];
@@ -215,6 +285,7 @@ export class ConnectService {
 		this.keepAliveMs = options.keepAliveMs ?? 10_000;
 		this.tunnel = options.tunnel;
 		this.tunnelCheckMs = options.tunnelCheckMs;
+		this.remote = options.remote ?? {};
 	}
 
 	/** Answer one frame from the side panel. Never throws; a bad frame gets an error and runs nothing. */
@@ -233,7 +304,7 @@ export class ConnectService {
 			const code = err instanceof ConnectError ? err.code : "failed";
 			// The method only: params (a code, a hub address) stay out of the log.
 			process.stderr.write(`[polycarp-host] connect ${call.method} failed (${code})\n`);
-			reply({ type: "connect", id, error: { code, message: safeMessage(err) } });
+			reply({ type: "connect", id, error: { code, message: safeMessage(err, undefined, call.method) } });
 		}
 	}
 
@@ -271,11 +342,81 @@ export class ConnectService {
 				} catch (err) {
 					throw new ConnectError("bad_params", safeMessage(err, join(configDir(), "theme.json")));
 				}
+			case "remoteState":
+				return this.alive(progress, call.method, () => (this.remote.state ?? remoteState)());
+			case "remoteSetup":
+				return this.alive(progress, call.method, () => this.remoteSetup());
+			case "remoteFunnel":
+				return this.alive(progress, call.method, () => this.remoteFunnel());
+			case "remoteTest":
+				return this.alive(progress, call.method, () => (this.remote.test ?? remoteTest)());
+			case "remoteFixPlan":
+				return this.alive(progress, call.method, () => remoteFix(true, this.remote.runSelf));
+			case "remoteFix":
+				return this.alive(progress, call.method, () => this.remoteFix());
+		}
+	}
+
+	/** Work that can outlast the relay's 60-second wait (setup, Funnel, the outside checks, repair): a frame every few seconds keeps it armed. */
+	private async alive<T>(progress: (p: Record<string, unknown>) => void, step: string, work: () => Promise<T>): Promise<T> {
+		const keepAlive = setInterval(() => progress({ step }), this.keepAliveMs);
+		try {
+			return await work();
+		} finally {
+			clearInterval(keepAlive);
+		}
+	}
+
+	/**
+	 * The connect code a successful setup hands back, so the person can add an assistant at once. It counts against the same
+	 * ten-in-ten-minutes limit as the panel's "New code" button, and a code that can't be made leaves setup on and says why.
+	 */
+	private resultCode(): Pick<RemoteAnswer, "connectCode" | "connectCodeExpiresAt" | "connectCodeProblem"> {
+		try {
+			this.takeCodeSlot();
+			const made = mintApprovalCode();
+			return { connectCode: made.code, connectCodeExpiresAt: made.expiresAt };
+		} catch (err) {
+			return { connectCodeProblem: safeMessage(err, join(configDir(), "oauth-codes.json"), "approvalCode") };
+		}
+	}
+
+	/** Tailscale's "Turn on". One setup at a time, shared with Cloudflare's; the host repeats a frame so the panel's wait never runs out. */
+	private async remoteSetup(): Promise<RemoteAnswer> {
+		if (this.settingUp) throw new ConnectError("busy", "Setup is already running in another Polycarp window.");
+		this.settingUp = true;
+		try {
+			const answer = await (this.remote.setup ?? remoteSetupTailscale)();
+			return answer.state === "on" ? { ...answer, ...this.resultCode() } : answer;
+		} finally {
+			this.settingUp = false;
+		}
+	}
+
+	/** Open the saved Funnel again: the panel calls it every few seconds while it waits for the person to allow Funnel. */
+	private async remoteFunnel(): Promise<RemoteAnswer> {
+		if (this.opening || this.settingUp) throw new ConnectError("busy", "Polycarp is already opening Funnel.");
+		this.opening = true;
+		try {
+			const answer = await remoteOpenFunnel(this.remote.funnel);
+			return answer.state === "on" ? { ...answer, ...this.resultCode() } : answer;
+		} finally {
+			this.opening = false;
+		}
+	}
+
+	private async remoteFix(): Promise<RemoteFixAnswer> {
+		if (this.fixing || this.settingUp) throw new ConnectError("busy", "Repair is already running.");
+		this.fixing = true;
+		try {
+			return await remoteFix(false, this.remote.runSelf);
+		} finally {
+			this.fixing = false;
 		}
 	}
 
 	/** The Cloudflare button. One at a time; the host repeats the current step so the panel's wait never runs out during the sign-in. */
-	private async setupTunnel(call: Extract<ConnectCall, { method: "setupTunnel" }>, progress: (p: Record<string, unknown>) => void): Promise<{ publicUrl: string; connectorUrl: string }> {
+	private async setupTunnel(call: Extract<ConnectCall, { method: "setupTunnel" }>, progress: (p: Record<string, unknown>) => void): Promise<TunnelResult> {
 		if (this.settingUp) throw new ConnectError("busy", "Cloudflare setup is already running.");
 		this.settingUp = true;
 		let last: Record<string, unknown> | undefined;
@@ -286,7 +427,8 @@ export class ConnectService {
 		const keepAlive = setInterval(() => last && progress(last), this.keepAliveMs);
 		try {
 			const done = await setupTunnel(call.host, send, this.tunnel, this.tunnelCheckMs !== undefined ? { checkTotalMs: this.tunnelCheckMs, checkEveryMs: Math.min(1000, this.tunnelCheckMs) } : {});
-			return { publicUrl: done.publicUrl, connectorUrl: `${done.publicUrl}/mcp` };
+			const checks = checkViews(done.checks);
+			return { publicUrl: done.publicUrl, connectorUrl: `${done.publicUrl}/mcp`, ...(checks?.length ? { checks } : {}), passcodeSet: tryPasscodeSet(), ...this.resultCode() };
 		} catch (err) {
 			if (err instanceof TunnelError) throw new ConnectError("failed", err.message);
 			throw err;
@@ -520,6 +662,6 @@ function enrollFailure(result: Extract<EnrollResult, { kind: "failed" }>, hubUrl
 			if (cause.status === 401) return new ConnectError("failed", "The hub refused this request. Check the hub's address and try again.");
 			return new ConnectError("failed", "The hub refused to add this computer. Check the hub's device list and try again.");
 		default:
-			return new ConnectError("failed", GENERIC_FAILURE);
+			return new ConnectError("failed", failureFor("joinHub"));
 	}
 }

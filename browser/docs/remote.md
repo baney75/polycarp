@@ -75,10 +75,33 @@ name if you gave none, and after the tunnel starts checks the public address for
 `remote off` stops the tunnel and leaves the tunnel and its record on your account, so turning it on again reuses them;
 `cloudflared tunnel delete polycarp-<this computer>` removes the tunnel for good.
 
-Settings > Agents has a "Set up with Cloudflare" button that does the same: enter the address, sign in to Cloudflare in the
-tab it opens, and it makes the tunnel and checks the public address. If no `cloudflared` is installed it downloads its own
-(pinned release 2026.10.7, SHA-256 checked before anything is unpacked or run) to `~/.config/polycarp/browser/bin/cloudflared`; one on
-your PATH or in Homebrew's folders is used first. When Funnel is on, the button moves to Cloudflare and turns Funnel off only after the tunnel is ready; in a terminal that is `remote setup --cloudflare <name> --replace-funnel`.
+Settings > Agents does the same with buttons; see "From the side panel" below. If no `cloudflared` is installed it
+downloads its own (pinned release 2026.10.7, SHA-256 checked before anything is unpacked or run) to
+`~/.config/polycarp/browser/bin/cloudflared`; one on your PATH or in Homebrew's folders is used first. When Funnel is on,
+choosing Cloudflare turns Funnel off only after the tunnel is ready; in a terminal that is
+`remote setup --cloudflare <name> --replace-funnel`.
+
+## From the side panel
+
+Settings > Agents > "Use Polycarp from Claude, ChatGPT and Grok" turns it on without a terminal, on Mac, Linux and
+Windows. It asks Polycarp's helper through the native host, so the helper must be installed; nothing the page holds
+reaches a command line (the remote methods take no parameters, and the Cloudflare address is checked before use).
+
+1. **Choose a way.** Tailscale (no domain; recommended when it is installed) or Cloudflare (a domain on your account).
+2. **Get it and sign in.** The page names what is missing, with one button: Tailscale's download page, the command to
+   sign in, or "Turn on" for Cloudflare, which downloads cloudflared and opens Cloudflare's sign-in. It checks every
+   3 seconds and moves on by itself.
+3. **Turn on.** If Tailscale hasn't allowed Funnel yet, the page opens Tailscale's page once and tries Funnel again every
+   5 seconds for up to 10 minutes; no "try again" press is needed.
+
+The result shows the connector URL, a one-time connect code with a 10-minute countdown and "New code", the steps for
+claude.ai, ChatGPT and grok.com (the same lines `remote setup` prints), and the checks from the internet
+(`remote test`). When a check fails and the helper has `remote fix`, a Repair button runs it; an older helper shows no
+button. The side panel never makes or shows a passcode: a new connect code approves an assistant again. The code lives
+only in the page's memory and is gone when Settings closes.
+
+The Linux desktop app has no remote screen; on Linux, use the side panel or the terminal. On Windows the helper finds
+`tailscale.exe` and `cloudflared.exe` in their installers' folders as well as on PATH ("Windows" below).
 
 `polycarp browser tunnel cloudflare` is a quick tunnel for local testing with a token, with no account: a temporary
 `*.trycloudflare.com` address that changes each time it starts. claude.ai, ChatGPT and grok.com can't use it, because a

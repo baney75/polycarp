@@ -13,7 +13,7 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (f) => readFileSync(join(repo, f), "utf8");
 
 test("the relay passes only known methods with object params, and names the id of a refused one", () => {
-	assert.deepEqual([...CONNECT_METHODS], ["status", "approvalCode", "deviceCode", "setBusy", "joinHub", "setupTunnel", "setTheme"]);
+	assert.deepEqual([...CONNECT_METHODS], ["status", "approvalCode", "deviceCode", "setBusy", "joinHub", "setupTunnel", "setTheme", "remoteState", "remoteSetup", "remoteFunnel", "remoteTest", "remoteFixPlan", "remoteFix"]);
 	assert.deepEqual(checkConnectRequest({ id: 1, method: "status" }), { ok: true, request: { id: 1, method: "status" } });
 	assert.deepEqual(checkConnectRequest({ id: 2, method: "setBusy", params: { busy: true } }).request.params, { busy: true });
 	for (const bad of [{ id: 3, method: "link.off" }, { id: 3, method: "__proto__" }, { id: 3, method: 5 }, { id: 3, method: "status", params: [] }, { id: 3, method: "status", params: "x" }, { id: 3, method: "status", params: null }]) {
@@ -524,25 +524,21 @@ test("setupTunnel needs a click gesture, and its request waits seven minutes", a
 	assert.match(read("src/connect/client.ts"), /method === "setupTunnel" \? SETUP_TIMEOUT_MS/);
 });
 
-test("the Cloudflare form shows for route none and Funnel, and not for Cloudflare, a custom address, a hub or a link", async () => {
-	const { tunnelFormOffered } = await import("../src/connect/format.ts");
+test("the one-button flow (with its Cloudflare form) shows for route none, Funnel and Cloudflare, and not for a custom address, a hub or a link", async () => {
+	const { remoteFlowFor } = await import("../src/connect/remote-flow.ts");
 	const base = { passcodeSet: false, theme: { preset: "default" } };
-	assert.equal(tunnelFormOffered({ ...base, route: "none" }), "none");
-	assert.equal(tunnelFormOffered({ ...base, route: "remote", remoteKind: "funnel", publicUrl: "https://m.ts.net:8443" }), "funnel");
-	assert.equal(tunnelFormOffered({ ...base, route: "remote", remoteKind: "cloudflare", publicUrl: "https://p.example.com" }), undefined);
-	assert.equal(tunnelFormOffered({ ...base, route: "remote", remoteKind: "custom", publicUrl: "https://p.example.com" }), undefined);
-	assert.equal(tunnelFormOffered({ ...base, route: "hub", publicUrl: "https://hub.example.com" }), undefined);
-	assert.equal(tunnelFormOffered({ ...base, route: "link" }), undefined);
-	assert.equal(tunnelFormOffered({ ...base, route: "none", problem: "remote.json is unreadable." }), undefined);
-	const tab = read("src/dialogs/ConnectTab.ts");
-	assert.match(tab, /children: "Set up with Cloudflare"/);
-	assert.match(tab, /placeholder="polycarp\.yourdomain\.com"/);
-	assert.match(tab, /<span>Address<\/span>/);
-	assert.match(tab, /aria-live="polite" data-tunnel-steps/);
-	assert.match(tab, /claude\.ai often can't reach Tailscale Funnel addresses\. Setting up Cloudflare turns Funnel off\./);
-	assert.match(tab, /Uses your own Cloudflare account and a domain on it\. You sign in to Cloudflare once, in a new tab\./);
-	// Both branches of assistants() draw it: no address yet, and Funnel's connector URL.
-	assert.equal((tab.match(/\$\{this\.tunnelForm\(s\)\}/g) ?? []).length, 2);
+	assert.equal(remoteFlowFor({ ...base, route: "none" }), true);
+	assert.equal(remoteFlowFor({ ...base, route: "remote", remoteKind: "funnel", publicUrl: "https://m.ts.net:8443" }), true);
+	assert.equal(remoteFlowFor({ ...base, route: "remote", remoteKind: "cloudflare", publicUrl: "https://p.example.com" }), true);
+	assert.equal(remoteFlowFor({ ...base, route: "remote", remoteKind: "custom", publicUrl: "https://p.example.com" }), false);
+	assert.equal(remoteFlowFor({ ...base, route: "hub", publicUrl: "https://hub.example.com" }), false);
+	assert.equal(remoteFlowFor({ ...base, route: "link" }), false);
+	assert.equal(remoteFlowFor({ ...base, route: "none", problem: "remote.json is unreadable." }), false);
+	const flow = read("src/dialogs/RemoteFlow.ts");
+	assert.match(flow, /placeholder="polycarp\.yourdomain\.com"/);
+	assert.match(flow, /<span>Address<\/span>/);
+	assert.match(flow, /aria-live="polite" data-tunnel-steps/);
+	assert.match(read("src/dialogs/ConnectTab.ts"), /<tabkyra-remote-flow \.status=\$\{s\}/);
 });
 
 test("the panel opens only https dash.cloudflare.com sign-in addresses", async () => {
@@ -557,6 +553,171 @@ test("the panel opens only https dash.cloudflare.com sign-in addresses", async (
 	assert.equal(parseTunnelProgress({ step: "signin", state: "waiting", url: good }).url, good);
 	assert.equal(parseTunnelProgress({ step: "nope", state: "done" }), undefined);
 	assert.equal(parseTunnelProgress({ step: "check", state: "weird" }), undefined);
-	const tab = read("src/dialogs/ConnectTab.ts");
-	assert.match(tab, /const safe = safeSignInUrl\(url\);\s*if \(!safe\) return;\s*try \{\s*void chrome\.tabs\.create\(\{ url: safe \}\)/);
+	const flow = read("src/dialogs/RemoteFlow.ts");
+	assert.match(flow, /view\.state === "waiting" \? safeSignInUrl\(view\.url\) : undefined;\s*if \(url && !signInOpened\)/);
+	// Every tab the flow opens goes through openTab, and every openTab gets a checked address.
+	for (const m of flow.matchAll(/this\.openTab\(([^)]*)\)/g)) assert.ok(["safe", "url"].includes(m[1]), m[0]);
+	assert.equal((flow.match(/chrome\.tabs\.create/g) ?? []).length, 1);
+});
+
+// ---------- Use Polycarp from Claude, ChatGPT and Grok (remote-copy.ts, remote-flow.ts, RemoteFlow.ts) ----------
+
+const STATES = ["tailscale_missing", "tailscale_signed_out", "funnel_not_allowed", "funnel_closed", "cloudflared_missing", "tailnet_lock", "port_busy", "ready", "on", "no_browser_connected", "problem"];
+const PROBLEMS = ["launcher", "hub", "service", "serve", "funnel", "config", "cloudflare_login", "cloudflare_name", "cloudflare_zone", "cloudflare_dns", "cloudflare_tunnel", "connect_code", "tailscale_operator", "dns", "tls", "resource_metadata", "auth_metadata", "auth_challenge", "streaming", "not_set_up"];
+const OLD_GENERIC = [/something is not working/i, /something went wrong/i, /couldn't finish/i, /an error occurred/i];
+const status = (over = {}) => ({ route: "none", passcodeSet: false, theme: { preset: "default" }, ...over });
+
+test("every helper state and problem code has its own sentence and one action, never a generic one", async () => {
+	const { stepCopy, STEP_COPY } = await import("../src/connect/remote-copy.ts");
+	const answers = [
+		...STATES.filter((s) => s !== "problem" && s !== "port_busy").map((state) => ({ state, message: "helper words" })),
+		{ state: "port_busy", code: "tailscale_port", message: "x" },
+		{ state: "port_busy", code: "local_port", message: "x" },
+		{ state: "cloudflared_missing", message: "x", next: { kind: "run_command", command: "polycarp remote setup --cloudflare p.example.com --yes" } },
+		...PROBLEMS.map((code) => ({ state: "problem", code, message: "helper words" })),
+		{ state: "problem", code: "cloudflare_dns", message: "x", next: { kind: "choose_name" } },
+	];
+	const bodies = new Set();
+	for (const a of answers) {
+		const copy = stepCopy(a);
+		const label = `${a.state}/${a.code ?? ""}/${a.next?.kind ?? ""}`;
+		assert.notEqual(copy.key, "unknown", label);
+		assert.ok(copy.title && copy.body, label);
+		assert.notEqual(copy.body, "helper words", `${label} shows its own sentence, not the helper's`);
+		for (const g of OLD_GENERIC) assert.doesNotMatch(`${copy.title} ${copy.body}`, g, label);
+		if (!["on", "no_browser_connected"].includes(copy.key)) assert.ok(copy.action?.label, `${label} has one action`);
+		bodies.add(copy.body);
+	}
+	// Distinct problems read differently: no two keys share a body.
+	const keys = Object.keys(STEP_COPY).filter((k) => k !== "unknown");
+	assert.equal(new Set(keys.map((k) => STEP_COPY[k].body)).size, keys.length);
+	// Unknown: the helper's own message, not a stock sentence.
+	assert.equal(stepCopy({ state: "brand_new_state", message: "Tailscale 2.0 said no." }).body, "Tailscale 2.0 said no.");
+	assert.equal(stepCopy({ state: "problem", code: "brand_new_code", message: "New words." }).body, "New words.");
+});
+
+test("each next.kind the helper sends draws its sentence and its button", async () => {
+	const { flowScreen } = await import("../src/connect/remote-flow.ts");
+	const cases = [
+		[{ state: "tailscale_missing", message: "", next: { kind: "install", url: "https://tailscale.com/download/mac" } }, "Get Tailscale", "open_url"],
+		[{ state: "tailscale_signed_out", message: "", next: { kind: "sign_in", command: "tailscale up" } }, "Copy the command", "copy_command"],
+		[{ state: "funnel_not_allowed", message: "", next: { kind: "open_page", url: "https://login.tailscale.com/f/funnel?node=x" } }, "Open Tailscale's page", "open_url"],
+		[{ state: "problem", code: "tailscale_operator", message: "", next: { kind: "run_command", command: "sudo tailscale set --operator=$USER" } }, "Copy the command", "copy_command"],
+		[{ state: "problem", code: "cloudflare_dns", message: "", next: { kind: "choose_name" } }, "Turn on", "turn_on"],
+		[{ state: "ready", message: "" }, "Turn on", "turn_on"],
+	];
+	for (const [answer, label, kind] of cases) {
+		const screen = flowScreen({ status: status(), remote: answer, chosen: "tailscale" });
+		assert.equal(screen.kind, "step", answer.state);
+		assert.equal(screen.copy.action.label, label, answer.state);
+		assert.equal(screen.copy.action.kind, kind, answer.state);
+	}
+	// add_connector is the result itself.
+	const on = { state: "on", message: "", connectorUrl: "https://m.ts.net:8443/mcp", next: { kind: "add_connector" } };
+	assert.equal(flowScreen({ status: status(), run: on }).kind, "result");
+	// The step draws the command the helper named, and opens only Tailscale's or Cloudflare's pages.
+	const flow = read("src/dialogs/RemoteFlow.ts");
+	assert.match(flow, /action\?\.kind === "copy_command" \? answer\.next\?\.command/);
+	const { safeHelpUrl } = await import("../src/connect/format.ts");
+	assert.equal(safeHelpUrl("https://login.tailscale.com/f/funnel?node=x"), "https://login.tailscale.com/f/funnel?node=x");
+	for (const bad of ["http://tailscale.com/", "https://tailscale.com.evil.example/", "https://u@tailscale.com/", "https://evil.example/", "javascript:alert(1)", 3]) assert.equal(safeHelpUrl(bad), undefined, String(bad));
+});
+
+test("the flow advances by itself: signing in, allowing Funnel and DNS all poll, and nothing asks for a try-again press", async () => {
+	const { flowScreen, pollFor, settleRun, STATE_POLL_MS, FUNNEL_POLL_MS } = await import("../src/connect/remote-flow.ts");
+	const routes = { tailscale: { installed: true, signedIn: false }, cloudflare: { installed: false, signedIn: false } };
+	// Choose: Tailscale is recommended when it is installed.
+	const choose = flowScreen({ status: status(), remote: { state: "tailscale_signed_out", message: "", routes } });
+	assert.equal(choose.kind, "choose");
+	assert.equal(choose.recommended, "tailscale");
+	assert.equal(flowScreen({ status: status(), remote: { state: "tailscale_missing", message: "", routes: { ...routes, tailscale: { installed: false, signedIn: false } } } }).recommended, undefined);
+	// Signed out -> polls -> the next state answers -> Ready, with no press in between.
+	const input = { status: status(), chosen: "tailscale", remote: { state: "tailscale_signed_out", message: "", next: { kind: "sign_in", command: "tailscale up" } } };
+	const s1 = flowScreen(input);
+	assert.equal(s1.copy.key, "tailscale_signed_out");
+	assert.equal(s1.step, 2);
+	assert.deepEqual(pollFor(s1, input), { method: "remoteState", everyMs: STATE_POLL_MS });
+	const later = { ...input, remote: { state: "ready", message: "" } };
+	const s2 = flowScreen(later);
+	assert.equal(s2.copy.key, "ready");
+	assert.equal(s2.step, 3);
+	// Funnel not allowed yet: the panel retries opening Funnel by itself, and the "on" answer is the result.
+	const remote = status({ route: "remote", remoteKind: "funnel", publicUrl: "https://m.ts.net:8443" });
+	const refused = { state: "funnel_not_allowed", message: "", next: { kind: "open_page", url: "https://login.tailscale.com/f/funnel?node=x" } };
+	const waiting = { status: remote, remote: { state: "funnel_closed", message: "" }, run: refused };
+	const s3 = flowScreen(waiting);
+	assert.equal(s3.copy.key, "funnel_not_allowed");
+	assert.deepEqual(pollFor(s3, waiting), { method: "remoteFunnel", everyMs: FUNNEL_POLL_MS });
+	assert.equal(settleRun(refused, waiting.remote, remote), refused, "a status poll doesn't drop the refusal");
+	const done = flowScreen({ ...waiting, run: { state: "on", message: "", connectorUrl: "https://m.ts.net:8443/mcp" } });
+	assert.equal(done.kind, "result");
+	assert.equal(done.connectorUrl, "https://m.ts.net:8443/mcp");
+	// A new address still spreading through DNS checks again by itself.
+	const dns = flowScreen({ status: remote, remote: { state: "problem", code: "dns", message: "" } });
+	assert.equal(dns.kind, "result");
+	assert.equal(pollFor(dns, { status: remote }).method, "remoteTest");
+	// No step's button is a bare "try again" for something that resolves by itself.
+	const { STEP_COPY } = await import("../src/connect/remote-copy.ts");
+	for (const [k, v] of Object.entries(STEP_COPY)) if (v.waits) assert.notEqual(v.action?.kind, "try_again", k);
+	assert.doesNotMatch(read("src/connect/remote-copy.ts"), /I've allowed it/);
+	// The component gives up retrying after ten minutes, and the button still opens Funnel again.
+	assert.match(read("src/dialogs/RemoteFlow.ts"), /FUNNEL_RETRY_FOR_MS = 10 \* 60_000/);
+});
+
+test("signing in or a Tailnet Lock refusal ends when the state moves on, and Use Cloudflare switches the form in", async () => {
+	const { flowScreen, settleRun } = await import("../src/connect/remote-flow.ts");
+	const run = { state: "tailscale_signed_out", message: "" };
+	assert.equal(settleRun(run, { state: "ready", message: "" }, status()), undefined);
+	assert.equal(settleRun(run, { state: "tailscale_signed_out", message: "" }, status()), run);
+	const funnel = status({ route: "remote", remoteKind: "funnel", publicUrl: "https://m.ts.net:8443" });
+	assert.equal(flowScreen({ status: funnel, remote: { state: "tailnet_lock", message: "" } }).copy.key, "tailnet_lock");
+	assert.equal(flowScreen({ status: funnel, remote: { state: "tailnet_lock", message: "" }, chosen: "cloudflare" }).kind, "cloudflare");
+	assert.equal(flowScreen({ status: status(), chosen: "cloudflare" }).kind, "cloudflare");
+	assert.equal(flowScreen({ status: status(), busy: "setup" }).copy.key, "turning_on");
+});
+
+test("the result screen shows the address, the code with a countdown and New code, the three assistants, and no passcode", async () => {
+	const { ASSISTANT_STEPS, RESULT_COPY } = await import("../src/connect/remote-copy.ts");
+	const flow = read("src/dialogs/RemoteFlow.ts");
+	const result = flow.slice(flow.indexOf("private result("), flow.indexOf("protected override updated"));
+	for (const needle of ["ASSISTANT_STEPS.map", "APPROVAL_STEP", "RESULT_COPY.addressStep", "RESULT_COPY.codeStep", 'role="timer"', "RESULT_COPY.expiresIn", "RESULT_COPY.newCode", "RESULT_COPY.noPasscode", "data-connect-code", "data-checks", "canRepair"]) {
+		assert.ok(result.includes(needle), needle);
+	}
+	assert.deepEqual(ASSISTANT_STEPS.map((a) => a.name), ["claude.ai", "ChatGPT", "grok.com"]);
+	assert.match(RESULT_COPY.noPasscode, /No passcode was made here/);
+	// Repair shows only when this helper has `remote fix` (feature-detected) and a check failed.
+	assert.match(result, /failed\.length > 0 && this\.fix\?\.available === true/);
+	// The panel setups make no passcode (D33), so nothing about one can reach the page.
+	assert.match(read("cli/src/remote-panel.ts"), /passcode: false/);
+	assert.doesNotMatch(flow, /\.passcode\b/);
+});
+
+test("the connect code is kept in memory only: no storage writes, and it is dropped when the view closes", () => {
+	for (const f of ["src/dialogs/RemoteFlow.ts", "src/connect/remote-flow.ts", "src/connect/remote-copy.ts", "src/dialogs/ConnectTab.ts"]) {
+		// Code only: the doc comments name these APIs to say they aren't used.
+		const src = read(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+		assert.doesNotMatch(src, /chrome\.storage|localStorage|sessionStorage|indexedDB|console\.(log|info|debug|warn|error)/, f);
+	}
+	const flow = read("src/dialogs/RemoteFlow.ts");
+	assert.match(flow, /disconnectedCallback\(\): void \{[^}]*this\.code = undefined;\s*this\.run = undefined;/s);
+	assert.match(read("src/dialogs/ConnectTab.ts"), /disconnectedCallback\(\): void \{[^}]*this\.approval = undefined;/s);
+});
+
+test("the unsourced claim about claude.ai and Funnel addresses is gone everywhere; the Tailnet Lock reason (D30) replaces it", () => {
+	const claim = /claude\.ai often can't reach Tailscale Funnel/i;
+	for (const f of ["src/dialogs/ConnectTab.ts", "src/dialogs/RemoteFlow.ts", "src/connect/remote-copy.ts", "src/connect/format.ts", "docs/remote.md", "../spaces/Sources/BaneySpacesCore/BrowserRemote.swift", "../spaces/Sources/BaneySpaces/BrowserRemoteView.swift"]) {
+		assert.doesNotMatch(read(f), claim, f);
+	}
+	assert.match(read("src/connect/remote-copy.ts"), /Tailnet Lock turned on, and Funnel doesn't work with it/);
+});
+
+test("a quiet poll changes nothing on screen (no jitter): equal answers are not assigned", async () => {
+	const { sameAnswer } = await import("../src/connect/remote-flow.ts");
+	assert.equal(sameAnswer({ state: "ready", message: "" }, { state: "ready", message: "" }), true);
+	assert.equal(sameAnswer({ state: "ready", message: "" }, { state: "on", message: "" }), false);
+	const flow = read("src/dialogs/RemoteFlow.ts");
+	assert.match(flow, /if \(!sameAnswer\(answer, this\.remote\)\) this\.remote = answer;/);
+	// The countdown re-renders only when its text changes, and the wait line keeps its height when empty.
+	assert.match(flow, /countdown\(this\.code\.expiresAt, this\.now\) !== countdown\(this\.code\.expiresAt, now\)/);
+	assert.match(flow, /min-h-4 text-xs text-muted-foreground" role="status"/);
 });

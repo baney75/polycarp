@@ -103,14 +103,6 @@ export function joinScopesOf(status: Pick<ConnectStatus, "joinScopes">): JoinSco
 	return out;
 }
 
-/** Whether the Cloudflare setup form shows: no public address yet, or Tailscale Funnel (which it replaces). */
-export function tunnelFormOffered(s: ConnectStatus): "none" | "funnel" | undefined {
-	if (s.problem) return undefined;
-	if (s.route === "none") return "none";
-	if (s.route === "remote" && s.remoteKind === "funnel") return "funnel";
-	return undefined;
-}
-
 /**
  * The only address the panel opens for Cloudflare sign-in: https on dash.cloudflare.com, with no credentials or port. The
  * helper checks it too; the panel does not trust the helper's word for what it opens in a tab.
@@ -162,3 +154,18 @@ export const TUNNEL_STEP_LABELS: Record<TunnelStepId, string> = {
 	tunnel: "Set up the tunnel",
 	check: "Check the address",
 };
+
+/** Pages this flow opens in a tab: Tailscale's own and Cloudflare's own download pages, over https, nothing else. */
+const OPEN_HOSTS = new Set(["tailscale.com", "login.tailscale.com", "developers.cloudflare.com"]);
+
+export function safeHelpUrl(value: unknown): string | undefined {
+	if (typeof value !== "string" || value.length > 2000) return undefined;
+	try {
+		const u = new URL(value);
+		if (u.protocol !== "https:" || u.username || u.password || u.port || !OPEN_HOSTS.has(u.hostname))
+			return undefined;
+		return u.href;
+	} catch {
+		return undefined;
+	}
+}

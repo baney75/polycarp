@@ -37,7 +37,8 @@ export interface TunnelHooks {
 	cloudflared(): Promise<{ ok: true; path: string; downloaded: boolean } | { ok: false; message: string }>;
 	signedIn(): boolean;
 	login(bin: string, onUrl: (url: string) => void): Promise<{ ok: true } | { ok: false; message: string }>;
-	setup(options: SetupOptions): Promise<void>;
+	/** Runs `remote setup` for the tunnel; the report it answers with carries the outside checks. */
+	setup(options: SetupOptions): Promise<SetupReport | undefined | void>;
 	check(publicUrl: string): Promise<{ ok: boolean; detail: string }>;
 }
 
@@ -68,6 +69,7 @@ export const realTunnelHooks: TunnelHooks = {
 		let report: SetupReport | undefined;
 		const code = await remoteSetup({ ...options, report: (r) => (report = r) });
 		if (code !== 0 || !report?.ok) throw new Error(report?.message ?? "Setup didn't finish.");
+		return report;
 	},
 	check: (publicUrl) => metadata(`${publicUrl}${METADATA_PATH}`, 10_000, publicUrl),
 };
@@ -78,7 +80,7 @@ export interface TunnelTimings {
 }
 
 /** Runs the five steps for `host` (already normalized). Returns the public origin. Throws TunnelError. */
-export async function setupTunnel(host: string, progress: (p: TunnelProgress) => void, hooks: TunnelHooks = realTunnelHooks, timings: TunnelTimings = {}): Promise<{ publicUrl: string }> {
+export async function setupTunnel(host: string, progress: (p: TunnelProgress) => void, hooks: TunnelHooks = realTunnelHooks, timings: TunnelTimings = {}): Promise<{ publicUrl: string; checks?: SetupReport["checks"] }> {
 	const name = normalizeCloudflareHost(host);
 	if (!name) throw new TunnelError("cloudflared", `${host} isn't a name a tunnel can have. Use one like polycarp.yourdomain.com.`);
 	const publicUrl = `https://${name}`;
@@ -124,13 +126,11 @@ export async function setupTunnel(host: string, progress: (p: TunnelProgress) =>
 
 	// Always run: setup again on the same name picks up where a failed run stopped (a service that never started). Funnel, when
 	// it is the route now, closes inside setup only after Cloudflare has made the tunnel.
-	await run("tunnel", async () => {
-		await hooks.setup({ cloudflare: name, service: true, passcode: false, replaceFunnel: previous?.route === "funnel" });
-	});
+	const report = await run("tunnel", async () => (await hooks.setup({ cloudflare: name, service: true, passcode: false, replaceFunnel: previous?.route === "funnel" })) || undefined);
 
 	await run("check", async () => {
 		const result = await checkWithRetry(publicUrl, timings.checkTotalMs ?? CHECK_TOTAL_MS, timings.checkEveryMs ?? CHECK_EVERY_MS, hooks.check);
 		if (!result.ok) throw new Error(`${publicUrl} isn't answering yet (${result.detail}). DNS can take a few minutes; reopen Settings to check again.`);
 	});
-	return { publicUrl };
+	return { publicUrl, ...(report?.checks ? { checks: report.checks } : {}) };
 }

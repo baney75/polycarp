@@ -1032,3 +1032,20 @@ Agents could not attach a file to a form or keep a file a page offers. One tool,
 - **Next: the Spaces handoff folder.** The folder Spaces uses to hand files between the person and an agent should
   accept files from `files/<session>/` next, on Mac and Linux, so a file an agent saved in the browser can be passed
   to a native app without the agent naming a path. Not built here; no Swift or Rust code changed.
+
+## D39. One remote flow on every surface, driven by the helper's JSON; no passcode from the panel (Claude, 2026-11-11)
+
+- **One table of words.** Every state, `problem` code and `next.kind` the helper sends maps to one title, one sentence and
+  one action in `src/connect/remote-copy.ts`. Only a state the table doesn't know shows the helper's own `message`. The
+  Mac app holds the same strings, and a test holds the panel's assistant steps equal to what `remote setup` prints.
+- **No passcode from the side panel.** D33 keeps the passcode out of every answer the panel gets, and a live connect code
+  already approves an assistant again, so setups started in the panel pass `passcode: false`. A passcode is made only
+  where it can be shown outside the browser (the terminal and the Mac app).
+- **Funnel approval advances by retrying Funnel.** Status can't see Funnel being allowed (it stays `funnel_closed` until
+  `tailscale funnel` runs again), so the panel calls `remoteFunnel` every 5 seconds for up to 10 minutes. It reopens only
+  the Funnel `remote.json` already names; it needs no click because it changes nothing the person didn't set up.
+- **Repair is feature-detected.** The host runs `remote fix --json --dry-run`; exit 2 or no `actions` array means this
+  helper has none, and the button stays hidden.
+- **Replaced claim.** "claude.ai often can't reach Tailscale Funnel addresses" had no source and is gone. The true reason
+  Funnel fails on some networks is Tailnet Lock (D30), which the Tailnet Lock step now says.
+
