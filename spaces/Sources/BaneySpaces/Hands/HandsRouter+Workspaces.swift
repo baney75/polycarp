@@ -204,7 +204,10 @@ extension HandsRouter {
         // Read Only, a narrowed scope or Donovan back in the app since the wait: checked again for every window in the pass
         // that applies the frames, and no frame is applied unless all of them pass.
         let applied: [UInt32: String]
-        switch mutateOnMain(chosen, verb: "arrange", session: session, perform: { _ in .success(host.arrange(frames)) }) {
+        let busy = Self.busy(chosen.first?.app ?? "the app", verb: "arrange")
+        switch onProcessQueues(chosen.map(\.pid), busy: busy, { [self] cancelled in
+            mutateOnMain(chosen, verb: "arrange", session: session, perform: { _ in cancelled() ? .failure(busy) : .success(host.arrange(frames)) })
+        }) {
         case .failure(let e): return .failure(e)
         case .success(let a): applied = a
         }
@@ -217,6 +220,21 @@ extension HandsRouter {
                                 "frame": .object(["x": .int(Int(f.minX)), "y": .int(Int(f.minY)), "width": .int(Int(f.width)), "height": .int(Int(f.height))])])
             }),
         ]))
+    }
+
+    static func busy(_ app: String, verb: String) -> HandsError {
+        HandsError(.inUse, "another action on \(app) is still running", suggestion: "Try `\(verb)` again when it has answered.", retry: .safe)
+    }
+
+    /// sol-sol-F4: `work` on the process queue of every pid, one at a time in pid order (two calls can't deadlock), so a
+    /// window change never lands inside a background action's transaction. The main thread never waits: there, and when a
+    /// queue isn't free within 10 s, it refuses with `busy`, and work that starts late sees `cancelled()` true.
+    func onProcessQueues<T>(_ pids: [Int32], busy: HandsError, _ work: @escaping (_ cancelled: @escaping () -> Bool) -> Result<T, HandsError>) -> Result<T, HandsError> {
+        func step(_ rest: ArraySlice<Int32>, _ cancelled: @escaping () -> Bool) -> Result<T, HandsError> {
+            guard let pid = rest.first else { return work(cancelled) }
+            return HandsEngine.shared.serialized(pid: pid, wait: Thread.isMainThread ? 0 : 10) { c in step(rest.dropFirst(), { cancelled() || c() }) } ?? .failure(busy)
+        }
+        return step(ArraySlice(Set(pids).sorted()), { false })
     }
 
     func move(_ req: HandsRequest) -> HandsEnvelope {
@@ -237,7 +255,9 @@ extension HandsRouter {
             let relative = req.string("frame").flatMap { AgentArrange.parseFrame("0=" + $0)?.frame }
             var framed: (frame: CGRect, applied: String)?
             // The move and the frame are applied in the gate's own pass, so a frame is never applied outside it.
-            let result = mutateOnMain([w], verb: "move", session: session) { agent -> Result<MoveDecision.Go, HandsError> in
+            let busy = Self.busy(w.app, verb: "move")
+            let result = onProcessQueues([w.pid], busy: busy) { [self] cancelled in mutateOnMain([w], verb: "move", session: session) { agent -> Result<MoveDecision.Go, HandsError> in
+                if cancelled() { return .failure(busy) }
                 let live = host.live(w.id)
                 let now = live.map { decide($0, agent, session: session) }
                     ?? .denied(HandsError(.windowNotFound, "window \(w.id) is gone", suggestion: "Run `polycarp-spaces agent windows`.", retry: .afterSnapshot))
@@ -256,7 +276,7 @@ extension HandsRouter {
                 }
                 fromSeen = live?.workspace
                 return r
-            }
+            } }
             let go: MoveDecision.Go
             switch result {
             case .failure(let e): return .failure(e)

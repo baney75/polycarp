@@ -192,7 +192,16 @@ public enum ChildWindowRule {
 /// first seen outside the 10 s after an action is never attributed later, and one that was there before the action never is.
 public struct ChildAttribution: Equatable, Sendable {
     struct Action: Equatable, Sendable { var session: String; var at: Date; var before: Set<UInt32>; var sheetsBefore: Set<UInt32> = [] }
-    struct Seen: Equatable, Sendable { var pid: Int32; var session: String?; var at: Date; var parent: UInt32? = nil }
+    struct Seen: Equatable, Sendable { var pid: Int32; var session: String?; var at: Date; var parent: UInt32? = nil; var last: Date? = nil }
+    /// A child (or sheet) not seen for longer than this, six watch intervals, is forgotten: it may have closed and its number
+    /// been reused between looks, so it is judged afresh (first-F1, sol-sol-F3).
+    public static let forgetAfter: TimeInterval = 3
+
+    /// Keeps of `book` only what this full look of `pid` still shows and saw within `forgetAfter`; marks those seen now.
+    private static func retire(_ book: inout [UInt32: Seen], _ ids: Set<UInt32>, pid: Int32, at: Date) {
+        book = book.filter { $0.value.pid != pid || (ids.contains($0.key) && at.timeIntervalSince($0.value.last ?? $0.value.at) <= forgetAfter) }
+        for id in ids { book[id]?.last = at }
+    }
     /// The actions on each pid within the last 10 s (first-F3: two sessions acting on one app).
     private var actions: [Int32: [Action]] = [:]
     private var seen: [UInt32: Seen] = [:]
@@ -213,7 +222,7 @@ public struct ChildAttribution: Equatable, Sendable {
     /// The placed windows of `pid` that hold a sheet with no number of their own at `at`. A sheet first seen within 10 s after
     /// an action, and not there before it, is that action's session's; one that closed is forgotten.
     public mutating func observedSheets(on: Set<UInt32>, pid: Int32, at: Date) {
-        sheets = sheets.filter { $0.value.pid != pid || on.contains($0.key) }
+        Self.retire(&sheets, on, pid: pid, at: at)
         for id in on where sheets[id] == nil {
             sheets[id] = Seen(pid: pid, session: owner(pid: pid, at: at) { $0.sheetsBefore.contains(id) }, at: at)
         }
@@ -237,8 +246,8 @@ public struct ChildAttribution: Equatable, Sendable {
     /// `parents` is each child's window as known when it is first seen: its own (a sheet's window, AXParent) or else the app's
     /// main or focused window at that moment. Kept, so a later look still knows which window raised it.
     public mutating func observed(_ ids: Set<UInt32>, pid: Int32, at: Date, parents: [UInt32: UInt32] = [:]) {
-        // sol-F3: one gone from this look is forgotten, so a window number the app reuses later is judged afresh.
-        seen = seen.filter { $0.value.pid != pid || ids.contains($0.key) }
+        // sol-F3: one gone from this look, or unseen too long, is forgotten, so a reused window number is judged afresh.
+        Self.retire(&seen, ids, pid: pid, at: at)
         for id in ids where seen[id] == nil {
             seen[id] = Seen(pid: pid, session: owner(pid: pid, at: at) { $0.before.contains(id) }, at: at, parent: parents[id])
         }
@@ -259,7 +268,9 @@ public struct ChildAttribution: Equatable, Sendable {
 
     /// Whether a watch should still be looking at `pid` for this session's action.
     public func watching(pid: Int32, now: Date) -> Bool {
+        // Also while a child or sheet of it is someone's, so its sightings stay continuous (`forgetAfter`).
         actions[pid]?.last.map { now.timeIntervalSince($0.at) <= ChildWindowRule.attributionWindow } ?? false
+            || seen.values.contains { $0.pid == pid && $0.session != nil } || sheets.values.contains { $0.pid == pid && $0.session != nil }
     }
 }
 

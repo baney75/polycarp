@@ -103,7 +103,7 @@ final class HandsEngine {
     /// sol-F1: runs `work` on the process's queue, after any transaction on it, so it never lands between another action's
     /// readings before and after. Nil when the queue isn't free within `wait`; work that starts after that sees `cancelled()`
     /// true and must do nothing.
-    func serialized<T>(pid: Int32, wait: TimeInterval, _ work: @escaping (_ cancelled: () -> Bool) -> T) -> T? {
+    func serialized<T>(pid: Int32, wait: TimeInterval, _ work: @escaping (_ cancelled: @escaping () -> Bool) -> T) -> T? {
         let lock = NSLock(), done = DispatchSemaphore(value: 0)
         var out: T?, gaveUp = false
         let cancelled = { () -> Bool in lock.lock(); defer { lock.unlock() }; return gaveUp }

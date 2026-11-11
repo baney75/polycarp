@@ -250,3 +250,51 @@ final class PR119Round1Tests: XCTestCase {
         XCTAssertNil(a.parent(of: 50, pid: 300), "and keeps no parent from the first")
     }
 }
+
+/// PR #119 review round 2.
+final class PR119Round2Tests: XCTestCase {
+    let t0 = Date(timeIntervalSince1970: 7_600_000)
+
+    func attributedDialog() -> ChildAttribution {
+        var a = ChildAttribution()
+        a.acted(session: "A", pid: 300, at: t0, existing: [])
+        a.observed([50], pid: 300, at: t0.addingTimeInterval(1), parents: [50: 7])
+        return a
+    }
+
+    func testAChildUnseenLongerThanTheBoundIsJudgedAfreshWithNoEmptyLookBetween() {
+        var a = attributedDialog()
+        XCTAssertTrue(a.attributed(50, pid: 300, session: "A"))
+        // Closed and its number reused by one of Donovan's windows, with no look in between: the next look still lists 50.
+        a.observed([50], pid: 300, at: t0.addingTimeInterval(ChildWindowRule.attributionWindow + 5))
+        XCTAssertFalse(a.attributed(50, pid: 300, session: "A"), "first-F1, sol-sol-F3: a gap ends ownership")
+        XCTAssertNil(a.parent(of: 50, pid: 300))
+    }
+
+    func testContinuousSightingsKeepItAndTheWatchRunsWhileItIsSomeones() {
+        var a = attributedDialog()
+        for i in 1...40 { a.observed([50], pid: 300, at: t0.addingTimeInterval(1 + Double(i) * 0.5)) }
+        XCTAssertTrue(a.attributed(50, pid: 300, session: "A"), "seen every half second for 20 s")
+        XCTAssertEqual(a.parent(of: 50, pid: 300), 7)
+        XCTAssertTrue(a.watching(pid: 300, now: t0.addingTimeInterval(21)), "the watch keeps looking past 10 s")
+        a.observed([], pid: 300, at: t0.addingTimeInterval(21.5))
+        XCTAssertFalse(a.watching(pid: 300, now: t0.addingTimeInterval(22)), "and stops once it closed")
+    }
+
+    func testASheetUnseenTooLongIsForgottenToo() {
+        var a = ChildAttribution()
+        a.acted(session: "A", pid: 300, at: t0, existing: [], sheetsOn: [])
+        a.observedSheets(on: [7], pid: 300, at: t0.addingTimeInterval(1))
+        a.observedSheets(on: [7], pid: 300, at: t0.addingTimeInterval(20))
+        XCTAssertFalse(a.sheetAttributed(on: 7, pid: 300, session: "A"))
+    }
+
+    func testArrangeAndMoveRunOnTheProcessQueues() throws {
+        let ws = try source("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
+        XCTAssertTrue(ws.contains("switch onProcessQueues(chosen.map(\\.pid), busy: busy, { [self] cancelled in\n            mutateOnMain(chosen, verb: \"arrange\""), "sol-sol-F4: arrange")
+        XCTAssertTrue(ws.contains("onProcessQueues([w.pid], busy: busy) { [self] cancelled in mutateOnMain([w], verb: \"move\""), "move, frame included")
+        XCTAssertTrue(ws.contains("if cancelled() { return .failure(busy) }\n                let live = host.live(w.id)"))
+        XCTAssertTrue(ws.contains("step(ArraySlice(Set(pids).sorted()), { false })"), "one pid at a time, in pid order")
+        XCTAssertTrue(ws.contains("serialized(pid: pid, wait: Thread.isMainThread ? 0 : 10)"))
+    }
+}
