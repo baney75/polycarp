@@ -36,6 +36,8 @@ usage: \(me) <command>
   set <setting> <value>       appearance.theme omarchy|baneyspaces|minimal, appearance.palette auto|<name>,
                               dock.enabled true|false; applies at once, no restart
   get [setting]               read one setting, or all three
+  update --check|--now        ask Polycarp for a newer release (exit 100 when one is out), or install it
+  --version                   this command's version and the commit it was built from
   remote on|off|status|token  let your other machines (tailnet only) send agent work here
   --on HOST <command>         run ls or agent status|open|run on another machine
   hook claude|grok            for agent hooks: reads the hook JSON on stdin
@@ -273,6 +275,33 @@ case "hooks":
     case "status", nil: out(Hooks.status())
     default: fail("usage: \(me) hooks install|uninstall|status", code: 2)
     }
+
+case "update":
+    // The app's own updater: the same check and the same signed installer as Settings > Updates.
+    guard remoteHost == nil else { fail("update runs on each machine itself", code: 2) }
+    guard rest.count == 1, let what = rest.first, ["--check", "--now"].contains(what) else { fail("usage: \(me) update --check|--now", code: 2) }
+    func ask(_ text: String) -> UpdateReport {
+        guard let reply = Wire.call(Wire.Request(op: .update, text: text), timeout: 5) else { fail("Polycarp isn't running, so it can't check for updates. Open it and try again.") }
+        guard let report = UpdateReport(info: reply.info) else { fail(reply.error ?? "this Polycarp is too old to be asked for updates; use Settings > Updates") }
+        if !reply.ok, let error = reply.error, text == "now" { fail(error) }
+        return report
+    }
+    // Ask for a fresh check, then wait for it to finish: `checks` goes up when it has.
+    let before = ask("check")
+    var report = before
+    let giveUp = Date().addingTimeInterval(60)
+    while report.checks == before.checks, report.state != .installing, Date() < giveUp {
+        usleep(500_000)
+        report = ask("status")
+    }
+    if report.checks == before.checks, report.state != .installing { fail("Polycarp did not finish checking for updates within a minute. Try again, or use Settings > Updates.") }
+    if what == "--now", report.state == .available { report = ask("now") }
+    out(report.line)
+    exit(what == "--now" && report.state == .installing ? 0 : report.exitCode)
+
+case "--version", "version":
+    // Read from the app this command sits in, never by asking the running app: the file on disk is what is installed.
+    out(InstalledBuild.line(executable: Bundle.main.executablePath ?? CommandLine.arguments[0], name: Product.commandName))
 
 case "skill":
     guard rest.first == "install" else { fail("usage: \(me) skill install", code: 2) }

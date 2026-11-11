@@ -28,7 +28,7 @@ import { runTheme } from "./theme.ts";
 import { loadRemoteConfig, remoteFile, remoteOff, remoteSetup, remoteStatus } from "./remote-setup.ts";
 import { createHubToken, hubTunnel, HUB_SCOPES } from "./hub.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
-import { runSessions, runTabs, SessionsUsageError } from "./sessions.ts";
+import { agentsWorking, RELOAD_BUSY, runSessions, runTabs, SessionsUsageError, statusQueryMs } from "./sessions.ts";
 import { runThreads, ThreadsUsageError } from "./threads.ts";
 import { runSkill, runSkillSync } from "./skill.ts";
 import { runSubmit } from "./skill-submit.ts";
@@ -127,42 +127,79 @@ async function withBridge<T>(name: string, fn: (client: BridgeClient) => Promise
 interface StatusReport {
 	connected: boolean;
 	hosts: Array<{ browser: string; state: string; file: string }>;
+	/** Every connected browser's extension and what it was built from (`polycarp version` reads this). */
+	extensions: Array<{ browser: string; version: string; commit: string; commitDate: string; dirty: boolean; /** False: the browser is connected but did not answer in time. */ answered: boolean }>;
 	extensionVersion?: string;
 	permissionMode?: string;
 	allowedHosts?: string[];
 	message?: string;
 }
 
+interface StatusInfo {
+	extensionVersion: string;
+	permissionMode: string;
+	allowedHosts: string[];
+	build?: { commit?: string; commitDate?: string; dirty?: boolean };
+}
+
+type StatusAnswer = { kind: "none" } | { kind: "ok"; browser: string; info: StatusInfo } | { kind: "failed"; browser: string; message: string };
+
+/** One browser's answer to `status`, inside `budgetMs` from connect to reply. `none`: no extension is behind that socket. */
+async function askStatus(path: string, budgetMs: number): Promise<StatusAnswer> {
+	const client = new BridgeClient({ name: "status" });
+	let timer: NodeJS.Timeout | undefined;
+	const late = new Promise<never>((_, reject) => {
+		timer = setTimeout(() => reject(new Error(`status timed out after ${budgetMs} ms`)), budgetMs);
+	});
+	try {
+		await Promise.race([client.connect(path), late]);
+		if (!client.extensionConnected) return { kind: "none" };
+		const info = (await Promise.race([client.call("status", {}, budgetMs, { retry: false }), late])) as StatusInfo;
+		return { kind: "ok", browser: client.hostBrowserName ?? "", info };
+	} catch (err) {
+		if (!client.extensionConnected) return { kind: "none" };
+		const message = err instanceof BridgeRpcError ? `The extension answered with an error: ${err.rpc.code}: ${err.rpc.message}` : err instanceof Error ? err.message : String(err);
+		return { kind: "failed", browser: client.hostBrowserName ?? "", message };
+	} finally {
+		clearTimeout(timer);
+		client.close();
+	}
+}
+
 async function status(json: boolean): Promise<number> {
 	const report: StatusReport = {
 		connected: false,
 		hosts: hostStatus().map((b) => ({ browser: b.name, state: b.state, file: b.file })),
+		extensions: [],
 	};
 	try {
-		for (const path of listSockets()) {
-			const client = new BridgeClient({ name: "status" });
-			try {
-				await client.connect(path);
-				if (!client.extensionConnected) continue;
-				// 20 s: above the extension's 15 s session-open limit.
-				const info = (await client.call("status", {}, 20000, { retry: false })) as {
-					extensionVersion: string;
-					permissionMode: string;
-					allowedHosts: string[];
-				};
-				report.connected = true;
-				report.extensionVersion = info.extensionVersion;
-				report.permissionMode = info.permissionMode;
-				report.allowedHosts = info.allowedHosts;
-				report.message = undefined;
-				break;
-			} catch (err) {
-				// Keep the reason; a later socket may still answer.
-				report.message =
-					err instanceof BridgeRpcError ? `The extension answered with an error: ${err.rpc.code}: ${err.rpc.message}` : err instanceof Error ? err.message : String(err);
-			} finally {
-				client.close();
+		// Every browser is asked at once and each gets the same budget, so one slow browser costs the others nothing.
+		const budget = statusQueryMs();
+		const answers = await Promise.all(listSockets().map((path) => askStatus(path, budget)));
+		for (const answer of answers) {
+			if (answer.kind === "none") continue;
+			if (answer.kind === "failed") {
+				// Connected, but no answer inside the budget (or an error): listed as unanswered, never as a version.
+				report.extensions.push({ browser: answer.browser, version: "", commit: "", commitDate: "", dirty: false, answered: false });
+				if (!report.connected) report.message = answer.message;
+				continue;
 			}
+			const info = answer.info;
+			report.extensions.push({
+				browser: answer.browser,
+				version: info.extensionVersion ?? "",
+				commit: info.build?.commit ?? "",
+				commitDate: info.build?.commitDate ?? "",
+				dirty: info.build?.dirty === true,
+				answered: true,
+			});
+			// The first browser that answers fills the single-browser fields, as before.
+			if (report.connected) continue;
+			report.connected = true;
+			report.extensionVersion = info.extensionVersion;
+			report.permissionMode = info.permissionMode;
+			report.allowedHosts = info.allowedHosts;
+			report.message = undefined;
 		}
 	} catch (err) {
 		report.message = err instanceof Error ? err.message : String(err);
@@ -240,7 +277,8 @@ async function main(): Promise<void> {
 	if (typeof updateArgs === "string") throw new UsageError(`${updateArgs} ${UPDATE_USAGE}`);
 	// A checkout whose install or rollback a crash interrupted is repaired by any of these, so
 	// the side panel isn't the only way back (docs/updates.md).
-	if (command === "doctor" || command === "status" || command === "update" || command === "setup") {
+	// `status --json` is what `polycarp version` and `polycarp doctor` read: it changes no file, so it repairs nothing.
+	if (command === "doctor" || (command === "status" && !flag("--json")) || command === "update" || command === "setup") {
 		const { mode, root } = detectMode();
 		if (mode === "checkout") {
 			const note = recoverCheckoutQuietly(root);
@@ -249,7 +287,7 @@ async function main(): Promise<void> {
 	}
 	// Inside Polycarp the app updates the helper; a release folder here would repoint the host away from the bundle.
 	if (COMPILED && command === "update") {
-		console.log(`${sym.dot} This helper is part of Polycarp. Polycarp updates it; there is nothing to run here.`);
+		console.log(`${sym.dot} This helper is part of Polycarp, which updates it with every other part. Run \`polycarp update\`.`);
 		return;
 	}
 	switch (command) {
@@ -401,7 +439,21 @@ async function main(): Promise<void> {
 			if (existsSync(dist) && missing.length > 0) {
 				throw new Error(`dist-chrome is incomplete (missing ${missing.join(", ")}). Run \`npm run build\` in the repo first.`);
 			}
-			await withBridge("reload", (client) => client.call("bridge.reload", {}, 5000));
+			const reloaded = await withBridge("reload", async (client) => {
+				if (flag("--if-idle")) {
+					// A reload drops every agent's connection mid-call, so `polycarp update` asks first.
+					const { sessions } = (await client.call("sessions.list", { all: false, tabs: false }, 15000)) as { sessions: Array<{ name: string; connected: number }> };
+					const busy = agentsWorking(sessions);
+					if (busy.length > 0) return busy;
+				}
+				await client.call("bridge.reload", {}, 5000);
+				return [];
+			});
+			if (reloaded.length > 0) {
+				console.log(`${sym.warn} Not reloaded: ${reloaded.length === 1 ? "an agent is" : `${reloaded.length} agents are`} working in the browser (${reloaded.join(", ")}). Run \`${COMMAND_NAME} reload\` when ${reloaded.length === 1 ? "it is" : "they are"} done.`);
+				process.exitCode = RELOAD_BUSY;
+				return;
+			}
 			console.log(`${sym.ok} Reloading the extension. It reconnects in a few seconds.`);
 			return;
 		}
@@ -812,7 +864,8 @@ async function main(): Promise<void> {
 		case "--version":
 		case "-v":
 		case "version":
-			if (flag("--json")) console.log(JSON.stringify({ version: VERSION, commit: BUILD?.commit ?? "", builtAt: BUILD?.builtAt ?? "" }));
+			if (flag("--json"))
+				console.log(JSON.stringify({ version: VERSION, commit: BUILD?.commit ?? "", commitDate: BUILD?.commitDate ?? "", dirty: BUILD?.dirty === true, builtAt: BUILD?.builtAt ?? "" }));
 			else console.log(VERSION);
 			return;
 		case undefined:

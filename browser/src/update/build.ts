@@ -12,6 +12,10 @@ export interface BuildInfo {
 	/** The extension manifest version. */
 	version: string;
 	builtAt: string;
+	/** When `commit` was made, UTC; absent in builds from before `polycarp version`. */
+	commitDate?: string;
+	/** Tracked files had changes at build time, so `commit` does not say everything. */
+	dirty?: boolean;
 }
 
 declare const __TABKYRA_BUILD__: BuildInfo | undefined;
@@ -29,6 +33,8 @@ export function asBuildInfo(value: unknown): BuildInfo | undefined {
 		commit: typeof v.commit === "string" ? v.commit : "",
 		version: v.version,
 		builtAt: typeof v.builtAt === "string" ? v.builtAt : "",
+		...(typeof v.commitDate === "string" && v.commitDate ? { commitDate: v.commitDate } : {}),
+		...(v.dirty === true ? { dirty: true } : {}),
 	};
 }
 

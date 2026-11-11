@@ -60,6 +60,7 @@ import {
 	SiteEditError,
 	switched as switchedEdit,
 } from "../site-edits/store.js";
+import { BUILD } from "../update/build.js";
 import { BridgeError, classify, detachedError, interruptedError, navigatedError } from "./errors.js";
 import { rankMatches } from "./find.js";
 import { getAllowedHosts, getPermissionMode } from "./permissions.js";
@@ -386,7 +387,15 @@ const editHandlers: Record<string, Handler> = {
 /** The part of `status` that is about the extension, not a session. */
 export async function extensionStatus() {
 	const [permissionMode, allowedHosts] = await Promise.all([getPermissionMode(), getAllowedHosts()]);
-	return { extensionVersion: chrome.runtime.getManifest().version, permissionMode, allowedHosts };
+	return {
+		extensionVersion: chrome.runtime.getManifest().version,
+		// What this extension was built from, for `polycarp version`.
+		...(BUILD
+			? { build: { commit: BUILD.commit, commitDate: BUILD.commitDate ?? "", dirty: BUILD.dirty === true } }
+			: {}),
+		permissionMode,
+		allowedHosts,
+	};
 }
 
 export const handlers: Record<string, Handler> = {

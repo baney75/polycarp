@@ -15,12 +15,15 @@ after(() => rmSync(root, { recursive: true, force: true }));
 
 let chooseSession;
 let formatContext;
+let agentsWorking;
+let RELOAD_BUSY;
+let statusQueryMs;
 
 before(async () => {
 	const { build } = await import("esbuild");
 	const out = join(root, "bundle.mjs");
 	await build({
-		stdin: { contents: 'export { chooseSession } from "./src/session-name.ts"; export { formatContext } from "./src/mcp.ts";', resolveDir: join(here, ".."), loader: "ts" },
+		stdin: { contents: 'export { chooseSession } from "./src/session-name.ts"; export { agentsWorking, RELOAD_BUSY, statusQueryMs } from "./src/sessions.ts"; export { formatContext } from "./src/mcp.ts";', resolveDir: join(here, ".."), loader: "ts" },
 		bundle: true,
 		platform: "node",
 		format: "esm",
@@ -28,7 +31,7 @@ before(async () => {
 		loader: { ".md": "text", ".pub": "text" },
 		logLevel: "silent",
 	});
-	({ chooseSession, formatContext } = await import(out));
+	({ chooseSession, formatContext, agentsWorking, RELOAD_BUSY, statusQueryMs } = await import(out));
 });
 
 function repo(...parts) {
@@ -37,6 +40,13 @@ function repo(...parts) {
 	execFileSync("git", ["init", "-q", dir]);
 	return dir;
 }
+
+test("each browser gets 20 s to answer status, or what the caller says it has", () => {
+	assert.equal(statusQueryMs({}), 20000);
+	assert.equal(statusQueryMs({ POLYCARP_BROWSER_QUERY_MS: "1600" }), 1600);
+	// Never more than the default, never so little that nothing could answer, never a guess from junk.
+	for (const bad of ["", "soon", "99", "20001", "-5", "1.5"]) assert.equal(statusQueryMs({ POLYCARP_BROWSER_QUERY_MS: bad }), 20000, bad);
+});
 
 test("a session name the user gives wins: --session, then TABKYRA_SESSION", () => {
 	const dir = repo("named");
@@ -109,6 +119,18 @@ function run(...args) {
 	const r = spawnSync(process.execPath, [cli, ...args], { env: { ...process.env, HOME: home, TABKYRA_SOCKET_DIR: sock, NO_COLOR: "1" }, encoding: "utf8", timeout: 20000 });
 	return { code: r.status, out: r.stdout, err: r.stderr };
 }
+
+test("reload --if-idle holds off while any agent is attached, and only then", () => {
+	const idle = { name: "notes", connected: 0 };
+	assert.deepEqual(agentsWorking([]), []);
+	assert.deepEqual(agentsWorking([idle, { name: "old", connected: 0 }]), []);
+	assert.deepEqual(agentsWorking([idle, { name: "shop", connected: 1 }, { name: "research", connected: 2 }]), ["shop", "research"]);
+	assert.equal(RELOAD_BUSY, 75);
+	// The flag is accepted, and without a browser it fails like plain reload (exit 1), never as "busy".
+	const r = run("reload", "--if-idle");
+	assert.equal(r.code, 1, r.out + r.err);
+	assert.match(r.err, /isn't connected/);
+});
 
 test("polycarp browser sessions and tabs: usage errors exit 2, no browser exits 1 with the fix", () => {
 	for (const args of [["sessions", "frob"], ["sessions", "show"], ["sessions", "rename", "a"], ["sessions", "end", "a", "--bogus"], ["tabs", "a", "b"], ["mcp", "--session"]]) {

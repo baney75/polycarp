@@ -96,6 +96,8 @@ final class SessionController {
     let connectorHands = HandsRouter(cap: { $0.forRemote }, remote: true)
     /// Answers `baneyspaces sandbox …` (the app delegate sets it); called off the main thread.
     var sandboxHandler: ((Wire.Request) -> Wire.Reply)?
+    /// Answers `polycarp-spaces update status|check|now` with the app's updater (the app delegate sets it).
+    var updateHandler: ((String) -> Wire.Reply)?
 
     /// Set by the app delegate: the menu bar badge shows how many agents finished unseen.
     var onUnseenChange: (Int) -> Void = { _ in }
@@ -421,6 +423,12 @@ final class SessionController {
     func handle(_ r: Wire.Request) -> Wire.Reply {
         // Looks and the dock switch need no Accessibility, so they answer before the session engine has started.
         if r.op == .setting { return setting(r) }
+        // Updating needs no Accessibility either. A remote caller never gets here (`Remote.allows`), and the
+        // check below keeps it so if that ever changes: another machine does not get to restart this app.
+        if r.op == .update {
+            guard r.caller?.hasPrefix("remote ") != true else { return .init(ok: false, error: "updates are started on each machine itself") }
+            return updateHandler?(r.text ?? "status") ?? .init(ok: false, error: "the updater isn't ready")
+        }
         guard started else { return .init(ok: false, error: "Polycarp hasn't finished starting (it needs Accessibility)") }
         switch r.op {
         case .ping:
@@ -465,6 +473,9 @@ final class SessionController {
             return .init(ok: true, info: ["id": item.id, "label": item.label])
         // The remote server names every caller "remote …" (Server.swift), and a local caller claiming it only loses access.
         case .agent: return agent(r.text ?? "status", r.args ?? [], remote: r.caller?.hasPrefix("remote ") == true)
+        case .update:
+            // Answered above, before the Accessibility check.
+            return .init(ok: false, error: "the updater isn't ready")
         case .sandbox:
             // Answered by the server off the main thread (`handleSandbox`); a sandbox request that
             // reaches here came through a path that doesn't know how.

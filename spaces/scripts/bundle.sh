@@ -96,7 +96,10 @@ swift scripts/make-icon.swift --menu-bar "$APP/Contents/Resources" ../brand
 # The commit and its date tell the updater exactly which build this is.
 COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 COMMIT_DATE=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)
-sed -e "s/@VERSION@/$VERSION/g" -e "s/@COMMIT@/$COMMIT/g" -e "s/@COMMIT_DATE@/$COMMIT_DATE/g" Resources/Info.plist > "$APP/Contents/Info.plist"
+# 1 when tracked files had changes, so the commit does not say everything (`polycarp version` shows it).
+DIRTY=0
+[ -z "$(git status --porcelain --untracked-files=no 2>/dev/null)" ] || DIRTY=1
+sed -e "s/@VERSION@/$VERSION/g" -e "s/@COMMIT@/$COMMIT/g" -e "s/@COMMIT_DATE@/$COMMIT_DATE/g" -e "s/@DIRTY@/$DIRTY/g" Resources/Info.plist > "$APP/Contents/Info.plist"
 # A stable local identity keeps the Accessibility permission across rebuilds; ad-hoc is the fallback.
 # Ad-hoc is for local builds and CI checks only and never ships as an update: install-app.sh refuses
 # it over an installed copy, and release.sh and install.sh require scripts/release-requirement.txt.

@@ -35,6 +35,11 @@ test("the CLI's version is the extension manifest's", async () => {
 	const json = JSON.parse(run("version", "--json").out);
 	assert.equal(json.version, manifestVersion);
 	assert.match(json.builtAt, /^\d{4}-/);
+	// The commit it was built from, for `polycarp version`: the checkout's HEAD, its date, and whether files had changed.
+	const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+	assert.equal(json.commit, head);
+	assert.match(json.commitDate, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+	assert.equal(typeof json.dirty, "boolean");
 	// The doctor and the MCP server's initialize reply report the same number.
 	assert.equal(JSON.parse(run("doctor", "--json").out).version, manifestVersion);
 	const mcp = new Client({ name: "version-test", version: "0.0.0" });

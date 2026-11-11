@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 mod features;
 mod mcp;
 mod theme;
+mod update;
+mod version;
 
 struct Tool {
     /// Subcommand name.
@@ -65,6 +67,8 @@ const BROWSER: Tool = Tool {
     bundled: &[
         "~/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
         "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
+        // Where `polycarp update` links the helper on Linux: before PATH, so an older `npm link` never answers for it.
+        "~/.local/bin/polycarp-browser",
     ],
     spots: &[
         "~/.config/tabkyra/tabkyra",
@@ -97,6 +101,8 @@ Usage:
   polycarp mcp                 serve the theme commands to an agent over MCP (stdio)
   polycarp doctor              show which tools were found
   polycarp --version
+  polycarp version [--json] [--check]   every part, its commit, and whether they match
+  polycarp update [--check] [--dry-run] [--yes] [--source <checkout>]
   polycarp --help
 
 The apps must already be installed. Each tool can be set with
@@ -121,8 +127,19 @@ fn main() {
         Some("features") => features::run(&rest),
         Some("mcp") => mcp::run(&rest),
         Some("doctor") => doctor(),
+        Some("version") => version::run(&rest, &version_device(&ask_helper)),
+        Some("update") => update::run(
+            &rest,
+            &update::Device {
+                home: home(),
+                app: polycarp_app(),
+                spaces: find(&SPACES).ok().filter(|p| trusted_tool(p)),
+                config: theme::config_dir(),
+                parts: &|| version::gather(&version_device(&ask_helper)),
+            },
+        ),
         Some("--version") | Some("-V") => {
-            println!("polycarp {}", env!("CARGO_PKG_VERSION"));
+            println!("{}", version::own_version_line());
             0
         }
         Some("--help") | Some("-h") => {
@@ -200,9 +217,12 @@ fn is_script(p: &Path) -> bool {
 /// of it: where per-user installers put tools and the folders their links lead to. Relative to
 /// the home folder. Whole trees such as `~/.local` are not listed, since a cloned repo can sit
 /// in them.
-const HOME_ALLOWED: [&str; 17] = [
+const HOME_ALLOWED: [&str; 18] = [
     ".local/bin",
     ".local/lib/node_modules",
+    // Polycarp's own browser folder: where `polycarp update` puts the helper on Linux, and where
+    // the standalone browser's releases live.
+    ".local/share/polycarp/browser",
     ".local/share/mise",
     ".cargo/bin",
     ".bun/bin",
@@ -319,6 +339,28 @@ fn check(p: &Path) -> Result<(), Miss> {
         return Err(Miss::Script(p.to_path_buf()));
     }
     against_cwd(p)
+}
+
+/// Outside the current folder's tree. From the home folder or above it, only that folder itself counts.
+fn clear_of_cwd(c: &Path) -> bool {
+    let Ok(cwd) = env::current_dir().and_then(fs::canonicalize) else {
+        return false;
+    };
+    let home = home().and_then(|h| fs::canonicalize(h).ok());
+    c != cwd && (home.is_some_and(|h| h.starts_with(&cwd)) || !c.starts_with(&cwd))
+}
+
+/// A PATH folder `update` and `version` take programs from: absolute, and where it really is (links
+/// followed) is neither in the current folder's tree nor a `node_modules`.
+fn trusted_dir(dir: &Path) -> bool {
+    let modules = |c: &Path| c.components().any(|n| n.as_os_str() == "node_modules");
+    dir.is_absolute() && fs::canonicalize(dir).is_ok_and(|c| clear_of_cwd(&c) && !modules(&c))
+}
+
+/// A program `update` and `version` run unasked: in a trusted folder, and no link into the current folder's tree.
+fn trusted_tool(p: &Path) -> bool {
+    let dir = p.parent().is_some_and(trusted_dir);
+    dir && is_executable_file(p) && fs::canonicalize(p).is_ok_and(|c| clear_of_cwd(&c))
 }
 
 /// A fixed spot as a path: `~/…` under the home folder, anything else absolute (skipped in tests that
@@ -728,6 +770,15 @@ fn doctor() -> i32 {
             let _ = writeln!(out, "{line}");
         }
     }
+    // The same one line `polycarp version` ends with. It informs; it does not change the exit code.
+    if printing {
+        let parts = version::gather(&version_device(&ask_helper));
+        let _ = writeln!(
+            out,
+            "{}",
+            version::summary(&parts, &version::compare(&parts))
+        );
+    }
     let _ = out.flush();
     if ok {
         0
@@ -736,18 +787,79 @@ fn doctor() -> i32 {
     }
 }
 
+/// What `polycarp version`, `doctor` and `update` look at. Nothing here runs the spaces command or
+/// the voice app: their builds are read from files.
+fn version_device(ask: &dyn Fn(&Path, &[&str]) -> version::Answer) -> version::Device<'_> {
+    version::Device {
+        exe: env::current_exe().ok(),
+        installed: installed_polycarp(),
+        home: home(),
+        app: polycarp_app(),
+        spaces: find(&SPACES).ok().filter(|p| trusted_tool(p)),
+        browser: find(&BROWSER).ok().filter(|p| trusted_tool(p)),
+        ask,
+    }
+}
+
+/// The `polycarp` an install or an update puts in place: `~/.local/bin/polycarp` on a Mac (a link
+/// into the app) and on Linux (`cargo install --root ~/.local`). None on Windows, where there is no
+/// such place yet, and wherever nothing is installed there.
+fn installed_polycarp() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return None;
+    }
+    spot_path("~/.local/bin/polycarp").filter(|p| is_executable_file(p))
+}
+
+/// Asks the browser helper. `status` asks every connected browser, so it gets its own budget: each
+/// browser has most of the limit to answer (the helper asks them all at once and reads
+/// POLYCARP_BROWSER_QUERY_MS), and the helper has half a limit more to gather and print. A helper too
+/// old to know the budget is stopped at that point and reported as "no answer in time".
+fn ask_helper(p: &Path, args: &[&str]) -> version::Answer {
+    let limit = doctor_limit();
+    if args.first() == Some(&"status") {
+        let each = limit.mul_f32(0.8).as_millis().max(100).to_string();
+        return ask(
+            p,
+            args,
+            limit + limit / 2,
+            &[("POLYCARP_BROWSER_QUERY_MS", each.as_str())],
+        );
+    }
+    ask(p, args, limit, &[])
+}
+
 /// The tool's version, or None if it can't start, fails, prints nothing or takes past the limit.
-/// The limit covers reading too: a tool that leaves a background process holding its output
-/// open can't stall `doctor`.
 fn first_version_line(p: &Path) -> Option<String> {
-    let mut child = Command::new(p)
-        .arg("--version")
+    match ask(p, &["--version"], doctor_limit(), &[]) {
+        version::Answer::Said(text) => text
+            .lines()
+            .next()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty()),
+        _ => None,
+    }
+}
+
+/// What a tool prints for `args` and how it ended: it could not start, it failed, or it took past
+/// `limit` and was stopped. The limit covers reading too: a tool that leaves a background process
+/// holding its output open can't stall `doctor`.
+fn ask(p: &Path, args: &[&str], limit: Duration, vars: &[(&str, &str)]) -> version::Answer {
+    use version::Answer;
+    let mut cmd = Command::new(p);
+    cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let stdout = child.stdout.take()?;
+        .stderr(Stdio::null());
+    for (k, v) in vars {
+        cmd.env(k, v);
+    }
+    let Ok(mut child) = cmd.spawn() else {
+        return Answer::NotRun;
+    };
+    let Some(stdout) = child.stdout.take() else {
+        return Answer::NotRun;
+    };
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut text = String::new();
@@ -755,29 +867,31 @@ fn first_version_line(p: &Path) -> Option<String> {
         let _ = tx.send(read.ok().map(|_| text));
     });
     let started = Instant::now();
-    let limit = doctor_limit();
+    let stop = |child: &mut std::process::Child| {
+        let _ = child.kill();
+        let _ = child.wait();
+    };
     let text = match rx.recv_timeout(limit) {
         Ok(Some(text)) => text,
-        _ => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
+        Ok(None) => {
+            stop(&mut child);
+            return Answer::Failed(String::new());
+        }
+        Err(_) => {
+            stop(&mut child);
+            return Answer::Late;
         }
     };
     loop {
-        match child.try_wait().ok()? {
-            Some(status) if status.success() => break,
-            Some(_) => return None,
-            None if started.elapsed() > limit => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Answer::Said(text),
+            Ok(Some(_)) => return Answer::Failed(text),
+            Ok(None) if started.elapsed() > limit => {
+                stop(&mut child);
+                return Answer::Late;
             }
-            None => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(_) => return Answer::Failed(text),
         }
     }
-    text.lines()
-        .next()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
 }

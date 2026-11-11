@@ -23,6 +23,11 @@ final class Updater: NSObject {
     /// workspace switch): alerts wait for it to end.
     var isBusy: () -> Bool = { false }
 
+    /// How many checks have finished since launch, and why the last one failed (nil when it didn't).
+    /// `polycarp-spaces update` reads both (`report`).
+    private(set) var checks = 0
+    private(set) var checkProblem: String?
+
     private var timer: Timer?
     private var checking = false
     private var watch: Timer?
@@ -102,6 +107,8 @@ final class Updater: NSObject {
                 self.checking = false
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                 guard let data, status == 200 else {
+                    self.checkProblem = error?.localizedDescription ?? "GitHub answered with status \(status)"
+                    self.checks += 1
                     if manual { self.tell("Couldn't check for updates", error?.localizedDescription ?? "GitHub answered with status \(status). Try again later.") }
                     return
                 }
@@ -112,6 +119,8 @@ final class Updater: NSObject {
                 let candidates = Updates.candidates(from: releases, channel: self.channel, build: Self.build)
                 self.firstContainingBuild(candidates) { release in
                     self.available = release
+                    self.checkProblem = nil
+                    self.checks += 1
                     self.onChange()
                     guard manual else { return }
                     if let release {
@@ -124,6 +133,36 @@ final class Updater: NSObject {
                 }
             }
         }.resume()
+    }
+
+    /// What the updater knows right now, for `polycarp-spaces update`.
+    var report: UpdateReport {
+        let build = Self.buildDescription
+        if let r = installing ?? (Self.installerRunning ? available : nil) {
+            return UpdateReport(state: .installing, build: build, channel: channel, name: r.name, commit: r.commit, checks: checks)
+        }
+        if let r = available {
+            return UpdateReport(state: .available, build: build, channel: channel, name: r.name, commit: r.commit, checks: checks)
+        }
+        if checks == 0 || checkProblem != nil {
+            return UpdateReport(state: .unknown, build: build, channel: channel, checks: checks, problem: checkProblem)
+        }
+        return UpdateReport(state: .current, build: build, channel: channel, checks: checks)
+    }
+
+    /// Answers `polycarp-spaces update`: "status" reports, "check" also asks GitHub again (the answer
+    /// arrives in a later status, when `checks` has gone up), "now" installs the release on offer the
+    /// way Update Now does: the same installer, the same signature check, nothing new.
+    func answer(_ what: String) -> Wire.Reply {
+        switch what {
+        case "status": break
+        case "check": check(manual: false)
+        case "now":
+            guard let release = available else { return Wire.Reply(ok: false, error: "no update is on offer; run update --check first", info: report.info) }
+            install(release)
+        default: return Wire.Reply(ok: false, error: "update takes status, check or now")
+        }
+        return Wire.Reply(ok: true, info: report.info)
     }
 
     /// The first candidate GitHub confirms is ahead of this build: it contains every change this
