@@ -126,8 +126,6 @@ function savedFolders(spec: ServiceSpec): { config?: string; socket?: string } {
 		const text = readFileSync(file, "utf8");
 		if (platform() === "darwin") {
 			for (const m of text.matchAll(/<key>([A-Z_]+)<\/key>\s*<string>([^<]*)<\/string>/g)) found.set(m[1], unxml(m[2]));
-		} else if (platform() === "win32") {
-			for (const m of text.matchAll(/^set "([A-Z_][A-Z0-9_]*)=(.*)"\r?$/gm)) found.set(m[1], m[2].replace(/%%/g, "%"));
 		} else {
 			for (const m of text.matchAll(/^Environment=(.*)$/gm)) {
 				let line = m[1].trim();
