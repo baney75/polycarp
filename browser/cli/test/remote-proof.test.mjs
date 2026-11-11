@@ -31,7 +31,7 @@ const KEY = readFileSync(join(certDir, "key.pem"));
  * The public side. stream: "now" answers an authenticated initialize as SSE at once; "held" holds the first bytes 10 seconds, the
  * way a buffering proxy does. Records the Host and SNI of every request and the bearer tokens it saw.
  */
-async function fakePublic({ stream = "now", onAuthed, authMeta = "full", resource = "ours" } = {}) {
+async function fakePublic({ stream = "now", onAuthed, authMeta = "full", resource = "ours", listen = "127.0.0.1" } = {}) {
 	const seen = { hosts: [], sni: [], tokens: [], authed: 0 };
 	let publicUrl = "";
 	const timers = new Set();
@@ -89,7 +89,7 @@ async function fakePublic({ stream = "now", onAuthed, authMeta = "full", resourc
 		}
 		json(404, {});
 	});
-	await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve));
+	await new Promise((resolve) => srv.listen(0, listen, resolve));
 	publicUrl = `https://${HOST}:${srv.address().port}`;
 	return {
 		publicUrl,
@@ -106,13 +106,22 @@ async function fakePublic({ stream = "now", onAuthed, authMeta = "full", resourc
 	};
 }
 
-/** Public DNS as DoH JSON: HOST points at `address`, nothing else resolves. */
-async function fakeDoh(address = "127.0.0.1") {
+/**
+ * Public DNS as DoH JSON: HOST points at `address` (an A record, or AAAA when it is IPv6), nothing else resolves. `status`: the
+ * DNS status every answer carries (2 is SERVFAIL); `httpStatus`: answer with that HTTP error and a JSON body instead.
+ */
+async function fakeDoh(address = "127.0.0.1", { status = 0, httpStatus = 200 } = {}) {
 	const asked = [];
 	const srv = createHttpServer((req, res) => {
 		const q = new URL(req.url, "http://x").searchParams;
 		asked.push(`${q.get("type")} ${q.get("name")}`);
 		res.setHeader("content-type", "application/dns-json");
+		if (httpStatus !== 200) {
+			res.statusCode = httpStatus;
+			return res.end(JSON.stringify({ Status: 0, Answer: [] }));
+		}
+		if (status !== 0) return res.end(JSON.stringify({ Status: status }));
+		if (address.includes(":")) return res.end(JSON.stringify({ Status: 0, Answer: q.get("type") === "AAAA" && q.get("name") === HOST ? [{ name: `${HOST}.`, type: 28, data: address }] : [] }));
 		res.end(JSON.stringify({ Status: 0, Answer: address && q.get("type") === "A" && q.get("name") === HOST ? [{ name: `${HOST}.`, type: 1, data: address }] : [] }));
 	});
 	await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve));
@@ -543,5 +552,41 @@ test("setup fails on a real fault at the public address (a refused certificate, 
 		await pub.close();
 		await nowhere.close();
 		await local.close();
+	}
+});
+
+test("public DNS that answers SERVFAIL or an HTTP error fails dns as a fault, not a name that needs a few minutes", async () => {
+	for (const [label, options] of [
+		["servfail", { status: 2 }],
+		["http500", { httpStatus: 500 }],
+	]) {
+		const doh = await fakeDoh("127.0.0.1", options);
+		try {
+			const m = machine(`doh-${label}`, `https://${HOST}:8443`, doh.url);
+			const r = await m.run(["remote", "test", "--json"]);
+			assert.equal(r.code, 1, r.stdout + r.stderr);
+			const dns = byName(r.json(), "dns");
+			assert.equal(dns.status, "fail");
+			assert.match(dns.detail, label === "servfail" ? /SERVFAIL/ : /HTTP 500/);
+			assert.notEqual(dns.pending, true, label);
+			assert.doesNotMatch(dns.next, /few minutes/);
+		} finally {
+			await doh.close();
+		}
+	}
+});
+
+test("a name with only an AAAA record is reached over IPv6", async () => {
+	const pub = await fakePublic({ listen: "::1" });
+	const doh = await fakeDoh("::1");
+	try {
+		const m = machine("aaaa-only", pub.publicUrl, doh.url);
+		const r = await m.run(["remote", "test", "--json"]);
+		assert.equal(r.code, 0, r.stdout + r.stderr);
+		assert.match(byName(r.json(), "dns").detail, /::1/);
+		assert.ok(doh.asked.includes(`AAAA ${HOST}`), doh.asked.join("\n"));
+	} finally {
+		await pub.close();
+		await doh.close();
 	}
 });

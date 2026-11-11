@@ -12,7 +12,7 @@ import type { IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { connect as tlsConnect } from "node:tls";
-import { dohAddresses } from "./doh.ts";
+import { DohAnswerError, dohAddresses } from "./doh.ts";
 import { createToken, deleteToken } from "./remote.ts";
 import { inTailnetRange, METADATA_PATH } from "./remote-state.ts";
 import { COMMAND_NAME } from "./self.ts";
@@ -311,7 +311,10 @@ export async function publicChecks(publicUrl: string, options: { streaming?: boo
 		try {
 			addresses = await dohAddresses(host);
 		} catch (err) {
-			checks.push({ name: "dns", status: "fail", pending: true, detail: `couldn't ask public DNS about ${host}: ${err instanceof Error ? err.message : String(err)}`, next: "Check this computer's internet connection, then run remote test again." });
+			// A resolver that answered with a failure (SERVFAIL, an HTTP error) is a fault with the name; one this computer can't
+			// reach says nothing about the connector, so setup doesn't fail on it.
+			if (err instanceof DohAnswerError) checks.push({ name: "dns", status: "fail", detail: err.message, next: `Public DNS can't resolve ${host}. Check its DNS records and DNSSEC with your DNS provider.` });
+			else checks.push({ name: "dns", status: "fail", pending: true, detail: `couldn't ask public DNS about ${host}: ${err instanceof Error ? err.message : String(err)}`, next: "Check this computer's internet connection, then run remote test again." });
 			return checks;
 		}
 		const open = addresses.filter(reachable);

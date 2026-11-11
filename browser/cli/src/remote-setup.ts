@@ -53,7 +53,7 @@ import {
 import { installService, removeService, run, serviceFile, serviceLogHint, serviceRunning, sleep, writeAtomic } from "./service.ts";
 import { configDir, listClients, mintApprovalCode, passcodeSet, setPasscode } from "./oauth.ts";
 import { hubFile } from "./hub-state.ts";
-import { dohAddresses } from "./doh.ts";
+import { DohAnswerError, dohAddresses } from "./doh.ts";
 import { isIP } from "node:net";
 import { answersFromOutside, type ProofCheck, privateAddress, publicChecks, realFault } from "./remote-test.ts";
 import { DEFAULT_PORT } from "./tunnel.ts";
@@ -971,12 +971,13 @@ export async function dnsCheck(host: string): Promise<Check> {
 	try {
 		addresses = await dohAddresses(host);
 	} catch (err) {
+		if (err instanceof DohAnswerError) return { name, status: "fail", detail: err.message };
 		return { name, status: "warn", detail: `couldn't ask public DNS about ${host}: ${err instanceof Error ? err.message : String(err)}` };
 	}
 	const reachable = addresses.filter((a) => !inTailnetRange(a));
 	if (reachable.length) return { name, status: "ok", detail: `${host} resolves publicly to ${reachable.join(", ")}` };
 	if (addresses.length) return { name, status: "fail", detail: `${host} resolves only to ${addresses.join(", ")}, a tailnet address. Funnel isn't reaching the internet.` };
-	return { name, status: "fail", detail: `public DNS has no A record for ${host}` };
+	return { name, status: "fail", detail: `public DNS has no address (A or AAAA) for ${host}` };
 }
 
 /** Which ways of reaching this computer are ready. Reads only; never signs in or installs anything. */
