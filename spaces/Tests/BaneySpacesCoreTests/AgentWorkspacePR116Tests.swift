@@ -107,3 +107,116 @@ final class MovedInOwnerTests: XCTestCase {
         XCTAssertTrue(src.contains("if who == .gone { b.drop(window: e.window) } else { live.append(e) }"))
     }
 }
+
+// MARK: review round 2 of #116
+
+private func source(_ path: String) throws -> String {
+    try String(contentsOfFile: #filePath.replacingOccurrences(of: "Tests/BaneySpacesCoreTests/AgentWorkspacePR116Tests.swift", with: path), encoding: .utf8)
+}
+
+/// sol-F1: a child is usable only while its parent window also passes inspection (no outside document, no file panel).
+final class ChildParentInspectionTests: XCTestCase {
+    func child(parent: UInt32?) -> ChildWindowFacts {
+        ChildWindowFacts(id: 50, pid: 300, app: "TextEdit", bundle: "com.apple.TextEdit", processName: "TextEdit", title: "Print",
+                         role: "AXWindow", subrole: "AXDialog", modal: true, parent: parent)
+    }
+    let parent = HandsWindow(id: 7, pid: 300, app: "TextEdit", workspace: 9)
+
+    func testAParentShowingAnOutsideDocumentAuthorizesNoChild() {
+        let outside = HandsError(.needsSandbox, "outside document", suggestion: "", retry: .never)
+        let placed = ChildWindowRule.inspected([(window: parent, scope: .onAgentWorkspace)]) { _ in outside }
+        XCTAssertFalse(placed[0].scope.allowed)
+        for p in [UInt32(7), nil] {
+            XCTAssertFalse(ChildWindowRule.decide(child(parent: p), placed: placed, attributed: true, selfPid: 1).allowed, "parent \(String(describing: p))")
+        }
+        let clean = ChildWindowRule.inspected([(window: parent, scope: .onAgentWorkspace)]) { _ in nil }
+        XCTAssertTrue(ChildWindowRule.decide(child(parent: 7), placed: clean, attributed: true, selfPid: 1).allowed)
+    }
+
+    func testTheRouterInspectsParentsInEveryChildDecision() throws {
+        XCTAssertTrue(try source("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift").contains("ChildWindowRule.inspected(all.filter { $0.pid == c.pid }"))
+    }
+}
+
+/// sol-F2: an open that asked for no window registers no claim, so a later window of the app is nobody's.
+final class OpenAskedForNoWindowTests: XCTestCase {
+    func testTheReplyKeyAndTheRouterSkip() throws {
+        XCTAssertFalse(SessionWindows.asksForWindow([SessionWindows.noWindowKey: "1", "pid": "300"]))
+        XCTAssertTrue(SessionWindows.asksForWindow(["pid": "300"]))
+        XCTAssertTrue(try source("Sources/BaneySpaces/Session/SessionController.swift").contains("\"pid\": \"\\(pid)\", SessionWindows.noWindowKey: \"1\","))
+        let router = try source("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        let skip = try XCTUnwrap(router.range(of: "guard SessionWindows.asksForWindow(reply.info) else {"))
+        let begin = try XCTUnwrap(router.range(of: "sessionWindows.beginOpen("))
+        XCTAssertLessThan(skip.lowerBound, begin.lowerBound, "checked before any claim is registered")
+    }
+
+    func testAnUnclaimedPendingEntryExpires() {
+        let t0 = Date(timeIntervalSince1970: 7_300_000)
+        var s = SessionWindows()
+        s.beginOpen(id: 1, session: "a", app: "Word", separate: false, pid: 300, known: [], at: t0)
+        s.endOpen(1)
+        let later = HandsWindow(id: 40, pid: 300, app: "Word", workspace: 9)
+        XCTAssertTrue(s.resolvePending(app: "Word", windows: [later], now: t0.addingTimeInterval(31)).isEmpty)
+        XCTAssertTrue(s.requests.isEmpty)
+    }
+}
+
+/// second-F7: the skill's background recipe parses as written, and a CLI request carries a session that can be set.
+final class BackgroundRecipeTests: XCTestCase {
+    func testEveryRecipeCommandParsesWithASession() throws {
+        let skill = try source("skill/SKILL.md")
+        let part = try XCTUnwrap(skill.components(separatedBy: "## Work in the background").dropFirst().first)
+        let block = try XCTUnwrap(part.components(separatedBy: "```").dropFirst().first)
+        let lines = block.split(separator: "\n").map { String($0.split(separator: "#", maxSplits: 1)[0]).trimmingCharacters(in: .whitespaces) }
+        XCTAssertTrue(lines.contains("export BANEYSPACES_SESSION=my-task-name"))
+        let commands = lines.filter { $0.hasPrefix("baneyspaces agent ") }
+        XCTAssertEqual(commands.count, 5)
+        let session = HandsParse.cliSession(environment: ["BANEYSPACES_SESSION": "my-task-name"], tty: "")
+        for c in commands {
+            let words = c.split(separator: " ").dropFirst(2).map(String.init)
+            switch HandsParse.command(words, session: session) {
+            case .failure(let e): XCTFail("\(c): \(e.message)")
+            case .success(let r): XCTAssertEqual(r.session, "my-task-name", c)
+            }
+        }
+        guard case .success(let close) = HandsParse.command(["close", "--window", "4211"], session: session) else { return XCTFail() }
+        XCTAssertEqual(close.int("window"), 4211)
+        guard case .success(let reuse) = HandsParse.command(["open", "--new_window=false", "TextEdit"], session: session) else { return XCTFail("the skill's reuse flag") }
+        XCTAssertEqual(reuse.bool("new_window"), false)
+    }
+
+    func testTheCLISessionComesFromTheEnvironmentThenTheTerminal() {
+        XCTAssertEqual(HandsParse.cliSession(environment: ["BANEYSPACES_SESSION": "t1"], tty: "/dev/ttys004"), "t1")
+        XCTAssertEqual(HandsParse.cliSession(environment: ["BANEYSPACES_SESSION": ""], tty: "/dev/ttys004"), "/dev/ttys004")
+        XCTAssertEqual(HandsParse.cliSession(environment: [:], tty: ""), "default", "never empty, so close and attribution work")
+    }
+}
+
+/// Mediums of round 2.
+final class PR116Round2MediumTests: XCTestCase {
+    func testTwoSessionsActingOnOneAppAttributeANewDialogToNeither() {
+        let t0 = Date(timeIntervalSince1970: 7_400_000)
+        var a = ChildAttribution()
+        a.acted(session: "A", pid: 300, at: t0, existing: [])
+        a.acted(session: "B", pid: 300, at: t0.addingTimeInterval(1), existing: [])
+        a.observed([50], pid: 300, at: t0.addingTimeInterval(2))
+        XCTAssertFalse(a.attributed(50, pid: 300, session: "A"))
+        XCTAssertFalse(a.attributed(50, pid: 300, session: "B"))
+        // B looked after it appeared: only A could have raised it.
+        var b = ChildAttribution()
+        b.acted(session: "A", pid: 300, at: t0, existing: [])
+        b.acted(session: "B", pid: 300, at: t0.addingTimeInterval(1), existing: [51])
+        b.observed([51], pid: 300, at: t0.addingTimeInterval(2))
+        XCTAssertTrue(b.attributed(51, pid: 300, session: "A"))
+    }
+
+    func testANonEnglishSaveSheetIsRefusedOnShape() {
+        let sheet = AXNodeInfo(role: "AXSheet", children: [AXNodeInfo(role: "AXStaticText", value: "Sichern unter:"), AXNodeInfo(role: "AXTextField"),
+                                                           AXNodeInfo(role: "AXStaticText", value: "Ort:"), AXNodeInfo(role: "AXPopUpButton")])
+        XCTAssertTrue(PanelDetector.looksLikeFilePanel(sheet))
+    }
+
+    func testChildReadsOnTheMainThreadRunOneAtATime() throws {
+        XCTAssertTrue(try source("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift").contains("if Thread.isMainThread { for i in list.indices { readings[i] = readChildren("))
+    }
+}

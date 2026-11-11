@@ -1027,7 +1027,7 @@ final class HandsSourceTests: XCTestCase {
         let router = try Self.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
         let gate = try XCTUnwrap(Self.block(after: "func gate(", in: router))
         XCTAssertTrue(gate.contains("inspectProblem(now)"))
-        let inspect = try XCTUnwrap(Self.block(after: "private func inspectProblem(", in: router))
+        let inspect = try XCTUnwrap(Self.block(after: "func inspectProblem(", in: router))
         XCTAssertTrue(inspect.contains("WindowInspection.decide(") && inspect.contains("panel: seen.panel") && inspect.contains("document: seen.document") && inspect.contains("handoff: Self.handoffFolder"))
         XCTAssertTrue(inspect.contains("remember(w.id)"))
         // Under Full Access the list skips reading every window (documents are open then); panels are refused at use (#167).

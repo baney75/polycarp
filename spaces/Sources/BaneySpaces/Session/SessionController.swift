@@ -612,7 +612,7 @@ final class SessionController {
                 } else { asked = false }
                 guard asked else {
                     h.unclaim(pid)
-                    return .init(ok: true, info: ["workspace": "\(n)", "app": appName, "pid": "\(pid)",
+                    return .init(ok: true, info: ["workspace": "\(n)", "app": appName, "pid": "\(pid)", SessionWindows.noWindowKey: "1",
                                                   "note": "\(appName) is already running and has no New Window command; with full access its windows are open to agents where they are"])
                 }
                 return .init(ok: true, info: ["workspace": "\(n)", "app": appName, "pid": "\(pid)", "note": "\(appName) is already running; its new window opens on the agent workspace in a moment"])

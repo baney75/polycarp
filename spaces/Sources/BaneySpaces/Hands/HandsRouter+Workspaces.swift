@@ -62,7 +62,8 @@ extension HandsRouter {
     }
 
     func decideChild(_ c: ChildWindowFacts, all: [HandsWindow], agent: Int?, session: String) -> ChildWindowRule.Decision {
-        let placed = all.filter { $0.pid == c.pid }.map { (window: $0, scope: decide($0, agent, session: session)) }
+        // sol-F1: a window that fails inspection now (an outside document, a file panel) authorizes no child of it.
+        let placed = ChildWindowRule.inspected(all.filter { $0.pid == c.pid }.map { (window: $0, scope: decide($0, agent, session: session)) }) { inspectProblem($0) }
         let attributed = childLocked { attribution.attributed(c.id, pid: c.pid, session: session) }
         return ChildWindowRule.decide(c, placed: placed, attributed: attributed, selfPid: getpid())
     }
@@ -73,9 +74,12 @@ extension HandsRouter {
         let list = Array(pids)
         var readings = [ChildWindowsAX.Reading](repeating: .init(children: [], sheetsOn: []), count: list.count)
         let lock = NSLock()
-        DispatchQueue.concurrentPerform(iterations: list.count) { i in
-            let r = readChildren(pid: list[i], all: all)
-            lock.lock(); readings[i] = r; lock.unlock()
+        // On the main thread one at a time: each read waits on main (`onMain`), which concurrentPerform would hold.
+        if Thread.isMainThread { for i in list.indices { readings[i] = readChildren(pid: list[i], all: all) } } else {
+            DispatchQueue.concurrentPerform(iterations: list.count) { i in
+                let r = readChildren(pid: list[i], all: all)
+                lock.lock(); readings[i] = r; lock.unlock()
+            }
         }
         let facts = readings.flatMap(\.children).sorted { $0.id < $1.id }
         return (facts.map { ($0, decideChild($0, all: all, agent: agent, session: session)) }, readings.reduce(into: Set<UInt32>()) { $0.formUnion($1.sheetsOn) })

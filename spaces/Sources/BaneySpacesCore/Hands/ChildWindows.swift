@@ -93,6 +93,15 @@ public enum ChildWindowRule {
             || bundle.hasPrefix("com.apple.SecurityAgent") || bundle.hasPrefix("com.apple.LocalAuthentication")
     }
 
+    /// sol-F1: the scopes the rule sees for an app's placed windows, each usable one also inspected now: one that fails (an
+    /// outside document, a file panel) is not usable, so it authorizes no child and the app counts as split.
+    public static func inspected(_ placed: [(window: HandsWindow, scope: ScopeDecision)], problem: (HandsWindow) -> HandsError?) -> [(window: HandsWindow, scope: ScopeDecision)] {
+        placed.map { p in
+            guard p.scope.allowed, let e = problem(p.window) else { return p }
+            return (window: p.window, scope: .denied(e))
+        }
+    }
+
     /// A placed window that holds a sheet (with or without a window number of its own) on an app split between the agent and
     /// Donovan: its snapshot and refs reach the sheet, so the window is usable only while every sheet on it is one this
     /// session's action raised. Unsure counts as not.
@@ -184,7 +193,8 @@ public enum ChildWindowRule {
 public struct ChildAttribution: Equatable, Sendable {
     struct Action: Equatable, Sendable { var session: String; var at: Date; var before: Set<UInt32>; var sheetsBefore: Set<UInt32> = [] }
     struct Seen: Equatable, Sendable { var pid: Int32; var session: String?; var at: Date; var parent: UInt32? = nil }
-    private var actions: [Int32: Action] = [:]
+    /// The actions on each pid within the last 10 s (first-F3: two sessions acting on one app).
+    private var actions: [Int32: [Action]] = [:]
     private var seen: [UInt32: Seen] = [:]
     /// Sheets with no window number of their own, by the placed window that holds them; cleared when the sheet closes.
     private var sheets: [UInt32: Seen] = [:]
@@ -193,9 +203,11 @@ public struct ChildAttribution: Equatable, Sendable {
 
     /// `session` is about to act on `pid`, which has these child windows now.
     public mutating func acted(session: String, pid: Int32, at: Date, existing: Set<UInt32>, sheetsOn: Set<UInt32> = []) {
-        actions[pid] = Action(session: session, at: at, before: existing, sheetsBefore: sheetsOn)
-        for id in existing where seen[id] == nil { seen[id] = Seen(pid: pid, session: nil, at: at) }
-        for id in sheetsOn where sheets[id] == nil { sheets[id] = Seen(pid: pid, session: nil, at: at) }
+        actions[pid] = (actions[pid] ?? []).filter { at.timeIntervalSince($0.at) <= ChildWindowRule.attributionWindow }
+        // One already there but not yet seen is judged by the earlier actions, before this one counts.
+        for id in existing where seen[id] == nil { seen[id] = Seen(pid: pid, session: owner(pid: pid, at: at) { $0.before.contains(id) }, at: at) }
+        for id in sheetsOn where sheets[id] == nil { sheets[id] = Seen(pid: pid, session: owner(pid: pid, at: at) { $0.sheetsBefore.contains(id) }, at: at) }
+        actions[pid]?.append(Action(session: session, at: at, before: existing, sheetsBefore: sheetsOn))
     }
 
     /// The placed windows of `pid` that hold a sheet with no number of their own at `at`. A sheet first seen within 10 s after
@@ -203,10 +215,15 @@ public struct ChildAttribution: Equatable, Sendable {
     public mutating func observedSheets(on: Set<UInt32>, pid: Int32, at: Date) {
         sheets = sheets.filter { $0.value.pid != pid || on.contains($0.key) }
         for id in on where sheets[id] == nil {
-            var owner: String?
-            if let a = actions[pid], !a.sheetsBefore.contains(id), at >= a.at, at.timeIntervalSince(a.at) <= ChildWindowRule.attributionWindow { owner = a.session }
-            sheets[id] = Seen(pid: pid, session: owner, at: at)
+            sheets[id] = Seen(pid: pid, session: owner(pid: pid, at: at) { $0.sheetsBefore.contains(id) }, at: at)
         }
+    }
+
+    /// The one session whose action, within 10 s before `at`, may have raised something not there before it; nil when none
+    /// did or when several sessions did (whose it is can't be told).
+    private func owner(pid: Int32, at: Date, wasThere: (Action) -> Bool) -> String? {
+        let who = Set((actions[pid] ?? []).filter { !wasThere($0) && at >= $0.at && at.timeIntervalSince($0.at) <= ChildWindowRule.attributionWindow }.map(\.session))
+        return who.count == 1 ? who.first : nil
     }
 
     /// Whether this session's action raised the sheet now on window `id`. False when unsure (never seen).
@@ -215,15 +232,13 @@ public struct ChildAttribution: Equatable, Sendable {
         return s.session == session
     }
 
-    /// The child windows `pid` has at `at`. Each one seen for the first time is the latest action's, when it came within
-    /// the window and was not there before it; otherwise nobody's, for good.
+    /// The child windows `pid` has at `at`. Each one seen for the first time is the acting session's, when exactly one session
+    /// acted within the window before it and it was not there then; otherwise nobody's, for good.
     /// `parents` is each child's window as known when it is first seen: its own (a sheet's window, AXParent) or else the app's
     /// main or focused window at that moment. Kept, so a later look still knows which window raised it.
     public mutating func observed(_ ids: Set<UInt32>, pid: Int32, at: Date, parents: [UInt32: UInt32] = [:]) {
         for id in ids where seen[id] == nil {
-            var owner: String?
-            if let a = actions[pid], !a.before.contains(id), at >= a.at, at.timeIntervalSince(a.at) <= ChildWindowRule.attributionWindow { owner = a.session }
-            seen[id] = Seen(pid: pid, session: owner, at: at, parent: parents[id])
+            seen[id] = Seen(pid: pid, session: owner(pid: pid, at: at) { $0.before.contains(id) }, at: at, parent: parents[id])
         }
         if seen.count > 2048 { seen = seen.filter { at.timeIntervalSince($0.value.at) < 3600 } }
     }
@@ -242,7 +257,7 @@ public struct ChildAttribution: Equatable, Sendable {
 
     /// Whether a watch should still be looking at `pid` for this session's action.
     public func watching(pid: Int32, now: Date) -> Bool {
-        actions[pid].map { now.timeIntervalSince($0.at) <= ChildWindowRule.attributionWindow } ?? false
+        actions[pid]?.last.map { now.timeIntervalSince($0.at) <= ChildWindowRule.attributionWindow } ?? false
     }
 }
 
@@ -346,6 +361,11 @@ public struct SessionWindows: Equatable, Sendable {
 
     /// How a launch was registered. An overlap with another request for the same running app clears that request too (both
     /// report `window_identified: false`).
+    /// sol-F2: the reply key the session's `open` sets when it asked the app for no window (a running app with no New Window
+    /// command and no files). Such an open registers no claim, so no later window of that app becomes the session's.
+    public static let noWindowKey = "no_window"
+    public static func asksForWindow(_ info: [String: String]?) -> Bool { info?[noWindowKey] != "1" }
+
     public enum OpenStart: Equatable, Sendable {
         /// Its window, when found, is recorded for its session.
         case owns

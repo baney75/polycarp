@@ -298,8 +298,6 @@ public struct AXNodeInfo: Equatable, Sendable {
 /// (`ChildWindowRule`); only a sheet that is, or may be, an Open or Save panel still does.
 public enum PanelDetector {
     static let panelTitles: Set<String> = ["open", "save", "save as", "export", "import", "choose"]
-    /// Labels a Save panel shows beside its name field and folder menu.
-    static let saveLabels: Set<String> = ["where", "save as", "tags", "export as"]
 
     /// Whether the window is an Open or Save panel, or holds one (a sheet that is or may be one, or a panel element
     /// within three levels). A sheet that is plainly something else (a "Save changes?" alert) leaves the window usable.
@@ -340,7 +338,7 @@ public enum PanelDetector {
     /// or a name field with a folder menu and a Save panel's labels ("Where", "Save As", "Tags").
     public static func looksLikeFilePanel(_ n: AXNodeInfo) -> Bool {
         if panelTitles.contains((n.title ?? "").lowercased()) { return true }
-        var textField = false, popUp = false, saveLabel = false, filePanel = false
+        var textField = false, popUp = false, filePanel = false
         func walk(_ x: AXNodeInfo, depth: Int, inSplit: Bool) {
             guard !filePanel else { return }
             if !x.readable { filePanel = true; return }
@@ -351,15 +349,13 @@ public enum PanelDetector {
             }
             if x.role == "AXTextField" { textField = true }
             if x.role == "AXPopUpButton" { popUp = true }
-            for text in [x.title, x.value] {
-                let t = (text ?? "").lowercased().trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: ":"))
-                if saveLabels.contains(t) { saveLabel = true }
-            }
             guard depth < 6 else { return }
             for c in x.children { walk(c, depth: depth + 1, inSplit: inSplit || x.role == "AXSplitGroup") }
         }
         walk(n, depth: 0, inSplit: false)
-        return filePanel || (textField && popUp && saveLabel)
+        // second-F8: a name field with a menu beside it is the shape of a (collapsed) Save panel in any language, so it is
+        // refused on shape alone, labels unread.
+        return filePanel || (textField && popUp)
     }
 
     /// The refusal for a window that is or holds an Open or Save panel. The same words wherever it is refused.

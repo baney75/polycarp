@@ -243,7 +243,7 @@ final class HandsRouter {
     /// No window is used while it is or holds an Open or Save panel, which would browse his files, in any mode. Windows of a process
     /// BaneySpaces started for an agent are also used only while they show no document from outside the handoff folder (a restored
     /// one, or one opened through a panel). Checked on every use, so a late window is covered too.
-    private func inspectProblem(_ w: HandsWindow) -> HandsError? {
+    func inspectProblem(_ w: HandsWindow) -> HandsError? {
         let (owned, seen) = onMain { (host.agentOwned(), host.inspect(w.id)) }
         let agentOwned = owned.contains(w.pid)
         switch WindowInspection.decide(full: access == .full, agentOwned: agentOwned, panel: seen.panel, document: seen.document, handoff: Self.handoffFolder) {
@@ -680,6 +680,12 @@ final class HandsRouter {
         let separate = AgentAppPolicy.needsSeparateInstance(bundle: bundle)
         // A reply with a pid asked an app already running (one process for everyone); one without started a new process.
         let runningPid = reply.info?["pid"].flatMap { Int32($0) }
+        // Nothing was asked to make a window: no claim, nothing looked for, and its reply says so (sol-F2).
+        guard SessionWindows.asksForWindow(reply.info) else {
+            var data: [String: JSONValue] = (reply.info ?? [:]).mapValues(JSONValue.string)
+            data["window_identified"] = .bool(false)
+            return .success(.object(data))
+        }
         let start = childLocked {
             sessionWindows.beginOpen(id: token, session: session, app: key, separate: runningPid == nil, pid: runningPid, known: known, at: Date())
         }

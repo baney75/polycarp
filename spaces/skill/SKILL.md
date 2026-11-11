@@ -102,6 +102,7 @@ Scope rules, enforced by the app, not by your good behavior:
 Donovan should never have to deal with your windows. The recipe:
 
 ```sh
+export BANEYSPACES_SESSION=my-task-name              # your session: what you open is this session's, and only it can close it
 baneyspaces agent workspaces                         # which workspace is yours, and whether he is looking at it
 baneyspaces agent open TextEdit notes.txt            # data.window is the id; data.focus says if focus moved and came back
 baneyspaces agent arrange halves                     # stable layout for snapshots (agent workspace only)
@@ -109,6 +110,9 @@ baneyspaces agent snapshot --window 4211 -i          # work: snapshot, act on a 
 baneyspaces agent close --window 4211                # only windows you opened; answer a save sheet if one comes back
 ```
 
+- Every command carries a session: `$BANEYSPACES_SESSION` when set, else your terminal, else `default`, which every caller
+  without a terminal shares (a tool shell often has none). `close`, `open --new_window=false` and "your own dialog" count
+  only what that session did, so set it once and keep it for the task; over MCP the server's session is used.
 - A dialog your action opens comes back as `opened: {window, kind, title}`; snapshot that window id and answer it. `windows`
   lists dialogs with `kind`, `parent` and `waiting`. A sheet without its own id is in its parent's snapshot (`in_sheet`).
 - Open and Save panels and macOS password or permission prompts are always refused. A dialog in an app Donovan also
