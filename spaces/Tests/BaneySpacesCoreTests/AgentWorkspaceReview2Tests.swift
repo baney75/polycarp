@@ -69,9 +69,7 @@ final class ParentUnknownDialogTests: XCTestCase {
         a.observed([70], pid: 100, at: t0.addingTimeInterval(2), parents: [70: 7])
         XCTAssertEqual(a.parent(of: 70, pid: 100), 8, "the main window when it appeared, not a later one")
         XCTAssertNil(a.parent(of: 70, pid: 101))
-        XCTAssertEqual(ChildCollect.hint(main: 8, focused: 70, placed: [7, 8]), 8)
-        XCTAssertEqual(ChildCollect.hint(main: 70, focused: 7, placed: [7, 8]), 7, "the dialog itself is never its parent")
-        XCTAssertNil(ChildCollect.hint(main: 70, focused: 70, placed: [7, 8]))
+
     }
 }
 
@@ -86,33 +84,7 @@ final class ChildCollectOrderTests: XCTestCase {
     }
 }
 
-/// sol-sol-F2: an open that identified nothing keeps a pending claim.
-final class PendingClaimTests: XCTestCase {
-    let t0 = Date(timeIntervalSince1970: 7_000_000)
-    func win(_ id: UInt32) -> HandsWindow { HandsWindow(id: id, pid: 300, app: "TextEdit", bundle: "com.apple.TextEdit", workspace: 9) }
-
-    func testALateWindowIsTheEarlierOpensAndTheLaterOpenGetsNone() {
-        var s = SessionWindows()
-        let app = "com.apple.TextEdit"
-        XCTAssertNil(s.claim([], session: "a", app: app, now: t0), "A, wait 0: nothing yet")
-        s.addPending(session: "a", app: app, known: [1, 2], at: t0)
-        // B opens; A's window 20 appears while B looks.
-        XCTAssertNil(s.claim([win(20)], session: "b", app: app, now: t0.addingTimeInterval(2)), "B gets none: window_identified false")
-        XCTAssertEqual(s.owner(of: 20), "a")
-        XCTAssertTrue(s.windows(of: "b").isEmpty)
-        XCTAssertTrue(s.pending.isEmpty, "served")
-        XCTAssertEqual(s.claim([win(20), win(21)], session: "b", app: app, now: t0.addingTimeInterval(3))?.id, 21, "B's own window once A's is served")
-    }
-
-    func testAPendingClaimBlocksOthersUntilItExpires() {
-        var s = SessionWindows()
-        s.addPending(session: "a", app: "TextEdit", known: [20], at: t0)
-        XCTAssertNil(s.claim([win(20)], session: "b", app: "TextEdit", now: t0.addingTimeInterval(5)), "20 was there before A's launch, and A's claim is live")
-        XCTAssertEqual(s.claim([win(20)], session: "b", app: "TextEdit", now: t0.addingTimeInterval(31))?.id, 20, "after 30 s it is gone")
-        var none = SessionWindows()
-        XCTAssertNil(none.claim([win(20)], session: "", app: "TextEdit", now: t0), "no session, no window")
-    }
-}
+/// sol-sol-F2: see `OpenRequestTests` (review round 3).
 
 /// sol-sol-F4: every sheet, dialog or alert child gets the file-panel check, and a cut-off read refuses it.
 final class ModalDialogPanelTests: XCTestCase {

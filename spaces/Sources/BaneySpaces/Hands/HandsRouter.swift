@@ -268,13 +268,21 @@ final class HandsRouter {
         .object(["pid": .int(Int(w.pid)), "window": .int(Int(w.id)), "app": .string(w.app), "scope": .string(scope.reason)])
     }
 
-    /// Gives each pending `open` (one that ended before its window appeared) the first unowned new window of its app.
+    /// Gives each pending `open` (one that replied before its window appeared) its own launch's window, once it is there.
     func resolvePendingOpens(all: [HandsWindow], agent: Int?) {
         let now = Date()
         childLocked {
-            for app in Set(sessionWindows.pending.map(\.app)) {
-                sessionWindows.resolvePending(app: app, appWindows: all.filter { matches($0, app) && $0.workspace == agent }, now: now)
+            syncLaunchPids()
+            for app in Set(sessionWindows.requests.filter(\.pending).map(\.app)) {
+                sessionWindows.resolvePending(app: app, windows: all.filter { matches($0, app) && $0.workspace == agent }, now: now)
             }
+        }
+    }
+
+    /// The pids separate launches reported, into their requests. Under `childLock`.
+    private func syncLaunchPids() {
+        for r in sessionWindows.requests where r.separate && r.pid == nil {
+            if let pid = AgentLaunches.shared.pid(r.id) { sessionWindows.launched(r.id, pid: pid) }
         }
     }
 
@@ -651,7 +659,13 @@ final class HandsRouter {
         // What is in front, and how often Polycarp has given the keyboard back, before the launch: the result says whether
         // macOS brought the app forward and whether it was undone.
         let (frontBefore, returnsBefore) = onMain { (NSWorkspace.shared.frontmostApplication?.processIdentifier, AgentLaunchFocus.shared.returns) }
-        let reply = onMain { host.open([app] + files) }
+        // This request's own launch: the session's `open` hands the token to the launch's completion, which reports its pid.
+        let token = AgentLaunches.shared.newToken()
+        let reply = onMain { () -> Wire.Reply in
+            AgentLaunches.shared.current = token
+            defer { AgentLaunches.shared.current = nil }
+            return host.open([app] + files)
+        }
         guard reply.ok else {
             let msg = reply.error ?? "couldn't open it"
             if msg.contains("agent workspace is off") { return .failure(HandsError(.agentWorkspaceOff, msg, suggestion: "Ask Donovan to run `polycarp-spaces agent on`.", retry: .never)) }
@@ -664,20 +678,26 @@ final class HandsRouter {
         // Its window arrives a moment later; wait for it so the caller gets the id. It must belong to a new
         // process: an app that ran the launch inside Donovan's copy is not an agent's window.
         let separate = AgentAppPolicy.needsSeparateInstance(bundle: bundle)
+        // A reply with a pid asked an app already running (one process for everyone); one without started a new process.
+        let runningPid = reply.info?["pid"].flatMap { Int32($0) }
+        let owns = childLocked {
+            sessionWindows.beginOpen(id: token, session: session, app: key, separate: runningPid == nil, pid: runningPid, known: known, at: Date())
+        }
         var window: HandsWindow?
         // Inside the 8 s claim on its window (`claimNextWindow`), so a window seen here was placed by that claim. At most
         // `wait` seconds (7 when it says more or nothing); 0 looks once.
         let deadline = Date().addingTimeInterval(min(InUseRule.bound(req.int("wait")), 7))
         var looked = false
-        while window == nil, !looked || Date() < deadline {
+        while owns, window == nil, !looked || Date() < deadline {
             looked = true
             let (all, agent) = listWindows(fresh: true)
-            let candidates = all.filter { matches($0, reply.info?["app"] ?? display) && !known.contains($0.id) && $0.workspace == agent && (!separate || !pidsBefore.contains($0.pid)) }
-            // Provenance: `close` closes only windows this session's `open` made. Claimed under the lock, never a window
-            // another session owns.
-            // A pending claim of another session's earlier open of this app is served first and blocks this one meanwhile.
-            let appWindows = all.filter { matches($0, key) && $0.workspace == agent }
-            window = childLocked { sessionWindows.claim(candidates, session: session, app: key, appWindows: appWindows, now: Date()) }
+            let candidates = all.filter { matches($0, reply.info?["app"] ?? display) && $0.workspace == agent && (!separate || !pidsBefore.contains($0.pid)) }
+            // Provenance: `close` closes only windows this session's `open` made. Claimed under the lock, only a window of this
+            // request's own launch, never one another session owns, and nothing while another open of the same running app overlaps.
+            window = childLocked { () -> HandsWindow? in
+                syncLaunchPids()
+                return sessionWindows.claim(token, windows: candidates, now: Date())
+            }
             if window == nil { Thread.sleep(forTimeInterval: 0.15) }
         }
         var data: [String: JSONValue] = (reply.info ?? [:]).mapValues(JSONValue.string)
@@ -688,13 +708,17 @@ final class HandsRouter {
             data["window"] = .int(Int(window.id)); data["pid"] = .int(Int(window.pid))
             data["reused"] = .bool(false)
         } else if separate, !pidsBefore.isEmpty, noNewProcess(bundle: bundle, before: pidsBefore) {
+            childLocked { sessionWindows.cancelOpen(token) }
             return .failure(HandsError(.needsSandbox, "\(display) didn't start a separate copy, so nothing of it is the agent's",
                                        suggestion: "Close nothing; ask Donovan to quit \(display), or work in the sandbox.", retry: .never))
         } else {
             data["window_identified"] = .bool(false)
-            // Its window may still come: the first unowned new window of this app is this session's when it does (30 s).
-            childLocked { sessionWindows.addPending(session: session, app: key, known: known, at: Date()) }
-            data["note"] = .string("Polycarp couldn't identify the window this open made (none appeared yet, or the only new one is another session's), so this session owns none of it; run `polycarp-spaces agent windows`")
+            // Its window may still come: when its own launch's window appears within 30 s it is this session's. An open that
+            // overlapped another open of the same running app gets none (`owns` false).
+            childLocked { sessionWindows.endOpen(token) }
+            data["note"] = .string(owns
+                ? "Polycarp couldn't identify the window this open made yet, so this session owns none of it for now; if it appears within 30 s it becomes yours. Run `polycarp-spaces agent windows`"
+                : "another open of \(display) overlapped this one, so Polycarp can't tell whose new window is whose and gives it to neither; you may still use it, but `close` won't close it")
         }
         return .success(.object(data))
     }

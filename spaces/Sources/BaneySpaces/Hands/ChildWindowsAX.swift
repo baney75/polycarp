@@ -41,8 +41,9 @@ enum ChildWindowsAX {
         var children: [ChildWindowFacts]
         /// Placed windows that hold a sheet without a window number of its own: its elements are in that window's snapshot.
         var sheetsOn: Set<UInt32>
-        /// The app's main or focused placed window at this look, for children whose own window is unknown.
-        var hint: UInt32? = nil
+        /// The app's main and focused windows at this look, for children whose own window is unknown (`ChildCollect.hint`).
+        var main: UInt32? = nil
+        var focused: UInt32? = nil
     }
 
     static func read(pid: pid_t, placed: Set<UInt32>) -> Reading {
@@ -103,8 +104,9 @@ enum ChildWindowsAX {
             guard AXUIElementCopyAttributeValue(app, a as CFString, &v) == .success, let v, CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
             return BackgroundAX.windowID(of: v as! AXUIElement)
         }
-        let hint = out.contains { $0.parent == nil } ? ChildCollect.hint(main: windowAttr(kAXMainWindowAttribute), focused: windowAttr(kAXFocusedWindowAttribute), placed: placed) : nil
-        return Reading(children: out, sheetsOn: sheetsOn, hint: hint)
+        let unknown = out.contains { $0.parent == nil }
+        return Reading(children: out, sheetsOn: sheetsOn, main: unknown ? windowAttr(kAXMainWindowAttribute) : nil,
+                       focused: unknown ? windowAttr(kAXFocusedWindowAttribute) : nil)
     }
 
     /// The process that owns a window number, and its name, from the window server.

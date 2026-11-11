@@ -170,9 +170,11 @@ verbs, in MCP and the CLI, all on the agent workspace only:
 - `workspaces` (read only): each workspace's number and whether it is shown, which one is the agent's, whether
   Donovan is looking at it (`agent_workspace_shown`), and where each window you may use is. No names or titles.
 - `open` returns the window id (waiting up to `wait`, at most 7 s within the claim), takes `new_window` (false reuses
-  this session's window of that app; one open per app runs at a time and never takes a window another session owns; an
-  open that ends with `window_identified: false` keeps a 30 s pending claim, so the first new window of that app is
-  still its own and no other session's open can take it meanwhile), and reports `focus: {changed, returned}` when the launch took the keyboard and
+  this session's window of that app; one open per app runs at a time and never takes a window another session owns. Each
+  open is tied to its own launch: a new process's open takes only that process's windows, also after it replied with
+  `window_identified: false` (for 30 s); an open of an app already running takes a window only while it is that app's
+  only open, and overlapping opens of it (and any in the 30 s after) get none. A window no open owns stays usable under
+  the scope rules; `close` just won't close it), and reports `focus: {changed, returned}` when the launch took the keyboard and
   BaneySpaces gave it back. URLs stay refused until agent browser profiles exist.
 - `arrange full | halves | thirds | grid | frames id=x,y,w,h …`: agent workspace windows only. A parked window keeps
   its new size and takes the position when the workspace is shown.

@@ -16,9 +16,13 @@ extension HandsRouter {
         let placed = Set(all.filter { $0.pid == pid }.map(\.id))
         var r = ChildWindowsAX.read(pid: pid, placed: placed)
         let now = Date()
-        // Each child's window as first seen: its own, else the app's main or focused window at that look.
+        // Each child's window as first seen: its own, else the app's main window when it is also the focused one and usable.
+        let agent = onMain { host.agentWorkspace() }
+        let usable = r.children.contains { $0.parent == nil } && r.main != nil && r.main == r.focused
+            ? Set(all.filter { $0.pid == pid && decide($0, agent).allowed }.map(\.id)) : []
+        let hint = ChildCollect.hint(main: r.main, focused: r.focused, usable: usable)
         var firstParents: [UInt32: UInt32] = [:]
-        for c in r.children { if let p = c.parent ?? r.hint { firstParents[c.id] = p } }
+        for c in r.children { if let p = c.parent ?? hint { firstParents[c.id] = p } }
         let known = childLocked { () -> [UInt32: UInt32] in
             attribution.observed(Set(r.children.map(\.id)), pid: pid, at: now, parents: firstParents)
             return r.children.reduce(into: [:]) { m, c in if let p = attribution.parent(of: c.id, pid: pid) { m[c.id] = p } }
@@ -66,7 +70,7 @@ extension HandsRouter {
     func children(ofPids pids: Set<Int32>, all: [HandsWindow], agent: Int?, session: String)
         -> (rows: [(facts: ChildWindowFacts, decision: ChildWindowRule.Decision)], sheetsOn: Set<UInt32>) {
         let list = Array(pids)
-        var readings = [ChildWindowsAX.Reading](repeating: .init(children: [], sheetsOn: [], hint: nil), count: list.count)
+        var readings = [ChildWindowsAX.Reading](repeating: .init(children: [], sheetsOn: []), count: list.count)
         let lock = NSLock()
         DispatchQueue.concurrentPerform(iterations: list.count) { i in
             let r = readChildren(pid: list[i], all: all)
@@ -209,6 +213,9 @@ extension HandsRouter {
             // After the wait: the agent workspace, the live window, its scope and whether it is shown, read together on the
             // main thread and acted on in the same pass. The agent workspace may have been turned off or changed meanwhile.
             var fromSeen: Int?
+            let relative = req.string("frame").flatMap { AgentArrange.parseFrame("0=" + $0)?.frame }
+            var framed: (frame: CGRect, applied: String)?
+            // The move and the frame are applied in the gate's own pass, so a frame is never applied outside it.
             let result = mutateOnMain([w], verb: "move", session: session) { agent -> Result<MoveDecision.Go, HandsError> in
                 let live = host.live(w.id)
                 let now = live.map { decide($0, agent, session: session) }
@@ -221,6 +228,10 @@ extension HandsRouter {
                     HandsMovedIn.shared.record(window: live.id, pid: live.pid, origin: origin, from: from, to: go.to)
                     if origin == .fullAccess { AgentAccess.shared.grant(live.pid) }
                     host.move(live.id, go.to)
+                }
+                if case .success = r, let relative {
+                    let f = AgentArrange.place(relative, in: host.agentArea())
+                    framed = (f, host.arrange([w.id: f])[w.id] ?? "skipped")
                 }
                 fromSeen = live?.workspace
                 return r
@@ -237,13 +248,9 @@ extension HandsRouter {
             if go.moves, scope != .onAgentWorkspace {
                 data["goes_back"] = .string("it goes back to workspace \(from.map(String.init) ?? "?") when the lend or Full Access that let it move ends")
             }
-            if let text = req.string("frame"), let rel = AgentArrange.parseFrame("0=" + text)?.frame {
-                let area = onMain { host.agentArea() }
-                let f = AgentArrange.place(rel, in: area)
-                // Spaces.move applies on the next pass of the main queue: the frame follows it there.
-                let applied = onMain { host.arrange([w.id: f]) }
+            if let (f, applied) = framed {
                 data["frame"] = .object(["x": .int(Int(f.minX)), "y": .int(Int(f.minY)), "width": .int(Int(f.width)), "height": .int(Int(f.height))])
-                data["applied"] = .string(applied[w.id] ?? "skipped")
+                data["applied"] = .string(applied)
             }
             return .success(.object(data))
         }

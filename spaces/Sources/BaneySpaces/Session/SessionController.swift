@@ -624,6 +624,8 @@ final class SessionController {
             AgentActivity.shared.markLaunch(bundle: bundle, excluding: before, for: 10)
             AgentLaunchFocus.shared.watch(bundle: bundle, excluding: before, for: 10)
             var claimed = false
+            // The hands request this launch is for (set by `HandsRouter.open` around this call), told the pid on completion.
+            let launchToken = AgentLaunches.shared.current
             /// A new window from behind through the app's own New Window command, claimed first.
             func newWindow(_ app: NSRunningApplication) -> Bool {
                 h.claim(app.processIdentifier, n, false, nil)
@@ -655,6 +657,7 @@ final class SessionController {
             func finished(_ app: NSRunningApplication?) {
                 DispatchQueue.main.async {
                     guard let app else { AgentActivity.shared.clearLaunch(bundle: bundle); return }
+                    if !before.contains(app.processIdentifier) { AgentLaunches.shared.launched(launchToken, pid: app.processIdentifier) }
                     claimLaunch(app)
                 }
             }

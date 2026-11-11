@@ -278,56 +278,99 @@ public struct SessionWindows: Equatable, Sendable {
     /// The session that owns this window, if any.
     public func owner(of window: UInt32) -> String? { opened.first { $0.value[window] != nil }?.key }
 
-    /// An `open` that ended without identifying its window: the first unowned new window of that app goes to it when it
-    /// appears, and while it is live no other session's `open` claims an unowned new window of that app.
-    public struct Pending: Equatable, Sendable {
+    /// One `open` request and the launch it made, from just after the launch until it owns a window, is cleared, or its
+    /// pending life (30 s after it ended) runs out. A request is tied to its own launch: one that started a new process
+    /// (`separate`) matches only windows of that process; one that asked an already running app (one pid for everyone) may
+    /// take a window only while it is the only request for that app, and two overlapping requests for it get nothing.
+    public struct OpenRequest: Equatable, Sendable {
+        public var id: Int
         public var session: String
         /// The app, as `open` keys it (bundle id, or name), lowercased.
         public var app: String
-        /// The windows that existed before that launch: never its window.
+        public var separate: Bool
+        /// The process the launch started (separate, known once the launch completes), or the running app's.
+        public var pid: Int32?
+        /// The windows that existed before the launch: never its window.
         public var known: Set<UInt32>
         public var at: Date
+        /// The `open` has replied without a window; the request waits for it.
+        public var pending: Bool
     }
     public static let pendingLife: TimeInterval = 30
-    public private(set) var pending: [Pending] = []
+    public private(set) var requests: [OpenRequest] = []
+    /// Running apps whose new windows are in doubt after overlapping opens, until this time: no open owns one meanwhile.
+    public private(set) var disputed: [String: Date] = [:]
 
-    public mutating func addPending(session: String, app: String, known: Set<UInt32>, at: Date) {
-        guard !session.isEmpty else { return }
-        pending.append(Pending(session: session, app: app.lowercased(), known: known, at: at))
-    }
+    private mutating func expire(now: Date) { requests.removeAll { $0.pending && now.timeIntervalSince($0.at) > Self.pendingLife } }
 
-    private mutating func expirePending(now: Date) { pending.removeAll { now.timeIntervalSince($0.at) > Self.pendingLife } }
-
-    public func livePending(app: String, now: Date) -> [Pending] {
-        pending.filter { $0.app == app.lowercased() && now.timeIntervalSince($0.at) <= Self.pendingLife }.sorted { $0.at < $1.at }
-    }
-
-    /// Gives each live pending claim for `app`, oldest first, the first unowned window of `appWindows` (the app's windows on
-    /// the agent workspace now) that was not there before its launch. Returns what was given.
+    /// Registers a launch. False when it can't own a window: no session, or it overlaps another request for the same running
+    /// app, in which case that request is cleared too (both report `window_identified: false`).
     @discardableResult
-    public mutating func resolvePending(app: String, appWindows: [HandsWindow], now: Date) -> [(session: String, window: HandsWindow)] {
-        expirePending(now: now)
+    public mutating func beginOpen(id: Int, session: String, app: String, separate: Bool, pid: Int32?, known: Set<UInt32>, at: Date) -> Bool {
+        expire(now: at)
+        guard !session.isEmpty else { return false }
+        let key = app.lowercased()
+        disputed = disputed.filter { $0.value > at }
+        if !separate, disputed[key] != nil || requests.contains(where: { $0.app == key && !$0.separate }) {
+            // Overlapping opens of one running app: whose new window is whose can't be told, now or for the next 30 s (a
+            // late window of the cleared ones may still come), so no open of it owns one until then.
+            requests.removeAll { $0.app == key && !$0.separate }
+            disputed[key] = at.addingTimeInterval(Self.pendingLife)
+            return false
+        }
+        requests.append(OpenRequest(id: id, session: session, app: key, separate: separate, pid: pid, known: known, at: at, pending: false))
+        return true
+    }
+
+    /// The process a separate launch started, once its completion reports it.
+    public mutating func launched(_ id: Int, pid: Int32) {
+        if let i = requests.firstIndex(where: { $0.id == id && $0.separate }) { requests[i].pid = pid }
+    }
+
+    /// The window this request may take from `windows` (the app's windows on the agent workspace now), or nil.
+    private func pick(_ r: OpenRequest, from windows: [HandsWindow], newest: Bool) -> HandsWindow? {
+        if !r.separate, requests.contains(where: { $0.id != r.id && $0.app == r.app && !$0.separate }) { return nil }
+        if !r.separate, let until = disputed[r.app], until > r.at { return nil }
+        let ok = windows.filter { w in
+            !r.known.contains(w.id) && owner(of: w.id) == nil && (r.separate ? r.pid == w.pid : (r.pid == nil || r.pid == w.pid))
+        }
+        return newest ? ok.max { $0.id < $1.id } : ok.min { $0.id < $1.id }
+    }
+
+    /// The claim of an `open` still looking for its window: recorded for its session, and the request is done.
+    public mutating func claim(_ id: Int, windows: [HandsWindow], now: Date) -> HandsWindow? {
+        expire(now: now)
+        guard let r = requests.first(where: { $0.id == id && !$0.pending }), let w = pick(r, from: windows, newest: true) else { return nil }
+        record(session: r.session, window: w.id, pid: w.pid)
+        requests.removeAll { $0.id == id }
+        return w
+    }
+
+    /// The `open` replied without a window: its request stays, pending, for the window that may still come.
+    public mutating func endOpen(_ id: Int) {
+        if let i = requests.firstIndex(where: { $0.id == id }) { requests[i].pending = true }
+    }
+
+    /// The launch failed or was refused: nothing of it is anyone's.
+    public mutating func cancelOpen(_ id: Int) { requests.removeAll { $0.id == id } }
+
+    /// Gives each pending request of `app` its own launch's window from `windows`, when it has appeared.
+    @discardableResult
+    public mutating func resolvePending(app: String, windows: [HandsWindow], now: Date) -> [(session: String, window: HandsWindow)] {
+        expire(now: now)
         var given: [(session: String, window: HandsWindow)] = []
-        for p in livePending(app: app, now: now) {
-            guard let w = appWindows.filter({ !p.known.contains($0.id) && owner(of: $0.id) == nil }).min(by: { $0.id < $1.id }) else { continue }
-            record(session: p.session, window: w.id, pid: w.pid)
-            pending.removeAll { $0 == p }
-            given.append((p.session, w))
+        for r in requests where r.pending && r.app == app.lowercased() {
+            guard let w = pick(r, from: windows, newest: false) else { continue }
+            record(session: r.session, window: w.id, pid: w.pid)
+            requests.removeAll { $0.id == r.id }
+            given.append((r.session, w))
         }
         return given
     }
 
-    /// `open`'s claim, made under one lock. Pending claims of `app` are served first (`resolvePending`, from `appWindows`,
-    /// which defaults to `candidates`); while another session's is still live this one gets nothing. Otherwise the newest of
-    /// `candidates` (the new windows this launch may have made) that no other session owns, recorded for `session`. Nil
-    /// means this `open` could not identify its window and owns none; a window is never recorded for two sessions, and a
-    /// request with no session is never handed one (`close` would refuse it).
-    public mutating func claim(_ candidates: [HandsWindow], session: String, app: String = "", appWindows: [HandsWindow]? = nil, now: Date = Date()) -> HandsWindow? {
+    /// The low-level exclusive claim: the newest of `candidates` no other session owns, recorded for `session`.
+    public mutating func claim(_ candidates: [HandsWindow], session: String) -> HandsWindow? {
         guard !session.isEmpty else { return nil }
-        if !app.isEmpty {
-            resolvePending(app: app, appWindows: appWindows ?? candidates, now: now)
-            if livePending(app: app, now: now).contains(where: { $0.session != session }) { return nil }
-        }
         let free = candidates.filter { w in owner(of: w.id).map { $0 == session } ?? true }
         guard let pick = free.max(by: { $0.id < $1.id }) else { return nil }
         record(session: session, window: pick.id, pid: pick.pid)
@@ -510,10 +553,11 @@ public enum ChildCollect {
         return out
     }
 
-    /// The parent an unattached child is first seen with: the app's main window, else its focused one, when that is one of
-    /// the app's placed windows.
-    public static func hint(main: UInt32?, focused: UInt32?, placed: Set<UInt32>) -> UInt32? {
-        [main, focused].compactMap { $0 }.first { placed.contains($0) }
+    /// The parent an unattached child is first seen with: the app's main window, only when it is also the focused window
+    /// and one the session may use. Otherwise unknown (refused on a split app).
+    public static func hint(main: UInt32?, focused: UInt32?, usable: Set<UInt32>) -> UInt32? {
+        guard let main, main == focused, usable.contains(main) else { return nil }
+        return main
     }
 }
 
