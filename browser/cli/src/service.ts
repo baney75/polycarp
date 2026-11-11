@@ -401,6 +401,9 @@ async function installWindows(spec: ServiceSpec, exec: Runner, binary: string, e
 	const home = resolve(configDir());
 	const problem = windowsPathProblem(home);
 	if (problem) return { ok: false, message: `${problem}, so no task was made. Set POLYCARP_BROWSER_CONFIG_DIR to a folder without it and run setup again, or ${keepRunning}.` };
+	// cmd `call`s the launcher, so it must be a program or a batch file. On Windows install writes polycarp.cmd
+	// (CLI_LAUNCHER_NAME in files.ts, writeScript in install.ts); anything else is refused, never started and left to fail in a loop.
+	if (!/\.(exe|cmd|bat)$/i.test(binary)) return { ok: false, message: `The launcher ${binary} isn't a .exe, .cmd or .bat file, so Windows can't run it and no task was made. Run ${COMMAND_NAME} install on this computer, then setup again.` };
 	// The script finds the launcher and the folders from its own place, so they must be where it looks.
 	if (resolve(dirname(binary)) !== home) return { ok: false, message: `The launcher ${binary} isn't in the config folder ${home}, so no task was made. Run ${COMMAND_NAME} install, then setup again, or ${keepRunning}.` };
 	const strayConfig = [...CONFIG_KEYS].map((k) => env[k]).find((v) => v !== undefined && resolve(v) !== home);

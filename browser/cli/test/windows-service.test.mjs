@@ -63,6 +63,9 @@ function fakeExec(answer = () => ({ code: 0, out: "" })) {
 
 afterEach(() => setServiceSeamForTests({}));
 
+/** Act as Windows, with the polycarp.cmd launcher `install` writes there unless a test names another. */
+const winSeam = (o) => setServiceSeamForTests({ platform: "win32", launcher: join(process.env.POLYCARP_BROWSER_CONFIG_DIR, "polycarp.cmd"), ...o });
+
 // ---------- Mac and Linux are unchanged ----------
 
 test("the launchd plist is byte for byte what it was", () => {
@@ -159,7 +162,7 @@ test("macOS install still writes the plist under LaunchAgents and its log under 
 test("Windows install makes the task from XML, ends any running copy, then starts it, with exact schtasks arguments", async () => {
 	await inConfig("win-install", async (dir) => {
 		const fake = fakeExec();
-		setServiceSeamForTests({ platform: "win32", exec: fake.exec, windowsUser: "DESKTOP-1\\Jane Doe", launcher: join(dir, "polycarp.cmd") });
+		winSeam({ exec: fake.exec, windowsUser: "DESKTOP-1\\Jane Doe", launcher: join(dir, "polycarp.cmd") });
 		const r = await installService(SERVE_SERVICE);
 		assert.equal(r.ok, true, r.message);
 		const script = join(dir, "services", "com.polycarp.serve.cmd");
@@ -199,7 +202,7 @@ test("Windows install makes the task from XML, ends any running copy, then start
 
 test("the batch script sets the folders, logs to the file, restarts after 10 seconds, and names no path of this computer", async () => {
 	await inConfig("win-script", async (dir) => {
-		setServiceSeamForTests({ platform: "win32", exec: fakeExec().exec, windowsUser: "PC\\x", launcher: join(dir, "polycarp.cmd") });
+		winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x", launcher: join(dir, "polycarp.cmd") });
 		const r = await installService(CLOUDFLARE_SERVICE);
 		assert.equal(r.ok, true, r.message);
 		const text = readFileSync(join(dir, "services", "com.polycarp.cloudflared.cmd"), "utf8");
@@ -240,7 +243,7 @@ test("a config folder with % refuses before anything is written or run", async (
 		mkdirSync(dir, { recursive: true });
 		process.env.POLYCARP_BROWSER_CONFIG_DIR = dir;
 		const fake = fakeExec();
-		setServiceSeamForTests({ platform: "win32", exec: fake.exec, windowsUser: "PC\\x" });
+		winSeam({ exec: fake.exec, windowsUser: "PC\\x" });
 		const r = await installService(SERVE_SERVICE);
 		assert.equal(r.ok, false);
 		assert.match(r.message, /no task was made/);
@@ -252,7 +255,7 @@ test("a config folder with % refuses before anything is written or run", async (
 test("Access is denied fails with one sentence that says what to do, and never asks for elevation", async () => {
 	await inConfig("win-denied", async () => {
 		const fake = fakeExec((cmd, args) => (args[0] === "/Create" ? { code: 1, out: "ERROR: Access is denied." } : { code: 0, out: "" }));
-		setServiceSeamForTests({ platform: "win32", exec: fake.exec, windowsUser: "CORP\\x" });
+		winSeam({ exec: fake.exec, windowsUser: "CORP\\x" });
 		const r = await installService(SERVE_SERVICE);
 		assert.equal(r.ok, false);
 		assert.match(r.message, /^Windows refused to make a scheduled task for CORP\\x \(ERROR: Access is denied\.\); Polycarp never asks for administrator rights, so .* ask its admin to allow them, or keep it running yourself: .* serve\.$/);
@@ -265,7 +268,7 @@ test("Access is denied fails with one sentence that says what to do, and never a
 test("an account Windows doesn't name makes no task", async () => {
 	await inConfig("win-nouser", async () => {
 		const fake = fakeExec();
-		setServiceSeamForTests({ platform: "win32", exec: fake.exec, windowsUser: "" });
+		winSeam({ exec: fake.exec, windowsUser: "" });
 		const r = await installService(SERVE_SERVICE);
 		assert.equal(r.ok, false);
 		assert.match(r.message, /no task was made/);
@@ -275,10 +278,10 @@ test("an account Windows doesn't name makes no task", async () => {
 
 test("Windows uninstall ends and deletes the task, removes the script, and keeps the log", async () => {
 	await inConfig("win-remove", async (dir) => {
-		setServiceSeamForTests({ platform: "win32", exec: fakeExec().exec, windowsUser: "PC\\x" });
+		winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x" });
 		assert.equal((await installService(SERVE_SERVICE)).ok, true);
 		const fake = fakeExec((cmd, args) => (args[0] === "/End" ? { code: 1, out: "ERROR: The task is not running." } : { code: 0, out: "" }));
-		setServiceSeamForTests({ platform: "win32", exec: fake.exec, windowsUser: "PC\\x" });
+		winSeam({ exec: fake.exec, windowsUser: "PC\\x" });
 		const r = removeService(SERVE_SERVICE);
 		assert.equal(r.ok, true, r.failure);
 		assert.deepEqual(fake.calls, [
@@ -289,7 +292,7 @@ test("Windows uninstall ends and deletes the task, removes the script, and keeps
 		assert.match(r.notes.join(" "), /log stays at .*polycarp-serve\.log/);
 		// Nothing installed: nothing to run.
 		const again = fakeExec();
-		setServiceSeamForTests({ platform: "win32", exec: again.exec, windowsUser: "PC\\x" });
+		winSeam({ exec: again.exec, windowsUser: "PC\\x" });
 		assert.deepEqual(removeService(SERVE_SERVICE), { ok: true, notes: [] });
 		assert.deepEqual(again.calls, []);
 	});
@@ -298,17 +301,17 @@ test("Windows uninstall ends and deletes the task, removes the script, and keeps
 test("a failed delete keeps the script when the task is still there, and counts as removed when it is gone", async () => {
 	await inConfig("win-remove-fail", async (dir) => {
 		const script = join(dir, "services", "com.polycarp.serve.cmd");
-		setServiceSeamForTests({ platform: "win32", exec: fakeExec().exec, windowsUser: "PC\\x" });
+		winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x" });
 		await installService(SERVE_SERVICE);
 		const stuck = fakeExec((cmd, args) => (args[0] === "/Delete" ? { code: 1, out: "ERROR: denied" } : { code: 0, out: "" }));
-		setServiceSeamForTests({ platform: "win32", exec: stuck.exec });
+		winSeam({ exec: stuck.exec });
 		const r = removeService(SERVE_SERVICE);
 		assert.equal(r.ok, false);
 		assert.match(r.failure, /schtasks \/Delete \/TN com\.polycarp\.serve failed: ERROR: denied\. The task is still there and remote\.json is kept\./);
 		assert.ok(existsSync(script));
 		assert.deepEqual(stuck.calls.at(-1), [SCHTASKS, "/Query", "/TN", "com.polycarp.serve"]);
 		const gone = fakeExec((cmd, args) => (args[0] === "/Delete" || args[0] === "/Query" ? { code: 1, out: "ERROR: The system cannot find the file specified." } : { code: 0, out: "" }));
-		setServiceSeamForTests({ platform: "win32", exec: gone.exec });
+		winSeam({ exec: gone.exec });
 		assert.equal(removeService(SERVE_SERVICE).ok, true);
 		assert.equal(existsSync(script), false);
 	});
@@ -316,7 +319,7 @@ test("a failed delete keeps the script when the task is still there, and counts 
 
 test("a task that won't start right away says it starts at the next logon", async () => {
 	await inConfig("win-run-fail", async () => {
-		setServiceSeamForTests({ platform: "win32", exec: fakeExec((cmd, args) => (args[0] === "/Run" ? { code: 1, out: "ERROR: x" } : { code: 0, out: "" })).exec, windowsUser: "PC\\x" });
+		winSeam({ exec: fakeExec((cmd, args) => (args[0] === "/Run" ? { code: 1, out: "ERROR: x" } : { code: 0, out: "" })).exec, windowsUser: "PC\\x" });
 		const r = await installService(HUB_SERVICE);
 		assert.equal(r.ok, false);
 		assert.match(r.message, /schtasks \/Run \/TN com\.polycarp\.hub failed: ERROR: x\. The task is made and starts at your next logon\./);
@@ -399,7 +402,7 @@ test("a non-ASCII profile folder is never written into the script: it is plain A
 	await inConfig(
 		"win-unicode",
 		async (dir) => {
-			setServiceSeamForTests({ platform: "win32", exec: fakeExec().exec, windowsUser: "PC\\Jos\u00e9", launcher: join(dir, "polycarp.cmd") });
+			winSeam({ exec: fakeExec().exec, windowsUser: "PC\\Jos\u00e9", launcher: join(dir, "polycarp.cmd") });
 			const r = await installService(SERVE_SERVICE);
 			assert.equal(r.ok, true, r.message);
 			const bytes = readFileSync(join(dir, "services", "com.polycarp.serve.cmd"));
@@ -421,11 +424,29 @@ test("a non-ASCII profile folder is never written into the script: it is plain A
 test("a launcher outside the config folder, or a folder variable with a non-ASCII value, makes no task", async () => {
 	await inConfig("win-outside", async (dir) => {
 		const fake = fakeExec();
-		setServiceSeamForTests({ platform: "win32", exec: fake.exec, windowsUser: "PC\\x", launcher: "C:\\elsewhere\\polycarp.cmd" });
+		winSeam({ exec: fake.exec, windowsUser: "PC\\x", launcher: "C:\\elsewhere\\polycarp.cmd" });
 		const r = await installService(SERVE_SERVICE);
 		assert.equal(r.ok, false);
 		assert.match(r.message, /isn't in the config folder/);
 		assert.deepEqual(fake.calls, []);
 	});
 	assert.throws(() => windowsScriptText("polycarp.cmd", { POLYCARP_SOCKET_DIR: "C:\\Jos\u00e9\\s" }, SERVE_SERVICE), /plain ASCII/);
+});
+
+test("Windows runs only a launcher it can execute: .exe, .cmd or .bat, never the extensionless POSIX one", async () => {
+	await inConfig("win-launcher-ext", async (dir) => {
+		for (const name of ["polycarp", "polycarp.sh", "polycarp.ps1"]) {
+			const fake = fakeExec();
+			winSeam({ exec: fake.exec, windowsUser: "PC\\x", launcher: join(dir, name) });
+			const r = await installService(SERVE_SERVICE);
+			assert.equal(r.ok, false, name);
+			assert.match(r.message, /Windows can't run it/, name);
+			assert.deepEqual(fake.calls, [], name);
+		}
+		for (const name of ["polycarp.cmd", "polycarp-browser.exe", "polycarp.bat"]) {
+			winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x", launcher: join(dir, name) });
+			const r = await installService(SERVE_SERVICE);
+			assert.equal(r.ok, true, `${name}: ${r.message}`);
+		}
+	});
 });
