@@ -1481,9 +1481,18 @@ fn update_dry_run_prints_the_plan_and_changes_nothing() {
     };
     let repo = checkout(&s, "src", "https://github.com/baney75/polycarp.git", &path);
     let cache = s.dir("cache");
+    // A `git` in the project's node_modules/.bin, first on PATH, is never run: not even to look.
+    let planted = s.dir("cwd").join("node_modules/.bin");
+    fs::create_dir_all(&planted).unwrap();
+    stub(
+        &planted,
+        "git",
+        &format!("touch {}", s.dir("ran").display()),
+    );
+    let first = std::env::join_paths([&planted, &path]).unwrap();
     let run = |args: &[&str]| {
         s.cmd(args)
-            .env("PATH", &path)
+            .env("PATH", &first)
             .env("POLYCARP_CACHE_DIR", &cache)
             .stdin(Stdio::null())
             .output()
@@ -1498,11 +1507,13 @@ fn update_dry_run_prints_the_plan_and_changes_nothing() {
     );
     assert!(
         t.contains(&format!(
-            "git -C {} fetch origin +refs/heads/main:refs/remotes/origin/main",
+            "{} -C {} fetch origin +refs/heads/main:refs/remotes/origin/main",
+            path.join("git").display(),
             repo.display()
         )),
-        "{t}"
+        "the plan names the git that runs: {t}"
     );
+    assert!(!s.dir("ran").exists(), "the planted git was run");
     assert!(
         t.contains("worktree add --detach --force") && t.contains(&cache.display().to_string()),
         "{t}"
@@ -1648,6 +1659,12 @@ fn a_build_in_a_checkout_judges_the_installed_command_not_itself() {
         return;
     };
     let (repo, head) = repo_with_a_commit(&s, "target-repo", &path);
+    // The first run: nothing is installed yet, and the build that is running is not taken for it.
+    let first = ["--is-current", repo.to_str().unwrap(), "HEAD", "--needs"];
+    let first = [&["update"], &first[..], &["polycarp command"]].concat();
+    let o = s.cmd(&first).env("PATH", &path).output().unwrap();
+    let said = out(&o).contains("not installed yet: polycarp command");
+    assert!(code(&o) == 100 && said, "{}", out(&o));
     let installed = install_stamped(&s, &head);
     let run = |args: &[&str]| s.cmd(args).env("PATH", &path).output().unwrap();
 
@@ -1689,6 +1706,22 @@ fn a_build_in_a_checkout_judges_the_installed_command_not_itself() {
         out(&o)
     );
     assert_eq!(code(&run(&[&gate[..], &["x", "--bogus"]].concat())), 2);
+}
+
+/// A `polycarp-browser` from an old `npm link`, earlier on PATH, does not answer for the helper the
+/// update placed: `polycarp browser`, `version` and the update's checks use the placed one.
+#[cfg(unix)]
+#[test]
+fn the_placed_browser_helper_wins_over_an_older_one_on_path() {
+    let s = Sandbox::new();
+    let local = s.dir("home").join(".local/bin");
+    fs::create_dir_all(&local).unwrap();
+    stub(&s.dir("bin"), "polycarp-browser", "echo old");
+    let placed = stub(&local, "polycarp-browser", "echo new");
+    let run = |args: &[&str]| s.cmd(args).env("PATH", s.dir("bin")).output().unwrap();
+    assert_eq!(out(&run(&["browser"])), "new\n");
+    let v = json(&run(&["version", "--json"]));
+    assert_eq!(part(&v, "browser helper")["path"], placed.to_str().unwrap());
 }
 
 /// A browser that is connected but slow. The helper is stopped at its limit, the extension is
@@ -1768,6 +1801,7 @@ fn a_slow_browser_is_no_answer_in_time_and_never_fails_the_update() {
         assert_eq!(code(&o), 0, "{extra:?}: {}{}", out(&o), err(&o));
         assert!(
             out(&o).contains("note: extension gave no answer in time")
+                && out(&o).contains(&format!("`polycarp browser` runs {}", bin.display()))
                 && out(&o).contains("up to date"),
             "{}",
             out(&o)

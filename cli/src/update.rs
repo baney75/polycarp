@@ -812,8 +812,8 @@ fn exit_text(code: Option<i32>) -> String {
     }
 }
 
-/// A bare program name as an absolute path, from the absolute folders on PATH only: `.` and other
-/// relative entries are skipped, so nothing in the current folder is ever picked up.
+/// A bare program name as an absolute path, from the trusted folders on PATH only: never a relative
+/// entry, the current folder's tree or a `node_modules/.bin` (`crate::trusted_tool`).
 pub fn on_path(name: &str, path: Option<&OsString>) -> Option<PathBuf> {
     let file = if cfg!(windows) {
         format!("{name}.exe")
@@ -821,9 +821,28 @@ pub fn on_path(name: &str, path: Option<&OsString>) -> Option<PathBuf> {
         name.to_string()
     };
     std::env::split_paths(path?)
-        .filter(|d| d.is_absolute())
         .map(|d| d.join(&file))
-        .find(|p| crate::is_executable_file(p))
+        .find(|p| crate::trusted_tool(p))
+}
+
+/// Before the plan is shown, each bare program in it is looked up once and named by the path that
+/// will run. One that is not found stays bare, and its step fails without starting anything.
+pub fn resolve(steps: &mut [Step], path: Option<&OsString>) {
+    let mut found = std::collections::BTreeMap::new();
+    for first in steps.iter_mut().filter_map(|st| st.argv.first_mut()) {
+        let tool = found
+            .entry(first.clone())
+            .or_insert_with_key(|name| on_path(name, path));
+        if let Some(p) = tool.as_ref().filter(|_| !Path::new(first).is_absolute()) {
+            *first = s(p);
+        }
+    }
+}
+
+/// The first `name` on PATH when it is not `new`: an older copy that keeps answering in a shell.
+pub fn shadowed(name: &str, new: &Path, path: Option<&OsString>) -> Option<PathBuf> {
+    let first = on_path(name, path)?;
+    (new.exists() && fs::canonicalize(&first).ok() != fs::canonicalize(new).ok()).then_some(first)
 }
 
 /// Runs steps for real: no shell, input closed, output straight to the terminal as it comes.
@@ -842,6 +861,8 @@ impl RealRunner {
         if let Some(p) = std::env::var_os("PATH") {
             dirs.extend(std::env::split_paths(&p));
         }
+        // What a step starts looks tools up too: it gets the trusted folders and no others.
+        dirs.retain(|d| crate::trusted_dir(d));
         RealRunner {
             path: std::env::join_paths(dirs).ok(),
         }
@@ -1156,8 +1177,13 @@ fn is_current(dir: &Path, rev: &str, check: &Check, device: &Device) -> i32 {
     let needs: Vec<&str> = check.needs.iter().map(String::as_str).collect();
     let at = version::short(&target);
     let started = std::time::Instant::now();
+    // The gate judges the command an update installs. With none there, the one that is running (a
+    // build in a checkout, on the first run) does not stand in for it: it counts as not installed.
+    let placed = device.home.as_ref().map(|h| h.join(".local/bin/polycarp"));
+    let placed = cfg!(windows) || placed.is_some_and(|p| p.is_file());
     let (parts, standing) = loop {
-        let parts = (device.parts)();
+        let mut parts = (device.parts)();
+        parts.retain(|p| placed || p.name != "polycarp command");
         let standing = standing(&parts, &needs, &target);
         if standing == Standing::Current || started.elapsed().as_secs() >= check.wait {
             break (parts, standing);
@@ -1170,6 +1196,10 @@ fn is_current(dir: &Path, rev: &str, check: &Check, device: &Device) -> i32 {
             "note: {} gave no answer in time, so it was not compared. `polycarp version` asks again.",
             quiet.join(", ")
         );
+    }
+    let helper = parts.iter().find(|p| p.name == "browser helper");
+    if let Some(version::Found::Installed { path: Some(p), .. }) = helper.map(|p| &p.found) {
+        println!("browser helper: `polycarp browser` runs {}", p.display());
     }
     match standing {
         Standing::Current => {
@@ -1312,7 +1342,7 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         home: home.clone(),
         install,
     };
-    let (summary, steps, notes, ask) = match plan(&facts, o) {
+    let (summary, mut steps, notes, ask) = match plan(&facts, o) {
         Plan::Refuse { code, message } => {
             eprintln!("{message}");
             return code;
@@ -1324,6 +1354,8 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
             ask,
         } => (summary, steps, notes, ask),
     };
+    let mut runner = RealRunner::new(&home);
+    resolve(&mut steps, runner.path.as_ref());
     if o.dry_run {
         print!("{}", render(&summary, &steps, &notes));
         println!("\ndry run: nothing was run.");
@@ -1351,7 +1383,7 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         }
     }
     let mut out = std::io::stdout();
-    match execute(&steps, &mut RealRunner::new(&home), &mut out) {
+    match execute(&steps, &mut runner, &mut out) {
         Outcome::UpToDate => 0,
         Outcome::Available => AVAILABLE,
         // The run that handed over prints the notes and the last line.
@@ -1371,6 +1403,11 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
                         installed.parent().unwrap_or(&installed).display()
                     );
                 }
+            }
+            let link = installed.with_file_name("polycarp-browser");
+            if let Some(old) = shadowed("polycarp-browser", &link, path.as_ref()) {
+                let (old, link) = (old.display(), link.display());
+                println!("note: `polycarp-browser` in your shell is {old}, an older copy. `polycarp browser` runs the updated one at {link}. Remove the old one with `rm {old}`.");
             }
             println!("polycarp update: done.");
             0
@@ -2369,6 +2406,34 @@ mod tests {
 
     const T: &str = "aaaaaaa1111111111111111111111111111111aa";
     const OLD: &str = "bbbbbbb2222222222222222222222222222222bb";
+    #[cfg(unix)]
+    #[test]
+    fn an_older_helper_earlier_on_path_is_named_and_one_in_a_node_modules_is_never_a_tool() {
+        let root = std::env::temp_dir().join(format!("polycarp-shadow-{}", std::process::id()));
+        let dirs = ["p/node_modules/.bin", "npm/bin", "home/.local/bin"].map(|d| root.join(d));
+        for d in &dirs {
+            fs::create_dir_all(d).unwrap();
+            fs::copy("/bin/sh", d.join("polycarp-browser")).unwrap();
+        }
+        let [modules, old, new] = dirs.map(|d| d.join("polycarp-browser"));
+        let path =
+            |list: &[&PathBuf]| std::env::join_paths(list.iter().map(|p| p.parent().unwrap())).ok();
+        let all = path(&[&modules, &old, &new]);
+        assert_eq!(on_path("polycarp-browser", all.as_ref()), Some(old.clone()));
+        assert_eq!(
+            shadowed("polycarp-browser", &new, all.as_ref()),
+            Some(old.clone())
+        );
+        assert_eq!(
+            shadowed("polycarp-browser", &new, path(&[&new, &old]).as_ref()),
+            None
+        );
+        let mut steps = vec![Step::new(Role::Build, "t", &["polycarp-browser", "x"])];
+        resolve(&mut steps, all.as_ref());
+        assert_eq!(steps[0].argv[0], s(&old));
+        let _ = fs::remove_dir_all(&root);
+    }
+
     fn at(name: &str, commit: &str) -> Part {
         Part::installed(name, None, version::Build::new(commit, "", false), None)
     }

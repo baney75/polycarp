@@ -67,10 +67,10 @@ const BROWSER: Tool = Tool {
     bundled: &[
         "~/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
         "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
+        // Where `polycarp update` links the helper on Linux: before PATH, so an older `npm link` never answers for it.
+        "~/.local/bin/polycarp-browser",
     ],
     spots: &[
-        // Where `polycarp update` links the helper on Linux, for a shell without ~/.local/bin on PATH.
-        "~/.local/bin/polycarp-browser",
         "~/.config/tabkyra/tabkyra",
         "/opt/homebrew/bin/tabkyra",
         "/usr/local/bin/tabkyra",
@@ -133,7 +133,7 @@ fn main() {
             &update::Device {
                 home: home(),
                 app: polycarp_app(),
-                spaces: find(&SPACES).ok(),
+                spaces: find(&SPACES).ok().filter(|p| trusted_tool(p)),
                 config: theme::config_dir(),
                 parts: &|| version::gather(&version_device(&ask_helper)),
             },
@@ -339,6 +339,28 @@ fn check(p: &Path) -> Result<(), Miss> {
         return Err(Miss::Script(p.to_path_buf()));
     }
     against_cwd(p)
+}
+
+/// Outside the current folder's tree. From the home folder or above it, only that folder itself counts.
+fn clear_of_cwd(c: &Path) -> bool {
+    let Ok(cwd) = env::current_dir().and_then(fs::canonicalize) else {
+        return false;
+    };
+    let home = home().and_then(|h| fs::canonicalize(h).ok());
+    c != cwd && (home.is_some_and(|h| h.starts_with(&cwd)) || !c.starts_with(&cwd))
+}
+
+/// A PATH folder `update` and `version` take programs from: absolute, and where it really is (links
+/// followed) is neither in the current folder's tree nor a `node_modules`.
+fn trusted_dir(dir: &Path) -> bool {
+    let modules = |c: &Path| c.components().any(|n| n.as_os_str() == "node_modules");
+    dir.is_absolute() && fs::canonicalize(dir).is_ok_and(|c| clear_of_cwd(&c) && !modules(&c))
+}
+
+/// A program `update` and `version` run unasked: in a trusted folder, and no link into the current folder's tree.
+fn trusted_tool(p: &Path) -> bool {
+    let dir = p.parent().is_some_and(trusted_dir);
+    dir && is_executable_file(p) && fs::canonicalize(p).is_ok_and(|c| clear_of_cwd(&c))
 }
 
 /// A fixed spot as a path: `~/…` under the home folder, anything else absolute (skipped in tests that
@@ -773,8 +795,8 @@ fn version_device(ask: &dyn Fn(&Path, &[&str]) -> version::Answer) -> version::D
         installed: installed_polycarp(),
         home: home(),
         app: polycarp_app(),
-        spaces: find(&SPACES).ok(),
-        browser: find(&BROWSER).ok(),
+        spaces: find(&SPACES).ok().filter(|p| trusted_tool(p)),
+        browser: find(&BROWSER).ok().filter(|p| trusted_tool(p)),
         ask,
     }
 }
