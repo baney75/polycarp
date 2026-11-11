@@ -96,6 +96,8 @@ export interface TokenRecord {
 	sha256: string;
 	createdAt: string;
 	revokedAt?: string;
+	/** When set, the token stops working at this time whatever else happens (remote test's probe), so a failed cleanup heals itself. */
+	expiresAt?: string;
 	lastUsedAt?: string;
 	/** "link": the token `polycarp browser link run` holds for its own loopback serve. Only that serve accepts it (see ServeOptions.acceptLinkTokens). */
 	kind?: "link";
@@ -156,8 +158,19 @@ function withTokensLock<T>(fn: () => T): T {
 	}
 }
 
-/** A new token for `name` with exactly `scopes`. The secret is returned once and never stored. */
-export function createToken(name: string, scopes: string[], kind?: "link"): { record: TokenRecord; token: string } {
+/** A token that still works: not revoked and not past its expiry. Authentication and every session sweep use this. */
+export function tokenLive(t: TokenRecord, now = Date.now()): boolean {
+	if (t.revokedAt) return false;
+	if (t.expiresAt === undefined) return true;
+	const ends = Date.parse(t.expiresAt);
+	return Number.isFinite(ends) && ends > now;
+}
+
+/**
+ * A new token for `name` with exactly `scopes`. The secret is returned once and never stored. `ttlMs` gives it a hard expiry
+ * that authentication enforces. Records already past their expiry are dropped here: they can never work again.
+ */
+export function createToken(name: string, scopes: string[], kind?: "link", ttlMs?: number): { record: TokenRecord; token: string } {
 	if (kind === "link" ? name !== LINK_TOKEN_NAME : !/^[\w.-]{1,40}$/.test(name)) throw new Error("Token name: letters, digits, dot, dash or underscore, up to 40.");
 	if (/^[0-9a-f]{8}$/.test(name)) throw new Error("A token name can't look like a token id (8 hex characters).");
 	if (/^(tkc_|o-)/.test(name)) throw new Error("A token name can't start with tkc_ or o-: those name OAuth clients and grants.");
@@ -165,10 +178,19 @@ export function createToken(name: string, scopes: string[], kind?: "link"): { re
 	if (scopes.length === 0) throw new Error(`Name at least one scope: ${Object.keys(SCOPES).join(", ")}. There is no wildcard.`);
 	for (const s of scopes) if (!Object.hasOwn(SCOPES, s)) throw new Error(`Unknown scope ${s}. Scopes: ${Object.keys(SCOPES).join(", ")}. There is no wildcard.`);
 	return withTokensLock(() => {
-		if (loadTokens().some((t) => t.name === name && !t.revokedAt)) throw new Error(`An active token is already named ${name}. Revoke it or pick another name.`);
+		if (loadTokens().some((t) => t.name === name && tokenLive(t))) throw new Error(`An active token is already named ${name}. Revoke it or pick another name.`);
 		const token = `tkr_${randomBytes(32).toString("base64url")}`;
-		const record: TokenRecord = { id: randomUUID().slice(0, 8), name, scopes: [...new Set(scopes)], sha256: hash(token), createdAt: new Date().toISOString(), ...(kind ? { kind } : {}) };
-		saveTokens([...loadTokens(), record]);
+		const now = Date.now();
+		const record: TokenRecord = {
+			id: randomUUID().slice(0, 8),
+			name,
+			scopes: [...new Set(scopes)],
+			sha256: hash(token),
+			createdAt: new Date(now).toISOString(),
+			...(ttlMs !== undefined ? { expiresAt: new Date(now + ttlMs).toISOString() } : {}),
+			...(kind ? { kind } : {}),
+		};
+		saveTokens([...loadTokens().filter((t) => t.expiresAt === undefined || tokenLive(t, now)), record]);
 		return { record, token };
 	});
 }
@@ -284,7 +306,7 @@ export function authenticate(header: string | undefined): TokenRecord | undefine
 	return tokens.find((t) => {
 		const stored = Buffer.from(String(t.sha256), "hex");
 		// A malformed record matches nothing instead of throwing for every request.
-		return !t.revokedAt && stored.length === presented.length && timingSafeEqual(stored, presented);
+		return tokenLive(t) && stored.length === presented.length && timingSafeEqual(stored, presented);
 	});
 }
 
@@ -403,7 +425,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		} catch {
 			/* unreadable: treat every token as revoked */
 		}
-		const live = new Set(tokens.filter((t) => !t.revokedAt).map((t) => t.id));
+		const live = new Set(tokens.filter((t) => tokenLive(t)).map((t) => t.id));
 		if (options.oauth) for (const id of liveGrantIds()) live.add(id);
 		for (const [id, s] of sessions) {
 			if (!live.has(s.tokenId) || Date.now() - s.lastSeen > IDLE_MS) {

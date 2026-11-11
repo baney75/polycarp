@@ -4,7 +4,8 @@
  * the tailnet (where this computer's resolver gives a 100.x address and the fetch never leaves the tailnet).
  *
  * The streaming probe needs a token. It is minted here with the narrowest scope (skills.read: no browser access), used for one
- * request, and deleted in a `finally` and on SIGINT or SIGTERM. Its secret is never printed, logged or put in a report.
+ * request, and deleted in a `finally` and on SIGINT or SIGTERM. It also expires two minutes after it is made, enforced where
+ * tokens are checked, so a failed delete heals itself. Its secret is never printed, logged or put in a report.
  */
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage } from "node:http";
@@ -17,7 +18,7 @@ import { inTailnetRange, METADATA_PATH } from "./remote-state.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { VERSION } from "./version.ts";
 
-export type ProofName = "dns" | "tls" | "resource_metadata" | "auth_metadata" | "auth_challenge" | "streaming";
+export type ProofName = "dns" | "tls" | "resource_metadata" | "auth_metadata" | "auth_challenge" | "streaming" | "probe_cleanup";
 
 /** One line of `remote test`: ok, warn or fail, and on a failure the one thing to do next. */
 export interface ProofCheck {
@@ -31,6 +32,8 @@ export interface ProofCheck {
 export const STREAM_FIRST_BYTE_MS = 5000;
 /** The narrowest scope there is: it grants reading bundled skills and nothing in the browser. */
 export const PROBE_SCOPE = "skills.read";
+/** The probe token stops working this long after it is made, even if deleting it fails. The probe needs a few seconds. */
+export const PROBE_TTL_MS = 2 * 60_000;
 
 const REQUEST_MS = 10_000;
 
@@ -172,17 +175,55 @@ const parse = (body: string): Record<string, unknown> | undefined => {
 
 const initialize = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "polycarp-remote-test", version: VERSION } } });
 
+/** The probe's one authenticated initialize, whose answer serve streams (text/event-stream). Its first bytes must arrive within STREAM_FIRST_BYTE_MS. */
+async function probe(address: string, publicUrl: string, token: string): Promise<ProofCheck> {
+	const auth = { authorization: `Bearer ${token}` };
+	const mcp = new URL("/mcp", publicUrl);
+	const held = {
+		name: "streaming" as const,
+		status: "fail" as const,
+		next: `Assistants time out on a held stream. A quick tunnel (trycloudflare.com) or a buffering proxy does this: use ${COMMAND_NAME} remote setup (Tailscale Funnel or a Cloudflare named tunnel), or turn buffering off in your proxy.`,
+	};
+	let answer: Answer;
+	try {
+		answer = await publicRequest(mcp, address, {
+			method: "POST",
+			headers: { ...auth, "content-type": "application/json", accept: "application/json, text/event-stream" },
+			body: initialize,
+			firstByteMs: STREAM_FIRST_BYTE_MS,
+		});
+	} catch (err) {
+		return { ...held, detail: `POST /mcp gave nothing in ${STREAM_FIRST_BYTE_MS / 1000} seconds (${err instanceof Error ? err.message : String(err)})` };
+	}
+	const session = header(answer, "mcp-session-id");
+	if (session) {
+		// Close the session the probe opened, so it doesn't wait for serve's idle sweep.
+		await publicRequest(mcp, address, { method: "DELETE", headers: { ...auth, "mcp-session-id": session }, limitMs: 3000 }).catch(() => undefined);
+	}
+	if (answer.status === 401 || answer.status === 403) {
+		return { name: "streaming", status: "fail", detail: `the probe's own token was refused (${answer.status})`, next: `The public address reaches a serve that doesn't use this computer's tokens. Run ${COMMAND_NAME} remote fix.` };
+	}
+	if (answer.status !== 200) return { name: "streaming", status: "fail", detail: `POST /mcp answered ${answer.status}`, next: `Run ${COMMAND_NAME} remote fix, then ${COMMAND_NAME} remote test again.` };
+	if (!/text\/event-stream/.test(header(answer, "content-type"))) {
+		return { name: "streaming", status: "fail", detail: `POST /mcp answered ${header(answer, "content-type") || "no content type"}, not a stream (text/event-stream)`, next: "Something between the internet and serve rewrites the answer. Use Tailscale Funnel or a Cloudflare named tunnel (remote setup)." };
+	}
+	if (answer.firstByteMs === undefined || answer.firstByteMs > STREAM_FIRST_BYTE_MS) return { ...held, detail: `the stream's first bytes didn't arrive in ${STREAM_FIRST_BYTE_MS / 1000} seconds: something between the internet and serve holds them back` };
+	return { name: "streaming", status: "ok", detail: `the stream's first bytes arrived in ${answer.firstByteMs} ms` };
+}
+
 /**
- * The streaming probe: an authenticated initialize, whose answer serve streams (text/event-stream). Its first bytes must arrive
- * within STREAM_FIRST_BYTE_MS. The token lives only for this call.
+ * The streaming check and its token. The token is made for this call with PROBE_SCOPE and a PROBE_TTL_MS expiry, and deleted
+ * in a `finally` and on SIGINT or SIGTERM. When deleting it fails, a probe_cleanup failure follows the streaming check: the run
+ * exits non-zero and names the token's id (never its secret) and when it stops working on its own.
  */
-async function streamingCheck(url: URL, address: string, publicUrl: string, hooks: RemoteTestHooks): Promise<ProofCheck> {
-	const minted = createToken(`remote-test-${randomBytes(3).toString("hex")}`, [PROBE_SCOPE]);
+async function streamingCheck(address: string, publicUrl: string, hooks: RemoteTestHooks): Promise<ProofCheck[]> {
+	const minted = createToken(`remote-test-${randomBytes(3).toString("hex")}`, [PROBE_SCOPE], undefined, PROBE_TTL_MS);
+	let forgetFailed: string | undefined;
 	const forget = () => {
 		try {
 			deleteToken(minted.record.id);
-		} catch {
-			/* the next run can't see it either way: it has one scope and no browser access */
+		} catch (err) {
+			forgetFailed = err instanceof Error ? err.message : String(err);
 		}
 	};
 	// Ctrl-C or a stop while the probe waits: the token goes first, then the process.
@@ -192,45 +233,27 @@ async function streamingCheck(url: URL, address: string, publicUrl: string, hook
 	};
 	process.once("SIGINT", onSignal);
 	process.once("SIGTERM", onSignal);
+	let streaming: ProofCheck;
 	try {
 		hooks.afterMint?.();
-		const auth = { authorization: `Bearer ${minted.token}` };
-		const mcp = new URL("/mcp", publicUrl);
-		const held = {
-			name: "streaming" as const,
-			status: "fail" as const,
-			next: `Assistants time out on a held stream. A quick tunnel (trycloudflare.com) or a buffering proxy does this: use ${COMMAND_NAME} remote setup (Tailscale Funnel or a Cloudflare named tunnel), or turn buffering off in your proxy.`,
-		};
-		let answer: Answer;
-		try {
-			answer = await publicRequest(mcp, address, {
-				method: "POST",
-				headers: { ...auth, "content-type": "application/json", accept: "application/json, text/event-stream" },
-				body: initialize,
-				firstByteMs: STREAM_FIRST_BYTE_MS,
-			});
-		} catch (err) {
-			return { ...held, detail: `POST /mcp gave nothing in ${STREAM_FIRST_BYTE_MS / 1000} seconds (${err instanceof Error ? err.message : String(err)})` };
-		}
-		const session = header(answer, "mcp-session-id");
-		if (session) {
-			// Close the session the probe opened, so it doesn't wait for serve's idle sweep.
-			await publicRequest(mcp, address, { method: "DELETE", headers: { ...auth, "mcp-session-id": session }, limitMs: 3000 }).catch(() => undefined);
-		}
-		if (answer.status === 401 || answer.status === 403) {
-			return { name: "streaming", status: "fail", detail: `the probe's own token was refused (${answer.status})`, next: `The public address reaches a serve that doesn't use this computer's tokens. Run ${COMMAND_NAME} remote fix.` };
-		}
-		if (answer.status !== 200) return { name: "streaming", status: "fail", detail: `POST /mcp answered ${answer.status}`, next: `Run ${COMMAND_NAME} remote fix, then ${COMMAND_NAME} remote test again.` };
-		if (!/text\/event-stream/.test(header(answer, "content-type"))) {
-			return { name: "streaming", status: "fail", detail: `POST /mcp answered ${header(answer, "content-type") || "no content type"}, not a stream (text/event-stream)`, next: "Something between the internet and serve rewrites the answer. Use Tailscale Funnel or a Cloudflare named tunnel (remote setup)." };
-		}
-		if (answer.firstByteMs === undefined || answer.firstByteMs > STREAM_FIRST_BYTE_MS) return { ...held, detail: `the stream's first bytes didn't arrive in ${STREAM_FIRST_BYTE_MS / 1000} seconds: something between the internet and serve holds them back` };
-		return { name: "streaming", status: "ok", detail: `the stream's first bytes arrived in ${answer.firstByteMs} ms` };
+		streaming = await probe(address, publicUrl, minted.token);
+	} catch (err) {
+		streaming = { name: "streaming", status: "fail", detail: `the streaming probe didn't run: ${err instanceof Error ? err.message : String(err)}`, next: `Run ${COMMAND_NAME} remote test again.` };
 	} finally {
 		process.off("SIGINT", onSignal);
 		process.off("SIGTERM", onSignal);
 		forget();
 	}
+	if (forgetFailed === undefined) return [streaming];
+	return [
+		streaming,
+		{
+			name: "probe_cleanup",
+			status: "fail",
+			detail: `the probe's token ${minted.record.id} couldn't be deleted (${forgetFailed}); it stops working on its own at ${minted.record.expiresAt}`,
+			next: `Revoke it now: ${COMMAND_NAME} token revoke ${minted.record.id}`,
+		},
+	];
 }
 
 /**
@@ -319,8 +342,9 @@ export async function publicChecks(publicUrl: string, options: { streaming?: boo
 	// The probe only means something once the name reaches this connector.
 	if (options.streaming !== false && checks.some((c) => c.name === "resource_metadata" && c.status === "ok")) {
 		try {
-			checks.push(await streamingCheck(url, address, publicUrl, hooks));
+			checks.push(...(await streamingCheck(address, publicUrl, hooks)));
 		} catch (err) {
+			// The token couldn't be made, so there is nothing to clean up.
 			checks.push({ name: "streaming", status: "fail", detail: `the streaming probe didn't run: ${err instanceof Error ? err.message : String(err)}`, next: `Run ${COMMAND_NAME} remote test again.` });
 		}
 	}

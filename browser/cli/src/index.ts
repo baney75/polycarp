@@ -19,7 +19,7 @@ import { installCopilotSdk } from "./subscriptions/install-sdk.ts";
 import { LIBRARY_USAGE, runLibrary } from "./library.ts";
 import { cloudflareLogin, runCloudflareTunnel } from "./cloudflare.ts";
 import { printReport } from "./remote-state.ts";
-import { createToken, loadTokens, loadUsage, offeredScopes, revokeToken, SCOPES, serve } from "./remote.ts";
+import { createToken, loadTokens, loadUsage, offeredScopes, revokeToken, SCOPES, serve, tokenLive } from "./remote.ts";
 import { listClients, mintApprovalCode, normalizePublicUrl, type OAuthConfig, passcodeSet, revokeClient, revokeGrantById, setPasscode } from "./oauth.ts";
 import { hubCode, hubDevices, hubOff, hubPrefer, hubRemove, hubServe, hubSetup, hubStatus } from "./hub-admin.ts";
 import { loadHubConfig } from "./hub-state.ts";
@@ -583,7 +583,7 @@ async function main(): Promise<void> {
 				}
 				for (const t of loadTokens()) {
 					const lastUsed = usage[t.id] ?? t.lastUsedAt;
-					console.log(`${t.id}  ${t.name.padEnd(16)} ${t.revokedAt ? c.dim("revoked") : "active "}  ${t.scopes.join(",")}  ${c.dim(lastUsed ? `last used ${lastUsed}` : "never used")}`);
+					console.log(`${t.id}  ${t.name.padEnd(16)} ${t.revokedAt ? c.dim("revoked") : tokenLive(t) ? "active " : c.dim("expired")}  ${t.scopes.join(",")}  ${c.dim(lastUsed ? `last used ${lastUsed}` : "never used")}`);
 				}
 				return;
 			}

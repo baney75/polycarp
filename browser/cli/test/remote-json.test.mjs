@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { cloudflareAddress, completeFunnelAdminUrl, funnelAdminUrl, lingerFromLoginctl, operatorFromPrefs, REMOTE_STATES, setupExitCode, stateFromStatus, tailscaleAccessDenied, zoneFromSoa } from "../src/remote-state.ts";
+import { loadTs } from "./helpers/bundle-ts.mjs";
 import { ENABLE_URL, writeTailscaleStub } from "./helpers/tailscale-stub.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1450,5 +1451,29 @@ test("in a terminal with no route named, setup asks which one and uses the answe
 		assert.doesNotMatch(one.stdout, /Connector hostname/);
 	} finally {
 		await local.close();
+	}
+});
+
+// ---------- PR 130 review follow-ups ----------
+
+test("a token with an expiry stops authenticating when it passes, and the next token made drops its record", async () => {
+	const cfg = mkdtempSync(join(tmpdir(), "tabkyra-expiry-"));
+	const saved = process.env.TABKYRA_CONFIG_DIR;
+	process.env.TABKYRA_CONFIG_DIR = cfg;
+	try {
+		const { authenticate, createToken, loadTokens } = await loadTs(`export { authenticate, createToken, loadTokens } from "@src/remote.ts";`);
+		const lasting = createToken("lasting", ["skills.read"]);
+		const brief = createToken("brief", ["skills.read"], undefined, 150);
+		assert.ok(brief.record.expiresAt, "the record carries its expiry");
+		assert.equal(authenticate(`Bearer ${brief.token}`)?.id, brief.record.id, "it works before its expiry");
+		await new Promise((r) => setTimeout(r, 250));
+		assert.equal(authenticate(`Bearer ${brief.token}`), undefined, "and not after it, though its record is still there");
+		assert.equal(authenticate(`Bearer ${lasting.token}`)?.id, lasting.record.id, "a token with no expiry keeps working");
+		createToken("later", ["skills.read"]);
+		assert.deepEqual(loadTokens().map((t) => t.name), ["lasting", "later"], "the expired record is gone");
+	} finally {
+		if (saved === undefined) delete process.env.TABKYRA_CONFIG_DIR;
+		else process.env.TABKYRA_CONFIG_DIR = saved;
+		rmSync(cfg, { recursive: true, force: true });
 	}
 });

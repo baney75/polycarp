@@ -3,7 +3,7 @@
 // Nothing here touches a real Tailscale, cloudflared, service manager or ~/.config/tabkyra.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { tmpdir } from "node:os";
@@ -31,7 +31,7 @@ const KEY = readFileSync(join(certDir, "key.pem"));
  * The public side. stream: "now" answers an authenticated initialize as SSE at once; "held" holds the first bytes 10 seconds, the
  * way a buffering proxy does. Records the Host and SNI of every request and the bearer tokens it saw.
  */
-async function fakePublic({ stream = "now" } = {}) {
+async function fakePublic({ stream = "now", onAuthed } = {}) {
 	const seen = { hosts: [], sni: [], tokens: [], authed: 0 };
 	let publicUrl = "";
 	const timers = new Set();
@@ -50,6 +50,7 @@ async function fakePublic({ stream = "now" } = {}) {
 			seen.tokens.push(auth.slice(7));
 			if (req.method === "DELETE") return json(200, {});
 			seen.authed++;
+			onAuthed?.();
 			req.resume();
 			if (stream === "trickle") {
 				// A proxy that dribbles its response headers, one line a second for 6 seconds (so the socket is never idle), then sends
@@ -259,6 +260,43 @@ test("a probe that throws after its token was made still removes the token", asy
 		assert.equal(byName(r.json(), "streaming").status, "fail");
 		assert.match(byName(r.json(), "streaming").detail, /didn't run/);
 		assert.equal(m.tokens(), before);
+	} finally {
+		await pub.close();
+		await doh.close();
+	}
+});
+
+test("a probe token that can't be deleted fails the run, names the token but never its secret, and expires on its own", async () => {
+	let tokensFile = "";
+	// While the probe is in flight, tokens.json becomes a directory, so deleting the token fails.
+	const pub = await fakePublic({
+		onAuthed: () => {
+			renameSync(tokensFile, `${tokensFile}.held`);
+			mkdirSync(tokensFile);
+		},
+	});
+	const doh = await fakeDoh();
+	try {
+		const m = machine("cleanup-fails", pub.publicUrl, doh.url);
+		tokensFile = join(m.env.TABKYRA_CONFIG_DIR, "tokens.json");
+		const r = await m.run(["remote", "test", "--json"]);
+		rmdirSync(tokensFile);
+		renameSync(`${tokensFile}.held`, tokensFile);
+		assert.equal(r.code, 1, r.stdout + r.stderr);
+		const report = r.json();
+		assert.equal(report.ok, false);
+		assert.equal(byName(report, "streaming").status, "ok", "the probe itself passed");
+		const cleanup = byName(report, "probe_cleanup");
+		assert.equal(cleanup?.status, "fail", r.stdout);
+		const probe = JSON.parse(m.tokens()).tokens.find((t) => t.name.startsWith("remote-test-"));
+		assert.ok(probe, "the record is still there");
+		assert.match(cleanup.detail, new RegExp(`${probe.id}.*stops working on its own at ${probe.expiresAt.replaceAll(".", "\\.")}`));
+		assert.match(cleanup.next, new RegExp(`token revoke ${probe.id}$`));
+		assert.equal(Date.parse(probe.expiresAt) - Date.parse(probe.createdAt), 2 * 60_000, "a two-minute hard expiry");
+		const [secret] = pub.seen.tokens;
+		assert.ok(!r.stdout.includes(secret) && !r.stderr.includes(secret), "the secret is never printed");
+		const text = await m.run(["remote", "test"]);
+		assert.ok(!text.stdout.includes(secret) && !text.stderr.includes(secret));
 	} finally {
 		await pub.close();
 		await doh.close();
