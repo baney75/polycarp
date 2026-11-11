@@ -53,7 +53,8 @@ export interface RemoteRoutes {
  * The one thing a person does next, so an app can render it without reading `message`. install: get a program (`url` is its
  * download page, `command` the setup run that gets it for you, when there is one). sign_in: sign in to Tailscale or Cloudflare
  * (`command` does it). open_page: open `url` and allow something there (Tailscale's Funnel page). run_command: run `command` in a
- * terminal (the person runs it: Polycarp never runs sudo). choose_name: pick another Cloudflare hostname. add_connector: setup is
+ * terminal (the person runs it: Polycarp never runs sudo; a `<name>` in it is theirs to fill in, so an app shows it rather
+ * than running it). choose_name: pick another Cloudflare hostname. add_connector: setup is
  * done; paste `url` into an assistant.
  */
 export interface RemoteNext {
@@ -83,7 +84,10 @@ export interface SetupReport {
 	 * connect a browser first), "hub", "service", "serve" (nothing answers on the local port), "funnel", "config", "cloudflare_login",
 	 * "cloudflare_tunnel", "cloudflare_dns" (that name is taken, with next choose_name; without next, cloudflared couldn't make the
 	 * record), "cloudflare_zone" (the sign-in covers another domain), "connect_code" (set up, but --connect-code's code couldn't be made); on status also
-	 * "dns" (public DNS doesn't answer for the address yet; Tailscale takes minutes to publish a new one). port_busy:
+	 * "dns" (public DNS doesn't answer for the address yet; Tailscale takes minutes to publish a new one). After remote.json is saved,
+	 * setup's outside proof can also fail with the name of the check that failed: "dns", "tls", "resource_metadata",
+	 * "auth_metadata", "auth_challenge", "streaming" or "probe_cleanup" (the probe's token couldn't be deleted; it expires on its
+	 * own); `checks` has that check's next action, and `connectorUrl` the saved address. port_busy:
 	 * "tailscale_port" (a Tailscale setting already uses 8443) or "local_port" (a program here uses the local port).
 	 */
 	code?: string;
@@ -109,6 +113,8 @@ export interface ProofLine {
 	status: "ok" | "warn" | "fail";
 	detail: string;
 	next?: string;
+	/** On a failure: true when it is what a new name looks like for its first few minutes, so waiting is the fix. */
+	pending?: boolean;
 }
 
 /** Tailscale's download page for this platform. */

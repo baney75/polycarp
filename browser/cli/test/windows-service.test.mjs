@@ -19,12 +19,14 @@ export { ourCloudflared } from "@src/tunnel.ts";
 export { tailscaleMissing, tailscaleSignIn } from "@src/remote-setup.ts";
 export { openPage } from "@src/remote-guide.ts";
 export { tailscaleDownloadUrl } from "@src/remote-state.ts";
+export { serviceRunning } from "@src/service.ts";
 export { recordServicePid, installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE } from "@src/service.ts";
 export { CLOUDFLARE_SERVICE, cloudflaredBinary } from "@src/cloudflare.ts";
 export { tailscaleBinary } from "@src/remote-setup.ts";
 export { windowsInstallPaths, windowsTool } from "@src/tool-paths.ts";
 export { cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION } from "@src/cloudflared-download.ts";
 `);
+const { serviceRunning } = mod;
 const { tailscaleSignIn, openPage, tailscaleDownloadUrl, tailscaleMissing, ourCloudflared, recordServicePid, installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE, CLOUDFLARE_SERVICE, cloudflaredBinary, tailscaleBinary, windowsInstallPaths, windowsTool, cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION } = mod;
 
 const SCHTASKS = "C:\\Windows\\System32\\schtasks.exe";
@@ -735,4 +737,21 @@ test("a running task whose program exited cleanly, or whose record is stale, is 
 		winSeam({ exec: windowsWith(1, "node.exe", { ended: 0 }).exec });
 		assert.match(removeService(SERVE_SERVICE).failure, /left no record of its pid/);
 	});
+});
+
+test("serviceRunning follows the service seam: its platform and its stand-in for launchctl and systemctl", () => {
+	const mac = fakeExec(() => ({ code: 0, out: "state = running" }));
+	setServiceSeamForTests({ platform: "darwin", exec: mac.exec });
+	assert.equal(serviceRunning(CLOUDFLARE_SERVICE), true);
+	assert.equal(mac.calls.length, 1);
+	assert.equal(mac.calls[0][0], "launchctl");
+	assert.equal(mac.calls[0][1], "print");
+	const linux = fakeExec(() => ({ code: 3, out: "inactive" }));
+	setServiceSeamForTests({ platform: "linux", exec: linux.exec });
+	assert.equal(serviceRunning(CLOUDFLARE_SERVICE), false);
+	assert.deepEqual(linux.calls, [["systemctl", "--user", "is-active", CLOUDFLARE_SERVICE.unit]]);
+	const win = fakeExec();
+	setServiceSeamForTests({ platform: "win32", exec: win.exec });
+	assert.equal(serviceRunning(CLOUDFLARE_SERVICE), undefined);
+	assert.deepEqual(win.calls, []);
 });

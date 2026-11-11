@@ -250,6 +250,7 @@ export const COMMANDS: CommandSpec[] = [
 			{ name: "cloudflare", args: "login", max: 1, what: "Sign in to your own Cloudflare account, in your browser", flags: ["--json"] },
 			{ name: "status", what: "Is it up and reachable from the internet? Fast checks from this computer", flags: ["--json"] },
 			{ name: "test", what: "Prove an assistant can reach it, from outside: public DNS, TLS, the OAuth metadata, the sign-in challenge and a streaming probe", flags: ["--json"] },
+			{ name: "fix", what: "Repair what remote test or status found, one step at a time, asking first (--yes to skip asking, --dry-run to list)", flags: ["--yes", "--dry-run", "--json"] },
 			{ name: "off", what: "Stop the service, close the tunnel or Funnel and remove remote.json", flags: ["--json"] },
 		],
 	},
@@ -365,7 +366,7 @@ export function argsProblem(command: string, args: string[]): string | undefined
 
 /** Exit codes every command uses; also printed by --help. */
 export const EXIT_CODES =
-	"Exit codes: 0 success, 1 failed, not connected or nothing found, 2 usage error; update --check 100 when an update exists, library add 3 retracted and 4 unchecked, remote setup 3 when a person has to act, remote test 3 when nothing is set up.";
+	"Exit codes: 0 success, 1 failed, not connected or nothing found, 2 usage error; update --check 100 when an update exists, library add 3 retracted and 4 unchecked, remote setup 3 when a person has to act, remote test 3 when nothing is set up, remote fix 3 when a person has to act.";
 
 function sh(word: string): string {
 	return word.replace(/[^A-Za-z0-9_.:,|/-]/g, "");

@@ -49,7 +49,7 @@ import {
 } from "./link-protocol.ts";
 import { handleOAuth, readBody, requestSource, sendJson } from "./oauth-http.ts";
 import { liveGrantIds, mintApprovalCode, normalizePublicUrl, type OAuthConfig, resourceMetadataUrl, verifyAccessToken } from "./oauth.ts";
-import { authenticate, hubHeaders, loadTokens, SCOPES, safeCallerName } from "./remote.ts";
+import { authenticate, hubHeaders, loadTokens, SCOPES, safeCallerName, tokenLive } from "./remote.ts";
 import { pageCss } from "./theme.ts";
 import { COMMAND_NAME } from "./self.ts";
 
@@ -1158,7 +1158,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		setInterval(() => {
 			let liveIds = new Set<string>();
 			try {
-				liveIds = new Set([...loadTokens().filter((t) => !t.revokedAt).map((t) => t.id), ...liveGrantIds()]);
+				liveIds = new Set([...loadTokens().filter((t) => tokenLive(t)).map((t) => t.id), ...liveGrantIds()]);
 			} catch {
 				/* unreadable: treat every caller as revoked */
 			}
