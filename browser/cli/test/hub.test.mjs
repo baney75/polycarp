@@ -9,8 +9,11 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const cli = join(here, "..", "dist", "index.js");
 const root = mkdtempSync(join(tmpdir(), "tabkyra-hub-"));
-const env = { HOME: join(root, "home"), PATH: dirname(process.execPath), NO_COLOR: "1", TABKYRA_SOCKET_DIR: join(root, "sock") };
+// TABKYRA_APPLICATIONS_DIR is an empty temp dir: `tunnel` finds tailscale the way `remote setup` does, Mac app included, so
+// without it a test would run this computer's own /Applications/Tailscale.app.
+const env = { HOME: join(root, "home"), PATH: dirname(process.execPath), NO_COLOR: "1", TABKYRA_SOCKET_DIR: join(root, "sock"), TABKYRA_APPLICATIONS_DIR: join(root, "apps") };
 mkdirSync(env.HOME, { recursive: true });
+mkdirSync(env.TABKYRA_APPLICATIONS_DIR, { recursive: true });
 mkdirSync(env.TABKYRA_SOCKET_DIR, { mode: 0o700 });
 
 function run(args, extra = {}) {

@@ -43,13 +43,36 @@ export const REMOTE_STATES: readonly RemoteState[] = [
 	"problem",
 ];
 
-/** What `remote setup --json` prints (one object on stdout). `passcode` is present only when this run made it. */
 /** Which ways of reaching this computer are installed and signed in, for an app that offers the choice. */
 export interface RemoteRoutes {
 	tailscale: { installed: boolean; signedIn: boolean };
 	cloudflare: { installed: boolean; signedIn: boolean };
 }
 
+/**
+ * The one thing a person does next, so an app can render it without reading `message`. install: get a program (`url` is its
+ * download page, `command` the setup run that gets it for you, when there is one). sign_in: sign in to Tailscale or Cloudflare
+ * (`command` does it). open_page: open `url` and allow something there (Tailscale's Funnel page). run_command: run `command` in a
+ * terminal (the person runs it: Polycarp never runs sudo). choose_name: pick another Cloudflare hostname. add_connector: setup is
+ * done; paste `url` into an assistant.
+ */
+export interface RemoteNext {
+	kind: "install" | "sign_in" | "open_page" | "run_command" | "choose_name" | "add_connector";
+	url?: string;
+	command?: string;
+}
+
+/** Exit codes of `remote setup`: 0 on, 1 failed, 2 usage (UsageError), 3 waits on a person (a `next` that isn't add_connector). */
+export const EXIT_ON = 0;
+export const EXIT_FAILED = 1;
+export const EXIT_NEEDS_PERSON = 3;
+
+export function setupExitCode(report: { ok: boolean; next?: RemoteNext }): number {
+	if (report.ok) return EXIT_ON;
+	return report.next && report.next.kind !== "add_connector" ? EXIT_NEEDS_PERSON : EXIT_FAILED;
+}
+
+/** What `remote setup --json` prints (one object on stdout). `passcode` is present only when this run made it. */
 export interface SetupReport {
 	ok: boolean;
 	state: RemoteState;
@@ -67,6 +90,64 @@ export interface SetupReport {
 	passcode?: string;
 	/** True when a passcode exists after this run, whether or not this run made it. */
 	passcodeSet?: boolean;
+	/** A one-time connect code (TK-XXXX-XXXX) that approves a new assistant, minted only on success with `--connect-code`. */
+	connectCode?: string;
+	/** When `connectCode` stops working, in milliseconds since 1970 (ten minutes after it was made). */
+	connectCodeExpiresAt?: number;
+	/** What the person does next. Present on `on` (add_connector) and on every refusal a person can clear. */
+	next?: RemoteNext;
+}
+
+/** Tailscale's download page for this platform. */
+export function tailscaleDownloadUrl(platform: string = process.platform): string {
+	return `https://tailscale.com/download/${platform === "darwin" ? "mac" : platform === "win32" ? "windows" : "linux"}`;
+}
+
+export const CLOUDFLARED_DOWNLOAD_URL = "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/";
+
+/** The fix Tailscale itself prints for a non-root user it refuses (cmd/tailscale/cli/cli.go). Polycarp shows it and never runs it. */
+export const TAILSCALE_OPERATOR_FIX = "sudo tailscale set --operator=$USER";
+
+/**
+ * Tailscale refused a change because this user isn't root or its operator. Its CLI wraps the local API's 403 as
+ * "Access denied: <what>" (client/local/local.go, AccessDeniedError) and, off Windows and not as root, adds
+ * "To not require root, use 'sudo tailscale set --operator=$USER' once." (cmd/tailscale/cli/cli.go). Either line counts.
+ */
+export function tailscaleAccessDenied(output: string): boolean {
+	return /^Access denied: /m.test(output) || /tailscale set --operator=/.test(output);
+}
+
+/** `loginctl show-user <user> -p Linger` prints `Linger=yes` or `Linger=no`. Undefined when the answer isn't one of those. */
+export function lingerFromLoginctl(output: string): boolean | undefined {
+	const m = /^Linger=(yes|no)\s*$/m.exec(output);
+	return m ? m[1] === "yes" : undefined;
+}
+
+/** The operator in `tailscale debug prefs` (JSON with OperatorUser, ipn/prefs.go): "" when none is set, undefined when unreadable. */
+export function operatorFromPrefs(output: string): string | undefined {
+	try {
+		const prefs = JSON.parse(output) as { OperatorUser?: unknown };
+		if (!prefs || typeof prefs !== "object") return undefined;
+		return typeof prefs.OperatorUser === "string" ? prefs.OperatorUser : "";
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The DNS zone a name sits in and whether Cloudflare serves it, from a DNS-over-HTTPS JSON answer for `type=SOA`. The SOA is in
+ * Answer for a zone apex and in Authority for any name below one (also for a name that doesn't exist yet). A zone on Cloudflare
+ * names one of its nameservers, `<x>.ns.cloudflare.com`, first in its SOA. Undefined when there is no SOA to read.
+ */
+export function zoneFromSoa(answer: unknown): { zone: string; onCloudflare: boolean } | undefined {
+	if (!answer || typeof answer !== "object") return undefined;
+	const { Answer, Authority } = answer as { Answer?: unknown; Authority?: unknown };
+	const records = [...(Array.isArray(Answer) ? Answer : []), ...(Array.isArray(Authority) ? Authority : [])] as { name?: unknown; type?: unknown; data?: unknown }[];
+	const soa = records.find((r) => r && r.type === 6 && typeof r.name === "string" && typeof r.data === "string");
+	if (!soa) return undefined;
+	const zone = String(soa.name).replace(/\.$/, "").toLowerCase();
+	const primary = String(soa.data).trim().split(/\s+/)[0] ?? "";
+	return { zone, onCloudflare: /\.ns\.cloudflare\.com\.?$/i.test(primary) };
 }
 
 /**

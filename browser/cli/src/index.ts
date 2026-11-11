@@ -26,6 +26,7 @@ import { loadHubConfig } from "./hub-state.ts";
 import { linkBusy, linkEnroll, linkMintCode, linkOff, linkRun, linkScopes, linkStatus, normalizeHubUrl, printCode } from "./link.ts";
 import { runTheme } from "./theme.ts";
 import { loadRemoteConfig, remoteFile, remoteOff, remoteSetup, remoteStatus } from "./remote-setup.ts";
+import { interactiveTerminal } from "./remote-guide.ts";
 import { createHubToken, hubTunnel, HUB_SCOPES } from "./hub.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
 import { agentsWorking, RELOAD_BUSY, runSessions, runTabs, SessionsUsageError, statusQueryMs } from "./sessions.ts";
@@ -677,11 +678,33 @@ async function main(): Promise<void> {
 						throw new UsageError(err instanceof Error ? err.message : String(err));
 					}
 				}
-				const cloudflare = option("--cloudflare");
-				if (cloudflare !== undefined && publicUrl) throw new UsageError("--cloudflare and --public-url are different routes: use one.");
+				// --cloudflare with no name (last, or followed by another flag) asks for one in a terminal.
+				const rawCloudflare = option("--cloudflare");
+				const cloudflare = flag("--cloudflare") || rawCloudflare !== undefined ? (rawCloudflare === undefined || rawCloudflare.startsWith("-") ? "" : rawCloudflare) : undefined;
+				const tailscale = flag("--tailscale");
+				if ([cloudflare !== undefined, publicUrl !== undefined, tailscale].filter(Boolean).length > 1) throw new UsageError("--tailscale, --cloudflare and --public-url are different routes: use one.");
 				const replaceFunnel = flag("--replace-funnel");
 				if (replaceFunnel && cloudflare === undefined) throw new UsageError("--replace-funnel moves a Funnel route to Cloudflare, so it needs --cloudflare name.yourdomain.com.");
-				process.exitCode = await remoteSetup({ publicUrl, cloudflare, port, service: !flag("--no-service"), passcode: !flag("--no-passcode"), json: flag("--json"), replaceFunnel });
+				const json = flag("--json");
+				const noInput = flag("--no-input");
+				if (noInput && cloudflare === undefined && publicUrl === undefined && !tailscale) throw new UsageError("--no-input needs a route: --tailscale, --cloudflare name.yourdomain.com or --public-url https://host.");
+				if (noInput && cloudflare === "") throw new UsageError("--no-input needs the name too: --cloudflare name.yourdomain.com.");
+				// A person at a terminal gets questions and waits; an app (--json), an agent's shell (no TTY) or --no-wait gets a report that says what's next.
+				const terminal = interactiveTerminal() && !json;
+				process.exitCode = await remoteSetup({
+					publicUrl,
+					cloudflare,
+					tailscale,
+					port,
+					service: !flag("--no-service"),
+					passcode: !flag("--no-passcode"),
+					json,
+					replaceFunnel,
+					wait: terminal && !flag("--no-wait"),
+					input: terminal && !noInput,
+					yes: flag("--yes"),
+					connectCode: flag("--connect-code"),
+				});
 				return;
 			}
 			if (sub === "status") {
@@ -689,10 +712,12 @@ async function main(): Promise<void> {
 				return;
 			}
 			if (sub === "off") {
-				process.exitCode = await remoteOff();
+				process.exitCode = await remoteOff({ json: flag("--json") });
 				return;
 			}
-			throw new UsageError(`Usage: ${COMMAND_NAME} remote setup [--cloudflare name.yourdomain.com | --public-url https://host] [--replace-funnel] [--port N] [--no-service] [--no-passcode] [--json] | status [--json] | off`);
+			throw new UsageError(
+				`Usage: ${COMMAND_NAME} remote setup [--tailscale | --cloudflare [name.yourdomain.com] | --public-url https://host] [--replace-funnel] [--port N] [--no-service] [--no-passcode] [--no-wait] [--no-input] [--yes] [--connect-code] [--json] | cloudflare login [--json] | status [--json] | off [--json]`,
+			);
 		}
 		case "hub": {
 			const rest = argv.slice(1).filter((a, i, all) => !a.startsWith("-") && !(VALUE_FLAGS.has(all[i - 1] ?? "") && !(all[i - 1] ?? "").includes("=")));
