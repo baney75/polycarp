@@ -241,8 +241,9 @@ small script that starts the program again 10 seconds after it stops. They live 
 it uses everywhere else: `%USERPROFILE%\.config\polycarp\browser`, or `POLYCARP_BROWSER_CONFIG_DIR` when you set it.
 
 - The scripts the tasks run: `services\com.polycarp.serve.cmd` and the others beside it.
-- The logs: `logs\polycarp-serve.log`, `logs\polycarp-cloudflared.log` and so on (Windows has no journal). Past
-  10 MB a log becomes `<name>.log.1`, replacing the one before.
+- The logs: `logs\polycarp-serve.log`, `logs\polycarp-cloudflared.log` and so on (Windows has no journal). When the
+  program starts again, a log past 10 MB becomes `<name>.log.1`, replacing the one before; a program that runs for weeks
+  keeps writing to the same log until then.
 
 The scripts name no folder: each finds the config folder from its own place, so a profile folder with letters outside
 ASCII works.
@@ -252,7 +253,7 @@ log on again or run setup again. `schtasks /Query /TN com.polycarp.serve /V /FO 
 
 `polycarp browser remote off` removes it: it ends the tasks, ends the programs they started with `taskkill /T` and checks
 they are gone, then deletes the tasks and their scripts, and keeps the logs. Each program records its pid and start time
-when it starts and deletes the record when it exits; a pid is ended only while Windows (`Get-Process`) reports the same
+when it starts and marks the record `exited` when it exits; a pid is ended only while Windows (`Get-Process`) reports the same
 start time, so a pid Windows has since given to another program is never touched. A program that won't stop, one whose
 start time can't be read, or a running task with no record leaves its task in place and says what to end in Task Manager.
 If Windows refuses to make a task, in any language, setup says your organization may block scheduled tasks and how to run

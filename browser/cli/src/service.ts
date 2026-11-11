@@ -331,6 +331,8 @@ export function windowsScriptText(launcherName: string, env: Record<string, stri
 		// The program records its pid here (recordServicePid), so stop and uninstall can end it and what it started.
 		`set "${PID_FILE_VAR}=%POLYCARP_HOME%\\services\\${spec.label}.pid"`,
 		":run",
+		// Until the program replaces it with its pid, the record says a start is under way (stopPlan).
+		`>"%${PID_FILE_VAR}%" echo starting`,
 		// Past 10 MB the log becomes <log>.1 (replacing the one before), so a program that keeps failing can't fill the disk.
 		'if exist "%POLYCARP_LOG%" for %%F in ("%POLYCARP_LOG%") do if %%~zF GTR 10485760 move /y "%POLYCARP_LOG%" "%POLYCARP_LOG%.1" >nul 2>&1',
 		'>>"%POLYCARP_LOG%" 2>&1 (',
@@ -365,6 +367,7 @@ export function windowsTaskXml(script: string, user: string, spec: ServiceSpec =
     </Principal>
   </Principals>
   <Settings>
+    <Priority>4</Priority>
     <MultipleInstancesPolicy>StopExisting</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
@@ -422,7 +425,8 @@ export function recordServicePid(
 	}
 	(o.onExit ?? ((fn) => process.on("exit", fn)))(() => {
 		try {
-			if ((readIfFile(file) ?? "").split(/\r?\n/)[0] === String(pid)) rmSync(file, { force: true });
+			// "exited", not deleted, so stop can tell a clean exit from a record that was never written.
+			if ((readIfFile(file) ?? "").split(/\r?\n/)[0] === String(pid)) writeFileSync(file, "exited\n");
 		} catch {
 			/* best effort: a stale record is told apart by its start time */
 		}
@@ -442,19 +446,26 @@ type StopStep = { run: [string, string[]] } | { sleep: number };
  * End the program the task started, and everything it started, then confirm it is gone. Its pid, program and start time come
  * from the record it wrote; a pid now used by another process (other program, or the same one started later) is left alone,
  * and nothing is killed unless the start time matches. `taskWasRunning` is /End's exit code saying it ended a running task: then
- * a missing record is not proof the program stopped. The steps are yielded so the native host can run them without blocking.
+ * a missing record, or one that still says "starting", is not proof the program stopped; "exited", or a record whose process is
+ * gone or is now another one, is. The steps are yielded so the native host can run them without blocking.
  * Returns undefined on success, else the sentence to show.
  */
 function* stopPlan(spec: ServiceSpec, taskWasRunning: boolean): Generator<StopStep, string | undefined, Answer | undefined> {
 	const file = windowsPidPath(spec);
 	const noRecord = `The ${spec.label} task was running, but its program left no record of its pid, so Polycarp can't tell whether it stopped: close the window titled ${spec.label} if it is open, or end its program in Task Manager, then run ${spec.off} again.`;
+	// A record that names a process which is gone, or is now another one, means the program stopped.
 	const gone = () => {
 		rmSync(file, { force: true });
-		return taskWasRunning ? noRecord : undefined;
+		return undefined;
 	};
-	const [pidText, image, startText] = (readIfFile(file) ?? "").split(/\r?\n/);
+	const [pidText, image, startText] = (readIfFile(file) ?? "").split(/\r?\n/).map((line) => line.trim());
+	if (pidText === "exited") return gone();
 	const pid = Number(pidText);
-	if (!Number.isInteger(pid) || pid <= 4 || !image) return gone();
+	// No record, "starting" or one that can't be read: whether the program still runs is unknown.
+	if (!Number.isInteger(pid) || pid <= 4 || !image) {
+		rmSync(file, { force: true });
+		return taskWasRunning ? noRecord : undefined;
+	}
 	const unconfirmed = `Polycarp couldn't confirm that pid ${pid} is still the ${image} its ${spec.label} task started, so it ended nothing: end that program in Task Manager (Details, PID ${pid}) if it is Polycarp's, then run ${spec.off} again.`;
 	const same = (seen: string | undefined) => seen !== undefined && seen !== "unknown" && seen.toLowerCase() === image.toLowerCase();
 	const look = function* (): Generator<StopStep, string | undefined | "unknown", Answer | undefined> {
