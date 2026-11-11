@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } 
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { cloudflaredBinary } from "./cloudflare.ts";
-import { tailscaleBinary } from "./remote-setup.ts";
+import { tailscaleBinary } from "./tailscale.ts";
 import { envVar } from "./env.ts";
 import { configDir } from "./files.ts";
 import { windowsProcessImage } from "./tool-paths.ts";

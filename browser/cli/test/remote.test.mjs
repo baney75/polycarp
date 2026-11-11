@@ -873,7 +873,8 @@ test("remote setup (funnel) runs the exact funnel command, writes remote.json an
 	const s = remoteScenario("funnel-setup");
 	const local = await localServer(`${FUNNEL_URL}/mcp`);
 	try {
-		const r = await runAsync(s, ["remote", "setup", "--no-service", "--port", String(local.port)]);
+		// --connect-code: with no terminal (this test's pipe), a code is made only when asked for.
+		const r = await runAsync(s, ["remote", "setup", "--no-service", "--connect-code", "--port", String(local.port)]);
 		assert.equal(r.code, 0, r.out);
 		assert.ok(s.calls().includes(funnelCall(local.port)), s.calls().join("\n"));
 		assert.deepEqual(s.remoteJson(), { publicUrl: FUNNEL_URL, port: local.port, route: "funnel" });
@@ -1386,7 +1387,7 @@ test("remote lists its subcommands in help and rejects unknown flags", () => {
 // prints no passcode; a one-time connect code approves the connection.
 test("remote setup --no-passcode makes and prints no passcode, and serve then approves with a one-time code", async () => {
 	const s = remoteScenario("no-passcode");
-	const ok = s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--port", "9101", "--no-service", "--no-passcode"]);
+	const ok = s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--port", "9101", "--no-service", "--no-passcode", "--connect-code"]);
 	assert.equal(ok.code, 0, ok.out);
 	assert.doesNotMatch(ok.out, /Passcode/);
 	assert.doesNotMatch(ok.out, /([a-zA-Z0-9]{5}-){3}[a-zA-Z0-9]{5}/, "no passcode-shaped string in the output");

@@ -1,0 +1,318 @@
+/**
+ * `remote test`: what a web assistant would see, checked from outside. The public name is resolved through DNS over HTTPS, and
+ * every request goes to that public address with the name as TLS SNI and Host, so a ts.net name is never answered from inside
+ * the tailnet (where this computer's resolver gives a 100.x address and the fetch never leaves the tailnet).
+ *
+ * The streaming probe needs a token. It is minted here with the narrowest scope (skills.read: no browser access), used for one
+ * request, and deleted in a `finally` and on SIGINT or SIGTERM. Its secret is never printed, logged or put in a report.
+ */
+import { randomBytes } from "node:crypto";
+import { request as httpsRequest } from "node:https";
+import { isIP } from "node:net";
+import { connect as tlsConnect } from "node:tls";
+import { dohAddresses } from "./doh.ts";
+import { envVar } from "./env.ts";
+import { createToken, deleteToken } from "./remote.ts";
+import { inTailnetRange, METADATA_PATH } from "./remote-state.ts";
+import { COMMAND_NAME } from "./self.ts";
+import { VERSION } from "./version.ts";
+
+export type ProofName = "dns" | "tls" | "resource_metadata" | "auth_metadata" | "auth_challenge" | "streaming";
+
+/** One line of `remote test`: ok, warn or fail, and on a failure the one thing to do next. */
+export interface ProofCheck {
+	name: ProofName;
+	status: "ok" | "warn" | "fail";
+	detail: string;
+	next?: string;
+}
+
+/** The first bytes of a streamed answer must arrive this fast. Quick tunnels and buffering proxies hold them back. */
+export const STREAM_FIRST_BYTE_MS = 5000;
+/** The narrowest scope there is: it grants reading bundled skills and nothing in the browser. */
+export const PROBE_SCOPE = "skills.read";
+
+const REQUEST_MS = 10_000;
+
+/** Loopback, private, link-local and the tailnet range: addresses the internet can't reach. */
+export function privateAddress(address: string): boolean {
+	if (isIP(address) === 6) return /^(::1|fe80:|fc|fd)/i.test(address);
+	const m = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(address);
+	if (!m) return true;
+	const [a, b] = [Number(m[1]), Number(m[2])];
+	return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || inTailnetRange(address);
+}
+
+/** TABKYRA_REMOTE_TEST_LOOPBACK=1 lets tests stand a fake public server on 127.0.0.1. Nothing else treats loopback as public. */
+const reachable = (address: string) => !privateAddress(address) || (envVar("REMOTE_TEST_LOOPBACK") === "1" && address === "127.0.0.1");
+
+type Lookup = (hostname: string, options: { all?: boolean }, callback: (...args: unknown[]) => void) => void;
+
+/** A `lookup` that always gives `address`: the connection goes there whatever this computer's resolver says. */
+const pinned =
+	(address: string): Lookup =>
+	(_hostname, options, callback) => {
+		const family = isIP(address) === 6 ? 6 : 4;
+		if (options?.all) callback(null, [{ address, family }]);
+		else callback(null, address, family);
+	};
+
+interface Answer {
+	status: number;
+	headers: Record<string, string | string[] | undefined>;
+	body: string;
+	/** ms from sending the request to the first byte of the body; undefined when none came before the limit. */
+	firstByteMs?: number;
+}
+
+/**
+ * One HTTPS request to `address`, with `url`'s name as SNI and Host and the certificate checked against it. `firstByteMs`: stop
+ * reading after the first body bytes, or fail when none arrive in that time.
+ */
+function publicRequest(url: URL, address: string, init: { method: string; headers?: Record<string, string>; body?: string; firstByteMs?: number; limitMs?: number }): Promise<Answer> {
+	return new Promise((resolve, reject) => {
+		const started = Date.now();
+		const req = httpsRequest(
+			{
+				host: url.hostname,
+				port: url.port || 443,
+				path: `${url.pathname}${url.search}`,
+				method: init.method,
+				headers: { "user-agent": `polycarp-browser/${VERSION} (remote test)`, ...init.headers },
+				servername: isIP(url.hostname) ? undefined : url.hostname,
+				lookup: pinned(address) as never,
+				agent: false,
+			},
+			(res) => {
+				let body = "";
+				let firstByteMs: number | undefined;
+				const timer = init.firstByteMs
+					? setTimeout(() => {
+							req.destroy();
+							resolve({ status: res.statusCode ?? 0, headers: res.headers, body });
+						}, Math.max(0, init.firstByteMs - (Date.now() - started)))
+					: undefined;
+				res.setEncoding("utf8");
+				res.on("data", (chunk: string) => {
+					if (firstByteMs === undefined) firstByteMs = Date.now() - started;
+					if (body.length < 65_536) body += chunk;
+					if (init.firstByteMs) {
+						clearTimeout(timer);
+						req.destroy();
+						resolve({ status: res.statusCode ?? 0, headers: res.headers, body, firstByteMs });
+					}
+				});
+				res.on("end", () => {
+					clearTimeout(timer);
+					resolve({ status: res.statusCode ?? 0, headers: res.headers, body, firstByteMs });
+				});
+				res.on("error", (err) => {
+					clearTimeout(timer);
+					reject(err);
+				});
+			},
+		);
+		req.setTimeout(init.limitMs ?? REQUEST_MS, () => req.destroy(new Error(`no answer in ${Math.round((init.limitMs ?? REQUEST_MS) / 1000)} seconds`)));
+		req.on("error", reject);
+		req.end(init.body);
+	});
+}
+
+/** The TLS handshake alone, to the public address with the name as SNI: is the certificate valid for the name, and until when? */
+function tlsCheck(url: URL, address: string): Promise<ProofCheck> {
+	return new Promise((resolve) => {
+		const port = Number(url.port || 443);
+		const socket = tlsConnect({ host: address, port, servername: url.hostname, timeout: REQUEST_MS });
+		const done = (check: ProofCheck) => {
+			socket.destroy();
+			resolve(check);
+		};
+		socket.on("secureConnect", () => {
+			const cert = socket.getPeerCertificate();
+			done({ name: "tls", status: "ok", detail: `${address}:${port} has a valid certificate for ${url.hostname}${cert?.valid_to ? `, until ${cert.valid_to}` : ""}` });
+		});
+		socket.on("timeout", () => done({ name: "tls", status: "fail", detail: `${address}:${port} didn't answer in ${REQUEST_MS / 1000} seconds`, next: `The public address doesn't answer. Run ${COMMAND_NAME} remote fix.` }));
+		socket.on("error", (err: NodeJS.ErrnoException) => {
+			const refused = err.code === "ECONNREFUSED" || err.code === "ECONNRESET";
+			done({
+				name: "tls",
+				status: "fail",
+				detail: refused ? `${address}:${port} refused the connection (${err.code})` : `the certificate isn't valid for ${url.hostname}: ${err.message}${err.code ? ` (${err.code})` : ""}`,
+				next: refused ? `Nothing public answers for ${url.host}. Run ${COMMAND_NAME} remote fix.` : `Assistants refuse this certificate. On your own front door, give it a certificate for ${url.hostname}; on Tailscale or Cloudflare, run ${COMMAND_NAME} remote fix.`,
+			});
+		});
+	});
+}
+
+const header = (answer: Answer, name: string) => {
+	const value = answer.headers[name];
+	return Array.isArray(value) ? value.join(", ") : (value ?? "");
+};
+
+const parse = (body: string): Record<string, unknown> | undefined => {
+	try {
+		const value = JSON.parse(body) as unknown;
+		return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+	} catch {
+		return undefined;
+	}
+};
+
+const initialize = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "polycarp-remote-test", version: VERSION } } });
+
+/**
+ * The streaming probe: an authenticated initialize, whose answer serve streams (text/event-stream). Its first bytes must arrive
+ * within STREAM_FIRST_BYTE_MS. The token lives only for this call.
+ */
+async function streamingCheck(url: URL, address: string, publicUrl: string): Promise<ProofCheck> {
+	const minted = createToken(`remote-test-${randomBytes(3).toString("hex")}`, [PROBE_SCOPE]);
+	const forget = () => {
+		try {
+			deleteToken(minted.record.id);
+		} catch {
+			/* the next run can't see it either way: it has one scope and no browser access */
+		}
+	};
+	// Ctrl-C or a stop while the probe waits: the token goes first, then the process.
+	const onSignal = (signal: NodeJS.Signals) => {
+		forget();
+		process.exit(signal === "SIGINT" ? 130 : 143);
+	};
+	process.once("SIGINT", onSignal);
+	process.once("SIGTERM", onSignal);
+	try {
+		if (envVar("REMOTE_TEST_THROW") === "1") throw new Error("the test seam threw after the token was made");
+		const auth = { authorization: `Bearer ${minted.token}` };
+		const mcp = new URL("/mcp", publicUrl);
+		const held = {
+			name: "streaming" as const,
+			status: "fail" as const,
+			next: `Assistants time out on a held stream. A quick tunnel (trycloudflare.com) or a buffering proxy does this: use ${COMMAND_NAME} remote setup (Tailscale Funnel or a Cloudflare named tunnel), or turn buffering off in your proxy.`,
+		};
+		let answer: Answer;
+		try {
+			answer = await publicRequest(mcp, address, {
+				method: "POST",
+				headers: { ...auth, "content-type": "application/json", accept: "application/json, text/event-stream" },
+				body: initialize,
+				firstByteMs: STREAM_FIRST_BYTE_MS,
+				limitMs: STREAM_FIRST_BYTE_MS,
+			});
+		} catch (err) {
+			return { ...held, detail: `POST /mcp gave nothing in ${STREAM_FIRST_BYTE_MS / 1000} seconds (${err instanceof Error ? err.message : String(err)})` };
+		}
+		const session = header(answer, "mcp-session-id");
+		if (session) {
+			// Close the session the probe opened, so it doesn't wait for serve's idle sweep.
+			await publicRequest(mcp, address, { method: "DELETE", headers: { ...auth, "mcp-session-id": session }, limitMs: 3000 }).catch(() => undefined);
+		}
+		if (answer.status === 401 || answer.status === 403) {
+			return { name: "streaming", status: "fail", detail: `the probe's own token was refused (${answer.status})`, next: `The public address reaches a serve that doesn't use this computer's tokens. Run ${COMMAND_NAME} remote fix.` };
+		}
+		if (answer.status !== 200) return { name: "streaming", status: "fail", detail: `POST /mcp answered ${answer.status}`, next: `Run ${COMMAND_NAME} remote fix, then ${COMMAND_NAME} remote test again.` };
+		if (!/text\/event-stream/.test(header(answer, "content-type"))) {
+			return { name: "streaming", status: "fail", detail: `POST /mcp answered ${header(answer, "content-type") || "no content type"}, not a stream (text/event-stream)`, next: "Something between the internet and serve rewrites the answer. Use Tailscale Funnel or a Cloudflare named tunnel (remote setup)." };
+		}
+		if (answer.firstByteMs === undefined) return { ...held, detail: `the stream's first bytes didn't arrive in ${STREAM_FIRST_BYTE_MS / 1000} seconds: something between the internet and serve holds them back` };
+		return { name: "streaming", status: "ok", detail: `the stream's first bytes arrived in ${answer.firstByteMs} ms` };
+	} finally {
+		process.off("SIGINT", onSignal);
+		process.off("SIGTERM", onSignal);
+		forget();
+	}
+}
+
+/**
+ * Every check, in order. DNS and TLS come first because nothing after them can run without an address that answers; the rest
+ * all run so one report names every problem. `streaming: false` leaves out the probe (and its token).
+ */
+export async function publicChecks(publicUrl: string, options: { streaming?: boolean } = {}): Promise<ProofCheck[]> {
+	const url = new URL(publicUrl);
+	const host = url.hostname;
+	const checks: ProofCheck[] = [];
+	let address: string;
+	if (isIP(host)) {
+		address = host;
+		checks.push({ name: "dns", status: reachable(host) ? "ok" : "fail", detail: `${host} is an address`, ...(reachable(host) ? {} : { next: "Use a public name for the connector (remote setup)." }) });
+	} else {
+		let addresses: string[];
+		try {
+			addresses = await dohAddresses(host);
+		} catch (err) {
+			checks.push({ name: "dns", status: "fail", detail: `couldn't ask public DNS about ${host}: ${err instanceof Error ? err.message : String(err)}`, next: "Check this computer's internet connection, then run remote test again." });
+			return checks;
+		}
+		const open = addresses.filter(reachable);
+		if (!open.length) {
+			const tailnetOnly = addresses.length > 0 && addresses.every(inTailnetRange);
+			checks.push({
+				name: "dns",
+				status: "fail",
+				detail: addresses.length ? `${host} resolves only to ${addresses.join(", ")}, ${tailnetOnly ? "a tailnet address" : "not a public address"}` : `public DNS has no address for ${host} yet`,
+				next: tailnetOnly
+					? `Funnel isn't publishing this name. Run ${COMMAND_NAME} remote fix.`
+					: addresses.length
+						? "Point the name at a public address."
+						: "A new name takes a few minutes to appear in public DNS. Wait, then run remote test again.",
+			});
+			return checks;
+		}
+		address = open[0];
+		checks.push({ name: "dns", status: "ok", detail: `${host} resolves publicly to ${open.join(", ")}` });
+	}
+	const tls = await tlsCheck(url, address);
+	checks.push(tls);
+	if (tls.status !== "ok") return checks;
+
+	const metadataUrl = `${publicUrl}${METADATA_PATH}`;
+	try {
+		const answer = await publicRequest(new URL(METADATA_PATH, publicUrl), address, { method: "GET" });
+		const body = parse(answer.body);
+		const servers = Array.isArray(body?.authorization_servers) ? body.authorization_servers : [];
+		if (answer.status === 421) checks.push({ name: "resource_metadata", status: "fail", detail: `${metadataUrl} answered 421: serve doesn't know this name`, next: `serve was started for another address. Run ${COMMAND_NAME} remote fix.` });
+		else if (answer.status !== 200 || !body) checks.push({ name: "resource_metadata", status: "fail", detail: `${metadataUrl} answered ${answer.status}${body ? "" : ", not JSON"}`, next: `The public address reaches something other than this connector. Run ${COMMAND_NAME} remote fix.` });
+		else if (body.resource !== `${publicUrl}/mcp` || !servers.includes(publicUrl))
+			checks.push({ name: "resource_metadata", status: "fail", detail: `${metadataUrl} names ${String(body.resource)} (authorization server ${servers.map(String).join(", ") || "none"}), not ${publicUrl}/mcp`, next: `Another serve answers this name. Run ${COMMAND_NAME} remote fix.` });
+		else checks.push({ name: "resource_metadata", status: "ok", detail: `${metadataUrl} names ${publicUrl}/mcp` });
+	} catch (err) {
+		checks.push({ name: "resource_metadata", status: "fail", detail: `${metadataUrl} didn't answer: ${err instanceof Error ? err.message : String(err)}`, next: `Run ${COMMAND_NAME} remote fix.` });
+	}
+
+	const asUrl = `${publicUrl}/.well-known/oauth-authorization-server`;
+	try {
+		const answer = await publicRequest(new URL("/.well-known/oauth-authorization-server", publicUrl), address, { method: "GET" });
+		const body = parse(answer.body);
+		if (answer.status === 200 && body?.issuer === publicUrl) checks.push({ name: "auth_metadata", status: "ok", detail: `${asUrl} names issuer ${publicUrl}` });
+		else checks.push({ name: "auth_metadata", status: "fail", detail: `${asUrl} answered ${answer.status}${body ? ` with issuer ${String(body.issuer)}` : ""}, expected issuer ${publicUrl}`, next: `Run ${COMMAND_NAME} remote fix.` });
+	} catch (err) {
+		checks.push({ name: "auth_metadata", status: "fail", detail: `${asUrl} didn't answer: ${err instanceof Error ? err.message : String(err)}`, next: `Run ${COMMAND_NAME} remote fix.` });
+	}
+
+	try {
+		const answer = await publicRequest(new URL("/mcp", publicUrl), address, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" }, body: initialize });
+		const challenge = header(answer, "www-authenticate");
+		if (answer.status === 401 && challenge.includes(`resource_metadata="${metadataUrl}"`)) checks.push({ name: "auth_challenge", status: "ok", detail: "POST /mcp without a token answers 401 and points to the metadata" });
+		else
+			checks.push({
+				name: "auth_challenge",
+				status: "fail",
+				detail: `POST /mcp without a token answered ${answer.status}${challenge ? ` with WWW-Authenticate: ${challenge}` : " with no WWW-Authenticate"}`,
+				next: answer.status === 401 ? `serve isn't using OAuth for ${publicUrl}. Run ${COMMAND_NAME} remote fix.` : `Assistants need a 401 with resource_metadata to start signing in. Run ${COMMAND_NAME} remote fix.`,
+			});
+	} catch (err) {
+		checks.push({ name: "auth_challenge", status: "fail", detail: `POST /mcp didn't answer: ${err instanceof Error ? err.message : String(err)}`, next: `Run ${COMMAND_NAME} remote fix.` });
+	}
+
+	// The probe only means something once the name reaches this connector.
+	if (options.streaming !== false && checks.some((c) => c.name === "resource_metadata" && c.status === "ok")) {
+		try {
+			checks.push(await streamingCheck(url, address, publicUrl));
+		} catch (err) {
+			checks.push({ name: "streaming", status: "fail", detail: `the streaming probe didn't run: ${err instanceof Error ? err.message : String(err)}`, next: `Run ${COMMAND_NAME} remote test again.` });
+		}
+	}
+	return checks;
+}
+
+/** The connector answers from outside: public DNS, a valid certificate and this connector's metadata. Past that, a failure is a real fault. */
+export const answersFromOutside = (checks: ProofCheck[]) => ["dns", "tls", "resource_metadata"].every((name) => checks.some((c) => c.name === name && c.status === "ok"));

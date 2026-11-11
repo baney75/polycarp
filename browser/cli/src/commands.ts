@@ -17,6 +17,8 @@ export interface SubcommandSpec {
 	max?: number;
 	/** Its arguments are file or folder paths: completions fall back to file names there. */
 	paths?: boolean;
+	/** Value options whose value may be left out here (`remote setup --cloudflare` asks for the name in a terminal). */
+	optionalValue?: string[];
 }
 
 export interface CommandSpec {
@@ -243,9 +245,11 @@ export const COMMANDS: CommandSpec[] = [
 				name: "setup",
 				what: "Tailscale Funnel (or a Cloudflare tunnel with --cloudflare, or your own --public-url), a passcode and a service that keeps serve running. In a terminal it asks and waits; --no-wait stops instead",
 				flags: ["--cloudflare", "--replace-funnel", "--public-url", "--port", "--no-service", "--no-passcode", "--tailscale", "--no-wait", "--no-input", "--yes", "--connect-code", "--json"],
+				optionalValue: ["--cloudflare"],
 			},
 			{ name: "cloudflare", args: "login", max: 1, what: "Sign in to your own Cloudflare account, in your browser", flags: ["--json"] },
-			{ name: "status", what: "Is it up and reachable from the internet?", flags: ["--json"] },
+			{ name: "status", what: "Is it up and reachable from the internet? Fast checks from this computer", flags: ["--json"] },
+			{ name: "test", what: "Prove an assistant can reach it, from outside: public DNS, TLS, the OAuth metadata, the sign-in challenge and a streaming probe", flags: ["--json"] },
 			{ name: "off", what: "Stop the service, close the tunnel or Funnel and remove remote.json", flags: ["--json"] },
 		],
 	},
@@ -329,6 +333,7 @@ export function argsProblem(command: string, args: string[]): string | undefined
 	const name = (a: string) => a.split("=")[0];
 	const positional = args.filter((a, i) => !a.startsWith("-") && !(VALUE_FLAGS.has(args[i - 1] ?? "") && !args[i - 1].includes("=")));
 	let flags = spec.flags ?? [];
+	let optional: string[] = [];
 	let max = spec.positional ?? 0;
 	let usage = `Usage: ${COMMAND_NAME} ${helpRows(spec)[0][0]}`;
 	if (spec.subcommands) {
@@ -336,6 +341,7 @@ export function argsProblem(command: string, args: string[]): string | undefined
 		// An unknown or missing subcommand is the command's own usage error, with its list.
 		if (!sub) return undefined;
 		flags = sub.flags ?? [];
+		optional = sub.optionalValue ?? [];
 		max = (positional[0] === undefined ? 0 : 1) + (sub.max ?? 0);
 		usage = `Usage: ${COMMAND_NAME} ${spec.name} ${sub.name}${sub.args ? ` ${sub.args}` : ""}${flagHints(flags)}`;
 	}
@@ -348,7 +354,9 @@ export function argsProblem(command: string, args: string[]): string | undefined
 		if (a.includes("=") && !VALUE_FLAGS.has(name(a))) return `${name(a)} takes no value. ${usage}`;
 		if (VALUE_FLAGS.has(name(a))) {
 			const value = a.includes("=") ? a.slice(a.indexOf("=") + 1) : args[i + 1];
-			if (value === undefined || value === "" || (!a.includes("=") && value.startsWith("-"))) return `${name(a)} needs a value. ${usage}`;
+			const missing = value === undefined || value === "" || (!a.includes("=") && value.startsWith("-"));
+			// `--cloudflare=` is still refused: an empty value someone typed is a mistake, not a question.
+			if (missing && !(optional.includes(name(a)) && !a.includes("="))) return `${name(a)} needs a value. ${usage}`;
 		}
 	}
 	if (positional.length > max) return `Unexpected argument "${positional[max]}". ${usage}`;
@@ -357,7 +365,7 @@ export function argsProblem(command: string, args: string[]): string | undefined
 
 /** Exit codes every command uses; also printed by --help. */
 export const EXIT_CODES =
-	"Exit codes: 0 success, 1 failed, not connected or nothing found, 2 usage error; update --check 100 when an update exists, library add 3 retracted and 4 unchecked.";
+	"Exit codes: 0 success, 1 failed, not connected or nothing found, 2 usage error; update --check 100 when an update exists, library add 3 retracted and 4 unchecked, remote setup 3 when a person has to act, remote test 3 when nothing is set up.";
 
 function sh(word: string): string {
 	return word.replace(/[^A-Za-z0-9_.:,|/-]/g, "");

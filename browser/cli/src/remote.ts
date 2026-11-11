@@ -197,6 +197,30 @@ export function revokeLinkTokens(): number {
 	});
 }
 
+/**
+ * Remove one token's record outright, as if it had never been made: for a token that lived only inside one command (`remote test`'s
+ * streaming probe), so the token list after the run is the list before it. Its last-use entry goes too. True when it was there.
+ */
+export function deleteToken(id: string): boolean {
+	const removed = withTokensLock(() => {
+		const tokens = loadTokens();
+		const kept = tokens.filter((t) => t.id !== id);
+		if (kept.length === tokens.length) return false;
+		saveTokens(kept);
+		return true;
+	});
+	try {
+		const usage = loadUsage();
+		if (id in usage) {
+			delete usage[id];
+			writeFileSync(usageFile(), `${JSON.stringify(usage)}\n`, { mode: 0o600 });
+		}
+	} catch {
+		/* usage is informational */
+	}
+	return removed;
+}
+
 export function revokeToken(idOrName: string): number {
 	return withTokensLock(() => revokeLocked(idOrName));
 }
