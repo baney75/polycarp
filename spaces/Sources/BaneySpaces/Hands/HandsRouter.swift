@@ -198,7 +198,7 @@ final class HandsRouter {
     }
 
     /// The one place `move`, `arrange` and `close` change something: on the main thread, the acting mode, and every target's
-    /// live window, scope and in-use condition are read again, and `perform` runs in that same pass only when all of them
+    /// live window, scope, inspection and in-use condition are read again, and `perform` runs in that same pass only when all of them
     /// pass (`MutationGate`). `perform` gets the agent workspace as read in that pass.
     func mutateOnMain<T>(_ ws: [HandsWindow], verb: String, session: String, perform: (_ agent: Int?) -> Result<T, HandsError>) -> Result<T, HandsError> {
         onMain {
@@ -210,7 +210,9 @@ final class HandsRouter {
                     let (state, verdict) = inUseVerdict(l, agent: agent, verb: verb, delivery: .posted)
                     return verdict == .wait ? InUseWait.refusal(app: w.app, state: state, waited: nil) : nil
                 }
-                return MutationTarget(window: w, live: live, scope: scope, inUse: inUse)
+                // The pre-check's inspection, read again on the live window in this pass, once per target (sol-F1).
+                let inspection = live.flatMap { l in scope.allowed ? sheetProblem(l, agent: agent, session: session) ?? inspectProblem(l) : nil }
+                return MutationTarget(window: w, live: live, scope: scope, inUse: inUse, inspection: inspection)
             }
             return MutationGate.run(mode: access, targets: targets) { perform(agent) }
         }

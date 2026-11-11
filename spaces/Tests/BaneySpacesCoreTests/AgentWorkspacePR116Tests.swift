@@ -298,3 +298,26 @@ final class PR119Round2Tests: XCTestCase {
         XCTAssertTrue(ws.contains("serialized(pid: pid, wait: Thread.isMainThread ? 0 : 10)"))
     }
 }
+
+/// PR #123 review round 1: the mutating pass rechecks inspection too.
+final class PR123Round1Tests: XCTestCase {
+    func testAnInspectionRefusalInThePassStopsTheMutation() {
+        let w = HandsWindow(id: 7, pid: 300, app: "TextEdit", workspace: 9)
+        let outside = HandsError(.needsSandbox, "window 7 of TextEdit shows a document from outside the handoff folder", suggestion: "", retry: .never)
+        var ran = false
+        let r = MutationGate.run(mode: .standard, targets: [MutationTarget(window: w, live: w, scope: .onAgentWorkspace, inUse: nil, inspection: outside)]) { () -> Result<Bool, HandsError> in
+            ran = true; return .success(true)
+        }
+        XCTAssertFalse(ran, "sol-F1: nothing is pressed, moved or arranged")
+        guard case .failure(let e) = r else { return XCTFail() }
+        XCTAssertEqual(e.message, outside.message, "the same error as the pre-check")
+        XCTAssertNil(MutationGate.refusal(mode: .standard, targets: [MutationTarget(window: w, live: w, scope: .onAgentWorkspace, inUse: nil)]))
+    }
+
+    func testMutateOnMainInspectsEveryAllowedTarget() throws {
+        let router = try source("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        let fn = try XCTUnwrap(router.components(separatedBy: "func mutateOnMain<T>(").dropFirst().first?.components(separatedBy: "\n    }\n").first)
+        XCTAssertTrue(fn.contains("scope.allowed ? sheetProblem(l, agent: agent, session: session) ?? inspectProblem(l) : nil"))
+        XCTAssertTrue(fn.contains("inspection: inspection)"))
+    }
+}

@@ -654,8 +654,10 @@ public struct MutationTarget: Equatable, Sendable {
     public var scope: ScopeDecision
     /// The in-use refusal when Donovan is using the app now.
     public var inUse: HandsError?
-    public init(window: HandsWindow, live: HandsWindow?, scope: ScopeDecision, inUse: HandsError?) {
-        self.window = window; self.live = live; self.scope = scope; self.inUse = inUse
+    /// sol-F1: the inspection refusal read in the same pass (a sheet that isn't the session's, an outside document, a file panel).
+    public var inspection: HandsError?
+    public init(window: HandsWindow, live: HandsWindow?, scope: ScopeDecision, inUse: HandsError?, inspection: HandsError? = nil) {
+        self.window = window; self.live = live; self.scope = scope; self.inUse = inUse; self.inspection = inspection
     }
 }
 
@@ -670,6 +672,7 @@ public enum MutationGate {
                 return HandsError(.staleRef, "window \(t.window.id) belongs to a different process now", suggestion: "Take a new snapshot.", retry: .afterSnapshot)
             }
             if case .denied(let e) = t.scope { return e }
+            if let e = t.inspection { return e }
             if let e = t.inUse { return e }
         }
         return nil
