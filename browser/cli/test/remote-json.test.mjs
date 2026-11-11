@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { completeFunnelAdminUrl, funnelAdminUrl, lingerFromLoginctl, operatorFromPrefs, REMOTE_STATES, setupExitCode, stateFromStatus, tailscaleAccessDenied, zoneFromSoa } from "../src/remote-state.ts";
+import { cloudflareAddress, completeFunnelAdminUrl, funnelAdminUrl, lingerFromLoginctl, operatorFromPrefs, REMOTE_STATES, setupExitCode, stateFromStatus, tailscaleAccessDenied, zoneFromSoa } from "../src/remote-state.ts";
 import { ENABLE_URL, writeTailscaleStub } from "./helpers/tailscale-stub.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1030,8 +1030,15 @@ test("the setup helpers read Tailscale's, loginctl's and DNS's real answers", ()
 	assert.equal(operatorFromPrefs('{"OperatorUser":"ada"}'), "ada");
 	assert.equal(operatorFromPrefs('{"WantRunning":true}'), "");
 	assert.equal(operatorFromPrefs("not json"), undefined);
-	assert.deepEqual(zoneFromSoa({ Authority: [{ name: "example.com.", type: 6, data: "ada.ns.cloudflare.com. dns.cloudflare.com. 1 2 3 4 5" }] }), { zone: "example.com", onCloudflare: true });
-	assert.deepEqual(zoneFromSoa({ Answer: [{ name: "example.com.", type: 6, data: "ns.icann.org. noc.dns.icann.org. 1 2 3 4 5" }] }), { zone: "example.com", onCloudflare: false });
+	assert.deepEqual(zoneFromSoa({ Authority: [{ name: "example.com.", type: 6, data: "ada.ns.cloudflare.com. dns.cloudflare.com. 1 2 3 4 5" }] }), { zone: "example.com", onCloudflare: true, primary: "ada.ns.cloudflare.com" });
+	assert.deepEqual(zoneFromSoa({ Answer: [{ name: "example.com.", type: 6, data: "ns.icann.org. noc.dns.icann.org. 1 2 3 4 5" }] }), { zone: "example.com", onCloudflare: false, primary: "ns.icann.org" });
+	// Cloudflare custom nameservers and Foundation DNS: the mailbox, or the primary's own name, still says Cloudflare.
+	assert.equal(zoneFromSoa({ Authority: [{ name: "example.com.", type: 6, data: "ns1.example.com. dns.cloudflare.com. 1 2 3 4 5" }] }).onCloudflare, true);
+	assert.equal(zoneFromSoa({ Authority: [{ name: "example.com.", type: 6, data: "kai.foundationdns.com. hostmaster.example.com. 1 2 3 4 5" }] }).onCloudflare, true);
+	assert.equal(cloudflareAddress("172.64.33.1"), true);
+	assert.equal(cloudflareAddress("173.245.58.51"), true);
+	assert.equal(cloudflareAddress("199.4.138.53"), false);
+	assert.equal(cloudflareAddress("not an address"), false);
 	assert.equal(zoneFromSoa({ Status: 3 }), undefined);
 	assert.equal(setupExitCode({ ok: true }), 0);
 	assert.equal(setupExitCode({ ok: false }), 1);
@@ -1042,7 +1049,8 @@ test("text-mode setup gives a connect code for a new assistant and never says th
 	const s = scenario("approve-text");
 	const local = await localServer(`${FUNNEL_URL}/mcp`);
 	try {
-		const r = await s.runAsync(["remote", "setup", "--no-service", "--port", String(local.port)]);
+		// A person at a terminal (the TTY seam) gets the code without asking; --tailscale so nothing asks which route.
+		const r = await s.runAsync(["remote", "setup", "--tailscale", "--no-service", "--port", String(local.port)], { TABKYRA_ASSUME_TTY: "1" });
 		assert.equal(r.code, 0, r.stdout + r.stderr);
 		assert.match(r.stdout, /Connect code: TK-[A-Z0-9]{4}-[A-Z0-9]{4}/);
 		assert.match(r.stdout, /Type it on the approval page when you add Polycarp to an assistant for the first time/);
@@ -1124,11 +1132,20 @@ test("with --no-wait the same refusal exits 3 at once, and the JSON names the pa
 	}
 });
 
-/** A fake DNS-over-HTTPS server: every SOA question gets `primary` as example.com's primary name server. */
-async function fakeDoh(primary) {
+/**
+ * A fake DNS-over-HTTPS server: every SOA question gets `primary` as example.com's primary name server (and `mailbox` as its
+ * mailbox); an A question for the primary gets `nsAddress`, or no answer when it is empty.
+ */
+async function fakeDoh(primary, { mailbox = "hostmaster.example.com.", nsAddress = "199.4.138.53" } = {}) {
 	const srv = createHttpServer((req, res) => {
+		const q = new URL(req.url, "http://x").searchParams;
 		res.setHeader("content-type", "application/dns-json");
-		res.end(JSON.stringify({ Status: 0, Authority: [{ name: "example.com.", type: 6, data: `${primary} hostmaster.example.com. 1 2 3 4 5` }] }));
+		if (q.get("type") === "A") {
+			const name = q.get("name");
+			res.end(JSON.stringify({ Status: 0, Answer: name === primary.replace(/\.$/, "") && nsAddress ? [{ name: `${name}.`, type: 1, data: nsAddress }] : [] }));
+			return;
+		}
+		res.end(JSON.stringify({ Status: 0, Authority: [{ name: "example.com.", type: 6, data: `${primary} ${mailbox} 1 2 3 4 5` }] }));
 	});
 	await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve));
 	return { url: `http://127.0.0.1:${srv.address().port}/dns-query`, close: () => new Promise((resolve) => srv.close(resolve)) };
@@ -1177,4 +1194,261 @@ test("tunnel cloudflare finds the cloudflared Polycarp downloaded when none is o
 	assert.match(r.stdout, /can't use a quick tunnel/);
 	assert.ok(s.calls().some((x) => x.startsWith("cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8799")), s.calls().join("\n"));
 	s.run(["tunnel", "cloudflare", "--off"]);
+});
+
+// ---------- PR 128 review follow-ups ----------
+
+/** Run the CLI with `input` on stdin (closed after it), in a terminal by the TTY seam. Killed after `limitMs` so a hang fails instead of stalling. */
+function runTyped(s, args, input, extra = {}, limitMs = 20_000) {
+	return new Promise((resolve) => {
+		const child = spawn(process.execPath, [cli, ...args], { env: { ...s.env, TABKYRA_ASSUME_TTY: "1", ...extra } });
+		let stdout = "";
+		let stderr = "";
+		let hung = false;
+		const timer = setTimeout(() => {
+			hung = true;
+			child.kill("SIGKILL");
+		}, limitMs);
+		child.stdout.on("data", (d) => (stdout += d));
+		child.stderr.on("data", (d) => (stderr += d));
+		child.on("close", (code) => {
+			clearTimeout(timer);
+			resolve({ code, stdout, stderr, hung });
+		});
+		if (input === undefined) return; // stdin left open: a question would wait forever
+		child.stdin.end(input);
+	});
+}
+
+test("remote setup --cloudflare with no name reaches the hostname question, last or before another flag (first-F1, sol-F1)", async () => {
+	for (const args of [["--cloudflare"], ["--cloudflare", "--yes"]]) {
+		const s = scenario(`cf-noname-${args.length}`, { tailscale: false });
+		const r = await runTyped(s, ["remote", "setup", ...args], "");
+		assert.notEqual(r.code, 2, `not a usage error: ${r.stderr}`);
+		assert.match(r.stdout, /Connector hostname, on a domain in your Cloudflare account/, r.stdout + r.stderr);
+		assert.equal(r.code, 3, "no name typed: a person step");
+		assert.equal(s.remoteJsonExists(), false);
+	}
+	// A typed name is used: setup goes on to make that record.
+	const s = scenario("cf-noname-typed", { tailscale: false });
+	cloudflared(s);
+	signedIn(s);
+	s.launcher();
+	const local = await localServer(`https://${CF_HOST}/mcp`);
+	try {
+		const r = await runTyped(s, ["remote", "setup", "--cloudflare", "--yes", "--port", String(local.port)], `${CF_HOST}\n`, { TABKYRA_PUBLIC_WAIT_MS: "1", TABKYRA_PUBLIC_POLL_MS: "1" });
+		assert.ok(cfCalls(s).includes(`cloudflared tunnel route dns ${CF_ID} ${CF_HOST}`), r.stdout + r.stderr + cfCalls(s).join("\n"));
+	} finally {
+		await local.close();
+	}
+	// An empty value someone typed is still a usage error, and --no-input still needs the name.
+	assert.equal(scenario("cf-noname-eq", { tailscale: false }).run(["remote", "setup", "--cloudflare="]).code, 2);
+	assert.match(scenario("cf-noname-ni", { tailscale: false }).run(["remote", "setup", "--cloudflare", "--no-input"]).stderr, /--no-input needs the name too/);
+});
+
+test("remote setup --no-wait in a terminal asks nothing: no route question, no download question (first-F2)", async () => {
+	const s = scenario("nowait-noask", { tailscale: false });
+	const r = await runTyped(s, ["remote", "setup", "--no-wait"], undefined, {}, 15_000);
+	assert.equal(r.hung, false, `it waited on stdin: ${r.stdout}`);
+	assert.doesNotMatch(r.stdout, /Type 1 or 2/);
+	assert.equal(r.code, 3, r.stdout + r.stderr);
+	const cf = scenario("nowait-nodownload", { tailscale: false });
+	const d = await runTyped(cf, ["remote", "setup", "--no-wait", "--cloudflare", CF_HOST], undefined, {}, 15_000);
+	assert.equal(d.hung, false);
+	assert.doesNotMatch(d.stdout, /\[y\/N\]/);
+	assert.equal(d.code, 3);
+});
+
+test("help lists exit 3 for remote setup and remote test (first-F3)", () => {
+	const help = scenario("help-exit3", { tailscale: false }).run(["--help"]).stdout;
+	assert.match(help, /remote setup 3 when a person has to act/);
+	assert.match(help, /remote test 3 when nothing is set up/);
+});
+
+test("text-mode setup with no terminal makes no connect code unasked, and says how to make one (first-F4)", async () => {
+	const s = scenario("code-notty");
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	try {
+		const r = await s.runAsync(["remote", "setup", "--no-service", "--port", String(local.port)]);
+		assert.equal(r.code, 0, r.stdout + r.stderr);
+		assert.doesNotMatch(r.stdout, /TK-[A-Z0-9]{4}-[A-Z0-9]{4}/, "no live code in an agent's transcript");
+		assert.match(r.stdout, /Connect code: make one with polycarp-browser token approval-code when you add an assistant/);
+		assert.doesNotMatch(r.stdout, /setup prints one when it's done/);
+	} finally {
+		await local.close();
+	}
+});
+
+test("remote setup --json --connect-code that can't make the code fails, says why and keeps the route (sol-F3, second-F10)", async () => {
+	const s = scenario("code-fails");
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	try {
+		// A folder where the codes file goes: the write fails, as a full disk or a bad permission would.
+		mkdirSync(join(s.env.TABKYRA_CONFIG_DIR, "oauth-codes.json"), { recursive: true });
+		const r = await s.runAsync(["remote", "setup", "--json", "--connect-code", "--no-service", "--port", String(local.port)]);
+		assert.equal(r.code, 1, r.stdout);
+		const report = r.json();
+		assert.equal(report.ok, false);
+		assert.equal(report.code, "connect_code");
+		assert.ok(report.connectCodeProblem, "the reason is in the report");
+		assert.equal(report.connectorUrl, `${FUNNEL_URL}/mcp`);
+		assert.equal("connectCode" in report, false);
+		assert.ok(s.remoteJsonExists(), "the saved route is kept");
+		// The text mode asked for the same thing: the same failure, exit 1.
+		const t = await s.runAsync(["remote", "setup", "--connect-code", "--no-service", "--port", String(local.port)]);
+		assert.equal(t.code, 1, t.stdout);
+		assert.match(t.stdout, /Connect code: none made/);
+	} finally {
+		await local.close();
+	}
+});
+
+test("two zones on Cloudflare and no zone remembered: the record lands in the signed-in zone, is named, and the next try is refused first (sol-F2)", async () => {
+	const local = await localServer(`https://${CF_HOST}/mcp`);
+	const doh = await fakeDoh("ada.ns.cloudflare.com.", { mailbox: "dns.cloudflare.com." });
+	try {
+		const s = scenario("cf-two-zones", { tailscale: false });
+		s.launcher();
+		cloudflared(s, { route: `${CF_HOST}.other.example.` });
+		signedIn(s);
+		const r = await s.runAsync(["remote", "setup", "--json", "--cloudflare", CF_HOST, "--port", String(local.port)], { TABKYRA_DOH_URL: doh.url });
+		const report = r.json();
+		assert.equal(report.code, "cloudflare_zone", r.stdout);
+		assert.match(report.message, new RegExp(`made the DNS record ${CF_HOST.replace(/\./g, "\\.")}\\.other\\.example`));
+		assert.match(report.message, /delete it in the Cloudflare dashboard/);
+		assert.match(report.message, /Polycarp never deletes DNS records/);
+		assert.equal(s.remoteJsonExists(), false);
+		assert.ok(!cfCalls(s).some((x) => /delete/.test(x)), "nothing on the account is deleted");
+		// The zone is known now: another name outside it is refused before any record.
+		const before = cfCalls(s).filter((x) => /route dns/.test(x)).length;
+		const again = await s.runAsync(["remote", "setup", "--json", "--cloudflare", "polycarp2.example.com", "--port", String(local.port)], { TABKYRA_DOH_URL: doh.url });
+		assert.equal(again.json().code, "cloudflare_zone", again.stdout);
+		assert.match(again.json().message, /sign-in is for other\.example/);
+		assert.equal(cfCalls(s).filter((x) => /route dns/.test(x)).length, before, "no second record");
+	} finally {
+		await local.close();
+		await doh.close();
+	}
+});
+
+test("a zone on Cloudflare custom nameservers goes ahead; one served elsewhere is refused before any record (second-F7)", async () => {
+	const local = await localServer(`https://${CF_HOST}/mcp`);
+	// The reviewer's falsifier: primary ns1.example.com and a mailbox that isn't Cloudflare's, on a nameserver at a Cloudflare address.
+	const custom = await fakeDoh("ns1.example.com.", { nsAddress: "172.64.33.1" });
+	// A nameserver whose address can't be found: unknown, so it goes ahead too.
+	const unknown = await fakeDoh("ns1.example.com.", { nsAddress: "" });
+	const elsewhere = await fakeDoh("ns.icann.org.", { nsAddress: "199.4.138.53" });
+	try {
+		for (const [name, doh] of [
+			["cf-custom-ns", custom],
+			["cf-unknown-ns", unknown],
+		]) {
+			const s = scenario(name, { tailscale: false });
+			s.launcher();
+			cloudflared(s);
+			signedIn(s);
+			const r = await s.runAsync(["remote", "setup", "--json", "--cloudflare", CF_HOST, "--port", String(local.port)], { TABKYRA_DOH_URL: doh.url });
+			assert.equal(cfCalls(s).filter((x) => /route dns/.test(x)).length, 1, `${name}: ${r.stdout}`);
+			assert.equal(r.json().state, "on", r.stdout);
+		}
+		const s = scenario("cf-elsewhere", { tailscale: false });
+		s.launcher();
+		cloudflared(s);
+		signedIn(s);
+		const r = await s.runAsync(["remote", "setup", "--json", "--cloudflare", CF_HOST, "--port", String(local.port)], { TABKYRA_DOH_URL: elsewhere.url });
+		assert.equal(r.json().code, "cloudflare_zone");
+		assert.match(r.json().message, /served by ns\.icann\.org \(199\.4\.138\.53\), not Cloudflare/);
+		assert.deepEqual(cfCalls(s).filter((x) => /route dns|tunnel create/.test(x)), []);
+	} finally {
+		await local.close();
+		await custom.close();
+		await unknown.close();
+		await elsewhere.close();
+	}
+});
+
+test("only refusals another name clears carry next choose_name: a cloudflared error and a failed download are failures (second-F9)", async () => {
+	const s = scenario("cf-api-error", { tailscale: false });
+	cloudflared(s);
+	signedIn(s);
+	// `tunnel route dns` failing for a reason that isn't a taken name.
+	s.script("cloudflared", readFileSync(join(s.dir, "bin", "cloudflared"), "utf8").replace(/^route\) .*$/m, `route) echo "failed to make request: 502 Bad Gateway" >&2; exit 1 ;;`));
+	const r = await cloudflareSetup(s);
+	assert.equal(r.code, 1, r.stdout);
+	assert.equal(r.json().code, "cloudflare_dns");
+	assert.equal("next" in r.json(), false);
+	assert.match(r.json().message, /couldn't make the DNS record/);
+	// A download whose bytes don't match the pinned digest.
+	const bad = createHttpServer((req, res) => res.end("not cloudflared"));
+	await new Promise((resolve) => bad.listen(0, "127.0.0.1", resolve));
+	try {
+		const d = scenario("cf-download-bad", { tailscale: false });
+		const got = await d.runAsync(["remote", "setup", "--json", "--yes", "--cloudflare", CF_HOST], { TABKYRA_CLOUDFLARED_BASE_URL: `http://127.0.0.1:${bad.address().port}` });
+		if (process.platform === "darwin" || process.platform === "linux") {
+			assert.equal(got.code, 1, got.stdout);
+			assert.equal(got.json().state, "cloudflared_missing");
+			assert.equal("next" in got.json(), false, "retrying a download that failed its check isn't a person's step");
+		}
+	} finally {
+		await new Promise((resolve) => bad.close(resolve));
+	}
+});
+
+/** Browser folders a real `install` would register Polycarp in. */
+const browserFolder = (home) => (process.platform === "darwin" ? join(home, "Library", "Application Support", "Google", "Chrome") : join(home, ".config", "google-chrome"));
+
+serviceTest("a terminal setup with no launcher writes only the launcher, never a browser's native host file (second-F8)", async () => {
+	const port = await freePort();
+	const s = scenario("launcher-only", { serveStatus: JSON.stringify({ Web: { [`${DNS}:8443`]: { Handlers: { "/": { Proxy: `http://127.0.0.1:${port}` } } } } }) });
+	mkdirSync(browserFolder(s.home), { recursive: true });
+	const srv = createHttpServer((req, res) => {
+		res.setHeader("content-type", "application/json");
+		res.end(JSON.stringify({ resource: `${FUNNEL_URL}/mcp` }));
+	});
+	await new Promise((resolve) => srv.listen(port, "127.0.0.1", resolve));
+	try {
+		const r = await runTyped(s, ["remote", "setup", "--tailscale", "--port", String(port)], "");
+		assert.equal(r.code, 0, r.stdout + r.stderr);
+		assert.match(r.stdout, /setup writes it now/);
+		assert.ok(existsSync(join(s.env.TABKYRA_CONFIG_DIR, "polycarp")), "the launcher is written");
+		assert.equal(existsSync(join(browserFolder(s.home), "NativeMessagingHosts")), false, "no browser was registered");
+	} finally {
+		await new Promise((resolve) => srv.close(resolve));
+	}
+});
+
+test("in a terminal, setup waits for Tailscale to be installed and carries on once it is (second-F8)", async () => {
+	const s = scenario("wait-tailscale", { tailscale: false });
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	try {
+		const run = runTyped(s, ["remote", "setup", "--tailscale", "--no-service", "--port", String(local.port)], undefined, { TABKYRA_TAILSCALE_POLL_MS: "50" });
+		await new Promise((resolve) => setTimeout(resolve, 800));
+		writeTailscaleStub(join(s.dir, "bin", "tailscale"), { dir: s.dir, log: join(s.dir, "calls.log"), dns: DNS });
+		const r = await run;
+		assert.equal(r.code, 0, r.stdout + r.stderr);
+		assert.match(r.stdout, /Waiting for Tailscale to be installed/);
+		assert.match(r.stdout, /Tailscale is signed in/);
+		assert.match(r.stdout, /Tailscale Funnel on https:\/\/mac\.example\.ts\.net:8443/);
+	} finally {
+		await local.close();
+	}
+});
+
+test("in a terminal with no route named, setup asks which one and uses the answer (second-F8)", async () => {
+	const s = scenario("route-choice", { tailscale: false });
+	const local = await localServer(`${FUNNEL_URL}/mcp`);
+	try {
+		// Neither route is ready, so it asks; "2" takes the Cloudflare route, which then asks for the name.
+		const cf = await runTyped(s, ["remote", "setup", "--no-service", "--port", String(local.port)], "2\n");
+		assert.match(cf.stdout, /Type 1 or 2 \[1\]: /);
+		assert.match(cf.stdout, /Connector hostname/);
+		// "1" takes Tailscale.
+		const t = scenario("route-choice-1", { tailscale: false });
+		const one = await runTyped(t, ["remote", "setup", "--no-service", "--no-passcode", "--port", String(local.port)], "1\n", { TABKYRA_TAILSCALE_WAIT_MS: "1", TABKYRA_TAILSCALE_POLL_MS: "1" });
+		assert.match(one.stdout, /Type 1 or 2/);
+		assert.match(one.stdout + one.stderr, /Tailscale isn't installed/);
+		assert.doesNotMatch(one.stdout, /Connector hostname/);
+	} finally {
+		await local.close();
+	}
 });

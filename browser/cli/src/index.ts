@@ -25,7 +25,7 @@ import { hubCode, hubDevices, hubOff, hubPrefer, hubRemove, hubServe, hubSetup, 
 import { loadHubConfig } from "./hub-state.ts";
 import { linkBusy, linkEnroll, linkMintCode, linkOff, linkRun, linkScopes, linkStatus, normalizeHubUrl, printCode } from "./link.ts";
 import { runTheme } from "./theme.ts";
-import { loadRemoteConfig, remoteFile, remoteOff, remoteSetup, remoteStatus } from "./remote-setup.ts";
+import { loadRemoteConfig, remoteFile, remoteOff, remoteSetup, remoteStatus, remoteTest } from "./remote-setup.ts";
 import { interactiveTerminal } from "./remote-guide.ts";
 import { createHubToken, hubTunnel, HUB_SCOPES } from "./hub.ts";
 import { cloudflareTunnel, DEFAULT_PORT, tailscaleTunnel } from "./tunnel.ts";
@@ -701,8 +701,10 @@ async function main(): Promise<void> {
 					passcode: !flag("--no-passcode"),
 					json,
 					replaceFunnel,
+					terminal,
 					wait: terminal && !flag("--no-wait"),
-					input: terminal && !noInput,
+					// --no-wait never blocks, so it asks nothing either: a question waits on stdin just as a wait does.
+					input: terminal && !noInput && !flag("--no-wait"),
 					yes: flag("--yes"),
 					connectCode: flag("--connect-code"),
 				});
@@ -712,12 +714,16 @@ async function main(): Promise<void> {
 				process.exitCode = await remoteStatus({ json: flag("--json") });
 				return;
 			}
+			if (sub === "test") {
+				process.exitCode = await remoteTest({ json: flag("--json") });
+				return;
+			}
 			if (sub === "off") {
 				process.exitCode = await remoteOff({ json: flag("--json") });
 				return;
 			}
 			throw new UsageError(
-				`Usage: ${COMMAND_NAME} remote setup [--tailscale | --cloudflare [name.yourdomain.com] | --public-url https://host] [--replace-funnel] [--port N] [--no-service] [--no-passcode] [--no-wait] [--no-input] [--yes] [--connect-code] [--json] | cloudflare login [--json] | status [--json] | off [--json]`,
+				`Usage: ${COMMAND_NAME} remote setup [--tailscale | --cloudflare [name.yourdomain.com] | --public-url https://host] [--replace-funnel] [--port N] [--no-service] [--no-passcode] [--no-wait] [--no-input] [--yes] [--connect-code] [--json] | cloudflare login [--json] | status [--json] | test [--json] | off [--json]`,
 			);
 		}
 		case "hub": {

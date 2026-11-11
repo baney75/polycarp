@@ -8,6 +8,7 @@
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { lookup } from "node:dns/promises";
 import { get as httpGet } from "node:http";
 import { userInfo } from "node:os";
 import { join } from "node:path";
@@ -23,21 +24,26 @@ import {
 	prepareCloudflare,
 } from "./cloudflare.ts";
 import { CLOUDFLARED_VERSION, cloudflaredAsset, downloadCloudflared, downloadedCloudflared } from "./cloudflared-download.ts";
-import { launcherValid, launcherBinary, which } from "./harness.ts";
+import { launcherValid, launcherBinary } from "./harness.ts";
 import { connectionChecks } from "./doctor.ts";
-import { install } from "./install.ts";
+import { ensureLauncherIsSelf } from "./install.ts";
 import { ask, askYes, closeInput, duration, openPage, waitMs } from "./remote-guide.ts";
 import {
 	CLOUDFLARED_DOWNLOAD_URL,
 	completeFunnelAdminUrl,
 	funnelAdminUrl,
+	inTailnetRange,
 	lingerFromLoginctl,
+	METADATA_PATH,
 	operatorFromPrefs,
 	printReport,
 	type RemoteNext,
 	type RemoteRoutes,
 	type RemoteState,
 	type SetupReport,
+	EXIT_FAILED,
+	EXIT_NEEDS_PERSON,
+	EXIT_ON,
 	setupExitCode,
 	stateFromStatus,
 	TAILSCALE_OPERATOR_FIX,
@@ -47,15 +53,19 @@ import {
 import { installService, removeService, run, serviceFile, serviceLogHint, sleep, writeAtomic } from "./service.ts";
 import { configDir, listClients, mintApprovalCode, passcodeSet, setPasscode } from "./oauth.ts";
 import { hubFile } from "./hub-state.ts";
+import { dohAddresses } from "./doh.ts";
+import { answersFromOutside, type ProofCheck, publicChecks } from "./remote-test.ts";
 import { DEFAULT_PORT } from "./tunnel.ts";
+import { tailscaleAppPath, tailscaleBinary } from "./tailscale.ts";
+
+export { inTailnetRange, METADATA_PATH, tailscaleAppPath, tailscaleBinary };
 import { c, sym } from "./ui.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
-import { type ToolLookup, windowsInstallPaths, windowsTool } from "./tool-paths.ts";
+import { windowsInstallPaths } from "./tool-paths.ts";
 
 /** Funnel's own port: keeps the OAuth paths at the root and anything on 443 private. */
 export const FUNNEL_PORT = 8443;
-export const METADATA_PATH = "/.well-known/oauth-protected-resource/mcp";
 
 export interface RemoteConfig {
 	publicUrl: string;
@@ -103,22 +113,6 @@ export function tailscaleSignIn(platform: NodeJS.Platform = process.platform): s
 	if (platform === "darwin") return "Open the Tailscale app and sign in, or run tailscale up";
 	if (platform === "win32") return "Open Tailscale from the Start menu and sign in, or run tailscale up";
 	return "Run tailscale up";
-}
-
-/** Where the Tailscale Mac app keeps its command. It never puts `tailscale` on PATH. TABKYRA_APPLICATIONS_DIR replaces /Applications, for tests. */
-export const tailscaleAppPath = () => join(envVar("APPLICATIONS_DIR") || "/Applications", "Tailscale.app", "Contents", "MacOS", "Tailscale");
-
-/**
- * The `tailscale` binary: on PATH, or the Tailscale Mac app's own copy at its fixed path, so a terminal and Polycarp's window
- * find the same one. On Windows, tailscale.exe on PATH or in the installer's folder (tool-paths.ts). Nothing else is searched:
- * a path nobody asked for is never run.
- */
-export function tailscaleBinary(lookup: ToolLookup = {}): string | undefined {
-	if ((lookup.platform ?? process.platform) === "win32") return windowsTool("tailscale", lookup);
-	const onPath = which("tailscale");
-	if (onPath) return onPath;
-	const app = tailscaleAppPath();
-	return existsSync(app) ? app : undefined;
 }
 
 type ServeWeb = Record<string, { Handlers?: Record<string, { Proxy?: string }> }>;
@@ -415,8 +409,13 @@ export interface SetupOptions {
 	input?: boolean;
 	/** --yes: the answer to "download cloudflared?" is yes. Nothing else is downloaded or changed by it. */
 	yes?: boolean;
-	/** --connect-code: in JSON mode, a successful run mints a one-time connect code and reports it. Text mode always does. */
+	/**
+	 * --connect-code: a successful run mints a one-time connect code and reports it, and a code that can't be made fails the run.
+	 * Without it only a person at a terminal (`terminal`) gets one: a code printed into an agent's shell or a log would sit there live.
+	 */
 	connectCode?: boolean;
+	/** A person is at a terminal (stdin and stdout are TTYs, no --json), even with --no-wait or --no-input. */
+	terminal?: boolean;
 }
 
 const tailscaleUp = tailscaleSignIn().replace(/un tailscale up$/, "un: tailscale up");
@@ -452,14 +451,17 @@ async function waitForTailscale(ports: number[], first: FunnelPlan, say: (line: 
 	return plan;
 }
 
-/** In a terminal: `polycarp browser install` writes only the launcher and the browsers' native host files, and skips what is current, so setup runs it. */
+/**
+ * In a terminal: the service runs the agent launcher, so setup writes that one file. Not `install`: that registers the native
+ * host with every browser on the machine, and setup must not add Polycarp to browsers the person never set up.
+ */
 async function ensureLauncher(say: (line: string) => void): Promise<void> {
-	say(`${sym.dot} The service needs ${COMMAND_NAME} install first, so setup runs it now.`);
+	say(`${sym.dot} The service needs ${COMMAND_NAME}'s launcher, so setup writes it now.`);
 	try {
-		const result = install();
-		say(`${sym.ok} Launcher ${c.dim(result.launcher)}`);
+		ensureLauncherIsSelf();
+		say(`${sym.ok} Launcher ${c.dim(launcherBinary())}`);
 	} catch (err) {
-		say(`${sym.warn} ${COMMAND_NAME} install didn't finish: ${err instanceof Error ? err.message : String(err)}`);
+		say(`${sym.warn} The launcher couldn't be written: ${err instanceof Error ? err.message : String(err)}`);
 	}
 	if (launcherValid()) return;
 	say(`Run ${COMMAND_NAME} install in another terminal. Waiting for it. Ctrl-C stops; nothing else has changed.`);
@@ -555,7 +557,7 @@ async function runSetup(options: SetupOptions): Promise<number> {
 		if (!json) console.log(line);
 	};
 	/** Text mode: the old stderr lines. JSON mode: the state, with the passcode if this run made it. Exit 3 when a person has something to do. */
-	const fail = (state: RemoteState, message: string, extra: { adminUrl?: string; code?: string; after?: string; next?: RemoteNext } = {}): number => {
+	const fail = (state: RemoteState, message: string, extra: { adminUrl?: string; code?: string; after?: string; next?: RemoteNext; checks?: ProofCheck[] } = {}): number => {
 		const report: SetupReport = {
 			ok: false,
 			state,
@@ -565,6 +567,7 @@ async function runSetup(options: SetupOptions): Promise<number> {
 			...(madePasscode ? { passcode: madePasscode } : {}),
 			passcodeSet: passcodeSet(),
 			...(extra.next ? { next: extra.next } : {}),
+			...(extra.checks ? { checks: extra.checks } : {}),
 		};
 		if (json) {
 			emit(report);
@@ -624,8 +627,11 @@ async function runSetup(options: SetupOptions): Promise<number> {
 			if (!yes && input) yes = await askYes(`cloudflared isn't installed. Download Cloudflare's release ${CLOUDFLARED_VERSION} from GitHub (checked against its SHA-256) to ${downloadedCloudflared()}? [y/N] `);
 			if (!yes) return missing(`cloudflared isn't installed. ${getIt} downloads Cloudflare's own release ${CLOUDFLARED_VERSION}, checked against its SHA-256; or install it from ${CLOUDFLARED_DOWNLOAD_URL}.`);
 			say(`${sym.dot} Downloading cloudflared ${CLOUDFLARED_VERSION}...`);
-			const got = await downloadCloudflared();
-			if (!got.ok) return missing(got.message);
+			// TABKYRA_CLOUDFLARED_BASE_URL is for tests: the bytes must still match the pinned SHA-256, so it can only make a download fail.
+			const base = envVar("CLOUDFLARED_BASE_URL");
+			const got = await downloadCloudflared(base ? { baseUrl: base } : {});
+			// A download that failed (a digest mismatch, no network) is a failure: retrying the same command isn't a person's step.
+			if (!got.ok) return fail("cloudflared_missing", got.message);
 			say(`${sym.ok} cloudflared ${c.dim(got.path)}`);
 			bin = got.path;
 		}
@@ -703,15 +709,17 @@ async function runSetup(options: SetupOptions): Promise<number> {
 			);
 		}
 	}
+	// Where the connect code comes from: this run makes one for a person at a terminal or when asked; otherwise the person makes one.
+	const codeSource = options.connectCode || (!json && options.terminal) ? "setup prints one when it's done" : `${COMMAND_NAME} token approval-code makes one`;
 	if (options.passcode === false && !passcodeSet()) {
-		say(`${sym.dot} No passcode made (--no-passcode). A one-time connect code approves each new assistant; setup prints one when it's done. ${COMMAND_NAME} token passcode sets a passcode later.`);
+		say(`${sym.dot} No passcode made (--no-passcode). A one-time connect code approves each new assistant; ${codeSource}. ${COMMAND_NAME} token passcode sets a passcode later.`);
 	} else if (!passcodeSet()) {
 		madePasscode = setPasscode();
 		// Shown now, so a run that stops or waits can't lose it; the summary at the end repeats it.
 		say(`${sym.ok} Passcode, shown once:\n\n  ${madePasscode}\n`);
 		say(
 			c.dim(
-				`It re-approves an assistant you already approved. A new assistant needs a one-time connect code instead; setup prints one when it's done. Keep the passcode in a password manager, but not one the browser Polycarp drives can fill. ${COMMAND_NAME} token passcode replaces it.`,
+				`It re-approves an assistant you already approved. A new assistant needs a one-time connect code instead; ${codeSource}. Keep the passcode in a password manager, but not one the browser Polycarp drives can fill. ${COMMAND_NAME} token passcode replaces it.`,
 			),
 		);
 	}
@@ -723,7 +731,8 @@ async function runSetup(options: SetupOptions): Promise<number> {
 		if (route === "cloudflare" && cloudflareHost) {
 			stage = "cloudflare_tunnel";
 			const opened = await prepareCloudflare(cloudflaredBin, cloudflareHost, port);
-			if (!opened.ok) return fail("problem", opened.message, { code: opened.code, ...(opened.code === "cloudflare_tunnel" ? {} : { next: { kind: "choose_name" } }) });
+			// Only a name in use or a name in the wrong zone is cleared by another name; an API, sign-in or network error is a plain failure.
+			if (!opened.ok) return fail("problem", opened.message, { code: opened.code, ...(opened.nameStep ? { next: { kind: "choose_name" } } : {}) });
 			tunnelName = opened.tunnel;
 			if (options.replaceFunnel && previous?.route === "funnel") {
 				// The tunnel is ready, so now the old public route closes. If it won't, nothing is saved and Funnel keeps working.
@@ -794,14 +803,35 @@ async function runSetup(options: SetupOptions): Promise<number> {
 		}
 		if (route === "cloudflare" && wait) await waitForPublic(publicUrl, say);
 		const connectorUrl = `${publicUrl}/mcp`;
-		// The one-time connect code a new assistant needs (the passcode alone is refused for one, issue #97). JSON mode makes one only when asked.
+		// The proof, as `remote test` gives it: what an assistant sees from outside. A name that doesn't answer yet is normal for a
+		// few minutes (new DNS); a connector that answers but can't stream, or can't start a sign-in, is a fault and fails setup.
+		stage = "proof";
+		const proof = await publicChecks(publicUrl);
+		const up = answersFromOutside(proof);
+		say(`\nFrom the internet, as an assistant sees it:`);
+		for (const line of proofLines(proof)) say(line);
+		const fault = up ? proof.find((x) => x.status === "fail") : undefined;
+		if (fault) {
+			return fail("problem", `${connectorUrl} answers from the internet, but ${fault.name} failed: ${fault.detail}. ${fault.next ?? ""} remote.json is kept.`.trim(), { code: fault.name, checks: proof });
+		}
+		if (!up) say(`${sym.warn} It doesn't answer from the internet yet. A new name takes a few minutes; then run ${COMMAND_NAME} remote test.`);
+		// The one-time connect code a new assistant needs (the passcode alone is refused for one, issue #97). Made for a person at a
+		// terminal, or when --connect-code asks; never printed unasked into an agent's shell or a log, where it would sit live.
 		let connect: { code: string; expiresAt: number } | undefined;
 		let connectProblem = "";
-		if (!json || options.connectCode) {
+		if (options.connectCode || (!json && options.terminal)) {
 			try {
 				connect = mintApprovalCode();
 			} catch (err) {
 				connectProblem = err instanceof Error ? err.message : String(err);
+			}
+		}
+		if (options.connectCode && !connect) {
+			// Asked for and not made: the route is saved and working, but the run didn't do what it was asked, so it says so and fails.
+			const why = `The connector is set up at ${connectorUrl}, but the connect code couldn't be made (${connectProblem}). remote.json is kept. Make one with ${COMMAND_NAME} token approval-code.`;
+			if (json) {
+				emit({ ok: false, state: "problem", code: "connect_code", message: why, connectorUrl, ...(madePasscode ? { passcode: madePasscode } : {}), passcodeSet: passcodeSet(), connectCodeProblem: connectProblem });
+				return 1;
 			}
 		}
 		if (json) {
@@ -814,6 +844,7 @@ async function runSetup(options: SetupOptions): Promise<number> {
 				passcodeSet: passcodeSet(),
 				...(connect ? { connectCode: connect.code, connectCodeExpiresAt: connect.expiresAt } : {}),
 				next: { kind: "add_connector", url: connectorUrl },
+				checks: proof,
 			};
 			emit(report);
 			return 0;
@@ -822,7 +853,9 @@ async function runSetup(options: SetupOptions): Promise<number> {
 			? `Connect code: ${c.bold(connect.code)}
   Type it on the approval page when you add Polycarp to an assistant for the first time.
   It works once, for 10 minutes. Each new assistant needs its own: ${COMMAND_NAME} token approval-code makes another.`
-			: `Connect code: none made (${connectProblem}). Make one with ${COMMAND_NAME} token approval-code before you add an assistant.`;
+			: connectProblem
+				? `Connect code: none made (${connectProblem}). Make one with ${COMMAND_NAME} token approval-code before you add an assistant.`
+				: `Connect code: make one with ${COMMAND_NAME} token approval-code when you add an assistant (it works once, for 10 minutes).`;
 		const passcodeLines = madePasscode
 			? `
 Passcode: ${c.bold(madePasscode)}
@@ -840,7 +873,7 @@ Add it to an assistant (paste the connector URL):
 Each opens Polycarp's approval page: check the name, tick what it may do, type the connect code and press Allow.
 
 Check it with: ${COMMAND_NAME} remote status`);
-		return 0;
+		return options.connectCode && !connect ? 1 : 0;
 	} catch (err) {
 		if (!json) throw err;
 		return fail("problem", `${err instanceof Error ? err.message : String(err)}. remote.json is kept; fix the cause and run ${COMMAND_NAME} remote setup again.`, { code: stage });
@@ -855,13 +888,16 @@ async function waitForPublic(publicUrl: string, say: (line: string) => void): Pr
 	say(`Waiting for ${publicUrl} to answer from the internet (a new name takes a few minutes), up to ${duration(total)}. Ctrl-C stops; setup is saved.`);
 	let shownAt = start;
 	for (;;) {
-		const result = await metadata(`${publicUrl}${METADATA_PATH}`, 10_000, publicUrl);
-		if (result.ok) {
+		// Asked the way an assistant would reach it: public DNS, then that address. Never this computer's resolver, which can
+		// answer from inside a tailnet.
+		const checks = await publicChecks(publicUrl, { streaming: false });
+		if (answersFromOutside(checks)) {
 			say(`${sym.ok} ${publicUrl} answers from the internet.`);
 			return;
 		}
 		if (Date.now() + every >= start + total) {
-			say(`${sym.warn} ${publicUrl} isn't answering yet (${result.detail}). DNS can take longer; check with ${COMMAND_NAME} remote status.`);
+			const failed = checks.find((x) => x.status !== "ok");
+			say(`${sym.warn} ${publicUrl} isn't answering yet (${failed?.detail ?? "no answer"}). DNS can take longer; check with ${COMMAND_NAME} remote test.`);
 			return;
 		}
 		if (Date.now() - shownAt >= 30_000) {
@@ -901,11 +937,6 @@ export interface Check {
 	detail: string;
 }
 
-/** 100.64.0.0/10: the address range Tailscale hands out. */
-export function inTailnetRange(address: string): boolean {
-	const m = /^100\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(address);
-	return Boolean(m) && Number(m?.[1]) >= 64 && Number(m?.[1]) <= 127;
-}
 
 export async function metadata(url: string, timeoutMs: number, publicUrl: string): Promise<{ ok: boolean; detail: string }> {
 	try {
@@ -922,18 +953,12 @@ export async function metadata(url: string, timeoutMs: number, publicUrl: string
 export async function dnsCheck(host: string): Promise<Check> {
 	const name = "public DNS";
 	if (/^[\d.]+$/.test(host) || host.includes(":")) return { name, status: "ok", detail: `${host} is an address, no DNS to check` };
-	const doh = envVar("DOH_URL") || "https://cloudflare-dns.com/dns-query";
-	let answer: { Answer?: { type?: number; data?: string }[] };
+	let addresses: string[];
 	try {
-		const url = new URL(doh);
-		url.searchParams.set("name", host);
-		url.searchParams.set("type", "A");
-		const res = await fetch(url, { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(5000) });
-		answer = (await res.json()) as typeof answer;
+		addresses = await dohAddresses(host);
 	} catch (err) {
 		return { name, status: "warn", detail: `couldn't ask public DNS about ${host}: ${err instanceof Error ? err.message : String(err)}` };
 	}
-	const addresses = (answer.Answer ?? []).filter((a) => a.type === 1 && typeof a.data === "string").map((a) => a.data as string);
 	const reachable = addresses.filter((a) => !inTailnetRange(a));
 	if (reachable.length) return { name, status: "ok", detail: `${host} resolves publicly to ${reachable.join(", ")}` };
 	if (addresses.length) return { name, status: "fail", detail: `${host} resolves only to ${addresses.join(", ")}, a tailnet address. Funnel isn't reaching the internet.` };
@@ -1010,11 +1035,12 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 		});
 		checks.push(await dnsCheck(new URL(config.publicUrl).hostname));
 		const pub = await metadata(`${config.publicUrl}${METADATA_PATH}`, 10_000, config.publicUrl);
-		checks.push({
-			name: "public fetch",
-			status: pub.ok ? "ok" : "fail",
-			detail: `${pub.detail} (from inside a tailnet this may go over the tailnet, so it can pass while the internet can't reach it; the DNS line is the check for that)`,
-		});
+		checks.push({ name: "public fetch", status: pub.ok ? "ok" : "fail", detail: pub.detail });
+		// This fetch used this computer's resolver. On a tailnet that answers a ts.net name with a tailnet address, so it can pass
+		// while the internet can't reach the connector. `remote test` asks public DNS and connects to that address instead.
+		if (await answeredInsideTailnet(new URL(config.publicUrl).hostname)) {
+			checks.push({ name: "public test", status: "warn", detail: `this computer can reach ${new URL(config.publicUrl).hostname} over your tailnet, so the fetch above can't tell whether the internet can. ${COMMAND_NAME} remote test checks from outside.` });
+		}
 		try {
 			clients = listClients().length;
 		} catch {
@@ -1058,6 +1084,63 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 		console.log(`${mark} ${check.name.padEnd(13)} ${c.dim(check.detail)}`);
 	}
 	return ok ? 0 : 1;
+}
+
+// ---------- remote test ----------
+
+/** Could this computer's own fetch of `host` have stayed inside the tailnet? A ts.net name, or one its resolver gives a tailnet address. */
+async function answeredInsideTailnet(host: string): Promise<boolean> {
+	if (/\.ts\.net$/i.test(host)) return true;
+	try {
+		return (await lookup(host, { all: true })).some((a) => inTailnetRange(a.address));
+	} catch {
+		return false;
+	}
+}
+
+/** `remote test`'s lines: one per check, and under a failure the one thing to do. */
+export function proofLines(checks: ProofCheck[]): string[] {
+	return checks.flatMap((check) => {
+		const mark = check.status === "ok" ? sym.ok : check.status === "warn" ? sym.warn : sym.fail;
+		return [`${mark} ${check.name.padEnd(18)} ${c.dim(check.detail)}`, ...(check.status !== "ok" && check.next ? [`  ${check.next}`] : [])];
+	});
+}
+
+/** Exit codes of `remote test`: 0 every check ok, 1 a check failed, 2 usage, 3 nothing is set up yet. */
+export async function remoteTest(options: { json: boolean }): Promise<number> {
+	let config: RemoteConfig | undefined;
+	try {
+		config = loadRemoteConfig();
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		if (options.json) printReport({ ok: false, state: "problem", code: "config", message, checks: [] });
+		else console.error(`${sym.fail} ${message}`);
+		return EXIT_FAILED;
+	}
+	if (!config) {
+		const message = `Nothing is set up yet. Run ${COMMAND_NAME} remote setup first.`;
+		if (options.json) printReport({ ok: false, state: "problem", code: "not_set_up", message, next: { kind: "run_command", command: `${COMMAND_NAME} remote setup` }, checks: [] });
+		else console.error(`${sym.fail} ${message}`);
+		return EXIT_NEEDS_PERSON;
+	}
+	const checks = await publicChecks(config.publicUrl);
+	const failed = checks.find((x) => x.status === "fail");
+	if (options.json) {
+		printReport({
+			ok: !failed,
+			state: failed ? "problem" : "on",
+			...(failed ? { code: failed.name } : {}),
+			message: failed ? `${failed.name}: ${failed.detail}` : "An assistant can reach and stream from this connector.",
+			publicUrl: config.publicUrl,
+			connectorUrl: `${config.publicUrl}/mcp`,
+			checks,
+		});
+	} else {
+		console.log(`Testing ${config.publicUrl}/mcp from outside, the way an assistant reaches it:`);
+		for (const line of proofLines(checks)) console.log(line);
+		console.log(failed ? `\n${sym.fail} ${failed.name} failed.` : `\n${sym.ok} An assistant can reach and stream from this connector.`);
+	}
+	return failed ? EXIT_FAILED : EXIT_ON;
 }
 
 // ---------- remote off ----------

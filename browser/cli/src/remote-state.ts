@@ -81,7 +81,8 @@ export interface SetupReport {
 	/**
 	 * Why a `problem` or `port_busy` happened, when an app has something specific to say. problem: "launcher" (no working launcher yet:
 	 * connect a browser first), "hub", "service", "serve" (nothing answers on the local port), "funnel", "config", "cloudflare_login",
-	 * "cloudflare_tunnel", "cloudflare_dns" (that name is taken), "cloudflare_zone" (the sign-in covers another domain); on status also
+	 * "cloudflare_tunnel", "cloudflare_dns" (that name is taken, with next choose_name; without next, cloudflared couldn't make the
+	 * record), "cloudflare_zone" (the sign-in covers another domain), "connect_code" (set up, but --connect-code's code couldn't be made); on status also
 	 * "dns" (public DNS doesn't answer for the address yet; Tailscale takes minutes to publish a new one). port_busy:
 	 * "tailscale_port" (a Tailscale setting already uses 8443) or "local_port" (a program here uses the local port).
 	 */
@@ -94,8 +95,20 @@ export interface SetupReport {
 	connectCode?: string;
 	/** When `connectCode` stops working, in milliseconds since 1970 (ten minutes after it was made). */
 	connectCodeExpiresAt?: number;
+	/** Why the connect code `--connect-code` asked for couldn't be made (with state problem, code "connect_code"). The route is saved. */
+	connectCodeProblem?: string;
 	/** What the person does next. Present on `on` (add_connector) and on every refusal a person can clear. */
 	next?: RemoteNext;
+	/** `remote test`'s checks, run at the end of setup: what an assistant sees from outside. `code` names the one that failed. */
+	checks?: ProofLine[];
+}
+
+/** One check of `remote test` (and the end of setup): its name, ok, warn or fail, what it found, and on a failure what to do. */
+export interface ProofLine {
+	name: string;
+	status: "ok" | "warn" | "fail";
+	detail: string;
+	next?: string;
 }
 
 /** Tailscale's download page for this platform. */
@@ -135,19 +148,47 @@ export function operatorFromPrefs(output: string): string | undefined {
 }
 
 /**
- * The DNS zone a name sits in and whether Cloudflare serves it, from a DNS-over-HTTPS JSON answer for `type=SOA`. The SOA is in
- * Answer for a zone apex and in Authority for any name below one (also for a name that doesn't exist yet). A zone on Cloudflare
- * names one of its nameservers, `<x>.ns.cloudflare.com`, first in its SOA. Undefined when there is no SOA to read.
+ * The DNS zone a name sits in and what its SOA says about Cloudflare, from a DNS-over-HTTPS JSON answer for `type=SOA`. The SOA is
+ * in Answer for a zone apex and in Authority for any name below one (also for a name that doesn't exist yet). `onCloudflare` is
+ * true only when the SOA itself shows Cloudflare: its primary is one of Cloudflare's nameservers (`<x>.ns.cloudflare.com`, or
+ * Foundation DNS's `foundationdns.com/.net/.org`), or its mailbox is Cloudflare's `dns.cloudflare.com`, which Cloudflare writes
+ * for zones on custom nameservers too. False means only "not shown here"; `primary` lets the caller look further.
+ * Undefined when there is no SOA to read.
  */
-export function zoneFromSoa(answer: unknown): { zone: string; onCloudflare: boolean } | undefined {
+export function zoneFromSoa(answer: unknown): { zone: string; onCloudflare: boolean; primary: string } | undefined {
 	if (!answer || typeof answer !== "object") return undefined;
 	const { Answer, Authority } = answer as { Answer?: unknown; Authority?: unknown };
 	const records = [...(Array.isArray(Answer) ? Answer : []), ...(Array.isArray(Authority) ? Authority : [])] as { name?: unknown; type?: unknown; data?: unknown }[];
 	const soa = records.find((r) => r && r.type === 6 && typeof r.name === "string" && typeof r.data === "string");
 	if (!soa) return undefined;
 	const zone = String(soa.name).replace(/\.$/, "").toLowerCase();
-	const primary = String(soa.data).trim().split(/\s+/)[0] ?? "";
-	return { zone, onCloudflare: /\.ns\.cloudflare\.com\.?$/i.test(primary) };
+	const [primary = "", mailbox = ""] = String(soa.data).trim().toLowerCase().split(/\s+/).map((x) => x.replace(/\.$/, ""));
+	const onCloudflare = /\.ns\.cloudflare\.com$/.test(primary) || /\.foundationdns\.(com|net|org)$/.test(primary) || mailbox === "dns.cloudflare.com";
+	return { zone, onCloudflare, primary };
+}
+
+/**
+ * Cloudflare's published IPv4 ranges (cloudflare.com/ips-v4). Its nameservers, custom nameservers included, answer from these, so
+ * a zone whose primary nameserver has an address here is on Cloudflare whatever the nameserver is called.
+ */
+const CLOUDFLARE_V4 = ["173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22"];
+
+const v4 = (address: string): number | undefined => {
+	const parts = address.split(".");
+	if (parts.length !== 4 || !parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255)) return undefined;
+	return parts.reduce((n, p) => n * 256 + Number(p), 0);
+};
+
+/** Is this IPv4 address in one of Cloudflare's ranges? */
+export function cloudflareAddress(address: string): boolean {
+	const n = v4(address);
+	if (n === undefined) return false;
+	return CLOUDFLARE_V4.some((range) => {
+		const [base, bits] = range.split("/");
+		const size = 2 ** (32 - Number(bits));
+		const start = v4(base) ?? -1;
+		return n >= start && n < start + size;
+	});
 }
 
 /**
@@ -163,6 +204,15 @@ export function funnelAdminUrl(output: string): string | undefined {
 /** The enablement page, but only once something follows it (a space, a newline or a quote), so a chunk that stops mid-address never counts. */
 export function completeFunnelAdminUrl(output: string): string | undefined {
 	return /https:\/\/login\.tailscale\.com\/[^\s"'<>]*[\s"'<>]/.test(output) ? funnelAdminUrl(output) : undefined;
+}
+
+/** Where serve answers the protected-resource metadata (RFC 9728) for its /mcp endpoint. */
+export const METADATA_PATH = "/.well-known/oauth-protected-resource/mcp";
+
+/** 100.64.0.0/10: the address range Tailscale hands out. */
+export function inTailnetRange(address: string): boolean {
+	const m = /^100\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(address);
+	return Boolean(m) && Number(m?.[1]) >= 64 && Number(m?.[1]) <= 127;
 }
 
 export function printReport(report: object): void {

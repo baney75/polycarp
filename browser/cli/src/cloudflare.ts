@@ -1,8 +1,8 @@
 /**
  * Remote access through the person's own Cloudflare account: a named tunnel on a domain they already have there, so the
  * connector's address is theirs and stays the same. `remote setup --cloudflare <host>` runs the steps; this file is the
- * cloudflared part of it. Polycarp doesn't install cloudflared and never makes an account: `cloudflared tunnel login` is the
- * person signing in, in their own browser.
+ * cloudflared part of it. Polycarp never makes an account, and downloads its pinned cloudflared only when the person says yes
+ * (cloudflared-download.ts): `cloudflared tunnel login` is the person signing in, in their own browser.
  *
  * A named tunnel needs a domain on the account (Cloudflare's rule). Without one, Tailscale is the route that needs none.
  */
@@ -16,9 +16,10 @@ import { which } from "./harness.ts";
 import { configDir } from "./files.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { removeService, runAsync, type ServiceSpec, sleep, writeAtomic } from "./service.ts";
+import { dohAddresses, dohQuery } from "./doh.ts";
 import { envVar } from "./env.ts";
 import { type ToolLookup, windowsTool } from "./tool-paths.ts";
-import { zoneFromSoa } from "./remote-state.ts";
+import { cloudflareAddress, zoneFromSoa } from "./remote-state.ts";
 
 /** cloudflared's own sign-in waits on the person. Five minutes, then it counts as not done. */
 const LOGIN_TIMEOUT_MS = 300_000;
@@ -201,10 +202,14 @@ function rememberZone(zone: string): void {
 const inZone = (host: string, zone: string) => host === zone || host.endsWith(`.${zone}`);
 
 /**
- * Checked before any tunnel or DNS record is made: can this sign-in give `host` its record? Cloudflare doesn't refuse a name
- * outside the signed-in domain; it adds that domain to the end and makes the record anyway. So this refuses a name outside the
- * zone an earlier try proved this sign-in covers, then asks public DNS which zone `host` is in and refuses when that zone isn't
- * on Cloudflare. When public DNS can't be asked it lets setup go on; the check after the record is made still catches a wrong one.
+ * Checked before any tunnel or DNS record is made: is `host` positively in the wrong place for this sign-in? Cloudflare doesn't
+ * refuse a name outside the signed-in domain; it adds that domain to the end and makes the record anyway. The certificate says
+ * which domain it covers, but it also holds an API token, so it is never read. This refuses only on what is known:
+ * - a name outside the zone an earlier try proved this sign-in covers;
+ * - a zone public DNS shows is served elsewhere: its SOA names no Cloudflare nameserver or mailbox, and its primary nameserver's
+ *   address is outside Cloudflare's ranges.
+ * Anything it can't tell (no answer, a nameserver it can't look up) goes ahead: the check after the record is made catches a
+ * wrong zone, names the record it made and remembers the zone, so the next try is refused here.
  */
 export async function checkCloudflareZone(host: string): Promise<{ ok: true } | { ok: false; message: string }> {
 	const remembered = signedInZone();
@@ -214,24 +219,28 @@ export async function checkCloudflareZone(host: string): Promise<{ ok: true } | 
 			message: `Your Cloudflare sign-in is for ${remembered}, and ${host} isn't on it, so nothing was made. Use a name ending in .${remembered}, or delete ${join(cloudflaredDir(), "cert.pem")}, run ${COMMAND_NAME} remote cloudflare login and choose the domain for ${host}.`,
 		};
 	}
-	const doh = envVar("DOH_URL") || "https://cloudflare-dns.com/dns-query";
 	let found: ReturnType<typeof zoneFromSoa>;
 	try {
-		const url = new URL(doh);
-		url.searchParams.set("name", host);
-		url.searchParams.set("type", "SOA");
-		const res = await fetch(url, { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(5000) });
-		found = zoneFromSoa(await res.json());
+		found = zoneFromSoa(await dohQuery(host, "SOA"));
 	} catch {
 		return { ok: true };
 	}
-	if (found && !found.onCloudflare) {
-		return { ok: false, message: `${host} is in ${found.zone}, and public DNS says ${found.zone} isn't on Cloudflare, so nothing was made. Pick a name on a domain in your Cloudflare account, or add ${found.zone} to Cloudflare first.` };
+	if (!found || found.onCloudflare || !found.primary) return { ok: true };
+	let addresses: string[];
+	try {
+		addresses = await dohAddresses(found.primary);
+	} catch {
+		return { ok: true };
 	}
-	return { ok: true };
+	if (!addresses.length || addresses.some(cloudflareAddress)) return { ok: true };
+	return {
+		ok: false,
+		message: `${host} is in ${found.zone}, and public DNS says ${found.zone} is served by ${found.primary} (${addresses.join(", ")}), not Cloudflare, so nothing was made. Pick a name on a domain in your Cloudflare account, or add ${found.zone} to Cloudflare first.`,
+	};
 }
 
-export type CloudflareOpen = { ok: true; tunnel: string } | { ok: false; code: "cloudflare_tunnel" | "cloudflare_dns" | "cloudflare_zone"; message: string };
+/** On a refusal, `nameStep` is true when another name is the way past it (the name is taken, or it landed in the wrong zone). */
+export type CloudflareOpen = { ok: true; tunnel: string } | { ok: false; code: "cloudflare_tunnel" | "cloudflare_dns" | "cloudflare_zone"; message: string; nameStep: boolean };
 
 /**
  * The tunnel (made once, then reused), its DNS record and the config the service runs. Nothing here starts traffic.
@@ -240,25 +249,39 @@ export type CloudflareOpen = { ok: true; tunnel: string } | { ok: false; code: "
 export async function prepareCloudflare(bin: string, host: string, port: number): Promise<CloudflareOpen> {
 	const name = cloudflareTunnelName();
 	const listed = await runAsync(bin, ["tunnel", "list", "--output", "json", "--name", name], 30_000);
-	if (listed.code !== 0) return { ok: false, code: "cloudflare_tunnel", message: `cloudflared couldn't list your tunnels: ${listed.out.slice(-300)}` };
+	if (listed.code !== 0) return { ok: false, code: "cloudflare_tunnel", nameStep: false, message: `cloudflared couldn't list your tunnels: ${listed.out.slice(-300)}` };
 	let id = UUID.exec(listed.out)?.[0];
 	if (id && !existsSync(join(cloudflaredDir(), `${id}.json`))) {
-		return { ok: false, code: "cloudflare_tunnel", message: `Your account has a tunnel named ${name}, but its key isn't on this computer. Delete it with: cloudflared tunnel delete ${name}. Then try again.` };
+		return { ok: false, code: "cloudflare_tunnel", nameStep: false, message: `Your account has a tunnel named ${name}, but its key isn't on this computer. Delete it with: cloudflared tunnel delete ${name}. Then try again.` };
 	}
 	if (!id) {
 		const made = await runAsync(bin, ["tunnel", "create", name], 60_000);
 		id = UUID.exec(made.out)?.[0];
-		if (made.code !== 0 || !id) return { ok: false, code: "cloudflare_tunnel", message: `cloudflared couldn't make the tunnel: ${made.out.slice(-300)}` };
+		if (made.code !== 0 || !id) return { ok: false, code: "cloudflare_tunnel", nameStep: false, message: `cloudflared couldn't make the tunnel: ${made.out.slice(-300)}` };
 	}
 	const route = await runAsync(bin, ["tunnel", "route", "dns", id, host], 60_000);
-	if (route.code !== 0) return { ok: false, code: "cloudflare_dns", message: `Cloudflare wouldn't give this tunnel ${host}. If that name is already in use, pick another. Its words: ${route.out.slice(-300)}` };
+	if (route.code !== 0) {
+		// cloudflared's words for a name that already has a record. Anything else (an API, sign-in or network error) isn't fixed by another name.
+		const taken = /already exists|already in use|record with that host/i.test(route.out);
+		return {
+			ok: false,
+			code: "cloudflare_dns",
+			nameStep: taken,
+			message: taken ? `${host} is already in use in your Cloudflare account, so pick another name. Its words: ${route.out.slice(-300)}` : `cloudflared couldn't make the DNS record for ${host}. Its words: ${route.out.slice(-300)}`,
+		};
+	}
 	// A sign-in covers one domain. A name on another one gets that domain added to the end instead of failing.
 	// The same when an earlier wrong try left that record: cloudflared then says it's already there, under the wrong name.
 	const added = (/Added CNAME (\S+)/i.exec(route.out) ?? /(\S+) is already configured to route to your tunnel/i.exec(route.out))?.[1]?.replace(/\.$/, "").toLowerCase();
 	if (added && added !== host) {
 		// Cloudflare put the name under the signed-in zone, so that zone is now known: the next name outside it is refused before anything is made.
 		if (added.startsWith(`${host}.`)) rememberZone(added.slice(host.length + 1));
-		return { ok: false, code: "cloudflare_zone", message: `Your Cloudflare sign-in is for a different domain, so Cloudflare made ${added} instead of ${host}. Remove that record, delete ${join(cloudflaredDir(), "cert.pem")}, and sign in again choosing the domain for ${host}.` };
+		return {
+			ok: false,
+			code: "cloudflare_zone",
+			nameStep: true,
+			message: `Your Cloudflare sign-in is for a different domain, so Cloudflare made the DNS record ${added} instead of ${host}. Nothing else was set up. That record is the only change: delete it in the Cloudflare dashboard (DNS, Records) if you don't want it; Polycarp never deletes DNS records. Then use a name ending in .${added.startsWith(`${host}.`) ? added.slice(host.length + 1) : "the signed-in domain"}, or delete ${join(cloudflaredDir(), "cert.pem")} and sign in again choosing the domain for ${host}.`,
+		};
 	}
 	writeAtomic(
 		cloudflareConfigFile(),
