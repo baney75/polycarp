@@ -383,19 +383,19 @@ const editHandlers: Record<string, Handler> = {
 	},
 };
 
+/** The part of `status` that is about the extension, not a session. */
+export async function extensionStatus() {
+	const [permissionMode, allowedHosts] = await Promise.all([getPermissionMode(), getAllowedHosts()]);
+	return { extensionVersion: chrome.runtime.getManifest().version, permissionMode, allowedHosts };
+}
+
 export const handlers: Record<string, Handler> = {
 	...editHandlers,
 	/** For the MCP `status` tool: what this session may open and where its tabs are. */
 	status: async (ctx) => {
-		const [permissionMode, allowedHosts, tabs] = await Promise.all([
-			getPermissionMode(),
-			getAllowedHosts(),
-			ctx.session.tabs(),
-		]);
+		const [extension, tabs] = await Promise.all([extensionStatus(), ctx.session.tabs()]);
 		return {
-			extensionVersion: chrome.runtime.getManifest().version,
-			permissionMode,
-			allowedHosts,
+			...extension,
 			tabGroup: ctx.session.groupName,
 			tabs: tabs.map((t) => ({ tabId: t.id, url: t.url, title: t.title, current: t.current })),
 		};
