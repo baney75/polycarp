@@ -25,6 +25,7 @@ import { hubCode, hubDevices, hubOff, hubPrefer, hubRemove, hubServe, hubSetup, 
 import { loadHubConfig } from "./hub-state.ts";
 import { linkBusy, linkEnroll, linkMintCode, linkOff, linkRun, linkScopes, linkStatus, normalizeHubUrl, printCode } from "./link.ts";
 import { runTheme } from "./theme.ts";
+import { remoteFix } from "./remote-fix.ts";
 import { loadRemoteConfig, remoteFile, remoteOff, remoteSetup, remoteStatus, remoteTest } from "./remote-setup.ts";
 import { interactiveTerminal } from "./remote-guide.ts";
 import { createHubToken, hubTunnel, HUB_SCOPES } from "./hub.ts";
@@ -718,12 +719,16 @@ async function main(): Promise<void> {
 				process.exitCode = await remoteTest({ json: flag("--json") });
 				return;
 			}
+			if (sub === "fix") {
+				process.exitCode = await remoteFix({ json: flag("--json"), yes: flag("--yes"), dryRun: flag("--dry-run") });
+				return;
+			}
 			if (sub === "off") {
 				process.exitCode = await remoteOff({ json: flag("--json") });
 				return;
 			}
 			throw new UsageError(
-				`Usage: ${COMMAND_NAME} remote setup [--tailscale | --cloudflare [name.yourdomain.com] | --public-url https://host] [--replace-funnel] [--port N] [--no-service] [--no-passcode] [--no-wait] [--no-input] [--yes] [--connect-code] [--json] | cloudflare login [--json] | status [--json] | test [--json] | off [--json]`,
+				`Usage: ${COMMAND_NAME} remote setup [--tailscale | --cloudflare [name.yourdomain.com] | --public-url https://host] [--replace-funnel] [--port N] [--no-service] [--no-passcode] [--no-wait] [--no-input] [--yes] [--connect-code] [--json] | cloudflare login [--json] | status [--json] | test [--json] | fix [--yes] [--dry-run] [--json] | off [--json]`,
 			);
 		}
 		case "hub": {

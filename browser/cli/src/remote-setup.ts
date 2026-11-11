@@ -50,7 +50,7 @@ import {
 	tailscaleAccessDenied,
 	tailscaleDownloadUrl,
 } from "./remote-state.ts";
-import { installService, removeService, run, serviceFile, serviceLogHint, sleep, writeAtomic } from "./service.ts";
+import { installService, removeService, run, serviceFile, serviceLogHint, serviceRunning, sleep, writeAtomic } from "./service.ts";
 import { configDir, listClients, mintApprovalCode, passcodeSet, setPasscode } from "./oauth.ts";
 import { hubFile } from "./hub-state.ts";
 import { dohAddresses } from "./doh.ts";
@@ -277,7 +277,7 @@ function openFunnelProcess(bin: string, port: number): Promise<FunnelOpen> {
 }
 
 /** Open Funnel on 8443 and confirm Tailscale really has it on for this machine before saying so. */
-async function openFunnel(bin: string, dns: string, port: number): Promise<FunnelOpen> {
+export async function openFunnel(bin: string, dns: string, port: number): Promise<FunnelOpen> {
 	const result = await openFunnelProcess(bin, port);
 	if (result.kind !== "opened") return result;
 	const after = readTailscale(bin);
@@ -363,7 +363,7 @@ async function answersLikeTabkyra(port: number): Promise<boolean> {
 }
 
 /** How long setup waits for serve to answer, in ms. TABKYRA_SERVE_WAIT_MS shortens it for tests. */
-const serveWaitMs = () => {
+export const serveWaitMs = () => {
 	const n = Number(envVar("SERVE_WAIT_MS"));
 	return Number.isFinite(n) && n > 0 ? n : 15_000;
 };
@@ -912,7 +912,7 @@ async function waitForPublic(publicUrl: string, say: (line: string) => void): Pr
  * Linux stops a user's services at logout unless lingering is on for that user (systemd-logind). Undefined when it is on, when
  * this isn't Linux, or when loginctl can't say.
  */
-function lingerWarning(): string | undefined {
+export function lingerWarning(): string | undefined {
 	if (process.platform !== "linux") return undefined;
 	const user = userInfo().username;
 	const r = run("loginctl", ["show-user", user, "-p", "Linger"], 10_000);
@@ -921,7 +921,7 @@ function lingerWarning(): string | undefined {
 }
 
 /** Linux: is this user Tailscale's operator? A warning when it isn't (Funnel then can't be opened again without sudo), else undefined. */
-function operatorWarning(bin: string | undefined): string | undefined {
+export function operatorWarning(bin: string | undefined): string | undefined {
 	if (process.platform !== "linux" || !bin || process.getuid?.() === 0) return undefined;
 	const r = run(bin, ["debug", "prefs"], 10_000);
 	const operator = r.code === 0 ? operatorFromPrefs(r.out) : undefined;
@@ -1017,8 +1017,14 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 		checks.push({ name: "cloudflare", status: "fail", detail: tailscale.message });
 	} else if (config?.route === "cloudflare") {
 		const file = serviceFile(CLOUDFLARE_SERVICE);
-		const running = Boolean(file && existsSync(file));
-		checks.push({ name: "cloudflare", status: running ? "ok" : "fail", detail: running ? `tunnel ${cloudflareTunnelName()}` : `The tunnel's service is gone. Run ${COMMAND_NAME} remote setup --cloudflare ${new URL(config.publicUrl).hostname} again.` });
+		const installed = Boolean(file && existsSync(file));
+		// The file alone says it was installed; the service manager says whether it runs (a crash loop or a stopped unit is not up).
+		const running = installed && serviceRunning(CLOUDFLARE_SERVICE) !== false;
+		checks.push({
+			name: "cloudflare",
+			status: running ? "ok" : "fail",
+			detail: running ? `tunnel ${cloudflareTunnelName()}` : installed ? `The tunnel's service isn't running. Run ${COMMAND_NAME} remote fix.` : `The tunnel's service is gone. Run ${COMMAND_NAME} remote setup --cloudflare ${new URL(config.publicUrl).hostname} again.`,
+		});
 	} else if (tailscale) checks.push({ name: "tailscale", status: "fail", detail: tailscale.message });
 	if (config && !tailscale) {
 		const passcode = passcodeSet();

@@ -832,3 +832,17 @@ function removeOne(spec: ServiceSpec): { ok: boolean; notes: string[]; failure?:
 	return { ok: true, notes: [] };
 }
 
+
+/**
+ * Read-only: is the service running right now? launchd's `state = running`, or systemd's `active`. False when the manager says it
+ * isn't (or doesn't know it). Undefined where it can't be read reliably: on Windows schtasks words a task's status in the system's
+ * language.
+ */
+export function serviceRunning(spec: ServiceSpec): boolean | undefined {
+	if (process.platform === "darwin") {
+		const r = run("launchctl", ["print", launchdTarget(spec)], 10_000);
+		return r.code === 0 && /\bstate = running\b/.test(r.out);
+	}
+	if (process.platform === "linux") return run("systemctl", ["--user", "is-active", spec.unit], 10_000).out.trim() === "active";
+	return undefined;
+}
