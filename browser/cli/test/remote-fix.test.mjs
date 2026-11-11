@@ -285,6 +285,11 @@ serviceTest("remote fix --yes restarts serve, then opens Funnel, and ends ok fro
 		const again = await m.run(["remote", "fix", "--yes", "--json"]);
 		assert.equal(again.code, 0);
 		assert.deepEqual(again.json().actions, []);
+		// Everything passing is exit 0 for remote test and remote fix --dry-run too, in JSON and text.
+		for (const args of [["test", "--json"], ["test"], ["fix", "--dry-run", "--json"], ["fix", "--dry-run"]]) {
+			const ok = await m.run(["remote", ...args]);
+			assert.equal(ok.code, 0, `remote ${args.join(" ")}: ${ok.stdout}${ok.stderr}`);
+		}
 	} finally {
 		m.cleanup();
 		await pub.close();
