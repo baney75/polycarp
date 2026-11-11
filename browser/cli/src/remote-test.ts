@@ -320,8 +320,9 @@ export async function publicChecks(publicUrl: string, options: { streaming?: boo
 		try {
 			addresses = await dohAddresses(host);
 		} catch (err) {
-			// A resolver that answered with a failure (SERVFAIL, an HTTP error) is a fault with the name; one this computer can't
-			// reach says nothing about the connector, so setup doesn't fail on it.
+			// A resolver that answered the lookup with a failure (SERVFAIL, REFUSED) is a fault with the name; one this computer
+			// can't reach, or that answers an HTTP error (busy, rate limited), says nothing about the connector, so setup doesn't
+			// fail on it.
 			if (err instanceof DohAnswerError) checks.push({ name: "dns", status: "fail", detail: err.message, next: `Public DNS can't resolve ${host}. Check its DNS records and DNSSEC with your DNS provider.` });
 			else checks.push({ name: "dns", status: "fail", pending: true, detail: `couldn't ask public DNS about ${host}: ${err instanceof Error ? err.message : String(err)}`, next: "Check this computer's internet connection, then run remote test again." });
 			return checks;

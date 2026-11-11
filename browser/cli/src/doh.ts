@@ -24,7 +24,8 @@ export async function dohQuery(name: string, type: "A" | "AAAA" | "SOA" | "NS", 
 	url.searchParams.set("name", name);
 	url.searchParams.set("type", type);
 	const res = await fetch(url, { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(timeoutMs) });
-	if (!res.ok) throw new DohAnswerError(`public DNS answered HTTP ${res.status}`);
+	// An HTTP error (5xx, 429) is the resolver having trouble, not an answer about the name: only a DNS rcode is that.
+	if (!res.ok) throw new Error(`public DNS answered HTTP ${res.status}`);
 	const body = (await res.json()) as DohAnswer;
 	return body && typeof body === "object" ? body : {};
 }

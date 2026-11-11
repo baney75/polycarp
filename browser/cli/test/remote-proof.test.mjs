@@ -555,10 +555,12 @@ test("setup fails on a real fault at the public address (a refused certificate, 
 	}
 });
 
-test("public DNS that answers SERVFAIL or an HTTP error fails dns as a fault, not a name that needs a few minutes", async () => {
-	for (const [label, options] of [
-		["servfail", { status: 2 }],
-		["http500", { httpStatus: 500 }],
+test("public DNS that answers SERVFAIL fails dns as a fault; an HTTP error from the resolver is pending, like one it can't reach", async () => {
+	for (const [label, options, pending, detail] of [
+		["servfail", { status: 2 }, false, /SERVFAIL/],
+		["http500", { httpStatus: 500 }, true, /HTTP 500/],
+		["http503", { httpStatus: 503 }, true, /HTTP 503/],
+		["http429", { httpStatus: 429 }, true, /HTTP 429/],
 	]) {
 		const doh = await fakeDoh("127.0.0.1", options);
 		try {
@@ -567,9 +569,10 @@ test("public DNS that answers SERVFAIL or an HTTP error fails dns as a fault, no
 			assert.equal(r.code, 1, r.stdout + r.stderr);
 			const dns = byName(r.json(), "dns");
 			assert.equal(dns.status, "fail");
-			assert.match(dns.detail, label === "servfail" ? /SERVFAIL/ : /HTTP 500/);
-			assert.notEqual(dns.pending, true, label);
+			assert.match(dns.detail, detail);
+			assert.equal(dns.pending === true, pending, label);
 			assert.doesNotMatch(dns.next, /few minutes/);
+			if (pending) assert.doesNotMatch(dns.next, /DNS provider/, label);
 		} finally {
 			await doh.close();
 		}
