@@ -76,7 +76,7 @@ test("the pinned release has a digest for each supported platform", () => {
 	assert.equal(cloudflaredAsset("darwin", "x64").name, "cloudflared-darwin-amd64.tgz");
 	assert.equal(cloudflaredAsset("linux", "x64").archive, false);
 	assert.equal(cloudflaredAsset("linux", "arm64").sha256, "3df43aedc9ff291d1735b5cb576cb97e0b157488796db2e32b28aecabb445775");
-	assert.equal(cloudflaredAsset("win32", "x64"), undefined);
+	assert.equal(cloudflaredAsset("win32", "x64").name, "cloudflared-windows-amd64.exe");
 });
 
 test("a download with the wrong digest is refused and leaves no cloudflared behind", async () => {

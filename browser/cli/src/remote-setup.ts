@@ -51,6 +51,7 @@ import { DEFAULT_PORT } from "./tunnel.ts";
 import { c, sym } from "./ui.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
+import { type ToolLookup, windowsInstallPaths, windowsTool } from "./tool-paths.ts";
 
 /** Funnel's own port: keeps the OAuth paths at the root and anything on 443 private. */
 export const FUNNEL_PORT = 8443;
@@ -97,14 +98,23 @@ export function saveRemoteConfig(config: RemoteConfig): void {
 
 // ---------- Tailscale Funnel ----------
 
+/** How to sign in to Tailscale here: its app on macOS, its Start menu entry on Windows (it runs in the notification area), else tailscale up. */
+export function tailscaleSignIn(platform: NodeJS.Platform = process.platform): string {
+	if (platform === "darwin") return "Open the Tailscale app and sign in, or run tailscale up";
+	if (platform === "win32") return "Open Tailscale from the Start menu and sign in, or run tailscale up";
+	return "Run tailscale up";
+}
+
 /** Where the Tailscale Mac app keeps its command. It never puts `tailscale` on PATH. TABKYRA_APPLICATIONS_DIR replaces /Applications, for tests. */
 export const tailscaleAppPath = () => join(envVar("APPLICATIONS_DIR") || "/Applications", "Tailscale.app", "Contents", "MacOS", "Tailscale");
 
 /**
  * The `tailscale` binary: on PATH, or the Tailscale Mac app's own copy at its fixed path, so a terminal and Polycarp's window
- * find the same one. Nothing else is searched: a path nobody asked for is never run.
+ * find the same one. On Windows, tailscale.exe on PATH or in the installer's folder (tool-paths.ts). Nothing else is searched:
+ * a path nobody asked for is never run.
  */
-export function tailscaleBinary(): string | undefined {
+export function tailscaleBinary(lookup: ToolLookup = {}): string | undefined {
+	if ((lookup.platform ?? process.platform) === "win32") return windowsTool("tailscale", lookup);
 	const onPath = which("tailscale");
 	if (onPath) return onPath;
 	const app = tailscaleAppPath();
@@ -153,7 +163,7 @@ export function tailscaleReady(): { ok: true; bin: string; state: TailscaleState
 		};
 	}
 	const state = readTailscale(bin);
-	if (state.kind === "disconnected") return { ok: false, state: "tailscale_signed_out", message: `Tailscale isn't connected. ${process.platform === "darwin" ? "Open the Tailscale app and sign in, or run tailscale up" : "Run tailscale up"}, then try again.` };
+	if (state.kind === "disconnected") return { ok: false, state: "tailscale_signed_out", message: `Tailscale isn't connected. ${tailscaleSignIn()}, then try again.` };
 	return { ok: true, bin, state };
 }
 
@@ -409,7 +419,7 @@ export interface SetupOptions {
 	connectCode?: boolean;
 }
 
-const tailscaleUp = process.platform === "darwin" ? "Open the Tailscale app and sign in, or run: tailscale up" : "Run: tailscale up";
+const tailscaleUp = tailscaleSignIn().replace(/un tailscale up$/, "un: tailscale up");
 
 /** What a planning refusal asks the person to do, when it asks anything. */
 function nextFor(state: RemoteState): RemoteNext | undefined {
@@ -1052,10 +1062,14 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 
 // ---------- remote off ----------
 
+/** Where tailscaleBinary() looked, for the message when it found nothing: the installer's folder on Windows, else the Mac app. */
+export const tailscaleMissing = (platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env) =>
+	`Tailscale wasn't found (not on PATH, and not at ${platform === "win32" ? windowsInstallPaths("tailscale", env).join(" or ") : tailscaleAppPath()})`;
+
 /** Close Funnel on 8443. A failure that leaves the entry in place is a failure; an entry already gone counts as off. */
 function funnelOff(bin: string | undefined): { ok: boolean; message: string } {
 	// Bounded like opening it: a call that never ends is a failure that leaves Funnel as it was.
-	const r = bin ? run(bin, ["funnel", `--https=${FUNNEL_PORT}`, "off"], 30_000) : { code: 1, out: `Tailscale wasn't found (not on PATH, and not at ${tailscaleAppPath()})` };
+	const r = bin ? run(bin, ["funnel", `--https=${FUNNEL_PORT}`, "off"], 30_000) : { code: 1, out: tailscaleMissing() };
 	if (r.code === 0) return { ok: true, message: `Tailscale Funnel on port ${FUNNEL_PORT} is off.` };
 	if (bin) {
 		const state = readTailscale(bin);

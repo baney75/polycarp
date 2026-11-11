@@ -22,6 +22,7 @@ import { cloudflaredBinary } from "./cloudflare.ts";
 import { tailscaleBinary } from "./remote-setup.ts";
 import { envVar } from "./env.ts";
 import { configDir } from "./files.ts";
+import { windowsProcessImage } from "./tool-paths.ts";
 
 export const DEFAULT_PORT = 8787;
 const SERVE_PATH = "/polycarp";
@@ -132,11 +133,15 @@ function cloudflaredPidFile(): string {
 }
 
 /** The cloudflared this command started, if it is still that process (not a reused PID); "unknown" when it can't be checked. */
-function ourCloudflared(): number | "unknown" | undefined {
+export function ourCloudflared(platform: NodeJS.Platform = process.platform, exec = run): number | "unknown" | undefined {
 	if (!existsSync(cloudflaredPidFile())) return undefined;
 	const pid = Number(readFileSync(cloudflaredPidFile(), "utf8"));
 	if (!Number.isInteger(pid) || pid <= 1) return undefined;
-	if (process.platform === "win32") return "unknown";
+	if (platform === "win32") {
+		// Windows has no ps; tasklist names the program, so a pid Windows has reused for something else reads as not running.
+		const image = windowsProcessImage(pid, exec);
+		return image === "unknown" ? image : image?.toLowerCase() === "cloudflared.exe" ? pid : undefined;
+	}
 	const ps = existsSync("/bin/ps") ? "/bin/ps" : "ps";
 	const raw = spawnSync(ps, ["-p", String(pid), "-o", "command="], { encoding: "utf8", timeout: 10_000 });
 	// Couldn't run ps at all: the process can't be checked, which is not the same as "not ours".

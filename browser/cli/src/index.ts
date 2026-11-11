@@ -36,7 +36,7 @@ import { runSubmit } from "./skill-submit.ts";
 import { banner, c, confirm, sym } from "./ui.ts";
 import { runUpdate, UpdateError } from "./update.ts";
 import { detectMode, recoverCheckoutQuietly } from "./checkout.ts";
-import { migrateLegacyServices } from "./service.ts";
+import { migrateLegacyServices, recordServicePid } from "./service.ts";
 import { type HostRunAction, runHostAction } from "./update-run.ts";
 import { BUILD } from "../../src/update/build.ts";
 import { argsProblem, COMMANDS, completionScript, EXIT_CODES, helpRows, VALUE_FLAGS, VISIBLE_COMMANDS } from "./commands.ts";
@@ -249,6 +249,7 @@ function checkArgs(command: string, args: string[]): void {
 }
 
 async function main(): Promise<void> {
+	recordServicePid();
 	const argv = process.argv.slice(2);
 	// A browser starts a native host as `<path> chrome-extension://<id>/`: the manifest can name the
 	// helper itself, with no launcher script between (install.ts).
