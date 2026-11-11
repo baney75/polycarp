@@ -1137,10 +1137,14 @@ test("with --no-wait the same refusal exits 3 at once, and the JSON names the pa
  * A fake DNS-over-HTTPS server: every SOA question gets `primary` as example.com's primary name server (and `mailbox` as its
  * mailbox); an A question for the primary gets `nsAddress`, or no answer when it is empty.
  */
-async function fakeDoh(primary, { mailbox = "hostmaster.example.com.", nsAddress = "199.4.138.53" } = {}) {
+async function fakeDoh(primary, { mailbox = "hostmaster.example.com.", nsAddress = "199.4.138.53", ns = [] } = {}) {
 	const srv = createHttpServer((req, res) => {
 		const q = new URL(req.url, "http://x").searchParams;
 		res.setHeader("content-type", "application/dns-json");
+		if (q.get("type") === "NS") {
+			res.end(JSON.stringify({ Status: 0, Answer: q.get("name") === "example.com" ? ns.map((data) => ({ name: "example.com.", type: 2, data })) : [] }));
+			return;
+		}
 		if (q.get("type") === "A") {
 			const name = q.get("name");
 			res.end(JSON.stringify({ Status: 0, Answer: name === primary.replace(/\.$/, "") && nsAddress ? [{ name: `${name}.`, type: 1, data: nsAddress }] : [] }));
@@ -1179,6 +1183,23 @@ test("a hostname outside the signed-in Cloudflare zone makes no DNS record", asy
 		await local.close();
 		await offCloudflare.close();
 		await onCloudflare.close();
+	}
+});
+
+test("a zone whose SOA names another primary but whose NS records are Cloudflare's (Secondary DNS) goes ahead", async () => {
+	const local = await localServer(`https://${CF_HOST}/mcp`);
+	const secondary = await fakeDoh("ns.icann.org.", { ns: ["ada.ns.cloudflare.com.", "bob.ns.cloudflare.com."] });
+	try {
+		const s = scenario("cf-zone-secondary", { tailscale: false });
+		s.launcher();
+		cloudflared(s);
+		signedIn(s);
+		const r = await s.runAsync(["remote", "setup", "--json", "--cloudflare", CF_HOST, "--port", String(local.port)], { TABKYRA_DOH_URL: secondary.url });
+		assert.notEqual(r.json().code, "cloudflare_zone", r.stdout);
+		assert.equal(cfCalls(s).filter((x) => /route dns/.test(x)).length, 1, cfCalls(s).join("\n"));
+	} finally {
+		await local.close();
+		await secondary.close();
 	}
 });
 
