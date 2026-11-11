@@ -54,7 +54,8 @@ import { installService, removeService, run, serviceFile, serviceLogHint, servic
 import { configDir, listClients, mintApprovalCode, passcodeSet, setPasscode } from "./oauth.ts";
 import { hubFile } from "./hub-state.ts";
 import { dohAddresses } from "./doh.ts";
-import { answersFromOutside, type ProofCheck, publicChecks, realFault } from "./remote-test.ts";
+import { isIP } from "node:net";
+import { answersFromOutside, type ProofCheck, privateAddress, publicChecks, realFault } from "./remote-test.ts";
 import { DEFAULT_PORT } from "./tunnel.ts";
 import { tailscaleAppPath, tailscaleBinary } from "./tailscale.ts";
 
@@ -557,6 +558,8 @@ async function runSetup(options: SetupOptions): Promise<number> {
 		if (!json) console.log(line);
 	};
 	/** Text mode: the old stderr lines. JSON mode: the state, with the passcode if this run made it. Exit 3 when a person has something to do. */
+	// The connector address once remote.json is saved: every failure after that reports it, so an app can show what was kept.
+	let savedConnectorUrl: string | undefined;
 	const fail = (state: RemoteState, message: string, extra: { adminUrl?: string; code?: string; after?: string; next?: RemoteNext; checks?: ProofCheck[] } = {}): number => {
 		const report: SetupReport = {
 			ok: false,
@@ -564,6 +567,7 @@ async function runSetup(options: SetupOptions): Promise<number> {
 			message,
 			...(extra.adminUrl ? { adminUrl: extra.adminUrl } : {}),
 			...(extra.code ? { code: extra.code } : {}),
+			...(savedConnectorUrl ? { connectorUrl: savedConnectorUrl } : {}),
 			...(madePasscode ? { passcode: madePasscode } : {}),
 			passcodeSet: passcodeSet(),
 			...(extra.next ? { next: extra.next } : {}),
@@ -742,6 +746,7 @@ async function runSetup(options: SetupOptions): Promise<number> {
 			stage = "config";
 		}
 		saveRemoteConfig({ publicUrl, port, route, ...(previous?.redirectHosts ? { redirectHosts: previous.redirectHosts } : {}), ...(previous?.allowHosts ? { allowHosts: previous.allowHosts } : {}) });
+		savedConnectorUrl = `${publicUrl}/mcp`;
 		say(`${sym.ok} Wrote ${c.dim(remoteFile())}`);
 		stage = "service";
 		let listening = probe.state === "match";
@@ -811,12 +816,17 @@ async function runSetup(options: SetupOptions): Promise<number> {
 		const up = answersFromOutside(proof);
 		say(`\nFrom the internet, as an assistant sees it:`);
 		for (const line of proofLines(proof)) say(line);
-		const fault = realFault(proof);
+		// A private address literal (--public-url http://127.0.0.1:...) is a deliberate local setup: no assistant on the internet
+		// reaches it, and setup says so instead of failing.
+		const host = new URL(publicUrl).hostname.replace(/^\[|\]$/g, "");
+		const localOnly = isIP(host) !== 0 && privateAddress(host);
+		const fault = localOnly ? undefined : realFault(proof);
 		if (fault) {
 			const where = up ? `${connectorUrl} answers from the internet, but` : `${connectorUrl} isn't usable from the internet:`;
 			return fail("problem", `${where} ${fault.name} failed: ${fault.detail}. ${fault.next ?? ""} remote.json is kept.`.replace(/\s+remote\.json/, " remote.json"), { code: fault.name, checks: proof });
 		}
-		if (!up) say(`${sym.warn} It doesn't answer from the internet yet. A new name takes a few minutes; then run ${COMMAND_NAME} remote test.`);
+		if (localOnly) say(`${sym.warn} ${host} is a private address, so only this computer or its network reaches the connector; assistants on the internet can't.`);
+		else if (!up) say(`${sym.warn} It doesn't answer from the internet yet. A new name takes a few minutes; then run ${COMMAND_NAME} remote test.`);
 		// The one-time connect code a new assistant needs (the passcode alone is refused for one, issue #97). Made for a person at a
 		// terminal, or when --connect-code asks; never printed unasked into an agent's shell or a log, where it would sit live.
 		let connect: { code: string; expiresAt: number } | undefined;

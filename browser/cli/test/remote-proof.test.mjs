@@ -462,6 +462,7 @@ test("remote setup ends with the outside proof: a connector that answers but hol
 				assert.equal(report.state, "problem");
 				assert.equal(report.code, "streaming");
 				assert.ok(existsSync(join(m.env.TABKYRA_CONFIG_DIR, "remote.json")), "remote.json is kept");
+				assert.equal(report.connectorUrl, `${pub.publicUrl}/mcp`, "the saved address is in the problem report");
 			} else {
 				assert.equal(r.code, 0, r.stdout);
 				assert.equal(report.state, "on");
@@ -515,6 +516,7 @@ test("setup fails on a real fault at the public address (a refused certificate, 
 			assert.equal(report.code, c.code, c.name);
 			assert.match(report.message, new RegExp(byName(report, c.code).next.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), c.name);
 			assert.ok(existsSync(join(m.env.TABKYRA_CONFIG_DIR, "remote.json")), "remote.json is kept");
+			assert.equal(report.connectorUrl, `${pub.publicUrl}/mcp`, "the saved address is in the report");
 			// Text mode says the same, not that the name needs a few minutes.
 			const t = await m.run(["remote", "setup", "--no-service", "--public-url", pub.publicUrl, "--port", String(local.port)], c.env);
 			assert.equal(t.code, 1, t.stdout);
