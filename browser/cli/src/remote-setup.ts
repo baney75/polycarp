@@ -21,6 +21,7 @@ import { DEFAULT_PORT } from "./tunnel.ts";
 import { c, sym } from "./ui.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
+import { type ToolLookup, windowsTool } from "./tool-paths.ts";
 
 /** Funnel's own port: keeps the OAuth paths at the root and anything on 443 private. */
 export const FUNNEL_PORT = 8443;
@@ -72,9 +73,11 @@ export const tailscaleAppPath = () => join(envVar("APPLICATIONS_DIR") || "/Appli
 
 /**
  * The `tailscale` binary: on PATH, or the Tailscale Mac app's own copy at its fixed path, so a terminal and Polycarp's window
- * find the same one. Nothing else is searched: a path nobody asked for is never run.
+ * find the same one. On Windows, tailscale.exe on PATH or in the installer's folder (tool-paths.ts). Nothing else is searched:
+ * a path nobody asked for is never run.
  */
-export function tailscaleBinary(): string | undefined {
+export function tailscaleBinary(lookup: ToolLookup = {}): string | undefined {
+	if ((lookup.platform ?? process.platform) === "win32") return windowsTool("tailscale", lookup);
 	const onPath = which("tailscale");
 	if (onPath) return onPath;
 	const app = tailscaleAppPath();

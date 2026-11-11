@@ -179,6 +179,30 @@ permissions, enter your Polycarp passcode and press Allow. Only approve a connec
 started. Lost the passcode? `polycarp browser token passcode` makes a new one; approvals you already
 gave keep working.
 
+## Windows
+
+Both routes work on Windows without administrator rights, and Polycarp runs no installer. Install Tailscale or
+cloudflared yourself as usual, or let the Cloudflare route offer Polycarp's own copy of cloudflared (Windows on x64 only;
+it asks first, as on the Mac, and checks the download's SHA-256 before using it). Polycarp finds `tailscale.exe` and
+`cloudflared.exe` on PATH, then in the installers' folders (`C:\Program Files\Tailscale`, `C:\Program Files\cloudflared`,
+`C:\Program Files (x86)\cloudflared`), then its own copy, `bin\cloudflared.exe` in the helper's config folder.
+
+Windows has no user service like launchd or systemd, so each service is a Task Scheduler task for your account alone:
+`com.polycarp.serve`, plus `com.polycarp.cloudflared` on the Cloudflare route (`com.polycarp.hub` and `com.polycarp.link`
+for a hub and a device). Each starts when you log on, runs with your own limited rights, stores no password, and runs a
+small script that starts the program again 10 seconds after it stops. They live in the helper's config folder, the same one
+it uses everywhere else: `%USERPROFILE%\.config\polycarp\browser`, or `POLYCARP_BROWSER_CONFIG_DIR` when you set it.
+
+- The scripts the tasks run: `services\com.polycarp.serve.cmd` and the others beside it.
+- The logs: `logs\polycarp-serve.log`, `logs\polycarp-cloudflared.log` and so on (Windows has no journal).
+
+Each task shows a command window while it runs, titled with its name. Closing that window stops the service until you
+log on again or run setup again. `schtasks /Query /TN com.polycarp.serve /V /FO LIST` shows a task.
+
+`polycarp browser remote off` removes it: it ends and deletes the tasks and their scripts, and keeps the logs. If Windows
+refuses to make a task ("Access is denied"), your organization blocks scheduled tasks; setup says so and how to run
+`polycarp browser serve` yourself instead.
+
 ## Revoke
 
 ```bash

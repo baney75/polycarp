@@ -17,6 +17,7 @@ import { configDir } from "./files.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { removeService, runAsync, type ServiceSpec, sleep, writeAtomic } from "./service.ts";
 import { envVar } from "./env.ts";
+import { type ToolLookup, windowsTool } from "./tool-paths.ts";
 
 /** cloudflared's own sign-in waits on the person. Five minutes, then it counts as not done. */
 const LOGIN_TIMEOUT_MS = 300_000;
@@ -35,9 +36,12 @@ export const CLOUDFLARE_SERVICE: ServiceSpec = {
 /**
  * On PATH, or where the installers put it (a service's PATH is short), or the copy Polycarp downloaded itself. The person's own
  * install comes first. Tests set the applications folder, which skips the Homebrew paths; the downloaded copy lives in the config
- * folder, which tests also point at a temp one.
+ * folder, which tests also point at a temp one. On Windows: cloudflared.exe on PATH, then the installer's folders (tool-paths.ts),
+ * then the downloaded copy.
  */
-export function cloudflaredBinary(): string | undefined {
+export function cloudflaredBinary(lookup: ToolLookup = {}): string | undefined {
+	const platform = lookup.platform ?? process.platform;
+	if (platform === "win32") return windowsTool("cloudflared", lookup) ?? [downloadedCloudflared(platform)].find((path) => (lookup.exists ?? existsSync)(path));
 	return (
 		which("cloudflared") ??
 		["/opt/homebrew/bin/cloudflared", "/usr/local/bin/cloudflared"].find((path) => envVar("APPLICATIONS_DIR") === undefined && existsSync(path)) ??

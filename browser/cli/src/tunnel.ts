@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { which } from "./harness.ts";
 import { envVar } from "./env.ts";
 import { configDir } from "./files.ts";
+import { windowsTool } from "./tool-paths.ts";
 
 export const DEFAULT_PORT = 8787;
 const SERVE_PATH = "/polycarp";
@@ -71,7 +72,7 @@ function tailscaleOff(bin: string, mode: string, port: number): TunnelResult {
 }
 
 export function tailscaleTunnel(options: { port: number; public: boolean; off: boolean }): TunnelResult {
-	const bin = which("tailscale");
+	const bin = process.platform === "win32" ? windowsTool("tailscale") : which("tailscale");
 	if (!bin) return { ok: false, message: "Tailscale isn't installed. Install it from tailscale.com and sign in, then run this again." };
 	const mode = options.public ? "funnel" : "serve";
 	if (options.off) {
@@ -159,7 +160,7 @@ export async function cloudflareTunnel(options: { port: number; off: boolean; ti
 		return { ok: true, message: "Stopped the Cloudflare tunnel." };
 	}
 	if (ourCloudflared() !== undefined) return { ok: false, message: `A Cloudflare tunnel is already running. Run ${COMMAND_NAME} tunnel cloudflare --off first.` };
-	const bin = which("cloudflared");
+	const bin = process.platform === "win32" ? windowsTool("cloudflared") : which("cloudflared");
 	if (!bin) {
 		return {
 			ok: false,

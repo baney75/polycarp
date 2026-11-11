@@ -1,12 +1,12 @@
 /**
- * User services (launchd on macOS, systemd --user on Linux) that keep `polycarp browser serve`, `polycarp browser hub serve`
+ * User services (launchd on macOS, systemd --user on Linux, a per-user Task Scheduler task on Windows) that keep `polycarp browser serve`, `polycarp browser hub serve`
  * or `polycarp browser link run` running. Shared by remote setup, hub setup and link.
  */
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import { launcherBinary } from "./harness.ts";
 import { cliLauncherPath, ensureLauncherIsSelf } from "./install.ts";
 import { configDir, configDirOverride, legacyConfigDir } from "./files.ts";
@@ -64,7 +64,27 @@ export function runAsync(cmd: string, args: string[], timeoutMs = 60_000): Promi
 	});
 }
 
+const runSync: SyncRunner = (cmd, args) => run(cmd, args);
+
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+type SyncRunner = (cmd: string, args: string[]) => { code: number; out: string };
+
+/**
+ * For tests: act as another platform, with a stand-in for the service manager and the Windows account, so the commands can be
+ * checked on any computer without running one. Production code never sets it.
+ */
+export interface ServiceSeam {
+	platform?: NodeJS.Platform;
+	exec?: SyncRunner;
+	/** The DOMAIN\user a Windows task is made for; "" acts as an account Windows didn't name. */
+	windowsUser?: string;
+}
+let seam: ServiceSeam = {};
+export function setServiceSeamForTests(next: ServiceSeam): void {
+	seam = next;
+}
+const platform = (): NodeJS.Platform => seam.platform ?? process.platform;
 
 
 const xml = (text: string) => text.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
@@ -99,8 +119,10 @@ function savedFolders(spec: ServiceSpec): { config?: string; socket?: string } {
 	try {
 		if (!file || !existsSync(file)) return {};
 		const text = readFileSync(file, "utf8");
-		if (process.platform === "darwin") {
+		if (platform() === "darwin") {
 			for (const m of text.matchAll(/<key>([A-Z_]+)<\/key>\s*<string>([^<]*)<\/string>/g)) found.set(m[1], unxml(m[2]));
+		} else if (platform() === "win32") {
+			for (const m of text.matchAll(/^set "([A-Z_][A-Z0-9_]*)=(.*)"\r?$/gm)) found.set(m[1], m[2].replace(/%%/g, "%"));
 		} else {
 			for (const m of text.matchAll(/^Environment=(.*)$/gm)) {
 				let line = m[1].trim();
@@ -228,9 +250,174 @@ WantedBy=default.target
 `;
 }
 
-export const serviceFile = (spec: ServiceSpec = SERVE_SERVICE): string | undefined => (process.platform === "darwin" ? plistPath(spec) : process.platform === "linux" ? unitPath(spec) : undefined);
+// ---------- Windows: a per-user Task Scheduler task ----------
+
+/*
+ * Windows has no per-user service manager like launchd or systemd --user, so each service is a Task Scheduler task made for
+ * this account alone, without administrator rights: it starts at this user's logon and runs with the user's own limited rights,
+ * with no password stored. The task runs a small batch script beside it that sets the folders, appends the program's output to
+ * a log file (Windows has no journal) and starts the program again 10 seconds after it stops, as KeepAlive and Restart=always do.
+ *
+ * Microsoft's documentation for what is written here:
+ * - schtasks /Create /XML, /Run, /End, /Delete and /Query: learn.microsoft.com/windows-server/administration/windows-commands/schtasks
+ * - the task XML: learn.microsoft.com/windows/win32/taskschd/task-scheduler-schema. A LogonTrigger whose UserId names one user
+ *   starts when that user logs on; with no UserId it starts for any user (taskschd/logontrigger-userid). LogonType
+ *   InteractiveToken runs only while the user is logged on and needs no stored password, and RunLevel LeastPrivilege is not
+ *   elevated (taskschd/taskschedulerschema-principal-principaltype-element). schtasks has no flag for restart on failure, so the
+ *   task is written as XML with RestartOnFailure, whose Count is an unsignedByte
+ *   (taskschd/taskschedulerschema-restartonfailure-settingstype-element). It covers a script that could not start at all; the
+ *   script's own loop covers a program that stops.
+ */
+
+const windowsServiceDir = () => join(configDir(), "services");
+const windowsScriptPath = (spec: ServiceSpec) => join(windowsServiceDir(), `${spec.label}.cmd`);
+const windowsTaskXmlPath = (spec: ServiceSpec) => join(windowsServiceDir(), `${spec.label}.xml`);
+const windowsLog = (spec: ServiceSpec) => join(configDir(), "logs", spec.logName);
+const systemRoot = () => process.env.SystemRoot || "C:\\Windows";
+/** By full path, so a schtasks or cmd elsewhere on PATH is never run in their place. */
+export const schtasksPath = () => win32.join(systemRoot(), "System32", "schtasks.exe");
+const cmdPath = () => win32.join(systemRoot(), "System32", "cmd.exe");
+
+/** The account the task is for, as Windows names it (DOMAIN\user), or undefined when the environment doesn't say. */
+function windowsUser(): string | undefined {
+	if (seam.windowsUser !== undefined) return seam.windowsUser || undefined;
+	const name = process.env.USERNAME;
+	if (!name) return undefined;
+	return process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${name}` : name;
+}
+
+/**
+ * A path the batch script and the task can name safely. Inside double quotes cmd reads & | < > ( ) and spaces as plain text,
+ * but a quote or line break ends the value, and % and ^ change under CALL, so those are refused rather than escaped.
+ */
+export function windowsPathProblem(path: string): string | undefined {
+	return /["\r\n\0%^]/.test(path) ? `${path} has a character (" % ^ or a line break) that a Windows task can't run safely` : undefined;
+}
+
+/** `set "NAME=value"`: the quotes keep & | < > as text; a literal % is written %%. Values with a quote or line break are refused earlier. */
+const batchSet = (name: string, value: string) => `set "${name}=${value.replace(/%/g, "%%")}"`;
+
+/** The batch script the task runs. Lines end in CRLF, as cmd expects. */
+export function windowsScriptText(binary: string, env: Record<string, string>, log: string, spec: ServiceSpec = SERVE_SERVICE): string {
+	for (const value of [binary, log]) {
+		const problem = windowsPathProblem(value);
+		if (problem) throw new Error(problem);
+	}
+	// A value in `set "NAME=value"` is only read once, so a % in it is doubled; a quote or line break would still end it.
+	for (const value of Object.values(env)) if (/["\r\n\0]/.test(value)) throw new Error(`${value} has a quote or line break, which a Windows task can't run safely`);
+	for (const name of Object.keys(env)) if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) throw new Error(`${name} isn't a variable name a Windows task can set`);
+	if (!spec.args.every((a) => /^[a-z][a-z-]*$/.test(a))) throw new Error(`${spec.args.join(" ")} isn't a command a Windows task can run`);
+	return [
+		"@echo off",
+		`rem ${spec.label}: started at logon by the Task Scheduler task of the same name. ${spec.off} removes both.`,
+		"setlocal DisableDelayedExpansion",
+		// The task runs with your logon, so Windows shows its console window; the title says what it is and that closing it stops it.
+		`title ${spec.label} (Polycarp; closing this window stops it until you log on again)`,
+		...Object.entries(env).map(([k, v]) => batchSet(k, v)),
+		":run",
+		`>>"${log}" 2>&1 (`,
+		"\techo [%DATE% %TIME%] starting",
+		`\tcall "${binary}" ${spec.args.join(" ")}`,
+		")",
+		"rem Wait 10 seconds before starting again (ping waits without a console, where timeout cannot).",
+		'"%SystemRoot%\\System32\\ping.exe" -n 11 127.0.0.1 >nul',
+		"goto run",
+		"",
+	].join("\r\n");
+}
+
+/** The task definition for `schtasks /Create /XML`, as Task Scheduler itself exports one. */
+export function windowsTaskXml(script: string, user: string, spec: ServiceSpec = SERVE_SERVICE): string {
+	return `<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>${xml(spec.description)}</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>${xml(user)}</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>${xml(user)}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>255</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>${xml(cmdPath())}</Command>
+      <Arguments>${xml(`/d /s /c ""${script}""`)}</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+`;
+}
+
+/** schtasks reads a task file as UTF-16 with a byte order mark, the way it exports one. Written through a temp file like the rest. */
+function writeUtf16(path: string, text: string): void {
+	mkdirSync(dirname(path), { recursive: true });
+	const tmp = `${path}.${process.pid}.tmp`;
+	writeFileSync(tmp, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text.replace(/\r?\n/g, "\r\n"), "utf16le")]), { mode: 0o600 });
+	renameSync(tmp, path);
+}
+
+async function installWindows(spec: ServiceSpec, exec: Runner, binary: string, env: Record<string, string>): Promise<InstallResult> {
+	const keepRunning = `keep it running yourself: ${binary} ${spec.args.join(" ")}`;
+	const user = windowsUser();
+	if (!user) return { ok: false, message: `Windows didn't say which account this is (USERNAME is empty), so no task was made. Sign in to Windows normally, or ${keepRunning}` };
+	const script = windowsScriptPath(spec);
+	const log = windowsLog(spec);
+	const problem = windowsPathProblem(script) ?? windowsPathProblem(binary) ?? windowsPathProblem(log);
+	if (problem) return { ok: false, message: `${problem}, so no task was made. Set POLYCARP_BROWSER_CONFIG_DIR to a folder without it and run setup again, or ${keepRunning}.` };
+	mkdirSync(dirname(log), { recursive: true });
+	writeAtomic(script, windowsScriptText(binary, env, log, spec), 0o644);
+	const xmlFile = windowsTaskXmlPath(spec);
+	writeUtf16(xmlFile, windowsTaskXml(script, user, spec));
+	let created: { code: number; out: string };
+	try {
+		created = await exec(schtasksPath(), ["/Create", "/TN", spec.label, "/XML", xmlFile, "/F"]);
+	} finally {
+		rmSync(xmlFile, { force: true });
+	}
+	if (created.code !== 0) {
+		const refused = /access is denied/i.test(created.out);
+		return {
+			ok: false,
+			file: script,
+			message: refused
+				? `Windows refused to make a scheduled task for ${user} (${created.out}); Polycarp never asks for administrator rights, so if your organization blocks scheduled tasks ask its admin to allow them, or ${keepRunning}.`
+				: `schtasks /Create failed: ${created.out}. The script is at ${script}.`,
+		};
+	}
+	// A task already running keeps the old program until it ends; ending one that isn't running fails, which is the state wanted.
+	await exec(schtasksPath(), ["/End", "/TN", spec.label]);
+	const started = await exec(schtasksPath(), ["/Run", "/TN", spec.label]);
+	if (started.code !== 0) return { ok: false, file: script, message: `schtasks /Run /TN ${spec.label} failed: ${started.out}. The task is made and starts at your next logon.` };
+	return { ok: true, file: script, message: `Service installed (Task Scheduler task ${spec.label}, starts at logon; script ${script}); logs in ${log}.` };
+}
+
+/** The file that says a service is installed: the plist, the unit, or on Windows the script its task runs. */
+export const serviceFile = (spec: ServiceSpec = SERVE_SERVICE): string | undefined =>
+	platform() === "darwin" ? plistPath(spec) : platform() === "linux" ? unitPath(spec) : platform() === "win32" ? windowsScriptPath(spec) : undefined;
 const launchdLog = (spec: ServiceSpec) => join(homedir(), "Library", "Logs", spec.logName);
-export const serviceLogHint = (spec: ServiceSpec = SERVE_SERVICE) => (process.platform === "darwin" ? launchdLog(spec) : `journalctl --user -u ${spec.unit}`);
+export const serviceLogHint = (spec: ServiceSpec = SERVE_SERVICE) => (platform() === "darwin" ? launchdLog(spec) : platform() === "win32" ? windowsLog(spec) : `journalctl --user -u ${spec.unit}`);
 
 /** After bootout, launchd can still list the service for a moment; bootstrap into that fails. */
 async function waitUntilUnloaded(spec: ServiceSpec, exec: Runner): Promise<void> {
@@ -242,12 +429,12 @@ type Runner = (cmd: string, args: string[]) => Promise<{ code: number; out: stri
 
 /** Install and (re)start the user service. Returns the step that failed, if any; the file is written either way. Blocks the event loop while the service manager runs: for the CLI. */
 export function installService(spec: ServiceSpec = SERVE_SERVICE): Promise<{ ok: boolean; message: string; file?: string }> {
-	return installWith(spec, run);
+	return installWith(spec, seam.exec ?? run);
 }
 
 /** The same install without blocking the event loop: for the native host, which keeps relaying while the service manager works. */
 export function installServiceAsync(spec: ServiceSpec = SERVE_SERVICE, timeoutMs?: number): Promise<{ ok: boolean; message: string; file?: string }> {
-	return installWith(spec, (cmd, args) => runAsync(cmd, args, timeoutMs));
+	return installWith(spec, seam.exec ?? ((cmd, args) => runAsync(cmd, args, timeoutMs)));
 }
 
 /** The service as it was named before the rename, shaped like a spec so the same file and log helpers work on it. */
@@ -264,7 +451,7 @@ export function legacyServiceInstalled(spec: ServiceSpec): boolean {
 
 /** Give the old log the new name, unless the new one exists already. A rename keeps the history. */
 function moveLegacyLog(spec: ServiceSpec): void {
-	if (process.platform !== "darwin" || !spec.legacy) return;
+	if (platform() !== "darwin" || !spec.legacy) return;
 	const from = launchdLog({ ...spec, logName: spec.legacy.logName });
 	const to = launchdLog(spec);
 	try {
@@ -294,10 +481,11 @@ const NOTHING_RETIRED: Retired = { ok: true, saved: {}, restore: async () => und
 async function retireLegacy(spec: ServiceSpec, exec: Runner): Promise<Retired> {
 	const old = legacySpec(spec);
 	const file = old ? serviceFile(old) : undefined;
-	if (!old || !file || !existsSync(file)) return NOTHING_RETIRED;
+	// Windows never had a service under the old names.
+	if (!old || !file || platform() === "win32" || !existsSync(file)) return NOTHING_RETIRED;
 	const saved = savedFolders(old);
 	const failure = (r: { code: number; out: string }, what: string) => (r.code === 0 ? undefined : `${what} failed: ${r.out}`);
-	if (process.platform === "darwin") {
+	if (platform() === "darwin") {
 		const r = await exec("launchctl", ["bootout", launchdTarget(old)]);
 		// bootout also fails when the service was never loaded; that is already stopped.
 		if (r.code !== 0 && (await exec("launchctl", ["print", launchdTarget(old)])).code === 0) {
@@ -379,8 +567,12 @@ const readIfFile = (path: string): string | undefined => {
 /** Stop and disable the service this install wrote, and delete its file (or put back what was there). Best effort: each step runs. */
 async function undoFresh(spec: ServiceSpec, exec: Runner, file: string | undefined, before: string | undefined): Promise<void> {
 	try {
-		if (process.platform === "darwin") await exec("launchctl", ["bootout", launchdTarget(spec)]);
-		else if (process.platform === "linux") await exec("systemctl", ["--user", "disable", "--now", spec.unit]);
+		if (platform() === "darwin") await exec("launchctl", ["bootout", launchdTarget(spec)]);
+		else if (platform() === "linux") await exec("systemctl", ["--user", "disable", "--now", spec.unit]);
+		else if (platform() === "win32") {
+			await exec(schtasksPath(), ["/End", "/TN", spec.label]);
+			await exec(schtasksPath(), ["/Delete", "/TN", spec.label, "/F"]);
+		}
 	} catch {
 		/* keep going */
 	}
@@ -389,7 +581,7 @@ async function undoFresh(spec: ServiceSpec, exec: Runner, file: string | undefin
 			if (before !== undefined) writeAtomic(file, before, 0o644);
 			else if (readIfFile(file) !== undefined) rmSync(file, { force: true });
 		}
-		if (process.platform === "linux") await exec("systemctl", ["--user", "daemon-reload"]);
+		if (platform() === "linux") await exec("systemctl", ["--user", "daemon-reload"]);
 	} catch {
 		/* the file may be unwritable, which is why we are here */
 	}
@@ -411,7 +603,7 @@ async function bootstrapWithRetry(spec: ServiceSpec, exec: Runner): Promise<{ co
 async function installFresh(spec: ServiceSpec, exec: Runner, saved: { config?: string; socket?: string } = {}): Promise<InstallResult> {
 	const binary = launcherBinary();
 	const env = serviceEnvironment(saved);
-	if (process.platform === "darwin") {
+	if (platform() === "darwin") {
 		const log = launchdLog(spec);
 		mkdirSync(dirname(log), { recursive: true });
 		writeAtomic(plistPath(spec), plistText(binary, env, log, spec), 0o644);
@@ -420,7 +612,7 @@ async function installFresh(spec: ServiceSpec, exec: Runner, saved: { config?: s
 		const r = await bootstrapWithRetry(spec, exec);
 		return { ok: r.code === 0, file: plistPath(spec), message: r.code === 0 ? `Service installed (${plistPath(spec)}); logs in ${log}.` : `launchctl bootstrap failed: ${r.out}. Run: launchctl bootstrap gui/${process.getuid?.() ?? 0} ${plistPath(spec)}` };
 	}
-	if (process.platform === "linux") {
+	if (platform() === "linux") {
 		writeAtomic(unitPath(spec), unitText(binary, env, spec), 0o644);
 		for (const args of [["daemon-reload"], ["enable", spec.unit], ["restart", spec.unit]]) {
 			const r = await exec("systemctl", ["--user", ...args]);
@@ -428,7 +620,8 @@ async function installFresh(spec: ServiceSpec, exec: Runner, saved: { config?: s
 		}
 		return { ok: true, file: unitPath(spec), message: `Service installed (${unitPath(spec)}); journalctl --user -u ${spec.unit} shows its log.` };
 	}
-	return { ok: false, message: `No service manager is set up for ${process.platform}. Keep it running yourself: ${binary} ${spec.args.join(" ")}` };
+	if (platform() === "win32") return installWindows(spec, exec, binary, env);
+	return { ok: false, message: `No service manager is set up for ${platform()}. Keep it running yourself: ${binary} ${spec.args.join(" ")}` };
 }
 
 /**
@@ -456,7 +649,8 @@ export function removeService(spec: ServiceSpec = SERVE_SERVICE): { ok: boolean;
 }
 
 function removeOne(spec: ServiceSpec): { ok: boolean; notes: string[]; failure?: string } {
-	if (process.platform === "darwin" && existsSync(plistPath(spec))) {
+	const run = seam.exec ?? runSync;
+	if (platform() === "darwin" && existsSync(plistPath(spec))) {
 		const r = run("launchctl", ["bootout", launchdTarget(spec)]);
 		// bootout also fails when the service was never loaded; that is already stopped.
 		if (r.code !== 0 && run("launchctl", ["print", launchdTarget(spec)]).code === 0) {
@@ -465,7 +659,17 @@ function removeOne(spec: ServiceSpec): { ok: boolean; notes: string[]; failure?:
 		rmSync(plistPath(spec), { force: true });
 		return { ok: true, notes: [`Stopped and removed ${plistPath(spec)}.`] };
 	}
-	if (process.platform === "linux" && existsSync(unitPath(spec))) {
+	if (platform() === "win32" && existsSync(windowsScriptPath(spec))) {
+		// Ending a task that isn't running fails, which is the state wanted; the delete is what has to work.
+		run(schtasksPath(), ["/End", "/TN", spec.label]);
+		const r = run(schtasksPath(), ["/Delete", "/TN", spec.label, "/F"]);
+		if (r.code !== 0 && run(schtasksPath(), ["/Query", "/TN", spec.label]).code === 0) {
+			return { ok: false, notes: [], failure: `schtasks /Delete /TN ${spec.label} failed: ${r.out}. The task is still there and ${spec.kept} is kept. Run: schtasks /End /TN ${spec.label} and schtasks /Delete /TN ${spec.label} /F, then ${spec.off} again.` };
+		}
+		rmSync(windowsScriptPath(spec), { force: true });
+		return { ok: true, notes: [`Stopped and removed the ${spec.label} task and ${windowsScriptPath(spec)}; its log stays at ${windowsLog(spec)}.`] };
+	}
+	if (platform() === "linux" && existsSync(unitPath(spec))) {
 		const r = run("systemctl", ["--user", "disable", "--now", spec.unit]);
 		if (r.code !== 0) {
 			return { ok: false, notes: [], failure: `systemctl --user disable --now ${spec.unit} failed: ${r.out}. The service is still installed and ${spec.kept} is kept. Run that command yourself, then ${spec.off} again.` };
