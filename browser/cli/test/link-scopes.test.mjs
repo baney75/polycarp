@@ -242,6 +242,15 @@ test("the call check inside the server reads the cap at each call, arguments inc
 	cap = ["browser.read", "skills.read"];
 	assert.match(check("read_network", { requestId: "1" }), /doesn't allow browser\.script \(allows: browser\.read, skills\.read\)/);
 	assert.equal(check("read_network", {}), undefined);
+	// files: an address the agent names needs browser.script, any download needs browser.navigate (ARGUMENT_RULES).
+	cap = ["browser.read", "browser.navigate", "browser.files"];
+	assert.match(check("files", { action: "download", url: "/api/me" }), /doesn't allow browser\.script/);
+	assert.equal(check("files", { action: "download", ref: "e1" }), undefined);
+	cap = ["browser.read", "browser.files", "browser.script"];
+	assert.match(check("files", { action: "download", ref: "e1" }), /doesn't allow browser\.navigate/);
+	assert.equal(check("files", { action: "save_pdf" }), undefined);
+	assert.equal(check("files", { action: "upload", ref: "e1", ids: ["f_1"] }), undefined);
+	cap = ["browser.read", "skills.read"];
 	assert.equal(check("devices", undefined), undefined, "a tool no scope lists needs none");
 	// The same check, given to the server, is asked on every call: the session's tool list never changes, the answer does.
 	cap = ["browser.read", "skills.read"];

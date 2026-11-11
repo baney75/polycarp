@@ -62,6 +62,7 @@ import {
 } from "../site-edits/store.js";
 import { BUILD } from "../update/build.js";
 import { BridgeError, classify, detachedError, interruptedError, navigatedError } from "./errors.js";
+import { dropTransfersForSession, fileHandlers } from "./files.js";
 import { rankMatches } from "./find.js";
 import { getAllowedHosts, getPermissionMode } from "./permissions.js";
 import { ERR } from "./protocol.js";
@@ -78,6 +79,12 @@ export interface HandlerContext {
 	isGuarded(url: string): boolean;
 	/** The hosts behind `isGuarded`, as the CLI sent them ("host" or "host:port"). */
 	guardedHosts?: readonly string[];
+	/**
+	 * Ask the person whether these local files may go to the page at `url` (the files tool, D38). True only for a
+	 * yes to this one upload: no answer and a no are both false, and the answer is never remembered. `askId` is the
+	 * caller's id for the one call that asks; it goes back with the question.
+	 */
+	askUpload(url: string, files: Array<{ name: string; bytes: number }>, askId: string): Promise<boolean>;
 	/** Stable id of the calling client. */
 	clientId: string;
 	/** Push an event to the calling client only. */
@@ -400,6 +407,7 @@ export async function extensionStatus() {
 
 export const handlers: Record<string, Handler> = {
 	...editHandlers,
+	...fileHandlers(resolveTab),
 	/** For the MCP `status` tool: what this session may open and where its tabs are. */
 	status: async (ctx) => {
 		const [extension, tabs] = await Promise.all([extensionStatus(), ctx.session.tabs()]);
@@ -485,6 +493,7 @@ export const handlers: Record<string, Handler> = {
 	"session.end": async (ctx, params) => {
 		const result = await ctx.session.end({ close: params.close === true });
 		await captures.sessionGone(ctx.session.id);
+		dropTransfersForSession(ctx.session.id);
 		return { ended: true, ...result };
 	},
 

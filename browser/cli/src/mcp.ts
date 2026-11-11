@@ -8,6 +8,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { ASK_USER_INSTRUCTION, registerAskUser } from "./ask.ts";
+import { type FilesTool, registerFiles } from "./files-tool.ts";
+import { FILE_ASK_TIMEOUT_MS } from "../../src/bridge/protocol.ts";
+import { byteSize } from "./saved-files.ts";
 import { registerThreadTools, THREADS_INSTRUCTION } from "./threads.ts";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
@@ -259,7 +262,12 @@ export function describeDevices(hub: McpHub): Record<string, unknown> {
  * session without it is refused that call (the handlers below), and so is a call on a device whose cap lost it since
  * (missingScope in remote.ts reads this same table).
  */
-export const ARGUMENT_RULES: ReadonlyArray<{ tool: string; arg: string; needs: string }> = [
+export const ARGUMENT_RULES: ReadonlyArray<{ tool: string; arg: string; needs: string; when?: (value: unknown) => boolean }> = [
+	// files (D38). A URL the agent names is fetched in the page with the user's sign-in on that site and comes back whole:
+	// what run_js can do with fetch, so it needs that scope.
+	{ tool: "files", arg: "url", needs: "run_js" },
+	// A link's file is what opening the link would fetch, so only a session that may open pages downloads one.
+	{ tool: "files", arg: "action", when: (action) => action === "download", needs: "navigate" },
 	// A body can hold what the page fetched with the user's sign-in: as much as run_js could read.
 	{ tool: "read_network", arg: "requestId", needs: "run_js" },
 	// Naming the group changes what the user sees: a read-only session may look, not rename.
@@ -269,14 +277,14 @@ export const ARGUMENT_RULES: ReadonlyArray<{ tool: string; arg: string; needs: s
 /** The tools this call needs beyond `tool` itself, by ARGUMENT_RULES. */
 export function argumentNeeds(tool: string, args: unknown): string[] {
 	const given = typeof args === "object" && args !== null ? (args as Record<string, unknown>) : {};
-	return ARGUMENT_RULES.filter((r) => r.tool === tool && given[r.arg] !== undefined).map((r) => r.needs);
+	return ARGUMENT_RULES.filter((r) => r.tool === tool && given[r.arg] !== undefined && (!r.when || r.when(given[r.arg]))).map((r) => r.needs);
 }
 
 /** A refusal for a tool call, or undefined to run it. Asked on every call, after the arguments are parsed, so it judges what runs. */
 export type CallCheck = (tool: string, args: unknown) => string | undefined;
 
 /** The MCP server and its bridge client, before any transport is attached. */
-export function createMcpServer(options: McpServerOptions = {}): { server: McpServer; client: BridgeClient } {
+export function createMcpServer(options: McpServerOptions = {}): { server: McpServer; client: BridgeClient; files?: FilesTool } {
 	// Behind a hub every session may list the devices: the tool reads the roster and nothing else.
 	const allowedTools = options.allowedTools && options.hub ? new Set([...options.allowedTools, DEVICES_TOOL]) : options.allowedTools;
 	// Fail closed: the local helper runs without --connector, so a scoped or remote session never gets it.
@@ -371,13 +379,17 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		project: "project" in choice ? choice.project : undefined,
 		onEvent: (event, data) => {
 			if (event === "permission_request") void handlePermission(data);
+			// The same session under a new name: its saved files go with it.
+			if (event === "session_renamed" && typeof data.session === "string") files?.renamed(data.session);
 		},
 	});
+	let files: FilesTool | undefined;
 
 	async function handlePermission(data: Record<string, unknown>): Promise<void> {
 		if (options.remote) return;
 		const requestId = String(data.requestId);
 		const host = String(data.host);
+		if (data.kind === "upload") return handleUploadQuestion(requestId, host, data);
 		let decision: "allow_once" | "allow_host" | "deny" = "deny";
 		if (envVar("AUTO_ALLOW") === "1") {
 			await client.call("permission.respond", { requestId, decision: "allow_once" }).catch(() => undefined);
@@ -409,6 +421,47 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			process.stderr.write(
 				`[polycarp] ${host} needs approval: run \`${COMMAND_NAME} allow ${host}\`, use the side panel (Settings > Agents), or set TABKYRA_AUTO_ALLOW=1.\n`,
 			);
+		}
+		await client.call("permission.respond", { requestId, decision }).catch(() => undefined);
+	}
+
+	/**
+	 * The files tool asks before a local file from outside the agent's folders goes to a site (D38). Only a yes
+	 * to this one upload counts, TABKYRA_AUTO_ALLOW does not answer it, and nothing is remembered. A client that
+	 * can't show questions leaves this one to the side panel, where it waits until it times out as a no.
+	 */
+	async function handleUploadQuestion(requestId: string, host: string, data: Record<string, unknown>): Promise<void> {
+		const asked = Array.isArray(data.files) ? (data.files as Array<{ name?: unknown; bytes?: unknown }>) : [];
+		// The upload call that asked knows where each file is (the question carries that call's id); the browser was told
+		// only names. The person is shown the full path, so a notes.txt from a private folder can't pass for the one in
+		// the project. A question that is not one call's own, file for file, is answered no.
+		const where = files?.asked(data.askId);
+		if (where?.length !== asked.length) return void (await client.call("permission.respond", { requestId, decision: "deny" }).catch(() => undefined));
+		const list = asked.map((f, i) => `${where[i]} (${byteSize(Number(f.bytes) || 0)})`).join(", ");
+		let decision: "allow_once" | "deny" = "deny";
+		if (!server.server.getClientCapabilities()?.elicitation) {
+			process.stderr.write(`[polycarp] An upload to ${host} is waiting for an answer in the side panel (Settings > Agents).\n`);
+			return;
+		}
+		try {
+			const answer = await server.server.elicitInput(
+				{
+					message: `Polycarp: ${String(data.agent || "the browser agent")} wants to upload ${list} from this computer to ${host}. Allow this upload?`,
+					requestedSchema: {
+						type: "object",
+						properties: {
+							decision: { type: "string", title: "Decision", enum: ["allow_once", "deny"], enumNames: ["Upload this once", "Deny"] },
+						},
+						required: ["decision"],
+					},
+				},
+				// The person has as long here as the side panel gives them, not the SDK's 60 seconds.
+				{ timeout: FILE_ASK_TIMEOUT_MS },
+			);
+			const d = answer.action === "accept" ? (answer.content as { decision?: string } | undefined)?.decision : undefined;
+			decision = d === "allow_once" ? "allow_once" : "deny";
+		} catch {
+			// The question was put and came back unusable: that is not a yes.
 		}
 		await client.call("permission.respond", { requestId, decision }).catch(() => undefined);
 	}
@@ -489,7 +542,12 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			description: "When the task is done: hand your tabs to the user, or close them with close:true, and end the session. Your next browser call starts a fresh group. Example: {\"close\":true}",
 			inputSchema: { close: z.boolean().optional().describe("Close the tabs instead of handing them over") },
 		},
-		(args) => call("session.end", args),
+		async (args) => {
+			const result = await call("session.end", args);
+			// The session's saved files end with it (D38).
+			if (!result.isError) files?.clear();
+			return result;
+		},
 	);
 	server.registerTool(
 		"tabs_release",
@@ -1084,6 +1142,22 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 
 	// ask_user (cli/src/ask.ts): questions for the user, answered in the side panel.
 	registerAskUser(server, client);
+	// A scoped session is treated as remote too: it names no paths and is told none.
+	files = registerFiles(server, client, {
+		session: choice.name,
+		// Only a default project session can be given another name by the extension ("<name>-2" for a second agent).
+		auto: choice.auto === true,
+		remote: Boolean(options.remote || allowedTools),
+		denied: (args) => {
+			const lacks = allowedTools ? argumentNeeds("files", args).find((t) => !allowedTools.has(t)) : undefined;
+			if (!lacks) return undefined;
+			return lacks === "run_js"
+				? "permission_denied: Downloading a URL you name needs the browser.script scope. Download a link, image or media element on the page by its ref, without url."
+				: "permission_denied: Downloading needs the browser.navigate scope: a link's file is fetched the way opening the link would fetch it.";
+		},
+		shapes: { tabId, ref, selector },
+		bridgeError: errorResult as (err: unknown) => { content: Array<{ type: "text"; text: string }>; isError: true },
+	});
 	// threads_list, thread_read, thread_search (cli/src/threads.ts): past side panel chats.
 	registerThreadTools(server, client);
 
@@ -1144,7 +1218,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			.map(([name]) => name);
 		if (unchecked.length) throw new Error(`Tools that skip the call check were registered: ${unchecked.join(", ")}`);
 	}
-	return { server, client };
+	return { server, client, files };
 }
 
 type ToolResult = { content: Content[]; isError?: boolean };

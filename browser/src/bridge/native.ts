@@ -21,6 +21,7 @@ import type { UpdateAction } from "../update/logic.js";
 import { runningFromStore } from "../update/store-install.js";
 import { type Delivered, dialogError, raceDialogs } from "./dialogs.js";
 import { BridgeError, classify } from "./errors.js";
+import { dropAllTransfers, dropTransfersForClient } from "./files.js";
 import {
 	addPendingRequest,
 	allowHost,
@@ -42,6 +43,7 @@ import {
 	type ExtConnect,
 	type ExtSubscription,
 	type ExtToHost,
+	FILE_ASK_TIMEOUT_MS,
 	type HostClientConnected,
 	type HostConnect,
 	type HostForwardedRequest,
@@ -256,6 +258,8 @@ async function onClientDisconnected(clientId: string): Promise<void> {
 	await stopScreencastsOwnedBy(clientId).catch(() => undefined);
 	// ask_user: a question from a client that left has nobody to answer to.
 	cancelQuestionsFor(clientId);
+	// The files tool: content half moved for a client that left is dropped.
+	dropTransfersForClient(clientId);
 	// A restarted harness (same session key) can connect before its old socket closes; the
 	// session is still in use then, so leave it alone.
 	const successors = state ? [...clients.values()].filter((c) => c.sessionKey === state.sessionKey) : [];
@@ -305,6 +309,47 @@ async function askPermission(state: ClientState, url: string): Promise<boolean> 
 	await removePendingRequest(requestId);
 	if (result === "allow_host") await allowHost(host);
 	return result !== "deny";
+}
+
+/**
+ * The files tool's question (docs/decisions.md, D38): may this agent put these local files into the page at `url`?
+ * It reaches the person the way a site question does (the agent's own prompt, and "Waiting for your answer" in
+ * Settings > Agents), but differs in three ways: it is asked in every permission mode, only "allow once" is a yes,
+ * and nothing is remembered, so the next upload asks again.
+ */
+async function askUpload(
+	state: ClientState,
+	url: string,
+	files: Array<{ name: string; bytes: number }>,
+	askId: string,
+): Promise<boolean> {
+	const host = hostOf(url);
+	if (!host || isOwnExtensionUrl(url)) return false;
+	const requestId = `${state.clientId}:${crypto.randomUUID()}`;
+	const decision = new Promise<PermissionDecision>((resolve) => {
+		pendingDecisions.set(requestId, resolve);
+		setTimeout(() => {
+			if (pendingDecisions.delete(requestId)) resolve("deny");
+		}, FILE_ASK_TIMEOUT_MS);
+	});
+	await addPendingRequest({
+		requestId,
+		clientId: state.clientId,
+		clientName: state.name,
+		host,
+		url,
+		createdAt: Date.now(),
+		upload: { files },
+	});
+	send({
+		type: "event",
+		clientId: state.clientId,
+		event: "permission_request",
+		data: { requestId, host, url, timeoutMs: FILE_ASK_TIMEOUT_MS, kind: "upload", agent: state.name, files, askId },
+	});
+	const result = await decision;
+	await removePendingRequest(requestId);
+	return result === "allow_once";
 }
 
 function guardedError(url: string): BridgeError {
@@ -410,6 +455,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			},
 			isGuarded: (url: string) => isGuardedUrl(url, req.guardedHosts),
 			guardedHosts: req.guardedHosts ?? [],
+			askUpload: (url, files, askId) => askUpload(state, url, files, askId),
 			checkUrl: async (url: string) => {
 				if (isGuardedUrl(url, req.guardedHosts)) throw guardedError(url);
 				if (!(await askPermission(state, url))) {
@@ -449,7 +495,8 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 						},
 						() => deliveredResult,
 					),
-			HANDLER_TIMEOUT_MS,
+			// An upload's begin may wait for the person's answer, which has its own, longer limit.
+			req.method === "files.upload.begin" ? FILE_ASK_TIMEOUT_MS + 30000 : HANDLER_TIMEOUT_MS,
 			req.method,
 		);
 		trace(`${state.name} ${req.method} session=${tSession}ms total=${Math.round(performance.now() - t0)}ms`);
@@ -861,6 +908,8 @@ function connect(): void {
 			state.closed = true;
 			state.abort?.();
 		}
+		// The files tool: an upload being committed for any of them stops, and its pieces are cleared.
+		dropAllTransfers();
 		for (const state of clients.values()) {
 			if (state.session) veilSessionGone(state.session.id);
 			void state.session?.suspend();

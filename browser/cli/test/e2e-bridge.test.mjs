@@ -7,7 +7,8 @@
 // directory, so it never touches an installed browser or a running bridge.
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -150,6 +151,54 @@ extraPages["/clip"] = `<!doctype html><title>Clip</title>
 for (const type of ["paste", "copy", "cut", "keydown", "keyup", "beforeinput"]) document.addEventListener(type, (e) => window.__seen.push(type + ":" + (e.key || "")), true);</script>`;
 
 // Evidence captures. The secrets are put together here so no line reads like a real credential.
+// The files tool (D38): two file inputs, a hidden one behind a label, a drop area, and a link to a file. The page hashes
+// what it is given, so the test compares bytes that crossed the whole bridge.
+extraPages["/files"] = `<!doctype html><title>Files</title>
+<input type="file" id="one" aria-label="One file" accept=".bin,text/plain">
+<input type="file" id="many" aria-label="Many files" multiple>
+<label for="hidden" id="pick">Choose a file</label><input type="file" id="hidden" style="display:none">
+<div id="zone" style="width:240px;height:80px;border:2px dashed #888">Drop files here</div>
+<p id="plain">Not a drop area</p>
+<a id="dl" href="/files-data/blob.bin" download="linked.bin">Get the file</a>
+<script>
+document.cookie = "dl=1; path=/";
+window.seen = [];
+const hex = async (f) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await f.arrayBuffer()))).map((b) => b.toString(16).padStart(2, "0")).join("");
+const note = async (where, files, event) => { for (const f of Array.from(files)) window.seen.push({ where, event, name: f.name, size: f.size, type: f.type, sha: await hex(f) }); };
+for (const id of ["one", "many", "hidden"]) for (const type of ["input", "change"]) document.getElementById(id).addEventListener(type, (e) => note(id, e.target.files, type));
+const zone = document.getElementById("zone");
+zone.addEventListener("dragover", (e) => e.preventDefault());
+zone.addEventListener("drop", (e) => { e.preventDefault(); note("zone", e.dataTransfer.files, "drop"); });
+</script>`;
+/** 3.5 MB that is the same on every run and differs along its length, so a piece out of order shows in the hash. */
+const FILES_BLOB = (() => {
+	const out = Buffer.alloc(3 * 1024 * 1024 + 512 * 1024);
+	for (let i = 0; i < out.length; i += 4) out.writeUInt32LE((i * 2654435761) >>> 0, i);
+	return out;
+})();
+function serveFileData(req, res) {
+	const path = req.url.split("?")[0];
+	if (!path.startsWith("/files-data/")) return false;
+	if (path === "/files-data/blob.bin") {
+		res.writeHead(200, { "content-type": "application/octet-stream", "content-length": FILES_BLOB.length });
+		res.end(FILES_BLOB);
+	} else if (path === "/files-data/members-only") {
+		// Only the page's own cookie gets this one.
+		const ok = /(^|; )dl=1/.test(req.headers.cookie ?? "");
+		res.writeHead(ok ? 200 : 403, { "content-type": "text/csv", "content-disposition": 'attachment; filename="../../.report 2026.csv"' });
+		res.end(ok ? "a,b\n1,2\n" : "no");
+	} else if (path === "/files-data/huge") {
+		// Says it is 60 MB and stops: the size alone must be enough to refuse it.
+		res.writeHead(200, { "content-type": "application/octet-stream", "content-length": 60 * 1024 * 1024 });
+		res.write(Buffer.alloc(1024));
+		setTimeout(() => res.destroy(), 200);
+	} else {
+		res.writeHead(404, { "content-type": "text/plain" });
+		res.end("no such file");
+	}
+	return true;
+}
+
 const cat = (...parts) => parts.join("");
 const CAPTURE_SECRETS = {
 	url: "URLSECRET1",
@@ -328,6 +377,7 @@ before(async () => {
 			res.writeHead(200, { "content-type": "application/json" });
 			return res.end('{"ok":true}');
 		}
+		if (serveFileData(req, res)) return;
 		res.writeHead(200, { "content-type": "text/html" });
 		if (req.url === "/counter") return res.end(COUNTER_PAGE);
 		if (req.url === "/refs") return res.end(REFS_PAGE);
@@ -1667,5 +1717,226 @@ test("the in-use veil: drawn over the agent's page, unseen by every read and scr
 	} finally {
 		await sw("chrome.storage.local.remove('veil_enabled').then(() => { globalThis.__POLYCARP_VEIL_IDLE_MS = undefined; })").catch(() => undefined);
 		await agent.close();
+	}
+});
+
+// ---- the files tool (docs/decisions.md, D38) ----
+
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+
+/** An agent in a project folder with files to upload, on the fixture page, with the site allowed for agents or not. */
+async function filesAgent(allowed = true) {
+	await connected();
+	const project = realpathSync(mkdtempSync(join(tmpdir(), "tabkyra-e2e-files-")));
+	const agent = await agentIn(project);
+	const call = async (args) => {
+		const r = await agent.callTool({ name: "files", arguments: args }, undefined, { timeout: 120_000 });
+		return { isError: r.isError === true, text: r.content.map((c) => c.text ?? "").join("\n"), content: r.content };
+	};
+	const ok = async (args) => {
+		const r = await call(args);
+		assert.ok(!r.isError, `files ${args.action} failed: ${r.text}`);
+		return JSON.parse(r.text);
+	};
+	const seen = async () => JSON.parse(JSON.parse(await on(agent, "run_js", { code: "JSON.stringify(window.seen)", world: "main" })).value);
+	const before = await sw("chrome.storage.local.get('bridge_allowed_hosts').then((d) => d.bridge_allowed_hosts ?? null)");
+	if (allowed) tk("allow", "127.0.0.1");
+	await on(agent, "navigate", { url: `${pageUrl}files` });
+	const close = async () => {
+		await sw(`chrome.storage.local.set({ bridge_allowed_hosts: ${JSON.stringify(before ?? [])} }).then(() => true)`).catch(() => undefined);
+		await on(agent, "session_end", { closeTabs: true }).catch(() => undefined);
+		await agent.close().catch(() => undefined);
+		rmSync(project, { recursive: true, force: true });
+	};
+	return { agent, project, call, ok, seen, close };
+}
+
+test("files upload: a 1.5 MB local file reaches a file input intact, by ref, with input and change fired", async () => {
+	const a = await filesAgent();
+	try {
+		const big = randomBytes(1536 * 1024);
+		writeFileSync(join(a.project, "big.bin"), big);
+		writeFileSync(join(a.project, "notes.txt"), "plain notes");
+		writeFileSync(join(a.project, "photo.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]));
+		const ref = refFor(await on(a.agent, "read_page", { filter: "interactive" }), "One file");
+		assert.ok(ref, "the file input has a ref");
+		const done = await a.ok({ action: "upload", ref, paths: [join(a.project, "big.bin")] });
+		assert.deepEqual(done.uploaded, [{ name: "big.bin", bytes: big.length }]);
+		assert.equal(done.target, "input");
+		assert.deepEqual(done.holds, [{ name: "big.bin", bytes: big.length, type: "application/octet-stream" }]);
+		// What the page itself holds: read back from the input, and hashed in the page.
+		const held = JSON.parse(JSON.parse(await on(a.agent, "run_js", { code: "JSON.stringify([document.getElementById('one').files.length, document.getElementById('one').files[0].size, document.getElementById('one').files[0].name])", world: "main" })).value);
+		assert.deepEqual(held, [1, big.length, "big.bin"]);
+		const seen = await until(async () => ((await a.seen()).length >= 2 ? a.seen() : undefined), 10_000, "the page to hash the file");
+		assert.deepEqual(seen.map((s) => [s.where, s.event, s.size]), [["one", "input", big.length], ["one", "change", big.length]]);
+		assert.equal(seen[1].sha, sha256(big), "the bytes in the page are the bytes on disk");
+
+		// The input's own limits hold: one file only, and only what it accepts. Nothing changes in the page.
+		const two = await a.call({ action: "upload", selector: "#one", paths: [join(a.project, "big.bin"), join(a.project, "notes.txt")] });
+		assert.ok(two.isError && /takes one file; 2 were given/.test(two.text), two.text);
+		const wrong = await a.call({ action: "upload", selector: "#one", paths: [join(a.project, "photo.png")] });
+		assert.ok(wrong.isError && /accepts \.bin,text\/plain; photo\.png/.test(wrong.text), wrong.text);
+		// A credential-like file never leaves the helper, even for an allowed site and a real input.
+		writeFileSync(join(a.project, ".env"), "TOKEN=1");
+		const secret = await a.call({ action: "upload", selector: "#many", paths: [join(a.project, ".env")] });
+		assert.ok(secret.isError && /credential/.test(secret.text), secret.text);
+		assert.equal((await a.seen()).length, 2, "the refused uploads fired nothing");
+
+		// Several files into a multiple input, and a hidden input reached through its label.
+		const many = await a.ok({ action: "upload", selector: "#many", paths: [join(a.project, "notes.txt"), join(a.project, "photo.png")] });
+		assert.deepEqual(many.holds.map((h) => [h.name, h.type]), [["notes.txt", "text/plain"], ["photo.png", "image/png"]]);
+		const label = refFor(await on(a.agent, "read_page", {}), "Choose a file");
+		const viaLabel = await a.ok(label ? { action: "upload", ref: label, paths: [join(a.project, "notes.txt")] } : { action: "upload", selector: "#pick", paths: [join(a.project, "notes.txt")] });
+		assert.equal(viaLabel.target, "input");
+		const after = await until(async () => ((await a.seen()).length >= 8 ? a.seen() : undefined), 10_000, "the later uploads");
+		assert.deepEqual(after.filter((s) => s.event === "change").map((s) => [s.where, s.name, s.sha]), [
+			["one", "big.bin", sha256(big)],
+			["many", "notes.txt", sha256("plain notes")],
+			["many", "photo.png", sha256(readFileSync(join(a.project, "photo.png")))],
+			["hidden", "notes.txt", sha256("plain notes")],
+		]);
+	} finally {
+		await a.close();
+	}
+});
+
+test("files upload: files dropped on a drop area arrive in its drop event; a site not allowed for agents gets nothing", async () => {
+	const a = await filesAgent();
+	try {
+		const body = randomBytes(700 * 1024);
+		writeFileSync(join(a.project, "drop.bin"), body);
+		writeFileSync(join(a.project, "second.txt"), "second file");
+		const zone = refFor(await on(a.agent, "read_page", {}), "Drop files here");
+		const dropped = await a.ok(zone ? { action: "upload", ref: zone, paths: [join(a.project, "drop.bin"), join(a.project, "second.txt")] } : { action: "upload", selector: "#zone", paths: [join(a.project, "drop.bin"), join(a.project, "second.txt")] });
+		assert.equal(dropped.target, "drop");
+		assert.equal(dropped.note, undefined, "the page took the drop");
+		const seen = await until(async () => ((await a.seen()).length >= 2 ? a.seen() : undefined), 10_000, "the drop");
+		assert.deepEqual(seen.map((s) => [s.where, s.event, s.name, s.size, s.sha]), [
+			["zone", "drop", "drop.bin", body.length, sha256(body)],
+			["zone", "drop", "second.txt", 11, sha256("second file")],
+		]);
+		// An element with no drop handler: the files are offered, and the result says the page did not take them.
+		const ignored = await a.ok({ action: "upload", selector: "#plain", paths: [join(a.project, "second.txt")] });
+		assert.match(ignored.note, /did not take the drop/);
+		assert.equal((await a.seen()).length, 2);
+	} finally {
+		await a.close();
+	}
+	// The agent was let onto this site once, but the site is not on the allowed list: no file goes to it.
+	const b = await filesAgent(false);
+	try {
+		writeFileSync(join(b.project, "notes.txt"), "plain notes");
+		const refused = await b.call({ action: "upload", selector: "#many", paths: [join(b.project, "notes.txt")] });
+		assert.ok(refused.isError && /not allowed for agents yet/.test(refused.text), refused.text);
+		assert.deepEqual(await b.seen(), []);
+	} finally {
+		await b.close();
+	}
+});
+
+test("files upload: a file from outside the project waits for the answer in the side panel, and only a yes to that upload sends it", async () => {
+	// This agent's client can show no question of its own, so the side panel is where the person answers.
+	const a = await filesAgent();
+	const outside = realpathSync(mkdtempSync(join(tmpdir(), "tabkyra-e2e-outside-")));
+	try {
+		const body = Buffer.from("from outside the project");
+		writeFileSync(join(outside, "cv.txt"), body);
+		const pending = () => sw("chrome.storage.session.get('bridge_pending_requests').then((d) => (d.bridge_pending_requests ?? []).filter((p) => p.upload))");
+		/** Wait for the question, check what it shows, and write what the side panel's button writes. */
+		const answer = async (decision) => {
+			const q = await until(async () => (await pending())[0], 15_000, "the upload question in the side panel");
+			assert.deepEqual(q.upload.files, [{ name: "cv.txt", bytes: body.length }]);
+			assert.equal(q.host, "127.0.0.1");
+			assert.ok(!JSON.stringify(q).includes(outside), "the browser is not told where the file is");
+			await sw(`chrome.storage.session.set({ ${JSON.stringify(`bridge_decision_${q.requestId}`)}: ${JSON.stringify(decision)} }).then(() => true)`);
+		};
+		const args = { action: "upload", selector: "#many", paths: [join(outside, "cv.txt")] };
+		// "Deny", and the answer a site question may get but an upload may not: neither sends a byte.
+		for (const no of ["deny", "allow_host"]) {
+			const call = a.call(args);
+			await answer(no);
+			const refused = await call;
+			assert.ok(refused.isError, refused.text);
+			assert.match(refused.text, /did not approve/);
+			assert.deepEqual(await a.seen(), [], `${no}: the page got something`);
+		}
+		// "Upload this once".
+		const call = a.call(args);
+		await answer("allow_once");
+		const done = await call;
+		assert.ok(!done.isError, done.text);
+		const seen = await until(async () => ((await a.seen()).length >= 2 ? a.seen() : undefined), 10_000, "the upload");
+		assert.deepEqual([...new Set(seen.map((f) => `${f.name} ${f.size} ${f.sha}`))], [`cv.txt ${body.length} ${sha256(body)}`]);
+		// The yes was for that upload: the next one asks again, and the question is gone once answered.
+		const again = a.call(args);
+		await answer("deny");
+		assert.ok((await again).isError);
+		assert.deepEqual(await pending(), []);
+		assert.equal((await a.seen()).length, seen.length);
+	} finally {
+		rmSync(outside, { recursive: true, force: true });
+		await a.close();
+	}
+});
+
+test("files download: a file fetched in the page, with its cookie, is saved privately and matches byte for byte", async () => {
+	const a = await filesAgent();
+	try {
+		const got = await a.ok({ action: "download", url: `${pageUrl}files-data/blob.bin` });
+		assert.deepEqual([got.name, got.bytes, got.sha256, got.sourceUrl], ["blob.bin", FILES_BLOB.length, sha256(FILES_BLOB), `${pageUrl}files-data/blob.bin`]);
+		assert.equal(sha256(readFileSync(got.path)), sha256(FILES_BLOB), "more than one 3 MB piece, in order");
+		assert.equal(statSync(got.path).mode & 0o777, 0o600);
+		assert.equal(statSync(dirname(got.path)).mode & 0o777, 0o700);
+		assert.ok(got.path.startsWith(realpathSync(home)) || got.path.startsWith(home), got.path);
+		// By ref: the link's href, named by its download attribute; and never over the first file.
+		const link = refFor(await on(a.agent, "read_page", { filter: "interactive" }), "Get the file");
+		const linked = await a.ok({ action: "download", ref: link });
+		assert.deepEqual([linked.name, linked.sha256], ["linked.bin", sha256(FILES_BLOB)]);
+		// The page's cookie goes with the request, and the server's file name is cleaned.
+		const members = await a.ok({ action: "download", url: "/files-data/members-only" });
+		assert.deepEqual([members.name, members.mime, readFileSync(members.path, "utf8")], ["report 2026.csv", "text/csv", "a,b\n1,2\n"]);
+		assert.equal(dirname(members.path), dirname(got.path));
+		// blob: and data: URLs of the page itself.
+		const blobUrl = JSON.parse(await on(a.agent, "run_js", { code: "URL.createObjectURL(new Blob(['made in the page'], { type: 'text/plain' }))", world: "main" })).value;
+		assert.equal(readFileSync((await a.ok({ action: "download", url: blobUrl })).path, "utf8"), "made in the page");
+		const data = await a.ok({ action: "download", url: `data:text/plain;base64,${Buffer.from("from a data url").toString("base64")}` });
+		assert.equal(readFileSync(data.path, "utf8"), "from a data url");
+		// Refusals: too large (with the size), a server error, another origin's blob, a scheme that is not the web's.
+		const huge = await a.call({ action: "download", url: `${pageUrl}files-data/huge` });
+		assert.ok(huge.isError && /60\.0 MB/.test(huge.text) && /50\.0 MB/.test(huge.text), huge.text);
+		const missing = await a.call({ action: "download", url: `${pageUrl}files-data/nope` });
+		assert.ok(missing.isError && /404/.test(missing.text), missing.text);
+		const foreign = await a.call({ action: "download", url: "blob:https://example.com/0c2b6a8e-0000-4000-8000-000000000000" });
+		assert.ok(foreign.isError && /another page/.test(foreign.text), foreign.text);
+		const local = await a.call({ action: "download", url: "file:///etc/hosts" });
+		assert.ok(local.isError && /Only http, https, blob and data/.test(local.text), local.text);
+		const listed = (await a.ok({ action: "list" })).files;
+		assert.deepEqual(listed.map((f) => f.name), ["blob.bin", "linked.bin", "report 2026.csv", listed[3].name, listed[4].name]);
+		// A saved file goes back into a page by its id.
+		const up = await a.ok({ action: "upload", selector: "#many", ids: [members.id] });
+		assert.deepEqual(up.holds, [{ name: "report 2026.csv", bytes: 8, type: "text/csv" }]);
+	} finally {
+		await a.close();
+	}
+});
+
+test("files save_pdf: the page as a PDF file on this computer", async () => {
+	const a = await filesAgent();
+	try {
+		const pdf = await a.ok({ action: "save_pdf" });
+		assert.deepEqual([pdf.name, pdf.mime, pdf.sourceUrl], ["Files.pdf", "application/pdf", `${pageUrl}files`]);
+		const bytes = readFileSync(pdf.path);
+		assert.equal(bytes.subarray(0, 5).toString("latin1"), "%PDF-");
+		assert.equal(bytes.length, pdf.bytes);
+		assert.ok(bytes.length > 1000);
+		assert.equal(sha256(bytes), pdf.sha256);
+		assert.equal(statSync(pdf.path).mode & 0o777, 0o600);
+		const read = await a.call({ action: "read", id: pdf.id });
+		assert.deepEqual(read.content.map((c) => c.type), ["text", "resource"]);
+		assert.equal(read.content[1].resource.mimeType, "application/pdf");
+		assert.deepEqual((await a.ok({ action: "remove", id: pdf.id })).removed, pdf.id);
+		assert.throws(() => statSync(pdf.path));
+	} finally {
+		await a.close();
 	}
 });

@@ -151,6 +151,41 @@ test("a read-only session sees inspect_page but can't read response bodies throu
 	}
 });
 
+test("browser.files alone never fetches with the user's sign-in what the session's other scopes could not open", async () => {
+	const call = async (scopes, args) => {
+		const client = await connect(token(`files-${randomBytes(4).toString("hex")}`, scopes));
+		try {
+			const r = await client.callTool({ name: "files", arguments: args });
+			return r.content.map((c) => c.text ?? "").join("\n");
+		} finally {
+			await client.close();
+		}
+	};
+	const named = { action: "download", url: "/api/me" };
+	const linked = { action: "download", ref: "e4" };
+	// Each scope set that lacks browser.script: an address the agent names is refused, same-origin, absolute or blob.
+	for (const scopes of ["browser.files", "browser.read,browser.files", "browser.read,browser.navigate,browser.files", "browser.read,browser.navigate,browser.act,browser.files"]) {
+		for (const args of [named, { ...named, url: "https://bank.test/statement.json" }, { ...named, url: "blob:https://bank.test/1" }, { ...named, ref: "e4" }])
+			assert.match(await call(scopes, args), /^permission_denied: .*browser\.script/, `${scopes} ${JSON.stringify(args)}`);
+	}
+	// Each scope set that lacks browser.navigate: no download at all, a link included, even with browser.script.
+	for (const scopes of ["browser.files", "browser.read,browser.files", "browser.read,browser.act,browser.files", "browser.files,browser.script"]) {
+		for (const args of [linked, { action: "download", selector: "a.export" }])
+			assert.match(await call(scopes, args), /^permission_denied: .*browser\.navigate/, `${scopes} ${JSON.stringify(args)}`);
+	}
+	assert.match(await call("browser.files,browser.script", named), /^permission_denied: .*browser\.navigate/);
+	// What the scopes do allow is not refused by them (no browser is connected here, so the bridge says so instead).
+	for (const [scopes, args] of [
+		["browser.read,browser.navigate,browser.files", linked],
+		["browser.read,browser.navigate,browser.files,browser.script", named],
+		["browser.files", { action: "save_pdf" }],
+	])
+		assert.doesNotMatch(await call(scopes, args), /permission_denied/, `${scopes} ${JSON.stringify(args)}`);
+	assert.deepEqual(JSON.parse(await call("browser.files", { action: "list" })), { files: [] });
+	// A path on this computer is never a remote session's to name, whatever it holds.
+	assert.match(await call("browser.read,browser.navigate,browser.act,browser.files,browser.script", { action: "upload", ref: "e1", paths: ["/etc/hosts"] }), /remote session can't upload from a path/);
+});
+
 test("a revoked token is refused at once, and another token can't reuse a session", async () => {
 	const a = token("alpha", "browser.read");
 	const b = token("beta", "library.read");

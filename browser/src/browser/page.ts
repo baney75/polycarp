@@ -137,7 +137,12 @@ const configuredWorlds = new Set<string>();
  * Run code in a tab's USER_SCRIPT world and return its JSON-serialisable result.
  * `code` must be an expression or an IIFE; promises are awaited.
  */
-export async function runInPage<T = unknown>(tabId: number, code: string, worldId = SNAPSHOT_WORLD_ID): Promise<T> {
+export async function runInPage<T = unknown>(
+	tabId: number,
+	code: string,
+	worldId = SNAPSHOT_WORLD_ID,
+	csp = SNAPSHOT_CSP,
+): Promise<T> {
 	const tab = await chrome.tabs.get(tabId);
 	if (tab.url && isRestrictedUrl(tab.url)) {
 		throw new Error(`Cannot run scripts on ${tab.url}: browser-internal pages are protected.`);
@@ -151,7 +156,7 @@ export async function runInPage<T = unknown>(tabId: number, code: string, worldI
 	try {
 		if (!configuredWorlds.has(worldId)) {
 			try {
-				await api.configureWorld({ worldId, messaging: true, csp: SNAPSHOT_CSP });
+				await api.configureWorld({ worldId, messaging: true, csp });
 			} catch (err) {
 				if (isUserScriptsGated(err)) throw err;
 				/* already configured with the same settings */
@@ -989,6 +994,23 @@ export async function snapshot(
 	);
 	if (typeof snap?.url === "string") snap.url = maskUrl(snap.url);
 	return snap;
+}
+
+/**
+ * Page-side statements that leave the element a ref or selector names in `el`, with the errors
+ * locate gives. For code that runs in the snapshot world (the default of runInPage), where refs live.
+ */
+export function elementCode(target: { ref?: string; selector?: string }): string {
+	return `let el = null;
+		const ref = ${JSON.stringify(target.ref ?? "")};
+		const sel = ${JSON.stringify(target.selector ?? "")};
+		if (ref) {
+			try { el = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); }
+			catch (e) { if (!sel) throw e; }
+		}
+		if (!el && sel) el = document.querySelector(sel);
+		if (!el) throw new Error("Selector not found: " + sel + ". read_page or find gives refs.");
+		if (!el.isConnected) throw new Error("Element is no longer in the page. Call read_page for fresh refs.");`;
 }
 
 /** Resolve a ref (from a snapshot) or CSS selector to its viewport center. */
