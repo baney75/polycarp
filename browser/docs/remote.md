@@ -80,12 +80,13 @@ and `remote status --json` give the `state` or check name in the first column.
 | `funnel_closed` | Funnel was turned off for this address. | `remote fix` opens it again. |
 | `cloudflared_missing` | cloudflared is gone. | `remote fix` offers the pinned download. |
 | `port_busy` | Another program uses the local port or 8443. | Stop it, or `remote setup --port N`. |
-| `dns` | Public DNS has no public address for the name. | Wait a few minutes for a new name; else `remote fix`. |
-| `tls` | The certificate isn't valid for the name, or nothing answers. | `remote fix`. |
+| `dns` | Public DNS has no public address (A or AAAA) for the name, or the lookup failed (SERVFAIL). | No address yet: wait a few minutes for a new name; else `remote fix`. A failed lookup: fix the name's DNS records or DNSSEC with your DNS provider. |
+| `tls` | The certificate isn't valid for the name, the port speaks plain HTTP, or nothing answers. | `remote fix`; on your own front door, a certificate for the name. |
 | `resource_metadata` | The public name reaches something that isn't this connector. | `remote fix` (restarts `serve`; a renamed computer gets its new URL). |
-| `auth_metadata` | The OAuth server metadata names another address. | `remote fix`. |
+| `auth_metadata` | The OAuth server metadata names another address, or no authorization or token endpoint on this one. | `remote fix`. |
 | `auth_challenge` | `/mcp` doesn't answer a sign-in challenge. | `remote fix`. |
 | `streaming` | The stream's first bytes take over 5 seconds, so assistants time out. | Use Tailscale Funnel or a Cloudflare named tunnel, not a quick tunnel or a buffering proxy. |
+| `probe_cleanup` | `remote test` couldn't delete its probe token. It stops working by itself two minutes after it was made. | The `token revoke <id>` command in `next`. |
 | `passcode` | No passcode is set. | `polycarp browser token passcode` (shown once). |
 | `linger`, `tailscale user` | Linux one-time steps. | The command in [Mac, Linux and Windows](#mac-linux-and-windows). |
 
@@ -109,10 +110,13 @@ fetch. From inside your own tailnet a ts.net name answers even when Funnel isn't
 
 `remote test` asks public DNS (DNS over HTTPS) for the name and connects to that public address with the name as TLS SNI
 and Host, as an assistant does. It checks the certificate, `/.well-known/oauth-protected-resource/mcp`, the
-authorization server metadata, that `POST /mcp` without a token answers 401 with a `WWW-Authenticate` naming the
+authorization server metadata (its issuer, and an authorization and token endpoint, plus any registration endpoint, on
+the connector's own address), that `POST /mcp` without a token answers 401 with a `WWW-Authenticate` naming the
 metadata, and a streaming probe: an authenticated request whose event stream must start within 5 seconds. The probe
-uses a token made for it alone, with the narrowest scope (`skills.read`, no browser access), and deleted when the probe
-ends, also on Ctrl-C; it is never printed, logged or in `--json`. `remote setup` runs the same checks at its end. The
+uses a token made for it alone, with the narrowest scope (`skills.read`, no browser access) and a two-minute expiry that
+every token check enforces, and deleted when the probe ends, also on Ctrl-C. If the delete fails, the run fails with a
+`probe_cleanup` check naming the token's id; the token still stops working at its expiry. Its secret is never printed,
+logged or in `--json`. Every request has an absolute deadline, so a proxy that trickles bytes can't stretch it. `remote setup` runs the same checks at its end. The
 computer must stay on, awake and signed in to the browser with Polycarp loaded.
 
 ## Setup in detail
@@ -207,16 +211,19 @@ another Cloudflare name) or, on `on`, `add_connector` (`url`, the connector URL)
 failure, 2 for a usage error and 3 when a person has to do something, which `next` names.
 `remote off --json` prints `{ok, message, notes}` with the same 0 or 1.
 
-`setup --json` ends with `checks`, the same list `remote test --json` gives (below). When the connector answers from
-outside but a later check fails (a held stream, no sign-in challenge), setup is a `problem` whose `code` is that check's
-name, exit 1, and `remote.json` is kept. With `--connect-code`, a code that can't be made is a `problem` with `code`
+`setup --json` ends with `checks`, the same list `remote test --json` gives (below). Only a failure marked `pending`
+(no public address yet, or nothing answering yet) is what a new name looks like for a few minutes; setup is then `on` and
+says to run `remote test` later. Any other failed check (a refused certificate, a 421, another connector's metadata, a
+held stream, no sign-in challenge) makes setup a `problem` whose `code` is that check's name, exit 1, with the saved
+`connectorUrl`, and `remote.json` is kept. Every failure after `remote.json` is saved carries `connectorUrl`. With `--connect-code`, a code that can't be made is a `problem` with `code`
 `connect_code`, the reason in `connectCodeProblem`, the `connectorUrl` and, when this run made it, the `passcode`; it exits
 1 and the route stays set up.
 
 `remote test --json` prints `{ok, state, code?, message, publicUrl, connectorUrl, checks}`. `state` is `on` when every
 check passes, else `problem` with `code` naming the first failed check. Each of `checks` is `{name, status, detail,
-next?}`: `status` is `ok`, `warn` or `fail`, `next` is the one thing to do after a failure, and `name` is, in order,
-`dns`, `tls`, `resource_metadata`, `auth_metadata`, `auth_challenge` or `streaming`. Checks after a failed `dns` or
+next?, pending?}`: `status` is `ok`, `warn` or `fail`, `next` is the one thing to do after a failure, `pending` is true on
+a failure that waiting fixes, and `name` is, in order, `dns`, `tls`, `resource_metadata`, `auth_metadata`,
+`auth_challenge`, `streaming` or `probe_cleanup` (only when the probe's token couldn't be deleted). Checks after a failed `dns` or
 `tls` don't run, and `streaming` runs only when `resource_metadata` passed. Nothing set up is `code` `not_set_up` with
 `next` `run_command`. Exit codes: 0 every check passed, 1 a check failed, 2 usage, 3 nothing is set up. No token is
 ever in it.
