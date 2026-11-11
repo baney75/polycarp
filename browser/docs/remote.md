@@ -250,11 +250,16 @@ ASCII works.
 Each task shows a command window while it runs, titled with its name. Closing that window stops the service until you
 log on again or run setup again. `schtasks /Query /TN com.polycarp.serve /V /FO LIST` shows a task.
 
-`polycarp browser remote off` removes it: it ends the tasks, ends the programs they started (by the pid each records, with
-`taskkill /T`) and checks they are gone, then deletes the tasks and their scripts, and keeps the logs. A program that
-won't stop leaves its task in place and says which pid to end. If Windows
-refuses to make a task ("Access is denied"), your organization blocks scheduled tasks; setup says so and how to run
+`polycarp browser remote off` removes it: it ends the tasks, ends the programs they started with `taskkill /T` and checks
+they are gone, then deletes the tasks and their scripts, and keeps the logs. Each program records its pid and start time
+when it starts and deletes the record when it exits; a pid is ended only while Windows (`Get-Process`) reports the same
+start time, so a pid Windows has since given to another program is never touched. A program that won't stop, one whose
+start time can't be read, or a running task with no record leaves its task in place and says what to end in Task Manager.
+If Windows refuses to make a task, in any language, setup says your organization may block scheduled tasks and how to run
 `polycarp browser serve` yourself instead.
+
+When setup asks you to allow Funnel, it opens the page in your default browser (on Windows through `rundll32.exe
+url.dll,FileProtocolHandler`, so no command line parses the address) and prints the address either way.
 
 ## Revoke
 
