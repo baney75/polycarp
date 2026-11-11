@@ -668,3 +668,6 @@
 {"task": "Add a comment to each function", "skill": "none"}
 {"task": "Remove all the unused imports in this file", "skill": "none"}
 {"task": "Delete every .tmp file in the build folder", "skill": "none"}
+{"task": "Move each component into its own module", "skill": "none"}
+{"task": "Delete all the stale git branches", "skill": "none"}
+{"task": "Mark every flaky test as skipped", "skill": "none"}

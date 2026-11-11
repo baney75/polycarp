@@ -487,9 +487,12 @@ function readTask(index: RouterIndex, task: string): ReadTask {
  * outranks ("archive all the LinkedIn notifications in my Gmail" stays email-organization).
  * Only the verbs in BULK_VERBS count, verbs that change a site's items: code work
  * ("run all the tests", "add a docstring to every function", "fix every lint error") and
- * reading ("summarize all the comments") open with other verbs. A task about local files or
- * code doesn't count even with one of these verbs: one that names a file ("package.json",
- * "img.png", ".tmp") or a code word ("remove all the unused imports in this file").
+ * reading ("summarize all the comments") open with other verbs. The task must also name a web
+ * thing (WEB_ITEMS: a site, page or account, a site's items such as posts, comments or orders,
+ * or a platform name), because coding agents call skill_match for every task and a false invoke
+ * costs more than a miss: "delete all the stale git branches" names none, so it doesn't count.
+ * Git and repo words are not web words. A task that names a file ("package.json", "img.png",
+ * ".tmp") or a code word ("remove all the unused imports in this file") never counts.
  */
 const BULK_SKILL = "bulk-actions";
 const QUANTIFIED_ACTION = /^\s*(?:please\s+)?([a-z]+)(?:\s+[a-z0-9']+){0,3}?\s+(?:all|every|each)\b/;
@@ -499,13 +502,15 @@ const BULK_VERBS = new Set(
 		"approve close revoke retire move tag"
 	).split(" "),
 );
+const WEB_ITEMS =
+	/\b(?:web ?sites?|sites?|web|online|pages?|accounts?|profiles?|inbox(?:es)?|feeds?|timelines?|posts?|tweets?|comments?|replies|messages|dms?|e-?mails?|threads?|notifications?|subscriptions?|followers|channels?|servers?|groups?|playlists?|videos?|photos?|bookmarks?|listings?|orders?|reviews?|connected apps|apps connected|sessions?|devices|library|queue|drafts?|tabs?|dashboard|portal|forum|wishlist|blog|friend requests|youtube|rumble|instagram|facebook|twitter|reddit|github|gmail|proton|amazon|etsy|slack|linkedin|discord|tiktok)\b/;
 const FILE_NAME =
 	/(?:^|[\s\w-])\.(?:json|jsonl|ya?ml|toml|ini|lock|md|txt|csv|tsv|log|tmp|bak|png|jpe?g|gif|webp|svg|heic|pdf|docx?|xlsx?|pptx?|zip|tar|gz|m?js|cjs|tsx?|jsx|py|rb|go|rs|java|swift|kt|c|h|cpp|sh|html?|css)\b/;
 const CODE_WORK = /\b(?:this|that|the|a|one) (?:file|folder|directory)\b|\b(?:imports?|functions?|methods?|variables?|codebase|source files?)\b/;
 
 function quantifiedAction(content: string): boolean {
 	const m = QUANTIFIED_ACTION.exec(content);
-	return m !== null && BULK_VERBS.has(m[1]) && !FILE_NAME.test(content) && !CODE_WORK.test(content);
+	return m !== null && BULK_VERBS.has(m[1]) && WEB_ITEMS.test(content) && !FILE_NAME.test(content) && !CODE_WORK.test(content);
 }
 
 export interface RawScore {

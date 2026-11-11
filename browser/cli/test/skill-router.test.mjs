@@ -927,7 +927,13 @@ test("past 32 skills the single-evidence bar grows with a two-skill word's weigh
 
 test("a site-changing verb on all or every item routes to bulk-actions; code work, reading and local files don't", () => {
 	const top = (task) => JSON.parse(run(["skill", "match", "--json", "--top", "1", task]).stdout)[0]?.name ?? "none";
-	for (const task of ["Mute every thread in this group", "Decline all 40 invites on this events page", "Delete every file in my Grok library"]) {
+	for (const task of [
+		"Mute every thread in this group",
+		"Decline all 40 invites on this events page",
+		"Delete every file in my Grok library",
+		"Remove all my reviews from this store's website",
+		"Archive all my old listings on Etsy",
+	]) {
 		assert.equal(top(task), "bulk-actions", task);
 	}
 	for (const task of [
@@ -943,6 +949,13 @@ test("a site-changing verb on all or every item routes to bulk-actions; code wor
 		"Revoke all the links to img.png",
 		"Retire every key in settings.json",
 		"Remove every unused variable in this module",
+		// Coding harnesses call skill_match for every task: a bulk verb with no web thing is not this skill (review, PR #114).
+		"Remove all the print statements from the scripts",
+		"Move each component into its own module",
+		"Delete all the stale git branches",
+		"Mark every flaky test as skipped",
+		"Add a docstring to every function",
+		"Unsubscribe me from all of these newsletters",
 	]) {
 		assert.notEqual(top(task), "bulk-actions", task);
 	}

@@ -161,8 +161,8 @@ function harnessName(): string {
 	return "mcp";
 }
 
-/** Where an agent doing one action on many items should look; skill_match rarely sees "all" or "every". */
-const BULK_ACTIONS_INSTRUCTION = 'For one action on many items, skill_read {"name":"bulk-actions"}.';
+/** Browser work only: coding agents read these instructions too, and a coding task on many items is not this skill. */
+const BULK_ACTIONS_INSTRUCTION = 'For one action on many items on a website (delete all), skill_read {"name":"bulk-actions"}.';
 
 /** Tool names an instruction sentence mentions; used to drop sentences about tools a session lacks. */
 const INSTRUCTION_TOOLS = ["status", "tabs_context", "session_info", "session_end", "tabs_release", "wait", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read", "ask_user", "threads_list", "thread_read", "thread_search", "search", "page_markdown", "map", "crawl", "site_edit", "site_script"];
@@ -253,7 +253,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"When a page needs a sign-in or captcha, call tabs_show and ask the user to do it.",
 				`Opening a new site may need the user's approval; if a site is denied ("Not allowed to open"), tell the user to allow it in the side panel (Settings > Agents) or with \`${COMMAND_NAME} allow <host>\`; do not try to get around it.`,
 				"First call skill_match with the user's task (it needs no browser). If it names a skill, call skill_read for that one skill only and follow it; if it says none, work without one.",
-				"Call tabs_context before any browser tool: it shows your session, your tab group and tabs (including ones left from earlier work here) and news from the user. If it says Polycarp isn't connected, tell the user and stop browser work.",
+				"Call tabs_context before any browser tool: it shows your session, your tab group and tabs (earlier ones too) and news from the user. If it says Polycarp isn't connected, tell the user and stop browser work.",
 				"status adds the site permissions.",
 				"Your tabs are in your own group, never take focus, and you can't see the user's other tabs.",
 				"Loop: navigate(url) -> read_page {\"filter\":\"interactive\"} (refs) -> click/type/fill by ref -> read_page again to confirm the result. Refs expire when the page changes.",
