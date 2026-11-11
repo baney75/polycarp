@@ -26,6 +26,8 @@ export interface ProofCheck {
 	status: "ok" | "warn" | "fail";
 	detail: string;
 	next?: string;
+	/** On a failure: true when it is what a new name looks like for its first few minutes (no public address yet, or nothing answers yet). */
+	pending?: boolean;
 }
 
 /** The first bytes of a streamed answer must arrive this fast. Quick tunnels and buffering proxies hold them back. */
@@ -146,17 +148,33 @@ function tlsCheck(url: URL, address: string): Promise<ProofCheck> {
 			const cert = socket.getPeerCertificate();
 			done({ name: "tls", status: "ok", detail: `${address}:${port} has a valid certificate for ${url.hostname}${cert?.valid_to ? `, until ${cert.valid_to}` : ""}` });
 		});
-		socket.on("timeout", () => done({ name: "tls", status: "fail", detail: `${address}:${port} didn't answer in ${REQUEST_MS / 1000} seconds`, next: `The public address doesn't answer. Run ${COMMAND_NAME} remote fix.` }));
-		socket.on("error", (err: NodeJS.ErrnoException) => {
-			const refused = err.code === "ECONNREFUSED" || err.code === "ECONNRESET";
-			done({
-				name: "tls",
-				status: "fail",
-				detail: refused ? `${address}:${port} refused the connection (${err.code})` : `the certificate isn't valid for ${url.hostname}: ${err.message}${err.code ? ` (${err.code})` : ""}`,
-				next: refused ? `Nothing public answers for ${url.host}. Run ${COMMAND_NAME} remote fix.` : `Assistants refuse this certificate. On your own front door, give it a certificate for ${url.hostname}; on Tailscale or Cloudflare, run ${COMMAND_NAME} remote fix.`,
-			});
-		});
+		socket.on("timeout", () => done({ name: "tls", status: "fail", pending: true, detail: `${address}:${port} didn't answer in ${REQUEST_MS / 1000} seconds`, next: `The public address doesn't answer. Run ${COMMAND_NAME} remote fix.` }));
+		socket.on("error", (err: NodeJS.ErrnoException) => done(tlsFailure(err, url, address, port)));
 	});
+}
+
+/** OpenSSL and Node codes for a certificate that was offered and refused: wrong name, expired, self-signed, unknown issuer. */
+const CERTIFICATE_CODE = /^(ERR_TLS_CERT|CERT_|UNABLE_TO_|DEPTH_ZERO|SELF_SIGNED|HOSTNAME_MISMATCH|ERR_SSL_SSLV3_ALERT_(BAD|UNSUPPORTED|CERTIFICATE)_CERTIFICATE)/;
+
+/** A failed TLS handshake, sorted by its code: refused (nothing listens yet), a refused certificate, not TLS at all, or no route. */
+function tlsFailure(err: NodeJS.ErrnoException, url: URL, address: string, port: number): ProofCheck {
+	const code = err.code ?? "";
+	const why = `${err.message}${code ? ` (${code})` : ""}`;
+	if (code === "ECONNREFUSED" || code === "ECONNRESET") {
+		return { name: "tls", status: "fail", pending: true, detail: `${address}:${port} refused the connection (${code})`, next: `Nothing public answers for ${url.host}. Run ${COMMAND_NAME} remote fix.` };
+	}
+	if (CERTIFICATE_CODE.test(code)) {
+		return {
+			name: "tls",
+			status: "fail",
+			detail: `the certificate isn't valid for ${url.hostname}: ${why}`,
+			next: `Assistants refuse this certificate. On your own front door, give it a certificate for ${url.hostname}; on Tailscale or Cloudflare, run ${COMMAND_NAME} remote fix.`,
+		};
+	}
+	if (/^(ERR_SSL_|ERR_TLS_|EPROTO$)/.test(code)) {
+		return { name: "tls", status: "fail", detail: `${address}:${port} answers, but not with HTTPS: ${why}`, next: `Something on ${url.host} speaks plain HTTP or another protocol. Point the name at an HTTPS front door, or run ${COMMAND_NAME} remote fix on Tailscale or Cloudflare.` };
+	}
+	return { name: "tls", status: "fail", detail: `couldn't connect to ${address}:${port}: ${why}`, next: `${address} can't be reached from here. Check that public DNS for ${url.hostname} points at the right address, or run ${COMMAND_NAME} remote fix on Tailscale or Cloudflare.` };
 }
 
 const header = (answer: Answer, name: string) => {

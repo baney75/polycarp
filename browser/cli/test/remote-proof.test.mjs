@@ -275,6 +275,33 @@ test("authorization metadata with only an issuer, or a token endpoint on another
 	}
 });
 
+test("tls failures are told apart: plain HTTP on the port is not called a certificate problem; an untrusted certificate is", async () => {
+	const plain = createHttpServer((_req, res) => res.end("plain"));
+	await new Promise((resolve) => plain.listen(0, "127.0.0.1", resolve));
+	const pub = await fakePublic();
+	const doh = await fakeDoh();
+	try {
+		const m = machine("tls-plain", `https://${HOST}:${plain.address().port}`, doh.url);
+		const r = await m.run(["remote", "test", "--json"]);
+		assert.equal(r.code, 1, r.stdout + r.stderr);
+		const tls = byName(r.json(), "tls");
+		assert.equal(tls.status, "fail");
+		assert.match(tls.detail, /not with HTTPS/);
+		assert.doesNotMatch(tls.detail + tls.next, /certificate/);
+		assert.notEqual(tls.pending, true);
+		const untrusted = machine("tls-untrusted", pub.publicUrl, doh.url);
+		const u = await untrusted.run(["remote", "test", "--json"], { NODE_EXTRA_CA_CERTS: "" });
+		const bad = byName(u.json(), "tls");
+		assert.equal(bad.status, "fail");
+		assert.match(bad.detail, /certificate isn't valid/);
+		assert.notEqual(bad.pending, true);
+	} finally {
+		await new Promise((resolve) => plain.close(resolve));
+		await pub.close();
+		await doh.close();
+	}
+});
+
 test("a probe that throws after its token was made still removes the token", async () => {
 	const pub = await fakePublic();
 	const doh = await fakeDoh();
