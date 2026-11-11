@@ -56,7 +56,7 @@ import {
 	UPDATE_STATUS_KEY,
 } from "./protocol.js";
 import { handleSessionsAdmin } from "./sessions-admin.js";
-import { type HandlerContext, handlers } from "./tools.js";
+import { extensionStatus, type HandlerContext, handlers } from "./tools.js";
 
 const ALARM_NAME = "tabkyra-bridge-keepalive";
 const WORKER_STARTED_AT = Date.now();
@@ -80,6 +80,8 @@ interface ClientState {
 	meta?: SessionMeta;
 	/** For a default (auto) session moved to "-2": the key and name it wanted, for when it frees up. */
 	wanted?: { key: string; name: string };
+	/** The client named no session: a one-shot command (`polycarp browser status`), whose key no later client can ask for. */
+	unnamed?: boolean;
 	session?: BrowserSession;
 	/** Only one request at a time per client; the CLI serialises anyway. */
 	queue: Promise<void>;
@@ -208,6 +210,7 @@ async function onClientConnected(msg: HostClientConnected): Promise<void> {
 		meta: { agent: name, ...(project ? { project } : {}), ...(sessionName ? { name: sessionName } : {}) },
 		queue: Promise.resolve(),
 		lastActivityAt: 0,
+		...(msg.client.session ? {} : { unnamed: true }),
 		...(msg.client.auto && msg.client.session && sessionName !== msg.client.session
 			? { wanted: { key: sessionIdFor(msg.client, msg.clientId), name: msg.client.session } }
 			: {}),
@@ -385,6 +388,13 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 
 		const handler = handlers[req.method];
 		if (!handler) throw new BridgeError(ERR.NOT_FOUND, `Unknown method ${req.method}`);
+		// `polycarp browser status` has no tabs to report and hangs up after one answer. A session opened
+		// for it stored an empty record until it left, and Settings > Agents drew that as one more agent
+		// for a moment, which moved everything under the list down a row and back.
+		if (req.method === "status" && state.unnamed && !state.session) {
+			reply({ ...(await extensionStatus()), tabs: [] });
+			return;
+		}
 		const t0 = performance.now();
 		const session = await withTimeout(getSession(state), 15000, "session open");
 		const tSession = Math.round(performance.now() - t0);

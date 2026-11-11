@@ -368,3 +368,31 @@ test("a session id the user didn't choose (a remote session, an older CLI) stays
 	assert.equal(fake.table()["bridge-remote-phone-remote-3f9c01ab-ab12cd34"].label, "remote-phone");
 	assert.equal(fake.table()["bridge-claude-6f1c2a9e-4b7d-4c1e-9a3f-1b2c3d4e5f60"].label, "claude");
 });
+
+test("polycarp browser status, which names no session, is answered without storing a session record", async () => {
+	const { fake, port, request } = await startBridge();
+	// Settings > Agents lists every stored bridge session. A record kept for the length of this one-shot
+	// command showed there as one more agent for a moment and moved the Connect section down a row.
+	const stored = [];
+	globalThis.chrome.storage.onChanged.addListener((changes) => {
+		for (const id of Object.keys(changes.browser_sessions?.newValue ?? {})) stored.push(id);
+	});
+	port.deliver({ type: "client_connected", clientId: "s1", client: { name: "status" } });
+	const reply = await request("s1", "status");
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	assert.equal(reply.result.permissionMode, "ask");
+	assert.deepEqual(reply.result.allowedHosts, []);
+	assert.equal(typeof reply.result.extensionVersion, "string");
+	assert.deepEqual(reply.result.tabs, []);
+	assert.deepEqual(Object.keys(fake.table()), [], "the status command left a session record while it was connected");
+	assert.deepEqual(stored, [], "a session record was stored and taken away again");
+});
+
+test("an agent's status call still opens its session and names its tab group", async () => {
+	const { fake, request, connect } = await startBridge();
+	connect("c1", "abc");
+	const reply = await request("c1", "status");
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	assert.equal(typeof reply.result.tabGroup, "string");
+	assert.ok(fake.table()["bridge-claude-abc"], "the agent's session was not stored");
+});
