@@ -21,7 +21,7 @@ export function capturesDir(): string {
 }
 
 /** Make the folder if it is missing, and refuse one that is not ours or is a link. */
-function privateDir(path: string): void {
+export function privateDir(path: string): void {
 	mkdirSync(path, { recursive: true, mode: 0o700 });
 	const st = lstatSync(path);
 	if (st.isSymbolicLink() || !st.isDirectory()) throw new Error(`${path} is not a plain folder`);

@@ -8,6 +8,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { ASK_USER_INSTRUCTION, registerAskUser } from "./ask.ts";
+import { registerFiles } from "./files-tool.ts";
+import { byteSize } from "./saved-files.ts";
 import { registerThreadTools, THREADS_INSTRUCTION } from "./threads.ts";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
@@ -378,6 +380,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		if (options.remote) return;
 		const requestId = String(data.requestId);
 		const host = String(data.host);
+		if (data.kind === "upload") return handleUploadQuestion(requestId, host, data);
 		let decision: "allow_once" | "allow_host" | "deny" = "deny";
 		if (envVar("AUTO_ALLOW") === "1") {
 			await client.call("permission.respond", { requestId, decision: "allow_once" }).catch(() => undefined);
@@ -409,6 +412,38 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			process.stderr.write(
 				`[polycarp] ${host} needs approval: run \`${COMMAND_NAME} allow ${host}\`, use the side panel (Settings > Agents), or set TABKYRA_AUTO_ALLOW=1.\n`,
 			);
+		}
+		await client.call("permission.respond", { requestId, decision }).catch(() => undefined);
+	}
+
+	/**
+	 * The files tool asks before a local file from outside the agent's folders goes to a site (D38). Only a yes
+	 * to this one upload counts, TABKYRA_AUTO_ALLOW does not answer it, and nothing is remembered. A client that
+	 * can't show questions leaves this one to the side panel, where it waits until it times out as a no.
+	 */
+	async function handleUploadQuestion(requestId: string, host: string, data: Record<string, unknown>): Promise<void> {
+		const files = Array.isArray(data.files) ? (data.files as Array<{ name?: unknown; bytes?: unknown }>) : [];
+		const list = files.map((f) => `${String(f.name)} (${byteSize(Number(f.bytes) || 0)})`).join(", ");
+		let decision: "allow_once" | "deny" = "deny";
+		if (!server.server.getClientCapabilities()?.elicitation) {
+			process.stderr.write(`[polycarp] An upload to ${host} is waiting for an answer in the side panel (Settings > Agents).\n`);
+			return;
+		}
+		try {
+			const answer = await server.server.elicitInput({
+				message: `Polycarp: ${String(data.agent || "the browser agent")} wants to upload ${list} from this computer to ${host}. Allow this upload?`,
+				requestedSchema: {
+					type: "object",
+					properties: {
+						decision: { type: "string", title: "Decision", enum: ["allow_once", "deny"], enumNames: ["Upload this once", "Deny"] },
+					},
+					required: ["decision"],
+				},
+			});
+			const d = answer.action === "accept" ? (answer.content as { decision?: string } | undefined)?.decision : undefined;
+			decision = d === "allow_once" ? "allow_once" : "deny";
+		} catch {
+			// The question was put and came back unusable: that is not a yes.
 		}
 		await client.call("permission.respond", { requestId, decision }).catch(() => undefined);
 	}
@@ -1084,6 +1119,13 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 
 	// ask_user (cli/src/ask.ts): questions for the user, answered in the side panel.
 	registerAskUser(server, client);
+	// A scoped session is treated as remote too: it names no paths and is told none.
+	registerFiles(server, client, {
+		session: choice.name,
+		remote: Boolean(options.remote || allowedTools),
+		shapes: { tabId, ref, selector },
+		bridgeError: errorResult as (err: unknown) => { content: Array<{ type: "text"; text: string }>; isError: true },
+	});
 	// threads_list, thread_read, thread_search (cli/src/threads.ts): past side panel chats.
 	registerThreadTools(server, client);
 

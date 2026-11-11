@@ -28,6 +28,22 @@ export const MAX_FRAME_TO_EXTENSION = 900 * 1024;
 /** Extension->host frames may be up to 64 MiB; screenshots live here. */
 export const MAX_FRAME_FROM_EXTENSION = 60 * 1024 * 1024;
 
+/**
+ * The `files` tool moves file content over the bridge in pieces (docs/decisions.md, D38).
+ * To the extension a piece is base64 inside a frame that must stay under MAX_FRAME_TO_EXTENSION:
+ * 480 KiB of bytes is 640 KiB of base64, which leaves room for the rest of the frame.
+ */
+export const FILE_CHUNK_TO_EXTENSION = 480 * 1024;
+/** From the extension frames may be large, but a piece stays at 3 MiB of bytes (4 MiB of base64). */
+export const FILE_CHUNK_FROM_EXTENSION = 3 * 1024 * 1024;
+/** One upload call: at most this many files and this many bytes in all. */
+export const FILE_UPLOAD_MAX_FILES = 10;
+export const FILE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+/** The most one download or page PDF may be. */
+export const FILE_DOWNLOAD_MAX_BYTES = 50 * 1024 * 1024;
+/** How long the person has to answer an upload question; no answer is a no. */
+export const FILE_ASK_TIMEOUT_MS = 120000;
+
 export interface ClientHello {
 	type: "hello";
 	client: {
@@ -497,6 +513,15 @@ export const BRIDGE_METHODS = [
 	"console.read",
 	"network.read",
 	"capture",
+	// The files tool (src/bridge/files.ts). None is idempotent: a transfer cut off is started again.
+	"files.upload.begin",
+	"files.upload.chunk",
+	"files.upload.commit",
+	"files.upload.abort",
+	"files.download.begin",
+	"files.download.chunk",
+	"files.download.end",
+	"files.pdf.begin",
 	"ask_user",
 	"ask_user.cancel",
 	"permission.respond",

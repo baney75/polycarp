@@ -30,6 +30,9 @@ import { runningFromStore } from "../update/store-install.js";
  * Code, Codex through `tabkyra mcp`), which hosts they may open, and pending
  * permission requests.
  */
+const fileSize = (n: number) =>
+	n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} bytes`;
+
 @customElement("bridge-tab")
 export class BridgeTab extends SettingsTab {
 	@state() private enabled = true;
@@ -237,13 +240,26 @@ export class BridgeTab extends SettingsTab {
 								${this.pending.map(
 									(p) => html`
 										<div class="p-3 rounded-lg border border-orange-500/40 bg-orange-500/10 space-y-2">
-											<div class="text-sm text-foreground"><span class="font-medium">${p.clientName}</span> wants to open <span class="font-mono">${p.host}</span></div>
-											<div class="text-xs text-muted-foreground break-all">${p.url}</div>
-											<div class="flex gap-2 flex-wrap">
-												${Button({ size: "sm", variant: "default", children: "Allow site", onClick: () => this.decide(p, "allow_host") })}
-												${Button({ size: "sm", variant: "secondary", children: "Allow once", onClick: () => this.decide(p, "allow_once") })}
-												${Button({ size: "sm", variant: "outline", children: "Deny", onClick: () => this.decide(p, "deny") })}
-											</div>
+											${
+												p.upload
+													? html`
+														<div class="text-sm text-foreground"><span class="font-medium">${p.clientName}</span> wants to upload ${p.upload.files.length === 1 ? "a file from this computer" : `${p.upload.files.length} files from this computer`} to <span class="font-mono">${p.host}</span></div>
+														<div class="text-xs text-muted-foreground break-all">${p.upload.files.map((f) => `${f.name} (${fileSize(f.bytes)})`).join(", ")}</div>
+														<div class="flex gap-2 flex-wrap">
+															${Button({ size: "sm", variant: "default", children: "Upload this once", onClick: () => this.decide(p, "allow_once") })}
+															${Button({ size: "sm", variant: "outline", children: "Deny", onClick: () => this.decide(p, "deny") })}
+														</div>
+													`
+													: html`
+														<div class="text-sm text-foreground"><span class="font-medium">${p.clientName}</span> wants to open <span class="font-mono">${p.host}</span></div>
+														<div class="text-xs text-muted-foreground break-all">${p.url}</div>
+														<div class="flex gap-2 flex-wrap">
+															${Button({ size: "sm", variant: "default", children: "Allow site", onClick: () => this.decide(p, "allow_host") })}
+															${Button({ size: "sm", variant: "secondary", children: "Allow once", onClick: () => this.decide(p, "allow_once") })}
+															${Button({ size: "sm", variant: "outline", children: "Deny", onClick: () => this.decide(p, "deny") })}
+														</div>
+													`
+											}
 										</div>
 									`,
 								)}

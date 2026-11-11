@@ -22,6 +22,11 @@ export interface PendingRequest {
 	host: string;
 	url: string;
 	createdAt: number;
+	/**
+	 * Set when the question is about putting local files into a page, not opening a site
+	 * (docs/decisions.md, D38). The answer covers this one upload and is never remembered.
+	 */
+	upload?: { files: Array<{ name: string; bytes: number }> };
 }
 
 export async function isBridgeEnabled(): Promise<boolean> {

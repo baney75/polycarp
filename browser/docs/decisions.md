@@ -941,3 +941,71 @@ The owner asked that a tab or window an agent uses be blocked out "with a cool t
   extension storage so the veil follows it; before the panel opens once after this change, "System" is assumed.
   The group colors are Chrome's tab group colors, as custom properties.
 
+## D38. Files in and out of a page: content through the helper, never a path to the browser (Claude, 2026-11-10)
+
+Agents could not attach a file to a form or keep a file a page offers. One tool, `files`, does both.
+
+- **One tool.** `files` takes an `action` (`upload`, `download`, `save_pdf`, `list`, `read`, `remove`), for the reason
+  `capture` does (D36). It costs 1,319 bytes of tools/list (30,434 to 31,753), most of it the nine arguments. The
+  list had 666 bytes to spare, so the budget in `cli/test/mcp.test.mjs` went from 31,100 to 31,800.
+- **The browser never gets a host path.** `DOM.setFileInputFiles` would have the browser open a path the helper
+  names: the path rules would then be enforced by nobody the user can see, and a remote helper could name any file
+  the browser's user can read. Instead the helper reads the file and sends its content. The extension builds `File`
+  objects in the page, sets `input.files` through a `DataTransfer` and fires `input` and `change`, or, when the
+  element is not a file input, fires `dragenter`, `dragover` and `drop` with that `DataTransfer`. A label stands for
+  its input. `multiple` and `accept` are honored: a second file for a single input, or a type it does not accept, is
+  an error and nothing is set.
+- **Pieces.** A frame to the extension is capped near 900 KiB, so an upload is `files.upload.begin` (each file's name,
+  size, type and SHA-256, and whether it needs the person's yes), `files.upload.chunk` (480 KiB each, in order) and
+  `files.upload.commit`. Everything is decided at begin, before content moves: the tab is the caller's, its site is
+  allowed, the element takes these files, the person said yes. Commit checks the total and each file's hash, and that
+  the tab is still on the host it was on at begin. A download runs the other way in 3 MiB pieces
+  (`files.download.begin`, `.chunk`, `.end`), and the helper checks each piece's size and the total. A transfer
+  belongs to the client and session that began it; it is dropped on any error, when either goes, and after five
+  idle minutes. None of the writing methods is idempotent, so a dropped connection is never replayed.
+- **Which paths (`cli/src/file-rules.ts`, pure, table-tested for Linux, macOS and Windows).** A remote caller (hub,
+  tunnel, or any scoped session) may not name a path at all, only ids of files its own session saved. A local path
+  is resolved with realpath and opened once without following a link; the rules judge that open file and the same
+  handle is read, so what was checked is what is sent. Refused whatever folder they are in, by any part of the given
+  or the resolved path: `.env`, `.env.*`, `*.env`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.kdbx`, `*.ppk`, `id_rsa*`,
+  `id_ed25519*`, `id_ecdsa*`, `id_dsa*`, `*.keychain*`, `.netrc`, `_netrc`, `.npmrc`, `.pypirc`, `.pgpass`,
+  `.git-credentials`, `known_hosts`, `authorized_keys`, `credentials`, `tokens.json`, `oauth*.json`, a browser's
+  cookie and login stores by name, and anything under `.ssh`, `.gnupg`, `.aws`, `.azure`, `.kube` or `.docker`.
+  Refused by place: the Polycarp and tabkyra config folders except `files/`, browser profile folders, and the
+  system key stores (on Windows the same under `%USERPROFILE%`, `%APPDATA%` and `%LOCALAPPDATA%`). Names are
+  compared without case on every platform, and folders without case on Windows and macOS. Also refused: anything
+  that is not a regular file, a file with more than one hard link, an unreadable one, and on Windows a device path
+  or an alternate data stream. At most 10 files and 10 MB per call.
+- **When the person is asked.** Not at all for a file inside the session's saved-files folder or inside one of the
+  MCP client's roots (`roots/list`; when the client has no roots, the helper's working directory). A root that is the
+  home folder, above it, or a drive root counts as no root. Any other path needs a yes for that exact upload. The
+  question goes the way a site question does (elicitation in the agent's client, and "Waiting for your answer" in
+  Settings > Agents) and names the agent, the files, their sizes and the destination host. It differs from a site
+  question in three ways: it is asked in every permission mode, `TABKYRA_AUTO_ALLOW` does not answer it, and there
+  is no "from now on": only a yes to this one upload, never remembered. A no, no answer in two minutes, and a
+  client that cannot show questions with nobody at the side panel are all refusals.
+- **Where files may go.** Only into a page on a site the person has allowed for agents (the allowed list, or the
+  "always allow" mode). A site the agent was let onto once is not enough, and a guarded host is refused as always.
+- **Downloads.** `download` fetches in the tab's own page, so the page's origin, cookies and CORS rules apply and the
+  extension's wider reach is not used. The URL goes through `checkUrl` like a navigation; a `blob:` URL must be the
+  page's own; `data:` is decoded in the worker; a redirect that ends on a guarded address is dropped. `ref` resolves
+  to the element's `href`, `currentSrc` or `src`. The fetch runs in a user-script world of its own, because the
+  snapshot world's policy allows no network. `save_pdf` is `Page.printToPDF`. One file is at most 50 MB and the
+  error states the size; a session keeps at most 200 files and 500 MB.
+- **Where they are kept.** `configDir()/files/<session>/`, under the rules captures follow: folders 0700, files 0600,
+  created exclusively, a taken name gets a number. A name from a server keeps only its last part and loses leading
+  dots, control and direction-override characters and what Windows refuses. Each file has an id; `upload` takes
+  `ids`. A local caller is also told the path; a remote caller never is. `read` returns text as text (200 KB, and
+  says when it cut), an image as an image only when its bytes are one, anything else as a resource blob, at most
+  8 MB; over that it is an error with the size.
+- **Scope.** `browser.files` holds the tool and is not in the default grant: the owner ticks it. Without it a remote
+  session does not list the tool.
+- **No new permission.** The manifest is unchanged, so `store/permissions.md` is too.
+- **Not built: downloads a click starts.** A file the browser itself downloads (a click on a link with
+  `Content-Disposition: attachment`, a form that answers with a file) never reaches the page's script, so this tool
+  cannot see it. Catching it needs the `downloads` permission. That should be an optional permission the person
+  grants from a click in the side panel, with the download then moved into the same session folder; it is a
+  follow-up, not part of this change.
+- **Next: the Spaces handoff folder.** The folder Spaces uses to hand files between the person and an agent should
+  accept files from `files/<session>/` next, on Mac and Linux, so a file an agent saved in the browser can be passed
+  to a native app without the agent naming a path. Not built here; no Swift or Rust code changed.

@@ -136,7 +136,7 @@ class Bridge {
 				this.pending.delete(msg.id);
 				if (msg.error) p.reject(new Error(\`\${msg.error.code}: \${msg.error.message}\`));
 				else p.resolve(msg.result);
-			} else if (msg.type === "event" && msg.event === "permission_request") {
+			} else if (msg.type === "event" && msg.event === "permission_request" && msg.data.kind !== "upload") {
 				if ((process.env.POLYCARP_AUTO_ALLOW || process.env.TABKYRA_AUTO_ALLOW) === "1") {
 					this.socket?.write(encode({ type: "request", id: ++this.seq, method: "permission.respond", params: { requestId: msg.data.requestId, decision: "allow_once" } }));
 				} else {

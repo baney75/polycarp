@@ -44,6 +44,11 @@ export const SCOPES: Record<string, { tools: string[]; what: string }> = {
 		tools: ["capture"],
 		what: "Record the agent's own tab: its network traffic as a redacted HAR file, a video of it, or the last minute of video. The files stay on this computer",
 	},
+	"browser.files": {
+		tools: ["files"],
+		// Off until the owner ticks it: a page's files leave it, and saved files can be put into pages.
+		what: "Save files from pages the agent opens (downloads, a page as PDF) to this computer and put those saved files into pages. Never a file path on this computer",
+	},
 	"browser.edit": {
 		tools: ["site_edit"],
 		what: "Change how sites look and load for you, on every visit: hide parts of pages, block requests on a site, ad blocking. Each one you can undo in the side panel",
