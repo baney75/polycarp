@@ -81,6 +81,8 @@ export const VALUE_HINTS: Record<string, string> = {
 	"--serial": "N",
 	"--source": "<commit>",
 	"--browser": "<name>",
+	"--add": "<scope>",
+	"--remove": "<scope>",
 };
 
 export const VALUE_FLAGS = new Set(Object.keys(VALUE_HINTS));
@@ -213,6 +215,7 @@ export const COMMANDS: CommandSpec[] = [
 			{ name: "status", what: "Is this device linked and connected?", flags: ["--json"] },
 			{ name: "off", what: "Stop the service, forget the hub and revoke the local link token" },
 			{ name: "busy", args: "on|off", what: "Mark this device busy: the hub sends new sessions elsewhere first", max: 1 },
+			{ name: "scopes", what: "What this device allows; --remove narrows at once, --add widens (never to computer use)", flags: ["--add", "--remove", "--json"] },
 			{ name: "code", what: "Ask the hub for a connect code for another device (manager devices only)", flags: ["--manage", "--json"] },
 			{ name: "approval-code", what: "Ask the hub for a one-time code to approve an assistant (manager devices only)", flags: ["--json"] },
 		],

@@ -36,7 +36,22 @@ import {
 	type StatusFrame,
 } from "./link-protocol.ts";
 import { configDir, DEFAULT_GRANT, normalizePublicUrl } from "./oauth.ts";
-import { createToken, HUB_HEADERS, LINK_TOKEN_NAME, pruneLinkTokens, revokeLinkTokens, revokeToken, SCOPES, serve } from "./remote.ts";
+import {
+	createToken,
+	HUB_HEADERS,
+	HUB_SCOPES_HEADER,
+	intersectScopes,
+	LEGACY_HUB_SCOPES_HEADER,
+	LINK_TOKEN_NAME,
+	offeredScopes,
+	parseScopeHeader,
+	pruneLinkTokens,
+	revokeLinkTokens,
+	revokeToken,
+	SCOPES,
+	missingScope,
+	serve,
+} from "./remote.ts";
 import { installService, installServiceAsync, LINK_SERVICE, removeService, serviceFile, serviceLogHint } from "./service.ts";
 import { splitText } from "./text-split.ts";
 import { c, sym } from "./ui.ts";
@@ -130,7 +145,70 @@ export function normalizeHubUrl(raw: string): string {
 	return normalizePublicUrl(raw.replace(/\/mcp\/?$/, ""));
 }
 
-const capOf = (config: LinkConfig) => (config.scopes?.length ? config.scopes : DEFAULT_GRANT);
+/** What this device allows. Only an absent cap means the default grant; a stored empty list allows nothing. */
+export const capOf = (config: Pick<LinkConfig, "scopes">): string[] => config.scopes ?? DEFAULT_GRANT;
+
+// ---------- what this device allows ----------
+//
+// The cap lives in link.json and only this computer's own commands write it: no hub frame and no caller
+// can (link run never writes link.json). Narrowing is free and applies to the next call: link run checks its
+// live cap at every tool call (liveCallCheck), not only in front of the local server. Nothing grants computer
+// use yet: a yes typed at a terminal can't show the owner gave it, because an agent can run the command in a
+// pseudo-terminal and type the yes itself, and an agent with a shell can edit link.json by hand. So the CLI
+// refuses to add a computer scope, writeCap drops any it finds, and link run serves none (servedCap), also from
+// a cap an earlier preview build wrote. Granting computer use over a link needs the owner's approval in the
+// Polycarp app, which isn't built yet.
+
+const isComputerScope = (scope: string) => scope.startsWith("computer.");
+
+/** Why a scope can't be on this device's cap, or undefined when it can be. */
+function scopeRefusal(scope: string): string | undefined {
+	if (!Object.hasOwn(SCOPES, scope)) return `Unknown scope ${scope}. Scopes: ${Object.keys(SCOPES).join(", ")}.`;
+	if (!Object.hasOwn(offeredScopes(), scope)) return `This computer can't serve ${scope}: computer use needs Polycarp's Mac app, and it isn't on this computer.`;
+	return undefined;
+}
+
+/**
+ * The part of a stored cap link run serves, and what it drops and why: computer use (no owner approval can be recorded
+ * yet) and any scope this computer can't serve.
+ */
+export function servedCap(cap: string[]): { scopes: string[]; stripped: Array<{ scope: string; why: string }> } {
+	const scopes: string[] = [];
+	const stripped: Array<{ scope: string; why: string }> = [];
+	const offered = offeredScopes();
+	for (const scope of cap) {
+		if (isComputerScope(scope)) stripped.push({ scope, why: "computer use over a link needs the owner's approval in the Polycarp app, which isn't built yet" });
+		else if (!Object.hasOwn(offered, scope)) stripped.push({ scope, why: "this computer can't serve it" });
+		else scopes.push(scope);
+	}
+	return { scopes, stripped };
+}
+
+const strippedWords = (stripped: Array<{ scope: string; why: string }>) => stripped.map((x) => `${x.scope} (${x.why})`).join("; ");
+
+/** The sentence a call outside the cap gets, from the guard and from the call check alike. */
+function capRefusalText(scope: string, cap: string[]): string {
+	let name = "This device";
+	try {
+		name = loadLinkConfig()?.name ?? name;
+	} catch {
+		/* the name is only for the sentence */
+	}
+	return `${name} doesn't allow ${scope} (allows: ${cap.join(", ") || "nothing"}). Only its owner can add it, on ${name}.`;
+}
+
+/** The call check link run gives its serve: `liveCap` is read at each call, so a removal reaches open sessions. */
+export function liveCallCheck(liveCap: () => string[]): (tool: string, args: unknown) => string | undefined {
+	return (tool, args) => {
+		const cap = liveCap();
+		const scope = missingScope(tool, args, cap);
+		return scope ? capRefusalText(scope, cap) : undefined;
+	};
+}
+
+/** Why the CLI won't grant a computer scope. */
+export const computerNotGrantable = (scope: string) =>
+	`${scope} can't be turned on from the command line: granting computer use over a link needs the owner's approval in the Polycarp app, and that approval isn't built yet.`;
 
 async function hubPost(config: { hubUrl: string }, path: string, body: unknown, credential?: string): Promise<{ status: number; body: Record<string, unknown> }> {
 	const res = await fetch(`${config.hubUrl}${path}`, {
@@ -315,7 +393,11 @@ export async function enrollDevice(options: Omit<EnrollOptions, "json">, hooks: 
 	const early = checkLinked();
 	if (early) return early;
 	const scopes = options.scopes?.length ? [...new Set(options.scopes)] : [...DEFAULT_GRANT];
-	for (const s of scopes) if (!Object.hasOwn(SCOPES, s)) return failed(`Unknown scope ${s}. Scopes: ${Object.keys(SCOPES).join(", ")}.`, { type: "scopes" });
+	// Only what this computer can serve, and never computer use: no CLI or panel path can show the owner granted it.
+	for (const s of scopes) {
+		const why = scopeRefusal(s) ?? (isComputerScope(s) ? computerNotGrantable(s) : undefined);
+		if (why) return failed(`${why} Nothing was changed.`, { type: "scopes" });
+	}
 	if (options.service && !service.valid()) return failed(`${launcherBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then link again (or pass --no-service). Nothing was changed.`, { type: "launcher" });
 	// Reserve before the hub sees the code: a competing join is refused here, with its code unspent.
 	let reservation: Awaited<ReturnType<typeof takeJoinReservation>>;
@@ -401,6 +483,36 @@ export async function linkEnroll(options: EnrollOptions): Promise<number> {
 
 // ---------- link run ----------
 
+/**
+ * The answer to a POST on an open session whose tools/call needs a scope outside `cap`, as JSON text, or undefined to let it
+ * through. A batch with any such call is refused whole: each request in it gets the refusal, and nothing in it runs. The body
+ * is always parsed and the decoded method and arguments checked (missingScope, the same rule as the call check). A body that
+ * doesn't parse as JSON is refused too, never forwarded: the local server might read it another way (another charset).
+ * This is the first line only; the call check inside serve judges the message that actually runs.
+ */
+export function refusedCall(body: string, cap: string[]): string | undefined {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(body);
+	} catch {
+		return JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "This device takes only UTF-8 JSON on an open session, and this body didn't parse, so nothing ran." } });
+	}
+	const messages = (Array.isArray(parsed) ? parsed : [parsed]).filter((m): m is Record<string, unknown> => typeof m === "object" && m !== null && !Array.isArray(m));
+	let scope: string | undefined;
+	for (const m of messages) {
+		const params = m.params as { name?: unknown; arguments?: unknown } | undefined;
+		const needs = m.method === "tools/call" && typeof params?.name === "string" ? missingScope(params.name, params.arguments, cap) : undefined;
+		if (needs) {
+			scope = needs;
+			break;
+		}
+	}
+	if (!scope) return undefined;
+	const words = capRefusalText(scope, cap);
+	const answers = messages.filter((m) => m.id !== undefined).map((m) => ({ jsonrpc: "2.0", id: m.id, result: { content: [{ type: "text", text: words }], isError: true } }));
+	return JSON.stringify(Array.isArray(parsed) ? answers : (answers[0] ?? { jsonrpc: "2.0", id: null, error: { code: -32600, message: words } }));
+}
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** The reconnect wait: 1 s doubling to 30 s, with up to a quarter of jitter either way. */
@@ -454,13 +566,30 @@ export async function linkRun(): Promise<void> {
 	const config = loadLinkConfig();
 	if (!config) throw new Error(`${linkFile()} not found. Run ${COMMAND_NAME} link <hub-url> --code <code> first.`);
 	const wsUrl = `${config.hubUrl.replace(/^http/, "ws")}/link`;
-	const cap = capOf(config);
+	// The link token holds the cap link run started with; link.json can only narrow it from there until the next start.
+	// Never computer use, nor a scope this computer can't serve, whatever link.json says (servedCap).
+	const served = servedCap(capOf(config));
+	if (served.stripped.length) console.error(`${sym.warn} Not serving ${strippedWords(served.stripped)}.`);
+	const startCap = served.scopes;
+	if (!startCap.length) throw new Error(`${linkFile()} allows nothing, so there is nothing to serve. Run ${COMMAND_NAME} link scopes --add <scope>, or ${COMMAND_NAME} link off.`);
+	let lastCap = startCap;
+	/** What this device allows right now: the start cap, narrowed by link.json as it is now. Read on each request, so a removal applies to the next call. */
+	const liveCap = (): string[] => {
+		try {
+			const now = loadLinkConfig();
+			if (now) lastCap = intersectScopes(startCap, servedCap(capOf(now)).scopes);
+		} catch {
+			/* unreadable: keep the last cap */
+		}
+		return lastCap;
+	};
+	const cap = startCap;
 	await takePidLock();
 	// With the pid lock held no other run is alive: clear the old link tokens, then mint a fresh one, held in memory only.
 	pruneLinkTokens();
 	const { token, record: linkToken } = createToken(LINK_TOKEN_NAME, cap, "link");
 	let sendStatus = () => {};
-	const local = await serve({ port: 0, host: "127.0.0.1", acceptLinkTokens: true, onSessionsChange: () => sendStatus(), hub: { self: { id: config.deviceId, name: config.name } } });
+	const local = await serve({ port: 0, host: "127.0.0.1", acceptLinkTokens: true, onSessionsChange: () => sendStatus(), hub: { self: { id: config.deviceId, name: config.name } }, linkCallCheck: liveCallCheck(liveCap) });
 	const localPort = Number(new URL(local.url).port);
 	const live: LiveState = { pid: process.pid, updatedAt: Date.now(), connected: false, lastConnectedAt: null, lastError: null, sessions: 0, requests: 0, streams: 0, extensionConnected: false, busy: false };
 	// Whether computer use can run here: the Mac helper is installed. What a caller may do with it is still the cap.
@@ -526,6 +655,28 @@ export async function linkRun(): Promise<void> {
 		const headers: Record<string, string> = {};
 		for (const name of [...FORWARD_REQUEST_HEADERS, ...HUB_HEADERS]) if (frame.headers[name] !== undefined) headers[name] = frame.headers[name];
 		headers.authorization = `Bearer ${token}`;
+		if (frame.method === "POST") {
+			// The local server reads the body as the guard did: UTF-8 JSON, whatever charset the caller named.
+			headers["content-type"] = "application/json";
+			const now = liveCap();
+			if (frame.headers["mcp-session-id"] === undefined) {
+				// A new session gets the caller's scopes narrowed by the cap as it is now, not as it was when link run started.
+				const asked = frame.headers[HUB_SCOPES_HEADER] ?? frame.headers[LEGACY_HUB_SCOPES_HEADER];
+				const narrowed = (asked === undefined ? now : intersectScopes(now, parseScopeHeader(asked))).join(",");
+				headers[HUB_SCOPES_HEADER] = narrowed;
+				headers[LEGACY_HUB_SCOPES_HEADER] = narrowed;
+			} else {
+				// An open session keeps its tool list, but a tool whose scope was removed since is refused here, before the local server
+				// (and again by the call check inside it). A body that doesn't parse is refused, not forwarded.
+				const refused = refusedCall(frame.body, now);
+				if (refused) {
+					sendFrame(socket, { t: "head", id, status: 200, headers: { "content-type": "application/json" } });
+					sendFrame(socket, { t: "chunk", id, data: refused });
+					sendFrame(socket, { t: "end", id });
+					return;
+				}
+			}
+		}
 		const body = Buffer.from(frame.body, "utf8");
 		if (body.length) headers["content-length"] = String(body.length);
 		const entry: Active = { req: undefined as unknown as Active["req"], stream, initialize: frame.method === "POST" && frame.headers["mcp-session-id"] === undefined, headSeen: false, cancelled: false };
@@ -599,7 +750,7 @@ export async function linkRun(): Promise<void> {
 			let last = "";
 			const status = async (force = false) => {
 				if (socket.readyState !== WebSocket.OPEN) return;
-				const frame: StatusFrame = { t: "status", extensionConnected: live.extensionConnected, sessions: local.sessionCount(), busy: live.busy, version: VERSION, browser: null, sessionCap: MAX_LINK_SESSIONS, scopes: cap, computer, platform: process.platform };
+				const frame: StatusFrame = { t: "status", extensionConnected: live.extensionConnected, sessions: local.sessionCount(), busy: live.busy, version: VERSION, browser: null, sessionCap: MAX_LINK_SESSIONS, scopes: liveCap(), computer, platform: process.platform };
 				const key = JSON.stringify(frame);
 				if (!force && key === last) return;
 				last = key;
@@ -738,7 +889,9 @@ export async function linkStatus(json: boolean): Promise<number> {
 		checks.push({ name: "link.json", status: "fail", detail: err instanceof Error ? err.message : String(err) });
 	}
 	if (config) {
-		checks.push({ name: "link.json", status: "ok", detail: `${config.name} (${config.deviceId}) on ${config.hubUrl}${config.manage ? ", manager" : ""}, allows ${capOf(config).join(",")}${config.busy ? ", marked busy" : ""}` });
+		const served = servedCap(capOf(config));
+		checks.push({ name: "link.json", status: "ok", detail: `${config.name} (${config.deviceId}) on ${config.hubUrl}${config.manage ? ", manager" : ""}, allows ${served.scopes.join(",")}${config.busy ? ", marked busy" : ""}` });
+		if (served.stripped.length) checks.push({ name: "scopes", status: "warn", detail: `link.json lists scopes link run doesn't serve: ${strippedWords(served.stripped)}` });
 		const file = serviceFile(LINK_SERVICE);
 		checks.push({ name: "service", status: file && existsSync(file) ? "ok" : "warn", detail: file && existsSync(file) ? `${file}; log: ${serviceLogHint(LINK_SERVICE)}` : `no service installed; start it with ${COMMAND_NAME} link run` });
 		let state: LiveState | undefined;
@@ -764,7 +917,8 @@ export async function linkStatus(json: boolean): Promise<number> {
 	}
 	const ok = checks.every((x) => x.status !== "fail");
 	if (json) {
-		console.log(JSON.stringify({ ok, hubUrl: config?.hubUrl ?? null, name: config?.name ?? null, checks }, null, 2));
+		const notServed = config ? servedCap(capOf(config)).stripped : [];
+		console.log(JSON.stringify({ ok, hubUrl: config?.hubUrl ?? null, name: config?.name ?? null, checks, ...(notServed.length ? { notServed } : {}) }, null, 2));
 		return ok ? 0 : 1;
 	}
 	for (const check of checks) console.log(`${check.status === "ok" ? sym.ok : check.status === "warn" ? sym.warn : sym.fail} ${check.name.padEnd(9)} ${c.dim(check.detail)}`);
@@ -840,6 +994,96 @@ export function linkBusy(value: string | undefined): number {
 	}
 	console.log(value === "on" ? `${sym.ok} Marked busy: the hub sends new sessions to your other devices first.` : `${sym.ok} Not busy: the hub may send new sessions here.`);
 	return 0;
+}
+
+// ---------- link scopes ----------
+
+const LAST_SCOPE = (cap: string[]) => `${cap.join(", ") || "Nothing"} is the only thing this device allows, and it can't be removed. To stop serving the hub, run ${COMMAND_NAME} link off.`;
+
+/** Write this device's cap, under link.json's lock, from the config as it is now. Throws a LinkError when it isn't linked or the cap would be empty. */
+async function writeCap(change: (cap: string[]) => string[]): Promise<string[]> {
+	let written: string[] = [];
+	await withFileLockAsync(
+		linkFile(),
+		async () => {
+			const config = loadLinkConfig();
+			if (!config) throw new LinkError(`This device isn't linked. Run ${COMMAND_NAME} link <hub-url> --code <code>.`);
+			// Never carry a computer scope forward, also one added to link.json by hand: nothing can grant it yet.
+			written = change([...capOf(config)]).filter((s) => !isComputerScope(s));
+			// Checked here, under the lock, on the config as it is now: two removals that each passed an earlier look can't leave it empty.
+			if (!written.length) throw new LinkError(LAST_SCOPE(capOf(config)));
+			writeJsonPrivate(linkFile(), { ...config, scopes: written });
+		},
+		REQUEST_LOCK_MS,
+	);
+	return written;
+}
+
+/** Remove one scope from this device's cap under the lock. Refuses, with nothing written, when it would leave the cap empty. */
+export const removeScope = (scope: string): Promise<string[]> => writeCap((cap) => cap.filter((s) => s !== scope));
+
+/**
+ * `link scopes`: show what this device allows, `--remove <scope>` (at once, no question) or `--add <scope>`. Adding computer use
+ * is always refused (computerNotGrantable); removing it works. Local only: nothing on the hub's side can call it.
+ */
+export async function linkScopes(options: { add?: string; remove?: string; json: boolean }): Promise<number> {
+	const out = (ok: boolean, line: string, scopes?: string[]) => {
+		if (options.json) console.log(JSON.stringify({ ok, ...(scopes ? { scopes } : {}), ...(ok ? {} : { error: line }) }, null, 2));
+		else if (ok) console.log(line);
+		else console.error(`${sym.fail} ${line}`);
+		return ok ? 0 : 1;
+	};
+	if (options.add !== undefined && options.remove !== undefined) {
+		console.error(`Usage: ${COMMAND_NAME} link scopes [--add <scope> | --remove <scope>] [--json]`);
+		return 2;
+	}
+	let config: LinkConfig | undefined;
+	try {
+		config = loadLinkConfig();
+	} catch (err) {
+		return out(false, err instanceof Error ? err.message : String(err));
+	}
+	if (!config) return out(false, `This device isn't linked. Run ${COMMAND_NAME} link <hub-url> --code <code>.`);
+	try {
+		if (options.remove !== undefined) {
+			const scope = options.remove;
+			if (!capOf(config).includes(scope)) return out(true, `${sym.dot} This device doesn't allow ${scope}. Nothing was changed.`, [...capOf(config)]);
+			if (capOf(config).length === 1) return out(false, LAST_SCOPE(capOf(config)));
+			const scopes = await removeScope(scope);
+			return out(true, `${sym.ok} Removed ${scope}. This device allows: ${scopes.join(", ")}. The next call that needs it is refused.`, scopes);
+		}
+		if (options.add !== undefined) {
+			const scope = options.add;
+			const why = scopeRefusal(scope);
+			if (why) return out(false, `${why} Nothing was changed.`);
+			if (isComputerScope(scope)) return out(false, `${computerNotGrantable(scope)} Nothing was changed.`);
+			if (capOf(config).includes(scope)) return out(true, `${sym.dot} This device already allows ${scope}.`, [...capOf(config)]);
+			const scopes = await writeCap((cap) => [...new Set([...cap, scope])]);
+			return out(true, `${sym.ok} Added ${scope}. This device allows: ${scopes.join(", ")}. ${await restartForCap()}`, scopes);
+		}
+	} catch (err) {
+		if (err instanceof LockTimeoutError) return out(false, "Another Polycarp window is writing link.json. Try again in a moment.");
+		if (err instanceof LinkError) return out(false, err.message);
+		throw err;
+	}
+	const { scopes: cap, stripped } = servedCap(capOf(config));
+	const computerHere = Object.keys(offeredScopes()).some(isComputerScope);
+	if (options.json) {
+		console.log(JSON.stringify({ ok: true, scopes: cap, ...(stripped.length ? { notServed: stripped } : {}) }, null, 2));
+		return 0;
+	}
+	console.log(`${sym.dot} This device allows: ${cap.join(", ")}`);
+	if (stripped.length) console.log(`${sym.warn} link.json also lists scopes link run doesn't serve: ${strippedWords(stripped)}.`);
+	if (computerHere) console.log(`${sym.dot} Computer use is off here. It can't be turned on from the command line: it needs the owner's approval in the Polycarp app, which isn't built yet.`);
+	return 0;
+}
+
+/** A wider cap needs a new link token, so link run starts again: the service is restarted when there is one. */
+async function restartForCap(): Promise<string> {
+	const file = serviceFile(LINK_SERVICE);
+	if (!file || !existsSync(file)) return `It applies when ${COMMAND_NAME} link run starts again.`;
+	const restarted = await installService(LINK_SERVICE);
+	return restarted.ok ? "The link service restarted to apply it; open sessions start over." : `It applies when the link service restarts: ${restarted.message}`;
 }
 
 // ---------- link code / approval-code ----------

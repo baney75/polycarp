@@ -43,13 +43,15 @@ async function inConfig(name, fn) {
 	// An empty Polycarp config folder, so a developer's own Polycarp theme never changes what status says.
 	const polycarp = join(dir, "polycarp-config");
 	mkdirSync(polycarp, { recursive: true });
-	const before = { t: process.env.TABKYRA_CONFIG_DIR, p: process.env.POLYCARP_CONFIG_DIR };
+	const before = { t: process.env.TABKYRA_CONFIG_DIR, p: process.env.POLYCARP_CONFIG_DIR, s: process.env.POLYCARP_SPACES_BIN };
 	process.env.TABKYRA_CONFIG_DIR = dir;
 	process.env.POLYCARP_CONFIG_DIR = polycarp;
+	// No computer-use helper, even on a Mac with Polycarp's app: status then offers no computer scopes (a test below sets one).
+	process.env.POLYCARP_SPACES_BIN = join(dir, "no-helper");
 	try {
 		return await fn(dir);
 	} finally {
-		for (const [k, v] of [["TABKYRA_CONFIG_DIR", before.t], ["POLYCARP_CONFIG_DIR", before.p]]) {
+		for (const [k, v] of [["TABKYRA_CONFIG_DIR", before.t], ["POLYCARP_CONFIG_DIR", before.p], ["POLYCARP_SPACES_BIN", before.s]]) {
 			if (v === undefined) delete process.env[k];
 			else process.env[k] = v;
 		}
@@ -1508,4 +1510,16 @@ test("status says why a Polycarp theme file was refused, and says nothing when t
 test("onlyKeys keeps its own doc comment", () => {
 	const src = readFileSync(new URL("../src/connect-host.ts", import.meta.url), "utf8");
 	assert.match(src, /\/\*\* `params` must hold only these keys\.[^\n]*\*\/\nfunction onlyKeys/);
+});
+
+test("status never offers computer use to a join, even where Polycarp's Mac app is here: nothing can turn it on yet", async () => {
+	await inConfig("status-computer", async (dir) => {
+		const helper = join(dir, "polycarp-spaces");
+		writeFileSync(helper, "");
+		process.env.POLYCARP_SPACES_BIN = helper;
+		const { result } = await ask(new ConnectService(), "status");
+		assert.deepEqual(result.joinScopes, DEFAULT_SCOPE_ROWS, "what a join grants is unchanged");
+		assert.equal(result.optionalJoinScopes, undefined);
+		assert.ok(!JSON.stringify(result).includes("computer."), "no computer scope anywhere in the status");
+	});
 });

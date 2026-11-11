@@ -251,6 +251,48 @@ makes a one-time code for the approval page, lists the devices (on the hub's com
 connect code for another device, and joins a hub from a code. It asks Polycarp's helper, so it needs
 `polycarp browser setup` first. See D33 in [decisions.md](decisions.md).
 
+### What a device allows
+
+A device's cap lives in its own `link.json`, and only that computer changes it. Nothing the hub
+sends can write it.
+
+```bash
+tabkyra link scopes                          # what this device allows
+tabkyra link scopes --remove browser.script  # narrower: the next call that needs it is refused
+tabkyra link scopes --add browser.script     # wider: applies once link run starts again
+```
+
+A narrower cap applies to the very next call, also on sessions already open: that call gets
+"laptop doesn't allow browser.script (allows: ...). Only its owner can add it, on laptop." `link run`
+reads `link.json` at every tool call, inside its local server, after the call's arguments are parsed,
+so the check judges the call that runs. It counts arguments too: `read_network` with `requestId`
+needs `browser.script`, and `session_info` with `label` needs `browser.navigate`. In front of the
+local server, a body on an open session that doesn't parse as UTF-8 JSON is refused, and the
+content-type the server sees is always `application/json`. The last scope can't be removed;
+`tabkyra link off` stops serving. A wider cap needs a new link token, so `link scopes --add`
+restarts the link service when there is one, and open sessions start over.
+
+Computer use (`computer.read`, `computer.act`) is not available over a link yet. Granting it needs
+the owner's approval in the Polycarp app, which isn't built yet, and nothing else can stand in for it:
+a yes typed at a terminal can come from an agent running the command in a pseudo-terminal, and an
+agent with a shell can edit `link.json` by hand. So:
+
+- `link --scope computer.act` and `link scopes --add computer.act` (or `computer.read`) are refused
+  and change nothing: "computer.act can't be turned on from the command line: granting computer use
+  over a link needs the owner's approval in the Polycarp app, and that approval isn't built yet."
+- `link run` never serves a computer scope, whatever `link.json` says. That includes a cap an
+  earlier preview build wrote: it loses its computer scopes. `link run` logs one line naming them,
+  and `link status` (and `link status --json`, as `notServed`) says which ones and why. It also drops
+  any scope this computer can't serve.
+- The next `link scopes` change writes the cap without them.
+- Joining a hub from the side panel never grants computer use, and the panel doesn't offer it.
+
+A computer without Polycarp's Mac app (`polycarp-spaces`) is told "This computer can't serve
+computer.read: computer use needs Polycarp's Mac app, and it isn't on this computer."
+
+A cap written as an empty list allows nothing; only a `link.json` with no `scopes` gets the default
+grant. Removals are checked under `link.json`'s lock, so two at once can't empty the cap.
+
 ### How a session is routed
 
 A new session goes to an online device that has reported in, grants at least one of the caller's
