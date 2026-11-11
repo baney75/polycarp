@@ -67,8 +67,15 @@ function plainWindowsPath(path: string): string {
 	return path;
 }
 
+/**
+ * macOS keeps the user's files on the Data volume and shows them at "/" through firmlinks, which
+ * realpath does not fold: /System/Volumes/Data/Users/me is /Users/me, and is compared as that.
+ */
+const MAC_DATA_VOLUME = /^\/System\/Volumes\/Data(?=\/)/i;
+
 function normalized(path: string, platform: string): string {
-	const p = lib(platform).normalize(platform === "win32" ? plainWindowsPath(path) : path);
+	let p = lib(platform).normalize(platform === "win32" ? plainWindowsPath(path) : path);
+	if (platform === "darwin") p = p.replace(MAC_DATA_VOLUME, "");
 	return foldsCase(platform) ? p.toLowerCase() : p;
 }
 

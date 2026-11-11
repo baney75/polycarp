@@ -245,6 +245,7 @@ export class BridgeTab extends SettingsTab {
 													? html`
 														<div class="text-sm text-foreground"><span class="font-medium">${p.clientName}</span> wants to upload ${p.upload.files.length === 1 ? "a file from this computer" : `${p.upload.files.length} files from this computer`} to <span class="font-mono">${p.host}</span></div>
 														<div class="text-xs text-muted-foreground break-all">${p.upload.files.map((f) => `${f.name} (${fileSize(f.bytes)})`).join(", ")}</div>
+														<div class="text-xs text-muted-foreground">Only the name is shown here. Ask the agent which folder the file is in before you say yes.</div>
 														<div class="flex gap-2 flex-wrap">
 															${Button({ size: "sm", variant: "default", children: "Upload this once", onClick: () => this.decide(p, "allow_once") })}
 															${Button({ size: "sm", variant: "outline", children: "Deny", onClick: () => this.decide(p, "deny") })}

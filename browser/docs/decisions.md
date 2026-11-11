@@ -988,7 +988,9 @@ Agents could not attach a file to a form or keep a file a page offers. One tool,
   "always allow" mode). A site the agent was let onto once is not enough, and a guarded host is refused as always.
 - **Downloads.** `download` fetches in the tab's own page, so the page's origin, cookies and CORS rules apply and the
   extension's wider reach is not used. The URL goes through `checkUrl` like a navigation; a `blob:` URL must be the
-  page's own; `data:` is decoded in the worker; a redirect that ends on a guarded address is dropped. `ref` resolves
+  page's own; `data:` is decoded in the worker; a redirect that ends on a guarded address is dropped, and one that
+  ends on another site gets the same `checkUrl`. The source URL kept with a file has credential-named query
+  parameters masked (`maskUrl`). `ref` resolves
   to the element's `href`, `currentSrc` or `src`. The fetch runs in a user-script world of its own, because the
   snapshot world's policy allows no network. `save_pdf` is `Page.printToPDF`. One file is at most 50 MB and the
   error states the size; a session keeps at most 200 files and 500 MB.
@@ -999,7 +1001,28 @@ Agents could not attach a file to a form or keep a file a page offers. One tool,
   says when it cut), an image as an image only when its bytes are one, anything else as a resource blob, at most
   8 MB; over that it is an error with the size.
 - **Scope.** `browser.files` holds the tool and is not in the default grant: the owner ticks it. Without it a remote
-  session does not list the tool.
+  session does not list the tool. A download is fetched in the page with the user's sign-in on that site and `read`
+  returns it whole, so the scope alone must not reach what the session's other scopes could not (review round 1).
+  Two rules in `ARGUMENT_RULES` (`cli/src/mcp.ts`), checked on every call and by the link cap, fail closed:
+  `download` with `url` needs `browser.script`, because an address the agent names, fetched with cookies, is what
+  `run_js` does with `fetch`; any `download` needs `browser.navigate`, because a link's file is what opening the link
+  would fetch. What is left to `browser.files` with read and navigate is the file behind an element the page itself
+  shows. Requests to another origin never carry credentials (`credentials: "same-origin"`), for any caller. The
+  scope's description on the consent page says all of this.
+- **Bound to the document.** The site check, the element check and the person's yes are for one document. `begin`
+  leaves a random mark in that document and records its origin; the scripts that stash a piece and that set the
+  files check the origin and the mark as they run, before they touch content, and refuse in any other document
+  (`Bound` in `src/browser/files-page.ts`). A check made in the worker before the script runs cannot do this: the
+  tab can navigate in between. A reload between `begin` and `commit` is refused for the same reason. A download's
+  fetch checks the page's origin the same way, and `save_pdf` is refused when the tab changed origin while printing.
+- **Bound to the caller.** A commit under way stays its client's to cancel. When the client disconnects, its session
+  ends or the bridge connection drops, the upload is cancelled: no further piece goes to the page, the files are not
+  set, and the pieces already in the page are cleared.
+- **Cleaned up.** A session's folder is removed when the session ends: `session_end`, and for a remote session also
+  when it expires or its connection closes (its id is never used again). All sessions together keep at most 2 GB,
+  and a file being written counts against the caps from its first byte. A default project session's folder is keyed
+  on the name the extension gave the client ("<name>-2" for a second agent in one project), which the helper learns
+  before it touches a folder, so two agents in one project do not share saved files.
 - **No new permission.** The manifest is unchanged, so `store/permissions.md` is too.
 - **Not built: downloads a click starts.** A file the browser itself downloads (a click on a link with
   `Content-Disposition: attachment`, a form that answers with a file) never reaches the page's script, so this tool

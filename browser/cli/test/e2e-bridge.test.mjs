@@ -1834,6 +1834,51 @@ test("files upload: files dropped on a drop area arrive in its drop event; a sit
 	}
 });
 
+test("files upload: a file from outside the project waits for the answer in the side panel, and only a yes to that upload sends it", async () => {
+	// This agent's client can show no question of its own, so the side panel is where the person answers.
+	const a = await filesAgent();
+	const outside = realpathSync(mkdtempSync(join(tmpdir(), "tabkyra-e2e-outside-")));
+	try {
+		const body = Buffer.from("from outside the project");
+		writeFileSync(join(outside, "cv.txt"), body);
+		const pending = () => sw("chrome.storage.session.get('bridge_pending_requests').then((d) => (d.bridge_pending_requests ?? []).filter((p) => p.upload))");
+		/** Wait for the question, check what it shows, and write what the side panel's button writes. */
+		const answer = async (decision) => {
+			const q = await until(async () => (await pending())[0], 15_000, "the upload question in the side panel");
+			assert.deepEqual(q.upload.files, [{ name: "cv.txt", bytes: body.length }]);
+			assert.equal(q.host, "127.0.0.1");
+			assert.ok(!JSON.stringify(q).includes(outside), "the browser is not told where the file is");
+			await sw(`chrome.storage.session.set({ ${JSON.stringify(`bridge_decision_${q.requestId}`)}: ${JSON.stringify(decision)} }).then(() => true)`);
+		};
+		const args = { action: "upload", selector: "#many", paths: [join(outside, "cv.txt")] };
+		// "Deny", and the answer a site question may get but an upload may not: neither sends a byte.
+		for (const no of ["deny", "allow_host"]) {
+			const call = a.call(args);
+			await answer(no);
+			const refused = await call;
+			assert.ok(refused.isError, refused.text);
+			assert.match(refused.text, /did not approve/);
+			assert.deepEqual(await a.seen(), [], `${no}: the page got something`);
+		}
+		// "Upload this once".
+		const call = a.call(args);
+		await answer("allow_once");
+		const done = await call;
+		assert.ok(!done.isError, done.text);
+		const seen = await until(async () => ((await a.seen()).length >= 2 ? a.seen() : undefined), 10_000, "the upload");
+		assert.deepEqual([...new Set(seen.map((f) => `${f.name} ${f.size} ${f.sha}`))], [`cv.txt ${body.length} ${sha256(body)}`]);
+		// The yes was for that upload: the next one asks again, and the question is gone once answered.
+		const again = a.call(args);
+		await answer("deny");
+		assert.ok((await again).isError);
+		assert.deepEqual(await pending(), []);
+		assert.equal((await a.seen()).length, seen.length);
+	} finally {
+		rmSync(outside, { recursive: true, force: true });
+		await a.close();
+	}
+});
+
 test("files download: a file fetched in the page, with its cookie, is saved privately and matches byte for byte", async () => {
 	const a = await filesAgent();
 	try {

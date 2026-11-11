@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -538,9 +538,18 @@ async function filesHost(name, behave = {}) {
 				buffered = buffered.subarray(4 + size);
 				if (msg.type === "hello") {
 					socket.write(frame({ type: "welcome", clientId: "c1", hostVersion: "0", extensionConnected: true }));
+					host.asked = msg.client?.session;
+					// A second agent in the project: the extension gives it a session of its own as it connects.
+					if (behave.assign) socket.write(frame({ type: "event", event: "session_assigned", data: { session: `${msg.client.session}-2` } }));
 					continue;
 				}
 				if (msg.type !== "request") continue;
+				// The files tool asks for its status once, to learn the session the extension gave it. Counted apart.
+				if (msg.method === "status") {
+					host.statusCalls = (host.statusCalls ?? 0) + 1;
+					reply(msg.id, {});
+					continue;
+				}
 				host.requests.push(msg);
 				host.frameBytes.push(size);
 				const p = msg.params ?? {};
@@ -712,6 +721,9 @@ test("files upload: a path outside the client's roots asks the person each time,
 		assert.equal(questions.length, 1);
 		// The question names the agent, the file, its size and where it is going.
 		for (const part of [/Test Agent/, /cv\.pdf/, /2 KB/, /upload\.test/]) assert.match(questions[0].message, part);
+		// And where the file is, so a cv.pdf from another folder can't pass for this one. The browser is still sent the name alone.
+		assert.ok(questions[0].message.includes(join(fx.proj, "cv.pdf")), questions[0].message);
+		assert.ok(!JSON.stringify(host.requests).includes(fx.proj), "no host path is sent to the browser");
 		assert.deepEqual(questions[0].requestedSchema.properties.decision.enum, ["allow_once", "deny"], "there is no answer that remembers");
 		assert.equal(sha(Buffer.concat(host.uploads[1].chunks)), sha(Buffer.alloc(2048, 1)));
 
@@ -841,6 +853,42 @@ test("files download, save_pdf, list, read, remove: private files with an id, an
 	}
 });
 
+test("files: a second agent in one project keeps its files apart from the first, from its first call on", async () => {
+	const fx = filesFixture("two");
+	const host = await filesHost("two", { assign: true });
+	const { client, run, connect } = await filesClient(host, fx);
+	try {
+		await connect();
+		// Its very first call is one that never needed the browser: it asks which session it has before it looks at a folder.
+		assert.deepEqual(JSON.parse((await run({ action: "list" })).text), { files: [] });
+		assert.equal(host.statusCalls, 1);
+		const asked = host.asked;
+		assert.ok(asked, "the helper asked for a session by name");
+		// The first agent's saved file, in the folder of the name both asked for.
+		const first = join(fx.config, "files", asked);
+		mkdirSync(first, { recursive: true, mode: 0o700 });
+		writeFileSync(join(first, "theirs.txt"), "the first agent's", { mode: 0o600 });
+		writeFileSync(join(first, ".index.json"), JSON.stringify({ files: [{ id: "f_aaaaaaaaaa", name: "theirs.txt", bytes: 17, mime: "text/plain", sha256: "", sourceUrl: "", savedAt: "" }] }), { mode: 0o600 });
+		for (const args of [{ action: "list" }, { action: "read", id: "f_aaaaaaaaaa" }, { action: "remove", id: "f_aaaaaaaaaa" }, { action: "upload", ref: "e1", ids: ["f_aaaaaaaaaa"] }]) {
+			const r = await run(args);
+			assert.ok(!r.text.includes("theirs") && !r.text.includes("the first agent's"), `${args.action}: ${r.text}`);
+			if (args.action !== "list") assert.equal(r.isError, true, args.action);
+		}
+		assert.equal(readFileSync(join(first, "theirs.txt"), "utf8"), "the first agent's");
+		// What it saves goes under the name it was given, and ending its session removes that folder alone.
+		host.serve = { body: Buffer.from("mine"), name: "mine.txt", mime: "text/plain" };
+		const mine = JSON.parse((await run({ action: "download", url: "https://files.test/mine" })).text);
+		assert.equal(mine.path, join(fx.config, "files", `${asked}-2`, "mine.txt"));
+		assert.equal(host.statusCalls, 1, "asked once");
+		assert.notEqual((await client.callTool({ name: "session_end", arguments: {} })).isError, true);
+		assert.equal(existsSync(join(fx.config, "files", `${asked}-2`)), false);
+		assert.equal(existsSync(join(first, "theirs.txt")), true);
+	} finally {
+		await client.close().catch(() => {});
+		host.close();
+	}
+});
+
 test("files for a remote session: its own scope, never a path in, never a path out, only its own files", async () => {
 	const { build } = await import("esbuild");
 	const here = dirname(fileURLToPath(import.meta.url));
@@ -857,6 +905,8 @@ test("files for a remote session: its own scope, never a path in, never a path o
 	assert.equal(toolsFor(DEFAULT_GRANT).has("files"), false);
 	assert.equal(toolsFor(Object.keys(SCOPES).filter((s) => s !== "browser.files")).has("files"), false, "no other scope carries it");
 	assert.equal(toolsFor(["browser.files"]).has("files"), true);
+	// The owner is told what ticking it grants: fetched with their sign-in, and what the stronger scopes add.
+	for (const part of [/your sign-in/, /browser\.navigate/, /browser\.script/, /Never a file path/, /removed when the session ends/]) assert.match(SCOPES["browser.files"].what, part);
 
 	const { createMcpServer } = await bundle("mcp");
 	const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
@@ -898,8 +948,18 @@ test("files for a remote session: its own scope, never a path in, never a path o
 
 		const body = Buffer.alloc(9 * 1024 * 1024, 9);
 		host.serve = { body, name: "nine.bin", mime: "application/octet-stream" };
-		const got = await one.run({ action: "download", url: "https://files.test/nine" });
+		// The default grant has no browser.script: an address the agent names is refused before the bridge hears of it,
+		// whatever the address, and with any other argument beside it.
+		for (const args of [{ url: "https://files.test/nine" }, { url: "/api/me" }, { url: "/api/me", ref: "e9" }, { url: "blob:https://files.test/1" }]) {
+			const named = await one.run({ action: "download", ...args });
+			assert.equal(named.isError, true);
+			assert.match(named.text, /^permission_denied: .*browser\.script/);
+		}
+		assert.deepEqual(host.requests, []);
+		// A link on the page is what the scope is for.
+		const got = await one.run({ action: "download", ref: "e9" });
 		assert.notEqual(got.isError, true, got.text);
+		assert.equal(host.requests[0].params.url, undefined);
 		const file = JSON.parse(got.text);
 		assert.deepEqual(Object.keys(file).sort(), ["bytes", "id", "mime", "name", "savedAt", "sha256", "sourceUrl"], "no path among them");
 		const onDisk = join(fx.config, "files", "remote-t1-bbbb", "nine.bin");
@@ -910,7 +970,7 @@ test("files for a remote session: its own scope, never a path in, never a path o
 		for (const text of outputs) assert.ok(!text.includes(fx.config) && !text.includes(root) && !/"path"/.test(text), text.slice(0, 200));
 		// Its own saved file goes back up by id.
 		host.serve = { body: Buffer.from("small"), name: "small.txt", mime: "text/plain" };
-		const small = JSON.parse((await one.run({ action: "download", url: "https://files.test/small" })).text);
+		const small = JSON.parse((await one.run({ action: "download", ref: "e9" })).text);
 		assert.notEqual((await one.run({ action: "upload", ref: "e1", ids: [small.id] })).isError, true);
 		assert.equal(Buffer.concat(host.uploads[0].chunks).toString(), "small");
 
@@ -920,10 +980,38 @@ test("files for a remote session: its own scope, never a path in, never a path o
 		const sent = host.requests.length;
 		for (const args of [{ action: "upload", ref: "e1", ids: [small.id] }, { action: "read", id: small.id }, { action: "remove", id: small.id }]) assert.equal((await two.run(args)).isError, true, args.action);
 		assert.equal(host.requests.length, sent);
+		// Without browser.navigate that session can't download at all (a link's file is what opening the link fetches),
+		// by ref, by selector or by address; its other actions still run.
+		for (const args of [{ ref: "e9" }, { selector: "a" }, { url: "https://files.test/small" }]) {
+			const r = await two.run({ action: "download", ...args });
+			assert.equal(r.isError, true);
+			assert.match(r.text, /^permission_denied: .*browser\.(navigate|script)/);
+		}
+		assert.equal(host.requests.length, sent);
+		host.serve = { body: Buffer.from("%PDF-1.7 page"), name: "Page.pdf", mime: "application/pdf" };
+		assert.notEqual((await two.run({ action: "save_pdf" })).isError, true);
+		// With browser.script and browser.navigate an address may be named.
+		const full = await open({ name: "r3", session: "remote-t3-dddd", remote: true, allowedTools: toolsFor([...DEFAULT_GRANT, "browser.files", "browser.script"]) });
+		host.serve = { body: Buffer.from("named"), name: "named.txt", mime: "text/plain" };
+		assert.notEqual((await full.run({ action: "download", url: "https://files.test/named" })).isError, true);
+		// The session's files go when it ends, and only its own.
+		assert.equal(existsSync(join(fx.config, "files", "remote-t3-dddd", "named.txt")), true);
+		assert.notEqual((await full.client.callTool({ name: "session_end", arguments: {} })).isError, true);
+		assert.equal(existsSync(join(fx.config, "files", "remote-t3-dddd")), false, "session_end removes the session's saved files");
+		assert.equal(existsSync(join(fx.config, "files", "remote-t1-bbbb", "small.txt")), true);
+		const before = host.requests.length;
 		// A scoped session that is not marked remote is treated the same way.
 		const scoped = await open({ name: "s", session: "scoped-files", allowedTools: new Set(["files"]) });
 		assert.equal((await scoped.run({ action: "upload", ref: "e1", paths: [join(fx.proj, "report.txt")] })).isError, true);
-		assert.equal(host.requests.length, sent);
+		assert.equal(host.requests.length, before);
+		// A disk error reaches a remote caller without the folder it happened in.
+		rmSync(join(fx.config, "files", "remote-t1-bbbb"), { recursive: true });
+		symlinkSync(fx.proj, join(fx.config, "files", "remote-t1-bbbb"));
+		host.serve = { body: Buffer.from("x"), name: "x.txt", mime: "text/plain" };
+		const broken = await one.run({ action: "download", ref: "e9" });
+		assert.equal(broken.isError, true);
+		assert.ok(!broken.text.includes(fx.config) && !broken.text.includes(root) && !/[\\/]files[\\/]/.test(broken.text), broken.text);
+		assert.match(broken.text, /could not be kept on the computer/);
 	} finally {
 		for (const c of clients) await c.close().catch(() => {});
 		host.close();

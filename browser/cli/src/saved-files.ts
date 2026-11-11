@@ -11,7 +11,7 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync, rmSync, statSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { privateDir } from "./captures.ts";
@@ -23,6 +23,8 @@ export const MAX_SAVED_BYTES = 50 * 1024 * 1024;
 /** What one session may keep, so a caller can't fill the disk. */
 export const MAX_SESSION_BYTES = 500 * 1024 * 1024;
 export const MAX_SESSION_FILES = 200;
+/** What every session together may keep: a caller that opens session after session still can't fill the disk. */
+export const MAX_ALL_BYTES = 2 * 1024 * 1024 * 1024;
 /** `read`: how much text goes back, and the most an image or other file may be. */
 export const READ_TEXT_CAP = 200 * 1024;
 export const READ_BLOB_CAP = 8 * 1024 * 1024;
@@ -165,7 +167,9 @@ export interface FileWriter {
 /** One session's saved files. */
 export class SavedFiles {
 	readonly dir: string;
-	private readonly session: string;
+	readonly session: string;
+	/** Files being written now: counted against the caps from the moment they start, not when they finish. */
+	private readonly pending = { files: 0, bytes: 0 };
 
 	constructor(session: string) {
 		this.session = session;
@@ -235,19 +239,57 @@ export class SavedFiles {
 		});
 	}
 
-	/** Why this session can't keep `bytes` more, or undefined. */
+	/** Why this session can't keep `bytes` more, or undefined. Counts the files still being written. */
 	full(bytes: number): string | undefined {
 		if (bytes > MAX_SAVED_BYTES) return `The file is ${bytes} bytes; the most one saved file may be is ${MAX_SAVED_BYTES} (50 MB).`;
 		const files = this.list();
-		if (files.length >= MAX_SESSION_FILES) return `This session already keeps ${files.length} files. Remove some first (action "remove").`;
-		const held = files.reduce((a, f) => a + f.bytes, 0);
+		if (files.length + this.pending.files >= MAX_SESSION_FILES) return `This session already keeps ${files.length} files. Remove some first (action "remove").`;
+		const held = files.reduce((a, f) => a + f.bytes, 0) + this.pending.bytes;
 		if (held + bytes > MAX_SESSION_BYTES) return `This session's saved files would pass ${MAX_SESSION_BYTES} bytes. Remove some first (action "remove").`;
+		if (savedBytesElsewhere(this.dir) + held + bytes > MAX_ALL_BYTES) return `Polycarp's saved files would pass ${byteSize(MAX_ALL_BYTES)} across all sessions. End sessions that are done (session_end removes their files), or remove files.`;
 		return undefined;
 	}
 
-	/** Start a new file under a cleaned name; a name that is taken gets a number, never the other file's place. */
-	create(meta: { name: string; mime?: unknown; sourceUrl: string }): FileWriter {
+	/** Remove every file this session saved, and its folder. */
+	clear(): void {
+		rmSync(this.dir, { recursive: true, force: true });
+	}
+
+	/** The same files under the session's new name. A folder already there is left alone, and so is this one. */
+	renamedTo(session: string): SavedFiles {
+		const next = new SavedFiles(session);
+		try {
+			if (next.dir !== this.dir && existsSync(this.dir) && !existsSync(next.dir)) renameSync(this.dir, next.dir);
+		} catch {
+			// The files stay under the old name; the new folder starts empty.
+		}
+		return next;
+	}
+
+	/**
+	 * Start a new file under a cleaned name; a name that is taken gets a number, never the other file's place.
+	 * `bytes`, the size announced, is held against the caps until the file is finished or dropped, so two
+	 * downloads at once can't both take the last of the room.
+	 */
+	create(meta: { name: string; mime?: unknown; sourceUrl: string; bytes?: number }): FileWriter {
 		this.ensureDir();
+		const reserved = { files: 1, bytes: meta.bytes ?? 0 };
+		this.pending.files += reserved.files;
+		this.pending.bytes += reserved.bytes;
+		const release = () => {
+			this.pending.files -= reserved.files;
+			this.pending.bytes -= reserved.bytes;
+			reserved.files = reserved.bytes = 0;
+		};
+		try {
+			return this.open(meta, release);
+		} catch (err) {
+			release();
+			throw err;
+		}
+	}
+
+	private open(meta: { name: string; mime?: unknown; sourceUrl: string }, release: () => void): FileWriter {
 		const mime0 = cleanMime(meta.mime);
 		let wanted = sanitizeFileName(meta.name);
 		if (!extname(wanted) && mime0) wanted += extFor(mime0);
@@ -271,6 +313,7 @@ export class SavedFiles {
 		const close = () => {
 			if (open) closeSync(fd);
 			open = false;
+			release();
 		};
 		const abort = () => {
 			close();
@@ -312,6 +355,28 @@ export class SavedFiles {
 			abort,
 		};
 	}
+}
+
+/** The bytes every other session's folder lists. A folder that can't be read counts as empty. */
+function savedBytesElsewhere(dir: string): number {
+	let total = 0;
+	let names: string[] = [];
+	try {
+		names = readdirSync(filesRoot());
+	} catch {
+		return 0;
+	}
+	for (const name of names) {
+		const other = join(filesRoot(), name);
+		if (other === dir) continue;
+		try {
+			const index = readJsonFile<Index>(join(other, INDEX), { files: [] });
+			for (const f of Array.isArray(index?.files) ? index.files : []) total += Number(f?.bytes) > 0 ? Number(f.bytes) : 0;
+		} catch {
+			/* not a session folder */
+		}
+	}
+	return total;
 }
 
 /** The helper's own folders and every browser profile, with their real paths: nothing is uploaded from them. */
@@ -372,9 +437,12 @@ export class UploadReader {
 		const held = this.open.get(realPath);
 		if (!held) throw new Error(`${basename(realPath)} was not checked.`);
 		if (held.bytes > MAX_UPLOAD_BYTES) throw new Error(`${basename(realPath)} is too large to upload.`);
-		const bytes = readFileSync(held.fd);
-		if (bytes.length !== held.bytes) throw new Error(`${basename(realPath)} changed while it was being read.`);
-		return bytes;
+		// Read from the start each time: the same file can be named twice in one upload, and it has one handle.
+		const bytes = Buffer.alloc(held.bytes + 1);
+		let got = 0;
+		for (let n = 1; n > 0 && got < bytes.length; got += n) n = readSync(held.fd, bytes, got, bytes.length - got, got);
+		if (got !== held.bytes) throw new Error(`${basename(realPath)} changed while it was being read.`);
+		return bytes.subarray(0, held.bytes);
 	}
 
 	close(): void {

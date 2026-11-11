@@ -32,28 +32,71 @@ export interface UploadTarget {
 	multiple?: boolean;
 	accept?: string;
 	disabled?: boolean;
+	/** The document the element was found in: its origin, and the mark this document carries (Bound). */
+	origin: string;
+	doc: string;
 }
 
-/** What the element at a ref is for an upload, before any content moves. */
-export function probeUploadTarget(tabId: number, target: Target): Promise<UploadTarget> {
+const STASH = "__polycarpUploads";
+const DOC = "__polycarpDoc";
+
+/**
+ * The one document an upload was approved for: the page's origin, and a mark left in that document
+ * when the upload began. A navigation or reload makes a new document, which has no mark, so a
+ * script that carries a Bound can tell, at the moment it runs, that it is still in the same page.
+ */
+export interface Bound {
+	origin: string;
+	doc: string;
+}
+
+/** Where a script found itself when it was not in the document it was meant for. */
+export interface Moved {
+	moved: true;
+	/** The host the tab is on now. */
+	host: string;
+	/** True when the origin is the approved one and only the document changed (a reload). */
+	sameOrigin: boolean;
+}
+
+/**
+ * Page-side statements that return a Moved, and drop what this upload stashed, unless the script
+ * is running in the bound document. They come first in a script, before it touches file content.
+ */
+function boundCode(bound: Bound, id: string): string {
+	return `const __origin = (() => { try { return String(location.origin); } catch (e) { return ""; } })();
+		if (__origin !== ${JSON.stringify(bound.origin)} || globalThis.${DOC} !== ${JSON.stringify(bound.doc)}) {
+			if (globalThis.${STASH}) delete globalThis.${STASH}[${JSON.stringify(id)}];
+			return { moved: true, host: (() => { try { return String(location.hostname); } catch (e) { return ""; } })(), sameOrigin: __origin === ${JSON.stringify(bound.origin)} };
+		}`;
+}
+
+/**
+ * What the element at a ref is for an upload, before any content moves. Leaves `mark` in the
+ * document if it has none yet, and reports the mark the document carries.
+ */
+export function probeUploadTarget(tabId: number, target: Target, mark: string): Promise<UploadTarget> {
 	return runInPage(
 		tabId,
 		`(() => {
 			${elementCode(target)}
+			const doc = (globalThis.${DOC} = globalThis.${DOC} || ${JSON.stringify(mark)});
+			const origin = String(location.origin);
 			const input = (${pageFileInput.toString()})(el);
-			if (!input) return { kind: "drop", tag: el.tagName.toLowerCase() };
-			return { kind: "input", tag: "input", multiple: input.multiple, accept: input.accept || "", disabled: input.disabled };
+			if (!input) return { kind: "drop", tag: el.tagName.toLowerCase(), origin, doc };
+			return { kind: "input", tag: "input", multiple: input.multiple, accept: input.accept || "", disabled: input.disabled, origin, doc };
 		})()`,
 	);
 }
 
-const STASH = "__polycarpUploads";
-
-/** Hand the page one piece of an upload; it keeps the pieces until commitUpload. Returns how many it holds. */
-export function stashUploadChunk(tabId: number, id: string, b64: string): Promise<number> {
+/**
+ * Hand the bound document one piece of an upload; it keeps the pieces until commitUpload. Returns
+ * how many it holds, or Moved (and keeps nothing) when the tab is no longer on that document.
+ */
+export function stashUploadChunk(tabId: number, id: string, b64: string, bound: Bound): Promise<number | Moved> {
 	return runInPage(
 		tabId,
-		`(() => { const s = (globalThis.${STASH} = globalThis.${STASH} || {}); (s[${JSON.stringify(id)}] = s[${JSON.stringify(id)}] || []).push("${b64}"); return s[${JSON.stringify(id)}].length; })()`,
+		`(() => { ${boundCode(bound, id)} const s = (globalThis.${STASH} = globalThis.${STASH} || {}); (s[${JSON.stringify(id)}] = s[${JSON.stringify(id)}] || []).push("${b64}"); return s[${JSON.stringify(id)}].length; })()`,
 	);
 }
 
@@ -72,6 +115,7 @@ export interface UploadMeta {
 }
 
 export type UploadOutcome =
+	| Moved
 	| { refused: string }
 	| {
 			mode: "input" | "drop";
@@ -83,13 +127,21 @@ export type UploadOutcome =
 /**
  * Build the File objects from the stashed pieces and give them to the element: `input.files`
  * through a DataTransfer, then input and change; or dragenter, dragover and drop when the element
- * is not a file input. The stash is emptied whatever happens.
+ * is not a file input. The stash is emptied whatever happens. The check that this is still the
+ * bound document runs here, in the same script that sets the files, so no navigation fits between.
  */
-export function commitUpload(tabId: number, target: Target, id: string, files: UploadMeta[]): Promise<UploadOutcome> {
+export function commitUpload(
+	tabId: number,
+	target: Target,
+	id: string,
+	files: UploadMeta[],
+	bound: Bound,
+): Promise<UploadOutcome> {
 	const total = files.reduce((a, f) => a + f.bytes, 0);
 	return runInPage(
 		tabId,
 		`(() => {
+			${boundCode(bound, id)}
 			const store = globalThis.${STASH} || {};
 			const parts = store[${JSON.stringify(id)}] || [];
 			delete store[${JSON.stringify(id)}];
@@ -156,6 +208,7 @@ const FETCHED = "__polycarpFetched";
 
 export type FetchOutcome =
 	| { ok: true; bytes: number; mime: string; finalUrl: string; disposition: string }
+	| { ok: false; error: "moved"; host: string }
 	| { ok: false; error: "http"; status: number }
 	| { ok: false; error: "too_large"; bytes: number; known: boolean }
 	| { ok: false; error: "fetch"; message: string };
@@ -163,12 +216,21 @@ export type FetchOutcome =
 /**
  * Fetch a URL from inside the page and keep the body there as a Blob; readFetched hands it back
  * in pieces. The same rules as the page: its cookies on its own origin, its CORS rules elsewhere.
- * Stops reading as soon as the body passes `cap`.
+ * Stops reading as soon as the body passes `cap`. `origin` is the page the request was judged for:
+ * a tab that has moved to another origin since fetches nothing, because its cookies are not the
+ * ones the caller was allowed to use.
  */
-export function fetchInPage(tabId: number, id: string, url: string, cap: number): Promise<FetchOutcome> {
+export function fetchInPage(
+	tabId: number,
+	id: string,
+	url: string,
+	cap: number,
+	origin: string,
+): Promise<FetchOutcome> {
 	return runInPage(
 		tabId,
 		`(async () => {
+			if (String(location.origin) !== ${JSON.stringify(origin)}) return { ok: false, error: "moved", host: String(location.hostname) };
 			let res;
 			try { res = await fetch(${JSON.stringify(url)}, { credentials: "same-origin", redirect: "follow" }); }
 			catch (e) { return { ok: false, error: "fetch", message: String(e && e.message || e) }; }

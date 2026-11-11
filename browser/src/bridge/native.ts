@@ -21,7 +21,7 @@ import type { UpdateAction } from "../update/logic.js";
 import { runningFromStore } from "../update/store-install.js";
 import { type Delivered, dialogError, raceDialogs } from "./dialogs.js";
 import { BridgeError, classify } from "./errors.js";
-import { dropTransfersForClient } from "./files.js";
+import { dropAllTransfers, dropTransfersForClient } from "./files.js";
 import {
 	addPendingRequest,
 	allowHost,
@@ -907,6 +907,8 @@ function connect(): void {
 			state.closed = true;
 			state.abort?.();
 		}
+		// The files tool: an upload being committed for any of them stops, and its pieces are cleared.
+		dropAllTransfers();
 		for (const state of clients.values()) {
 			if (state.session) veilSessionGone(state.session.id);
 			void state.session?.suspend();

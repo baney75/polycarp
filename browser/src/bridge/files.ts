@@ -11,10 +11,17 @@
  * the helper marked a file as needing it. `commit` checks the size and hash of what arrived against
  * what `begin` announced. A transfer belongs to the client and session that began it and is dropped
  * when either goes, on any error, and after five idle minutes.
+ *
+ * Two things can change between `begin` and the moment the files are set, and both are checked at
+ * that moment, not before it. The tab can navigate: an upload is bound to the document it was
+ * approved for (files-page.ts, Bound), and the script that stashes or sets content refuses in any
+ * other document. The caller can go: a transfer whose client or bridge connection is gone is
+ * cancelled, its pieces are cleared here and in the page, and nothing more is sent to the page.
  */
 
 import { cdpSend } from "../browser/cdp.js";
 import {
+	type Bound,
 	commitUpload,
 	dropFetched,
 	dropUploadStash,
@@ -26,6 +33,7 @@ import {
 	type UploadMeta,
 	type UploadTarget,
 } from "../browser/files-page.js";
+import { maskUrl } from "../browser/mask-body.js";
 import { BridgeError } from "./errors.js";
 import { acceptsFile, base64Bytes, dispositionName, parseDataUrl, urlFileName } from "./file-util.js";
 import { hostOf, isUrlAllowed } from "./permissions.js";
@@ -53,12 +61,16 @@ interface Upload {
 	sessionId: string;
 	tabId: number;
 	host: string;
+	/** The document the site check, the element check and the person's yes were for. */
+	bound: Bound;
 	target: { ref?: string; selector?: string };
 	files: UploadFile[];
 	total: number;
 	received: number;
 	chunks: string[];
 	touchedAt: number;
+	/** Set when the transfer was dropped; a commit under way stops before its next step in the page. */
+	cancelled?: boolean;
 }
 
 interface Outgoing {
@@ -73,6 +85,8 @@ interface Outgoing {
 
 const uploads = new Map<string, Upload>();
 const outgoing = new Map<string, Outgoing>();
+/** Uploads whose commit is running: no longer in `uploads`, but still their client's to cancel. */
+const committing = new Set<Upload>();
 
 const IDLE_MS = 5 * 60 * 1000;
 /** A client moves one file at a time; a few slots cover a retry that overlaps its predecessor. */
@@ -82,6 +96,9 @@ function forget(t: Upload | Outgoing): void {
 	if ("chunks" in t) {
 		uploads.delete(t.id);
 		t.chunks.length = 0;
+		t.cancelled = true;
+		// A commit under way may already have handed the page some pieces.
+		if (committing.has(t)) void dropUploadStash(t.tabId, t.id).catch(() => undefined);
 		return;
 	}
 	outgoing.delete(t.id);
@@ -99,19 +116,47 @@ function makeRoom(clientId: string): void {
 	while (mine.length >= MAX_PER_CLIENT) forget(mine.shift() as Upload | Outgoing);
 }
 
-/** A client hung up: what it was moving has nowhere to go. */
+const everyTransfer = () => [...uploads.values(), ...committing, ...outgoing.values()];
+
+/** A client hung up: what it was moving has nowhere to go, and a commit of its upload stops. */
 export function dropTransfersForClient(clientId: string): void {
-	for (const t of [...uploads.values(), ...outgoing.values()]) if (t.clientId === clientId) forget(t);
+	for (const t of everyTransfer()) if (t.clientId === clientId) forget(t);
 }
 
 /** A session ended: its transfers end with it. */
 export function dropTransfersForSession(sessionId: string): void {
-	for (const t of [...uploads.values(), ...outgoing.values()]) if (t.sessionId === sessionId) forget(t);
+	for (const t of everyTransfer()) if (t.sessionId === sessionId) forget(t);
+}
+
+/** The bridge connection went: no client can be answered, so nothing any of them was moving is kept. */
+export function dropAllTransfers(): void {
+	for (const t of everyTransfer()) forget(t);
 }
 
 /** For tests and bridge.debug: how many transfers are held. */
 export function transferCount(): number {
-	return uploads.size + outgoing.size;
+	return uploads.size + committing.size + outgoing.size;
+}
+
+const pageOrigin = (url: string): string => {
+	try {
+		return new URL(url).origin;
+	} catch {
+		return "null";
+	}
+};
+
+/** The refusal for a script that found the tab on another document than the one the upload was for. */
+function movedError(up: Upload, now: { host: string; sameOrigin: boolean }): BridgeError {
+	return now.sameOrigin
+		? new BridgeError(
+				ERR.BAD_PARAMS,
+				`The page on ${up.host} reloaded or changed during the upload. Nothing was set; read_page and upload again.`,
+			)
+		: new BridgeError(
+				ERR.PERMISSION_DENIED,
+				`The tab moved from ${up.host} to ${now.host || "another page"} during the upload. Nothing was set.`,
+			);
 }
 
 function owned<T extends Upload | Outgoing>(map: Map<string, T>, ctx: HandlerContext, params: Params): T {
@@ -258,7 +303,11 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 				);
 			const tabId = await resolveTab(ctx, params, false);
 			const { url, host } = await destination(ctx, tabId);
-			const probe = await probeUploadTarget(tabId, target);
+			const probe = await probeUploadTarget(tabId, target, crypto.randomUUID());
+			// The element was found in the document whose address was just checked, or nowhere.
+			if (probe.origin !== pageOrigin(url))
+				throw new BridgeError(ERR.PERMISSION_DENIED, `The tab left ${host} as the upload began. Nothing was sent.`);
+			const bound: Bound = { origin: probe.origin, doc: probe.doc };
 			checkTarget(probe, files);
 			const asking = files.filter((f) => f.ask).map((f) => ({ name: f.name, bytes: f.bytes }));
 			if (asking.length && !(await ctx.askUpload(url, asking)))
@@ -273,6 +322,7 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 				sessionId: ctx.session.id,
 				tabId,
 				host,
+				bound,
 				target,
 				files,
 				total,
@@ -324,23 +374,35 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 			}
 			if (!ctx.session.tabIds.includes(up.tabId))
 				throw new BridgeError(ERR.NOT_FOUND, "The tab is no longer one of yours. Nothing was set.");
-			// The yes, and the site check, were for the site the tab was on at begin.
+			// The yes, and the site check, were for the site the tab was on at begin. This reads the tab's address,
+			// which can change the moment after; the scripts below check the document itself as they run.
 			const now = await destination(ctx, up.tabId);
-			if (now.host !== up.host)
-				throw new BridgeError(
-					ERR.PERMISSION_DENIED,
-					`The tab moved from ${up.host} to ${now.host} during the upload. Nothing was set.`,
-				);
-			let outcome: Awaited<ReturnType<typeof commitUpload>>;
+			if (pageOrigin(now.url) !== up.bound.origin) throw movedError(up, { host: now.host, sameOrigin: false });
+			/** The caller is gone (its client, its session or the bridge connection): nothing more goes to the page. */
+			const stopIfGone = () => {
+				if (up.cancelled || ctx.aborted())
+					throw new BridgeError(
+						ERR.INTERRUPTED,
+						"The connection to the agent closed during the upload. Nothing was set.",
+					);
+			};
+			let outcome: Awaited<ReturnType<typeof commitUpload>> | undefined;
+			committing.add(up);
 			try {
-				for (const chunk of up.chunks) await stashUploadChunk(up.tabId, up.id, chunk);
-				outcome = await commitUpload(up.tabId, up.target, up.id, up.files);
-			} catch (err) {
-				await dropUploadStash(up.tabId, up.id).catch(() => undefined);
-				throw err;
+				for (const chunk of [...up.chunks]) {
+					stopIfGone();
+					const held = await stashUploadChunk(up.tabId, up.id, chunk, up.bound);
+					if (typeof held !== "number") throw movedError(up, held);
+				}
+				stopIfGone();
+				outcome = await commitUpload(up.tabId, up.target, up.id, up.files, up.bound);
 			} finally {
+				committing.delete(up);
 				up.chunks.length = 0;
+				// commitUpload empties the stash itself; anything else leaves pieces to clear.
+				if (!outcome) await dropUploadStash(up.tabId, up.id).catch(() => undefined);
 			}
+			if ("moved" in outcome) throw movedError(up, outcome);
 			if ("refused" in outcome) throw new BridgeError(ERR.BAD_PARAMS, outcome.refused);
 			return {
 				host: up.host,
@@ -357,7 +419,7 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 
 		"files.upload.abort": async (ctx, params) => {
 			const id = String(params.transferId ?? "");
-			const up = uploads.get(id);
+			const up = uploads.get(id) ?? [...committing].find((u) => u.id === id);
 			if (up && up.clientId === ctx.clientId && up.sessionId === ctx.session.id) forget(up);
 			return { aborted: Boolean(up) };
 		},
@@ -419,8 +481,18 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 			}
 			makeRoom(ctx.clientId);
 			const id = crypto.randomUUID();
-			const got = await fetchInPage(tabId, id, parsed.href, FILE_DOWNLOAD_MAX_BYTES);
+			// The address was resolved and judged against the page the tab was on; the fetch runs only there.
+			const got = await fetchInPage(tabId, id, parsed.href, FILE_DOWNLOAD_MAX_BYTES, pageOrigin(pageUrl));
+			if (ctx.aborted()) {
+				if (got.ok) await dropFetched(tabId, id).catch(() => undefined);
+				throw new BridgeError(ERR.INTERRUPTED, "The connection to the agent closed. Nothing was saved.");
+			}
 			if (!got.ok) {
+				if (got.error === "moved")
+					throw new BridgeError(
+						ERR.BAD_PARAMS,
+						`The tab moved to ${got.host || "another page"} before the download began. Nothing was fetched; read_page and try again.`,
+					);
 				if (got.error === "too_large") throw tooLarge("That file", got.bytes, got.known);
 				if (got.error === "http")
 					throw new BridgeError(
@@ -440,6 +512,15 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 					"That URL led to an address agents never open. Nothing was saved.",
 				);
 			}
+			// A redirect to another site is a site the agent is now reading: it gets the check a navigation gets.
+			if (/^https?:/i.test(got.finalUrl) && hostOf(got.finalUrl) !== parsed.hostname.toLowerCase()) {
+				try {
+					await ctx.checkUrl(got.finalUrl);
+				} catch (err) {
+					await dropFetched(tabId, id).catch(() => undefined);
+					throw err;
+				}
+			}
 			const t: Outgoing = {
 				id,
 				clientId: ctx.clientId,
@@ -452,7 +533,8 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 			return announce(t, {
 				mime: got.mime,
 				name: suggested || dispositionName(got.disposition) || urlFileName(got.finalUrl) || "",
-				url: parsed.protocol === "blob:" ? `blob from ${pageUrl}` : got.finalUrl,
+				// A signed link's token is a credential the agent never held; it is masked like any URL shown.
+				url: parsed.protocol === "blob:" ? `blob from ${maskUrl(pageUrl)}` : maskUrl(got.finalUrl),
 			});
 		},
 
@@ -496,6 +578,13 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 				preferCSSPageSize: true,
 				transferMode: "ReturnAsBase64",
 			});
+			// The PDF is filed under the page it is of: a tab that changed sites while printing has no one page.
+			const after = (await chrome.tabs.get(tabId)).url ?? "";
+			if (pageOrigin(after) !== pageOrigin(tab.url ?? ""))
+				throw new BridgeError(
+					ERR.BAD_PARAMS,
+					`The tab moved to ${hostOf(after) || "another page"} while the PDF was made. Nothing was saved; try again.`,
+				);
 			const bytes = base64Bytes(data);
 			if (bytes < 0) throw new BridgeError(ERR.INTERNAL, "The browser returned a PDF that could not be read.");
 			if (bytes > FILE_DOWNLOAD_MAX_BYTES) throw tooLarge("The PDF of this page", bytes);
@@ -503,7 +592,7 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 			return announce(t, {
 				mime: "application/pdf",
 				name: `${(tab.title ?? "").trim() || "page"}.pdf`,
-				url: tab.url ?? "",
+				url: maskUrl(tab.url ?? ""),
 			});
 		},
 	};

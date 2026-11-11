@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { FILE_ASK_TIMEOUT_MS, FILE_CHUNK_FROM_EXTENSION, FILE_CHUNK_TO_EXTENSION } from "../../src/bridge/protocol.ts";
-import type { BridgeClient } from "./client.ts";
+import { type BridgeClient, BridgeRpcError } from "./client.ts";
 import { checkUploadCaps, checkUploadPath, MAX_UPLOAD_FILES, type RuleEnv } from "./file-rules.ts";
 import {
 	byteSize,
@@ -36,8 +36,14 @@ type Block =
 type Result = { content: Block[]; isError?: boolean };
 
 export interface FilesToolOptions {
-	/** The session whose folder holds the saved files. */
+	/** The session the client asked for. Its saved files are kept under the name it really has (see `auto`). */
 	session: string;
+	/** A default project session: the extension may give the client another name, so the name is confirmed first. */
+	auto?: boolean;
+	/** Why this session's scopes refuse a call with these arguments, or undefined (ARGUMENT_RULES in mcp.ts). */
+	denied?: (args: unknown) => string | undefined;
+	/** Told where the files of an upload that asks the person are, in order, and undefined when the asking is over. */
+	asking?: (paths: string[] | undefined) => void;
 	/** A hub, tunnel or scoped session: no paths in, no paths out. */
 	remote: boolean;
 	/** Shared argument shapes from mcp.ts, so the tool reads like the others. */
@@ -62,8 +68,36 @@ interface Incoming {
 	url?: string;
 }
 
-export function registerFiles(server: McpServer, client: BridgeClient, o: FilesToolOptions): void {
-	const saved = new SavedFiles(o.session);
+/** What mcp.ts and remote.ts do to a session's saved files from outside the tool. */
+export interface FilesTool {
+	/** The session ended: its saved files go. */
+	clear(): void;
+	/** The session has a new name: its folder follows. */
+	renamed(session: string): void;
+}
+
+/** An error from this computer's disk as a remote caller may read it: what failed, never where. */
+function withoutPaths(err: unknown): string {
+	const code = (err as NodeJS.ErrnoException)?.code;
+	return `The file could not be kept on the computer${typeof code === "string" ? ` (${code})` : ""}. Nothing was saved.`;
+}
+
+export function registerFiles(server: McpServer, client: BridgeClient, o: FilesToolOptions): FilesTool {
+	let saved = new SavedFiles(o.session);
+	/** True once `saved` is the folder of the session this client really has. */
+	let confirmed = false;
+
+	/**
+	 * Point `saved` at this client's own session. Two agents in one project ask for the same default session and the
+	 * extension gives the second "<name>-2" when it connects, so the name is only known after the extension has
+	 * answered once; a client that has heard nothing yet asks for its status first.
+	 */
+	async function ownFolder(): Promise<void> {
+		if (o.auto && !client.answered) await client.call("status", {}, 5000).catch(() => undefined);
+		const name = client.session ?? o.session;
+		if (name !== saved.session) saved = new SavedFiles(name);
+		confirmed = true;
+	}
 
 	/** What the caller is told about a saved file. Only a local caller learns where it is on disk. */
 	const describe = (f: SavedFile) => ({ ...f, ...(o.remote ? {} : { path: saved.pathOf(f) }) });
@@ -100,7 +134,7 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 
 		const reader = new UploadReader();
 		try {
-			const picked: Array<{ name: string; bytes: number; ask: boolean; read: () => Buffer }> = [];
+			const picked: Array<{ name: string; bytes: number; ask: boolean; path?: string; read: () => Buffer }> = [];
 			if (paths.length) {
 				const env: RuleEnv = {
 					platform: process.platform,
@@ -116,7 +150,7 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 					const verdict = checkUploadPath(path, env);
 					if (!verdict.ok) return refuse(`Not uploaded: ${verdict.reason}`);
 					const real = verdict.path;
-					picked.push({ name: verdict.name, bytes: verdict.bytes, ask: verdict.ask, read: () => reader.read(real) });
+					picked.push({ name: verdict.name, bytes: verdict.bytes, ask: verdict.ask, path: real, read: () => reader.read(real) });
 				}
 			}
 			for (const id of ids) {
@@ -141,6 +175,8 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 
 			let transferId = "";
 			try {
+				// The question names each file by its full path here; the browser is sent names only.
+				o.asking?.(picked.filter((p) => p.ask).map((p) => p.path ?? p.name));
 				const begun = await client.call<{ transferId: string }>(
 					"files.upload.begin",
 					{ tabId: args.tabId, ref: args.ref, selector: args.selector, files },
@@ -155,6 +191,8 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 			} catch (err) {
 				if (transferId) await client.call("files.upload.abort", { transferId }).catch(() => undefined);
 				return o.bridgeError(err);
+			} finally {
+				o.asking?.(undefined);
 			}
 		} finally {
 			reader.close();
@@ -175,7 +213,7 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 			await end();
 			return refuse(`Not saved: ${full}`);
 		}
-		const writer = saved.create({ name: info.name || fallbackName, mime: info.mime, sourceUrl: String(info.url ?? "").slice(0, 2000) });
+		const writer = saved.create({ name: info.name || fallbackName, mime: info.mime, sourceUrl: String(info.url ?? "").slice(0, 2000), bytes });
 		try {
 			for (let index = 0; index < pieces; index++) {
 				const { data } = await client.call<{ data: string }>("files.download.chunk", { transferId: info.transferId, index });
@@ -191,6 +229,8 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 			return say(describe(writer.finish(bytes)));
 		} catch (err) {
 			writer.abort();
+			// A disk error names a path on this computer; a bridge error (it has a code of its own) does not.
+			if (o.remote && !(err instanceof BridgeRpcError) && typeof (err as NodeJS.ErrnoException)?.code === "string") return refuse(withoutPaths(err));
 			const shaped = o.bridgeError(err);
 			return refuse(`Not saved: ${shaped.content[0]?.text ?? String(err)}`);
 		} finally {
@@ -246,7 +286,13 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 		},
 		async (raw): Promise<Result> => {
 			const args = raw as { action: string; tabId?: number; ref?: string; selector?: string; paths?: string[]; ids?: string[]; url?: string; id?: string; max_bytes?: number };
+			const denied = o.denied?.(args);
+			if (denied) return refuse(denied);
+			// Decided before the bridge hears of the call, whatever the path.
+			if (args.action === "upload" && o.remote && args.paths?.length)
+				return refuse("A remote session can't upload from a path on this computer. Use ids of files this session saved (download or save_pdf).");
 			try {
+				await ownFolder();
 				if (args.action === "upload") return await upload(args);
 				if (args.action === "download") {
 					if (!args.url && !args.ref && !args.selector) return refuse("download needs a url, or the ref of a link, image or media element.");
@@ -275,8 +321,18 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 				}
 				return refuse("action must be upload, download, save_pdf, list, read or remove.");
 			} catch (err) {
-				return refuse(err instanceof Error ? err.message : String(err));
+				// "never told a path" holds for errors too: privateDir and the file system name the folder they failed on.
+				return refuse(o.remote ? withoutPaths(err) : err instanceof Error ? err.message : String(err));
 			}
 		},
 	);
+	return {
+		// Before the session is confirmed nothing was saved by this client, and the folder may be another agent's.
+		clear: () => {
+			if (confirmed) saved.clear();
+		},
+		renamed: (session) => {
+			if (confirmed) saved = saved.renamedTo(session);
+		},
+	};
 }

@@ -1,12 +1,12 @@
 // Where the files tool keeps a session's files, and how it opens a local file for an upload (D38).
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { checkUploadPath } from "../src/file-rules.ts";
-import { filesRoot, isTextMime, MAX_SAVED_BYTES, mimeFor, privateDirsHere, SavedFiles, sanitizeFileName, sessionFolder, sniffImage, UploadReader } from "../src/saved-files.ts";
+import { filesRoot, isTextMime, MAX_ALL_BYTES, MAX_SAVED_BYTES, MAX_SESSION_BYTES, MAX_SESSION_FILES, mimeFor, privateDirsHere, SavedFiles, sanitizeFileName, sessionFolder, sniffImage, UploadReader } from "../src/saved-files.ts";
 
 function withConfig(fn) {
 	const dir = realpathSync(mkdtempSync(join(tmpdir(), "tabkyra-files-")));
@@ -176,3 +176,90 @@ test("types: text is told from binary, and an image is one only by its bytes", (
 	assert.equal(sniffImage(Buffer.from("<svg onload=alert(1)>")), undefined);
 	assert.equal(sniffImage(Buffer.from("%PDF-1.7")), undefined);
 });
+
+test("room is held from the moment a file starts, so two downloads at once can't both take the last of it", () =>
+	withConfig(() => {
+		const files = new SavedFiles("quota");
+		const big = 40 * 1024 * 1024;
+		// 450 MB already kept, as far as the list says.
+		save(files, "seed.bin", "x");
+		const index = join(files.dir, ".index.json");
+		const listed = JSON.parse(readFileSync(index, "utf8"));
+		listed.files[0].bytes = MAX_SESSION_BYTES - 50 * 1024 * 1024;
+		writeFileSync(index, JSON.stringify(listed));
+		assert.equal(files.full(big), undefined);
+		const first = files.create({ name: "a.bin", sourceUrl: "", bytes: big });
+		// The second of two overlapping downloads is judged with the first still arriving.
+		assert.match(files.full(big), /would pass/);
+		assert.equal(files.full(5 * 1024 * 1024), undefined, "what still fits is allowed");
+		// A download that fails gives its room back; one that finishes is counted by the list instead.
+		first.abort();
+		assert.equal(files.full(big), undefined);
+		const again = files.create({ name: "a.bin", sourceUrl: "", bytes: 3 });
+		again.write(Buffer.from("abc"));
+		again.finish(3);
+		assert.equal(files.full(big), undefined);
+		// The count of files is held the same way.
+		const counted = new SavedFiles("count");
+		for (let i = 0; i < MAX_SESSION_FILES - 1; i++) save(counted, `n${i}.txt`, "n");
+		assert.equal(counted.full(1), undefined);
+		const open = counted.create({ name: "open.txt", sourceUrl: "", bytes: 1 });
+		assert.match(counted.full(1), /already keeps/);
+		open.abort();
+		assert.equal(counted.full(1), undefined);
+	}));
+
+test("every session together has a cap, and a session's files go with it", () =>
+	withConfig(() => {
+		// Sessions opened one after another each keep a little under their own cap.
+		const each = 450 * 1024 * 1024;
+		const sessions = ["s1", "s2", "s3", "s4"].map((name) => {
+			const files = new SavedFiles(name);
+			save(files, "kept.bin", "x");
+			const index = join(files.dir, ".index.json");
+			const listed = JSON.parse(readFileSync(index, "utf8"));
+			listed.files[0].bytes = each;
+			writeFileSync(index, JSON.stringify(listed));
+			return files;
+		});
+		assert.ok(4 * each < MAX_ALL_BYTES && 5 * each > MAX_ALL_BYTES);
+		const fifth = new SavedFiles("s5");
+		assert.equal(fifth.full(40 * 1024 * 1024), undefined);
+		save(fifth, "kept.bin", "x");
+		const index = join(fifth.dir, ".index.json");
+		const listed = JSON.parse(readFileSync(index, "utf8"));
+		listed.files[0].bytes = MAX_ALL_BYTES - 4 * each - 1024;
+		writeFileSync(index, JSON.stringify(listed));
+		assert.match(new SavedFiles("s6").full(4096), /across all sessions/);
+		assert.match(fifth.full(4096), /across all sessions/);
+		// A session that ends takes its files with it, and the room comes back.
+		sessions[0].clear();
+		assert.equal(existsSync(sessions[0].dir), false);
+		assert.equal(existsSync(sessions[1].dir), true, "only its own folder goes");
+		assert.equal(new SavedFiles("s6").full(4096), undefined);
+		sessions[0].clear();
+		// A renamed session keeps its files, and never takes over a folder that is already there.
+		const moved = sessions[1].renamedTo("research");
+		assert.deepEqual(moved.list().map((f) => f.name), ["kept.bin"]);
+		assert.equal(existsSync(sessions[1].dir), false);
+		const blocked = sessions[2].renamedTo("research");
+		assert.equal(existsSync(sessions[2].dir), true);
+		assert.deepEqual(blocked.list().map((f) => f.name), ["kept.bin"]);
+	}));
+
+test("the same file named twice in one upload is read whole both times", () =>
+	withConfig((dir) => {
+		const path = join(dir, "twice.txt");
+		writeFileSync(path, "the same bytes");
+		symlinkSync(path, join(dir, "alias.txt"));
+		const reader = new UploadReader();
+		try {
+			const a = reader.inspect(path);
+			const b = reader.inspect(join(dir, "alias.txt"));
+			assert.equal(a.realPath, b.realPath);
+			assert.equal(reader.read(a.realPath).toString(), "the same bytes");
+			assert.equal(reader.read(b.realPath).toString(), "the same bytes");
+		} finally {
+			reader.close();
+		}
+	}));

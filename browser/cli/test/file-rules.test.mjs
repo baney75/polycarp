@@ -133,6 +133,19 @@ test("Polycarp's own folders, browser profiles and key stores are refused; the s
 		"/USERS/ME/.CONFIG/POLYCARP/browser/remote.json",
 	];
 	for (const path of mac) assert.equal(verdict(path, env("darwin")), "private_dir", path);
+	// The same folders reached through the Data volume, where macOS really keeps them: realpath leaves that prefix on.
+	for (const path of mac) {
+		const onData = `/System/Volumes/Data${path}`;
+		assert.equal(verdict(onData, env("darwin")), "private_dir", onData);
+		// A link whose target resolves there is judged by the target.
+		assert.equal(verdict("/Users/me/proj/innocent.txt", env("darwin", {}, { "/Users/me/proj/innocent.txt": { realPath: onData } })), "private_dir", `link to ${onData}`);
+	}
+	assert.equal(verdict("/SYSTEM/volumes/data/Users/me/.config/polycarp/browser/link.json", env("darwin")), "private_dir");
+	// A project file named through the Data volume is still the project's, and a folder that only looks like the prefix is not folded.
+	assert.equal(verdict("/System/Volumes/Data/Users/me/proj/report.pdf", env("darwin")), "free");
+	assert.equal(verdict("/System/Volumes/DataX/Users/me/proj/report.pdf", env("darwin")), "ask");
+	// Linux has no such volume: the path is what it says.
+	assert.equal(verdict("/System/Volumes/Data/home/me/proj/report.pdf", env("linux")), "ask");
 	assert.equal(verdict("/Users/me/Library/Keychains/login.keychain-db", env("darwin")), "credential");
 	// Linux does not fold case, so a differently spelled folder is a different folder (and asks).
 	assert.equal(verdict("/home/me/.CONFIG/Google-Chrome/Default/History", env("linux")), "ask");

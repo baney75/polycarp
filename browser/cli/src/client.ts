@@ -334,8 +334,20 @@ export class BridgeClient {
 		this.pathBrowser.set(path, browserId);
 	}
 
+	/** The session this client drives now: the one it asked for, or the name the extension has given it since. */
+	get session(): string | undefined {
+		return this.options.session;
+	}
+
+	/**
+	 * True once the extension has answered a request. The extension names a client's session when the client connects
+	 * (a second agent in one project becomes "<name>-2"), so by the first answer `session` is the one it really has.
+	 */
+	answered = false;
+
 	private onMessage(msg: HostToClient, from: Socket, path: string): void {
 		if (msg.type === "response") {
+			this.answered = true;
 			const p = this.pending.get(msg.id);
 			if (!p) return;
 			this.pending.delete(msg.id);

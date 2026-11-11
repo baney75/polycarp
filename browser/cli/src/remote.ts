@@ -46,8 +46,9 @@ export const SCOPES: Record<string, { tools: string[]; what: string }> = {
 	},
 	"browser.files": {
 		tools: ["files"],
-		// Off until the owner ticks it: a page's files leave it, and saved files can be put into pages.
-		what: "Save files from pages the agent opens (downloads, a page as PDF) to this computer and put those saved files into pages. Never a file path on this computer",
+		// Off until the owner ticks it: a page's files leave it, and saved files can be put into pages. What it grants is
+		// spelled out because a download is fetched with the user's sign-in (docs/decisions.md, D38; ARGUMENT_RULES in mcp.ts).
+		what: "Save a page as PDF, save the files a page links to or shows (fetched with your sign-in on that site, so the agent can read them), and put those saved files into pages. Saving a link needs browser.navigate too; saving an address the agent names needs browser.script. Never a file path on this computer; the saved files are removed when the session ends",
 	},
 	"browser.edit": {
 		tools: ["site_edit"],
@@ -483,7 +484,7 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		// Before the wait below: closeSessions() during it must reach this session too.
 		const born = generation;
 		const computer = await openComputer(allowed);
-		const { server, client } = createMcpServer({
+		const { server, client, files } = createMcpServer({
 			name: `remote-${label}`,
 			session: `remote-${token.id}-${randomUUID().slice(0, 8)}`,
 			allowedTools: allowed,
@@ -507,6 +508,8 @@ export async function serve(options: ServeOptions): Promise<{ close: () => Promi
 		});
 		transport.onclose = () => {
 			if (transport.sessionId) sessions.delete(transport.sessionId);
+			// A remote session's id is never used again, so what it saved has no reader left (D38).
+			files?.clear();
 			client.close?.();
 			computer?.close();
 			notifySessions();
