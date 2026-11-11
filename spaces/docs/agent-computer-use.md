@@ -315,6 +315,22 @@ nightly builds ship for every platform; it gets tested on every platform before 
 | Sandbox | Tart macOS VM | A KVM VM (libvirt) | Hyper-V or Windows Sandbox |
 | Keys | ⌘1–9, ⌘⇧1–9 | Super+1–9, Super+Shift+1–9 (Omarchy's own bindings are rebound to BaneySpaces) | Win+1–9 is taken by the taskbar; Alt+1–9 and Alt+Shift+1–9 by default, changeable |
 
+The agent workspace verbs (`workspaces`, `open` with `new_window` and `wait`, `arrange`, `move --window`,
+`close`, child windows), per platform:
+
+| Verb | macOS | Linux (Omarchy, Hyprland) | Windows 11 |
+| --- | --- | --- | --- |
+| `workspaces` | yes | yes (`agent_workspace` is `"special:agent"`) | not supported yet |
+| `open` with `new_window`, `wait`, `reused`, `focus` | yes | yes | not supported yet |
+| `arrange` | yes | yes, applied at once while the workspace stays hidden | not supported yet |
+| `move --window` | yes, including lent and Full Access windows | the agent's own windows and ones you parked; what needs a lend or Full Access is `not_supported` (no lend sheet yet) | not supported yet |
+| `close` | only windows this session opened | the same, by Hyprland address, pid and start time | not supported yet |
+| Child windows | the child window rules above | a floating window of an agent process, on `special:agent` or on no workspace yet; any other process's dialog is refused | not supported yet |
+
+Linux details (the Hyprland dispatch each verb sends and why none takes focus, the differences and a
+list of commands to try it on a live session) are in `platforms/linux/README.md`, "Agents manage
+their own workspace". On Linux these are CLI verbs; the shared MCP catalog does not list them yet.
+
 One contract keeps them the same product: `spec/` in this repo holds the workspace rules, the key map,
 the CLI and MCP schemas (one JSON envelope everywhere) and conformance cases as JSON. Every platform's
 test suite runs the same cases. A behavior that isn't in `spec/` doesn't ship on one platform alone.

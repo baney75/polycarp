@@ -1,6 +1,7 @@
 //! `baneyspaces daemon`: the model driven by Hyprland's events, the control socket the CLI talks
 //! to, `state.json`, the agent workspace and the agent action log.
 
+use crate::agentws;
 use crate::apps;
 use crate::bus;
 use crate::hands;
@@ -38,6 +39,8 @@ pub struct Client {
     pub mapped: bool,
     /// Hyprland's `stableId`: the window's identifier in ext-foreign-toplevel-list, which `agent shot` captures by.
     pub stable_id: String,
+    /// Floating rather than tiled. A floating window of an agent process next to its main window is a dialog.
+    pub floating: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -90,6 +93,10 @@ pub struct Core {
     pub bus_children: HashMap<String, Vec<std::process::Child>>,
     /// Stacks to take down once the Core lock is released (stopping waits for processes).
     pub pending_stops: Vec<bus::StopJob>,
+    /// Which windows each agent session's `open` made, so `close` closes only those.
+    pub sessions: agentws::SessionWindows,
+    /// Windows `arrange` or `move --frame` floated (so they are not mistaken for dialogs).
+    pub placed: HashSet<String>,
 }
 
 pub type Shared = Arc<Mutex<Core>>;
@@ -209,6 +216,7 @@ impl Core {
                         title: c["title"].as_str().unwrap_or("").into(),
                         mapped: c["mapped"].as_bool().unwrap_or(true),
                         stable_id: c["stableId"].as_str().unwrap_or("").into(),
+                        floating: c["floating"].as_bool().unwrap_or(false),
                     })
                     .collect()
             })
@@ -699,6 +707,9 @@ impl Core {
                 }
             }
             HyprEvent::CloseWindow { addr } => {
+                // An address can come back for a later window: what a session opened ends here.
+                self.sessions.forget(&addr);
+                self.placed.remove(&addr);
                 let _ = self.apply(Event::Close { window: addr });
             }
             HyprEvent::ActiveWindow { addr } => {
@@ -994,6 +1005,12 @@ pub fn handle(shared: &Shared, req: &Value, peer: Option<u32>) -> Envelope {
             }
         }
         "agent_status" | "agent_windows" => Envelope::ok(agent_status(&lock(shared))),
+        // The agent workspace verbs (the Mac's names). `agent_move_window` is the agent's `move --window`;
+        // `agent_move` above is yours (it parks one of your windows) and stays refused to agents.
+        "agent_workspaces" => agentws::workspaces(shared, &agent),
+        "agent_arrange" => agentws::arrange(shared, &agent, &args),
+        "agent_move_window" => agentws::move_window(shared, &agent, &args),
+        "agent_close" => agentws::close_window(shared, &agent, &args),
         "agent_open" => agent_open(shared, &agent, &args, false),
         "test_open" => agent_open(shared, &agent, &args, true),
         "test_reap" => {
@@ -1038,11 +1055,8 @@ fn ls(c: &Core) -> Value {
 }
 
 fn agent_status(c: &Core) -> Value {
-    let clients: BTreeMap<String, Client> = c
-        .clients()
-        .into_iter()
-        .map(|x| (x.addr.clone(), x))
-        .collect();
+    let list = c.clients();
+    let clients: BTreeMap<String, Client> = list.iter().map(|x| (x.addr.clone(), x.clone())).collect();
     let windows: Vec<Value> = c
         .model
         .agent_windows()
@@ -1050,7 +1064,10 @@ fn agent_status(c: &Core) -> Value {
         .map(|w| {
             let cl = clients.get(w);
             let pid = c.model.pid_of(w);
-            json!({ "window": w, "app": cl.map(|c| c.class.clone()).unwrap_or_default(), "title": cl.map(|c| c.title.clone()).unwrap_or_default(), "pid": pid, "drivable": pid.is_some_and(|p| c.model.agent_proc(p).is_some() && !c.bus_lost_for(p)) })
+            // A dialog of an agent process: floating, not floated by `arrange`, next to another window of its process.
+            let dialog = cl.filter(|x| x.floating && !c.placed.contains(w) && list.iter().any(|o| o.pid == x.pid && o.addr != x.addr && o.ws_name == AGENT_SPECIAL));
+            let parent = dialog.and_then(|d| agentws::parent_of(&c.model, &list, d));
+            json!({ "window": w, "app": cl.map(|c| c.class.clone()).unwrap_or_default(), "title": cl.map(|c| c.title.clone()).unwrap_or_default(), "pid": pid, "drivable": pid.is_some_and(|p| c.model.agent_proc(p).is_some() && !c.bus_lost_for(p)), "kind": if dialog.is_some() { "dialog" } else { "window" }, "parent": parent })
         })
         .collect();
     json!({ "workspace": AGENT_SPECIAL, "shown": c.model.agent_shown(), "windows": windows, "processes": c.model.agent_pids().len(), "refused": c.model.refused() })
@@ -1197,14 +1214,25 @@ fn prepare(c: &Core, plan: &Plan, token: &str) -> Result<Prepared, Envelope> {
     }
 }
 
+/// What `open` adds to a launch: the agent session it belongs to (`close` closes only what a
+/// session's `open` made) and how long to wait for the window (`wait`, at most 7 s as on the Mac;
+/// 8 s when it is not given).
+#[derive(Default)]
+struct OpenOpts {
+    session: String,
+    wait: Option<u64>,
+}
+
 /// Starts the plan as a new process on the agent workspace, on a private session bus of its own,
 /// then waits for a window of its own.
-fn launch_on_agent(shared: &Shared, agent: &str, plan: Plan) -> Envelope {
+fn launch_on_agent(shared: &Shared, agent: &str, plan: Plan, opts: &OpenOpts) -> Envelope {
     let token = match proc::random_token() {
         Ok(t) => t,
         Err(e) => return Envelope::err("internal", format!("no random bytes: {e}"), Retry::Never, ""),
     };
     let private_bus = !matches!(plan, Plan::Test { private_bus: false, .. });
+    // Only `open` claims its window for the session; `run` is the agent's own shell.
+    let claims = !matches!(plan, Plan::Run { .. });
     // 1. Under the lock, briefly: check the plan and read what is needed.
     let (prep, known, run_dir) = {
         let c = lock(shared);
@@ -1240,8 +1268,10 @@ fn launch_on_agent(shared: &Shared, agent: &str, plan: Plan) -> Envelope {
     }
     // 3. Under the lock again: record the launch and start the app. The app does not get the means to
     //    drive the compositor (its IPC signature): accident-proofing, like the rest.
-    {
+    let (front_before, refused_before) = {
         let mut c = lock(shared);
+        let front = c.hypr.json("activewindow").ok().and_then(|v| v["address"].as_str().map(String::from));
+        let refused = c.model.refused();
         let (kids, bus_info) = match started {
             Some((k, i)) => (Some(k), Some(i)),
             None => (None, None),
@@ -1264,19 +1294,32 @@ fn launch_on_agent(shared: &Shared, agent: &str, plan: Plan) -> Envelope {
             record(&c, agent, "open", None, None, None, "exec", &env);
             return env;
         }
-    }
+        (front, refused)
+    };
     let label = label.as_str();
-    let deadline = Instant::now() + Duration::from_secs(8);
-    while Instant::now() < deadline {
+    let deadline = Instant::now() + opts.wait.map(|w| Duration::from_secs(w.min(7))).unwrap_or(Duration::from_secs(8));
+    // At least one look, even with `wait: 0` (the Mac's rule).
+    loop {
         std::thread::sleep(Duration::from_millis(50));
-        let c = lock(shared);
+        let mut c = lock(shared);
         if let Some(pid) = c.token_pids.get(&token).and_then(|v| v.first()).copied() {
             if let Some(w) = c.model.agent_windows().into_iter().find(|w| c.model.pid_of(w) == Some(pid)).map(String::from) {
                 let title = c.client(&w).map(|x| x.title).unwrap_or_default();
-                let env = Envelope::ok(json!({ "window": w, "pid": pid, "app": label, "title": title, "workspace": AGENT_SPECIAL, "start": proc::start_time(pid) }));
+                let start = proc::start_time(pid);
+                let front_after = c.hypr.json("activewindow").ok().and_then(|v| v["address"].as_str().map(String::from));
+                let focus = agentws::focus_json(front_before.as_deref(), front_after.as_deref(), refused_before, c.model.refused());
+                let mut data = json!({ "window": w, "pid": pid, "app": label, "title": title, "workspace": AGENT_SPECIAL, "start": start, "reused": false, "focus": focus });
+                if claims && !c.sessions.record(&opts.session, &w, agentws::Opened { pid, start: start.unwrap_or(0), app: label.to_string() }) {
+                    data["window_identified"] = json!(false);
+                    data["note"] = json!("this window is not recorded for your session (no session, or another session owns it), so `close` will refuse it");
+                }
+                let env = Envelope::ok(data);
                 record(&c, agent, "open", Some(pid), Some(&w), None, "exec", &env);
                 return env;
             }
+        }
+        if Instant::now() >= deadline {
+            break;
         }
     }
     let c = lock(shared);
@@ -1316,13 +1359,27 @@ fn agent_open(shared: &Shared, agent: &str, args: &Value, test: bool) -> Envelop
     let Some(app) = arg_str(args, "app") else {
         return Envelope::err("invalid_args", "an app is required", Retry::Never, "Example: baneyspaces agent open foot");
     };
-    let list = str_list(args, "args");
+    // `targets` is the Mac's name for the files.
+    let mut list = str_list(args, "args");
+    if list.is_empty() {
+        list = str_list(args, "targets");
+    }
+    let opts = OpenOpts { session: arg_str(args, "session").unwrap_or("").to_string(), wait: args["wait"].as_u64() };
+    // `new_window: false` with no files: this session's window of that app, if it still has one. Nothing starts.
+    if args["new_window"].as_bool() == Some(false) && list.is_empty() && !opts.session.is_empty() {
+        let c = lock(shared);
+        if let Some(data) = agentws::reuse(&c, &opts.session, app) {
+            let env = Envelope::ok(data);
+            record(&c, agent, "open", env.data.as_ref().and_then(|d| d["pid"].as_u64()).map(|p| p as u32), env.data.as_ref().and_then(|d| d["window"].as_str()), None, "reuse", &env);
+            return env;
+        }
+    }
     let plan = if test {
         Plan::Test { app: app.into(), args: list, private_bus: args["private_bus"].as_bool().unwrap_or(true) }
     } else {
         Plan::Open { app: app.into(), files: list }
     };
-    launch_on_agent(shared, agent, plan)
+    launch_on_agent(shared, agent, plan, &opts)
 }
 
 /// `agent run`: a command in a terminal on the agent workspace. It is a shell with your uid, so
@@ -1333,7 +1390,7 @@ fn agent_run(shared: &Shared, agent: &str, args: &Value) -> Envelope {
     if cmd.is_empty() {
         return Envelope::err("invalid_args", "a command is required after --", Retry::Never, "Example: baneyspaces agent run --dir ~/Projects/x -- claude");
     }
-    launch_on_agent(shared, agent, Plan::Run { cmd, dir: arg_str(args, "dir").map(String::from) })
+    launch_on_agent(shared, agent, Plan::Run { cmd, dir: arg_str(args, "dir").map(String::from) }, &OpenOpts::default())
 }
 
 // ---- serving --------------------------------------------------------------------------------
@@ -1422,6 +1479,8 @@ pub fn run(trace: bool) -> i32 {
         stall_ms: 0,
         bus_children: HashMap::new(),
         pending_stops: vec![],
+        sessions: agentws::SessionWindows::default(),
+        placed: HashSet::new(),
     };
     let shared: Shared = Arc::new(Mutex::new(core));
     // Connect to Hyprland's events FIRST. They queue in the socket while the state is read, so a
@@ -1549,7 +1608,7 @@ pub fn call_timeout(paths: &Paths, req: &Value, wait: Duration) -> Envelope {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn temp_paths(tag: &str) -> Paths {
@@ -1587,11 +1646,13 @@ mod tests {
             stall_ms: 0,
             bus_children: HashMap::new(),
             pending_stops: vec![],
+            sessions: agentws::SessionWindows::default(),
+            placed: HashSet::new(),
         }
     }
 
     /// A stand-in for Hyprland's socket: answers each request with `answer(request)` and logs it.
-    fn fake_hypr(tag: &str, answer: impl Fn(&str) -> String + Send + 'static) -> (Core, std::sync::Arc<Mutex<Vec<String>>>) {
+    pub(crate) fn fake_hypr(tag: &str, answer: impl Fn(&str) -> String + Send + 'static) -> (Core, std::sync::Arc<Mutex<Vec<String>>>) {
         let paths = temp_paths(tag);
         let dir = paths.run.join("hypr");
         std::fs::create_dir_all(&dir).unwrap();
@@ -1610,7 +1671,7 @@ mod tests {
         (test_core_on(paths, Hypr::at(dir)), log)
     }
 
-    fn mon(id: i64, name: &str, focused: bool, ws: i64) -> Value {
+    pub(crate) fn mon(id: i64, name: &str, focused: bool, ws: i64) -> Value {
         json!({ "id": id, "name": name, "focused": focused, "disabled": false, "activeWorkspace": { "id": ws, "name": ws.to_string() }, "specialWorkspace": { "name": "" } })
     }
 

@@ -309,11 +309,14 @@ pub(crate) fn guard(c: &Core, window: &str, expect: Option<&SnapInfo>) -> Result
             "Run `baneyspaces agent status` for the agent workspace's windows.",
         ));
     };
+    let start = proc::start_time(cl.pid).unwrap_or(0);
+    // A dialog of an agent process that Hyprland has placed on no workspace yet is the agent's: it is
+    // not on yours. Same pid and start time as a registered agent process, and floating; nothing else.
+    let unplaced_child = crate::agentws::unplaced_child(&c.model, &cl, start);
     // Hyprland's word is final: the window must be on the agent workspace right now.
-    if cl.ws_name != AGENT_SPECIAL {
+    if cl.ws_name != AGENT_SPECIAL && !unplaced_child {
         return Err(Envelope::err("not_in_scope", "that window is not on the agent workspace", Retry::Never, "Agents act only on windows on the agent workspace. Start the app with `baneyspaces agent open`."));
     }
-    let start = proc::start_time(cl.pid).unwrap_or(0);
     if let Some(s) = expect {
         if s.pid != cl.pid || (s.start != 0 && s.start != start) {
             return Err(Envelope::err(
@@ -324,15 +327,10 @@ pub(crate) fn guard(c: &Core, window: &str, expect: Option<&SnapInfo>) -> Result
             ));
         }
     }
-    check_scope(
-        &c.model,
-        &WindowFacts {
-            window: window.into(),
-            pid: cl.pid,
-            pid_start: start,
-        },
-    )
-    .map_err(|r| r.envelope())?;
+    // The model does not track a window on no workspace; the pid check above is its scope.
+    if !unplaced_child {
+        check_scope(&c.model, &WindowFacts { window: window.into(), pid: cl.pid, pid_start: start }).map_err(|r| r.envelope())?;
+    }
     // The app's session bus ended when the daemon restarted: it keeps a dead bus address and its
     // accessibility is gone, so there is nothing to read. Say so rather than answer wrongly.
     if c.bus_lost_for(cl.pid) {

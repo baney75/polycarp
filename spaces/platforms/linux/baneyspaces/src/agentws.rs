@@ -1,0 +1,1067 @@
+//! The verbs an agent uses to manage its own workspace on Hyprland: `workspaces`, `arrange`,
+//! `move --window`, `close`, and the session record `open` keeps. The same names, arguments and
+//! result fields as the Mac (`HandsRouter+Workspaces.swift`, `ChildWindows.swift` in the macOS app),
+//! so an agent's script works on both.
+//!
+//! Three rules hold for every verb here:
+//!
+//! - **Nothing is shown and focus never moves.** Every dispatch is built by one of the functions
+//!   below, each says why it keeps focus where it is, and `send` refuses any dispatch that `loud`
+//!   flags before it reaches Hyprland. Windows are always named by address: a Hyprland dispatcher
+//!   with no window acts on the focused one, which is yours.
+//! - **Only the agent's windows.** A window is the agent's when its process is one BaneySpaces started
+//!   for an agent (pid and start time) and Hyprland has it on `special:agent`. A window you parked
+//!   there yourself (`agent move <window>`) may be laid out but not driven. Anything else is refused.
+//!   Linux has no lend sheet yet, so what the Mac allows only through a lend or Full Access is
+//!   `not_supported` here, and says so.
+//! - **`close` closes only what this session's `open` made**, by Hyprland address plus pid and start
+//!   time, and only while it is still on `special:agent`. It never quits an app or kills a process.
+
+#![allow(clippy::result_large_err)] // the crate's convention: an `Envelope` is the error, as in daemon.rs and hands.rs
+
+use crate::daemon::{lock, record, Client, Core, Shared};
+use crate::proc;
+use crate::scheme::{lua_str, AGENT_SPECIAL};
+use baneyspaces_core::envelope::{Envelope, Retry};
+use baneyspaces_core::model::{Home, Model};
+use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
+
+// ---- the session record -------------------------------------------------------------------
+
+/// One window an `open` of a session made: the process that owns it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Opened {
+    pub pid: u32,
+    /// The process start time; 0 when it could not be read.
+    pub start: u64,
+    /// The app name `open` was given (foot, mpv, ...).
+    pub app: String,
+}
+
+/// Which windows each agent session opened with `open`, by Hyprland address and process, so
+/// `close` closes only those. A window is never recorded for two sessions. Kept in memory: after a
+/// daemon restart no session owns anything, so `close` refuses (fails closed).
+#[derive(Default, Debug)]
+pub struct SessionWindows {
+    opened: HashMap<String, HashMap<String, Opened>>,
+}
+
+impl SessionWindows {
+    /// Records `window` for `session`. False when the session is empty or another session owns it.
+    pub fn record(&mut self, session: &str, window: &str, o: Opened) -> bool {
+        if session.is_empty() || self.owner(window).is_some_and(|s| s != session) {
+            return false;
+        }
+        self.opened.entry(session.to_string()).or_default().insert(window.to_string(), o);
+        true
+    }
+
+    pub fn owner(&self, window: &str) -> Option<&str> {
+        self.opened.iter().find(|(_, w)| w.contains_key(window)).map(|(s, _)| s.as_str())
+    }
+
+    /// Whether this session opened this exact window of this exact process. Start times are compared
+    /// when both are known, so a reused pid does not pass.
+    pub fn opened_by(&self, session: &str, window: &str, pid: u32, start: u64) -> bool {
+        !session.is_empty()
+            && self.opened.get(session).and_then(|w| w.get(window)).is_some_and(|o| o.pid == pid && (o.start == 0 || start == 0 || o.start == start))
+    }
+
+    pub fn forget(&mut self, window: &str) {
+        for w in self.opened.values_mut() {
+            w.remove(window);
+        }
+    }
+
+    /// This session's windows, address and record.
+    pub fn of(&self, session: &str) -> Vec<(String, Opened)> {
+        let mut v: Vec<(String, Opened)> = self.opened.get(session).map(|w| w.iter().map(|(k, o)| (k.clone(), o.clone())).collect()).unwrap_or_default();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
+    }
+}
+
+// ---- dispatches ---------------------------------------------------------------------------
+
+/// A Hyprland window address as `hyprctl clients` prints it: `0x` and hex digits. Anything else is
+/// refused before a selector is built, because a selector Hyprland cannot read means "the focused
+/// window" to its dispatchers.
+pub fn valid_addr(s: &str) -> bool {
+    s.strip_prefix("0x").is_some_and(|h| !h.is_empty() && h.len() <= 16 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+fn sel(addr: &str) -> String {
+    lua_str(&format!("address:{addr}"))
+}
+
+/// Floats the window in place so it can take an exact frame. Hyprland's `floatWindow` changes the
+/// layout mode and raises the window within its own workspace (stacking order only): it does not
+/// focus it, and its workspace stays hidden.
+pub fn float_on(addr: &str) -> String {
+    format!("hl.dsp.window.float({{ action = \"enable\", window = {} }})", sel(addr))
+}
+
+/// An exact size. Hyprland's `resize` resizes the window's layout target and nothing else: no focus,
+/// no workspace change.
+pub fn resize_to(addr: &str, w: i64, h: i64) -> String {
+    format!("hl.dsp.window.resize({{ x = {w}, y = {h}, window = {} }})", sel(addr))
+}
+
+/// An exact position, in Hyprland's global layout coordinates. Hyprland's `move` with `x` and `y`
+/// moves the window's layout target and nothing else: no focus, no workspace change.
+pub fn move_to(addr: &str, x: i64, y: i64) -> String {
+    format!("hl.dsp.window.move({{ x = {x}, y = {y}, window = {} }})", sel(addr))
+}
+
+/// Onto the agent workspace without showing it. `follow = false` is Hyprland's silent move
+/// (`movetoworkspacesilent`): the target workspace is not shown, and focus changes only if the moved
+/// window had it (then to the window under it). An agent window never has focus: the guard puts
+/// yours back whenever one gets it.
+pub fn to_agent(addr: &str) -> String {
+    format!("hl.dsp.window.move({{ workspace = {}, follow = false, window = {} }})", lua_str(AGENT_SPECIAL), sel(addr))
+}
+
+/// Asks the window to close, as its close button or Super+W would (an xdg-toplevel close request).
+/// Hyprland's `closeWindow` sends the request and nothing else: no focus change, nothing shown, and
+/// the app may ask to save first. It never kills the process (that would be `kill`).
+pub fn close(addr: &str) -> String {
+    format!("hl.dsp.window.close({{ window = {} }})", sel(addr))
+}
+
+/// Why a dispatch would show a workspace, move focus or act on a window it does not name, or None
+/// when it is quiet. The new verbs send nothing this flags (`send` refuses it), and the tests run
+/// every string sent through it. `exec_cmd` is allowed only as `open` sends it: silent, on the agent
+/// workspace.
+pub fn loud(lua: &str) -> Option<&'static str> {
+    let t = lua.trim_start();
+    // hyprctl's classic dispatchers, in case one is ever written here by hand.
+    const CLASSIC: &[&str] = &["workspace ", "togglespecialworkspace", "focuswindow", "focusmonitor", "movefocus", "movetoworkspace ", "focusurgentorlast", "focuscurrentorlast", "cyclenext", "pin", "fullscreen", "bringactivetotop"];
+    if let Some(c) = CLASSIC.iter().find(|c| t.starts_with(**c)) {
+        return Some(match *c {
+            "workspace " | "togglespecialworkspace" | "movetoworkspace " => "show a workspace",
+            _ => "move focus or bring a window forward",
+        });
+    }
+    if t.starts_with("hl.dsp.exec_cmd(") {
+        let silent = format!("{{ workspace = \"{AGENT_SPECIAL} silent\" }})");
+        return (!t.ends_with(&silent)).then_some("start something that is not silent on the agent workspace");
+    }
+    const LUA: &[(&str, &str)] = &[
+        ("hl.dsp.focus", "move focus"),
+        ("hl.dsp.workspace.", "show or move a workspace"),
+        ("follow = true", "follow a window to its workspace"),
+        ("hl.dsp.window.pin", "show a window on every workspace"),
+        ("hl.dsp.window.fullscreen", "bring a window forward"),
+        ("hl.dsp.window.cycle_next", "move focus"),
+        ("hl.dsp.window.bring_to_top", "bring a window forward"),
+        ("hl.dsp.cursor", "move the pointer"),
+        ("hl.dsp.exec", "start something"),
+    ];
+    if let Some((_, why)) = LUA.iter().find(|(k, _)| t.contains(k)) {
+        return Some(why);
+    }
+    if t.starts_with("hl.dsp.window.move(") && t.contains("workspace =") && !t.contains("follow = false") {
+        return Some("follow a window to its workspace");
+    }
+    let named = t.find("window = \"address:0x").is_some();
+    (!named).then_some("act on whichever window has focus")
+}
+
+/// Sends one dispatch from these verbs, after `loud` has passed it.
+fn send(c: &Core, lua: &str) -> Result<(), String> {
+    if let Some(why) = loud(lua) {
+        return Err(format!("BaneySpaces refused its own dispatch, which would {why}"));
+    }
+    c.hypr.dispatch(lua).map_err(|e| e.to_string())
+}
+
+// ---- geometry -----------------------------------------------------------------------------
+
+/// A frame in logical pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rect {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+impl Rect {
+    fn json(&self) -> Value {
+        json!({ "x": self.x as i64, "y": self.y as i64, "width": self.w as i64, "height": self.h as i64 })
+    }
+}
+
+/// `arrange`'s layouts, the Mac's names (`AgentArrange.Layout`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    Full,
+    Halves,
+    Thirds,
+    Grid,
+    Frames,
+}
+
+impl Layout {
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s.to_ascii_lowercase().as_str() {
+            "full" => Self::Full,
+            "halves" => Self::Halves,
+            "thirds" => Self::Thirds,
+            "grid" => Self::Grid,
+            "frames" => Self::Frames,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Halves => "halves",
+            Self::Thirds => "thirds",
+            Self::Grid => "grid",
+            Self::Frames => "frames",
+        }
+    }
+}
+
+/// The smallest window a layout or a frame makes (the Mac's `AgentArrange.minSize`).
+pub const MIN_W: f64 = 240.0;
+pub const MIN_H: f64 = 160.0;
+
+/// One frame per window, in order, inside `area` (the Mac's `AgentArrange.frames`). `halves` and
+/// `thirds` are columns; windows past the last column start the columns again, on top of the first.
+pub fn frames(layout: Layout, count: usize, area: Rect) -> Vec<Rect> {
+    if count == 0 {
+        return vec![];
+    }
+    let columns = |n: usize| -> Vec<Rect> {
+        let w = (area.w / n as f64).floor();
+        (0..count).map(|i| Rect { x: area.x + (i % n) as f64 * w, y: area.y, w, h: area.h }).collect()
+    };
+    match layout {
+        Layout::Full | Layout::Frames => vec![area; count],
+        Layout::Halves => columns(2),
+        Layout::Thirds => columns(3),
+        Layout::Grid => {
+            let cols = (count as f64).sqrt().ceil() as usize;
+            let rows = (count as f64 / cols as f64).ceil() as usize;
+            let (w, h) = ((area.w / cols as f64).floor(), (area.h / rows as f64).floor());
+            (0..count).map(|i| Rect { x: area.x + (i % cols) as f64 * w, y: area.y + (i / cols) as f64 * h, w, h }).collect()
+        }
+    }
+}
+
+/// `x,y,width,height`, finite numbers.
+pub fn parse_rect(text: &str) -> Option<Rect> {
+    let n: Vec<f64> = text.split(',').map(|p| p.trim().parse::<f64>()).collect::<Result<_, _>>().ok()?;
+    (n.len() == 4 && n.iter().all(|v| v.is_finite())).then(|| Rect { x: n[0], y: n[1], w: n[2], h: n[3] })
+}
+
+/// `0x5da0=0,0,800,600`: a window address and a frame from the area's top-left corner.
+pub fn parse_frame(text: &str) -> Option<(String, Rect)> {
+    let (id, rest) = text.split_once('=')?;
+    let id = id.trim();
+    valid_addr(id).then_some(())?;
+    Some((id.to_string(), parse_rect(rest)?))
+}
+
+/// A frame given relative to the area, made absolute and kept inside it, at least the minimum size
+/// (the Mac's `AgentArrange.place`).
+pub fn place(rel: Rect, area: Rect) -> Rect {
+    let w = rel.w.max(MIN_W).min(area.w);
+    let h = rel.h.max(MIN_H).min(area.h);
+    let x = (area.x + rel.x).max(area.x).min(area.x + area.w - w);
+    let y = (area.y + rel.y).max(area.y).min(area.y + area.h - h);
+    Rect { x: x.floor(), y: y.floor(), w: w.floor(), h: h.floor() }
+}
+
+/// The usable area of one `hyprctl -j monitors` entry, in global logical pixels: its position, its
+/// mode divided by its scale (swapped when it is rotated), less what bars reserve.
+pub fn usable_area(m: &Value) -> Option<Rect> {
+    let (pw, ph) = (m["width"].as_f64()?, m["height"].as_f64()?);
+    let scale = m["scale"].as_f64().filter(|s| *s > 0.0).unwrap_or(1.0);
+    let rotated = m["transform"].as_i64().unwrap_or(0) % 2 == 1;
+    let (lw, lh) = if rotated { (ph / scale, pw / scale) } else { (pw / scale, ph / scale) };
+    let r: Vec<f64> = m["reserved"].as_array().map(|a| a.iter().map(|v| v.as_f64().unwrap_or(0.0)).collect()).unwrap_or_default();
+    let get = |i: usize| r.get(i).copied().unwrap_or(0.0).max(0.0);
+    let (l, t, rr, b) = (get(0), get(1), get(2), get(3));
+    let a = Rect { x: (m["x"].as_f64()? + l).floor(), y: (m["y"].as_f64()? + t).floor(), w: (lw - l - rr).floor(), h: (lh - t - b).floor() };
+    (a.w > 0.0 && a.h > 0.0).then_some(a)
+}
+
+/// The area windows on `special:agent` are laid out in: the usable area of the monitor that holds
+/// the agent workspace (`hyprctl -j workspaces`), else the one showing it, else the focused one
+/// (where Hyprland creates it when the first agent window arrives).
+pub fn agent_area(workspaces: &Value, monitors: &Value) -> Option<Rect> {
+    let mons = monitors.as_array()?;
+    let held = workspaces.as_array().into_iter().flatten().find(|w| w["name"].as_str() == Some(AGENT_SPECIAL)).and_then(|w| w["monitorID"].as_i64());
+    let m = held
+        .and_then(|id| mons.iter().find(|m| m["id"].as_i64() == Some(id)))
+        .or_else(|| mons.iter().find(|m| m["specialWorkspace"]["name"].as_str() == Some(AGENT_SPECIAL)))
+        .or_else(|| mons.iter().find(|m| m["focused"].as_bool() == Some(true)))?;
+    usable_area(m)
+}
+
+// ---- whose window is it -------------------------------------------------------------------
+
+/// What a window is to the agent asking.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Standing {
+    /// A window of an agent process, on `special:agent` by Hyprland's word and the model's.
+    Own,
+    /// A dialog of an agent process: floating, not floated by `arrange` or `move`, with another
+    /// window of the same process on the agent workspace, or not placed on any workspace yet.
+    Child,
+    /// A window of an agent process that is not on the agent workspace (yet: the daemon moves it).
+    OwnElsewhere,
+    /// One of your windows that you parked on the agent workspace (`agent move <window>`).
+    Parked,
+    /// Anything else: yours.
+    Yours,
+}
+
+/// Hyprland reports a window that is on no workspace with workspace id -1 and no name.
+fn unplaced(cl: &Client) -> bool {
+    cl.ws_id == -1 || cl.ws_name.is_empty()
+}
+
+/// The rule, in one place. `start` is the window's process start time now; `siblings` says whether
+/// the same process has another window on `special:agent`; `placed` whether `arrange` or `move`
+/// floated this window.
+pub fn standing(model: &Model, cl: &Client, start: u64, siblings: bool, placed: bool) -> Standing {
+    let agent_pid = model.agent_proc(cl.pid).is_some() && model.is_agent_pid(cl.pid, start);
+    let on_agent = cl.ws_name == AGENT_SPECIAL;
+    let home_agent = matches!(model.home(&cl.addr), Some(Home::Agent)) && model.pid_of(&cl.addr) == Some(cl.pid);
+    if agent_pid {
+        if cl.floating && !placed && ((on_agent && siblings) || unplaced(cl)) {
+            return Standing::Child;
+        }
+        if on_agent && home_agent {
+            return Standing::Own;
+        }
+        return Standing::OwnElsewhere;
+    }
+    if on_agent && home_agent {
+        return Standing::Parked;
+    }
+    Standing::Yours
+}
+
+/// A dialog of an agent process that Hyprland has not placed on any workspace yet. `hands` treats
+/// it as on the agent workspace (it is the agent's, and it is not on yours).
+pub fn unplaced_child(model: &Model, cl: &Client, start: u64) -> bool {
+    cl.floating && unplaced(cl) && model.agent_proc(cl.pid).is_some() && model.is_agent_pid(cl.pid, start)
+}
+
+/// Each window on Hyprland's list with its standing.
+fn standings(c: &Core, clients: &[Client]) -> Vec<(Client, Standing)> {
+    let on_agent = |pid: u32, not: &str| clients.iter().any(|o| o.pid == pid && o.addr != not && o.ws_name == AGENT_SPECIAL);
+    clients
+        .iter()
+        .filter(|cl| cl.mapped)
+        .map(|cl| {
+            let start = proc::start_time(cl.pid).unwrap_or(0);
+            let s = standing(&c.model, cl, start, on_agent(cl.pid, &cl.addr), c.placed.contains(&cl.addr));
+            (cl.clone(), s)
+        })
+        .collect()
+}
+
+/// The window a child belongs to: the oldest other window of its process on the agent workspace.
+pub fn parent_of(model: &Model, clients: &[Client], child: &Client) -> Option<String> {
+    model.agent_windows().into_iter().find(|w| *w != child.addr && clients.iter().any(|o| o.addr == *w && o.pid == child.pid)).map(String::from)
+}
+
+fn scope_name(s: Standing) -> &'static str {
+    match s {
+        Standing::Own | Standing::Child | Standing::OwnElsewhere => "agent_workspace",
+        Standing::Parked => "parked",
+        Standing::Yours => "yours",
+    }
+}
+
+fn no_lend(what: &str) -> Envelope {
+    Envelope::err(
+        "not_supported",
+        format!("{what} is one of your windows, and Linux has no lend sheet yet"),
+        Retry::Never,
+        "On the Mac only a window the user lends, or any window under Full Access, comes to the agent workspace. Neither exists on Linux yet, so an agent never moves or lays out the user's windows here. The user can park one with `baneyspaces agent move <window>`.",
+    )
+}
+
+// ---- workspaces ---------------------------------------------------------------------------
+
+/// `workspaces`: the nine and the agent workspace, which are shown, which one you are on, how many
+/// windows each holds, and where each window the agent may use is. Counts only, never titles of your
+/// windows. Read only: it sends nothing to Hyprland.
+pub fn workspace_list(workspaces: &Value, monitors: &Value, usable: &[(Client, Standing)]) -> Value {
+    let mons = monitors.as_array().cloned().unwrap_or_default();
+    let ws = workspaces.as_array().cloned().unwrap_or_default();
+    let focused = mons.iter().find(|m| m["focused"].as_bool() == Some(true));
+    let count = |pred: &dyn Fn(&Value) -> bool| ws.iter().find(|w| pred(w)).and_then(|w| w["windows"].as_i64()).unwrap_or(0);
+    let agent_shown = mons.iter().any(|m| m["specialWorkspace"]["name"].as_str() == Some(AGENT_SPECIAL));
+    let mut rows: Vec<Value> = (1..=9i64)
+        .map(|n| {
+            let shown = mons.iter().any(|m| m["activeWorkspace"]["id"].as_i64() == Some(n));
+            let current = focused.is_some_and(|m| m["activeWorkspace"]["id"].as_i64() == Some(n));
+            json!({ "number": n, "shown": shown, "current": current, "agent": false, "windows": count(&|w| w["id"].as_i64() == Some(n) && w["name"].as_str().is_none_or(|s| !s.starts_with("special:"))) })
+        })
+        .collect();
+    let current_agent = focused.is_some_and(|m| m["specialWorkspace"]["name"].as_str() == Some(AGENT_SPECIAL));
+    rows.push(json!({ "number": Value::Null, "name": AGENT_SPECIAL, "shown": agent_shown, "current": current_agent, "agent": true, "windows": count(&|w| w["name"].as_str() == Some(AGENT_SPECIAL)) }));
+    let mut yours: Vec<&(Client, Standing)> = usable.iter().filter(|(_, s)| !matches!(s, Standing::Yours)).collect();
+    yours.sort_by(|a, b| a.0.addr.cmp(&b.0.addr));
+    json!({
+        "agent_workspace": AGENT_SPECIAL,
+        "agent_workspace_shown": agent_shown,
+        "access": "default",
+        "workspaces": rows,
+        "your_windows": yours.iter().map(|(cl, s)| json!({ "id": cl.addr, "app": cl.class, "pid": cl.pid, "workspace": if cl.ws_name.is_empty() { Value::Null } else { json!(cl.ws_name) }, "scope": scope_name(*s) })).collect::<Vec<_>>(),
+        "note": "Agents never change which workspace is shown and never create, rename or delete workspaces. Work on the agent workspace; while it is shown the user is looking at it.",
+    })
+}
+
+pub fn workspaces(shared: &Shared, agent: &str) -> Envelope {
+    let c = lock(shared);
+    let env = match (c.hypr.json("workspaces"), c.hypr.json("monitors"), c.try_clients()) {
+        (Ok(ws), Ok(mons), Ok(clients)) => Envelope::ok(workspace_list(&ws, &mons, &standings(&c, &clients))),
+        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Envelope::err("compositor_error", format!("cannot read Hyprland: {e}"), Retry::Safe, "Is Hyprland running? Check `baneyspaces doctor`."),
+    };
+    record(&c, agent, "workspaces", None, None, None, "ctl", &env);
+    env
+}
+
+// ---- arrange and move ---------------------------------------------------------------------
+
+/// Gives one window a frame: float it, size it, place it. Each dispatch names the window and none
+/// focuses it or shows its workspace (see the builders). The answer is the Mac's `applied`: "now"
+/// (Hyprland applies a frame at once, also on a hidden special workspace) or why not.
+fn apply_frame(c: &mut Core, addr: &str, f: Rect) -> String {
+    for lua in [float_on(addr), resize_to(addr, f.w as i64, f.h as i64), move_to(addr, f.x as i64, f.y as i64)] {
+        if let Err(e) = send(c, &lua) {
+            return format!("skipped: {e}");
+        }
+    }
+    c.placed.insert(addr.to_string());
+    "now".into()
+}
+
+fn area_now(c: &Core) -> Result<Rect, Envelope> {
+    let read = |what: &str| c.hypr.json(what).map_err(|e| Envelope::err("compositor_error", format!("cannot read Hyprland: {e}"), Retry::Safe, "Is Hyprland running?"));
+    let (ws, mons) = (read("workspaces")?, read("monitors")?);
+    agent_area(&ws, &mons).ok_or_else(|| Envelope::err("engine_error", "the screen's size couldn't be read", Retry::Safe, "Try again."))
+}
+
+pub fn arrange(shared: &Shared, agent: &str, args: &Value) -> Envelope {
+    let mut c = lock(shared);
+    let env = arrange_locked(&mut c, args);
+    record(&c, agent, "arrange", None, None, None, "ctl", &env);
+    env
+}
+
+fn arrange_locked(c: &mut Core, args: &Value) -> Envelope {
+    let bad = |m: String| Envelope::err("invalid_args", m, Retry::Never, "usage: agent arrange full|halves|thirds|grid [window...] | frames 0xADDR=x,y,width,height ...");
+    let Some(layout) = args["layout"].as_str().and_then(Layout::parse) else {
+        return bad(format!("layout is full, halves, thirds, grid or frames, not {:?}", args["layout"].as_str().unwrap_or("")));
+    };
+    let items: Vec<String> = args["windows"].as_array().into_iter().flatten().filter_map(Value::as_str).map(String::from).collect();
+    let mut wanted: Vec<(String, Option<Rect>)> = vec![];
+    for it in &items {
+        if layout == Layout::Frames {
+            match parse_frame(it) {
+                Some((a, r)) => wanted.push((a, Some(r))),
+                None => return bad(format!("{it} isn't 0xADDR=x,y,width,height")),
+            }
+        } else if valid_addr(it) {
+            wanted.push((it.clone(), None));
+        } else {
+            return bad(format!("{it} isn't a window address (0x...)"));
+        }
+    }
+    if layout == Layout::Frames && wanted.is_empty() {
+        return bad("frames needs 0xADDR=x,y,width,height for each window".into());
+    }
+    let clients = match c.try_clients() {
+        Ok(v) => v,
+        Err(e) => return Envelope::err("compositor_error", format!("cannot read Hyprland: {e}"), Retry::Safe, "Is Hyprland running?"),
+    };
+    let all = standings(c, &clients);
+    // Oldest first, as the model saw them arrive (the Mac sorts by window id, which is the same order there).
+    let order = c.model.agent_windows().into_iter().map(String::from).collect::<Vec<_>>();
+    let mine: Vec<&(Client, Standing)> = order.iter().filter_map(|w| all.iter().find(|(cl, s)| cl.addr == *w && matches!(s, Standing::Own | Standing::Parked))).collect();
+    let chosen: Vec<(Client, Option<Rect>)> = if wanted.is_empty() {
+        mine.iter().map(|(cl, _)| (cl.clone(), None)).collect()
+    } else {
+        let mut v = vec![];
+        for (a, r) in &wanted {
+            match mine.iter().find(|(cl, _)| cl.addr == *a) {
+                Some((cl, _)) => v.push((cl.clone(), *r)),
+                None => {
+                    return match all.iter().find(|(cl, _)| cl.addr == *a) {
+                        Some((_, Standing::Yours)) => no_lend(&format!("window {a}")),
+                        _ => Envelope::err("not_in_scope", format!("window {a} isn't a window of yours on the agent workspace"), Retry::Never, "arrange lays out only agent workspace windows; `agent workspaces` lists where yours are. A dialog goes with its window."),
+                    }
+                }
+            }
+        }
+        v
+    };
+    if chosen.is_empty() {
+        return Envelope::ok(json!({ "layout": layout.name(), "windows": [], "note": "no window of yours is on the agent workspace" }));
+    }
+    let area = match area_now(c) {
+        Ok(a) => a,
+        Err(e) => return e,
+    };
+    let laid = frames(layout, chosen.len(), area);
+    let mut out = vec![];
+    for (i, (cl, rel)) in chosen.iter().enumerate() {
+        let f = match rel {
+            Some(r) => place(*r, area),
+            None => place(Rect { x: laid[i].x - area.x, y: laid[i].y - area.y, w: laid[i].w, h: laid[i].h }, area),
+        };
+        let applied = apply_frame(c, &cl.addr, f);
+        out.push(json!({ "window": cl.addr, "app": cl.class, "applied": applied, "frame": f.json() }));
+    }
+    Envelope::ok(json!({ "layout": layout.name(), "area": area.json(), "windows": out }))
+}
+
+pub fn move_window(shared: &Shared, agent: &str, args: &Value) -> Envelope {
+    let mut c = lock(shared);
+    let (env, pid) = move_locked(&mut c, args);
+    record(&c, agent, "move", pid, args["window"].as_str(), None, "ctl", &env);
+    env
+}
+
+fn move_locked(c: &mut Core, args: &Value) -> (Envelope, Option<u32>) {
+    let Some(addr) = args["window"].as_str().filter(|a| valid_addr(a)).map(String::from) else {
+        return (Envelope::err("invalid_args", "--window 0xADDR is required (a window address from `agent windows` or `agent open`)", Retry::Never, "usage: agent move --window 0xADDR [--frame x,y,width,height]"), None);
+    };
+    let frame = match args["frame"].as_str() {
+        None => None,
+        Some(t) => match parse_rect(t) {
+            Some(r) => Some(r),
+            None => return (Envelope::err("invalid_args", format!("frame is x,y,width,height, not {t}"), Retry::Never, "usage: agent move --window 0xADDR [--frame x,y,width,height]"), None),
+        },
+    };
+    let clients = match c.try_clients() {
+        Ok(v) => v,
+        Err(e) => return (Envelope::err("compositor_error", format!("cannot read Hyprland: {e}"), Retry::Safe, "Is Hyprland running?"), None),
+    };
+    let all = standings(c, &clients);
+    let Some((cl, st)) = all.into_iter().find(|(cl, _)| cl.addr == addr) else {
+        return (Envelope::err("not_found", format!("no window {addr}"), Retry::AfterSnapshot, "Run `baneyspaces agent windows`."), None);
+    };
+    let pid = Some(cl.pid);
+    let from = if cl.ws_name.is_empty() { Value::Null } else { json!(cl.ws_name) };
+    let moves = match st {
+        Standing::Own | Standing::Parked => false,
+        Standing::OwnElsewhere => true,
+        Standing::Child => return (Envelope::err("not_supported", format!("window {addr} is a dialog of {}; it goes where its app's window goes", cl.class), Retry::Never, "Answer it where it is, or move its parent window."), pid),
+        Standing::Yours => return (no_lend(&format!("window {addr} of {}", cl.class)), pid),
+    };
+    if moves {
+        // The Mac's rule: nothing is moved onto the agent workspace while the user is looking at it.
+        let shown = c.hypr.json("monitors").ok().and_then(|v| v.as_array().map(|a| a.iter().any(|m| m["specialWorkspace"]["name"].as_str() == Some(AGENT_SPECIAL))));
+        match shown {
+            Some(false) => {}
+            Some(true) => return (Envelope::err("in_use", "the user is looking at the agent workspace, so nothing is moved onto it now", Retry::Safe, "Retry once it is hidden, or work on a window already there. Do not ask the user to hide it."), pid),
+            None => return (Envelope::err("compositor_error", "cannot tell whether the agent workspace is shown", Retry::Safe, "Try again."), pid),
+        }
+        // An agent process's window off the agent workspace is one the daemon moves there anyway (R-A3).
+        if let Err(e) = send(c, &to_agent(&addr)) {
+            return (Envelope::err("compositor_error", format!("Hyprland did not move it: {e}"), Retry::Never, "Run `baneyspaces agent windows`."), pid);
+        }
+    }
+    let mut data = json!({ "window": addr, "app": cl.class, "from": from, "to": AGENT_SPECIAL, "moved": moves });
+    if st == Standing::Parked {
+        data["note"] = json!("this window is the user's, parked on the agent workspace: it can be laid out, not driven");
+    }
+    if let Some(rel) = frame {
+        let area = match area_now(c) {
+            Ok(a) => a,
+            Err(e) => return (e, pid),
+        };
+        let f = place(rel, area);
+        data["frame"] = f.json();
+        data["applied"] = json!(apply_frame(c, &addr, f));
+    }
+    (Envelope::ok(data), pid)
+}
+
+// ---- close --------------------------------------------------------------------------------
+
+/// Why `close` refuses this window for this session, or None. Only a window this session's `open`
+/// made, of the same process, still the agent's on the agent workspace.
+pub fn close_refusal(sessions: &SessionWindows, session: &str, cl: &Client, start: u64, st: Standing) -> Option<Envelope> {
+    if !sessions.opened_by(session, &cl.addr, cl.pid, start) {
+        return Some(Envelope::err(
+            "not_in_scope",
+            format!("window {} of {} wasn't opened by this session", cl.addr, cl.class),
+            Retry::Never,
+            "close closes only windows your own `agent open` made in this session; leave the rest as they are. Answer a dialog with its own buttons.",
+        ));
+    }
+    if st != Standing::Own {
+        return Some(Envelope::err("not_in_scope", format!("window {} is no longer the agent's on the agent workspace", cl.addr), Retry::Never, "Leave it as it is."));
+    }
+    None
+}
+
+pub fn close_window(shared: &Shared, agent: &str, args: &Value) -> Envelope {
+    let session = args["session"].as_str().unwrap_or("").to_string();
+    let Some(addr) = args["window"].as_str().filter(|a| valid_addr(a)).map(String::from) else {
+        let env = Envelope::err("invalid_args", "--window 0xADDR is required (the window your `agent open` returned)", Retry::Never, "usage: agent close --window 0xADDR");
+        record(&lock(shared), agent, "close", None, None, None, "ctl", &env);
+        return env;
+    };
+    let (cl, before) = {
+        let c = lock(shared);
+        let clients = match c.try_clients() {
+            Ok(v) => v,
+            Err(e) => return Envelope::err("compositor_error", format!("cannot read Hyprland: {e}"), Retry::Safe, "Is Hyprland running?"),
+        };
+        let all = standings(&c, &clients);
+        let Some((cl, st)) = all.iter().find(|(cl, _)| cl.addr == addr).cloned() else {
+            let env = Envelope::err("not_found", format!("no window {addr}"), Retry::Never, "It may be closed already. Run `baneyspaces agent windows`.");
+            record(&c, agent, "close", None, Some(&addr), None, "ctl", &env);
+            return env;
+        };
+        let start = proc::start_time(cl.pid).unwrap_or(0);
+        if let Some(env) = close_refusal(&c.sessions, &session, &cl, start, st) {
+            record(&c, agent, "close", Some(cl.pid), Some(&addr), None, "ctl", &env);
+            return env;
+        }
+        if let Err(e) = send(&c, &close(&addr)) {
+            let env = Envelope::err("compositor_error", format!("Hyprland did not take the close request: {e}"), Retry::Never, "Run `baneyspaces agent windows`.");
+            record(&c, agent, "close", Some(cl.pid), Some(&addr), None, "ctl", &env);
+            return env;
+        }
+        let before: HashSet<String> = clients.iter().map(|x| x.addr.clone()).collect();
+        (cl, before)
+    };
+    // Without the lock: give the app a second to close, or to ask (a save dialog of the same process).
+    let deadline = Instant::now() + Duration::from_millis(1000);
+    let (mut gone, mut opened) = (false, None);
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+        let c = lock(shared);
+        let Ok(now) = c.try_clients() else { continue };
+        gone = !now.iter().any(|x| x.addr == addr);
+        opened = now.iter().find(|x| x.pid == cl.pid && !before.contains(&x.addr)).map(|d| json!({ "window": d.addr, "kind": if d.floating { "dialog" } else { "window" }, "title": d.title, "waiting": true, "parent": addr }));
+        if gone || opened.is_some() {
+            break;
+        }
+    }
+    let mut c = lock(shared);
+    let mut data = json!({ "window": addr, "app": cl.class, "pressed": "close", "target": { "window": addr, "pid": cl.pid, "app": cl.class, "scope": "agent_workspace" } });
+    if let Some(o) = opened {
+        data["opened"] = o;
+        data["note"] = json!("the app asked something before closing: answer the dialog in opened");
+    } else {
+        data["closed"] = json!(gone);
+    }
+    if gone {
+        c.sessions.forget(&addr);
+        c.placed.remove(&addr);
+    }
+    let env = Envelope::ok(data);
+    record(&c, agent, "close", Some(cl.pid), Some(&addr), None, "ctl", &env);
+    env
+}
+
+// ---- open: the session's claim and new_window: false ----------------------------------------
+
+/// `open` with `new_window: false` and no files: this session's newest window of that app, if it is
+/// still the agent's on the agent workspace. Nothing starts.
+pub fn reuse(c: &Core, session: &str, app: &str) -> Option<Value> {
+    let clients = c.try_clients().ok()?;
+    let all = standings(c, &clients);
+    c.sessions
+        .of(session)
+        .into_iter()
+        .rev()
+        .filter(|(_, o)| o.app == app)
+        .find_map(|(addr, o)| {
+            let (cl, st) = all.iter().find(|(cl, _)| cl.addr == addr)?;
+            let start = proc::start_time(cl.pid).unwrap_or(0);
+            (*st == Standing::Own && c.sessions.opened_by(session, &addr, cl.pid, start)).then(|| {
+                json!({ "window": addr, "pid": o.pid, "app": app, "title": cl.title, "workspace": AGENT_SPECIAL, "reused": true, "focus": { "changed": false, "returned": false } })
+            })
+        })
+}
+
+/// What `open` says about focus: whether the window in front changed while it ran, and whether the
+/// daemon's guard gave it back (it refuses every activation of an agent window).
+pub fn focus_json(front_before: Option<&str>, front_after: Option<&str>, refused_before: u64, refused_after: u64) -> Value {
+    json!({ "changed": front_before != front_after, "returned": refused_after > refused_before })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon::tests::{fake_hypr, mon};
+    use baneyspaces_core::model::Event;
+    use std::sync::{Arc, Mutex};
+
+    const OWN: &str = "0xa1";
+    const OWN2: &str = "0xa2";
+    const DIALOG: &str = "0xa3";
+    const PARKED: &str = "0xb1";
+    const YOURS: &str = "0xc1";
+
+    fn client(addr: &str, pid: u32, ws: &str, floating: bool) -> Value {
+        let id = if ws == AGENT_SPECIAL { -98 } else { ws.parse::<i64>().unwrap_or(-1) };
+        json!({ "address": addr, "pid": pid, "workspace": { "id": id, "name": ws }, "monitor": 0, "class": "foot", "title": format!("t{addr}"), "mapped": true, "floating": floating, "stableId": "1" })
+    }
+
+    fn area_mon(special: &str) -> Value {
+        let mut m = mon(0, "A", true, 1);
+        m["x"] = json!(0);
+        m["y"] = json!(0);
+        m["width"] = json!(1920);
+        m["height"] = json!(1080);
+        m["scale"] = json!(1.0);
+        m["transform"] = json!(0);
+        m["reserved"] = json!([0, 30, 0, 0]);
+        m["specialWorkspace"] = json!({ "name": special });
+        m
+    }
+
+    /// A Core on a fake Hyprland: the agent process is this test process (so its start time reads),
+    /// your windows belong to pid 1 (not an agent). Returns the shared core and everything sent.
+    fn setup(tag: &str, agent_shown: bool) -> (Shared, Arc<Mutex<Vec<String>>>) {
+        let me = std::process::id();
+        let clients = json!([
+            client(OWN, me, AGENT_SPECIAL, false),
+            client(OWN2, me, AGENT_SPECIAL, false),
+            client(DIALOG, me, AGENT_SPECIAL, true),
+            client(PARKED, 1, AGENT_SPECIAL, false),
+            client(YOURS, 1, "3", false),
+        ])
+        .to_string();
+        let monitors = json!([area_mon(if agent_shown { AGENT_SPECIAL } else { "" })]).to_string();
+        let workspaces = json!([
+            { "id": 1, "name": "1", "windows": 0, "monitorID": 0 },
+            { "id": 3, "name": "3", "windows": 1, "monitorID": 0 },
+            { "id": -98, "name": AGENT_SPECIAL, "windows": 4, "monitorID": 0 }
+        ])
+        .to_string();
+        let (mut c, log) = fake_hypr(tag, move |r| match r {
+            "j/clients" => clients.clone(),
+            "j/monitors" => monitors.clone(),
+            "j/workspaces" => workspaces.clone(),
+            "j/activewindow" => "{\"address\":\"0xc1\"}".into(),
+            _ => "ok".into(),
+        });
+        let start = proc::start_time(me).unwrap_or(0);
+        for (w, pid, ws) in [(OWN, me, None), (OWN2, me, None), (DIALOG, me, None), (PARKED, 1, None), (YOURS, 1, Some(3))] {
+            c.model.apply(Event::ObserveWindow { window: w.into(), pid, start: if pid == me { start } else { 0 }, app: "foot".into(), workspace: ws }).unwrap();
+        }
+        c.model.apply(Event::AgentRegister { pid: me, start }).unwrap();
+        (Arc::new(Mutex::new(c)), log)
+    }
+
+    fn dispatches(log: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
+        log.lock().unwrap().iter().filter_map(|r| r.strip_prefix("/dispatch ").map(String::from)).collect()
+    }
+
+    /// Everything sent to Hyprland in a test: reads, or dispatches that are quiet and name their window.
+    fn assert_all_quiet(log: &Arc<Mutex<Vec<String>>>) {
+        for r in log.lock().unwrap().iter() {
+            if r.starts_with("j/") {
+                continue;
+            }
+            let lua = r.strip_prefix("/dispatch ").unwrap_or_else(|| panic!("only reads and dispatches are sent: {r}"));
+            assert_eq!(loud(lua), None, "{lua}");
+            for bad in ["workspace ", "togglespecialworkspace", "focuswindow", "focusmonitor", "hl.dsp.focus", "toggle_special", "follow = true", "hl.dsp.workspace."] {
+                if bad == "workspace " {
+                    assert!(!lua.starts_with(bad), "{lua}");
+                } else {
+                    assert!(!lua.contains(bad), "{bad} in {lua}");
+                }
+            }
+        }
+    }
+
+    fn code(e: &Envelope) -> String {
+        e.error.as_ref().map(|e| e.code.clone()).unwrap_or_default()
+    }
+
+    #[test]
+    fn the_dispatch_strings_are_exact() {
+        assert_eq!(float_on("0xa1"), r#"hl.dsp.window.float({ action = "enable", window = "address:0xa1" })"#);
+        assert_eq!(resize_to("0xa1", 960, 1050), r#"hl.dsp.window.resize({ x = 960, y = 1050, window = "address:0xa1" })"#);
+        assert_eq!(move_to("0xa1", 0, 30), r#"hl.dsp.window.move({ x = 0, y = 30, window = "address:0xa1" })"#);
+        assert_eq!(to_agent("0xa1"), r#"hl.dsp.window.move({ workspace = "special:agent", follow = false, window = "address:0xa1" })"#);
+        assert_eq!(close("0xa1"), r#"hl.dsp.window.close({ window = "address:0xa1" })"#);
+        for d in [float_on("0x1"), resize_to("0x1", 1, 1), move_to("0x1", 0, 0), to_agent("0x1"), close("0x1")] {
+            assert_eq!(loud(&d), None, "{d}");
+        }
+    }
+
+    #[test]
+    fn the_denylist_catches_focus_and_showing_and_unnamed_windows() {
+        for d in [
+            "workspace 3",
+            "togglespecialworkspace agent",
+            "focuswindow address:0x1",
+            "focusmonitor A",
+            r#"hl.dsp.focus({ window = "address:0x1" })"#,
+            r#"hl.dsp.workspace.toggle_special("agent")"#,
+            r#"hl.dsp.workspace.move({ workspace = "3", monitor = "A" })"#,
+            r#"hl.dsp.window.move({ workspace = "special:agent", window = "address:0x1" })"#,
+            r#"hl.dsp.window.move({ workspace = "special:agent", follow = true, window = "address:0x1" })"#,
+            r#"hl.dsp.window.pin({ window = "address:0x1" })"#,
+            r#"hl.dsp.window.close({ })"#,
+            r#"hl.dsp.window.close()"#,
+            r#"hl.dsp.window.resize({ x = 1, y = 1 })"#,
+            r#"hl.dsp.exec_cmd("foot")"#,
+        ] {
+            assert!(loud(d).is_some(), "{d} must be refused");
+        }
+        assert_eq!(loud(r#"hl.dsp.exec_cmd("env foot", { workspace = "special:agent silent" })"#), None, "open's launch is silent on the agent workspace");
+    }
+
+    #[test]
+    fn a_selector_is_built_only_from_an_address() {
+        assert!(valid_addr("0x5da0") && valid_addr("0xABCdef0123"));
+        for bad in ["", "0x", "5da0", "active", "0x5da0\" }) hl.dsp.focus({", "address:0x1", "0x12345678901234567", "0xg1"] {
+            assert!(!valid_addr(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn layouts_are_the_macs() {
+        let a = Rect { x: 0.0, y: 30.0, w: 1920.0, h: 1050.0 };
+        assert_eq!(Layout::parse("Halves"), Some(Layout::Halves));
+        assert_eq!(Layout::parse("columns"), None);
+        assert_eq!(frames(Layout::Full, 2, a), vec![a, a]);
+        let h = frames(Layout::Halves, 3, a);
+        assert_eq!((h[0].x, h[1].x, h[2].x, h[1].w), (0.0, 960.0, 0.0, 960.0), "the third starts the columns again");
+        let t = frames(Layout::Thirds, 3, a);
+        assert_eq!((t[2].x, t[2].w), (1280.0, 640.0));
+        let g = frames(Layout::Grid, 3, a);
+        assert_eq!(g.len(), 3);
+        assert_eq!((g[1].x, g[2].x, g[2].y, g[2].w, g[2].h), (960.0, 0.0, 555.0, 960.0, 525.0));
+        assert!(frames(Layout::Grid, 0, a).is_empty());
+        // place: absolute, inside the area, at least the minimum size.
+        assert_eq!(place(Rect { x: 10.0, y: 10.0, w: 800.0, h: 600.0 }, a), Rect { x: 10.0, y: 40.0, w: 800.0, h: 600.0 });
+        assert_eq!(place(Rect { x: 5000.0, y: -50.0, w: 10.0, h: 10.0 }, a), Rect { x: 1680.0, y: 30.0, w: 240.0, h: 160.0 });
+        assert_eq!(parse_frame("0xa1=0,0,800,600"), Some(("0xa1".into(), Rect { x: 0.0, y: 0.0, w: 800.0, h: 600.0 })));
+        for bad in ["a1=0,0,1,1", "0xa1=0,0,1", "0xa1=0,0,1,nan", "0xa1"] {
+            assert_eq!(parse_frame(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_area_is_the_agent_monitors_usable_part() {
+        let mut m = area_mon("");
+        assert_eq!(usable_area(&m), Some(Rect { x: 0.0, y: 30.0, w: 1920.0, h: 1050.0 }));
+        m["scale"] = json!(2.0);
+        m["transform"] = json!(1);
+        assert_eq!(usable_area(&m), Some(Rect { x: 0.0, y: 30.0, w: 540.0, h: 930.0 }), "scaled and rotated");
+        let mut b = area_mon("");
+        b["id"] = json!(1);
+        b["x"] = json!(1920);
+        b["focused"] = json!(false);
+        let ws = json!([{ "name": AGENT_SPECIAL, "monitorID": 1 }]);
+        assert_eq!(agent_area(&ws, &json!([area_mon(""), b])).unwrap().x, 1920.0, "the monitor that holds special:agent, not the focused one");
+        assert_eq!(agent_area(&json!([]), &json!([area_mon("")])).unwrap().x, 0.0, "else the focused one");
+    }
+
+    #[test]
+    fn workspaces_has_the_macs_fields_and_never_a_title_of_yours() {
+        let (shared, log) = setup("aws-list", false);
+        let env = workspaces(&shared, "t");
+        let d = env.data.expect("ok");
+        for k in ["agent_workspace", "agent_workspace_shown", "access", "workspaces", "your_windows", "note"] {
+            assert!(d.get(k).is_some(), "{k}");
+        }
+        assert_eq!(d["agent_workspace"], AGENT_SPECIAL);
+        assert_eq!(d["agent_workspace_shown"], false);
+        let rows = d["workspaces"].as_array().unwrap();
+        assert_eq!(rows.len(), 10, "the nine and the agent workspace");
+        for r in rows {
+            for k in ["number", "shown", "current", "agent", "windows"] {
+                assert!(r.get(k).is_some(), "{k} in {r}");
+            }
+        }
+        assert_eq!((rows[0]["shown"].clone(), rows[0]["current"].clone()), (json!(true), json!(true)));
+        assert_eq!(rows[2]["windows"], 1);
+        assert_eq!((rows[9]["agent"].clone(), rows[9]["name"].clone(), rows[9]["windows"].clone()), (json!(true), json!(AGENT_SPECIAL), json!(4)));
+        let yours = d["your_windows"].as_array().unwrap();
+        let ids: Vec<&str> = yours.iter().map(|w| w["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, [OWN, OWN2, DIALOG, PARKED], "the agent's and the parked one; not the window on workspace 3");
+        for w in yours {
+            for k in ["id", "app", "pid", "workspace", "scope"] {
+                assert!(w.get(k).is_some(), "{k}");
+            }
+        }
+        assert!(!d.to_string().contains("t0xc1"), "never the title of your window");
+        assert!(dispatches(&log).is_empty(), "read only");
+    }
+
+    #[test]
+    fn arrange_sends_exact_frames_for_the_agents_windows_only() {
+        let (shared, log) = setup("aws-arrange", false);
+        let env = arrange(&shared, "t", &json!({ "layout": "halves" }));
+        let d = env.data.expect("ok");
+        assert_eq!(d["layout"], "halves");
+        assert_eq!(d["area"], json!({ "x": 0, "y": 30, "width": 1920, "height": 1050 }));
+        let ws: Vec<&str> = d["windows"].as_array().unwrap().iter().map(|w| w["window"].as_str().unwrap()).collect();
+        assert_eq!(ws, [OWN, OWN2, PARKED], "the dialog goes with its window and your window on 3 is never touched");
+        for w in d["windows"].as_array().unwrap() {
+            for k in ["window", "app", "applied", "frame"] {
+                assert!(w.get(k).is_some(), "{k}");
+            }
+            assert_eq!(w["applied"], "now");
+        }
+        assert_eq!(
+            dispatches(&log),
+            [
+                float_on(OWN), resize_to(OWN, 960, 1050), move_to(OWN, 0, 30),
+                float_on(OWN2), resize_to(OWN2, 960, 1050), move_to(OWN2, 960, 30),
+                float_on(PARKED), resize_to(PARKED, 960, 1050), move_to(PARKED, 0, 30),
+            ]
+        );
+        assert_all_quiet(&log);
+        // Named windows: yours is refused before anything is sent, and so is a dialog.
+        log.lock().unwrap().clear();
+        assert_eq!(code(&arrange(&shared, "t", &json!({ "layout": "grid", "windows": [OWN, YOURS] }))), "not_supported");
+        assert_eq!(code(&arrange(&shared, "t", &json!({ "layout": "grid", "windows": [DIALOG] }))), "not_in_scope");
+        assert_eq!(code(&arrange(&shared, "t", &json!({ "layout": "frames", "windows": ["0xa1=0,0,800"] }))), "invalid_args");
+        assert_eq!(code(&arrange(&shared, "t", &json!({ "layout": "columns" }))), "invalid_args");
+        assert!(dispatches(&log).is_empty(), "{:?}", dispatches(&log));
+        let env = arrange(&shared, "t", &json!({ "layout": "frames", "windows": ["0xa2=100,0,800,600"] }));
+        assert_eq!(env.data.unwrap()["windows"][0]["frame"], json!({ "x": 100, "y": 30, "width": 800, "height": 600 }));
+        assert_eq!(dispatches(&log), [float_on(OWN2), resize_to(OWN2, 800, 600), move_to(OWN2, 100, 30)]);
+        assert_all_quiet(&log);
+    }
+
+    #[test]
+    fn move_refuses_your_window_and_a_dialog_and_frames_the_agents() {
+        let (shared, log) = setup("aws-move", false);
+        let e = move_window(&shared, "t", &json!({ "window": YOURS }));
+        assert_eq!(code(&e), "not_supported");
+        assert!(e.error.unwrap().message.contains("no lend sheet"), "says why");
+        assert_eq!(code(&move_window(&shared, "t", &json!({ "window": DIALOG }))), "not_supported");
+        assert_eq!(code(&move_window(&shared, "t", &json!({ "window": "0xdead" }))), "not_found");
+        assert_eq!(code(&move_window(&shared, "t", &json!({ "window": "active" }))), "invalid_args");
+        assert_eq!(code(&move_window(&shared, "t", &json!({ "window": OWN, "frame": "1,2,3" }))), "invalid_args");
+        assert!(dispatches(&log).is_empty(), "nothing sent for a refusal: {:?}", dispatches(&log));
+        let d = move_window(&shared, "t", &json!({ "window": OWN, "frame": "0,0,800,600" })).data.expect("ok");
+        for k in ["window", "app", "from", "to", "moved", "frame", "applied"] {
+            assert!(d.get(k).is_some(), "{k}");
+        }
+        assert_eq!((d["moved"].clone(), d["to"].clone(), d["applied"].clone()), (json!(false), json!(AGENT_SPECIAL), json!("now")));
+        assert_eq!(dispatches(&log), [float_on(OWN), resize_to(OWN, 800, 600), move_to(OWN, 0, 30)]);
+        // A window you parked takes a frame, and the result says it is yours.
+        let d = move_window(&shared, "t", &json!({ "window": PARKED })).data.expect("ok");
+        assert!(d["note"].as_str().unwrap().contains("parked"));
+        assert_all_quiet(&log);
+    }
+
+    #[test]
+    fn move_brings_an_agent_window_over_silently_and_never_while_it_is_shown() {
+        for shown in [false, true] {
+            let (shared, log) = setup(&format!("aws-move-over-{shown}"), shown);
+            // The agent's process has a window on workspace 3 that the daemon has not moved yet.
+            let me = std::process::id();
+            {
+                let mut c = shared.lock().unwrap();
+                let start = proc::start_time(me).unwrap_or(0);
+                c.model.apply(Event::ObserveWindow { window: "0xa9".into(), pid: me, start, app: "foot".into(), workspace: Some(3) }).unwrap();
+            }
+            let clients = json!([client("0xa9", me, "3", false)]).to_string();
+            let monitors = json!([area_mon(if shown { AGENT_SPECIAL } else { "" })]).to_string();
+            let (fake, flog) = fake_hypr(&format!("aws-move-over2-{shown}"), move |r| match r {
+                "j/clients" => clients.clone(),
+                "j/monitors" => monitors.clone(),
+                "j/workspaces" => "[]".into(),
+                _ => "ok".into(),
+            });
+            shared.lock().unwrap().hypr = fake.hypr.clone();
+            let e = move_window(&shared, "t", &json!({ "window": "0xa9" }));
+            if shown {
+                assert_eq!(code(&e), "in_use");
+                assert!(dispatches(&flog).is_empty());
+            } else {
+                let d = e.data.expect("ok");
+                assert_eq!((d["moved"].clone(), d["from"].clone()), (json!(true), json!("3")));
+                assert_eq!(dispatches(&flog), [to_agent("0xa9")]);
+            }
+            assert_all_quiet(&flog);
+            assert!(dispatches(&log).is_empty());
+        }
+    }
+
+    #[test]
+    fn close_closes_only_what_this_session_opened() {
+        let (shared, log) = setup("aws-close", false);
+        let me = std::process::id();
+        let start = proc::start_time(me).unwrap_or(0);
+        shared.lock().unwrap().sessions.record("s1", OWN, Opened { pid: me, start, app: "foot".into() });
+        let refuse = |w: &str, s: &str| code(&close_window(&shared, "t", &json!({ "window": w, "session": s })));
+        assert_eq!(refuse(OWN2, "s1"), "not_in_scope", "the agent's window, but not opened by this session");
+        assert_eq!(refuse(OWN, "s2"), "not_in_scope", "another session's window");
+        assert_eq!(refuse(OWN, ""), "not_in_scope", "no session");
+        assert_eq!(refuse(YOURS, "s1"), "not_in_scope", "your window");
+        assert_eq!(refuse(PARKED, "s1"), "not_in_scope", "a window you parked");
+        assert_eq!(refuse("active", "s1"), "invalid_args");
+        assert!(dispatches(&log).is_empty(), "nothing was sent for any refusal: {:?}", dispatches(&log));
+        let d = close_window(&shared, "t", &json!({ "window": OWN, "session": "s1" })).data.expect("ok");
+        for k in ["window", "app", "pressed", "target"] {
+            assert!(d.get(k).is_some(), "{k}");
+        }
+        assert_eq!(d["closed"], false, "the fake Hyprland keeps listing it");
+        assert_eq!(dispatches(&log), [close(OWN)]);
+        assert_all_quiet(&log);
+    }
+
+    #[test]
+    fn a_reused_pid_does_not_pass_close() {
+        let mut s = SessionWindows::default();
+        assert!(s.record("s1", "0x1", Opened { pid: 7, start: 100, app: "foot".into() }));
+        assert!(!s.record("s2", "0x1", Opened { pid: 7, start: 100, app: "foot".into() }), "never two sessions");
+        assert!(s.opened_by("s1", "0x1", 7, 100));
+        assert!(!s.opened_by("s1", "0x1", 7, 101), "same pid, another process");
+        assert!(!s.opened_by("s1", "0x1", 8, 100));
+        assert!(!s.opened_by("s2", "0x1", 7, 100));
+        s.forget("0x1");
+        assert!(!s.opened_by("s1", "0x1", 7, 100));
+        assert!(!s.record("", "0x2", Opened { pid: 7, start: 1, app: "x".into() }));
+    }
+
+    #[test]
+    fn a_dialog_is_usable_only_from_an_agent_process() {
+        let me = std::process::id();
+        let start = proc::start_time(me).unwrap_or(0);
+        let mut m = Model::new();
+        m.apply(Event::ObserveWindow { window: "0x1".into(), pid: me, start, app: "foot".into(), workspace: None }).unwrap();
+        m.apply(Event::ObserveWindow { window: "0x2".into(), pid: me, start, app: "foot".into(), workspace: None }).unwrap();
+        m.apply(Event::AgentRegister { pid: me, start }).unwrap();
+        let cl = |addr: &str, pid: u32, ws_id: i64, ws: &str, floating: bool| Client { addr: addr.into(), pid, ws_id, ws_name: ws.into(), monitor: 0, class: "x".into(), title: String::new(), mapped: true, stable_id: String::new(), floating };
+        assert_eq!(standing(&m, &cl("0x2", me, -98, AGENT_SPECIAL, true), start, true, false), Standing::Child);
+        assert_eq!(standing(&m, &cl("0x2", me, -98, AGENT_SPECIAL, true), start, true, true), Standing::Own, "floated by arrange, not a dialog");
+        assert_eq!(standing(&m, &cl("0x1", me, -98, AGENT_SPECIAL, false), start, true, false), Standing::Own);
+        assert_eq!(standing(&m, &cl("0x9", me, -1, "", true), start, false, false), Standing::Child, "unplaced");
+        assert!(unplaced_child(&m, &cl("0x9", me, -1, "", true), start));
+        // Another process's dialog, on the agent workspace or unplaced, is not the agent's.
+        assert_eq!(standing(&m, &cl("0x8", 1, -98, AGENT_SPECIAL, true), 0, false, false), Standing::Yours);
+        assert!(!unplaced_child(&m, &cl("0x8", 1, -1, "", true), 0));
+        // The agent's dialog that landed on your workspace is not usable there.
+        assert_eq!(standing(&m, &cl("0x7", me, 3, "3", true), start, false, false), Standing::OwnElsewhere);
+        assert!(!unplaced_child(&m, &cl("0x7", me, 3, "3", true), start));
+        assert!(!unplaced_child(&m, &cl("0x9", me, -1, "", false), start), "a dialog floats");
+    }
+
+    #[test]
+    fn focus_is_reported_like_the_macs() {
+        assert_eq!(focus_json(Some("0x1"), Some("0x1"), 3, 3), json!({ "changed": false, "returned": false }));
+        assert_eq!(focus_json(Some("0x1"), Some("0x2"), 3, 4), json!({ "changed": true, "returned": true }));
+    }
+}
