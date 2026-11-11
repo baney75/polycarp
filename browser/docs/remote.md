@@ -82,7 +82,7 @@ and `remote status --json` give the `state` or check name in the first column.
 | `port_busy` | Another program uses the local port or 8443. | Stop it, or `remote setup --port N`. |
 | `dns` | Public DNS has no public address (A or AAAA) for the name, or the lookup failed (SERVFAIL). | No address yet: wait a few minutes for a new name; else `remote fix`. A failed lookup: fix the name's DNS records or DNSSEC with your DNS provider. |
 | `tls` | The certificate isn't valid for the name, the port speaks plain HTTP, or nothing answers. | `remote fix`; on your own front door, a certificate for the name. |
-| `resource_metadata` | The public name reaches something that isn't this connector. | `remote fix` (restarts `serve`; a renamed computer gets its new URL). |
+| `resource_metadata` | The public name reaches something that isn't this connector, or (`pending`) its tunnel or gateway answers 502, 503, 504, 521, 522, 523 or 530 or nothing: it hasn't connected yet. | A pending one: wait a minute, then `remote test`. Otherwise, or if it stays: `remote fix` (restarts `serve` and the tunnel; a renamed computer gets its new URL). |
 | `auth_metadata` | The OAuth server metadata names another address, or no authorization or token endpoint on this one. | `remote fix`. |
 | `auth_challenge` | `/mcp` doesn't answer a sign-in challenge. | `remote fix`. |
 | `streaming` | The stream's first bytes take over 5 seconds, so assistants time out. | Use Tailscale Funnel or a Cloudflare named tunnel, not a quick tunnel or a buffering proxy. |
@@ -213,7 +213,11 @@ failure, 2 for a usage error and 3 when a person has to do something, which `nex
 
 `setup --json` ends with `checks`, the same list `remote test --json` gives (below). Only a failure marked `pending`
 (no public address yet, or nothing answering yet) is what a new name looks like for a few minutes; setup is then `on` and
-says to run `remote test` later. Any other failed check (a refused certificate, a 421, another connector's metadata, a
+says to run `remote test` later. One kind of pending failure it waits out itself: the name resolves and has a certificate,
+but the tunnel or gateway in front of `serve` answers 502, 503, 504, 521, 522, 523 or 530, or nothing, as a Cloudflare
+tunnel does for a minute after its service starts. Setup asks again every 5 seconds for up to 5 minutes (one deadline with
+the wait for the name), and if the tunnel still hasn't connected it is a `problem` whose `code` is that check's name, with
+`next` `run_command` `remote fix` (exit 3). Any other failed check (a refused certificate, a 421, another connector's metadata, a
 held stream, no sign-in challenge) makes setup a `problem` whose `code` is that check's name, exit 1, with the saved
 `connectorUrl`, and `remote.json` is kept. Every failure after `remote.json` is saved carries `connectorUrl`. With `--connect-code`, a code that can't be made is a `problem` with `code`
 `connect_code`, the reason in `connectCodeProblem`, the `connectorUrl` and, when this run made it, the `passcode`; it exits
@@ -222,9 +226,11 @@ held stream, no sign-in challenge) makes setup a `problem` whose `code` is that 
 `remote test --json` prints `{ok, state, code?, message, publicUrl, connectorUrl, checks}`. `state` is `on` when every
 check passes, else `problem` with `code` naming the first failed check. Each of `checks` is `{name, status, detail,
 next?, pending?}`: `status` is `ok`, `warn` or `fail`, `next` is the one thing to do after a failure, `pending` is true on
-a failure that waiting fixes, and `name` is, in order, `dns`, `tls`, `resource_metadata`, `auth_metadata`,
+a failure that waiting fixes (no public address yet, a refused connection, no route from this computer, a resolver's
+HTTP error, or a gateway status or no answer past TLS), and `name` is, in order, `dns`, `tls`, `resource_metadata`, `auth_metadata`,
 `auth_challenge`, `streaming` or `probe_cleanup` (only when the probe's token couldn't be deleted). Checks after a failed `dns` or
-`tls` don't run, and `streaming` runs only when `resource_metadata` passed. Nothing set up is `code` `not_set_up` with
+`tls` don't run, and `streaming` runs only when `resource_metadata` passed. `remote fix --dry-run` always exits 0, even when
+a step only you can take blocks the rest; the JSON still names it. Nothing set up is `code` `not_set_up` with
 `next` `run_command`. Exit codes: 0 every check passed, 1 a check failed, 2 usage, 3 nothing is set up. No token is
 ever in it.
 
