@@ -76,7 +76,7 @@ impl SessionWindows {
     /// when both are known, so a reused pid does not pass.
     pub fn opened_by(&self, session: &str, window: &str, pid: u32, start: u64) -> bool {
         !session.is_empty()
-            && self.opened.get(session).and_then(|w| w.get(window)).is_some_and(|e| e.o.pid == pid && (e.o.start == 0 || start == 0 || e.o.start == start))
+            && self.opened.get(session).and_then(|w| w.get(window)).is_some_and(|e| e.o.pid == pid && e.o.start != 0 && e.o.start == start)
     }
 
     pub fn forget(&mut self, window: &str) {
@@ -361,7 +361,7 @@ pub fn standing(model: &Model, cl: &Client, start: u64, oldest: bool, placed: bo
 }
 
 /// Whether `addr` is the first window of process `pid` on the agent workspace, in the model's order.
-fn oldest_of(model: &Model, clients: &[Client], pid: u32, addr: &str) -> bool {
+pub(crate) fn oldest_of(model: &Model, clients: &[Client], pid: u32, addr: &str) -> bool {
     model.agent_windows().into_iter().find(|w| clients.iter().any(|o| o.addr == *w && o.pid == pid && o.ws_name == AGENT_SPECIAL)) == Some(addr)
 }
 
@@ -391,7 +391,8 @@ pub fn parent_of(model: &Model, clients: &[Client], child: &Client) -> Option<St
 
 fn scope_name(s: Standing) -> &'static str {
     match s {
-        Standing::Own | Standing::Child | Standing::OwnElsewhere => "agent_workspace",
+        Standing::Own | Standing::Child => "agent_workspace",
+        Standing::OwnElsewhere => "moved_out_by_user",
         Standing::Yours => "yours",
     }
 }
@@ -459,21 +460,22 @@ struct Owner {
 /// Right before a dispatch: Hyprland is asked again, and the window must still be on `special:agent`
 /// and belong to the same registered agent process (pid and start time). The Core lock does not stop
 /// the compositor: the user can move a window back between the selection and the dispatch.
-fn still_agents(c: &Core, addr: &str, who: Owner) -> Result<(), String> {
-    let cl = c.client(addr).ok_or_else(|| format!("window {addr} is gone"))?;
+fn still_agents(c: &Core, addr: &str, who: Owner) -> Result<(), Step> {
+    let clients = c.try_clients().map_err(|e| Step::Compositor(format!("cannot read Hyprland: {e}")))?;
+    let cl = clients.into_iter().find(|x| x.addr == addr).ok_or_else(|| Step::Scope(format!("window {addr} is gone")))?;
     let start = proc::start_time(cl.pid).unwrap_or(0);
     if cl.ws_name != AGENT_SPECIAL {
-        return Err(format!("window {addr} left the agent workspace"));
+        return Err(Step::Scope(format!("window {addr} left the agent workspace")));
     }
     if cl.pid != who.pid || (who.start != 0 && start != who.start) || c.model.agent_proc(cl.pid).is_none() || !c.model.is_agent_pid(cl.pid, start) {
-        return Err(format!("window {addr} no longer belongs to the agent process it was chosen with"));
+        return Err(Step::Scope(format!("window {addr} no longer belongs to the agent process it was chosen with")));
     }
     Ok(())
 }
 
 /// Checks the target, then sends one dispatch.
 fn send_checked(c: &Core, addr: &str, who: Owner, lua: &str) -> Result<(), Step> {
-    still_agents(c, addr, who).map_err(Step::Scope)?;
+    still_agents(c, addr, who)?;
     send(c, lua).map_err(Step::Compositor)
 }
 
@@ -489,7 +491,7 @@ enum Step {
 /// the Mac's `applied` ("now": Hyprland applies a frame at once, also on a hidden special workspace,
 /// or "skipped: ..." when Hyprland refused). `Err` is a scope change, with whether the window had
 /// already been changed.
-fn apply_frame(c: &mut Core, addr: &str, who: Owner, f: Rect) -> Result<String, (String, bool)> {
+fn apply_frame(c: &mut Core, addr: &str, who: Owner, f: Rect) -> Result<(String, bool), (String, bool)> {
     let steps = [float_on(addr), resize_to(addr, f.w as i64, f.h as i64), move_to(addr, f.x as i64, f.y as i64)];
     for (i, lua) in steps.iter().enumerate() {
         match send_checked(c, addr, who, lua) {
@@ -498,10 +500,10 @@ fn apply_frame(c: &mut Core, addr: &str, who: Owner, f: Rect) -> Result<String, 
                 c.placed.insert(addr.to_string());
             }
             Err(Step::Scope(why)) => return Err((why, i > 0)),
-            Err(Step::Compositor(e)) => return Ok(format!("skipped: {e}")),
+            Err(Step::Compositor(e)) => return Ok((format!("skipped: {e}"), i > 0)),
         }
     }
-    Ok("now".into())
+    Ok(("now".into(), true))
 }
 
 fn owner_of(cl: &Client) -> Owner {
@@ -591,8 +593,8 @@ fn arrange_locked(c: &mut Core, args: &Value) -> Envelope {
             None => place(Rect { x: laid[i].x - area.x, y: laid[i].y - area.y, w: laid[i].w, h: laid[i].h }, area),
         };
         match apply_frame(c, &cl.addr, owner_of(cl), f) {
-            Ok(applied) => {
-                if applied == "now" {
+            Ok((applied, touched)) => {
+                if touched {
                     changed.push(cl.addr.clone());
                 }
                 out.push(json!({ "window": cl.addr, "app": cl.class, "applied": applied, "frame": f.json() }));
@@ -640,6 +642,7 @@ fn move_locked(c: &mut Core, args: &Value) -> (Envelope, Option<u32>) {
     let from = if cl.ws_name.is_empty() { Value::Null } else { json!(cl.ws_name) };
     let moves = match st {
         Standing::Own => false,
+        Standing::OwnElsewhere if !cl.ws_name.is_empty() => return (moved_out(&cl), pid),
         Standing::OwnElsewhere => true,
         Standing::Child => return (Envelope::err("not_supported", format!("window {addr} is a dialog of {}; it goes where its app's window goes", cl.class), Retry::Never, "Answer it where it is, or move its parent window."), pid),
         Standing::Yours => return (no_lend(&format!("window {addr} of {}", cl.class)), pid),
@@ -652,10 +655,10 @@ fn move_locked(c: &mut Core, args: &Value) -> (Envelope, Option<u32>) {
             Some(true) => return (Envelope::err("in_use", "the user is looking at the agent workspace, so nothing is moved onto it now", Retry::Safe, "Retry once it is hidden, or work on a window already there. Do not ask the user to hide it."), pid),
             None => return (Envelope::err("compositor_error", "cannot tell whether the agent workspace is shown", Retry::Safe, "Try again."), pid),
         }
-        // An agent process's window off the agent workspace is one the daemon moves there anyway (R-A3).
-        // Checked again right before: still that agent process's, and still not on a workspace it may not leave.
+        // Only a window Hyprland has not placed yet comes over (the daemon moves those there anyway, R-A3).
+        // Checked again right before: still unplaced, and still that agent process's.
         let fresh = c.client(&addr);
-        let ok = fresh.as_ref().is_some_and(|f| f.pid == who.pid && (who.start == 0 || proc::start_time(f.pid).unwrap_or(0) == who.start) && c.model.is_agent_pid(f.pid, who.start) && c.model.agent_proc(f.pid).is_some());
+        let ok = fresh.as_ref().is_some_and(|f| f.ws_name.is_empty() && f.pid == who.pid && (who.start == 0 || proc::start_time(f.pid).unwrap_or(0) == who.start) && c.model.is_agent_pid(f.pid, who.start) && c.model.agent_proc(f.pid).is_some());
         if !ok {
             return (stopped(&format!("window {addr} no longer belongs to the agent process it was chosen with"), &[], std::slice::from_ref(&addr), vec![]), pid);
         }
@@ -671,7 +674,7 @@ fn move_locked(c: &mut Core, args: &Value) -> (Envelope, Option<u32>) {
         };
         let f = place(rel, area);
         match apply_frame(c, &addr, who, f) {
-            Ok(applied) => {
+            Ok((applied, _)) => {
                 data["frame"] = f.json();
                 data["applied"] = json!(applied);
             }
@@ -682,6 +685,12 @@ fn move_locked(c: &mut Core, args: &Value) -> (Envelope, Option<u32>) {
         }
     }
     (Envelope::ok(data), pid)
+}
+
+/// An agent's window the user took to one of their workspaces is theirs from then on: nothing is
+/// sent for it until they move it back to the agent workspace.
+fn moved_out(cl: &Client) -> Envelope {
+    Envelope::err("not_in_scope", format!("window {} of {} is on workspace {}: the user moved it out of the agent workspace, so it is theirs now", cl.addr, cl.class, cl.ws_name), Retry::Never, "Leave it where it is. It is back in scope only if the user moves it back.")
 }
 
 // ---- close --------------------------------------------------------------------------------
@@ -714,7 +723,11 @@ pub fn close_window(shared: &Shared, agent: &str, args: &Value) -> Envelope {
         let c = lock(shared);
         let clients = match c.try_clients() {
             Ok(v) => v,
-            Err(e) => return Envelope::err("compositor_error", format!("cannot read Hyprland: {e}"), Retry::Safe, "Is Hyprland running?"),
+            Err(e) => {
+                let env = Envelope::err("compositor_error", format!("cannot read Hyprland: {e}"), Retry::Safe, "Is Hyprland running?");
+                record(&c, agent, "close", None, Some(&addr), None, "ctl", &env);
+                return env;
+            }
         };
         let all = standings(&c, &clients);
         let Some((cl, st)) = all.iter().find(|(cl, _)| cl.addr == addr).cloned() else {
@@ -727,13 +740,11 @@ pub fn close_window(shared: &Shared, agent: &str, args: &Value) -> Envelope {
             record(&c, agent, "close", Some(cl.pid), Some(&addr), None, "ctl", &env);
             return env;
         }
-        if let Err(Step::Scope(why)) = still_agents(&c, &addr, Owner { pid: cl.pid, start }).map_err(Step::Scope) {
-            let env = stopped(&why, &[], std::slice::from_ref(&addr), vec![]);
-            record(&c, agent, "close", Some(cl.pid), Some(&addr), None, "ctl", &env);
-            return env;
-        }
-        if let Err(e) = send(&c, &close(&addr)) {
-            let env = Envelope::err("compositor_error", format!("Hyprland did not take the close request: {e}"), Retry::Never, "Run `baneyspaces agent windows`.");
+        if let Err(step) = send_checked(&c, &addr, Owner { pid: cl.pid, start }, &close(&addr)) {
+            let env = match step {
+                Step::Scope(why) => stopped(&why, &[], std::slice::from_ref(&addr), vec![]),
+                Step::Compositor(e) => Envelope::err("compositor_error", format!("Hyprland did not take the close request: {e}"), Retry::Never, "Run `baneyspaces agent windows`."),
+            };
             record(&c, agent, "close", Some(cl.pid), Some(&addr), None, "ctl", &env);
             return env;
         }
@@ -1096,35 +1107,38 @@ mod tests {
     }
 
     #[test]
-    fn move_brings_an_agent_window_over_silently_and_never_while_it_is_shown() {
+    fn an_agent_window_the_user_moved_out_is_theirs() {
         for shown in [false, true] {
-            let (shared, log) = setup(&format!("aws-move-over-{shown}"), shown);
-            // The agent's process has a window on workspace 3 that the daemon has not moved yet.
+            let (shared, log) = setup(&format!("aws-moved-out-{shown}"), shown);
+            // The user took the agent's foot window to workspace 3, where it is in front.
             let me = std::process::id();
+            let start = proc::start_time(me).unwrap_or(0);
             {
                 let mut c = shared.lock().unwrap();
-                let start = proc::start_time(me).unwrap_or(0);
                 c.model.apply(Event::ObserveWindow { window: "0xa9".into(), pid: me, start, app: "foot".into(), workspace: Some(3) }).unwrap();
+                c.sessions.record("s1", "0xa9", Opened { pid: me, start, app: "foot".into() });
             }
             let clients = json!([client("0xa9", me, "3", false)]).to_string();
             let monitors = json!([area_mon(if shown { AGENT_SPECIAL } else { "" })]).to_string();
-            let (fake, flog) = fake_hypr(&format!("aws-move-over2-{shown}"), move |r| match r {
+            let (fake, flog) = fake_hypr(&format!("aws-moved-out2-{shown}"), move |r| match r {
                 "j/clients" => clients.clone(),
                 "j/monitors" => monitors.clone(),
                 "j/workspaces" => "[]".into(),
+                "j/activewindow" => "{\"address\":\"0xa9\"}".into(),
                 _ => "ok".into(),
             });
             shared.lock().unwrap().hypr = fake.hypr.clone();
-            let e = move_window(&shared, "t", &json!({ "window": "0xa9" }));
-            if shown {
-                assert_eq!(code(&e), "in_use");
-                assert!(dispatches(&flog).is_empty());
-            } else {
-                let d = e.data.expect("ok");
-                assert_eq!((d["moved"].clone(), d["from"].clone()), (json!(true), json!("3")));
-                assert_eq!(dispatches(&flog), [to_agent("0xa9")]);
+            for e in [
+                move_window(&shared, "t", &json!({ "window": "0xa9" })),
+                move_window(&shared, "t", &json!({ "window": "0xa9", "frame": "0,0,800,600" })),
+                arrange(&shared, "t", &json!({ "layout": "full", "windows": ["0xa9"] })),
+                close_window(&shared, "t", &json!({ "window": "0xa9", "session": "s1" })),
+            ] {
+                assert_eq!(code(&e), "not_in_scope", "{:?}", e.error);
             }
-            assert_all_quiet(&flog);
+            assert!(dispatches(&flog).is_empty(), "nothing sent: {:?}", dispatches(&flog));
+            let d = workspaces(&shared, "t").data.expect("still listed");
+            assert_eq!(d["your_windows"][0]["scope"], "moved_out_by_user");
             assert!(dispatches(&log).is_empty());
         }
     }

@@ -494,6 +494,12 @@ impl Core {
         if !c.mapped || self.model.is_tracked(&c.addr) {
             return;
         }
+        // A new window: nothing recorded under its address (a missed close) carries over to it. A
+        // resync rebuilds the model from windows that still exist, so their records stay.
+        if !self.resyncing {
+            self.sessions.forget(&c.addr);
+            self.placed.remove(&c.addr);
+        }
         let on_agent = c.ws_name == AGENT_SPECIAL;
         let n = if on_agent { None } else { decode(c.ws_id, &c.ws_name) };
         if !on_agent && n.is_none() {
@@ -505,6 +511,7 @@ impl Core {
         if existing {
             let ev = Event::ObserveWindow { window: c.addr.clone(), pid: c.pid, start, app: c.class.clone(), workspace: n };
             let _ = self.apply(ev);
+            self.claim_window(&c.addr, c.pid, start);
             return;
         }
         let monitor = self.monitors().into_iter().find(|m| m.id == c.monitor).map(|m| m.name);
@@ -671,8 +678,16 @@ impl Core {
         let live: HashSet<&str> = clients.iter().map(|c| c.addr.as_str()).collect();
         let gone: Vec<String> = self.model.window_ids().into_iter().filter(|w| !live.contains(*w)).map(String::from).collect();
         for w in gone {
-            let _ = self.apply(Event::Close { window: w });
+            self.window_gone(&w);
         }
+    }
+
+    /// A window closed, by its event or found missing by reconciliation. Every record keyed to its
+    /// address ends here: an address can come back for a later window, which starts unowned.
+    fn window_gone(&mut self, addr: &str) {
+        self.sessions.forget(addr);
+        self.placed.remove(addr);
+        let _ = self.apply(Event::Close { window: addr.to_string() });
     }
 
     /// R-F2 on Linux rests on `misc:focus_on_activate = false`: with it, an app asking for focus
@@ -741,12 +756,7 @@ impl Core {
                     self.open_client(&c, false);
                 }
             }
-            HyprEvent::CloseWindow { addr } => {
-                // An address can come back for a later window: what a session opened ends here.
-                self.sessions.forget(&addr);
-                self.placed.remove(&addr);
-                let _ = self.apply(Event::Close { window: addr });
-            }
+            HyprEvent::CloseWindow { addr } => self.window_gone(&addr),
             HyprEvent::ActiveWindow { addr } => {
                 // An event can arrive after the focus has moved on (our own dispatches make some: a
                 // monitor is focused for a moment to hide the agent workspace there). Only what is
@@ -1099,8 +1109,8 @@ fn agent_status(c: &Core) -> Value {
         .map(|w| {
             let cl = clients.get(w);
             let pid = c.model.pid_of(w);
-            // A dialog of an agent process: floating, not floated by `arrange`, next to another window of its process.
-            let dialog = cl.filter(|x| x.floating && !c.placed.contains(w) && list.iter().any(|o| o.pid == x.pid && o.addr != x.addr && o.ws_name == AGENT_SPECIAL));
+            // A dialog of an agent process: floating, not floated by `arrange`, not its process's first window there (`agentws::standing`).
+            let dialog = cl.filter(|x| x.floating && !c.placed.contains(w) && x.ws_name == AGENT_SPECIAL && !agentws::oldest_of(&c.model, &list, x.pid, w));
             let parent = dialog.and_then(|d| agentws::parent_of(&c.model, &list, d));
             json!({ "window": w, "app": cl.map(|c| c.class.clone()).unwrap_or_default(), "title": cl.map(|c| c.title.clone()).unwrap_or_default(), "pid": pid, "drivable": pid.is_some_and(|p| c.model.agent_proc(p).is_some() && !c.bus_lost_for(p)), "kind": if dialog.is_some() { "dialog" } else { "window" }, "parent": parent })
         })
@@ -1381,6 +1391,8 @@ fn launch_on_agent(shared: &Shared, agent: &str, plan: Plan, opts: &OpenOpts) ->
             Retry::Never,
             "Agents drive only a process BaneySpaces started. Use the app's files or command line instead, or ask the user to lend it.",
         )
+    } else if !(claims && opts.wait.is_some()) {
+        Envelope::err("timeout", format!("{label} is running (pid {}) but opened no window within 8 s", alive[0]), Retry::Never, "Check `baneyspaces agent status`; the app may need a display flag.")
     } else {
         // Still starting. Its first window is claimed for this session when it comes (the claim was
         // recorded with the exec), so this is not a failure: the window is just not here yet.
@@ -1734,6 +1746,38 @@ pub(crate) mod tests {
 
     pub(crate) fn mon(id: i64, name: &str, focused: bool, ws: i64) -> Value {
         json!({ "id": id, "name": name, "focused": focused, "disabled": false, "activeWorkspace": { "id": ws, "name": ws.to_string() }, "specialWorkspace": { "name": "" } })
+    }
+
+    /// A window that closes with its event missed leaves no record behind, and a later window at the
+    /// same address, of the same process, starts unowned.
+    #[test]
+    fn a_missed_close_leaves_no_owner_for_the_address() {
+        let me = std::process::id();
+        let start = crate::proc::start_time(me).unwrap_or(0);
+        let listed: std::sync::Arc<Mutex<Vec<Value>>> = Default::default();
+        let list = listed.clone();
+        let (mut c, _log) = fake_hypr("missed-close", move |r| match r {
+            "j/clients" => Value::Array(list.lock().unwrap().clone()).to_string(),
+            "j/monitors" => json!([mon(0, "A", true, 1)]).to_string(),
+            _ => "[]".into(),
+        });
+        c.model.apply(Event::AgentRegister { pid: me, start }).unwrap();
+        let w = json!({ "address": "0xe1", "pid": me, "workspace": { "id": -98, "name": AGENT_SPECIAL }, "monitor": 0, "class": "foot", "title": "t", "mapped": true, "floating": false, "stableId": "1" });
+        let cl = Core::parse_clients(&json!([w.clone()]))[0].clone();
+        listed.lock().unwrap().push(w);
+        c.open_client(&cl, false);
+        assert!(c.sessions.record("s1", "0xe1", agentws::Opened { pid: me, start, app: "foot".into() }));
+        c.placed.insert("0xe1".into());
+        // It closes; its event is missed and reconciliation finds it gone.
+        listed.lock().unwrap().clear();
+        c.reconcile_windows();
+        assert!(!c.model.is_tracked("0xe1"));
+        assert_eq!(c.sessions.owner("0xe1"), None, "reconciliation forgets the session record");
+        assert!(!c.placed.contains("0xe1"));
+        // A record the model no longer backs (say, from before a rebuild) does not pass to a new window there.
+        assert!(c.sessions.record("s1", "0xe1", agentws::Opened { pid: me, start, app: "foot".into() }));
+        c.open_client(&cl, false);
+        assert!(!c.sessions.opened_by("s1", "0xe1", me, start), "a new window at that address starts unowned");
     }
 
     /// `open` with `wait: 0` answers before the window exists; the window still goes to that session,

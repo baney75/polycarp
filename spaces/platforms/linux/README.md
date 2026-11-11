@@ -160,7 +160,7 @@ the verbs refuse their own dispatch if it matches, and the unit tests check ever
 | `workspaces` | none (`j/workspaces`, `j/monitors`, `j/clients`) | read only; counts, never titles of your windows |
 | `open` | `hl.dsp.exec_cmd(cmd, { workspace = "special:agent silent" })` (unchanged) | the exec rule places the window silently; the guard undoes any activation |
 | `arrange`, `move --frame` | `hl.dsp.window.float({ action = "enable", ... })`, `hl.dsp.window.resize({ x = W, y = H, ... })`, `hl.dsp.window.move({ x = X, y = Y, ... })` | these change the layout target only; float raises the window within `special:agent`, it does not focus it |
-| `move` of an agent window that is not there yet | `hl.dsp.window.move({ workspace = "special:agent", follow = false, ... })` | `follow = false` is the silent move: the target is not shown |
+| `move` of an agent window Hyprland has not placed on any workspace yet | `hl.dsp.window.move({ workspace = "special:agent", follow = false, ... })` | `follow = false` is the silent move: the target is not shown |
 | `close` | `hl.dsp.window.close({ ... })` | a close request, as Super+W sends; the app may ask to save first, and that dialog comes back as `opened` |
 
 Frames are in logical pixels from the top-left of the usable area (bars excluded) of the monitor that
@@ -174,7 +174,9 @@ Where Linux differs from the Mac, and why:
 - **Checked right before each dispatch.** Hyprland is asked again before every float, resize, move
   and close: the window must still be on `special:agent` and belong to the same agent process (pid
   and start time). If you took one back meanwhile, the call stops there, sends nothing more, and
-  answers `not_in_scope` with `changed` and `not_changed` lists.
+  answers `not_in_scope` with `changed` and `not_changed` lists. An agent's window you move to one of
+  your workspaces is yours from then on: every verb refuses it (`not_in_scope`), and `workspaces`
+  lists it as `moved_out_by_user` until you move it back.
 - **A slow start.** `open` records its session with the launch, before the window exists. With a
   `--wait` shorter than the app's start it answers `window: null, pending: true`, and the first window
   of the process that launch started is still recorded for that session when it comes (for 120 s);
