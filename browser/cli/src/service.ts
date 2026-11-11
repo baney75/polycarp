@@ -551,13 +551,11 @@ async function installWindows(spec: ServiceSpec, exec: Runner, binary: string, e
 		rmSync(xmlFile, { force: true });
 	}
 	if (created.code !== 0) {
-		const refused = /access is denied/i.test(created.out);
 		return {
 			ok: false,
 			file: script,
-			message: refused
-				? `Windows refused to make a scheduled task for ${user} (${created.out}); Polycarp never asks for administrator rights, so if your organization blocks scheduled tasks ask its admin to allow them, or ${keepRunning}.`
-				: `schtasks /Create failed: ${created.out}. The script is at ${script}.`,
+			// schtasks words its errors in the system's language, so every refusal gets the sentence, not just an English one.
+			message: `Windows didn't make a scheduled task for ${user} (${created.out}); Polycarp never asks for administrator rights, so if your organization blocks scheduled tasks, ask its admin to allow them, or ${keepRunning}.`,
 		};
 	}
 	// The task replaces a running copy itself (StopExisting), so /Run always starts the new script.

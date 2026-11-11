@@ -262,7 +262,7 @@ test("Access is denied fails with one sentence that says what to do, and never a
 		winSeam({ exec: fake.exec, windowsUser: "CORP\\x" });
 		const r = await installService(SERVE_SERVICE);
 		assert.equal(r.ok, false);
-		assert.match(r.message, /^Windows refused to make a scheduled task for CORP\\x \(ERROR: Access is denied\.\); Polycarp never asks for administrator rights, so .* ask its admin to allow them, or keep it running yourself: .* serve\.$/);
+		assert.match(r.message, /^Windows didn\'t make a scheduled task for CORP\\x \(ERROR: Access is denied\.\); Polycarp never asks for administrator rights, so .* ask its admin to allow them, or keep it running yourself: .* serve\.$/);
 		assert.equal(r.message.split(/\.\s+[A-Z]/).length, 1, "one sentence");
 		assert.deepEqual(fake.calls.map((c) => c[1]), ["/Create"]);
 		assert.ok(!fake.calls.flat().some((a) => /runas|\/RL|HIGHEST|Start-Process/i.test(a)));
@@ -627,6 +627,17 @@ test("uninstall kills the recorded tree, confirms it, then deletes the task; a p
 		winSeam({ exec: other.exec });
 		assert.equal(removeService(SERVE_SERVICE).ok, true);
 		assert.ok(!other.calls.some(([cmd]) => cmd === TASKKILL));
+	});
+});
+
+test("any refused /Create, in any language, gets the sentence about blocked scheduled tasks", async () => {
+	await inConfig("win-german", async () => {
+		const fake = fakeExec((cmd, args) => (args[0] === "/Create" ? { code: 1, out: "FEHLER: Zugriff verweigert" } : { code: 0, out: "" }));
+		winSeam({ exec: fake.exec, windowsUser: "CORP\\x" });
+		const r = await installService(SERVE_SERVICE);
+		assert.equal(r.ok, false);
+		assert.equal(r.message.split(/\.\s+[A-Z]/).length, 1, "one sentence");
+		assert.match(r.message, /^Windows didn't make a scheduled task for CORP\\x \(FEHLER: Zugriff verweigert\); Polycarp never asks for administrator rights, so if your organization blocks scheduled tasks, ask its admin to allow them, or keep it running yourself: .* serve\.$/);
 	});
 });
 
