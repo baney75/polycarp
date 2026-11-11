@@ -26,6 +26,8 @@ pub struct SnapInfo {
     pub window: String,
     pub pid: u32,
     pub start: u64,
+    /// Hyprland's `stableId` of the window: an address is reused for a later window, this is not.
+    pub stable: String,
 }
 
 /// Finds the pinned engine: `$BANEYSPACES_ENGINE`, `engine/` beside the binary or in the source
@@ -295,6 +297,8 @@ pub(crate) struct Plan {
     pub window: String,
     pub pid: u32,
     pub start: u64,
+    /// Hyprland's `stableId` of the window when it was guarded.
+    pub stable: String,
     pub title: String,
     pub class: String,
 }
@@ -318,10 +322,11 @@ pub(crate) fn guard(c: &Core, window: &str, expect: Option<&SnapInfo>) -> Result
         return Err(Envelope::err("not_in_scope", "that window is not on the agent workspace", Retry::Never, "Agents act only on windows on the agent workspace. Start the app with `baneyspaces agent open`."));
     }
     if let Some(s) = expect {
-        if s.pid != cl.pid || (s.start != 0 && s.start != start) {
+        // The address is the same; the window is not, if its `stableId` changed (the old one closed).
+        if s.pid != cl.pid || (s.start != 0 && s.start != start) || s.stable != cl.stable_id {
             return Err(Envelope::err(
                 "stale_ref",
-                "the window now belongs to a different process than the snapshot",
+                "the window is not the one the snapshot was taken of (another window or process has its address now)",
                 Retry::AfterSnapshot,
                 "Take a new snapshot.",
             ));
@@ -347,6 +352,7 @@ pub(crate) fn guard(c: &Core, window: &str, expect: Option<&SnapInfo>) -> Result
         window: window.into(),
         pid: cl.pid,
         start,
+        stable: cl.stable_id,
         title: cl.title,
         class: cl.class,
     })
@@ -457,7 +463,7 @@ pub fn run(shared: &Shared, agent: &str, args: &Value) -> Envelope {
     }
     {
         let c = crate::daemon::lock(shared);
-        let expect = SnapInfo { window: plan.window.clone(), pid: plan.pid, start: plan.start };
+        let expect = SnapInfo { window: plan.window.clone(), pid: plan.pid, start: plan.start, stable: plan.stable.clone() };
         if guard(&c, &plan.window, Some(&expect)).is_err() {
             let env = Envelope::err("not_in_scope", "the window changed while the call was being prepared (it moved, or its process changed), so nothing was sent", Retry::Never, "Take a new snapshot of a window on the agent workspace.");
             record(&c, agent, &verb, Some(plan.pid), Some(&plan.window), reference.as_deref(), "atspi", &env);
@@ -497,6 +503,7 @@ pub fn run(shared: &Shared, agent: &str, args: &Value) -> Envelope {
                     window: plan.window.clone(),
                     pid: plan.pid,
                     start: plan.start,
+                    stable: plan.stable.clone(),
                 },
             );
         }

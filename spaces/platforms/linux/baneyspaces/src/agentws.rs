@@ -14,8 +14,10 @@
 //!   before every dispatch. A window you parked there yourself (`agent move <window>`) is still
 //!   yours: never laid out, moved or closed. Linux has no lend sheet yet, so what the Mac allows only
 //!   through a lend or Full Access is `not_supported` here, and says so.
-//! - **`close` closes only what this session's `open` made**, by Hyprland address plus pid and start
-//!   time, and only while it is still on `special:agent`. It never quits an app or kills a process.
+//! - **`close` closes only what this session's `open` made**, by Hyprland address and `stableId` plus
+//!   pid and start time, and only while it is still on `special:agent`. An address can come back for
+//!   a later window of the same process; its `stableId` does not, so that window is not the
+//!   session's. It never quits an app or kills a process.
 
 #![allow(clippy::result_large_err)] // the crate's convention: an `Envelope` is the error, as in daemon.rs and hands.rs
 
@@ -38,6 +40,10 @@ pub struct Opened {
     pub start: u64,
     /// The app name `open` was given (foot, mpv, ...).
     pub app: String,
+    /// Hyprland's `stableId` of the window when it was recorded. An address is reused, this is not:
+    /// a later window at the same address has another one. Empty when Hyprland reported none, and
+    /// then the record never passes `opened_by`.
+    pub stable: String,
 }
 
 /// One window of a session's record, with the order it was opened in.
@@ -73,10 +79,22 @@ impl SessionWindows {
     }
 
     /// Whether this session opened this exact window of this exact process. Start times are compared
-    /// when both are known, so a reused pid does not pass.
-    pub fn opened_by(&self, session: &str, window: &str, pid: u32, start: u64) -> bool {
+    /// when both are known, so a reused pid does not pass. `stable` is the window's `stableId` now: it
+    /// must be the one recorded, so another window at a reused address does not pass, and a window
+    /// with no `stableId` (then or now) never passes.
+    pub fn opened_by(&self, session: &str, window: &str, pid: u32, start: u64, stable: &str) -> bool {
         !session.is_empty()
-            && self.opened.get(session).and_then(|w| w.get(window)).is_some_and(|e| e.o.pid == pid && e.o.start != 0 && e.o.start == start)
+            && !stable.is_empty()
+            && self.opened.get(session).and_then(|w| w.get(window)).is_some_and(|e| e.o.pid == pid && e.o.start != 0 && e.o.start == start && e.o.stable == stable)
+    }
+
+    /// Drops what is recorded under this address for any window but the one with this `stableId`.
+    pub fn keep_only(&mut self, window: &str, stable: &str) {
+        for w in self.opened.values_mut() {
+            if w.get(window).is_some_and(|e| stable.is_empty() || e.o.stable != stable) {
+                w.remove(window);
+            }
+        }
     }
 
     pub fn forget(&mut self, window: &str) {
@@ -378,7 +396,7 @@ fn standings(c: &Core, clients: &[Client]) -> Vec<(Client, Standing)> {
         .filter(|cl| cl.mapped)
         .map(|cl| {
             let start = proc::start_time(cl.pid).unwrap_or(0);
-            let s = standing(&c.model, cl, start, oldest_of(&c.model, clients, cl.pid, &cl.addr), c.placed.contains(&cl.addr));
+            let s = standing(&c.model, cl, start, oldest_of(&c.model, clients, cl.pid, &cl.addr), c.is_placed(cl));
             (cl.clone(), s)
         })
         .collect()
@@ -450,22 +468,28 @@ pub fn workspaces(shared: &Shared, agent: &str) -> Envelope {
 
 // ---- arrange and move ---------------------------------------------------------------------
 
-/// The process a target was selected with, checked again before every dispatch.
-#[derive(Clone, Copy, Debug)]
+/// The process and the window (`stableId`) a target was selected with, checked again before every
+/// dispatch.
+#[derive(Clone, Debug)]
 struct Owner {
     pid: u32,
     start: u64,
+    stable: String,
 }
 
-/// Right before a dispatch: Hyprland is asked again, and the window must still be on `special:agent`
-/// and belong to the same registered agent process (pid and start time). The Core lock does not stop
+/// Right before a dispatch: Hyprland is asked again, and the window must still be on `special:agent`,
+/// be the same window (`stableId`, since an address is reused) and belong to the same registered
+/// agent process (pid and start time). The Core lock does not stop
 /// the compositor: the user can move a window back between the selection and the dispatch.
-fn still_agents(c: &Core, addr: &str, who: Owner) -> Result<(), Step> {
+fn still_agents(c: &Core, addr: &str, who: &Owner) -> Result<(), Step> {
     let clients = c.try_clients().map_err(|e| Step::Compositor(format!("cannot read Hyprland: {e}")))?;
     let cl = clients.into_iter().find(|x| x.addr == addr).ok_or_else(|| Step::Scope(format!("window {addr} is gone")))?;
     let start = proc::start_time(cl.pid).unwrap_or(0);
     if cl.ws_name != AGENT_SPECIAL {
         return Err(Step::Scope(format!("window {addr} left the agent workspace")));
+    }
+    if cl.stable_id != who.stable {
+        return Err(Step::Scope(format!("window {addr} is another window now (the one chosen closed)")));
     }
     if cl.pid != who.pid || (who.start != 0 && start != who.start) || c.model.agent_proc(cl.pid).is_none() || !c.model.is_agent_pid(cl.pid, start) {
         return Err(Step::Scope(format!("window {addr} no longer belongs to the agent process it was chosen with")));
@@ -474,7 +498,7 @@ fn still_agents(c: &Core, addr: &str, who: Owner) -> Result<(), Step> {
 }
 
 /// Checks the target, then sends one dispatch.
-fn send_checked(c: &Core, addr: &str, who: Owner, lua: &str) -> Result<(), Step> {
+fn send_checked(c: &Core, addr: &str, who: &Owner, lua: &str) -> Result<(), Step> {
     still_agents(c, addr, who)?;
     send(c, lua).map_err(Step::Compositor)
 }
@@ -486,28 +510,40 @@ enum Step {
     Compositor(String),
 }
 
+/// Why a frame was not fully applied, with whether the window had already been changed.
+#[derive(Debug)]
+enum Halt {
+    /// The window's scope changed: stop everything.
+    Scope(String, bool),
+    /// Hyprland refused a step or did not answer it.
+    Compositor(String, bool),
+}
+
 /// Gives one window a frame: float it, size it, place it, each step after `still_agents`. Each
-/// dispatch names the window and none focuses it or shows its workspace (see the builders). `Ok` is
-/// the Mac's `applied` ("now": Hyprland applies a frame at once, also on a hidden special workspace,
-/// or "skipped: ..." when Hyprland refused). `Err` is a scope change, with whether the window had
-/// already been changed.
-fn apply_frame(c: &mut Core, addr: &str, who: Owner, f: Rect) -> Result<(String, bool), (String, bool)> {
+/// dispatch names the window and none focuses it or shows its workspace (see the builders). `Ok`
+/// means all three steps were taken (Hyprland applies a frame at once, also on a hidden special
+/// workspace). `Err` says which step stopped it and whether the window had already been changed.
+fn apply_frame(c: &mut Core, addr: &str, who: &Owner, f: Rect) -> Result<(), Halt> {
     let steps = [float_on(addr), resize_to(addr, f.w as i64, f.h as i64), move_to(addr, f.x as i64, f.y as i64)];
     for (i, lua) in steps.iter().enumerate() {
         match send_checked(c, addr, who, lua) {
             Ok(()) => {
                 // Floated by us from the first step on, so a half-placed window is never taken for a dialog.
-                c.placed.insert(addr.to_string());
+                c.placed.insert(addr.to_string(), who.stable.clone());
             }
-            Err(Step::Scope(why)) => return Err((why, i > 0)),
-            Err(Step::Compositor(e)) => return Ok((format!("skipped: {e}"), i > 0)),
+            Err(Step::Scope(why)) => return Err(Halt::Scope(why, i > 0)),
+            Err(Step::Compositor(e)) => {
+                // Refused or unanswered: what Hyprland did is not known, so it is read again before the next command.
+                c.dirty = true;
+                return Err(Halt::Compositor(e, i > 0));
+            }
         }
     }
-    Ok(("now".into(), true))
+    Ok(())
 }
 
 fn owner_of(cl: &Client) -> Owner {
-    Owner { pid: cl.pid, start: proc::start_time(cl.pid).unwrap_or(0) }
+    Owner { pid: cl.pid, start: proc::start_time(cl.pid).unwrap_or(0), stable: cl.stable_id.clone() }
 }
 
 /// The answer when a target's scope changed mid-call: nothing more was sent, and which windows were
@@ -592,14 +628,19 @@ fn arrange_locked(c: &mut Core, args: &Value) -> Envelope {
             Some(r) => place(*r, area),
             None => place(Rect { x: laid[i].x - area.x, y: laid[i].y - area.y, w: laid[i].w, h: laid[i].h }, area),
         };
-        match apply_frame(c, &cl.addr, owner_of(cl), f) {
-            Ok((applied, touched)) => {
+        match apply_frame(c, &cl.addr, &owner_of(cl), f) {
+            Ok(()) => {
+                changed.push(cl.addr.clone());
+                out.push(json!({ "window": cl.addr, "app": cl.class, "applied": "now", "frame": f.json() }));
+            }
+            // The Mac's `applied`: a window Hyprland refused is skipped and the rest are still laid out.
+            Err(Halt::Compositor(e, touched)) => {
                 if touched {
                     changed.push(cl.addr.clone());
                 }
-                out.push(json!({ "window": cl.addr, "app": cl.class, "applied": applied, "frame": f.json() }));
+                out.push(json!({ "window": cl.addr, "app": cl.class, "applied": format!("skipped: {e}"), "frame": f.json() }));
             }
-            Err((why, partly)) => {
+            Err(Halt::Scope(why, partly)) => {
                 if partly {
                     changed.push(cl.addr.clone());
                 }
@@ -658,7 +699,7 @@ fn move_locked(c: &mut Core, args: &Value) -> (Envelope, Option<u32>) {
         // Only a window Hyprland has not placed yet comes over (the daemon moves those there anyway, R-A3).
         // Checked again right before: still unplaced, and still that agent process's.
         let fresh = c.client(&addr);
-        let ok = fresh.as_ref().is_some_and(|f| f.ws_name.is_empty() && f.pid == who.pid && (who.start == 0 || proc::start_time(f.pid).unwrap_or(0) == who.start) && c.model.is_agent_pid(f.pid, who.start) && c.model.agent_proc(f.pid).is_some());
+        let ok = fresh.as_ref().is_some_and(|f| f.ws_name.is_empty() && f.stable_id == who.stable && f.pid == who.pid && (who.start == 0 || proc::start_time(f.pid).unwrap_or(0) == who.start) && c.model.is_agent_pid(f.pid, who.start) && c.model.agent_proc(f.pid).is_some());
         if !ok {
             return (stopped(&format!("window {addr} no longer belongs to the agent process it was chosen with"), &[], std::slice::from_ref(&addr), vec![]), pid);
         }
@@ -673,14 +714,23 @@ fn move_locked(c: &mut Core, args: &Value) -> (Envelope, Option<u32>) {
             Err(e) => return (e, pid),
         };
         let f = place(rel, area);
-        match apply_frame(c, &addr, who, f) {
-            Ok((applied, _)) => {
+        // Which windows a stopped frame leaves changed: this one, if a step or the move was taken.
+        let split = |partly: bool| -> (Vec<String>, Vec<String>) { if partly || moves { (vec![addr.clone()], vec![]) } else { (vec![], vec![addr.clone()]) } };
+        match apply_frame(c, &addr, &who, f) {
+            Ok(()) => {
                 data["frame"] = f.json();
-                data["applied"] = json!(applied);
+                data["applied"] = json!("now");
             }
-            Err((why, partly)) => {
-                let (ch, not): (Vec<String>, Vec<String>) = if partly || moves { (vec![addr.clone()], vec![]) } else { (vec![], vec![addr.clone()]) };
+            Err(Halt::Scope(why, partly)) => {
+                let (ch, not) = split(partly);
                 return (stopped(&why, &ch, &not, vec![data]), pid);
+            }
+            // A frame Hyprland refused or did not answer is a failure, never `ok`.
+            Err(Halt::Compositor(e, partly)) => {
+                let (ch, not) = split(partly);
+                let env = Envelope::err("compositor_error", format!("Hyprland did not apply the frame: {e}"), Retry::Never, "The window may be partly changed (see changed). Run `baneyspaces agent windows` before you try again.")
+                    .with_data(json!({ "changed": ch, "not_changed": not, "windows": [data] }));
+                return (env, pid);
             }
         }
     }
@@ -696,9 +746,10 @@ fn moved_out(cl: &Client) -> Envelope {
 // ---- close --------------------------------------------------------------------------------
 
 /// Why `close` refuses this window for this session, or None. Only a window this session's `open`
-/// made, of the same process, still the agent's on the agent workspace.
+/// made (the same `stableId`, not just the same address), of the same process, still the agent's on
+/// the agent workspace.
 pub fn close_refusal(sessions: &SessionWindows, session: &str, cl: &Client, start: u64, st: Standing) -> Option<Envelope> {
-    if !sessions.opened_by(session, &cl.addr, cl.pid, start) {
+    if !sessions.opened_by(session, &cl.addr, cl.pid, start, &cl.stable_id) {
         return Some(Envelope::err(
             "not_in_scope",
             format!("window {} of {} wasn't opened by this session", cl.addr, cl.class),
@@ -712,6 +763,14 @@ pub fn close_refusal(sessions: &SessionWindows, session: &str, cl: &Client, star
     None
 }
 
+/// Whether a window that appeared after a close request is one `close` may report: of the same
+/// registered agent process (`start` is the closed window's process start time) and on the agent
+/// workspace by Hyprland's word, or a dialog it has not placed on any workspace yet.
+fn asked_by(model: &Model, x: &Client, start: u64) -> bool {
+    let now = proc::start_time(x.pid).unwrap_or(0);
+    now == start && model.agent_proc(x.pid).is_some() && model.is_agent_pid(x.pid, now) && (x.ws_name == AGENT_SPECIAL || (x.floating && unplaced(x)))
+}
+
 pub fn close_window(shared: &Shared, agent: &str, args: &Value) -> Envelope {
     let session = args["session"].as_str().unwrap_or("").to_string();
     let Some(addr) = args["window"].as_str().filter(|a| valid_addr(a)).map(String::from) else {
@@ -719,7 +778,7 @@ pub fn close_window(shared: &Shared, agent: &str, args: &Value) -> Envelope {
         record(&lock(shared), agent, "close", None, None, None, "ctl", &env);
         return env;
     };
-    let (cl, before) = {
+    let (cl, start, before) = {
         let c = lock(shared);
         let clients = match c.try_clients() {
             Ok(v) => v,
@@ -740,7 +799,7 @@ pub fn close_window(shared: &Shared, agent: &str, args: &Value) -> Envelope {
             record(&c, agent, "close", Some(cl.pid), Some(&addr), None, "ctl", &env);
             return env;
         }
-        if let Err(step) = send_checked(&c, &addr, Owner { pid: cl.pid, start }, &close(&addr)) {
+        if let Err(step) = send_checked(&c, &addr, &Owner { pid: cl.pid, start, stable: cl.stable_id.clone() }, &close(&addr)) {
             let env = match step {
                 Step::Scope(why) => stopped(&why, &[], std::slice::from_ref(&addr), vec![]),
                 Step::Compositor(e) => Envelope::err("compositor_error", format!("Hyprland did not take the close request: {e}"), Retry::Never, "Run `baneyspaces agent windows`."),
@@ -748,8 +807,9 @@ pub fn close_window(shared: &Shared, agent: &str, args: &Value) -> Envelope {
             record(&c, agent, "close", Some(cl.pid), Some(&addr), None, "ctl", &env);
             return env;
         }
-        let before: HashSet<String> = clients.iter().map(|x| x.addr.clone()).collect();
-        (cl, before)
+        // By address and `stableId`: a new window at an address seen before is still a new window.
+        let before: HashSet<(String, String)> = clients.iter().map(|x| (x.addr.clone(), x.stable_id.clone())).collect();
+        (cl, start, before)
     };
     // Without the lock: give the app a second to close, or to ask (a save dialog of the same process).
     let deadline = Instant::now() + Duration::from_millis(1000);
@@ -758,8 +818,15 @@ pub fn close_window(shared: &Shared, agent: &str, args: &Value) -> Envelope {
         std::thread::sleep(Duration::from_millis(100));
         let c = lock(shared);
         let Ok(now) = c.try_clients() else { continue };
-        gone = !now.iter().any(|x| x.addr == addr);
-        opened = now.iter().find(|x| x.pid == cl.pid && !before.contains(&x.addr)).map(|d| json!({ "window": d.addr, "kind": if d.floating { "dialog" } else { "window" }, "title": d.title, "waiting": true, "parent": addr }));
+        // Gone when Hyprland no longer lists that window: the address with the same `stableId`.
+        gone = !now.iter().any(|x| x.addr == addr && x.stable_id == cl.stable_id);
+        // What the app asked before closing: a new window of the same process, and only one that is
+        // the agent's to read (on the agent workspace, or a dialog not placed yet). A window the user
+        // took to their workspace is theirs, and its title is not reported.
+        opened = now
+            .iter()
+            .find(|x| x.pid == cl.pid && !before.contains(&(x.addr.clone(), x.stable_id.clone())) && asked_by(&c.model, x, start))
+            .map(|d| json!({ "window": d.addr, "kind": if d.floating { "dialog" } else { "window" }, "title": d.title, "waiting": true, "parent": addr }));
         if gone || opened.is_some() {
             break;
         }
@@ -796,7 +863,7 @@ pub fn reuse(c: &Core, session: &str, app: &str) -> Option<Value> {
         .find_map(|(addr, o)| {
             let (cl, st) = all.iter().find(|(cl, _)| cl.addr == addr)?;
             let start = proc::start_time(cl.pid).unwrap_or(0);
-            (*st == Standing::Own && c.sessions.opened_by(session, &addr, cl.pid, start)).then(|| {
+            (*st == Standing::Own && c.sessions.opened_by(session, &addr, cl.pid, start, &cl.stable_id)).then(|| {
                 json!({ "window": addr, "pid": o.pid, "app": app, "title": cl.title, "workspace": AGENT_SPECIAL, "reused": true, "focus": { "changed": false, "returned": false } })
             })
         })
@@ -1116,7 +1183,7 @@ mod tests {
             {
                 let mut c = shared.lock().unwrap();
                 c.model.apply(Event::ObserveWindow { window: "0xa9".into(), pid: me, start, app: "foot".into(), workspace: Some(3) }).unwrap();
-                c.sessions.record("s1", "0xa9", Opened { pid: me, start, app: "foot".into() });
+                c.sessions.record("s1", "0xa9", Opened { pid: me, start, app: "foot".into(), stable: "1".into() });
             }
             let clients = json!([client("0xa9", me, "3", false)]).to_string();
             let monitors = json!([area_mon(if shown { AGENT_SPECIAL } else { "" })]).to_string();
@@ -1148,7 +1215,7 @@ mod tests {
         let (shared, log) = setup("aws-close", false);
         let me = std::process::id();
         let start = proc::start_time(me).unwrap_or(0);
-        shared.lock().unwrap().sessions.record("s1", OWN, Opened { pid: me, start, app: "foot".into() });
+        shared.lock().unwrap().sessions.record("s1", OWN, Opened { pid: me, start, app: "foot".into(), stable: "1".into() });
         let refuse = |w: &str, s: &str| code(&close_window(&shared, "t", &json!({ "window": w, "session": s })));
         assert_eq!(refuse(OWN2, "s1"), "not_in_scope", "the agent's window, but not opened by this session");
         assert_eq!(refuse(OWN, "s2"), "not_in_scope", "another session's window");
@@ -1169,15 +1236,109 @@ mod tests {
     #[test]
     fn a_reused_pid_does_not_pass_close() {
         let mut s = SessionWindows::default();
-        assert!(s.record("s1", "0x1", Opened { pid: 7, start: 100, app: "foot".into() }));
-        assert!(!s.record("s2", "0x1", Opened { pid: 7, start: 100, app: "foot".into() }), "never two sessions");
-        assert!(s.opened_by("s1", "0x1", 7, 100));
-        assert!(!s.opened_by("s1", "0x1", 7, 101), "same pid, another process");
-        assert!(!s.opened_by("s1", "0x1", 8, 100));
-        assert!(!s.opened_by("s2", "0x1", 7, 100));
+        assert!(s.record("s1", "0x1", Opened { pid: 7, start: 100, app: "foot".into(), stable: "5".into() }));
+        assert!(!s.record("s2", "0x1", Opened { pid: 7, start: 100, app: "foot".into(), stable: "5".into() }), "never two sessions");
+        assert!(s.opened_by("s1", "0x1", 7, 100, "5"));
+        assert!(!s.opened_by("s1", "0x1", 7, 101, "5"), "same pid, another process");
+        assert!(!s.opened_by("s1", "0x1", 8, 100, "5"));
+        assert!(!s.opened_by("s2", "0x1", 7, 100, "5"));
         s.forget("0x1");
-        assert!(!s.opened_by("s1", "0x1", 7, 100));
-        assert!(!s.record("", "0x2", Opened { pid: 7, start: 1, app: "x".into() }));
+        assert!(!s.opened_by("s1", "0x1", 7, 100, "5"));
+        assert!(!s.record("", "0x2", Opened { pid: 7, start: 1, app: "x".into(), stable: "5".into() }));
+    }
+
+    #[test]
+    fn another_window_at_the_same_address_does_not_pass_close() {
+        let mut s = SessionWindows::default();
+        assert!(s.record("s1", "0x1", Opened { pid: 7, start: 100, app: "foot".into(), stable: "5".into() }));
+        assert!(!s.opened_by("s1", "0x1", 7, 100, "6"), "same address, pid and start time, another window");
+        assert!(!s.opened_by("s1", "0x1", 7, 100, ""), "a window that reports no stableId");
+        // Recorded with no stableId: never owned, whatever the window reports now.
+        assert!(s.record("s1", "0x2", Opened { pid: 7, start: 100, app: "foot".into(), stable: String::new() }));
+        assert!(!s.opened_by("s1", "0x2", 7, 100, ""));
+        assert!(!s.opened_by("s1", "0x2", 7, 100, "5"));
+        // keep_only: the record stays for the same window and goes for any other, or for none.
+        s.keep_only("0x1", "5");
+        assert_eq!(s.owner("0x1"), Some("s1"));
+        s.keep_only("0x1", "6");
+        assert_eq!(s.owner("0x1"), None);
+        s.keep_only("0x2", "");
+        assert_eq!(s.owner("0x2"), None);
+    }
+
+    /// A Core like `setup`'s whose Hyprland lists `clients(dispatches so far)` and answers each
+    /// dispatch with `answer(dispatch)`.
+    fn setup_on(tag: &str, clients: impl Fn(usize) -> Value + Send + 'static, answer: fn(&str) -> &'static str) -> (Shared, Arc<Mutex<Vec<String>>>) {
+        let (shared, _) = setup(&format!("{tag}-model"), false);
+        let sent = std::sync::atomic::AtomicUsize::new(0);
+        let monitors = json!([area_mon("")]).to_string();
+        let (fake, log) = fake_hypr(tag, move |r| {
+            use std::sync::atomic::Ordering::SeqCst;
+            match r {
+                "j/clients" => clients(sent.load(SeqCst)).to_string(),
+                "j/monitors" => monitors.clone(),
+                "j/workspaces" => json!([{ "id": -98, "name": AGENT_SPECIAL, "windows": 1, "monitorID": 0 }]).to_string(),
+                _ => match r.strip_prefix("/dispatch ") {
+                    Some(lua) => {
+                        sent.fetch_add(1, SeqCst);
+                        answer(lua).into()
+                    }
+                    None => "ok".into(),
+                },
+            }
+        });
+        shared.lock().unwrap().hypr = fake.hypr.clone();
+        (shared, log)
+    }
+
+    #[test]
+    fn a_frame_hyprland_refuses_is_an_error_from_move() {
+        let me = std::process::id();
+        let (shared, log) = setup_on("aws-move-refused", move |_| json!([client(OWN, me, AGENT_SPECIAL, false)]), |lua| if lua.contains("window.resize") { "resize: no such window" } else { "ok" });
+        let e = move_window(&shared, "t", &json!({ "window": OWN, "frame": "0,0,800,600" }));
+        assert!(!e.ok, "a frame that was not applied is never ok");
+        assert_eq!(code(&e), "compositor_error");
+        let d = e.error.unwrap().data.expect("what was changed");
+        assert_eq!((d["changed"].clone(), d["not_changed"].clone()), (json!([OWN]), json!([])), "it was floated before the resize failed");
+        assert_eq!(dispatches(&log), [float_on(OWN), resize_to(OWN, 800, 600)], "nothing is sent after the step that failed");
+        assert!(shared.lock().unwrap().dirty, "Hyprland is read again before the next command");
+        // The first step refused: nothing was changed.
+        let (shared, _log) = setup_on("aws-move-refused-first", move |_| json!([client(OWN, me, AGENT_SPECIAL, false)]), |_| "no");
+        let e = move_window(&shared, "t", &json!({ "window": OWN, "frame": "0,0,800,600" }));
+        assert_eq!(code(&e), "compositor_error");
+        assert_eq!(e.error.unwrap().data.unwrap()["not_changed"], json!([OWN]));
+    }
+
+    #[test]
+    fn close_reports_only_a_new_window_that_is_still_the_agents() {
+        let me = std::process::id();
+        let start = proc::start_time(me).unwrap_or(0);
+        let mut asked = client("0xd1", me, AGENT_SPECIAL, true);
+        asked["stableId"] = json!("2");
+        let mut taken = client("0xd1", me, "3", false);
+        taken["stableId"] = json!("2");
+        // The app asks to save: a new dialog of the same process on the agent workspace is reported.
+        let dialog = asked.clone();
+        let (shared, _log) = setup_on("aws-close-asked", move |sent| if sent == 0 { json!([client(OWN, me, AGENT_SPECIAL, false)]) } else { json!([client(OWN, me, AGENT_SPECIAL, false), dialog.clone()]) }, |_| "ok");
+        shared.lock().unwrap().sessions.record("s1", OWN, Opened { pid: me, start, app: "foot".into(), stable: "1".into() });
+        let d = close_window(&shared, "t", &json!({ "window": OWN, "session": "s1" })).data.expect("ok");
+        assert_eq!((d["opened"]["window"].clone(), d["opened"]["title"].clone()), (json!("0xd1"), json!("t0xd1")));
+        // The same process opens a window and the user takes it to workspace 3 before the look: it is
+        // theirs, so it is not reported and its title is not read.
+        let (shared, _log) = setup_on("aws-close-taken", move |sent| if sent == 0 { json!([client(OWN, me, AGENT_SPECIAL, false)]) } else { json!([client(OWN, me, AGENT_SPECIAL, false), taken.clone()]) }, |_| "ok");
+        shared.lock().unwrap().sessions.record("s1", OWN, Opened { pid: me, start, app: "foot".into(), stable: "1".into() });
+        let d = close_window(&shared, "t", &json!({ "window": OWN, "session": "s1" })).data.expect("ok");
+        assert!(d.get("opened").is_none(), "{d}");
+        assert!(!d.to_string().contains("t0xd1"), "never the title of a window on your workspace");
+        assert_eq!(d["closed"], false);
+        // The window closes and another takes its address (another stableId): it is closed, by stableId.
+        let mut reborn = client(OWN, me, "3", false);
+        reborn["stableId"] = json!("9");
+        let (shared, _log) = setup_on("aws-close-reborn", move |sent| if sent == 0 { json!([client(OWN, me, AGENT_SPECIAL, false)]) } else { json!([reborn.clone()]) }, |_| "ok");
+        shared.lock().unwrap().sessions.record("s1", OWN, Opened { pid: me, start, app: "foot".into(), stable: "1".into() });
+        let d = close_window(&shared, "t", &json!({ "window": OWN, "session": "s1" })).data.expect("ok");
+        assert_eq!(d["closed"], true, "{d}");
+        assert!(d.get("opened").is_none(), "{d}");
     }
 
     #[test]
@@ -1227,7 +1388,7 @@ mod tests {
     fn a_session_lists_its_windows_in_the_order_they_opened() {
         let mut s = SessionWindows::default();
         for w in ["0xf", "0xa", "0x1b"] {
-            assert!(s.record("s1", w, Opened { pid: 7, start: 1, app: "foot".into() }));
+            assert!(s.record("s1", w, Opened { pid: 7, start: 1, app: "foot".into(), stable: "5".into() }));
         }
         let ws: Vec<String> = s.of("s1").into_iter().map(|(w, _)| w).collect();
         assert_eq!(ws, ["0xf", "0xa", "0x1b"]);

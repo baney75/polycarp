@@ -144,7 +144,7 @@ type them.
 | `agent open <app> [file...] [--new_window=false] [--wait S]` | yes | yes: `reused`, `focus: {changed, returned}`, the window recorded for your session, also when it comes after `open` answered (`window: null, pending: true`) | not supported yet (plain `agent open` only) |
 | `agent arrange full\|halves\|thirds\|grid [window...]`, `frames 0xADDR=x,y,w,h ...` | yes | yes: the Mac's frames, applied at once while the workspace stays hidden (`applied: "now"`) | not supported yet |
 | `agent move --window W [--frame x,y,w,h]` | yes, including a lent window or one under Full Access | yes for the agent's own windows; your windows, including one you parked on the agent workspace, and anything that needs a lend or Full Access are `not_supported` (no lend sheet on Linux yet) | not supported yet |
-| `agent close --window W` | yes: only windows this session opened | yes: only windows this session opened, by address, pid and start time | not supported yet |
+| `agent close --window W` | yes: only windows this session opened | yes: only windows this session opened, by address, `stableId`, pid and start time (another window that later gets the same address is not the session's) | not supported yet |
 | Child windows (dialogs) | usable under the child window rules | usable when its process is an agent process: floating, on `special:agent` or on no workspace yet; a dialog of any other process is not | not supported yet |
 
 `agent move <window>` (no `--window`) is still yours: it parks one of your windows there and stays
@@ -178,7 +178,8 @@ Where Linux differs from the Mac, and why:
   your workspaces is yours from then on: every verb refuses it (`not_in_scope`), and `workspaces`
   lists it as `moved_out_by_user` until you move it back.
 - **A slow start.** `open` records its session with the launch, before the window exists. With a
-  `--wait` shorter than the app's start it answers `window: null, pending: true`, and the first window
+  `--wait` shorter than the app's start it answers `window: null, pending: true` (`pid` is `null`
+  while Hyprland has not started the process yet), never an error, and the first window
   of the process that launch started is still recorded for that session when it comes (for 120 s);
   two sessions opening the same app each get only their own.
 - **Workspace names.** `agent_workspace` is `"special:agent"` and its row in `workspaces` has
