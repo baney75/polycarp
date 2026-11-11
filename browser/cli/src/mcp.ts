@@ -205,6 +205,23 @@ export const DEVICES_TOOL = "devices";
 
 const PLATFORM_NAMES: Record<string, string> = { darwin: "macOS", linux: "Linux", win32: "Windows" };
 
+/** The argument every tool but devices takes behind a hub. The hub routes on it and strips it; a device checks a call that still names one is for itself. */
+const DEVICE_ARG = z.string().min(1).max(80).optional().describe("Run this one call on another of the user's devices: its name or id from devices. Default: this device");
+
+export const DEVICES_INSTRUCTION =
+	"The user may have several devices behind this hub: devices lists them and what each allows. To run one call on another device, pass its name as device (a site that needs approval there waits for the user in that device's side panel); without it, calls run on this session's device.";
+
+/** Whether a device argument means the device this server runs on: its id or name, or its name in another case when no other device has that name. */
+function namesSelf(hub: McpHub, given: string): boolean {
+	const self = hub.self;
+	if (given === self.id || given === self.name) return true;
+	if (given.toLowerCase() !== self.name.toLowerCase()) return false;
+	return !(hub.roster()?.devices ?? []).some((d) => d.id !== self.id && d.name.toLowerCase() === given.toLowerCase());
+}
+
+/** A raw zod shape (what every tool here passes as inputSchema), not a zod object or nothing. */
+const isRawShape = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v) && !("_def" in v);
+
 /** The devices tool's answer: one entry per device, this one marked. */
 export function describeDevices(hub: McpHub): Record<string, unknown> {
 	const known = hub.roster();
@@ -270,6 +287,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 					allowedTools && !allowedTools.has("tabs_show") ? ["When a page needs a sign-in or captcha, stop and ask the user to handle it in their browser."] : [],
 					options.computer?.tools.length ? [COMPUTER_INSTRUCTION] : [],
 					local?.present ? [LOCAL_COMPUTER_INSTRUCTION] : [],
+					options.hub ? [DEVICES_INSTRUCTION] : [],
 					allowedTools ? [`This session's tools: ${[...allowedTools].sort().filter((t) => !t.startsWith("computer_") || t === COMPUTER_STATUS_TOOL || options.computer?.tools.some((c) => c.name === t)).join(", ")}.`] : [],
 				)
 				.join(" "),
@@ -280,6 +298,26 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
 		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, ...rest: unknown[]) =>
 			allow(String(name)) ? register(name, ...rest) : undefined;
+	}
+	// Behind a hub every tool takes an optional device. The hub sends a call naming another device there and strips the
+	// argument; a call that still names another device reached the wrong one (an older hub, or a batch the hub doesn't
+	// route), so it is refused here and nothing runs. Without a hub nothing is added, and tools are exactly as before.
+	const deviceHub = options.hub;
+	if (deviceHub) {
+		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
+		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, cb: unknown, ...rest: unknown[]) => {
+			const shape = (config as { inputSchema?: unknown } | undefined)?.inputSchema;
+			if (name === DEVICES_TOOL || typeof cb !== "function" || !isRawShape(shape)) return register(name, config, cb, ...rest);
+			const handler = cb as (args: Record<string, unknown>, extra: unknown) => unknown;
+			const withDevice = { ...(config as Record<string, unknown>), inputSchema: { ...shape, device: DEVICE_ARG } };
+			return register(name, withDevice, (args: Record<string, unknown> | undefined, extra: unknown) => {
+				const { device, ...given } = args ?? {};
+				if (typeof device === "string" && !namesSelf(deviceHub, device)) {
+					return { content: text(`This call names ${oneLine(device)}, but it reached ${deviceHub.self.name}. Nothing was done. Call devices for the names, then try again.`), isError: true };
+				}
+				return handler(given, extra);
+			});
+		};
 	}
 	const choice = options.session ? { name: options.session, auto: false } : chooseSession({ flag: options.sessionFlag });
 	const client = new BridgeClient({

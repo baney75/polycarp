@@ -266,6 +266,31 @@ a client that stops reading is cancelled after 30 seconds. A session
 stays on its device and only for the caller that opened it. When that device goes away, the next
 request on its session gets 404, the assistant starts a new session, and another device takes it.
 
+### Pick a device for one call
+
+The hub sends every device a list of all of them (the roster), and a session behind a hub has a
+`devices` tool: each device's name, id, platform, online or when last seen, what it allows, and
+whether it has the browser extension and computer use. Every other tool takes an optional `device`
+(a name or id from `devices`). Without it, a call runs on the session's own device, exactly as
+before. With another device's name, the hub sends that one call there, in a second session it opens
+on that device for this session (once, then reused, and closed when this session ends), and removes
+`device` from the call first.
+
+- The second session gets the caller's own scopes, narrowed by that device's own cap on the device,
+  as any new session is. What the session's first device allows never carries over.
+- The hub checks the target's cap before it sends anything, and refuses a tool outside it:
+  `Parish1 doesn't allow computer.act (allows: browser.read, ...). Only its owner can add it, on Parish1.`
+- An offline device: `Chapel1 is offline (last seen 2026-11-10 14:02). Nothing was sent. Online now: Mac, Parish1.`
+  A name the hub doesn't know: `No device called "X". Devices: Mac, Parish1, Chapel1.`
+- A device that drops while the call runs: `Parish1 went offline while this call ran. The action may
+  have landed: read it back before you repeat it.`
+- Each of these is a tool result marked as an error, never an HTTP failure, so the session stays.
+- A call that still names another device when it reaches one (an older hub, or a JSON-RPC batch, which
+  the hub doesn't route) is refused there and nothing runs.
+- Site approvals: no session through a hub asks the assistant to approve a site, on its first device
+  or another. A new site waits for you in that device's side panel (Settings > Agents), and the
+  assistant is told to ask you to allow it there.
+
 ### Revoke
 
 ```bash

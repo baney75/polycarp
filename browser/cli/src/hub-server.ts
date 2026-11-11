@@ -65,6 +65,10 @@ const MAX_QUEUED_BYTES = 16_000_000;
 /** Initialize requests whose bodies are still arriving, hub-wide. Per caller, the session cap bounds them. */
 const MAX_INIT_READERS = 64;
 const SESSION_ID = /^[\x21-\x7e]{1,128}$/;
+/** A secondary session unused this long is opened again: the device forgets idle sessions after 30 minutes. */
+const SECONDARY_FRESH_MS = 25 * 60_000;
+/** Largest initialize body kept for opening secondary sessions; a session with a larger one can't route calls. */
+const MAX_INIT_REPLAY_BYTES = 64_000;
 
 export interface HubOptions {
 	port: number;
@@ -90,6 +94,25 @@ interface Pending {
 	slowTimer?: NodeJS.Timeout;
 	onHead?: (status: number, headers: Headers) => void;
 	onDone?: () => void;
+	/** The hub session id the client knows; a device's own session id in the response is replaced with it. */
+	alias?: string;
+	/** A tools/call routed to another device by its device argument: failures answer as a tool result, not an HTTP error. */
+	toolCall?: ToolCall;
+}
+
+/** A routed tools/call: its JSON-RPC id, the device's name, and how the device answered so far. */
+interface ToolCall {
+	id: string | number;
+	device: string;
+	sse: boolean;
+	wrote: boolean;
+}
+
+/** A session the hub opened on another device for one hub session's routed calls. */
+interface Secondary {
+	sid: string;
+	linkInstance: number;
+	lastUsed: number;
 }
 
 interface Link {
@@ -121,6 +144,11 @@ interface HubSession {
 	lastSeen: number;
 	/** The session's one standalone GET stream is open. */
 	streamOpen: boolean;
+	/** The initialize body, replayed to open a secondary session on another device; undefined when too large to keep. */
+	initBody?: string;
+	/** Sessions on other devices for calls that name them, by device id, and the ones being opened. Closed with this session. */
+	secondary: Map<string, Secondary>;
+	opening: Map<string, Promise<Secondary | string>>;
 }
 
 interface Caller {
@@ -190,8 +218,11 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			return this;
 		}
 		override delete(key: string): boolean {
+			const session = super.get(key);
 			const had = super.delete(key);
 			if (had) snapshotSoon();
+			// However a session ends (DELETE, idle, revoked, its device gone), its sessions on other devices end with it.
+			if (session) closeSecondaries(session);
 			return had;
 		}
 	})();
@@ -262,10 +293,45 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 	function failPending(link: Link, id: string, status: number, message: string): void {
 		const p = link.inflight.get(id);
 		if (!p || p.done) return;
-		if (p.res && !p.headSent) deny(p.res, status, message);
-		else p.res?.destroy();
+		if (!(p.toolCall && !message.startsWith("The client") && toolFailure(link, p, message))) {
+			if (p.res && !p.headSent) deny(p.res, status, message);
+			else p.res?.destroy();
+		}
 		sendTo(link, { t: "cancel", id });
 		finish(link, id);
+	}
+
+	/** A routed call that broke after it was sent: say so as a tool result. False when the response can't take one any more. */
+	function toolFailure(link: Link, p: Pending, message: string): boolean {
+		const call = p.toolCall;
+		const res = p.res;
+		if (!call || !res || res.writableEnded || res.destroyed) return false;
+		const gone = links.get(link.device.id) !== link || link.ws.readyState !== WebSocket.OPEN;
+		const words = `${gone ? `${call.device} went offline while this call ran.` : `${call.device} didn't finish this call (${message.replace(/\.$/, "")}).`} The action may have landed: read it back before you repeat it.`;
+		if (!res.headersSent) {
+			toolError(res, call.id, words, p.alias);
+			return true;
+		}
+		// An event stream with nothing on it yet can still carry the answer.
+		if (call.sse && !call.wrote) {
+			res.end(`event: message\ndata: ${toolErrorBody(call.id, words)}\n\n`);
+			return true;
+		}
+		return false;
+	}
+
+	function toolErrorBody(id: string | number, words: string): string {
+		return JSON.stringify({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: words }], isError: true } });
+	}
+
+	/** A tool result with isError, as a JSON response: what an agent sees for a call that couldn't be routed. */
+	function toolError(res: ServerResponse, id: string | number, words: string, alias?: string): void {
+		if (res.headersSent) {
+			res.end();
+			return;
+		}
+		res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store", ...(alias ? { "mcp-session-id": alias } : {}) });
+		res.end(toolErrorBody(id, words));
 	}
 
 	/** The client of request `id` isn't reading: stop reading the link until it drains, and cancel the request if it stays that way. */
@@ -298,7 +364,10 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 	}
 
 	/** Send one request over a link and stream the answer back to `res`. */
-	function forward(link: Link, request: { method: ReqFrame["method"]; headers: Headers; body: string; res?: ServerResponse; stream?: boolean; onHead?: Pending["onHead"]; onDone?: () => void }): void {
+	function forward(
+		link: Link,
+		request: { method: ReqFrame["method"]; headers: Headers; body: string; res?: ServerResponse; stream?: boolean; onHead?: Pending["onHead"]; onDone?: () => void; alias?: string; toolCall?: { id: string | number; device: string } },
+	): void {
 		const id = `r${++counter}`;
 		const frame: ReqFrame = { t: "req", id, method: request.method, path: "/mcp", headers: request.headers, body: request.body };
 		const text = JSON.stringify(frame);
@@ -311,7 +380,17 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		const timer = setTimeout(() => failPending(link, id, 504, "The device didn't answer in time."), headTimeoutMs);
 		timer.unref();
 		const stream = request.stream === true;
-		const p: Pending = { res: request.res, stream, headSent: false, done: false, timer, onHead: request.onHead, onDone: request.onDone };
+		const p: Pending = {
+			res: request.res,
+			stream,
+			headSent: false,
+			done: false,
+			timer,
+			onHead: request.onHead,
+			onDone: request.onDone,
+			alias: request.alias,
+			toolCall: request.toolCall ? { ...request.toolCall, sse: false, wrote: false } : undefined,
+		};
 		link.inflight.set(id, p);
 		if (stream) link.streams++;
 		else link.calls++;
@@ -350,9 +429,19 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			// A device that rejects the hub's own credential is a setup fault, not the caller's 401.
 			const status = frame.status === 401 ? 502 : frame.status;
 			p.onHead?.(status, frame.headers);
+			// A routed call's secondary session is gone on its device (it restarted the session, or forgot it): a tool result,
+			// so the client keeps its hub session. onHead dropped the secondary; the next call opens a new one.
+			if (p.toolCall && status === 404 && p.res) {
+				toolError(p.res, p.toolCall.id, `${p.toolCall.device} had closed this session there. Nothing was done. Call it again to start a new one.`, p.alias);
+				sendTo(link, { t: "cancel", id: frame.id });
+				finish(link, frame.id);
+				return;
+			}
+			if (p.toolCall) p.toolCall.sse = frame.headers["content-type"]?.startsWith("text/event-stream") === true;
 			if (p.res) {
 				const out: Record<string, string> = {};
 				for (const k of FORWARD_RESPONSE_HEADERS) if (frame.headers[k]) out[k] = frame.headers[k];
+				if (p.alias && out["mcp-session-id"]) out["mcp-session-id"] = p.alias;
 				if (status === 502 && frame.status === 401) {
 					deny(p.res, 502, `This device refused the hub's link token. Run ${COMMAND_NAME} link off and link again on it.`);
 					finish(link, frame.id);
@@ -369,6 +458,7 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		}
 		if (frame.t === "chunk") {
 			if (!p.headSent || !p.res) return;
+			if (p.toolCall) p.toolCall.wrote = true;
 			const ok = p.res.write(frame.data);
 			// Past the bound, or stalled: stop holding the client's data for it.
 			if (p.res.writableLength > MAX_QUEUED_BYTES) failPending(link, frame.id, 502, "The client isn't reading the response.");
@@ -489,8 +579,6 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 			const caps = online.map((l) => `${l.device.name}: ${l.status.scopes.join(", ") || "nothing"}`).join("; ");
 			return { status: 403, message: `None of the permissions you granted are allowed on any online device (${caps}).` };
 		}
-		const known = (l: Link) => [...sessions.values()].filter((x) => x.deviceId === l.device.id).length;
-		const load = (l: Link) => Math.max(l.status.sessions, known(l)) + l.initsPending;
 		const roomy = fits.filter((l) => l.calls + l.reserved < MAX_INFLIGHT_PER_DEVICE && load(l) < l.status.sessionCap);
 		if (!roomy.length) return { status: 429, message: "Every device that can serve you is at its limit. Close a session or try again in a moment." };
 		const prefer = loadDevices().prefer;
@@ -503,6 +591,12 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 		const partial = (l: Link) => Number(covers(l) < wanted.length);
 		const best = [...pool].sort((a, b) => partial(a) - partial(b) || Number(a.status.busy) - Number(b.status.busy) || load(a) - load(b) || rank(a) - rank(b) || b.lastSeen - a.lastSeen)[0];
 		return { link: best };
+	}
+
+	/** Sessions on a device: what it reports, or what the hub routes there when that is more, plus initializes in flight. */
+	function load(l: Link): number {
+		const known = [...sessions.values()].filter((x) => x.deviceId === l.device.id).length;
+		return Math.max(l.status.sessions, known) + l.initsPending;
 	}
 
 	function offlineMessage(): string {
@@ -576,6 +670,12 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 				reserved = false;
 				link.reserved--;
 			}
+			// A tools/call whose device argument names another device goes there; one naming this device, or none, is forwarded as before.
+			const call = method === "POST" ? deviceCall(body) : undefined;
+			if (call) {
+				const target = pickLink(who, call.device);
+				if (!("link" in target) || target.link !== link) return routeCall(session, sessionId, who, req, res, call, target);
+			}
 			return forward(link, {
 				method,
 				headers: requestHeaders(req, who),
@@ -634,7 +734,16 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 				const id = headers["mcp-session-id"];
 				// A device can't take over a session id the hub already routes.
 				if (status >= 200 && status < 300 && id && SESSION_ID.test(id) && !sessions.has(id)) {
-					sessions.set(id, { deviceId: link.device.id, linkInstance: link.instance, callerId: who.id, lastSeen: Date.now(), streamOpen: false });
+					sessions.set(id, {
+						deviceId: link.device.id,
+						linkInstance: link.instance,
+						callerId: who.id,
+						lastSeen: Date.now(),
+						streamOpen: false,
+						initBody: Buffer.byteLength(body) <= MAX_INIT_REPLAY_BYTES ? body : undefined,
+						secondary: new Map(),
+						opening: new Map(),
+					});
 				}
 			},
 			onDone: () => {
@@ -642,6 +751,192 @@ export async function startHub(options: HubOptions): Promise<HubHandle> {
 				releaseInit();
 			},
 		});
+	}
+
+	// ---------- Per-call device routing ----------
+
+	interface DeviceCall {
+		id: string | number;
+		name: string;
+		device: string;
+		message: Record<string, unknown>;
+	}
+
+	const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+	/** A single tools/call request whose arguments name a device. A batch is never routed: it reaches the bound device whole, which refuses a call naming another. */
+	function deviceCall(body: string): DeviceCall | undefined {
+		if (!body.includes('"device"')) return undefined;
+		let msg: unknown;
+		try {
+			msg = JSON.parse(body);
+		} catch {
+			return undefined;
+		}
+		if (!isObject(msg) || msg.method !== "tools/call" || !isObject(msg.params) || !isObject(msg.params.arguments)) return undefined;
+		const { id } = msg;
+		const device = msg.params.arguments.device;
+		if ((typeof id !== "string" && typeof id !== "number") || typeof device !== "string") return undefined;
+		return { id, name: typeof msg.params.name === "string" ? msg.params.name : "", device, message: msg };
+	}
+
+	/** The scope that grants a tool, or undefined for one no scope lists (devices). */
+	function scopeOfTool(tool: string): string | undefined {
+		return Object.entries(SCOPES).find(([, v]) => v.tools.includes(tool))?.[0];
+	}
+
+	/** "2026-11-10 14:02" in the hub's local time. */
+	function shortTime(iso: string): string {
+		const d = new Date(iso);
+		if (Number.isNaN(d.getTime())) return iso;
+		const two = (n: number) => String(n).padStart(2, "0");
+		return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`;
+	}
+
+	function onlineNames(): string {
+		return (
+			loadDevices()
+				.devices.filter((d) => routable(links.get(d.id)))
+				.map((d) => d.name)
+				.join(", ") || "none"
+		);
+	}
+
+	function offlineDevice(device: DeviceRecord): string {
+		const seen = offlineAt.get(device.id) ?? device.lastSeen;
+		return `${device.name} is offline (${seen ? `last seen ${shortTime(seen)}` : "never connected"}). Nothing was sent. Online now: ${onlineNames()}.`;
+	}
+
+	function unknownDevice(given: string): string {
+		const names = loadDevices().devices.map((d) => d.name);
+		return `No device called ${JSON.stringify(given.slice(0, 80))}. Devices: ${names.join(", ") || "none"}.`;
+	}
+
+	/**
+	 * Send one tools/call to the device its device argument names, in this hub session's secondary session there. The
+	 * target's own cap still applies twice: here, from what it reported, and on the device, which narrows the caller's
+	 * scopes by its link token when the secondary session opens. The secondary session is opened with the caller's
+	 * own scopes, never the bound device's, so nothing allowed on one device reaches another.
+	 */
+	async function routeCall(session: HubSession, sessionId: string, who: Caller, req: IncomingMessage, res: ServerResponse, call: DeviceCall, picked: { link: Link } | Miss): Promise<void> {
+		if ("miss" in picked) return toolError(res, call.id, picked.miss === "unknown" ? unknownDevice(call.device) : offlineDevice(picked.device));
+		const target = picked.link;
+		const name = target.device.name;
+		const scope = scopeOfTool(call.name);
+		if (scope && !target.status.scopes.includes(scope)) {
+			return toolError(res, call.id, `${name} doesn't allow ${scope} (allows: ${target.status.scopes.join(", ") || "nothing"}). Only its owner can add it, on ${name}.`);
+		}
+		if (scope && !who.scopes.includes(scope)) return toolError(res, call.id, `This connection doesn't allow ${scope}, so ${call.name} can't run on any device through it.`);
+		if (scope?.startsWith("computer.") && target.status.computer === false) return toolError(res, call.id, `${name} has no computer use: Polycarp's Mac app isn't on it. Nothing was sent.`);
+		if (target.calls + target.reserved >= MAX_INFLIGHT_PER_DEVICE) return toolError(res, call.id, `${name} is handling too many requests. Nothing was sent. Try again in a moment.`);
+		// A request slot on the target while its session opens.
+		target.reserved++;
+		let secondary: Secondary | string;
+		try {
+			secondary = await secondaryFor(session, sessionId, target, who, req);
+		} finally {
+			target.reserved--;
+		}
+		if (typeof secondary === "string") return toolError(res, call.id, secondary);
+		if (res.destroyed || res.writableEnded) return;
+		if (links.get(target.device.id) !== target || target.ws.readyState !== WebSocket.OPEN) return toolError(res, call.id, offlineDevice(target.device));
+		secondary.lastUsed = Date.now();
+		const params = call.message.params as Record<string, unknown>;
+		const { device: _device, ...args } = params.arguments as Record<string, unknown>;
+		const opened = secondary;
+		forward(target, {
+			method: "POST",
+			headers: { ...requestHeaders(req, who), "mcp-session-id": opened.sid },
+			body: JSON.stringify({ ...call.message, params: { ...params, arguments: args } }),
+			res,
+			alias: sessionId,
+			toolCall: { id: call.id, device: name },
+			onHead: (status) => {
+				if (status === 404 && session.secondary.get(target.device.id) === opened) session.secondary.delete(target.device.id);
+			},
+		});
+	}
+
+	/** This hub session's open secondary session on `target`, or a new one; parallel first calls share one opening. A string says why there is none. */
+	function secondaryFor(session: HubSession, sessionId: string, target: Link, who: Caller, req: IncomingMessage): Promise<Secondary | string> {
+		const id = target.device.id;
+		const known = session.secondary.get(id);
+		if (known && known.linkInstance === target.instance && Date.now() - known.lastUsed < SECONDARY_FRESH_MS) return Promise.resolve(known);
+		if (known) {
+			session.secondary.delete(id);
+			closeSecondary(id, known);
+		}
+		const opening = session.opening.get(id);
+		if (opening) return opening;
+		const started = openSecondary(session, sessionId, target, who, req).finally(() => session.opening.delete(id));
+		session.opening.set(id, started);
+		return started;
+	}
+
+	/** One request to a device with no client attached: resolves with the head's status (0 when none came) and headers. */
+	function ask(link: Link, request: { method: ReqFrame["method"]; headers: Headers; body: string }): Promise<{ status: number; headers: Headers }> {
+		return new Promise((resolve) => {
+			let status = 0;
+			let headers: Headers = {};
+			forward(link, {
+				...request,
+				onHead: (s, h) => {
+					status = s;
+					headers = h;
+				},
+				onDone: () => resolve({ status, headers }),
+			});
+		});
+	}
+
+	async function openSecondary(session: HubSession, sessionId: string, target: Link, who: Caller, req: IncomingMessage): Promise<Secondary | string> {
+		const name = target.device.name;
+		if (!session.initBody) return `This session's initialize request was too large to open a session on ${name}. Nothing was sent. Start a new session to use device.`;
+		if (load(target) >= target.status.sessionCap) return `${name} is at its session limit. Nothing was sent. Close a session there or try again later.`;
+		// The caller's own scopes and name, as for any new session: never anything from the bound device's session.
+		const headers = requestHeaders(req, who);
+		delete headers["mcp-session-id"];
+		delete headers["mcp-protocol-version"];
+		delete headers["last-event-id"];
+		headers["content-type"] = "application/json";
+		headers.accept = "application/json, text/event-stream";
+		target.initsPending++;
+		let init: { status: number; headers: Headers };
+		try {
+			init = await ask(target, { method: "POST", headers, body: session.initBody });
+		} finally {
+			target.initsPending = Math.max(0, target.initsPending - 1);
+		}
+		const sid = init.headers["mcp-session-id"];
+		if (init.status === 403) return `${name} allows none of this connection's permissions. Nothing was sent.`;
+		if (init.status < 200 || init.status >= 300 || !sid || !SESSION_ID.test(sid)) {
+			return init.status ? `${name} couldn't start a session for this call (it answered ${init.status}). Nothing was sent.` : `${name} went offline before the call could start. Nothing was sent.`;
+		}
+		const secondary: Secondary = { sid, linkInstance: target.instance, lastUsed: Date.now() };
+		// The hub session ended, or the device's link changed, while this opened: nothing would close it later, so close it now.
+		if (sessions.get(sessionId) !== session || links.get(target.device.id) !== target) {
+			closeSecondary(target.device.id, secondary);
+			return `This session ended while ${name} was starting a session. Nothing was sent.`;
+		}
+		session.secondary.set(target.device.id, secondary);
+		// As a client would, before its first call.
+		const version = req.headers["mcp-protocol-version"];
+		await ask(target, {
+			method: "POST",
+			headers: { ...headers, "mcp-session-id": sid, ...(typeof version === "string" && !/[\r\n\0]/.test(version) ? { "mcp-protocol-version": version } : {}) },
+			body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+		});
+		return secondary;
+	}
+
+	function closeSecondary(deviceId: string, secondary: Secondary): void {
+		const link = links.get(deviceId);
+		if (link && link.instance === secondary.linkInstance && link.ws.readyState === WebSocket.OPEN) forward(link, { method: "DELETE", headers: { "mcp-session-id": secondary.sid, ...hubHeaders("", "hub") }, body: "" });
+	}
+
+	function closeSecondaries(session: HubSession): void {
+		for (const [deviceId, secondary] of session.secondary) closeSecondary(deviceId, secondary);
+		session.secondary.clear();
 	}
 
 	// ---------- Enrollment and codes ----------
