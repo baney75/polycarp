@@ -233,10 +233,8 @@ export function deleteToken(id: string): boolean {
 	});
 	try {
 		const usage = loadUsage();
-		if (id in usage) {
-			delete usage[id];
-			writeFileSync(usageFile(), `${JSON.stringify(usage)}\n`, { mode: 0o600 });
-		}
+		delete usage[id];
+		saveUsage(usage);
 	} catch {
 		/* usage is informational */
 	}
@@ -274,6 +272,24 @@ export function loadUsage(): Record<string, string> {
 	}
 }
 
+/**
+ * Write token-usage.json whole (tmp, then rename), so a crash can't truncate it. Token ids (8 hex) with no record in
+ * tokens.json are dropped on the way: a use recorded just after a delete (serve's write racing remote test's cleanup) is
+ * gone by the next write. OAuth grant ids are kept; tokens.json doesn't list them.
+ */
+function saveUsage(usage: Record<string, string>): void {
+	let known: Set<string> | undefined;
+	try {
+		known = new Set(loadTokens().map((t) => t.id));
+	} catch {
+		/* unreadable tokens.json: keep every entry */
+	}
+	const kept = Object.fromEntries(Object.entries(usage).filter(([id]) => !known || !/^[0-9a-f]{8}$/.test(id) || known.has(id)));
+	const tmp = `${usageFile()}.${process.pid}.tmp`;
+	writeFileSync(tmp, `${JSON.stringify(kept)}\n`, { mode: 0o600 });
+	renameSync(tmp, usageFile());
+}
+
 const lastRecorded = new Map<string, number>();
 
 /** Record a token's use, at most once a minute per token. */
@@ -284,9 +300,7 @@ function recordUse(id: string): void {
 	try {
 		const usage = loadUsage();
 		usage[id] = new Date().toISOString();
-		const tmp = `${usageFile()}.${process.pid}.tmp`;
-		writeFileSync(tmp, `${JSON.stringify(usage)}\n`, { mode: 0o600 });
-		renameSync(tmp, usageFile());
+		saveUsage(usage);
 	} catch {
 		/* usage is informational */
 	}

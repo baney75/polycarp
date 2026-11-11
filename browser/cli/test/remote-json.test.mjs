@@ -3,7 +3,7 @@
 // a real service manager or ~/.config/tabkyra. Run with --experimental-strip-types (it imports src/remote-state.ts).
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -1505,4 +1505,25 @@ test("the metadata serve itself publishes passes remote test's sign-in check; an
 	assert.deepEqual(authMetadataProblems(authorizationServerMetadata({ publicUrl, scopes: {} }), publicUrl), []);
 	assert.deepEqual(authMetadataProblems({ issuer: publicUrl }, publicUrl), ["names no authorization_endpoint or token_endpoint"]);
 	assert.match(authMetadataProblems({ issuer: publicUrl, authorization_endpoint: `${publicUrl}/authorize`, token_endpoint: `${publicUrl}/token`, registration_endpoint: "http://mac.example.ts.net/register" }, publicUrl)[0], /registration_endpoint/);
+});
+
+test("deleting a token rewrites token-usage.json whole and drops entries for token ids that have no record", async () => {
+	const cfg = mkdtempSync(join(tmpdir(), "tabkyra-usage-"));
+	const saved = process.env.TABKYRA_CONFIG_DIR;
+	process.env.TABKYRA_CONFIG_DIR = cfg;
+	try {
+		const { createToken, deleteToken } = await loadTs(`export { createToken, deleteToken } from "@src/remote.ts";`);
+		const kept = createToken("kept", ["skills.read"]);
+		const probe = createToken("probe", ["skills.read"]);
+		// A stale entry, as serve's late write after an earlier delete would leave it, and an OAuth grant's, which tokens.json never lists.
+		const usageFile = join(cfg, "token-usage.json");
+		writeFileSync(usageFile, JSON.stringify({ [kept.record.id]: "a", [probe.record.id]: "b", deadbeef: "c", "o-grant1": "d" }));
+		assert.equal(deleteToken(probe.record.id), true);
+		assert.deepEqual(Object.keys(JSON.parse(readFileSync(usageFile, "utf8"))).sort(), [kept.record.id, "o-grant1"].sort());
+		assert.deepEqual(readdirSync(cfg).filter((f) => f.endsWith(".tmp")), [], "no temp file is left");
+	} finally {
+		if (saved === undefined) delete process.env.TABKYRA_CONFIG_DIR;
+		else process.env.TABKYRA_CONFIG_DIR = saved;
+		rmSync(cfg, { recursive: true, force: true });
+	}
 });
