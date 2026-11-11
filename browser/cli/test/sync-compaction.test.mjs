@@ -195,3 +195,59 @@ test("a 90-day rejoiner does not adopt a peer's allow from the snapshot", () => 
 	assert.deepEqual(suggestions(c), ["dv-a:1"]);
 	assert.deepEqual(plainView(c).dictionary, { offline: 1 });
 });
+
+/** dv-c is absent past 90 days, makes `edits` offline, then rejoins by snapshot and syncs both ways. */
+function rejoinAfter(edits) {
+	let a = createReplica("dv-a", members);
+	let b = createReplica("dv-b", members);
+	let c = createReplica("dv-c", members);
+	edits.forEach((edit, i) => {
+		c = localOp(c, registry, edit, T + DAY_MS + i).replica;
+	});
+	a = localOp(a, registry, { category: "dictionary", kind: "add", key: "omarchy", value: 1 }, T + 2 * DAY_MS).replica;
+	const day91 = T + 91 * DAY_MS;
+	({ from: a, to: b } = sync(a, b, day91));
+	a = compact(a, registry, day91);
+	const back = delta(a, c.vv);
+	assert.equal(back.kind, "snapshot");
+	const adopted = adoptSnapshot(c, registry, back.snapshot, day91 + 10);
+	c = adopted.replica;
+	a = recordAck(a, "dv-c", c.vv, day91 + 10);
+	({ from: c, to: a } = sync(c, a, day91 + 11));
+	({ from: c, to: b } = sync(c, b, day91 + 11));
+	return Object.assign([a, b, c], { replayed: adopted.replayed });
+}
+
+test("a word added and removed offline stays gone after a snapshot rejoin, and so does a deleted setting", () => {
+	const replicas = rejoinAfter([
+		{ category: "dictionary", kind: "add", key: "teh", value: "the" },
+		{ category: "dictionary", kind: "remove", key: "teh" },
+		{ category: "settings-spaces", kind: "set", key: "layout", value: "grid" },
+		{ category: "settings-spaces", kind: "del", key: "layout" },
+	]);
+	for (const r of replicas) {
+		assert.deepEqual(plainView(r).dictionary, { omarchy: 1 }, `${r.device}: the removed word stays gone`);
+		assert.deepEqual(plainView(r)["settings-spaces"], {}, `${r.device}: the deleted setting stays gone`);
+	}
+	assert.equal(stateBytes(replicas[1]), stateBytes(replicas[0]));
+	assert.equal(stateBytes(replicas[2]), stateBytes(replicas[0]));
+});
+
+test("a word added, removed and added again offline is present once after a snapshot rejoin", () => {
+	const replicas = rejoinAfter([
+		{ category: "dictionary", kind: "add", key: "teh", value: "the" },
+		{ category: "dictionary", kind: "remove", key: "teh" },
+		{ category: "dictionary", kind: "add", key: "teh", value: "the!" },
+	]);
+	assert.deepEqual(
+		replicas.replayed.map((o) => o.value),
+		["the!"],
+		"only the add that still stands is replayed",
+	);
+	for (const r of replicas) {
+		assert.deepEqual(plainView(r).dictionary, { omarchy: 1, teh: "the!" }, r.device);
+		const tags = Object.values(r.states.dictionary.tags).filter((t) => t.key === "teh");
+		assert.equal(tags.length, 1, `${r.device}: one live tag for the word`);
+	}
+	assert.equal(stateBytes(replicas[2]), stateBytes(replicas[0]));
+});

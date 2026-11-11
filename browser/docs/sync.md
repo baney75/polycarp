@@ -56,8 +56,9 @@ Apply commutes, so replicas holding the same ops hold byte-identical canonical s
   ops up to its ack at fold time are folded too. A device with no current member folds nothing.
 - **Rejoin.** A peer behind the snapshot gets the snapshot (`delta` returns `kind: "snapshot"`). `adoptSnapshot` keeps
   the device's own unsent ops and replays its offline `lww` edits and set adds as new ops with a fresh clock, so they
-  hold. Narrow-only edits are not replayed, so an old offline allow never beats a newer revoke. Snapshot ops stamped
-  too far ahead are held. Deleted items may reappear; the UI is to say so.
+  hold. Only edits that still stand are replayed: an add whose tag is still live and the device's last edit per
+  key, so a word it removed offline stays removed. Narrow-only edits are not replayed, so an old offline allow never
+  beats a newer revoke. Snapshot ops stamped too far ahead are held. Deleted items may reappear; the UI is to say so.
 
 ## Categories
 

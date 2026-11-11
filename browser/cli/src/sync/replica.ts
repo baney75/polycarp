@@ -282,7 +282,7 @@ export function releaseHeld(replica: Replica, registry: Registry, now: number): 
 		ready.push(held[id]);
 		delete held[id];
 	}
-	if (ready.length === 0) return replica;
+	if (ready.length === 0) return Object.keys(held).length === ids.length ? replica : { ...replica, held };
 	return admit({ ...replica, held }, registry, ready, now);
 }
 
@@ -440,14 +440,17 @@ export function adoptSnapshot(
 	}
 	for (const op of extra) log[opId(op)] = op;
 	let clock = replica.clock;
+	let seq = Math.max(replica.seq, vvGet(message.vv, replica.device));
 	for (const op of Object.values(log)) clock = hlcReceive(clock, op.at, now);
+	for (const op of [...Object.values(log), ...Object.values(held), ...Object.values(message.snapshot.kept)])
+		if (op.author === replica.device) seq = Math.max(seq, op.seq);
 	const authors = new Set(Object.keys(log).map((id) => id.slice(0, id.lastIndexOf(":"))));
 	const vv = advanceVv(message.snapshot.vv, log, authors);
 	let next = rebuild(
 		{
 			...replica,
 			clock,
-			seq: Math.max(replica.seq, vvGet(message.vv, replica.device)),
+			seq,
 			vv,
 			log,
 			held,
@@ -462,9 +465,20 @@ export function adoptSnapshot(
 		},
 		registry,
 	);
+	// Replay only offline edits that still stand: an add whose tag is live after the rebuild (a later remove or re-add
+	// of ours kills it), and the last register edit of ours per key (a later set or del of ours supersedes it).
+	const adopted = next.states;
+	const lastPerKey = new Map<string, string>();
+	for (const op of extra)
+		if (op.author === replica.device) lastPerKey.set(canonicalize([op.category, op.key]), opId(op));
+	const stands = (op: SyncOp): boolean => {
+		if (op.kind === "add") return has((get(adopted, op.category) as AwSetState | undefined)?.tags ?? rec(), opId(op));
+		return lastPerKey.get(canonicalize([op.category, op.key])) === opId(op);
+	};
 	const replayed: SyncOp[] = [];
 	for (const op of extra) {
 		if (op.author !== replica.device || !replayable(op, registry) || has(next.skipped, opId(op))) continue;
+		if (!stands(op)) continue;
 		const edit: LocalEdit = { category: op.category, kind: op.kind, key: op.key, schema: op.schema };
 		if ("value" in op) edit.value = op.value;
 		const out = localOp(next, registry, edit, now);

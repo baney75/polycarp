@@ -180,15 +180,46 @@ function checkSeed(seed) {
 			`seed ${seed}: merge of ${name} differs`,
 		);
 	}
-	// A newcomer joins from dv-a: by snapshot when dv-a compacted, otherwise by ops. Same shared state, no foreign allow.
+	// A device that was offline (dv-n) adds and removes words of its own, then joins from dv-a: by snapshot when dv-a
+	// compacted, otherwise by ops, and sends dv-a what it wrote. Its last edit per word holds everywhere, no word it
+	// removed comes back, the shared state matches and no foreign allow is adopted.
+	const offline = prng(seed ^ 0x5eed);
+	let newcomer = createReplica("dv-n");
+	const expected = {};
+	let removed = false;
+	for (let i = 0, count = Math.floor(offline() * 6); i < count; i++) {
+		const key = `off${Math.floor(offline() * 3)}`;
+		const add = !(key in expected) || offline() < 0.5;
+		const edit = add
+			? { category: "dictionary", kind: "add", key, value: i }
+			: { category: "dictionary", kind: "remove", key };
+		newcomer = localOp(newcomer, registry, edit, BASE + i).replica;
+		if (add) expected[key] = i;
+		else {
+			delete expected[key];
+			removed = true;
+		}
+	}
+	const join = BASE + 3_600_000;
 	const d = delta(replicas[0], {});
-	const newcomer =
+	newcomer =
 		d.kind === "snapshot"
-			? adoptSnapshot(createReplica("dv-n"), registry, d.snapshot, BASE + 3_600_000).replica
-			: receiveOps(createReplica("dv-n"), registry, d.ops, BASE + 3_600_000);
+			? adoptSnapshot(newcomer, registry, d.snapshot, join).replica
+			: receiveOps(newcomer, registry, d.ops, join);
+	const host = receiveOps(replicas[0], registry, delta(newcomer, replicas[0].vv).ops, join);
 	assertNarrow(seed, newcomer);
-	const [n] = snapshotOf([newcomer]);
-	assert.equal(n.state, a.state, `seed ${seed}: the newcomer's state differs from dv-a`);
+	const [n, h] = snapshotOf([newcomer, host]);
+	assert.equal(n.state, h.state, `seed ${seed}: the joined device's state differs from dv-a`);
+	for (const r of [newcomer, host]) {
+		const words = view(r, registry).dictionary ?? {};
+		const off = Object.fromEntries(
+			Object.keys(words)
+				.filter((k) => k.startsWith("off"))
+				.map((k) => [k, words[k]]),
+		);
+		assert.deepEqual(off, expected, `seed ${seed}: ${r.device} lost an offline edit or revived a removed word`);
+	}
+	replicas.offlineRemove = d.kind === "snapshot" && removed;
 	replicas.snapshotJoin =
 		d.kind === "snapshot" && Object.values(d.snapshot.snapshot.kept).some((o) => o.category === NARROW);
 	return replicas;
@@ -200,6 +231,7 @@ test("three replicas converge to byte-identical state under random delivery, for
 	const types = new Set();
 	let ops = 0;
 	let narrowSnapshots = 0;
+	let offlineRemoves = 0;
 	for (const seed of seeds) {
 		let replicas;
 		try {
@@ -211,11 +243,13 @@ test("three replicas converge to byte-identical state under random delivery, for
 		for (const name of Object.keys(replicas[0].states)) types.add(registry.get(name).merge);
 		ops += Object.keys(replicas[0].log).length;
 		if (replicas.snapshotJoin) narrowSnapshots++;
+		if (replicas.offlineRemove) offlineRemoves++;
 	}
 	if (!only) {
 		assert.ok(seeds.length >= 500);
 		assert.deepEqual([...types].sort(), ["awset", "log", "lww"], "every merge type was exercised");
 		assert.ok(ops > seeds.length * 5, "the runs wrote ops");
+		assert.ok(offlineRemoves > 50, `offline removes before a snapshot join in ${offlineRemoves} seeds`);
 		assert.ok(narrowSnapshots > 50, `snapshots carried narrow ops in ${narrowSnapshots} seeds`);
 	}
 });
