@@ -31,7 +31,7 @@ const KEY = readFileSync(join(certDir, "key.pem"));
  * The public side. stream: "now" answers an authenticated initialize as SSE at once; "held" holds the first bytes 10 seconds, the
  * way a buffering proxy does. Records the Host and SNI of every request and the bearer tokens it saw.
  */
-async function fakePublic({ stream = "now", onAuthed, authMeta = "full" } = {}) {
+async function fakePublic({ stream = "now", onAuthed, authMeta = "full", resource = "ours" } = {}) {
 	const seen = { hosts: [], sni: [], tokens: [], authed: 0 };
 	let publicUrl = "";
 	const timers = new Set();
@@ -42,7 +42,12 @@ async function fakePublic({ stream = "now", onAuthed, authMeta = "full" } = {}) 
 			res.writeHead(status, { "content-type": "application/json", ...headers });
 			res.end(JSON.stringify(body));
 		};
-		if (req.method === "GET" && req.url === METADATA_PATH) return json(200, { resource: `${publicUrl}/mcp`, authorization_servers: [publicUrl] });
+		if (req.method === "GET" && req.url === METADATA_PATH) {
+			// "421": a serve started for another name. "other": another connector's metadata.
+			if (resource === "421") return json(421, { error: "misdirected" });
+			if (resource === "other") return json(200, { resource: "https://other.example.com/mcp", authorization_servers: ["https://other.example.com"] });
+			return json(200, { resource: `${publicUrl}/mcp`, authorization_servers: [publicUrl] });
+		}
 		if (req.method === "GET" && req.url === "/.well-known/oauth-authorization-server") {
 			const full = { issuer: publicUrl, authorization_endpoint: `${publicUrl}/authorize`, token_endpoint: `${publicUrl}/token`, registration_endpoint: `${publicUrl}/register` };
 			// "partial": the issuer alone, nowhere to sign in. "elsewhere": the token endpoint on another origin.
@@ -108,7 +113,7 @@ async function fakeDoh(address = "127.0.0.1") {
 		const q = new URL(req.url, "http://x").searchParams;
 		asked.push(`${q.get("type")} ${q.get("name")}`);
 		res.setHeader("content-type", "application/dns-json");
-		res.end(JSON.stringify({ Status: 0, Answer: q.get("type") === "A" && q.get("name") === HOST ? [{ name: `${HOST}.`, type: 1, data: address }] : [] }));
+		res.end(JSON.stringify({ Status: 0, Answer: address && q.get("type") === "A" && q.get("name") === HOST ? [{ name: `${HOST}.`, type: 1, data: address }] : [] }));
 	});
 	await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve));
 	return { url: `http://127.0.0.1:${srv.address().port}/dns-query`, asked, close: () => new Promise((resolve) => srv.close(resolve)) };
@@ -487,5 +492,54 @@ test("the old environment seams do nothing: without the preloaded test hooks, lo
 		assert.equal(report.checks.length, 1);
 	} finally {
 		await doh.close();
+	}
+});
+
+test("setup fails on a real fault at the public address (a refused certificate, a 421, another connector) and waits only on a name that isn't public yet", async () => {
+	const cases = [
+		{ name: "cert", options: {}, env: { NODE_EXTRA_CA_CERTS: "" }, code: "tls" },
+		{ name: "421", options: { resource: "421" }, code: "resource_metadata" },
+		{ name: "other", options: { resource: "other" }, code: "resource_metadata" },
+	];
+	for (const c of cases) {
+		const pub = await fakePublic(c.options);
+		const doh = await fakeDoh();
+		const local = await localServe(pub.publicUrl);
+		try {
+			const m = machine(`setup-fault-${c.name}`, undefined, doh.url);
+			const r = await m.run(["remote", "setup", "--json", "--no-service", "--public-url", pub.publicUrl, "--port", String(local.port)], c.env);
+			assert.equal(r.code, 1, `${c.name}: ${r.stdout}${r.stderr}`);
+			const report = r.json();
+			assert.equal(report.ok, false, c.name);
+			assert.equal(report.state, "problem", c.name);
+			assert.equal(report.code, c.code, c.name);
+			assert.match(report.message, new RegExp(byName(report, c.code).next.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), c.name);
+			assert.ok(existsSync(join(m.env.TABKYRA_CONFIG_DIR, "remote.json")), "remote.json is kept");
+			// Text mode says the same, not that the name needs a few minutes.
+			const t = await m.run(["remote", "setup", "--no-service", "--public-url", pub.publicUrl, "--port", String(local.port)], c.env);
+			assert.equal(t.code, 1, t.stdout);
+			assert.doesNotMatch(t.stdout + t.stderr, /takes a few minutes/, c.name);
+		} finally {
+			await pub.close();
+			await doh.close();
+			await local.close();
+		}
+	}
+	// The control: public DNS has no address for the name yet. That is what a new name looks like, so setup is on and says to wait.
+	const pub = await fakePublic();
+	const nowhere = await fakeDoh("");
+	const local = await localServe(pub.publicUrl);
+	try {
+		const m = machine("setup-pending", undefined, nowhere.url);
+		const r = await m.run(["remote", "setup", "--json", "--no-service", "--public-url", pub.publicUrl, "--port", String(local.port)]);
+		assert.equal(r.code, 0, r.stdout + r.stderr);
+		assert.equal(r.json().state, "on");
+		assert.equal(byName(r.json(), "dns").pending, true);
+		const t = await m.run(["remote", "setup", "--no-service", "--public-url", pub.publicUrl, "--port", String(local.port)]);
+		assert.match(t.stdout, /takes a few minutes/);
+	} finally {
+		await pub.close();
+		await nowhere.close();
+		await local.close();
 	}
 });

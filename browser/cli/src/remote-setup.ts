@@ -54,7 +54,7 @@ import { installService, removeService, run, serviceFile, serviceLogHint, servic
 import { configDir, listClients, mintApprovalCode, passcodeSet, setPasscode } from "./oauth.ts";
 import { hubFile } from "./hub-state.ts";
 import { dohAddresses } from "./doh.ts";
-import { answersFromOutside, type ProofCheck, publicChecks } from "./remote-test.ts";
+import { answersFromOutside, type ProofCheck, publicChecks, realFault } from "./remote-test.ts";
 import { DEFAULT_PORT } from "./tunnel.ts";
 import { tailscaleAppPath, tailscaleBinary } from "./tailscale.ts";
 
@@ -803,16 +803,18 @@ async function runSetup(options: SetupOptions): Promise<number> {
 		}
 		if (route === "cloudflare" && wait) await waitForPublic(publicUrl, say);
 		const connectorUrl = `${publicUrl}/mcp`;
-		// The proof, as `remote test` gives it: what an assistant sees from outside. A name that doesn't answer yet is normal for a
-		// few minutes (new DNS); a connector that answers but can't stream, or can't start a sign-in, is a fault and fails setup.
+		// The proof, as `remote test` gives it: what an assistant sees from outside. Only what a new name looks like for a few minutes
+		// waits: no public address yet, or nothing answering yet (a timeout or a refusal). Anything else is a fault and fails setup:
+		// a refused certificate, a 421, another connector's metadata, a stream held back, a sign-in that can't start.
 		stage = "proof";
 		const proof = await publicChecks(publicUrl);
 		const up = answersFromOutside(proof);
 		say(`\nFrom the internet, as an assistant sees it:`);
 		for (const line of proofLines(proof)) say(line);
-		const fault = up ? proof.find((x) => x.status === "fail") : undefined;
+		const fault = realFault(proof);
 		if (fault) {
-			return fail("problem", `${connectorUrl} answers from the internet, but ${fault.name} failed: ${fault.detail}. ${fault.next ?? ""} remote.json is kept.`.trim(), { code: fault.name, checks: proof });
+			const where = up ? `${connectorUrl} answers from the internet, but` : `${connectorUrl} isn't usable from the internet:`;
+			return fail("problem", `${where} ${fault.name} failed: ${fault.detail}. ${fault.next ?? ""} remote.json is kept.`.replace(/\s+remote\.json/, " remote.json"), { code: fault.name, checks: proof });
 		}
 		if (!up) say(`${sym.warn} It doesn't answer from the internet yet. A new name takes a few minutes; then run ${COMMAND_NAME} remote test.`);
 		// The one-time connect code a new assistant needs (the passcode alone is refused for one, issue #97). Made for a person at a
@@ -895,6 +897,8 @@ async function waitForPublic(publicUrl: string, say: (line: string) => void): Pr
 			say(`${sym.ok} ${publicUrl} answers from the internet.`);
 			return;
 		}
+		// A real fault doesn't go away by waiting; the proof after this names it.
+		if (realFault(checks)) return;
 		if (Date.now() + every >= start + total) {
 			const failed = checks.find((x) => x.status !== "ok");
 			say(`${sym.warn} ${publicUrl} isn't answering yet (${failed?.detail ?? "no answer"}). DNS can take longer; check with ${COMMAND_NAME} remote test.`);

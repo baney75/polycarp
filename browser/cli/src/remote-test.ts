@@ -311,7 +311,7 @@ export async function publicChecks(publicUrl: string, options: { streaming?: boo
 		try {
 			addresses = await dohAddresses(host);
 		} catch (err) {
-			checks.push({ name: "dns", status: "fail", detail: `couldn't ask public DNS about ${host}: ${err instanceof Error ? err.message : String(err)}`, next: "Check this computer's internet connection, then run remote test again." });
+			checks.push({ name: "dns", status: "fail", pending: true, detail: `couldn't ask public DNS about ${host}: ${err instanceof Error ? err.message : String(err)}`, next: "Check this computer's internet connection, then run remote test again." });
 			return checks;
 		}
 		const open = addresses.filter(reachable);
@@ -320,6 +320,7 @@ export async function publicChecks(publicUrl: string, options: { streaming?: boo
 			checks.push({
 				name: "dns",
 				status: "fail",
+				...(addresses.length ? {} : { pending: true }),
 				detail: addresses.length ? `${host} resolves only to ${addresses.join(", ")}, ${tailnetOnly ? "a tailnet address" : "not a public address"}` : `public DNS has no address for ${host} yet`,
 				next: tailnetOnly
 					? `Funnel isn't publishing this name. Run ${COMMAND_NAME} remote fix.`
@@ -388,6 +389,12 @@ export async function publicChecks(publicUrl: string, options: { streaming?: boo
 	}
 	return checks;
 }
+
+/**
+ * A failure that isn't what a new name looks like: a refused certificate, plain HTTP, a 421 or another connector's metadata.
+ * Undefined when every failure is pending (no public address yet, or nothing answers yet) or nothing failed.
+ */
+export const realFault = (checks: ProofCheck[]) => checks.find((c) => c.status === "fail" && !c.pending);
 
 /** The connector answers from outside: public DNS, a valid certificate and this connector's metadata. Past that, a failure is a real fault. */
 export const answersFromOutside = (checks: ProofCheck[]) => ["dns", "tls", "resource_metadata"].every((name) => checks.some((c) => c.name === name && c.status === "ok"));
