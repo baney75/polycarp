@@ -94,9 +94,10 @@ async function fakeDoh() {
 
 /**
  * A machine on the Funnel route with the serve service installed. serve: "down" (not running) or "up" (running with remote.json as
- * it is now). funnel: whether Funnel is open for the stub's name. dns: the name Tailscale gives this computer now.
+ * it is now). funnel: whether Funnel is open for the stub's name. dns: the name Tailscale gives this computer now. cfLate: how many
+ * reads of the tunnel's service, after it is started, say it is still starting ("spawn scheduled", "activating").
  */
-async function machine(name, { serve = "down", funnel = false, dns = DNS, recorded = DNS, doh, route = "funnel" } = {}) {
+async function machine(name, { serve = "down", funnel = false, dns = DNS, recorded = DNS, doh, route = "funnel", cfLate = 0 } = {}) {
 	const dir = join(root, name);
 	const bin = join(dir, "bin");
 	const home = join(dir, "home");
@@ -109,6 +110,10 @@ async function machine(name, { serve = "down", funnel = false, dns = DNS, record
 	const remote = join(cfg, "remote.json");
 	writeFileSync(remote, JSON.stringify(route === "cloudflare" ? { publicUrl: `https://${CF_HOST}`, port, route } : { publicUrl: `https://${recorded}:8443`, port, route }));
 	const cfRunning = join(dir, "cloudflared.running");
+	const cfStarting = join(dir, "cloudflared.starting");
+	const cfStart = cfLate ? `echo ${cfLate} > ${cfStarting}` : `: > ${cfRunning}`;
+	// Prints `$1` (exiting `$2`) while the service is still starting; once the reads run out it is running.
+	const cfStill = (say, code) => `if [ -f ${cfStarting} ]; then read n < ${cfStarting}; if [ "$n" -gt 0 ]; then echo $((n - 1)) > ${cfStarting}; echo "${say}"; exit ${code}; fi; /bin/rm -f ${cfStarting}; : > ${cfRunning}; fi; `;
 	if (route === "cloudflare") {
 		// What an earlier Cloudflare setup leaves: cloudflared, the tunnel's settings and its service file.
 		writeFileSync(join(bin, "cloudflared"), `#!/bin/sh\necho "cloudflared $*" >> ${log}\n`);
@@ -136,11 +141,11 @@ async function machine(name, { serve = "down", funnel = false, dns = DNS, record
 	};
 	script(
 		"launchctl",
-		`case "$1" in\nprint) case "$2" in *com.polycarp.serve) if [ -f ${pidFile} ]; then echo "state = running"; exit 0; fi ;; *com.polycarp.cloudflared) if [ -f ${cfRunning} ]; then echo "state = running"; exit 0; fi ;; esac; exit 1 ;;\nbootout) case "$2" in *com.polycarp.serve) ${stop} ;; *com.polycarp.cloudflared) /bin/rm -f ${cfRunning} ;; esac ;;\nbootstrap) case "$3" in *com.polycarp.serve.plist) ${start} ;; *com.polycarp.cloudflared.plist) : > ${cfRunning} ;; esac ;;\nesac\n`,
+		`case "$1" in\nprint) case "$2" in *com.polycarp.serve) if [ -f ${pidFile} ]; then echo "state = running"; exit 0; fi ;; *com.polycarp.cloudflared) ${cfStill("state = spawn scheduled", 0)}if [ -f ${cfRunning} ]; then echo "state = running"; exit 0; fi ;; esac; exit 1 ;;\nbootout) case "$2" in *com.polycarp.serve) ${stop} ;; *com.polycarp.cloudflared) /bin/rm -f ${cfRunning} ;; esac ;;\nbootstrap) case "$3" in *com.polycarp.serve.plist) ${start} ;; *com.polycarp.cloudflared.plist) ${cfStart} ;; esac ;;\nesac\n`,
 	);
 	script(
 		"systemctl",
-		`case "$2" in\nis-active) if { [ "$3" = polycarp-serve.service ] && [ -f ${pidFile} ]; } || { [ "$3" = polycarp-cloudflared.service ] && [ -f ${cfRunning} ]; }; then echo active; else echo inactive; exit 3; fi ;;\nrestart) if [ "$3" = polycarp-serve.service ]; then ${stop}; ${start}; else : > ${cfRunning}; fi ;;\ndisable) if [ "$4" = polycarp-serve.service ]; then ${stop}; else /bin/rm -f ${cfRunning}; fi ;;\nesac\n`,
+		`case "$2" in\nis-active) if [ "$3" = polycarp-cloudflared.service ]; then ${cfStill("activating", 3)}:; fi; if { [ "$3" = polycarp-serve.service ] && [ -f ${pidFile} ]; } || { [ "$3" = polycarp-cloudflared.service ] && [ -f ${cfRunning} ]; }; then echo active; else echo inactive; exit 3; fi ;;\nrestart) if [ "$3" = polycarp-serve.service ]; then ${stop}; ${start}; else ${cfStart}; fi ;;\ndisable) if [ "$4" = polycarp-serve.service ]; then ${stop}; else /bin/rm -f ${cfRunning}; fi ;;\nesac\n`,
 	);
 	script("loginctl", `echo "Linger=yes"\n`);
 	const env = {
@@ -393,6 +398,30 @@ serviceTest("--dry-run while a step only the person can take blocks the rest sti
 		assert.equal(r.json().state, "tailscale_signed_out", "the report still names what blocks it");
 		assert.deepEqual(changes(m), []);
 		never(m);
+	} finally {
+		m.cleanup();
+	}
+});
+
+serviceTest("remote fix waits for the restarted tunnel service to be running before it calls the repair done", async () => {
+	const m = await machine("cf-late", { route: "cloudflare", serve: "up", cfLate: 2 });
+	try {
+		const r = await m.run(["remote", "fix", "--yes", "--json"]);
+		assert.deepEqual(r.json().actions.map((a) => `${a.kind} ${a.status}`), ["restart_cloudflared done"], r.stdout);
+		assert.ok(m.calls().filter((x) => /^(launchctl print .*cloudflared|systemctl --user is-active polycarp-cloudflared)/.test(x)).length >= 3, "it read the service again while it was starting");
+	} finally {
+		m.cleanup();
+	}
+});
+
+serviceTest("a restarted tunnel service that never comes up is a failed repair, with its log, not a done one", async () => {
+	const m = await machine("cf-never", { route: "cloudflare", serve: "up", cfLate: 100000 });
+	try {
+		const r = await m.run(["remote", "fix", "--yes", "--json"], { extra: { TABKYRA_FIX_SERVICE_WAIT_MS: "700" } });
+		assert.equal(r.code, 1, r.stdout);
+		const action = r.json().actions.find((a) => a.kind === "restart_cloudflared");
+		assert.equal(action.status, "failed", r.stdout);
+		assert.match(action.detail, /isn't running after 1 seconds\. Its log: /);
 	} finally {
 		m.cleanup();
 	}

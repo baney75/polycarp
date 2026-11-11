@@ -15,7 +15,7 @@ import { FUNNEL_PORT, lingerWarning, loadRemoteConfig, openFunnel, operatorWarni
 import { CLOUDFLARED_DOWNLOAD_URL, EXIT_FAILED, EXIT_NEEDS_PERSON, EXIT_ON, printReport, type RemoteState, TAILSCALE_OPERATOR_FIX } from "./remote-state.ts";
 import { type ProofCheck, publicChecks } from "./remote-test.ts";
 import { COMMAND_NAME } from "./self.ts";
-import { installService, SERVE_SERVICE, serviceFile, serviceRunning } from "./service.ts";
+import { installService, SERVE_SERVICE, type ServiceSpec, serviceFile, serviceLogHint, serviceRunning, sleep } from "./service.ts";
 import { c, sym } from "./ui.ts";
 
 /** The repairs, in the order they run: a rename first (serve must restart for the new name), serve before Funnel (setup's rule). */
@@ -104,6 +104,22 @@ async function diagnose(config: RemoteConfig): Promise<Diagnosis> {
 
 type Done = { ok: true; detail: string } | { ok: false; detail: string; blocked?: Diagnosis["blocked"] };
 
+/** How long remote fix waits for a service it started to be running, in ms. TABKYRA_FIX_SERVICE_WAIT_MS changes it for tests. */
+const serviceWaitMs = () => {
+	const n = Number(envVar("FIX_SERVICE_WAIT_MS"));
+	return Number.isFinite(n) && n > 0 ? n : 10_000;
+};
+
+/** True once the service manager says the service runs, or when it can't say (Windows); false if it still isn't at the deadline. */
+async function serviceUp(spec: ServiceSpec): Promise<boolean> {
+	const deadline = Date.now() + serviceWaitMs();
+	for (;;) {
+		if (serviceRunning(spec) !== false) return true;
+		if (Date.now() >= deadline) return false;
+		await sleep(250);
+	}
+}
+
 async function perform(action: Diagnosis["actions"][number], config: RemoteConfig, funnelFor: () => { bin: string; dns: string } | undefined): Promise<Done> {
 	switch (action.kind) {
 		case "download_cloudflared": {
@@ -124,7 +140,11 @@ async function perform(action: Diagnosis["actions"][number], config: RemoteConfi
 		}
 		case "restart_cloudflared": {
 			const r = await installService(CLOUDFLARE_SERVICE);
-			return r.ok ? { ok: true, detail: "the tunnel's service started" } : { ok: false, detail: r.message };
+			if (!r.ok) return { ok: false, detail: r.message };
+			// launchd and systemd can take a moment to run what they were just given ("spawn scheduled", "activating").
+			return (await serviceUp(CLOUDFLARE_SERVICE))
+				? { ok: true, detail: "the tunnel's service started" }
+				: { ok: false, detail: `the tunnel's service was started but isn't running after ${Math.round(serviceWaitMs() / 1000)} seconds. Its log: ${serviceLogHint(CLOUDFLARE_SERVICE)}` };
 		}
 		case "open_funnel": {
 			const where = funnelFor();
