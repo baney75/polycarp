@@ -8,7 +8,7 @@
  */
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir, hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { downloadedCloudflared } from "./cloudflared-download.ts";
@@ -17,6 +17,7 @@ import { configDir } from "./files.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { removeService, runAsync, type ServiceSpec, sleep, writeAtomic } from "./service.ts";
 import { envVar } from "./env.ts";
+import { zoneFromSoa } from "./remote-state.ts";
 
 /** cloudflared's own sign-in waits on the person. Five minutes, then it counts as not done. */
 const LOGIN_TIMEOUT_MS = 300_000;
@@ -163,6 +164,69 @@ export async function cloudflareLoginForPanel(bin: string, onUrl: (url: string) 
 	}
 }
 
+/**
+ * The zone the current sign-in covers, once Cloudflare has shown it: asked for a name outside it, Cloudflare puts the name under
+ * it ("Added CNAME <name>.<zone>"). Kept with the certificate's modification time, so a new sign-in forgets it. The certificate
+ * itself is never read: the zone it covers is inside it, next to its API token.
+ */
+const zoneMemoryFile = () => join(configDir(), "cloudflare-zone.json");
+
+function certStamp(): number | undefined {
+	try {
+		return statSync(join(cloudflaredDir(), "cert.pem")).mtimeMs;
+	} catch {
+		return undefined;
+	}
+}
+
+export function signedInZone(): string | undefined {
+	try {
+		const saved = JSON.parse(readFileSync(zoneMemoryFile(), "utf8")) as { zone?: unknown; cert?: unknown };
+		if (typeof saved.zone !== "string" || saved.cert !== certStamp()) return undefined;
+		return saved.zone;
+	} catch {
+		return undefined;
+	}
+}
+
+function rememberZone(zone: string): void {
+	const cert = certStamp();
+	if (cert !== undefined) writeAtomic(zoneMemoryFile(), `${JSON.stringify({ zone, cert })}\n`, 0o600);
+}
+
+const inZone = (host: string, zone: string) => host === zone || host.endsWith(`.${zone}`);
+
+/**
+ * Checked before any tunnel or DNS record is made: can this sign-in give `host` its record? Cloudflare doesn't refuse a name
+ * outside the signed-in domain; it adds that domain to the end and makes the record anyway. So this refuses a name outside the
+ * zone an earlier try proved this sign-in covers, then asks public DNS which zone `host` is in and refuses when that zone isn't
+ * on Cloudflare. When public DNS can't be asked it lets setup go on; the check after the record is made still catches a wrong one.
+ */
+export async function checkCloudflareZone(host: string): Promise<{ ok: true } | { ok: false; message: string }> {
+	const remembered = signedInZone();
+	if (remembered && !inZone(host, remembered)) {
+		return {
+			ok: false,
+			message: `Your Cloudflare sign-in is for ${remembered}, and ${host} isn't on it, so nothing was made. Use a name ending in .${remembered}, or delete ${join(cloudflaredDir(), "cert.pem")}, run ${COMMAND_NAME} remote cloudflare login and choose the domain for ${host}.`,
+		};
+	}
+	const doh = envVar("DOH_URL") || "https://cloudflare-dns.com/dns-query";
+	let found: ReturnType<typeof zoneFromSoa>;
+	try {
+		const url = new URL(doh);
+		url.searchParams.set("name", host);
+		url.searchParams.set("type", "SOA");
+		const res = await fetch(url, { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(5000) });
+		found = zoneFromSoa(await res.json());
+	} catch {
+		return { ok: true };
+	}
+	if (found && !found.onCloudflare) {
+		return { ok: false, message: `${host} is in ${found.zone}, and public DNS says ${found.zone} isn't on Cloudflare, so nothing was made. Pick a name on a domain in your Cloudflare account, or add ${found.zone} to Cloudflare first.` };
+	}
+	return { ok: true };
+}
+
 export type CloudflareOpen = { ok: true; tunnel: string } | { ok: false; code: "cloudflare_tunnel" | "cloudflare_dns" | "cloudflare_zone"; message: string };
 
 /**
@@ -188,6 +252,8 @@ export async function prepareCloudflare(bin: string, host: string, port: number)
 	// The same when an earlier wrong try left that record: cloudflared then says it's already there, under the wrong name.
 	const added = (/Added CNAME (\S+)/i.exec(route.out) ?? /(\S+) is already configured to route to your tunnel/i.exec(route.out))?.[1]?.replace(/\.$/, "").toLowerCase();
 	if (added && added !== host) {
+		// Cloudflare put the name under the signed-in zone, so that zone is now known: the next name outside it is refused before anything is made.
+		if (added.startsWith(`${host}.`)) rememberZone(added.slice(host.length + 1));
 		return { ok: false, code: "cloudflare_zone", message: `Your Cloudflare sign-in is for a different domain, so Cloudflare made ${added} instead of ${host}. Remove that record, delete ${join(cloudflaredDir(), "cert.pem")}, and sign in again choosing the domain for ${host}.` };
 	}
 	writeAtomic(

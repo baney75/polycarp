@@ -28,7 +28,7 @@ const withNode = (bin) => {
 	if (!existsSync(join(bin, "node"))) symlinkSync(process.execPath, join(bin, "node"));
 	return bin;
 };
-const env = { HOME: join(root, "home"), PATH: nodeOnly, NO_COLOR: "1", TABKYRA_SOCKET_DIR: join(root, "sock"), TABKYRA_APPLICATIONS_DIR: join(root, "apps") };
+const env = { HOME: join(root, "home"), PATH: nodeOnly, NO_COLOR: "1", TABKYRA_SOCKET_DIR: join(root, "sock"), TABKYRA_APPLICATIONS_DIR: join(root, "apps"), TABKYRA_DOH_URL: "http://127.0.0.1:9/dns-query" };
 mkdirSync(env.HOME, { recursive: true });
 mkdirSync(env.TABKYRA_SOCKET_DIR, { mode: 0o700 });
 let server;
@@ -792,7 +792,7 @@ function remoteScenario(name, { lock = "Tailnet lock is NOT enabled.", serveStat
 	// The stub service managers start nothing. launchctl print says "not loaded" (exit 1) unless failStop() ran.
 	script("launchctl", `echo "launchctl $*" >> ${log}\ncase "$1" in\nprint) exit 1 ;;\nesac\n`);
 	script("systemctl", `echo "systemctl $*" >> ${log}\n`);
-	const scenarioEnv = { HOME: home, TABKYRA_CONFIG_DIR: join(home, "cfg"), PATH: withNode(bin), TABKYRA_APPLICATIONS_DIR: apps };
+	const scenarioEnv = { HOME: home, TABKYRA_CONFIG_DIR: join(home, "cfg"), PATH: withNode(bin), TABKYRA_APPLICATIONS_DIR: apps, TABKYRA_DOH_URL: "http://127.0.0.1:9/dns-query" };
 	return {
 		stub,
 		env: { ...env, ...scenarioEnv },
@@ -881,7 +881,9 @@ test("remote setup (funnel) runs the exact funnel command, writes remote.json an
 		assert.match(r.out, new RegExp(`Connector URL: https://${DNS}:8443/mcp`));
 		assert.match(r.out, /Settings > Connectors > Add custom connector/);
 		assert.match(r.out, /grok\.com\/connectors > New Connector > Custom/);
-		assert.match(r.out, /Approve with your Polycarp passcode\./);
+		assert.match(r.out, /Connect code: TK-[0-9A-Z]{4}-[0-9A-Z]{4}\n  Type it on the approval page when you add Polycarp to an assistant for the first time\./);
+		assert.match(r.out, /Passcode: ([a-zA-Z0-9]{5}-){3}[a-zA-Z0-9]{5}\n  For re-approving an assistant you already approved\./);
+		assert.doesNotMatch(r.out, /Approve with your Polycarp pass[c]ode/);
 		assert.match(r.out, /Check it with: polycarp-browser remote status/);
 		assert.match(r.out, PASSCODE, "the passcode is printed");
 		const again = await runAsync(s, ["remote", "setup", "--no-service"]);
@@ -915,14 +917,14 @@ test("remote setup refuses when port 8443 already serves something else", () => 
 	assert.equal(s.hasRemoteJson(), false);
 });
 
-test("remote setup without Tailscale on PATH says what to do and exits 1", () => {
+test("remote setup without Tailscale on PATH says what to do and exits 3 (a person installs it)", () => {
 	const s = remoteScenario("no-tailscale");
 	const bare = join(root, "no-tailscale", "node-only");
 	mkdirSync(bare, { recursive: true });
 	symlinkSync(process.execPath, join(bare, "node"));
 	const r = s.run(["remote", "setup"], { PATH: bare });
-	assert.equal(r.code, 1, r.out);
-	assert.match(r.out, /Tailscale isn't installed.*--public-url/);
+	assert.equal(r.code, 3, r.out);
+	assert.match(r.out, /Tailscale isn't installed\. Install it from https:\/\/tailscale\.com\/download\/\w+ and sign in, or use --cloudflare/);
 	assert.equal(s.hasRemoteJson(), false);
 });
 
@@ -1003,10 +1005,10 @@ serviceTest("remote setup with a service that never answers exits 1, names the l
 	assert.ok(s.hasRemoteJson(), "remote.json is kept");
 });
 
-test("remote setup with a service requested and no working launcher exits 1 and installs nothing", () => {
+test("remote setup with a service requested and no working launcher exits 3 and installs nothing", () => {
 	const s = remoteScenario("no-launcher");
 	const r = s.run(["remote", "setup"]);
-	assert.equal(r.code, 1, r.out);
+	assert.equal(r.code, 3, r.out);
 	assert.match(r.out, /Run polycarp-browser install first, then polycarp-browser remote setup again\./);
 	assert.equal(existsSync(s.serviceFile()), false);
 	assert.equal(s.hasRemoteJson(), false);
@@ -1074,7 +1076,7 @@ test("remote setup says so when Funnel isn't enabled for the tailnet, and keeps 
 	const local = await localServer(`${FUNNEL_URL}/mcp`);
 	try {
 		const r = await runAsync(s, ["remote", "setup", "--no-service", "--port", String(local.port)]);
-		assert.equal(r.code, 1, r.out);
+		assert.equal(r.code, 3, r.out);
 		assert.match(r.out, /Funnel isn't enabled for this tailnet or node yet\. Open https:\/\/login\.tailscale\.com\/f\/funnel\?node=n123, enable it, then run polycarp-browser remote setup again\./);
 		assert.ok(s.hasRemoteJson());
 	} finally {
@@ -1374,7 +1376,8 @@ test("remote lists its subcommands in help and rejects unknown flags", () => {
 	const help = cliRun(["remote", "--help"]).out;
 	assert.match(help, /polycarp-browser remote setup \[--cloudflare name\.yourdomain\.com\] \[--replace-funnel\] \[--public-url https:\/\/host\] \[--port N\] \[--no-service\]/);
 	assert.match(help, /polycarp-browser remote status \[--json\]/);
-	assert.match(help, /polycarp-browser remote off/);
+	assert.match(help, /polycarp-browser remote off \[--json\]/);
+	assert.match(help, /polycarp-browser remote cloudflare login \[--json\]/);
 	assert.equal(cliRun(["remote", "setup", "--bogus"]).code, 2);
 	assert.equal(cliRun(["remote"]).code, 2);
 });
@@ -1385,16 +1388,16 @@ test("remote setup --no-passcode makes and prints no passcode, and serve then ap
 	const s = remoteScenario("no-passcode");
 	const ok = s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--port", "9101", "--no-service", "--no-passcode"]);
 	assert.equal(ok.code, 0, ok.out);
-	assert.doesNotMatch(ok.out, /OAuth passcode/);
+	assert.doesNotMatch(ok.out, /Passcode/);
 	assert.doesNotMatch(ok.out, /([a-zA-Z0-9]{5}-){3}[a-zA-Z0-9]{5}/, "no passcode-shaped string in the output");
 	assert.match(ok.out, /No passcode made \(--no-passcode\)/);
-	assert.match(ok.out, /Approve with a one-time connect code: polycarp-browser token approval-code\./);
-	assert.doesNotMatch(ok.out, /Approve with your Polycarp passcode/);
+	assert.match(ok.out, /Connect code: TK-[0-9A-Z]{4}-[0-9A-Z]{4}\n/);
+	assert.doesNotMatch(ok.out, /Approve with your Polycarp pass[c]ode/);
 	const oauthFile = join(s.config, "oauth.json");
 	assert.equal(existsSync(oauthFile) ? JSON.parse(readFileSync(oauthFile, "utf8")).passcode : undefined, undefined, "no passcode was stored");
 	// A second setup without the flag still mints one, as before.
 	const again = s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--port", "9101", "--no-service"]);
-	assert.match(again.out, /OAuth passcode/);
+	assert.match(again.out, /Passcode, shown once/);
 });
 
 test("serve with no passcode starts, says only a connect code can approve, and takes that code", async () => {

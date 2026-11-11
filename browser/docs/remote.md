@@ -18,8 +18,22 @@ polycarp browser remote setup
 ```
 
 It turns on Tailscale Funnel for this computer, sets an approval passcode (shown once), writes
-`remote.json` and installs a user service that keeps `polycarp browser serve` running. Then it prints the
-connector URL, `https://<this-computer>.<your-tailnet>.ts.net:8443/mcp`.
+`remote.json` and installs a user service that keeps `polycarp browser serve` running. When it's done it prints:
+
+- the connector URL, `https://<this-computer>.<your-tailnet>.ts.net:8443/mcp`;
+- a one-time connect code (`TK-XXXX-XXXX`, good once for 10 minutes). Type it on the approval page when you add
+  Polycarp to an assistant for the first time. `polycarp browser token approval-code` makes another;
+- the passcode, only in the run that made it. It re-approves an assistant you already approved; it can't approve a new one;
+- where to add the connector in claude.ai, ChatGPT and grok.com, and the status command.
+
+In a terminal it waits instead of stopping. With no route flag it uses whichever of Tailscale and Cloudflare is ready,
+and asks when both or neither is. If Tailscale isn't installed it prints the download link and waits; if it's signed
+out it waits for the sign-in; if Funnel isn't allowed yet it opens Tailscale's page, says what to click and tries again
+every 5 seconds for up to 10 minutes; if `polycarp browser install` hasn't run it runs it (it only writes the launcher
+and the native host files, and skips what's current). Each wait prints one line naming what it waits for. Ctrl-C stops
+it, and running setup again continues from where it was. `--no-wait` makes it stop and say what to do instead, and
+`--no-input` never asks a question (it needs `--tailscale`, `--cloudflare <name>` or `--public-url`). `--json`, or a
+run with no terminal, never waits or asks.
 
 Check it any time:
 
@@ -49,8 +63,15 @@ polycarp browser remote setup --cloudflare polycarp.example.com
 ```
 
 `setup` makes a tunnel named `polycarp-<this computer>`, or reuses it, adds the DNS record and keeps both `serve` and
-`cloudflared` running as services. It never overwrites a DNS record: a name already in use is refused, in Cloudflare's own
-words. A sign-in covers one domain, so a name on another domain is refused too, and it says how to sign in for that one.
+`cloudflared` running as services. It never overwrites or deletes a DNS record: a name already in use is refused, in
+Cloudflare's own words. A sign-in covers one domain, so a name on another domain is refused too, and it says how to sign
+in for that one. Before it makes anything it asks public DNS which zone the name is in and refuses one that isn't on
+Cloudflare, and it remembers the zone your sign-in turned out to cover, so a later name outside it is refused with
+nothing made.
+
+In a terminal, `remote setup --cloudflare` does the rest inline: with no `cloudflared` it offers the download below
+(y/N; `--yes` accepts, and it never downloads without one of those), signs you in to Cloudflare and waits, asks for the
+name if you gave none, and after the tunnel starts checks the public address for up to 5 minutes, with a line while it waits.
 `remote off` stops the tunnel and leaves the tunnel and its record on your account, so turning it on again reuses them;
 `cloudflared tunnel delete polycarp-<this computer>` removes the tunnel for good.
 
@@ -59,8 +80,10 @@ tab it opens, and it makes the tunnel and checks the public address. If no `clou
 (pinned release 2026.10.7, SHA-256 checked before anything is unpacked or run) to `~/.config/polycarp/browser/bin/cloudflared`; one on
 your PATH or in Homebrew's folders is used first. When Funnel is on, the button moves to Cloudflare and turns Funnel off only after the tunnel is ready; in a terminal that is `remote setup --cloudflare <name> --replace-funnel`.
 
-To try it without an account, `polycarp browser tunnel cloudflare` gives a temporary `*.trycloudflare.com` address that
-changes each time it starts, so a connector added with it stops working at the next restart.
+`polycarp browser tunnel cloudflare` is a quick tunnel for local testing with a token, with no account: a temporary
+`*.trycloudflare.com` address that changes each time it starts. claude.ai, ChatGPT and grok.com can't use it, because a
+quick tunnel doesn't carry their event stream. For them, use `polycarp browser remote setup`. It finds `cloudflared` the
+same way setup does, including the copy setup downloaded.
 
 ## Computer use
 
@@ -92,10 +115,20 @@ sentences. `state` is one of `tailscale_missing`, `tailscale_signed_out`, `funne
 `connectorUrl`), `no_browser_connected` or `problem` (with `message`, and sometimes `code`).
 `status --json` also has `routes`: `tailscale` and `cloudflare`, each with `installed` and `signedIn`, read without changing anything.
 `setup --json` includes `passcode` only in the run that made it, even when that run then fails, so
-keep it. `token passcode --json` makes a new one.
+keep it. `token passcode --json` makes a new one. It mints no connect code unless you pass `--connect-code`; then it adds
+`connectCode` (`TK-XXXX-XXXX`) and `connectCodeExpiresAt` (milliseconds since 1970, 10 minutes on). Neither is logged.
+
+`setup --json` also says what comes next in `next`: `{kind, url?, command?}`, where `kind` is `install` (with the
+download `url`), `sign_in` (with the `command`), `open_page` (`url`), `run_command` (`command`), `choose_name` (pick
+another Cloudflare name) or, on `on`, `add_connector` (`url`, the connector URL). The exit code is 0 for `on`, 1 for a
+failure, 2 for a usage error and 3 when a person has to do something, which `next` names.
+`remote off --json` prints `{ok, message, notes}` with the same 0 or 1.
 
 `code` says why when it matters. For `problem`: `launcher`, `hub`, `service`, `serve` (nothing answers
-on the local port, so nothing was turned on), `funnel` (Tailscale's own words are in `message`) or
+on the local port, so nothing was turned on), `funnel` (Tailscale's own words are in `message`),
+`tailscale_operator` (Tailscale refused because your user isn't its operator; `next` has the command),
+`cloudflare_login`, `cloudflare_name` (no name was given), `cloudflare_zone` (the name's zone isn't on Cloudflare or
+isn't the one you signed in for; checked before any record is made), `cloudflare_dns`, `cloudflare_tunnel` or
 `config`. A failure after the passcode was made, such as a file that can't be written, is a `problem` with
 `code` `config`, `service` or `funnel`, and still carries the `passcode`. For `port_busy`: `tailscale_port` (a saved Tailscale setting already uses 8443) or
 `local_port` (a program on this computer uses the local port). A status read on the Funnel route
@@ -116,8 +149,20 @@ app behave the same.
 - Polycarp installed and connected (`polycarp browser setup`, then `polycarp browser install` so the service has a
   launcher to start).
 - Tailscale on this computer, signed in. Free plan is enough. If Funnel isn't allowed for your
-  tailnet yet, `polycarp browser remote setup` prints the Tailscale page that allows it and stops; allow it
-  there, then run setup again.
+  tailnet yet, `polycarp browser remote setup` opens the Tailscale page that allows it and waits while you
+  allow it (with `--no-wait`, `--json` or no terminal it prints the page and stops; run setup again after).
+
+On Linux, two more things:
+
+- Tailscale refuses changes from a user who isn't its operator, with "Access denied" and its own advice. Setup
+  prints the fix and waits for you to run it once; Polycarp never runs sudo:
+
+  ```bash
+  sudo tailscale set --operator=$USER
+  ```
+
+- A systemd user service stops when you log out unless lingering is on. Setup and `remote status` warn when it
+  isn't, with the fix: `loginctl enable-linger $USER`. `remote status` also warns when Tailscale has no operator.
 
 Funnel runs on its own port (8443), so the OAuth paths sit at the root of the URL, and anything
 you serve on 443 stays private.
@@ -126,7 +171,7 @@ you serve on 443 stays private.
 
 `polycarp browser remote setup` stops, without changing anything, when:
 
-- Tailscale isn't installed.
+- Tailscale isn't installed (in a terminal it waits for you to install it instead).
 - The tailnet has Tailnet Lock on. Funnel doesn't work on a Tailnet Lock tailnet.
 - Port 8443 on this computer already serves something else, or forwards plain TCP.
 - A `remote.json` or a service from an earlier setup is in the way (`polycarp browser remote off` clears it).
@@ -175,8 +220,10 @@ Paste `<public URL>/mcp` in each:
 - **grok.com**: grok.com/connectors > New Connector > Custom.
 
 Each opens Polycarp's approval page. Check the name and the site you return to, tick the
-permissions, enter your Polycarp passcode and press Allow. Only approve a connection you just
-started. Lost the passcode? `polycarp browser token passcode` makes a new one; approvals you already
+permissions, enter the connect code setup printed and press Allow. A new assistant needs a connect
+code; the passcode alone is refused for one (D34). Code used or expired? `polycarp browser token approval-code`
+makes another. Later approvals of an assistant you already approved take the passcode. Only approve a connection
+you just started. Lost the passcode? `polycarp browser token passcode` makes a new one; approvals you already
 gave keep working.
 
 ## Revoke
@@ -197,8 +244,8 @@ keeps forwarding to this computer. Stop it there, for example by stopping `cloud
 ## Security notes
 
 - Anyone on the internet can reach the URL. Two things stand between them and your browser: the
-  passcode on the approval page (five wrong tries per connection, then a 15-minute wait) and the
-  per-permission consent. Keep the passcode in a password manager the browser Polycarp drives can't fill, and don't reuse it.
+  connect code or passcode on the approval page (a new assistant needs the one-time code; five wrong tries per
+  connection, then a 15-minute wait) and the per-permission consent. Keep the passcode in a password manager the browser Polycarp drives can't fill, and don't reuse it.
 - An approval carries only the permissions you ticked; there is no wildcard. `browser.script`
   (run code in a page as you) and `threads.read` (your past chats) start unticked. Leave them off
   unless you need them.

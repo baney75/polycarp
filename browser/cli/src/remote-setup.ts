@@ -9,13 +9,43 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { get as httpGet } from "node:http";
+import { userInfo } from "node:os";
 import { join } from "node:path";
-import { CLOUDFLARE_SERVICE, closeCloudflare, cloudflaredBinary, cloudflareSignedIn, cloudflareTunnelName, normalizeCloudflareHost, prepareCloudflare } from "./cloudflare.ts";
+import {
+	CLOUDFLARE_SERVICE,
+	checkCloudflareZone,
+	closeCloudflare,
+	cloudflaredBinary,
+	cloudflareLoginForPanel,
+	cloudflareSignedIn,
+	cloudflareTunnelName,
+	normalizeCloudflareHost,
+	prepareCloudflare,
+} from "./cloudflare.ts";
+import { CLOUDFLARED_VERSION, cloudflaredAsset, downloadCloudflared, downloadedCloudflared } from "./cloudflared-download.ts";
 import { launcherValid, launcherBinary, which } from "./harness.ts";
 import { connectionChecks } from "./doctor.ts";
-import { completeFunnelAdminUrl, funnelAdminUrl, printReport, type RemoteRoutes, type RemoteState, type SetupReport, stateFromStatus } from "./remote-state.ts";
+import { install } from "./install.ts";
+import { ask, askYes, closeInput, duration, openPage, waitMs } from "./remote-guide.ts";
+import {
+	CLOUDFLARED_DOWNLOAD_URL,
+	completeFunnelAdminUrl,
+	funnelAdminUrl,
+	lingerFromLoginctl,
+	operatorFromPrefs,
+	printReport,
+	type RemoteNext,
+	type RemoteRoutes,
+	type RemoteState,
+	type SetupReport,
+	setupExitCode,
+	stateFromStatus,
+	TAILSCALE_OPERATOR_FIX,
+	tailscaleAccessDenied,
+	tailscaleDownloadUrl,
+} from "./remote-state.ts";
 import { installService, removeService, run, serviceFile, serviceLogHint, sleep, writeAtomic } from "./service.ts";
-import { configDir, listClients, passcodeSet, setPasscode } from "./oauth.ts";
+import { configDir, listClients, mintApprovalCode, passcodeSet, setPasscode } from "./oauth.ts";
 import { hubFile } from "./hub-state.ts";
 import { DEFAULT_PORT } from "./tunnel.ts";
 import { c, sym } from "./ui.ts";
@@ -113,7 +143,7 @@ type FunnelPlan = { ok: true; bin: string; dns: string } | FunnelBlock;
 /** The Tailscale part of planning: installed, no Tailnet Lock, signed in. What `remote status` re-checks once remote.json exists. */
 export function tailscaleReady(): { ok: true; bin: string; state: TailscaleState } | FunnelBlock {
 	const bin = tailscaleBinary();
-	if (!bin) return { ok: false, state: "tailscale_missing", message: "Tailscale isn't installed. Install it from tailscale.com, or use --public-url with your own tunnel (a free Cloudflare named tunnel works)." };
+	if (!bin) return { ok: false, state: "tailscale_missing", message: `Tailscale isn't installed. Install it from ${tailscaleDownloadUrl()} and sign in, or use --cloudflare name.yourdomain.com for a domain on your Cloudflare account.` };
 	if (/tailnet lock is enabled/i.test(run(bin, ["lock", "status"]).out)) {
 		return {
 			ok: false,
@@ -123,7 +153,7 @@ export function tailscaleReady(): { ok: true; bin: string; state: TailscaleState
 		};
 	}
 	const state = readTailscale(bin);
-	if (state.kind === "disconnected") return { ok: false, state: "tailscale_signed_out", message: "Tailscale isn't connected. Run tailscale up, then try again." };
+	if (state.kind === "disconnected") return { ok: false, state: "tailscale_signed_out", message: `Tailscale isn't connected. ${process.platform === "darwin" ? "Open the Tailscale app and sign in, or run tailscale up" : "Run tailscale up"}, then try again.` };
 	return { ok: true, bin, state };
 }
 
@@ -348,8 +378,10 @@ export async function waitForServe(port: number, publicUrl: string, totalMs: num
 export interface SetupOptions {
 	/** A normalized origin, or undefined for the Tailscale Funnel route. */
 	publicUrl?: string;
-	/** A name on a domain in the person's Cloudflare account: the named-tunnel route. */
+	/** A name on a domain in the person's Cloudflare account: the named-tunnel route. "" asks for the name (a terminal only). */
 	cloudflare?: string;
+	/** --tailscale: the Funnel route, chosen outright, so nothing asks which route. */
+	tailscale?: boolean;
 	port?: number;
 	service: boolean;
 	/** False (--no-passcode) mints and prints no passcode; the one-time connect code is the way in. For an agent's shell. */
@@ -367,26 +399,170 @@ export interface SetupOptions {
 	 * has made the tunnel: any refusal before that leaves the Funnel route as it was.
 	 */
 	replaceFunnel?: boolean;
+	/** A person at a terminal (and no --no-wait): wait for what they do (install, sign in, allow Funnel) and carry on. Never in JSON mode. */
+	wait?: boolean;
+	/** A person at a terminal (and no --no-input): questions may be asked. Never in JSON mode. */
+	input?: boolean;
+	/** --yes: the answer to "download cloudflared?" is yes. Nothing else is downloaded or changed by it. */
+	yes?: boolean;
+	/** --connect-code: in JSON mode, a successful run mints a one-time connect code and reports it. Text mode always does. */
+	connectCode?: boolean;
+}
+
+const tailscaleUp = process.platform === "darwin" ? "Open the Tailscale app and sign in, or run: tailscale up" : "Run: tailscale up";
+
+/** What a planning refusal asks the person to do, when it asks anything. */
+function nextFor(state: RemoteState): RemoteNext | undefined {
+	if (state === "tailscale_missing") return { kind: "install", url: tailscaleDownloadUrl() };
+	if (state === "tailscale_signed_out") return { kind: "sign_in", command: "tailscale up" };
+	return undefined;
+}
+
+/** In a terminal: wait while Tailscale is missing or signed out, one line per state, until it is ready or the wait ends. */
+async function waitForTailscale(ports: number[], first: FunnelPlan, say: (line: string) => void): Promise<FunnelPlan> {
+	let plan = first;
+	let shown = "";
+	const every = waitMs("TAILSCALE_POLL_MS", 2000);
+	const deadline = Date.now() + waitMs("TAILSCALE_WAIT_MS", 30 * 60_000);
+	while (!plan.ok && (plan.state === "tailscale_missing" || plan.state === "tailscale_signed_out") && Date.now() < deadline) {
+		if (plan.state !== shown) {
+			shown = plan.state;
+			if (plan.state === "tailscale_missing") {
+				say(`${sym.dot} Tailscale isn't installed. It's free: ${tailscaleDownloadUrl()}`);
+				say(`Waiting for Tailscale to be installed. Ctrl-C stops; nothing has changed yet.`);
+			} else {
+				say(`${sym.dot} Tailscale isn't signed in. ${tailscaleUp}`);
+				say(`Waiting for Tailscale to sign in. Ctrl-C stops; nothing has changed yet.`);
+			}
+		}
+		await sleep(every);
+		plan = planFunnel(ports);
+	}
+	if (plan.ok && shown) say(`${sym.ok} Tailscale is signed in.`);
+	return plan;
+}
+
+/** In a terminal: `polycarp browser install` writes only the launcher and the browsers' native host files, and skips what is current, so setup runs it. */
+async function ensureLauncher(say: (line: string) => void): Promise<void> {
+	say(`${sym.dot} The service needs ${COMMAND_NAME} install first, so setup runs it now.`);
+	try {
+		const result = install();
+		say(`${sym.ok} Launcher ${c.dim(result.launcher)}`);
+	} catch (err) {
+		say(`${sym.warn} ${COMMAND_NAME} install didn't finish: ${err instanceof Error ? err.message : String(err)}`);
+	}
+	if (launcherValid()) return;
+	say(`Run ${COMMAND_NAME} install in another terminal. Waiting for it. Ctrl-C stops; nothing else has changed.`);
+	const every = waitMs("TAILSCALE_POLL_MS", 2000);
+	const deadline = Date.now() + waitMs("TAILSCALE_WAIT_MS", 30 * 60_000);
+	while (!launcherValid() && Date.now() < deadline) await sleep(every);
+}
+
+/** Tailscale refused the change for this user, and named the operator setting as the fix (Linux and other Unix, not Windows). */
+const operatorRefusal = (message: string) => process.platform !== "win32" && tailscaleAccessDenied(message);
+
+/** A refusal a person clears in Tailscale, so a terminal run waits for it: Funnel not allowed yet, or this user not Tailscale's operator. */
+const funnelWaitsOnPerson = (opened: FunnelOpen) => opened.kind === "not_allowed" || (opened.kind === "failed" && operatorRefusal(opened.message));
+
+/** In a terminal: open the page (or show the command), then try Funnel again every 5 seconds for up to 10 minutes. */
+async function waitForFunnel(bin: string, dns: string, port: number, first: FunnelOpen, say: (line: string) => void): Promise<FunnelOpen> {
+	let opened = first;
+	let shown = "";
+	const every = waitMs("FUNNEL_RETRY_MS", 5000);
+	const total = waitMs("FUNNEL_RETRY_TOTAL_MS", 10 * 60_000);
+	const deadline = Date.now() + total;
+	while (funnelWaitsOnPerson(opened) && Date.now() < deadline) {
+		const key = opened.kind === "not_allowed" ? opened.url : "operator";
+		if (key !== shown) {
+			shown = key;
+			if (opened.kind === "not_allowed") {
+				const started = openPage(opened.url);
+				say(`${sym.dot} Tailscale asks you to allow Funnel for this computer. ${started ? "Your browser opened" : "Open"} ${opened.url}`);
+				say("  Sign in if it asks, then press the button that enables Funnel (and HTTPS, if it asks) for this computer.");
+			} else {
+				say(`${sym.dot} Tailscale refused the change because your user isn't its operator. In another terminal, run this once (Polycarp never runs sudo):\n\n  ${TAILSCALE_OPERATOR_FIX}\n`);
+			}
+			say(`Waiting for Tailscale to allow Funnel, trying again every ${duration(every)} for up to ${duration(total)}. Ctrl-C stops; ${COMMAND_NAME} remote setup continues from here.`);
+		}
+		await sleep(every);
+		opened = await openFunnel(bin, dns, port);
+	}
+	return opened;
+}
+
+/** In a terminal, when nothing says which route: use the one that's ready, or ask when both or neither is. */
+async function chooseRoute(say: (line: string) => void): Promise<"tailscale" | "cloudflare" | undefined> {
+	const routes = remoteRoutes();
+	const tailscale = (await preflight()).state === "ready";
+	const cloudflare = routes.cloudflare.installed && routes.cloudflare.signedIn;
+	if (tailscale && !cloudflare) {
+		say(`${sym.dot} Using Tailscale: it's installed and signed in. (--cloudflare name.yourdomain.com uses Cloudflare instead.)`);
+		return "tailscale";
+	}
+	if (cloudflare && !tailscale) {
+		say(`${sym.dot} Using Cloudflare: cloudflared is signed in. (--tailscale uses Tailscale instead.)`);
+		return "cloudflare";
+	}
+	say(tailscale ? "Tailscale and Cloudflare are both ready. Which should assistants use to reach this computer?" : "How should assistants reach this computer? Both are free, on your own account.");
+	say("  1  Tailscale (no domain needed)");
+	say("  2  Cloudflare (a domain on your Cloudflare account)");
+	for (;;) {
+		const answer = await ask("Type 1 or 2 [1]: ");
+		if (answer === undefined) return undefined;
+		const pick = answer.trim().toLowerCase();
+		if (pick === "" || pick === "1" || pick === "tailscale") return "tailscale";
+		if (pick === "2" || pick === "cloudflare") return "cloudflare";
+	}
+}
+
+/** In a terminal: the hostname for a Cloudflare route, asked until it can be one. Undefined when input ends. */
+async function askCloudflareHost(say: (line: string) => void): Promise<string | undefined> {
+	for (;;) {
+		const answer = await ask("Connector hostname, on a domain in your Cloudflare account (for example polycarp.yourdomain.com): ");
+		if (answer === undefined) return undefined;
+		const host = normalizeCloudflareHost(answer);
+		if (host) return host;
+		if (answer.trim()) say(`${answer.trim()} isn't a name a tunnel can have. Use one like polycarp.yourdomain.com.`);
+	}
 }
 
 export async function remoteSetup(options: SetupOptions): Promise<number> {
+	try {
+		return await runSetup(options);
+	} finally {
+		closeInput();
+	}
+}
+
+async function runSetup(options: SetupOptions): Promise<number> {
 	const json = options.json === true || options.report !== undefined;
+	const wait = !json && options.wait === true;
+	const input = !json && options.input === true;
 	const emit = options.report ?? printReport;
 	/** The passcode this run made. A run that fails after making it still reports it, because a later run won't print it again. */
 	let madePasscode: string | undefined;
 	const say = (line: string) => {
 		if (!json) console.log(line);
 	};
-	/** Text mode: the old stderr lines. JSON mode: the state, with the passcode if this run made it. */
-	const fail = (state: RemoteState, message: string, extra: { adminUrl?: string; code?: string; after?: string } = {}): number => {
+	/** Text mode: the old stderr lines. JSON mode: the state, with the passcode if this run made it. Exit 3 when a person has something to do. */
+	const fail = (state: RemoteState, message: string, extra: { adminUrl?: string; code?: string; after?: string; next?: RemoteNext } = {}): number => {
+		const report: SetupReport = {
+			ok: false,
+			state,
+			message,
+			...(extra.adminUrl ? { adminUrl: extra.adminUrl } : {}),
+			...(extra.code ? { code: extra.code } : {}),
+			...(madePasscode ? { passcode: madePasscode } : {}),
+			passcodeSet: passcodeSet(),
+			...(extra.next ? { next: extra.next } : {}),
+		};
 		if (json) {
-			const report: SetupReport = { ok: false, state, message, ...(extra.adminUrl ? { adminUrl: extra.adminUrl } : {}), ...(extra.code ? { code: extra.code } : {}), ...(madePasscode ? { passcode: madePasscode } : {}), passcodeSet: passcodeSet() };
 			emit(report);
-			return 1;
+			return setupExitCode(report);
 		}
 		console.error(`${sym.fail} ${message}`);
 		if (extra.after) console.error(extra.after);
-		return 1;
+		return setupExitCode(report);
 	};
 	// One public route per install: a hub (polycarp browser hub setup) owns it.
 	if (existsSync(hubFile())) {
@@ -406,16 +582,55 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 	let funnelDns = "";
 	let cloudflaredBin = "";
 	// `remote setup` again on this route picks up where a failed run stopped, with the name it already has.
-	const cloudflareName = options.cloudflare ?? (previous?.route === "cloudflare" && !options.publicUrl ? new URL(previous.publicUrl).hostname : undefined);
+	let cloudflareName = options.cloudflare ?? (previous?.route === "cloudflare" && !options.publicUrl && !options.tailscale ? new URL(previous.publicUrl).hostname : undefined);
+	if (input && !previous && cloudflareName === undefined && !options.publicUrl && !options.tailscale) {
+		const choice = await chooseRoute(say);
+		if (choice === undefined) return fail("problem", `No route was chosen, so nothing was changed. Run ${COMMAND_NAME} remote setup --tailscale, or --cloudflare name.yourdomain.com.`);
+		if (choice === "cloudflare") cloudflareName = "";
+	}
+	if (cloudflareName === "") {
+		const typed = input ? await askCloudflareHost(say) : undefined;
+		if (!typed) {
+			return fail("problem", `The Cloudflare route needs a name on a domain in your Cloudflare account: ${COMMAND_NAME} remote setup --cloudflare polycarp.yourdomain.com. Nothing was changed.`, {
+				code: "cloudflare_name",
+				next: { kind: "choose_name" },
+			});
+		}
+		cloudflareName = typed;
+	}
 	const cloudflareHost = cloudflareName === undefined ? undefined : normalizeCloudflareHost(cloudflareName);
-	if (cloudflareName !== undefined && !cloudflareHost) return fail("problem", `${cloudflareName} isn't a name a tunnel can have. Use one like polycarp.yourdomain.com.`, { code: "cloudflare_dns" });
+	if (cloudflareName !== undefined && !cloudflareHost) return fail("problem", `${cloudflareName} isn't a name a tunnel can have. Use one like polycarp.yourdomain.com.`, { code: "cloudflare_dns", next: { kind: "choose_name" } });
 	if (previous?.route === "cloudflare" && !cloudflareHost) return fail("problem", `A Cloudflare tunnel from an earlier setup is on. Run ${COMMAND_NAME} remote off first.`);
 	if (cloudflareHost) {
 		if (previous?.route === "funnel" && !options.replaceFunnel) return fail("problem", `Funnel from an earlier setup is on. Run ${COMMAND_NAME} remote off first.`);
-		const bin = cloudflaredBinary();
-		if (!bin) return fail("cloudflared_missing", "cloudflared isn't installed. Get it from developers.cloudflare.com/tunnel/downloads, then try again.");
-		if (!cloudflareSignedIn()) return fail("problem", `Sign in to Cloudflare first: ${COMMAND_NAME} remote cloudflare login.`, { code: "cloudflare_login" });
 		if (!options.service) return fail("problem", "The Cloudflare route runs as a service, so --no-service doesn't apply.");
+		let bin = cloudflaredBinary();
+		if (!bin) {
+			const getIt = `${COMMAND_NAME} remote setup --cloudflare ${cloudflareHost} --yes`;
+			const missing = (message: string) => fail("cloudflared_missing", message, { next: { kind: "install", url: CLOUDFLARED_DOWNLOAD_URL, ...(cloudflaredAsset() ? { command: getIt } : {}) } });
+			// No release for this platform (Windows, other CPUs): the person installs it, as before.
+			if (!cloudflaredAsset()) return missing(`cloudflared isn't installed. Get it from ${CLOUDFLARED_DOWNLOAD_URL}, then try again.`);
+			let yes = options.yes === true;
+			if (!yes && input) yes = await askYes(`cloudflared isn't installed. Download Cloudflare's release ${CLOUDFLARED_VERSION} from GitHub (checked against its SHA-256) to ${downloadedCloudflared()}? [y/N] `);
+			if (!yes) return missing(`cloudflared isn't installed. ${getIt} downloads Cloudflare's own release ${CLOUDFLARED_VERSION}, checked against its SHA-256; or install it from ${CLOUDFLARED_DOWNLOAD_URL}.`);
+			say(`${sym.dot} Downloading cloudflared ${CLOUDFLARED_VERSION}...`);
+			const got = await downloadCloudflared();
+			if (!got.ok) return missing(got.message);
+			say(`${sym.ok} cloudflared ${c.dim(got.path)}`);
+			bin = got.path;
+		}
+		if (!cloudflareSignedIn()) {
+			const signIn: RemoteNext = { kind: "sign_in", command: `${COMMAND_NAME} remote cloudflare login` };
+			if (!wait) return fail("problem", `Sign in to Cloudflare first: ${COMMAND_NAME} remote cloudflare login.`, { code: "cloudflare_login", next: signIn });
+			say(`${sym.dot} Sign in to Cloudflare in your browser and choose the domain for ${cloudflareHost}.`);
+			say(`Waiting up to 5 minutes for the sign-in. Ctrl-C stops; nothing has changed yet.`);
+			const signedIn = await cloudflareLoginForPanel(bin, (url) => say(`  ${openPage(url) ? "Your browser opened" : "Open"} ${url}`));
+			if (!signedIn.ok) return fail("problem", signedIn.message, { code: "cloudflare_login", next: signIn });
+			say(`${sym.ok} Signed in to Cloudflare.`);
+		}
+		// Cloudflare doesn't refuse a name outside the signed-in domain; it makes a different record. So this refuses first.
+		const zone = await checkCloudflareZone(cloudflareHost);
+		if (!zone.ok) return fail("problem", zone.message, { code: "cloudflare_zone", next: { kind: "choose_name" } });
 		// Funnel on 8443 would stay public and forward to this machine, whatever else is set up.
 		if (tailscaleBinary()) {
 			const stray = await strayFunnel();
@@ -440,8 +655,13 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 		publicUrl = options.publicUrl;
 		route = "custom";
 	} else {
-		const plan = planFunnel(previous?.route === "funnel" ? [port, previous.port] : [port]);
-		if (!plan.ok) return fail(plan.state, plan.message, plan.code ? { code: plan.code } : {});
+		const ports = previous?.route === "funnel" ? [port, previous.port] : [port];
+		let plan = planFunnel(ports);
+		if (!plan.ok && wait) plan = await waitForTailscale(ports, plan, say);
+		if (!plan.ok) {
+			const next = nextFor(plan.state);
+			return fail(plan.state, plan.message, { ...(plan.code ? { code: plan.code } : {}), ...(next ? { next } : {}) });
+		}
 		funnelBin = plan.bin;
 		funnelDns = plan.dns;
 		publicUrl = `https://${plan.dns}:${FUNNEL_PORT}`;
@@ -452,7 +672,13 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 		return fail("problem", `A service from an earlier setup is installed (${installed}), and --no-service would leave it running. Run ${COMMAND_NAME} remote off first. Nothing was changed.`);
 	}
 	if (options.service && !launcherValid()) {
-		return fail("problem", `${launcherBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then ${COMMAND_NAME} remote setup again.`, { code: "launcher" });
+		if (wait) await ensureLauncher(say);
+		if (!launcherValid()) {
+			return fail("problem", `${launcherBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then ${COMMAND_NAME} remote setup again.`, {
+				code: "launcher",
+				next: { kind: "run_command", command: `${COMMAND_NAME} install` },
+			});
+		}
 	}
 	// Whatever listens on the port must be Polycarp with OAuth for this URL, or Funnel would publish something else.
 	const probe = await probeLocal(port, publicUrl);
@@ -468,11 +694,16 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 		}
 	}
 	if (options.passcode === false && !passcodeSet()) {
-		say(`${sym.dot} No passcode made (--no-passcode). Approve a connection with a one-time connect code: ${COMMAND_NAME} token approval-code. ${COMMAND_NAME} token passcode sets a passcode later.`);
+		say(`${sym.dot} No passcode made (--no-passcode). A one-time connect code approves each new assistant; setup prints one when it's done. ${COMMAND_NAME} token passcode sets a passcode later.`);
 	} else if (!passcodeSet()) {
 		madePasscode = setPasscode();
-		say(`${sym.ok} OAuth passcode:\n\n  ${madePasscode}\n`);
-		say(c.dim(`Shown once. Type it on the approval page when claude.ai, ChatGPT or grok.com connects. Keep it in a password manager, but not one the browser Polycarp drives can fill. ${COMMAND_NAME} token passcode replaces it; grants already approved keep working.`));
+		// Shown now, so a run that stops or waits can't lose it; the summary at the end repeats it.
+		say(`${sym.ok} Passcode, shown once:\n\n  ${madePasscode}\n`);
+		say(
+			c.dim(
+				`It re-approves an assistant you already approved. A new assistant needs a one-time connect code instead; setup prints one when it's done. Keep the passcode in a password manager, but not one the browser Polycarp drives can fill. ${COMMAND_NAME} token passcode replaces it.`,
+			),
+		);
 	}
 	// Every step from here on has made (or may have made) a passcode a later run won't print, so in JSON mode a throw is still a report.
 	let stage = "config";
@@ -482,7 +713,7 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 		if (route === "cloudflare" && cloudflareHost) {
 			stage = "cloudflare_tunnel";
 			const opened = await prepareCloudflare(cloudflaredBin, cloudflareHost, port);
-			if (!opened.ok) return fail("problem", opened.message, { code: opened.code });
+			if (!opened.ok) return fail("problem", opened.message, { code: opened.code, ...(opened.code === "cloudflare_tunnel" ? {} : { next: { kind: "choose_name" } }) });
 			tunnelName = opened.tunnel;
 			if (options.replaceFunnel && previous?.route === "funnel") {
 				// The tunnel is ready, so now the old public route closes. If it won't, nothing is saved and Funnel keeps working.
@@ -526,41 +757,130 @@ export async function remoteSetup(options: SetupOptions): Promise<number> {
 		}
 		stage = "funnel";
 		if (route === "funnel") {
-			const opened = await openFunnel(funnelBin, funnelDns, port);
+			let opened = await openFunnel(funnelBin, funnelDns, port);
+			if (wait && funnelWaitsOnPerson(opened)) opened = await waitForFunnel(funnelBin, funnelDns, port, opened, say);
 			const after = `${sym.dot} remote.json is kept. Fix that, then run ${COMMAND_NAME} remote setup again, or ${COMMAND_NAME} remote off to undo setup.`;
 			if (opened.kind === "not_allowed") {
-				return fail("funnel_not_allowed", `Funnel isn't enabled for this tailnet or node yet. Open ${opened.url}, enable it, then run ${COMMAND_NAME} remote setup again.`, { adminUrl: opened.url, after });
+				return fail("funnel_not_allowed", `Funnel isn't enabled for this tailnet or node yet. Open ${opened.url}, enable it, then run ${COMMAND_NAME} remote setup again.`, {
+					adminUrl: opened.url,
+					after,
+					next: { kind: "open_page", url: opened.url },
+				});
+			}
+			if (opened.kind === "failed" && operatorRefusal(opened.message)) {
+				return fail("problem", `Tailscale refused to open Funnel because your user isn't its operator. Run this once: ${TAILSCALE_OPERATOR_FIX}, then ${COMMAND_NAME} remote setup again. Tailscale's words: ${opened.message}`, {
+					code: "tailscale_operator",
+					after,
+					next: { kind: "run_command", command: TAILSCALE_OPERATOR_FIX },
+				});
 			}
 			if (opened.kind === "failed") return fail("problem", `tailscale funnel failed: ${opened.message}`, { code: "funnel", after });
 			say(`${sym.ok} Tailscale Funnel on ${publicUrl} ${c.dim(`-> 127.0.0.1:${port}`)}`);
 		}
 		if (!options.service) say(listening ? `${sym.dot} No service installed. Start it yourself: ${c.bold(`${COMMAND_NAME} serve`)}` : `${sym.warn} Nothing is listening on 127.0.0.1:${port} yet. Start it yourself: ${c.bold(`${COMMAND_NAME} serve`)}`);
+		if (options.service) {
+			const linger = lingerWarning();
+			if (linger) say(`${sym.warn} ${linger}`);
+		}
+		if (route === "cloudflare" && wait) await waitForPublic(publicUrl, say);
+		const connectorUrl = `${publicUrl}/mcp`;
+		// The one-time connect code a new assistant needs (the passcode alone is refused for one, issue #97). JSON mode makes one only when asked.
+		let connect: { code: string; expiresAt: number } | undefined;
+		let connectProblem = "";
+		if (!json || options.connectCode) {
+			try {
+				connect = mintApprovalCode();
+			} catch (err) {
+				connectProblem = err instanceof Error ? err.message : String(err);
+			}
+		}
 		if (json) {
 			const report: SetupReport = {
 				ok: true,
 				state: "on",
 				message: "Connector ready.",
-				connectorUrl: `${publicUrl}/mcp`,
+				connectorUrl,
 				...(madePasscode ? { passcode: madePasscode } : {}),
 				passcodeSet: passcodeSet(),
+				...(connect ? { connectCode: connect.code, connectCodeExpiresAt: connect.expiresAt } : {}),
+				next: { kind: "add_connector", url: connectorUrl },
 			};
 			emit(report);
 			return 0;
 		}
+		const codeLines = connect
+			? `Connect code: ${c.bold(connect.code)}
+  Type it on the approval page when you add Polycarp to an assistant for the first time.
+  It works once, for 10 minutes. Each new assistant needs its own: ${COMMAND_NAME} token approval-code makes another.`
+			: `Connect code: none made (${connectProblem}). Make one with ${COMMAND_NAME} token approval-code before you add an assistant.`;
+		const passcodeLines = madePasscode
+			? `
+Passcode: ${c.bold(madePasscode)}
+  For re-approving an assistant you already approved. Shown only in this run; save it now.`
+			: "";
 		console.log(`
-Connector URL: ${c.bold(`${publicUrl}/mcp`)}
+Connector URL: ${c.bold(connectorUrl)}
 
-  claude.ai   Settings > Connectors > Add custom connector, paste the URL.
-  ChatGPT     Settings > Apps & Connectors (developer mode) > Create, paste the URL, OAuth.
-  grok.com    grok.com/connectors > New Connector > Custom, paste the URL.
+${codeLines}
+${passcodeLines}
+Add it to an assistant (paste the connector URL):
+  claude.ai   Settings > Connectors > Add custom connector.
+  ChatGPT     Settings > Apps & Connectors (turn on developer mode) > Create. Choose OAuth.
+  grok.com    grok.com/connectors > New Connector > Custom.
+Each opens Polycarp's approval page: check the name, tick what it may do, type the connect code and press Allow.
 
-${passcodeSet() ? "Approve with your Polycarp passcode." : `Approve with a one-time connect code: ${COMMAND_NAME} token approval-code.`}
 Check it with: ${COMMAND_NAME} remote status`);
 		return 0;
 	} catch (err) {
 		if (!json) throw err;
 		return fail("problem", `${err instanceof Error ? err.message : String(err)}. remote.json is kept; fix the cause and run ${COMMAND_NAME} remote setup again.`, { code: stage });
 	}
+}
+
+/** In a terminal, after a Cloudflare setup: a new DNS name takes minutes, so check the public address for up to 5 minutes. */
+async function waitForPublic(publicUrl: string, say: (line: string) => void): Promise<void> {
+	const every = waitMs("PUBLIC_POLL_MS", 5000);
+	const total = waitMs("PUBLIC_WAIT_MS", 5 * 60_000);
+	const start = Date.now();
+	say(`Waiting for ${publicUrl} to answer from the internet (a new name takes a few minutes), up to ${duration(total)}. Ctrl-C stops; setup is saved.`);
+	let shownAt = start;
+	for (;;) {
+		const result = await metadata(`${publicUrl}${METADATA_PATH}`, 10_000, publicUrl);
+		if (result.ok) {
+			say(`${sym.ok} ${publicUrl} answers from the internet.`);
+			return;
+		}
+		if (Date.now() + every >= start + total) {
+			say(`${sym.warn} ${publicUrl} isn't answering yet (${result.detail}). DNS can take longer; check with ${COMMAND_NAME} remote status.`);
+			return;
+		}
+		if (Date.now() - shownAt >= 30_000) {
+			shownAt = Date.now();
+			say(`  still waiting, ${duration(Date.now() - start)} so far`);
+		}
+		await sleep(every);
+	}
+}
+
+/**
+ * Linux stops a user's services at logout unless lingering is on for that user (systemd-logind). Undefined when it is on, when
+ * this isn't Linux, or when loginctl can't say.
+ */
+function lingerWarning(): string | undefined {
+	if (process.platform !== "linux") return undefined;
+	const user = userInfo().username;
+	const r = run("loginctl", ["show-user", user, "-p", "Linger"], 10_000);
+	if (r.code !== 0 || lingerFromLoginctl(r.out) !== false) return undefined;
+	return `Linux stops your user services when you log out, so assistants can't reach this computer then. To keep them running, run once: loginctl enable-linger ${user}`;
+}
+
+/** Linux: is this user Tailscale's operator? A warning when it isn't (Funnel then can't be opened again without sudo), else undefined. */
+function operatorWarning(bin: string | undefined): string | undefined {
+	if (process.platform !== "linux" || !bin || process.getuid?.() === 0) return undefined;
+	const r = run(bin, ["debug", "prefs"], 10_000);
+	const operator = r.code === 0 ? operatorFromPrefs(r.out) : undefined;
+	if (operator === undefined || operator === userInfo().username) return undefined;
+	return `Tailscale needs root for changes your user makes, so ${COMMAND_NAME} remote setup can't open Funnel. Run once: ${TAILSCALE_OPERATOR_FIX}`;
 }
 
 // ---------- remote status ----------
@@ -692,6 +1012,16 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 		}
 		checks.push({ name: "OAuth clients", status: clients ? "ok" : "warn", detail: clients ? `${clients} registered (${COMMAND_NAME} token clients)` : "none yet; add the connector in claude.ai, ChatGPT or grok.com" });
 	}
+	// Linux only, both warnings: without operator rights setup can't open Funnel again, and without lingering the service stops at logout.
+	if (config?.route !== "cloudflare" && config?.route !== "custom") {
+		const operator = operatorWarning(tailscaleBinary());
+		if (operator) checks.push({ name: "tailscale user", status: "warn", detail: operator });
+	}
+	const service = serviceFile();
+	if (service && existsSync(service)) {
+		const linger = lingerWarning();
+		if (linger) checks.push({ name: "linger", status: "warn", detail: linger });
+	}
 	const ok = checks.every((x) => x.status !== "fail");
 	if (options.json) {
 		// The state is the app's answer; the checks stay for anyone who wants the detail. The passcode itself is never here.
@@ -735,8 +1065,26 @@ function funnelOff(bin: string | undefined): { ok: boolean; message: string } {
 }
 
 
-/** Funnel first, then the service, then the files: while Funnel is open, a serve with OAuth on loopback is the safe state. */
-export async function remoteOff(): Promise<number> {
+/**
+ * Funnel first, then the service, then the files: while Funnel is open, a serve with OAuth on loopback is the safe state.
+ * `json`: one object on stdout, `{ok, message, notes}`, and nothing else; the exit code is the same either way.
+ */
+export async function remoteOff(options: { json?: boolean } = {}): Promise<number> {
+	const notes: string[] = [];
+	let failure: string | undefined;
+	/** A line of the report: printed in text mode, kept for the JSON one. */
+	const note = (mark: string, text: string, dim = false) => {
+		if (options.json) notes.push(text);
+		else console.log(mark ? `${mark} ${dim ? c.dim(text) : text}` : dim ? c.dim(text) : text);
+	};
+	const problem = (text: string) => {
+		failure ??= text;
+		if (!options.json) console.error(`${sym.fail} ${text}`);
+	};
+	const finish = (code: number): number => {
+		if (options.json) printReport({ ok: code === 0, message: failure ?? "Remote access is off.", notes });
+		return code;
+	};
 	let config: RemoteConfig | undefined;
 	let badFile: string | undefined;
 	try {
@@ -744,61 +1092,61 @@ export async function remoteOff(): Promise<number> {
 	} catch (err) {
 		badFile = err instanceof Error ? err.message : String(err);
 	}
-	if (badFile !== undefined) console.log(`${sym.warn} ${badFile}`);
+	if (badFile !== undefined) note(sym.warn, badFile);
 	let code = 0;
 	// By the service, not remote.json: a damaged or missing file must not leave a tunnel running.
 	const tunnelService = serviceFile(CLOUDFLARE_SERVICE);
 	if (config?.route === "cloudflare" || (tunnelService && existsSync(tunnelService))) {
 		const closed = closeCloudflare();
 		if (!closed.ok) {
-			console.error(`${sym.fail} ${closed.failure}`);
-			return 1;
+			problem(closed.failure ?? "The Cloudflare tunnel's service couldn't be removed.");
+			return finish(1);
 		}
-		for (const note of closed.notes) console.log(`${sym.ok} ${note}`);
-		console.log(c.dim(`The tunnel and its DNS record stay in your Cloudflare account, so turning this on again reuses them. To remove the tunnel: cloudflared tunnel delete ${cloudflareTunnelName()}`));
+		for (const line of closed.notes) note(sym.ok, line);
+		note("", `The tunnel and its DNS record stay in your Cloudflare account, so turning this on again reuses them. To remove the tunnel: cloudflared tunnel delete ${cloudflareTunnelName()}`, true);
 	}
 	if (config?.route === "cloudflare") {
 		// The tunnel is closed above; there's no Funnel to look for on this route.
 	} else if (config?.route === "funnel") {
 		const r = funnelOff(tailscaleBinary());
 		if (!r.ok) {
-			console.error(`${sym.fail} ${r.message}`);
-			return 1;
+			problem(r.message);
+			return finish(1);
 		}
-		console.log(`${sym.ok} ${r.message}`);
+		note(sym.ok, r.message);
 	} else {
 		const stray = await strayFunnel();
 		if (stray.kind === "unknown") {
-			console.error(`${sym.fail} ${stray.message} Nothing was changed. Start Tailscale and run ${COMMAND_NAME} remote off again.`);
-			return 1;
+			problem(`${stray.message} Nothing was changed. Start Tailscale and run ${COMMAND_NAME} remote off again.`);
+			return finish(1);
 		}
 		if (stray.kind === "found" && stray.ours) {
 			const r = funnelOff(stray.bin);
 			if (!r.ok) {
-				console.error(`${sym.fail} ${r.message}`);
-				return 1;
+				problem(r.message);
+				return finish(1);
 			}
-			console.log(`${sym.ok} ${r.message}`);
+			note(sym.ok, r.message);
 		} else if (stray.kind === "found") {
-			console.error(
-				`${sym.fail} Tailscale Funnel on port ${FUNNEL_PORT} forwards ${stray.paths.join(", ")} to a local port, but not everything there answers like Polycarp serve, so it was left on. If it is yours to close, run tailscale funnel --https=${FUNNEL_PORT} off.`,
+			problem(
+				`Tailscale Funnel on port ${FUNNEL_PORT} forwards ${stray.paths.join(", ")} to a local port, but not everything there answers like Polycarp serve, so it was left on. If it is yours to close, run tailscale funnel --https=${FUNNEL_PORT} off.`,
 			);
 			code = 1;
 		}
 	}
 	const service = removeService();
 	if (!service.ok) {
-		console.error(`${sym.fail} ${service.failure}`);
-		return 1;
+		problem(service.failure ?? "The service couldn't be removed.");
+		return finish(1);
 	}
-	for (const note of service.notes) console.log(`${sym.ok} ${note}`);
+	for (const line of service.notes) note(sym.ok, line);
 	if (config || badFile !== undefined) {
 		rmSync(remoteFile(), { force: true });
-		console.log(`${sym.ok} Removed ${c.dim(remoteFile())}`);
+		note(sym.ok, `Removed ${remoteFile()}`);
 	} else {
-		console.log(`${sym.dot} No remote.json; nothing else to remove.`);
+		note(sym.dot, "No remote.json; nothing else to remove.");
 	}
-	if (config?.route === "custom") console.log(`${sym.warn} Your own front door for ${config.publicUrl} still forwards to this machine. Stop it there (for example, stop cloudflared); ${COMMAND_NAME} remote off can't.`);
-	console.log(c.dim(`Approved connectors keep their grants in oauth.json. ${COMMAND_NAME} token clients lists them; ${COMMAND_NAME} token revoke <client id> ends one.`));
-	return code;
+	if (config?.route === "custom") note(sym.warn, `Your own front door for ${config.publicUrl} still forwards to this machine. Stop it there (for example, stop cloudflared); ${COMMAND_NAME} remote off can't.`);
+	note("", `Approved connectors keep their grants in oauth.json. ${COMMAND_NAME} token clients lists them; ${COMMAND_NAME} token revoke <client id> ends one.`, true);
+	return finish(code);
 }
