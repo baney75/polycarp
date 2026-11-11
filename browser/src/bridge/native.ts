@@ -321,6 +321,7 @@ async function askUpload(
 	state: ClientState,
 	url: string,
 	files: Array<{ name: string; bytes: number }>,
+	askId: string,
 ): Promise<boolean> {
 	const host = hostOf(url);
 	if (!host || isOwnExtensionUrl(url)) return false;
@@ -344,7 +345,7 @@ async function askUpload(
 		type: "event",
 		clientId: state.clientId,
 		event: "permission_request",
-		data: { requestId, host, url, timeoutMs: FILE_ASK_TIMEOUT_MS, kind: "upload", agent: state.name, files },
+		data: { requestId, host, url, timeoutMs: FILE_ASK_TIMEOUT_MS, kind: "upload", agent: state.name, files, askId },
 	});
 	const result = await decision;
 	await removePendingRequest(requestId);
@@ -454,7 +455,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			},
 			isGuarded: (url: string) => isGuardedUrl(url, req.guardedHosts),
 			guardedHosts: req.guardedHosts ?? [],
-			askUpload: (url, files) => askUpload(state, url, files),
+			askUpload: (url, files, askId) => askUpload(state, url, files, askId),
 			checkUrl: async (url: string) => {
 				if (isGuardedUrl(url, req.guardedHosts)) throw guardedError(url);
 				if (!(await askPermission(state, url))) {

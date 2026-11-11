@@ -100,10 +100,12 @@ export function stashUploadChunk(tabId: number, id: string, b64: string, bound: 
 	);
 }
 
-export function dropUploadStash(tabId: number, id: string): Promise<unknown> {
+/** Drop an upload's pieces. `gone` leaves a mark in their place, so a commitUpload already on its way sets nothing. */
+export function dropUploadStash(tabId: number, id: string, gone = false): Promise<unknown> {
+	const at = `s[${JSON.stringify(id)}]`;
 	return runInPage(
 		tabId,
-		`(() => { if (globalThis.${STASH}) delete globalThis.${STASH}[${JSON.stringify(id)}]; return true; })()`,
+		`(() => { const s = (globalThis.${STASH} = globalThis.${STASH} || {}); ${gone ? `${at} = null` : `delete ${at}`}; return true; })()`,
 	);
 }
 
@@ -143,8 +145,10 @@ export function commitUpload(
 		`(() => {
 			${boundCode(bound, id)}
 			const store = globalThis.${STASH} || {};
-			const parts = store[${JSON.stringify(id)}] || [];
+			const held = store[${JSON.stringify(id)}];
 			delete store[${JSON.stringify(id)}];
+			if (held === null) return { refused: "The connection to the agent closed during the upload. Nothing was set." };
+			const parts = held || [];
 			${elementCode(target)}
 			const metas = ${JSON.stringify(files)};
 			const W = el.ownerDocument.defaultView || window;

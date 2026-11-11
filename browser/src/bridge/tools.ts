@@ -81,9 +81,10 @@ export interface HandlerContext {
 	guardedHosts?: readonly string[];
 	/**
 	 * Ask the person whether these local files may go to the page at `url` (the files tool, D38). True only for a
-	 * yes to this one upload: no answer and a no are both false, and the answer is never remembered.
+	 * yes to this one upload: no answer and a no are both false, and the answer is never remembered. `askId` is the
+	 * caller's id for the one call that asks; it goes back with the question.
 	 */
-	askUpload(url: string, files: Array<{ name: string; bytes: number }>): Promise<boolean>;
+	askUpload(url: string, files: Array<{ name: string; bytes: number }>, askId: string): Promise<boolean>;
 	/** Stable id of the calling client. */
 	clientId: string;
 	/** Push an event to the calling client only. */

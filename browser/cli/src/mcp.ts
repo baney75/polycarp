@@ -430,15 +430,14 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	 * to this one upload counts, TABKYRA_AUTO_ALLOW does not answer it, and nothing is remembered. A client that
 	 * can't show questions leaves this one to the side panel, where it waits until it times out as a no.
 	 */
-	/** Where the files of the upload being asked about are on this computer, in the order asked (files-tool.ts). */
-	let filesAsking: string[] | undefined;
-
 	async function handleUploadQuestion(requestId: string, host: string, data: Record<string, unknown>): Promise<void> {
 		const asked = Array.isArray(data.files) ? (data.files as Array<{ name?: unknown; bytes?: unknown }>) : [];
-		// The helper knows where each file is; the browser was told only names. The person is shown the full path, so a
-		// notes.txt from a private folder can't pass for the one in the project.
-		const where = filesAsking ?? [];
-		const list = asked.map((f, i) => `${where[i] ?? String(f.name)} (${byteSize(Number(f.bytes) || 0)})`).join(", ");
+		// The upload call that asked knows where each file is (the question carries that call's id); the browser was told
+		// only names. The person is shown the full path, so a notes.txt from a private folder can't pass for the one in
+		// the project. A question that is not one call's own, file for file, is answered no.
+		const where = files?.asked(data.askId);
+		if (where?.length !== asked.length) return void (await client.call("permission.respond", { requestId, decision: "deny" }).catch(() => undefined));
+		const list = asked.map((f, i) => `${where[i]} (${byteSize(Number(f.bytes) || 0)})`).join(", ");
 		let decision: "allow_once" | "deny" = "deny";
 		if (!server.server.getClientCapabilities()?.elicitation) {
 			process.stderr.write(`[polycarp] An upload to ${host} is waiting for an answer in the side panel (Settings > Agents).\n`);
@@ -1155,9 +1154,6 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			return lacks === "run_js"
 				? "permission_denied: Downloading a URL you name needs the browser.script scope. Download a link, image or media element on the page by its ref, without url."
 				: "permission_denied: Downloading needs the browser.navigate scope: a link's file is fetched the way opening the link would fetch it.";
-		},
-		asking: (paths) => {
-			filesAsking = paths;
 		},
 		shapes: { tabId, ref, selector },
 		bridgeError: errorResult as (err: unknown) => { content: Array<{ type: "text"; text: string }>; isError: true },

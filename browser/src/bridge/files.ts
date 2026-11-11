@@ -98,7 +98,7 @@ function forget(t: Upload | Outgoing): void {
 		t.chunks.length = 0;
 		t.cancelled = true;
 		// A commit under way may already have handed the page some pieces.
-		if (committing.has(t)) void dropUploadStash(t.tabId, t.id).catch(() => undefined);
+		if (committing.has(t)) void dropUploadStash(t.tabId, t.id, true).catch(() => undefined);
 		return;
 	}
 	outgoing.delete(t.id);
@@ -168,6 +168,25 @@ function owned<T extends Upload | Outgoing>(map: Map<string, T>, ctx: HandlerCon
 		throw new BridgeError(ERR.NOT_FOUND, "That transfer is gone (it finished, failed, or sat idle). Start again.");
 	t.touchedAt = Date.now();
 	return t;
+}
+
+/**
+ * A commit handler whose upload is in `committing` for as long as it runs: its awaits included, so a client that
+ * leaves during any of them still finds the transfer and stops it. It is out of `uploads`, so it can't be committed twice.
+ */
+function whileCommitting(run: (ctx: HandlerContext, up: Upload) => Promise<unknown>): Handler {
+	return async (ctx, params) => {
+		const up = owned(uploads, ctx, params);
+		uploads.delete(up.id);
+		committing.add(up);
+		try {
+			return await run(ctx, up);
+		} finally {
+			committing.delete(up);
+			// forget() left a mark in the page for a script already on its way; no script is now.
+			if (up.cancelled) await dropUploadStash(up.tabId, up.id).catch(() => undefined);
+		}
+	};
 }
 
 const size = (n: number) =>
@@ -310,7 +329,8 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 			const bound: Bound = { origin: probe.origin, doc: probe.doc };
 			checkTarget(probe, files);
 			const asking = files.filter((f) => f.ask).map((f) => ({ name: f.name, bytes: f.bytes }));
-			if (asking.length && !(await ctx.askUpload(url, asking)))
+			// The caller's own id for this one call goes back with the question, so its answer is for these files only.
+			if (asking.length && !(await ctx.askUpload(url, asking, String(params.askId ?? "").slice(0, 64))))
 				throw new BridgeError(
 					ERR.PERMISSION_DENIED,
 					`The user did not approve uploading ${asking.map((f) => f.name).join(", ")} to ${host}. Nothing was sent. Do not try another way; ask the user.`,
@@ -350,10 +370,7 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 			return { received: up.received };
 		},
 
-		"files.upload.commit": async (ctx, params) => {
-			const up = owned(uploads, ctx, params);
-			// Whatever happens next, this transfer is over.
-			uploads.delete(up.id);
+		"files.upload.commit": whileCommitting(async (ctx, up) => {
 			if (up.received !== up.total)
 				throw new BridgeError(ERR.BAD_PARAMS, `${up.received} of ${up.total} bytes arrived. Nothing was set.`);
 			const parts = up.chunks.map(decode);
@@ -370,6 +387,7 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 						ERR.BAD_PARAMS,
 						`${f.name} did not arrive intact (its hash differs). Nothing was set.`,
 					);
+				stopIfGone();
 				at += f.bytes;
 			}
 			if (!ctx.session.tabIds.includes(up.tabId))
@@ -377,17 +395,17 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 			// The yes, and the site check, were for the site the tab was on at begin. This reads the tab's address,
 			// which can change the moment after; the scripts below check the document itself as they run.
 			const now = await destination(ctx, up.tabId);
+			stopIfGone();
 			if (pageOrigin(now.url) !== up.bound.origin) throw movedError(up, { host: now.host, sameOrigin: false });
 			/** The caller is gone (its client, its session or the bridge connection): nothing more goes to the page. */
-			const stopIfGone = () => {
+			function stopIfGone(): void {
 				if (up.cancelled || ctx.aborted())
 					throw new BridgeError(
 						ERR.INTERRUPTED,
 						"The connection to the agent closed during the upload. Nothing was set.",
 					);
-			};
+			}
 			let outcome: Awaited<ReturnType<typeof commitUpload>> | undefined;
-			committing.add(up);
 			try {
 				for (const chunk of [...up.chunks]) {
 					stopIfGone();
@@ -397,7 +415,6 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 				stopIfGone();
 				outcome = await commitUpload(up.tabId, up.target, up.id, up.files, up.bound);
 			} finally {
-				committing.delete(up);
 				up.chunks.length = 0;
 				// commitUpload empties the stash itself; anything else leaves pieces to clear.
 				if (!outcome) await dropUploadStash(up.tabId, up.id).catch(() => undefined);
@@ -415,7 +432,7 @@ export function fileHandlers(resolveTab: ResolveTab): Record<string, Handler> {
 						}
 					: {}),
 			};
-		},
+		}),
 
 		"files.upload.abort": async (ctx, params) => {
 			const id = String(params.transferId ?? "");

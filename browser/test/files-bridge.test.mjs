@@ -214,6 +214,47 @@ test("a caller that goes away during the commit: no more pieces, no files set, t
 	}
 });
 
+test("a client that leaves while the commit is still checking (a hash, the tab's address) gets nothing set", async () => {
+	await allowHost("good.test");
+	const digest = crypto.subtle.digest.bind(crypto.subtle);
+	for (const during of ["the hash", "the address"]) {
+		const tab = browser("https://good.test/form");
+		const { ctx } = caller();
+		const { transferId } = await begun(ctx);
+		const start = tab.ran.length;
+		const get = chrome.tabs.get;
+		// The client leaves once, as that step starts.
+		const leave = () => {
+			crypto.subtle.digest = digest;
+			chrome.tabs.get = get;
+			files.dropTransfersForClient("c1");
+		};
+		if (during === "the hash") crypto.subtle.digest = async (...a) => (leave(), digest(...a));
+		else chrome.tabs.get = async (id) => (leave(), get(id));
+		await assert.rejects(handlers["files.upload.commit"](ctx, { transferId }), (err) => err.code === "interrupted", during);
+		assert.equal(tab.ran.slice(start).some((code) => code.includes("DataTransfer") || code.includes(".push(")), false, `${during}: content reached the page`);
+		untouched(tab.doc, during);
+		assert.equal(files.transferCount(), 0);
+	}
+});
+
+test("a commit script already on its way when the client leaves sets nothing, even for an empty file", async () => {
+	await allowHost("good.test");
+	const tab = browser("https://good.test/form");
+	const { ctx } = caller();
+	const empty = { name: "empty.txt", bytes: 0, sha256: sha(Buffer.alloc(0)), mime: "text/plain" };
+	const { transferId } = await handlers["files.upload.begin"](ctx, { selector: "#file", files: [empty] });
+	tab.beforeRun = async (t) => {
+		t.beforeRun = undefined;
+		files.dropTransfersForClient("c1");
+		// The mark the drop leaves lands first; the script that sets the files runs after it.
+		await new Promise((r) => setTimeout(r, 20));
+	};
+	await assert.rejects(handlers["files.upload.commit"](ctx, { transferId }), /closed during the upload. Nothing was set/);
+	untouched(tab.doc, "left as the files were being set");
+	assert.equal(files.transferCount(), 0);
+});
+
 test("a download is fetched only in the page it was judged for", async () => {
 	await allowHost("good.test");
 	const tab = browser("https://good.test/files");

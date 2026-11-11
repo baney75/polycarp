@@ -525,7 +525,7 @@ async function filesHost(name, behave = {}) {
 		head.writeUInt32LE(body.length);
 		return Buffer.concat([head, body]);
 	};
-	const host = { dir, requests: [], frameBytes: [], uploads: [], serve: undefined, waiting: undefined };
+	const host = { dir, requests: [], frameBytes: [], uploads: [], serve: undefined, waiting: {} };
 	const server = createServer((socket) => {
 		let buffered = Buffer.alloc(0);
 		const reply = (id, result) => socket.write(frame({ type: "response", id, result }));
@@ -560,13 +560,13 @@ async function filesHost(name, behave = {}) {
 				if (msg.method === "files.upload.begin") {
 					const asking = p.files.filter((f) => f.ask).map((f) => ({ name: f.name, bytes: f.bytes }));
 					if (asking.length && behave.ask) {
-						host.waiting = { id: msg.id, begun };
-						socket.write(frame({ type: "event", event: "permission_request", data: { requestId: "c1:q1", host: "upload.test", url: "https://upload.test/form", kind: "upload", agent: "Test Agent", files: asking } }));
+						const requestId = `c1:q${msg.id}`;
+						host.waiting[requestId] = { id: msg.id, begun };
+						socket.write(frame({ type: "event", event: "permission_request", data: { requestId, askId: host.unknownAsk ? "x" : p.askId, host: "upload.test", url: "https://upload.test/form", kind: "upload", agent: "Test Agent", files: asking } }));
 					} else begun();
 				} else if (msg.method === "permission.respond") {
 					reply(msg.id, { accepted: true });
-					const w = host.waiting;
-					host.waiting = undefined;
+					const w = host.waiting[p.requestId];
 					if (p.decision === "allow_once") w.begun();
 					else fail(w.id, "permission_denied", "The user did not approve the upload. Nothing was sent.");
 				} else if (msg.method === "files.upload.chunk") {
@@ -688,6 +688,42 @@ test("files upload: content goes in pieces under the frame limit and arrives byt
 		writeFileSync(join(fx.outside, "cv.pdf"), "%PDF-1.4 cv");
 		assert.notEqual((await run({ action: "upload", ref: "e1", paths: [join(fx.outside, "cv.pdf")] })).isError, true);
 		assert.deepEqual(host.uploads[1].files.map((f) => [f.name, f.ask]), [["cv.pdf", true]]);
+	} finally {
+		await client.close().catch(() => {});
+		host.close();
+	}
+});
+
+test("files upload: two calls at once each ask about their own file, and a yes to one sends only that one", async () => {
+	const fx = filesFixture("pair");
+	const host = await filesHost("pair", { ask: true });
+	const { client, run, connect } = await filesClient(host, fx, { capabilities: { roots: {}, elicitation: {} } });
+	// Same name, same size, different folders: only the path tells them apart.
+	const [secret, flyer] = ["private", "public"].map((d) => (mkdirSync(join(fx.proj, d)), join(fx.proj, d, "report.txt")));
+	writeFileSync(secret, "SECRET");
+	writeFileSync(flyer, "public");
+	const questions = [];
+	let both;
+	const asked = new Promise((r) => (both = r));
+	client.setRequestHandler(ElicitRequestSchema, async (req) => {
+		if (questions.push(req.params.message) === 2) both();
+		// Both calls are waiting on their question before either is answered. The person says yes to the flyer only.
+		await asked;
+		return { action: "accept", content: { decision: req.params.message.includes(flyer) ? "allow_once" : "deny" } };
+	});
+	client.setRequestHandler(ListRootsRequestSchema, async () => ({ roots: [{ uri: pathToFileURL(fx.outside).href, name: "work" }] }));
+	try {
+		await connect();
+		const [a, b] = await Promise.all([secret, flyer].map((path) => run({ action: "upload", ref: "e1", paths: [path] })));
+		assert.deepEqual([questions.filter((q) => q.includes(secret)).length, questions.filter((q) => q.includes(flyer)).length], [1, 1], questions.join("\n"));
+		assert.equal(a.isError, true, a.text);
+		assert.notEqual(b.isError, true, b.text);
+		assert.deepEqual(host.uploads.map((u) => Buffer.concat(u.chunks).toString()), ["public"], "only the approved file's content moved");
+		// A question that carries no call's id (another helper's, or a made-up one) is answered no without being put.
+		const before = questions.length;
+		host.unknownAsk = true;
+		assert.equal((await run({ action: "upload", ref: "e1", paths: [flyer] })).isError, true);
+		assert.equal(questions.length, before);
 	} finally {
 		await client.close().catch(() => {});
 		host.close();

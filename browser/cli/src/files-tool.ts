@@ -5,7 +5,7 @@
  * in pieces under the bridge's frame limit, announced by size and SHA-256 and checked on both ends.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -42,8 +42,6 @@ export interface FilesToolOptions {
 	auto?: boolean;
 	/** Why this session's scopes refuse a call with these arguments, or undefined (ARGUMENT_RULES in mcp.ts). */
 	denied?: (args: unknown) => string | undefined;
-	/** Told where the files of an upload that asks the person are, in order, and undefined when the asking is over. */
-	asking?: (paths: string[] | undefined) => void;
 	/** A hub, tunnel or scoped session: no paths in, no paths out. */
 	remote: boolean;
 	/** Shared argument shapes from mcp.ts, so the tool reads like the others. */
@@ -74,6 +72,8 @@ export interface FilesTool {
 	clear(): void;
 	/** The session has a new name: its folder follows. */
 	renamed(session: string): void;
+	/** Where the files one upload call is asking about are on this computer, in the order asked, by that call's id. */
+	asked(askId: unknown): string[] | undefined;
 }
 
 /** An error from this computer's disk as a remote caller may read it: what failed, never where. */
@@ -86,6 +86,8 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 	let saved = new SavedFiles(o.session);
 	/** True once `saved` is the folder of the session this client really has. */
 	let confirmed = false;
+	/** Each upload call that is asking the person, by an id of its own: overlapping calls share nothing. */
+	const asks = new Map<unknown, string[]>();
 
 	/**
 	 * Point `saved` at this client's own session. Two agents in one project ask for the same default session and the
@@ -174,12 +176,13 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 			if (files.some((f, i) => f.bytes !== picked[i].bytes)) return refuse("Not uploaded: a file changed while it was being read.");
 
 			let transferId = "";
+			const askId = randomUUID();
 			try {
-				// The question names each file by its full path here; the browser is sent names only.
-				o.asking?.(picked.filter((p) => p.ask).map((p) => p.path ?? p.name));
+				// The question names each file by its full path here; the browser is sent names only, and this call's id.
+				asks.set(askId, picked.filter((p) => p.ask).map((p) => p.path ?? p.name));
 				const begun = await client.call<{ transferId: string }>(
 					"files.upload.begin",
-					{ tabId: args.tabId, ref: args.ref, selector: args.selector, files },
+					{ tabId: args.tabId, ref: args.ref, selector: args.selector, files, askId },
 					FILE_ASK_TIMEOUT_MS + 45000,
 				);
 				transferId = begun.transferId;
@@ -192,7 +195,7 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 				if (transferId) await client.call("files.upload.abort", { transferId }).catch(() => undefined);
 				return o.bridgeError(err);
 			} finally {
-				o.asking?.(undefined);
+				asks.delete(askId);
 			}
 		} finally {
 			reader.close();
@@ -327,6 +330,7 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 		},
 	);
 	return {
+		asked: (askId) => asks.get(askId),
 		// Before the session is confirmed nothing was saved by this client, and the folder may be another agent's.
 		clear: () => {
 			if (confirmed) saved.clear();
