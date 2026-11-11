@@ -16,13 +16,14 @@ after(() => rmSync(root, { recursive: true, force: true }));
 
 const mod = await loadTs(`
 export { ourCloudflared } from "@src/tunnel.ts";
+export { tailscaleMissing } from "@src/remote-setup.ts";
 export { recordServicePid, installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE } from "@src/service.ts";
 export { CLOUDFLARE_SERVICE, cloudflaredBinary } from "@src/cloudflare.ts";
 export { tailscaleBinary } from "@src/remote-setup.ts";
 export { windowsInstallPaths, windowsTool } from "@src/tool-paths.ts";
 export { cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION } from "@src/cloudflared-download.ts";
 `);
-const { ourCloudflared, recordServicePid, installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE, CLOUDFLARE_SERVICE, cloudflaredBinary, tailscaleBinary, windowsInstallPaths, windowsTool, cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION } = mod;
+const { tailscaleMissing, ourCloudflared, recordServicePid, installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE, CLOUDFLARE_SERVICE, cloudflaredBinary, tailscaleBinary, windowsInstallPaths, windowsTool, cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION } = mod;
 
 const SCHTASKS = "C:\\Windows\\System32\\schtasks.exe";
 const sha = (buf) => createHash("sha256").update(buf).digest("hex");
@@ -572,4 +573,10 @@ test("on Windows a cloudflared pid file reads as running only while tasklist sho
 		assert.equal(ourCloudflared("win32", answer('"notepad.exe","4321","Console","1","9,000 K"')), undefined);
 		assert.equal(ourCloudflared("win32", answer("ERROR: no access", 1)), "unknown");
 	});
+});
+
+test("remote off without Tailscale names the folder searched on this platform: the Windows install folder, else the Mac app", () => {
+	const win = tailscaleMissing("win32", { ProgramFiles: "D:\\Apps" });
+	assert.equal(win, "Tailscale wasn't found (not on PATH, and not at D:\\Apps\\Tailscale\\tailscale.exe)");
+	assert.equal(tailscaleMissing("darwin"), "Tailscale wasn't found (not on PATH, and not at /Applications/Tailscale.app/Contents/MacOS/Tailscale)");
 });

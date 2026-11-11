@@ -21,7 +21,7 @@ import { DEFAULT_PORT } from "./tunnel.ts";
 import { c, sym } from "./ui.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
-import { type ToolLookup, windowsTool } from "./tool-paths.ts";
+import { type ToolLookup, windowsInstallPaths, windowsTool } from "./tool-paths.ts";
 
 /** Funnel's own port: keeps the OAuth paths at the root and anything on 443 private. */
 export const FUNNEL_PORT = 8443;
@@ -725,10 +725,14 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 
 // ---------- remote off ----------
 
+/** Where tailscaleBinary() looked, for the message when it found nothing: the installer's folder on Windows, else the Mac app. */
+export const tailscaleMissing = (platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env) =>
+	`Tailscale wasn't found (not on PATH, and not at ${platform === "win32" ? windowsInstallPaths("tailscale", env).join(" or ") : tailscaleAppPath()})`;
+
 /** Close Funnel on 8443. A failure that leaves the entry in place is a failure; an entry already gone counts as off. */
 function funnelOff(bin: string | undefined): { ok: boolean; message: string } {
 	// Bounded like opening it: a call that never ends is a failure that leaves Funnel as it was.
-	const r = bin ? run(bin, ["funnel", `--https=${FUNNEL_PORT}`, "off"], 30_000) : { code: 1, out: `Tailscale wasn't found (not on PATH, and not at ${tailscaleAppPath()})` };
+	const r = bin ? run(bin, ["funnel", `--https=${FUNNEL_PORT}`, "off"], 30_000) : { code: 1, out: tailscaleMissing() };
 	if (r.code === 0) return { ok: true, message: `Tailscale Funnel on port ${FUNNEL_PORT} is off.` };
 	if (bin) {
 		const state = readTailscale(bin);
