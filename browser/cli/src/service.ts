@@ -12,6 +12,7 @@ import { cliLauncherPath, ensureLauncherIsSelf } from "./install.ts";
 import { configDir, configDirOverride, legacyConfigDir } from "./files.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
+import { windowsProcessImage } from "./tool-paths.ts";
 
 export function writeAtomic(path: string, text: string, mode: number): void {
 	mkdirSync(dirname(path), { recursive: true });
@@ -412,17 +413,6 @@ export function recordServicePid(env: NodeJS.ProcessEnv = process.env, pid = pro
 	} catch {
 		/* stop then falls back to telling the user which window to close */
 	}
-}
-
-/** The program name tasklist reports for `pid`: undefined when no process has it, "unknown" when tasklist itself failed. */
-function windowsProcessImage(pid: number, exec: SyncRunner): string | undefined | "unknown" {
-	const r = exec(win32.join(systemRoot(), "System32", "tasklist.exe"), ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]);
-	if (r.code !== 0) return "unknown";
-	for (const line of r.out.split(/\r?\n/)) {
-		const m = /^"([^"]+)","(\d+)"/.exec(line.trim());
-		if (m && Number(m[2]) === pid) return m[1];
-	}
-	return undefined;
 }
 
 const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);

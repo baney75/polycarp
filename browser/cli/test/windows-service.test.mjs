@@ -15,13 +15,14 @@ const root = mkdtempSync(join(tmpdir(), "polycarp-winsvc-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 
 const mod = await loadTs(`
+export { ourCloudflared } from "@src/tunnel.ts";
 export { recordServicePid, installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE } from "@src/service.ts";
 export { CLOUDFLARE_SERVICE, cloudflaredBinary } from "@src/cloudflare.ts";
 export { tailscaleBinary } from "@src/remote-setup.ts";
 export { windowsInstallPaths, windowsTool } from "@src/tool-paths.ts";
 export { cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION } from "@src/cloudflared-download.ts";
 `);
-const { recordServicePid, installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE, CLOUDFLARE_SERVICE, cloudflaredBinary, tailscaleBinary, windowsInstallPaths, windowsTool, cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION } = mod;
+const { ourCloudflared, recordServicePid, installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE, CLOUDFLARE_SERVICE, cloudflaredBinary, tailscaleBinary, windowsInstallPaths, windowsTool, cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION } = mod;
 
 const SCHTASKS = "C:\\Windows\\System32\\schtasks.exe";
 const sha = (buf) => createHash("sha256").update(buf).digest("hex");
@@ -555,5 +556,20 @@ test("uninstall kills the recorded tree, confirms it, then deletes the task; a p
 		winSeam({ exec: other.exec });
 		assert.equal(removeService(SERVE_SERVICE).ok, true);
 		assert.ok(!other.calls.some(([cmd]) => cmd === TASKKILL));
+	});
+});
+
+// ---------- Windows: a stale cloudflared pid file ----------
+
+test("on Windows a cloudflared pid file reads as running only while tasklist shows cloudflared.exe with that pid", async () => {
+	await inConfig("win-tunnel-pid", async (dir) => {
+		writeFileSync(join(dir, "cloudflared.pid"), "4321");
+		const calls = [];
+		const answer = (out, code = 0) => (cmd, args) => (calls.push([cmd, ...args]), { code, out });
+		assert.equal(ourCloudflared("win32", answer('"cloudflared.exe","4321","Console","1","20,000 K"')), 4321);
+		assert.deepEqual(calls[0], [TASKLIST, "/FI", "PID eq 4321", "/FO", "CSV", "/NH"]);
+		assert.equal(ourCloudflared("win32", answer("INFO: No tasks are running which match the specified criteria.")), undefined);
+		assert.equal(ourCloudflared("win32", answer('"notepad.exe","4321","Console","1","9,000 K"')), undefined);
+		assert.equal(ourCloudflared("win32", answer("ERROR: no access", 1)), "unknown");
 	});
 });

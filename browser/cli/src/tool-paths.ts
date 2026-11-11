@@ -35,3 +35,17 @@ export function windowsTool(tool: WindowsTool, lookup: ToolLookup = {}): string 
 	const exists = lookup.exists ?? existsSync;
 	return (lookup.which ?? which)(`${tool}.exe`) ?? windowsInstallPaths(tool, lookup.env).find((path) => exists(path));
 }
+
+/**
+ * The program name Windows reports for `pid`, from tasklist.exe by full path: undefined when no process has that pid, "unknown"
+ * when tasklist itself failed (learn.microsoft.com/windows-server/administration/windows-commands/tasklist).
+ */
+export function windowsProcessImage(pid: number, exec: (cmd: string, args: string[]) => { code: number; out: string }, env: NodeJS.ProcessEnv = process.env): string | undefined | "unknown" {
+	const r = exec(win32.join(env.SystemRoot || "C:\\Windows", "System32", "tasklist.exe"), ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]);
+	if (r.code !== 0) return "unknown";
+	for (const line of r.out.split(/\r?\n/)) {
+		const m = /^"([^"]+)","(\d+)"/.exec(line.trim());
+		if (m && Number(m[2]) === pid) return m[1];
+	}
+	return undefined;
+}
