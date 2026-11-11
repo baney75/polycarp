@@ -674,3 +674,42 @@ test("remote status --json on a name whose lookup fails (SERVFAIL) is code dns_l
 		await doh.close();
 	}
 });
+
+test("setup on a private address literal (--public-url https://127.0.0.1:port) is on with a warning; a public name with the same fault fails", async () => {
+	const pub = await fakePublic();
+	const doh = await fakeDoh();
+	const literal = `https://127.0.0.1:${new URL(pub.publicUrl).port}`;
+	const local = await localServe(literal);
+	try {
+		const m = machine("private-literal", undefined, doh.url);
+		// No reachable hook: the address is what it is, private, and the certificate is for another name.
+		const run = (args) =>
+			new Promise((resolve) => {
+				const child = spawn(process.execPath, [cli, "remote", "setup", "--no-service", "--port", String(local.port), ...args], { env: m.env });
+				let stdout = "";
+				child.stdout.on("data", (d) => (stdout += d));
+				let stderr = "";
+				child.stderr.on("data", (d) => (stderr += d));
+				child.on("close", (status) => resolve({ status, stdout: stdout + (status === 0 ? "" : stderr) }));
+			});
+		const j = await run(["--public-url", literal, "--json"]);
+		assert.equal(j.status, 0, j.stdout);
+		assert.equal(JSON.parse(j.stdout).state, "on");
+		const t = await run(["--public-url", literal]);
+		assert.equal(t.status, 0, t.stdout);
+		assert.match(t.stdout, /127\.0\.0\.1 is a private address, so only this computer or its network reaches the connector/);
+		// The same refused certificate on a public name is a fault.
+		const forName = await localServe(pub.publicUrl);
+		try {
+			const named = await m.run(["remote", "setup", "--json", "--no-service", "--public-url", pub.publicUrl, "--port", String(forName.port)], { NODE_EXTRA_CA_CERTS: "" });
+			assert.equal(named.code, 1, named.stdout);
+			assert.equal(named.json().code, "tls");
+		} finally {
+			await forName.close();
+		}
+	} finally {
+		await pub.close();
+		await doh.close();
+		await local.close();
+	}
+});
