@@ -53,7 +53,8 @@ function inConfig(name, fn, folder = "Polycarp Config & More") {
 }
 
 /** Records every command; `answer` decides each exit code. The task file is read when /Create runs, since install deletes it after. */
-function fakeExec(answer = () => ({ code: 0, out: "" })) {
+/** Records each call. By default every command succeeds except /End, which exits 1 as schtasks does for a task that isn't running. */
+function fakeExec(answer = (cmd, args) => (args[0] === "/End" ? { code: 1, out: "ERROR: The task is not running." } : { code: 0, out: "" })) {
 	const calls = [];
 	const xmlSeen = [];
 	const exec = (cmd, args) => {
@@ -306,14 +307,14 @@ test("a failed delete keeps the script when the task is still there, and counts 
 		const script = join(dir, "services", "com.polycarp.serve.cmd");
 		winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x" });
 		await installService(SERVE_SERVICE);
-		const stuck = fakeExec((cmd, args) => (args[0] === "/Delete" ? { code: 1, out: "ERROR: denied" } : { code: 0, out: "" }));
+		const stuck = fakeExec((cmd, args) => (args[0] === "/Delete" ? { code: 1, out: "ERROR: denied" } : args[0] === "/End" ? { code: 1, out: "not running" } : { code: 0, out: "" }));
 		winSeam({ exec: stuck.exec });
 		const r = removeService(SERVE_SERVICE);
 		assert.equal(r.ok, false);
 		assert.match(r.failure, /schtasks \/Delete \/TN com\.polycarp\.serve failed: ERROR: denied\. The task is still there and remote\.json is kept\./);
 		assert.ok(existsSync(script));
 		assert.deepEqual(stuck.calls.at(-1), [SCHTASKS, "/Query", "/TN", "com.polycarp.serve"]);
-		const gone = fakeExec((cmd, args) => (args[0] === "/Delete" || args[0] === "/Query" ? { code: 1, out: "ERROR: The system cannot find the file specified." } : { code: 0, out: "" }));
+		const gone = fakeExec((cmd, args) => (["/Delete", "/Query", "/End"].includes(args[0]) ? { code: 1, out: "ERROR: The system cannot find the file specified." } : { code: 0, out: "" }));
 		winSeam({ exec: gone.exec });
 		assert.equal(removeService(SERVE_SERVICE).ok, true);
 		assert.equal(existsSync(script), false);
@@ -458,34 +459,61 @@ test("Windows runs only a launcher it can execute: .exe, .cmd or .bat, never the
 
 const TASKLIST = "C:\\Windows\\System32\\tasklist.exe";
 const TASKKILL = "C:\\Windows\\System32\\taskkill.exe";
+const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+const STARTED = 1_800_000_000_000;
 
-/** A stand-in Windows where process `pid` (`image`) runs until taskkill /T ends it, or never if `stubborn`. */
-function windowsWith(pid, image, { stubborn = false, onKill } = {}) {
+/**
+ * A stand-in Windows where process `pid` (`image`, started at `started` ms) runs until taskkill /T ends it, or never if
+ * `stubborn`. /End answers `ended` (0: the task was running). Answers come back as promises when `async`, as the native host's
+ * runner gives them.
+ */
+function windowsWith(pid, image, { started = STARTED, stubborn = false, onKill, psFails = false, ended = 0, async = false } = {}) {
 	let alive = true;
-	return fakeExec((cmd, args) => {
+	const fake = fakeExec((cmd, args) => {
 		if (cmd === TASKLIST) {
 			const row = `"${image}","${pid}","Console","1","40,000 K"`;
 			return { code: 0, out: alive ? row : "INFO: No tasks are running which match the specified criteria." };
 		}
+		if (cmd === POWERSHELL) return psFails || !alive ? { code: 1, out: "Get-Process : Cannot find a process" } : { code: 0, out: `${started}\r\n` };
 		if (cmd === TASKKILL) {
 			onKill?.();
 			if (!stubborn) alive = false;
 			return { code: 0, out: "" };
 		}
+		if (cmd === SCHTASKS && args[0] === "/End") return { code: ended, out: ended ? "ERROR: The task is not running." : "SUCCESS" };
 		return { code: 0, out: "" };
 	});
+	if (async) {
+		const sync = fake.exec;
+		fake.exec = (cmd, args) => Promise.resolve(sync(cmd, args));
+	}
+	return fake;
 }
+const verbsOf = (calls) => calls.map(([cmd, ...a]) => (cmd === SCHTASKS ? a[0] : cmd === TASKKILL ? `taskkill ${a.join(" ")}` : cmd === POWERSHELL ? "powershell" : cmd === TASKLIST ? "tasklist" : cmd));
+const record = (dir, pid, image, started = STARTED) => {
+	mkdirSync(join(dir, "services"), { recursive: true });
+	writeFileSync(join(dir, "services", "com.polycarp.serve.pid"), `${pid}\n${image}\n${started}\n`);
+};
 
-test("the service's helper records its pid and image for the task, and its children don't inherit the variable", async () => {
+test("the service's helper records its pid, image and start time, removes the record on exit, and its children don't inherit the variable", async () => {
 	await inConfig("win-pid", async (dir) => {
 		const file = join(dir, "services", "com.polycarp.serve.pid");
 		mkdirSync(join(dir, "services"), { recursive: true });
 		const env = { POLYCARP_SERVICE_PID_FILE: file };
-		recordServicePid(env, 4242, "C:\\Program Files\\nodejs\\node.exe", "win32");
-		assert.equal(readFileSync(file, "utf8"), "4242\nnode.exe\n");
+		const hooks = [];
+		recordServicePid({ env, pid: 4242, execPath: "C:\\Program Files\\nodejs\\node.exe", platform: "win32", startMs: STARTED + 0.4, onExit: (fn) => hooks.push(fn) });
+		assert.equal(readFileSync(file, "utf8"), `4242\nnode.exe\n${STARTED}\n`);
 		assert.equal(env.POLYCARP_SERVICE_PID_FILE, undefined);
+		assert.equal(hooks.length, 1);
+		hooks[0]();
+		assert.equal(existsSync(file), false, "a clean exit leaves no record behind");
+		// A newer copy's record is not the exiting one's to delete.
+		writeFileSync(file, `5000\nnode.exe\n${STARTED}\n`);
+		recordServicePid({ env: { POLYCARP_SERVICE_PID_FILE: join(dir, "other.pid") }, pid: 4243, execPath: "node.exe", platform: "win32", startMs: STARTED, onExit: (fn) => hooks.push(fn) });
+		hooks[0]();
+		assert.equal(readFileSync(file, "utf8"), `5000\nnode.exe\n${STARTED}\n`);
 		const mac = { POLYCARP_SERVICE_PID_FILE: join(dir, "x.pid") };
-		recordServicePid(mac, 1, "/usr/bin/node", "darwin");
+		recordServicePid({ env: mac, pid: 1, execPath: "/usr/bin/node", platform: "darwin", onExit: () => assert.fail("no hook off Windows") });
 		assert.equal(existsSync(join(dir, "x.pid")), false);
 	});
 });
@@ -501,24 +529,66 @@ test("the task replaces a running copy itself (StopExisting), so /Run can't be i
 	assert.ok(!xml.includes("IgnoreNew"));
 });
 
-test("reinstalling stops the running program tree and confirms it is gone before the script is rewritten, then runs once", async () => {
+test("reinstalling, through the async runner, confirms the recorded process by start time, kills its tree and sees it gone before the script is rewritten", async () => {
 	await inConfig("win-reinstall", async (dir) => {
 		const script = join(dir, "services", "com.polycarp.serve.cmd");
-		const pidFile = join(dir, "services", "com.polycarp.serve.pid");
-		mkdirSync(join(dir, "services"), { recursive: true });
+		record(dir, 777, "node.exe");
 		writeFileSync(script, "OLD SCRIPT");
-		writeFileSync(pidFile, "777\nnode.exe\n");
 		let scriptAtKill;
-		const fake = windowsWith(777, "node.exe", { onKill: () => (scriptAtKill = readFileSync(script, "utf8")) });
+		const fake = windowsWith(777, "node.exe", { async: true, onKill: () => (scriptAtKill = readFileSync(script, "utf8")) });
 		winSeam({ exec: fake.exec, windowsUser: "PC\\x" });
 		const r = await installService(SERVE_SERVICE);
 		assert.equal(r.ok, true, r.message);
 		assert.equal(scriptAtKill, "OLD SCRIPT", "the old program is stopped before its script changes");
-		const verbs = fake.calls.map(([cmd, ...a]) => (cmd === SCHTASKS ? a[0] : cmd === TASKKILL ? `taskkill ${a.join(" ")}` : "tasklist"));
-		assert.deepEqual(verbs, ["/End", "tasklist", "taskkill /PID 777 /T /F", "tasklist", "/Create", "/Run"]);
+		assert.deepEqual(verbsOf(fake.calls), ["/End", "tasklist", "powershell", "taskkill /PID 777 /T /F", "tasklist", "/Create", "/Run"]);
 		assert.deepEqual(fake.calls[1], [TASKLIST, "/FI", "PID eq 777", "/FO", "CSV", "/NH"]);
-		assert.equal(existsSync(pidFile), false);
+		assert.deepEqual(fake.calls[2], [POWERSHELL, "-NoProfile", "-NonInteractive", "-Command", "[DateTimeOffset]::new((Get-Process -Id 777 -ErrorAction Stop).StartTime).ToUnixTimeMilliseconds()"]);
+		assert.equal(existsSync(join(dir, "services", "com.polycarp.serve.pid")), false);
 		assert.notEqual(readFileSync(script, "utf8"), "OLD SCRIPT");
+	});
+});
+
+test("a pid Windows reused for another node.exe, started later, is never killed", async () => {
+	await inConfig("win-reused", async (dir) => {
+		winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x" });
+		assert.equal((await installService(SERVE_SERVICE)).ok, true);
+		record(dir, 555, "node.exe");
+		const other = windowsWith(555, "node.exe", { started: STARTED + 3_600_000, ended: 1 });
+		winSeam({ exec: other.exec });
+		const r = removeService(SERVE_SERVICE);
+		assert.equal(r.ok, true, r.failure);
+		assert.ok(!other.calls.some(([cmd]) => cmd === TASKKILL));
+		assert.deepEqual(verbsOf(other.calls), ["/End", "tasklist", "powershell", "/Delete"]);
+	});
+});
+
+test("when the start time can't be read, nothing is killed and stop fails in one sentence naming the pid to end", async () => {
+	await inConfig("win-unconfirmed", async (dir) => {
+		winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x" });
+		assert.equal((await installService(SERVE_SERVICE)).ok, true);
+		record(dir, 666, "node.exe");
+		const fake = windowsWith(666, "node.exe", { psFails: true });
+		winSeam({ exec: fake.exec });
+		const r = removeService(SERVE_SERVICE);
+		assert.equal(r.ok, false);
+		assert.ok(!fake.calls.some(([cmd]) => cmd === TASKKILL));
+		assert.match(r.failure, /^Polycarp couldn't confirm that pid 666 is still the node\.exe its com\.polycarp\.serve task started, so it ended nothing: /);
+		assert.ok(existsSync(join(dir, "services", "com.polycarp.serve.cmd")));
+		assert.ok(!fake.calls.some(([cmd, verb]) => cmd === SCHTASKS && verb === "/Delete"));
+	});
+});
+
+test("a running task with no pid record is not reported stopped: the task and script are kept", async () => {
+	await inConfig("win-norecord", async (dir) => {
+		winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x" });
+		assert.equal((await installService(SERVE_SERVICE)).ok, true);
+		const fake = windowsWith(1, "node.exe", { ended: 0 });
+		winSeam({ exec: fake.exec });
+		const r = removeService(SERVE_SERVICE);
+		assert.equal(r.ok, false);
+		assert.match(r.failure, /com\.polycarp\.serve task was running, but its program left no record of its pid/);
+		assert.ok(existsSync(join(dir, "services", "com.polycarp.serve.cmd")));
+		assert.deepEqual(verbsOf(fake.calls), ["/End"]);
 	});
 });
 
@@ -526,7 +596,7 @@ test("a program that survives taskkill fails stop and uninstall, keeps the scrip
 	await inConfig("win-stubborn", async (dir) => {
 		winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x", stopWaitMs: 50 });
 		assert.equal((await installService(SERVE_SERVICE)).ok, true);
-		writeFileSync(join(dir, "services", "com.polycarp.serve.pid"), "888\npolycarp-browser.exe\n");
+		record(dir, 888, "polycarp-browser.exe");
 		const fake = windowsWith(888, "polycarp-browser.exe", { stubborn: true });
 		winSeam({ exec: fake.exec, windowsUser: "PC\\x", stopWaitMs: 50 });
 		const r = removeService(SERVE_SERVICE);
@@ -545,17 +615,15 @@ test("uninstall kills the recorded tree, confirms it, then deletes the task; a p
 	await inConfig("win-remove-tree", async (dir) => {
 		winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x" });
 		assert.equal((await installService(SERVE_SERVICE)).ok, true);
-		writeFileSync(join(dir, "services", "com.polycarp.serve.pid"), "999\nnode.exe\n");
+		record(dir, 999, "node.exe");
 		const fake = windowsWith(999, "node.exe");
 		winSeam({ exec: fake.exec });
 		assert.equal(removeService(SERVE_SERVICE).ok, true);
-		const verbs = fake.calls.map(([cmd, ...a]) => (cmd === SCHTASKS ? a[0] : cmd === TASKKILL ? "taskkill" : "tasklist"));
-		assert.deepEqual(verbs, ["/End", "tasklist", "taskkill", "tasklist", "/Delete"]);
-		// Reused pid: another image now has it, so nothing is killed.
+		assert.deepEqual(verbsOf(fake.calls), ["/End", "tasklist", "powershell", "taskkill /PID 999 /T /F", "tasklist", "/Delete"]);
 		winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x" });
 		await installService(SERVE_SERVICE);
-		writeFileSync(join(dir, "services", "com.polycarp.serve.pid"), "555\nnode.exe\n");
-		const other = windowsWith(555, "notepad.exe");
+		record(dir, 555, "node.exe");
+		const other = windowsWith(555, "notepad.exe", { ended: 1 });
 		winSeam({ exec: other.exec });
 		assert.equal(removeService(SERVE_SERVICE).ok, true);
 		assert.ok(!other.calls.some(([cmd]) => cmd === TASKKILL));

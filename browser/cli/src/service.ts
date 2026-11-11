@@ -12,7 +12,7 @@ import { cliLauncherPath, ensureLauncherIsSelf } from "./install.ts";
 import { configDir, configDirOverride, legacyConfigDir } from "./files.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
-import { windowsProcessImage } from "./tool-paths.ts";
+import { tasklistCall, tasklistImage } from "./tool-paths.ts";
 
 export function writeAtomic(path: string, text: string, mode: number): void {
 	mkdirSync(dirname(path), { recursive: true });
@@ -400,50 +400,114 @@ const PID_FILE_VAR = "POLYCARP_SERVICE_PID_FILE";
 const windowsPidPath = (spec: ServiceSpec) => join(windowsServiceDir(), `${spec.label}.pid`);
 
 /**
- * Called first thing by the CLI. When a Windows task started it, write this process's pid and program name where the task's
- * script asked, so stop and uninstall can end it: ending the task ends only cmd.exe, and Node would keep running. The variable is
- * then cleared so programs this one starts don't overwrite the file.
+ * Called first thing by the CLI. When a Windows task started it, write this process's pid, program name and start time where
+ * the task's script asked, so stop and uninstall can end it: ending the task ends only cmd.exe, and Node would keep running. The
+ * start time tells this process apart from a later one Windows gives the same pid. The record is deleted on exit, and the
+ * variable is cleared so programs this one starts don't overwrite it. A record that can't be written means stop reports that
+ * it can't confirm the program ended (stopPlan).
  */
-export function recordServicePid(env: NodeJS.ProcessEnv = process.env, pid = process.pid, execPath = process.execPath, plat: NodeJS.Platform = process.platform): void {
+export function recordServicePid(
+	o: { env?: NodeJS.ProcessEnv; pid?: number; execPath?: string; platform?: NodeJS.Platform; startMs?: number; onExit?: (fn: () => void) => void } = {},
+): void {
+	const env = o.env ?? process.env;
 	const file = env[PID_FILE_VAR];
-	if (plat !== "win32" || !file) return;
+	if ((o.platform ?? process.platform) !== "win32" || !file) return;
 	delete env[PID_FILE_VAR];
+	const pid = o.pid ?? process.pid;
 	try {
-		writeFileSync(file, `${pid}\n${win32.basename(execPath)}\n`);
+		// performance.timeOrigin is when this process started, in ms since 1970 (nodejs.org/api/perf_hooks.html).
+		writeFileSync(file, `${pid}\n${win32.basename(o.execPath ?? process.execPath)}\n${Math.round(o.startMs ?? performance.timeOrigin)}\n`);
 	} catch {
-		/* stop then falls back to telling the user which window to close */
+		return;
 	}
+	(o.onExit ?? ((fn) => process.on("exit", fn)))(() => {
+		try {
+			if ((readIfFile(file) ?? "").split(/\r?\n/)[0] === String(pid)) rmSync(file, { force: true });
+		} catch {
+			/* best effort: a stale record is told apart by its start time */
+		}
+	});
+}
+
+/** How far apart Node's start time and Windows' may be for the same process. A reused pid starts after the first one ended. */
+const START_SLACK_MS = 2000;
+const powershellPath = () => win32.join(systemRoot(), "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+/** A process's start time in ms since 1970: Get-Process's StartTime (learn.microsoft.com/powershell/module/microsoft.powershell.management/get-process). */
+const startTimeCall = (pid: number): [string, string[]] => [powershellPath(), ["-NoProfile", "-NonInteractive", "-Command", `[DateTimeOffset]::new((Get-Process -Id ${pid} -ErrorAction Stop).StartTime).ToUnixTimeMilliseconds()`]];
+
+type Answer = { code: number; out: string };
+type StopStep = { run: [string, string[]] } | { sleep: number };
+
+/**
+ * End the program the task started, and everything it started, then confirm it is gone. Its pid, program and start time come
+ * from the record it wrote; a pid now used by another process (other program, or the same one started later) is left alone,
+ * and nothing is killed unless the start time matches. `taskWasRunning` is /End's exit code saying it ended a running task: then
+ * a missing record is not proof the program stopped. The steps are yielded so the native host can run them without blocking.
+ * Returns undefined on success, else the sentence to show.
+ */
+function* stopPlan(spec: ServiceSpec, taskWasRunning: boolean): Generator<StopStep, string | undefined, Answer | undefined> {
+	const file = windowsPidPath(spec);
+	const noRecord = `The ${spec.label} task was running, but its program left no record of its pid, so Polycarp can't tell whether it stopped: close the window titled ${spec.label} if it is open, or end its program in Task Manager, then run ${spec.off} again.`;
+	const gone = () => {
+		rmSync(file, { force: true });
+		return taskWasRunning ? noRecord : undefined;
+	};
+	const [pidText, image, startText] = (readIfFile(file) ?? "").split(/\r?\n/);
+	const pid = Number(pidText);
+	if (!Number.isInteger(pid) || pid <= 4 || !image) return gone();
+	const unconfirmed = `Polycarp couldn't confirm that pid ${pid} is still the ${image} its ${spec.label} task started, so it ended nothing: end that program in Task Manager (Details, PID ${pid}) if it is Polycarp's, then run ${spec.off} again.`;
+	const same = (seen: string | undefined) => seen !== undefined && seen !== "unknown" && seen.toLowerCase() === image.toLowerCase();
+	const look = function* (): Generator<StopStep, string | undefined | "unknown", Answer | undefined> {
+		return tasklistImage(pid, (yield { run: tasklistCall(pid) }) as Answer);
+	};
+	let seen = yield* look();
+	if (seen === "unknown") return `Windows couldn't say whether ${image} (pid ${pid}) is still running. Run: taskkill /PID ${pid} /T /F, then ${spec.off} again.`;
+	if (!same(seen)) return gone();
+	const recorded = Number(startText);
+	const started = (yield { run: startTimeCall(pid) }) as Answer;
+	const actual = started.code === 0 ? Number(started.out.trim()) : Number.NaN;
+	if (!Number.isFinite(recorded) || !Number.isFinite(actual)) return same(yield* look()) ? unconfirmed : gone();
+	if (Math.abs(actual - recorded) > START_SLACK_MS) return gone();
+	yield { run: [win32.join(systemRoot(), "System32", "taskkill.exe"), ["/PID", String(pid), "/T", "/F"]] };
+	const deadline = Date.now() + (seam.stopWaitMs ?? 5000);
+	for (;;) {
+		seen = yield* look();
+		if (!same(seen) || Date.now() >= deadline) break;
+		yield { sleep: 100 };
+	}
+	if (seen === "unknown" || same(seen)) return `${image} (pid ${pid}) is still running after taskkill. Run: taskkill /PID ${pid} /T /F, or close its window, then ${spec.off} again.`;
+	rmSync(file, { force: true });
+	return undefined;
 }
 
 const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-/**
- * End the program the task started, and everything it started, then confirm it is gone. Its pid comes from the file it wrote; a
- * pid now used by another program (the file outlived a restart) is left alone. Undefined on success, else what to tell the user.
- */
-export function stopWindowsProgram(spec: ServiceSpec, exec: SyncRunner = seam.exec ?? runSync): string | undefined {
-	const file = windowsPidPath(spec);
-	const [pidText, image] = (readIfFile(file) ?? "").split(/\r?\n/);
-	const pid = Number(pidText);
-	if (!Number.isInteger(pid) || pid <= 4 || !image) {
-		rmSync(file, { force: true });
-		return undefined;
+/** Run a stop plan with the CLI's blocking runner (remove is synchronous). */
+function stopWindowsSync(spec: ServiceSpec, taskWasRunning: boolean, exec: SyncRunner): string | undefined {
+	const plan = stopPlan(spec, taskWasRunning);
+	let step = plan.next();
+	while (!step.done) {
+		const s = step.value;
+		if ("sleep" in s) {
+			sleepSync(s.sleep);
+			step = plan.next(undefined);
+		} else step = plan.next(exec(...s.run));
 	}
-	const same = (seen: string | undefined) => seen !== undefined && seen !== "unknown" && seen.toLowerCase() === image.toLowerCase();
-	let seen = windowsProcessImage(pid, exec);
-	if (seen === "unknown") return `Windows couldn't say whether ${image} (pid ${pid}) is still running. Run: taskkill /PID ${pid} /T /F, then ${spec.off} again.`;
-	if (same(seen)) {
-		exec(win32.join(systemRoot(), "System32", "taskkill.exe"), ["/PID", String(pid), "/T", "/F"]);
-		const deadline = Date.now() + (seam.stopWaitMs ?? 5000);
-		for (;;) {
-			seen = windowsProcessImage(pid, exec);
-			if (!same(seen) || Date.now() >= deadline) break;
-			sleepSync(100);
-		}
-		if (seen === "unknown" || same(seen)) return `${image} (pid ${pid}) is still running after taskkill. Run: taskkill /PID ${pid} /T /F, or close its window, then ${spec.off} again.`;
+	return step.value;
+}
+
+/** Run a stop plan with the install's runner, without blocking the event loop (the native host relays while it waits). */
+async function stopWindows(spec: ServiceSpec, taskWasRunning: boolean, exec: Runner): Promise<string | undefined> {
+	const plan = stopPlan(spec, taskWasRunning);
+	let step = plan.next();
+	while (!step.done) {
+		const s = step.value;
+		if ("sleep" in s) {
+			await sleep(s.sleep);
+			step = plan.next(undefined);
+		} else step = plan.next(await exec(...s.run));
 	}
-	rmSync(file, { force: true });
-	return undefined;
+	return step.value;
 }
 
 async function installWindows(spec: ServiceSpec, exec: Runner, binary: string, env: Record<string, string>): Promise<InstallResult> {
@@ -471,8 +535,9 @@ async function installWindows(spec: ServiceSpec, exec: Runner, binary: string, e
 	}
 	// A copy already running reads its script as it loops, so it is stopped, and confirmed gone, before the script changes.
 	if (existsSync(script)) {
-		await exec(schtasksPath(), ["/End", "/TN", spec.label]);
-		const stuck = stopWindowsProgram(spec);
+		// /End exits 0 only when it ended a running task.
+		const ended = await exec(schtasksPath(), ["/End", "/TN", spec.label]);
+		const stuck = await stopWindows(spec, ended.code === 0, exec);
 		if (stuck) return { ok: false, file: script, message: `${stuck} The script wasn't changed.` };
 	}
 	mkdirSync(dirname(log), { recursive: true });
@@ -659,7 +724,7 @@ async function undoFresh(spec: ServiceSpec, exec: Runner, file: string | undefin
 		else if (platform() === "linux") await exec("systemctl", ["--user", "disable", "--now", spec.unit]);
 		else if (platform() === "win32") {
 			await exec(schtasksPath(), ["/End", "/TN", spec.label]);
-			stopWindowsProgram(spec);
+			await stopWindows(spec, false, exec);
 			await exec(schtasksPath(), ["/Delete", "/TN", spec.label, "/F"]);
 		}
 	} catch {
@@ -750,9 +815,10 @@ function removeOne(spec: ServiceSpec): { ok: boolean; notes: string[]; failure?:
 	}
 	if (platform() === "win32" && existsSync(windowsScriptPath(spec))) {
 		// Ending a task that isn't running fails, which is the state wanted; the delete is what has to work.
-		run(schtasksPath(), ["/End", "/TN", spec.label]);
-		// /End ends only cmd.exe; the program it started is ended by pid, and has to be gone before the task is.
-		const stuck = stopWindowsProgram(spec, run);
+		// /End ends only cmd.exe, and exits 0 only when the task was running; the program it started is ended by pid, and has to
+		// be gone before the task is.
+		const ended = run(schtasksPath(), ["/End", "/TN", spec.label]);
+		const stuck = stopWindowsSync(spec, ended.code === 0, run);
 		if (stuck) return { ok: false, notes: [], failure: `${stuck} The ${spec.label} task and ${spec.kept} are kept.` };
 		const r = run(schtasksPath(), ["/Delete", "/TN", spec.label, "/F"]);
 		if (r.code !== 0 && run(schtasksPath(), ["/Query", "/TN", spec.label]).code === 0) {

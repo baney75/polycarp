@@ -36,16 +36,22 @@ export function windowsTool(tool: WindowsTool, lookup: ToolLookup = {}): string 
 	return (lookup.which ?? which)(`${tool}.exe`) ?? windowsInstallPaths(tool, lookup.env).find((path) => exists(path));
 }
 
-/**
- * The program name Windows reports for `pid`, from tasklist.exe by full path: undefined when no process has that pid, "unknown"
- * when tasklist itself failed (learn.microsoft.com/windows-server/administration/windows-commands/tasklist).
- */
-export function windowsProcessImage(pid: number, exec: (cmd: string, args: string[]) => { code: number; out: string }, env: NodeJS.ProcessEnv = process.env): string | undefined | "unknown" {
-	const r = exec(win32.join(env.SystemRoot || "C:\\Windows", "System32", "tasklist.exe"), ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]);
+/** tasklist.exe by full path, and its arguments for one pid in CSV without a header (learn.microsoft.com/windows-server/administration/windows-commands/tasklist). */
+export function tasklistCall(pid: number, env: NodeJS.ProcessEnv = process.env): [string, string[]] {
+	return [win32.join(env.SystemRoot || "C:\\Windows", "System32", "tasklist.exe"), ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]];
+}
+
+/** The program name in tasklist's answer for `pid`: undefined when no process has that pid, "unknown" when tasklist itself failed. */
+export function tasklistImage(pid: number, r: { code: number; out: string }): string | undefined | "unknown" {
 	if (r.code !== 0) return "unknown";
 	for (const line of r.out.split(/\r?\n/)) {
 		const m = /^"([^"]+)","(\d+)"/.exec(line.trim());
 		if (m && Number(m[2]) === pid) return m[1];
 	}
 	return undefined;
+}
+
+/** The program name Windows reports for `pid`, from tasklist (see tasklistImage). */
+export function windowsProcessImage(pid: number, exec: (cmd: string, args: string[]) => { code: number; out: string }, env: NodeJS.ProcessEnv = process.env): string | undefined | "unknown" {
+	return tasklistImage(pid, exec(...tasklistCall(pid, env)));
 }
