@@ -512,8 +512,12 @@ polycarp update
 ```
 
 It builds from a clean copy of `origin/main`, never from the checkout you work in, and reloads the extension when no
-agent is working. [Updating](../README.md#updating) in the main README has the details for a Mac, Linux and Windows,
-and `polycarp version` shows whether the helper and each browser's extension match the rest.
+agent is working. On a Mac the helper and the extension are inside Polycarp.app. On Linux they are copied to
+`~/.local/share/polycarp/browser/source` (load the extension from its `dist-chrome` folder), and
+`~/.local/bin/polycarp-browser` points there, so nothing runs from the cache. On Windows `polycarp update` is not
+supported yet. [Updating](../README.md#updating) in the main README has the details, and `polycarp version` shows
+whether the helper and each browser's extension match the rest. A browser that is connected but does not answer in
+time is listed as "no answer in time", not as a mismatch.
 
 `polycarp-browser update` is the standalone browser's own updater. It installs signed GitHub releases: it verifies a
 minisign signature and a checksum, swaps the release in, keeps the previous one for

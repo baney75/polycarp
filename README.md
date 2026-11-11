@@ -75,6 +75,13 @@ line whether every installed part comes from the same commit. A part that isn't 
 an error. `--json` prints the same as JSON; `--check` exits 0 when they match and 1 when one differs, and names it.
 `polycarp doctor` ends with the same line.
 
+Two things hold on a Mac and on Linux alike. The `polycarp` command in the list is the installed one
+(`~/.local/bin/polycarp`), whichever `polycarp` you ran, so a build in a checkout reports what is installed and not
+itself. And a browser that is connected but slow is its own state: each browser gets a share of the time limit, the
+helper asks them all at once, and one that has not answered is listed as "no answer in time". It is never counted as a
+mismatch or as not installed, `--check` exits 75 when that is the only thing in the way, and `polycarp update` notes
+it and carries on. On Windows the command in the list is the one that is running; the rest is the same.
+
 `polycarp update` shows its steps and asks once before it runs them. `--dry-run` prints the steps and runs nothing,
 `--yes` skips the question (needed where there is no terminal), and `--check` only says whether an update is waiting
 (exit 0 when up to date, 100 when there is one). It stops at the first step that fails, shows that step's output, says
@@ -85,8 +92,8 @@ What it does depends on how Polycarp got onto the device:
 | Install | What `polycarp update` does |
 | --- | --- |
 | **Mac app from the download or the install script** | Asks the app's own updater (`polycarp-spaces update --now`): the same check, signature check and installer as **Settings > Updates > Update Now**. The app restarts itself when it is done. |
-| **Built from source, Mac** | Fetches `origin/main`, makes a clean copy of it in `~/Library/Caches/polycarp`, and runs `make -C spaces install` there: the app with the command, the helper, the extension and the skill inside, installed and restarted. Then it reloads the extension unless an agent is working in the browser. |
-| **Built from source, Linux** | The same clean copy (in `~/.cache/polycarp`), then: the `polycarp` command into `~/.local/bin`; on Hyprland the spaces daemon, the engine and `spaces/platforms/linux/omarchy/install.sh`; with Node, the browser helper and the extension; then the daemon is stopped and Hyprland reloaded, which starts the new one. |
+| **Built from source, Mac** | Fetches `origin/main`, makes a clean copy of it in `~/Library/Caches/polycarp`, gets the packages the build needs (`browser/scripts/setup-siblings.sh`), and runs `make -C spaces install` there: the app with the command, the helper, the extension and the skill inside, installed and restarted. Then the newly installed command reloads the extension, unless an agent is working in the browser, and checks every part. |
+| **Built from source, Linux (Omarchy)** | The same clean copy (in `~/.cache/polycarp`). Everything is built first: on Hyprland the spaces daemon and the engine; with Node, the packages, the browser helper and the extension. Only then is anything installed: the helper and the extension are copied to `~/.local/share/polycarp/browser/source` with `~/.local/bin/polycarp-browser` pointing there, the helper is registered with your browsers, `spaces/platforms/linux/omarchy/install.sh` runs, and the `polycarp` command goes into `~/.local/bin` last. Then the newly installed command reloads the extension, stops the daemon, reloads Hyprland (which starts the new one) and checks every part. |
 | **Windows** | Not supported yet: it prints the build-from-source steps from [spaces/platforms/windows/README.md](spaces/platforms/windows/README.md) and exits 2. `polycarp version` works. |
 
 For a source install, tell it once where your checkout is:
@@ -97,10 +104,29 @@ polycarp update --source ~/src/polycarp
 
 It remembers the path in `source.toml` in Polycarp's config folder (`~/.config/polycarp` on a Mac and Linux), and from
 then on `polycarp update` is enough. Only `origin/main` is ever installed, and only from the clean copy: never a
-branch, never files you have changed, never the checkout you work in, which is used for `git fetch` and nothing else.
-It refuses a checkout whose `origin` is not this repo. When every installed part is already at that commit it says so
-and stops before building anything. On Linux the browser helper and the extension run from the clean copy, so keep
-that folder; a deleted one is rebuilt by the next update.
+branch, never files you have changed, never the checkout you work in, which is used for `git fetch` and
+`git worktree` and nothing else. It refuses a checkout whose `origin` is not this repo. When every part this update
+installs is already there and at that commit it says so and stops before building anything. A part that is missing (the
+browser helper on a device that has gained Node since) counts as an update, and an extension that only has to reload
+does not: the update says "reload pending" and exits 0.
+
+Nothing that is installed runs from the clean copy, on a Mac or on Linux, so the cache folder can be deleted at any
+time; the next update makes it again. On Linux, load the extension from
+`~/.local/share/polycarp/browser/source/dist-chrome`.
+
+**The first run.** An installed `polycarp` from before this command does not know `update`. Build one and run it:
+
+```sh
+cd ~/src/polycarp/cli && cargo build --release
+./target/release/polycarp update --source ~/src/polycarp
+```
+
+That works on a Mac and on Linux. The `polycarp` that starts an update fetches, builds and installs. After the step
+that replaces the installed command, it runs nothing more itself: it hands over to the installed command
+(`~/.local/bin/polycarp update --finish`), which reloads, restarts and checks by its own rules. So an updater that is
+older than what it installs cannot finish an update the old way, and the plan (`--dry-run`) prints which command runs
+each step. If the handover fails, every part is already installed and the report says which last steps did not run.
+On Windows there is no update yet, so there is no first run: it exits 2 with the build steps.
 
 A source build needs what the first build needed: Rust everywhere; on a Mac Apple's command line tools, Bun and Node;
 on Linux Node for the browser part.

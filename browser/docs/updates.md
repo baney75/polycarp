@@ -9,8 +9,9 @@ Update now and Roll back. `polycarp-browser update` does the release install fro
 commands and the skill, from a clean copy of `origin/main`, and `polycarp version` shows whether they match
 ([Updating](../../README.md#updating) in the main README). This page describes the browser part's own updater, which
 the standalone browser uses. The helper inside Polycarp.app has no updater of its own (`polycarp-browser update` there
-says to run `polycarp update`), and a helper that `polycarp update` built on Linux runs from that clean copy, which
-is not on a branch, so the side panel's Update now refuses there and `polycarp update` is the way.
+says to run `polycarp update`). On Linux `polycarp update` copies the helper and the extension out of its clean copy
+to `~/.local/share/polycarp/browser/source`, which is not a git checkout, so the side panel's Update now refuses there
+(the Unmanaged row below) and `polycarp update` is the way. On Windows `polycarp update` is not supported yet.
 
 What "update" does depends on how Polycarp runs (the install mode):
 
@@ -112,7 +113,8 @@ is swapped by renames; the CLI is replaced file by file in place (a rename over 
 so `cli/dist/index.js`, which the native host's launcher runs, is never missing. Install
 and Roll back write a journal (`.tabkyra-update/journal.json`) and keep every source whole
 until they commit, so a crash at any point is finished or undone by the next updater, the
-next native host start, or `polycarp-browser doctor`, `status`, `setup` or `update` in a terminal. The builds they replace go to `.tabkyra-update/previous/` for Roll
+next native host start, or `polycarp-browser doctor`, `status`, `setup` or `update` in a terminal (`status --json`
+only reads, on every system: it is what `polycarp version` asks, so it repairs nothing). The builds they replace go to `.tabkyra-update/previous/` for Roll
 back. If `npm install` in `setup-siblings.sh` rewrote a `package-lock.json`, the updater puts
 it back as committed (any other changed tracked file stops the update), so the next update
 isn't refused for local changes. `setup-siblings.sh` fetches a pinned sibling revision the

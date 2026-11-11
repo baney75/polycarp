@@ -17,12 +17,13 @@ let chooseSession;
 let formatContext;
 let agentsWorking;
 let RELOAD_BUSY;
+let statusQueryMs;
 
 before(async () => {
 	const { build } = await import("esbuild");
 	const out = join(root, "bundle.mjs");
 	await build({
-		stdin: { contents: 'export { chooseSession } from "./src/session-name.ts"; export { agentsWorking, RELOAD_BUSY } from "./src/sessions.ts"; export { formatContext } from "./src/mcp.ts";', resolveDir: join(here, ".."), loader: "ts" },
+		stdin: { contents: 'export { chooseSession } from "./src/session-name.ts"; export { agentsWorking, RELOAD_BUSY, statusQueryMs } from "./src/sessions.ts"; export { formatContext } from "./src/mcp.ts";', resolveDir: join(here, ".."), loader: "ts" },
 		bundle: true,
 		platform: "node",
 		format: "esm",
@@ -30,7 +31,7 @@ before(async () => {
 		loader: { ".md": "text", ".pub": "text" },
 		logLevel: "silent",
 	});
-	({ chooseSession, formatContext, agentsWorking, RELOAD_BUSY } = await import(out));
+	({ chooseSession, formatContext, agentsWorking, RELOAD_BUSY, statusQueryMs } = await import(out));
 });
 
 function repo(...parts) {
@@ -39,6 +40,13 @@ function repo(...parts) {
 	execFileSync("git", ["init", "-q", dir]);
 	return dir;
 }
+
+test("each browser gets 20 s to answer status, or what the caller says it has", () => {
+	assert.equal(statusQueryMs({}), 20000);
+	assert.equal(statusQueryMs({ POLYCARP_BROWSER_QUERY_MS: "1600" }), 1600);
+	// Never more than the default, never so little that nothing could answer, never a guess from junk.
+	for (const bad of ["", "soon", "99", "20001", "-5", "1.5"]) assert.equal(statusQueryMs({ POLYCARP_BROWSER_QUERY_MS: bad }), 20000, bad);
+});
 
 test("a session name the user gives wins: --session, then TABKYRA_SESSION", () => {
 	const dir = repo("named");

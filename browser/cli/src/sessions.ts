@@ -35,6 +35,15 @@ export function agentsWorking(sessions: ReadonlyArray<{ name: string; connected:
 	return sessions.filter((s) => s.connected > 0).map((s) => s.name);
 }
 
+/**
+ * How long one browser gets to answer `status`: 20 s (above the extension's 15 s session-open limit), or less when the
+ * caller has less to give. `polycarp version` sets POLYCARP_BROWSER_QUERY_MS so the answer comes back inside its own limit.
+ */
+export function statusQueryMs(env: NodeJS.ProcessEnv = process.env): number {
+	const asked = Number(env.POLYCARP_BROWSER_QUERY_MS);
+	return Number.isInteger(asked) && asked >= 100 && asked <= 20000 ? asked : 20000;
+}
+
 /** A usage error: exit 2. */
 export class SessionsUsageError extends Error {}
 

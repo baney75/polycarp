@@ -69,6 +69,8 @@ const BROWSER: Tool = Tool {
         "/Applications/Polycarp.app/Contents/Resources/browser/polycarp-browser",
     ],
     spots: &[
+        // Where `polycarp update` links the helper on Linux, for a shell without ~/.local/bin on PATH.
+        "~/.local/bin/polycarp-browser",
         "~/.config/tabkyra/tabkyra",
         "/opt/homebrew/bin/tabkyra",
         "/usr/local/bin/tabkyra",
@@ -215,9 +217,12 @@ fn is_script(p: &Path) -> bool {
 /// of it: where per-user installers put tools and the folders their links lead to. Relative to
 /// the home folder. Whole trees such as `~/.local` are not listed, since a cloned repo can sit
 /// in them.
-const HOME_ALLOWED: [&str; 17] = [
+const HOME_ALLOWED: [&str; 18] = [
     ".local/bin",
     ".local/lib/node_modules",
+    // Polycarp's own browser folder: where `polycarp update` puts the helper on Linux, and where
+    // the standalone browser's releases live.
+    ".local/share/polycarp/browser",
     ".local/share/mise",
     ".cargo/bin",
     ".bun/bin",
@@ -746,7 +751,11 @@ fn doctor() -> i32 {
     // The same one line `polycarp version` ends with. It informs; it does not change the exit code.
     if printing {
         let parts = version::gather(&version_device(&ask_helper));
-        let _ = writeln!(out, "{}", version::compare(&parts).line());
+        let _ = writeln!(
+            out,
+            "{}",
+            version::summary(&parts, &version::compare(&parts))
+        );
     }
     let _ = out.flush();
     if ok {
@@ -758,9 +767,10 @@ fn doctor() -> i32 {
 
 /// What `polycarp version`, `doctor` and `update` look at. Nothing here runs the spaces command or
 /// the voice app: their builds are read from files.
-fn version_device(ask: &dyn Fn(&Path, &[&str]) -> Option<String>) -> version::Device<'_> {
+fn version_device(ask: &dyn Fn(&Path, &[&str]) -> version::Answer) -> version::Device<'_> {
     version::Device {
         exe: env::current_exe().ok(),
+        installed: installed_polycarp(),
         home: home(),
         app: polycarp_app(),
         spaces: find(&SPACES).ok(),
@@ -769,31 +779,65 @@ fn version_device(ask: &dyn Fn(&Path, &[&str]) -> Option<String>) -> version::De
     }
 }
 
-fn ask_helper(p: &Path, args: &[&str]) -> Option<String> {
-    capture(p, args)
+/// The `polycarp` an install or an update puts in place: `~/.local/bin/polycarp` on a Mac (a link
+/// into the app) and on Linux (`cargo install --root ~/.local`). None on Windows, where there is no
+/// such place yet, and wherever nothing is installed there.
+fn installed_polycarp() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return None;
+    }
+    spot_path("~/.local/bin/polycarp").filter(|p| is_executable_file(p))
+}
+
+/// Asks the browser helper. `status` asks every connected browser, so it gets its own budget: each
+/// browser has most of the limit to answer (the helper asks them all at once and reads
+/// POLYCARP_BROWSER_QUERY_MS), and the helper has half a limit more to gather and print. A helper too
+/// old to know the budget is stopped at that point and reported as "no answer in time".
+fn ask_helper(p: &Path, args: &[&str]) -> version::Answer {
+    let limit = doctor_limit();
+    if args.first() == Some(&"status") {
+        let each = limit.mul_f32(0.8).as_millis().max(100).to_string();
+        return ask(
+            p,
+            args,
+            limit + limit / 2,
+            &[("POLYCARP_BROWSER_QUERY_MS", each.as_str())],
+        );
+    }
+    ask(p, args, limit, &[])
 }
 
 /// The tool's version, or None if it can't start, fails, prints nothing or takes past the limit.
 fn first_version_line(p: &Path) -> Option<String> {
-    capture(p, &["--version"])?
-        .lines()
-        .next()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
+    match ask(p, &["--version"], doctor_limit(), &[]) {
+        version::Answer::Said(text) => text
+            .lines()
+            .next()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty()),
+        _ => None,
+    }
 }
 
-/// What a tool prints for `args`, or None if it can't start, fails or takes past the limit.
-/// The limit covers reading too: a tool that leaves a background process holding its output
-/// open can't stall `doctor`.
-fn capture(p: &Path, args: &[&str]) -> Option<String> {
-    let mut child = Command::new(p)
-        .args(args)
+/// What a tool prints for `args` and how it ended: it could not start, it failed, or it took past
+/// `limit` and was stopped. The limit covers reading too: a tool that leaves a background process
+/// holding its output open can't stall `doctor`.
+fn ask(p: &Path, args: &[&str], limit: Duration, vars: &[(&str, &str)]) -> version::Answer {
+    use version::Answer;
+    let mut cmd = Command::new(p);
+    cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let stdout = child.stdout.take()?;
+        .stderr(Stdio::null());
+    for (k, v) in vars {
+        cmd.env(k, v);
+    }
+    let Ok(mut child) = cmd.spawn() else {
+        return Answer::NotRun;
+    };
+    let Some(stdout) = child.stdout.take() else {
+        return Answer::NotRun;
+    };
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut text = String::new();
@@ -801,26 +845,31 @@ fn capture(p: &Path, args: &[&str]) -> Option<String> {
         let _ = tx.send(read.ok().map(|_| text));
     });
     let started = Instant::now();
-    let limit = doctor_limit();
+    let stop = |child: &mut std::process::Child| {
+        let _ = child.kill();
+        let _ = child.wait();
+    };
     let text = match rx.recv_timeout(limit) {
         Ok(Some(text)) => text,
-        _ => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
+        Ok(None) => {
+            stop(&mut child);
+            return Answer::Failed(String::new());
+        }
+        Err(_) => {
+            stop(&mut child);
+            return Answer::Late;
         }
     };
     loop {
-        match child.try_wait().ok()? {
-            Some(status) if status.success() => break,
-            Some(_) => return None,
-            None if started.elapsed() > limit => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Answer::Said(text),
+            Ok(Some(_)) => return Answer::Failed(text),
+            Ok(None) if started.elapsed() > limit => {
+                stop(&mut child);
+                return Answer::Late;
             }
-            None => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(_) => return Answer::Failed(text),
         }
     }
-    Some(text)
 }

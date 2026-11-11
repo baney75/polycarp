@@ -6,7 +6,13 @@
 //! state things are in. `--dry-run` prints the plan and runs nothing.
 //!
 //! Only origin/main is ever built and installed, and only from a clean copy of it under the cache
-//! folder: never from a branch, a changed tree or the checkout a person works in.
+//! folder: never from a branch, a changed tree or the checkout a person works in. Nothing that is
+//! installed runs from that cache folder: on Linux the browser helper and the extension are copied to
+//! `~/.local/share/polycarp/browser/source`.
+//!
+//! The `polycarp` that starts an update may be older than the one it installs (the first run is a
+//! build in a checkout). So the plan ends by handing over: the newly installed command runs
+//! `polycarp update --finish`, which reloads, restarts and does the final check by its own rules.
 
 use std::ffi::OsString;
 use std::fs;
@@ -52,8 +58,13 @@ pub struct Facts {
     pub worktree: PathBuf,
     pub worktree_exists: bool,
     pub home: PathBuf,
-    /// This command, as later steps should call it.
+    /// The `polycarp` that is running this update. It runs the steps up to the install.
     pub polycarp: PathBuf,
+    /// The `polycarp` the update installs (`~/.local/bin/polycarp`). It is the one compared with
+    /// origin/main, and the one that finishes the update.
+    pub installed: PathBuf,
+    /// Linux: where the browser helper and the extension are installed, outside the cache.
+    pub browser_home: PathBuf,
     /// Apple silicon builds for itself only, as the installer does.
     pub arm64: bool,
     /// Linux: `~/.config/hypr/hyprland.lua` is there, so the Omarchy install script applies.
@@ -71,6 +82,8 @@ pub struct Options {
     pub check: bool,
     pub dry_run: bool,
     pub yes: bool,
+    /// `--finish`: the last steps only, run by the newly installed command.
+    pub finish: bool,
 }
 
 /// What a step is for. It decides what a failure means and what the failure message says.
@@ -86,8 +99,10 @@ pub enum Role {
     Install,
     /// Worth doing, but a failure does not stop the update (reloading the extension while an agent works).
     Soft,
-    /// The check at the end: `polycarp version --check`.
+    /// The check at the end: every part the update installs is at origin/main.
     Verify,
+    /// The last step of an install: the newly installed `polycarp` runs `update --finish`.
+    Handoff,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -225,7 +240,8 @@ pub fn plan(f: &Facts, o: Options) -> Plan {
         }
     };
     // Looking is always allowed. Changing things needs a yes: the flag, or one answer on a terminal.
-    let changes = !o.check && !o.dry_run;
+    // `--finish` is run by an update that already had its yes.
+    let changes = !o.check && !o.dry_run && !o.finish;
     if changes && !o.yes && !f.terminal {
         return Plan::Refuse {
             code: 2,
@@ -270,6 +286,26 @@ const FETCH: [&str; 3] = [
 ];
 const TARGET: &str = "refs/remotes/origin/main";
 
+/// The parts an update on this device installs, as `polycarp version` names them. The gate and the
+/// final check need each of them to be installed, so a part that is missing is installed by the
+/// next update and never passes for "up to date".
+fn needs(f: &Facts) -> String {
+    let mut names = vec!["polycarp command"];
+    match f.platform {
+        Platform::Mac => names.extend(["app", "spaces command", "browser helper"]),
+        Platform::Linux => {
+            if f.hyprland {
+                names.push("spaces command");
+            }
+            if f.node {
+                names.push("browser helper");
+            }
+        }
+        Platform::Windows => {}
+    }
+    names.join(",")
+}
+
 fn source_steps(
     f: &Facts,
     checkout: &Path,
@@ -277,8 +313,14 @@ fn source_steps(
     o: Options,
 ) -> (String, Vec<Step>, Vec<String>) {
     let (co, wt, me) = (s(checkout), s(&f.worktree), s(&f.polycarp));
+    let installed = s(&f.installed);
+    let needs = needs(f);
     let summary = format!("source install: origin/main of {co}, built in {wt}");
     let mut notes = Vec::new();
+    if o.finish {
+        // Run by the command this update just installed: only what comes after the install.
+        return (summary, finish_steps(f), notes);
+    }
     let mut steps = vec![Step::new(
         Role::Git,
         "Fetch origin/main",
@@ -288,7 +330,15 @@ fn source_steps(
         steps.push(Step::new(
             Role::Gate,
             "Compare what is installed with origin/main",
-            &[&me, "update", "--is-current", &co, TARGET],
+            &[
+                &me,
+                "update",
+                "--is-current",
+                &co,
+                TARGET,
+                "--needs",
+                &needs,
+            ],
         ));
         return (summary, steps, notes);
     }
@@ -324,20 +374,94 @@ fn source_steps(
     }
     steps.push(Step::new(
         Role::Gate,
-        "Stop here if every installed part is already at that commit",
-        &[&me, "update", "--is-current", &wt, "HEAD"],
+        "Stop here if every part this update installs is already at that commit",
+        &[
+            &me,
+            "update",
+            "--is-current",
+            &wt,
+            "HEAD",
+            "--needs",
+            &needs,
+        ],
     ));
     match f.platform {
         Platform::Mac => mac_steps(f, &mut steps),
         Platform::Linux => linux_steps(f, &mut steps, &mut notes),
         Platform::Windows => {}
     }
+    let last: Vec<String> = finish_steps(f).into_iter().map(|st| st.title).collect();
+    steps.push(Step::new(
+        Role::Handoff,
+        "Hand over to the polycarp that was just installed, for the last steps",
+        &[&installed, "update", "--finish", "--source", &co],
+    ));
+    notes.push(format!(
+        "The last step is run by the newly installed command ({installed}), by its own rules. With this version they are: {}.",
+        last.join("; ")
+    ));
+    if f.polycarp != f.installed {
+        notes.push(format!(
+            "This polycarp ({me}) is not the installed command. It fetches, builds and installs. The installed one ({installed}) is the one compared with origin/main, and the one that finishes the update, so an updater older than what it installs changes nothing about the result."
+        ));
+    }
+    (summary, steps, notes)
+}
+
+/// What comes after the install, built and run by the newly installed command (`update --finish`):
+/// reload the extension, restart what runs, and check every part against the clean copy's commit.
+fn finish_steps(f: &Facts) -> Vec<Step> {
+    let installed = s(&f.installed);
+    let wt = s(&f.worktree);
+    let mut steps = Vec::new();
+    const RELOAD: &str = "Reload the extension, unless an agent is working in the browser";
+    match f.platform {
+        Platform::Mac => steps.push(Step::new(
+            Role::Soft,
+            RELOAD,
+            &[&installed, "browser", "reload", "--if-idle"],
+        )),
+        Platform::Linux => {
+            if f.node {
+                let entry = s(&f.browser_home.join("cli/dist/index.js"));
+                steps.push(
+                    Step::new(Role::Soft, RELOAD, &["node", &entry, "reload", "--if-idle"])
+                        .in_dir(&f.browser_home),
+                );
+            }
+            if f.hyprland {
+                // The repo's restart path: the daemon refuses to run twice, and a config reload starts it.
+                steps.push(Step::new(
+                    Role::Soft,
+                    "Stop the running spaces daemon",
+                    &[&s(&f.home.join(".local/bin/baneyspaces")), "stop"],
+                ));
+                steps.push(Step::new(
+                    Role::Soft,
+                    "Reload Hyprland, which starts the new daemon",
+                    &["hyprctl", "reload"],
+                ));
+            }
+        }
+        Platform::Windows => {}
+    }
     steps.push(Step::new(
         Role::Verify,
-        "Check that every part now comes from the same commit",
-        &[&me, "version", "--check", "--wait", "30"],
+        "Check that every part this update installs is at origin/main",
+        &[
+            &installed,
+            "update",
+            "--is-current",
+            &wt,
+            "HEAD",
+            "--needs",
+            &needs(f),
+            "--after-install",
+            "--wait",
+            "30",
+        ],
     ));
-    (summary, steps, notes)
+    steps
 }
 
 /// `npm install` in the sibling setup can rewrite a package-lock.json. In the clean copy that is the only
@@ -350,26 +474,31 @@ fn restore_step(worktree: &Path) -> Step {
     )
 }
 
+/// `browser/scripts/setup-siblings.sh`: it clones the pinned pi-mono and mini-lit next to `browser/`
+/// and runs `npm install` in `browser/` and in `browser/cli`, so a clean copy made a moment ago has
+/// every package the two builds after it need (`a_fresh_clean_copy_gets_its_packages_before_any_build`).
+fn siblings_step(worktree: &Path) -> Step {
+    let browser = worktree.join("browser");
+    Step::new(
+        Role::Build,
+        "Get what the extension builds against, and the packages for the helper and the extension",
+        &[&s(&browser.join("scripts/setup-siblings.sh"))],
+    )
+    .in_dir(&browser)
+}
+
 fn mac_steps(f: &Facts, steps: &mut Vec<Step>) {
     let wt = &f.worktree;
-    let me = s(&f.polycarp);
     let env: Vec<(String, String)> = if f.arm64 {
         vec![("BANEYSPACES_ARM64_ONLY".to_string(), "1".to_string())]
     } else {
         Vec::new()
     };
-    steps.push(
-        Step::new(
-            Role::Build,
-            "Get what the extension builds against",
-            &[&s(&wt.join("browser/scripts/setup-siblings.sh"))],
-        )
-        .in_dir(&wt.join("browser")),
-    );
+    steps.push(siblings_step(wt));
     steps.push(restore_step(wt));
     // What `make -C spaces install` does: bundle.sh builds the app with the command, the helper, the
     // extension and the skill inside, and install-app.sh quits the running app, swaps it, links the
-    // commands in ~/.local/bin and opens it again.
+    // commands in ~/.local/bin (polycarp among them) and opens it again.
     steps.push(
         Step::new(
             Role::Install,
@@ -393,33 +522,15 @@ fn mac_steps(f: &Facts, steps: &mut Vec<Step>) {
             .in_dir(wt),
         );
     }
-    steps.push(Step::new(
-        Role::Soft,
-        "Reload the extension, unless an agent is working in the browser",
-        &[&me, "browser", "reload", "--if-idle"],
-    ));
 }
 
+/// Linux: every build first, so a build that fails has changed nothing that is installed. Then the
+/// installs, with the `polycarp` command last: every step before it is still run by the polycarp
+/// that made this plan.
 fn linux_steps(f: &Facts, steps: &mut Vec<Step>, notes: &mut Vec<String>) {
     let wt = &f.worktree;
     let spaces = wt.join("spaces");
     let browser = wt.join("browser");
-    steps.push(
-        Step::new(
-            Role::Install,
-            "Build the polycarp command and install it in ~/.local/bin",
-            &[
-                "cargo",
-                "install",
-                "--locked",
-                "--path",
-                "cli",
-                "--root",
-                &s(&f.home.join(".local")),
-            ],
-        )
-        .in_dir(wt),
-    );
     if f.hyprland {
         steps.push(
             Step::new(
@@ -444,29 +555,13 @@ fn linux_steps(f: &Facts, steps: &mut Vec<Step>, notes: &mut Vec<String>) {
             )
             .in_dir(&spaces),
         );
-        steps.push(
-            Step::new(
-                Role::Install,
-                "Install the daemon, the engine and the Hyprland include (Omarchy install script)",
-                &[&s(&spaces.join("platforms/linux/omarchy/install.sh"))],
-            )
-            .in_dir(&spaces),
-        );
     } else {
         notes.push(
             "No ~/.config/hypr/hyprland.lua here, so the spaces daemon (Hyprland only) is not built or installed.".to_string(),
         );
     }
     if f.node {
-        let entry = s(&browser.join("cli/dist/index.js"));
-        steps.push(
-            Step::new(
-                Role::Build,
-                "Get what the extension builds against",
-                &[&s(&browser.join("scripts/setup-siblings.sh"))],
-            )
-            .in_dir(&browser),
-        );
+        steps.push(siblings_step(wt));
         steps.push(restore_step(wt));
         steps.push(
             Step::new(
@@ -476,52 +571,157 @@ fn linux_steps(f: &Facts, steps: &mut Vec<Step>, notes: &mut Vec<String>) {
             )
             .in_dir(&browser.join("cli")),
         );
+        // TABKYRA_NO_BUMP: a plain build edits static/manifest.chrome.json, a tracked file, and every
+        // part built after that would be stamped as built from a changed tree.
+        steps.push(
+            Step::new(Role::Build, "Build the extension", &["npm", "run", "build"])
+                .in_dir(&browser)
+                .with_env(&[("TABKYRA_NO_BUMP".to_string(), "1".to_string())]),
+        );
+        let home = s(&f.browser_home);
+        let entry = s(&f.browser_home.join("cli/dist/index.js"));
         steps.push(
             Step::new(
                 Role::Install,
-                "Put polycarp-browser on PATH",
-                &["npm", "link"],
+                "Copy the helper and the extension out of the clean copy, and link polycarp-browser in ~/.local/bin",
+                &[
+                    &s(&f.polycarp),
+                    "update",
+                    "--place-browser",
+                    &s(&browser),
+                    &home,
+                    &s(&f.home.join(".local/bin/polycarp-browser")),
+                ],
             )
-            .in_dir(&browser.join("cli")),
+            .in_dir(wt),
         );
         steps.push(
             Step::new(
                 Role::Install,
-                "Build the extension and register the helper with your browsers",
+                "Register the helper with your browsers",
                 &["node", &entry, "setup", "--yes", "--no-wait"],
             )
-            .in_dir(&browser),
-        );
-        steps.push(
-            Step::new(
-                Role::Soft,
-                "Reload the extension, unless an agent is working in the browser",
-                &["node", &entry, "reload", "--if-idle"],
-            )
-            .in_dir(&browser),
+            .in_dir(&f.browser_home),
         );
         notes.push(format!(
-            "The browser helper and the extension run from {}. Keep that folder; `polycarp update` rebuilds it if it is ever deleted.",
-            browser.display()
+            "The browser helper and the extension are installed in {home}, and nothing installed runs from the cache folder. Browsers load the extension from {home}/dist-chrome. If yours loaded it from another folder before, `polycarp browser setup` shows how to load this one."
         ));
     } else {
         notes.push(
-            "Node and npm are not on PATH, so the browser helper and the extension are not built. Install Node, then run `polycarp update` again.".to_string(),
+            "Node and npm are not on PATH, so the browser helper and the extension are not built. Install Node, then run `polycarp update` again: it installs them even when nothing else has changed.".to_string(),
         );
     }
     if f.hyprland {
-        // The repo's restart path: the daemon refuses to run twice, and a config reload starts it.
-        steps.push(Step::new(
-            Role::Soft,
-            "Stop the running spaces daemon",
-            &[&s(&f.home.join(".local/bin/baneyspaces")), "stop"],
-        ));
-        steps.push(Step::new(
-            Role::Soft,
-            "Reload Hyprland, which starts the new daemon",
-            &["hyprctl", "reload"],
+        steps.push(
+            Step::new(
+                Role::Install,
+                "Install the daemon, the engine and the Hyprland include (Omarchy install script)",
+                &[&s(&spaces.join("platforms/linux/omarchy/install.sh"))],
+            )
+            .in_dir(&spaces),
+        );
+    }
+    steps.push(
+        Step::new(
+            Role::Install,
+            "Build the polycarp command and install it in ~/.local/bin",
+            &[
+                "cargo",
+                "install",
+                "--locked",
+                "--path",
+                "cli",
+                "--root",
+                &s(&f.home.join(".local")),
+            ],
+        )
+        .in_dir(wt),
+    );
+}
+
+/// Linux: copies the built browser helper and extension from the clean copy (`from`, its `browser/`
+/// folder) to `to`, a folder that stays, and points `link` (`~/.local/bin/polycarp-browser`) at the
+/// helper there. The copy is made next to `to` and swapped in by rename, so `to` is never half
+/// written, and a failure before the swap leaves the old one as it was.
+#[cfg(unix)]
+pub fn place_browser(from: &Path, to: &Path, link: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let at = |e: std::io::Error, p: &Path| format!("{}: {e}", p.display());
+    if !to.is_absolute() || !link.is_absolute() {
+        return Err("the folder and the link must be absolute paths".to_string());
+    }
+    // Only what runs: the helper is one bundled file, and it reads these to know its version.
+    let wanted = [
+        "package.json",
+        "static/manifest.chrome.json",
+        "cli/package.json",
+        "cli/dist",
+        "dist-chrome",
+    ];
+    for must in ["cli/dist/index.js", "dist-chrome/manifest.json"] {
+        if !from.join(must).is_file() {
+            return Err(format!(
+                "{} is missing, so there is no build to install",
+                from.join(must).display()
+            ));
+        }
+    }
+    // The link is made when the name is free and moved when it is a link already. A real file there
+    // is someone's own: it is left alone, and nothing is copied.
+    if fs::symlink_metadata(link).is_ok_and(|meta| !meta.file_type().is_symlink()) {
+        return Err(format!(
+            "{} is a file this update did not make. Move it away, then run `polycarp update` again.",
+            link.display()
         ));
     }
+    let name = to
+        .file_name()
+        .ok_or("the folder has no name")?
+        .to_string_lossy();
+    let (next, old) = (
+        to.with_file_name(format!("{name}.new")),
+        to.with_file_name(format!("{name}.old")),
+    );
+    for stale in [&next, &old] {
+        if stale.exists() {
+            fs::remove_dir_all(stale).map_err(|e| at(e, stale))?;
+        }
+    }
+    fn copy(from: &Path, to: &Path) -> std::io::Result<()> {
+        if fs::metadata(from)?.is_dir() {
+            fs::create_dir_all(to)?;
+            for entry in fs::read_dir(from)? {
+                let entry = entry?;
+                copy(&entry.path(), &to.join(entry.file_name()))?;
+            }
+            return Ok(());
+        }
+        if let Some(dir) = to.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        fs::copy(from, to).map(|_| ())
+    }
+    for item in wanted {
+        copy(&from.join(item), &next.join(item)).map_err(|e| at(e, &from.join(item)))?;
+    }
+    let helper = next.join("cli/dist/index.js");
+    fs::set_permissions(&helper, fs::Permissions::from_mode(0o755)).map_err(|e| at(e, &helper))?;
+    if to.exists() {
+        fs::rename(to, &old).map_err(|e| at(e, to))?;
+    }
+    fs::rename(&next, to).map_err(|e| at(e, to))?;
+    let _ = fs::remove_dir_all(&old);
+    let dir = link.parent().ok_or("the link has no folder")?;
+    fs::create_dir_all(dir).map_err(|e| at(e, dir))?;
+    let fresh = dir.join(".polycarp-browser.new");
+    let _ = fs::remove_file(&fresh);
+    std::os::unix::fs::symlink(to.join("cli/dist/index.js"), &fresh).map_err(|e| at(e, &fresh))?;
+    fs::rename(&fresh, link).map_err(|e| at(e, link))
+}
+
+#[cfg(not(unix))]
+pub fn place_browser(_from: &Path, _to: &Path, _link: &Path) -> Result<(), String> {
+    Err("placing the browser helper is not supported on Windows yet".to_string())
 }
 
 // ---- Running a plan ------------------------------------------------------------------------------
@@ -554,6 +754,7 @@ pub fn state_after_failure(steps: &[Step], failed: usize) -> &'static str {
     let installed_before = steps[..failed].iter().any(|st| st.role == Role::Install);
     match steps[failed].role {
         Role::Verify => "Every step before this one ran, but the parts do not all match yet. `polycarp version` shows which.",
+        Role::Handoff => "Every part was installed. The last steps (reloading the extension, restarting what runs, the final check) did not finish. `polycarp version` shows what is installed.",
         Role::Install if !installed_before => "This step installs. It did not finish, so some parts may be new and others old. `polycarp version` shows what is installed.",
         _ if installed_before => "Earlier steps already installed some parts, so some may be new and others old. `polycarp version` shows what is installed.",
         _ => "Nothing that is installed on this device was changed.",
@@ -841,6 +1042,11 @@ fn parse(args: &[OsString]) -> Result<Args, String> {
             Some("--check") => out.options.check = true,
             Some("--dry-run") => out.options.dry_run = true,
             Some("--yes") | Some("-y") => out.options.yes = true,
+            // Not in the usage text: an update runs it as its last step, with the command it installed.
+            Some("--finish") => {
+                out.options.finish = true;
+                out.options.yes = true;
+            }
             Some("--source") => {
                 let path = it.next().ok_or("--source needs the path of a checkout")?;
                 out.source = Some(PathBuf::from(path));
@@ -861,9 +1067,85 @@ fn platform() -> Platform {
     }
 }
 
-/// `polycarp update --is-current <dir> <rev>`, the gate the plan runs: exit 0 when every installed part
-/// is at `rev` of the repo in `dir`, 100 when an update would change something.
-fn is_current(dir: &Path, rev: &str, device: &Device) -> i32 {
+/// What `update --is-current` was asked, after `<dir> <rev>`.
+#[derive(Debug, Default, PartialEq)]
+struct Check {
+    /// Part names that must be installed (`--needs a,b`): what an update on this device installs.
+    needs: Vec<String>,
+    /// `--after-install`: the final check of an update, not the gate before one.
+    after_install: bool,
+    /// `--wait <seconds>`: keep looking that long (an app that is restarting).
+    wait: u64,
+}
+
+fn parse_check(args: &[OsString]) -> Result<Check, String> {
+    let mut check = Check::default();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.to_str() {
+            Some("--needs") => {
+                let list = it.next().ok_or("--needs needs a list of parts")?;
+                check.needs = list
+                    .to_string_lossy()
+                    .split(',')
+                    .filter(|n| !n.is_empty())
+                    .map(str::to_string)
+                    .collect();
+            }
+            Some("--after-install") => check.after_install = true,
+            Some("--wait") => {
+                check.wait = it
+                    .next()
+                    .and_then(|v| v.to_str())
+                    .and_then(|v| v.parse().ok())
+                    .map(|secs: u64| secs.min(600))
+                    .ok_or("--wait needs a number of seconds")?;
+            }
+            _ => return Err(format!("unknown option {}", a.to_string_lossy())),
+        }
+    }
+    Ok(check)
+}
+
+/// What the parts on the device say about `target`, for the gate before an update and the check after.
+#[derive(Debug, PartialEq)]
+pub enum Standing {
+    /// Every part the update installs is installed and at the target, built from a clean tree.
+    Current,
+    /// The same, except that a browser still runs an older extension: it only has to reload.
+    ReloadPending(Vec<String>),
+    /// Something is missing, older or odd: an update would change it.
+    Behind,
+}
+
+/// Pure: how `parts` stand against `target`. A part that gave no answer in time is left out, so a slow
+/// browser alone never makes an update fail or run again.
+pub fn standing(parts: &[Part], needs: &[&str], target: &str) -> Standing {
+    if !version::missing(parts, needs).is_empty() {
+        return Standing::Behind;
+    }
+    if version::is_current(parts, target) {
+        return Standing::Current;
+    }
+    let rest = version::without_extensions(parts);
+    if rest.len() < parts.len() && version::is_current(&rest, target) {
+        let waiting = parts
+            .iter()
+            .filter(|p| p.name.starts_with("extension"))
+            .filter(|p| !version::is_current(std::slice::from_ref(p), target))
+            .filter(|p| matches!(p.found, version::Found::Installed { .. }))
+            .map(|p| p.name.clone())
+            .collect();
+        return Standing::ReloadPending(waiting);
+    }
+    Standing::Behind
+}
+
+/// `polycarp update --is-current <dir> <rev> [--needs <parts>] [--after-install] [--wait <seconds>]`,
+/// which the plan runs twice. As the gate: exit 0 when there is nothing to install, 100 when an update
+/// would change something. With `--after-install`, as the final check: exit 0 when every part is at
+/// `rev`, 1 when one is not.
+fn is_current(dir: &Path, rev: &str, check: &Check, device: &Device) -> i32 {
     let Some(target) = git_line(
         dir,
         &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
@@ -871,25 +1153,91 @@ fn is_current(dir: &Path, rev: &str, device: &Device) -> i32 {
         eprintln!("polycarp update: could not read {rev} in {}", dir.display());
         return 1;
     };
-    let parts = (device.parts)();
-    if version::is_current(&parts, &target) {
+    let needs: Vec<&str> = check.needs.iter().map(String::as_str).collect();
+    let at = version::short(&target);
+    let started = std::time::Instant::now();
+    let (parts, standing) = loop {
+        let parts = (device.parts)();
+        let standing = standing(&parts, &needs, &target);
+        if standing == Standing::Current || started.elapsed().as_secs() >= check.wait {
+            break (parts, standing);
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    };
+    let quiet = version::unanswered(&parts);
+    if !quiet.is_empty() {
         println!(
-            "up to date: every installed part is at origin/main ({})",
-            version::short(&target)
+            "note: {} gave no answer in time, so it was not compared. `polycarp version` asks again.",
+            quiet.join(", ")
         );
-        return 0;
     }
-    println!(
-        "update available: origin/main is at {}",
-        version::short(&target)
-    );
-    println!("{}", version::compare(&parts).line());
-    AVAILABLE
+    match standing {
+        Standing::Current => {
+            println!("up to date: every installed part is at origin/main ({at})");
+            0
+        }
+        Standing::ReloadPending(waiting) => {
+            println!(
+                "up to date: everything installed is at origin/main ({at}). Reload pending: {} still runs the build from before, until it reloads. Run `polycarp browser reload` when no agent is working in the browser.",
+                waiting.join(", ")
+            );
+            0
+        }
+        Standing::Behind => {
+            let missing = version::missing(&parts, &needs);
+            if check.after_install {
+                print!("{}", version::table(&parts));
+                println!("\nnot every part is at origin/main ({at}) yet.");
+            } else {
+                println!("update available: origin/main is at {at}");
+            }
+            if !missing.is_empty() {
+                println!("not installed yet: {}", missing.join(", "));
+            }
+            println!("{}", version::summary(&parts, &version::compare(&parts)));
+            if check.after_install {
+                1
+            } else {
+                AVAILABLE
+            }
+        }
+    }
 }
 
 pub fn run(args: &[OsString], device: &Device) -> i32 {
-    if args.first().and_then(|a| a.to_str()) == Some("--is-current") && args.len() == 3 {
-        return is_current(Path::new(&args[1]), &args[2].to_string_lossy(), device);
+    // The two commands a plan runs for itself. Neither is in the usage text.
+    match args.first().and_then(|a| a.to_str()) {
+        Some("--is-current") if args.len() >= 3 => {
+            return match parse_check(&args[3..]) {
+                Ok(check) => is_current(
+                    Path::new(&args[1]),
+                    &args[2].to_string_lossy(),
+                    &check,
+                    device,
+                ),
+                Err(e) => {
+                    eprintln!("polycarp update: {e}");
+                    2
+                }
+            };
+        }
+        Some("--place-browser") if args.len() == 4 => {
+            let [from, to, link] = [&args[1], &args[2], &args[3]].map(Path::new);
+            return match place_browser(from, to, link) {
+                Ok(()) => {
+                    println!(
+                        "The browser helper and the extension are in {}.",
+                        to.display()
+                    );
+                    0
+                }
+                Err(e) => {
+                    eprintln!("polycarp update: {e}");
+                    1
+                }
+            };
+        }
+        _ => {}
     }
     if args.iter().any(|a| a == "--help" || a == "-h") {
         print!("{USAGE}");
@@ -943,17 +1291,19 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         _ => cache_dir(&home).join("source"),
     };
     let path = std::env::var_os("PATH");
-    let local = home.join(".local/bin/polycarp");
+    let installed = home.join(".local/bin/polycarp");
     let facts = Facts {
         platform: platform(),
         worktree_exists: worktree.join(".git").exists(),
         worktree,
-        // This binary, not whichever `polycarp` is installed: an older one would not know the
-        // commands the steps use.
+        // This binary runs the steps up to the install: the installed one may be older and not know
+        // them. After the install, the installed one takes over.
         polycarp: std::env::current_exe()
             .ok()
             .filter(|p| p.is_absolute())
-            .unwrap_or(local),
+            .unwrap_or_else(|| installed.clone()),
+        browser_home: home.join(".local/share/polycarp/browser/source"),
+        installed: installed.clone(),
         arm64: cfg!(target_arch = "aarch64"),
         hyprland: home.join(".config/hypr/hyprland.lua").is_file(),
         node: on_path("node", path.as_ref()).is_some() && on_path("npm", path.as_ref()).is_some(),
@@ -991,7 +1341,8 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         }
     }
     // Remember the checkout only once a plan for it was accepted: a refused origin is never recorded.
-    if let (Some(checkout), Ok(config)) = (&given, &device.config) {
+    // `--finish` is the same update still going: the run that started it did the remembering.
+    if let (Some(checkout), Ok(config), false) = (&given, &device.config, o.finish) {
         if recorded_source(config).as_deref() != Some(checkout.as_path()) {
             match record_source(config, checkout) {
                 Ok(()) => println!("Remembered {} as the source (in {}).", checkout.display(), config.join(SOURCE_FILE).display()),
@@ -1003,10 +1354,23 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
     match execute(&steps, &mut RealRunner::new(&home), &mut out) {
         Outcome::UpToDate => 0,
         Outcome::Available => AVAILABLE,
-        Outcome::Done if o.check => 0,
+        // The run that handed over prints the notes and the last line.
+        Outcome::Done if o.check || o.finish => 0,
         Outcome::Done => {
             for note in &notes {
                 println!("note: {note}");
+            }
+            // An older copy earlier on PATH would keep answering to `polycarp`: say so once.
+            if let Some(first) = on_path("polycarp", path.as_ref()) {
+                let same = fs::canonicalize(&first).ok() == fs::canonicalize(&installed).ok();
+                if !same && installed.exists() {
+                    println!(
+                        "note: `polycarp` in your shell is {}, not the updated command at {}. Remove the old one, or put {} first on PATH.",
+                        first.display(),
+                        installed.display(),
+                        installed.parent().unwrap_or(&installed).display()
+                    );
+                }
             }
             println!("polycarp update: done.");
             0
@@ -1023,6 +1387,10 @@ mod tests {
     const CHECKOUT: &str = "/home/u/src/polycarp";
     const WORKTREE: &str = "/home/u/.cache/polycarp/source-1234abcd";
     const ORIGIN: &str = "https://github.com/baney75/polycarp.git";
+    /// The polycarp that starts the update: a build somewhere else, not the installed command.
+    const BOOT: &str = "/home/u/build/polycarp";
+    const INSTALLED: &str = "/home/u/.local/bin/polycarp";
+    const BROWSER_HOME: &str = "/home/u/.local/share/polycarp/browser/source";
 
     fn source(origin: Option<&str>, dirty: bool) -> Install {
         Install::Source {
@@ -1039,7 +1407,9 @@ mod tests {
             worktree: PathBuf::from(WORKTREE),
             worktree_exists: false,
             home: PathBuf::from(HOME),
-            polycarp: PathBuf::from("/home/u/.local/bin/polycarp"),
+            polycarp: PathBuf::from(BOOT),
+            installed: PathBuf::from(INSTALLED),
+            browser_home: PathBuf::from(BROWSER_HOME),
             arm64: true,
             hyprland: true,
             node: true,
@@ -1052,16 +1422,26 @@ mod tests {
         check: false,
         dry_run: false,
         yes: true,
+        finish: false,
+    };
+    /// What the newly installed command runs: `--finish` carries its own yes.
+    const FINISH: Options = Options {
+        check: false,
+        dry_run: false,
+        yes: true,
+        finish: true,
     };
     const DRY: Options = Options {
         check: false,
         dry_run: true,
         yes: false,
+        finish: false,
     };
     const CHECK: Options = Options {
         check: true,
         dry_run: false,
         yes: false,
+        finish: false,
     };
 
     fn steps_of(plan: Plan) -> Vec<Step> {
@@ -1080,8 +1460,10 @@ mod tests {
         steps.iter().map(|st| st.argv.join(" ")).collect()
     }
 
+    #[cfg(unix)]
     #[test]
     fn mac_source_plan() {
+        const MAC_NEEDS: &str = "polycarp command,app,spaces command,browser helper";
         let f = facts(Platform::Mac, source(Some(ORIGIN), false));
         let steps = steps_of(plan(&f, YES));
         assert_eq!(
@@ -1090,12 +1472,11 @@ mod tests {
                 format!("git -C {CHECKOUT} fetch origin +refs/heads/main:refs/remotes/origin/main"),
                 format!("git -C {CHECKOUT} worktree prune"),
                 format!("git -C {CHECKOUT} worktree add --detach --force {WORKTREE} refs/remotes/origin/main"),
-                format!("/home/u/.local/bin/polycarp update --is-current {WORKTREE} HEAD"),
+                format!("{BOOT} update --is-current {WORKTREE} HEAD --needs {MAC_NEEDS}"),
                 format!("{WORKTREE}/browser/scripts/setup-siblings.sh"),
                 format!("git -C {WORKTREE} checkout -- ."),
                 "make -C spaces install".to_string(),
-                "/home/u/.local/bin/polycarp browser reload --if-idle".to_string(),
-                "/home/u/.local/bin/polycarp version --check --wait 30".to_string(),
+                format!("{INSTALLED} update --finish --source {CHECKOUT}"),
             ]
         );
         let make = &steps[6];
@@ -1104,7 +1485,18 @@ mod tests {
             make.env,
             vec![("BANEYSPACES_ARM64_ONLY".to_string(), "1".to_string())]
         );
-        assert_eq!(steps.last().unwrap().role, Role::Verify);
+        assert_eq!(steps.last().unwrap().role, Role::Handoff);
+        // What the installed command then runs.
+        let last = steps_of(plan(&f, FINISH));
+        assert_eq!(
+            commands(&last),
+            vec![
+                format!("{INSTALLED} browser reload --if-idle"),
+                format!("{INSTALLED} update --is-current {WORKTREE} HEAD --needs {MAC_NEEDS} --after-install --wait 30"),
+            ]
+        );
+        assert_eq!(last[0].role, Role::Soft);
+        assert_eq!(last[1].role, Role::Verify);
 
         // An Intel Mac builds the universal app, and an installed skill is refreshed after the app.
         let mut f = f;
@@ -1131,26 +1523,61 @@ mod tests {
         assert!(!cmds.iter().any(|c| c.contains("worktree add")));
     }
 
+    #[cfg(unix)]
     #[test]
     fn linux_source_plan_with_hyprland() {
         let f = facts(Platform::Linux, source(Some(ORIGIN), false));
-        let cmds = commands(&steps_of(plan(&f, YES)));
+        let steps = steps_of(plan(&f, YES));
+        let needs = "polycarp command,spaces command,browser helper";
         assert_eq!(
-            cmds[4..],
+            commands(&steps)[3..],
             [
-                "cargo install --locked --path cli --root /home/u/.local".to_string(),
+                format!("{BOOT} update --is-current {WORKTREE} HEAD --needs {needs}"),
+                // Every build first.
                 "cargo build --release --locked -p baneyspaces-linux".to_string(),
                 format!("{WORKTREE}/spaces/platforms/linux/scripts/build-engine.sh"),
-                format!("{WORKTREE}/spaces/platforms/linux/omarchy/install.sh"),
                 format!("{WORKTREE}/browser/scripts/setup-siblings.sh"),
                 format!("git -C {WORKTREE} checkout -- ."),
                 "npm run build".to_string(),
-                "npm link".to_string(),
-                format!("node {WORKTREE}/browser/cli/dist/index.js setup --yes --no-wait"),
-                format!("node {WORKTREE}/browser/cli/dist/index.js reload --if-idle"),
+                "npm run build".to_string(),
+                // Then the installs, the polycarp command last.
+                format!("{BOOT} update --place-browser {WORKTREE}/browser {BROWSER_HOME} /home/u/.local/bin/polycarp-browser"),
+                format!("node {BROWSER_HOME}/cli/dist/index.js setup --yes --no-wait"),
+                format!("{WORKTREE}/spaces/platforms/linux/omarchy/install.sh"),
+                "cargo install --locked --path cli --root /home/u/.local".to_string(),
+                format!("{INSTALLED} update --finish --source {CHECKOUT}"),
+            ]
+        );
+        // The helper build, then the extension build, which must not edit the tracked manifest.
+        assert_eq!(
+            steps[8].cwd.as_deref(),
+            Some(Path::new(WORKTREE).join("browser/cli").as_path())
+        );
+        assert_eq!(
+            steps[9].cwd.as_deref(),
+            Some(Path::new(WORKTREE).join("browser").as_path())
+        );
+        assert_eq!(
+            steps[9].env,
+            vec![("TABKYRA_NO_BUMP".to_string(), "1".to_string())]
+        );
+        let first_install = steps
+            .iter()
+            .position(|st| st.role == Role::Install)
+            .unwrap();
+        assert!(
+            steps[first_install..]
+                .iter()
+                .all(|st| st.role != Role::Build),
+            "a build after an install: a failed build would leave parts mixed"
+        );
+        assert_eq!(
+            commands(&steps_of(plan(&f, FINISH))),
+            vec![
+                format!("node {BROWSER_HOME}/cli/dist/index.js reload --if-idle"),
                 "/home/u/.local/bin/baneyspaces stop".to_string(),
                 "hyprctl reload".to_string(),
-                "/home/u/.local/bin/polycarp version --check --wait 30".to_string(),
+                format!("{INSTALLED} update --is-current {WORKTREE} HEAD --needs {needs} --after-install --wait 30"),
             ]
         );
     }
@@ -1175,6 +1602,12 @@ mod tests {
             notes.iter().any(|n| n.contains("hyprland.lua")),
             "{notes:?}"
         );
+        // The gate needs the helper, so a device that gained Node since the last update is not "up to date".
+        assert!(
+            cmds[3].ends_with("--needs polycarp command,browser helper"),
+            "{}",
+            cmds[3]
+        );
 
         f.node = false;
         let Plan::Run { steps, notes, .. } = plan(&f, YES) else {
@@ -1184,12 +1617,311 @@ mod tests {
         assert_eq!(
             cmds.len(),
             6,
-            "fetch, two for the copy, the gate, the command, the check: {cmds:?}"
+            "fetch, two for the copy, the gate, the command, the handover: {cmds:?}"
         );
+        assert!(cmds[3].ends_with("--needs polycarp command"), "{}", cmds[3]);
         assert!(
             notes.iter().any(|n| n.contains("Node and npm")),
             "{notes:?}"
         );
+        let last = commands(&steps_of(plan(&f, FINISH)));
+        assert_eq!(last.len(), 1, "only the final check: {last:?}");
+    }
+
+    /// The polycarp that starts an update can be older than the one it installs (the documented first
+    /// run is a build in a checkout). It runs the steps up to the install; after the step that
+    /// replaces the command, only the installed command runs, and it makes its own list of last steps.
+    #[test]
+    fn the_installed_command_finishes_the_update_not_the_one_that_started_it() {
+        for platform in [Platform::Mac, Platform::Linux] {
+            for boot in [BOOT, INSTALLED] {
+                let mut f = facts(platform, source(Some(ORIGIN), false));
+                f.polycarp = PathBuf::from(boot);
+                let Plan::Run { steps, notes, .. } = plan(&f, YES) else {
+                    panic!("refused")
+                };
+                let replaces = steps
+                    .iter()
+                    .position(|st| {
+                        let c = st.argv.join(" ");
+                        c == "make -C spaces install" || c.starts_with("cargo install ")
+                    })
+                    .expect("a step installs the polycarp command");
+                // Up to there, polycarp is the one that made the plan, gate included.
+                for st in &steps[..replaces] {
+                    if st.argv.get(1).map(String::as_str) == Some("update") {
+                        assert_eq!(st.argv[0], boot, "{}", st.title);
+                    }
+                }
+                let gate = steps.iter().find(|st| st.role == Role::Gate).unwrap();
+                assert_eq!(gate.argv[0], boot);
+                // After it, the starter runs nothing, and the plan ends by handing over.
+                if boot != INSTALLED {
+                    for st in &steps[replaces + 1..] {
+                        assert!(!st.argv.contains(&boot.to_string()), "{:?}", st.argv);
+                    }
+                }
+                let last = steps.last().unwrap();
+                assert_eq!(last.role, Role::Handoff);
+                assert_eq!(last.argv[..3], [INSTALLED, "update", "--finish"]);
+                assert!(
+                    !steps
+                        .iter()
+                        .any(|st| matches!(st.role, Role::Soft | Role::Verify)),
+                    "the reload, the restart and the final check belong to the installed command"
+                );
+                // The plan says so, and says more when the starter is not the installed command.
+                assert!(
+                    notes
+                        .iter()
+                        .any(|n| n.contains("run by the newly installed command")),
+                    "{notes:?}"
+                );
+                assert_eq!(
+                    notes
+                        .iter()
+                        .any(|n| n.contains("is not the installed command")),
+                    boot != INSTALLED,
+                    "{notes:?}"
+                );
+                // What the installed command runs: never the starter, and the check is its own.
+                let finish = steps_of(plan(&f, FINISH));
+                for st in &finish {
+                    assert!(
+                        boot == INSTALLED || !st.argv.contains(&boot.to_string()),
+                        "{:?}",
+                        st.argv
+                    );
+                }
+                let verify = finish.last().unwrap();
+                assert_eq!(verify.role, Role::Verify);
+                assert_eq!(verify.argv[0], INSTALLED);
+                assert!(verify.argv.contains(&"--after-install".to_string()));
+            }
+        }
+        // `--finish` never asks and needs no terminal: the run that handed over had the yes.
+        let f = facts(Platform::Linux, source(Some(ORIGIN), false));
+        assert!(matches!(plan(&f, FINISH), Plan::Run { ask: false, .. }));
+    }
+
+    /// A clean copy made a moment ago has no node_modules. The sibling setup installs them (in
+    /// `browser/` and in `browser/cli`), so it has to come before every build that needs them.
+    #[test]
+    fn a_fresh_clean_copy_gets_its_packages_before_any_build() {
+        // What the plan relies on, read from the real script: if it stops installing the helper's
+        // packages, this fails and the plan needs a step of its own.
+        let script = fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../browser/scripts/setup-siblings.sh"),
+        )
+        .unwrap();
+        let tail = script.rsplit_once("cd \"$here\"").unwrap().1;
+        assert!(
+            tail.contains("\nnpm install") && tail.contains("(cd cli && npm install"),
+            "setup-siblings.sh no longer installs the packages for browser/ and browser/cli: {tail}"
+        );
+        for platform in [Platform::Mac, Platform::Linux] {
+            let f = facts(platform, source(Some(ORIGIN), false));
+            assert!(!f.worktree_exists);
+            let steps = steps_of(plan(&f, YES));
+            let setup = steps
+                .iter()
+                .position(|st| {
+                    Path::new(&st.argv[0]).ends_with("browser/scripts/setup-siblings.sh")
+                })
+                .unwrap_or_else(|| panic!("{platform:?}: no sibling setup"));
+            assert_eq!(
+                steps[setup].cwd.as_deref(),
+                Some(Path::new(WORKTREE).join("browser").as_path())
+            );
+            for (i, st) in steps.iter().enumerate() {
+                let c = st.argv.join(" ");
+                if c == "npm run build" || c == "make -C spaces install" {
+                    assert!(
+                        i > setup,
+                        "{platform:?}: `{c}` runs before the packages are there"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The same, with real files: the build steps of a Linux plan run through the real runner in a
+    /// folder with no node_modules. `npm run build` here fails exactly as the real one does without
+    /// its packages, and the sibling setup does what the real script's last lines do.
+    #[cfg(unix)]
+    #[test]
+    fn the_build_steps_work_in_a_copy_with_no_node_modules() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("polycarp-fresh-copy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let (wt, bin) = (root.join("copy"), root.join("bin"));
+        let script = |path: &Path, body: &str| {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        fs::create_dir_all(wt.join("browser/cli")).unwrap();
+        script(
+            &wt.join("browser/scripts/setup-siblings.sh"),
+            "/bin/mkdir -p node_modules cli/node_modules",
+        );
+        script(
+            &bin.join("npm"),
+            "[ \"$1 $2\" = 'run build' ] && [ -d node_modules ] && : > built",
+        );
+        let mut f = facts(Platform::Linux, source(Some(ORIGIN), false));
+        f.hyprland = false;
+        f.worktree = wt.clone();
+        let builds: Vec<Step> = steps_of(plan(&f, YES))
+            .into_iter()
+            .filter(|st| st.role == Role::Build)
+            .collect();
+        assert_eq!(builds.len(), 3, "{:?}", commands(&builds));
+        let run = |steps: &[Step]| {
+            let mut runner = RealRunner {
+                path: Some(bin.clone().into_os_string()),
+            };
+            let mut out = Vec::new();
+            execute(steps, &mut runner, &mut out)
+        };
+        // Without the sibling setup the first build fails: this is the failure a missing install gives.
+        assert_eq!(
+            run(&builds[1..]),
+            Outcome::Failed {
+                step: 0,
+                code: Some(1)
+            }
+        );
+        assert_eq!(run(&builds), Outcome::Done);
+        assert!(wt.join("browser/cli/built").is_file() && wt.join("browser/built").is_file());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Nothing that is installed may run from the cache folder: it can be pruned, and the next update
+    /// rebuilds in it. On Linux the helper and the extension are copied out, and every command that
+    /// stays in use is run from where it was installed.
+    #[test]
+    fn linux_installs_the_browser_outside_the_cache() {
+        let f = facts(Platform::Linux, source(Some(ORIGIN), false));
+        let Plan::Run { steps, notes, .. } = plan(&f, YES) else {
+            panic!("refused")
+        };
+        let cmds = commands(&steps);
+        assert!(
+            !cmds.iter().any(|c| c.starts_with("npm link")),
+            "npm link leaves polycarp-browser pointing into the clean copy: {cmds:?}"
+        );
+        let place = steps
+            .iter()
+            .find(|st| st.argv.get(2).map(String::as_str) == Some("--place-browser"))
+            .expect("a step copies the browser part out of the cache");
+        assert_eq!(place.role, Role::Install);
+        let (to, link) = (Path::new(&place.argv[4]), Path::new(&place.argv[5]));
+        assert_eq!(to, Path::new(BROWSER_HOME));
+        assert_eq!(link, Path::new(HOME).join(".local/bin/polycarp-browser"));
+        assert!(!to.starts_with(WORKTREE) && !to.starts_with(Path::new(HOME).join(".cache")));
+        // Registering with the browsers and reloading run the installed helper, never the cache's.
+        let all: Vec<Step> = steps
+            .into_iter()
+            .chain(steps_of(plan(&f, FINISH)))
+            .collect();
+        let node: Vec<&Step> = all.iter().filter(|st| st.argv[0] == "node").collect();
+        assert_eq!(node.len(), 2, "setup and reload");
+        for st in node {
+            assert!(
+                Path::new(&st.argv[1]).starts_with(BROWSER_HOME),
+                "{:?}",
+                st.argv
+            );
+            assert_eq!(st.cwd.as_deref(), Some(Path::new(BROWSER_HOME)));
+        }
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains(BROWSER_HOME)
+                    && n.contains("nothing installed runs from the cache")),
+            "{notes:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn placing_the_browser_copies_it_out_and_survives_the_cache_being_deleted() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("polycarp-place-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let from = root.join("cache/source-1/browser");
+        let to = root.join("home/.local/share/polycarp/browser/source");
+        let link = root.join("home/.local/bin/polycarp-browser");
+        let write = |rel: &str, text: &str| {
+            let p = from.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, text).unwrap();
+        };
+        // Not built yet: refused, and nothing is made.
+        write("package.json", "{}");
+        assert!(place_browser(&from, &to, &link)
+            .unwrap_err()
+            .contains("no build to install"));
+        assert!(!to.exists() && fs::symlink_metadata(&link).is_err());
+
+        write("static/manifest.chrome.json", "{\"version\":\"1.0.0\"}");
+        write("cli/package.json", "{}");
+        write("cli/dist/index.js", "#!/bin/sh\necho one\n");
+        write("cli/dist/build-info.json", "{}");
+        write("dist-chrome/manifest.json", "{}");
+        write("dist-chrome/assets/a.js", "a");
+        write("node_modules/big/index.js", "not copied");
+        write("src/secret.ts", "not copied");
+        place_browser(&from, &to, &link).unwrap();
+        for rel in [
+            "package.json",
+            "static/manifest.chrome.json",
+            "cli/package.json",
+            "cli/dist/build-info.json",
+            "dist-chrome/assets/a.js",
+        ] {
+            assert!(to.join(rel).is_file(), "{rel}");
+        }
+        assert!(!to.join("node_modules").exists() && !to.join("src").exists());
+        let helper = to.join("cli/dist/index.js");
+        assert_eq!(fs::read_link(&link).unwrap(), helper);
+        assert!(fs::metadata(&helper).unwrap().permissions().mode() & 0o111 != 0);
+
+        // The cache is pruned: the installed command still resolves, to a file outside the cache.
+        fs::remove_dir_all(root.join("cache")).unwrap();
+        let real = fs::canonicalize(&link).unwrap();
+        assert!(
+            real.is_file() && !real.starts_with(fs::canonicalize(&root).unwrap().join("cache"))
+        );
+        assert_eq!(fs::read_to_string(&link).unwrap(), "#!/bin/sh\necho one\n");
+
+        // The next update swaps the new build in whole, and files it no longer has are gone.
+        write("package.json", "{}");
+        write("static/manifest.chrome.json", "{\"version\":\"1.0.1\"}");
+        write("cli/package.json", "{}");
+        write("cli/dist/index.js", "#!/bin/sh\necho two\n");
+        write("dist-chrome/manifest.json", "{}");
+        place_browser(&from, &to, &link).unwrap();
+        assert_eq!(fs::read_to_string(&link).unwrap(), "#!/bin/sh\necho two\n");
+        assert!(!to.join("dist-chrome/assets").exists());
+        assert!(
+            !to.with_file_name("source.new").exists() && !to.with_file_name("source.old").exists()
+        );
+
+        // A real file where the link goes is someone's own: refused before anything is copied.
+        fs::remove_file(&link).unwrap();
+        fs::write(&link, "mine").unwrap();
+        write("cli/dist/index.js", "#!/bin/sh\necho three\n");
+        assert!(place_browser(&from, &to, &link)
+            .unwrap_err()
+            .contains("did not make"));
+        assert_eq!(fs::read_to_string(&link).unwrap(), "mine");
+        assert_eq!(
+            fs::read_to_string(&helper).unwrap(),
+            "#!/bin/sh\necho two\n"
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1225,7 +1957,7 @@ mod tests {
     #[test]
     fn windows_is_refused_with_the_build_steps() {
         for install in [source(Some(ORIGIN), false), Install::Unknown] {
-            for o in [YES, DRY, CHECK] {
+            for o in [YES, DRY, CHECK, FINISH] {
                 let (code, message) = refusal(plan(&facts(Platform::Windows, install.clone()), o));
                 assert_eq!(code, 2);
                 assert!(message.contains("not supported on Windows yet"));
@@ -1248,7 +1980,7 @@ mod tests {
             Some("https://github.com/baney75/tabkyra"),
             None,
         ] {
-            for o in [YES, DRY, CHECK] {
+            for o in [YES, DRY, CHECK, FINISH] {
                 let (code, message) =
                     refusal(plan(&facts(Platform::Mac, source(origin, false)), o));
                 assert_eq!(code, 1, "{origin:?}");
@@ -1303,7 +2035,7 @@ mod tests {
             commands(&steps),
             vec![
                 format!("git -C {CHECKOUT} fetch origin +refs/heads/main:refs/remotes/origin/main"),
-                format!("/home/u/.local/bin/polycarp update --is-current {CHECKOUT} refs/remotes/origin/main"),
+                format!("{BOOT} update --is-current {CHECKOUT} refs/remotes/origin/main --needs polycarp command,spaces command,browser helper"),
             ]
         );
         assert_eq!(steps[1].role, Role::Gate);
@@ -1328,20 +2060,29 @@ mod tests {
                         f.hyprland = hyprland;
                         f.node = node;
                         f.skill_installed = skill;
-                        for step in steps_of(plan(&f, YES)) {
+                        let all = steps_of(plan(&f, YES))
+                            .into_iter()
+                            .chain(steps_of(plan(&f, FINISH)));
+                        for step in all {
                             if matches!(step.role, Role::Build | Role::Install) {
                                 let cwd = step.cwd.as_deref().unwrap_or_else(|| {
                                     panic!("{} has no working directory", step.title)
                                 });
+                                // A build only ever runs in the clean copy. An install runs there
+                                // too, or in the folder the browser part was installed into.
                                 assert!(
-                                    cwd.starts_with(WORKTREE),
+                                    cwd.starts_with(WORKTREE)
+                                        || (step.role == Role::Install
+                                            && cwd.starts_with(BROWSER_HOME)),
                                     "{} runs in {}",
                                     step.title,
                                     cwd.display()
                                 );
                                 seen += 1;
                             }
-                            if step.role != Role::Git {
+                            // The handover names the checkout only so the installed command can
+                            // find the same clean copy. It builds nothing there.
+                            if !matches!(step.role, Role::Git | Role::Handoff) {
                                 let names_checkout = step.argv.iter().any(|a| a.contains(CHECKOUT))
                                     || step.cwd.as_deref().is_some_and(|d| d.starts_with(CHECKOUT));
                                 assert!(
@@ -1415,20 +2156,20 @@ mod tests {
         );
         assert_eq!(ran.len(), 5, "nothing after the failed step ran: {ran:?}");
         assert!(
-            text.contains("step 5 of 9: Get what the extension builds against"),
+            text.contains("step 5 of 8: Get what the extension builds against"),
             "{text}"
         );
         assert!(
-            text.contains("Get what the extension builds against said no"),
+            text.contains("the packages for the helper and the extension said no"),
             "the step's own output: {text}"
         );
-        assert!(text.contains("step 5 of 9 failed (exit 7)"), "{text}");
+        assert!(text.contains("step 5 of 8 failed (exit 7)"), "{text}");
         assert!(
             text.contains("Nothing that is installed on this device was changed."),
             "{text}"
         );
         assert!(text.contains("run `polycarp update` again"), "{text}");
-        assert!(!text.contains("step 6 of 9"), "{text}");
+        assert!(!text.contains("step 6 of 8"), "{text}");
 
         // The install step itself fails: say that parts may be mixed.
         let codes = [
@@ -1455,6 +2196,31 @@ mod tests {
             "{text}"
         );
 
+        // The handover fails: every part is installed, and the report says what did not finish.
+        let codes = [
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(AVAILABLE),
+            Some(0),
+            Some(0),
+            Some(0),
+            Some(1),
+        ];
+        let (outcome, _, text) = run_fake(&steps, &codes);
+        assert_eq!(
+            outcome,
+            Outcome::Failed {
+                step: 7,
+                code: Some(1)
+            }
+        );
+        assert!(
+            text.contains("Every part was installed. The last steps")
+                && text.contains("did not finish"),
+            "{text}"
+        );
+
         // A program that cannot be started is a failure too.
         let (outcome, ran, text) = run_fake(&steps, &[None]);
         assert_eq!(
@@ -1478,7 +2244,7 @@ mod tests {
         assert_eq!(outcome, Outcome::UpToDate);
         assert_eq!(ran.len(), 4, "the gate was the last step run: {ran:?}");
         assert!(
-            !text.contains("make") && !text.contains("step 5 of 9"),
+            !text.contains("make") && !text.contains("step 5 of 8"),
             "{text}"
         );
         // A gate that fails for another reason (git could not read the commit) is a failure, not "carry on".
@@ -1495,28 +2261,18 @@ mod tests {
 
     #[test]
     fn a_soft_step_that_fails_does_not_stop_the_update_but_the_check_does() {
+        // The last steps, as the installed command runs them.
         let steps = steps_of(plan(
             &facts(Platform::Mac, source(Some(ORIGIN), false)),
-            YES,
+            FINISH,
         ));
-        // Step 8, the reload, says an agent is working (exit 75); the check at the end then fails.
-        let codes = [
-            Some(0),
-            Some(0),
-            Some(0),
-            Some(AVAILABLE),
-            Some(0),
-            Some(0),
-            Some(0),
-            Some(75),
-            Some(1),
-        ];
-        let (outcome, ran, text) = run_fake(&steps, &codes);
-        assert_eq!(ran.len(), 9, "every step ran: {ran:?}");
+        // The reload says an agent is working (exit 75); the check at the end then fails.
+        let (outcome, ran, text) = run_fake(&steps, &[Some(75), Some(1)]);
+        assert_eq!(ran.len(), 2, "every step ran: {ran:?}");
         assert_eq!(
             outcome,
             Outcome::Failed {
-                step: 8,
+                step: 1,
                 code: Some(1)
             }
         );
@@ -1525,7 +2281,12 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("the parts do not all match yet"), "{text}");
-        // All green.
+        // All green, here and in the plan that hands over.
+        assert_eq!(run_fake(&steps, &[]).0, Outcome::Done);
+        let steps = steps_of(plan(
+            &facts(Platform::Mac, source(Some(ORIGIN), false)),
+            YES,
+        ));
         let codes = [Some(0), Some(0), Some(0), Some(AVAILABLE)];
         assert_eq!(run_fake(&steps, &codes).0, Outcome::Done);
     }
@@ -1593,11 +2354,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("polycarp-update-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         assert_eq!(recorded_source(&dir), None);
-        record_source(&dir, Path::new("/src/with \"quotes\" and spaces")).unwrap();
-        assert_eq!(
-            recorded_source(&dir).as_deref(),
-            Some(Path::new("/src/with \"quotes\" and spaces"))
-        );
+        // Absolute on every system (`/src/...` is not, on Windows), with characters that need escaping.
+        let checkout = dir.join("src").join("with \"quotes\" and spaces");
+        record_source(&dir, &checkout).unwrap();
+        assert_eq!(recorded_source(&dir).as_deref(), Some(checkout.as_path()));
         fs::write(dir.join(SOURCE_FILE), "checkout = \"relative/path\"\n").unwrap();
         assert_eq!(
             recorded_source(&dir),
@@ -1605,5 +2365,104 @@ mod tests {
             "a relative path is not a checkout"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    const T: &str = "aaaaaaa1111111111111111111111111111111aa";
+    const OLD: &str = "bbbbbbb2222222222222222222222222222222bb";
+    fn at(name: &str, commit: &str) -> Part {
+        Part::installed(name, None, version::Build::new(commit, "", false), None)
+    }
+
+    #[test]
+    fn a_slow_browser_alone_never_fails_the_update_or_starts_one() {
+        let needs = ["polycarp command", "browser helper"];
+        let parts = vec![
+            at("polycarp command", T),
+            at("browser helper", T),
+            Part::unanswered("extension (Helium)", version::NO_ANSWER),
+        ];
+        assert_eq!(standing(&parts, &needs, T), Standing::Current);
+        // The helper itself gave no answer: still not missing, still not a reason to fail.
+        let parts = vec![
+            at("polycarp command", T),
+            Part::unanswered("browser helper", version::NO_ANSWER),
+            Part::unanswered("extension", version::NO_ANSWER),
+        ];
+        assert_eq!(standing(&parts, &needs, T), Standing::Current);
+        // A part that did answer and is older is still behind.
+        let parts = vec![
+            at("polycarp command", OLD),
+            Part::unanswered("browser helper", version::NO_ANSWER),
+        ];
+        assert_eq!(standing(&parts, &needs, T), Standing::Behind);
+    }
+
+    #[test]
+    fn a_part_the_update_would_install_makes_it_run() {
+        // Everything that is installed matches, but the helper is not there yet (Node was added).
+        let parts = vec![
+            at("polycarp command", T),
+            Part::absent("browser helper", "not installed"),
+            Part::absent("extension", "not installed"),
+        ];
+        assert_eq!(
+            standing(&parts, &["polycarp command"], T),
+            Standing::Current
+        );
+        assert_eq!(
+            standing(&parts, &["polycarp command", "browser helper"], T),
+            Standing::Behind
+        );
+        // A part nobody listed at all is missing too.
+        assert_eq!(
+            standing(&parts, &["polycarp command", "spaces command"], T),
+            Standing::Behind
+        );
+    }
+
+    #[test]
+    fn an_extension_that_only_has_to_reload_is_not_a_reason_to_rebuild() {
+        let needs = ["polycarp command", "browser helper"];
+        let parts = vec![
+            at("polycarp command", T),
+            at("browser helper", T),
+            at("extension (Helium)", OLD),
+            at("extension (Chrome)", T),
+        ];
+        assert_eq!(
+            standing(&parts, &needs, T),
+            Standing::ReloadPending(vec!["extension (Helium)".to_string()])
+        );
+        // Anything else behind is a real update.
+        let parts = vec![
+            at("polycarp command", T),
+            at("browser helper", OLD),
+            at("extension (Helium)", OLD),
+        ];
+        assert_eq!(standing(&parts, &needs, T), Standing::Behind);
+    }
+
+    #[test]
+    fn the_gate_reads_its_options() {
+        let args = |list: &[&str]| -> Vec<OsString> { list.iter().map(OsString::from).collect() };
+        assert_eq!(parse_check(&[]), Ok(Check::default()));
+        assert_eq!(
+            parse_check(&args(&[
+                "--needs",
+                "polycarp command,browser helper",
+                "--after-install",
+                "--wait",
+                "30"
+            ])),
+            Ok(Check {
+                needs: vec!["polycarp command".into(), "browser helper".into()],
+                after_install: true,
+                wait: 30,
+            })
+        );
+        assert_eq!(parse_check(&args(&["--wait", "9999"])).unwrap().wait, 600);
+        assert!(parse_check(&args(&["--needs"])).is_err());
+        assert!(parse_check(&args(&["--wait", "soon"])).is_err());
+        assert!(parse_check(&args(&["--force"])).is_err());
     }
 }

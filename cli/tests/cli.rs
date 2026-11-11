@@ -1507,7 +1507,32 @@ fn update_dry_run_prints_the_plan_and_changes_nothing() {
         t.contains("worktree add --detach --force") && t.contains(&cache.display().to_string()),
         "{t}"
     );
-    assert!(t.contains("version --check"), "{t}");
+    // The plan ends by handing over to the installed command, and says so.
+    let installed = s.dir("home").join(".local/bin/polycarp");
+    assert!(
+        t.contains(&format!(
+            "{} update --finish --source {}",
+            installed.display(),
+            repo.display()
+        )),
+        "{t}"
+    );
+    assert!(t.contains("run by the newly installed command"), "{t}");
+    assert!(t.contains("is not the installed command"), "{t}");
+    // What the installed command would then run is a plan too, and it runs nothing either.
+    let o = run(&[
+        "update",
+        "--finish",
+        "--dry-run",
+        "--source",
+        repo.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
+    assert!(
+        out(&o).contains("--after-install --wait 30") && !out(&o).contains("fetch origin"),
+        "{}",
+        out(&o)
+    );
     assert!(t.trim_end().ends_with("dry run: nothing was run."), "{t}");
     // Nothing was fetched, built, remembered or created.
     assert!(
@@ -1573,4 +1598,242 @@ fn update_without_a_known_install_says_how_to_point_it_at_a_checkout() {
     let o = s.run(&["update", "--help"]);
     assert_eq!(code(&o), 0);
     assert!(out(&o).contains("--dry-run"));
+}
+
+/// A repo with one empty commit, and that commit.
+#[cfg(unix)]
+fn repo_with_a_commit(s: &Sandbox, name: &str, path: &Path) -> (PathBuf, String) {
+    let dir = s.dir(name);
+    fs::create_dir_all(&dir).unwrap();
+    let git = |args: &[&str]| {
+        let o = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .env("PATH", path)
+            .env("HOME", s.dir("home"))
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", err(&o));
+        out(&o).trim().to_string()
+    };
+    git(&["init", "-q"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "one"]);
+    let head = git(&["rev-parse", "HEAD"]);
+    (dir.canonicalize().unwrap(), head)
+}
+
+/// A stand-in for an installed `polycarp`: a file that carries the build stamp a real one does.
+#[cfg(unix)]
+fn install_stamped(s: &Sandbox, commit: &str) -> PathBuf {
+    let dir = s.dir("home").join(".local/bin");
+    fs::create_dir_all(&dir).unwrap();
+    stub(
+        &dir,
+        "polycarp",
+        &format!("# polycarp-build|v1|{commit}|2026-11-01T00:00:00Z|0|0.0.9|end|\nexit 0"),
+    )
+}
+
+/// The documented first run: `cargo build --release` in `cli/`, then run that binary. It is not the
+/// installed command, and it may be older or newer than it. What is compared with origin/main, by
+/// `version` and by the update's own gate, is the installed command.
+#[cfg(unix)]
+#[test]
+fn a_build_in_a_checkout_judges_the_installed_command_not_itself() {
+    let s = Sandbox::new();
+    let Some(path) = git_only_path(&s) else {
+        return;
+    };
+    let (repo, head) = repo_with_a_commit(&s, "target-repo", &path);
+    let installed = install_stamped(&s, &head);
+    let run = |args: &[&str]| s.cmd(args).env("PATH", &path).output().unwrap();
+
+    let v = json(&run(&["version", "--json"]));
+    let me = part(&v, "polycarp command");
+    assert_eq!(me["commit"], head.as_str(), "{v}");
+    assert_eq!(me["version"], "0.0.9");
+    assert_eq!(me["path"], installed.to_str().unwrap());
+    assert!(me["note"].as_str().unwrap().contains("this run is"), "{me}");
+
+    // The gate, exactly as the plan runs it: the installed command is at the target, so there is
+    // nothing to do, whatever commit this test binary was built from.
+    let dir = repo.to_str().unwrap();
+    let gate = ["update", "--is-current", dir, "HEAD", "--needs"];
+    let o = run(&[&gate[..], &["polycarp command"]].concat());
+    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
+    assert!(out(&o).starts_with("up to date: "), "{}", out(&o));
+    // A part this update installs is not there yet: the update runs.
+    let o = run(&[&gate[..], &["polycarp command,browser helper"]].concat());
+    assert_eq!(code(&o), 100, "{}", out(&o));
+    assert!(
+        out(&o).contains("update available")
+            && out(&o).contains("not installed yet: browser helper"),
+        "{}",
+        out(&o)
+    );
+
+    // The installed command is from another commit: an update is waiting, and after an install
+    // that same state is a failure with the list.
+    install_stamped(&s, OTHER_COMMIT);
+    let o = run(&[&gate[..], &["polycarp command"]].concat());
+    assert_eq!(code(&o), 100, "{}", out(&o));
+    let o = run(&[&gate[..], &["polycarp command", "--after-install"]].concat());
+    assert_eq!(code(&o), 1, "{}", out(&o));
+    assert!(
+        out(&o).contains("polycarp command")
+            && out(&o).contains("not every part is at origin/main"),
+        "{}",
+        out(&o)
+    );
+    assert_eq!(code(&run(&[&gate[..], &["x", "--bogus"]].concat())), 2);
+}
+
+/// A browser that is connected but slow. The helper is stopped at its limit, the extension is
+/// reported as "no answer in time", `version --check` says so with its own exit code, and the
+/// update's final check does not fail on it.
+#[cfg(unix)]
+#[test]
+fn a_slow_browser_is_no_answer_in_time_and_never_fails_the_update() {
+    let s = Sandbox::new();
+    let Some(path) = git_only_path(&s) else {
+        return;
+    };
+    let (repo, head) = repo_with_a_commit(&s, "target-repo", &path);
+    install_stamped(&s, &head);
+    let log = s.dir("budget");
+    let helper = |status: &str| {
+        stub(
+            &s.dir("bin"),
+            "polycarp-browser",
+            &format!(
+                "case \"$1\" in\n\
+                 version) echo '{{\"version\":\"1.2.3\",\"commit\":\"{head}\",\"dirty\":false}}';;\n\
+                 status) printf '%s' \"$POLYCARP_BROWSER_QUERY_MS\" > '{}'; {status};;\n\
+                 esac",
+                log.display()
+            ),
+        )
+    };
+    let bin = helper("exec /bin/sleep 20");
+    let run = |args: &[&str]| {
+        s.cmd(args)
+            .env("PATH", &path)
+            .env("POLYCARP_BROWSER_BIN", &bin)
+            .env("POLYCARP_DOCTOR_LIMIT_MS", "400")
+            .output()
+            .unwrap()
+    };
+    let started = std::time::Instant::now();
+    let o = run(&["version", "--json", "--check"]);
+    assert!(
+        started.elapsed().as_secs() < 10,
+        "the slow helper was waited for"
+    );
+    let v = json(&o);
+    assert_eq!(code(&o), 75, "{v}");
+    assert_eq!(v["match"], true, "{v}");
+    assert_eq!(part(&v, "browser helper")["commit"], head.as_str());
+    let ext = part(&v, "extension");
+    assert_eq!(ext["installed"], serde_json::Value::Null, "{ext}");
+    assert_eq!(ext["answered"], false);
+    assert_eq!(ext["state"], "no answer in time");
+    assert_eq!(v["unanswered"], serde_json::json!(["extension"]));
+    assert!(v["odd"].as_array().unwrap().is_empty(), "{v}");
+    // Each browser was given most of the limit, and the helper half a limit more.
+    assert_eq!(fs::read_to_string(&log).unwrap(), "320");
+    let o = run(&["version"]);
+    assert_eq!(code(&o), 0);
+    assert!(
+        out(&o).contains("no answer in time") && out(&o).contains("Not compared"),
+        "{}",
+        out(&o)
+    );
+
+    // The final check of an update, and the gate before one: a quiet browser is named, not failed.
+    let dir = repo.to_str().unwrap();
+    for extra in [&["--after-install"][..], &[]] {
+        let mut args = vec![
+            "update",
+            "--is-current",
+            dir,
+            "HEAD",
+            "--needs",
+            "polycarp command,browser helper",
+        ];
+        args.extend_from_slice(extra);
+        let o = run(&args);
+        assert_eq!(code(&o), 0, "{extra:?}: {}{}", out(&o), err(&o));
+        assert!(
+            out(&o).contains("note: extension gave no answer in time")
+                && out(&o).contains("up to date"),
+            "{}",
+            out(&o)
+        );
+    }
+
+    // The helper answers in time but one browser did not: the same state, for that browser only.
+    helper(&format!(
+        "echo '{{\"connected\":true,\"extensions\":[{{\"browser\":\"Helium\",\"answered\":true,\"version\":\"1.2.3\",\"commit\":\"{head}\"}},{{\"browser\":\"Chrome\",\"answered\":false}}]}}'"
+    ));
+    let o = run(&["version", "--json", "--check"]);
+    let v = json(&o);
+    assert_eq!(code(&o), 75, "{v}");
+    assert_eq!(part(&v, "extension (Helium)")["commit"], head.as_str());
+    assert_eq!(part(&v, "extension (Chrome)")["state"], "no answer in time");
+    // A browser that answers with an older build is still a difference.
+    helper(&format!(
+        "echo '{{\"connected\":true,\"extensions\":[{{\"browser\":\"Helium\",\"answered\":true,\"version\":\"1.2.2\",\"commit\":\"{OTHER_COMMIT}\"}}]}}'"
+    ));
+    assert_eq!(code(&run(&["version", "--check"])), 1);
+}
+
+/// Linux: the helper is copied out of the clean copy, and `polycarp browser` runs it from there
+/// after the clean copy is gone.
+#[cfg(unix)]
+#[test]
+fn the_placed_browser_helper_runs_after_the_clean_copy_is_deleted() {
+    let s = Sandbox::new();
+    let from = s.dir("cache").join("source-1/browser");
+    for (rel, text) in [
+        ("package.json", "{}"),
+        ("static/manifest.chrome.json", "{}"),
+        ("cli/package.json", "{}"),
+        ("cli/dist/index.js", "#!/bin/sh\necho \"helper ran: $*\"\n"),
+        ("dist-chrome/manifest.json", "{}"),
+    ] {
+        let p = from.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, text).unwrap();
+    }
+    let home = s.dir("home").canonicalize().unwrap();
+    let to = home.join(".local/share/polycarp/browser/source");
+    let link = home.join(".local/bin/polycarp-browser");
+    let o = s.run(&[
+        "update",
+        "--place-browser",
+        from.to_str().unwrap(),
+        to.to_str().unwrap(),
+        link.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&o), 0, "{}{}", out(&o), err(&o));
+    fs::remove_dir_all(s.dir("cache")).unwrap();
+    assert!(to.join("dist-chrome/manifest.json").is_file());
+    // Nothing is on PATH: the command is found where the update put it.
+    let o = s.run(&["browser", "hello", "there"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(out(&o), "helper ran: hello there\n");
+    // Nothing to place is an error with a reason, and the installed copy is untouched.
+    let o = s.run(&[
+        "update",
+        "--place-browser",
+        from.to_str().unwrap(),
+        to.to_str().unwrap(),
+        link.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&o), 1, "{}", out(&o));
+    assert!(err(&o).contains("no build to install"), "{}", err(&o));
+    assert_eq!(out(&s.run(&["browser", "x"])), "helper ran: x\n");
 }

@@ -322,3 +322,28 @@ test("after input is cut off in browser A, the agent's next call waits for A ins
 		client.close();
 	}
 });
+
+test("status --json asks every browser at once, and a slow one is listed as not answered instead of holding the rest", async () => {
+	await host({ browserId: "fast" });
+	await host({ browserId: "slow", slow: { status: 8000 } });
+	const cli = join(here, "..", "dist", "index.js");
+	const started = Date.now();
+	const child = spawn(process.execPath, [cli, "status", "--json"], {
+		env: { ...process.env, TABKYRA_SOCKET_DIR: dir, POLYCARP_BROWSER_QUERY_MS: "500" },
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	let out = "";
+	let err = "";
+	child.stdout.on("data", (c) => (out += c));
+	child.stderr.on("data", (c) => (err += c));
+	const code = await new Promise((r) => child.on("close", r));
+	const took = Date.now() - started;
+	const report = JSON.parse(out);
+	assert.equal(code, 0, err);
+	assert.equal(report.connected, true);
+	assert.deepEqual(report.extensions.map((e) => e.answered).sort(), [false, true]);
+	// The one that did not answer carries no version: nothing is known about its build.
+	assert.deepEqual(report.extensions.find((e) => !e.answered), { browser: "", version: "", commit: "", commitDate: "", dirty: false, answered: false });
+	assert.ok(took < 5000, `status waited ${took} ms on a browser that had 500 ms`);
+});
+

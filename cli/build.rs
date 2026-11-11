@@ -1,5 +1,5 @@
-//! Stamps the build with the monorepo commit it came from: the full sha, the commit's date (UTC) and
-//! whether tracked files had changes. `polycarp --version` and `polycarp version` print it, and
+//! Stamps the build with the monorepo commit it came from (POLYCARP_BUILD_STAMP): the full sha, the
+//! commit's date (UTC) and whether tracked files had changes. `polycarp --version` and `polycarp version` print it, and
 //! `polycarp update` compares it with the other parts. Outside a git checkout the three are empty.
 //!
 //! POLYCARP_BUILD_COMMIT, POLYCARP_BUILD_DATE and POLYCARP_BUILD_DIRTY override what git says, for a
@@ -63,10 +63,12 @@ fn main() {
             git(&["status", "--porcelain", "--untracked-files=no"]).is_some_and(|s| !s.is_empty())
         }
     };
-    println!("cargo:rustc-env=POLYCARP_BUILD_COMMIT={commit}");
-    println!("cargo:rustc-env=POLYCARP_BUILD_DATE={date}");
+    // One line inside the binary, so `polycarp version` can read an installed command's build from its
+    // file without running it (the Linux spaces binary carries the same):
+    //   polycarp-build|v1|<full sha>|<commit date, UTC>|<1 when tracked files had changes, else 0>|<version>|end|
     println!(
-        "cargo:rustc-env=POLYCARP_BUILD_DIRTY={}",
-        if dirty { "1" } else { "0" }
+        "cargo:rustc-env=POLYCARP_BUILD_STAMP=polycarp-build|v1|{commit}|{date}|{}|{}|end|",
+        if dirty { "1" } else { "0" },
+        std::env::var("CARGO_PKG_VERSION").unwrap_or_default()
     );
 }

@@ -1,9 +1,10 @@
 //! `polycarp version`: every Polycarp part on this device, the commit each was built from, and one
 //! line saying whether they all match. `compare` is the pure part; `gather` reads the device.
 //!
-//! Nothing here starts an app. The app and the spaces command are read from files (the app's
-//! Info.plist, a stamp inside the Linux binary); only the browser helper is run, as `doctor` already
-//! does, and it answers for itself and for each connected browser's extension.
+//! Nothing here starts an app. The app, the spaces command and the installed `polycarp` are read from
+//! files (the app's Info.plist, a stamp inside the binary); only the browser helper is run, as `doctor`
+//! already does, and it answers for itself and for each connected browser's extension. A helper or a
+//! browser that does not answer in time is listed as exactly that: never as a mismatch, never as missing.
 
 use std::ffi::OsString;
 use std::fs;
@@ -66,6 +67,23 @@ pub enum Found {
     },
     /// Not on this device, with the words to show: "not installed", "no browser is connected".
     Absent(&'static str),
+    /// It may well be there, but the question got no answer ("no answer in time"). Nothing is known
+    /// about its build, so it is neither compared nor counted as missing.
+    Unanswered(&'static str),
+}
+
+/// What the browser helper said when it was run with some arguments.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Answer {
+    /// It exited 0 and printed this.
+    Said(String),
+    /// It exited with another code. What it printed is kept: `status --json` exits 1 with a full
+    /// report when no browser is connected.
+    Failed(String),
+    /// It did not finish inside the time it was given, and was stopped.
+    Late,
+    /// It could not be started.
+    NotRun,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -100,6 +118,14 @@ impl Part {
         Part {
             name: name.to_string(),
             found: Found::Absent(why),
+            note: None,
+            compared: true,
+        }
+    }
+    pub fn unanswered(name: &str, why: &'static str) -> Part {
+        Part {
+            name: name.to_string(),
+            found: Found::Unanswered(why),
             note: None,
             compared: true,
         }
@@ -187,7 +213,7 @@ pub fn compare(parts: &[Part]) -> Verdict {
         .filter(|p| p.compared)
         .filter_map(|p| match &p.found {
             Found::Installed { build, .. } => Some((p, build)),
-            Found::Absent(_) => None,
+            Found::Absent(_) | Found::Unanswered(_) => None,
         })
         .collect();
     // Group the known commits; keep the order they first appear in.
@@ -258,15 +284,64 @@ pub fn is_current(parts: &[Part], target: &str) -> bool {
     }
 }
 
+/// The parts that gave no answer, by name. They are left out of the comparison and always named.
+pub fn unanswered(parts: &[Part]) -> Vec<&str> {
+    parts
+        .iter()
+        .filter(|p| matches!(p.found, Found::Unanswered(_)))
+        .map(|p| p.name.as_str())
+        .collect()
+}
+
+/// Of `needs` (part names an update on this device installs), the ones that are not installed. A part
+/// that gave no answer is not called missing: nothing is known about it.
+pub fn missing<'a>(parts: &[Part], needs: &[&'a str]) -> Vec<&'a str> {
+    needs
+        .iter()
+        .filter(|need| {
+            !parts
+                .iter()
+                .any(|p| p.name == **need && !matches!(p.found, Found::Absent(_)))
+        })
+        .copied()
+        .collect()
+}
+
+/// The parts without each browser's extension. An extension keeps running its old build until it
+/// reloads, so after an install it can be the one thing that still differs.
+pub fn without_extensions(parts: &[Part]) -> Vec<Part> {
+    parts
+        .iter()
+        .filter(|p| !p.name.starts_with("extension"))
+        .cloned()
+        .collect()
+}
+
+/// The verdict line, plus the parts that could not be asked, so a quiet browser is never read as a match.
+pub fn summary(parts: &[Part], verdict: &Verdict) -> String {
+    let quiet = unanswered(parts);
+    if quiet.is_empty() {
+        return verdict.line();
+    }
+    format!(
+        "{} Not compared, because there was no answer in time: {}.",
+        verdict.line(),
+        quiet.join(", ")
+    )
+}
+
 // ---- Reading the device ---------------------------------------------------------------------------
 
-/// The build this command was compiled from (cli/build.rs).
+/// The stamp this command carries (cli/build.rs), so another `polycarp` can read its build from the
+/// file without running it: the same shape as the Linux spaces binary's.
+#[used]
+pub static BUILD_STAMP: &str = env!("POLYCARP_BUILD_STAMP");
+
+/// The build this command was compiled from.
 pub fn own_build() -> Build {
-    Build::new(
-        env!("POLYCARP_BUILD_COMMIT"),
-        env!("POLYCARP_BUILD_DATE"),
-        env!("POLYCARP_BUILD_DIRTY") == "1",
-    )
+    stamp_identity(BUILD_STAMP.as_bytes())
+        .map(|(_, build)| build)
+        .unwrap_or_default()
 }
 
 /// "polycarp 0.1.0 (abc1234)": the version the tests pin, then the commit when it is known.
@@ -299,19 +374,24 @@ pub fn plist_identity(xml: &str) -> (Option<String>, Build) {
 /// `polycarp-build|v1|<commit>|<commit date>|<0 or 1 for dirty>|<version>|end|`.
 pub const STAMP_START: &[u8] = b"polycarp-build|v1|";
 
-/// The stamp in a binary's bytes, if it has one.
+/// The stamp in a binary's bytes, if it has one. The first complete stamp wins: `polycarp` itself also
+/// holds the bare start text (this module searches for it), which is not a stamp.
 pub fn stamp_identity(bytes: &[u8]) -> Option<(Option<String>, Build)> {
-    let at = bytes
+    let mut from = 0;
+    while let Some(at) = bytes[from..]
         .windows(STAMP_START.len())
-        .position(|w| w == STAMP_START)?;
-    let rest = &bytes[at + STAMP_START.len()..];
-    let text = String::from_utf8_lossy(&rest[..rest.len().min(200)]).into_owned();
-    let fields: Vec<&str> = text.split('|').collect();
-    if fields.len() < 6 || fields[4] != "end" {
-        return None;
+        .position(|w| w == STAMP_START)
+    {
+        let rest = &bytes[from + at + STAMP_START.len()..];
+        let text = String::from_utf8_lossy(&rest[..rest.len().min(200)]).into_owned();
+        let fields: Vec<&str> = text.split('|').collect();
+        if fields.len() >= 6 && fields[4] == "end" {
+            let version = Some(fields[3].to_string()).filter(|v| !v.is_empty());
+            return Some((version, Build::new(fields[0], fields[1], fields[2] == "1")));
+        }
+        from += at + STAMP_START.len();
     }
-    let version = Some(fields[3].to_string()).filter(|v| !v.is_empty());
-    Some((version, Build::new(fields[0], fields[1], fields[2] == "1")))
+    None
 }
 
 /// The app bundle a file sits in (`X.app/Contents/Resources/bin/<file>` or `…/browser/<file>`).
@@ -346,13 +426,16 @@ fn file_identity(file: &Path) -> Option<(Option<String>, Build)> {
 /// What the device has. The callbacks keep this free of `main.rs`'s search rules:
 /// `app` is the installed Polycarp.app (Mac only), `spaces` and `browser` the commands as `polycarp`
 /// would run them, `ask` runs the browser helper with arguments and returns what it printed.
+/// `installed` is the `polycarp` an install or an update puts in place (`~/.local/bin/polycarp`), when
+/// there is one: it is the command that is compared, whichever `polycarp` is running.
 pub struct Device<'a> {
     pub exe: Option<PathBuf>,
+    pub installed: Option<PathBuf>,
     pub home: Option<PathBuf>,
     pub app: Option<PathBuf>,
     pub spaces: Option<PathBuf>,
     pub browser: Option<PathBuf>,
-    pub ask: &'a dyn Fn(&Path, &[&str]) -> Option<String>,
+    pub ask: &'a dyn Fn(&Path, &[&str]) -> Answer,
 }
 
 fn str_field(v: &Value, key: &str) -> Option<String> {
@@ -374,10 +457,13 @@ pub fn helper_identity(text: &str) -> Option<(Option<String>, Build)> {
     Some((Some(version), build))
 }
 
+/// The words for a helper or a browser that was asked and did not answer inside its time.
+pub const NO_ANSWER: &str = "no answer in time";
+
 /// The extensions in the helper's `status --json`: one part per connected browser.
 pub fn extension_parts(text: &str) -> Vec<Part> {
     let Ok(v) = serde_json::from_str::<Value>(text.trim()) else {
-        return vec![Part::absent(
+        return vec![Part::unanswered(
             "extension",
             "not checked: the browser helper gave no answer",
         )];
@@ -393,6 +479,10 @@ pub fn extension_parts(text: &str) -> Vec<Part> {
                     Some(b) => format!("extension ({b})"),
                     None => "extension".to_string(),
                 };
+                // Connected, but it did not answer inside the time it was given.
+                if e.get("answered").and_then(Value::as_bool) == Some(false) {
+                    return Part::unanswered(&name, NO_ANSWER);
+                }
                 let build = Build::new(
                     &str_field(e, "commit").unwrap_or_default(),
                     &str_field(e, "commitDate").unwrap_or_default(),
@@ -415,14 +505,58 @@ pub fn extension_parts(text: &str) -> Vec<Part> {
     vec![Part::absent("extension", "no browser is connected")]
 }
 
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+/// The `polycarp` command that is compared. It is the installed one (`~/.local/bin/polycarp`), read
+/// from its file, even when another `polycarp` is running (a build in a checkout, an old copy
+/// elsewhere on PATH): an update replaces the installed one, so that is the one to judge. Where
+/// nothing is installed there, or it is this very program, it is this program's own build.
+fn command_part(d: &Device) -> Part {
+    let own = || {
+        Part::installed(
+            "polycarp command",
+            Some(env!("CARGO_PKG_VERSION").to_string()),
+            own_build(),
+            d.exe.clone(),
+        )
+    };
+    let Some(installed) = &d.installed else {
+        return own();
+    };
+    if d.exe.as_ref().is_some_and(|exe| same_file(exe, installed)) {
+        return own();
+    }
+    let running = match &d.exe {
+        Some(exe) => format!(
+            "the installed command; this run is {} at {}",
+            exe.display(),
+            own_build().label()
+        ),
+        None => "the installed command".to_string(),
+    };
+    match file_identity(installed) {
+        Some((version, build)) => {
+            Part::installed("polycarp command", version, build, Some(installed.clone()))
+                .note(&running)
+        }
+        None => Part::installed(
+            "polycarp command",
+            None,
+            Build::default(),
+            Some(installed.clone()),
+        )
+        .note("carries no build stamp (it is older than `polycarp version`)"),
+    }
+}
+
 /// Every part, in the order they are shown. The command itself is first, so it wins a tie.
 pub fn gather(d: &Device) -> Vec<Part> {
-    let mut parts = vec![Part::installed(
-        "polycarp command",
-        Some(env!("CARGO_PKG_VERSION").to_string()),
-        own_build(),
-        d.exe.clone(),
-    )];
+    let mut parts = vec![command_part(d)];
     let app = d.app.as_ref().map(|a| (a, app_identity(a)));
     if cfg!(target_os = "macos") {
         parts.push(match &app {
@@ -450,7 +584,11 @@ pub fn gather(d: &Device) -> Vec<Part> {
     match &d.browser {
         Some(path) => {
             let answer = (d.ask)(path, &["version", "--json"]);
-            match answer.as_deref().and_then(helper_identity) {
+            let identity = match &answer {
+                Answer::Said(text) | Answer::Failed(text) => helper_identity(text),
+                Answer::Late | Answer::NotRun => None,
+            };
+            match identity {
                 Some((version, build)) => {
                     parts.push(Part::installed(
                         "browser helper",
@@ -458,8 +596,17 @@ pub fn gather(d: &Device) -> Vec<Part> {
                         build,
                         Some(path.clone()),
                     ));
-                    let status = (d.ask)(path, &["status", "--json"]).unwrap_or_default();
-                    parts.extend(extension_parts(&status));
+                    // `status --json` exits 1 with a full report when no browser is connected, so
+                    // what it printed is read whatever its exit code.
+                    parts.extend(match (d.ask)(path, &["status", "--json"]) {
+                        Answer::Said(text) | Answer::Failed(text) => extension_parts(&text),
+                        Answer::Late => vec![Part::unanswered("extension", NO_ANSWER)],
+                        Answer::NotRun => extension_parts(""),
+                    });
+                }
+                None if answer == Answer::Late => {
+                    parts.push(Part::unanswered("browser helper", NO_ANSWER));
+                    parts.push(Part::unanswered("extension", NO_ANSWER));
                 }
                 None => {
                     parts.push(
@@ -471,10 +618,7 @@ pub fn gather(d: &Device) -> Vec<Part> {
                         )
                         .note("did not answer `version --json`"),
                     );
-                    parts.push(Part::absent(
-                        "extension",
-                        "not checked: the browser helper gave no answer",
-                    ));
+                    parts.extend(extension_parts(""));
                 }
             }
         }
@@ -522,7 +666,7 @@ pub fn table(parts: &[Part]) -> String {
     let mut out = String::new();
     for p in parts {
         let line = match &p.found {
-            Found::Absent(why) => format!("{:width$}  {why}", p.name),
+            Found::Absent(why) | Found::Unanswered(why) => format!("{:width$}  {why}", p.name),
             Found::Installed {
                 version,
                 build,
@@ -554,6 +698,10 @@ pub fn to_json(parts: &[Part], verdict: &Verdict) -> Value {
         .iter()
         .map(|p| match &p.found {
             Found::Absent(why) => json!({ "name": p.name, "installed": false, "state": why }),
+            // Not known either way: `installed` is null, and `answered` says why.
+            Found::Unanswered(why) => {
+                json!({ "name": p.name, "installed": null, "answered": false, "state": why })
+            }
             Found::Installed {
                 version,
                 build,
@@ -585,7 +733,8 @@ pub fn to_json(parts: &[Part], verdict: &Verdict) -> Value {
         "match": verdict.matches(),
         "commit": reference,
         "odd": odd,
-        "verdict": verdict.line(),
+        "unanswered": unanswered(parts),
+        "verdict": summary(parts, verdict),
     })
 }
 
@@ -596,9 +745,16 @@ Lists every Polycarp part on this device with its version, the commit it was bui
 is, then says in one line whether they all come from the same commit.
 
   --json    the same as JSON
-  --check   exit 0 when every installed part matches, 1 when one differs
+  --check   exit 0 when every installed part matches, 1 when one differs, 75 when they match but a
+            part gave no answer in time (a slow browser), so it could not be compared
   --wait    with --check: keep looking for up to this many seconds (an app that is restarting)
+
+The polycarp command that is compared is the installed one (~/.local/bin/polycarp) when there is one,
+whichever polycarp is running. On Windows it is the polycarp that is running.
 ";
+
+/// `version --check` when every answering part matches but one gave no answer (EX_TEMPFAIL: try again).
+pub const UNANSWERED: i32 = 75;
 
 /// `polycarp version`. Exit 0 unless `--check` finds a difference (1) or the arguments are wrong (2).
 pub fn run(args: &[OsString], device: &Device) -> i32 {
@@ -635,7 +791,8 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
     let (parts, verdict) = loop {
         let parts = gather(device);
         let verdict = compare(&parts);
-        if !check || verdict.matches() || started.elapsed().as_secs() >= wait {
+        let settled = verdict.matches() && unanswered(&parts).is_empty();
+        if !check || settled || started.elapsed().as_secs() >= wait {
             break (parts, verdict);
         }
         std::thread::sleep(std::time::Duration::from_secs(2));
@@ -647,10 +804,12 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         );
     } else {
         print!("{}", table(&parts));
-        println!("\n{}", verdict.line());
+        println!("\n{}", summary(&parts, &verdict));
     }
     if check && !verdict.matches() {
         1
+    } else if check && !unanswered(&parts).is_empty() {
+        UNANSWERED
     } else {
         0
     }
@@ -886,5 +1045,172 @@ mod tests {
         let old = extension_parts(r#"{"connected":true,"extensionVersion":"1.1.2"}"#);
         assert!(matches!(&old[0].found, Found::Installed { build, .. } if build.commit.is_none()));
         assert!(!compare(&old).matches());
+    }
+
+    /// A browser that is connected but slow is its own state: never a mismatch, never "not installed".
+    #[test]
+    fn a_part_with_no_answer_is_neither_a_mismatch_nor_missing() {
+        let parts = vec![
+            at("polycarp command", A),
+            at("browser helper", A),
+            Part::unanswered("extension (Helium)", NO_ANSWER),
+        ];
+        let verdict = compare(&parts);
+        assert!(verdict.matches(), "{}", verdict.line());
+        assert!(is_current(&parts, A));
+        assert_eq!(unanswered(&parts), ["extension (Helium)"]);
+        assert!(missing(&parts, &["browser helper", "extension (Helium)"]).is_empty());
+        assert_eq!(missing(&parts, &["spaces command"]), ["spaces command"]);
+        let line = summary(&parts, &verdict);
+        assert!(
+            line.contains("Not compared, because there was no answer in time: extension (Helium)."),
+            "{line}"
+        );
+        assert!(
+            table(&parts).contains("no answer in time"),
+            "{}",
+            table(&parts)
+        );
+        let v = to_json(&parts, &verdict);
+        assert_eq!(v["match"], true);
+        assert_eq!(v["unanswered"], json!(["extension (Helium)"]));
+        assert_eq!(v["parts"][2]["installed"], Value::Null);
+        assert_eq!(v["parts"][2]["answered"], false);
+        assert_eq!(v["parts"][2]["state"], NO_ANSWER);
+        // With every part answering, the summary is the verdict alone.
+        assert_eq!(
+            summary(&parts[..2], &compare(&parts[..2])),
+            compare(&parts[..2]).line()
+        );
+        // A real difference stays a difference, whatever else was quiet.
+        let mut differ = parts.clone();
+        differ[1] = at("browser helper", B);
+        assert!(!compare(&differ).matches());
+    }
+
+    #[test]
+    fn a_browser_that_did_not_answer_in_time_is_marked_per_browser() {
+        let status = format!(
+            r#"{{"connected":true,"extensions":[{{"browser":"Helium","answered":true,"version":"1.1.10","commit":"{A}"}},{{"browser":"Chrome","answered":false}}]}}"#
+        );
+        let parts = extension_parts(&status);
+        assert_eq!(parts[0], at_version("extension (Helium)", "1.1.10", A));
+        assert_eq!(parts[1], Part::unanswered("extension (Chrome)", NO_ANSWER));
+        assert!(matches!(extension_parts("")[0].found, Found::Unanswered(_)));
+    }
+
+    fn at_version(name: &str, version: &str, commit: &str) -> Part {
+        Part::installed(
+            name,
+            Some(version.into()),
+            Build::new(commit, "", false),
+            None,
+        )
+    }
+
+    #[test]
+    fn this_command_carries_a_stamp_another_polycarp_can_read() {
+        let (version, build) = stamp_identity(BUILD_STAMP.as_bytes()).expect("a readable stamp");
+        assert_eq!(version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+        assert_eq!(build, own_build());
+        // And it is in the file itself, not only in the source.
+        let exe = std::env::current_exe().unwrap();
+        assert_eq!(file_identity(&exe), Some((version, build)));
+    }
+
+    fn device<'a>(
+        dir: &Path,
+        installed: Option<PathBuf>,
+        browser: Option<PathBuf>,
+        ask: &'a dyn Fn(&Path, &[&str]) -> Answer,
+    ) -> Device<'a> {
+        Device {
+            exe: Some(dir.join("build/polycarp")),
+            installed,
+            home: None,
+            app: None,
+            spaces: None,
+            browser,
+            ask,
+        }
+    }
+
+    /// The documented first run is a build in a checkout. What is compared is still the command an
+    /// install put in place, read from its file.
+    #[test]
+    fn the_command_that_is_compared_is_the_installed_one() {
+        let dir = std::env::temp_dir().join(format!("polycarp-version-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("bin")).unwrap();
+        let installed = dir.join("bin/polycarp");
+        let mut bytes = b"#!/bin/sh\n# ".to_vec();
+        bytes.extend_from_slice(STAMP_START);
+        bytes.extend_from_slice(format!("{B}|2026-11-01T00:00:00Z|0|0.0.9|end|\n").as_bytes());
+        fs::write(&installed, bytes).unwrap();
+        let never = |_: &Path, _: &[&str]| Answer::NotRun;
+
+        let part = command_part(&device(&dir, Some(installed.clone()), None, &never));
+        assert_eq!(
+            part.found,
+            Found::Installed {
+                version: Some("0.0.9".into()),
+                build: Build::new(B, "2026-11-01T00:00:00Z", false),
+                path: Some(installed.clone()),
+            }
+        );
+        assert!(part.note.unwrap().contains("this run is"));
+
+        // An installed command from before the stamp: listed, with no commit, so it is odd.
+        fs::write(&installed, "#!/bin/sh\n").unwrap();
+        let part = command_part(&device(&dir, Some(installed.clone()), None, &never));
+        assert!(matches!(&part.found, Found::Installed { build, .. } if build.commit.is_none()));
+        assert!(part.note.unwrap().contains("carries no build stamp"));
+
+        // Nothing installed, or the installed command is the one running: its own build.
+        let part = command_part(&device(&dir, None, None, &never));
+        assert!(matches!(&part.found, Found::Installed { build, .. } if *build == own_build()));
+        let mut d = device(&dir, Some(installed.clone()), None, &never);
+        d.exe = Some(installed.clone());
+        let part = command_part(&d);
+        assert!(matches!(&part.found, Found::Installed { build, .. } if *build == own_build()));
+        assert_eq!(part.note, None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_helper_that_is_late_gives_no_answer_not_a_mismatch() {
+        let dir = PathBuf::from("/nowhere");
+        let helper = PathBuf::from("/nowhere/polycarp-browser");
+        // `status` is late: the helper is known, the extension is not.
+        let version = format!(r#"{{"version":"1.1.10","commit":"{A}"}}"#);
+        let late_status = |_: &Path, args: &[&str]| match args[0] {
+            "version" => Answer::Said(version.clone()),
+            _ => Answer::Late,
+        };
+        let parts = gather(&device(&dir, None, Some(helper.clone()), &late_status));
+        let find = |parts: &[Part], name: &str| {
+            parts.iter().find(|p| p.name == name).unwrap().found.clone()
+        };
+        assert!(matches!(
+            find(&parts, "browser helper"),
+            Found::Installed { .. }
+        ));
+        assert_eq!(find(&parts, "extension"), Found::Unanswered(NO_ANSWER));
+        // The helper itself is late: both are unknown, and neither is "not installed".
+        let late = |_: &Path, _: &[&str]| Answer::Late;
+        let parts = gather(&device(&dir, None, Some(helper.clone()), &late));
+        assert_eq!(find(&parts, "browser helper"), Found::Unanswered(NO_ANSWER));
+        assert_eq!(find(&parts, "extension"), Found::Unanswered(NO_ANSWER));
+        assert!(missing(&parts, &["browser helper"]).is_empty());
+        // `status` exits 1 with a full report when no browser is connected: that is an answer.
+        let none = |_: &Path, args: &[&str]| match args[0] {
+            "version" => Answer::Said(version.clone()),
+            _ => Answer::Failed(r#"{"connected":false,"extensions":[]}"#.to_string()),
+        };
+        let parts = gather(&device(&dir, None, Some(helper), &none));
+        assert_eq!(
+            find(&parts, "extension"),
+            Found::Absent("no browser is connected")
+        );
     }
 }
