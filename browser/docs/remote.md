@@ -206,7 +206,7 @@ keep it. `token passcode --json` makes a new one. It mints no connect code unles
 `connectCode` (`TK-XXXX-XXXX`) and `connectCodeExpiresAt` (milliseconds since 1970, 10 minutes on). Neither is logged.
 
 `setup --json` also says what comes next in `next`: `{kind, url?, command?}`, where `kind` is `install` (with the
-download `url`), `sign_in` (with the `command`), `open_page` (`url`), `run_command` (`command`), `choose_name` (pick
+download `url`), `sign_in` (with the `command`), `open_page` (`url`), `run_command` (`command`; a `<name>` in it is yours to fill in, as in `install --browser <name>`), `choose_name` (pick
 another Cloudflare name) or, on `on`, `add_connector` (`url`, the connector URL). The exit code is 0 for `on`, 1 for a
 failure, 2 for a usage error and 3 when a person has to do something, which `next` names.
 `remote off --json` prints `{ok, message, notes}` with the same 0 or 1.

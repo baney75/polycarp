@@ -53,7 +53,8 @@ export interface RemoteRoutes {
  * The one thing a person does next, so an app can render it without reading `message`. install: get a program (`url` is its
  * download page, `command` the setup run that gets it for you, when there is one). sign_in: sign in to Tailscale or Cloudflare
  * (`command` does it). open_page: open `url` and allow something there (Tailscale's Funnel page). run_command: run `command` in a
- * terminal (the person runs it: Polycarp never runs sudo). choose_name: pick another Cloudflare hostname. add_connector: setup is
+ * terminal (the person runs it: Polycarp never runs sudo; a `<name>` in it is theirs to fill in, so an app shows it rather
+ * than running it). choose_name: pick another Cloudflare hostname. add_connector: setup is
  * done; paste `url` into an assistant.
  */
 export interface RemoteNext {

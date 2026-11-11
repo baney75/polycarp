@@ -699,7 +699,7 @@ async function runSetup(options: SetupOptions): Promise<number> {
 		if (!launcherValid()) {
 			return fail("problem", `${launcherBinary()} isn't a working launcher, so the service would have nothing to start. Run ${launcherStep()} first, then ${COMMAND_NAME} remote setup again.`, {
 				code: "launcher",
-				next: { kind: "run_command", command: `${COMMAND_NAME} install` },
+				next: { kind: "run_command", command: `${COMMAND_NAME} install --browser <name>` },
 			});
 		}
 	}

@@ -310,6 +310,10 @@ test("remote setup --json with a service and no working launcher is a problem, n
 	assert.match(r.json().message, /polycarp-browser install --browser <name>/);
 	assert.match(r.json().message, /plain install registers every browser/, "it never sends the person to a step that registers every browser unsaid");
 	assert.equal(r.json().code, "launcher", "the app reads the code, not the sentence");
+	const next = r.json().next;
+	assert.equal(next.kind, "run_command");
+	assert.equal(next.command, "polycarp-browser install --browser <name>", "the command an app shows is the one the message names, never plain install");
+	assert.ok(r.json().message.includes(next.command));
 });
 
 // ---------- status once it's set up ----------
