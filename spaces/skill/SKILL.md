@@ -45,6 +45,13 @@ BaneySpaces workspace.
 
 ## Drive an app: snapshot, act on a ref, check
 
+Act only on the window your own `agent open` returned (`data.window`, on the agent workspace) or a lent app's. If you can't tell
+which window is yours, stop and tell Donovan; never guess. Don't drive an app through AppleScript, JXA or Shortcuts
+(`osascript`, `shortcuts run`): they pick an app by name, not by your window, so they can reach Donovan's own copy
+of it, or start one on his workspace, outside the checks that hold you to the agent workspace. To work on many
+items at once, read or write a file in the handoff folder instead. Never run anything that takes focus or raises
+a window.
+
 `baneyspaces agent …` (or the MCP tools from `baneyspaces mcp`, same names) reads and acts on desktop apps
 from behind. It never raises a window, moves the pointer, types into the front app or switches Donovan's
 workspace. Every command prints one JSON envelope: `{"ok":true,"data":{…}}` or

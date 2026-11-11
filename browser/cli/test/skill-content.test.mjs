@@ -3,11 +3,12 @@
 // them wrong: commands are run where the tool exists, and wording is pinned where it isn't.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..", "..");
@@ -209,4 +210,148 @@ test("skill-platform doc states the evidence rule at min(catalog size, 13) skill
 	const none = cases.filter((c) => c.skill === "none").length;
 	assert.match(doc, new RegExp(`tuned set of\\s+${cases.length} cases,`), `${cases.length} cases`);
 	assert.match(doc, new RegExp(`false invokes 0% \\(0 of ${none}\\)`), `${none} none cases`);
+});
+
+/** A fake site for the bulk-actions batch script (the `bulk-batch` block): a fake clock and a fake fetch. */
+function bulkSite(text, answer) {
+	const call = fenced(text, "bulk-batch").trim();
+	assert.ok(call.startsWith("run_js "), "the block is one run_js call");
+	const code = JSON.parse(call.slice("run_js ".length)).code;
+	assert.ok(code.includes("['a1','a2']"), "the script's id list is where the skill says");
+	const start = 1_000_000;
+	const site = { now: start, sent: [], batches: 0 };
+	let latestWaitEnd = start;
+	const sandbox = {
+		Date: { now: () => site.now },
+		setTimeout: (fn, ms) => {
+			site.now += ms;
+			latestWaitEnd = Math.max(latestWaitEnd, site.now);
+			setImmediate(fn);
+		},
+		AbortSignal: { timeout: () => undefined },
+		fetch: async (url) => {
+			site.sent.push(url);
+			site.now += 500;
+			return answer(url);
+		},
+	};
+	/** One run_js call: how long it took, how far past its own start any wait ran, and what it returned. */
+	site.batch = async (ids) => {
+		site.batches++;
+		const begin = site.now;
+		latestWaitEnd = begin;
+		const out = await runInNewContext(code.replace("['a1','a2']", JSON.stringify(ids)), sandbox);
+		return { out: JSON.parse(JSON.stringify(out)), elapsed: site.now - begin, latestWait: latestWaitEnd - begin };
+	};
+	return site;
+}
+
+const tooMany = { ok: false, status: 429, headers: { get: (h) => (h.toLowerCase() === "retry-after" ? "20" : null) } };
+
+test("bulk-actions: a site that answers 429 with Retry-After 20 forever gets the batch back well inside 90 s", async () => {
+	const ids = Array.from({ length: 20 }, (_, i) => `id${i}`);
+	const site = bulkSite(skill("bulk-actions"), () => tooMany);
+	const { out, elapsed, latestWait } = await site.batch(ids);
+	assert.ok(elapsed <= 60_000, `returned after ${elapsed} ms, past the 60 s worst case the script states`);
+	assert.ok(elapsed < 90_000, `returned after ${elapsed} ms, past the 90 s run_js limit`);
+	assert.ok(latestWait <= 50_000, `a wait ran to ${latestWait} ms, past the 50 s stop`);
+	assert.deepEqual(out.left, ids, "the item being retried and every unstarted item come back in left");
+	assert.deepEqual(out.done, []);
+	assert.deepEqual(out.failed, []);
+	assert.deepEqual(out.limited, { status: 429, retryAfter: 20 }, "it says the site limited it, and for how long");
+	assert.ok(site.sent.length >= 2, "it did retry before giving the batch back");
+});
+
+/** Step 10 as written: batches of 20, requeue left, wait retryAfter (60 without one) after any limited batch, stop after two no-progress batches in a row. */
+async function runStep10(site, ids) {
+	let queue = [...ids];
+	const done = [];
+	const failed = [];
+	const waits = [];
+	let stale = 0;
+	while (queue.length) {
+		assert.ok(site.batches < 10, "the loop ends");
+		const batch = queue.slice(0, 20);
+		const { out } = await site.batch(batch);
+		done.push(...out.done);
+		failed.push(...out.failed);
+		queue = [...out.left, ...queue.slice(batch.length)];
+		stale = out.done.length === 0 && JSON.stringify(out.left) === JSON.stringify(batch) ? stale + 1 : 0;
+		if (stale === 2) break;
+		if (out.limited) {
+			const ms = (out.limited.retryAfter ?? 60) * 1000;
+			waits.push(ms);
+			site.now += ms;
+		}
+	}
+	return { queue, done, failed, waits };
+}
+
+test("bulk-actions: step 10 stops after two batches with no progress on a site that always answers 429", async () => {
+	const text = skill("bulk-actions");
+	const step10 = text.split("\n").find((l) => l.startsWith("10. "));
+	assert.ok(step10, "step 10");
+	for (const rule of [
+		"Whenever a batch returns `limited`, `wait` `retryAfter` seconds, or 60 if there is none, before the next batch.",
+		"After two batches in a row with no progress (`done` empty and `left` unchanged), stop and tell the user what is left.",
+	]) {
+		assert.ok(step10.includes(rule), `step 10 says: ${rule}`);
+	}
+	assert.ok(text.includes("| A batch returns `limited` | As step 10: wait `retryAfter`"), "the table row matches step 10");
+
+	const ids = Array.from({ length: 45 }, (_, i) => `id${i}`);
+	const site = bulkSite(text, () => tooMany);
+	const { queue, done, failed, waits } = await runStep10(site, ids);
+	assert.equal(site.batches, 2, "it stopped after the second batch with no progress");
+	assert.deepEqual(waits, [20_000], "it waited the site's Retry-After before the second batch");
+	assert.deepEqual(done, []);
+	assert.deepEqual(failed, []);
+	assert.deepEqual([...queue].sort(), [...ids].sort(), "every id is reported as left");
+});
+
+test("bulk-actions: a Retry-After past the cap is never cut short, and step 10 waits it out even after progress", async () => {
+	const ids = Array.from({ length: 45 }, (_, i) => `id${i}`);
+	const slow = { ok: false, status: 429, headers: { get: (h) => (h.toLowerCase() === "retry-after" ? "30" : null) } };
+	const site = bulkSite(skill("bulk-actions"), () => (site.sent.length <= 3 ? { ok: true, status: 204, headers: { get: () => null } } : slow));
+	const { queue, done, failed, waits } = await runStep10(site, ids);
+	assert.deepEqual(done, ["id0", "id1", "id2"]);
+	assert.deepEqual(failed, [], "a limited item is left, not failed");
+	assert.equal(queue.length, 42, "every other id is reported as left");
+	assert.deepEqual(waits, [30_000, 30_000], "it waited the full Retry-After after the batch that made progress, too");
+	assert.equal(site.sent.length, 6, "one request per limited batch: no retry before the 30 s the site asked for");
+});
+
+test("bulk-actions: the batch script does every item when the site answers ok", async () => {
+	const ids = ["a", "b", "c"];
+	const { out } = await bulkSite(skill("bulk-actions"), () => ({ ok: true, status: 204, headers: { get: () => null } })).batch(ids);
+	assert.deepEqual(out, { done: ids, failed: [], left: [] });
+});
+
+test("bulk-actions: the recount checks each item's state, and toggles are never re-sent blindly", () => {
+	const text = skill("bulk-actions");
+	const step = (n) => text.split("\n").find((l) => l.startsWith(`${n}. `)) ?? "";
+	assert.ok(step(6).includes("the field that shows the action's effect (read or unread, tag, folder, starred)"), "step 6 keeps the state field");
+	assert.ok(step(12).includes("Re-queue only items whose state still differs from the target"), "step 12 re-queues by state");
+	assert.ok(!/still there goes back/.test(step(12)), "step 12 no longer re-queues every item still listed");
+	assert.ok(step(13).startsWith("13. **Report by state.**"), "step 13 reports by state");
+	assert.ok(step(7).includes("Before any batch that changes the site, call `ask_user`"), "step 7 asks before any change, not only deletes");
+	assert.ok(text.includes("- The user said yes to the count and sample before any batch that changes the site."));
+	assert.ok(text.includes("Never re-send an item that is in `done` without checking its state first."));
+	assert.ok(text.includes("For a toggle (star, follow, read or unread), prefer an endpoint or parameter that sets the state explicitly"));
+	assert.ok(text.includes("if only a toggle exists, send it only to items whose current state differs from the target."));
+});
+
+// The Spaces skill (spaces/skill/SKILL.md) ships in Polycarp.app beside this package; it has no lint of its own.
+const spacesSkill = join(repo, "..", "spaces", "skill", "SKILL.md");
+
+test("spaces: the agent acts only on its own window and never scripts an app by name", { skip: !existsSync(spacesSkill) && "no spaces checkout" }, () => {
+	const text = readFileSync(spacesSkill, "utf8").replace(/\s+/g, " ");
+	const i = text.indexOf("Act only on the window your own `agent open` returned (`data.window`, on the agent workspace)");
+	assert.ok(i >= 0, "acts only on the window its own open returned");
+	const para = text.slice(i, text.indexOf("`baneyspaces agent", i));
+	assert.ok(para.includes("If you can't tell which window is yours, stop and tell Donovan; never guess."), "refuses without its window");
+	assert.ok(para.includes("Don't drive an app through AppleScript, JXA or Shortcuts"), "no scripting by app name");
+	assert.ok(para.includes("Never run anything that takes focus or raises a window."), "focus is forbidden");
+	// The old wording sent the agent to osascript first, which can reach Donovan's own copy of the app.
+	assert.doesNotMatch(text, /check for a programmatic route before you click|If the app has a scripting interface/);
 });
