@@ -237,6 +237,8 @@ public struct ChildAttribution: Equatable, Sendable {
     /// `parents` is each child's window as known when it is first seen: its own (a sheet's window, AXParent) or else the app's
     /// main or focused window at that moment. Kept, so a later look still knows which window raised it.
     public mutating func observed(_ ids: Set<UInt32>, pid: Int32, at: Date, parents: [UInt32: UInt32] = [:]) {
+        // sol-F3: one gone from this look is forgotten, so a window number the app reuses later is judged afresh.
+        seen = seen.filter { $0.value.pid != pid || ids.contains($0.key) }
         for id in ids where seen[id] == nil {
             seen[id] = Seen(pid: pid, session: owner(pid: pid, at: at) { $0.before.contains(id) }, at: at, parent: parents[id])
         }

@@ -89,7 +89,9 @@ extension HandsRouter {
     /// raise (`ChildWindowRule.sheetOnWindowRefusal`). Nothing to read when the app isn't split.
     func sheetProblem(_ w: HandsWindow, agent: Int?, session: String) -> HandsError? {
         let all = listWindows().windows
-        guard all.contains(where: { $0.pid == w.pid && !decide($0, agent, session: session).allowed }) else { return nil }
+        // sol-F2: split as the child rule sees it, each window inspected too, so an outside document makes the app split.
+        let placed = ChildWindowRule.inspected(all.filter { $0.pid == w.pid }.map { (window: $0, scope: decide($0, agent, session: session)) }) { inspectProblem($0) }
+        guard placed.contains(where: { !$0.scope.allowed }) else { return nil }
         let r = readChildren(pid: w.pid, all: all)
         let attributed = childLocked { () -> [Bool] in
             (r.sheetsOn.contains(w.id) ? [attribution.sheetAttributed(on: w.id, pid: w.pid, session: session)] : [])
@@ -294,7 +296,11 @@ extension HandsRouter {
             defer { AgentActivity.shared.end(token) }
             // Read Only, scope and in use, read again in the pass that presses the button.
             let pressed: Bool
-            switch mutateOnMain([w], verb: "close", session: session, perform: { _ in .success(host.close(w.id)) }) {
+            // On the process's queue, so the press never falls inside a background action's transaction on it (sol-F1).
+            let busy = HandsError(.inUse, "another action on \(w.app) is still running", suggestion: "Try `close` again when it has answered.", retry: .safe)
+            switch HandsEngine.shared.serialized(pid: w.pid, wait: 10, { [self] cancelled in
+                mutateOnMain([w], verb: "close", session: session, perform: { _ in cancelled() ? .failure(busy) : .success(host.close(w.id)) })
+            }) ?? .failure(busy) {
             case .failure(let e): return .failure(e)
             case .success(let p): pressed = p
             }

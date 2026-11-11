@@ -220,3 +220,33 @@ final class PR116Round2MediumTests: XCTestCase {
         XCTAssertTrue(try source("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift").contains("if Thread.isMainThread { for i in list.indices { readings[i] = readChildren("))
     }
 }
+
+/// PR #119 review round 1.
+final class PR119Round1Tests: XCTestCase {
+    func testCloseWaitsForTheProcessQueueAndRefusesWhenItIsBusy() throws {
+        let ws = try source("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
+        let serial = try XCTUnwrap(ws.range(of: "switch HandsEngine.shared.serialized(pid: w.pid, wait: 10, {"))
+        let press = try XCTUnwrap(ws.range(of: "cancelled() ? .failure(busy) : .success(host.close(w.id))"))
+        XCTAssertLessThan(serial.lowerBound, press.lowerBound, "sol-F1: the close button is pressed only on the process's queue")
+        XCTAssertTrue(ws.contains("}) ?? .failure(busy) {"), "and refused when the queue isn't free")
+        XCTAssertTrue(try source("Sources/BaneySpaces/Hands/HandsEngine.swift").contains("queue(for: pid).async {\n            defer { done.signal() }\n            if cancelled() { return }"))
+    }
+
+    func testASheetsAppIsSplitWhenAnyWindowFailsInspection() throws {
+        let ws = try source("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
+        let fn = try XCTUnwrap(ws.components(separatedBy: "func sheetProblem(").dropFirst().first?.components(separatedBy: "\n    }\n").first)
+        XCTAssertTrue(fn.contains("ChildWindowRule.inspected(") && fn.contains("guard placed.contains(where: { !$0.scope.allowed })"), "sol-F2")
+    }
+
+    func testAReusedWindowNumberIsJudgedAfresh() {
+        let t0 = Date(timeIntervalSince1970: 7_500_000)
+        var a = ChildAttribution()
+        a.acted(session: "A", pid: 300, at: t0, existing: [])
+        a.observed([50], pid: 300, at: t0.addingTimeInterval(1), parents: [50: 7])
+        XCTAssertTrue(a.attributed(50, pid: 300, session: "A"))
+        a.observed([], pid: 300, at: t0.addingTimeInterval(30))
+        a.observed([50], pid: 300, at: t0.addingTimeInterval(60))
+        XCTAssertFalse(a.attributed(50, pid: 300, session: "A"), "sol-F3: the second appearance is nobody's")
+        XCTAssertNil(a.parent(of: 50, pid: 300), "and keeps no parent from the first")
+    }
+}
