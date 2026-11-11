@@ -823,8 +823,9 @@ async function runSetup(options: SetupOptions): Promise<number> {
 		const localOnly = isIP(host) !== 0 && privateAddress(host);
 		let proof = await publicChecks(publicUrl);
 		// The name resolves and has a certificate, but the tunnel or gateway in front of serve answers 502 to 530 or nothing: right
-		// after the tunnel's service starts it does that for a minute. Keep asking to the deadline; no person is needed for it.
-		if (!localOnly && tunnelPending(proof) && !realFault(proof)) {
+		// after a Tailscale or Cloudflare tunnel starts it does that for a minute.
+		const plan = localOnly || realFault(proof) || !tunnelPending(proof) ? undefined : tunnelPlan(route, wait);
+		if (plan === "poll") {
 			const every = waitMs("PUBLIC_POLL_MS", 5000);
 			say(`Waiting for the tunnel in front of ${publicUrl} to connect (${tunnelPending(proof)?.detail}), up to ${duration(Math.max(0, publicDeadline - Date.now()))}.`);
 			while (tunnelPending(proof) && !realFault(proof) && Date.now() + every < publicDeadline) {
@@ -837,11 +838,17 @@ async function runSetup(options: SetupOptions): Promise<number> {
 		for (const line of proofLines(proof)) say(line);
 		const fault = localOnly ? undefined : realFault(proof);
 		const stuck = localOnly || fault ? undefined : tunnelPending(proof);
+		if (stuck && plan === "fault") {
+			return fail("problem", `${connectorUrl} isn't usable from the internet: your front door answers but doesn't reach serve (${stuck.name}: ${stuck.detail}). Point it at 127.0.0.1:${port}, check that serve runs, then run ${COMMAND_NAME} remote test. remote.json is kept.`, { code: stuck.name, checks: proof });
+		}
 		if (stuck) {
-			return fail("problem", `${connectorUrl} isn't usable from the internet: the tunnel in front of serve hasn't connected by the deadline (${stuck.name}: ${stuck.detail}). Run ${COMMAND_NAME} remote fix to restart it, then ${COMMAND_NAME} remote test. remote.json is kept.`, {
+			const waited = plan === "poll";
+			const what = waited ? `hasn't connected by the deadline` : `hasn't connected yet`;
+			const then = waited ? `Run ${COMMAND_NAME} remote fix to restart it, then ${COMMAND_NAME} remote test.` : `A new tunnel takes a minute: run ${COMMAND_NAME} remote test, and ${COMMAND_NAME} remote fix if it stays.`;
+			return fail("problem", `${connectorUrl} isn't usable from the internet: the tunnel in front of serve ${what} (${stuck.name}: ${stuck.detail}). ${then} remote.json is kept.`, {
 				code: stuck.name,
 				checks: proof,
-				next: { kind: "run_command", command: `${COMMAND_NAME} remote fix` },
+				next: { kind: "run_command", command: `${COMMAND_NAME} remote ${waited ? "fix" : "test"}` },
 			});
 		}
 		if (fault) {
@@ -916,6 +923,13 @@ Check it with: ${COMMAND_NAME} remote status`);
 }
 
 /** In a terminal, after a Cloudflare setup: a new DNS name takes minutes, so check the public address for up to 5 minutes. */
+/**
+ * What setup does when the tunnel in front of serve hasn't connected: poll it to the deadline (Tailscale or Cloudflare, with a
+ * person waiting), report it at once (--json, --no-wait, no terminal), or call it a fault (your own front door, which no wait
+ * or remote fix changes).
+ */
+export const tunnelPlan = (route: RemoteConfig["route"], wait: boolean): "poll" | "report" | "fault" => (route === "custom" ? "fault" : wait ? "poll" : "report");
+
 async function waitForPublic(publicUrl: string, say: (line: string) => void, deadline: number): Promise<void> {
 	const every = waitMs("PUBLIC_POLL_MS", 5000);
 	const start = Date.now();

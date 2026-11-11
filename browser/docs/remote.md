@@ -213,11 +213,12 @@ failure, 2 for a usage error and 3 when a person has to do something, which `nex
 
 `setup --json` ends with `checks`, the same list `remote test --json` gives (below). Only a failure marked `pending`
 (no public address yet, or nothing answering yet) is what a new name looks like for a few minutes; setup is then `on` and
-says to run `remote test` later. One kind of pending failure it waits out itself: the name resolves and has a certificate,
-but the tunnel or gateway in front of `serve` answers 502, 503, 504, 521, 522, 523 or 530, or nothing, as a Cloudflare
-tunnel does for a minute after its service starts. Setup asks again every 5 seconds for up to 5 minutes (one deadline with
-the wait for the name), and if the tunnel still hasn't connected it is a `problem` whose `code` is that check's name, with
-`next` `run_command` `remote fix` (exit 3). Any other failed check (a refused certificate, a 421, another connector's metadata, a
+says to run `remote test` later. One pending failure is reported as a `problem`: the name resolves and has a certificate,
+but the tunnel in front of `serve` answers 502, 503, 504, 521, 522, 523 or 530, or nothing, as a Cloudflare tunnel does
+for a minute after its service starts. `--json` never waits, so it reports this at once with `next` `run_command`
+`remote test` (exit 3); only a person at a terminal on Tailscale or Cloudflare waits, asking every 5 seconds for up to 5
+minutes, and then gets `next` `remote fix`. On your own front door (`--public-url`) the same answer is a fault (exit 1):
+point it at `127.0.0.1:<port>`. Any other failed check (a refused certificate, a 421, another connector's metadata, a
 held stream, no sign-in challenge) makes setup a `problem` whose `code` is that check's name, exit 1, with the saved
 `connectorUrl`, and `remote.json` is kept. Every failure after `remote.json` is saved carries `connectorUrl`. With `--connect-code`, a code that can't be made is a `problem` with `code`
 `connect_code`, the reason in `connectCodeProblem`, the `connectorUrl` and, when this run made it, the `passcode`; it exits
