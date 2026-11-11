@@ -1075,7 +1075,7 @@ final class AgentRunLaunchTests: XCTestCase {
             XCTAssertTrue(helper.contains(needed), needed)
         }
         XCTAssertEqual(session.components(separatedBy: "adoptAgentStartedProcess(").count - 1, 3, "the definition, `agent open` and `agent run`")
-        XCTAssertTrue(session.contains("if startedNew {") && session.contains("adoptAgentStartedProcess(pid, workspace: n, title: name"))
+        XCTAssertTrue(session.contains("if MovedInWindows.ProcessOrigin(startedNew: startedNew).ownsWholeProcess {") && session.contains("adoptAgentStartedProcess(pid, workspace: n, title: name"))
         let engine = try HandsSourceTests.code("Sources/BaneySpaces/Session/Engine.swift")
         XCTAssertTrue(engine.contains("opened(app.processIdentifier, name, true)") && engine.contains("opened(running.processIdentifier, name, false)"),
                       "only a Terminal this run started is new")

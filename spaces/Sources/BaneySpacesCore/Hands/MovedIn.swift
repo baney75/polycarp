@@ -33,6 +33,15 @@ public struct MovedInWindows: Equatable, Sendable {
 
     /// The origin a `move` with this scope records, or nil when the window needs no entry: one already on the agent
     /// workspace, or one of a process Polycarp started for an agent.
+    /// sol-sol-F2: how an agent window's process came to be. Only one Polycarp started for an agent is wholly the agent's
+    /// (`AgentOwned`, exempt from moved-in records); Donovan's running process an agent window opened in (`agent run` in
+    /// his Terminal) stays his and split: only the window claimed for the agent is in scope, by where it is placed.
+    public enum ProcessOrigin: Sendable {
+        case started, adopted
+        public init(startedNew: Bool) { self = startedNew ? .started : .adopted }
+        public var ownsWholeProcess: Bool { self == .started }
+    }
+
     public static func origin(scope: ScopeDecision, agentOwned: Bool) -> Origin? {
         guard !agentOwned else { return nil }
         switch scope {

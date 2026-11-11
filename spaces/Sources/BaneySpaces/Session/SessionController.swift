@@ -680,12 +680,11 @@ final class SessionController {
             guard !cmd.isEmpty else { return .init(ok: false, error: "usage: polycarp-spaces agent run [--dir DIR] -- <command>") }
             let dir = args.firstIndex(of: "--dir").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
             guard engine.newAgentTerminal(in: dir, command: cmd, opened: { [weak self] pid, name, startedNew in
-                if startedNew {
+                if MovedInWindows.ProcessOrigin(startedNew: startedNew).ownsWholeProcess {
                     // A Terminal this run started: the same treatment as an app `agent open` started.
                     self?.adoptAgentStartedProcess(pid, workspace: n, title: name, host: h, grantAccess: false)
                 } else {
-                    // Your running Terminal: yours, so only its next window is claimed.
-                    AgentOwned.shared.add(pid)
+                    // Your running Terminal: yours, never agent-owned (sol-sol-F2), so only its next window is claimed.
                     h.claim(pid, n, false, name)
                 }
             }) else {

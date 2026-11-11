@@ -321,3 +321,33 @@ final class PR123Round1Tests: XCTestCase {
         XCTAssertTrue(fn.contains("inspection: inspection)"))
     }
 }
+
+/// PR #123 review round 2: Donovan's running process an agent window opened in is not wholly the agent's.
+final class PR123Round2Tests: XCTestCase {
+    func testAnAdoptedProcessWindowMovedInUnderFullAccessGoesBackWhenNarrowed() {
+        let now = Date(timeIntervalSince1970: 7_700_000)
+        XCTAssertTrue(MovedInWindows.ProcessOrigin(startedNew: true).ownsWholeProcess)
+        let adopted = MovedInWindows.ProcessOrigin(startedNew: false)
+        XCTAssertFalse(adopted.ownsWholeProcess, "sol-sol-F2: his Terminal stays his")
+        // His Terminal (pid 300) holds the agent's run window; another of its windows (8) is moved in under Full Access.
+        var owned = AgentOwnedSet()
+        if adopted.ownsWholeProcess { owned.add(300, startedAt: 1000) }
+        let origin = MovedInWindows.origin(scope: .fullAccess, agentOwned: owned.contains(300, startedAt: 1000))
+        XCTAssertEqual(origin, .fullAccess, "recorded, not exempt")
+        var book = MovedInWindows()
+        book.record(window: 8, pid: 300, startedAt: 1000, origin: origin, from: 2, to: 9)
+        let w = HandsWindow(id: 8, pid: 300, app: "Terminal", workspace: 9)
+        XCTAssertTrue(book.decide(w, base: .onAgentWorkspace, lends: LendBook(), now: now, mode: .full).allowed)
+        // Full Access narrowed: it goes back to workspace 2 and is denied until read back.
+        XCTAssertEqual(book.settle(lends: LendBook(), now: now, mode: .standard).map(\.from), [2])
+        XCTAssertFalse(book.decide(w, base: .onAgentWorkspace, lends: LendBook(), now: now, mode: .standard).allowed)
+        XCTAssertFalse(SocketPolicy.mayMove(windowPid: 300, startedForAgents: owned.pids), "the session move op can't take his windows either")
+    }
+
+    func testTheRunBranchNeverMakesHisTerminalAgentOwned() throws {
+        let sc = try source("Sources/BaneySpaces/Session/SessionController.swift")
+        let run = try XCTUnwrap(sc.components(separatedBy: "case \"run\":").dropFirst().first?.components(separatedBy: "case \"move\":").first)
+        XCTAssertFalse(run.contains("AgentOwned.shared.add("))
+        XCTAssertTrue(run.contains("MovedInWindows.ProcessOrigin(startedNew: startedNew).ownsWholeProcess"))
+    }
+}
