@@ -16,6 +16,8 @@ import { writeTailscaleStub } from "./helpers/tailscale-stub.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cli = join(here, "..", "dist", "index.js");
+// Lets the fake public server on 127.0.0.1 count as public. Only these tests load it; the CLI never reads an environment variable for it.
+const HOOKS = join(here, "helpers", "remote-test-hooks.mjs");
 const root = mkdtempSync(join(tmpdir(), "tabkyra-remote-fix-"));
 const DNS = "mac.example.ts.net";
 const RENAMED = "studio.example.ts.net";
@@ -149,7 +151,6 @@ async function machine(name, { serve = "down", funnel = false, dns = DNS, record
 		PATH: bin,
 		TABKYRA_APPLICATIONS_DIR: join(dir, "apps"),
 		TABKYRA_DOH_URL: doh ?? "http://127.0.0.1:9/dns-query",
-		TABKYRA_REMOTE_TEST_LOOPBACK: "1",
 		TABKYRA_SERVE_WAIT_MS: "8000",
 		NODE_EXTRA_CA_CERTS: join(certDir, "cert.pem"),
 	};
@@ -163,7 +164,7 @@ async function machine(name, { serve = "down", funnel = false, dns = DNS, record
 	}
 	const run = (args, { input, extra = {} } = {}) =>
 		new Promise((resolve) => {
-			const child = spawn(process.execPath, [cli, ...args], { env: { ...env, ...extra } });
+			const child = spawn(process.execPath, ["--import", HOOKS, cli, ...args], { env: { ...env, ...extra } });
 			let stdout = "";
 			let stderr = "";
 			child.stdout.on("data", (d) => (stdout += d));

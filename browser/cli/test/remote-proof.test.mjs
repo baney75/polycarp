@@ -13,6 +13,8 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cli = join(here, "..", "dist", "index.js");
+// Lets the fake public server on 127.0.0.1 count as public. Only these tests load it; the CLI never reads an environment variable for it.
+const HOOKS = join(here, "helpers", "remote-test-hooks.mjs");
 const root = mkdtempSync(join(tmpdir(), "tabkyra-remote-proof-"));
 const HOST = "polycarp.example.com";
 const METADATA_PATH = "/.well-known/oauth-protected-resource/mcp";
@@ -104,19 +106,18 @@ function machine(name, publicUrl, doh) {
 		PATH: bin,
 		TABKYRA_APPLICATIONS_DIR: join(dir, "apps"),
 		TABKYRA_DOH_URL: doh,
-		TABKYRA_REMOTE_TEST_LOOPBACK: "1",
 		NODE_EXTRA_CA_CERTS: join(certDir, "cert.pem"),
 	};
 	const run = (args, extra = {}) =>
 		new Promise((resolve) => {
-			const child = spawn(process.execPath, [cli, ...args], { env: { ...env, ...extra } });
+			const child = spawn(process.execPath, ["--import", HOOKS, cli, ...args], { env: { ...env, ...extra } });
 			let stdout = "";
 			let stderr = "";
 			child.stdout.on("data", (d) => (stdout += d));
 			child.stderr.on("data", (d) => (stderr += d));
 			child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr, json: () => JSON.parse(stdout) }));
 		});
-	const spawnRaw = (args) => spawn(process.execPath, [cli, ...args], { env });
+	const spawnRaw = (args) => spawn(process.execPath, ["--import", HOOKS, cli, ...args], { env });
 	mkdirSync(env.TABKYRA_CONFIG_DIR, { recursive: true });
 	if (publicUrl) writeFileSync(join(env.TABKYRA_CONFIG_DIR, "remote.json"), JSON.stringify({ publicUrl, port: 8799, route: "custom" }));
 	const made = spawnSync(process.execPath, [cli, "token", "create", "kept", "--scope", "skills.read"], { env, encoding: "utf8" });
@@ -215,7 +216,7 @@ test("a probe that throws after its token was made still removes the token", asy
 	try {
 		const m = machine("throw", pub.publicUrl, doh.url);
 		const before = m.tokens();
-		const r = await m.run(["remote", "test", "--json"], { TABKYRA_REMOTE_TEST_THROW: "1" });
+		const r = await m.run(["remote", "test", "--json"], { REMOTE_HOOK_THROW: "1" });
 		assert.equal(r.code, 1, r.stdout + r.stderr);
 		assert.equal(byName(r.json(), "streaming").status, "fail");
 		assert.match(byName(r.json(), "streaming").detail, /didn't run/);
@@ -339,5 +340,23 @@ test("remote setup ends with the outside proof: a connector that answers but hol
 			await doh.close();
 			await local.close();
 		}
+	}
+});
+
+test("the old environment seams do nothing: without the preloaded test hooks, loopback is not public and the probe doesn't throw", async () => {
+	const doh = await fakeDoh("127.0.0.1");
+	try {
+		const m = machine("no-env-seam", `https://${HOST}:8443`, doh.url);
+		const child = spawn(process.execPath, [cli, "remote", "test", "--json"], { env: { ...m.env, TABKYRA_REMOTE_TEST_LOOPBACK: "1", TABKYRA_REMOTE_TEST_THROW: "1" } });
+		let stdout = "";
+		child.stdout.on("data", (d) => (stdout += d));
+		const code = await new Promise((resolve) => child.on("close", resolve));
+		assert.equal(code, 1, stdout);
+		const report = JSON.parse(stdout);
+		assert.equal(byName(report, "dns").status, "fail");
+		assert.match(byName(report, "dns").detail, /127\.0\.0\.1, not a public address/);
+		assert.equal(report.checks.length, 1);
+	} finally {
+		await doh.close();
 	}
 });

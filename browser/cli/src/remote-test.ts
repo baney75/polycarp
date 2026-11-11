@@ -11,7 +11,6 @@ import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import { dohAddresses } from "./doh.ts";
-import { envVar } from "./env.ts";
 import { createToken, deleteToken } from "./remote.ts";
 import { inTailnetRange, METADATA_PATH } from "./remote-state.ts";
 import { COMMAND_NAME } from "./self.ts";
@@ -43,8 +42,19 @@ export function privateAddress(address: string): boolean {
 	return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || inTailnetRange(address);
 }
 
-/** TABKYRA_REMOTE_TEST_LOOPBACK=1 lets tests stand a fake public server on 127.0.0.1. Nothing else treats loopback as public. */
-const reachable = (address: string) => !privateAddress(address) || (envVar("REMOTE_TEST_LOOPBACK") === "1" && address === "127.0.0.1");
+/**
+ * Test seams, set only by a module a test preloads (test/helpers/remote-test-hooks.mjs) or passed to publicChecks. No
+ * environment variable reaches them, so nothing a person sets can make loopback count as public or make the probe fail.
+ */
+export interface RemoteTestHooks {
+	/** True for an address that counts as public although privateAddress says otherwise (a fake server on 127.0.0.1). */
+	reachable?: (address: string) => boolean;
+	/** Runs right after the probe token is made, before it is used. */
+	afterMint?: () => void;
+}
+
+const HOOKS = Symbol.for("polycarp.remote-test.hooks");
+const preloadedHooks = (): RemoteTestHooks => ((globalThis as Record<symbol, unknown>)[HOOKS] as RemoteTestHooks | undefined) ?? {};
 
 type Lookup = (hostname: string, options: { all?: boolean }, callback: (...args: unknown[]) => void) => void;
 
@@ -164,7 +174,7 @@ const initialize = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize",
  * The streaming probe: an authenticated initialize, whose answer serve streams (text/event-stream). Its first bytes must arrive
  * within STREAM_FIRST_BYTE_MS. The token lives only for this call.
  */
-async function streamingCheck(url: URL, address: string, publicUrl: string): Promise<ProofCheck> {
+async function streamingCheck(url: URL, address: string, publicUrl: string, hooks: RemoteTestHooks): Promise<ProofCheck> {
 	const minted = createToken(`remote-test-${randomBytes(3).toString("hex")}`, [PROBE_SCOPE]);
 	const forget = () => {
 		try {
@@ -181,7 +191,7 @@ async function streamingCheck(url: URL, address: string, publicUrl: string): Pro
 	process.once("SIGINT", onSignal);
 	process.once("SIGTERM", onSignal);
 	try {
-		if (envVar("REMOTE_TEST_THROW") === "1") throw new Error("the test seam threw after the token was made");
+		hooks.afterMint?.();
 		const auth = { authorization: `Bearer ${minted.token}` };
 		const mcp = new URL("/mcp", publicUrl);
 		const held = {
@@ -226,7 +236,9 @@ async function streamingCheck(url: URL, address: string, publicUrl: string): Pro
  * Every check, in order. DNS and TLS come first because nothing after them can run without an address that answers; the rest
  * all run so one report names every problem. `streaming: false` leaves out the probe (and its token).
  */
-export async function publicChecks(publicUrl: string, options: { streaming?: boolean } = {}): Promise<ProofCheck[]> {
+export async function publicChecks(publicUrl: string, options: { streaming?: boolean; hooks?: RemoteTestHooks } = {}): Promise<ProofCheck[]> {
+	const hooks = options.hooks ?? preloadedHooks();
+	const reachable = (address: string) => !privateAddress(address) || hooks.reachable?.(address) === true;
 	const url = new URL(publicUrl);
 	const host = url.hostname;
 	const checks: ProofCheck[] = [];
@@ -306,7 +318,7 @@ export async function publicChecks(publicUrl: string, options: { streaming?: boo
 	// The probe only means something once the name reaches this connector.
 	if (options.streaming !== false && checks.some((c) => c.name === "resource_metadata" && c.status === "ok")) {
 		try {
-			checks.push(await streamingCheck(url, address, publicUrl));
+			checks.push(await streamingCheck(url, address, publicUrl, hooks));
 		} catch (err) {
 			checks.push({ name: "streaming", status: "fail", detail: `the streaming probe didn't run: ${err instanceof Error ? err.message : String(err)}`, next: `Run ${COMMAND_NAME} remote test again.` });
 		}
