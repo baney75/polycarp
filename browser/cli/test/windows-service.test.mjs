@@ -27,8 +27,8 @@ const SCHTASKS = "C:\\Windows\\System32\\schtasks.exe";
 const sha = (buf) => createHash("sha256").update(buf).digest("hex");
 
 /** A config folder whose path has spaces and an ampersand, a HOME of its own, and SystemRoot as Windows sets it. */
-function inConfig(name, fn) {
-	const dir = join(root, name, "Polycarp Config & More");
+function inConfig(name, fn, folder = "Polycarp Config & More") {
+	const dir = join(root, name, folder);
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	const keys = ["POLYCARP_BROWSER_CONFIG_DIR", "TABKYRA_CONFIG_DIR", "HOME", "SystemRoot"];
 	const before = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
@@ -159,7 +159,7 @@ test("macOS install still writes the plist under LaunchAgents and its log under 
 test("Windows install makes the task from XML, ends any running copy, then starts it, with exact schtasks arguments", async () => {
 	await inConfig("win-install", async (dir) => {
 		const fake = fakeExec();
-		setServiceSeamForTests({ platform: "win32", exec: fake.exec, windowsUser: "DESKTOP-1\\Jane Doe" });
+		setServiceSeamForTests({ platform: "win32", exec: fake.exec, windowsUser: "DESKTOP-1\\Jane Doe", launcher: join(dir, "polycarp.cmd") });
 		const r = await installService(SERVE_SERVICE);
 		assert.equal(r.ok, true, r.message);
 		const script = join(dir, "services", "com.polycarp.serve.cmd");
@@ -197,37 +197,35 @@ test("Windows install makes the task from XML, ends any running copy, then start
 	});
 });
 
-test("the batch script sets the folders, logs to the file, restarts after 10 seconds, and quotes paths with spaces and &", async () => {
+test("the batch script sets the folders, logs to the file, restarts after 10 seconds, and names no path of this computer", async () => {
 	await inConfig("win-script", async (dir) => {
-		setServiceSeamForTests({ platform: "win32", exec: fakeExec().exec, windowsUser: "PC\\x" });
+		setServiceSeamForTests({ platform: "win32", exec: fakeExec().exec, windowsUser: "PC\\x", launcher: join(dir, "polycarp.cmd") });
 		const r = await installService(CLOUDFLARE_SERVICE);
 		assert.equal(r.ok, true, r.message);
 		const text = readFileSync(join(dir, "services", "com.polycarp.cloudflared.cmd"), "utf8");
 		const lines = text.split("\r\n");
 		assert.ok(!/[^\r]\n/.test(text), "every line ends in CRLF");
-		const log = join(dir, "logs", "polycarp-cloudflared.log");
+		assert.ok(!text.includes(dir) && !text.includes("Config & More"), "no folder of this computer is written in");
 		assert.equal(lines[0], "@echo off");
 		assert.ok(lines.includes("setlocal DisableDelayedExpansion"));
 		assert.ok(lines.includes("title com.polycarp.cloudflared (Polycarp; closing this window stops it until you log on again)"));
-		assert.ok(lines.includes(`set "POLYCARP_BROWSER_CONFIG_DIR=${dir}"`));
-		assert.ok(lines.includes(`set "TABKYRA_CONFIG_DIR=${dir}"`));
-		assert.ok(lines.includes(`>>"${log}" 2>&1 (`));
-		assert.ok(lines.some((l) => /^\tcall ".*polycarp" remote cloudflare run$/.test(l)), text);
+		assert.ok(lines.includes('set "POLYCARP_BROWSER_CONFIG_DIR=%POLYCARP_HOME%"'));
+		assert.ok(lines.includes('set "POLYCARP_LOG=%POLYCARP_HOME%\\logs\\polycarp-cloudflared.log"'));
+		assert.ok(lines.includes('\tcall "%POLYCARP_HOME%\\polycarp.cmd" remote cloudflare run'), text);
 		assert.ok(lines.includes('"%SystemRoot%\\System32\\ping.exe" -n 11 127.0.0.1 >nul'));
 		assert.deepEqual(lines.slice(-2), ["goto run", ""]);
 		assert.ok(lines.indexOf(":run") < lines.indexOf("goto run"));
 	});
 });
 
-test("windowsScriptText doubles % in a folder and refuses a quote, %, ^ or line break where cmd would misread it", () => {
-	const ok = windowsScriptText("C:\\Users\\Jane Doe\\polycarp.cmd", { POLYCARP_BROWSER_CONFIG_DIR: "C:\\Users\\Jane Doe\\50% off" }, "C:\\Users\\Jane Doe\\x.log", LINK_SERVICE);
-	assert.ok(ok.includes('set "POLYCARP_BROWSER_CONFIG_DIR=C:\\Users\\Jane Doe\\50%% off"\r\n'));
-	assert.ok(ok.includes('\tcall "C:\\Users\\Jane Doe\\polycarp.cmd" link run\r\n'));
-	for (const bad of ['C:\\a"b\\p.cmd', "C:\\a%b\\p.cmd", "C:\\a^b\\p.cmd", "C:\\a\r\nb\\p.cmd"]) {
-		assert.throws(() => windowsScriptText(bad, {}, "C:\\x.log", LINK_SERVICE), /can't run safely/, JSON.stringify(bad));
-	}
-	assert.throws(() => windowsScriptText("C:\\p.cmd", { "BAD NAME": "x" }, "C:\\x.log"), /variable name/);
-	assert.throws(() => windowsScriptText("C:\\p.cmd", { X: 'a"b' }, "C:\\x.log"), /can't run safely/);
+test("windowsScriptText refuses names and values cmd would misread", () => {
+	const ok = windowsScriptText("polycarp.cmd", { POLYCARP_BROWSER_CONFIG_DIR: "C:\\anything", POLYCARP_SOCKET_DIR: "C:\\pipes" }, LINK_SERVICE);
+	assert.ok(ok.includes('set "POLYCARP_SOCKET_DIR=C:\\pipes"\r\n'));
+	assert.ok(ok.includes('\tcall "%POLYCARP_HOME%\\polycarp.cmd" link run\r\n'));
+	assert.ok(!ok.includes("C:\\anything"));
+	for (const bad of ['a"b.cmd', "a%b.cmd", "a^b.cmd", "a b.cmd", "a&b.cmd"]) assert.throws(() => windowsScriptText(bad, {}, LINK_SERVICE), /launcher name/, bad);
+	assert.throws(() => windowsScriptText("p.cmd", { "BAD NAME": "x" }), /variable name/);
+	for (const v of ['a"b', "50%", "a^b", "a\r\nb"]) assert.throws(() => windowsScriptText("p.cmd", { X: v }), /plain ASCII/, JSON.stringify(v));
 });
 
 test("the task XML escapes the user and the script path", () => {
@@ -395,4 +393,39 @@ test("on Windows the download is checked before it becomes cloudflared.exe, and 
 			server.stop();
 		}
 	});
+});
+
+test("a non-ASCII profile folder is never written into the script: it is plain ASCII and finds its folders from %~dp0", async () => {
+	await inConfig(
+		"win-unicode",
+		async (dir) => {
+			setServiceSeamForTests({ platform: "win32", exec: fakeExec().exec, windowsUser: "PC\\Jos\u00e9", launcher: join(dir, "polycarp.cmd") });
+			const r = await installService(SERVE_SERVICE);
+			assert.equal(r.ok, true, r.message);
+			const bytes = readFileSync(join(dir, "services", "com.polycarp.serve.cmd"));
+			assert.ok(bytes.every((b) => b < 0x80), "every byte cmd reads is ASCII, whatever its code page");
+			const lines = bytes.toString("latin1").split("\r\n");
+			assert.ok(!lines.some((l) => l.includes("Jos")), lines.join("\n"));
+			assert.ok(lines.indexOf("chcp 65001 >nul") > 0 && lines.indexOf("chcp 65001 >nul") < lines.indexOf(":run"));
+			assert.ok(lines.includes('for %%I in ("%~dp0..") do set "POLYCARP_HOME=%%~fI"'));
+			assert.ok(lines.includes('set "POLYCARP_BROWSER_CONFIG_DIR=%POLYCARP_HOME%"'));
+			assert.ok(lines.includes('set "TABKYRA_CONFIG_DIR=%POLYCARP_HOME%"'));
+			assert.ok(lines.includes('set "POLYCARP_LOG=%POLYCARP_HOME%\\logs\\polycarp-serve.log"'));
+			assert.ok(lines.includes('>>"%POLYCARP_LOG%" 2>&1 ('));
+			assert.ok(lines.includes('\tcall "%POLYCARP_HOME%\\polycarp.cmd" serve'));
+		},
+		"Jos\u00e9 M\u00fcller",
+	);
+});
+
+test("a launcher outside the config folder, or a folder variable with a non-ASCII value, makes no task", async () => {
+	await inConfig("win-outside", async (dir) => {
+		const fake = fakeExec();
+		setServiceSeamForTests({ platform: "win32", exec: fake.exec, windowsUser: "PC\\x", launcher: "C:\\elsewhere\\polycarp.cmd" });
+		const r = await installService(SERVE_SERVICE);
+		assert.equal(r.ok, false);
+		assert.match(r.message, /isn't in the config folder/);
+		assert.deepEqual(fake.calls, []);
+	});
+	assert.throws(() => windowsScriptText("polycarp.cmd", { POLYCARP_SOCKET_DIR: "C:\\Jos\u00e9\\s" }, SERVE_SERVICE), /plain ASCII/);
 });

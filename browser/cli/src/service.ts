@@ -6,7 +6,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import { launcherBinary } from "./harness.ts";
 import { cliLauncherPath, ensureLauncherIsSelf } from "./install.ts";
 import { configDir, configDirOverride, legacyConfigDir } from "./files.ts";
@@ -79,6 +79,8 @@ export interface ServiceSeam {
 	exec?: SyncRunner;
 	/** The DOMAIN\user a Windows task is made for; "" acts as an account Windows didn't name. */
 	windowsUser?: string;
+	/** The launcher a service runs, in place of launcherBinary(). */
+	launcher?: string;
 }
 let seam: ServiceSeam = {};
 export function setServiceSeamForTests(next: ServiceSeam): void {
@@ -294,30 +296,41 @@ export function windowsPathProblem(path: string): string | undefined {
 	return /["\r\n\0%^]/.test(path) ? `${path} has a character (" % ^ or a line break) that a Windows task can't run safely` : undefined;
 }
 
-/** `set "NAME=value"`: the quotes keep & | < > as text; a literal % is written %%. Values with a quote or line break are refused earlier. */
-const batchSet = (name: string, value: string) => `set "${name}=${value.replace(/%/g, "%%")}"`;
+/** The folder variables the script sets from its own location, never from a path written into it. */
+const CONFIG_KEYS = new Set(["POLYCARP_BROWSER_CONFIG_DIR", "TABKYRA_CONFIG_DIR"]);
 
-/** The batch script the task runs. Lines end in CRLF, as cmd expects. */
-export function windowsScriptText(binary: string, env: Record<string, string>, log: string, spec: ServiceSpec = SERVE_SERVICE): string {
-	for (const value of [binary, log]) {
-		const problem = windowsPathProblem(value);
-		if (problem) throw new Error(problem);
-	}
-	// A value in `set "NAME=value"` is only read once, so a % in it is doubled; a quote or line break would still end it.
-	for (const value of Object.values(env)) if (/["\r\n\0]/.test(value)) throw new Error(`${value} has a quote or line break, which a Windows task can't run safely`);
-	for (const name of Object.keys(env)) if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) throw new Error(`${name} isn't a variable name a Windows task can set`);
+/**
+ * The batch script the task runs. It names no folder of this computer: cmd reads a batch file in the console's code page, so
+ * a profile folder such as C:\Users\José written into it as UTF-8 would be misread. Every path comes from %~dp0, the script's own
+ * folder as Windows hands it over (the config folder is the one above it, where the launcher is too), and the script is plain
+ * ASCII. `chcp 65001` then has cmd read the launcher it calls, which names Node's path, as UTF-8. Lines end in CRLF.
+ */
+export function windowsScriptText(launcherName: string, env: Record<string, string>, spec: ServiceSpec = SERVE_SERVICE): string {
+	if (!/^[A-Za-z0-9._-]+$/.test(launcherName)) throw new Error(`${launcherName} isn't a launcher name a Windows task can run`);
+	if (!/^[A-Za-z0-9._-]+$/.test(spec.logName)) throw new Error(`${spec.logName} isn't a log name a Windows task can write`);
 	if (!spec.args.every((a) => /^[a-z][a-z-]*$/.test(a))) throw new Error(`${spec.args.join(" ")} isn't a command a Windows task can run`);
+	const extra: string[] = [];
+	for (const [name, value] of Object.entries(env)) {
+		if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) throw new Error(`${name} isn't a variable name a Windows task can set`);
+		if (CONFIG_KEYS.has(name)) continue;
+		if (!/^[\x20-\x7e]*$/.test(value) || /["%^]/.test(value)) throw new Error(`${name}=${value} isn't a value a Windows task can set safely: it must be plain ASCII without " % or ^`);
+		extra.push(`set "${name}=${value}"`);
+	}
 	return [
 		"@echo off",
 		`rem ${spec.label}: started at logon by the Task Scheduler task of the same name. ${spec.off} removes both.`,
 		"setlocal DisableDelayedExpansion",
+		"chcp 65001 >nul",
 		// The task runs with your logon, so Windows shows its console window; the title says what it is and that closing it stops it.
 		`title ${spec.label} (Polycarp; closing this window stops it until you log on again)`,
-		...Object.entries(env).map(([k, v]) => batchSet(k, v)),
+		'for %%I in ("%~dp0..") do set "POLYCARP_HOME=%%~fI"',
+		...[...CONFIG_KEYS].filter((k) => k in env).map((k) => `set "${k}=%POLYCARP_HOME%"`),
+		...extra,
+		`set "POLYCARP_LOG=%POLYCARP_HOME%\\logs\\${spec.logName}"`,
 		":run",
-		`>>"${log}" 2>&1 (`,
+		'>>"%POLYCARP_LOG%" 2>&1 (',
 		"\techo [%DATE% %TIME%] starting",
-		`\tcall "${binary}" ${spec.args.join(" ")}`,
+		`\tcall "%POLYCARP_HOME%\\${launcherName}" ${spec.args.join(" ")}`,
 		")",
 		"rem Wait 10 seconds before starting again (ping waits without a console, where timeout cannot).",
 		'"%SystemRoot%\\System32\\ping.exe" -n 11 127.0.0.1 >nul',
@@ -380,14 +393,26 @@ function writeUtf16(path: string, text: string): void {
 
 async function installWindows(spec: ServiceSpec, exec: Runner, binary: string, env: Record<string, string>): Promise<InstallResult> {
 	const keepRunning = `keep it running yourself: ${binary} ${spec.args.join(" ")}`;
+	const keepRunningSentence = `Keep it running yourself: ${binary} ${spec.args.join(" ")}.`;
 	const user = windowsUser();
 	if (!user) return { ok: false, message: `Windows didn't say which account this is (USERNAME is empty), so no task was made. Sign in to Windows normally, or ${keepRunning}` };
 	const script = windowsScriptPath(spec);
 	const log = windowsLog(spec);
-	const problem = windowsPathProblem(script) ?? windowsPathProblem(binary) ?? windowsPathProblem(log);
+	const home = resolve(configDir());
+	const problem = windowsPathProblem(home);
 	if (problem) return { ok: false, message: `${problem}, so no task was made. Set POLYCARP_BROWSER_CONFIG_DIR to a folder without it and run setup again, or ${keepRunning}.` };
+	// The script finds the launcher and the folders from its own place, so they must be where it looks.
+	if (resolve(dirname(binary)) !== home) return { ok: false, message: `The launcher ${binary} isn't in the config folder ${home}, so no task was made. Run ${COMMAND_NAME} install, then setup again, or ${keepRunning}.` };
+	const strayConfig = [...CONFIG_KEYS].map((k) => env[k]).find((v) => v !== undefined && resolve(v) !== home);
+	if (strayConfig) return { ok: false, message: `The service would use ${strayConfig}, not the config folder ${home} its script sits in, so no task was made. ${keepRunningSentence}` };
+	let text: string;
+	try {
+		text = windowsScriptText(basename(binary), env, spec);
+	} catch (err) {
+		return { ok: false, message: `${err instanceof Error ? err.message : String(err)}, so no task was made. ${keepRunningSentence}` };
+	}
 	mkdirSync(dirname(log), { recursive: true });
-	writeAtomic(script, windowsScriptText(binary, env, log, spec), 0o644);
+	writeAtomic(script, text, 0o644);
 	const xmlFile = windowsTaskXmlPath(spec);
 	writeUtf16(xmlFile, windowsTaskXml(script, user, spec));
 	let created: { code: number; out: string };
@@ -601,7 +626,7 @@ async function bootstrapWithRetry(spec: ServiceSpec, exec: Runner): Promise<{ co
 }
 
 async function installFresh(spec: ServiceSpec, exec: Runner, saved: { config?: string; socket?: string } = {}): Promise<InstallResult> {
-	const binary = launcherBinary();
+	const binary = seam.launcher ?? launcherBinary();
 	const env = serviceEnvironment(saved);
 	if (platform() === "darwin") {
 		const log = launchdLog(spec);
