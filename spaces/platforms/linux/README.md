@@ -141,9 +141,9 @@ type them.
 | Verb | macOS | Linux (Omarchy, Hyprland) | Windows |
 | --- | --- | --- | --- |
 | `agent workspaces` | yes | yes: the nine and `special:agent` (`number`, `shown`, `current`, `agent`, `windows`), `agent_workspace_shown`, `your_windows` | not supported yet |
-| `agent open <app> [file...] [--new_window=false] [--wait S]` | yes | yes: `reused`, `focus: {changed, returned}`, the window recorded for your session | not supported yet (plain `agent open` only) |
+| `agent open <app> [file...] [--new_window=false] [--wait S]` | yes | yes: `reused`, `focus: {changed, returned}`, the window recorded for your session, also when it comes after `open` answered (`window: null, pending: true`) | not supported yet (plain `agent open` only) |
 | `agent arrange full\|halves\|thirds\|grid [window...]`, `frames 0xADDR=x,y,w,h ...` | yes | yes: the Mac's frames, applied at once while the workspace stays hidden (`applied: "now"`) | not supported yet |
-| `agent move --window W [--frame x,y,w,h]` | yes, including a lent window or one under Full Access | yes for the agent's own windows and a window you parked; anything that needs a lend or Full Access is `not_supported` (no lend sheet on Linux yet) | not supported yet |
+| `agent move --window W [--frame x,y,w,h]` | yes, including a lent window or one under Full Access | yes for the agent's own windows; your windows, including one you parked on the agent workspace, and anything that needs a lend or Full Access are `not_supported` (no lend sheet on Linux yet) | not supported yet |
 | `agent close --window W` | yes: only windows this session opened | yes: only windows this session opened, by address, pid and start time | not supported yet |
 | Child windows (dialogs) | usable under the child window rules | usable when its process is an agent process: floating, on `special:agent` or on no workspace yet; a dialog of any other process is not | not supported yet |
 
@@ -169,8 +169,16 @@ holds `special:agent`, at least 240 by 160, kept inside the area: the Mac's poin
 Where Linux differs from the Mac, and why:
 
 - **No lend, no Full Access.** Linux has no lend sheet yet, so a window on your workspaces is never
-  moved or laid out for an agent: `not_supported`, with a message that says so. Park one yourself with
-  `agent move <window>` and an agent may give it a frame (`scope: "parked"`), never drive it.
+  moved or laid out for an agent: `not_supported`, with a message that says so. A window you park on
+  the agent workspace yourself (`agent move <window>`) is still yours: no frame, no move, no close.
+- **Checked right before each dispatch.** Hyprland is asked again before every float, resize, move
+  and close: the window must still be on `special:agent` and belong to the same agent process (pid
+  and start time). If you took one back meanwhile, the call stops there, sends nothing more, and
+  answers `not_in_scope` with `changed` and `not_changed` lists.
+- **A slow start.** `open` records its session with the launch, before the window exists. With a
+  `--wait` shorter than the app's start it answers `window: null, pending: true`, and the first window
+  of the process that launch started is still recorded for that session when it comes (for 120 s);
+  two sessions opening the same app each get only their own.
 - **Workspace names.** `agent_workspace` is `"special:agent"` and its row in `workspaces` has
   `number: null` and `name: "special:agent"`; `from` and `to` in `move` are Hyprland workspace names.
 - **Error codes.** A refusal the Mac answers `permission_denied` or `outside_agent_workspace` is
@@ -179,8 +187,9 @@ Where Linux differs from the Mac, and why:
 - **Sessions** are the Mac's: `--session S`, else `$BANEYSPACES_SESSION`, else your terminal, else
   `default`. The record is kept in memory, so after a daemon restart `close` refuses what was opened
   before it (it fails closed). Like the agent id, the session is the caller's word: accident-proofing.
-- **A dialog** is a floating window of an agent process next to another window of that process on
-  `special:agent` (a window `arrange` floated does not count), or one Hyprland has not placed on any
+- **A dialog** is a floating window of an agent process on `special:agent` that is not the first of
+  its process to arrive there (so a process always keeps a window of its own; a window `arrange`
+  floated does not count), or one Hyprland has not placed on any
   workspace. Hyprland does not report a parent, so `parent` is the oldest other window of the process.
 - **MCP.** The verbs are on the CLI. The shared MCP catalog (`spec/mcp-tools.json`) is unchanged:
   its test refuses any tool named `move` and `spec/cli.md` says no tool lists your workspaces, so

@@ -323,7 +323,7 @@ The agent workspace verbs (`workspaces`, `open` with `new_window` and `wait`, `a
 | `workspaces` | yes | yes (`agent_workspace` is `"special:agent"`) | not supported yet |
 | `open` with `new_window`, `wait`, `reused`, `focus` | yes | yes | not supported yet |
 | `arrange` | yes | yes, applied at once while the workspace stays hidden | not supported yet |
-| `move --window` | yes, including lent and Full Access windows | the agent's own windows and ones you parked; what needs a lend or Full Access is `not_supported` (no lend sheet yet) | not supported yet |
+| `move --window` | yes, including lent and Full Access windows | the agent's own windows only; yours (also one you parked on the agent workspace) and what needs a lend or Full Access are `not_supported` (no lend sheet yet) | not supported yet |
 | `close` | only windows this session opened | the same, by Hyprland address, pid and start time | not supported yet |
 | Child windows | the child window rules above | a floating window of an agent process, on `special:agent` or on no workspace yet; any other process's dialog is refused | not supported yet |
 
