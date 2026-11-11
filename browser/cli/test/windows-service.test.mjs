@@ -4,7 +4,7 @@
 // checked against exact text, so this change provably leaves them as they were.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,13 +15,13 @@ const root = mkdtempSync(join(tmpdir(), "polycarp-winsvc-"));
 after(() => rmSync(root, { recursive: true, force: true }));
 
 const mod = await loadTs(`
-export { installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE } from "@src/service.ts";
+export { recordServicePid, installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE } from "@src/service.ts";
 export { CLOUDFLARE_SERVICE, cloudflaredBinary } from "@src/cloudflare.ts";
 export { tailscaleBinary } from "@src/remote-setup.ts";
 export { windowsInstallPaths, windowsTool } from "@src/tool-paths.ts";
 export { cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION } from "@src/cloudflared-download.ts";
 `);
-const { installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE, CLOUDFLARE_SERVICE, cloudflaredBinary, tailscaleBinary, windowsInstallPaths, windowsTool, cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION } = mod;
+const { recordServicePid, installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE, CLOUDFLARE_SERVICE, cloudflaredBinary, tailscaleBinary, windowsInstallPaths, windowsTool, cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION } = mod;
 
 const SCHTASKS = "C:\\Windows\\System32\\schtasks.exe";
 const sha = (buf) => createHash("sha256").update(buf).digest("hex");
@@ -159,7 +159,7 @@ test("macOS install still writes the plist under LaunchAgents and its log under 
 
 // ---------- Windows: the Task Scheduler task ----------
 
-test("Windows install makes the task from XML, ends any running copy, then starts it, with exact schtasks arguments", async () => {
+test("a fresh Windows install makes the task from XML and runs it once, with exact schtasks arguments and no /End between", async () => {
 	await inConfig("win-install", async (dir) => {
 		const fake = fakeExec();
 		winSeam({ exec: fake.exec, windowsUser: "DESKTOP-1\\Jane Doe", launcher: join(dir, "polycarp.cmd") });
@@ -170,7 +170,6 @@ test("Windows install makes the task from XML, ends any running copy, then start
 		assert.equal(schtasksPath(), SCHTASKS);
 		assert.deepEqual(fake.calls, [
 			[SCHTASKS, "/Create", "/TN", "com.polycarp.serve", "/XML", xmlFile, "/F"],
-			[SCHTASKS, "/End", "/TN", "com.polycarp.serve"],
 			[SCHTASKS, "/Run", "/TN", "com.polycarp.serve"],
 		]);
 		assert.equal(r.file, script);
@@ -448,5 +447,113 @@ test("Windows runs only a launcher it can execute: .exe, .cmd or .bat, never the
 			const r = await installService(SERVE_SERVICE);
 			assert.equal(r.ok, true, `${name}: ${r.message}`);
 		}
+	});
+});
+
+// ---------- Windows: the program the task started is really stopped ----------
+
+const TASKLIST = "C:\\Windows\\System32\\tasklist.exe";
+const TASKKILL = "C:\\Windows\\System32\\taskkill.exe";
+
+/** A stand-in Windows where process `pid` (`image`) runs until taskkill /T ends it, or never if `stubborn`. */
+function windowsWith(pid, image, { stubborn = false, onKill } = {}) {
+	let alive = true;
+	return fakeExec((cmd, args) => {
+		if (cmd === TASKLIST) {
+			const row = `"${image}","${pid}","Console","1","40,000 K"`;
+			return { code: 0, out: alive ? row : "INFO: No tasks are running which match the specified criteria." };
+		}
+		if (cmd === TASKKILL) {
+			onKill?.();
+			if (!stubborn) alive = false;
+			return { code: 0, out: "" };
+		}
+		return { code: 0, out: "" };
+	});
+}
+
+test("the service's helper records its pid and image for the task, and its children don't inherit the variable", async () => {
+	await inConfig("win-pid", async (dir) => {
+		const file = join(dir, "services", "com.polycarp.serve.pid");
+		mkdirSync(join(dir, "services"), { recursive: true });
+		const env = { POLYCARP_SERVICE_PID_FILE: file };
+		recordServicePid(env, 4242, "C:\\Program Files\\nodejs\\node.exe", "win32");
+		assert.equal(readFileSync(file, "utf8"), "4242\nnode.exe\n");
+		assert.equal(env.POLYCARP_SERVICE_PID_FILE, undefined);
+		const mac = { POLYCARP_SERVICE_PID_FILE: join(dir, "x.pid") };
+		recordServicePid(mac, 1, "/usr/bin/node", "darwin");
+		assert.equal(existsSync(join(dir, "x.pid")), false);
+	});
+});
+
+test("the script tells the helper where to record its pid", async () => {
+	const text = windowsScriptText("polycarp.cmd", {}, SERVE_SERVICE);
+	assert.ok(text.includes('set "POLYCARP_SERVICE_PID_FILE=%POLYCARP_HOME%\\services\\com.polycarp.serve.pid"\r\n'));
+});
+
+test("the task replaces a running copy itself (StopExisting), so /Run can't be ignored while the old one is ending", () => {
+	const xml = windowsTaskXml("C:\\s.cmd", "PC\\x", SERVE_SERVICE);
+	assert.ok(xml.includes("<MultipleInstancesPolicy>StopExisting</MultipleInstancesPolicy>"));
+	assert.ok(!xml.includes("IgnoreNew"));
+});
+
+test("reinstalling stops the running program tree and confirms it is gone before the script is rewritten, then runs once", async () => {
+	await inConfig("win-reinstall", async (dir) => {
+		const script = join(dir, "services", "com.polycarp.serve.cmd");
+		const pidFile = join(dir, "services", "com.polycarp.serve.pid");
+		mkdirSync(join(dir, "services"), { recursive: true });
+		writeFileSync(script, "OLD SCRIPT");
+		writeFileSync(pidFile, "777\nnode.exe\n");
+		let scriptAtKill;
+		const fake = windowsWith(777, "node.exe", { onKill: () => (scriptAtKill = readFileSync(script, "utf8")) });
+		winSeam({ exec: fake.exec, windowsUser: "PC\\x" });
+		const r = await installService(SERVE_SERVICE);
+		assert.equal(r.ok, true, r.message);
+		assert.equal(scriptAtKill, "OLD SCRIPT", "the old program is stopped before its script changes");
+		const verbs = fake.calls.map(([cmd, ...a]) => (cmd === SCHTASKS ? a[0] : cmd === TASKKILL ? `taskkill ${a.join(" ")}` : "tasklist"));
+		assert.deepEqual(verbs, ["/End", "tasklist", "taskkill /PID 777 /T /F", "tasklist", "/Create", "/Run"]);
+		assert.deepEqual(fake.calls[1], [TASKLIST, "/FI", "PID eq 777", "/FO", "CSV", "/NH"]);
+		assert.equal(existsSync(pidFile), false);
+		assert.notEqual(readFileSync(script, "utf8"), "OLD SCRIPT");
+	});
+});
+
+test("a program that survives taskkill fails stop and uninstall, keeps the script and the task, and says what to do", async () => {
+	await inConfig("win-stubborn", async (dir) => {
+		winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x", stopWaitMs: 50 });
+		assert.equal((await installService(SERVE_SERVICE)).ok, true);
+		writeFileSync(join(dir, "services", "com.polycarp.serve.pid"), "888\npolycarp-browser.exe\n");
+		const fake = windowsWith(888, "polycarp-browser.exe", { stubborn: true });
+		winSeam({ exec: fake.exec, windowsUser: "PC\\x", stopWaitMs: 50 });
+		const r = removeService(SERVE_SERVICE);
+		assert.equal(r.ok, false);
+		assert.match(r.failure, /polycarp-browser\.exe \(pid 888\) is still running/);
+		assert.match(r.failure, /taskkill \/PID 888 \/T \/F/);
+		assert.ok(existsSync(join(dir, "services", "com.polycarp.serve.cmd")));
+		assert.ok(!fake.calls.some(([cmd, verb]) => cmd === SCHTASKS && verb === "/Delete"));
+		const again = await installService(SERVE_SERVICE);
+		assert.equal(again.ok, false);
+		assert.match(again.message, /is still running/);
+	});
+});
+
+test("uninstall kills the recorded tree, confirms it, then deletes the task; a pid now used by another program is left alone", async () => {
+	await inConfig("win-remove-tree", async (dir) => {
+		winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x" });
+		assert.equal((await installService(SERVE_SERVICE)).ok, true);
+		writeFileSync(join(dir, "services", "com.polycarp.serve.pid"), "999\nnode.exe\n");
+		const fake = windowsWith(999, "node.exe");
+		winSeam({ exec: fake.exec });
+		assert.equal(removeService(SERVE_SERVICE).ok, true);
+		const verbs = fake.calls.map(([cmd, ...a]) => (cmd === SCHTASKS ? a[0] : cmd === TASKKILL ? "taskkill" : "tasklist"));
+		assert.deepEqual(verbs, ["/End", "tasklist", "taskkill", "tasklist", "/Delete"]);
+		// Reused pid: another image now has it, so nothing is killed.
+		winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x" });
+		await installService(SERVE_SERVICE);
+		writeFileSync(join(dir, "services", "com.polycarp.serve.pid"), "555\nnode.exe\n");
+		const other = windowsWith(555, "notepad.exe");
+		winSeam({ exec: other.exec });
+		assert.equal(removeService(SERVE_SERVICE).ok, true);
+		assert.ok(!other.calls.some(([cmd]) => cmd === TASKKILL));
 	});
 });

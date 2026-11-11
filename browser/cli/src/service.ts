@@ -81,6 +81,8 @@ export interface ServiceSeam {
 	windowsUser?: string;
 	/** The launcher a service runs, in place of launcherBinary(). */
 	launcher?: string;
+	/** How long to wait for a killed Windows program to be gone. */
+	stopWaitMs?: number;
 }
 let seam: ServiceSeam = {};
 export function setServiceSeamForTests(next: ServiceSeam): void {
@@ -327,6 +329,8 @@ export function windowsScriptText(launcherName: string, env: Record<string, stri
 		...[...CONFIG_KEYS].filter((k) => k in env).map((k) => `set "${k}=%POLYCARP_HOME%"`),
 		...extra,
 		`set "POLYCARP_LOG=%POLYCARP_HOME%\\logs\\${spec.logName}"`,
+		// The program records its pid here (recordServicePid), so stop and uninstall can end it and what it started.
+		`set "${PID_FILE_VAR}=%POLYCARP_HOME%\\services\\${spec.label}.pid"`,
 		":run",
 		'>>"%POLYCARP_LOG%" 2>&1 (',
 		"\techo [%DATE% %TIME%] starting",
@@ -360,7 +364,7 @@ export function windowsTaskXml(script: string, user: string, spec: ServiceSpec =
     </Principal>
   </Principals>
   <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <MultipleInstancesPolicy>StopExisting</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <AllowHardTerminate>true</AllowHardTerminate>
@@ -391,6 +395,67 @@ function writeUtf16(path: string, text: string): void {
 	renameSync(tmp, path);
 }
 
+const PID_FILE_VAR = "POLYCARP_SERVICE_PID_FILE";
+const windowsPidPath = (spec: ServiceSpec) => join(windowsServiceDir(), `${spec.label}.pid`);
+
+/**
+ * Called first thing by the CLI. When a Windows task started it, write this process's pid and program name where the task's
+ * script asked, so stop and uninstall can end it: ending the task ends only cmd.exe, and Node would keep running. The variable is
+ * then cleared so programs this one starts don't overwrite the file.
+ */
+export function recordServicePid(env: NodeJS.ProcessEnv = process.env, pid = process.pid, execPath = process.execPath, plat: NodeJS.Platform = process.platform): void {
+	const file = env[PID_FILE_VAR];
+	if (plat !== "win32" || !file) return;
+	delete env[PID_FILE_VAR];
+	try {
+		writeFileSync(file, `${pid}\n${win32.basename(execPath)}\n`);
+	} catch {
+		/* stop then falls back to telling the user which window to close */
+	}
+}
+
+/** The program name tasklist reports for `pid`: undefined when no process has it, "unknown" when tasklist itself failed. */
+function windowsProcessImage(pid: number, exec: SyncRunner): string | undefined | "unknown" {
+	const r = exec(win32.join(systemRoot(), "System32", "tasklist.exe"), ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]);
+	if (r.code !== 0) return "unknown";
+	for (const line of r.out.split(/\r?\n/)) {
+		const m = /^"([^"]+)","(\d+)"/.exec(line.trim());
+		if (m && Number(m[2]) === pid) return m[1];
+	}
+	return undefined;
+}
+
+const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/**
+ * End the program the task started, and everything it started, then confirm it is gone. Its pid comes from the file it wrote; a
+ * pid now used by another program (the file outlived a restart) is left alone. Undefined on success, else what to tell the user.
+ */
+export function stopWindowsProgram(spec: ServiceSpec, exec: SyncRunner = seam.exec ?? runSync): string | undefined {
+	const file = windowsPidPath(spec);
+	const [pidText, image] = (readIfFile(file) ?? "").split(/\r?\n/);
+	const pid = Number(pidText);
+	if (!Number.isInteger(pid) || pid <= 4 || !image) {
+		rmSync(file, { force: true });
+		return undefined;
+	}
+	const same = (seen: string | undefined) => seen !== undefined && seen !== "unknown" && seen.toLowerCase() === image.toLowerCase();
+	let seen = windowsProcessImage(pid, exec);
+	if (seen === "unknown") return `Windows couldn't say whether ${image} (pid ${pid}) is still running. Run: taskkill /PID ${pid} /T /F, then ${spec.off} again.`;
+	if (same(seen)) {
+		exec(win32.join(systemRoot(), "System32", "taskkill.exe"), ["/PID", String(pid), "/T", "/F"]);
+		const deadline = Date.now() + (seam.stopWaitMs ?? 5000);
+		for (;;) {
+			seen = windowsProcessImage(pid, exec);
+			if (!same(seen) || Date.now() >= deadline) break;
+			sleepSync(100);
+		}
+		if (seen === "unknown" || same(seen)) return `${image} (pid ${pid}) is still running after taskkill. Run: taskkill /PID ${pid} /T /F, or close its window, then ${spec.off} again.`;
+	}
+	rmSync(file, { force: true });
+	return undefined;
+}
+
 async function installWindows(spec: ServiceSpec, exec: Runner, binary: string, env: Record<string, string>): Promise<InstallResult> {
 	const keepRunning = `keep it running yourself: ${binary} ${spec.args.join(" ")}`;
 	const keepRunningSentence = `Keep it running yourself: ${binary} ${spec.args.join(" ")}.`;
@@ -414,6 +479,12 @@ async function installWindows(spec: ServiceSpec, exec: Runner, binary: string, e
 	} catch (err) {
 		return { ok: false, message: `${err instanceof Error ? err.message : String(err)}, so no task was made. ${keepRunningSentence}` };
 	}
+	// A copy already running reads its script as it loops, so it is stopped, and confirmed gone, before the script changes.
+	if (existsSync(script)) {
+		await exec(schtasksPath(), ["/End", "/TN", spec.label]);
+		const stuck = stopWindowsProgram(spec);
+		if (stuck) return { ok: false, file: script, message: `${stuck} The script wasn't changed.` };
+	}
 	mkdirSync(dirname(log), { recursive: true });
 	writeAtomic(script, text, 0o644);
 	const xmlFile = windowsTaskXmlPath(spec);
@@ -434,8 +505,7 @@ async function installWindows(spec: ServiceSpec, exec: Runner, binary: string, e
 				: `schtasks /Create failed: ${created.out}. The script is at ${script}.`,
 		};
 	}
-	// A task already running keeps the old program until it ends; ending one that isn't running fails, which is the state wanted.
-	await exec(schtasksPath(), ["/End", "/TN", spec.label]);
+	// The task replaces a running copy itself (StopExisting), so /Run always starts the new script.
 	const started = await exec(schtasksPath(), ["/Run", "/TN", spec.label]);
 	if (started.code !== 0) return { ok: false, file: script, message: `schtasks /Run /TN ${spec.label} failed: ${started.out}. The task is made and starts at your next logon.` };
 	return { ok: true, file: script, message: `Service installed (Task Scheduler task ${spec.label}, starts at logon; script ${script}); logs in ${log}.` };
@@ -599,6 +669,7 @@ async function undoFresh(spec: ServiceSpec, exec: Runner, file: string | undefin
 		else if (platform() === "linux") await exec("systemctl", ["--user", "disable", "--now", spec.unit]);
 		else if (platform() === "win32") {
 			await exec(schtasksPath(), ["/End", "/TN", spec.label]);
+			stopWindowsProgram(spec);
 			await exec(schtasksPath(), ["/Delete", "/TN", spec.label, "/F"]);
 		}
 	} catch {
@@ -690,6 +761,9 @@ function removeOne(spec: ServiceSpec): { ok: boolean; notes: string[]; failure?:
 	if (platform() === "win32" && existsSync(windowsScriptPath(spec))) {
 		// Ending a task that isn't running fails, which is the state wanted; the delete is what has to work.
 		run(schtasksPath(), ["/End", "/TN", spec.label]);
+		// /End ends only cmd.exe; the program it started is ended by pid, and has to be gone before the task is.
+		const stuck = stopWindowsProgram(spec, run);
+		if (stuck) return { ok: false, notes: [], failure: `${stuck} The ${spec.label} task and ${spec.kept} are kept.` };
 		const r = run(schtasksPath(), ["/Delete", "/TN", spec.label, "/F"]);
 		if (r.code !== 0 && run(schtasksPath(), ["/Query", "/TN", spec.label]).code === 0) {
 			return { ok: false, notes: [], failure: `schtasks /Delete /TN ${spec.label} failed: ${r.out}. The task is still there and ${spec.kept} is kept. Run: schtasks /End /TN ${spec.label} and schtasks /Delete /TN ${spec.label} /F, then ${spec.off} again.` };
