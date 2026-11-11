@@ -849,10 +849,11 @@ function removeOne(spec: ServiceSpec): { ok: boolean; notes: string[]; failure?:
  * language.
  */
 export function serviceRunning(spec: ServiceSpec): boolean | undefined {
-	if (process.platform === "darwin") {
-		const r = run("launchctl", ["print", launchdTarget(spec)], 10_000);
+	const exec: SyncRunner = seam.exec ?? ((cmd, args) => run(cmd, args, 10_000));
+	if (platform() === "darwin") {
+		const r = exec("launchctl", ["print", launchdTarget(spec)]);
 		return r.code === 0 && /\bstate = running\b/.test(r.out);
 	}
-	if (process.platform === "linux") return run("systemctl", ["--user", "is-active", spec.unit], 10_000).out.trim() === "active";
+	if (platform() === "linux") return exec("systemctl", ["--user", "is-active", spec.unit]).out.trim() === "active";
 	return undefined;
 }
