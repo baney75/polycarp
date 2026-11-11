@@ -1587,3 +1587,31 @@ test("stateFromStatus: a failed DNS lookup is code dns_lookup, never dns, which 
 	assert.equal(servfail.code, "dns_lookup");
 	assert.match(servfail.message, /SERVFAIL/);
 });
+
+test("remote --help, or remote alone, prints the five remote commands in order, one line each, exit 0", () => {
+	const s = scenario("remote-guide");
+	for (const args of [["remote", "--help"], ["remote"], ["remote", "-h"]]) {
+		const r = s.run(args);
+		assert.equal(r.code, 0, `${args.join(" ")}: ${r.stdout}${r.stderr}`);
+		const lines = r.stdout.trim().split("\n");
+		assert.ok(lines.length <= 8, `a short guide, not the whole help (${lines.length} lines)`);
+		const order = lines.map((l) => / remote (setup|status|test|fix|off) /.exec(l)?.[1]).filter(Boolean);
+		assert.deepEqual(order, ["setup", "status", "test", "fix", "off"], r.stdout);
+	}
+	assert.match(s.run(["remote", "setup", "--help"]).stdout, /Library/, "a subcommand's --help is still the full help");
+});
+
+test("the --help exit codes name every remote exit code the remote docs give", async () => {
+	const { EXIT_CODES } = await loadTs(`export { EXIT_CODES } from "@src/commands.ts";`);
+	const docs = readFileSync(join(here, "..", "..", "docs", "remote.md"), "utf8").replace(/\s+/g, " ");
+	const pairs = [
+		["exit code is 0 for `on`, 1 for a failure, 2 for a usage error and 3 when a person has to do something", "remote setup 3 when a person has to act"],
+		["Exit codes: 0 every check passed, 1 a check failed, 2 usage, 3 nothing is set up.", "remote test 3 when nothing is set up"],
+		["Exit codes: 0 ok, 1 a repair or a check failed, 2 usage, 3 a person has to act or nothing is set up.", "remote fix 3 when a person has to act or nothing is set up"],
+	];
+	for (const [said, listed] of pairs) {
+		assert.ok(docs.includes(said), `remote.md says: ${said}`);
+		assert.ok(EXIT_CODES.includes(listed), `EXIT_CODES lists: ${listed}`);
+	}
+	assert.match(EXIT_CODES, /0 success, 1 failed.*2 usage error/);
+});

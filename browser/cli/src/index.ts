@@ -40,7 +40,7 @@ import { detectMode, recoverCheckoutQuietly } from "./checkout.ts";
 import { migrateLegacyServices, recordServicePid } from "./service.ts";
 import { type HostRunAction, runHostAction } from "./update-run.ts";
 import { BUILD } from "../../src/update/build.ts";
-import { argsProblem, COMMANDS, completionScript, EXIT_CODES, helpRows, VALUE_FLAGS, VISIBLE_COMMANDS } from "./commands.ts";
+import { argsProblem, COMMANDS, completionScript, EXIT_CODES, helpRows, REMOTE_GUIDE, VALUE_FLAGS, VISIBLE_COMMANDS } from "./commands.ts";
 import { VERSION } from "./version.ts";
 
 /** A path under the home folder as ~/..., for help text. */
@@ -264,6 +264,10 @@ async function main(): Promise<void> {
 		const i = argv.indexOf(name);
 		return i >= 0 ? argv[i + 1] : undefined;
 	};
+	if (command === "remote" && !argv.slice(1).some((a) => !a.startsWith("-"))) {
+		process.stdout.write(REMOTE_GUIDE);
+		return;
+	}
 	if (command && command !== "host" && (flag("--help") || flag("-h"))) {
 		process.stdout.write(help());
 		return;

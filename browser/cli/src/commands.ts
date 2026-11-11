@@ -366,7 +366,19 @@ export function argsProblem(command: string, args: string[]): string | undefined
 
 /** Exit codes every command uses; also printed by --help. */
 export const EXIT_CODES =
-	"Exit codes: 0 success, 1 failed, not connected or nothing found, 2 usage error; update --check 100 when an update exists, library add 3 retracted and 4 unchecked, remote setup 3 when a person has to act, remote test 3 when nothing is set up, remote fix 3 when a person has to act.";
+	"Exit codes: 0 success, 1 failed, not connected or nothing found, 2 usage error; update --check 100 when an update exists, library add 3 retracted and 4 unchecked, remote setup 3 when a person has to act, remote test 3 when nothing is set up, remote fix 3 when a person has to act or nothing is set up.";
+
+/** `remote --help`, or `remote` alone: the remote commands in the order a person uses them. */
+export const REMOTE_GUIDE = [
+	"Remote access for claude.ai, ChatGPT and grok.com, in the order you use it:",
+	`  1. ${COMMAND_NAME} remote setup    Make serve reachable: Tailscale Funnel, a Cloudflare tunnel or your own --public-url`,
+	`  2. ${COMMAND_NAME} remote status   Fast checks from this computer: is it up?`,
+	`  3. ${COMMAND_NAME} remote test     Prove an assistant can reach and stream from it, from outside`,
+	`  4. ${COMMAND_NAME} remote fix      Repair what status or test found (--dry-run lists the steps)`,
+	`  5. ${COMMAND_NAME} remote off      Stop the service, close the tunnel and remove remote.json`,
+	"Each takes --json. Exit codes: 0 ok, 1 failed, 2 usage, 3 a person has to act (or, for test and fix, nothing is set up).",
+	"",
+].join("\n");
 
 function sh(word: string): string {
 	return word.replace(/[^A-Za-z0-9_.:,|/-]/g, "");
