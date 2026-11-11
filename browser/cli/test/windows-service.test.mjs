@@ -495,7 +495,7 @@ const record = (dir, pid, image, started = STARTED) => {
 	writeFileSync(join(dir, "services", "com.polycarp.serve.pid"), `${pid}\n${image}\n${started}\n`);
 };
 
-test("the service's helper records its pid, image and start time, removes the record on exit, and its children don't inherit the variable", async () => {
+test("the service's helper records its pid, image and start time, marks the record exited on exit, and its children don't inherit the variable", async () => {
 	await inConfig("win-pid", async (dir) => {
 		const file = join(dir, "services", "com.polycarp.serve.pid");
 		mkdirSync(join(dir, "services"), { recursive: true });
@@ -506,7 +506,7 @@ test("the service's helper records its pid, image and start time, removes the re
 		assert.equal(env.POLYCARP_SERVICE_PID_FILE, undefined);
 		assert.equal(hooks.length, 1);
 		hooks[0]();
-		assert.equal(existsSync(file), false, "a clean exit leaves no record behind");
+		assert.equal(readFileSync(file, "utf8"), "exited\n", "a clean exit says so, so stop can tell it from a record never written");
 		// A newer copy's record is not the exiting one's to delete.
 		writeFileSync(file, `5000\nnode.exe\n${STARTED}\n`);
 		recordServicePid({ env: { POLYCARP_SERVICE_PID_FILE: join(dir, "other.pid") }, pid: 4243, execPath: "node.exe", platform: "win32", startMs: STARTED, onExit: (fn) => hooks.push(fn) });
@@ -526,6 +526,8 @@ test("the script tells the helper where to record its pid", async () => {
 test("the task replaces a running copy itself (StopExisting), so /Run can't be ignored while the old one is ending", () => {
 	const xml = windowsTaskXml("C:\\s.cmd", "PC\\x", SERVE_SERVICE);
 	assert.ok(xml.includes("<MultipleInstancesPolicy>StopExisting</MultipleInstancesPolicy>"));
+	// Task Scheduler defaults to 7 (below normal CPU and low I/O); 4 is normal, as launchd and systemd run them.
+	assert.ok(xml.includes("<Priority>4</Priority>"));
 	assert.ok(!xml.includes("IgnoreNew"));
 });
 
@@ -700,4 +702,37 @@ test("the Tailscale sign-in hint and download link name what Windows has", () =>
 	assert.equal(tailscaleSignIn("darwin"), "Open the Tailscale app and sign in, or run tailscale up");
 	assert.equal(tailscaleSignIn("linux"), "Run tailscale up");
 	assert.equal(tailscaleDownloadUrl("win32"), "https://tailscale.com/download/windows");
+});
+
+test("the script marks each start, so stop can tell a start in progress from a program that exited", () => {
+	const lines = windowsScriptText("polycarp.cmd", {}, SERVE_SERVICE).split("\r\n");
+	const at = lines.indexOf('>"%POLYCARP_SERVICE_PID_FILE%" echo starting');
+	assert.ok(at > lines.indexOf(":run") && at < lines.indexOf('>>"%POLYCARP_LOG%" 2>&1 ('));
+});
+
+test("a running task whose program exited cleanly, or whose record is stale, is stopped; only a missing or starting record fails", async () => {
+	await inConfig("win-between", async (dir) => {
+		const pidFile = join(dir, "services", "com.polycarp.serve.pid");
+		const cases = [
+			["exited", () => writeFileSync(pidFile, "exited\n"), windowsWith(1, "node.exe", { ended: 0 }), ["/End", "/Delete"]],
+			["pid gone", () => record(dir, 321, "node.exe"), windowsWith(999, "node.exe", { ended: 0 }), ["/End", "tasklist", "/Delete"]],
+			["pid reused", () => record(dir, 321, "node.exe"), windowsWith(321, "node.exe", { ended: 0, started: STARTED + 3_600_000 }), ["/End", "tasklist", "powershell", "/Delete"]],
+		];
+		for (const [name, write, fake, verbs] of cases) {
+			winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x" });
+			assert.equal((await installService(SERVE_SERVICE)).ok, true);
+			write();
+			winSeam({ exec: fake.exec });
+			const r = removeService(SERVE_SERVICE);
+			assert.equal(r.ok, true, `${name}: ${r.failure}`);
+			assert.deepEqual(verbsOf(fake.calls), verbs, name);
+			assert.ok(!fake.calls.some(([cmd]) => cmd === TASKKILL), name);
+			assert.equal(existsSync(pidFile), false, name);
+		}
+		winSeam({ exec: fakeExec().exec, windowsUser: "PC\\x" });
+		await installService(SERVE_SERVICE);
+		writeFileSync(pidFile, "starting\r\n");
+		winSeam({ exec: windowsWith(1, "node.exe", { ended: 0 }).exec });
+		assert.match(removeService(SERVE_SERVICE).failure, /left no record of its pid/);
+	});
 });
