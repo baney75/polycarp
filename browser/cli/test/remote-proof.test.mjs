@@ -51,6 +51,21 @@ async function fakePublic({ stream = "now" } = {}) {
 			if (req.method === "DELETE") return json(200, {});
 			seen.authed++;
 			req.resume();
+			if (stream === "trickle") {
+				// A proxy that dribbles its response headers, one line a second for 6 seconds (so the socket is never idle), then sends
+				// the end of the headers and the first event together. Raw bytes on the socket: Node's own writer can't trickle headers.
+				const sock = req.socket;
+				sock.write("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n");
+				let n = 0;
+				const t = setInterval(() => {
+					if (++n < 6) return sock.write(`x-pad-${n}: ${n}\r\n`);
+					clearInterval(t);
+					sock.end(`connection: close\r\n\r\nevent: message\ndata: {"jsonrpc":"2.0","id":1,"result":{}}\n\n`);
+				}, 1000);
+				timers.add(t);
+				sock.on("close", () => clearInterval(t));
+				return;
+			}
 			res.writeHead(200, { "content-type": "text/event-stream", "mcp-session-id": "s1" });
 			const send = () => res.end(`event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{}}\n\n`);
 			if (stream === "now") send();
@@ -71,7 +86,10 @@ async function fakePublic({ stream = "now" } = {}) {
 		seen,
 		close: () =>
 			new Promise((resolve) => {
-				for (const t of timers) clearTimeout(t);
+				for (const t of timers) {
+					clearTimeout(t);
+					clearInterval(t);
+				}
 				srv.closeAllConnections();
 				srv.close(resolve);
 			}),
@@ -203,6 +221,26 @@ test("a public server that holds the stream's first bytes 10 seconds fails strea
 		assert.match(streaming.next, /buffering/);
 		for (const name of ["dns", "tls", "resource_metadata", "auth_metadata", "auth_challenge"]) assert.equal(byName(report, name).status, "ok", name);
 		assert.ok(!JSON.stringify(report).includes(pub.seen.tokens[0]), "the token is not in the report");
+		assert.equal(m.tokens(), before);
+	} finally {
+		await pub.close();
+		await doh.close();
+	}
+});
+
+test("a proxy that trickles its headers past 5 seconds and then sends the first event at once fails streaming", async () => {
+	const pub = await fakePublic({ stream: "trickle" });
+	const doh = await fakeDoh();
+	try {
+		const m = machine("trickle", pub.publicUrl, doh.url);
+		const before = m.tokens();
+		const started = Date.now();
+		const r = await m.run(["remote", "test", "--json"]);
+		assert.ok(Date.now() - started < 9000, "the probe gives up at its 5-second deadline");
+		assert.equal(r.code, 1, r.stdout + r.stderr);
+		const streaming = byName(r.json(), "streaming");
+		assert.equal(streaming.status, "fail", r.stdout);
+		assert.match(streaming.detail, /5 seconds/);
 		assert.equal(m.tokens(), before);
 	} finally {
 		await pub.close();

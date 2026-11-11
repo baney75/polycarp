@@ -7,6 +7,7 @@
  * request, and deleted in a `finally` and on SIGINT or SIGTERM. Its secret is never printed, logged or put in a report.
  */
 import { randomBytes } from "node:crypto";
+import type { IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { connect as tlsConnect } from "node:tls";
@@ -76,12 +77,31 @@ interface Answer {
 }
 
 /**
- * One HTTPS request to `address`, with `url`'s name as SNI and Host and the certificate checked against it. `firstByteMs`: stop
- * reading after the first body bytes, or fail when none arrive in that time.
+ * One HTTPS request to `address`, with `url`'s name as SNI and Host and the certificate checked against it. Its deadline is
+ * absolute, started before the request opens: bytes that trickle in slowly enough to keep the socket busy don't stretch it.
+ * `firstByteMs`: that is the deadline, and the answer is the response as it stands at the first body bytes; when the headers
+ * came but no body bytes did, it resolves without `firstByteMs`.
  */
 function publicRequest(url: URL, address: string, init: { method: string; headers?: Record<string, string>; body?: string; firstByteMs?: number; limitMs?: number }): Promise<Answer> {
 	return new Promise((resolve, reject) => {
 		const started = Date.now();
+		const limit = init.firstByteMs ?? init.limitMs ?? REQUEST_MS;
+		let response: IncomingMessage | undefined;
+		let body = "";
+		let firstByteMs: number | undefined;
+		let settled = false;
+		const finish = (err?: Error) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(deadline);
+			req.destroy();
+			if (err) reject(err);
+			else resolve({ status: response?.statusCode ?? 0, headers: response?.headers ?? {}, body, firstByteMs });
+		};
+		const deadline = setTimeout(() => {
+			if (init.firstByteMs && response) finish();
+			else finish(new Error(`no answer in ${Math.round(limit / 1000)} seconds`));
+		}, limit);
 		const req = httpsRequest(
 			{
 				host: url.hostname,
@@ -94,36 +114,18 @@ function publicRequest(url: URL, address: string, init: { method: string; header
 				agent: false,
 			},
 			(res) => {
-				let body = "";
-				let firstByteMs: number | undefined;
-				const timer = init.firstByteMs
-					? setTimeout(() => {
-							req.destroy();
-							resolve({ status: res.statusCode ?? 0, headers: res.headers, body });
-						}, Math.max(0, init.firstByteMs - (Date.now() - started)))
-					: undefined;
+				response = res;
 				res.setEncoding("utf8");
 				res.on("data", (chunk: string) => {
 					if (firstByteMs === undefined) firstByteMs = Date.now() - started;
 					if (body.length < 65_536) body += chunk;
-					if (init.firstByteMs) {
-						clearTimeout(timer);
-						req.destroy();
-						resolve({ status: res.statusCode ?? 0, headers: res.headers, body, firstByteMs });
-					}
+					if (init.firstByteMs) finish();
 				});
-				res.on("end", () => {
-					clearTimeout(timer);
-					resolve({ status: res.statusCode ?? 0, headers: res.headers, body, firstByteMs });
-				});
-				res.on("error", (err) => {
-					clearTimeout(timer);
-					reject(err);
-				});
+				res.on("end", () => finish());
+				res.on("error", (err) => finish(err));
 			},
 		);
-		req.setTimeout(init.limitMs ?? REQUEST_MS, () => req.destroy(new Error(`no answer in ${Math.round((init.limitMs ?? REQUEST_MS) / 1000)} seconds`)));
-		req.on("error", reject);
+		req.on("error", (err) => finish(err));
 		req.end(init.body);
 	});
 }
@@ -206,7 +208,6 @@ async function streamingCheck(url: URL, address: string, publicUrl: string, hook
 				headers: { ...auth, "content-type": "application/json", accept: "application/json, text/event-stream" },
 				body: initialize,
 				firstByteMs: STREAM_FIRST_BYTE_MS,
-				limitMs: STREAM_FIRST_BYTE_MS,
 			});
 		} catch (err) {
 			return { ...held, detail: `POST /mcp gave nothing in ${STREAM_FIRST_BYTE_MS / 1000} seconds (${err instanceof Error ? err.message : String(err)})` };
@@ -223,7 +224,7 @@ async function streamingCheck(url: URL, address: string, publicUrl: string, hook
 		if (!/text\/event-stream/.test(header(answer, "content-type"))) {
 			return { name: "streaming", status: "fail", detail: `POST /mcp answered ${header(answer, "content-type") || "no content type"}, not a stream (text/event-stream)`, next: "Something between the internet and serve rewrites the answer. Use Tailscale Funnel or a Cloudflare named tunnel (remote setup)." };
 		}
-		if (answer.firstByteMs === undefined) return { ...held, detail: `the stream's first bytes didn't arrive in ${STREAM_FIRST_BYTE_MS / 1000} seconds: something between the internet and serve holds them back` };
+		if (answer.firstByteMs === undefined || answer.firstByteMs > STREAM_FIRST_BYTE_MS) return { ...held, detail: `the stream's first bytes didn't arrive in ${STREAM_FIRST_BYTE_MS / 1000} seconds: something between the internet and serve holds them back` };
 		return { name: "streaming", status: "ok", detail: `the stream's first bytes arrived in ${answer.firstByteMs} ms` };
 	} finally {
 		process.off("SIGINT", onSignal);
