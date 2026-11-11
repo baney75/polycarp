@@ -275,6 +275,10 @@ export function releaseHeld(replica: Replica, registry: Registry, now: number): 
 	const ready: SyncOp[] = [];
 	for (const id of ids.sort()) {
 		if (isTooFarAhead(held[id].at, now)) continue;
+		if (holds({ ...replica, held: rec<SyncOp>() }, held[id])) {
+			delete held[id];
+			continue;
+		}
 		ready.push(held[id]);
 		delete held[id];
 	}
@@ -329,6 +333,16 @@ export function currentMembers(replica: Replica, now: number): string[] {
 
 // ---------- compaction ----------
 
+function isNarrow(registry: Registry, category: string): boolean {
+	return registry.get(category)?.direction === "narrow";
+}
+
+function dropNarrow(registry: Registry, states: Rec<unknown>): Rec<unknown> {
+	const out = rec<unknown>();
+	for (const name of Object.keys(states)) if (!isNarrow(registry, name)) out[name] = states[name];
+	return out;
+}
+
 /** The vector every current member has acked (and this replica holds). Empty when no other member is current. */
 export function foldFrontier(replica: Replica, now: number): VersionVector {
 	const current = currentMembers(replica, now);
@@ -345,15 +359,20 @@ export function foldFrontier(replica: Replica, now: number): VersionVector {
  */
 export function compact(replica: Replica, registry: Registry, now: number): Replica {
 	const frontier = foldFrontier(replica, now);
-	const states = copyRec(replica.snapshot.states);
+	const states = dropNarrow(registry, replica.snapshot.states);
 	const kept = rec<SyncOp>();
 	const scratch = rec<SkipReason>();
-	for (const op of sortedOps(replica.snapshot.kept))
-		if (!applyTo(states, scratch, registry, replica.device, op)) kept[opId(op)] = op;
+	// A narrow-only category's state depends on the device reading it (whose allow it is), so its ops are never
+	// folded into states: they stay in kept, and every receiver rebuilds them through registry.decide.
+	const fold = (op: SyncOp) => {
+		if (isNarrow(registry, op.category) || !applyTo(states, scratch, registry, replica.device, op))
+			kept[opId(op)] = op;
+	};
+	for (const op of sortedOps(replica.snapshot.kept)) fold(op);
 	const log = copyRec(replica.log);
 	for (const op of sortedOps(replica.log)) {
 		if (!vvCovers(frontier, op.author, op.seq)) continue;
-		if (!applyTo(states, scratch, registry, replica.device, op)) kept[opId(op)] = op;
+		fold(op);
 		delete log[opId(op)];
 	}
 	const snapVv = vvMerge(replica.snapshot.vv, frontier);
@@ -392,7 +411,8 @@ export function compact(replica: Replica, registry: Registry, now: number): Repl
 /** Kinds replayed with a fresh clock on rejoin: edits whose outcome depends on their time. */
 function replayable(op: SyncOp, registry: Registry): boolean {
 	const def = registry.get(op.category);
-	if (!def) return false;
+	// A narrow-only allow is never re-stamped: a fresh clock would let an old offline allow beat a newer revoke.
+	if (!def || def.direction === "narrow") return false;
 	if (def.merge === "lww") return true;
 	if (def.merge === "awset") return op.kind === "add";
 	return false;
@@ -412,10 +432,15 @@ export function adoptSnapshot(
 ): { replica: Replica; replayed: SyncOp[] } {
 	const extra = sortedOps(replica.log).filter((op) => !vvCovers(message.vv, op.author, op.seq));
 	const log = rec<SyncOp>();
-	for (const op of message.ops) if (opProblem(op) === null) log[opId(op)] = op;
+	const held = copyRec(replica.held);
+	for (const op of message.ops) {
+		if (opProblem(op) !== null) continue;
+		if (isTooFarAhead(op.at, now)) held[opId(op)] = op;
+		else log[opId(op)] = op;
+	}
 	for (const op of extra) log[opId(op)] = op;
 	let clock = replica.clock;
-	for (const op of Object.values(log)) if (!isTooFarAhead(op.at, now)) clock = hlcReceive(clock, op.at, now);
+	for (const op of Object.values(log)) clock = hlcReceive(clock, op.at, now);
 	const authors = new Set(Object.keys(log).map((id) => id.slice(0, id.lastIndexOf(":"))));
 	const vv = advanceVv(message.snapshot.vv, log, authors);
 	let next = rebuild(
@@ -425,9 +450,12 @@ export function adoptSnapshot(
 			seq: Math.max(replica.seq, vvGet(message.vv, replica.device)),
 			vv,
 			log,
+			held,
+			// Narrow-only state is never adopted as folded state (older code or a forged snapshot may send it): those
+			// categories are rebuilt from kept ops through registry.decide for this device.
 			snapshot: {
 				vv: copyRec(message.snapshot.vv),
-				states: copyRec(message.snapshot.states),
+				states: dropNarrow(registry, message.snapshot.states),
 				kept: copyRec(message.snapshot.kept),
 			},
 			folded: rec<FoldRecord>(),

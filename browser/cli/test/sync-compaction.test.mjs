@@ -14,6 +14,7 @@ import {
 	receiveOps,
 	recordAck,
 	stateBytes,
+	suggestions,
 	view,
 } from "../src/sync/index.ts";
 
@@ -133,4 +134,64 @@ test("a member unseen for 90 days stops blocking, then rejoins by snapshot and r
 	}
 	assert.equal(stateBytes(b), stateBytes(a));
 	assert.equal(stateBytes(c), stateBytes(a));
+});
+
+test("a newcomer's snapshot ships no narrow-only state: a peer's allow becomes a suggestion, a revoke still lands", () => {
+	let a = createReplica("dv-a", { "dv-b": T });
+	a = localOp(
+		a,
+		registry,
+		{ category: "site-permissions", kind: "set", key: "a-only.example", value: true },
+		T,
+	).replica;
+	a = localOp(a, registry, { category: "site-permissions", kind: "del", key: "github.com" }, T + 5).replica;
+	a = localOp(a, registry, { category: "dictionary", kind: "add", key: "polycarp", value: 1 }, T + 6).replica;
+	a = recordAck(a, "dv-b", a.vv, T + 7);
+	a = compact(a, registry, T + 8);
+	assert.deepEqual(Object.keys(a.log), []);
+	assert.deepEqual(plainView(a)["site-permissions"], { "a-only.example": true }, "the allow holds where it was made");
+	const message = delta(a, {});
+	assert.equal(message.kind, "snapshot");
+	assert.equal(message.snapshot.snapshot.states["site-permissions"], undefined, "not folded into states");
+	let n = createReplica("dv-n");
+	n = localOp(
+		n,
+		registry,
+		{ category: "site-permissions", kind: "set", key: "github.com", value: true },
+		T + 1,
+	).replica;
+	n = adoptSnapshot(n, registry, message.snapshot, T + 10).replica;
+	assert.deepEqual(plainView(n)["site-permissions"], {}, "the peer's allow is not adopted and the revoke lands");
+	assert.deepEqual(suggestions(n), ["dv-a:1"]);
+	assert.deepEqual(plainView(n).dictionary, { polycarp: 1 }, "other categories still arrive folded");
+
+	// A snapshot that carries narrow-only state anyway (older code or forged) has that entry ignored.
+	const forged = structuredClone(message.snapshot);
+	forged.snapshot.states["site-permissions"] = {
+		"evil.example": { at: { wall: T, count: 0, device: "dv-a" }, del: false, value: true },
+	};
+	const m = adoptSnapshot(createReplica("dv-m"), registry, forged, T + 10).replica;
+	assert.deepEqual(plainView(m)["site-permissions"], {});
+	assert.deepEqual(plainView(m).dictionary, { polycarp: 1 });
+});
+
+test("a 90-day rejoiner does not adopt a peer's allow from the snapshot", () => {
+	let a = createReplica("dv-a", members);
+	let c = createReplica("dv-c", members);
+	c = localOp(c, registry, { category: "dictionary", kind: "add", key: "offline", value: 1 }, T + DAY_MS).replica;
+	a = localOp(
+		a,
+		registry,
+		{ category: "site-permissions", kind: "set", key: "a-only.example", value: true },
+		T + 50 * DAY_MS,
+	).replica;
+	const day91 = T + 91 * DAY_MS;
+	a = recordAck(a, "dv-b", a.vv, day91);
+	a = compact(a, registry, day91);
+	const back = delta(a, c.vv);
+	assert.equal(back.kind, "snapshot");
+	c = adoptSnapshot(c, registry, back.snapshot, day91 + 10).replica;
+	assert.deepEqual(plainView(c)["site-permissions"] ?? {}, {});
+	assert.deepEqual(suggestions(c), ["dv-a:1"]);
+	assert.deepEqual(plainView(c).dictionary, { offline: 1 });
 });

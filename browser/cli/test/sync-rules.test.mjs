@@ -84,6 +84,23 @@ test("a forged widening op in a narrow-only category changes nothing; a revoke s
 	assert.deepEqual(plainView(narrowed, registry)["site-permissions"], { "github.com": true });
 });
 
+test("a single-writer stream refuses another device's append, delete and clear", () => {
+	let b = createReplica("dv-b");
+	b = localOp(b, registry, { category: "threads", kind: "append", key: "dv-b/t1", value: "mine" }, T).replica;
+	const before = stateBytes(b);
+	const foreign = [
+		op({ category: "threads", author: "dv-a", seq: 1, kind: "append", key: "dv-b/t1", value: "theirs" }),
+		op({ category: "threads", author: "dv-a", seq: 2, kind: "delete", key: "dv-b/t1", obs: ["dv-b:1"] }),
+		op({ category: "threads", author: "dv-a", seq: 3, at: { wall: T + 9, count: 0 }, kind: "clear", key: "dv-b/t1" }),
+	];
+	b = receiveOps(b, registry, foreign, T + 10);
+	assert.equal(stateBytes(b), before);
+	assert.deepEqual(
+		{ ...b.skipped },
+		{ "dv-a:1": "single-writer", "dv-a:2": "single-writer", "dv-a:3": "single-writer" },
+	);
+});
+
 test("never-synced kinds cannot be registered", () => {
 	const names = [
 		"secrets",

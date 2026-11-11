@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+	adoptSnapshot,
 	canonicalize,
 	compact,
 	createReplica,
@@ -15,7 +16,6 @@ import {
 	receiveOps,
 	recordAck,
 	releaseHeld,
-	stateBytes,
 	view,
 } from "../src/sync/index.ts";
 
@@ -38,6 +38,12 @@ const SIX_MIN = 6 * 60 * 1000;
 
 function randomEdit(rand, replica, device) {
 	const pick = (list) => list[Math.floor(rand() * list.length)];
+	if (rand() < 0.1) {
+		const key = pick(["github.com", "example.org"]);
+		return rand() < 0.6
+			? { category: "site-permissions", kind: "set", key, value: true }
+			: { category: "site-permissions", kind: "del", key };
+	}
 	const which = rand();
 	if (which < 0.3) {
 		const key = pick(["theme", "density", "layout", "zoom"]);
@@ -69,8 +75,24 @@ function shuffle(rand, list) {
 	return out;
 }
 
+// Narrow-only state is per device by design (each keeps its own allows), so convergence is checked on the shared
+// categories and the narrow rule is checked directly.
+const NARROW = "site-permissions";
+function withoutNarrow(record) {
+	const { [NARROW]: _narrow, ...rest } = record;
+	return rest;
+}
 function snapshotOf(replicas) {
-	return replicas.map((r) => ({ state: stateBytes(r), view: canonicalize(view(r, registry)) }));
+	return replicas.map((r) => ({
+		state: canonicalize(withoutNarrow(r.states)),
+		view: canonicalize(withoutNarrow(view(r, registry))),
+	}));
+}
+function assertNarrow(seed, r) {
+	const regs = r.states[NARROW] ?? {};
+	for (const key of Object.keys(regs))
+		if (!regs[key].del)
+			assert.equal(regs[key].at.device, r.device, `seed ${seed}: ${r.device} holds ${regs[key].at.device}'s allow`);
 }
 
 function runSeed(seed) {
@@ -142,12 +164,14 @@ function runSeed(seed) {
 function checkSeed(seed) {
 	const replicas = runSeed(seed);
 	for (const r of replicas) assert.deepEqual(Object.keys(r.held), [], `seed ${seed}: ops still held`);
+	for (const r of replicas) assertNarrow(seed, r);
 	const [a, b, c] = snapshotOf(replicas);
 	assert.equal(b.state, a.state, `seed ${seed}: state of dv-b differs from dv-a`);
 	assert.equal(c.state, a.state, `seed ${seed}: state of dv-c differs from dv-a`);
 	assert.equal(b.view, a.view, `seed ${seed}: view of dv-b differs from dv-a`);
 	assert.equal(c.view, a.view, `seed ${seed}: view of dv-c differs from dv-a`);
 	for (const name of Object.keys(replicas[0].states)) {
+		if (name === NARROW) continue;
 		const type = MERGE_TYPES[registry.get(name).merge];
 		const merged = type.merge(replicas[1].states[name], replicas[2].states[name]);
 		assert.equal(
@@ -156,6 +180,17 @@ function checkSeed(seed) {
 			`seed ${seed}: merge of ${name} differs`,
 		);
 	}
+	// A newcomer joins from dv-a: by snapshot when dv-a compacted, otherwise by ops. Same shared state, no foreign allow.
+	const d = delta(replicas[0], {});
+	const newcomer =
+		d.kind === "snapshot"
+			? adoptSnapshot(createReplica("dv-n"), registry, d.snapshot, BASE + 3_600_000).replica
+			: receiveOps(createReplica("dv-n"), registry, d.ops, BASE + 3_600_000);
+	assertNarrow(seed, newcomer);
+	const [n] = snapshotOf([newcomer]);
+	assert.equal(n.state, a.state, `seed ${seed}: the newcomer's state differs from dv-a`);
+	replicas.snapshotJoin =
+		d.kind === "snapshot" && Object.values(d.snapshot.snapshot.kept).some((o) => o.category === NARROW);
 	return replicas;
 }
 
@@ -164,6 +199,7 @@ test("three replicas converge to byte-identical state under random delivery, for
 	const seeds = only ? [Number(only)] : Array.from({ length: Number(process.env.SYNC_SEEDS ?? 500) }, (_, i) => i + 1);
 	const types = new Set();
 	let ops = 0;
+	let narrowSnapshots = 0;
 	for (const seed of seeds) {
 		let replicas;
 		try {
@@ -174,10 +210,12 @@ test("three replicas converge to byte-identical state under random delivery, for
 		}
 		for (const name of Object.keys(replicas[0].states)) types.add(registry.get(name).merge);
 		ops += Object.keys(replicas[0].log).length;
+		if (replicas.snapshotJoin) narrowSnapshots++;
 	}
 	if (!only) {
 		assert.ok(seeds.length >= 500);
 		assert.deepEqual([...types].sort(), ["awset", "log", "lww"], "every merge type was exercised");
 		assert.ok(ops > seeds.length * 5, "the runs wrote ops");
+		assert.ok(narrowSnapshots > 50, `snapshots carried narrow ops in ${narrowSnapshots} seeds`);
 	}
 });

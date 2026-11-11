@@ -33,7 +33,7 @@ carried and relayed but not checked: the engine trusts `author` as given until P
 |---|---|---|---|
 | `lww` | settings, themes, skills, site permissions | `set`, `del` | Greater stamp wins; device id breaks a clock tie. |
 | `awset` | dictionary, library | `add`, `remove` | Add-wins observed-remove set. A remove tombstones only the adds it saw, so a concurrent add survives. An element's value is its newest live add. |
-| `log` | history, threads | `append`, `delete`, `clear` | Append-only per stream. Delete wins for good; `clear` hides every entry stamped before it. Threads are single-writer: a stream key starts with its author's id. |
+| `log` | history, threads | `append`, `delete`, `clear` | Append-only per stream. Delete wins for good; `clear` hides every entry stamped before it. Threads are single-writer: a stream key starts with its author's id, and only that author appends, deletes or clears in it. |
 
 Apply commutes, so replicas holding the same ops hold byte-identical canonical state whatever the order.
 
@@ -43,7 +43,9 @@ Apply commutes, so replicas holding the same ops hold byte-identical canonical s
   and it does not move the clock. It is admitted once the clock catches up (`releaseHeld`, and every `receiveOps`).
 - **Narrow only.** Permission-like categories (`site-permissions`) take only removals from other devices. A remote
   `set` is refused, changes nothing, and is listed by `suggestions()` for a local click (PR 7). A later local allow
-  beats an older revoke by its clock. A narrow-only category must be `lww`.
+  beats an older revoke by its clock. A narrow-only category must be `lww`. Its ops never fold into
+  `snapshot.states`: compaction keeps them in `snapshot.kept`, and a device adopting a snapshot ignores any narrow entry
+  in `states` and rebuilds the category from those ops for itself, so a peer's allow arrives as a suggestion.
 - **Never synced.** `createRegistry` throws `NeverSyncedError` for a category named for secrets, tokens, passwords,
   keys, cookies, OAuth or sign-ins, Full Access, lends, scopes, subscriptions, permission mode, sandbox or hooks.
   Settings maps (`guardKeys`) also refuse op keys with those words.
@@ -54,7 +56,8 @@ Apply commutes, so replicas holding the same ops hold byte-identical canonical s
   ops up to its ack at fold time are folded too. A device with no current member folds nothing.
 - **Rejoin.** A peer behind the snapshot gets the snapshot (`delta` returns `kind: "snapshot"`). `adoptSnapshot` keeps
   the device's own unsent ops and replays its offline `lww` edits and set adds as new ops with a fresh clock, so they
-  hold. Deleted items may reappear; the UI is to say so.
+  hold. Narrow-only edits are not replayed, so an old offline allow never beats a newer revoke. Snapshot ops stamped
+  too far ahead are held. Deleted items may reappear; the UI is to say so.
 
 ## Categories
 

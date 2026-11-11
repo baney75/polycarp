@@ -23,7 +23,7 @@ export interface CategoryDef {
 	readonly defaultOn: boolean;
 	/** "narrow": another device can only take away (revoke), never grant. */
 	readonly direction: Direction;
-	/** log only: a stream key must start with "<author>/", and only that author appends to it. */
+	/** log only: a stream key must start with "<author>/", and only that author appends, deletes or clears in it. */
 	readonly singleWriter?: boolean;
 	/** lww only: refuse op keys that name a never-synced kind (for settings maps). */
 	readonly guardKeys?: boolean;
@@ -168,8 +168,7 @@ export function createRegistry(defs: readonly CategoryDef[]): Registry {
 			if (type.check(op) !== null) return { apply: false, reason: "malformed" };
 			if (def.direction === "narrow" && op.author !== localDevice && type.widening.includes(op.kind))
 				return { apply: false, reason: "widening" };
-			if (def.singleWriter && op.kind === "append" && !op.key.startsWith(`${op.author}/`))
-				return { apply: false, reason: "single-writer" };
+			if (def.singleWriter && !op.key.startsWith(`${op.author}/`)) return { apply: false, reason: "single-writer" };
 			if (def.guardKeys && deniedTerm(op.key) !== null) return { apply: false, reason: "never-synced-key" };
 			return { apply: true, def, type };
 		},
