@@ -1566,3 +1566,15 @@ test("a TLS connect error from this computer's own network (no route) is pending
 	assert.equal(fail("ERR_TLS_CERT_ALTNAME_INVALID").pending, undefined);
 	assert.equal(fail("EAI_FAIL").pending, undefined);
 });
+
+test("a TLS alert is a handshake refused for this name (no certificate for it); a wrong version or plain HTTP stays \"not HTTPS\"", async () => {
+	const { tlsFailure } = await loadTs(`export { tlsFailure } from "@src/remote-test.ts";`);
+	const url = new URL("https://a.b.example.com/mcp");
+	const fail = (code) => tlsFailure(Object.assign(new Error(code), { code }), url, "203.0.113.5", 443);
+	for (const code of ["ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE", "ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR"]) {
+		const c = fail(code);
+		assert.match(c.detail, /refused the TLS handshake for a\.b\.example\.com/, code);
+		assert.doesNotMatch(c.detail + c.next, /not with HTTPS|plain HTTP/, code);
+	}
+	for (const code of ["ERR_SSL_PACKET_LENGTH_TOO_LONG", "ERR_SSL_WRONG_VERSION_NUMBER", "EPROTO"]) assert.match(fail(code).detail, /not with HTTPS/, code);
+});
