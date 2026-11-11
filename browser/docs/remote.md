@@ -194,12 +194,18 @@ small script that starts the program again 10 seconds after it stops. They live 
 it uses everywhere else: `%USERPROFILE%\.config\polycarp\browser`, or `POLYCARP_BROWSER_CONFIG_DIR` when you set it.
 
 - The scripts the tasks run: `services\com.polycarp.serve.cmd` and the others beside it.
-- The logs: `logs\polycarp-serve.log`, `logs\polycarp-cloudflared.log` and so on (Windows has no journal).
+- The logs: `logs\polycarp-serve.log`, `logs\polycarp-cloudflared.log` and so on (Windows has no journal). Past
+  10 MB a log becomes `<name>.log.1`, replacing the one before.
+
+The scripts name no folder: each finds the config folder from its own place, so a profile folder with letters outside
+ASCII works.
 
 Each task shows a command window while it runs, titled with its name. Closing that window stops the service until you
 log on again or run setup again. `schtasks /Query /TN com.polycarp.serve /V /FO LIST` shows a task.
 
-`polycarp browser remote off` removes it: it ends and deletes the tasks and their scripts, and keeps the logs. If Windows
+`polycarp browser remote off` removes it: it ends the tasks, ends the programs they started (by the pid each records, with
+`taskkill /T`) and checks they are gone, then deletes the tasks and their scripts, and keeps the logs. A program that
+won't stop leaves its task in place and says which pid to end. If Windows
 refuses to make a task ("Access is denied"), your organization blocks scheduled tasks; setup says so and how to run
 `polycarp browser serve` yourself instead.
 

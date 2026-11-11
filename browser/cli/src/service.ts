@@ -331,6 +331,8 @@ export function windowsScriptText(launcherName: string, env: Record<string, stri
 		// The program records its pid here (recordServicePid), so stop and uninstall can end it and what it started.
 		`set "${PID_FILE_VAR}=%POLYCARP_HOME%\\services\\${spec.label}.pid"`,
 		":run",
+		// Past 10 MB the log becomes <log>.1 (replacing the one before), so a program that keeps failing can't fill the disk.
+		'if exist "%POLYCARP_LOG%" for %%F in ("%POLYCARP_LOG%") do if %%~zF GTR 10485760 move /y "%POLYCARP_LOG%" "%POLYCARP_LOG%.1" >nul 2>&1',
 		'>>"%POLYCARP_LOG%" 2>&1 (',
 		"\techo [%DATE% %TIME%] starting",
 		`\tcall "%POLYCARP_HOME%\\${launcherName}" ${spec.args.join(" ")}`,

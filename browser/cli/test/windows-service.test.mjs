@@ -580,3 +580,11 @@ test("remote off without Tailscale names the folder searched on this platform: t
 	assert.equal(win, "Tailscale wasn't found (not on PATH, and not at D:\\Apps\\Tailscale\\tailscale.exe)");
 	assert.equal(tailscaleMissing("darwin"), "Tailscale wasn't found (not on PATH, and not at /Applications/Tailscale.app/Contents/MacOS/Tailscale)");
 });
+
+test("the Windows script keeps one old log and starts a new one past 10 MB, before each start, while the log isn't open", () => {
+	const lines = windowsScriptText("polycarp.cmd", {}, SERVE_SERVICE).split("\r\n");
+	const rotate = 'if exist "%POLYCARP_LOG%" for %%F in ("%POLYCARP_LOG%") do if %%~zF GTR 10485760 move /y "%POLYCARP_LOG%" "%POLYCARP_LOG%.1" >nul 2>&1';
+	const at = lines.indexOf(rotate);
+	assert.ok(at > lines.indexOf(":run"), "rotation runs on every pass of the loop");
+	assert.equal(lines[at + 1], '>>"%POLYCARP_LOG%" 2>&1 (', "and before the log is opened for the next start");
+});
