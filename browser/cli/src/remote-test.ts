@@ -257,6 +257,24 @@ async function streamingCheck(address: string, publicUrl: string, hooks: RemoteT
 }
 
 /**
+ * What an assistant needs from the authorization server's metadata, beyond its issuer: where to send the person to sign in
+ * (authorization_endpoint) and where to trade the code for a token (token_endpoint), and, when the server offers dynamic client
+ * registration (registration_endpoint), where to register. Each must be an https URL on the connector's own origin.
+ */
+export function authMetadataProblems(body: Record<string, unknown>, publicUrl: string): string[] {
+	const origin = new URL(publicUrl).origin;
+	const problems: string[] = [];
+	const missing = ["authorization_endpoint", "token_endpoint"].filter((field) => typeof body[field] !== "string" || !body[field]);
+	if (missing.length) problems.push(`names no ${missing.join(" or ")}`);
+	for (const field of ["authorization_endpoint", "token_endpoint", "registration_endpoint"]) {
+		const value = body[field];
+		if (value === undefined || missing.includes(field)) continue;
+		if (!URL.canParse(String(value)) || new URL(String(value)).origin !== origin) problems.push(`gives ${field} ${String(value)}, not a URL on ${origin}`);
+	}
+	return problems;
+}
+
+/**
  * Every check, in order. DNS and TLS come first because nothing after them can run without an address that answers; the rest
  * all run so one report names every problem. `streaming: false` leaves out the probe (and its token).
  */
@@ -318,7 +336,9 @@ export async function publicChecks(publicUrl: string, options: { streaming?: boo
 	try {
 		const answer = await publicRequest(new URL("/.well-known/oauth-authorization-server", publicUrl), address, { method: "GET" });
 		const body = parse(answer.body);
-		if (answer.status === 200 && body?.issuer === publicUrl) checks.push({ name: "auth_metadata", status: "ok", detail: `${asUrl} names issuer ${publicUrl}` });
+		const wrong = body ? authMetadataProblems(body, publicUrl) : [];
+		if (answer.status === 200 && body?.issuer === publicUrl && !wrong.length) checks.push({ name: "auth_metadata", status: "ok", detail: `${asUrl} names issuer ${publicUrl} and its sign-in endpoints` });
+		else if (answer.status === 200 && body?.issuer === publicUrl) checks.push({ name: "auth_metadata", status: "fail", detail: `${asUrl} ${wrong.join("; ")}`, next: `Assistants can't sign in without these. Run ${COMMAND_NAME} remote fix.` });
 		else checks.push({ name: "auth_metadata", status: "fail", detail: `${asUrl} answered ${answer.status}${body ? ` with issuer ${String(body.issuer)}` : ""}, expected issuer ${publicUrl}`, next: `Run ${COMMAND_NAME} remote fix.` });
 	} catch (err) {
 		checks.push({ name: "auth_metadata", status: "fail", detail: `${asUrl} didn't answer: ${err instanceof Error ? err.message : String(err)}`, next: `Run ${COMMAND_NAME} remote fix.` });

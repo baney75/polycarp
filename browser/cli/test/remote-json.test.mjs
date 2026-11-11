@@ -1477,3 +1477,11 @@ test("a token with an expiry stops authenticating when it passes, and the next t
 		rmSync(cfg, { recursive: true, force: true });
 	}
 });
+
+test("the metadata serve itself publishes passes remote test's sign-in check; an issuer alone doesn't", async () => {
+	const { authMetadataProblems, authorizationServerMetadata } = await loadTs(`export { authMetadataProblems } from "@src/remote-test.ts"; export { authorizationServerMetadata } from "@src/oauth.ts";`);
+	const publicUrl = "https://mac.example.ts.net";
+	assert.deepEqual(authMetadataProblems(authorizationServerMetadata({ publicUrl, scopes: {} }), publicUrl), []);
+	assert.deepEqual(authMetadataProblems({ issuer: publicUrl }, publicUrl), ["names no authorization_endpoint or token_endpoint"]);
+	assert.match(authMetadataProblems({ issuer: publicUrl, authorization_endpoint: `${publicUrl}/authorize`, token_endpoint: `${publicUrl}/token`, registration_endpoint: "http://mac.example.ts.net/register" }, publicUrl)[0], /registration_endpoint/);
+});

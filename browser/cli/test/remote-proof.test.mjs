@@ -31,7 +31,7 @@ const KEY = readFileSync(join(certDir, "key.pem"));
  * The public side. stream: "now" answers an authenticated initialize as SSE at once; "held" holds the first bytes 10 seconds, the
  * way a buffering proxy does. Records the Host and SNI of every request and the bearer tokens it saw.
  */
-async function fakePublic({ stream = "now", onAuthed } = {}) {
+async function fakePublic({ stream = "now", onAuthed, authMeta = "full" } = {}) {
 	const seen = { hosts: [], sni: [], tokens: [], authed: 0 };
 	let publicUrl = "";
 	const timers = new Set();
@@ -43,7 +43,11 @@ async function fakePublic({ stream = "now", onAuthed } = {}) {
 			res.end(JSON.stringify(body));
 		};
 		if (req.method === "GET" && req.url === METADATA_PATH) return json(200, { resource: `${publicUrl}/mcp`, authorization_servers: [publicUrl] });
-		if (req.method === "GET" && req.url === "/.well-known/oauth-authorization-server") return json(200, { issuer: publicUrl });
+		if (req.method === "GET" && req.url === "/.well-known/oauth-authorization-server") {
+			const full = { issuer: publicUrl, authorization_endpoint: `${publicUrl}/authorize`, token_endpoint: `${publicUrl}/token`, registration_endpoint: `${publicUrl}/register` };
+			// "partial": the issuer alone, nowhere to sign in. "elsewhere": the token endpoint on another origin.
+			return json(200, authMeta === "partial" ? { issuer: publicUrl } : authMeta === "elsewhere" ? { ...full, token_endpoint: "https://other.example/token" } : full);
+		}
 		if (req.url === "/mcp") {
 			const auth = req.headers.authorization ?? "";
 			if (!auth.startsWith("Bearer ")) return json(401, { error: "unauthorized" }, { "www-authenticate": `Bearer resource_metadata="${publicUrl}${METADATA_PATH}"` });
@@ -246,6 +250,28 @@ test("a proxy that trickles its headers past 5 seconds and then sends the first 
 	} finally {
 		await pub.close();
 		await doh.close();
+	}
+});
+
+test("authorization metadata with only an issuer, or a token endpoint on another origin, fails auth_metadata", async () => {
+	for (const [authMeta, missing] of [
+		["partial", /authorization_endpoint.*token_endpoint/],
+		["elsewhere", /token_endpoint https:\/\/other\.example\/token/],
+	]) {
+		const pub = await fakePublic({ authMeta });
+		const doh = await fakeDoh();
+		try {
+			const m = machine(`as-${authMeta}`, pub.publicUrl, doh.url);
+			const r = await m.run(["remote", "test", "--json"]);
+			assert.equal(r.code, 1, r.stdout + r.stderr);
+			const check = byName(r.json(), "auth_metadata");
+			assert.equal(check.status, "fail", r.stdout);
+			assert.match(check.detail, missing);
+			assert.match(check.next, /remote fix/);
+		} finally {
+			await pub.close();
+			await doh.close();
+		}
 	}
 });
 

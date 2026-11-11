@@ -64,7 +64,7 @@ async function fakePublic(remoteFile) {
 			res.end(JSON.stringify(body));
 		};
 		if (req.url === METADATA_PATH) return json(200, { resource: `${publicUrl}/mcp`, authorization_servers: [publicUrl] });
-		if (req.url === "/.well-known/oauth-authorization-server") return json(200, { issuer: publicUrl });
+		if (req.url === "/.well-known/oauth-authorization-server") return json(200, { issuer: publicUrl, authorization_endpoint: `${publicUrl}/authorize`, token_endpoint: `${publicUrl}/token`, registration_endpoint: `${publicUrl}/register` });
 		if (req.url === "/mcp" && !req.headers.authorization) return json(401, {}, { "www-authenticate": `Bearer resource_metadata="${publicUrl}${METADATA_PATH}"` });
 		if (req.url === "/mcp" && req.method === "DELETE") return json(200, {});
 		if (req.url === "/mcp") {
