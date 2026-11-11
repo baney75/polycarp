@@ -298,7 +298,8 @@ extension HandsRouter {
             let pressed: Bool
             // On the process's queue, so the press never falls inside a background action's transaction on it (sol-F1).
             let busy = HandsError(.inUse, "another action on \(w.app) is still running", suggestion: "Try `close` again when it has answered.", retry: .safe)
-            switch HandsEngine.shared.serialized(pid: w.pid, wait: 10, { [self] cancelled in
+            // The main thread never waits (the work needs it to finish): there it refuses at once.
+            switch HandsEngine.shared.serialized(pid: w.pid, wait: Thread.isMainThread ? 0 : 10, { [self] cancelled in
                 mutateOnMain([w], verb: "close", session: session, perform: { _ in cancelled() ? .failure(busy) : .success(host.close(w.id)) })
             }) ?? .failure(busy) {
             case .failure(let e): return .failure(e)

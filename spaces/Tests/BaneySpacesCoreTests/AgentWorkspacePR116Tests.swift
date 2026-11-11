@@ -225,7 +225,7 @@ final class PR116Round2MediumTests: XCTestCase {
 final class PR119Round1Tests: XCTestCase {
     func testCloseWaitsForTheProcessQueueAndRefusesWhenItIsBusy() throws {
         let ws = try source("Sources/BaneySpaces/Hands/HandsRouter+Workspaces.swift")
-        let serial = try XCTUnwrap(ws.range(of: "switch HandsEngine.shared.serialized(pid: w.pid, wait: 10, {"))
+        let serial = try XCTUnwrap(ws.range(of: "switch HandsEngine.shared.serialized(pid: w.pid, wait: Thread.isMainThread ? 0 : 10, {"))
         let press = try XCTUnwrap(ws.range(of: "cancelled() ? .failure(busy) : .success(host.close(w.id))"))
         XCTAssertLessThan(serial.lowerBound, press.lowerBound, "sol-F1: the close button is pressed only on the process's queue")
         XCTAssertTrue(ws.contains("}) ?? .failure(busy) {"), "and refused when the queue isn't free")
