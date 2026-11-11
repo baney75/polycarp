@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { writeTailscaleStub } from "./helpers/tailscale-stub.mjs";
+import { ENABLE_URL, writeTailscaleStub } from "./helpers/tailscale-stub.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cli = join(here, "..", "dist", "index.js");
@@ -95,9 +95,10 @@ async function fakeDoh() {
 /**
  * A machine on the Funnel route with the serve service installed. serve: "down" (not running) or "up" (running with remote.json as
  * it is now). funnel: whether Funnel is open for the stub's name. dns: the name Tailscale gives this computer now. cfLate: how many
- * reads of the tunnel's service, after it is started, say it is still starting ("spawn scheduled", "activating").
+ * reads of the tunnel's service, after it is started, say it is still starting ("spawn scheduled", "activating"). cfDies: it stops
+ * right after its first read says running. funnelMode: the tailscale stub's `funnel` (see tailscale-stub.mjs).
  */
-async function machine(name, { serve = "down", funnel = false, dns = DNS, recorded = DNS, doh, route = "funnel", cfLate = 0 } = {}) {
+async function machine(name, { serve = "down", funnel = false, dns = DNS, recorded = DNS, doh, route = "funnel", cfLate = 0, cfDies = false, funnelMode } = {}) {
 	const dir = join(root, name);
 	const bin = join(dir, "bin");
 	const home = join(dir, "home");
@@ -113,6 +114,7 @@ async function machine(name, { serve = "down", funnel = false, dns = DNS, record
 	const cfStarting = join(dir, "cloudflared.starting");
 	const cfStart = cfLate ? `echo ${cfLate} > ${cfStarting}` : `: > ${cfRunning}`;
 	// Prints `$1` (exiting `$2`) while the service is still starting; once the reads run out it is running.
+	const cfDie = (say, code) => (cfDies ? `if [ -f ${cfRunning} ]; then /bin/rm -f ${cfRunning}; echo "${say}"; exit ${code}; fi; ` : "");
 	const cfStill = (say, code) => `if [ -f ${cfStarting} ]; then read n < ${cfStarting}; if [ "$n" -gt 0 ]; then echo $((n - 1)) > ${cfStarting}; echo "${say}"; exit ${code}; fi; /bin/rm -f ${cfStarting}; : > ${cfRunning}; fi; `;
 	if (route === "cloudflare") {
 		// What an earlier Cloudflare setup leaves: cloudflared, the tunnel's settings and its service file.
@@ -130,7 +132,7 @@ async function machine(name, { serve = "down", funnel = false, dns = DNS, record
 	mkdirSync(dirname(serviceFile), { recursive: true });
 	writeFileSync(serviceFile, "left by an earlier setup\n");
 	const serveStatus = JSON.stringify({ TCP: { 8443: { HTTPS: true } }, Web: { [`${dns}:8443`]: { Handlers: { "/": { Proxy: `http://127.0.0.1:${port}` } } } } });
-	writeTailscaleStub(join(bin, "tailscale"), { dir, log, dns, serveStatus });
+	writeTailscaleStub(join(bin, "tailscale"), { dir, log, dns, serveStatus, ...(funnelMode ? { funnel: funnelMode } : {}) });
 	if (funnel) writeFileSync(join(dir, "funnel-on"), "on\n");
 	const pidFile = join(dir, "serve.pid");
 	const start = `"${process.execPath}" ${fakeServe} ${port} ${remote} >/dev/null 2>&1 & echo $! > ${pidFile}`;
@@ -141,11 +143,11 @@ async function machine(name, { serve = "down", funnel = false, dns = DNS, record
 	};
 	script(
 		"launchctl",
-		`case "$1" in\nprint) case "$2" in *com.polycarp.serve) if [ -f ${pidFile} ]; then echo "state = running"; exit 0; fi ;; *com.polycarp.cloudflared) ${cfStill("state = spawn scheduled", 0)}if [ -f ${cfRunning} ]; then echo "state = running"; exit 0; fi ;; esac; exit 1 ;;\nbootout) case "$2" in *com.polycarp.serve) ${stop} ;; *com.polycarp.cloudflared) /bin/rm -f ${cfRunning} ;; esac ;;\nbootstrap) case "$3" in *com.polycarp.serve.plist) ${start} ;; *com.polycarp.cloudflared.plist) ${cfStart} ;; esac ;;\nesac\n`,
+		`case "$1" in\nprint) case "$2" in *com.polycarp.serve) if [ -f ${pidFile} ]; then echo "state = running"; exit 0; fi ;; *com.polycarp.cloudflared) ${cfDie("state = running", 0)}${cfStill("state = spawn scheduled", 0)}if [ -f ${cfRunning} ]; then echo "state = running"; exit 0; fi ;; esac; exit 1 ;;\nbootout) case "$2" in *com.polycarp.serve) ${stop} ;; *com.polycarp.cloudflared) /bin/rm -f ${cfRunning} ;; esac ;;\nbootstrap) case "$3" in *com.polycarp.serve.plist) ${start} ;; *com.polycarp.cloudflared.plist) ${cfStart} ;; esac ;;\nesac\n`,
 	);
 	script(
 		"systemctl",
-		`case "$2" in\nis-active) if [ "$3" = polycarp-cloudflared.service ]; then ${cfStill("activating", 3)}:; fi; if { [ "$3" = polycarp-serve.service ] && [ -f ${pidFile} ]; } || { [ "$3" = polycarp-cloudflared.service ] && [ -f ${cfRunning} ]; }; then echo active; else echo inactive; exit 3; fi ;;\nrestart) if [ "$3" = polycarp-serve.service ]; then ${stop}; ${start}; else ${cfStart}; fi ;;\ndisable) if [ "$4" = polycarp-serve.service ]; then ${stop}; else /bin/rm -f ${cfRunning}; fi ;;\nesac\n`,
+		`case "$2" in\nis-active) if [ "$3" = polycarp-cloudflared.service ]; then ${cfDie("active", 0)}${cfStill("activating", 3)}:; fi; if { [ "$3" = polycarp-serve.service ] && [ -f ${pidFile} ]; } || { [ "$3" = polycarp-cloudflared.service ] && [ -f ${cfRunning} ]; }; then echo active; else echo inactive; exit 3; fi ;;\nrestart) if [ "$3" = polycarp-serve.service ]; then ${stop}; ${start}; else ${cfStart}; fi ;;\ndisable) if [ "$4" = polycarp-serve.service ]; then ${stop}; else /bin/rm -f ${cfRunning}; fi ;;\nesac\n`,
 	);
 	script("loginctl", `echo "Linger=yes"\n`);
 	const env = {
@@ -422,6 +424,55 @@ serviceTest("a restarted tunnel service that never comes up is a failed repair, 
 		const action = r.json().actions.find((a) => a.kind === "restart_cloudflared");
 		assert.equal(action.status, "failed", r.stdout);
 		assert.match(action.detail, /isn't running after 1 seconds\. Its log: /);
+	} finally {
+		m.cleanup();
+	}
+});
+
+serviceTest("no cloudflared: remote fix downloads it from the release URL and refuses bytes that fail the SHA-256", async () => {
+	const m = await machine("cf-download", { route: "cloudflare", serve: "up" });
+	const asked = [];
+	const release = createHttpServer((req, res) => {
+		asked.push(req.url);
+		res.end("not cloudflared");
+	});
+	await new Promise((resolve) => release.listen(0, "127.0.0.1", resolve));
+	try {
+		rmSync(join(m.dir, "bin", "cloudflared"));
+		const extra = { TABKYRA_CLOUDFLARED_BASE_URL: `http://127.0.0.1:${release.address().port}` };
+		const r = await m.run(["remote", "fix", "--yes", "--json"], { extra });
+		const action = r.json().actions.find((a) => a.kind === "download_cloudflared");
+		assert.equal(action?.status, "failed", r.stdout);
+		assert.match(action.detail, /didn.t match its expected checksum/);
+		assert.equal(asked.length, 1, "it fetched the pinned asset once");
+		assert.ok(!existsSync(join(m.env.TABKYRA_CONFIG_DIR, "bin", "cloudflared")), "nothing unchecked is kept");
+	} finally {
+		release.close();
+		m.cleanup();
+	}
+});
+
+serviceTest("Funnel not enabled for the tailnet: remote fix stops with the enable page, exit 3", async () => {
+	const m = await machine("funnel-not-allowed", { serve: "up", funnelMode: "exit0url" });
+	try {
+		const r = await m.run(["remote", "fix", "--yes", "--json"]);
+		assert.equal(r.code, 3, r.stdout);
+		assert.equal(r.json().state, "funnel_not_allowed");
+		assert.deepEqual(r.json().next, { kind: "open_page", url: ENABLE_URL });
+		assert.ok(!m.funnelOpen());
+	} finally {
+		m.cleanup();
+	}
+});
+
+serviceTest("a repair that is done while its check still fails stops after one try, exit 1", async () => {
+	const m = await machine("cf-dies", { route: "cloudflare", serve: "up", cfDies: true });
+	try {
+		const r = await m.run(["remote", "fix", "--yes", "--json"]);
+		assert.equal(r.code, 1, r.stdout);
+		assert.equal(r.json().code, "restart_cloudflared");
+		assert.match(r.json().message, /done, and the check still fails/);
+		assert.equal(m.calls().filter((x) => /^(launchctl bootstrap .*cloudflared|systemctl --user restart polycarp-cloudflared)/.test(x)).length, 1, "it restarted once, not in a loop");
 	} finally {
 		m.cleanup();
 	}
