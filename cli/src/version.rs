@@ -374,9 +374,12 @@ pub fn plist_identity(xml: &str) -> (Option<String>, Build) {
 /// `polycarp-build|v1|<commit>|<commit date>|<0 or 1 for dirty>|<version>|end|`.
 pub const STAMP_START: &[u8] = b"polycarp-build|v1|";
 
-/// The stamp in a binary's bytes, if it has one. The first complete stamp wins: `polycarp` itself also
-/// holds the bare start text (this module searches for it), which is not a stamp.
+/// The stamp in a binary's bytes, if it has one. `polycarp` itself also holds the bare start text
+/// (this module searches for it), and a linker may put that text right before other text that happens
+/// to end like a stamp. So a complete stamp that names a commit wins over one that does not, wherever
+/// each is in the file; a build made without git has only the second kind.
 pub fn stamp_identity(bytes: &[u8]) -> Option<(Option<String>, Build)> {
+    let mut without_commit = None;
     let mut from = 0;
     while let Some(at) = bytes[from..]
         .windows(STAMP_START.len())
@@ -385,13 +388,17 @@ pub fn stamp_identity(bytes: &[u8]) -> Option<(Option<String>, Build)> {
         let rest = &bytes[from + at + STAMP_START.len()..];
         let text = String::from_utf8_lossy(&rest[..rest.len().min(200)]).into_owned();
         let fields: Vec<&str> = text.split('|').collect();
-        if fields.len() >= 6 && fields[4] == "end" {
+        if fields.len() >= 6 && fields[4] == "end" && matches!(fields[2], "0" | "1") {
             let version = Some(fields[3].to_string()).filter(|v| !v.is_empty());
-            return Some((version, Build::new(fields[0], fields[1], fields[2] == "1")));
+            let found = (version, Build::new(fields[0], fields[1], fields[2] == "1"));
+            if found.1.commit.is_some() {
+                return Some(found);
+            }
+            without_commit.get_or_insert(found);
         }
         from += at + STAMP_START.len();
     }
-    None
+    without_commit
 }
 
 /// The app bundle a file sits in (`X.app/Contents/Resources/bin/<file>` or `…/browser/<file>`).
@@ -1000,6 +1007,30 @@ mod tests {
         assert_eq!(version.as_deref(), Some("0.1.0"));
         assert_eq!(build, Build::new(A, "2026-11-09T10:00:00Z", false));
         assert_eq!(stamp_identity(b"no stamp here"), None);
+        // The start text next to something that only ends like a stamp (this happens inside a test
+        // binary, and could inside any binary): the stamp that names a commit is the one that is read.
+        let mut two = STAMP_START.to_vec();
+        two.extend_from_slice(b"|2026-11-09T10:00:00Z|0|0.1.0|end|\0");
+        assert_eq!(
+            stamp_identity(&two),
+            Some((
+                Some("0.1.0".into()),
+                Build::new("", "2026-11-09T10:00:00Z", false)
+            )),
+            "a build made without git"
+        );
+        two.extend_from_slice(STAMP_START);
+        two.extend_from_slice(format!("{B}|2026-11-10T10:00:00Z|1|0.2.0|end|").as_bytes());
+        assert_eq!(
+            stamp_identity(&two),
+            Some((
+                Some("0.2.0".into()),
+                Build::new(B, "2026-11-10T10:00:00Z", true)
+            ))
+        );
+        let mut junk = STAMP_START.to_vec();
+        junk.extend_from_slice(b"a|b|maybe|c|end|");
+        assert_eq!(stamp_identity(&junk), None, "the dirty field is 0 or 1");
         let mut cut = STAMP_START.to_vec();
         cut.extend_from_slice(b"aaaaaaa|date");
         assert_eq!(
