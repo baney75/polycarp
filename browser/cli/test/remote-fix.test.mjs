@@ -384,6 +384,20 @@ serviceTest("Tailscale signed out: remote fix changes nothing and says what the 
 	}
 });
 
+serviceTest("--dry-run while a step only the person can take blocks the rest still exits 0, as every dry run does", async () => {
+	const m = await machine("signed-out-dry");
+	try {
+		writeTailscaleStub(join(m.dir, "bin", "tailscale"), { dir: m.dir, log: join(m.dir, "calls.log"), dns: DNS, status: "{}" });
+		const r = await m.run(["remote", "fix", "--dry-run", "--json"]);
+		assert.equal(r.code, 0, r.stdout);
+		assert.equal(r.json().state, "tailscale_signed_out", "the report still names what blocks it");
+		assert.deepEqual(changes(m), []);
+		never(m);
+	} finally {
+		m.cleanup();
+	}
+});
+
 serviceTest("the Cloudflare tunnel's service installed but not running: status says so, and remote fix starts it", async () => {
 	const m = await machine("cf-stopped", { route: "cloudflare", serve: "up" });
 	try {

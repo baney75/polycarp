@@ -206,7 +206,8 @@ export async function remoteFix(options: FixOptions): Promise<number> {
 			const b = d.blocked;
 			const next = b.url ? { kind: "open_page", url: b.url } : b.command ? { kind: "run_command", command: b.command } : undefined;
 			const planned = d.actions.map((a) => ({ kind: a.kind, what: a.what, status: "planned" as const }));
-			return finish({ ok: false, state: b.state, ...(b.code ? { code: b.code } : {}), message: b.message, ...(next ? { next } : {}), planned }, EXIT_NEEDS_PERSON);
+			// A dry run only reports, so it exits 0 here too; the JSON still names the step that blocks the rest.
+			return finish({ ok: false, state: b.state, ...(b.code ? { code: b.code } : {}), message: b.message, ...(next ? { next } : {}), planned }, options.dryRun ? EXIT_ON : EXIT_NEEDS_PERSON);
 		}
 		const action = d.actions[0];
 		if (!action) break;
