@@ -1546,3 +1546,19 @@ test("remote fix's last hint keeps a check's own advice without sending the pers
 	assert.match(waiting, /few minutes/);
 	assert.match(waiting, /remote test/);
 });
+
+test("a TLS connect error from this computer's own network (no route) is pending, not a setup fault", async () => {
+	const { tlsFailure } = await loadTs(`export { tlsFailure } from "@src/remote-test.ts";`);
+	const url = new URL("https://pub.example.com/mcp");
+	const fail = (code) => tlsFailure(Object.assign(new Error(`connect ${code}`), { code }), url, "2001:db8::1", 443);
+	for (const code of ["ENETUNREACH", "EHOSTUNREACH"]) {
+		const c = fail(code);
+		assert.equal(c.status, "fail");
+		assert.equal(c.pending, true, code);
+		assert.match(c.detail, new RegExp(code));
+		assert.match(c.next, /this computer's network/);
+	}
+	assert.equal(fail("ECONNREFUSED").pending, true);
+	assert.equal(fail("ERR_TLS_CERT_ALTNAME_INVALID").pending, undefined);
+	assert.equal(fail("EAI_FAIL").pending, undefined);
+});

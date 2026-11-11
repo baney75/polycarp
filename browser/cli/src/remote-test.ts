@@ -157,11 +157,20 @@ function tlsCheck(url: URL, address: string): Promise<ProofCheck> {
 const CERTIFICATE_CODE = /^(ERR_TLS_CERT|CERT_|UNABLE_TO_|DEPTH_ZERO|SELF_SIGNED|HOSTNAME_MISMATCH|ERR_SSL_SSLV3_ALERT_(BAD|UNSUPPORTED|CERTIFICATE)_CERTIFICATE)/;
 
 /** A failed TLS handshake, sorted by its code: refused (nothing listens yet), a refused certificate, not TLS at all, or no route. */
-function tlsFailure(err: NodeJS.ErrnoException, url: URL, address: string, port: number): ProofCheck {
+export function tlsFailure(err: NodeJS.ErrnoException, url: URL, address: string, port: number): ProofCheck {
 	const code = err.code ?? "";
 	const why = `${err.message}${code ? ` (${code})` : ""}`;
 	if (code === "ECONNREFUSED" || code === "ECONNRESET") {
 		return { name: "tls", status: "fail", pending: true, detail: `${address}:${port} refused the connection (${code})`, next: `Nothing public answers for ${url.host}. Run ${COMMAND_NAME} remote fix.` };
+	}
+	if (code === "ENETUNREACH" || code === "EHOSTUNREACH") {
+		return {
+			name: "tls",
+			status: "fail",
+			pending: true,
+			detail: `this computer has no route to ${address}:${port} (${code})`,
+			next: `That is this computer's network, not the setup. Check its connection (an IPv6 address needs an IPv6 route), then run ${COMMAND_NAME} remote test.`,
+		};
 	}
 	if (CERTIFICATE_CODE.test(code)) {
 		return {
