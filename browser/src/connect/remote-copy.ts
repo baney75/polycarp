@@ -1,6 +1,6 @@
 /**
  * Every sentence of "Use Polycarp from Claude, ChatGPT and Grok", in one place: the side panel draws from it, the Mac app
- * holds the same strings (spaces/Sources/BaneySpacesCore/BrowserRemote.swift, held equal by test/remote-copy.test.mjs),
+ * holds the same strings (spaces/Sources/BaneySpacesCore/RemoteSharedCopy.swift, held equal by test/remote-copy.test.mjs),
  * and the assistant steps are the lines `remote setup` prints. Types and constants only, so the extension and the helper
  * both import it.
  *
@@ -116,6 +116,11 @@ export const STEP_COPY = {
 		title: "Finish installing Polycarp",
 		body: "Polycarp's launcher isn't set up on this computer, so the background service would have nothing to start. Run this command once in a terminal, then try again.",
 		action: { kind: "copy_command", label: "Copy the command" },
+	},
+	launcher_app: {
+		title: "Connect a browser first",
+		body: "Polycarp needs a browser connected before an assistant can use it. Use Connect in the Browsers section above, then press Check again.",
+		action: { kind: "check_again", label: "Check again" },
 	},
 	hub: {
 		title: "This computer is a hub",

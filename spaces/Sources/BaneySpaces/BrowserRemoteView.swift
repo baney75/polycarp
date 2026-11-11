@@ -14,8 +14,17 @@ final class BrowserRemoteModel: ObservableObject {
     /// The approval passcode, from the run that made it. Memory only: shown until the person says they've saved it.
     @Published private(set) var passcode: String?
     @Published private(set) var note: String?
-    /// The one-time code that approves a new assistant. Memory only.
-    @Published private(set) var connectCode: String?
+    /// The one-time code that approves a new assistant, with when it stops working. Memory only, never logged.
+    @Published private(set) var connectCode: ConnectCode?
+    /// Checks from the internet: setup's proof, then `remote test`.
+    @Published private(set) var checks: [RemoteCheck] = []
+    @Published private(set) var checking = false
+    /// What `remote fix` would repair. Nil until asked; `available: false` from a helper without it.
+    @Published private(set) var fixPlan: RemoteFixPlan?
+    @Published private(set) var fixing = false
+    /// Turn on is running again by itself while Tailscale's Funnel page is open.
+    @Published private(set) var retryingFunnel = false
+    @Published private(set) var funnelGaveUp = false
     @Published private(set) var copied: String?
     /// Status reads in a row that gave no usable answer.
     @Published private(set) var failedReads = 0
@@ -23,6 +32,14 @@ final class BrowserRemoteModel: ObservableObject {
     @Published private(set) var route: RemoteRoute?
     @Published private(set) var signingIn = false
     private var setupAt: Date?
+    private var funnelFirstRefusal: Date?
+    private var funnelLastTry: Date?
+    private var funnelTimer: Timer?
+    private var openedAdmin: URL?
+    /// The setup command of the last Turn on, so Try again runs the same one.
+    private var lastSetup: RemoteCommand = .setup
+    /// `remote test` ran in this visit to the On screen.
+    private var testedThisVisit = false
     /// Bumped by every click that changes things. A status read that started before the click is out of date and is dropped.
     private var generation = 0
     private var timer: Timer?
@@ -55,7 +72,12 @@ final class BrowserRemoteModel: ObservableObject {
 
     func stopWatching() {
         watchers = max(0, watchers - 1)
-        if watchers == 0 { timer?.invalidate(); timer = nil }
+        if watchers == 0 { timer?.invalidate(); timer = nil; stopFunnelRetry(); clearSecrets() }
+    }
+
+    /// The passcode and connect code are shown once: closing the window forgets them. Nothing here is ever saved.
+    func clearSecrets() {
+        passcode = nil; connectCode = nil; testedThisVisit = false
     }
 
     private func schedule() {
@@ -111,19 +133,31 @@ final class BrowserRemoteModel: ObservableObject {
         }
     }
 
-    func turnOn(cloudflare host: String? = nil) {
-        guard available, !settingUp, !working else { return }
-        settingUp = true; note = nil; generation += 1; failedReads = 0
+    /// `download`: "Get it for me" was pressed, so the helper may fetch Cloudflare's own cloudflared first.
+    func turnOn(cloudflare host: String? = nil, download: Bool = false) {
+        let command = host.map { RemoteCommand.setupCloudflare($0, download: download) } ?? .setup
+        runSetup(command, quiet: false)
+    }
+
+    /// Try again: the same setup as last time.
+    func tryAgain() { runSetup(lastSetup, quiet: false) }
+
+    /// `quiet`: the Funnel retry. The screen stays as it is (no "Turning on") until an answer changes it.
+    private func runSetup(_ command: RemoteCommand, quiet: Bool) {
+        guard available, !settingUp, !working, !retryingFunnel else { return }
+        if quiet { retryingFunnel = true; funnelLastTry = Date() } else { settingUp = true; note = nil; stopFunnelRetry() }
+        lastSetup = command
+        generation += 1; failedReads = 0
         queue.async { [weak self] in
-            let result = Self.run(host.map(RemoteCommand.setupCloudflare) ?? .setup)
+            let result = Self.run(command)
             let parsed = RemoteReport.parse(result.out)
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.settingUp = false
+                self.settingUp = false; self.retryingFunnel = false
                 let report = parsed ?? RemoteReport(state: .problem, message: RemoteCopy.helperSilent)
-                self.passcode = RemoteFlow.keepPasscode(current: self.passcode, from: report)
-                self.setup = report
-                self.setupAt = Date()
+                // A quiet retry that hears the same refusal changes nothing on screen.
+                if quiet, report.state == .funnelNotAllowed { self.refresh(); return }
+                self.take(report)
                 if report.state == .on {
                     // The success speaks for itself only briefly: when the grace is over, whatever status says takes over.
                     for grace in [RemoteFlow.setupGrace, RemoteFlow.dnsGrace] {
@@ -138,7 +172,90 @@ final class BrowserRemoteModel: ObservableObject {
         }
     }
 
+    private func take(_ report: RemoteReport) {
+        passcode = RemoteFlow.keepPasscode(current: passcode, from: report)
+        if let code = report.connectCode { connectCode = code }
+        if !report.checks.isEmpty { checks = report.checks }
+        setup = report
+        setupAt = Date()
+        if report.state == .funnelNotAllowed { startFunnelRetry(admin: report.adminURL) } else { stopFunnelRetry() }
+        if report.state == .on { testedThisVisit = true; if !report.failedChecks.isEmpty { planFix() } }
+    }
+
+    // MARK: Funnel: allowed in Tailscale, noticed here
+
+    private func startFunnelRetry(admin: URL?) {
+        if funnelFirstRefusal == nil { funnelFirstRefusal = Date(); funnelGaveUp = false }
+        // The page to allow Funnel opens once per refusal run, since that is the step; the button stays for reopening it.
+        if let admin, openedAdmin != admin { openedAdmin = admin; NSWorkspace.shared.open(admin) }
+        guard funnelTimer == nil else { return }
+        funnelTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.funnelTick() }
+    }
+
+    private func funnelTick() {
+        let now = Date()
+        if let first = funnelFirstRefusal, now.timeIntervalSince(first) >= RemoteFlow.funnelRetryFor {
+            funnelTimer?.invalidate(); funnelTimer = nil; funnelGaveUp = true
+            return
+        }
+        if RemoteFlow.funnelRetryDue(setup: setup, busy: settingUp || working || retryingFunnel, firstRefusal: funnelFirstRefusal, lastTry: funnelLastTry, now: now) {
+            runSetup(lastSetup, quiet: true)
+        }
+    }
+
+    private func stopFunnelRetry() {
+        funnelTimer?.invalidate(); funnelTimer = nil
+        funnelFirstRefusal = nil; funnelLastTry = nil; openedAdmin = nil; funnelGaveUp = false
+    }
+
+    // MARK: Checks from the internet, and Repair
+
+    /// Once per visit to the On screen when nothing has been checked yet, and on Check again.
+    func checkFromOutside(force: Bool = false) {
+        guard available, !checking, force || !testedThisVisit else { return }
+        testedThisVisit = true; checking = true
+        queue.async { [weak self] in
+            let result = Self.run(.test)
+            let parsed = RemoteReport.parse(result.out)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.checking = false
+                if let parsed, !parsed.checks.isEmpty { self.checks = parsed.checks }
+                if !self.checks.filter(\.failed).isEmpty { self.planFix() }
+            }
+        }
+    }
+
+    /// Asks `remote fix --dry-run` what it would repair. Changes nothing; an older helper answers "not available".
+    private func planFix() {
+        guard available else { return }
+        queue.async { [weak self] in
+            let result = Self.run(.fixPlan)
+            let plan = RemoteCommand.parseFix(exitCode: result.code, result.out)
+            DispatchQueue.main.async { self?.fixPlan = plan }
+        }
+    }
+
+    func repair() {
+        guard available, !fixing, RemoteFlow.offerRepair(checks: checks, plan: fixPlan) else { return }
+        fixing = true; note = nil; generation += 1
+        queue.async { [weak self] in
+            let result = Self.run(.fix)
+            let done = RemoteCommand.parseFix(exitCode: result.code, result.out)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.fixing = false
+                if !done.checks.isEmpty { self.checks = done.checks }
+                if !done.ok { self.note = RemoteCopy.repairFailed }
+                self.fixPlan = nil
+                if !self.checks.filter(\.failed).isEmpty { self.planFix() }
+                self.refresh()
+            }
+        }
+    }
+
     func checkAgain() {
+        stopFunnelRetry()
         setup = nil; note = nil; generation += 1; failedReads = 0
         refresh()
     }
@@ -153,6 +270,7 @@ final class BrowserRemoteModel: ObservableObject {
                 self.working = false
                 if result.code == 0 {
                     self.setup = nil; self.setupAt = nil; self.passcode = nil; self.status = nil; self.failedReads = 0; self.route = nil
+                    self.connectCode = nil; self.checks = []; self.fixPlan = nil; self.stopFunnelRetry()
                 } else {
                     self.note = RemoteCopy.turnOffFailed + (result.text.isEmpty ? "" : " \(result.text)")
                 }
@@ -170,7 +288,7 @@ final class BrowserRemoteModel: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.working = false
-                if let code { self.passcode = code } else { self.note = "Couldn't make a new passcode. Try again." }
+                if let code { self.passcode = code } else { self.note = RemoteCopy.newPasscodeFailed }
             }
         }
     }
@@ -190,6 +308,11 @@ final class BrowserRemoteModel: ObservableObject {
     }
 
     func savedPasscode() { passcode = nil }
+
+    /// The render harness's result screen: a made-up code and checks, in memory, never from the helper.
+    func stageForRender(code: ConnectCode?, passcode: String?, checks: [RemoteCheck], plan: RemoteFixPlan?) {
+        connectCode = code; self.passcode = passcode; self.checks = checks; fixPlan = plan; testedThisVisit = true
+    }
 
     func copy(_ text: String, label: String, secret: Bool = false) {
         let board = NSPasteboard.general
@@ -260,14 +383,16 @@ final class BrowserRemoteModel: ObservableObject {
     }
 }
 
-/// The guided flow: one step on screen, and it moves on by itself as Tailscale gets installed and signed in.
+/// The guided flow: one step on screen, and it moves on by itself as Tailscale gets installed, signed in and Funnel allowed.
+/// Every title, body and button is `RemoteSharedCopy`'s, the side panel's own words.
 struct BrowserRemoteView: View {
-    /// The render harness's step, in place of the live one.
+    /// The render harness's step, in place of the live one. Nothing is read from the helper while it is set.
     var preview: RemoteScreen?
     @ObservedObject private var model = BrowserRemoteModel.shared
-    @State private var assistant = RemoteCopy.assistants[0].name
     @State private var cloudflareName = ""
     @State private var nameRefused = false
+
+    private typealias Shared = RemoteSharedCopy
 
     var body: some View {
         SettingsGroup(RemoteCopy.title) {
@@ -284,149 +409,261 @@ struct BrowserRemoteView: View {
                 .accessibilityLabel("\(RemoteCopy.otherWays): \(RemoteCopy.otherWaysHelp)")
             }
         }
-        .onAppear { model.startWatching() }
-        .onDisappear { model.stopWatching() }
+        .onAppear { if preview == nil { model.startWatching() } }
+        .onDisappear { if preview == nil { model.stopWatching() } }
     }
 
+    private var current: RemoteScreen { preview ?? model.screen }
+
     @ViewBuilder private var content: some View {
-        switch preview ?? model.screen {
+        switch current {
         case .unavailable:
             line(RemoteCopy.unavailable)
         case .checking:
-            HStack(spacing: 8) { ProgressView().controlSize(.small); line("Looking…") }
+            HStack(spacing: 8) { ProgressView().controlSize(.small); line("Looking...") }
         case .chooseRoute(let routes):
             line(RemoteCopy.intro)
-            Text(RemoteCopy.chooseTitle).font(Chrome.font(13, .semibold))
-            line(RemoteCopy.chooseBody)
-            routeChoice("Tailscale", RemoteCopy.tailscaleChoice, installed: routes.tailscaleInstalled, signedIn: routes.tailscaleSignedIn,
-                        use: RemoteCopy.useTailscaleButton, signup: RemoteCopy.tailscaleSignupURL) { model.choose(.tailscale) }
-            routeChoice("Cloudflare", RemoteCopy.cloudflareChoice, installed: routes.cloudflareInstalled, signedIn: routes.cloudflareSignedIn,
-                        use: RemoteCopy.useCloudflareButton, signup: RemoteCopy.cloudflareSignupURL) { model.choose(.cloudflare) }
+            header(1)
+            Text(Shared.route["chooseTitle"]!).font(Chrome.font(13, .semibold))
+            line(Shared.route["chooseBody"]!)
+            routeChoice("tailscale", installed: routes.tailscaleInstalled, signedIn: routes.tailscaleSignedIn, recommended: routes.tailscaleInstalled,
+                        signup: RemoteCopy.tailscaleSignupURL) { model.choose(.tailscale) }
+            routeChoice("cloudflare", installed: routes.cloudflareInstalled, signedIn: routes.cloudflareSignedIn, recommended: false,
+                        signup: RemoteCopy.cloudflareSignupURL) { model.choose(.cloudflare) }
             footnotes
         case .getCloudflared(let configured):
-            step(RemoteCopy.getCloudflaredTitle, RemoteCopy.getCloudflaredBody) {
+            step("cloudflared_missing") {
+                if !configured { nameField(onSubmit: getCloudflared) }
                 HStack(spacing: 10) {
-                    Button(RemoteCopy.getCloudflaredButton) { NSWorkspace.shared.open(RemoteCopy.cloudflaredDownloadURL) }
-                    Button(RemoteCopy.copyCommandButton) { model.copy(RemoteCopy.cloudflaredCommand, label: "command") }
+                    Button(Shared.steps["cloudflared_missing"]!.action!, action: getCloudflared).keyboardShortcut(.defaultAction)
+                    Button(RemoteCopy.openDownloadPage) { NSWorkspace.shared.open(RemoteCopy.cloudflaredDownloadURL) }.buttonStyle(.link).font(Chrome.font(11))
                     if configured { turnOffButton } else { chooseAgain }
                 }
             }
+            if nameRefused { warning(RemoteCopy.cloudflareAddressFirst) }
             if configured { line(RemoteCopy.stillSetUp) }
         case .cloudflareSignIn(let waiting):
-            step(RemoteCopy.cloudflareSignInTitle, RemoteCopy.cloudflareSignInBody) {
+            step("cloudflare_login") {
                 HStack(spacing: 10) {
                     if waiting {
                         ProgressView().controlSize(.small)
                         line(RemoteCopy.cloudflareWaiting)
                     } else {
-                        Button(RemoteCopy.cloudflareSignInButton) { model.signInToCloudflare() }
+                        Button(Shared.steps["cloudflare_login"]!.action!) { model.signInToCloudflare() }.keyboardShortcut(.defaultAction)
                     }
                     Button(RemoteCopy.createAccountButton) { NSWorkspace.shared.open(RemoteCopy.cloudflareSignupURL) }
                     chooseAgain
                 }
             }
-        case .cloudflareAddress(let problem):
-            step(RemoteCopy.cloudflareAddressTitle, RemoteCopy.cloudflareAddressBody) {
-                TextField(RemoteCopy.cloudflareAddressPlaceholder, text: $cloudflareName)
-                    .textFieldStyle(.roundedBorder)
-                    .font(Chrome.font(12))
-                    .autocorrectionDisabled()
-                    .onSubmit(turnOnCloudflare)
-                    .onChange(of: cloudflareName) { _ in nameRefused = false }
+        case .cloudflareAddress(let problem, let code):
+            let key = code.map { Shared.key(state: "problem", code: $0, nextKind: model.setup?.nextKind) } ?? "cloudflare_name"
+            step(key == "unknown" ? "cloudflare_name" : key) {
+                nameField(onSubmit: turnOnCloudflare)
                 HStack(spacing: 10) {
-                    Button(RemoteCopy.turnOnButton, action: turnOnCloudflare)
+                    Button(Shared.steps["cloudflare_name"]!.action!, action: turnOnCloudflare).keyboardShortcut(.defaultAction)
                     chooseAgain
                 }
             }
-            if nameRefused { Text(RemoteCopy.cloudflareAddressInvalid).font(Chrome.font(11)).foregroundStyle(Chrome.working) }
-            if let problem { Text(problem).font(Chrome.font(11)).foregroundStyle(Chrome.working).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
+            if nameRefused { warning(RemoteCopy.cloudflareAddressInvalid) }
+            if let problem { details(problem) }
             passcodeShown
             footnotes
         case .getTailscale(let configured):
             if !configured { line(RemoteCopy.intro) }
-            step(RemoteCopy.getTailscaleTitle, RemoteCopy.getTailscaleBody) {
+            step("tailscale_missing") {
                 HStack(spacing: 10) {
-                    Button(RemoteCopy.getTailscaleButton) { NSWorkspace.shared.open(RemoteCopy.tailscaleDownloadURL) }
+                    Button(Shared.steps["tailscale_missing"]!.action!) { NSWorkspace.shared.open(RemoteCopy.tailscaleDownloadURL) }.keyboardShortcut(.defaultAction)
                     if configured { turnOffButton } else { Button(RemoteCopy.createAccountButton) { NSWorkspace.shared.open(RemoteCopy.tailscaleSignupURL) }; chooseAgain }
                 }
+                waitingLine
             }
             if configured { line(RemoteCopy.stillSetUp) }
         case .signIn(let configured):
             if !configured { line(RemoteCopy.intro) }
-            step(RemoteCopy.signInTitle, RemoteCopy.signInBody) {
+            step("tailscale_signed_out") {
+                commandBox(model.status?.nextCommand ?? model.setup?.nextCommand ?? "tailscale up")
                 HStack(spacing: 10) {
-                    if model.tailscaleAppInstalled { Button(RemoteCopy.openTailscaleButton) { model.openTailscale() } }
-                    if configured { turnOffButton } else { Button(RemoteCopy.createAccountButton) { NSWorkspace.shared.open(RemoteCopy.tailscaleSignupURL) }; chooseAgain }
+                    if model.tailscaleAppInstalled { Button(RemoteCopy.openTailscaleButton) { model.openTailscale() }.keyboardShortcut(.defaultAction) }
+                    if configured { turnOffButton } else { chooseAgain }
                 }
+                waitingLine
             }
             if configured { line(RemoteCopy.stillSetUp) }
         case .needsBrowser:
-            step(RemoteCopy.needsBrowserTitle, RemoteCopy.needsBrowserBody) {
-                Button(RemoteCopy.checkAgainButton) { model.checkAgain() }
+            step("launcher_app") {
+                Button(Shared.steps["launcher_app"]!.action!) { model.checkAgain() }.keyboardShortcut(.defaultAction)
             }
         case .funnelNotAllowed(let admin):
-            step(RemoteCopy.funnelTitle, RemoteCopy.funnelBody) {
+            step("funnel_not_allowed", header: 3) {
                 HStack(spacing: 10) {
-                    if let admin { Button(RemoteCopy.funnelButton) { NSWorkspace.shared.open(admin) } }
-                    Button(RemoteCopy.tryAgainButton) { model.turnOn() }
+                    if let admin { Button(Shared.steps["funnel_not_allowed"]!.action!) { NSWorkspace.shared.open(admin) }.keyboardShortcut(.defaultAction) }
                     turnOffButton
+                }
+                if model.funnelGaveUp {
+                    HStack(spacing: 10) {
+                        warning(RemoteCopy.funnelGaveUp)
+                        Button(Shared.steps["ready"]!.action!) { model.tryAgain() }
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small).opacity(model.retryingFunnel ? 1 : 0.5)
+                        line(RemoteCopy.funnelWaiting)
+                    }
+                    .accessibilityElement(children: .combine)
                 }
             }
             // The passcode was made before Funnel was refused: show it here, so it can't be lost unseen.
             passcodeShown
         case .funnelClosed:
-            step(RemoteCopy.funnelClosedTitle, RemoteCopy.funnelClosedBody) {
+            step("funnel_closed", header: 3) {
                 HStack(spacing: 10) {
-                    Button(RemoteCopy.funnelClosedButton) { model.turnOn() }
+                    Button(Shared.steps["funnel_closed"]!.action!) { model.turnOn() }.keyboardShortcut(.defaultAction)
                     turnOffButton
                 }
             }
             passcodeShown
         case .tailnetLock(let configured):
-            step(RemoteCopy.lockTitle, configured ? RemoteCopy.lockConfiguredBody : RemoteCopy.lockBody) {
+            step("tailnet_lock") {
                 HStack(spacing: 10) {
-                    Button(RemoteCopy.checkAgainButton) { model.checkAgain() }
-                    if configured { turnOffButton }
+                    if configured {
+                        turnOffButton
+                    } else {
+                        Button(Shared.steps["tailnet_lock"]!.action!) { model.choose(.cloudflare) }.keyboardShortcut(.defaultAction)
+                    }
                 }
             }
             if configured { line(RemoteCopy.stillSetUp) }
         case .portBusy(let tailscaleSetting, let detail):
-            step(RemoteCopy.busyTitle, tailscaleSetting ? RemoteCopy.busyTailscaleBody : RemoteCopy.busyBody) {
-                Button(RemoteCopy.checkAgainButton) { model.checkAgain() }
+            let key = tailscaleSetting ? "tailscale_port" : "local_port"
+            step(key, header: 3) {
+                Button(Shared.steps[key]!.action!) { model.checkAgain() }.keyboardShortcut(.defaultAction)
             }
             details(detail)
             // The passcode may have been made before the run stopped: never leave it unseen.
             passcodeShown
         case .ready:
             line(RemoteCopy.intro)
-            step(RemoteCopy.readyTitle, RemoteCopy.readyBody) {
+            step("ready", header: 3) {
                 HStack(spacing: 10) {
-                    Button(RemoteCopy.turnOnButton) { model.turnOn() }
+                    Button(Shared.steps["ready"]!.action!) { model.turnOn() }.keyboardShortcut(.defaultAction)
                     chooseAgain
                 }
             }
             footnotes
         case .turningOn:
+            header(3)
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(RemoteCopy.turningOnTitle).font(Chrome.font(12, .medium))
-                    line(RemoteCopy.turningOnBody)
+                    Text(Shared.steps["turning_on"]!.title).font(Chrome.font(12, .medium))
+                    line(Shared.steps["turning_on"]!.body!)
                 }
             }
+            .accessibilityElement(children: .combine)
         case .on(let address, let browserConnected):
             onView(address: address, browserConnected: browserConnected)
-        case .problem(let message):
-            let silent = message == RemoteCopy.helperSilent
-            step("Something is not working", silent ? RemoteCopy.helperSilent : RemoteCopy.genericProblem) {
-                HStack(spacing: 10) {
-                    Button(RemoteCopy.checkAgainButton) { model.checkAgain() }
-                    Button(RemoteCopy.startOverButton) { model.turnOff() }.disabled(model.working)
+        case .problem(let code, let message):
+            problemView(code: code, message: message)
+        }
+    }
+
+    // MARK: Problems: each code its own sentence and one button
+
+    @ViewBuilder private func problemView(code: String?, message: String) -> some View {
+        if code == RemoteCopy.helperSilentCode {
+            stepText(Shared.steps["unknown"]!.title, RemoteCopy.helperSilent)
+            Button(Shared.steps["unknown"]!.action!) { model.checkAgain() }.keyboardShortcut(.defaultAction)
+        } else {
+            let copy = Shared.copy(for: RemoteReport(state: .problem, message: message, code: code, nextKind: model.setup?.nextKind, nextCommand: model.setup?.nextCommand))
+            let entry = Shared.steps[copy.key]!
+            header(stepNumber(copy.key))
+            stepText(copy.title, copy.body)
+            if let command = model.setup?.nextCommand, entry.kind == "copy_command" { commandBox(command) }
+            HStack(spacing: 10) {
+                if let label = entry.action, let kind = entry.kind, kind != "copy_command" {
+                    Button(label) { act(kind) }.keyboardShortcut(.defaultAction).disabled(model.working || model.fixing)
                 }
+                Button(RemoteCopy.startOverButton) { model.turnOff() }.disabled(model.working)
             }
-            if message != RemoteCopy.genericProblem, !silent { details(message) }
+            // The helper's own words, unless they already are the body.
+            if copy.key != "unknown" { details(message) }
             passcodeShown
         }
+    }
+
+    /// What a step's one button does. The kinds are remote-copy.ts's.
+    private func act(_ kind: String) {
+        switch kind {
+        case "try_again": model.tryAgain()
+        case "turn_on", "open_funnel": model.turnOn()
+        case "new_code": model.newConnectCode()
+        case "repair": model.repair()
+        case "choose": model.choose(nil)
+        case "use_cloudflare": model.choose(.cloudflare)
+        case "sign_in_cloudflare": model.signInToCloudflare()
+        default: model.checkAgain()
+        }
+    }
+
+    // MARK: Pieces
+
+    private func line(_ text: String) -> some View {
+        Text(text).font(Chrome.font(12)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func warning(_ text: String) -> some View {
+        Text(text).font(Chrome.font(11)).foregroundStyle(Chrome.working).fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// "Step 2 of 3: Get it and sign in", the side panel's header.
+    private func header(_ n: Int) -> some View {
+        Text(RemoteCopy.stepHeader(n)).font(Chrome.font(11, .medium)).foregroundStyle(Chrome.muted).accessibilityAddTraits(.isHeader)
+    }
+
+    private func stepText(_ title: String, _ body: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(Chrome.font(13, .semibold)).accessibilityAddTraits(.isHeader)
+            line(body)
+        }
+    }
+
+    /// One shared entry: the step number, its title and body, then the actions.
+    private func step<Actions: View>(_ key: String, header n: Int? = nil, @ViewBuilder actions: () -> Actions) -> some View {
+        let entry = Shared.steps[key] ?? Shared.steps["unknown"]!
+        let number = n ?? stepNumber(key)
+        return VStack(alignment: .leading, spacing: 8) {
+            header(number)
+            stepText(entry.title, entry.body ?? Shared.unknownBody)
+            actions()
+        }
+    }
+
+    /// Step 2 is getting the tool and signing in; anything about turning on or what it found is step 3 (remote-flow.ts's STEP_TWO).
+    private func stepNumber(_ key: String) -> Int {
+        ["tailscale_missing", "tailscale_signed_out", "tailnet_lock", "cloudflared_missing", "cloudflared_manual", "cloudflare_login"].contains(key) ? 2 : 3
+    }
+
+    /// Steps that wait on the person say so, in a line that is always there, so the layout doesn't jump.
+    private var waitingLine: some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.mini)
+            Text("Watching for it...").font(Chrome.font(11)).foregroundStyle(Chrome.muted)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func nameField(onSubmit: @escaping () -> Void) -> some View {
+        TextField(RemoteCopy.cloudflareAddressPlaceholder, text: $cloudflareName)
+            .textFieldStyle(.roundedBorder)
+            .font(Chrome.font(12))
+            .autocorrectionDisabled()
+            .onSubmit(onSubmit)
+            .onChange(of: cloudflareName) { _ in nameRefused = false }
+            .accessibilityLabel(Shared.steps["cloudflare_name"]!.title)
+    }
+
+    private func commandBox(_ command: String) -> some View {
+        copyRow(RemoteCopy.commandLabel, command, label: "command", secret: false)
     }
 
     /// The helper's own words, for anyone who wants them.
@@ -439,40 +676,31 @@ struct BrowserRemoteView: View {
         }
     }
 
-    // MARK: Pieces
-
-    private func line(_ text: String) -> some View {
-        Text(text).font(Chrome.font(12)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func step<Actions: View>(_ title: String, _ body: String, @ViewBuilder actions: () -> Actions) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(Chrome.font(13, .semibold))
-            line(body)
-            actions()
-        }
-    }
-
     /// One way in: what it is, where it stands here, and both ways to start: an account you have, or a new one.
-    private func routeChoice(_ name: String, _ detail: String, installed: Bool, signedIn: Bool, use: String, signup: URL, action: @escaping () -> Void) -> some View {
+    private func routeChoice(_ id: String, installed: Bool, signedIn: Bool, recommended: Bool, signup: URL, action: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text(name).font(Chrome.font(13, .semibold))
-                Text(RemoteCopy.routeStatus(installed: installed, signedIn: signedIn)).font(Chrome.font(11)).foregroundStyle(signedIn ? Chrome.done : Chrome.muted)
+                Text(Shared.route["\(id).name"]!).font(Chrome.font(13, .semibold))
+                if recommended {
+                    Text(Shared.route["recommended"]!).font(Chrome.font(10, .medium)).foregroundStyle(Chrome.done)
+                }
+                Text(signedIn ? Shared.route["signedIn"]! : installed ? Shared.route["installed"]! : Shared.route["missing"]!)
+                    .font(Chrome.font(11)).foregroundStyle(signedIn ? Chrome.done : Chrome.muted)
             }
-            line(detail)
+            line(Shared.route["\(id).detail"]!)
             HStack(spacing: 10) {
-                Button(use, action: action)
+                Button(Shared.route["\(id).use"]!, action: action)
                 if !signedIn { Button(RemoteCopy.createAccountButton) { NSWorkspace.shared.open(signup) } }
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Chrome.shape(.settingsCell, continuous: false).fill(Chrome.cell(0.06)))
+        .accessibilityElement(children: .contain)
     }
 
     private var chooseAgain: some View {
-        Button(RemoteCopy.chooseAgainButton) { model.choose(nil) }.buttonStyle(.link).font(Chrome.font(11))
+        Button(Shared.route["chooseAgain"]!) { model.choose(nil) }.buttonStyle(.link).font(Chrome.font(11))
     }
 
     private func turnOnCloudflare() {
@@ -480,8 +708,20 @@ struct BrowserRemoteView: View {
         model.turnOn(cloudflare: host)
     }
 
+    /// "Get it for me": the helper downloads Cloudflare's pinned release and goes on to set up the address. An install that is
+    /// already set up keeps its own address; a new one needs the address first.
+    private func getCloudflared() {
+        if case .getCloudflared(true) = current {
+            guard let url = model.status?.connectorURL, let host = URL(string: url)?.host else { nameRefused = true; return }
+            model.turnOn(cloudflare: host, download: true)
+            return
+        }
+        guard let host = RemoteFlow.cloudflareHost(cloudflareName) else { nameRefused = true; return }
+        model.turnOn(cloudflare: host, download: true)
+    }
+
     private var turnOffButton: some View {
-        Button(RemoteCopy.turnOffButton) { model.turnOff() }.controlSize(.small).disabled(model.working)
+        Button(Shared.result["turnOff"]!) { model.turnOff() }.controlSize(.small).disabled(model.working)
     }
 
     @ViewBuilder private var footnotes: some View {
@@ -489,70 +729,130 @@ struct BrowserRemoteView: View {
         line(RemoteCopy.staysOn)
     }
 
+    // MARK: The result
+
+    private func result(_ key: String) -> String { Shared.result[key]! }
+
     private func onView(address: String, browserConnected: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let failed = model.checks.filter(\.failed)
+        let head = !failed.isEmpty ? "check_failed" : browserConnected ? "on" : "no_browser_connected"
+        return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: browserConnected ? "checkmark.circle.fill" : "exclamationmark.circle").foregroundStyle(browserConnected ? Chrome.done : Chrome.working)
-                Text(RemoteCopy.onTitle).font(Chrome.font(13, .semibold))
+                Image(systemName: failed.isEmpty && browserConnected ? "checkmark.circle.fill" : "exclamationmark.circle")
+                    .foregroundStyle(failed.isEmpty && browserConnected ? Chrome.done : Chrome.working)
+                    .accessibilityHidden(true)
+                Text(Shared.steps[head]!.title).font(Chrome.font(13, .semibold)).accessibilityAddTraits(.isHeader)
             }
-            if !browserConnected { Text(RemoteCopy.noBrowserNote).font(Chrome.font(11)).foregroundStyle(Chrome.working).fixedSize(horizontal: false, vertical: true) }
-            copyRow(RemoteCopy.addressLabel, address, label: "address", secret: false)
+            line(Shared.steps[head]!.body!)
+
+            numbered(result("assistantsStep")) {
+                ForEach(Shared.assistantSteps) { a in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(a.name).font(Chrome.font(12, .medium)).frame(width: 72, alignment: .leading)
+                        Text(a.where).font(Chrome.font(12)).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+                line(RemoteCopy.menusNote)
+            }
+            numbered(result("addressStep")) {
+                copyRow(result("addressLabel"), address, label: "address", secret: false)
+            }
+            numbered(result("codeStep")) {
+                line(Shared.approvalStep)
+                codeBox
+                line(result("codeNote"))
+            }
             passcodeBlock
-            assistants
+            checksBlock(failed: failed)
             footnotes
-            Button(RemoteCopy.turnOffButton) { model.turnOff() }.disabled(model.working)
+            Button(Shared.result["turnOff"]!) { model.turnOff() }.disabled(model.working)
+        }
+        .onAppear { if preview == nil { model.checkFromOutside() } }
+    }
+
+    private func numbered<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(Chrome.font(12, .semibold)).accessibilityAddTraits(.isHeader)
+            content()
         }
     }
 
-    /// The passcode this run made, with the "I've saved it" step. Nothing when there isn't one to show.
+    /// The connect code, its countdown and New code. The row keeps its size with or without a code, so nothing jumps.
+    private var codeBox: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let left = model.connectCode?.secondsLeft(now: context.date) ?? 0
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(result("codeLabel")).font(Chrome.font(11)).foregroundStyle(Chrome.muted)
+                    Text(left > 0 ? model.connectCode!.code : "----").font(Chrome.font(14, .semibold)).monospaced().textSelection(.enabled)
+                    Text(model.connectCode == nil ? " " : Shared.countdown(seconds: left)).font(Chrome.font(11)).monospacedDigit()
+                        .foregroundStyle(left > 0 ? Chrome.muted : Chrome.working)
+                        .accessibilityLabel(left > 0 ? Shared.countdown(seconds: left) : result("expired"))
+                }
+                Spacer(minLength: 8)
+                if model.copied == "connect code" { Text(result("copied")).font(Chrome.font(11)).foregroundStyle(Chrome.muted) }
+                if left > 0, let code = model.connectCode {
+                    Button(result("copy")) { model.copy(code.code, label: "connect code", secret: true) }.controlSize(.small).accessibilityLabel("Copy the connect code")
+                }
+                Button(result("newCode")) { model.newConnectCode() }.controlSize(.small).disabled(model.working)
+            }
+        }
+    }
+
+    /// The passcode only when this run made it, labeled for re-approving. Otherwise one line, and a way to make a new one.
+    @ViewBuilder private var passcodeBlock: some View {
+        if model.passcode != nil {
+            passcodeShown
+        } else if model.passcodeSet {
+            VStack(alignment: .leading, spacing: 6) {
+                line(RemoteCopy.passcodeEarlier)
+                Button(RemoteCopy.newPasscodeButton) { model.newPasscode() }.controlSize(.small).disabled(model.working)
+            }
+        } else {
+            line(result("noPasscode"))
+        }
+    }
+
     @ViewBuilder private var passcodeShown: some View {
         if let code = model.passcode {
-            copyRow(RemoteCopy.passcodeLabel, code, label: "passcode", secret: true)
+            copyRow(result("passcodeLabel"), code, label: "passcode", secret: true)
             HStack(spacing: 8) {
-                line(RemoteCopy.passcodeOnce)
+                line(result("passcodeNote"))
                 Button(RemoteCopy.passcodeSaved) { model.savedPasscode() }.controlSize(.small)
             }
         }
     }
 
-    @ViewBuilder private var passcodeBlock: some View {
-        if model.passcode != nil {
-            passcodeShown
-        } else {
-            VStack(alignment: .leading, spacing: 6) {
-                if model.passcodeSet {
-                    line(RemoteCopy.passcodeEarlier)
-                    line(RemoteCopy.newPasscodeNote)
-                } else {
-                    line(RemoteCopy.noPasscodeNote)
-                }
-                Button(RemoteCopy.newPasscodeButton) { model.newPasscode() }.controlSize(.small).disabled(model.working)
-            }
-        }
-    }
-
-    private var assistants: some View {
+    /// The outside checks as a checklist, with Repair only when one failed and the helper can repair it.
+    private func checksBlock(failed: [RemoteCheck]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Picker("", selection: $assistant) {
-                ForEach(RemoteCopy.assistants) { Text($0.name).tag($0.name) }
+            HStack(spacing: 8) {
+                Text(result("checksTitle")).font(Chrome.font(12, .semibold)).accessibilityAddTraits(.isHeader)
+                Text(model.checking ? result("checksRunning") : model.checks.isEmpty ? result("checksNone")
+                     : failed.isEmpty ? result("checksPassed") : Shared.checksFailed(failed.count))
+                    .font(Chrome.font(11)).foregroundStyle(failed.isEmpty ? Chrome.muted : Chrome.working)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            if let chosen = RemoteCopy.assistants.first(where: { $0.name == assistant }) {
-                ForEach(Array(chosen.steps.enumerated()), id: \.offset) { index, words in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text("\(index + 1).").font(Chrome.font(12, .medium))
-                        Text(words).font(Chrome.font(12)).fixedSize(horizontal: false, vertical: true)
+            ForEach(model.checks) { check in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: check.status == "ok" ? "checkmark.circle" : check.failed ? "xmark.circle" : "exclamationmark.circle")
+                        .foregroundStyle(check.status == "ok" ? Chrome.done : Chrome.working).accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(Shared.checkLabels[check.name] ?? check.name).font(Chrome.font(12))
+                        if check.status != "ok", !check.detail.isEmpty {
+                            Text(check.detail).font(Chrome.font(11)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(Shared.checkLabels[check.name] ?? check.name): \(check.status == "ok" ? "passed" : check.failed ? "failed" : "warning")")
             }
-            line(RemoteCopy.approvalNote)
-            if let code = model.connectCode {
-                copyRow(RemoteCopy.connectCodeLabel, code, label: "connect code", secret: true)
-                line(RemoteCopy.connectCodeNote)
+            HStack(spacing: 10) {
+                Button(result("checkAgain")) { model.checkFromOutside(force: true) }.controlSize(.small).disabled(model.checking || model.fixing)
+                if RemoteFlow.offerRepair(checks: model.checks, plan: model.fixPlan) {
+                    Button(model.fixing ? result("repairing") : result("repair")) { model.repair() }.controlSize(.small).disabled(model.fixing)
+                }
             }
-            Button(RemoteCopy.connectCodeButton) { model.newConnectCode() }.controlSize(.small).disabled(model.working)
-            line(RemoteCopy.menusNote)
         }
     }
 
@@ -563,9 +863,8 @@ struct BrowserRemoteView: View {
                 Text(value).font(Chrome.font(12, .medium)).textSelection(.enabled).lineLimit(2).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            // Every screen with a Copy button confirms it here, so the Funnel refusal and problem screens do too.
-            if model.copied == label { Text("Copied").font(Chrome.font(11)).foregroundStyle(Chrome.muted) }
-            Button("Copy") { model.copy(value, label: label, secret: secret) }.controlSize(.small).accessibilityLabel("Copy the \(label)")
+            if model.copied == label { Text(result("copied")).font(Chrome.font(11)).foregroundStyle(Chrome.muted) }
+            Button(result("copy")) { model.copy(value, label: label, secret: secret) }.controlSize(.small).accessibilityLabel("Copy the \(label)")
         }
     }
 }

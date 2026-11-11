@@ -100,6 +100,12 @@ claude.ai, ChatGPT and grok.com (the same lines `remote setup` prints), and the 
 button. The side panel never makes or shows a passcode: a new connect code approves an assistant again. The code lives
 only in the page's memory and is gone when Settings closes.
 
+The Mac app's Settings > Browser has the same three steps in the same words (they come from one table, held equal by
+`test/remote-copy.test.mjs`). Its differences: "Get it for me" asks for the Cloudflare address first and runs
+`remote setup --cloudflare <name> --yes`, Funnel is tried again every 15 seconds by running setup again, and a run that
+makes the passcode shows it once, labeled for re-approving. The passcode and the connect code are forgotten when
+Settings closes.
+
 The Linux desktop app has no remote screen; on Linux, use the side panel or the terminal. On Windows the helper finds
 `tailscale.exe` and `cloudflared.exe` in their installers' folders as well as on PATH ("Windows" below).
 
