@@ -1528,3 +1528,21 @@ test("deleting a token rewrites token-usage.json whole and drops entries for tok
 		rmSync(cfg, { recursive: true, force: true });
 	}
 });
+
+test("remote fix's last hint keeps a check's own advice without sending the person back to remote fix, and says to wait on a pending failure", async () => {
+	const { fixHint, COMMAND_NAME } = await loadTs(`export { fixHint } from "@src/remote-fix.ts"; export { COMMAND_NAME } from "@src/self.ts";`);
+	const cases = [
+		{ next: `Assistants refuse this certificate. On your own front door, give it a certificate for x.example.com; on Tailscale or Cloudflare, run ${COMMAND_NAME} remote fix.`, keep: /give it a certificate for x\.example\.com\./ },
+		{ next: `Something on x.example.com speaks plain HTTP or another protocol. Point the name at an HTTPS front door, or run ${COMMAND_NAME} remote fix on Tailscale or Cloudflare.`, keep: /Point the name at an HTTPS front door\./ },
+		{ next: `serve was started for another address. Run ${COMMAND_NAME} remote fix.`, keep: /remote status shows the local side/ },
+		{ next: "Public DNS can't resolve x.example.com. Check its DNS records and DNSSEC with your DNS provider.", keep: /^Public DNS can't resolve x\.example\.com\. Check its DNS records and DNSSEC with your DNS provider\.$/ },
+	];
+	for (const { next, keep } of cases) {
+		const hint = fixHint({ name: "tls", status: "fail", detail: "d", next });
+		assert.match(hint, keep, hint);
+		assert.doesNotMatch(hint, /remote fix/, hint);
+	}
+	const waiting = fixHint({ name: "tls", status: "fail", pending: true, detail: "refused", next: `Nothing public answers. Run ${COMMAND_NAME} remote fix.` });
+	assert.match(waiting, /few minutes/);
+	assert.match(waiting, /remote test/);
+});

@@ -843,7 +843,6 @@ function removeOne(spec: ServiceSpec): { ok: boolean; notes: string[]; failure?:
 	return { ok: true, notes: [] };
 }
 
-
 /**
  * Read-only: is the service running right now? launchd's `state = running`, or systemd's `active`. False when the manager says it
  * isn't (or doesn't know it). Undefined where it can't be read reliably: on Windows schtasks words a task's status in the system's

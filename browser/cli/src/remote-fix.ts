@@ -256,7 +256,27 @@ export async function remoteFix(options: FixOptions): Promise<number> {
 		const moved = renamed ? ` The connector is now ${renamed.newUrl}/mcp: add the new URL in each assistant; the old one no longer works.` : "";
 		return finish({ ok: true, state: "on", message: `An assistant can reach and stream from this connector.${moved}`, checks }, EXIT_ON);
 	}
-	// Its own advice would be "run remote fix" again; here the useful next step is what the check says, or the local detail.
-	const hint = failed.next && !/remote fix/.test(failed.next) ? failed.next : `Nothing on this computer explains it; ${COMMAND_NAME} remote status shows the local side.`;
+	const hint = fixHint(failed);
 	return finish({ ok: false, state: "problem", code: failed.name, message: `${failed.name}: ${failed.detail}. ${hint}`, checks }, EXIT_FAILED);
+}
+
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * What remote fix says after the outside proof fails. A check's own advice often ends "run remote fix", which here would loop;
+ * that part goes and the rest stays (a certificate to give the front door, a DNS record to check). A pending failure says
+ * to wait, since a route that was just opened or renamed takes a few minutes to reach public DNS.
+ */
+export function fixHint(failed: ProofCheck): string {
+	if (failed.pending) return `A name or route that just changed takes a few minutes to answer from outside; run ${COMMAND_NAME} remote test again soon.`;
+	const fix = escaped(`${COMMAND_NAME} remote fix`);
+	const own = (failed.next ?? "")
+		.replace(new RegExp(`;? on Tailscale or Cloudflare, run ${fix}`, "g"), "")
+		.replace(new RegExp(`,? or run ${fix} on Tailscale or Cloudflare`, "g"), "")
+		.replace(new RegExp(`\\s*Run ${fix}[^.]*\\.`, "g"), "")
+		.trim();
+	const local = `Nothing on this computer explains it; ${COMMAND_NAME} remote status shows the local side.`;
+	if (!own) return local;
+	const ended = /[.!?]$/.test(own) ? own : `${own}.`;
+	return failed.next && new RegExp(fix).test(failed.next) ? `${ended} ${local}` : ended;
 }
