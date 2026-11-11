@@ -720,11 +720,6 @@ async function undoFresh(spec: ServiceSpec, exec: Runner, file: string | undefin
 	try {
 		if (platform() === "darwin") await exec("launchctl", ["bootout", launchdTarget(spec)]);
 		else if (platform() === "linux") await exec("systemctl", ["--user", "disable", "--now", spec.unit]);
-		else if (platform() === "win32") {
-			await exec(schtasksPath(), ["/End", "/TN", spec.label]);
-			await stopWindows(spec, false, exec);
-			await exec(schtasksPath(), ["/Delete", "/TN", spec.label, "/F"]);
-		}
 	} catch {
 		/* keep going */
 	}
