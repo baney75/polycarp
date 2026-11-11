@@ -1578,3 +1578,12 @@ test("a TLS alert is a handshake refused for this name (no certificate for it); 
 	}
 	for (const code of ["ERR_SSL_PACKET_LENGTH_TOO_LONG", "ERR_SSL_WRONG_VERSION_NUMBER", "EPROTO"]) assert.match(fail(code).detail, /not with HTTPS/, code);
 });
+
+test("stateFromStatus: a failed DNS lookup is code dns_lookup, never dns, which means still publishing", () => {
+	const fetchFail = { name: "public fetch", status: "fail", detail: "no answer" };
+	const pending = stateFromStatus({ configured: true, checks: [{ name: "public DNS", status: "fail", detail: "no address" }, fetchFail] });
+	assert.equal(pending.code, "dns");
+	const servfail = stateFromStatus({ configured: true, checks: [fetchFail, { name: "public DNS", status: "fail", code: "dns_lookup", detail: "SERVFAIL" }] });
+	assert.equal(servfail.code, "dns_lookup");
+	assert.match(servfail.message, /SERVFAIL/);
+});

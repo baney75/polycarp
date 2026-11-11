@@ -257,7 +257,9 @@ when the name is taken; any other cloudflared error has no `next`), `cloudflare_
 names `tailscale_missing`, `tailscale_signed_out` or `tailnet_lock` ahead of `problem`, and
 `funnel_closed` when Tailscale's Funnel isn't open for the saved address (status only; `remote setup`
 opens it again). `problem` with `code` `dns` means the only failures are public DNS and the public
-fetch, which lag a new address by minutes.
+fetch, which lag a new address by minutes: waiting fixes it. `code` `dns_lookup` means public DNS answered that the
+lookup failed (SERVFAIL or REFUSED, often broken DNSSEC): waiting doesn't fix it; fix the name's records with your DNS
+provider.
 
 `funnel_not_allowed` means Tailscale printed its login.tailscale.com page for enabling Funnel. The
 helper returns it as soon as the page appears and stops that `tailscale funnel` call, which would

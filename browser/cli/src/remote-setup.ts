@@ -972,6 +972,7 @@ export interface Check {
 	name: string;
 	status: "ok" | "warn" | "fail";
 	detail: string;
+	code?: string;
 }
 
 
@@ -994,7 +995,7 @@ export async function dnsCheck(host: string): Promise<Check> {
 	try {
 		addresses = await dohAddresses(host);
 	} catch (err) {
-		if (err instanceof DohAnswerError) return { name, status: "fail", detail: err.message };
+		if (err instanceof DohAnswerError) return { name, status: "fail", code: "dns_lookup", detail: err.message };
 		return { name, status: "warn", detail: `couldn't ask public DNS about ${host}: ${err instanceof Error ? err.message : String(err)}` };
 	}
 	const reachable = addresses.filter((a) => !inTailnetRange(a));

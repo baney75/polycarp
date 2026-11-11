@@ -675,3 +675,15 @@ test("a name with only an AAAA record is reached over IPv6", async () => {
 		await doh.close();
 	}
 });
+
+test("remote status --json on a name whose lookup fails (SERVFAIL) is code dns_lookup, not the pending dns", async () => {
+	const doh = await fakeDoh("127.0.0.1", { status: 2 });
+	try {
+		const m = machine("status-servfail", `https://${HOST}:8443`, doh.url);
+		const r = await m.run(["remote", "status", "--json"]);
+		assert.equal(r.json().state, "problem", r.stdout);
+		assert.equal(r.json().code, "dns_lookup", r.stdout);
+	} finally {
+		await doh.close();
+	}
+});
