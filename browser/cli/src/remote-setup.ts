@@ -50,11 +50,12 @@ import {
 	tailscaleAccessDenied,
 	tailscaleDownloadUrl,
 } from "./remote-state.ts";
-import { installService, removeService, run, serviceFile, serviceLogHint, sleep, writeAtomic } from "./service.ts";
+import { installService, removeService, run, serviceFile, serviceLogHint, serviceRunning, sleep, writeAtomic } from "./service.ts";
 import { configDir, listClients, mintApprovalCode, passcodeSet, setPasscode } from "./oauth.ts";
 import { hubFile } from "./hub-state.ts";
-import { dohAddresses } from "./doh.ts";
-import { answersFromOutside, type ProofCheck, publicChecks } from "./remote-test.ts";
+import { DohAnswerError, dohAddresses } from "./doh.ts";
+import { isIP } from "node:net";
+import { answersFromOutside, type ProofCheck, privateAddress, publicChecks, realFault, tunnelPending } from "./remote-test.ts";
 import { DEFAULT_PORT } from "./tunnel.ts";
 import { tailscaleAppPath, tailscaleBinary } from "./tailscale.ts";
 
@@ -363,7 +364,7 @@ async function answersLikeTabkyra(port: number): Promise<boolean> {
 }
 
 /** How long setup waits for serve to answer, in ms. TABKYRA_SERVE_WAIT_MS shortens it for tests. */
-const serveWaitMs = () => {
+export const serveWaitMs = () => {
 	const n = Number(envVar("SERVE_WAIT_MS"));
 	return Number.isFinite(n) && n > 0 ? n : 15_000;
 };
@@ -451,6 +452,9 @@ async function waitForTailscale(ports: number[], first: FunnelPlan, say: (line: 
 	return plan;
 }
 
+/** The step that writes the launcher without registering Polycarp with browsers the person never set up. */
+const launcherStep = () => `${COMMAND_NAME} install --browser <name> for the browser you use Polycarp in (it writes the launcher and registers only that browser; plain install registers every browser on this computer)`;
+
 /**
  * In a terminal: the service runs the agent launcher, so setup writes that one file. Not `install`: that registers the native
  * host with every browser on the machine, and setup must not add Polycarp to browsers the person never set up.
@@ -464,7 +468,7 @@ async function ensureLauncher(say: (line: string) => void): Promise<void> {
 		say(`${sym.warn} The launcher couldn't be written: ${err instanceof Error ? err.message : String(err)}`);
 	}
 	if (launcherValid()) return;
-	say(`Run ${COMMAND_NAME} install in another terminal. Waiting for it. Ctrl-C stops; nothing else has changed.`);
+	say(`Run ${launcherStep()} in another terminal. Waiting for it. Ctrl-C stops; nothing else has changed.`);
 	const every = waitMs("TAILSCALE_POLL_MS", 2000);
 	const deadline = Date.now() + waitMs("TAILSCALE_WAIT_MS", 30 * 60_000);
 	while (!launcherValid() && Date.now() < deadline) await sleep(every);
@@ -557,6 +561,8 @@ async function runSetup(options: SetupOptions): Promise<number> {
 		if (!json) console.log(line);
 	};
 	/** Text mode: the old stderr lines. JSON mode: the state, with the passcode if this run made it. Exit 3 when a person has something to do. */
+	// The connector address once remote.json is saved: every failure after that reports it, so an app can show what was kept.
+	let savedConnectorUrl: string | undefined;
 	const fail = (state: RemoteState, message: string, extra: { adminUrl?: string; code?: string; after?: string; next?: RemoteNext; checks?: ProofCheck[] } = {}): number => {
 		const report: SetupReport = {
 			ok: false,
@@ -564,6 +570,7 @@ async function runSetup(options: SetupOptions): Promise<number> {
 			message,
 			...(extra.adminUrl ? { adminUrl: extra.adminUrl } : {}),
 			...(extra.code ? { code: extra.code } : {}),
+			...(savedConnectorUrl ? { connectorUrl: savedConnectorUrl } : {}),
 			...(madePasscode ? { passcode: madePasscode } : {}),
 			passcodeSet: passcodeSet(),
 			...(extra.next ? { next: extra.next } : {}),
@@ -690,9 +697,9 @@ async function runSetup(options: SetupOptions): Promise<number> {
 	if (options.service && !launcherValid()) {
 		if (wait) await ensureLauncher(say);
 		if (!launcherValid()) {
-			return fail("problem", `${launcherBinary()} isn't a working launcher, so the service would have nothing to start. Run ${COMMAND_NAME} install first, then ${COMMAND_NAME} remote setup again.`, {
+			return fail("problem", `${launcherBinary()} isn't a working launcher, so the service would have nothing to start. Run ${launcherStep()} first, then ${COMMAND_NAME} remote setup again.`, {
 				code: "launcher",
-				next: { kind: "run_command", command: `${COMMAND_NAME} install` },
+				next: { kind: "run_command", command: `${COMMAND_NAME} install --browser <name>` },
 			});
 		}
 	}
@@ -742,6 +749,7 @@ async function runSetup(options: SetupOptions): Promise<number> {
 			stage = "config";
 		}
 		saveRemoteConfig({ publicUrl, port, route, ...(previous?.redirectHosts ? { redirectHosts: previous.redirectHosts } : {}), ...(previous?.allowHosts ? { allowHosts: previous.allowHosts } : {}) });
+		savedConnectorUrl = `${publicUrl}/mcp`;
 		say(`${sym.ok} Wrote ${c.dim(remoteFile())}`);
 		stage = "service";
 		let listening = probe.state === "match";
@@ -801,20 +809,47 @@ async function runSetup(options: SetupOptions): Promise<number> {
 			const linger = lingerWarning();
 			if (linger) say(`${sym.warn} ${linger}`);
 		}
-		if (route === "cloudflare" && wait) await waitForPublic(publicUrl, say);
+		// One deadline for both waits below: the name becoming public, then the tunnel behind it connecting.
+		const publicDeadline = Date.now() + waitMs("PUBLIC_WAIT_MS", 5 * 60_000);
+		if (route === "cloudflare" && wait) await waitForPublic(publicUrl, say, publicDeadline);
 		const connectorUrl = `${publicUrl}/mcp`;
-		// The proof, as `remote test` gives it: what an assistant sees from outside. A name that doesn't answer yet is normal for a
-		// few minutes (new DNS); a connector that answers but can't stream, or can't start a sign-in, is a fault and fails setup.
+		// The proof, as `remote test` gives it: what an assistant sees from outside. Only what a new name looks like for a few minutes
+		// waits: no public address yet, or nothing answering yet (a timeout or a refusal). Anything else is a fault and fails setup:
+		// a refused certificate, a 421, another connector's metadata, a stream held back, a sign-in that can't start.
 		stage = "proof";
-		const proof = await publicChecks(publicUrl);
+		// A private address literal (--public-url http://127.0.0.1:...) is a deliberate local setup: no assistant on the internet
+		// reaches it, and setup says so instead of failing.
+		const host = new URL(publicUrl).hostname.replace(/^\[|\]$/g, "");
+		const localOnly = isIP(host) !== 0 && privateAddress(host);
+		let proof = await publicChecks(publicUrl);
+		// The name resolves and has a certificate, but the tunnel or gateway in front of serve answers 502 to 530 or nothing: right
+		// after the tunnel's service starts it does that for a minute. Keep asking to the deadline; no person is needed for it.
+		if (!localOnly && tunnelPending(proof) && !realFault(proof)) {
+			const every = waitMs("PUBLIC_POLL_MS", 5000);
+			say(`Waiting for the tunnel in front of ${publicUrl} to connect (${tunnelPending(proof)?.detail}), up to ${duration(Math.max(0, publicDeadline - Date.now()))}.`);
+			while (tunnelPending(proof) && !realFault(proof) && Date.now() + every < publicDeadline) {
+				await sleep(every);
+				proof = await publicChecks(publicUrl);
+			}
+		}
 		const up = answersFromOutside(proof);
 		say(`\nFrom the internet, as an assistant sees it:`);
 		for (const line of proofLines(proof)) say(line);
-		const fault = up ? proof.find((x) => x.status === "fail") : undefined;
-		if (fault) {
-			return fail("problem", `${connectorUrl} answers from the internet, but ${fault.name} failed: ${fault.detail}. ${fault.next ?? ""} remote.json is kept.`.trim(), { code: fault.name, checks: proof });
+		const fault = localOnly ? undefined : realFault(proof);
+		const stuck = localOnly || fault ? undefined : tunnelPending(proof);
+		if (stuck) {
+			return fail("problem", `${connectorUrl} isn't usable from the internet: the tunnel in front of serve hasn't connected by the deadline (${stuck.name}: ${stuck.detail}). Run ${COMMAND_NAME} remote fix to restart it, then ${COMMAND_NAME} remote test. remote.json is kept.`, {
+				code: stuck.name,
+				checks: proof,
+				next: { kind: "run_command", command: `${COMMAND_NAME} remote fix` },
+			});
 		}
-		if (!up) say(`${sym.warn} It doesn't answer from the internet yet. A new name takes a few minutes; then run ${COMMAND_NAME} remote test.`);
+		if (fault) {
+			const where = up ? `${connectorUrl} answers from the internet, but` : `${connectorUrl} isn't usable from the internet:`;
+			return fail("problem", `${where} ${fault.name} failed: ${fault.detail}. ${fault.next ?? ""} remote.json is kept.`.replace(/\s+remote\.json/, " remote.json"), { code: fault.name, checks: proof });
+		}
+		if (localOnly) say(`${sym.warn} ${host} is a private address, so only this computer or its network reaches the connector; assistants on the internet can't.`);
+		else if (!up) say(`${sym.warn} It doesn't answer from the internet yet. A new name takes a few minutes; then run ${COMMAND_NAME} remote test.`);
 		// The one-time connect code a new assistant needs (the passcode alone is refused for one, issue #97). Made for a person at a
 		// terminal, or when --connect-code asks; never printed unasked into an agent's shell or a log, where it would sit live.
 		let connect: { code: string; expiresAt: number } | undefined;
@@ -881,10 +916,10 @@ Check it with: ${COMMAND_NAME} remote status`);
 }
 
 /** In a terminal, after a Cloudflare setup: a new DNS name takes minutes, so check the public address for up to 5 minutes. */
-async function waitForPublic(publicUrl: string, say: (line: string) => void): Promise<void> {
+async function waitForPublic(publicUrl: string, say: (line: string) => void, deadline: number): Promise<void> {
 	const every = waitMs("PUBLIC_POLL_MS", 5000);
-	const total = waitMs("PUBLIC_WAIT_MS", 5 * 60_000);
 	const start = Date.now();
+	const total = Math.max(0, deadline - start);
 	say(`Waiting for ${publicUrl} to answer from the internet (a new name takes a few minutes), up to ${duration(total)}. Ctrl-C stops; setup is saved.`);
 	let shownAt = start;
 	for (;;) {
@@ -895,6 +930,8 @@ async function waitForPublic(publicUrl: string, say: (line: string) => void): Pr
 			say(`${sym.ok} ${publicUrl} answers from the internet.`);
 			return;
 		}
+		// A real fault doesn't go away by waiting, and a tunnel still connecting is the proof's own wait; the proof names either.
+		if (realFault(checks) || tunnelPending(checks)) return;
 		if (Date.now() + every >= start + total) {
 			const failed = checks.find((x) => x.status !== "ok");
 			say(`${sym.warn} ${publicUrl} isn't answering yet (${failed?.detail ?? "no answer"}). DNS can take longer; check with ${COMMAND_NAME} remote test.`);
@@ -912,7 +949,7 @@ async function waitForPublic(publicUrl: string, say: (line: string) => void): Pr
  * Linux stops a user's services at logout unless lingering is on for that user (systemd-logind). Undefined when it is on, when
  * this isn't Linux, or when loginctl can't say.
  */
-function lingerWarning(): string | undefined {
+export function lingerWarning(): string | undefined {
 	if (process.platform !== "linux") return undefined;
 	const user = userInfo().username;
 	const r = run("loginctl", ["show-user", user, "-p", "Linger"], 10_000);
@@ -921,7 +958,7 @@ function lingerWarning(): string | undefined {
 }
 
 /** Linux: is this user Tailscale's operator? A warning when it isn't (Funnel then can't be opened again without sudo), else undefined. */
-function operatorWarning(bin: string | undefined): string | undefined {
+export function operatorWarning(bin: string | undefined): string | undefined {
 	if (process.platform !== "linux" || !bin || process.getuid?.() === 0) return undefined;
 	const r = run(bin, ["debug", "prefs"], 10_000);
 	const operator = r.code === 0 ? operatorFromPrefs(r.out) : undefined;
@@ -957,12 +994,13 @@ export async function dnsCheck(host: string): Promise<Check> {
 	try {
 		addresses = await dohAddresses(host);
 	} catch (err) {
+		if (err instanceof DohAnswerError) return { name, status: "fail", detail: err.message };
 		return { name, status: "warn", detail: `couldn't ask public DNS about ${host}: ${err instanceof Error ? err.message : String(err)}` };
 	}
 	const reachable = addresses.filter((a) => !inTailnetRange(a));
 	if (reachable.length) return { name, status: "ok", detail: `${host} resolves publicly to ${reachable.join(", ")}` };
 	if (addresses.length) return { name, status: "fail", detail: `${host} resolves only to ${addresses.join(", ")}, a tailnet address. Funnel isn't reaching the internet.` };
-	return { name, status: "fail", detail: `public DNS has no A record for ${host}` };
+	return { name, status: "fail", detail: `public DNS has no address (A or AAAA) for ${host}` };
 }
 
 /** Which ways of reaching this computer are ready. Reads only; never signs in or installs anything. */
@@ -1017,8 +1055,14 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 		checks.push({ name: "cloudflare", status: "fail", detail: tailscale.message });
 	} else if (config?.route === "cloudflare") {
 		const file = serviceFile(CLOUDFLARE_SERVICE);
-		const running = Boolean(file && existsSync(file));
-		checks.push({ name: "cloudflare", status: running ? "ok" : "fail", detail: running ? `tunnel ${cloudflareTunnelName()}` : `The tunnel's service is gone. Run ${COMMAND_NAME} remote setup --cloudflare ${new URL(config.publicUrl).hostname} again.` });
+		const installed = Boolean(file && existsSync(file));
+		// The file alone says it was installed; the service manager says whether it runs (a crash loop or a stopped unit is not up).
+		const running = installed && serviceRunning(CLOUDFLARE_SERVICE) !== false;
+		checks.push({
+			name: "cloudflare",
+			status: running ? "ok" : "fail",
+			detail: running ? `tunnel ${cloudflareTunnelName()}` : installed ? `The tunnel's service isn't running. Run ${COMMAND_NAME} remote fix.` : `The tunnel's service is gone. Run ${COMMAND_NAME} remote setup --cloudflare ${new URL(config.publicUrl).hostname} again.`,
+		});
 	} else if (tailscale) checks.push({ name: "tailscale", status: "fail", detail: tailscale.message });
 	if (config && !tailscale) {
 		const passcode = passcodeSet();

@@ -1010,7 +1010,7 @@ test("remote setup with a service requested and no working launcher exits 3 and 
 	const s = remoteScenario("no-launcher");
 	const r = s.run(["remote", "setup"]);
 	assert.equal(r.code, 3, r.out);
-	assert.match(r.out, /Run polycarp-browser install first, then polycarp-browser remote setup again\./);
+	assert.match(r.out, /Run polycarp-browser install --browser <name> for the browser you use Polycarp in \(.*plain install registers every browser on this computer\) first, then polycarp-browser remote setup again\./);
 	assert.equal(existsSync(s.serviceFile()), false);
 	assert.equal(s.hasRemoteJson(), false);
 	assert.ok(!s.calls().some((x) => x.startsWith("tailscale funnel")), s.calls().join("\n"));
