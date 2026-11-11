@@ -4,6 +4,7 @@
  * report instead. Nothing here prints a secret.
  */
 import { spawn } from "node:child_process";
+import { win32 } from "node:path";
 import { createInterface, type Interface } from "node:readline";
 import { envVar } from "./env.ts";
 import { which } from "./harness.ts";
@@ -57,17 +58,34 @@ export function closeInput(): void {
 	reader = undefined;
 }
 
+/** What openPage uses, so tests can ask for another platform. Production code passes nothing. */
+export interface OpenSeam {
+	platform?: NodeJS.Platform;
+	which?: (name: string) => string | undefined;
+	spawn?: (cmd: string, args: string[], opts: { stdio: "ignore"; detached: boolean }) => { on(event: "error", fn: () => void): unknown; unref(): void };
+	env?: NodeJS.ProcessEnv;
+}
+
 /**
- * Opens an https page in the person's browser with the platform's opener (open on macOS, xdg-open on Linux), found on PATH
- * only. False when there is none (a server over ssh, or Windows, which keeps printing the address): the caller prints the
- * address either way.
+ * Opens an https page in the person's browser with the platform's opener: open on macOS and xdg-open on Linux, found on PATH
+ * only; on Windows, rundll32.exe by full path with url.dll's FileProtocolHandler, which hands the URL to the default browser
+ * without cmd, so an & in a query string stays in it. On Windows a URL with a space, quote or % is refused, since a command
+ * line could split or expand it. False when there is no opener (a server over ssh): the caller prints the address either way.
  */
-export function openPage(url: string): boolean {
+export function openPage(url: string, seam: OpenSeam = {}): boolean {
 	if (!/^https:\/\//.test(url)) return false;
-	const opener = process.platform === "darwin" ? which("open") : process.platform === "linux" ? which("xdg-open") : undefined;
+	const platform = seam.platform ?? process.platform;
+	const find = seam.which ?? which;
+	let opener: string | undefined;
+	let args = [url];
+	if (platform === "win32") {
+		if (/[\s"%^<>|`]/.test(url)) return false;
+		opener = win32.join((seam.env ?? process.env).SystemRoot || "C:\\Windows", "System32", "rundll32.exe");
+		args = ["url.dll,FileProtocolHandler", url];
+	} else opener = platform === "darwin" ? find("open") : platform === "linux" ? find("xdg-open") : undefined;
 	if (!opener) return false;
 	try {
-		const child = spawn(opener, [url], { stdio: "ignore", detached: true });
+		const child = (seam.spawn ?? spawn)(opener, args, { stdio: "ignore", detached: true });
 		child.on("error", () => {});
 		child.unref();
 		return true;

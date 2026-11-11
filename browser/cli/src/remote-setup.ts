@@ -98,6 +98,13 @@ export function saveRemoteConfig(config: RemoteConfig): void {
 
 // ---------- Tailscale Funnel ----------
 
+/** How to sign in to Tailscale here: its app on macOS, its Start menu entry on Windows (it runs in the notification area), else tailscale up. */
+export function tailscaleSignIn(platform: NodeJS.Platform = process.platform): string {
+	if (platform === "darwin") return "Open the Tailscale app and sign in, or run tailscale up";
+	if (platform === "win32") return "Open Tailscale from the Start menu and sign in, or run tailscale up";
+	return "Run tailscale up";
+}
+
 /** Where the Tailscale Mac app keeps its command. It never puts `tailscale` on PATH. TABKYRA_APPLICATIONS_DIR replaces /Applications, for tests. */
 export const tailscaleAppPath = () => join(envVar("APPLICATIONS_DIR") || "/Applications", "Tailscale.app", "Contents", "MacOS", "Tailscale");
 
@@ -156,7 +163,7 @@ export function tailscaleReady(): { ok: true; bin: string; state: TailscaleState
 		};
 	}
 	const state = readTailscale(bin);
-	if (state.kind === "disconnected") return { ok: false, state: "tailscale_signed_out", message: `Tailscale isn't connected. ${process.platform === "darwin" ? "Open the Tailscale app and sign in, or run tailscale up" : "Run tailscale up"}, then try again.` };
+	if (state.kind === "disconnected") return { ok: false, state: "tailscale_signed_out", message: `Tailscale isn't connected. ${tailscaleSignIn()}, then try again.` };
 	return { ok: true, bin, state };
 }
 
@@ -412,7 +419,7 @@ export interface SetupOptions {
 	connectCode?: boolean;
 }
 
-const tailscaleUp = process.platform === "darwin" ? "Open the Tailscale app and sign in, or run: tailscale up" : "Run: tailscale up";
+const tailscaleUp = tailscaleSignIn().replace(/un tailscale up$/, "un: tailscale up");
 
 /** What a planning refusal asks the person to do, when it asks anything. */
 function nextFor(state: RemoteState): RemoteNext | undefined {

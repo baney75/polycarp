@@ -16,14 +16,16 @@ after(() => rmSync(root, { recursive: true, force: true }));
 
 const mod = await loadTs(`
 export { ourCloudflared } from "@src/tunnel.ts";
-export { tailscaleMissing } from "@src/remote-setup.ts";
+export { tailscaleMissing, tailscaleSignIn } from "@src/remote-setup.ts";
+export { openPage } from "@src/remote-guide.ts";
+export { tailscaleDownloadUrl } from "@src/remote-state.ts";
 export { recordServicePid, installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE } from "@src/service.ts";
 export { CLOUDFLARE_SERVICE, cloudflaredBinary } from "@src/cloudflare.ts";
 export { tailscaleBinary } from "@src/remote-setup.ts";
 export { windowsInstallPaths, windowsTool } from "@src/tool-paths.ts";
 export { cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION } from "@src/cloudflared-download.ts";
 `);
-const { tailscaleMissing, ourCloudflared, recordServicePid, installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE, CLOUDFLARE_SERVICE, cloudflaredBinary, tailscaleBinary, windowsInstallPaths, windowsTool, cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION } = mod;
+const { tailscaleSignIn, openPage, tailscaleDownloadUrl, tailscaleMissing, ourCloudflared, recordServicePid, installService, removeService, serviceFile, serviceLogHint, setServiceSeamForTests, plistText, unitText, windowsTaskXml, windowsScriptText, schtasksPath, SERVE_SERVICE, HUB_SERVICE, LINK_SERVICE, CLOUDFLARE_SERVICE, cloudflaredBinary, tailscaleBinary, windowsInstallPaths, windowsTool, cloudflaredAsset, downloadCloudflared, downloadedCloudflared, CLOUDFLARED_VERSION } = mod;
 
 const SCHTASKS = "C:\\Windows\\System32\\schtasks.exe";
 const sha = (buf) => createHash("sha256").update(buf).digest("hex");
@@ -587,4 +589,36 @@ test("the Windows script keeps one old log and starts a new one past 10 MB, befo
 	const at = lines.indexOf(rotate);
 	assert.ok(at > lines.indexOf(":run"), "rotation runs on every pass of the loop");
 	assert.equal(lines[at + 1], '>>"%POLYCARP_LOG%" 2>&1 (', "and before the log is opened for the next start");
+});
+
+// ---------- Windows: the guided setup's opener, sign-in hint and download link ----------
+
+test("on Windows the Funnel page opens through rundll32 by full path, with the URL as one argument and no shell, so & stays in the URL", () => {
+	const spawned = [];
+	const fakeSpawn = (cmd, args, opts) => {
+		spawned.push([cmd, args, opts]);
+		return { on() {}, unref() {} };
+	};
+	const url = "https://login.tailscale.com/f/funnel?node=nABC&tab=1";
+	const env = { SystemRoot: "C:\\Windows" };
+	assert.equal(openPage(url, { platform: "win32", spawn: fakeSpawn, env, which: () => assert.fail("PATH is never searched on Windows") }), true);
+	assert.deepEqual(spawned[0][0], "C:\\Windows\\System32\\rundll32.exe");
+	assert.deepEqual(spawned[0][1], ["url.dll,FileProtocolHandler", url]);
+	assert.equal(spawned[0][2].shell, undefined);
+	// Characters a Windows command line would split or reinterpret are refused rather than passed on.
+	for (const bad of ['https://x.example/"&calc', "https://x.example/a b", "https://x.example/%PATH%", "http://x.example/"]) {
+		assert.equal(openPage(bad, { platform: "win32", spawn: fakeSpawn, env }), false, bad);
+	}
+	assert.equal(spawned.length, 1);
+	// macOS and Linux keep their openers from PATH.
+	openPage(url, { platform: "darwin", spawn: fakeSpawn, which: (n) => `/usr/bin/${n}` });
+	openPage(url, { platform: "linux", spawn: fakeSpawn, which: (n) => `/usr/bin/${n}` });
+	assert.deepEqual(spawned.slice(1).map(([cmd, args]) => [cmd, args]), [["/usr/bin/open", [url]], ["/usr/bin/xdg-open", [url]]]);
+});
+
+test("the Tailscale sign-in hint and download link name what Windows has", () => {
+	assert.equal(tailscaleSignIn("win32"), "Open Tailscale from the Start menu and sign in, or run tailscale up");
+	assert.equal(tailscaleSignIn("darwin"), "Open the Tailscale app and sign in, or run tailscale up");
+	assert.equal(tailscaleSignIn("linux"), "Run tailscale up");
+	assert.equal(tailscaleDownloadUrl("win32"), "https://tailscale.com/download/windows");
 });
