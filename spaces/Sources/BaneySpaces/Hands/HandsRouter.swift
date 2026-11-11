@@ -237,7 +237,7 @@ final class HandsRouter {
         guard now.pid == w.pid else { return HandsError(.staleRef, "window \(w.id) belongs to a different process now", suggestion: "Take a new snapshot.", retry: .afterSnapshot) }
         if case .denied(let e) = decide(now, agent, session: session) { return e }
         // A child's own panel check is part of its decision (`ChildWindowRule` rule 3).
-        return now.workspace == nil ? nil : inspectProblem(now)
+        return now.workspace == nil ? nil : sheetProblem(now, agent: agent, session: session) ?? inspectProblem(now)
     }
 
     /// No window is used while it is or holds an Open or Save panel, which would browse his files, in any mode. Windows of a process
@@ -680,7 +680,7 @@ final class HandsRouter {
         let separate = AgentAppPolicy.needsSeparateInstance(bundle: bundle)
         // A reply with a pid asked an app already running (one process for everyone); one without started a new process.
         let runningPid = reply.info?["pid"].flatMap { Int32($0) }
-        let owns = childLocked {
+        let start = childLocked {
             sessionWindows.beginOpen(id: token, session: session, app: key, separate: runningPid == nil, pid: runningPid, known: known, at: Date())
         }
         var window: HandsWindow?
@@ -688,7 +688,7 @@ final class HandsRouter {
         // `wait` seconds (7 when it says more or nothing); 0 looks once.
         let deadline = Date().addingTimeInterval(min(InUseRule.bound(req.int("wait")), 7))
         var looked = false
-        while owns, window == nil, !looked || Date() < deadline {
+        while start != .overlap, window == nil, !looked || Date() < deadline {
             looked = true
             let (all, agent) = listWindows(fresh: true)
             let candidates = all.filter { matches($0, reply.info?["app"] ?? display) && $0.workspace == agent && (!separate || !pidsBefore.contains($0.pid)) }
@@ -707,6 +707,10 @@ final class HandsRouter {
         if let window {
             data["window"] = .int(Int(window.id)); data["pid"] = .int(Int(window.pid))
             data["reused"] = .bool(false)
+            if start == .noSession {
+                data["owned"] = .bool(false)
+                data["note"] = "this open had no session, so the window is reported but owned by nobody: `close` won't close it"
+            }
         } else if separate, !pidsBefore.isEmpty, noNewProcess(bundle: bundle, before: pidsBefore) {
             childLocked { sessionWindows.cancelOpen(token) }
             return .failure(HandsError(.needsSandbox, "\(display) didn't start a separate copy, so nothing of it is the agent's",
@@ -714,11 +718,9 @@ final class HandsRouter {
         } else {
             data["window_identified"] = .bool(false)
             // Its window may still come: when its own launch's window appears within 30 s it is this session's. An open that
-            // overlapped another open of the same running app gets none (`owns` false).
+            // overlapped another open of the same running app gets none.
             childLocked { sessionWindows.endOpen(token) }
-            data["note"] = .string(owns
-                ? "Polycarp couldn't identify the window this open made yet, so this session owns none of it for now; if it appears within 30 s it becomes yours. Run `polycarp-spaces agent windows`"
-                : "another open of \(display) overlapped this one, so Polycarp can't tell whose new window is whose and gives it to neither; you may still use it, but `close` won't close it")
+            data["note"] = .string(OpenNote.text(start, app: display))
         }
         return .success(.object(data))
     }

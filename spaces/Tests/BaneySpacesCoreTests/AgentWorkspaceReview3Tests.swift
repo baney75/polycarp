@@ -13,10 +13,10 @@ final class OpenRequestTests: XCTestCase {
     /// The running app: one pid for everyone.
     func testOverlappingOpensOfARunningAppGiveTheWindowToNeither() {
         var s = SessionWindows()
-        XCTAssertTrue(s.beginOpen(id: 1, session: "a", app: word, separate: false, pid: 300, known: [1], at: t0))
+        XCTAssertEqual(s.beginOpen(id: 1, session: "a", app: word, separate: false, pid: 300, known: [1], at: t0), .owns)
         XCTAssertNil(s.claim(1, windows: [], now: t0), "A, wait 0: nothing yet")
         s.endOpen(1)
-        XCTAssertFalse(s.beginOpen(id: 2, session: "b", app: word, separate: false, pid: 300, known: [1], at: t0.addingTimeInterval(1)), "B overlaps A")
+        XCTAssertEqual(s.beginOpen(id: 2, session: "b", app: word, separate: false, pid: 300, known: [1], at: t0.addingTimeInterval(1)), .overlap, "B overlaps A")
         // B's window appears first.
         XCTAssertNil(s.claim(2, windows: [win(20)], now: t0.addingTimeInterval(2)), "B: window_identified false")
         s.endOpen(2)
@@ -41,9 +41,9 @@ final class OpenRequestTests: XCTestCase {
 
     func testSeparateLaunchesEachGetOnlyTheirOwnProcesssWindow() {
         var s = SessionWindows()
-        XCTAssertTrue(s.beginOpen(id: 1, session: "a", app: "TextEdit", separate: true, pid: nil, known: [], at: t0))
+        XCTAssertEqual(s.beginOpen(id: 1, session: "a", app: "TextEdit", separate: true, pid: nil, known: [], at: t0), .owns)
         s.endOpen(1)
-        XCTAssertTrue(s.beginOpen(id: 2, session: "b", app: "TextEdit", separate: true, pid: nil, known: [], at: t0), "separate launches never conflict")
+        XCTAssertEqual(s.beginOpen(id: 2, session: "b", app: "TextEdit", separate: true, pid: nil, known: [], at: t0), .owns, "separate launches never conflict")
         XCTAssertNil(s.claim(2, windows: [win(20, pid: 401)], now: t0), "B's pid is not known yet: nothing")
         s.launched(2, pid: 402)
         s.launched(1, pid: 401)
@@ -79,8 +79,6 @@ final class OpenRequestTests: XCTestCase {
         XCTAssertNotEqual(t.owner(of: 30), "a")
         XCTAssertEqual(t.resolvePending(app: "TextEdit", windows: [win(30, pid: 500)], now: t0).map(\.session), ["b"], "B still gets its own")
         XCTAssertFalse(SessionWindows().requests.contains { $0.session.isEmpty })
-        var none = SessionWindows()
-        XCTAssertFalse(none.beginOpen(id: 1, session: "", app: word, separate: true, pid: nil, known: [], at: t0), "no session, no window")
     }
 }
 

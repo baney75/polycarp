@@ -25,6 +25,7 @@ extension HandsRouter {
         for c in r.children { if let p = c.parent ?? hint { firstParents[c.id] = p } }
         let known = childLocked { () -> [UInt32: UInt32] in
             attribution.observed(Set(r.children.map(\.id)), pid: pid, at: now, parents: firstParents)
+            attribution.observedSheets(on: r.sheetsOn, pid: pid, at: now)
             return r.children.reduce(into: [:]) { m, c in if let p = attribution.parent(of: c.id, pid: pid) { m[c.id] = p } }
         }
         for i in r.children.indices where r.children[i].parent == nil { r.children[i].parent = known[r.children[i].id] }
@@ -80,15 +81,29 @@ extension HandsRouter {
         return (facts.map { ($0, decideChild($0, all: all, agent: agent, session: session)) }, readings.reduce(into: Set<UInt32>()) { $0.formUnion($1.sheetsOn) })
     }
 
+    /// sol-F1: a placed window of an app split between the agent and Donovan, holding a sheet this session's action didn't
+    /// raise (`ChildWindowRule.sheetOnWindowRefusal`). Nothing to read when the app isn't split.
+    func sheetProblem(_ w: HandsWindow, agent: Int?, session: String) -> HandsError? {
+        let all = listWindows().windows
+        guard all.contains(where: { $0.pid == w.pid && !decide($0, agent, session: session).allowed }) else { return nil }
+        let r = readChildren(pid: w.pid, all: all)
+        let attributed = childLocked { () -> [Bool] in
+            (r.sheetsOn.contains(w.id) ? [attribution.sheetAttributed(on: w.id, pid: w.pid, session: session)] : [])
+                + r.children.filter { $0.parent == w.id && $0.kind == .sheet }.map { attribution.attributed($0.id, pid: w.pid, session: session) }
+        }
+        return ChildWindowRule.sheetOnWindowRefusal(window: w, sheetsAttributed: attributed, split: true)
+    }
+
     /// Right before an action on `pid`: the child windows it has now, recorded as this session's action, and a watch that
     /// looks again every half second for 10 s so a dialog the action raises is seen within the window.
     func noteAction(session: String, pid: Int32) -> Set<UInt32> {
         let all = listWindows().windows
-        let existing = Set(ChildWindowsAX.read(pid: pid, placed: Set(all.filter { $0.pid == pid }.map(\.id))).children.map(\.id))
+        let read = ChildWindowsAX.read(pid: pid, placed: Set(all.filter { $0.pid == pid }.map(\.id)))
+        let existing = Set(read.children.map(\.id))
         let now = Date()
         // The action is recorded first, so a running watch sees it before deciding to stop; a pid has one watch at most.
         let start = childLocked { () -> Bool in
-            attribution.acted(session: session, pid: pid, at: now, existing: existing)
+            attribution.acted(session: session, pid: pid, at: now, existing: existing, sheetsOn: read.sheetsOn)
             return childWatchers.insert(pid).inserted
         }
         if start { watch(pid: pid) }

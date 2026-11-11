@@ -93,6 +93,16 @@ public enum ChildWindowRule {
             || bundle.hasPrefix("com.apple.SecurityAgent") || bundle.hasPrefix("com.apple.LocalAuthentication")
     }
 
+    /// A placed window that holds a sheet (with or without a window number of its own) on an app split between the agent and
+    /// Donovan: its snapshot and refs reach the sheet, so the window is usable only while every sheet on it is one this
+    /// session's action raised. Unsure counts as not.
+    public static func sheetOnWindowRefusal(window w: HandsWindow, sheetsAttributed: [Bool], split: Bool) -> HandsError? {
+        guard split, sheetsAttributed.contains(false) else { return nil }
+        return HandsError(.outsideAgentWorkspace,
+                          "window \(w.id) of \(w.app) holds a sheet your action didn't raise, and \(w.app) also has windows you may not use, so the sheet may be Donovan's (rule 2)",
+                          suggestion: "Leave it for Donovan; work in another window until the sheet closes.", retry: .never)
+    }
+
     /// Which rule refused a child window.
     public enum Failed: String, Sendable {
         case ownWindow = "own_window"
@@ -172,17 +182,37 @@ public enum ChildWindowRule {
 /// Which child windows appeared after which session's action. Fed by every look at a process's child windows; a window
 /// first seen outside the 10 s after an action is never attributed later, and one that was there before the action never is.
 public struct ChildAttribution: Equatable, Sendable {
-    struct Action: Equatable, Sendable { var session: String; var at: Date; var before: Set<UInt32> }
+    struct Action: Equatable, Sendable { var session: String; var at: Date; var before: Set<UInt32>; var sheetsBefore: Set<UInt32> = [] }
     struct Seen: Equatable, Sendable { var pid: Int32; var session: String?; var at: Date; var parent: UInt32? = nil }
     private var actions: [Int32: Action] = [:]
     private var seen: [UInt32: Seen] = [:]
+    /// Sheets with no window number of their own, by the placed window that holds them; cleared when the sheet closes.
+    private var sheets: [UInt32: Seen] = [:]
 
     public init() {}
 
     /// `session` is about to act on `pid`, which has these child windows now.
-    public mutating func acted(session: String, pid: Int32, at: Date, existing: Set<UInt32>) {
-        actions[pid] = Action(session: session, at: at, before: existing)
+    public mutating func acted(session: String, pid: Int32, at: Date, existing: Set<UInt32>, sheetsOn: Set<UInt32> = []) {
+        actions[pid] = Action(session: session, at: at, before: existing, sheetsBefore: sheetsOn)
         for id in existing where seen[id] == nil { seen[id] = Seen(pid: pid, session: nil, at: at) }
+        for id in sheetsOn where sheets[id] == nil { sheets[id] = Seen(pid: pid, session: nil, at: at) }
+    }
+
+    /// The placed windows of `pid` that hold a sheet with no number of their own at `at`. A sheet first seen within 10 s after
+    /// an action, and not there before it, is that action's session's; one that closed is forgotten.
+    public mutating func observedSheets(on: Set<UInt32>, pid: Int32, at: Date) {
+        sheets = sheets.filter { $0.value.pid != pid || on.contains($0.key) }
+        for id in on where sheets[id] == nil {
+            var owner: String?
+            if let a = actions[pid], !a.sheetsBefore.contains(id), at >= a.at, at.timeIntervalSince(a.at) <= ChildWindowRule.attributionWindow { owner = a.session }
+            sheets[id] = Seen(pid: pid, session: owner, at: at)
+        }
+    }
+
+    /// Whether this session's action raised the sheet now on window `id`. False when unsure (never seen).
+    public func sheetAttributed(on id: UInt32, pid: Int32, session: String) -> Bool {
+        guard !session.isEmpty, let s = sheets[id], s.pid == pid else { return false }
+        return s.session == session
     }
 
     /// The child windows `pid` has at `at`. Each one seen for the first time is the latest action's, when it came within
@@ -266,6 +296,17 @@ public enum SheetMark {
 }
 
 /// Which windows each agent session opened with `open`, by window id and process, so `close` closes only those.
+/// The `note` of an `open` that identified no window: plain that none was, and why.
+public enum OpenNote {
+    public static func text(_ start: SessionWindows.OpenStart, app: String) -> String {
+        switch start {
+        case .owns: return "Polycarp couldn't identify the window this open made yet, so this session owns none of it for now; if it appears within 30 s it becomes yours. Run `polycarp-spaces agent windows`"
+        case .noSession: return "Polycarp couldn't identify the window this open made yet; this open had no session, so no window of it is anyone's. Run `polycarp-spaces agent windows`"
+        case .overlap: return "Polycarp identified no window for this open: another open of \(app) is still waiting for its window or overlapped one in the last 30 s, so it can't tell whose new window is whose and gives it to neither; you may still use it, but `close` won't close it"
+        }
+    }
+}
+
 public struct SessionWindows: Equatable, Sendable {
     private var opened: [String: [UInt32: Int32]] = [:]
     public init() {}
@@ -303,12 +344,20 @@ public struct SessionWindows: Equatable, Sendable {
 
     private mutating func expire(now: Date) { requests.removeAll { $0.pending && now.timeIntervalSince($0.at) > Self.pendingLife } }
 
-    /// Registers a launch. False when it can't own a window: no session, or it overlaps another request for the same running
-    /// app, in which case that request is cleared too (both report `window_identified: false`).
+    /// How a launch was registered. An overlap with another request for the same running app clears that request too (both
+    /// report `window_identified: false`).
+    public enum OpenStart: Equatable, Sendable {
+        /// Its window, when found, is recorded for its session.
+        case owns
+        /// No session: its window is still looked for by the same rules and reported, but owned by nobody.
+        case noSession
+        /// It overlapped another open of the same running app (now or in the 30 s before): nothing is looked for.
+        case overlap
+    }
+
     @discardableResult
-    public mutating func beginOpen(id: Int, session: String, app: String, separate: Bool, pid: Int32?, known: Set<UInt32>, at: Date) -> Bool {
+    public mutating func beginOpen(id: Int, session: String, app: String, separate: Bool, pid: Int32?, known: Set<UInt32>, at: Date) -> OpenStart {
         expire(now: at)
-        guard !session.isEmpty else { return false }
         let key = app.lowercased()
         disputed = disputed.filter { $0.value > at }
         if !separate, disputed[key] != nil || requests.contains(where: { $0.app == key && !$0.separate }) {
@@ -316,10 +365,10 @@ public struct SessionWindows: Equatable, Sendable {
             // late window of the cleared ones may still come), so no open of it owns one until then.
             requests.removeAll { $0.app == key && !$0.separate }
             disputed[key] = at.addingTimeInterval(Self.pendingLife)
-            return false
+            return .overlap
         }
         requests.append(OpenRequest(id: id, session: session, app: key, separate: separate, pid: pid, known: known, at: at, pending: false))
-        return true
+        return session.isEmpty ? .noSession : .owns
     }
 
     /// The process a separate launch started, once its completion reports it.
@@ -341,13 +390,14 @@ public struct SessionWindows: Equatable, Sendable {
     public mutating func claim(_ id: Int, windows: [HandsWindow], now: Date) -> HandsWindow? {
         expire(now: now)
         guard let r = requests.first(where: { $0.id == id && !$0.pending }), let w = pick(r, from: windows, newest: true) else { return nil }
-        record(session: r.session, window: w.id, pid: w.pid)
+        record(session: r.session, window: w.id, pid: w.pid)  // nothing is recorded for no session
         requests.removeAll { $0.id == id }
         return w
     }
 
     /// The `open` replied without a window: its request stays, pending, for the window that may still come.
     public mutating func endOpen(_ id: Int) {
+        // A request with no session stays only to count toward an overlap; resolvePending skips it.
         if let i = requests.firstIndex(where: { $0.id == id }) { requests[i].pending = true }
     }
 
@@ -359,7 +409,7 @@ public struct SessionWindows: Equatable, Sendable {
     public mutating func resolvePending(app: String, windows: [HandsWindow], now: Date) -> [(session: String, window: HandsWindow)] {
         expire(now: now)
         var given: [(session: String, window: HandsWindow)] = []
-        for r in requests where r.pending && r.app == app.lowercased() {
+        for r in requests where r.pending && r.app == app.lowercased() && !r.session.isEmpty {
             guard let w = pick(r, from: windows, newest: false) else { continue }
             record(session: r.session, window: w.id, pid: w.pid)
             requests.removeAll { $0.id == r.id }

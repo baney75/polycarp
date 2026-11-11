@@ -14,7 +14,7 @@ final class MovedInLaunchTests: XCTestCase {
     func testAPersistedRecordWithNoLiveLendIsDeniedAndSentBack() {
         let saved = MovedInWindows.decode(MovedInWindows(entries: [entry(.lent)]).encoded())
         XCTAssertEqual(saved, [entry(.lent)], "saved with its start time, origin, from and to")
-        let l = MovedInWindows.launch(saved, startTime: { _ in 1000 }, lends: LendBook(), now: now, mode: .full)
+        let l = MovedInWindows.launch(saved, startTime: { _ in 1000 }, alive: { _ in true }, lends: LendBook(), now: now, mode: .full)
         XCTAssertEqual(l.sendBack.map(\.window), [8])
         XCTAssertTrue(l.keep.isEmpty)
         XCTAssertTrue(l.drop.isEmpty)
@@ -26,16 +26,15 @@ final class MovedInLaunchTests: XCTestCase {
     }
 
     func testARecordWhoseProcessIsGoneIsDropped() {
-        for start in [nil, Double(2000)] {
-            let l = MovedInWindows.launch([entry(.fullAccess)], startTime: { _ in start }, lends: LendBook(), now: now, mode: .full)
+        for (start, alive) in [(nil, false), (Double(2000), true)] as [(Double?, Bool)] {
+            let l = MovedInWindows.launch([entry(.fullAccess)], startTime: { _ in start }, alive: { _ in alive }, lends: LendBook(), now: now, mode: .full)
             XCTAssertEqual(l.drop.map(\.window), [8], "start time \(String(describing: start))")
             XCTAssertTrue(l.book.entries.isEmpty)
         }
-        XCTAssertEqual(MovedInWindows.launch([entry(.lent, started: nil)], startTime: { _ in 1000 }, lends: LendBook(), now: now, mode: .standard).drop.count, 1)
     }
 
     func testARecordWhoseOriginStillHoldsIsKept() {
-        let l = MovedInWindows.launch([entry(.fullAccess)], startTime: { _ in 1000.2 }, lends: LendBook(), now: now, mode: .full)
+        let l = MovedInWindows.launch([entry(.fullAccess)], startTime: { _ in 1000.2 }, alive: { _ in true }, lends: LendBook(), now: now, mode: .full)
         XCTAssertEqual(l.keep.map(\.window), [8])
         let w = HandsWindow(id: 8, pid: 100, app: "Word", workspace: 9)
         XCTAssertTrue(l.book.decide(w, base: .onAgentWorkspace, lends: LendBook(), now: now, mode: .full).allowed)

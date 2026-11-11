@@ -86,9 +86,19 @@ public struct MovedInWindows: Equatable, Sendable {
     /// Drops the entry of a process that has quit.
     public mutating func drop(window: UInt32) { entries[window] = nil }
 
-    /// What a launch does with the saved entries, before any agent request: an entry whose process is gone (no start time,
-    /// or a different one) is dropped; one whose origin no longer holds is kept as returning, denied and sent back; the
-    /// rest are kept as they were.
+    /// Whether an entry's process is still the one that was moved. Only a process known gone (or a different start time)
+    /// is `gone`; a start time that can't be read, now or at the move, is `unconfirmed`, and that window goes back to him.
+    public enum Owner: Equatable, Sendable { case same, gone, unconfirmed }
+
+    public static func owner(_ e: Entry, startTime: Double?, alive: Bool) -> Owner {
+        guard alive else { return .gone }
+        guard let was = e.startedAt, let t = startTime else { return .unconfirmed }
+        return abs(t - was) < 0.5 ? .same : .gone
+    }
+
+    /// What a launch does with the saved entries, before any agent request: an entry whose process is gone is dropped; one
+    /// whose owner can't be confirmed, or whose origin no longer holds, is kept as returning, denied and sent back; the rest
+    /// are kept as they were.
     public struct Launch: Equatable, Sendable {
         public var keep: [Entry]
         public var sendBack: [Entry]
@@ -96,11 +106,12 @@ public struct MovedInWindows: Equatable, Sendable {
         public var book: MovedInWindows { MovedInWindows(entries: keep + sendBack) }
     }
 
-    public static func launch(_ saved: [Entry], startTime: (Int32) -> Double?, lends: LendBook, now: Date, mode: AgentAccessMode) -> Launch {
+    public static func launch(_ saved: [Entry], startTime: (Int32) -> Double?, alive: (Int32) -> Bool, lends: LendBook, now: Date, mode: AgentAccessMode) -> Launch {
         var out = Launch(keep: [], sendBack: [], drop: [])
         for var e in saved.sorted(by: { $0.window < $1.window }) {
-            guard let was = e.startedAt, let t = startTime(e.pid), abs(t - was) < 0.5 else { out.drop.append(e); continue }
-            if holds(e, lends: lends, now: now, mode: mode) { out.keep.append(e) } else { e.returning = true; out.sendBack.append(e) }
+            let who = owner(e, startTime: startTime(e.pid), alive: alive(e.pid))
+            if who == .gone { out.drop.append(e); continue }
+            if who == .same, holds(e, lends: lends, now: now, mode: mode) { out.keep.append(e) } else { e.returning = true; out.sendBack.append(e) }
         }
         return out
     }
