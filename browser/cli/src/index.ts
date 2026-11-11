@@ -266,6 +266,7 @@ async function main(): Promise<void> {
 	};
 	if (command === "remote" && !argv.slice(1).some((a) => !a.startsWith("-"))) {
 		process.stdout.write(REMOTE_GUIDE);
+		if (!flag("--help") && !flag("-h")) process.exitCode = 2;
 		return;
 	}
 	if (command && command !== "host" && (flag("--help") || flag("-h"))) {

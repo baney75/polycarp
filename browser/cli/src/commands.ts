@@ -368,7 +368,7 @@ export function argsProblem(command: string, args: string[]): string | undefined
 export const EXIT_CODES =
 	"Exit codes: 0 success, 1 failed, not connected or nothing found, 2 usage error; update --check 100 when an update exists, library add 3 retracted and 4 unchecked, remote setup 3 when a person has to act, remote test 3 when nothing is set up, remote fix 3 when a person has to act or nothing is set up.";
 
-/** `remote --help`, or `remote` alone: the remote commands in the order a person uses them. */
+/** `remote --help`, or `remote` alone (a usage error, exit 2): the remote commands in the order a person uses them. */
 export const REMOTE_GUIDE = [
 	"Remote access for claude.ai, ChatGPT and grok.com, in the order you use it:",
 	`  1. ${COMMAND_NAME} remote setup    Make serve reachable: Tailscale Funnel, a Cloudflare tunnel or your own --public-url`,
@@ -377,6 +377,7 @@ export const REMOTE_GUIDE = [
 	`  4. ${COMMAND_NAME} remote fix      Repair what status or test found (--dry-run lists the steps)`,
 	`  5. ${COMMAND_NAME} remote off      Stop the service, close the tunnel and remove remote.json`,
 	"Each takes --json. Exit codes: 0 ok, 1 failed, 2 usage, 3 a person has to act (or, for test and fix, nothing is set up).",
+	`Every flag: ${COMMAND_NAME} --help`,
 	"",
 ].join("\n");
 

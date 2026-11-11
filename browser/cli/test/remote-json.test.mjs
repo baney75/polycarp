@@ -1588,13 +1588,13 @@ test("stateFromStatus: a failed DNS lookup is code dns_lookup, never dns, which 
 	assert.match(servfail.message, /SERVFAIL/);
 });
 
-test("remote --help, or remote alone, prints the five remote commands in order, one line each, exit 0", () => {
+test("remote --help (exit 0), or remote alone (exit 2), prints the five remote commands in order, one line each", () => {
 	const s = scenario("remote-guide");
-	for (const args of [["remote", "--help"], ["remote"], ["remote", "-h"]]) {
+	for (const [args, code] of [[["remote", "--help"], 0], [["remote", "-h"], 0], [["remote"], 2]]) {
 		const r = s.run(args);
-		assert.equal(r.code, 0, `${args.join(" ")}: ${r.stdout}${r.stderr}`);
+		assert.equal(r.code, code, `${args.join(" ")}: ${r.stdout}${r.stderr}`);
 		const lines = r.stdout.trim().split("\n");
-		assert.ok(lines.length <= 8, `a short guide, not the whole help (${lines.length} lines)`);
+		assert.ok(lines.length <= 9, `a short guide, not the whole help (${lines.length} lines)`);
 		const order = lines.map((l) => / remote (setup|status|test|fix|off) /.exec(l)?.[1]).filter(Boolean);
 		assert.deepEqual(order, ["setup", "status", "test", "fix", "off"], r.stdout);
 	}

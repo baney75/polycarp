@@ -1374,7 +1374,7 @@ test("remote off with no remote.json closes a Polycarp Funnel on 8443, and says 
 });
 
 test("remote lists its subcommands in help and rejects unknown flags", () => {
-	const help = cliRun(["remote", "--help"]).out;
+	const help = cliRun(["--help"]).out;
 	assert.match(help, /polycarp-browser remote setup \[--cloudflare name\.yourdomain\.com\] \[--replace-funnel\] \[--public-url https:\/\/host\] \[--port N\] \[--no-service\]/);
 	assert.match(help, /polycarp-browser remote status \[--json\]/);
 	assert.match(help, /polycarp-browser remote off \[--json\]/);
