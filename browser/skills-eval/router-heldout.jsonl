@@ -164,10 +164,3 @@
 {"task": "Retire every outdated product listing in my Etsy shop", "skill": "bulk-actions"}
 {"task": "Close all the stale pull requests older than six months in this repo", "skill": "bulk-actions"}
 {"task": "Revoke access for every app connected to my account settings page", "skill": "bulk-actions"}
-{"task": "Run all the tests and fix failures", "skill": "none"}
-{"task": "Add a docstring to every function", "skill": "none"}
-{"task": "Update all dependencies in package.json", "skill": "none"}
-{"task": "Fix every lint error", "skill": "none"}
-{"task": "Add a comment to each function", "skill": "none"}
-{"task": "Remove all the unused imports in this file", "skill": "none"}
-{"task": "Delete every .tmp file in the build folder", "skill": "none"}

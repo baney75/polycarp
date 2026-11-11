@@ -45,13 +45,12 @@ BaneySpaces workspace.
 
 ## Drive an app: snapshot, act on a ref, check
 
-For an app you may already act on (one you started with `agent open`, or one Donovan lent you), check for a
-programmatic route before you click, and never under Read Only. If the app has a scripting interface (AppleScript
-or JXA through `osascript`, a Shortcuts action through `shortcuts run`), a command-line tool, a file you can read or
-write, or a D-Bus service on Linux, use that: it is faster, works on many items at once, and is easier to check.
-A scripting route does not widen what the access mode allows: an app you may not click in, you may not script
-either. `tell application ... to activate`, and anything else that takes focus or raises a window, is forbidden.
-Click through the app only when no such route does the job, or the user wants to watch it happen.
+Act only on the window your own `agent open` returned (`data.window`, on the agent workspace) or a lent app's. If you can't tell
+which window is yours, stop and tell Donovan; never guess. Don't drive an app through AppleScript, JXA or Shortcuts
+(`osascript`, `shortcuts run`): they pick an app by name, not by your window, so they can reach Donovan's own copy
+of it, or start one on his workspace, outside the checks that hold you to the agent workspace. To work on many
+items at once, read or write a file in the handoff folder instead. Never run anything that takes focus or raises
+a window.
 
 `baneyspaces agent …` (or the MCP tools from `baneyspaces mcp`, same names) reads and acts on desktop apps
 from behind. It never raises a window, moves the pointer, types into the front app or switches Donovan's
