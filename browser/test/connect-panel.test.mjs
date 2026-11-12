@@ -602,7 +602,8 @@ test("each next.kind the helper sends draws its sentence and its button", async 
 		[{ state: "tailscale_missing", message: "", next: { kind: "install", url: "https://tailscale.com/download/mac" } }, "Get Tailscale", "open_url"],
 		[{ state: "tailscale_signed_out", message: "", next: { kind: "sign_in", command: "tailscale up" } }, "Copy the command", "copy_command"],
 		[{ state: "funnel_not_allowed", message: "", next: { kind: "open_page", url: "https://login.tailscale.com/f/funnel?node=x" } }, "Open Tailscale's page", "open_url"],
-		[{ state: "problem", code: "tailscale_operator", message: "", next: { kind: "run_command", command: "sudo tailscale set --operator=$USER" } }, "Copy the command", "copy_command"],
+		// Nothing saved yet, so nothing retries it: the command is drawn and the button checks again (first-F2, round 2).
+		[{ state: "problem", code: "tailscale_operator", message: "", next: { kind: "run_command", command: "sudo tailscale set --operator=$USER" } }, "Check again", "open_funnel"],
 		[{ state: "problem", code: "cloudflare_dns", message: "", next: { kind: "choose_name" } }, "Turn on", "turn_on"],
 		[{ state: "ready", message: "" }, "Turn on", "turn_on"],
 	];
@@ -617,7 +618,7 @@ test("each next.kind the helper sends draws its sentence and its button", async 
 	assert.equal(flowScreen({ status: status(), run: on }).kind, "result");
 	// The step draws the command the helper named, and opens only Tailscale's or Cloudflare's pages.
 	const flow = read("src/dialogs/RemoteFlow.ts");
-	assert.match(flow, /action\?\.kind === "copy_command" \? answer\.next\?\.command/);
+	assert.match(flow, /action\?\.kind === "copy_command" \|\| copy\.key === "tailscale_operator_check" \? answer\.next\?\.command/);
 	const { safeHelpUrl } = await import("../src/connect/format.ts");
 	assert.equal(safeHelpUrl("https://login.tailscale.com/f/funnel?node=x"), "https://login.tailscale.com/f/funnel?node=x");
 	for (const bad of ["http://tailscale.com/", "https://tailscale.com.evil.example/", "https://u@tailscale.com/", "https://evil.example/", "javascript:alert(1)", 3]) assert.equal(safeHelpUrl(bad), undefined, String(bad));
@@ -686,7 +687,7 @@ test("the result screen shows the address, the code with a countdown and New cod
 	assert.deepEqual(ASSISTANT_STEPS.map((a) => a.name), ["claude.ai", "ChatGPT", "grok.com"]);
 	assert.match(RESULT_COPY.noPasscode, /No passcode was made here/);
 	// Repair shows only when this helper has `remote fix` (feature-detected) with actions and a check really failed.
-	assert.match(read("src/connect/remote-flow.ts"), /repair: failed\.length > 0 && repairAvailable\(input\.fix\)/);
+	assert.match(read("src/connect/remote-flow.ts"), /repair: \(failed\.length > 0 \|\| gaveUp\) && repairAvailable\(input\.fix\)/);
 	// The panel setups make no passcode (D33), so nothing about one can reach the page.
 	assert.match(read("cli/src/remote-panel.ts"), /passcode: false/);
 	assert.doesNotMatch(flow, /\.passcode\b/);

@@ -34,6 +34,9 @@ export interface RemoteStepCopy {
 
 export const REMOTE_TITLE = "Use Polycarp from Claude, ChatGPT and Grok";
 
+/** What a stopped Repair's step ends with in place of "this page moves on by itself": nothing polls there. */
+export const REPAIR_AGAIN = "Then press Repair again.";
+
 export const ROUTE_COPY = {
 	chooseTitle: "How should assistants reach this computer?",
 	chooseBody: "Both ways are free and run on your own account. Polycarp never sees the account or makes one for you.",
@@ -118,6 +121,15 @@ export const STEP_COPY = {
 		body: "Tailscale refused because your user isn't its operator. Run this command once in a terminal; Polycarp never runs sudo. This page moves on by itself.",
 		action: { kind: "copy_command", label: "Copy the command" },
 		waits: true,
+	},
+	/**
+	 * The surface's own: the operator refusal when nothing checks for it by itself (the Funnel retry stopped, or nothing is saved
+	 * yet to retry), so the button checks again.
+	 */
+	tailscale_operator_check: {
+		title: "Let your user control Tailscale",
+		body: "Tailscale refused because your user isn't its operator. Run this command once in a terminal; Polycarp never runs sudo. Then press Check again.",
+		action: { kind: "open_funnel", label: "Check again" },
 	},
 	launcher: {
 		title: "Finish installing Polycarp",
@@ -312,6 +324,14 @@ export function waitingChecks(checks: readonly CheckLike[] | undefined): boolean
 }
 
 /**
+ * The helper says the next step is `remote fix` (setup's deadline passed with a check still pending): waiting is over, and the
+ * answer is a failure that offers Repair, never "still being published" (second-N2).
+ */
+export function needsRepair(answer: { next?: { kind?: string; command?: string } }): boolean {
+	return answer.next?.kind === "run_command" && /(^|\s)remote fix(\s|$)/.test(answer.next.command ?? "");
+}
+
+/**
  * The route is on, as a person should read it: the helper says on, or it saved an address and the only failures are ones that
  * waiting fixes (setup's own rule), or an older helper's bare `dns` code with the address. The host mints a pressed Turn on's
  * code by this too.
@@ -320,10 +340,11 @@ export function answerOn(answer: {
 	state: string;
 	code?: string;
 	connectorUrl?: string;
+	next?: { kind?: string; command?: string };
 	checks?: readonly CheckLike[];
 }): boolean {
 	if (answer.state === "on" || answer.state === "no_browser_connected") return true;
-	if (answer.state !== "problem" || !answer.connectorUrl) return false;
+	if (answer.state !== "problem" || !answer.connectorUrl || needsRepair(answer)) return false;
 	return answer.checks?.length ? waitingChecks(answer.checks) : answer.code === "dns";
 }
 
@@ -402,6 +423,16 @@ export const RESULT_COPY = {
 	copy: "Copy",
 	copied: "Copied.",
 } as const;
+
+/**
+ * RESULT_COPY entries the side panel never draws: the Mac app shows the passcode once (the panel never sees one, D33) and has a
+ * Turn off button. Kept here so both surfaces read one table (first-F4).
+ */
+export const MAC_ONLY_RESULT = [
+	"passcodeLabel",
+	"passcodeNote",
+	"turnOff",
+] as const satisfies readonly (keyof typeof RESULT_COPY)[];
 
 /** "1 check failed", "2 checks failed". */
 export function checksFailed(n: number): string {
