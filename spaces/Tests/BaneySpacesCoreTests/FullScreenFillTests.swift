@@ -101,9 +101,17 @@ final class FullScreenFillTests: XCTestCase {
         XCTAssertEqual(next.minY, moved.minY)
     }
 
-    func testDraggingAFullSizeWindowWithNoRecordStillShrinksIt() throws {
+    func testDraggingAWindowMacOSFilledLeavesItToMacOS() {
+        // Donovan, 2026-11-12: Helium filled by a drag to the top, then dragged down. macOS put back its old size and Spaces
+        // shrank it as well in the same 10 ms, so the window changed size twice and jumped off the pointer.
         let moved = fill.offsetBy(dx: 12, dy: 30)
-        let next = try XCTUnwrap(FullScreenFill.unfilled(current: moved, fill: fill, record: nil, pointer: CGPoint(x: moved.midX, y: moved.minY + 8)))
+        XCTAssertNil(FullScreenFill.unfilled(current: moved, fill: fill, record: nil, pointer: CGPoint(x: moved.midX, y: moved.minY + 8)))
+    }
+
+    func testAFilledWindowWhoseEarlierSizeWasFullShrinksWhenDragged() throws {
+        let record = FullScreenFill.Record(from: fill, landed: fill)
+        let moved = fill.offsetBy(dx: 0, dy: 30)
+        let next = try XCTUnwrap(FullScreenFill.unfilled(current: moved, fill: fill, record: record, pointer: CGPoint(x: moved.midX, y: moved.minY + 8)))
         XCTAssertEqual(next.size, FullScreenFill.smaller(fill).size)
     }
 

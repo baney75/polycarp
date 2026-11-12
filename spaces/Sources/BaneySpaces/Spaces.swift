@@ -778,13 +778,16 @@ final class Spaces {
     func unfillForDrag(_ id: WindowID, at pointer: CGPoint) {
         guard active, !switching, FullScreenGestures.isEnabled else { return }
         refresh()
-        guard let w = windows[id], let current = w.frame,
-              let next = FullScreenFill.unfilled(current: current, fill: Windows.visibleArea(near: current),
-                                                 record: filled[id], pointer: pointer) else { return }
+        guard let w = windows[id], let current = w.frame else { return }
+        guard let next = FullScreenFill.unfilled(current: current, fill: Windows.visibleArea(near: current),
+                                                 record: filled[id], pointer: pointer) else {
+            Trace.log("fill window=\(id) drag left to macOS: \(filled[id] == nil ? "no record" : "not filled") frame=\(current)")
+            return
+        }
         w.setFrame(next)
         filled[id] = nil
         saveFilled()
-        Trace.log("fill window=\(id) off: dragged away")
+        Trace.log("fill window=\(id) off: dragged away from=\(current) to=\(next)")
     }
 
     /// Windows this filled, so a second press puts each back. Kept across launches: an update or a restart must not leave
