@@ -11,7 +11,19 @@ import { renderMessage, type TranscriptContext, type TranscriptRenderer } from "
 import { html, LitElement, nothing, type TemplateResult } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { repeat } from "lit/directives/repeat.js";
-import { Brain, Check, ChevronRight, CircleAlert, Code, FileText, Globe, Loader2, Sparkles } from "lucide";
+import {
+	Brain,
+	Check,
+	ChevronRight,
+	CircleAlert,
+	Code,
+	FileText,
+	Globe,
+	Loader2,
+	MousePointerClick,
+	Sparkles,
+} from "lucide";
+import { PAGE_TOOL_NAMES } from "../bridge/page-tools.js";
 import { SkillPill } from "../components/SkillPill.js";
 import { getTabkyraStorage } from "../storage/app-storage.js";
 import type { Skill } from "../storage/stores/skills-store.js";
@@ -201,7 +213,7 @@ export class StepList extends LitElement {
 		const lead = html`${statusIcon(state)}${
 			fav
 				? html`<img src=${fav} alt="" class="w-3.5 h-3.5 shrink-0" @error=${hideImg} />`
-				: html`<span class="inline-flex shrink-0">${icon(step.call.name === "navigate" ? Globe : step.call.name === "skill" ? Sparkles : step.call.name.startsWith("extract") ? FileText : Code, "xs")}</span>`
+				: html`<span class="inline-flex shrink-0">${icon(step.call.name === "navigate" ? Globe : step.call.name === "skill" ? Sparkles : step.call.name.startsWith("extract") ? FileText : PAGE_TOOL_NAMES.has(step.call.name) ? MousePointerClick : Code, "xs")}</span>`
 		}`;
 		const skills = step.showSkills ? (details.skills ?? []).map((s) => s.fullDetails ?? s.name) : [];
 		return html`

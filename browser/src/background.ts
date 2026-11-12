@@ -1,4 +1,5 @@
 import { startBridge, trace } from "./bridge/native.js";
+import { startPanelPageTools } from "./bridge/panel-calls.js";
 import { installCdpListeners } from "./browser/cdp.js";
 import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard.js";
 import { startGroupGestures } from "./browser/group-gestures.js";
@@ -33,6 +34,8 @@ chrome.webNavigation.onTabReplaced.addListener(({ replacedTabId, tabId }) => {
 // native-messaging bridge. Connects when the CLI has installed the host manifest.
 startBridge();
 startSubscriptionRelay();
+// The side panel's page tools (read_page, act, ...) run here, on the same handlers as the bridge.
+startPanelPageTools();
 startConnectRelay();
 
 // "Update now", the reload after an update (only when no agent runs), automatic updates. A copy

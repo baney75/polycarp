@@ -9,6 +9,7 @@ import { migrateLegacyPaths } from "./migrate.ts";
 import { runNativeHost } from "./host.ts";
 import { browserDirs, cliLauncherPath, hostStatus, install, isInstalled } from "./install.ts";
 import { runMcpServer } from "./mcp.ts";
+import { runPanelProfile } from "./panel-profile.ts";
 import { COMMAND_NAME, COMPILED } from "./self.ts";
 import { EXTENSION_FILES, extensionDir } from "./paths.ts";
 import { writePiExtension } from "./pi-extension.ts";
@@ -330,7 +331,9 @@ async function main(): Promise<void> {
 			runNativeHost();
 			return;
 		case "mcp":
-			await runMcpServer({ session: option("--session") });
+			// --profile panel: the side panel's page tools, for measuring the panel's tool surface (eval/web-bench.mjs).
+			if (option("--profile") === "panel") await runPanelProfile({ session: option("--session") });
+			else await runMcpServer({ session: option("--session") });
 			return;
 		case "threads": {
 			const rest = argv.slice(1).filter((a, i, all) => !a.startsWith("-") && !VALUE_FLAGS.has(all[i - 1] ?? ""));

@@ -8,13 +8,16 @@
 //   TABKYRA_NO_BUMP=1 TABKYRA_OUT_DIR=$PWD/dist-chrome npm run build   (repo root)
 // and a Playwright Chromium (`npx playwright-core install chromium`).
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { loadTs } from "./helpers/bundle-ts.mjs";
+import { lastToolResult, seedStubScript, stubModelServer } from "./helpers/stub-model.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const extensionDir = join(here, "..", "..", "dist-chrome");
@@ -422,5 +425,109 @@ test("a real side panel (no tab) is served by the real Connect relay, not discon
 		assert.equal(isSidePanelPort({ ...fromPanel, tab: { id: 1 } }, `chrome-extension://${EXTENSION_ID}/`), false);
 	} finally {
 		await page.close();
+	}
+});
+
+// The panel's own model on the bridge's ref tools, end to end: a scripted stand-in model opens a page, reads it, clicks
+// the button by the ref read_page gave, and reads again. The click goes through the real handlers, CDP input and all.
+// Its own Chromium without Playwright attached, as in e2e-bridge: the extension's chrome.debugger can't attach to a tab
+// another automation client holds, so the stand-in model and the page are local servers and the panel is driven over
+// the DevTools endpoint.
+test("the panel's model reads a page, clicks a ref with act, and the page changes", async () => {
+	const site = createServer((_req, res) => {
+		res.writeHead(200, { "content-type": "text/html" });
+		res.end(
+			`<!doctype html><title>Fixture</title><main><h1>Question</h1><button onclick="document.querySelector('main').innerHTML='<h1>Answer: 42</h1>'">Show answer</button></main>`,
+		);
+	});
+	await new Promise((r) => site.listen(0, "127.0.0.1", r));
+	const FIXTURE = `http://127.0.0.1:${site.address().port}/`;
+	let ref;
+	const stub = await stubModelServer((body, turn) => {
+		if (turn === 0) return { toolCalls: [{ name: "navigate", arguments: { url: FIXTURE, newTab: true } }] };
+		if (turn === 1) return { toolCalls: [{ name: "read_page", arguments: { filter: "interactive" } }] };
+		if (turn === 2) {
+			ref = /(e\d+) button "Show answer"/.exec(lastToolResult(body))?.[1];
+			if (!ref) return { text: `no ref in: ${lastToolResult(body)}` };
+			return { toolCalls: [{ name: "act", arguments: { action: "click", ref } }] };
+		}
+		if (turn === 3) return { toolCalls: [{ name: "read_page", arguments: {} }] };
+		return { text: "The answer is 42." };
+	});
+	const own = mkdtempSync(join(tmpdir(), "tabkyra-e2e-panel-tools-"));
+	const browser = spawn(
+		chromium.executablePath(),
+		[`--user-data-dir=${own}`, "--headless=new", "--no-first-run", "--no-default-browser-check", "--use-mock-keychain", "--password-store=basic", "--remote-debugging-port=0", "--disable-gpu", `--disable-extensions-except=${extensionDir}`, `--load-extension=${extensionDir}`, "about:blank"],
+		{ stdio: ["ignore", "ignore", "pipe"] },
+	);
+	let stderr = "";
+	browser.stderr.on("data", (d) => {
+		stderr += d;
+	});
+	const until = async (fn, ms, what) => {
+		const end = Date.now() + ms;
+		for (;;) {
+			const v = await fn().catch(() => undefined);
+			if (v) return v;
+			if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+			await new Promise((r) => setTimeout(r, 150));
+		}
+	};
+	try {
+		const devtools = await until(async () => stderr.match(/DevTools listening on ws:\/\/([^/]+)\//)?.[1], 20_000, "Chromium");
+		const targets = async () => (await fetch(`http://${devtools}/json/list`)).json();
+		const version = await (await fetch(`http://${devtools}/json/version`)).json();
+		const send = (wsUrl, method, params = {}) =>
+			new Promise((resolve, reject) => {
+				const ws = new WebSocket(wsUrl);
+				ws.onerror = () => reject(new Error(`no DevTools socket for ${method}`));
+				ws.onopen = () => ws.send(JSON.stringify({ id: 1, method, params }));
+				ws.onmessage = (e) => {
+					const m = JSON.parse(e.data);
+					if (m.id !== 1) return;
+					ws.close();
+					m.error ? reject(new Error(m.error.message)) : resolve(m.result);
+				};
+			});
+		const evaluate = async (targetId, expression) => {
+			const t = (await targets()).find((x) => x.id === targetId);
+			const r = await send(t.webSocketDebuggerUrl, "Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+			return r.result?.value;
+		};
+		const { targetId } = await send(version.webSocketDebuggerUrl, "Target.createTarget", { url: PANEL });
+		await until(() => evaluate(targetId, `!!document.querySelector("textarea")?.placeholder?.includes("Ask about this page")`), 20_000, "the composer");
+		await evaluate(targetId, seedStubScript(stub.model));
+		const panelPage = (await targets()).find((x) => x.id === targetId);
+		await send(panelPage.webSocketDebuggerUrl, "Page.navigate", { url: `${PANEL}?teststeps=${encodeURIComponent(JSON.stringify(["Show the answer"]))}` });
+		await until(() => evaluate(targetId, `document.body.innerText.includes("The answer is 42.")`), 30_000, "the answer").catch((err) => {
+			throw new Error(`${err.message}\nwhat the model saw: ${JSON.stringify(stub.requests.map(lastToolResult))}`);
+		});
+		assert.equal(stub.requests.length, 5, "the model got a request per turn");
+		assert.ok(ref, "read_page gave the button a ref");
+		const [read, clicked, readAgain] = [2, 3, 4].map((i) => lastToolResult(stub.requests[i]));
+		assert.match(read, /use the ref with act/);
+		assert.doesNotMatch(clicked, /^[a-z_]+: /, `the click worked: ${clicked}`);
+		assert.match(readAgain, /Answer: 42/);
+		assert.doesNotMatch(readAgain, /Show answer/);
+		// The tab itself changed, not just what the model was told.
+		const fixture = (await targets()).find((t) => t.type === "page" && t.url.startsWith(FIXTURE));
+		assert.equal(await evaluate(fixture.id, `document.querySelector("h1").textContent`), "Answer: 42");
+		// The panel's step rows name the calls.
+		const rows = await evaluate(targetId, "document.body.innerText");
+		assert.match(rows, new RegExp(`Click ${ref}`));
+		// The panel's tool list is the grouped ref tools; MCP's separate input tools are not in it.
+		const tools = stub.requests[0].tools.map((t) => t.function.name);
+		for (const name of ["read_page", "find", "get_page_text", "act", "handle_dialog"]) assert.ok(tools.includes(name), name);
+		assert.ok(!tools.includes("click"));
+	} finally {
+		browser.kill();
+		await new Promise((r) => (browser.exitCode === null ? browser.once("exit", r) : r()));
+		await stub.close();
+		site.close();
+		try {
+			rmSync(own, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+		} catch {
+			/* Chromium helpers may still hold it */
+		}
 	}
 });

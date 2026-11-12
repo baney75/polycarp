@@ -19,7 +19,7 @@ import { resyncMirror, startThreadMirror } from "../threads/mirror.js";
 import { asBuildInfo, BUILD, type BuildInfo } from "../update/build.js";
 import type { UpdateAction } from "../update/logic.js";
 import { runningFromStore } from "../update/store-install.js";
-import { type Delivered, dialogError, raceDialogs } from "./dialogs.js";
+import { type Delivered, dialogError, isDialogSafe, raceDialogs } from "./dialogs.js";
 import { BridgeError, classify } from "./errors.js";
 import { dropAllTransfers, dropTransfersForClient } from "./files.js";
 import {
@@ -367,23 +367,6 @@ function resolveDecision(requestId: string, decision: PermissionDecision): boole
 	return true;
 }
 
-/** Methods that still work while a dialog freezes the page. */
-const DIALOG_SAFE = new Set([
-	"dialog",
-	"status",
-	"tabs.context",
-	"tabs.create",
-	"tabs.close",
-	"tabs.select",
-	"tabs.show",
-	"permission.respond",
-	// Read buffered messages only; they help explain the dialog.
-	"console.read",
-	"network.read",
-	// Saving what a capture holds is how an agent keeps the evidence of a page that broke (a dialog included).
-	"capture",
-]);
-
 async function runRequest(state: ClientState, req: HostForwardedRequest): Promise<void> {
 	const reply = (result?: unknown, error?: BridgeError) =>
 		send({
@@ -472,12 +455,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 				}
 			},
 		};
-		// Reading a body asks the page's network stack, not just a buffer: not while a dialog holds it.
-		// A capture's start attaches to the page; saving or stopping reads what it holds, which is what a dialog calls for.
-		const dialogSafe =
-			DIALOG_SAFE.has(req.method) &&
-			!(req.method === "network.read" && req.params?.requestId !== undefined) &&
-			!(req.method === "capture" && String(req.params?.action).endsWith("_start"));
+		const dialogSafe = isDialogSafe(req.method, req.params);
 		if (!dialogSafe) {
 			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
 			if (openOn !== undefined) throw dialogError(openOn, openDialog(openOn) as PageDialog);

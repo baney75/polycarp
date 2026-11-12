@@ -22,6 +22,35 @@ export function dialogError(tabId: number, dialog: PageDialog): BridgeError {
 	);
 }
 
+/** Methods that still work while a dialog freezes the page. */
+const DIALOG_SAFE = new Set([
+	"dialog",
+	"status",
+	"tabs.context",
+	"tabs.create",
+	"tabs.close",
+	"tabs.select",
+	"tabs.show",
+	"permission.respond",
+	// Read buffered messages only; they help explain the dialog.
+	"console.read",
+	"network.read",
+	// Saving what a capture holds is how an agent keeps the evidence of a page that broke (a dialog included).
+	"capture",
+]);
+
+/**
+ * Whether a call may run while a dialog is open on one of the session's tabs. The bridge
+ * (native.ts) and the side panel's tools (panel-calls.ts) both ask this.
+ */
+export function isDialogSafe(method: string, params?: Record<string, unknown>): boolean {
+	// Reading a body asks the page's network stack, not just a buffer: not while a dialog holds it.
+	if (method === "network.read" && params?.requestId !== undefined) return false;
+	// A capture's start attaches to the page; saving or stopping reads what it holds, which is what a dialog calls for.
+	if (method === "capture" && String(params?.action).endsWith("_start")) return false;
+	return DIALOG_SAFE.has(method);
+}
+
 /** What a call that worked, and so opened a dialog, returns: its result plus the dialog and what answers it. */
 export function dialogOpenedResult(delivered: Record<string, unknown>, tabId: number, dialog: PageDialog) {
 	const notRun = typeof delivered.notRun === "number" ? delivered.notRun : 0;

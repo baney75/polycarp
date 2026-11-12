@@ -201,6 +201,63 @@ export function groupTranscript(messages: readonly TMessage[], opts: GroupOption
 	return { blocks, lastSite };
 }
 
+/** Model-written text for a label: one line, quoted, cut at 40 characters. */
+function quoted(v: unknown): string {
+	if (typeof v !== "string" || !v.trim()) return "";
+	const line = v.replace(/\s+/g, " ").trim();
+	return `"${line.length > 40 ? `${line.slice(0, 39)}…` : line}"`;
+}
+
+/** What a page tool aims at: its ref, a short selector, or a point. */
+function targetText(a: Record<string, unknown>): string {
+	if (typeof a.ref === "string" && a.ref) return a.ref;
+	if (typeof a.selector === "string" && a.selector) return quoted(a.selector);
+	if (typeof a.x === "number" && typeof a.y === "number") return `at ${Math.round(a.x)}, ${Math.round(a.y)}`;
+	return "";
+}
+
+/** An act call's label, by its action: "Click e5", "Type "hi" in e2", "Scroll to bottom". */
+function actLabel(a: Record<string, unknown>): string {
+	const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+	switch (a.action) {
+		case "click":
+			return `${Number(a.clickCount) === 2 ? "Double-click" : "Click"} ${targetText(a)}`.trim();
+		case "hover":
+			return `Hover ${targetText(a)}`.trim();
+		case "type":
+			return `Type ${quoted(a.text)}${a.ref || a.selector ? ` in ${targetText(a)}` : ""}`.trim();
+		case "fill":
+			return `Fill ${targetText(a)} with ${quoted(a.value)}`.trim();
+		case "press": {
+			const times = Number(a.repeat);
+			return `Press ${str(a.key) ?? "a key"}${times > 1 ? ` ${times} times` : ""}`;
+		}
+		case "scroll": {
+			const edge = a.edge ?? a.to;
+			if (edge === "top" || edge === "bottom") return `Scroll to ${edge}`;
+			const dy = Number(a.dy ?? 0);
+			if (dy) return `Scroll ${dy > 0 ? "down" : "up"}`;
+			if (a.ref || a.selector) return `Scroll to ${targetText(a)}`;
+			return "Scroll";
+		}
+		case "drag":
+			return "Drag";
+		case "wait":
+			if (str(a.text)) return `Wait for ${quoted(a.text)}`;
+			if (str(a.urlIncludes)) return `Wait for ${quoted(a.urlIncludes)} in the address`;
+			if (str(a.selector)) return "Wait for an element";
+			return Number(a.ms) > 0 ? `Wait ${Number(a.ms)} ms` : "Wait";
+		case "screenshot":
+			return "Screenshot";
+		case "steps": {
+			const n = Array.isArray(a.steps) ? a.steps.length : 0;
+			return n ? `Run ${n} input ${n === 1 ? "step" : "steps"}` : "Run input steps";
+		}
+		default:
+			return "Act on the page";
+	}
+}
+
 /** A one-line label for a tool call row. */
 export function stepLabel(call: TToolCall, result?: TMessage): { label: string; detail?: string } {
 	const a = call.arguments ?? {};
@@ -227,6 +284,20 @@ export function stepLabel(call: TToolCall, result?: TMessage): { label: string; 
 			return { label: "Read image" };
 		case "ask_user_which_element":
 			return { label: "Ask you to pick an element" };
+		case "read_page":
+		case "get_page_text": {
+			const url = (result?.details as { url?: unknown } | undefined)?.url;
+			return {
+				label: call.name === "read_page" ? "Read page" : "Read text",
+				detail: siteOf(typeof url === "string" ? url : undefined),
+			};
+		}
+		case "find":
+			return { label: `Find ${quoted(a.query)}`.trim() };
+		case "act":
+			return { label: actLabel(a) };
+		case "handle_dialog":
+			return { label: a.accept === true ? "Answer the dialog: OK" : "Answer the dialog: Cancel" };
 		case "artifacts":
 			return { label: `${str(a.command) ?? "Edit"} ${str(a.filename) ?? ""}`.trim() };
 		default:
