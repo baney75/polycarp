@@ -41,31 +41,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// one up again bumps its generation, so its stale move never runs, even one queued.
     private var settling: [WindowID: Timer] = [:]
     private var dropGeneration: [WindowID: Int] = [:]
-    /// Windows waiting to hold still after a drag before `correctAfterDrag` looks at them.
-    private var clamping: [WindowID: Timer] = [:]
+    /// Windows waiting to hold still after a drag before `correctAfterDrag` looks at them, and the timer looking at each.
+    private var pendingSettles = PendingSettles()
+    private var settleTimers: [WindowID: Timer] = [:]
 
-    /// Waits for the window server, the app and any tile animation to finish the drop (still for three looks 20 ms apart,
-    /// no longer than 0.5 s), then lets Spaces correct a blind drop or an unreachable title bar. A window dropped on a
-    /// workspace is the drop's. One still moving after 0.5 s (an app animating its own frame) is left alone: moving it
-    /// then would fight the animation.
+    /// Waits for the window server, the app and any tile animation to finish the drop, then lets Spaces correct a blind
+    /// drop or an unreachable title bar. `DragRelease.settleWatch` sets how long and what ends the wait early;
+    /// `PendingSettles` cancels it when the window is pressed or dragged again, or any button goes down. A window dropped
+    /// on a workspace is the drop's.
     private func correctOnceStill(_ id: WindowID, after end: DragEnd) {
         guard !end.dropped else { return }
-        clamping.removeValue(forKey: id)?.invalidate()
-        var watch = DragRelease.settleWatch(from: TopDragWatcher.bounds(of: id), after: end, displays: Spaces.dragDisplays())
-        if watch.stillLooks > 3 { Trace.log("drag end window=\(id) let go blind at a side edge: waits \(watch.stillLooks * 20) ms still for macOS's tile") }
-        clamping[id] = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { [weak self] timer in
-            let now = TopDragWatcher.bounds(of: id)
-            let verdict = watch.look(now)
-            guard verdict != .wait else { return }
-            timer.invalidate()
-            guard let self, self.clamping[id] === timer else { return }
-            self.clamping[id] = nil
-            guard verdict == .still, now != nil else {
-                if end.coveredFrom != nil { Trace.log("drag end window=\(id) still moving after \(watch.looks * 20) ms; left alone") }
-                return
-            }
-            self.spaces.correctAfterDrag(id, end: end)
+        cancelCorrection(id)
+        let watch = DragRelease.settleWatch(from: TopDragWatcher.bounds(of: id), after: end, displays: Spaces.dragDisplays())
+        if watch.leaveIfMoved {
+            Trace.log("drag end window=\(id) let go blind at a side edge: waits \(watch.stillLooks * 20) ms still, left alone if it moves")
         }
+        pendingSettles.start(id, watch: watch, end: end)
+        settleTimers[id] = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { [weak self] timer in
+            guard let self, self.settleTimers[id] === timer else { return timer.invalidate() }
+            let outcome = self.pendingSettles.look(id, frame: TopDragWatcher.bounds(of: id), buttonDown: NSEvent.pressedMouseButtons != 0)
+            switch outcome {
+            case .wait: return
+            case let .correct(end): self.spaces.correctAfterDrag(id, end: end)
+            case let .leftAlone(why): if end.coveredFrom != nil { Trace.log("drag end window=\(id) \(why); left alone") }
+            case .none: break
+            }
+            timer.invalidate()
+            self.settleTimers[id] = nil
+        }
+    }
+
+    /// Cancels the correction waiting for window `id`: it was pressed or dragged again.
+    private func cancelCorrection(_ id: WindowID) {
+        pendingSettles.cancel(id)
+        settleTimers.removeValue(forKey: id)?.invalidate()
     }
 
     /// Cancels the drop waiting for window `id`, or every one.
@@ -81,7 +90,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// A window dragged to the top of the screen opens the overview, in place of Mission Control.
     private lazy var topDrag: TopDragWatcher = {
         let t = TopDragWatcher()
-        t.onDragStart = { [weak self] id, p in self?.spaces.unfillForDrag(id, at: p) }
+        t.onDragStart = { [weak self] id, p in
+            self?.cancelCorrection(id)
+            self?.spaces.unfillForDrag(id, at: p)
+        }
         t.onOpen = { [weak self] grab, p in
             guard let self, self.started else { return false }
             if self.spaces.switching { return nil }
@@ -93,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         t.onPress = { [weak self] id in
             guard let self, let id else { return }
             self.cancelSettling(id)
-            self.clamping.removeValue(forKey: id)?.invalidate()
+            self.cancelCorrection(id)
         }
         t.overviewCovers = { [weak self] p in self?.viewer.carryCovers(p) ?? false }
         t.onRelease = { [weak self] grab, p in

@@ -815,9 +815,6 @@ final class Spaces {
         }
     }
 
-    /// A drag of a window ended and it has held still: one the overview covered and that dropped nowhere goes back to its
-    /// frame from before the overview, and one whose title bar is out of reach comes back far enough to grab. Anything
-    /// else stays where the person put it. Only a window on the workspace you're on.
     /// Each display's whole frame and visible area in window-server coordinates, as `DragRelease` takes them.
     static func dragDisplays() -> [(frame: CGRect, visible: CGRect)] {
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
@@ -825,6 +822,9 @@ final class Spaces {
                                        visible: Geometry.toAX($0.visibleFrame, primaryHeight: primaryHeight)) }
     }
 
+    /// A drag of a window ended and it has held still: one the overview covered and that dropped nowhere goes back to its
+    /// frame from before the overview, and one whose title bar is out of reach comes back far enough to grab. Anything
+    /// else stays where the person put it. Only a window on the workspace you're on.
     func correctAfterDrag(_ id: WindowID, end: DragEnd) {
         guard active, !switching, let w = windows[id], model.workspace(of: id).map(model.isShown) == true,
               !w.isMinimized, let f = w.frame else { return }
