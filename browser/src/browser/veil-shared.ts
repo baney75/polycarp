@@ -7,18 +7,21 @@
  */
 
 export const VEIL_ENABLED_KEY = "veil_enabled";
+/** The pointer character that shows where the agent acts (Settings > Agents); off keeps the glow and label. */
+export const POINTER_ENABLED_KEY = "veil_pointer";
 /** The side panel's Light / Dark / System switch, mirrored where the worker can read it (appearance/mode.ts). */
 export const MODE_MIRROR_KEY = "tabkyra.mode";
 const TAGS_KEY = "veil_tags";
 
-export async function isVeilEnabled(): Promise<boolean> {
-	const data = await chrome.storage.local.get(VEIL_ENABLED_KEY);
-	return data[VEIL_ENABLED_KEY] !== false;
-}
+/** An on/off setting in local storage: on unless turned off. */
+const flag = (key: string) =>
+	[
+		async () => (await chrome.storage.local.get(key))[key] !== false,
+		async (on: boolean) => chrome.storage.local.set({ [key]: on }),
+	] as const;
 
-export async function setVeilEnabled(enabled: boolean): Promise<void> {
-	await chrome.storage.local.set({ [VEIL_ENABLED_KEY]: enabled });
-}
+export const [isVeilEnabled, setVeilEnabled] = flag(VEIL_ENABLED_KEY);
+export const [isPointerEnabled, setPointerEnabled] = flag(POINTER_ENABLED_KEY);
 
 /** A fresh tag name: two runs of lowercase letters joined by a hyphen (a valid custom element name). */
 export function newVeilTag(random: () => number = Math.random): string {
