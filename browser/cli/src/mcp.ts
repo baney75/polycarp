@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { checkSkill, listSkills, matchTask, readSkill, removeSkill, skillInfo, syncCommunity, writeSkill } from "./skill.ts";
 import { stageCases } from "./skill-submit.ts";
 import { firecrawlCrawl, firecrawlMap, pageMarkdown } from "./firecrawl.ts";
+import { capCrawl, capJson, capOutput, fitSnapshot, MARKDOWN_CHARS, sliceText, VALUE_CHARS } from "./output-cap.ts";
 import { searxSearch } from "./searx.ts";
 import { selfExec, selfPrefix } from "./self.ts";
 import { VERSION } from "./version.ts";
@@ -35,7 +36,9 @@ import type { RosterDevice } from "./link-protocol.ts";
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
 function text(value: unknown): Content[] {
-	return [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }];
+	// The net under every tool: no result an agent gets is longer than OUTPUT_CAP (output-cap.ts). A value stays valid
+	// JSON: its longest fields are cut, never the JSON text in the middle.
+	return [{ type: "text", text: typeof value === "string" ? capOutput(value) : capJson(value) }];
 }
 
 function errorMessage(err: unknown): string {
@@ -415,6 +418,24 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		return { content: text(isNotConnected(err) ? NOT_CONNECTED : errorMessage(err)), isError: true };
 	}
 
+	/**
+	 * The last run_js value, for offset reads of it (one value per session, the newest). Every other tool drops it
+	 * before it runs (the wrapper below), whatever it does: navigate, a click, files, read_page with a tabId (which makes
+	 * that tab current) all can change the page or which tab is current, so reading on never serves an old tab's value.
+	 */
+	let lastValue: { key: string; json: string } | undefined;
+	{
+		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
+		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, cb: unknown, ...rest: unknown[]) => {
+			if (name === "run_js" || typeof cb !== "function") return register(name, config, cb, ...rest);
+			const handler = cb as (...a: unknown[]) => unknown;
+			return register(name, config, (...a: unknown[]) => {
+				lastValue = undefined;
+				return handler(...a);
+			}, ...rest);
+		};
+	}
+
 	async function call(method: string, params: Record<string, unknown> = {}): Promise<{ content: Content[]; isError?: boolean }> {
 		try {
 			const result = await client.call(method, params);
@@ -560,14 +581,22 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			inputSchema: {
 				tabId,
 				filter: z.enum(["all", "interactive"]).optional().describe('"interactive" lists only controls and links (shorter)'),
-				maxNodes: z.number().int().optional().describe("Cap on listed elements"),
+				maxNodes: z.number().int().optional().describe("Cap on listed elements (default 300)"),
 				maxTextChars: z.number().int().optional().describe("Cap on page text (default 3000)"),
 			},
 		},
 		async (args) => {
 			try {
-				const snap = (await client.call("snapshot", { ...args, maxTextChars: args.maxTextChars ?? 3000 })) as Parameters<typeof formatSnapshot>[0];
-				return { content: text(formatSnapshot(snap)) };
+				const maxTextChars = Math.max(0, args.maxTextChars ?? 3000);
+				const maxNodes = Math.max(1, args.maxNodes ?? 300);
+				// One more of each than is shown, so a cut is seen rather than guessed (fitSnapshot).
+				const raw = (await client.call("snapshot", {
+					...args,
+					maxNodes: maxNodes + 1,
+					maxTextChars: maxTextChars ? maxTextChars + 1 : 0,
+				})) as Parameters<typeof formatSnapshot>[0];
+				const { snap, note } = fitSnapshot(raw, maxNodes, maxTextChars);
+				return { content: text(formatSnapshot(snap) + note) };
 			} catch (err) {
 				return errorResult(err);
 			}
@@ -577,8 +606,14 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"get_page_text",
 		{
 			title: "Get page text",
-			description: "Readable text of the page or one element. Cheaper than read_page when you only need to read. On a PDF: text by page. Example: {\"selector\":\"article\"}",
-			inputSchema: { tabId, selector, maxChars: z.number().int().optional().describe("Cap on returned characters"), pages: z.string().optional().describe('PDF: "3" or "3-7"') },
+			description: "Readable text of the page or one element, up to 50,000 characters (offset reads on). Cheaper than read_page when you only need to read. On a PDF: text by page. Example: {\"selector\":\"article\"}",
+			inputSchema: {
+				tabId,
+				selector,
+				maxChars: z.number().int().optional().describe("Cap on returned characters"),
+				offset: z.number().int().optional().describe("Start at this character"),
+				pages: z.string().optional().describe('PDF: "3" or "3-7"'),
+			},
 		},
 		(args) => {
 			// "3", "3-7", "3–7" (an en dash), "p3", "pp. 3-7".
@@ -593,8 +628,13 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"get_page_html",
 		{
 			title: "Get page HTML",
-			description: "Outer HTML of the page or one element, for markup and attributes. Example: {\"selector\":\"form#login\"}",
-			inputSchema: { tabId, selector, maxChars: z.number().int().optional().describe("Cap on returned characters") },
+			description: "Outer HTML of the page or one element, for markup and attributes, up to 50,000 characters (offset reads on). Example: {\"selector\":\"form#login\"}",
+			inputSchema: {
+				tabId,
+				selector,
+				maxChars: z.number().int().optional().describe("Cap on returned characters"),
+				offset: z.number().int().optional().describe("Start at this character"),
+			},
 		},
 		(args) => call("html", args),
 	);
@@ -773,14 +813,34 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"run_js",
 		{
 			title: "Run JavaScript in the page",
-			description: "Run JavaScript in the page and return its JSON value. world \"user\" (default) is isolated with DOM access; \"main\" sees the page's own globals. Prefer read_page and the input tools; use it for data the page doesn't show. Example: {\"code\":\"document.querySelectorAll('tr').length\"}",
+			description: "Run JavaScript in the page and return its JSON value, up to 50,000 characters (offset reads on from the value kept, without running the code again). world \"user\" (default) is isolated with DOM access; \"main\" sees the page's own globals. Prefer read_page and the input tools; use it for data the page doesn't show. Example: {\"code\":\"document.querySelectorAll('tr').length\"}",
 			inputSchema: {
 				code: z.string().describe("JavaScript source"),
 				tabId,
 				world: z.enum(["user", "main"]).optional().describe('"user" (default): isolated, DOM only; "main": the page\'s own globals'),
+				offset: z.number().int().optional().describe("Start at this character"),
 			},
 		},
-		(args) => call("evaluate", args),
+		async (args) => {
+			const { offset, ...rest } = args;
+			const key = JSON.stringify([rest.code, rest.world ?? "user", rest.tabId ?? null]);
+			try {
+				// Code can act (click, post, delete), so reading on must not run it twice: an offset reads the value the
+				// last run returned, kept for this session.
+				if (offset) {
+					if (lastValue?.key !== key)
+						return errorResult(new Error("No value is kept for that code, world and tab: run it without offset first, then read on with offset."));
+					return { content: text(sliceText(lastValue.json, offset, VALUE_CHARS, "return a smaller value, or call run_js again with offset")) };
+				}
+				const result = await client.call("evaluate", rest);
+				// As call() shows it: a string as is, anything else as JSON.
+				const json = typeof result === "string" ? result : (JSON.stringify(result) ?? "null");
+				lastValue = { key, json };
+				return { content: text(sliceText(json, offset, VALUE_CHARS, "return a smaller value, or call run_js again with offset")) };
+			} catch (err) {
+				return errorResult(err);
+			}
+		},
 	);
 	server.registerTool(
 		"wait",
@@ -823,6 +883,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				pattern: z.string().optional().describe("Regex to filter messages"),
 				clear: z.boolean().optional().describe("Clear after reading"),
 				limit: z.number().int().optional().describe("Most recent messages to return (default 100)"),
+				offset: z.number().int().optional().describe("Skip this many newest"),
 			},
 		},
 		(args) => call("console.read", args),
@@ -839,6 +900,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				requestId: z.string().optional().describe("One request's bodies"),
 				clear: z.boolean().optional().describe("Clear after reading"),
 				limit: z.number().int().optional().describe("Most recent requests to return (default 100)"),
+				offset: z.number().int().optional().describe("Skip this many newest"),
 			},
 		},
 		(args) =>
@@ -1013,10 +1075,18 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"page_markdown",
 		{
 			title: "Page as markdown",
-			description: "URL to markdown via self-hosted Firecrawl (FIRECRAWL_API_URL); api.firecrawl.dev refused. Example: {\"url\":\"https://example.com\"}",
-			inputSchema: { url: z.string().describe("http(s) URL") },
+			description: "URL to markdown via self-hosted Firecrawl (FIRECRAWL_API_URL); api.firecrawl.dev refused. Up to 40,000 characters (offset reads on). Example: {\"url\":\"https://example.com\"}",
+			inputSchema: {
+				url: z.string().describe("http(s) URL"),
+				offset: z.number().int().optional().describe("Start at this character"),
+			},
 		},
-		(args) => webtool(() => pageMarkdown(args.url)),
+		(args) =>
+			webtool(async () => {
+				const page = await pageMarkdown(args.url);
+				const markdown = sliceText(page.markdown, args.offset, MARKDOWN_CHARS, "call page_markdown again with offset", true);
+				return { ...page, markdown };
+			}),
 	);
 	server.registerTool(
 		"map",
@@ -1034,13 +1104,13 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"crawl",
 		{
 			title: "Crawl pages",
-			description: "Crawl via self-hosted Firecrawl. Example: {\"url\":\"https://example.com\",\"limit\":10}",
+			description: "Crawl via self-hosted Firecrawl. Each page's markdown is cut to 3,000 characters. Example: {\"url\":\"https://example.com\",\"limit\":10}",
 			inputSchema: {
 				url: z.string().describe("Start URL"),
 				limit: z.number().int().optional().describe("Max pages"),
 			},
 		},
-		(args) => webtool(() => firecrawlCrawl(args.url, { limit: args.limit })),
+		(args) => webtool(async () => capCrawl(await firecrawlCrawl(args.url, { limit: args.limit }))),
 	);
 
 	server.registerTool(

@@ -1,4 +1,4 @@
-// Tool calls and tokens per task with and without the change report (decision D42). A measurement,
+// Tool calls and tokens per task with and without the change report (decision D43). A measurement,
 // not a gate: eight multi-step tasks from the DOM benchmark's fixture pages, each solved twice by
 // the same scripted agent in a throwaway headless Chromium (no model).
 //

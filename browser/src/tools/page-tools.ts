@@ -10,6 +10,7 @@ import { registerToolRenderer, renderHeader, type ToolRenderer, type ToolRenderR
 import { html } from "lit";
 import { MousePointerClick } from "lucide";
 import {
+	fitPageCall,
 	formatPageResult,
 	PAGE_TOOLS,
 	PANEL_ABORT,
@@ -24,7 +25,14 @@ import {
 	routePageTool,
 } from "../bridge/page-tools.js";
 import { getCurrentBrowserSession, hasCurrentBrowserSession } from "../browser/current.js";
+import { CHARS_PER_TOKEN, estimateTextTokens } from "../models/context-budget.js";
 import { stepLabel } from "../transcript/group.js";
+
+/** The least room a read is fitted to: below it a part says too little to be worth the call. */
+const MIN_ROOM = 1100;
+
+const textOf = (content: Array<{ type: string; text?: string }>) =>
+	content.map((c) => (c.type === "text" ? (c.text ?? "") : "")).join("");
 
 /** Runs one bridge method for the panel and returns its result, or throws the error text the model reads. */
 export type PanelSend = (method: string, params: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
@@ -105,8 +113,14 @@ export const sendToWorker: PanelSend = async (method, params, signal) => {
 	}
 };
 
-/** One AgentTool per page tool spec. `send` runs the routed call (the service worker; tests stand in). */
-export function createPageTools(send: PanelSend = sendToWorker): AgentTool<any, PageToolDetails>[] {
+/**
+ * One AgentTool per page tool spec. `send` runs the routed call (the service worker; tests stand in). `budgetChars`,
+ * when given, sizes reads to what the model's next request keeps for one tool result (fitPageCall).
+ */
+export function createPageTools(
+	send: PanelSend = sendToWorker,
+	budgetChars?: () => number,
+): AgentTool<any, PageToolDetails>[] {
 	return PAGE_TOOLS.map((spec) => ({
 		name: spec.name,
 		label: spec.label,
@@ -124,16 +138,61 @@ export function createPageTools(send: PanelSend = sendToWorker): AgentTool<any, 
 				if (err instanceof PageToolArgsError) throw new Error(`bad_params: ${err.message}`);
 				throw err;
 			}
-			const result = await send(call.method, call.params, signal);
-			const { content, details } = formatPageResult(spec.name, result, call.action);
-			return { content: content as (TextContent | ImageContent)[], details };
+			if (!budgetChars) {
+				const { content, details } = formatPageResult(
+					spec.name,
+					await send(call.method, call.params, signal),
+					call.action,
+				);
+				return { content: content as (TextContent | ImageContent)[], details };
+			}
+			// The guard holds a result to its tokens (context-budget.ts), and a page of CJK text, code or long names holds
+			// more of them than its characters suggest. A read over that would be cut again and lose its own note on how to
+			// read on, so it is fitted again, smaller, until the guard's own estimate fits: read_page from the same answer
+			// (it asked for its limits, which only shrink), get_page_text by asking for fewer characters, so the bridge's
+			// "call again with offset N" stays exact.
+			const chars = budgetChars();
+			const allowed = Math.floor(chars / CHARS_PER_TOKEN);
+			let room = chars;
+			let fitted = fitPageCall(spec.name, call.params, room);
+			let result = await send(call.method, fitted.params, signal);
+			let out = formatPageResult(spec.name, result, call.action, fitted.limits);
+			for (let i = 0; i < 6; i++) {
+				const tokens = estimateTextTokens(textOf(out.content));
+				if (tokens <= allowed) break;
+				const share = (allowed * 0.95) / tokens;
+				if (spec.name === "read_page" && fitted.limits) {
+					// Measured, not assumed: the same answer, held to a share of the elements and text it showed.
+					const { maxNodes = 300, maxTextChars = 3000 } = fitted.limits;
+					if (maxNodes <= 1 && maxTextChars <= 100) break;
+					fitted = {
+						...fitted,
+						limits: {
+							maxNodes: Math.max(1, Math.floor(maxNodes * share)),
+							maxTextChars: Math.max(100, Math.floor(maxTextChars * share)),
+						},
+					};
+				} else if (spec.name === "act" && fitted.limits?.changesChars !== undefined) {
+					// The change report is the part that grows with the page: the same answer, its report shorter.
+					const { changesChars } = fitted.limits;
+					if (changesChars <= 100) break;
+					fitted = { ...fitted, limits: { changesChars: Math.max(100, Math.floor(changesChars * share)) } };
+				} else if (spec.name === "get_page_text") {
+					if (room <= MIN_ROOM) break;
+					room = Math.max(MIN_ROOM, Math.floor(room * share));
+					fitted = fitPageCall(spec.name, call.params, room);
+					result = await send(call.method, fitted.params, signal);
+				} else break;
+				out = formatPageResult(spec.name, result, call.action, fitted.limits);
+			}
+			return { content: out.content as (TextContent | ImageContent)[], details: out.details };
 		},
 	}));
 }
 
-/** The page tools the panel's model gets. */
-export function panelPageTools(): AgentTool<any, PageToolDetails>[] {
-	return createPageTools();
+/** The page tools the panel's model gets, each read sized to `budgetChars` (the guard's budget for one result). */
+export function panelPageTools(budgetChars?: () => number): AgentTool<any, PageToolDetails>[] {
+	return createPageTools(sendToWorker, budgetChars);
 }
 
 /** Arguments as the renderer gets them: parsed, or still a JSON string while they stream. */

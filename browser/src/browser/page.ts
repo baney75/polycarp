@@ -6,6 +6,7 @@
  */
 
 import { isGuardedUrl } from "../bridge/permissions.js";
+import { isPdfTab } from "../offscreen/pdf-client.js";
 import { cdpSend, isRestrictedUrl } from "./cdp.js";
 import { maskUrl } from "./mask-body.js";
 import { isUserScriptsGated, userScriptsApi } from "./userscripts-status.js";
@@ -39,6 +40,47 @@ export async function navigateTabDetailed(
 	tabId: number,
 	url: string,
 	options: NavigateOptions = {},
+): Promise<{ url: string; timedOut: boolean }> {
+	const from = await chrome.tabs.get(tabId).then(
+		(t) => t.url,
+		() => undefined,
+	);
+	if (isPdfPageJump(from, url) && (await isPdfTab(tabId))) {
+		// Chrome's PDF viewer reads #page=N only when the file loads: a change of the hash alone leaves it on the
+		// page it shows. So set the hash, then reload, and the viewer opens at that page.
+		// The hash change is quick; if a viewer reports no event for it, the reload still runs.
+		const hashWait = { ...options, timeoutMs: Math.min(options.timeoutMs ?? 20000, 3000) };
+		await waitForNavigation(tabId, url, hashWait, () => chrome.tabs.update(tabId, { url }));
+		return waitForNavigation(tabId, url, options, () => chrome.tabs.reload(tabId));
+	}
+	return waitForNavigation(tabId, url, options, () => chrome.tabs.update(tabId, { url }));
+}
+
+/**
+ * True when `to` is the PDF `from` already shows, with a #page=N (Chrome's PDF open parameter) that differs: the one
+ * case where a same-document navigation must reload.
+ */
+export function isPdfPageJump(from: string | undefined, to: string): boolean {
+	if (!from) return false;
+	let a: URL;
+	let b: URL;
+	try {
+		a = new URL(from);
+		b = new URL(to);
+	} catch {
+		return false;
+	}
+	if (!/^https?:|^file:/.test(b.protocol) || !/(^#|&)page=\d+/i.test(b.hash) || a.hash === b.hash) return false;
+	a.hash = "";
+	b.hash = "";
+	return a.href === b.href;
+}
+
+function waitForNavigation(
+	tabId: number,
+	url: string,
+	options: NavigateOptions,
+	start: () => Promise<unknown>,
 ): Promise<{ url: string; timedOut: boolean }> {
 	const { signal, timeoutMs = 20000, waitUntil = "domcontentloaded" } = options;
 	if (signal?.aborted) throw new Error("Aborted");
@@ -89,7 +131,7 @@ export async function navigateTabDetailed(
 		nav.onReferenceFragmentUpdated.addListener(onSameDocument);
 		nav.onHistoryStateUpdated.addListener(onSameDocument);
 		nav.onErrorOccurred.addListener(onError);
-		chrome.tabs.update(tabId, { url }).catch((err: Error) => finish(() => reject(err)));
+		start().catch((err: Error) => finish(() => reject(err)));
 	});
 }
 
@@ -1092,7 +1134,7 @@ export async function changeLook(
 	guardedHosts: readonly string[] = [],
 ): Promise<ChangeLook | "guarded" | "large"> {
 	// The approval page (#94) can commit between the URL check and this script: the script checks
-	// again before it touches anything. A page this big is not read twice per action (D42).
+	// again before it touches anything. A page this big is not read twice per action (D43).
 	const code = `(() => {
 		if ((${isGuardedUrl.toString()})(location.href, ${JSON.stringify(guardedHosts)})) return "guarded";
 		if (document.getElementsByTagName("*").length > ${LARGE_PAGE}) return "large";
@@ -1263,7 +1305,32 @@ export async function fillElement(
 	await runInPage(tabId, code);
 }
 
-export async function pageText(tabId: number, selector?: string, maxChars = 50000): Promise<string> {
+/** Characters get_page_text returns by default. */
+export const PAGE_TEXT_CHARS = 50000;
+/** Characters get_page_html returns by default. */
+export const PAGE_HTML_CHARS = 50000;
+
+/** Whole, non-negative numbers for the slice, whatever the caller passed (they go into page code). */
+function sliceBounds(offset: unknown, maxChars: unknown, fallback: number): [number, number] {
+	const from = Math.max(0, Math.floor(Number(offset) || 0));
+	const max = Math.max(1, Math.floor(Number(maxChars) || fallback));
+	return [from, from + max];
+}
+
+/** A slice of a page's text or HTML: `text` from character `offset`, of `total` in all. */
+export interface PageSlice {
+	text: string;
+	offset: number;
+	total: number;
+}
+
+export async function pageText(
+	tabId: number,
+	selector?: string,
+	maxChars = PAGE_TEXT_CHARS,
+	offset = 0,
+): Promise<PageSlice> {
+	const [from, to] = sliceBounds(offset, maxChars, PAGE_TEXT_CHARS);
 	const code = `(() => {
 		const sel = ${JSON.stringify(selector ?? "")};
 		const el = sel ? document.querySelector(sel) : document.body;
@@ -1306,12 +1373,19 @@ export async function pageText(tabId: number, selector?: string, maxChars = 5000
 			}
 		};
 		visit(el, 0);
-		return parts.join("\\n").slice(0, ${maxChars});
+		const all = parts.join("\\n");
+		return { text: all.slice(${from}, ${to}), offset: ${from}, total: all.length };
 	})()`;
-	return runInPage<string>(tabId, code);
+	return runInPage<PageSlice>(tabId, code);
 }
 
-export async function pageHtml(tabId: number, selector?: string, maxChars = 200000): Promise<string> {
+export async function pageHtml(
+	tabId: number,
+	selector?: string,
+	maxChars = PAGE_HTML_CHARS,
+	offset = 0,
+): Promise<PageSlice> {
+	const [from, to] = sliceBounds(offset, maxChars, PAGE_HTML_CHARS);
 	// The in-use veil (veil.ts) is Polycarp's own element, not the page's: it is cut out.
 	const veil = (await veilTag(tabId)) ?? "";
 	const code = `(() => {
@@ -1321,9 +1395,9 @@ export async function pageHtml(tabId: number, selector?: string, maxChars = 2000
 		const veil = ${JSON.stringify(veil)} ? document.querySelector(${JSON.stringify(veil || "x")}) : null;
 		let out = el.outerHTML;
 		if (veil && el !== veil && el.contains(veil)) out = out.replace(veil.outerHTML, "");
-		return out.slice(0, ${maxChars});
+		return { text: out.slice(${from}, ${to}), offset: ${from}, total: out.length };
 	})()`;
-	return runInPage<string>(tabId, code);
+	return runInPage<PageSlice>(tabId, code);
 }
 
 /** Scroll the page or an element; returns the new scroll position. */

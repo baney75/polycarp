@@ -66,7 +66,7 @@ Without a CORS proxy, these requests would fail in the browser environment.
 
 - **`src/sidepanel.ts`**:
   - Lines 236-237: Loads proxy settings from storage
-  - Lines 364-368: Configures `extract_document` tool with proxy URL if enabled
+  - Configures `extract_document` (`src/tools/extract-document.ts`) with the proxy URL if enabled
   - Lines 776-785: Initializes default proxy settings on first run
 
 - **`src/tutorials.ts`**:
@@ -173,7 +173,7 @@ The `extract_document` tool implements a try-first-fallback strategy:
 
 1. **First attempt**: Direct fetch to the document URL
 2. **On CORS error**: If proxy is configured, retry the fetch through proxy
-3. **On success**: Return extracted document text
+3. **On success**: Keep the extracted text for the URL and return a part that fits the model's context: the page count and the first pages, the `pages` asked for, or the pages that match a `query`
 4. **On failure**:
    - If proxy available but also failed: Show error about both attempts
    - If no proxy configured: Show error suggesting proxy setup or manual download

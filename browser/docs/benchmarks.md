@@ -238,7 +238,7 @@ there yet when the action returns.
 
 # Change report, 2026-11-12
 
-`cli/eval/change-report.mjs` (D42) on 8 multi-step tasks from the DOM benchmark's pages, solved by a scripted agent (no
+`cli/eval/change-report.mjs` (D43) on 8 multi-step tasks from the DOM benchmark's pages, solved by a scripted agent (no
 model) in headless Chromium. "Before" is the read-act-read loop the server instructions taught: `read_page`, act,
 `read_page` again to confirm and for the next refs. "After" reads once and acts on what each result's `changes` lists,
 reading again only when the next control is not there or nothing changed. Tokens are response bytes / 4. Both modes pass
@@ -259,7 +259,7 @@ every task's own check.
 31% fewer calls and 25% fewer tokens; each saved call is also one model turn. Time: one action averages 369 ms with the
 report and 365 ms on the build before it (d56c4ab0, the same loop), so the two looks cost about 5 ms on these pages.
 
-Schema cost: the MCP server instructions grow 47 bytes (about 12 tokens) and tools/list is unchanged at 31,894 bytes. The
+Schema cost: the MCP server instructions grow 47 bytes (about 12 tokens, 2,991 after the merge with D42) and tools/list is unchanged by it (31,894 bytes before D42, 32,676 after). The
 side panel's system prompt grows 13 tokens (1,996 to 2,009, `cli/eval/panel-prompt-size.mjs`, o200k_base), and its tool
 list grows 9 tokens (8,613 to 8,622), since `act` now says to read its `changes`. Added time per action is bounded at
 1.5 s (two looks of at most 0.75 s), held by `test/changes.test.mjs`, "... both looks add at most 2 x LOOK_MS".

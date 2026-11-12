@@ -4,12 +4,13 @@
  * return the difference: URL and title, tabs opened or closed, focus, the controls that
  * appeared, went or changed, each with its ref, role and name, and new lines of text. Refs are the ones read_page gives
  * (the same element keeps its ref), so a ref the report lists works at once and a ref that
- * survived stays valid. A new document is summed up, not listed. Decision D42.
+ * survived stays valid. A new document is summed up, not listed. Decision D43.
  *
  * Page text in the report (names, values) is the page's: quoted, on one line, capped, exactly as
  * read_page shows it. Password values never appear (the snapshot leaves them out).
  */
 
+import { CHANGES_MAX_CHARS, fitChanges } from "../bridge/fit-changes.js";
 import { openDialog } from "./cdp.js";
 import { maskUrl } from "./mask-body.js";
 import { type ChangeLook, changeLook } from "./page.js";
@@ -48,12 +49,16 @@ type Node = ChangeLook["nodes"][number];
 const oneLine = (t: string | undefined) => String(t ?? "").replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]/g, " ");
 /** Page text on one line, quoted and capped, as read_page shows it. */
 const q = (t: string | undefined, max = 60) => JSON.stringify(oneLine(t).slice(0, max));
+/** The most one URL or one element line takes, so the whole report has a fixed ceiling (CHANGES_MAX_CHARS). */
+const URL_CHARS = 200;
+const LINE_CHARS = 160;
+const cut = (s: string, max: number) => (s.length > max ? `${s.slice(0, max - 3)}...` : s);
 
 function line(n: Node): string {
 	let s = `${n.ref} ${n.role.replace(/[^a-z-]/g, "") || "generic"} ${q(n.name)}`;
 	if (n.value) s += ` value=${q(n.value, 40)}`;
 	if (n.states?.length) s += ` [${n.states.join(", ").replace(/[^\w ,:-]/g, "")}]`;
-	return s;
+	return cut(s, LINE_CHARS);
 }
 
 /** What changed on a control that kept its ref. */
@@ -65,7 +70,7 @@ function delta(a: Node, b: Node): string | undefined {
 	const sb = (b.states ?? []).join(", ");
 	if (sa !== sb) parts.push(`[${sa}] -> [${sb}]`.replace(/[^\w ,:[\]>-]/g, ""));
 	return parts.length
-		? `${b.ref} ${b.role.replace(/[^a-z-]/g, "") || "generic"} ${q(b.name)}: ${parts.join("; ")}`
+		? cut(`${b.ref} ${b.role.replace(/[^a-z-]/g, "") || "generic"} ${q(b.name)}: ${parts.join("; ")}`, LINE_CHARS)
 		: undefined;
 }
 
@@ -106,14 +111,26 @@ export async function afterAction(
 	urlOf: (tabId: number) => Promise<string>,
 	skip: (url: string) => boolean,
 ): Promise<Record<string, unknown> | string> {
+	// Short by construction: one report never passes CHANGES_MAX_CHARS, whatever the page puts in it.
+	return fitChanges(await report(b, tabs, urlOf, skip), CHANGES_MAX_CHARS);
+}
+
+async function report(
+	b: Before,
+	tabs: number[],
+	urlOf: (tabId: number) => Promise<string>,
+	skip: (url: string) => boolean,
+): Promise<Record<string, unknown> | string> {
 	const out: Record<string, unknown> = {};
 	const opened = tabs.filter((t) => !b.tabs.includes(t));
 	const closed = b.tabs.filter((t) => !tabs.includes(t));
 	if (opened.length)
 		out.tabsOpened = await Promise.all(
-			opened.slice(0, 5).map(async (tabId) => ({ tabId, url: maskUrl(await urlOf(tabId).catch(() => "")) })),
+			opened
+				.slice(0, 5)
+				.map(async (tabId) => ({ tabId, url: cut(maskUrl(await urlOf(tabId).catch(() => "")), URL_CHARS) })),
 		);
-	if (closed.length) out.tabsClosed = closed;
+	if (closed.length) out.tabsClosed = closed.slice(0, 10);
 	const gone = !tabs.includes(b.tabId);
 	const url = gone ? "" : await urlOf(b.tabId).catch(() => "");
 	// No second look when the first is missing: the report can't compare, and the action is not held longer.
@@ -133,12 +150,12 @@ export async function afterAction(
 		return Object.keys(out).length ? out : "nothing changed";
 	}
 	const a = got;
-	if (a.url !== b.look.url) out.url = a.url;
+	if (a.url !== b.look.url) out.url = cut(a.url, URL_CHARS);
 	if (a.title !== b.look.title) out.title = oneLine(a.title).slice(0, 120);
 	const byRef = new Map(a.nodes.map((n) => [n.ref, n]));
 	const named = (ref: string) => {
 		const n = byRef.get(ref);
-		return n ? `${n.ref} ${n.role.replace(/[^a-z-]/g, "") || "generic"} ${q(n.name)}` : "";
+		return n ? cut(`${n.ref} ${n.role.replace(/[^a-z-]/g, "") || "generic"} ${q(n.name)}`, LINE_CHARS) : "";
 	};
 	if (a.focus !== b.look.focus && !(a.focus && a.focus === b.target))
 		out.focus = (a.focus && named(a.focus)) || "nothing listed";

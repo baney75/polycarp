@@ -490,7 +490,7 @@ test("the system prompt teaches the loop and gives one rule for the REPL and the
 	assert.doesNotMatch(REPL_TOOL_DESCRIPTION([BROWSERJS_RUNTIME_PROVIDER_DESCRIPTION]), /document\.title|Read current page/);
 	assert.ok(SYSTEM_PROMPT.includes(PAGE_TOOLS_PROMPT));
 	assert.match(PAGE_TOOLS_PROMPT, /read_page[^\n]*act[^\n]*read_page again/);
-	// The panel acts on the change report (D42) like MCP clients do.
+	// The panel acts on the change report (D43) like MCP clients do.
 	assert.match(PAGE_TOOLS_PROMPT, /its changes list new refs and what changed/);
 	// The act tool says the same as the prompt: check changes, read_page only when they say too little (first-F6).
 	const actText = PAGE_TOOLS.find((t) => t.name === "act").description;

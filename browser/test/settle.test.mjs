@@ -143,7 +143,7 @@ test("a navigate that lands on the approval host is blanked before anything runs
 		return t;
 	};
 	recordCommands((method) => {
-		// A look at the page before the navigation (the change report, D42) is not in the approval page.
+		// A look at the page before the navigation (the change report, D43) is not in the approval page.
 		if (method === "Runtime.evaluate" && onApproval) order.push("evaluate");
 		return undefined;
 	});

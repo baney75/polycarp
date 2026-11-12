@@ -66,6 +66,16 @@ import { BUILD } from "../update/build.js";
 import { BridgeError, classify, detachedError, interruptedError, navigatedError } from "./errors.js";
 import { dropTransfersForSession, fileHandlers } from "./files.js";
 import { rankMatches } from "./find.js";
+import {
+	fitSlice,
+	newestPage,
+	PDF_DEFAULT_CHARS,
+	pdfCutNote,
+	pdfWindow,
+	READ_MAX_CHARS,
+	readChars,
+	sliceInfo,
+} from "./paging.js";
 import { getAllowedHosts, getPermissionMode } from "./permissions.js";
 import { ERR } from "./protocol.js";
 
@@ -669,12 +679,13 @@ export const handlers: Record<string, Handler> = {
 		// The PDF viewer has no page text to read: its text comes from the file, page by page.
 		if (!str(params, "selector") && (await isPdfTab(tabId))) {
 			const tab = await chrome.tabs.get(tabId);
-			const pdf = await pdfText(
-				tab.url ?? "",
-				num(params, "maxChars"),
-				num(params, "firstPage"),
-				num(params, "lastPage"),
-			);
+			const offset = Math.max(0, Math.floor(num(params, "offset") ?? 0));
+			const max = readChars(params.maxChars, PDF_DEFAULT_CHARS) ?? PDF_DEFAULT_CHARS;
+			// The page stream is the same on every read, so offset + max characters of it, from offset, is the exact
+			// continuation of the read before.
+			const pdf = await pdfText(tab.url ?? "", offset + max, num(params, "firstPage"), num(params, "lastPage"));
+			const part = pdfWindow(pdf, offset, max);
+			const first = num(params, "firstPage") ?? 1;
 			const note = !pdf.read
 				? `There is no such page: this PDF has ${pdf.pages}.`
 				: pdf.empty.length === pdf.read
@@ -682,20 +693,30 @@ export const handlers: Record<string, Handler> = {
 					: pdf.empty.length
 						? `Pages ${pdf.empty.join(", ")} have no text layer (images); read those with screenshot.`
 						: undefined;
+			const cut = part.next !== undefined ? pdfCutNote(pdf.text, first, part.next) : undefined;
 			return {
 				...(await tabSummary(tabId)),
-				pdf: { pages: pdf.pages, truncated: pdf.truncated, ...(note ? { note } : {}) },
-				text: pdf.text,
+				pdf: {
+					pages: pdf.pages,
+					truncated: part.truncated,
+					...(offset ? { offset } : {}),
+					...(note ? { note } : {}),
+					...(cut ? { cut } : {}),
+				},
+				text: part.text,
 			};
 		}
-		const text = await pageText(tabId, str(params, "selector"), num(params, "maxChars"));
-		return { ...(await tabSummary(tabId)), text };
+		const max = readChars(params.maxChars) ?? READ_MAX_CHARS;
+		// Measured as JSON carries it, so the note's offset holds after a page of quotes or newlines is escaped.
+		const slice = fitSlice(await pageText(tabId, str(params, "selector"), max, num(params, "offset")), max);
+		return { ...(await tabSummary(tabId)), text: slice.text, ...sliceInfo(slice) };
 	},
 
 	html: async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, false);
-		const html = await pageHtml(tabId, str(params, "selector"), num(params, "maxChars"));
-		return { ...(await tabSummary(tabId)), html };
+		const max = readChars(params.maxChars) ?? READ_MAX_CHARS;
+		const slice = fitSlice(await pageHtml(tabId, str(params, "selector"), max, num(params, "offset")), max);
+		return { ...(await tabSummary(tabId)), html: slice.text, ...sliceInfo(slice) };
 	},
 
 	inspect: async (ctx, params) => {
@@ -1064,7 +1085,7 @@ export const handlers: Record<string, Handler> = {
 			const re = new RegExp(pattern, "i");
 			entries = entries.filter((e) => re.test(e.text));
 		}
-		return { ...(capture ? { capture } : {}), entries: entries.slice(-(num(params, "limit") ?? 100)) };
+		return { ...(capture ? { capture } : {}), ...newestPage(entries, params, "text") };
 	},
 
 	/**
@@ -1099,6 +1120,6 @@ export const handlers: Record<string, Handler> = {
 		}
 		const type = str(params, "type");
 		if (type) entries = entries.filter((e) => e.type?.toLowerCase() === type.toLowerCase());
-		return { ...(capture ? { capture } : {}), entries: entries.slice(-(num(params, "limit") ?? 100)) };
+		return { ...(capture ? { capture } : {}), ...newestPage(entries, params, "url") };
 	},
 };

@@ -1,4 +1,4 @@
-// The change report (D42), review round 1 of PR 144: a report is a diff of two real looks or says
+// The change report (D43), review round 1 of PR 144: a report is a diff of two real looks or says
 // it could not compare; the looks are bounded and never read the approval page; what "changed"
 // means for reused rows, big pages and live counters; nothing leaks through tab URLs or titles.
 import assert from "node:assert/strict";
@@ -224,4 +224,47 @@ test("second-S3: wait {until:settled} on a tab whose pending URL is the approval
 	const reply = await request("wait", { until: "settled", timeoutMs: 2000 });
 	assert.equal(reply.error?.code, "permission_denied", JSON.stringify(reply));
 	assert.equal((await chrome.tabs.get(tabId)).url, "about:blank");
+});
+
+test("short by construction: a page that fills every field still gets a report under CHANGES_MAX_CHARS", async () => {
+	const { fake, beforeAction, afterAction } = await load();
+	const { CHANGES_MAX_CHARS } = await import("../src/bridge/fit-changes.ts");
+	const tabId = fake.addTab({ url: "https://shop.example/", status: "complete" });
+	// Names of quotes and backslashes double when JSON escapes them; states and values are as long as a page likes.
+	const loud = '"\\'.repeat(200);
+	const many = (from) =>
+		Array.from({ length: 30 }, (_, i) =>
+			node(`e${from + i}`, loud, { value: loud, states: Array.from({ length: 50 }, (_, j) => `state${j}`) }),
+		);
+	const long = `https://shop.example/${"a".repeat(5000)}`;
+	let n = 0;
+	recordCommands((method, params) =>
+		method === "Runtime.evaluate" && isLook(params)
+			? says(n++ ? look(many(100), { url: long, title: loud, text: Array.from({ length: 9 }, (_, i) => `${loud} ${i}`).join("\n") }) : look(many(0)))
+			: undefined,
+	);
+	const tabs = Array.from({ length: 20 }, () => fake.addTab({ url: long, status: "complete" }));
+	const b = await beforeAction(tabId, [tabId], undefined, GUARDED);
+	const r = await afterAction(b, [tabId, ...tabs], async () => long, () => false);
+	const json = JSON.stringify(r);
+	assert.ok(json.length <= CHANGES_MAX_CHARS, `${json.length} characters`);
+	assert.notEqual(r, "nothing changed");
+	assert.match(String(r.more ?? r.page), /read_page/, json.slice(0, 300));
+});
+
+test("fitChanges: drops new text, then element lines, counts them, and never says nothing changed", async () => {
+	const { fitChanges, CHANGES_TOO_LONG } = await import("../src/bridge/fit-changes.ts");
+	const lines = (k) => Array.from({ length: 6 }, (_, i) => `e${i} button "${k} ${i} ${"x".repeat(60)}"`);
+	const report = { url: "https://a.example/next", appeared: lines("New"), changed: lines("Changed"), newText: ["one", "two", "three"], more: "4 more; read_page lists them" };
+	assert.equal(fitChanges(report, 100_000), report, "a report that fits is untouched");
+	const fit = fitChanges(report, 500);
+	assert.ok(JSON.stringify(fit).length <= 500, JSON.stringify(fit));
+	assert.equal(fit.url, report.url, "the URL stays");
+	assert.equal(fit.newText, undefined);
+	assert.equal(fit.moreText, 3);
+	const kept = (fit.appeared?.length ?? 0) + (fit.changed?.length ?? 0);
+	assert.equal(fit.more, `${4 + 12 - kept} more; read_page lists them`);
+	assert.equal(report.appeared.length, 6, "the input is not changed");
+	assert.deepEqual(fitChanges(report, 40), { page: CHANGES_TOO_LONG });
+	assert.equal(fitChanges("nothing changed", 5), "nothing changed");
 });

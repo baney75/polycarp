@@ -428,6 +428,125 @@ test("a real side panel (no tab) is served by the real Connect relay, not discon
 	}
 });
 
+/** A real PDF of `pages` pages, uncompressed, with `line(n, i)` as the text of line i on page n. */
+function makePdf(pages, linesPerPage, line) {
+	const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
+	const kids = [];
+	for (let n = 1; n <= pages; n++) {
+		const lines = Array.from({ length: linesPerPage }, (_, i) => `(${line(n, i).replace(/[()\\]/g, "")}) Tj T*`).join("\n");
+		const stream = `BT /F1 7 Tf 9 TL 20 770 Td\n${lines}\nET`;
+		objects.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+		objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${objects.length} 0 R >>`);
+		kids.push(`${objects.length} 0 R`);
+	}
+	objects[1] = `<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${pages} >>`;
+	let out = "%PDF-1.4\n";
+	const offsets = objects.map((body, i) => {
+		const at = out.length;
+		out += `${i + 1} 0 obj\n${body}\nendobj\n`;
+		return at;
+	});
+	const xref = out.length;
+	out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}`;
+	out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+	return Buffer.from(out, "latin1");
+}
+
+/** One OpenAI-style streamed reply: either a tool call or text. */
+function sse(reply) {
+	const chunk = (delta, finish = null) => `data: ${JSON.stringify({ id: "stub", object: "chat.completion.chunk", created: 0, model: "stub-small", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+	if (reply.tool)
+		return (
+			chunk({ role: "assistant", tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: reply.tool, arguments: JSON.stringify(reply.args) } }] }) +
+			chunk({}, "tool_calls") +
+			"data: [DONE]\n\n"
+		);
+	return chunk({ role: "assistant", content: reply.text }) + chunk({}, "stop") + "data: [DONE]\n\n";
+}
+
+// The bug this guards: extract_document handed a whole 400-page PDF (about 706,000 characters) to a model with a small
+// window, the provider answered "400 status code (no body)", and the thread stayed dead. Here a stand-in provider refuses
+// any request over REFUSE_OVER bytes the same way. The chat must end with the model's answer. The window is 16,384
+// tokens: the panel's own instructions and tools take about 11,000 (12,600 as Polycarp counts them), so the reply and
+// the book share what is left.
+test("a 400-page PDF read on a small-window model ends with an answer, not a 400", async () => {
+	const REFUSE_OVER = 150_000;
+	const filler = "Virtue is a settled state of character concerned with choice, lying in a mean relative to us.";
+	const pdf = makePdf(400, 20, (n, i) => (n === 287 && i === 3 ? "CONTEMPLATION is the highest activity, the life of the mind." : `Page ${n} line ${i}. ${filler}`));
+	const sizes = [];
+	const maxTokens = [];
+	let toolResult = "";
+	await context.route("https://docs.stub.test/**", (r) => r.fulfill({ status: 200, contentType: "application/pdf", headers: { "access-control-allow-origin": "*" }, body: pdf }));
+	await context.route("https://llm.stub.test/**", async (r) => {
+		const body = r.request().postData() ?? "";
+		sizes.push(body.length);
+		const asked = JSON.parse(body);
+		maxTokens.push(asked.max_completion_tokens ?? asked.max_tokens ?? 0);
+		if (body.length > REFUSE_OVER) return r.fulfill({ status: 400, headers: { "access-control-allow-origin": "*" }, body: "" });
+		const messages = JSON.parse(body).messages;
+		const result = messages.find((m) => m.role === "tool");
+		if (!result) return r.fulfill({ status: 200, contentType: "text/event-stream", headers: { "access-control-allow-origin": "*" }, body: sse({ tool: "extract_document", args: { url: "https://docs.stub.test/ethics.pdf" } }) });
+		toolResult = typeof result.content === "string" ? result.content : JSON.stringify(result.content);
+		return r.fulfill({ status: 200, contentType: "text/event-stream", headers: { "access-control-allow-origin": "*" }, body: sse({ text: "STUB-ANSWER: the book has 400 pages." }) });
+	});
+	const model = {
+		id: "stub-small",
+		name: "Stub small",
+		api: "openai-completions",
+		provider: "stub",
+		baseUrl: "https://llm.stub.test/v1",
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 16_384,
+		maxTokens: 2048,
+	};
+	const page = await context.newPage();
+	try {
+		await page.goto(PANEL);
+		await page.getByPlaceholder(/Ask about this page/).waitFor({ timeout: 20_000 });
+		await page.evaluate(async (m) => {
+			await chrome.storage.local.set({ "tk-welcome-seen": true });
+			const db = await new Promise((resolve, reject) => {
+				const open = indexedDB.open("tabkyra-storage");
+				open.onsuccess = () => resolve(open.result);
+				open.onerror = () => reject(open.error);
+			});
+			await new Promise((resolve, reject) => {
+				const tx = db.transaction(["settings", "provider-keys"], "readwrite");
+				tx.objectStore("settings").put(m, "lastUsedModel");
+				tx.objectStore("provider-keys").put("sk-stub", "stub");
+				tx.oncomplete = resolve;
+				tx.onerror = () => reject(tx.error);
+			});
+			db.close();
+		}, model);
+		await page.reload();
+		const box = page.getByPlaceholder(/Ask about this page/);
+		await box.waitFor({ timeout: 20_000 });
+		await box.fill("Read https://docs.stub.test/ethics.pdf and tell me how long it is.");
+		await box.press("Enter");
+		const answer = page.getByText("STUB-ANSWER: the book has 400 pages.");
+		const refused = page.getByText(/400 status code|too long for the model/);
+		await Promise.race([answer.first().waitFor({ timeout: 60_000 }), refused.first().waitFor({ timeout: 60_000 })]);
+		assert.equal(await refused.count(), 0, `the chat ended in an error; request sizes ${sizes.join(", ")}`);
+		assert.ok(await answer.count(), "the answer is shown");
+		assert.ok(sizes.every((s) => s <= REFUSE_OVER), `every request fit: ${sizes.join(", ")}`);
+		// The tool read the real PDF, said how long it is, and told the model how to read the rest.
+		assert.match(toolResult, /400 pages/);
+		assert.match(toolResult, /query/);
+		assert.ok(toolResult.length < 60_000, `tool result was ${toolResult.length} characters`);
+		// The tool's own answer reached the model whole: the guard did not cut it again.
+		assert.doesNotMatch(toolResult, /Polycarp cut this here/);
+		// The reply asked for is what the budget kept room for.
+		assert.ok(maxTokens.every((n) => n <= 2048), `max tokens asked: ${maxTokens.join(", ")}`);
+	} finally {
+		await context.unroute("https://docs.stub.test/**");
+		await context.unroute("https://llm.stub.test/**");
+		await page.close();
+	}
+});
+
 // The panel's own model on the bridge's ref tools, end to end: a scripted stand-in model opens a page, reads it, clicks
 // the button by the ref read_page gave, and reads again. The click goes through the real handlers, CDP input and all.
 // Its own Chromium without Playwright attached, as in e2e-bridge: the extension's chrome.debugger can't attach to a tab
@@ -542,7 +661,7 @@ test("the panel's model reads a page, clicks a ref with act, the page changes, a
 			const [read, clicked, readAgain] = [2, 3, 4].map((i) => lastToolResult(stub.requests[i]));
 			assert.match(read, /use the ref with act/);
 			assert.doesNotMatch(clicked, /^[a-z_]+: /, `the click worked: ${clicked}`);
-			// The panel's act reports what the click changed (D42), as MCP's click does.
+			// The panel's act reports what the click changed (D43), as MCP's click does.
 			assert.match(clicked, /"changes":\{[^]*Answer: 42/, `no change report: ${clicked}`);
 			assert.match(readAgain, /Answer: 42/);
 			assert.doesNotMatch(readAgain, /Show answer/);
