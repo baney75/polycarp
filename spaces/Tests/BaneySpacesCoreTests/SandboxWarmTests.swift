@@ -73,6 +73,10 @@ final class SandboxWarmStateTests: XCTestCase {
         _ = try r.manager.up(task: "t1")
         XCTAssertTrue(r.manager.waitUntilWarm(limit: 120))
         let w = warmName(r)!
+        // Used now. `waitUntilWarm` moves the fake clock 1 s per look while the build thread runs, so under load more than
+        // 5 s had passed since `up` and "14 minutes in" was already 15 (failed 1 of 6 full runs 11-12; 3 of 3 with the
+        // fake clone slowed 50 ms). Counting from here, the idle time is exactly what the test advances.
+        r.manager.touch()
         r.clock.advance(SandboxWarmPolicy.idleLimit - 5)
         r.manager.tick()
         XCTAssertEqual(r.manager.snapshot().warmLocation, .memory, "still in use 14 minutes in")
@@ -86,6 +90,18 @@ final class SandboxWarmStateTests: XCTestCase {
         XCTAssertEqual(t.from, .disk, "the disk path is the fallback")
         XCTAssertEqual(r.tart.spawned.filter { $0.args.last == w }.count, 2, "restored with a second `tart run`")
         XCTAssertEqual(r.manager.snapshot().vm, w)
+    }
+
+    /// The same check with the build slowed as under load: it must not depend on how fast the warm clone builds.
+    func testIdleTimeCountsFromLastUseHoweverLongTheBuildTook() throws {
+        let r = rig(64)
+        r.tart.onClone = { Thread.sleep(forTimeInterval: 0.05) }
+        _ = try r.manager.up(task: "t1")
+        XCTAssertTrue(r.manager.waitUntilWarm(limit: 120))
+        r.manager.touch()
+        r.clock.advance(SandboxWarmPolicy.idleLimit - 5)
+        r.manager.tick()
+        XCTAssertEqual(r.manager.snapshot().warmLocation, .memory, "still in use 14 minutes in")
     }
 
     func testStatusAloneDoesNotKeepItInMemory() throws {
