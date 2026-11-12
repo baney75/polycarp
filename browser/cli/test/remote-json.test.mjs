@@ -132,7 +132,13 @@ const funnelReady = { ok: true, bin: "/x/tailscale", state: { kind: "ok", dns: "
 test("preflight probes the port setup will use, so a server on 8787 never blocks another port", async () => {
 	const { preflight } = await loadTs(`export { preflight } from "@src/remote-setup.ts";`);
 	// Something that isn't Polycarp on 8787; where a real server already holds it, that one stands in.
-	const holder = createNetServer((sock) => sock.end("HTTP/1.1 418 Teapot\r\ncontent-length: 0\r\n\r\n"));
+	// It reads its socket: one that never reads isn't an active handle, so `close` below would wait on it forever and the
+	// process would exit with this test pending (CI, where nothing else holds 8787).
+	const holder = createNetServer((sock) => {
+		sock.on("error", () => {});
+		sock.resume();
+		sock.end("HTTP/1.1 418 Teapot\r\ncontent-length: 0\r\n\r\n");
+	});
 	await new Promise((resolve) => {
 		holder.once("error", resolve);
 		holder.listen(8787, "127.0.0.1", resolve);
