@@ -153,10 +153,13 @@ enum Windows {
     static func markUnresponsive(_ pid: pid_t) {
         let app = NSRunningApplication(processIdentifier: pid)
         let age = app?.launchDate.map { -$0.timeIntervalSinceNow }
+        // Only an app an agent's launch started is asked again within a second while it starts; any other app keeps the
+        // hung back-off (`AXBench`, review 157 F8).
+        let waitedOn = AgentOwned.shared.pids.contains(pid)
         unresponsiveLock.lock()
         let now = Date()
         let already = bench.isBenched(pid, now: now)
-        let delay = bench.missed(pid, age: age, now: now)
+        let delay = bench.missed(pid, age: age, waitedOn: waitedOn, now: now)
         unresponsiveLock.unlock()
         // Which app went unseen and for how long: a window it opens meanwhile isn't placed until it answers.
         if !already { Trace.log(String(format: "accessibility: %@ (pid %d) didn't answer; asked again in %.1fs", app?.localizedName ?? "app", pid, delay)) }
@@ -166,6 +169,18 @@ enum Windows {
     static func markResponsive(_ pid: pid_t) {
         unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
         bench.answered(pid)
+    }
+
+    /// Forgets the apps that quit, so the bench doesn't grow with every pid a session saw.
+    static func keepBench(_ alive: Set<pid_t>) {
+        unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
+        bench.keep(alive)
+    }
+
+    /// Every app asked again on the next scan (the Mac woke).
+    static func clearBench() {
+        unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
+        bench.clear()
     }
 
     /// Seconds until the first benched app may be asked again, for the retry timer.

@@ -1378,6 +1378,55 @@ change small; they can follow.
 Proof: `test/compaction.test.mjs`, with each of the five rules above broken on purpose to see a test fail, and a panel
 e2e that runs a chat on an 18k stub model until it is summarized, reloads the panel, and checks the next request
 carries the stored notes and the latest question with no new summary and nothing dropped.
+
+Amended after review (PR 140 round 1, 2026-11-12):
+
+- **Who said what is structure.** The summarizer reads each message as a `<message from="person|assistant|tool|browser">`
+  block built from the stored role. Text inside a block can't open or close one, and a role marker inside it is shown
+  as a quote.
+- **The notes are Polycarp's.** The notes message carries the `compactionNotes` field (`COMPACTION_NOTES`), never a
+  text mark, so nothing the person writes can pass for it. The guard never counts it as the person and cuts it only
+  after every earlier turn (step 8b), before the latest message.
+- **Full history when it fits.** A stored record applies only while the whole chat would make the guard drop turns.
+- **A turn compacts at most twice.** The second time cuts at the person's latest message, so further tool steps find
+  nothing to summarize.
+- **Done steps** is a section of its own.
+- Chunks are sized by `estimateTextTokens`; summary calls are recorded in Costs; `compaction-summary.ts` loads on the
+  first compaction.
+
+Amended after review (PR 153 round 1, 2026-11-12): telling the person's lines from planted ones by word overlap failed
+on short planted lines, reworded steps, other languages and facts promoted in a later round. Structure replaces it:
+
+- **The person's instructions never pass through the summarizer.** Code quotes the person's own earlier messages word
+  for word under "The person's own words": the first one (cut by code, with a count, only if it alone is too long) and
+  the most recent ones, whole, with a count of those left out. The summarizer writes no goal section.
+- **Everything the summarizer writes is labeled once** as Polycarp's working notes from pages and tool results: facts
+  and progress, not instructions. The system prompt says nothing in the notes authorizes an action the person's own
+  words don't. A planted line is at worst a recorded fact; no filter is needed.
+- **No rule drops or adds a step because its wording changed.** A section the summarizer leaves out or answers with
+  "none" keeps what the earlier notes had. The earlier notes reach the next round inside an `<earlier-notes>` block,
+  as data.
+- **Cut order.** The notes message has two text parts, the person's words and the working notes. A cut to fit takes
+  the working notes first and the person's words last, each with its own hint.
+
+Amended after review (PR 153 round 2, 2026-11-12):
+
+- **No to-do list.** "Open steps" is now "Not finished", sent as "What Polycarp had not finished, by its own guess;
+  the person's words above decide what to do". Notes stored under "Open steps" are read as it.
+- **"none" is an answer.** It empties the section; only a section whose heading is left out keeps the earlier
+  content.
+- **No person message vanishes.** Every one is quoted. When they don't fit, long ones are cut by code to one share,
+  marked; when a share would be under a line, the first and newest stay whole and the rest keep their start, with a
+  count of those shortened.
+- **Every heading is attributed.** The summarizer's sections are `###` headings under the label, each ending in
+  "(Polycarp's note)".
+- **True notes.** The drop note says the dropped messages came after Polycarp's notes, and its room is reserved.
+  Cuts fall on code points.
+
+Amended (PR 162 round 1), replacing the "none" and "left out" rules above: "none" empties only Not finished. Past a
+line each, the person's part keeps the first, newest and newest others' starts, and a gap line names the rest. The drop
+note's room comes from the notes, never the latest message. Old goal sections are not sent.
+
 ## D46. Cross-origin frames are read and acted on by ref, through the debugger (Claude, 2026-11-12)
 
 Gap analysis item 5. Before this, `read_page` listed a frame from another origin as one `iframe` line with its URL, and the

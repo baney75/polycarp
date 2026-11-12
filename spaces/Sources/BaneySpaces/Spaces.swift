@@ -185,6 +185,7 @@ final class Spaces {
         clock.scan = firstScan ? "first" : full ? "full" : last(lastScan!, snap.appWindows, pids, offKnown)
         RunningApps.invalidate()
         let pidsNow = RunningApps.regular
+        Windows.keepBench(pidsNow)
         let (list, unsure, listed, partial, nonStandard, asks) = Windows.all(owners: snap.owners)
         notWindows = nonStandard
         asking = asks
@@ -1236,6 +1237,18 @@ final class Spaces {
         for pid in saved.hiddenApps { NSRunningApplication(processIdentifier: pid)?.unhide() }
         saved.hiddenApps = []
         persist()
+    }
+
+    /// The Mac woke. Apps that missed Accessibility while it slept were benched (up to 10 minutes) as if hung, so their
+    /// windows went unplaced after wake: every app is asked again, the window list is read in full, and the workspace
+    /// you're on is applied again, as for a display change.
+    func didWake() {
+        Windows.clearBench()
+        RunningApps.invalidate()
+        Trace.log("wake: every app asked again; workspace \(model.current) applied again")
+        guard active else { return }
+        if !switching { refresh(full: true) }
+        screensChanged()
     }
 
     /// The display layout changed: put hidden windows at the new hiding spot. macOS sends a burst

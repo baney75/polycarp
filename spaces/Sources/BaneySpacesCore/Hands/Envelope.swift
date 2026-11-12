@@ -30,6 +30,9 @@ public enum HandsErrorCode: String, Codable, CaseIterable, Sendable {
     case staleRef = "stale_ref"
     /// The ref matched more than one plausible element now.
     case ambiguousTarget = "ambiguous_target"
+    /// A bare row number (`5`) that could mean a row from an older read of this session.
+    /// Nothing was sent; `next_call` is a full snapshot of the window, after which the number means that read's row.
+    case staleBareRow = "stale_bare_row"
     /// The element can't do that (no such action, not settable).
     case notSupported = "not_supported"
     /// The engine acted, but what it read back contradicts the request.
@@ -51,7 +54,7 @@ public enum HandsErrorCode: String, Codable, CaseIterable, Sendable {
     /// What to do next when the caller has no better idea.
     public var defaultRetry: HandsRetry {
         switch self {
-        case .staleRef, .unknownRef, .ambiguousTarget, .ambiguousWindow: return .afterSnapshot
+        case .staleRef, .unknownRef, .ambiguousTarget, .ambiguousWindow, .staleBareRow: return .afterSnapshot
         case .timeout, .notRunning, .appNotFound, .windowNotFound, .badArguments, .permissionDenied, .ambiguous, .inUse: return .safe
         case .outsideAgentWorkspace, .agentWorkspaceOff, .notSupported, .actionFailed, .unverified, .engineError, .needsLend, .needsSandbox: return .never
         }
@@ -73,9 +76,18 @@ public struct HandsError: Codable, Equatable, Error, Sendable {
     public var message: String
     public var retry: HandsRetry
     public var suggestion: String
+    /// The exact call to make next, `{"tool","arguments"}`: a read, or the same verb with a full ref when nothing was sent.
+    public var nextCall: JSONValue?
 
-    public init(_ code: HandsErrorCode, _ message: String, suggestion: String, retry: HandsRetry? = nil) {
-        self.code = code; self.message = message; self.suggestion = suggestion; self.retry = retry ?? code.defaultRetry
+    enum CodingKeys: String, CodingKey { case code, message, retry, suggestion, nextCall = "next_call" }
+
+    public init(_ code: HandsErrorCode, _ message: String, suggestion: String, retry: HandsRetry? = nil, nextCall: JSONValue? = nil) {
+        self.code = code; self.message = message; self.suggestion = suggestion; self.retry = retry ?? code.defaultRetry; self.nextCall = nextCall
+    }
+
+    /// `{"tool": "snapshot", "arguments": {...}}`: tool is the MCP name without the `computer_` prefix a connector adds.
+    public static func call(_ tool: String, _ arguments: [String: JSONValue]) -> JSONValue {
+        .object(["tool": .string(tool.replacingOccurrences(of: "-", with: "_")), "arguments": .object(arguments)])
     }
 }
 
@@ -111,5 +123,12 @@ public enum EngineVerdict {
         // A timeout or an unresponsive app without the engine's word that nothing was delivered may have landed.
         if code == .timeout, verdict != "safe" { retry = .never }
         return retry
+    }
+
+    /// The suggestion an agent sees for an engine error. The engine's `window_not_found` says "Run 'list-windows' to see
+    /// available window IDs.", a command of the engine's own CLI that no Polycarp agent has (seen 11-12 on every window
+    /// that quit mid-call): it names ours instead.
+    public static func suggestion(_ engine: String) -> String {
+        engine.contains("list-windows") ? "Run `polycarp-spaces agent windows` for the current ids." : engine
     }
 }

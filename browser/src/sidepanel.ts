@@ -949,7 +949,11 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		model: () => agent?.state.model,
 		request: () => ({ systemPrompt: agent?.state.systemPrompt ?? "", tools: (agent?.state.tools ?? []) as never }),
 		toLlm: browserMessageTransformer,
-		summarize: streamSummarizer(streamFn, getApiKey),
+		summarize: streamSummarizer(streamFn, getApiKey, (model, cost) => {
+			storage.costs
+				.recordCost(model.provider, model.id, cost)
+				.catch((err) => console.error("Failed to record cost:", err));
+		}),
 		// The record joins the stored chat, so the notes hold across a reload and the transcript shows the marker.
 		onCompacted: (record) => {
 			agent.appendMessage(record);
