@@ -786,9 +786,10 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"wait",
 		{
 			title: "Wait",
-			description: "Wait until text or a selector appears, or the URL contains a fragment, instead of polling read_page; or wait a fixed ms. Example: {\"text\":\"Order confirmed\",\"timeoutMs\":15000}",
+			description: "Wait until text or a selector appears, the URL contains a fragment, or the page settles, instead of polling read_page; or wait a fixed ms. Example: {\"text\":\"Order confirmed\",\"timeoutMs\":15000}",
 			inputSchema: {
 				tabId,
+				until: z.enum(["settled"]).optional().describe("No pending requests, DOM changes or loading markers"),
 				selector,
 				text: z.string().optional().describe("Text that must appear on the page"),
 				urlIncludes: z.string().optional().describe("Substring the URL must contain"),
