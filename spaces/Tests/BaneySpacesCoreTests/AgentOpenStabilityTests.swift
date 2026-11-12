@@ -64,6 +64,17 @@ final class AXBenchTests: XCTestCase {
         XCTAssertEqual([0.5, 1, 2].map { b.missed(7, age: $0, waitedOn: false, now: t0) }, [5, 30, 120])
     }
 
+    /// After a wake every app is asked again: misses while the Mac slept don't bench anything.
+    func testClearAsksEveryAppAgain() {
+        var b = AXBench()
+        for _ in 0..<4 { b.missed(9, age: 3_600, waitedOn: true, now: t0) }
+        b.missed(7, age: 1, waitedOn: true, now: t0)
+        b.clear()
+        XCTAssertFalse(b.isBenched(9, now: t0))
+        XCTAssertFalse(b.isBenched(7, now: t0))
+        XCTAssertEqual(b.missed(9, age: 3_600, waitedOn: true, now: t0), 5, "the hung back-off starts over")
+    }
+
     func testAppsThatQuitAreForgotten() {
         var b = AXBench()
         b.missed(7, age: 0.5, waitedOn: true, now: t0); b.missed(9, age: 3_600, waitedOn: true, now: t0)
@@ -207,5 +218,13 @@ final class AgentOpenStabilitySourceTests: XCTestCase {
         XCTAssertTrue(c.contains("CloseReadback.gone(mainThread: Thread.isMainThread, listed: { Self.serverLists(w.id) }"),
                       "read back from the window server, not a scan on main per tick (F9)")
         XCTAssertFalse(c.contains("let gone = onMain { host.live(w.id) } == nil"), "not one early look")
+    }
+
+    func testWakeAsksEveryAppAgainAndReappliesTheWorkspace() throws {
+        let d = try HandsSourceTests.code("Sources/BaneySpaces/AppDelegate.swift")
+        XCTAssertTrue(d.contains("NSWorkspace.didWakeNotification") && d.contains("self.spaces.didWake()"))
+        let s = try HandsSourceTests.code("Sources/BaneySpaces/Spaces.swift")
+        let wake = try XCTUnwrap(HandsSourceTests.block(after: "func didWake()", in: s))
+        XCTAssertTrue(wake.contains("Windows.clearBench()") && wake.contains("refresh(full: true)") && wake.contains("screensChanged()"))
     }
 }

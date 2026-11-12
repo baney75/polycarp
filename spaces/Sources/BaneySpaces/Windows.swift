@@ -177,6 +177,12 @@ enum Windows {
         bench.keep(alive)
     }
 
+    /// Every app asked again on the next scan (the Mac woke).
+    static func clearBench() {
+        unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
+        bench.clear()
+    }
+
     /// Seconds until the first benched app may be asked again, for the retry timer.
     static func retryDelay() -> TimeInterval {
         unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
