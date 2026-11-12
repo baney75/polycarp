@@ -18,6 +18,8 @@ struct AgentHost {
     var pidOf: (UInt32) -> pid_t? = { _ in nil }
     /// Whether a workspace holds any window.
     var occupied: (Int) -> Bool = { _ in false }
+    /// A process the agent started hidden (`HiddenLaunches`): shown once its windows are placed.
+    var launchedHidden: (pid_t) -> Void = { _ in }
 }
 
 /// Processes BaneySpaces started for an agent (`agent open` of an app, `agent run`): the only ones an agent
@@ -630,6 +632,11 @@ final class SessionController {
             }
             cfg.createsNewApplicationInstance = true
             cfg.arguments = ["-ApplePersistenceIgnoreState", "YES"]
+            // Hidden until Spaces has placed and parked its windows: otherwise its first window is drawn where the app
+            // puts it, on your screen, for about 60 ms before it is parked (`HiddenLaunches`). Only this new copy:
+            // the path above opens files in your running copy and never hides it.
+            cfg.hides = true
+            let hiddenBefore = Set(NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundle && $0.isHidden }.map(\.processIdentifier))
             // Until this launch's own process is known, an activation of the bundle by a process that was not
             // already running is the launch's; Donovan's running copies are excluded.
             AgentActivity.shared.markLaunch(bundle: bundle, excluding: before, for: 10)
@@ -653,8 +660,13 @@ final class SessionController {
                 guard !claimed else { return }
                 claimed = true
                 AgentActivity.shared.clearLaunch(bundle: bundle)
-                // Not a new process (the app ran this launch inside Donovan's): leave it entirely alone.
-                guard !before.contains(app.processIdentifier) else { return }
+                // Not a new process (the app ran this launch inside Donovan's): leave it entirely alone, shown again if
+                // this launch's `hides` hid it.
+                guard !before.contains(app.processIdentifier) else {
+                    if HiddenLaunches.undo(hiddenNow: app.isHidden, hiddenBefore: hiddenBefore.contains(app.processIdentifier)) { app.unhide() }
+                    return
+                }
+                h.launchedHidden(app.processIdentifier)
                 adoptAgentStartedProcess(app.processIdentifier, workspace: n, title: nil, host: h, grantAccess: !separate)
                 if files.isEmpty {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
