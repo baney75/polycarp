@@ -9,6 +9,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { ASK_USER_INSTRUCTION, registerAskUser } from "./ask.ts";
 import { type FilesTool, registerFiles } from "./files-tool.ts";
+import { formatNodes, formatSnapshot, oneLine, type SnapNode } from "../../src/bridge/format.ts";
 import { FILE_ASK_TIMEOUT_MS } from "../../src/bridge/protocol.ts";
 import { byteSize } from "./saved-files.ts";
 import { registerThreadTools, THREADS_INSTRUCTION } from "./threads.ts";
@@ -35,62 +36,6 @@ type Content = { type: "text"; text: string } | { type: "image"; data: string; m
 
 function text(value: unknown): Content[] {
 	return [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }];
-}
-
-interface SnapNode {
-	ref: string;
-	role: string;
-	name: string;
-	value?: string;
-	href?: string;
-	visible: boolean;
-	/** expanded, pressed, selected, checked, disabled, ... */
-	states?: string[];
-	/** The same-origin frame the element is in. */
-	frame?: string;
-}
-
-/** Page-supplied text on one line: a URL or frame label can't start a fake element line. */
-const oneLine = (text: string) => text.replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]/g, " ");
-
-/** One line per element; same-origin links shortened to their path. */
-function formatNodes(nodes: SnapNode[], pageUrl: string): string {
-	let origin = "";
-	try {
-		origin = new URL(pageUrl).origin;
-	} catch {
-		/* no origin */
-	}
-	return nodes
-		.map((n) => {
-			let line = `${n.ref} ${oneLine(n.role)} ${JSON.stringify(oneLine(n.name))}`;
-			if (n.value) line += ` value=${JSON.stringify(oneLine(n.value))}`;
-			if (n.states?.length) line += ` [${oneLine(n.states.join(", "))}]`;
-			if (n.href) line += ` -> ${oneLine(origin && n.href.startsWith(origin) ? n.href.slice(origin.length) || "/" : n.href)}`;
-			if (n.frame) line += ` (in frame ${JSON.stringify(oneLine(n.frame))})`;
-			if (!n.visible) line += " (offscreen)";
-			return line;
-		})
-		.join("\n");
-}
-
-/** read_page as compact text: a fraction of the tokens of pretty JSON, same information. */
-function formatSnapshot(snap: {
-	url: string;
-	title: string;
-	viewport: { width: number; height: number; scrollY: number; pageHeight: number };
-	nodes: SnapNode[];
-	text: string;
-}): string {
-	const v = snap.viewport;
-	const parts = [
-		`Page: ${snap.title} | ${snap.url}`,
-		`Viewport ${v.width}x${v.height}, scrollY ${v.scrollY} of ${v.pageHeight}`,
-		`Elements (${snap.nodes.length}; use the ref with click/type/fill/scroll):`,
-		formatNodes(snap.nodes, snap.url),
-	];
-	if (snap.text) parts.push("", "Text:", snap.text);
-	return parts.join("\n");
 }
 
 function errorMessage(err: unknown): string {

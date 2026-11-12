@@ -96,6 +96,7 @@ Sitegeist-specific prompts:
 - `REPL_TOOL_DESCRIPTION(runtimeProviderDescriptions)` - REPL with browserjs()/navigate()
 - `SKILL_TOOL_DESCRIPTION` - Skill management (get/list/create/update/rewrite/delete)
 - `NAVIGATE_TOOL_DESCRIPTION` - Navigate to URLs in tabs
+- `PAGE_TOOLS_PROMPT` and the page tool descriptions - in `src/bridge/page-tools.ts`, shared with `polycarp mcp --profile panel` (D40)
 - `ASK_USER_WHICH_ELEMENT_DESCRIPTION` - Element picker
 
 **Runtime Provider Descriptions**:

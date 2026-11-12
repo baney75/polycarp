@@ -1103,3 +1103,60 @@ Agents could not attach a file to a form or keep a file a page offers. One tool,
   `remote fix`, or a plan with no actions), the check_failed step's button is Check again, which runs `remoteTest` (the
   Mac: `remote test`); a test that says the route is on ends the step.
 
+
+## D40. The side panel's model uses the bridge's ref tools, grouped as one `act` tool (Claude, 2026-11-11)
+
+- **One implementation.** The panel's calls run the bridge's own handlers (`src/bridge/tools.ts`) on its own browser
+  session: the stale-ref refusal, hit-tested clicks, shadow roots, frames and dialog handling are the ones MCP clients get.
+  The specs, routes and result text live once in `src/bridge/page-tools.ts`; the panel adapter (`src/tools/page-tools.ts`)
+  and the CLI's `mcp --profile panel` both use them. Read formatting (`src/bridge/format.ts`) is shared with `cli/src/mcp.ts`.
+- **In the service worker.** The panel sends each routed call as a message and the worker runs it
+  (`src/bridge/panel-calls.ts`). Loading the handlers in the panel pulled their capture, PDF and site-edit code (the public
+  suffix list alone is 150 KB) into what the panel parses to open, 2,061,447 bytes against the 1,900,000 budget even as a
+  lazy import, because the bundler shares those modules with the panel's own. In the worker the panel stays at main's size.
+  The worker answers only `sidepanel.html` of this extension.
+- **One source of truth for the tabs.** The panel and the worker each hold a BrowserSession object for the panel's
+  session; the stored session table is the truth for both. The worker reads it under the table lock for every call
+  (`BrowserSession.existing`), its handlers write it the same way, and the panel reads it back as each call returns, so a
+  navigate {switchToTab} or {newTab} is what the next read_page sees, and a tab the worker made current is the panel's at
+  once (storage.onChanged alone arrives a task later). Tests: a tab switch then a read across two contexts, and in the
+  panel e2e.
+- **Worker restarts.** With no native host connected nothing keeps the worker running, and Chrome stops it after about 30
+  idle seconds. The panel pings it every 20 seconds until five minutes pass with no page tool call, which covers a
+  model's thinking between calls. What act x/y needs is kept anyway: the worker mirrors the screenshot scales and open
+  dialogs into storage.session (`persistCdpMemory` in cdp.ts, the worker only, so the panel's own extract_image scales
+  can't replace them) and reads them back when it starts. act x/y with no screenshot of the tab is refused with
+  `bad_params`, never mapped by a guessed scale. The panel e2e stops the worker over DevTools between act screenshot and
+  act click x/y.
+- **Stop ends the call.** The panel stops waiting the moment the user presses stop (`interrupted`), the worker answers
+  the call at once and stops the handler between steps, and a handler that never settles is cut off by the bridge's
+  `withTimeout(HANDLER_TIMEOUT_MS)`, now shared from `src/bridge/errors.ts`.
+- **Five tools, not fifteen.** read_page, find, get_page_text and handle_dialog stay separate; the ten input tools (click,
+  type, fill, press, hover, scroll, drag, wait, screenshot, actions) are one `act` tool with an `action` field. Fifteen
+  separate tools cost the panel 1,938 tokens a turn over main (+21%); the grouped five cost 1,187 (+13%), measured with
+  `cli/eval/panel-prompt-size.mjs` (docs/benchmarks.md). Small models run the panel in 16k to 32k windows, and reading
+  comes first in the loop, so the reads keep their own names. `actions` is `act` `steps`, and scroll's `to` is `edge`, so
+  `to` means only drag's end point.
+- **Left out.** tabs_* (navigate lists, opens, switches, shows and closes the panel's tabs), run_js and get_page_html (the
+  REPL), files (its approval flow is the bridge's question to the user), read_console, read_network, inspect_page and
+  capture (debugging and evidence for outside agents), site_edit and site_script (Settings > Sites), and search, crawl,
+  skills, library and threads (the helper's or the panel's own tools).
+- **Same reach as before, nothing looser.** The tools act only on tabs in the panel's session (the handlers refuse others),
+  never on a Polycarp page (`isOwnExtensionUrl`), open no site (their `checkUrl` refuses; navigate stays the panel's own
+  tool) and send no file (`askUpload` is false). The bridge's per-host allow list governs outside agents and is not
+  applied: the panel's model could already act on these pages through the REPL, and asking before acting under the user's
+  sign-in stays a system prompt rule, as it was. Guarded hosts are the native host's to name per bridge request, so the
+  panel has none. Page text from read_page, find and get_page_text is listed as untrusted data in the prompt.
+- **Dialogs.** A non-dialog-safe call fails with `dialog_open` while any session tab has a box open, and a click that
+  opened one is the click's success, through the same `raceDialogs` bridge requests use (`isDialogSafe` moved to
+  `src/bridge/dialogs.ts` so both share it). The bridge's messages name MCP tools; the panel rewrites the two that name
+  tabs_context and tabs_select into navigate's words.
+- **One rule for the REPL and the page tools.** The REPL runs code: data work, files, bulk extraction, a skill's
+  functions, a recorded workflow's replay() and skill code under test. The model's own clicks and keys go through act.
+  The tool list, the Working on Pages paragraph, browserjs(), Website automation and the skill tool's Creating Skills
+  steps all say this; a capability is found with read_page and act, then written as skill code and tested in the REPL.
+  nativeClick and friends remain for skills.
+- **act steps reports everything.** Beyond the count and note, every field the batch returns (`notRun`, the dialog it
+  opened, what each step did) reaches the model.
+- **Enums are `{type: "string", enum}`**, not a union of literals: Google's API rejects the anyOf a union makes, as the
+  skill tool already notes.
