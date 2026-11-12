@@ -318,36 +318,52 @@ test("leftover second-S3: a full navigation takes no look; a jump within the pag
 	assert.equal(sent.filter((c) => isLook(c.params)).length, 2, "a hash jump keeps the document: it is compared");
 });
 
-test("leftover first-F1: drag reports its changes without the settle wait (no Network turned on)", async () => {
+test("r1 second-S2-2: a drop that reorders 100 ms later is in drag's report, with a short wait and no Network turned on", async () => {
 	const { request } = await startBridge();
-	const sent = recordCommands((method, params) => (method === "Runtime.evaluate" && isLook(params) ? says(look([node("e1", "Card")])) : undefined));
+	let dropAt = 0;
+	const late = () => dropAt && Date.now() - dropAt >= 100;
+	const sent = recordCommands((method, params) => {
+		if (method === "Input.dispatchMouseEvent" && params.type === "mouseReleased") dropAt = Date.now();
+		if (method !== "Runtime.evaluate") return undefined;
+		if (isLook(params)) return says(look([node("e1", "Card A")], late() ? { text: "Moved Card A to Done" } : {}));
+		// The settle probe: the page is changing until the reorder lands.
+		return says({ since: late() ? Date.now() - dropAt - 100 : 0, parsing: false, busy: "" });
+	});
 	const t0 = Date.now();
 	const reply = await request("drag", { from: { x: 10, y: 10 }, to: { x: 50, y: 50 } });
 	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
-	assert.equal(reply.result.changes, "nothing changed");
-	assert.equal(sent.filter((c) => c.method === "Network.enable").length, 0, "drag ran the settle wait");
-	assert.ok(Date.now() - t0 < 2 * 750 + 500, `${Date.now() - t0} ms`);
+	assert.deepEqual(reply.result.changes, { newText: ["Moved Card A to Done"] }, JSON.stringify(reply.result));
+	assert.equal(sent.filter((c) => c.method === "Network.enable").length, 0, "drag turned Network on");
+	// The short wait (0.6 s) and two looks (1.5 s), with 300 ms for the test machine.
+	assert.ok(Date.now() - t0 < 600 + 2 * 750 + 300, `${Date.now() - t0} ms`);
 });
 
 test("leftover first-F1: scroll keeps the wait (new rows load after it) and on a page that never goes quiet returns within its bound", async () => {
 	const { request } = await startBridge();
-	// The settle probe says a loader is up every time; looks answer at once.
+	// Each part takes its documented most: Network.enable never answers (cut at 0.5 s), each look
+	// answers just inside LOOK_MS, and the settle probe says a loader is up every time (the 2.5 s cap).
+	const slow = (v) => new Promise((r) => setTimeout(() => r(v), 740));
 	recordCommands((method, params) =>
-		method !== "Runtime.evaluate"
-			? undefined
-			: isLook(params)
-				? says(look([node("e1", "Row")]))
-				: /scrollX/.test(params.expression)
-					? says({ scrollX: 0, scrollY: 400 })
-					: says({ since: 0, parsing: false, busy: "loading placeholder" }),
+		method === "Network.enable"
+			? new Promise(() => {})
+			: method !== "Runtime.evaluate"
+				? undefined
+				: isLook(params)
+					? slow(says(look([node("e1", "Row")])))
+					: /scrollX/.test(params.expression)
+						? says({ scrollX: 0, scrollY: 400 })
+						: says({ since: 0, parsing: false, busy: "loading placeholder" }),
 	);
 	const t0 = Date.now();
 	const reply = await request("scroll", { dy: 400 });
 	const ms = Date.now() - t0;
 	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
 	assert.equal(reply.result.settled, false, JSON.stringify(reply.result));
-	// D41's cap (2.5 s), Network.enable (0.5 s) and two looks (1.5 s), with room for the test machine.
-	assert.ok(ms < 2500 + 500 + 1500 + 700, `${ms} ms`);
+	// The documented bound, about 4.5 s: D41's cap (2.5 s), Network.enable (0.5 s) and two looks (1.5 s).
+	// 300 ms is the stated margin for the test machine; the parts above take their full time, so a
+	// regression of more than that fails.
+	assert.ok(ms >= 2500 + 500 + 2 * 740, `${ms} ms: a part did not take its full time`);
+	assert.ok(ms < 4500 + 300, `${ms} ms`);
 });
 
 test("leftover first-F3: a control that only changed its name is one changed line, not gone and appeared", async () => {
@@ -358,13 +374,13 @@ test("leftover first-F3: a control that only changed its name is one changed lin
 		if (method !== "Runtime.evaluate" || !isLook(params)) return undefined;
 		return says(
 			n++
-				? look([node("e3", "Clock at 2"), node("e2", "Buy", { x: 1, y: 40 }), node("e4", "Added", { x: 1, y: 80 })], { gone: ["e1"] })
+				? look([node("e3", "Clock at 2"), node("e2", "Buy", { x: 1, y: 40 }), node("e4", "Added", { x: 1, y: 80 })], { gone: ["e1"], same: { e1: "e3" } })
 				: look([node("e1", "Clock at 1"), node("e2", "Buy", { x: 1, y: 40 })]),
 		);
 	});
 	const b = await beforeAction(tabId, [tabId], undefined, GUARDED);
 	const r = await afterAction(b, [tabId], async () => "https://shop.example/", () => false);
-	assert.deepEqual(r.changed, ['e3 button "Clock at 2": name "Clock at 1" -> "Clock at 2" (was e1)'], JSON.stringify(r));
+	assert.deepEqual(r.changed, ['e3 (was e1) button "Clock at 2": name "Clock at 1" -> "Clock at 2"'], JSON.stringify(r));
 	assert.deepEqual(r.appeared, ['e4 button "Added"']);
 	assert.equal(r.gone, undefined);
 });
@@ -405,4 +421,113 @@ test("leftover first-F2: a reload of the same URL is a new document, so its refu
 	const r = await settle(tabId, { quietMs: 300, capMs: 1500 });
 	assert.equal(r.settled, false, `the reloaded page was never probed: ${JSON.stringify(r)}`);
 	assert.equal(r.waitingOn, "loading");
+});
+
+// Review round 1 of PR 147.
+const twoLooks = (before, after) => {
+	let n = 0;
+	recordCommands((method, params) => (method !== "Runtime.evaluate" || !isLook(params) ? undefined : says(n++ ? after : before)));
+};
+
+test("r1 first-F1: an identical node put in a control's place is a gone and an appeared line, so the old ref is named", async () => {
+	const { fake, beforeAction, afterAction } = await load();
+	const tabId = fake.addTab({ url: "https://shop.example/", status: "complete" });
+	const field = (ref) => node(ref, "Email", { role: "textbox" });
+	// A form re-render: e4's element left the page, a new one with the same role, name and place is e7.
+	twoLooks(look([field("e4")]), look([field("e7")], { gone: ["e4"], same: {} }));
+	const b = await beforeAction(tabId, [tabId], undefined, GUARDED);
+	const r = await afterAction(b, [tabId], async () => "https://shop.example/", () => false);
+	assert.deepEqual(r, { appeared: ['e7 textbox "Email"'], gone: ['e4 textbox "Email"'] }, JSON.stringify(r));
+});
+
+test("r1 first-F1: the same element under a new ref with nothing visible changed still names its old ref", async () => {
+	const { fake, beforeAction, afterAction } = await load();
+	const tabId = fake.addTab({ url: "https://shop.example/", status: "complete" });
+	twoLooks(look([node("e4", "Send")]), look([node("e9", "Send")], { gone: ["e4"], same: { e4: "e9" } }));
+	const b = await beforeAction(tabId, [tabId], undefined, GUARDED);
+	const r = await afterAction(b, [tabId], async () => "https://shop.example/", () => false);
+	assert.deepEqual(r, { changed: ['e9 (was e4) button "Send"'] }, JSON.stringify(r));
+});
+
+test("r1 first-F2: new rows in old places are not renames: by position alone nothing pairs, and a scroll pairs nothing", async () => {
+	const { fake, beforeAction, afterAction } = await load();
+	const tabId = fake.addTab({ url: "https://shop.example/", status: "complete" });
+	const row = (ref, name) => node(ref, name, { role: "row" });
+	// A virtualized list: new elements where the old rows were.
+	twoLooks(look([row("e5", "Item 1")]), look([row("e21", "Item 21")], { gone: ["e5"], same: {} }));
+	const b = await beforeAction(tabId, [tabId], undefined, GUARDED);
+	const r = await afterAction(b, [tabId], async () => "https://shop.example/", () => false);
+	assert.deepEqual(r, { appeared: ['e21 row "Item 21"'], gone: ['e5 row "Item 1"'] }, JSON.stringify(r));
+	// A list that recycles its elements: the same element shows a new item. Through scroll, not a rename.
+	const { request } = await startBridge();
+	let n = 0;
+	recordCommands((method, params) =>
+		method !== "Runtime.evaluate"
+			? undefined
+			: isLook(params)
+				? says(n++ ? look([row("e21", "Item 21")], { gone: ["e5"], same: { e5: "e21" } }) : look([row("e5", "Item 1")]))
+				: /scrollX/.test(params.expression)
+					? says({ scrollX: 0, scrollY: 400 })
+					: says({ since: 1000, parsing: false, busy: "" }),
+	);
+	const reply = await request("scroll", { dy: 400 });
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	assert.deepEqual(reply.result.changes, { appeared: ['e21 row "Item 21"'], gone: ['e5 row "Item 1"'] }, JSON.stringify(reply.result));
+});
+
+test("r1 second-S2-1: a long name's changed line keeps its old ref", async () => {
+	const { fake, beforeAction, afterAction } = await load();
+	const tabId = fake.addTab({ url: "https://shop.example/", status: "complete" });
+	const long = (k) => `Status of the nightly import for the north region: ${k} of 12 files`;
+	twoLooks(look([node("e1", long(3))]), look([node("e123", long(4))], { gone: ["e1"], same: { e1: "e123" } }));
+	const b = await beforeAction(tabId, [tabId], undefined, GUARDED);
+	const r = await afterAction(b, [tabId], async () => "https://shop.example/", () => false);
+	assert.equal(r.changed.length, 1, JSON.stringify(r));
+	assert.match(r.changed[0], /^e123 \(was e1\) button /);
+	assert.ok(r.changed[0].length <= 160, r.changed[0]);
+	assert.equal(r.gone, undefined);
+});
+
+test("r1 first-F3: a navigate that loads no new document (a 204) says so, not new page", async () => {
+	const { fake, request } = await startBridge();
+	const { NEW_PAGE, NOT_LOADED } = await import("../src/browser/changes.ts");
+	loadsLand(fake);
+	let loader = "L1";
+	recordCommands((method) => (method === "Page.getFrameTree" ? { frameTree: { frame: { id: "main", loaderId: loader } } } : undefined));
+	const kept = await request("navigate", { url: "https://shop.example/empty-204" });
+	assert.deepEqual(kept.result?.changes, { page: NOT_LOADED }, JSON.stringify(kept));
+	const real = chrome.tabs.update;
+	chrome.tabs.update = async (...args) => {
+		loader = "L2";
+		return real(...args);
+	};
+	const loaded = await request("navigate", { url: "https://other.example/" });
+	assert.deepEqual(loaded.result?.changes, { page: NEW_PAGE }, JSON.stringify(loaded));
+});
+
+test("r1 second-S2-3: actions on a named tab with only a wait step moves nowhere: the report is that tab's", async () => {
+	const { request, tabId: named } = await startBridge();
+	const { movedTo } = await import("../src/browser/changes.ts");
+	const a = await request("tabs.create");
+	await chrome.tabs.update(a.result.tabId, { url: "https://shop.example/a", status: "complete" });
+	const sent = recordCommands((method, params) => (method === "Runtime.evaluate" && isLook(params) ? says(look([node("e1", "Buy")])) : undefined));
+	const reply = await request("actions", { tabId: named, steps: [{ wait: 50 }] });
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	assert.notDeepEqual(reply.result.changes, { page: movedTo(a.result.tabId) });
+	assert.equal(reply.result.changes, "nothing changed", JSON.stringify(reply.result));
+	assert.equal(sent.filter((c) => isLook(c.params)).length, 2, "a before and an after look, on the named tab");
+});
+
+test("r1 first-F1: refsRenewed maps an old ref to its element's new ref, never to a node put in its place", async () => {
+	await load();
+	const { refsRenewed } = await import("../src/browser/page.ts");
+	const kept = {};
+	const replaced = {};
+	const refs = new Map([["e1", kept], ["e2", replaced]]);
+	const refOf = new WeakMap([[kept, "e9"], [replaced, "e2"]]);
+	const window = { __tabkyraRefs: refs, __tabkyraRefOf: refOf };
+	const ctx = vm.createContext({ window, Map, WeakMap, Set });
+	// e1's element shows something new and is e9 now; e2's element left (a new node is e7, not tied to it).
+	const out = vm.runInContext(`(${refsRenewed.toString()})(["e1", "e2"], new Set(["e7", "e9"]))`, ctx);
+	assert.deepEqual({ ...out }, { e1: "e9" });
 });

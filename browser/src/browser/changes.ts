@@ -41,6 +41,11 @@ export interface Before {
 	miss?: Miss;
 	/** The hosts no tool may read (#94): each look checks them in the page before it reads anything. */
 	hosts: readonly string[];
+	/**
+	 * False for a scroll: a list that recycles its rows shows new items in old elements, which would
+	 * read as renamed. Its report lists what went and what appeared instead.
+	 */
+	pairRenames?: boolean;
 }
 
 type Node = ChangeLook["nodes"][number];
@@ -102,6 +107,8 @@ const TOO_LARGE = "too large to compare quickly; read_page shows it";
 /** Reports given without a look: a full navigation is a new document, so a diff would be the page. */
 export const NEW_PAGE = "new page; read_page lists it";
 export const STILL_LOADING = "still loading; read_page shows it";
+/** A navigate whose URL loaded no new document (a 204, a download): the page around it is the one before. */
+export const NOT_LOADED = "no new page loaded; read_page shows the page";
 export const movedTo = (tabId: number) => `moved to tab ${tabId}; read_page shows it`;
 
 /**
@@ -119,15 +126,15 @@ export async function afterAction(
 	return fitChanges(await report(b, tabs, urlOf, skip), CHANGES_MAX_CHARS);
 }
 
-async function report(
-	b: Before,
+/** The session's tabs an action opened (with their URLs, masked) and closed, for any report. */
+export async function tabChanges(
+	was: number[],
 	tabs: number[],
 	urlOf: (tabId: number) => Promise<string>,
-	skip: (url: string) => boolean,
-): Promise<Record<string, unknown> | string> {
+): Promise<Record<string, unknown>> {
 	const out: Record<string, unknown> = {};
-	const opened = tabs.filter((t) => !b.tabs.includes(t));
-	const closed = b.tabs.filter((t) => !tabs.includes(t));
+	const opened = tabs.filter((t) => !was.includes(t));
+	const closed = was.filter((t) => !tabs.includes(t));
 	if (opened.length)
 		out.tabsOpened = await Promise.all(
 			opened
@@ -135,6 +142,16 @@ async function report(
 				.map(async (tabId) => ({ tabId, url: cut(maskUrl(await urlOf(tabId).catch(() => "")), URL_CHARS) })),
 		);
 	if (closed.length) out.tabsClosed = closed.slice(0, 10);
+	return out;
+}
+
+async function report(
+	b: Before,
+	tabs: number[],
+	urlOf: (tabId: number) => Promise<string>,
+	skip: (url: string) => boolean,
+): Promise<Record<string, unknown> | string> {
+	const out: Record<string, unknown> = await tabChanges(b.tabs, tabs, urlOf);
 	const gone = !tabs.includes(b.tabId);
 	const url = gone ? "" : await urlOf(b.tabId).catch(() => "");
 	// No second look when the first is missing: the report can't compare, and the action is not held longer.
@@ -177,18 +194,16 @@ async function report(
 	}
 	const old = new Map(b.look.nodes.map((n) => [n.ref, n]));
 	const goneSet = new Set(a.gone);
-	// A control that only changed its name (a live counter, "Save" -> "Saved") gets a new ref; the
-	// same role in the same place is one changed line, not a gone and an appeared one.
-	const at = (n: Node) => `${n.role}@${Math.round(n.x)},${Math.round(n.y)}`;
-	const stale = new Map(b.look.nodes.filter((n) => goneSet.has(n.ref)).map((n) => [at(n), n]));
+	// A control that only changed what it shows (a live counter, "Save" -> "Saved") gets a new ref:
+	// the same element is one changed line naming its old ref, which fails now. Only the same element:
+	// an identical node put in its place (a re-render) is a gone and an appeared line, and a scroll
+	// pairs nothing (a list that recycles rows shows new items in old elements).
 	const renamed = new Map<string, Node>();
-	for (const n of a.nodes) {
-		const was = !old.has(n.ref) && stale.get(at(n));
-		if (was) {
-			renamed.set(n.ref, was);
-			stale.delete(at(n));
+	if (b.pairRenames !== false)
+		for (const [was, now] of Object.entries(a.same ?? {})) {
+			const o = old.get(was);
+			if (o && goneSet.has(was) && byRef.has(now) && !old.has(now)) renamed.set(now, o);
 		}
-	}
 	const paired = new Set([...renamed.values()].map((n) => n.ref));
 	const appeared = a.nodes.filter((n) => !old.has(n.ref) && !renamed.has(n.ref)).map(line);
 	const changed = a.nodes.flatMap((n) => {
@@ -197,8 +212,15 @@ async function report(
 		return d ? [d] : [];
 	});
 	for (const [ref, was] of renamed) {
-		const d = delta(was, a.nodes.find((n) => n.ref === ref) as Node);
-		if (d) changed.push(cut(`${d} (was ${was.ref})`, LINE_CHARS));
+		const n = byRef.get(ref) as Node;
+		// The old ref goes right after the new one, so a long line's cut never drops it.
+		const d = delta(was, n) ?? line(n);
+		changed.push(
+			cut(
+				d.replace(/^\S+/, (r) => `${r} (was ${was.ref})`),
+				LINE_CHARS,
+			),
+		);
 	}
 	const vanished = b.look.nodes.filter((n) => goneSet.has(n.ref) && !paired.has(n.ref)).map(line);
 	let room = MAX_LINES;
