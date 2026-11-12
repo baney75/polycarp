@@ -164,6 +164,12 @@ function findAttachment(files: LoadedDocument[], name: string, copy: number): { 
 	const newest = [...files].reverse();
 	let named = newest.filter((f) => f.fileName.toLowerCase() === want);
 	if (!named.length) named = newest.filter((f) => f.fileName.toLowerCase().includes(want));
+	// Copies are of one name: a part of a name that fits several documents names none of them.
+	const names = [...new Set(named.map((f) => f.fileName))];
+	if (names.length > 1)
+		throw new Error(
+			`${JSON.stringify(name)} fits ${names.length} attached documents: ${names.map((n) => `"${n}"`).join(", ")}. Give the whole name.`,
+		);
 	const file = named[copy - 1];
 	if (file) return { file, same: named.length };
 	if (named.length)
@@ -223,8 +229,9 @@ export function createExtractDocumentTool(options: ExtractDocumentOptions): Extr
 			}
 			cache.set(key, entry);
 			const { doc, fileName } = entry;
-			// The budget as given, never raised: a tight window's 768 characters are 256 tokens, not 333.
-			const chars = Math.max(200, Math.floor(options.budgetChars()));
+			// The allowance is the guard's as given, never raised: 120 characters are 40 tokens, whatever the read starts at.
+			const given = Math.floor(options.budgetChars());
+			const chars = Math.max(200, given);
 			let range: { first: number; last: number } | undefined;
 			if (!args.query?.trim() && args.pages?.trim()) {
 				range = parseRange(args.pages, doc.units.length);
@@ -234,16 +241,21 @@ export function createExtractDocumentTool(options: ExtractDocumentOptions): Extr
 					);
 			}
 			const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+			const which =
+				same > 1
+					? `[${same} attached documents are called ${JSON.stringify(fileName)}: this is copy ${copy}, 1 being the newest.]\n`
+					: "";
 			const read = (budget: number): string => {
-				if (args.query?.trim()) return readSearch(doc, fileName, args.query, budget, attached ? "" : key).text;
-				if (range) return readRange(doc, fileName, range, offset, budget).text;
-				if (offset) return readRange(doc, fileName, { first: 1, last: doc.units.length }, offset, budget).text;
-				return readOverview(doc, fileName, budget).text;
+				const b = Math.max(0, budget - which.length);
+				if (args.query?.trim()) return which + readSearch(doc, fileName, args.query, b, attached ? "" : key).text;
+				if (range) return which + readRange(doc, fileName, range, offset, b).text;
+				if (offset) return which + readRange(doc, fileName, { first: 1, last: doc.units.length }, offset, b).text;
+				return which + readOverview(doc, fileName, b).text;
 			};
 			// The guard measures a result in tokens by script (context-budget.ts), and a page of CJK text or code holds
 			// more of them than its length suggests. An answer over that would be cut again and lose its own note on how
 			// to read on, so it is read again, smaller, until the guard's own estimate fits.
-			const allowed = Math.floor(chars / CHARS_PER_TOKEN);
+			const allowed = Math.floor(given / CHARS_PER_TOKEN);
 			let budget = chars;
 			let text = read(budget);
 			for (let i = 0; i < 10; i++) {
@@ -252,11 +264,15 @@ export function createExtractDocumentTool(options: ExtractDocumentOptions): Extr
 				budget = Math.max(200, Math.floor((budget * allowed * 0.9) / tokens));
 				text = read(budget);
 			}
-			// Too little room for even the shortest read: say so in a line, which the guard won't cut again.
-			if (estimateTextTokens(text) > allowed)
-				text = `${fileName}: ${doc.units.length} ${doc.kind}s. The model's context has no room for this read: ask for one ${doc.kind} at a time, or use query.`;
-			if (same > 1)
-				text = `[${same} attached documents are called ${JSON.stringify(fileName)}: this is copy ${copy}, 1 being the newest.]\n${text}`;
+			// Too little room for even the shortest read: say so in a line, within the allowance, which the guard won't cut again.
+			if (estimateTextTokens(text) > allowed) {
+				const ask = args.query?.trim()
+					? "search with fewer words"
+					: `ask for one ${doc.kind} at a time, or use query`;
+				text = `${which}${fileName}: ${doc.units.length} ${doc.kind}s. The model's context has no room for this read: ${ask}.`;
+				while (text.length > 1 && estimateTextTokens(text) > allowed)
+					text = text.slice(0, Math.floor(text.length * 0.8));
+			}
 			return {
 				content: [{ type: "text", text }],
 				details: { extractedText: text, format: doc.format, fileName, size: entry.size, pages: doc.units.length },

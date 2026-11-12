@@ -681,7 +681,10 @@ export const handlers: Record<string, Handler> = {
 		if (query)
 			return {
 				...(await tabSummary(tabId)),
-				text: await searchTab(tabId, str(params, "selector"), query, readChars(params.maxChars) ?? READ_MAX_CHARS),
+				text: await searchTab(tabId, str(params, "selector"), query, readChars(params.maxChars) ?? READ_MAX_CHARS, {
+					first: num(params, "firstPage"),
+					last: num(params, "lastPage"),
+				}),
 			};
 		// The PDF viewer has no page text to read: its text comes from the file, page by page.
 		if (!str(params, "selector") && (await isPdfTab(tabId))) {
