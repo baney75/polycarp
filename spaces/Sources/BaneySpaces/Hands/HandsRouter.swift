@@ -81,7 +81,7 @@ final class HandsRouter {
     func handleWire(_ r: Wire.Request) -> Wire.Reply {
         let env: HandsEnvelope
         if let data = r.text?.data(using: .utf8), let req = try? JSONDecoder().decode(HandsRequest.self, from: data) {
-            env = handle(req)
+            env = HandsNextCall.fill(handle(req), window: windowOf(req))
         } else {
             env = .failure(HandsError(.badArguments, "the request wasn't an agent command", suggestion: "Use `polycarp-spaces agent <command>`.", retry: .never))
         }
@@ -589,6 +589,9 @@ final class HandsRouter {
             }
             // The child windows the app has now: one that appears after this is the action's (`ChildAttribution`).
             let childrenBefore = noteAction(session: session, pid: w.pid)
+            if kind == .click, let plan = rowPlan(ref, session: session) {
+                return clickRow(w, scope: scope, ref: ref, plan: plan, session: session, childrenBefore: childrenBefore)
+            }
             // The scope and ref checks run again on the process queue, at the moment the call executes.
             let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session))
             switch reply {
@@ -623,11 +626,30 @@ final class HandsRouter {
                     "action": .string(name), "ref": .string(ref), "verified": .bool(verified), "evidence": evidence,
                     "engine": engine, "target": targetJSON(w, scope),
                 ]
+                // Not verified: the one read to make before anything else.
+                if !verified { result["next_call"] = HandsNextCall.after(.unverified, window: Int(w.id)) }
                 // A dialog or sheet the action raised: said here, so the agent need not poll.
                 if let opened = openedChildren(pid: w.pid, before: childrenBefore, session: session) { result["opened"] = opened }
                 return .success(.object(result))
             }
         }
+    }
+
+    /// The window a request is about, for its error's next call: the window it names, or the one its ref's snapshot read.
+    private func windowOf(_ req: HandsRequest) -> Int? {
+        if let w = req.int("window") { return w }
+        guard let r = req.string("ref"), r.hasPrefix("@"), let colon = r.firstIndex(of: ":") else { return nil }
+        let sid = String(r[r.index(after: r.startIndex)..<colon])
+        lock.lock(); defer { lock.unlock() }
+        return snaps[sid].map { Int($0.window) }
+    }
+
+    /// The selection write a click on `ref` falls back to, when the ref is an item in an outline, table or list.
+    private func rowPlan(_ ref: String, session: String) -> ClickFallback.Plan? {
+        guard ref.hasPrefix("@"), let colon = ref.firstIndex(of: ":"), let n = SnapshotRows.refNumber(ref) else { return nil }
+        let sid = String(ref[ref.index(after: ref.startIndex)..<colon])
+        guard let read = withRows({ $0.read(snapshot: sid, session: session) }) else { return nil }
+        return ClickFallback.plan(rows: read.rows, snapshot: sid, number: n)
     }
 
     private func shot(_ req: HandsRequest) -> HandsEnvelope {

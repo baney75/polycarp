@@ -75,7 +75,7 @@ public enum HandsTools {
             refParam,
             HandsParam("property", .string, "value (default), text, title, role, bounds or states.", positional: true),
         ], acts: false),
-        HandsTool(verb: "click", summary: "Click an element by ref, without moving the pointer or raising the window. Prints what it verified.", params: [refParam], acts: true),
+        HandsTool(verb: "click", summary: "Click an element by ref, without moving the pointer or raising the window. On a row of a list, table or outline that the press doesn't select, it selects the row instead and says which landed (landed: press or selection_write). Example: {\"ref\":\"12\"}", params: [refParam], acts: true),
         HandsTool(verb: "type", summary: "Type text into an element by ref: inserts it at the element's selection through accessibility, never by posting keys. Prints the value it read back.", params: [
             refParam,
             HandsParam("text", .string, "The text.", required: true, positional: true, rest: true),

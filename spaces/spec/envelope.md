@@ -22,6 +22,12 @@ Every `baneyspaces` command and every MCP tool result is one JSON object.
 - A hands result (`click`, `set-value`, ...) carries `data.evidence`: `{ "delivery", "verified",
   "readback" }` taken from the engine's own report. `verified` is true only when the engine read the
   result back from the element it targeted. A capture is never evidence by itself.
+- macOS, `click` on a row, cell or item of an outline, table or list: when the press leaves it unselected, the click
+  writes the selection on the container in the same transaction. `data.landed` is `press`, `selection_write`,
+  `already_selected` or `none`, and `data.evidence` (`kind: selection_readback`) holds the selection read before, after
+  the press and after the write. The write is never made after a press that selected the row. Linux and Windows: the press only.
+- MCP, macOS: every error carries `error.next_call`, a read or `null` for none, and an unverified result carries
+  `data.next_call`. Linux and Windows: not yet.
 - Exit status of the CLI: 0 for `ok`, 1 for an error, 2 for `invalid_args`.
 
 ## Codes
