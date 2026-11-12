@@ -30,23 +30,30 @@ public enum ReleaseOrder {
     }
 }
 
-/// Waits, a look every 20 ms, for a window to hold still after a drag: three unchanged looks, and at least five in all,
-/// so the window server, the app and a tile animation have finished. Gives up after 25 looks (0.5 s) of motion: an app
-/// animating its own frame is left alone, since moving it then would fight the animation.
+/// Waits, a look every 20 ms, for a window to hold still after a drag: `stillLooks` unchanged looks in a row (three by
+/// default), and at least five in all, so the window server, the app and a tile animation have finished. Gives up after
+/// `giveUpAfter` looks (25, 0.5 s) of motion: an app animating its own frame is left alone, since moving it then would
+/// fight the animation. `DragRelease.settleWatch` picks a longer wait where macOS may still be about to tile.
 public struct SettleWatch: Sendable {
     public enum Verdict: Equatable, Sendable { case wait, still, gaveUp }
     public private(set) var looks = 0
+    public let stillLooks: Int
+    public let giveUpAfter: Int
     private var still = 0
     private var last: CGRect?
 
-    public init(from frame: CGRect?) { last = frame }
+    public init(from frame: CGRect?, stillLooks: Int = 3, giveUpAfter: Int = 25) {
+        last = frame
+        self.stillLooks = stillLooks
+        self.giveUpAfter = giveUpAfter
+    }
 
     public mutating func look(_ frame: CGRect?) -> Verdict {
         looks += 1
         still = frame == last ? still + 1 : 0
         last = frame
-        if looks >= 5 && still >= 3 { return .still }
-        return looks >= 25 ? .gaveUp : .wait
+        if looks >= 5 && still >= stillLooks { return .still }
+        return looks >= giveUpAfter ? .gaveUp : .wait
     }
 }
 
@@ -78,17 +85,23 @@ public enum DragRelease {
         }
     }
 
+    /// macOS can pause a beat before it animates a window let go at a side edge into a half, so a covered release there
+    /// must hold still this many looks (300 ms) before it counts as still, and is given up on after 75 (1.5 s).
+    public static let sideTileStillLooks = 15
+    public static let sideTileGiveUpAfter = 75
+
     public enum Edge: Sendable { case top, left, right }
 
-    /// The outer edge of `d` that `p` is within `edgeBand` of, among `edges`. Nil at a seam another display touches.
+    /// The outer edge of `d` that `p` is within `edgeBand` of, among `edges`. Nil at a seam: where another display
+    /// touches that edge right at the pointer. Elsewhere along the same edge, past the other display, macOS still tiles.
     public static func tileEdge(_ p: CGPoint, on d: CGRect, displays: [CGRect], edges: [Edge]) -> Edge? {
         func touched(_ e: Edge) -> Bool {
             displays.contains { o in
                 guard o != d else { return false }
                 switch e {
-                case .top: return abs(o.maxY - d.minY) < 1 && o.minX < d.maxX && o.maxX > d.minX
-                case .left: return abs(o.maxX - d.minX) < 1 && o.minY < d.maxY && o.maxY > d.minY
-                case .right: return abs(o.minX - d.maxX) < 1 && o.minY < d.maxY && o.maxY > d.minY
+                case .top: return abs(o.maxY - d.minY) < 1 && o.minX <= p.x && p.x < o.maxX
+                case .left: return abs(o.maxX - d.minX) < 1 && o.minY <= p.y && p.y < o.maxY
+                case .right: return abs(o.minX - d.maxX) < 1 && o.minY <= p.y && p.y < o.maxY
                 }
             }
         }
@@ -101,6 +114,17 @@ public enum DragRelease {
             }
             return near && !touched(e)
         }
+    }
+
+    /// How long to wait for the window to hold still before `correction` looks at it. A covered release in a side edge's
+    /// band waits out macOS's half tile (review of #154, first-F2): moved back mid-animation, the window would fight it.
+    public static func settleWatch(from frame: CGRect?, after end: DragEnd, displays: [(frame: CGRect, visible: CGRect)]) -> SettleWatch {
+        let p = end.pointer
+        guard end.coveredFrom != nil, !end.dropped, let d = displays.first(where: { $0.frame.contains(p) }),
+              tileEdge(p, on: d.frame, displays: displays.map(\.frame), edges: [.left, .right]) != nil else {
+            return SettleWatch(from: frame)
+        }
+        return SettleWatch(from: frame, stillLooks: sideTileStillLooks, giveUpAfter: sideTileGiveUpAfter)
     }
 
     /// `displays` are in window-server coordinates: each display's whole frame and its visible area. Called once the
