@@ -17,6 +17,8 @@ enum WindowShot {
         var cursorDrawn = false
         /// With the cursor drawn in, the hash of the capture as taken, before anything was drawn on it.
         var rawSha256: String?
+        /// The window's size in points: the capture is 2x, and a model maps image pixels back to points with it.
+        var points = CGSize.zero
     }
 
     static var folder: URL { HandsEngine.home.appendingPathComponent("shots", isDirectory: true) }
@@ -142,7 +144,7 @@ enum WindowShot {
                 _ = try? FileManager.default.removeItem(at: file)
                 try FileManager.default.moveItem(at: tmp, to: file)
                 let hash = SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined()
-                outcome.set(.success(Result(path: file.path, width: picture.width, height: picture.height, sha256: hash, cursorDrawn: drawn, rawSha256: rawHash)))
+                outcome.set(.success(Result(path: file.path, width: picture.width, height: picture.height, sha256: hash, cursorDrawn: drawn, rawSha256: rawHash, points: w.frame.size)))
             } catch {
                 outcome.set(.failure(HandsError(.engineError, "the capture failed: \(error.localizedDescription)", suggestion: "Check Screen Recording access for Polycarp.", retry: .safe)))
             }
