@@ -516,6 +516,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self, self.started else { return }
             self.spaces.screensChanged()
         }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification,
+                                                          object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.started else { return }
+            self.spaces.didWake()
+        }
         // `kill`, logout and `launchctl stop` still bring every window back.
         for sig in [SIGTERM, SIGINT, SIGHUP] {
             signal(sig, SIG_IGN)
