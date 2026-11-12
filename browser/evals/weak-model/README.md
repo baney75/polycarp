@@ -23,7 +23,20 @@ variable (`lib.mjs` KEY_VARS) is set, and removes them from the child's environm
 Chromium (`cli/test/e2e-harness.mjs`), a turn cap (30) and a wall-clock cap (240 s browser, 300 s computer).
 The computer tools go through `polycarp-spaces mcp --connector`, which holds the model to the agent workspace and
 lent apps. The runner backs up and restores the apps' preferences and closes only the app copies its own
-`computer_open` calls started.
+`computer_open` calls started (`reused: false`), read from each answer as it streams in (`transcript.mjs`).
+
+## How a run ends
+
+Everything a run must undo registers in one registry (`cleanup.mjs`) the moment it exists: the scratch folder, the
+headless Chromium, the socket folder, the handoff folder, the preferences backup, each `claude -p` and each app copy
+it started. One cleanup runs the registry in reverse, exactly once, from every way out: a normal end, a thrown error,
+Ctrl-C (SIGINT), SIGTERM, SIGHUP, an uncaught error, or a `claude` that is not on the PATH (one clear line, exit 1).
+Each `claude -p` runs in its own process group, and cleanup kills the group, so its MCP server goes with it. A run
+cut off by a stop writes no record and no summary. When a preferences restore fails, the backups are copied to
+`~/.local/state/polycarp-weak-model/prefs-<time>/`, the path is printed, and scratch is kept.
+
+Bad options exit 2 with the reason before anything is written: a number that isn't a whole number above 0, an
+unknown `--kind`, or an `--only` and `--kind` that match no task.
 
 ## Commands
 
@@ -41,7 +54,9 @@ node evals/weak-model/measure-read.mjs after                      # read_page an
 Results go to `results/<label>/`: one record per run (`<task>-t<n>.json`, every call with its arguments, error flag,
 size and a clipped result), kept locally, and what is committed: `runs.jsonl` (the same records, one per line) and
 `summary.json` (`node evals/weak-model/summarize.mjs <label>` rebuilds both, laying local records over the committed
-runs by task and trial). `results/r1-haiku/classes.json` classifies every round 1 failure.
+runs by task and trial). A partial rerun (`--only`, or one stopped early) replaces only its own runs and keeps an
+earlier `stopped` mark; only a run that made every job clears it. `results/r1-haiku/classes.json` classifies every
+round 1 failure.
 
 ## The ratchet
 
