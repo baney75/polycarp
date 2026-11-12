@@ -15,7 +15,14 @@
 //   --no-polycarp    the probe's own window, Polycarp quit first: macOS alone, judged by frames only
 //   --chromium       a Chrome for Testing window the probe launches with a fresh profile (never his Helium), Polycarp running
 //   --chromium --no-polycarp   Chromium and macOS alone
-// The arms with either flag run case 5 only. --chromium installs nothing: without Chrome for Testing it says so and stops.
+// The arms with either flag run case 5 only (--no-polycarp also runs case 6). --chromium installs nothing: without
+// Chrome for Testing it says so and stops, and it always quits the Chrome it launched and removes its profile, on every
+// way out. The 0.8 s rest at the top opens Polycarp's overview, so the release counts as covered; case 5 reads the trace
+// to tell a move Polycarp made from the jump.
+//
+// Case 6 measures the pause macOS takes before it half-tiles a window let go blind at the left edge, the number behind
+// `DragRelease.sideTileStillLooks`, and prints it. With Polycarp running it also checks that Polycarp moved the window
+// only if macOS left it alone for the whole wait.
 //
 // It takes the pointer, so it refuses to run unless the Mac has been idle 10 minutes. Before every press it checks that the
 // window under the press point is the one it means to drag, and stops if not, so no click can land in another app. It
@@ -95,9 +102,55 @@ func fillHeld(_ watched: [Watch], fills: (CGRect) -> Bool, over: Double = 3, sla
 }
 /// Polycarp watched a drag of `id` reach the top and rest there: the drag macOS fills (review of #154, second-F5).
 func topRestSeen(_ id: UInt32) -> [[String]] { [["topDrag moving window=\(id)"], ["topDrag dwell start window=\(id)"]] }
-/// The lines where Polycarp itself moved or filled `id`, which a window macOS filled must not have.
+/// The lines where Polycarp itself moved or filled `id`. A wait that ended in "left alone" moved nothing (review of #155).
 func polycarpMoved(_ trace: [String], _ id: UInt32) -> [String] {
-    trace.filter { $0.contains("drag end window=\(id) ") || $0.contains("fill window=\(id) on") }
+    let moves = ["drag end window=\(id) back to its frame before the overview", "drag end window=\(id) title bar out of reach",
+                 "fill window=\(id) on"]
+    return trace.filter { line in moves.contains { line.contains($0) } }
+}
+/// Case 5's verdict on what the watch saw, read with what Polycarp logged meanwhile (nil: Polycarp wasn't running). A
+/// change Polycarp made is its own failure, never read as the jump; a change with no Polycarp move is the jump.
+func fillHoldsVerdict(_ hold: FillHold, trace: [String]?, id: UInt32) -> (ok: Bool, why: String) {
+    let moved = trace.map { polycarpMoved($0, id) } ?? []
+    switch hold {
+    case let .held(f):
+        return moved.isEmpty ? (true, "the filled frame \(f) held 3 s from mouse-up")
+                             : (false, "the frame held, but Polycarp moved or filled the window: \(moved)")
+    case let .changed(at, from, to):
+        let when = "the filled frame \(from) changed \(Int(at * 1000)) ms after mouse-up to \(String(describing: to))"
+        if !moved.isEmpty { return (false, "\(when), and Polycarp moved it (\(moved)): Polycarp's own move, not the jump") }
+        return (false, "\(when) with \(trace == nil ? "Polycarp not running" : "no Polycarp move in the trace"): the jump, the app's or macOS's")
+    case let .neverFilled(f):
+        return (false, "precondition, macOS filled the window within 1 s of mouse-up (frame \(String(describing: f)))")
+    case let .short(t):
+        return (false, "watched 3 s from mouse-up (only \(String(format: "%.2f", t)) s)")
+    }
+}
+/// When a window let go at a side edge first moved from where it was let go, and when it came to rest, in seconds
+/// from mouse-up; nil `moved` means it never moved in the watch.
+func sidePause(_ watched: [Watch], slack: CGFloat = 4) -> (moved: Double?, settled: Double?, final: CGRect?) {
+    guard let start = watched.first?.frame else { return (nil, nil, watched.last?.frame) }
+    let moved = watched.first { !backNear($0.frame, start, within: slack) }?.t
+    let final = watched.last?.frame
+    guard moved != nil, let final else { return (moved, nil, final) }
+    let lastAway = watched.lastIndex { !backNear($0.frame, final, within: 1) }
+    return (moved, lastAway.map { watched[min($0 + 1, watched.count - 1)].t } ?? watched.first?.t, final)
+}
+
+/// `DragRelease.sideTileStillLooks` read from its source, so case 6 checks the wait Polycarp ships. Nil if not found.
+func sideTileStillLooks(in source: String) -> Int? {
+    guard let r = source.range(of: #"static let sideTileStillLooks = (\d+)"#, options: .regularExpression) else { return nil }
+    return Int(source[r].split(separator: "=").last!.trimmingCharacters(in: .whitespaces))
+}
+let dragReleaseSource = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../Sources/BaneySpacesCore/DragRelease.swift")
+
+/// Undone on every way out of the probe: a normal exit, a stop before a click, an error, or a signal.
+var cleanups: [() -> Void] = []
+let cleanupLock = NSLock()
+func addCleanup(_ c: @escaping () -> Void) { cleanupLock.lock(); cleanups.append(c); cleanupLock.unlock() }
+func runCleanups() {
+    cleanupLock.lock(); let c = cleanups; cleanups = []; cleanupLock.unlock()
+    c.reversed().forEach { $0() }
 }
 /// The newest of several Chrome for Testing apps, by the build number in their paths.
 func newest(_ paths: [String]) -> String? { paths.max { $0.compare($1, options: .numeric) == .orderedAscending } }
@@ -197,6 +250,39 @@ if CommandLine.arguments.contains("--self-test") {
     expect(polycarpMoved(rested + ["10:32:29.7 drag end window=7 back to its frame before the overview: (0,35) to (0,540)"], 7).count == 1, "a correction of the window is caught")
     expect(polycarpMoved(rested + ["10:32:29.7 fill window=7 on frame=(0,35,1512,947)"], 7).count == 1, "a Polycarp fill of the window is caught")
     expect(polycarpMoved(rested + ["10:32:29.7 drag end window=70 back to its frame before the overview"], 7).isEmpty, "another window's correction isn't")
+    // Review of #155, first-F2: a wait Polycarp gave up on, or one it started, moved nothing.
+    expect(polycarpMoved(["10:32:29.6 drag end window=7 still moving after 500 ms; left alone",
+                          "10:32:29.6 drag end window=7 let go blind at a side edge: waits 1000 ms still, left alone if it moves",
+                          "10:32:29.7 drag end window=7 moved on its own 120 ms after the release; left alone"], 7).isEmpty,
+           "a \"left alone\" line is not a move")
+    expect(polycarpMoved(["10:32:29.7 drag end window=7 title bar out of reach at (0,0), moved to (0,35)"], 7).count == 1, "a title bar rescue is a move")
+    // Case 5 tells a move Polycarp made from the jump.
+    let jump = FillHold.changed(at: 0.704, from: filled, to: lowerHalf)
+    let ours = fillHoldsVerdict(jump, trace: rested + ["10:32:29.7 drag end window=7 back to its frame before the overview: (0,35) to (0,540)"], id: 7)
+    expect(!ours.ok && ours.why.contains("Polycarp's own move"), "a change Polycarp made fails as Polycarp's, not as the jump (\(ours.why))")
+    let theirs = fillHoldsVerdict(jump, trace: rested + ["10:32:29.7 drag end window=7 still moving after 500 ms; left alone"], id: 7)
+    expect(!theirs.ok && theirs.why.contains("the jump") && !theirs.why.contains("Polycarp's own"), "a change with no Polycarp move fails as the jump (\(theirs.why))")
+    let alone = fillHoldsVerdict(jump, trace: nil, id: 7)
+    expect(!alone.ok && alone.why.contains("Polycarp not running"), "without Polycarp the jump is the app's or macOS's (\(alone.why))")
+    expect(fillHoldsVerdict(.held(filled), trace: rested + ["10:32:29.6 drag end window=7 still moving after 500 ms; left alone"], id: 7).ok,
+           "a fill that held passes though Polycarp gave up a wait")
+    expect(!fillHoldsVerdict(.held(filled), trace: ["10:32:29.7 fill window=7 on frame=(0,35,1512,947)"], id: 7).ok, "a fill Polycarp made fails")
+    expect(!fillHoldsVerdict(.neverFilled(atTop), trace: rested, id: 7).ok, "never filled fails")
+    // Review of #155, first-F3: case 6 measures macOS's pause before a side tile.
+    let blindLeft = CGRect(x: -608, y: 478, width: 1492, height: 928), leftHalf = CGRect(x: 0, y: 35, width: 756, height: 947)
+    let paused = watch { $0 < 0.42 ? blindLeft : $0 < 0.7 ? blindLeft.offsetBy(dx: CGFloat(($0 - 0.42) * 2000), dy: 0) : leftHalf }
+    let measured = sidePause(paused)
+    expect(measured.moved.map { abs($0 - 0.432) < 0.02 } == true && measured.settled.map { abs($0 - 0.704) < 0.02 } == true && measured.final == leftHalf,
+           "a pause of 420 ms, then a tile that settles at 700 ms, is measured as such (\(measured))")
+    let untouched = sidePause(watch { _ in blindLeft })
+    expect(untouched.moved == nil && untouched.final == blindLeft, "a window macOS never moved has no pause (\(untouched))")
+    expect(sideTileStillLooks(in: "    public static let sideTileStillLooks = 50\n") == 50, "the side wait is read from DragRelease's source")
+    expect(sideTileStillLooks(in: (try? String(contentsOf: dragReleaseSource, encoding: .utf8)) ?? "") != nil, "DragRelease.swift is found next to the probe")
+    // Review of #155, first-F6: the probe's cleanups run once, on whichever way out comes first.
+    var ran = 0
+    addCleanup { ran += 1 }
+    runCleanups(); runCleanups()
+    expect(ran == 1, "cleanups run exactly once (\(ran))")
     // Review of #154, second-F4: the newest Chrome for Testing by build number, not by spelling.
     let cft = "chrome-mac-arm64/Google Chrome for Testing.app"
     expect(newest(["/c/ms-playwright/chromium-999/\(cft)", "/c/ms-playwright/chromium-1248/\(cft)", "/c/ms-playwright/chromium-1200/\(cft)"]) == "/c/ms-playwright/chromium-1248/\(cft)",
@@ -216,6 +302,16 @@ func idleSeconds() -> Double {
     return ((value as? NSNumber)?.doubleValue ?? 0) / 1e9
 }
 
+atexit { runCleanups() }
+var signalSources: [DispatchSourceSignal] = []
+for sig in [SIGINT, SIGTERM, SIGHUP] {
+    signal(sig, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: sig, queue: .global())
+    source.setEventHandler { runCleanups(); exit(128 + sig) }
+    source.resume()
+    signalSources.append(source)
+}
+
 guard idleSeconds() >= 600 else {
     print("not idle 10 minutes (\(Int(idleSeconds())) s): this probe takes the pointer, so it waits for an idle Mac")
     exit(2)
@@ -227,7 +323,7 @@ if noPolycarp {
     guard !polycarpRunning else {
         print("--no-polycarp tests macOS without Polycarp, but Polycarp is running: quit it first (the probe won't quit it)"); exit(2)
     }
-    print("Polycarp was not running: case 5 only, judged by frames alone, no trace")
+    print("Polycarp was not running: cases 5 and 6 only, judged by frames alone, no trace")
 } else {
     guard polycarpRunning else { print("Polycarp isn't running (pass --no-polycarp to test macOS without it)"); exit(2) }
 }
@@ -414,26 +510,43 @@ func judgedDrag(_ id: CGWindowID, _ name: String) -> UInt64 {
 func fillHolds(_ id: CGWindowID, grab: CGPoint, owner: pid_t, _ name: String) {
     let before = traceEnd()
     let d = drag(id, from: grab, path: [CGPoint(x: grab.x, y: 0)], speed: 500, hold: 0.8, owner: owner, after: 3)
-    let lines = d.watched.map { w in "\(String(format: "%.3f", w.t)) f=\(w.frame.map { "\(Int($0.minX)),\(Int($0.minY)),\(Int($0.width))x\(Int($0.height))" } ?? "none")" }
-    try? lines.joined(separator: "\n").write(to: support.appendingPathComponent("fill-drag-probe-\(name).log"), atomically: true, encoding: .utf8)
-    switch fillHeld(d.watched, fills: { fills($0) }) {
-    case let .held(f):
-        expect(true, "\(name): precondition, macOS filled the window within 1 s of mouse-up")
-        expect(true, "\(name): the filled frame \(f) held 3 s from mouse-up")
-    case let .changed(at, from, to):
-        expect(true, "\(name): precondition, macOS filled the window within 1 s of mouse-up")
-        expect(false, "\(name): the filled frame \(from) held 3 s from mouse-up, but changed \(Int(at * 1000)) ms after it to \(String(describing: to))")
-    case let .neverFilled(f):
-        expect(false, "\(name): precondition, macOS filled the window within 1 s of mouse-up (frame \(String(describing: f)))")
-    case let .short(t):
-        expect(false, "\(name): watched 3 s from mouse-up (only \(String(format: "%.2f", t)) s)")
-    }
-    guard !noPolycarp else { return print("  Polycarp was not running: no trace to check") }
-    let trace = traceSince(before)
+    writeWatch(d.watched, name)
+    let trace = noPolycarp ? nil : traceSince(before)
+    let verdict = fillHoldsVerdict(fillHeld(d.watched, fills: { fills($0) }), trace: trace, id: id)
+    expect(verdict.ok, "\(name): \(verdict.why)")
+    guard let trace else { return print("  Polycarp was not running: no trace to check") }
     expect(missing(trace, topRestSeen(id)).isEmpty, "\(name): Polycarp saw the drag reach the top and rest there \(missing(trace, topRestSeen(id)))")
-    expect(polycarpMoved(trace, id).isEmpty, "\(name): Polycarp never moved or filled the window itself \(polycarpMoved(trace, id))")
     let opened = trace.contains { $0.contains("overview open") && $0.contains("window=\(id)") }
-    print("  the overview \(opened ? "opened" : "stayed shut") during the rest at the top")
+    print("  the overview \(opened ? "opened, so the release counted as covered" : "stayed shut") during the rest at the top")
+}
+
+func writeWatch(_ watched: [Watch], _ name: String) {
+    let lines = watched.map { w in "\(String(format: "%.3f", w.t)) f=\(w.frame.map { "\(Int($0.minX)),\(Int($0.minY)),\(Int($0.width))x\(Int($0.height))" } ?? "none")" }
+    try? lines.joined(separator: "\n").write(to: support.appendingPathComponent("fill-drag-probe-\(name).log"), atomically: true, encoding: .utf8)
+}
+
+/// Case 6: up to the top (Polycarp's overview opens over it), across to the left edge, a rest there and a release, so
+/// the window is let go blind with most of it off the left edge. Watched 3 s from mouse-up; prints when macOS first moved
+/// it and when it came to rest. With Polycarp running, Polycarp may move it only if macOS left it alone the whole wait.
+func sideEdgePause(_ id: CGWindowID, _ name: String) {
+    guard let f = frame(id) else { return expect(false, "\(name): precondition, the window has a frame") }
+    let before = traceEnd()
+    let grab = CGPoint(x: f.maxX - 60, y: titleY(f))
+    let d = drag(id, from: grab, path: [CGPoint(x: grab.x, y: 0), CGPoint(x: 0, y: visible.midY)], speed: 500, hold: 0.7, after: 3)
+    writeWatch(d.watched, name)
+    let letGo = d.samples.last(where: { $0.down })?.frame
+    expect(letGo.map { $0.minX < -50 } == true, "\(name): precondition, let go with part of it past the left edge (\(String(describing: letGo)))")
+    let m = sidePause(d.watched)
+    let ms = { (t: Double?) in t.map { "\(Int($0 * 1000)) ms" } ?? "never" }
+    print("  side-edge pause: first moved \(ms(m.moved)) after mouse-up, at rest from \(ms(m.settled)), ended at \(String(describing: m.final))")
+    guard !noPolycarp else { return print("  Polycarp was not running: macOS alone") }
+    let moved = polycarpMoved(traceSince(before), id)
+    guard let looks = sideTileStillLooks(in: (try? String(contentsOf: dragReleaseSource, encoding: .utf8)) ?? "") else {
+        return expect(false, "\(name): DragRelease.sideTileStillLooks read from \(dragReleaseSource.path)")
+    }
+    let wait = Double(looks) * 0.02
+    expect(moved.isEmpty || (m.moved ?? 9) >= wait - 0.05,
+           "\(name): Polycarp moved it only after macOS left it alone for the whole \(Int(wait * 1000)) ms wait (\(moved))")
 }
 
 /// Case 5 on a Chrome for Testing window with a profile of its own, the stand-in for Helium.
@@ -445,10 +558,16 @@ func chromiumFillHolds(_ app: URL) {
     p.arguments = ["--user-data-dir=\(profile.path)", "--no-first-run", "--no-default-browser-check", "--disable-sync",
                    "--window-position=260,220", "--window-size=900,600", "about:blank"]
     p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
-    defer {
-        if p.isRunning { p.terminate(); p.waitUntilExit() }
+    // Quit and removed on every way out, including a stop before a click (exit 3) and a signal (review of #155, first-F6).
+    addCleanup {
+        if p.isRunning {
+            p.terminate()
+            for _ in 0..<50 where p.isRunning { usleep(100_000) }
+            if p.isRunning { kill(p.processIdentifier, SIGKILL) }
+        }
         try? FileManager.default.removeItem(at: profile)
     }
+    defer { runCleanups() }
     do { try p.run() } catch { return expect(false, "chromium: precondition, Chrome for Testing launched (\(error))") }
     var window: CGWindowID?
     for _ in 0..<50 where window == nil {
@@ -483,6 +602,14 @@ DispatchQueue.global().async {
     if let f = frame(id5) { fillHolds(id5, grab: CGPoint(x: f.midX, y: titleY(f)), owner: getpid(), "fill-holds") }
     rec5?.waitUntilExit()
     DispatchQueue.main.sync { w5.close() }
+
+    // Case 6, the pause behind DragRelease.sideTileStillLooks.
+    print("let go blind at the left edge: macOS's pause before a half tile")
+    let (w6, id6) = makeWindow("Polycarp fill-drag probe (side edge)")
+    let rec6 = capture("side-edge", seconds: 9)
+    sideEdgePause(id6, "side-edge")
+    rec6?.waitUntilExit()
+    DispatchQueue.main.sync { w6.close() }
 
     print(failures.isEmpty ? "PASS" : "FAIL: \(failures.count)")
     exit(failures.isEmpty ? 0 : 1)

@@ -334,9 +334,11 @@ extension HandsRouter {
                 data["opened"] = opened
                 data["note"] = "the app asked something before closing: answer the sheet or dialog in opened"
             } else {
-                Thread.sleep(forTimeInterval: 0.2)
-                let gone = onMain { host.live(w.id) } == nil
+                // Read back from a fresh scan until the window is gone: one look 0.2 s after the press answered
+                // `closed: false` for windows already gone (`CloseReadback`).
+                let gone = CloseReadback.gone { onMain { host.freshWindows().contains { $0.id == w.id } } }
                 data["closed"] = .bool(gone)
+                Trace.log("agent close: window \(w.id) of \(w.app) \(gone ? "closed" : "still open after the press")")
                 if gone { childLocked { sessionWindows.forget(window: w.id) } }
             }
             return .success(.object(data))
