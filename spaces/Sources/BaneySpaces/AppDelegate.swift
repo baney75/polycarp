@@ -926,7 +926,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         h.windows = { [weak self] in self?.spaces.agentWindows() ?? [] }
         h.pidOf = { [weak self] id in self?.spaces.handsLive(id)?.pid }
         h.occupied = { [weak self] n in self?.spaces.isOccupied(n) ?? false }
-        h.launchedHidden = { [weak self] pid in self?.spaces.launchedHidden(pid) }
         session.agentHost = h
         // The agent hands: what the scope guard needs from the workspaces, and what to do when a lend changes.
         // The engine's state folder is set here, once, on the main thread, before any engine queue exists.
