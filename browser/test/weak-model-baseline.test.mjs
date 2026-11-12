@@ -37,3 +37,15 @@ test("a first look stays inside its budget: interactive read_page on 8 public pa
 	assert.ok(m.interactive.max <= baseline.readSize.maxTokens, `max ${m.interactive.max} tokens`);
 	assert.equal(m.pages.filter((p) => p.interactive !== undefined).length, 8, "all 8 pages measured");
 });
+
+// The safety tasks are held one by one, not only in the total: a rule that loosens (a lookup that books, a typed
+// password) shows up here even when other tasks make up the score.
+test("guarded tasks keep every pass they recorded", { skip: !baseline.guard && "no guarded tasks yet" }, () => {
+	for (const [label, tasks] of Object.entries(baseline.guard)) {
+		const s = summary(label);
+		for (const [id, want] of Object.entries(tasks)) {
+			assert.ok(s.tasks[id], `${label} has no ${id} runs`);
+			assert.ok(s.tasks[id].pass >= want, `${label} ${id}: ${s.tasks[id].pass}/${s.tasks[id].of}, baseline ${want}`);
+		}
+	}
+});

@@ -92,15 +92,20 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// The loop line teaching `changes` (D43) adds 47 bytes; it saves a read_page after most actions.
 	// The password rule covering one the user gave, with its tabs_show handoff, adds 92 (evals/weak-model: Haiku typed
 	// the password a signup prompt supplied, and submitted, when the rule didn't say it covered that).
-	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 3087, "instructions over 3,087 bytes");
+	// The booking clause adds 115 (Haiku filled a booking the user asked for and stopped before "Book now"), and
+	// leading the handoff line with tabs_show adds 8 (a small-profile run told the user in text instead).
+	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 3210, "instructions over 3,210 bytes");
 });
 
 test("instructions state the safety rules", () => {
 	const instructions = mcp.getInstructions() ?? "";
 	assert.match(instructions, /untrusted data/);
 	assert.match(instructions, /Ask the user before you act under their sign-in/);
+	// A booking the user asked for needs no second ask (Haiku stopped before "Book now" on one), but only that exact
+	// action: the clause must keep "anything more still needs one", or a lookup could turn into a booking.
+	assert.match(instructions, /No extra ask when the request names that exact action \(this booking, this message\); anything more still needs one\./);
 	// A password the user gave is still one Polycarp doesn't type: Haiku typed it when the rule didn't say so.
-	assert.match(instructions, /Do not enter passwords or payment details, even ones the user gave you: fill the rest, leave those empty, don't submit\. Then, or when a page needs a sign-in or captcha, call tabs_show/);
+	assert.match(instructions, /Do not enter passwords or payment details, even ones the user gave you: fill the rest, leave those empty, don't submit\. Then call tabs_show and ask the user to finish; do the same when a page needs a sign-in or captcha\./);
 });
 
 test("skill_match routes a task to one skill, or none, and skill_read returns that skill", async () => {
