@@ -43,6 +43,7 @@ import {
 	STILL_LOADING,
 	tabChanges,
 } from "../browser/changes.js";
+import { type DialogAnswer, dialogAnswerArrive, dialogAnswerEnd, dialogUnheard } from "../browser/dialog-guard.js";
 import { injectScript } from "../browser/inject.js";
 import {
 	fillElement,
@@ -111,6 +112,8 @@ export interface HandlerContext {
 	askUpload(url: string, files: Array<{ name: string; bytes: number }>, askId: string): Promise<boolean>;
 	/** Stable id of the calling client. */
 	clientId: string;
+	/** handle_dialog's box, fixed when the request reached the worker (dialog-guard.ts `dialogAnswerArrive`). */
+	dialogAnswer?: DialogAnswer;
 	/** Push an event to the calling client only. */
 	emit(event: string, data: Record<string, unknown>): void;
 	/**
@@ -1048,25 +1051,34 @@ export const handlers: Record<string, Handler> = {
 
 	/** Answer an alert, confirm or prompt box: accept presses OK, otherwise Cancel. */
 	dialog: async (ctx, params) => {
-		const requested = num(params, "tabId");
-		const open = ctx.session.tabIds.filter((id) => !!openDialog(id));
-		if (requested !== undefined && !open.includes(requested))
-			throw new BridgeError(ERR.NOT_FOUND, `No dialog is open on tab ${requested}; nothing to answer there.`);
-		// Never guess between two boxes: OK on the wrong one could delete or send something.
-		if (requested === undefined && open.length > 1) {
-			const list = open.map((id) => `tab ${id}: ${JSON.stringify(openDialog(id)?.message)}`).join("; ");
-			throw new BridgeError(ERR.BAD_PARAMS, `Dialogs are open on more than one tab (${list}). Pass tabId.`);
-		}
-		const tabId = requested ?? open[0];
-		if (tabId === undefined)
-			throw new BridgeError(
-				ERR.NOT_FOUND,
-				"No dialog is open on your tabs; nothing to answer. Carry on with read_page.",
-			);
 		if (typeof params.accept !== "boolean")
 			throw new BridgeError(ERR.BAD_PARAMS, "accept must be true (OK) or false (Cancel)");
-		const dialog = await answerDialog(tabId, params.accept, str(params, "promptText"));
-		return { tabId, type: dialog.type, message: dialog.message, accepted: params.accept };
+		const own = ctx.dialogAnswer === undefined;
+		const answer = ctx.dialogAnswer ?? dialogAnswerArrive(ctx.session.id, ctx.session.tabIds, num(params, "tabId"));
+		try {
+			const open = ctx.session.tabIds.filter((id) => openDialog(id) !== undefined);
+			const list = open.map((id) => `tab ${id}: ${JSON.stringify(openDialog(id)?.message)}`).join("; ");
+			const next = list
+				? ` Open now: ${list}. To answer one, call handle_dialog with its tabId.`
+				: " Carry on with read_page.";
+			// A box the guard cancelled that the agent hasn't heard of: told here, once, in the notice's own words.
+			const unheard = await dialogUnheard(answer.requested !== undefined ? [answer.requested] : ctx.session.tabIds);
+			if (unheard) throw new BridgeError(ERR.NOT_FOUND, `${unheard}${next}`);
+			const target = answer.target;
+			if (!target) {
+				if (answer.requested === undefined && open.length > 1)
+					throw new BridgeError(ERR.BAD_PARAMS, `Dialogs are open on more than one tab (${list}). Pass tabId.`);
+				const where = answer.requested === undefined ? "on your tabs" : `on tab ${answer.requested}`;
+				throw new BridgeError(ERR.NOT_FOUND, `No dialog is open ${where}; nothing to answer.${next}`);
+			}
+			// The box this call was for, by identity: never one that opened after it on the same tab.
+			if (openDialog(target.tabId)?.seq !== target.seq)
+				throw new BridgeError(ERR.NOT_FOUND, `The dialog this call was for on tab ${target.tabId} is gone.${next}`);
+			const dialog = await answerDialog(target.tabId, params.accept, str(params, "promptText"), target.seq);
+			return { tabId: target.tabId, type: dialog.type, message: dialog.message, accepted: params.accept };
+		} finally {
+			if (own) dialogAnswerEnd(answer);
+		}
 	},
 
 	/**

@@ -1427,6 +1427,63 @@ Amended (PR 162 round 1), replacing the "none" and "left out" rules above: "none
 line each, the person's part keeps the first, newest and newest others' starts, and a gap line names the rest. The drop
 note's room comes from the notes, never the latest message. Old goal sections are not sent.
 
+## D46. An agent's dialog is cancelled only when it would freeze the person (Claude, 2026-11-12)
+
+Problem: the owner saw tabs of one site blocked while an agent worked in only one of them. The cause is a dialog. Chrome
+cancels an alert, confirm or prompt that a hidden tab opens. With Polycarp's debugger attached (`Page.enable` in
+`ensureAttached`, cdp.ts) the box waits for the agent's `handle_dialog` instead, with no limit, and while it waits its
+renderer process runs nothing. Chrome runs tabs of one site in one process (a tab one page opened, and same-site tabs
+once it nears its process limit), so one agent tab's unanswered box froze every tab of that site, the person's too: no
+script, no click, no key.
+
+Decision (`src/browser/dialog-guard.ts`, service worker):
+
+- **Facts, not events.** The guard keeps only facts: the open boxes, each with an identity (`PageDialog.seq`, given at
+  `Page.javascriptDialogOpening`); which session owns each tab and each tab's site; which tab is in front in each window;
+  the `handle_dialog` answers that have arrived; and per box, since when a tab of the person's on its site has existed
+  and has been in front. One pure `decide(facts, now)` returns the boxes to Cancel and when to look again. One
+  `reconcile()` reads the facts, decides, acts and sets one timer; runs go one at a time, and every trigger calls it:
+  any tab or window event, any change of who owns a tab (the session table, so taking a tab back and ungrouping count),
+  an answer arriving or ending, the timer, and worker start (after the dialog memory is back).
+- **Only an agent's box.** A box on a tab of an agent (bridge) session can be cancelled. The side panel's box is in the
+  person's own tab and is theirs to answer: never cancelled.
+- **Same site is the proxy.** Which tabs share a renderer process can't be read from an extension, so the guard asks
+  whether the person has a tab on the box's site: its registrable domain by the Public Suffix List with its private
+  section, the list Polycarp already ships for site edits (`siteOf`; mail.web.de and www.web.de are one site,
+  alice.github.io and bob.github.io two, as Chrome groups them). An IP address or a one-label host is its own site. The
+  person's tabs are tabs no agent session owns; the side panel's count as theirs. Where the proxy errs it over-matches:
+  a box cancelled for nothing costs the agent one retry, a missed match freezes the person's tab.
+- **No tab of the person's on the site: the box stays open**, with no timer. An agent that clicks Delete and gets
+  `confirm()` may think for minutes or ask the person first.
+- **One of them in front:** Cancel 3 seconds after that began. **One open, none in front:** Cancel a minute after the
+  person's tab appeared. A pending `ask_user` from the owning session leaves only the minute rule.
+- **Only a handle_dialog for that dialog defers its Cancel,** counted from the moment the request reaches the worker's
+  socket, while it waits behind the client's earlier requests too, until it ends. Nothing else holds a box: not another
+  call on the tab, not a screenshot of it, not an answer for another box.
+- **Answer by identity.** `handle_dialog` fixes its box (tab and seq) on arrival: the tab it names, or with no tabId the
+  one box open on the session's tabs. At send time the tab's open box must still be that one, checked with no await
+  before the send; otherwise it refuses, lists the boxes open now and says which call answers one.
+- **Cancel, then tell.** A box is marked in flight before its Cancel is sent, so no run sends two and no answer takes
+  it meanwhile. Only a Cancel that succeeded is recorded and noticed; a failed one leaves the box open and answerable
+  and is tried again a second later. The notice says the box was cancelled because the person was using (or had) a tab
+  on the site, that the page saw Cancel, and to do the action again when ready. `handle_dialog` waits for a Cancel in
+  flight and then says the same words instead if the notice is unread, taking it back; nothing repeats it.
+- **The veil** credits only the tab a call acted on (`src/browser/tab-use.ts`), plus a tab the call moved the session to;
+  before, a call that named a tab still counted on the current tab.
+
+Not done: the list is a snapshot (`scripts/gen-public-suffixes.mjs` refreshes it), and Chrome's own process grouping
+can put sites together that the proxy keeps apart (a tab opened by another site's page).
+
+Proof: `test/dialog-guard.test.mjs` has `decide` table rows and guard runs on a fake clock, each named for the review
+finding it covers, and a randomized run of 120 event sequences (boxes opening and closing, tabs moving to the front,
+owners changing, answers arriving and ending, tab replacement, worker restart, ask_user) that checks after every step
+that no person's tab stays frozen past its deadline unless an answer for that exact box is pending, and that no box is
+cancelled under its answer or twice. `test/dialog-answer.test.mjs` drives `handle_dialog` with real cdp events: a call
+for a box that closed while it waited never answers the next one. The e2e "only the tab an agent uses is held up" in
+`cli/test/e2e-bridge.test.mjs` opens a same-site tab from the agent's tab (one process, checked by a busy loop), lets
+the user keep it, has the agent's page open a confirm and brings the user's tab to the front. On main the user's tab
+stays frozen and the test fails.
+
 ## D47. The agent's pointer: Mote (Claude, 2026-11-12)
 
 Problem: the veil (D37) says a tab is in use but not what the agent is doing in it. The owner asked for "a cool mouse guy

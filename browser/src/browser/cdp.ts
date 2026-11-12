@@ -43,7 +43,12 @@ export interface PageDialog {
 	message: string;
 	defaultPrompt?: string;
 	url?: string;
+	/** The box's identity: a new number for every box that opens, so an answer meant for one never reaches the next. */
+	seq: number;
 }
+
+/** Unique across worker restarts: a restarted worker starts above any number an earlier one gave out. */
+let dialogSeq = Date.now() * 1000;
 
 const openDialogs = new Map<number, PageDialog>();
 const dialogWatchers = new Set<(tabId: number, dialog: PageDialog) => void>();
@@ -53,6 +58,11 @@ export function openDialog(tabId: number): PageDialog | undefined {
 	return openDialogs.get(tabId);
 }
 
+/** Every open dialog by tab, including ones an earlier worker kept (after `cdpMemoryReady`). */
+export function allDialogs(): Array<[number, PageDialog]> {
+	return [...openDialogs];
+}
+
 /** Called whenever a dialog opens on any attached tab. Returns an unsubscribe function. */
 export function watchDialogs(fn: (tabId: number, dialog: PageDialog) => void): () => void {
 	dialogWatchers.add(fn);
@@ -60,9 +70,16 @@ export function watchDialogs(fn: (tabId: number, dialog: PageDialog) => void): (
 }
 
 /** Answer the open dialog: OK (accept) or Cancel, with text for a prompt(). */
-export async function answerDialog(tabId: number, accept: boolean, promptText?: string): Promise<PageDialog> {
+export async function answerDialog(
+	tabId: number,
+	accept: boolean,
+	promptText?: string,
+	seq?: number,
+): Promise<PageDialog> {
 	const dialog = openDialogs.get(tabId);
 	if (!dialog) throw new Error("No dialog is open on this tab");
+	// Checked and sent with no await between: the answer goes to this box or to none.
+	if (seq !== undefined && dialog.seq !== seq) throw new Error("That dialog is gone; another one is open on this tab");
 	await send(tabId, "Page.handleJavaScriptDialog", { accept, ...(promptText !== undefined ? { promptText } : {}) });
 	openDialogs.delete(tabId);
 	remember(tabId);
@@ -83,6 +100,7 @@ function installListeners(): void {
 				message: p.message ?? "",
 				defaultPrompt: p.defaultPrompt,
 				url: p.url,
+				seq: ++dialogSeq,
 			};
 			openDialogs.set(tabId, dialog);
 			remember(tabId);
@@ -334,7 +352,7 @@ export function persistCdpMemory(): Promise<void> {
 			for (const [key, scale] of Object.entries(memory.scales ?? {}))
 				if (!touched.has(Number(key))) screenshotScale.set(Number(key), scale);
 			for (const [key, dialog] of Object.entries(memory.dialogs ?? {}))
-				if (!touched.has(Number(key))) openDialogs.set(Number(key), dialog);
+				if (!touched.has(Number(key))) openDialogs.set(Number(key), { ...dialog, seq: dialog.seq ?? ++dialogSeq });
 		},
 		() => undefined,
 	);

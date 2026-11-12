@@ -9,6 +9,7 @@
 
 import { cancelQuestion, cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
 import { openDialog, type PageDialog, stopScreencastsOwnedBy } from "../browser/cdp.js";
+import { type DialogAnswer, dialogAnswerArrive, dialogAnswerEnd, dialogAsk } from "../browser/dialog-guard.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
 import { BrowserSession, listSessions, pruneSessions, type SessionMeta, sanitizeLabel } from "../browser/session.js";
 import { probeUserScripts } from "../browser/userscripts-status.js";
@@ -345,7 +346,10 @@ function resolveDecision(requestId: string, decision: PermissionDecision): boole
 	return true;
 }
 
-async function runRequest(state: ClientState, req: HostForwardedRequest): Promise<void> {
+const tabIdParam = (params: Record<string, unknown> | undefined) =>
+	params?.tabId === undefined ? undefined : Number(params.tabId);
+
+async function runRequest(state: ClientState, req: HostForwardedRequest, answer?: DialogAnswer): Promise<void> {
 	const reply = (result?: unknown, error?: BridgeError) =>
 		send({
 			type: "response",
@@ -385,7 +389,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	state.inFlight = { method: req.method, since: Date.now() };
 	state.lastActivityAt = Date.now();
 	/** The session and the tab the in-use veil counted this call on (src/browser/veil.ts). */
-	let veiled: { session: BrowserSession; tabId: number | undefined } | undefined;
+	let veiled: { session: BrowserSession; tabId: number | undefined; currentBefore: number | undefined } | undefined;
 	try {
 		if (!(await isBridgeEnabled())) {
 			throw new BridgeError(ERR.DISABLED, "The Polycarp bridge is disabled in Settings > Agents.");
@@ -409,6 +413,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		const ctx: HandlerContext = {
 			session,
 			clientId: state.clientId,
+			dialogAnswer: answer,
 			emit: (event, data) => send({ type: "event", clientId: state.clientId, event, data }),
 			aborted: () => aborted,
 			delivered: (result, tabId) => {
@@ -438,7 +443,11 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
 			if (openOn !== undefined) throw dialogError(openOn, openDialog(openOn) as PageDialog);
 		}
-		veiled = { session, tabId: await veilBegin(session, req.method, req.params).catch(() => undefined) };
+		veiled = {
+			session,
+			currentBefore: session.currentTabId,
+			tabId: await veilBegin(session, req.method, req.params).catch(() => undefined),
+		};
 		const work = handler(ctx, req.params ?? {});
 		const result = await withTimeout(
 			dialogSafe
@@ -465,7 +474,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		if (stack) trace(`${req.method} ${error.code}: ${stack.split("\n").slice(0, 6).join(" | ")}`);
 		reply(undefined, error);
 	} finally {
-		if (veiled) veilEnd(veiled.session, req.method, veiled.tabId);
+		if (veiled) veilEnd(veiled.session, req.method, veiled.tabId, veiled.currentBefore);
 		state.abort = undefined;
 		state.inFlight = undefined;
 		state.lastActivityAt = Date.now();
@@ -495,7 +504,14 @@ async function runAsk(state: ClientState, req: HostForwardedRequest): Promise<vo
 			});
 		// The client may have hung up during the awaits; its question would have nobody to answer to.
 		if (clients.get(state.clientId) !== state) return;
-		respond(await handleBridgeAsk(state, req.params ?? {}));
+		// A box on the session's tab may wait for the person's answer too (dialog-guard.ts).
+		const asker = state.sessionKey;
+		dialogAsk(asker, true);
+		try {
+			respond(await handleBridgeAsk(state, req.params ?? {}));
+		} finally {
+			dialogAsk(asker, false);
+		}
 	} catch (err) {
 		respond({ error: { code: ERR.INTERNAL, message: err instanceof Error ? err.message : String(err) } });
 	}
@@ -811,7 +827,17 @@ function onHostMessage(message: HostToExt): void {
 				return;
 			}
 			const current = state;
-			current.queue = current.queue.then(() => runRequest(current, message)).catch(() => undefined);
+			// A handle_dialog holds its box's Cancel from here, queued behind other calls included (dialog-guard.ts).
+			const answer =
+				message.method === "dialog"
+					? dialogAnswerArrive(current.sessionKey, current.session?.tabIds, tabIdParam(message.params))
+					: undefined;
+			current.queue = current.queue
+				.then(() => runRequest(current, message, answer))
+				.catch(() => undefined)
+				.then(() => {
+					if (answer) dialogAnswerEnd(answer);
+				});
 			return;
 		}
 	}
