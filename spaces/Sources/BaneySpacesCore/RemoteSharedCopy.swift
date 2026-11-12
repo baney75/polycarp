@@ -43,6 +43,8 @@ public enum RemoteSharedCopy {
         "funnel": RemoteStepCopy(title: "Tailscale couldn't open Funnel", body: "Tailscale refused to open Funnel. Its own words are under Details. Fix that, then try again.", action: "Try again", kind: "try_again", waits: false),
         "config": RemoteStepCopy(title: "A settings file couldn't be saved", body: "Polycarp couldn't read or write its connector settings. Details names the file. Fix it, then try again.", action: "Try again", kind: "try_again", waits: false),
         "dns": RemoteStepCopy(title: "The new address is still spreading", body: "A new address takes a few minutes to reach public DNS. This page checks again by itself.", action: "Check now", kind: "check_again", waits: true),
+        "dns_lookup": RemoteStepCopy(title: "Public DNS can't look up this address", body: "Public DNS answered that the lookup failed, often because of broken DNSSEC, so waiting won't fix it. Fix the name's records or DNSSEC with your DNS provider, then check again.", action: "Check again", kind: "check_again", waits: false),
+        "tailscale_silent": RemoteStepCopy(title: "Tailscale didn't answer, checking again", body: "Tailscale took too long to answer, so nothing was changed. This page checks again by itself. If it stays here, check that Tailscale is running.", action: "Check again", kind: "check_again", waits: true),
         "cloudflared_missing": RemoteStepCopy(title: "Get cloudflared", body: "cloudflared is Cloudflare's free program for tunnels. Polycarp can download Cloudflare's own release and check its fingerprint before using it.", action: "Get it for me", kind: "download", waits: false),
         "cloudflared_manual": RemoteStepCopy(title: "Get cloudflared", body: "cloudflared is Cloudflare's free program for tunnels. Install it from Cloudflare's page; this page moves on by itself.", action: "Open the download page", kind: "open_url", waits: true),
         "cloudflare_login": RemoteStepCopy(title: "Sign in to Cloudflare", body: "Your browser opens Cloudflare. Sign in and pick the domain for this computer's address. This page moves on by itself.", action: "Sign in to Cloudflare", kind: "sign_in_cloudflare", waits: true),
@@ -115,7 +117,7 @@ public enum RemoteSharedCopy {
         "chooseAgain": "Choose another way",
         "useCloudflareInstead": "Use Cloudflare instead",
     ]
-    public static let problemCodes: [String] = ["tailscale_operator", "launcher", "hub", "service", "serve", "funnel", "config", "dns", "cloudflare_login", "cloudflare_zone", "cloudflare_tunnel", "connect_code"]
+    public static let problemCodes: [String] = ["tailscale_operator", "launcher", "hub", "service", "serve", "funnel", "config", "dns", "dns_lookup", "tailscale_silent", "cloudflare_login", "cloudflare_zone", "cloudflare_tunnel", "connect_code"]
     public static let flowSteps: [String] = ["Choose a way", "Get it and sign in", "Turn on"]
 
     /// The proof check names: a `problem` whose code is one of these failed a check from outside.

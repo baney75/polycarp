@@ -138,7 +138,7 @@ export async function remoteState(seam: ProbeSeam = {}): Promise<RemoteAnswer> {
 			return remoteAnswer({ ...base, state: ready.state, message: ready.message, ...(ready.code ? { code: ready.code } : {}), ...(next ? { next } : {}) });
 		}
 		// Tailscale didn't answer in time: say so, not "on" and not "signed out" (PR 136 second-S5).
-		if (ready.state.kind === "unreadable" && ready.state.why) return remoteAnswer({ ...base, state: "problem", message: ready.state.why });
+		if (ready.state.kind === "unreadable" && ready.state.why) return remoteAnswer({ ...base, state: "problem", message: ready.state.why, ...(ready.state.code ? { code: ready.state.code } : {}) });
 		const address = new URL(config.publicUrl);
 		const key = `${address.hostname}:${address.port || "443"}`;
 		if (ready.state.kind === "ok" && ready.state.allowFunnel[key] !== true) {

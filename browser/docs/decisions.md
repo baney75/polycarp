@@ -1095,4 +1095,11 @@ Agents could not attach a file to a form or keep a file a page offers. One tool,
   hidden or asleep panel doesn't jump straight to failed when it wakes.
 - **A Tailscale that doesn't answer is unreadable, not signed out (second-S5).** A probe that hits its 15-second limit
   reports "Tailscale didn't answer within 15 seconds", with nothing changed, never the sign-in step and never "on".
+  The answer carries `code` `tailscale_silent` (PR 136 review round 2, first-F1 and second-S1): its own step, "Tailscale
+  didn't answer, checking again", which polls `remoteState` and has Check again, not Try again. On a saved route it comes
+  ahead of the result and of an older run, like the states in BLOCKING. `remote status --json` reads Tailscale through the
+  same 15-second probes, so the Mac app gets the step inside its 30-second wait and polls every 4 seconds while it shows.
+- **A failed check always keeps a way forward (PR 136 review round 2, first-F2).** When Repair has nothing behind it (no
+  `remote fix`, or a plan with no actions), the check_failed step's button is Check again, which runs `remoteTest` (the
+  Mac: `remote test`); a test that says the route is on ends the step.
 

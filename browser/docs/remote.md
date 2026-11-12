@@ -300,7 +300,9 @@ names `tailscale_missing`, `tailscale_signed_out` or `tailnet_lock` ahead of `pr
 opens it again). `problem` with `code` `dns` means the only failures are public DNS and the public
 fetch, which lag a new address by minutes: waiting fixes it. `code` `dns_lookup` means public DNS answered that the
 lookup failed (SERVFAIL or REFUSED, often broken DNSSEC): waiting doesn't fix it; fix the name's records with your DNS
-provider.
+provider. `code` `tailscale_silent` means a Tailscale read took longer than 15 seconds: nothing was changed, and the
+answer is never "on" or signed out. The side panel and the Mac app show "Tailscale didn't answer, checking again" and read
+again by themselves until Tailscale answers.
 
 `funnel_not_allowed` means Tailscale printed its login.tailscale.com page for enabling Funnel. The
 helper returns it as soon as the page appears and stops that `tailscale funnel` call, which would

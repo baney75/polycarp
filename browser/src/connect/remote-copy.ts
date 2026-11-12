@@ -172,6 +172,19 @@ export const STEP_COPY = {
 		action: { kind: "check_again", label: "Check now" },
 		waits: true,
 	},
+	/** Public DNS answered that the lookup failed (SERVFAIL or REFUSED, often broken DNSSEC): waiting doesn't fix it. */
+	dns_lookup: {
+		title: "Public DNS can't look up this address",
+		body: "Public DNS answered that the lookup failed, often because of broken DNSSEC, so waiting won't fix it. Fix the name's records or DNSSEC with your DNS provider, then check again.",
+		action: { kind: "check_again", label: "Check again" },
+	},
+	/** A Tailscale read hit the probes' 15 s limit: Tailscale is slow or stuck, which says nothing about the route. */
+	tailscale_silent: {
+		title: "Tailscale didn't answer, checking again",
+		body: "Tailscale took too long to answer, so nothing was changed. This page checks again by itself. If it stays here, check that Tailscale is running.",
+		action: { kind: "check_again", label: "Check again" },
+		waits: true,
+	},
 	cloudflared_missing: {
 		title: "Get cloudflared",
 		body: "cloudflared is Cloudflare's free program for tunnels. Polycarp can download Cloudflare's own release and check its fingerprint before using it.",
@@ -358,6 +371,8 @@ export const PROBLEM_CODES: readonly string[] = [
 	"funnel",
 	"config",
 	"dns",
+	"dns_lookup",
+	"tailscale_silent",
 	"cloudflare_login",
 	"cloudflare_zone",
 	"cloudflare_tunnel",

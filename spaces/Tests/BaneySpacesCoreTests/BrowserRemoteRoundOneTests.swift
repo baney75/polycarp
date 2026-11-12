@@ -76,9 +76,10 @@ final class BrowserRemoteRoundOneTests: XCTestCase {
         XCTAssertEqual(real.checks.first?.pending, true)
         let some = RemoteCommand.parseFix(exitCode: 0, Data(#"{"ok":true,"state":"problem","message":"m","publicUrl":null,"actions":[{"kind":"funnel","what":"Open Funnel again","status":"planned","detail":"x"}],"advice":[]}"#.utf8))
         XCTAssertEqual(some.actions.map(\.kind), ["funnel"])
-        // A step whose button is Repair draws it only when the plan has something in it.
-        let src = try source(view)
-        XCTAssertTrue(src.contains(#"kind != "repair" || RemoteFlow.repairAvailable(model.fixPlan)"#))
+        // A step whose button is Repair draws it only when the plan has something in it; else Check again (PR 136 r2 first-F2).
+        XCTAssertEqual(RemoteFlow.problemAction(key: "check_failed", plan: real)?.kind, "check_again")
+        XCTAssertEqual(RemoteFlow.problemAction(key: "check_failed", plan: some)?.kind, "repair")
+        XCTAssertTrue(try source(view).contains("RemoteFlow.problemAction(key: copy.key, plan: model.fixPlan)"))
     }
 
     /// second-N2: the quiet Funnel retry runs by itself, so it never asks for a connect code. Only a press makes one.
@@ -87,11 +88,12 @@ final class BrowserRemoteRoundOneTests: XCTestCase {
         XCTAssertFalse(RemoteCommand.setupCloudflare("a.example.com").arguments(connectCode: false).contains("--connect-code"))
         XCTAssertEqual(RemoteCommand.setup.arguments(connectCode: false), ["remote", "setup", "--json"])
         XCTAssertEqual(RemoteCommand.setup.arguments, ["remote", "setup", "--json", "--connect-code"], "a press still asks for one")
-        let src = try source(view)
-        XCTAssertTrue(src.contains("Self.run(command, connectCode: !quiet)"), "the retry's run carries no --connect-code")
-        XCTAssertTrue(src.contains("self.take(report, pressed: !quiet)"))
-        XCTAssertTrue(src.contains("if pressed, report.answerOn, let code = report.connectCode { connectCode = code }"), "a code only from a pressed run")
-        XCTAssertFalse(src.contains("if let code = report.connectCode { connectCode = code }"))
+        // The session decides; BrowserRemoteReviewR2Tests.testOnlyAPressAsksForAndTakesAConnectCode holds it by value.
+        var s = RemoteSession()
+        XCTAssertFalse(s.setupStarts(quiet: true, now: Date()).connectCode, "the retry's run carries no --connect-code")
+        _ = s.take(RemoteReport(ok: true, state: .on, connectorURL: "https://m.ts.net:8443/mcp",
+                                connectCode: ConnectCode(code: "TK-ABCD-EFGH", expiresAt: Date().addingTimeInterval(600))), pressed: false, now: Date())
+        XCTAssertNil(s.connectCode, "a code only from a pressed run")
     }
 
     /// first-F1: a run that stopped on dns or a failed check is over once a later test says the route is on.
@@ -117,8 +119,10 @@ final class BrowserRemoteRoundOneTests: XCTestCase {
     /// While a check waits, the window checks again by itself every 30 seconds.
     func testWaitingChecksAgainByItself() throws {
         XCTAssertEqual(RemoteFlow.waitingRecheckEvery, 30)
+        var s = RemoteSession()
+        let waiting = RemoteReport(state: .problem, connectorURL: "https://m.ts.net:8443/mcp", checks: [RemoteCheck(name: "dns", status: "fail", pending: true)])
+        XCTAssertTrue(s.take(waiting, pressed: true, now: Date()).contains(.recheckIfWaiting))
         let src = try source(view)
-        XCTAssertTrue(src.contains("scheduleWaitingRecheck()"))
         XCTAssertTrue(src.contains(#"Shared.result["checksWaiting"]"#) || src.contains(#"result("checksWaiting")"#))
         XCTAssertTrue(src.contains(#"result("codeNone")"#), "no code yet: the line says to press New code")
     }

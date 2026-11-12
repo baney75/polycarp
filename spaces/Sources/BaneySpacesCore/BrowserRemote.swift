@@ -206,8 +206,9 @@ public enum RemoteScreen: Equatable {
     case checking
     /// Nothing is set up and no route is picked: Tailscale or Cloudflare, each with a way to make an account.
     case chooseRoute(RemoteRoutes)
-    /// `configured`: remote access is set up on the Cloudflare route and cloudflared went away.
-    case getCloudflared(configured: Bool)
+    /// `configured`: remote access is set up on the Cloudflare route and cloudflared went away. `problem`: the helper's words
+    /// about a "Get it for me" that stopped before cloudflared was in place, shown under Details (PR 134 round 2 first-F1).
+    case getCloudflared(configured: Bool, problem: String? = nil)
     /// `waiting`: cloudflared's sign-in is open in the browser.
     case cloudflareSignIn(waiting: Bool)
     /// The name to use. `problem`: the helper's words about the last try; `code`: its problem code, which picks the sentence.
@@ -250,22 +251,32 @@ public enum RemoteFlow {
     /// - `chosen`: the route the person picked, while nothing is set up yet. `signingIn`: cloudflared's sign-in is running.
     public static func screen(helperAvailable: Bool, settingUp: Bool, status: RemoteReport?, setup: RemoteReport?, setupAge: TimeInterval = 0,
                               readsFailing: Bool = false, chosen: RemoteRoute? = nil, signingIn: Bool = false) -> RemoteScreen {
-        guard helperAvailable else { return .unavailable }
-        if settingUp { return .turningOn }
+        shown(helperAvailable: helperAvailable, settingUp: settingUp, status: status, setup: setup, setupAge: setupAge,
+              readsFailing: readsFailing, chosen: chosen, signingIn: signingIn).screen
+    }
+
+    /// `screen`, and the answer it was drawn from (setup's or status's), so a step's command and `next` come from that answer
+    /// and not from a setup answer the screen isn't showing (PR 134 round 2 first-F3). Nil for a screen no answer drew.
+    public static func shown(helperAvailable: Bool, settingUp: Bool, status: RemoteReport?, setup: RemoteReport?, setupAge: TimeInterval = 0,
+                             readsFailing: Bool = false, chosen: RemoteRoute? = nil, signingIn: Bool = false) -> (screen: RemoteScreen, answer: RemoteReport?) {
+        guard helperAvailable else { return (.unavailable, nil) }
+        if settingUp { return (.turningOn, nil) }
         // Reads that keep failing come before the last good answer: an old "On" must not stay up while the helper is silent.
-        if readsFailing { return .problem(code: RemoteCopy.helperSilentCode, message: RemoteCopy.helperSilent) }
+        if readsFailing { return (.problem(code: RemoteCopy.helperSilentCode, message: RemoteCopy.helperSilent), nil) }
         if let status, status.answerOn, let url = status.connectorURL {
             // A name still being published (a problem that is only waiting) says nothing against the browser unless status does.
             let connected = status.state == .problem ? status.extensionConnected ?? true : status.state == .on
-            return .on(connectorURL: url, browserConnected: connected)
+            return (.on(connectorURL: url, browserConnected: connected), status)
         }
         // Nothing set up: the choice comes first, then the chosen route's steps. A problem (no browser yet, a hub) comes ahead of both.
         if let status, !status.configured, status.state != .problem, !(setup?.answerOn ?? false), let routes = status.routes {
-            if chosen == nil, setup == nil { return .chooseRoute(routes) }
+            if chosen == nil, setup == nil { return (.chooseRoute(routes), status) }
             if chosen == .cloudflare {
-                if !routes.cloudflareInstalled { return .getCloudflared(configured: false) }
-                if signingIn || !routes.cloudflareSignedIn { return .cloudflareSignIn(waiting: signingIn) }
-                return .cloudflareAddress(problem: setup.flatMap { $0.message.isEmpty ? nil : $0.message }, code: setup?.code)
+                let words = setup.flatMap { $0.message.isEmpty ? nil : $0.message }
+                // "Get it for me" that stopped before cloudflared was in place says why (round 2 first-F1).
+                if !routes.cloudflareInstalled { return (.getCloudflared(configured: false, problem: words), setup ?? status) }
+                if signingIn || !routes.cloudflareSignedIn { return (.cloudflareSignIn(waiting: signingIn), status) }
+                return (.cloudflareAddress(problem: words, code: setup?.code), setup ?? status)
             }
         }
         if let setup {
@@ -273,18 +284,27 @@ public enum RemoteFlow {
                 // Just turned on (a new name still being published included). Before the first status read, or while it lags
                 // (inside the grace period), this stands in for it.
                 if status == nil || setupAge < grace(for: status) {
-                    return .on(connectorURL: url, browserConnected: status?.extensionConnected ?? true)
+                    return (.on(connectorURL: url, browserConnected: status?.extensionConnected ?? true), setup)
                 }
             } else if !setup.answerOn {
-                if !(status.map { moreBasic.contains($0.state) } ?? false) { return screen(for: setup, configured: status?.configured ?? false) }
+                if !(status.map(isMoreBasic) ?? false) { return (screen(for: setup, configured: status?.configured ?? false), setup) }
             }
         }
-        guard let status else { return .checking }
-        return screen(for: status, configured: status.configured)
+        guard let status else { return (.checking, nil) }
+        return (screen(for: status, configured: status.configured), status)
     }
 
     /// Tailscale itself being gone is more basic than any refusal about Funnel or a busy connection.
     private static let moreBasic: Set<RemoteState> = [.tailscaleMissing, .tailscaleSignedOut, .tailnetLock, .cloudflaredMissing]
+
+    /// The helper's code for a Tailscale read that hit its 15 s limit: Tailscale is slow or stuck (PR 136 r2 first-F1).
+    public static let tailscaleSilentCode = "tailscale_silent"
+
+    /// A status that comes ahead of an older setup answer and keeps the window polling quickly: Tailscale or cloudflared gone,
+    /// or Tailscale not answering in time, which is never "on" and never a dead "Setup stopped".
+    public static func isMoreBasic(_ status: RemoteReport) -> Bool {
+        moreBasic.contains(status.state) || (status.state == .problem && status.code == tailscaleSilentCode)
+    }
 
     /// The `setup` answer to keep once a status read arrives. A success was only a bridge: a status that confirms it ends it. A
     /// refusal about Tailscale itself ends once status no longer says the same thing, so signing in moves the window on.
@@ -369,6 +389,26 @@ public enum RemoteFlow {
     /// This helper has `remote fix` (feature-detected) and its plan has something in it. remote-flow.ts's repairAvailable.
     public static func repairAvailable(_ plan: RemoteFixPlan?) -> Bool { (plan?.available ?? false) && !(plan?.actions.isEmpty ?? true) }
 
+    /// A problem step's one button: the entry's, except a Repair with nothing planned becomes Check again, so the step keeps a
+    /// way forward (PR 136 r2 first-F2). Nil for no button; a copy_command step's command box is its action.
+    public static func problemAction(key: String, plan: RemoteFixPlan?) -> (label: String, kind: String)? {
+        guard let entry = RemoteSharedCopy.steps[key], let label = entry.action, let kind = entry.kind, kind != "copy_command" else { return nil }
+        if kind == "repair", !repairAvailable(plan) { return (RemoteSharedCopy.result["checkAgain"] ?? "Check again", "check_again") }
+        return (label, kind)
+    }
+
+    /// Check again on a failed check runs `remote test` again, as remote-flow.ts's checkAgainMethod does, and keeps the step
+    /// until a test says the route is on. Any other step reads status again, which on the Mac reruns the DNS checks too.
+    public static func checkAgainTests(key: String) -> Bool { key == "check_failed" }
+
+    /// What a Repair that didn't finish says, and the helper's words to show under Details. Nil when it finished. The note names
+    /// Details only when there are words to put there (PR 134 round 2 first-F4).
+    public static func repairNote(_ done: RemoteFixPlan) -> (note: String, details: String?)? {
+        guard !done.ok else { return nil }
+        guard let words = done.message else { return (RemoteCopy.repairFailedSilent, nil) }
+        return (RemoteCopy.repairFailed, words)
+    }
+
     /// Something failed, and every failure is one waiting fixes. remote-copy.ts's waitingChecks.
     public static func waitingOnly(_ checks: [RemoteCheck]) -> Bool {
         let failed = checks.filter(\.failed)
@@ -401,7 +441,7 @@ public enum RemoteFlow {
     public static func pollInterval(for screen: RemoteScreen, status: RemoteReport? = nil, bridging: Bool = false) -> TimeInterval {
         if bridging { return 4 }
         if case .on = screen { return 30 }
-        if let status, status.configured, !moreBasic.contains(status.state) { return 30 }
+        if let status, status.configured, !isMoreBasic(status) { return 30 }
         return 4
     }
 
@@ -489,7 +529,8 @@ public enum RemoteCommand: Equatable {
             guard let kind = a["kind"] as? String, let what = a["what"] as? String, let status = a["status"] as? String else { return nil }
             return .init(kind: String(kind.prefix(40)), what: String(what.prefix(300)), status: String(status.prefix(20)))
         }
-        return RemoteFixPlan(available: true, ok: root["ok"] as? Bool ?? false, actions: Array(actions), checks: RemoteCheck.parse(root["checks"]))
+        let message = (root["message"] as? String).flatMap { $0.isEmpty ? nil : String($0.prefix(300)) }
+        return RemoteFixPlan(available: true, ok: root["ok"] as? Bool ?? false, actions: Array(actions), checks: RemoteCheck.parse(root["checks"]), message: message)
     }
 
     /// `{"ok":true,"passcode":"…"}` from `token passcode --json`.
@@ -549,8 +590,10 @@ public struct RemoteFixPlan: Equatable {
     public var ok = false
     public var actions: [Action] = []
     public var checks: [RemoteCheck] = []
-    public init(available: Bool, ok: Bool = false, actions: [Action] = [], checks: [RemoteCheck] = []) {
-        self.available = available; self.ok = ok; self.actions = actions; self.checks = checks
+    /// The helper's own words about the run, capped. Nil when it gave none.
+    public var message: String?
+    public init(available: Bool, ok: Bool = false, actions: [Action] = [], checks: [RemoteCheck] = [], message: String? = nil) {
+        self.available = available; self.ok = ok; self.actions = actions; self.checks = checks; self.message = message
     }
 }
 
@@ -589,6 +632,8 @@ public enum RemoteCopy {
     public static let newPasscodeFailed = "Couldn't make a new passcode. Try again."
     public static let connectCodeFailed = "Couldn't make a connect code. Try again."
     public static let repairFailed = "Repair didn't finish. Details has the helper's words."
+    /// A Repair that gave no words (it timed out, or printed no JSON): nothing to point to.
+    public static let repairFailedSilent = "Repair didn't finish. Try again."
     public static let turnOffFailed = "Couldn't turn it off. Try again."
     /// The problem code the window uses for "the helper didn't answer": not one the helper sends.
     public static let helperSilentCode = "helper_silent"
@@ -611,7 +656,7 @@ public enum RemoteCopy {
     public static var everySentence: [String] {
         [title, createAccountButton, openTailscaleButton, openDownloadPage, cloudflareWaiting, cloudflareAddressInvalid, cloudflareAddressFirst,
          funnelWaiting, intro, honest, staysOn, stillSetUp, startOverButton, detailsLabel, commandLabel, copyCommandButton,
-         passcodeSaved, passcodeEarlier, newPasscodeButton, newPasscodeFailed, connectCodeFailed, repairFailed, turnOffFailed, helperSilent,
+         passcodeSaved, passcodeEarlier, newPasscodeButton, newPasscodeFailed, connectCodeFailed, repairFailed, repairFailedSilent, turnOffFailed, helperSilent,
          unavailable, otherWays, otherWaysHelp, menusNote] + testCheckLabels.values.sorted()
     }
 }

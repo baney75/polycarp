@@ -44,6 +44,7 @@ import {
 } from "../connect/remote-copy.js";
 import {
 	type ChosenRoute,
+	checkAgainMethod,
 	cloudflareHostFor,
 	type FlowInput,
 	type FlowScreen,
@@ -439,7 +440,7 @@ export class RemoteFlow extends LitElement {
 				return;
 			}
 			case "check_again":
-				void this.checkAgain(answer.code === "dns" ? "remoteTest" : "remoteState");
+				void this.checkAgain(checkAgainMethod(answer));
 				return;
 			case "use_cloudflare":
 				this.run = undefined;
