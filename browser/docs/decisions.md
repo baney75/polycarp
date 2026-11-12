@@ -1422,3 +1422,7 @@ Amended after review (PR 153 round 2, 2026-11-12):
   "(Polycarp's note)".
 - **True notes.** The drop note says the dropped messages came after Polycarp's notes, and its room is reserved.
   Cuts fall on code points.
+
+Amended (PR 162 round 1), replacing the "none" and "left out" rules above: "none" empties only Not finished. Past a
+line each, the person's part keeps the first, newest and newest others' starts, and a gap line names the rest. The drop
+note's room comes from the notes, never the latest message. Old goal sections are not sent.

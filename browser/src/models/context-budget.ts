@@ -584,7 +584,8 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 			: `[Polycarp left out the ${n} earliest messages of this chat to fit the model's context.]`;
 	// The note saying so goes on the latest message, so its room is kept once anything is dropped.
 	const noteRoom = estimateTextTokens(dropNote(9_999_999)) + 8;
-	while (total + (droppedEarlier ? noteRoom : 0) > budget.inputTokens && latestUser() > head()) {
+	const overWithNote = () => total + (droppedEarlier ? noteRoom : 0) > budget.inputTokens;
+	while (overWithNote() && latestUser() > head()) {
 		const from = head();
 		let next = from + 1;
 		while (next < latestUser() && !isPerson(next)) next++;
@@ -593,8 +594,8 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 	// 8b. The notes themselves, halving, before anything of the latest message or the turn in progress: the working
 	// notes first, the person's own words last.
 	for (const which of [1, 0] as const)
-		for (const c of halving(STUB_TOKENS * 4, over))
-			for (let i = 0; i < messages.length && over(); i++)
+		for (const c of halving(STUB_TOKENS * 4, overWithNote))
+			for (let i = 0; i < messages.length && overWithNote(); i++)
 				if (summaries[i]) replace(i, capNotesPart(messages[i], which, c));
 	if (droppedEarlier) {
 		const i = latestUser();

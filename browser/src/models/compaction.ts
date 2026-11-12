@@ -97,7 +97,7 @@ export function compactionPlan(
 	const window = budget.windowSize;
 	const room = Math.max(0, budget.inputTokens - fixedTokens);
 	const summaryTokens = Math.floor(Math.max(300, Math.min(window * 0.08, 4000, room * 0.25)));
-	const userTokens = Math.floor(Math.min(window * 0.05, room * 0.1));
+	const userTokens = Math.floor(Math.min(window * 0.08, room * 0.2));
 	const keepTokens = Math.floor(Math.min(window * 0.2, room * 0.4));
 	const chunkTokens = Math.max(1000, Math.floor((window - 2 * summaryTokens - 1500) * 0.8));
 	return { window, room, summaryTokens, userTokens, keepTokens, chunkTokens };
@@ -206,7 +206,8 @@ export function textOf(content: unknown): { text: string; images: number } {
 	return { text, images };
 }
 
-export const short = (s: string, max: number) => (s.length <= max ? s : `${s.slice(0, max - 3)}...`);
+export const short = (s: string, max: number) =>
+	s.length <= max ? s : `${s.slice(0, max - 3).replace(/[\uD800-\uDBFF]$/, "")}...`;
 
 // ----------------------------------------------------------------------------------------------------------------
 // What is sent after a compaction
@@ -222,8 +223,9 @@ export function sectionNamed(name: string): (typeof SECTIONS)[number] | undefine
  * The summarizer's notes as the model reads them: each section one level below the working-notes label, headed with
  * NOTE_TAG, so the attribution travels with every section and survives a cut. Any other heading becomes a plain line.
  */
+const OLD_GOAL = /^#{1,6}\s*goal and standing instructions[^\n]*\n[\s\S]*?(?=^#{1,6}\s|(?![\s\S]))/im; // stored before PR 153: never sent
 const taggedNotes = (notes: string) =>
-	notes.replace(/^#{1,6}\s*(.*)$/gm, (_line, name: string) => {
+	notes.replace(OLD_GOAL, "").replace(/^#{1,6}\s*(.*)$/gm, (_line, name: string) => {
 		const s = sectionNamed(name);
 		return s ? `### ${TITLES[s]} ${NOTE_TAG}` : `- ${name}`;
 	});
@@ -248,51 +250,53 @@ const fmtN = (n: number) => n.toLocaleString("en-US");
 const LINE_TOKENS = 40;
 
 /**
- * The person's earlier messages, every one of them, in order, as they wrote them, within `budget` tokens as far as it
- * goes. All whole when they fit. Otherwise long messages are cut by code to one share, the largest that fits, each
- * with a mark saying how much is shown. When even that share is under a line, the first and the newest stay whole (up
- * to a third of the budget each) and each of the rest keeps its first line. No message is left out, and the count of
- * those shortened is given.
+ * The person's earlier messages, in order, as written, within `budget` tokens (a count line may add a few). All whole
+ * when they fit; else long ones are cut by code to the largest share that fits, each marked. When that share is under a
+ * line, the first and newest stay (up to a third each), the newest others keep their start, and a line names the rest.
  */
 function personsWords(said: readonly string[], budget: number): string[] {
 	const n = said.length;
 	const head = (i: number) => `Message ${i + 1} of ${n}:\n`;
 	const tokens = said.map((t) => estimateTextTokens(t));
-	const headTokens = said.map((_, i) => estimateTextTokens(head(i)));
-	const MARK = 16;
-	const cost = (cap: number) => tokens.reduce((sum, t, i) => sum + headTokens[i] + (t <= cap ? t : cap + MARK), 0);
-	let shortened = 0;
-	const cut = (i: number, text: string, how: string) => {
-		shortened++;
-		return `${head(i)}${text}\n(${how}: ${fmtN(count(text))} of ${fmtN(count(said[i]))} characters shown)`;
-	};
 	const whole = (i: number) => `${head(i)}${said[i]}`;
-	let out: string[];
-	if (cost(Number.POSITIVE_INFINITY) <= budget) out = said.map((_, i) => whole(i));
-	else {
-		let lo = 0;
-		let hi = Math.max(0, ...tokens);
-		while (lo < hi) {
-			const mid = Math.ceil((lo + hi) / 2);
-			if (cost(mid) <= budget) lo = mid;
-			else hi = mid - 1;
-		}
-		if (lo >= LINE_TOKENS)
-			out = said.map((t, i) => (tokens[i] <= lo ? whole(i) : cut(i, headOf(t, lo), "cut to fit")));
-		else {
-			const third = Math.max(LINE_TOKENS, Math.floor(budget / 3));
-			out = said.map((t, i) => {
-				if (i === 0 || i === n - 1) return tokens[i] <= third ? whole(i) : cut(i, headOf(t, third), "cut to fit");
-				const line = headOf(t.split("\n")[0], LINE_TOKENS);
-				return line === t ? whole(i) : cut(i, line, "shortened to its start");
-			});
-		}
+	const cut = (i: number, text: string) =>
+		`${head(i)}${text}\n(cut to fit: ${fmtN(count(text))} of ${fmtN(count(said[i]))} characters shown)`;
+	const fits = (lines: string[]) => estimateTextTokens(lines.join("\n")) <= budget;
+	const many = (s: number) =>
+		`(${s} of the messages shown ${s === 1 ? "is" : "are"} shortened to fit, each marked. Ask the person if you need the rest.)`;
+	const counted = (lines: string[], shortened: number) => (shortened ? [...lines, many(shortened)] : lines);
+	const all = said.map((_, i) => whole(i));
+	if (fits(all)) return all;
+	const share = (cap: number) => said.map((t, i) => (tokens[i] <= cap ? whole(i) : cut(i, headOf(t, cap))));
+	let lo = 0;
+	let hi = Math.max(0, ...tokens);
+	while (lo < hi) {
+		const mid = Math.ceil((lo + hi) / 2);
+		if (fits(share(mid))) lo = mid;
+		else hi = mid - 1;
 	}
-	if (shortened)
-		out.push(
-			`(${shortened} of these ${n} messages ${shortened === 1 ? "is" : "are"} shortened to fit, each marked with how much of it is shown. Ask the person if you need the rest.)`,
-		);
-	return out;
+	if (lo >= LINE_TOKENS) return counted(share(lo), tokens.filter((t) => t > lo).length);
+	const third = Math.max(LINE_TOKENS, Math.floor(budget / 3));
+	const end = (i: number) => (tokens[i] <= third ? whole(i) : cut(i, headOf(said[i], third)));
+	const ends = n > 1 ? [end(0), end(n - 1)] : [end(0)];
+	const room = budget - estimateTextTokens(ends.join("\n")) - 40;
+	const build = (k: number) => {
+		const words = Math.max(8, Math.min(LINE_TOKENS, Math.floor(room / Math.max(1, k)) - 12));
+		const middle: string[] = [];
+		let shortened = ends.filter((e, j) => e !== whole(j ? n - 1 : 0)).length;
+		for (let i = n - 1 - k; i < n - 1; i++) {
+			const start = headOf(said[i].split("\n")[0], words);
+			if (start !== said[i]) shortened++;
+			middle.push(`${head(i)}${start}${start === said[i] ? "" : " [...]"}`);
+		}
+		const left = n - 2 - k;
+		const gap = `(${left === 1 ? `Message 2 of ${n} is` : `Messages 2 to ${left + 1} of ${n} are`} not shown here to fit, and nothing else records them. Ask the person if you need what they said.)`;
+		return { lines: [ends[0], ...(left > 0 ? [gap] : []), ...middle, ...ends.slice(1)], shortened };
+	};
+	for (let k = Math.max(0, n - 2); ; k -= Math.max(1, Math.ceil(k / 10))) {
+		const built = build(k);
+		if (k === 0 || fits(built.lines)) return counted(built.lines, built.shortened);
+	}
 }
 
 /**

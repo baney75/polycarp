@@ -265,8 +265,8 @@ test("the person's earlier messages are all sent verbatim, none left out when th
 	for (const t of ["first ask", "second: only 2026", "third: cite URLs"]) assert.match(roomy, new RegExp(t));
 	const tight = summaryMessageText(record, earlier, 30);
 	assert.match(tight, /third: cite URLs/);
-	for (const t of ["first ask", "second: only 2026", "third: cite URLs"]) assert.match(tight, new RegExp(t), "no message is left out");
-	assert.doesNotMatch(tight, /left out|cover them/);
+	for (const t of ["first ask", "third: cite URLs"]) assert.match(tight, new RegExp(t), "the first and newest are kept");
+	assert.match(tight, /\(Message 2 of 3 is not shown here to fit, and nothing else records them\./, "the gap is named, never said to be covered");
 	const sent = applyCompaction([...earlier, record, person("now")], record, 1000);
 	assert.equal(sent.length, 2);
 	assert.equal(sent[1].content, "now");
