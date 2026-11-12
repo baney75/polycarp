@@ -10,6 +10,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { isCorsError, loadAttachment } from "@mariozechner/pi-web-ui";
 import { type Static, Type } from "@sinclair/typebox";
+import { CHARS_PER_TOKEN, estimateTextTokens } from "../models/context-budget.js";
 import { EXTRACT_DOCUMENT_TOOL_DESCRIPTION } from "../prompts/prompts.js";
 import {
 	type ParsedDocument,
@@ -21,7 +22,10 @@ import {
 } from "./document-reader.js";
 
 const schema = Type.Object({
-	url: Type.String({ description: "URL of the document (PDF, DOCX, XLSX, PPTX or text)" }),
+	url: Type.Optional(Type.String({ description: "URL of the document (PDF, DOCX, XLSX, PPTX or text)" })),
+	attachment: Type.Optional(
+		Type.String({ description: "Instead of url: the file name of a document the person attached to the chat" }),
+	),
 	pages: Type.Optional(
 		Type.String({
 			description:
@@ -83,7 +87,7 @@ async function download(url: string, signal?: AbortSignal): Promise<ArrayBuffer>
 	const response = await fetch(url, { signal });
 	if (!response.ok)
 		throw new Error(
-			`Could not download the document (${response.status} ${response.statusText}). The site may block downloads: ask the user to download it and attach it with the paperclip.`,
+			`Could not download the document (${response.status} ${response.statusText}). The site may block downloads: ask the user to download it and attach it with the paperclip, then read it with attachment.`,
 		);
 	const length = Number(response.headers.get("content-length") ?? 0);
 	if (length > MAX_SIZE)
@@ -106,7 +110,7 @@ async function loadFromWeb(
 		if (!isCorsError(err)) throw err;
 		if (!corsProxyUrl)
 			throw new Error(
-				"The site blocks downloads from extensions (CORS). Set a CORS proxy in Settings, or ask the user to download the file and attach it with the paperclip.",
+				"The site blocks downloads from extensions (CORS). Set a CORS proxy in Settings, or ask the user to download the file and attach it with the paperclip, then read it with attachment.",
 			);
 		data = await download(corsProxyUrl + encodeURIComponent(url), signal);
 	}
@@ -128,6 +132,22 @@ export interface ExtractDocumentOptions {
 	budgetChars: () => number;
 	/** Replaces the web fetch and parse (tests). */
 	load?: (url: string, signal?: AbortSignal) => Promise<LoadedDocument>;
+	/** Documents attached to this chat, with the text pi-web-ui extracted from each. */
+	attachments?: () => LoadedDocument[];
+}
+
+/** The attached document called `name` (exactly, else the one whose name holds it), or a message saying what is. */
+function findAttachment(files: LoadedDocument[], name: string): LoadedDocument {
+	const want = name.trim().toLowerCase();
+	const file =
+		files.find((f) => f.fileName.toLowerCase() === want) ??
+		files.find((f) => f.fileName.toLowerCase().includes(want));
+	if (file) return file;
+	throw new Error(
+		files.length
+			? `No attached document is called ${JSON.stringify(name)}. Attached: ${files.map((f) => JSON.stringify(f.fileName)).join(", ")}.`
+			: "No document is attached to this chat.",
+	);
 }
 
 export type ExtractDocumentTool = AgentTool<typeof schema, ExtractDocumentDetails> & { corsProxyUrl?: string };
@@ -142,18 +162,28 @@ export function createExtractDocumentTool(options: ExtractDocumentOptions): Extr
 		execute: async (_toolCallId, args, signal) => {
 			if (signal?.aborted) throw new Error("Aborted");
 			const url = String(args.url ?? "").trim();
-			try {
-				new URL(url);
-			} catch {
-				throw new Error(`Not a URL: ${url}`);
+			const attachment = String(args.attachment ?? "").trim();
+			if (!url === !attachment) throw new Error("Give url or attachment, one of them.");
+			let key: string;
+			let attached: LoadedDocument | undefined;
+			if (attachment) {
+				attached = findAttachment(options.attachments?.() ?? [], attachment);
+				key = `attachment:${attached.fileName}:${attached.size}`;
+			} else {
+				try {
+					new URL(url);
+				} catch {
+					throw new Error(`Not a URL: ${url}`);
+				}
+				// The viewer's #page=N is not part of the file.
+				key = url.split("#")[0];
 			}
-			// The viewer's #page=N is not part of the file.
-			const key = url.split("#")[0];
 			let entry = cache.get(key);
 			if (entry) {
 				cache.delete(key);
 			} else {
-				const loaded = await (options.load ?? ((u, s) => loadFromWeb(u, tool.corsProxyUrl, s)))(key, signal);
+				const loaded =
+					attached ?? (await (options.load ?? ((u, s) => loadFromWeb(u, tool.corsProxyUrl, s)))(key, signal));
 				entry = {
 					doc: parseExtracted(loaded.extractedText, formatOf(loaded.mimeType, loaded.fileName)),
 					fileName: loaded.fileName,
@@ -163,27 +193,33 @@ export function createExtractDocumentTool(options: ExtractDocumentOptions): Extr
 			}
 			cache.set(key, entry);
 			const { doc, fileName } = entry;
-			const budget = Math.max(1000, Math.floor(options.budgetChars()));
-			let text: string;
-			if (args.query?.trim()) {
-				text = readSearch(doc, fileName, args.query, budget, key).text;
-			} else if (args.pages?.trim()) {
-				const range = parseRange(args.pages, doc.units.length);
+			const chars = Math.max(1000, Math.floor(options.budgetChars()));
+			let range: { first: number; last: number } | undefined;
+			if (!args.query?.trim() && args.pages?.trim()) {
+				range = parseRange(args.pages, doc.units.length);
 				if (!range)
 					throw new Error(
 						`pages takes one number or a range, like "12" or "40-55", not ${JSON.stringify(args.pages)}.`,
 					);
-				text = readRange(doc, fileName, range, Math.max(0, Math.floor(Number(args.offset) || 0)), budget).text;
-			} else if (args.offset) {
-				text = readRange(
-					doc,
-					fileName,
-					{ first: 1, last: doc.units.length },
-					Math.max(0, Math.floor(Number(args.offset))),
-					budget,
-				).text;
-			} else {
-				text = readOverview(doc, fileName, budget).text;
+			}
+			const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+			const read = (budget: number): string => {
+				if (args.query?.trim()) return readSearch(doc, fileName, args.query, budget, attached ? "" : key).text;
+				if (range) return readRange(doc, fileName, range, offset, budget).text;
+				if (offset) return readRange(doc, fileName, { first: 1, last: doc.units.length }, offset, budget).text;
+				return readOverview(doc, fileName, budget).text;
+			};
+			// The guard measures a result in tokens by script (context-budget.ts), and a page of CJK text or code holds
+			// more of them than its length suggests. An answer over that would be cut again and lose its own note on how
+			// to read on, so it is read again, smaller, until the guard's own estimate fits.
+			const allowed = Math.floor(chars / CHARS_PER_TOKEN);
+			let budget = chars;
+			let text = read(budget);
+			for (let i = 0; i < 6; i++) {
+				const tokens = estimateTextTokens(text);
+				if (tokens <= allowed || budget <= 1000) break;
+				budget = Math.max(1000, Math.floor((budget * allowed * 0.95) / tokens));
+				text = read(budget);
 			}
 			return {
 				content: [{ type: "text", text }],

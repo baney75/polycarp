@@ -796,8 +796,8 @@ test("read tools cap what they hand an agent, say when they cut, and page with o
 					url: "https://page.test/",
 					title: "Long",
 					viewport: { width: 1, height: 1, scrollY: 0, pageHeight: 1 },
-					nodes: Array.from({ length: 300 }, (_, i) => ({ ref: `e${i}`, role: "link", name: `n${i}`, visible: true })),
-					text: "t".repeat(3000),
+					nodes: Array.from({ length: 301 }, (_, i) => ({ ref: `e${i}`, role: "link", name: `n${i}`, visible: true })),
+					text: "t".repeat(3001),
 				};
 			return undefined;
 		},
@@ -821,18 +821,32 @@ test("read tools cap what they hand an agent, say when they cut, and page with o
 		}),
 	);
 	const run = async (name, args = {}) => (await c.callTool({ name, arguments: args })).content.map((x) => x.text ?? "").join("\n");
+	const last = (m) => host.requests.filter((r) => r.method === m).at(-1).params;
 	try {
 		// run_js: 50,000 characters of the value, then the offset that reads on.
 		const js = await run("run_js", { code: "big" });
 		assert.ok(js.length <= 50_200, `run_js returned ${js.length}`);
 		assert.match(js, /\[Cut at character 50,000 of 200,01\d\. For the rest, return a smaller value, or call run_js again with offset 50000\.\]/);
+		const evaluations = () => host.requests.filter((r) => r.method === "evaluate").length;
+		const ran = evaluations();
 		const on = await run("run_js", { code: "big", offset: 50_000 });
 		assert.match(on, /^\[Characters 50,000 to 100,000 of 200,01\d\.\]/);
-		assert.equal(host.requests.filter((r) => r.method === "evaluate").at(-1).params.offset, undefined, "offset stays here, not in the page");
+		// Reading on serves the value kept from the run before: code with side effects never runs twice.
+		await run("run_js", { code: "big", offset: 100_000 });
+		assert.equal(evaluations(), ran, "an offset read does not run the code again");
+		// Other code (or another world or tab) has no value kept, so an offset is refused rather than run.
+		const other = await c.callTool({ name: "run_js", arguments: { code: "other", offset: 50_000 } });
+		assert.equal(other.isError, true);
+		assert.match(other.content[0].text, /run it without offset first/);
+		assert.equal(evaluations(), ran);
 		// read_page: says the element list and the text were cut, and how to read on.
 		const page = await run("read_page");
 		assert.match(page, /element list stopped at 300/);
-		assert.match(page, /get_page_text with offset 3000 reads on/);
+		assert.match(page, /The text stopped at 3,000 characters: get_page_text reads all of it, in parts, from the top\./);
+		assert.doesNotMatch(page, /offset 3000/, "read_page's text offsets don't match get_page_text's");
+		assert.equal(last("snapshot").maxNodes, 301, "asks for one more than it shows, to know it cut");
+		assert.equal(last("snapshot").maxTextChars, 3001);
+		assert.doesNotMatch(page, /\be300\b/);
 		// The net under every tool: a 300,000 character answer comes back at 100,000 with what was left out.
 		const html = await run("get_page_html");
 		assert.ok(html.length <= 100_000, `get_page_html returned ${html.length}`);
@@ -841,7 +855,6 @@ test("read tools cap what they hand an agent, say when they cut, and page with o
 		await run("get_page_text", { offset: 50_000 });
 		await run("read_console", { offset: 100 });
 		await run("read_network", { offset: 100 });
-		const last = (m) => host.requests.filter((r) => r.method === m).at(-1).params;
 		assert.equal(last("text").offset, 50_000);
 		assert.equal(last("console.read").offset, 100);
 		assert.equal(last("network.read").offset, 100);
@@ -927,6 +940,31 @@ test("files download, save_pdf, list, read, remove: private files with an id, an
 		assert.ok(Buffer.byteLength(read.text) <= 50 * 1024 + 300, `read returned ${Buffer.byteLength(read.text)} bytes`);
 		const less = await run({ action: "read", id: longText.id, max_bytes: 1000 });
 		assert.ok(Buffer.byteLength(less.text) <= 1300 && /\[Cut: the first 1000 bytes/.test(less.text), less.text.slice(-200));
+		// Text with characters of 2, 3 and 4 bytes, read in small parts by the offset each part gives: no character is
+		// split or lost, and the parts join to the file.
+		const wide = "Ωmega 日本語のテキスト 🙂 café ".repeat(400);
+		const wideFile = await save({ body: Buffer.from(wide), name: "wide.txt", mime: "text/plain; charset=utf-8" });
+		let joined = "";
+		let at = 0;
+		for (let i = 0; i < 200; i++) {
+			const part = await run({ action: "read", id: wideFile.id, offset: at, max_bytes: 997 });
+			const cut = part.text.lastIndexOf("\n\n[Cut:");
+			assert.ok(cut >= 0, part.text.slice(-200));
+			const body = part.text.slice(0, cut);
+			assert.doesNotMatch(body, /\ufffd/);
+			joined += body;
+			const next = /read again with offset (\d+)\./.exec(part.text.slice(cut));
+			if (!next) break;
+			at = Number(next[1]);
+		}
+		assert.equal(joined, wide);
+		// The largest read (200 KB) of plain text stays under the 100,000 character output cap, and the offset it gives
+		// is where it really stopped.
+		const max = await run({ action: "read", id: longText.id, max_bytes: 200 * 1024 });
+		assert.ok(max.text.length <= 100_000, `read returned ${max.text.length} characters`);
+		const next = Number(/read again with offset (\d+)\./.exec(max.text)[1]);
+		const shown = max.text.slice(0, max.text.lastIndexOf("\n\n[Cut:"));
+		assert.equal(next, Buffer.byteLength(shown));
 		const whole = await run({ action: "read", id: (await save({ body: Buffer.from('{"a":1}'), name: "data.json", mime: "application/json" })).id });
 		assert.equal(whole.text, '{"a":1}');
 

@@ -117,8 +117,6 @@ function joinUnits(doc: ParsedDocument, units: DocUnit[]): string {
 
 export interface ReadResult {
 	text: string;
-	/** Characters of document text left out of this answer. */
-	omitted: number;
 }
 
 const fmt = (x: number) => x.toLocaleString("en-US");
@@ -155,12 +153,12 @@ export function readRange(
 	if (!units.length)
 		return {
 			text: `${summaryLine(doc, fileName)}\nThere is no ${word.toLowerCase()} ${range.first}: this document has ${doc.units.length} ${plural}.`,
-			omitted: 0,
 		};
 	const all = joinUnits(doc, units);
 	const start = Math.max(0, Math.min(offset, all.length));
 	const head = `${summaryLine(doc, fileName)}\n${plural[0].toUpperCase()}${plural.slice(1)} ${range.first === range.last ? range.first : `${range.first}-${range.last}`}${start ? `, from character ${fmt(start)}` : ""}:\n\n`;
-	const room = Math.max(500, budget - head.length - 400);
+	// The note on how to read on matters more than the last of the body: a tight budget shortens the body, never the note.
+	const room = Math.max(100, budget - head.length - 400);
 	const body = all.slice(start, start + room);
 	const end = start + body.length;
 	let note = "";
@@ -168,7 +166,7 @@ export function readRange(
 		const spec = range.first === range.last ? `${range.first}` : `${range.first}-${range.last}`;
 		note = `\n\n[Cut here to fit the model's context: ${fmt(all.length - end)} more characters in this range. For the rest, call extract_document with pages "${spec}" and offset ${end}, or a smaller range.]`;
 	}
-	return { text: `${head}${body}${note}`, omitted: doc.totalChars - body.length };
+	return { text: `${head}${body}${note}` };
 }
 
 /** The first units up to the budget, with what was left out and how to get it. */
@@ -179,7 +177,7 @@ export function readOverview(doc: ParsedDocument, fileName: string, budget: numb
 			? `\nSheets: ${doc.units.map((u) => `${u.n} "${u.name}" (${fmt(u.text.length)} characters)`).join(", ")}.`
 			: "";
 	const head = `${summaryLine(doc, fileName)}${sheetList}${emptyNote(doc)}\n\n`;
-	const room = Math.max(500, budget - head.length - 600);
+	const room = Math.max(100, budget - head.length - 600);
 	let body = "";
 	let lastWhole = 0;
 	for (const u of doc.units) {
@@ -192,11 +190,11 @@ export function readOverview(doc: ParsedDocument, fileName: string, budget: numb
 		lastWhole = u.n;
 	}
 	const shown = Math.min(body.length, doc.totalChars);
-	if (lastWhole === doc.units.length) return { text: `${head}${body}`, omitted: 0 };
+	if (lastWhole === doc.units.length) return { text: `${head}${body}` };
 	const next = lastWhole + 1;
 	const span = Math.max(1, lastWhole);
 	const note = `\n\n[This is only the start. ${lastWhole ? `${lastWhole > 1 ? `${plural[0].toUpperCase()}${plural.slice(1)} 1-${lastWhole}` : `${word} 1`} of ${doc.units.length} shown` : `Part of ${word.toLowerCase()} 1 shown`}; ${fmt(Math.max(0, doc.totalChars - shown))} characters left out to fit the model's context. To read on, call extract_document with pages "${next}-${Math.min(doc.units.length, next + span - 1)}". To find a passage, call it with query and a few words from it: that returns the matching ${plural} with their numbers.]`;
-	return { text: `${head}${body}${note}`, omitted: Math.max(0, doc.totalChars - shown) };
+	return { text: `${head}${body}${note}` };
 }
 
 // ---- search ----------------------------------------------------------------------------------
@@ -311,25 +309,17 @@ export function searchDocument(doc: ParsedDocument, query: string, limit = 5): {
 }
 
 /** The search as the model reads it: ranked units with numbers and snippets, and the next steps. */
-export function readSearch(
-	doc: ParsedDocument,
-	fileName: string,
-	query: string,
-	budget: number,
-	url: string,
-): ReadResult {
+export function readSearch(doc: ParsedDocument, fileName: string, query: string, budget: number, url = ""): ReadResult {
 	const [word, plural] = KIND_WORD[doc.kind];
 	const { terms, hits } = searchDocument(doc, query, 8);
 	const head = `${summaryLine(doc, fileName)}\nSearch: ${JSON.stringify(query)}${terms.length ? ` (words: ${terms.join(", ")})` : ""}\n`;
 	if (!terms.length)
 		return {
 			text: `${head}No words to search for: give a few distinctive words from the passage.`,
-			omitted: doc.totalChars,
 		};
 	if (!hits.length)
 		return {
 			text: `${head}No ${word.toLowerCase()} has these words. Try other words the author would use (a synonym, the original term), or read a range with pages.${emptyNote(doc)}`,
-			omitted: doc.totalChars,
 		};
 	const lines = hits.map((h, i) => `${i + 1}. ${word} ${h.n}: ${h.snippet}`);
 	const top = hits[0].n;
@@ -340,5 +330,5 @@ export function readSearch(
 	const tail = `\n\nBest match first. Read a ${word.toLowerCase()} in full with pages (like "${top}" or "${Math.max(1, top - 1)}-${Math.min(doc.units.length, top + 1)}") before you quote it.${open}`;
 	let text = `${head}\nMatching ${plural}:\n${lines.join("\n")}${tail}`;
 	if (text.length > budget) text = `${text.slice(0, Math.max(0, budget - 40))}\n[more matches cut]`;
-	return { text, omitted: doc.totalChars };
+	return { text };
 }

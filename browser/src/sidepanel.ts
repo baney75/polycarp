@@ -71,8 +71,7 @@ import {
 } from "./messages/NavigationMessage.js";
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
-import { toolResultBudgetChars } from "./models/context-budget.js";
-import { guardContext } from "./models/context-guard.js";
+import { guardContext, toolBudgetChars } from "./models/context-guard.js";
 import { modelLabelParts } from "./models/display.js";
 import { FREE_KEY_NOTE, FREE_PRIVACY_NOTE, FREE_SHORT_NOTE } from "./models/free-mode.js";
 import { freeComposerText, installFreeMode, setFreeMode, streamFree } from "./models/free-panel.js";
@@ -97,7 +96,7 @@ import {
 	routeSubscriptionModel,
 } from "./subscriptions/stream.js";
 import { DebuggerTool } from "./tools/debugger.js";
-import { createExtractDocumentTool } from "./tools/extract-document.js";
+import { createExtractDocumentTool, type LoadedDocument } from "./tools/extract-document.js";
 import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-image.js";
 import { AskUserTool, AskUserWhichElementTool, skillTool } from "./tools/index.js";
 import { NativeInputEventsRuntimeProvider } from "./tools/NativeInputEventsRuntimeProvider.js";
@@ -846,6 +845,28 @@ function uncappedStreamFn<F extends (model: Model<any>, ...rest: any[]) => any>(
 	}) as F;
 }
 
+/** Documents attached to this chat's messages, with their extracted text, for extract_document {attachment}. */
+function chatDocuments(): LoadedDocument[] {
+	const out: LoadedDocument[] = [];
+	for (const m of agent?.state.messages ?? []) {
+		if (m.role !== "user-with-attachments") continue;
+		for (const a of (
+			m as {
+				attachments?: Array<{
+					type: string;
+					fileName: string;
+					mimeType: string;
+					size: number;
+					extractedText?: string;
+				}>;
+			}
+		).attachments ?? [])
+			if (a.type === "document" && a.extractedText)
+				out.push({ extractedText: a.extractedText, fileName: a.fileName, mimeType: a.mimeType, size: a.size });
+	}
+	return out;
+}
+
 const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true) => {
 	if (agentUnsubscribe) {
 		agentUnsubscribe();
@@ -1091,7 +1112,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 			// Polycarp's bounded extract_document (pages, query), with the CORS proxy from settings (loaded above).
 			const extractDocumentTool = createExtractDocumentTool({
-				budgetChars: () => toolResultBudgetChars(agent?.state.model),
+				// The budget the guard fits each result to, so what the tool returns is never cut again.
+				budgetChars: () => toolBudgetChars(agent?.state.model),
+				attachments: chatDocuments,
 			});
 			if (corsProxyEnabled && corsProxyUrl) {
 				extractDocumentTool.corsProxyUrl = `${corsProxyUrl}/?url=`;

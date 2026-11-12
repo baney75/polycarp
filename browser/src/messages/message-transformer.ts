@@ -2,6 +2,7 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent, Message, TextContent } from "@mariozechner/pi-ai";
 import { noAnswer, outcomeText, validateAskParams } from "../ask/core.js";
 import { type ComposerRefs, refsForModel } from "../composer/refs.js";
+import { ATTACHMENT_MARK } from "../models/context-budget.js";
 import type { NavigationMessage } from "./NavigationMessage.js";
 
 // Helper: Check if a message has toolCall blocks
@@ -111,8 +112,7 @@ export async function browserMessageTransformer(messages: AgentMessage[]): Promi
 					: [...(base.content as Array<TextContent | ImageContent>)];
 			for (const a of attachments ?? []) {
 				if (a.type === "image") parts.push({ type: "image", data: a.content, mimeType: a.mimeType });
-				else if (a.type === "document" && a.extractedText)
-					parts.push({ type: "text", text: `\n\n[Document: ${a.fileName}]\n${a.extractedText}` });
+				else if (a.type === "document" && a.extractedText) parts.push({ type: "text", text: attachedText(a) });
 			}
 			transformed.push({ ...base, content: parts } as Message);
 			continue;
@@ -186,6 +186,24 @@ function answerCutOffQuestions(messages: Message[]): Message[] {
 		}
 	}
 	return out;
+}
+
+/** An attached document longer than this goes to the model as a note and its start, not whole. */
+export const ATTACHMENT_INLINE_CHARS = 20_000;
+/** How much of a long attachment the note shows. */
+const ATTACHMENT_HEAD_CHARS = 2000;
+
+/**
+ * An attached document as the model reads it. A short one goes whole. A long one (a 400-page book is 700,000
+ * characters) would fill the window on every turn, so it goes as its start and a note: read it in parts with
+ * extract_document {"attachment": name}, which is held to the model's budget like any tool result.
+ */
+export function attachedText(a: Pick<AttachmentLike, "fileName" | "extractedText">): string {
+	const text = a.extractedText ?? "";
+	const label = `${ATTACHMENT_MARK}${a.fileName}]`;
+	if (text.length <= ATTACHMENT_INLINE_CHARS) return `\n\n${label}\n${text}`;
+	const n = text.length.toLocaleString("en-US");
+	return `\n\n${label}\nThis file is ${n} characters, too long to send whole on every turn. Its start is below. Read it in parts with extract_document {"attachment": ${JSON.stringify(a.fileName)}} and pages (like "1-3") or a query.\n\n${text.slice(0, ATTACHMENT_HEAD_CHARS)}\n[The rest of ${a.fileName} was not sent: read it with extract_document as above.]`;
 }
 
 /** The fields of pi-web-ui's Attachment the transformer reads. */

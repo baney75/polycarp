@@ -11,7 +11,18 @@ import {
 	createAssistantMessageEventStream,
 	type Model,
 } from "@mariozechner/pi-ai";
-import { budgetFor, fitContext, isSizeRefusal, sizeRefusalMessage } from "./context-budget.js";
+import {
+	type Budget,
+	budgetFor,
+	CHARS_PER_TOKEN,
+	fitContext,
+	replyReserve,
+	resultTokensFor,
+	sizeEvidence,
+	sizeRefusalMessage,
+	unclearRefusalMessage,
+	windowTooSmallMessage,
+} from "./context-budget.js";
 
 type Inner = (
 	model: Model<any>,
@@ -24,14 +35,36 @@ const RETRY_CEILING_TOKENS = 24000;
 
 /**
  * Windows learned from refusals, per provider and model: a model list can claim more than the provider takes. Kept for
- * the panel's life, so later turns don't hit the same refusal first.
+ * the panel's life, so later turns don't hit the same refusal first. A window is learned when the provider's words
+ * name size, or the second time a bare 400 was cured by a shorter request: once could be anything.
  */
 const learned = new Map<string, number>();
-const keyOf = (model: Model<any>) => `${model.provider}/${model.id}`;
+const strikes = new Map<string, number>();
+/** The system prompt and tool definitions of the last request, per model, so a tool can size its answer. */
+const lastFixed = new Map<string, number>();
+const keyOf = (model: Pick<Model<any>, "provider" | "id">) => `${model.provider}/${model.id}`;
 
 /** Forget what was learned (tests). */
 export function resetLearnedWindows(): void {
 	learned.clear();
+	strikes.clear();
+	lastFixed.clear();
+}
+
+/**
+ * Characters one tool result may hold on this model's next request: the same budget the guard will fit it to, from the
+ * learned window and the last request's system prompt and tools. A tool that answers within it is never cut after.
+ */
+export function toolBudgetChars(model: Model<any> | undefined): number {
+	if (!model) return resultTokensFor(budgetFor(undefined), 0) * CHARS_PER_TOKEN;
+	const key = keyOf(model);
+	return resultTokensFor(budgetFor(model, learned.get(key)), lastFixed.get(key) ?? 0) * CHARS_PER_TOKEN;
+}
+
+/** `options` asking for no more reply than the budget kept room for. */
+function withReply(options: any, model: Model<any>, budget: Budget): any {
+	const asked = replyReserve(model, options?.maxTokens, Number.POSITIVE_INFINITY);
+	return budget.replyTokens < asked ? { ...(options ?? {}), maxTokens: budget.replyTokens } : options;
 }
 
 function errorEvent(text: string, base?: AssistantMessage): AssistantMessageEvent {
@@ -71,49 +104,68 @@ async function pipe(from: AsyncIterator<AssistantMessageEvent>, out: AssistantMe
 export function guardContext<F extends Inner>(inner: F): F {
 	return (async (model: Model<any>, context: Context, options?: any) => {
 		const key = keyOf(model);
-		const budget = budgetFor(model, learned.get(key));
+		const budget = budgetFor(model, learned.get(key), options?.maxTokens);
 		const first = fitContext(context, budget);
-		const stream = await inner(model, first.context, options);
+		lastFixed.set(key, first.fixed);
 		const out = createAssistantMessageEventStream();
+		if (first.fixed >= budget.inputTokens) {
+			// Nothing can be cut that would make this fit: say so instead of sending a request that must be refused.
+			out.push(
+				errorEvent(
+					windowTooSmallMessage({
+						fixed: first.fixed,
+						inputTokens: budget.inputTokens,
+						windowSize: budget.windowSize,
+					}),
+				),
+			);
+			out.end();
+			return out;
+		}
+		const stream = await inner(model, first.context, withReply(options, model, budget));
 		void (async () => {
 			const iterator = stream[Symbol.asyncIterator]();
 			const head = await iterator.next();
 			if (head.done) return out.end();
 			const event = head.value;
+			const evidence =
+				event.type === "error" && event.reason === "error"
+					? sizeEvidence(event.error.errorMessage, first.estimate, budget.windowSize, first.original)
+					: undefined;
 			// Only a refusal before anything streamed can be retried unseen; anything else passes through.
-			if (
-				event.type !== "error" ||
-				event.reason !== "error" ||
-				!isSizeRefusal(event.error.errorMessage, first.estimate, budget.windowSize, first.original)
-			) {
+			if (event.type !== "error" || !evidence) {
 				out.push(event);
 				return pipe(iterator, out);
 			}
 			const refused = event.error.errorMessage ?? "";
 			const ceiling = Math.max(2048, Math.min(Math.floor(first.estimate / 2), RETRY_CEILING_TOKENS));
-			const harder = budgetFor(model, ceiling);
+			const harder = budgetFor(model, ceiling, options?.maxTokens);
 			const second = fitContext(context, harder);
-			const retry = (await inner(model, second.context, options))[Symbol.asyncIterator]();
+			const retry = (await inner(model, second.context, withReply(options, model, harder)))[Symbol.asyncIterator]();
 			const head2 = await retry.next();
 			if (head2.done) return out.end();
 			const again = head2.value;
 			if (again.type === "error" && again.reason === "error") {
 				const message = again.error.errorMessage ?? "";
-				if (message === refused || isSizeRefusal(message, second.estimate, harder.windowSize)) {
-					out.push(
-						errorEvent(
-							sizeRefusalMessage({
+				const evidence2 = sizeEvidence(message, second.estimate, harder.windowSize);
+				if (message === refused || evidence2) {
+					// Size is claimed only on proof: the provider said so, or the first request was at the window.
+					const proven = evidence === "words" || evidence === "likely" || evidence2 === "words";
+					const text = proven
+						? sizeRefusalMessage({
 								estimate: second.estimate,
-								windowSize: harder.windowSize,
 								provider: model.provider,
 								detail: providerDetail(refused),
-							}),
-							again.error,
-						),
-					);
+							})
+						: unclearRefusalMessage({ estimate: second.estimate, first: refused });
+					out.push(errorEvent(text, again.error));
 					return out.end();
 				}
-			} else learned.set(key, ceiling);
+			} else {
+				const n = (strikes.get(key) ?? 0) + 1;
+				strikes.set(key, n);
+				if (evidence === "words" || n >= 2) learned.set(key, Math.min(learned.get(key) ?? ceiling, ceiling));
+			}
 			out.push(again);
 			return pipe(retry, out);
 		})().catch((err) => {

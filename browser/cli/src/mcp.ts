@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { checkSkill, listSkills, matchTask, readSkill, removeSkill, skillInfo, syncCommunity, writeSkill } from "./skill.ts";
 import { stageCases } from "./skill-submit.ts";
 import { firecrawlCrawl, firecrawlMap, pageMarkdown } from "./firecrawl.ts";
-import { capCrawl, capOutput, MARKDOWN_CHARS, sliceText, snapshotCutNote, VALUE_CHARS } from "./output-cap.ts";
+import { capCrawl, capOutput, fitSnapshot, MARKDOWN_CHARS, sliceText, VALUE_CHARS } from "./output-cap.ts";
 import { searxSearch } from "./searx.ts";
 import { selfExec, selfPrefix } from "./self.ts";
 import { VERSION } from "./version.ts";
@@ -623,9 +623,16 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 		async (args) => {
 			try {
-				const maxTextChars = args.maxTextChars ?? 3000;
-				const snap = (await client.call("snapshot", { ...args, maxTextChars })) as Parameters<typeof formatSnapshot>[0];
-				return { content: text(formatSnapshot(snap) + snapshotCutNote(snap, args.maxNodes ?? 300, maxTextChars)) };
+				const maxTextChars = Math.max(0, args.maxTextChars ?? 3000);
+				const maxNodes = Math.max(1, args.maxNodes ?? 300);
+				// One more of each than is shown, so a cut is seen rather than guessed (fitSnapshot).
+				const raw = (await client.call("snapshot", {
+					...args,
+					maxNodes: maxNodes + 1,
+					maxTextChars: maxTextChars ? maxTextChars + 1 : 0,
+				})) as Parameters<typeof formatSnapshot>[0];
+				const { snap, note } = fitSnapshot(raw, maxNodes, maxTextChars);
+				return { content: text(formatSnapshot(snap) + note) };
 			} catch (err) {
 				return errorResult(err);
 			}
@@ -838,11 +845,13 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			}
 		},
 	);
+	/** The last run_js value, for offset reads of it (one value per session, the newest). */
+	let lastValue: { key: string; json: string } | undefined;
 	server.registerTool(
 		"run_js",
 		{
 			title: "Run JavaScript in the page",
-			description: "Run JavaScript in the page and return its JSON value, up to 50,000 characters (offset reruns the code and reads on). world \"user\" (default) is isolated with DOM access; \"main\" sees the page's own globals. Prefer read_page and the input tools; use it for data the page doesn't show. Example: {\"code\":\"document.querySelectorAll('tr').length\"}",
+			description: "Run JavaScript in the page and return its JSON value, up to 50,000 characters (offset reads on from the value kept, without running the code again). world \"user\" (default) is isolated with DOM access; \"main\" sees the page's own globals. Prefer read_page and the input tools; use it for data the page doesn't show. Example: {\"code\":\"document.querySelectorAll('tr').length\"}",
 			inputSchema: {
 				code: z.string().describe("JavaScript source"),
 				tabId,
@@ -852,10 +861,19 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 		async (args) => {
 			const { offset, ...rest } = args;
+			const key = JSON.stringify([rest.code, rest.world ?? "user", rest.tabId ?? null]);
 			try {
+				// Code can act (click, post, delete), so reading on must not run it twice: an offset reads the value the
+				// last run returned, kept for this session.
+				if (offset) {
+					if (lastValue?.key !== key)
+						return errorResult(new Error("No value is kept for that code, world and tab: run it without offset first, then read on with offset."));
+					return { content: text(sliceText(lastValue.json, offset, VALUE_CHARS, "return a smaller value, or call run_js again with offset")) };
+				}
 				const result = await client.call("evaluate", rest);
 				// As call() shows it: a string as is, anything else as JSON.
 				const json = typeof result === "string" ? result : (JSON.stringify(result) ?? "null");
+				lastValue = { key, json };
 				return { content: text(sliceText(json, offset, VALUE_CHARS, "return a smaller value, or call run_js again with offset")) };
 			} catch (err) {
 				return errorResult(err);

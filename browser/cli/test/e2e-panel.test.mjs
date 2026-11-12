@@ -463,17 +463,21 @@ function sse(reply) {
 
 // The bug this guards: extract_document handed a whole 400-page PDF (about 706,000 characters) to a model with a small
 // window, the provider answered "400 status code (no body)", and the thread stayed dead. Here a stand-in provider refuses
-// any request over REFUSE_OVER bytes the same way. The chat must end with the model's answer.
+// any request over REFUSE_OVER bytes the same way. The chat must end with the model's answer. The window is 32,000
+// tokens: the panel's own instructions and tools take about 14,000, so a 16,000 window leaves no room to read.
 test("a 400-page PDF read on a small-window model ends with an answer, not a 400", async () => {
 	const REFUSE_OVER = 150_000;
 	const filler = "Virtue is a settled state of character concerned with choice, lying in a mean relative to us.";
 	const pdf = makePdf(400, 20, (n, i) => (n === 287 && i === 3 ? "CONTEMPLATION is the highest activity, the life of the mind." : `Page ${n} line ${i}. ${filler}`));
 	const sizes = [];
+	const maxTokens = [];
 	let toolResult = "";
 	await context.route("https://docs.stub.test/**", (r) => r.fulfill({ status: 200, contentType: "application/pdf", headers: { "access-control-allow-origin": "*" }, body: pdf }));
 	await context.route("https://llm.stub.test/**", async (r) => {
 		const body = r.request().postData() ?? "";
 		sizes.push(body.length);
+		const asked = JSON.parse(body);
+		maxTokens.push(asked.max_completion_tokens ?? asked.max_tokens ?? 0);
 		if (body.length > REFUSE_OVER) return r.fulfill({ status: 400, headers: { "access-control-allow-origin": "*" }, body: "" });
 		const messages = JSON.parse(body).messages;
 		const result = messages.find((m) => m.role === "tool");
@@ -490,7 +494,7 @@ test("a 400-page PDF read on a small-window model ends with an answer, not a 400
 		reasoning: false,
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 16_000,
+		contextWindow: 32_000,
 		maxTokens: 2048,
 	};
 	const page = await context.newPage();
@@ -528,6 +532,10 @@ test("a 400-page PDF read on a small-window model ends with an answer, not a 400
 		assert.match(toolResult, /400 pages/);
 		assert.match(toolResult, /query/);
 		assert.ok(toolResult.length < 60_000, `tool result was ${toolResult.length} characters`);
+		// The tool's own answer reached the model whole: the guard did not cut it again.
+		assert.doesNotMatch(toolResult, /Polycarp cut this here/);
+		// The reply asked for is what the budget kept room for.
+		assert.ok(maxTokens.every((n) => n <= 2048), `max tokens asked: ${maxTokens.join(", ")}`);
 	} finally {
 		await context.unroute("https://docs.stub.test/**");
 		await context.unroute("https://llm.stub.test/**");

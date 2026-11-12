@@ -12,6 +12,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { FILE_ASK_TIMEOUT_MS, FILE_CHUNK_FROM_EXTENSION, FILE_CHUNK_TO_EXTENSION } from "../../src/bridge/protocol.ts";
 import { type BridgeClient, BridgeRpcError } from "./client.ts";
+import { OUTPUT_CAP, utf8Window } from "./output-cap.ts";
 import { checkUploadCaps, checkUploadPath, MAX_UPLOAD_FILES, type RuleEnv } from "./file-rules.ts";
 import {
 	byteSize,
@@ -250,12 +251,11 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 		if (isTextMime(file.mime)) {
 			const cap = Math.min(limit ?? READ_TEXT_DEFAULT, READ_TEXT_CAP);
 			const all = saved.read(file);
-			const from = Math.min(Math.max(0, Math.floor(args.offset ?? 0)), all.length);
-			const end = Math.min(all.length, from + cap);
-			// A cut may land inside a character; the broken ends are dropped.
-			const body = all.subarray(from, end).toString("utf8").replace(/^\ufffd+/, "").replace(/\ufffd+$/, "");
+			// Both ends on a character boundary, and under the output cap with room for the note, so the offset given
+			// for the rest is exactly where this part stopped.
+			const { text: body, from, end } = utf8Window(all, args.offset ?? 0, cap, OUTPUT_CAP - 1000);
 			if (!from && end === all.length) return say(body);
-			const which = from ? `bytes ${from} to ${end}` : `the first ${byteSize(cap)}`;
+			const which = from ? `bytes ${from} to ${end}` : `the first ${byteSize(end)}`;
 			const more = end < all.length ? ` For the rest, read again with offset ${end}.` : "";
 			return say(`${body}\n\n[Cut: ${which} of ${byteSize(all.length)} (${file.name}).${more}${where}]`);
 		}

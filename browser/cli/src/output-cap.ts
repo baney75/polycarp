@@ -59,12 +59,47 @@ export function capCrawl(result: unknown): unknown {
 	};
 }
 
-/** read_page's note when the element list or the text was cut, with how to read on. */
-export function snapshotCutNote(snap: { nodes: unknown[]; text: string }, maxNodes: number, maxTextChars: number): string {
+/**
+ * A read_page snapshot cut to its caps, with a note when it was. The caller asks the page for one more element and one
+ * more character than it shows, so a cut is known, not guessed from a list that happens to be exactly full. The text
+ * comes from read_page's own extraction, whose offsets don't match get_page_text's, so the note names no offset.
+ */
+export function fitSnapshot<S extends { nodes: unknown[]; text: string }>(snap: S, maxNodes: number, maxTextChars: number): { snap: S; note: string } {
 	const notes: string[] = [];
-	if (snap.nodes.length >= maxNodes)
+	let out = snap;
+	if (snap.nodes.length > maxNodes) {
+		out = { ...out, nodes: snap.nodes.slice(0, maxNodes) };
 		notes.push(`The element list stopped at ${fmt(maxNodes)}: use find for what you need, filter "interactive", or a larger maxNodes.`);
-	if (maxTextChars > 0 && snap.text.length >= maxTextChars)
-		notes.push(`The text stopped at ${fmt(maxTextChars)} characters: get_page_text with offset ${maxTextChars} reads on.`);
-	return notes.length ? `\n\n[${notes.join(" ")}]` : "";
+	}
+	if (snap.text.length > maxTextChars) {
+		out = { ...out, text: snap.text.slice(0, maxTextChars) };
+		notes.push(`The text stopped at ${fmt(maxTextChars)} characters: get_page_text reads all of it, in parts, from the top.`);
+	}
+	return { snap: out, note: notes.length ? `\n\n[${notes.join(" ")}]` : "" };
+}
+
+/**
+ * A window of UTF-8 bytes as text: at most `maxBytes` from `offset` and at most `maxChars` characters, both ends on a
+ * character boundary, so no character is split and `end` is the exact offset that reads on.
+ */
+export function utf8Window(all: Uint8Array, offset: number, maxBytes: number, maxChars: number): { text: string; from: number; end: number } {
+	const cont = (i: number) => i < all.length && (all[i] & 0xc0) === 0x80;
+	let from = Math.min(Math.max(0, Math.floor(offset)), all.length);
+	while (cont(from)) from++;
+	let end = Math.min(all.length, from + Math.max(1, maxBytes));
+	while (end > from && cont(end)) end--;
+	// A limit smaller than one character still reads that character, so a reader always moves on.
+	if (end === from && from < all.length) {
+		end++;
+		while (cont(end)) end++;
+	}
+	let text = new TextDecoder().decode(all.subarray(from, end));
+	if (text.length > maxChars) {
+		let cut = maxChars;
+		const code = text.charCodeAt(cut - 1);
+		if (code >= 0xd800 && code <= 0xdbff) cut--;
+		text = text.slice(0, cut);
+		end = from + new TextEncoder().encode(text).length;
+	}
+	return { text, from, end };
 }

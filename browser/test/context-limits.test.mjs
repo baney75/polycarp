@@ -5,10 +5,22 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 
-const { budgetFor, capText, estimateContextTokens, fitContext, isSizeRefusal, toolResultBudgetChars } = await import(
-	"../src/models/context-budget.ts"
+const {
+	budgetFor,
+	capText,
+	estimateContextTokens,
+	estimateTextTokens,
+	fitContext,
+	isSizeRefusal,
+	resultTokensFor,
+	sizeEvidence,
+	toolResultBudgetChars,
+} = await import("../src/models/context-budget.ts");
+const { guardContext, resetLearnedWindows, toolBudgetChars } = await import("../src/models/context-guard.ts");
+const { attachedText, ATTACHMENT_INLINE_CHARS, browserMessageTransformer } = await import(
+	"../src/messages/message-transformer.ts"
 );
-const { guardContext, resetLearnedWindows } = await import("../src/models/context-guard.ts");
+const prompts = await import("../src/prompts/prompts.ts");
 const { createExtractDocumentTool, clearDocumentCache } = await import("../src/tools/extract-document.ts");
 const { parseExtracted } = await import("../src/tools/document-reader.ts");
 const { isPdfPageJump } = await import("../src/browser/page.ts");
@@ -166,14 +178,13 @@ test("a history holding a 700,000 character tool result is shrunk to fit before 
 	assert.ok(estimateContextTokens(context) > budget.inputTokens);
 	const fitted = fitContext(context, budget);
 	assert.ok(fitted.trimmed);
-	assert.ok(!fitted.over, `estimate ${fitted.estimate} over ${budget.inputTokens}`);
-	assert.ok(estimateContextTokens(fitted.context) <= budget.inputTokens);
+	assert.ok(estimateContextTokens(fitted.context) <= budget.inputTokens, `estimate ${fitted.estimate} over ${budget.inputTokens}`);
 	assert.equal(fitted.context.messages.length, context.messages.length);
 	assert.ok(pairsIntact(fitted.context.messages));
 	for (const i of [0, 3]) assert.equal(fitted.context.messages[i], context.messages[i], "user messages go as they are");
 	const cut = fitted.context.messages[2].content[0].text;
-	assert.match(cut, /Polycarp left out [\d,]+ of [\d,]+ characters/);
-	assert.match(cut, /pages \(like "40-55"\) or query/);
+	assert.match(cut, /\[Polycarp cut this here to fit the model's context: [\d,]+ of [\d,]+ characters after this point were not sent\./);
+	assert.match(cut, /fewer pages \(like "40-42"\) or a query/);
 	// Stored history is untouched.
 	assert.equal(context.messages[2].content[0].text, big);
 });
@@ -200,23 +211,224 @@ test("older tool results give way before the latest one", () => {
 	// Oldest first: lengths never grow from the latest back to the oldest, and the oldest gave way.
 	assert.ok(lengths.every((n, i) => i === 0 || lengths[i - 1] <= n), `lengths ${lengths}`);
 	assert.ok(lengths[0] < lengths.at(-1), `lengths ${lengths}`);
-	assert.ok(!fitted.over);
+	assert.ok(fitted.estimate <= budget.inputTokens);
 	assert.ok(pairsIntact(fitted.context.messages));
 });
 
-test("capText keeps the head and the tail and says what was dropped", () => {
-	const text = `${"A".repeat(5000)}${"B".repeat(5000)}`;
+test("capText keeps the head only, so a tool's own read-on note is never kept pointing past what was dropped", () => {
+	const text = `${"A".repeat(5000)}${"B".repeat(5000)}\n[For the rest, call again with offset 10000.]`;
 	const cut = capText(text, 2000, "Ask for less.");
 	assert.ok(cut.length <= 2000);
 	assert.ok(cut.startsWith("A"));
-	assert.ok(cut.endsWith("B"));
-	assert.match(cut, /left out [\d,]+ of 10,000 characters here to fit the model's context\. Ask for less\./);
+	assert.doesNotMatch(cut, /B|offset 10000/);
+	assert.match(cut, /\[Polycarp cut this here to fit the model's context: [\d,]+ of 10,04\d characters after this point were not sent\. Ask for less\.\]$/);
 	assert.equal(capText("short", 2000), "short");
+});
+
+// ---- every block, every path -----------------------------------------------------------------
+
+const toolResult = (content, toolName = "repl") => ({
+	role: "toolResult",
+	toolCallId: "call_1",
+	toolName,
+	content,
+	isError: false,
+	timestamp: 3,
+});
+const withMessage = (message, extra = []) => ({
+	systemPrompt: "You are Polycarp.",
+	tools: [],
+	messages: [
+		{ role: "user", content: "Read it", timestamp: 1 },
+		{ role: "assistant", content: [{ type: "toolCall", id: "call_1", name: "repl", arguments: {} }], timestamp: 2 },
+		message,
+		...extra,
+	],
+});
+
+test("sol-F1: one result of 1,000 blocks of 350 characters is held to one budget in all, on an 8k model", () => {
+	const blocks = Array.from({ length: 1000 }, (_, i) => ({ type: "text", text: `block ${i} ${"word ".repeat(68)}` }));
+	assert.ok(blocks.every((b) => b.text.length <= 350));
+	const context = withMessage(toolResult(blocks));
+	const budget = budgetFor(SMALL);
+	const fitted = fitContext(context, budget);
+	const sent = fitted.context.messages[2].content;
+	const tokens = sent.reduce((n, p) => n + estimateTextTokens(p.text), 0);
+	// The whole result, every block together, within the per-result budget (the note adds a line).
+	assert.ok(tokens <= fitted.resultTokens + 100, `result is ${tokens} tokens, budget ${fitted.resultTokens}`);
+	assert.ok(estimateContextTokens(fitted.context) <= budget.inputTokens);
+	assert.match(sent.at(-1).text, /Polycarp left out \d+ more of the 1000 text parts/);
+	assert.equal(sent[0].text, blocks[0].text, "the first blocks go whole");
+});
+
+test("second-N1: a 700,000 character attachment goes to the model as a note and its start, and reads in parts", async () => {
+	const text = book(400, DISTRACTORS);
+	const inline = attachedText({ fileName: "ethics.pdf", extractedText: text });
+	assert.ok(inline.length < 3000, `inline attachment is ${inline.length} characters`);
+	assert.match(inline, /^\n\n\[Document: ethics\.pdf\]/, "keeps the mark the guard knows attachments by");
+	assert.match(inline, /extract_document \{"attachment": "ethics\.pdf"\}/);
+	// A short file still goes whole.
+	const short = "A short note.";
+	assert.equal(attachedText({ fileName: "n.txt", extractedText: short }), `\n\n[Document: n.txt]\n${short}`);
+	assert.ok(ATTACHMENT_INLINE_CHARS <= toolResultBudgetChars({ contextWindow: 32000 }) * 2);
+	// The tool reads the attached file by name, within the budget, with no download.
+	clearDocumentCache();
+	const tool = createExtractDocumentTool({
+		budgetChars: () => toolResultBudgetChars(SMALL),
+		attachments: () => [{ extractedText: text, fileName: "ethics.pdf", mimeType: "application/pdf", size: 3_200_000 }],
+		load: async () => assert.fail("an attachment is not downloaded"),
+	});
+	const out = resultText(await tool.execute("c1", { attachment: "ethics.pdf", query: "contemplation needs no external things" }));
+	assert.ok(out.length <= toolResultBudgetChars(SMALL));
+	assert.match(out, /Page 287/);
+	const page = resultText(await tool.execute("c2", { attachment: "ethics", pages: "287" }));
+	assert.match(page, /needs no external things/);
+	await assert.rejects(tool.execute("c3", { attachment: "other.pdf" }), /ethics\.pdf/);
+	await assert.rejects(tool.execute("c4", { attachment: "ethics.pdf", url: URL_ }), /one of them/);
+});
+
+test("second-N1: an attachment already inline in a stored user message is cut like a tool result; the typed words stay", () => {
+	const typed = { type: "text", text: "Find where he says contemplation needs nothing external" };
+	const message = { role: "user", content: [typed, { type: "text", text: `\n\n[Document: ethics.pdf]\n${book(400)}` }], timestamp: 4 };
+	const context = withMessage(toolResult([{ type: "text", text: "ok" }]), [message]);
+	const fitted = fitContext(context, budgetFor(SMALL));
+	const sent = fitted.context.messages[3].content;
+	assert.equal(sent[0], typed, "the person's words go whole");
+	assert.ok(estimateTextTokens(sent[1].text) <= fitted.resultTokens + 100);
+	assert.match(sent[1].text, /extract_document \{"attachment"/);
+	assert.ok(estimateContextTokens(fitted.context) <= budgetFor(SMALL).inputTokens);
+});
+
+test("second-N1: a 700,000 character paste is cut last, but cut: the request still fits", () => {
+	const paste = { role: "user", content: book(400), timestamp: 4 };
+	const fitted = fitContext(withMessage(toolResult([{ type: "text", text: "ok" }]), [paste]), budgetFor(SMALL));
+	assert.ok(estimateContextTokens(fitted.context) <= budgetFor(SMALL).inputTokens, `estimate ${fitted.estimate}`);
+	assert.match(fitted.context.messages[3].content, /Ask the person for the part that matters/);
+	assert.equal(fitted.context.messages[0].content, "Read it", "a short message is not cut");
+});
+
+test("second-N1: every path into a message, through the real transformer, is bounded: attachment, paste, navigation", async () => {
+	const big = book(400);
+	const stored = [
+		{ role: "user-with-attachments", content: "Read the attached book", attachments: [{ id: "a1", type: "document", fileName: "ethics.pdf", mimeType: "application/pdf", size: 3_200_000, content: "", extractedText: big }], timestamp: 1 },
+		{ role: "assistant", content: [{ type: "text", text: "Done." }], api: "openai-completions", provider: "p", model: "m", usage: {}, stopReason: "stop", timestamp: 2 },
+		{ role: "navigation", url: "https://example.com/", title: "Example", tabId: 1, skillsOutput: big, timestamp: 3 },
+		{ role: "user", content: big, timestamp: 4 },
+	];
+	const messages = await browserMessageTransformer(stored);
+	const context = { systemPrompt: "You are Polycarp.", tools: [], messages };
+	assert.ok(estimateContextTokens(context) > 600_000 / 3, "the paths carry the whole book before fitting");
+	const budget = budgetFor(SMALL);
+	const fitted = fitContext(context, budget);
+	assert.ok(estimateContextTokens(fitted.context) <= budget.inputTokens, `estimate ${fitted.estimate} over ${budget.inputTokens}`);
+	assert.equal(fitted.context.messages.length, messages.length);
+});
+
+test("first-F3: Chinese text and dense code count more tokens a character than English", () => {
+	assert.equal(estimateTextTokens("日本語".repeat(1000)), 3000);
+	assert.equal(estimateTextTokens("abc".repeat(1000)), 1000);
+	assert.ok(estimateTextTokens("{a:[1,2]};".repeat(100)) >= 1000 / 3 * 1.3, "code counts more than chars/3");
+	// A CJK result is held to the same tokens, so it keeps about a third of the characters an English one would.
+	const fitted = fitContext(withMessage(toolResult([{ type: "text", text: "道".repeat(30_000) }])), budgetFor(SMALL));
+	const kept = fitted.context.messages[2].content[0].text;
+	assert.ok(estimateTextTokens(kept) <= fitted.resultTokens, `${estimateTextTokens(kept)} tokens`);
+	assert.ok(kept.length < fitted.resultTokens * 1.2);
+});
+
+/** The panel's fixed text: its system prompt and the descriptions of its own tools (the panel sends more). */
+function panelContext(messages) {
+	const tools = Object.entries(prompts)
+		.filter(([k, v]) => k !== "SYSTEM_PROMPT" && typeof v === "string")
+		.map(([name, description]) => ({ name, description, parameters: { type: "object" } }));
+	return { systemPrompt: prompts.SYSTEM_PROMPT, tools, messages };
+}
+
+test("second-N2: on an 8k model the real system prompt and tools leave no room, so nothing is sent and the error says why", async () => {
+	resetLearnedWindows();
+	const { inner, sent } = stub(() => ({ text: "never" }));
+	const last = await finalOf(await guardContext(inner)(SMALL, panelContext([{ role: "user", content: "hi", timestamp: 1 }]), {}));
+	assert.equal(sent.length, 0, "no request the provider must refuse");
+	assert.equal(last.type, "error");
+	assert.match(last.error.errorMessage, /context window \(8,192 tokens\) is too small for Polycarp: its instructions and tools alone take about [\d,]+ tokens/);
+});
+
+test("second-N2: on a 16k model the result budget comes from what the system prompt and tools leave", async () => {
+	resetLearnedWindows();
+	const MID = { id: "mid", provider: "local", contextWindow: 16_384, maxTokens: 16_384 };
+	const context = panelContext(history(book(400)).messages);
+	const budget = budgetFor(MID);
+	const fitted = fitContext(context, budget);
+	assert.ok(fitted.fixed > 6000, `fixed ${fitted.fixed}`);
+	assert.ok(fitted.resultTokens < budget.toolResultTokens, "less than the window's share: the rest is taken");
+	assert.equal(fitted.resultTokens, resultTokensFor(budget, fitted.fixed));
+	assert.ok(fitted.estimate <= budget.inputTokens);
+	const { inner, sent, options } = stub(() => ({ text: "ok" }));
+	await finalOf(await guardContext(inner)(MID, context, {}));
+	assert.equal(sent.length, 1);
+	// A tool sizing its answer after this request gets the guard's own budget, so its answer is never cut again.
+	assert.equal(toolBudgetChars(MID), fitted.resultTokens * 3);
+	assert.ok(toolBudgetChars(MID) < toolResultBudgetChars(MID));
+	// second-N3: the reply asked for is the one the budget kept room for, not the model's 16,384.
+	assert.equal(options[0].maxTokens, budget.replyTokens);
+	assert.ok(estimateContextTokens(sent[0]) + options[0].maxTokens <= MID.contextWindow);
+});
+
+test("second-N3: a stream that asks for more reply than the window allows is lowered to what was kept", async () => {
+	resetLearnedWindows();
+	const BIG_REPLY = { id: "r", provider: "local", contextWindow: 32_768, maxTokens: 32_768 };
+	const { inner, options } = stub(() => ({ text: "ok" }));
+	await finalOf(await guardContext(inner)(BIG_REPLY, history("short"), { maxTokens: 30_000 }));
+	assert.equal(options[0].maxTokens, budgetFor(BIG_REPLY, undefined, 30_000).replyTokens);
+	assert.ok(options[0].maxTokens <= 32_768 / 4);
+	// A request for less than the reserve is left as it was.
+	const small = stub(() => ({ text: "ok" }));
+	const asked = { maxTokens: 2000 };
+	await finalOf(await guardContext(small.inner)(BIG_REPLY, history("short"), asked));
+	assert.equal(small.options[0], asked);
+});
+
+test("second-N4: extract_document's answer, sized by the guard's budget, reaches the model whole with its note", async () => {
+	resetLearnedWindows();
+	for (const text of [book(400), book(60, Object.fromEntries(Array.from({ length: 60 }, (_, i) => [i + 1, "論語學而第一子曰學而時習之不亦說乎".repeat(60)])))]) {
+		const { tool } = toolWith(text);
+		const out = resultText(await tool.execute("c1", { url: URL_, pages: "10-30" }));
+		assert.match(out, /offset \d+/, "names the call that reads on");
+		const context = history(out);
+		const fitted = fitContext(context, budgetFor(SMALL));
+		assert.equal(fitted.context.messages[2].content[0].text, out, "not cut again");
+	}
+});
+
+test("second-N4: on the tightest budget the answer still fits whole, its note included", async () => {
+	// What a 16k model has left after the panel's own prompt and tools: the 500-token floor, 1,500 characters.
+	clearDocumentCache();
+	const tool = createExtractDocumentTool({
+		budgetChars: () => 1500,
+		load: async () => ({ extractedText: book(400), fileName: "ethics.pdf", mimeType: "application/pdf", size: 3_200_000 }),
+	});
+	const overview = resultText(await tool.execute("c1", { url: URL_ }));
+	assert.ok(estimateTextTokens(overview) <= 500, `${estimateTextTokens(overview)} tokens`);
+	assert.match(overview, /To find a passage, call it with query/);
+	const range = resultText(await tool.execute("c2", { url: URL_, pages: "10-30" }));
+	assert.ok(estimateTextTokens(range) <= 500, `${estimateTextTokens(range)} tokens`);
+	assert.match(range, /pages "10-30" and offset \d+/);
+});
+
+test("first-F6 hint: a cut extract_document result says the page it stopped inside", () => {
+	const pages = Array.from({ length: 50 }, (_, i) => `--- Page ${i + 1} of 50 ---\n${"text of the page ".repeat(100)}`).join("\n\n");
+	const fitted = fitContext(history(pages), budgetFor(SMALL));
+	const cut = fitted.context.messages[2].content[0].text;
+	const seen = [...cut.matchAll(/--- Page (\d+) of 50 ---/g)].map((m) => m[1]).at(-1);
+	assert.match(cut, new RegExp(`It stopped inside page ${seen}: call extract_document with pages starting at ${seen}`));
 });
 
 // ---- size refusals ---------------------------------------------------------------------------
 
 test("a size refusal is recognized; a bare 400 only near the window; another 400 never", () => {
+	assert.equal(sizeEvidence("400 status code (no body)", 30000, 32768), "likely");
+	assert.equal(sizeEvidence("400 status code (no body)", 20000, 32768), "maybe");
+	assert.equal(sizeEvidence("400 status code (no body)", 2000, 32768, 900_000), "maybe");
+	assert.equal(sizeEvidence("prompt is too long", 10, 32768), "words");
 	assert.ok(isSizeRefusal("This model's maximum context length is 32768 tokens", 1000, 32768));
 	assert.ok(isSizeRefusal("413 status code (no body)", 1000, 32768));
 	assert.ok(isSizeRefusal("400 status code (no body)", 30000, 32768));
@@ -226,8 +438,10 @@ test("a size refusal is recognized; a bare 400 only near the window; another 400
 
 function stub(behavior) {
 	const sent = [];
-	const inner = async (model, context) => {
+	const options = [];
+	const inner = async (model, context, opts) => {
 		sent.push(context);
+		options.push(opts);
 		const s = createAssistantMessageEventStream();
 		const reply = behavior(context, sent.length);
 		queueMicrotask(() => {
@@ -242,7 +456,7 @@ function stub(behavior) {
 		});
 		return s;
 	};
-	return { inner, sent };
+	return { inner, sent, options };
 }
 
 async function finalOf(stream) {
@@ -276,18 +490,44 @@ test("when the provider takes less than the window its model list claims, a bare
 	assert.equal(sent.length, 2, "one refusal, one retry");
 	assert.ok(JSON.stringify(sent[1]).length <= LIMIT);
 	assert.ok(pairsIntact(sent[1].messages));
-	// The next turn starts at the size that worked.
+	// first-F2: one bare 400 is not proof: the next turn tries the listed window again ...
+	await finalOf(await guarded(CLAIMS, history(book(400)), {}));
+	assert.equal(sent.length, 4, "refused and retried again");
+	// ... and after the second, the size that worked is kept: the turn after starts there.
+	await finalOf(await guarded(CLAIMS, history(book(400)), {}));
+	assert.equal(sent.length, 5);
+});
+
+test("first-F2: a refusal that names size is learned the first time", async () => {
+	resetLearnedWindows();
+	const CLAIMS = { id: "w", provider: "p", contextWindow: 131_072, maxTokens: 8192 };
+	const { inner, sent } = stub((context) =>
+		JSON.stringify(context).length > 20_000 ? { error: "This model's maximum context length is 6000 tokens" } : { text: "ok" },
+	);
+	const guarded = guardContext(inner);
+	await finalOf(await guarded(CLAIMS, history(book(400)), {}));
+	assert.equal(sent.length, 2);
 	await finalOf(await guarded(CLAIMS, history(book(400)), {}));
 	assert.equal(sent.length, 3);
 });
 
-test("a refusal that survives the retry reads as a plain sentence, not '400 status code (no body)'", async () => {
+test("first-F2: a bare 400 that survives the retry on a request well under the window is not blamed on length", async () => {
 	resetLearnedWindows();
 	const { inner, sent } = stub(() => ({ error: "400 status code (no body)" }));
 	const last = await finalOf(await guardContext(inner)(SMALL, history(book(400)), {}));
 	assert.equal(last.type, "error");
+	assert.equal(sent.length, 2, "one retry, cut harder, since the uncut chat was over the window");
+	assert.match(last.error.errorMessage, /^The provider refused this request \(400 status code \(no body\)\)/);
+	assert.match(last.error.errorMessage, /It may not be the chat's length/);
+	assert.doesNotMatch(last.error.errorMessage, /too long/);
+});
+
+test("a refusal that names size and survives the retry reads as a plain sentence about length", async () => {
+	resetLearnedWindows();
+	const { inner, sent } = stub(() => ({ error: "prompt is too long: 9000 tokens > 8192 maximum" }));
+	const last = await finalOf(await guardContext(inner)(SMALL, history(book(400)), {}));
 	assert.equal(sent.length, 2);
-	assert.match(last.error.errorMessage, /^This chat is too long for the model\. Polycarp cut older tool results/);
+	assert.match(last.error.errorMessage, /^This chat is too long for the model \(cerebras said: prompt is too long/);
 	assert.match(last.error.errorMessage, /tried again/);
 });
 
