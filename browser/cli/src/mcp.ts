@@ -31,6 +31,7 @@ import { VERSION } from "./version.ts";
 import { COMPUTER_INSTRUCTION, COMPUTER_STATUS_TOOL, type ComputerClient, LOCAL_COMPUTER_INSTRUCTION, LocalComputer } from "./computer.ts";
 import { COMMAND_NAME } from "./self.ts";
 import { envVar } from "./env.ts";
+import { hideOutsideCore, SMALL_CORE, SMALL_INSTRUCTION } from "./small-profile.ts";
 import type { RosterDevice } from "./link-protocol.ts";
 
 /** Controls an interactive read lists by default: a first look of about 1,500 tokens on a busy page (evals/weak-model). */
@@ -195,6 +196,8 @@ export interface McpServerOptions {
 	hub?: McpHub;
 	/** Asked before every tool call; a string refuses it with that text. `link run` reads its live cap here, so a removal applies to open sessions. */
 	callCheck?: CallCheck;
+	/** "small": the core tools listed, the rest behind more_tools (cli/src/small-profile.ts). */
+	profile?: "small";
 }
 
 /** What a session behind a hub knows about it: which device it runs on, and the hub's last roster (undefined until one arrives). */
@@ -284,15 +287,18 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	const allowedTools = options.allowedTools && options.hub ? new Set([...options.allowedTools, DEVICES_TOOL]) : options.allowedTools;
 	// Fail closed: the local helper runs without --connector, so a scoped or remote session never gets it.
 	const local = allowedTools || options.remote ? undefined : options.localComputer;
+	const small = options.profile === "small";
 
 	const server = new McpServer(
 		{ name: "polycarp", version: VERSION },
 		{
-			instructions: browserInstructions(allowedTools ? (t) => allowedTools.has(t) : () => true)
+			// The small profile names only its core tools, so a small model isn't sent after one it has to unlock.
+			instructions: browserInstructions((t) => (!allowedTools || allowedTools.has(t)) && (!small || SMALL_CORE.has(t)))
 				.concat(
 					options.computer?.tools.length ? [COMPUTER_INSTRUCTION] : [],
 					local?.present ? [LOCAL_COMPUTER_INSTRUCTION] : [],
 					options.hub ? [DEVICES_INSTRUCTION] : [],
+					small ? [SMALL_INSTRUCTION] : [],
 					allowedTools ? [`This session's tools: ${[...allowedTools].sort().filter((t) => !t.startsWith("computer_") || t === COMPUTER_STATUS_TOOL || options.computer?.tools.some((c) => c.name === t)).join(", ")}.`] : [],
 				)
 				.join(" "),
@@ -341,6 +347,8 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			});
 		};
 	}
+	// Last, so a hidden tool's handler is the one the gates above wrapped.
+	const addMoreTools = small ? hideOutsideCore(server) : undefined;
 	const choice = options.session ? { name: options.session, auto: false } : chooseSession({ flag: options.sessionFlag });
 	const client = new BridgeClient({
 		name: options.name ?? harnessName(),
@@ -1286,6 +1294,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		);
 	}
 
+	addMoreTools?.();
 	stripSchemaDialect(server);
 	if (local) waitForLocalComputer(server, local);
 
@@ -1431,14 +1440,15 @@ function registerSkillManagement(server: McpServer, library: <T>(fn: () => Promi
 	);
 }
 
-export async function runMcpServer(options: { session?: string } = {}): Promise<void> {
+export async function runMcpServer(options: { session?: string; profile?: "small" } = {}): Promise<void> {
 	if (!isInstalled()) {
 		// First run from any harness completes setup; the extension reconnects on its alarm.
 		const result = install();
 		process.stderr.write(`[polycarp] installed native host manifests (${result.written.length} file(s))\n`);
 	}
 	const localComputer = new LocalComputer();
-	const { server, client } = createMcpServer({ sessionFlag: options.session, localComputer });
+	const profile = options.profile ?? (envVar("PROFILE") === "small" ? "small" : undefined);
+	const { server, client } = createMcpServer({ sessionFlag: options.session, localComputer, profile });
 	process.stdin.on("end", () => localComputer.close());
 	// Community skills, about daily, in the background: many harnesses keep this server running.
 	// The whole reconciliation (skill.ts syncCommunity), not just the fetch: pulled skills lose their installed copies here too.
