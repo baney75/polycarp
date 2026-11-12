@@ -422,7 +422,9 @@ where the platform has signing), and each app's updater offers the nightly chann
 Verbs: `press <ref> <keys>` (several keys separated by spaces), `click-at` and `drag` (window id and window-local
 points, from the window's top-left corner). They reach one process that is not in front. They never activate,
 raise, switch a Space, move the real pointer or post to the session or a HID tap. Source tests read the one file
-that makes events (`BackgroundPoster.swift`) and fail if it names any of those.
+that makes events (`BackgroundPoster.swift`) and fail if it names any of those. `click-at` takes `count` (2 for a
+double click, 3 for a triple; the click state counts up and the clicks follow within the double-click interval) and
+`button` (`right` for one right click). A click the run stops after its press is still released.
 
 | Order | Route | Used for | Needs |
 | --- | --- | --- | --- |

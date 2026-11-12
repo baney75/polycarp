@@ -47,4 +47,14 @@ final class ClickStyleTests: XCTestCase {
         XCTAssertEqual(tool?.params.filter { ["count", "button"].contains($0.name) }.count, 2)
         XCTAssertTrue(tool?.summary.contains(#""count":2}"#) == true, "one example call")
     }
+
+    /// The poster and router live in the app target: their source posts the right button with the counted click state.
+    func testThePosterAndRouterCarryTheStyle() throws {
+        let poster = try HandsSourceTests.code("Sources/BaneySpaces/Hands/BackgroundPoster.swift")
+        XCTAssertTrue(poster.contains("c.right ? .rightMouseDown : .leftMouseDown, p, Int64(c.state)"))
+        XCTAssertTrue(poster.contains("mouseButton: button"))
+        let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
+        XCTAssertTrue(router.contains(#"ClickStyle.parse(count: req.int("count"), button: req.string("button"))"#))
+        XCTAssertTrue(router.contains("InputScript.click(at: path[0], count: style.count, right: style.right)"))
+    }
 }
