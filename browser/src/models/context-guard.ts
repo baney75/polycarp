@@ -88,6 +88,18 @@ function withReply(options: any, budget: Budget): any {
 	return { ...(options ?? {}), maxTokens: budget.replyTokens };
 }
 
+/** `options` that send no max_tokens (pi-ai fills it from the model, so the payload loses it); the budget keeps the room. */
+export function withoutReplyCap(options: any): any {
+	const prior = options?.onPayload;
+	return {
+		...(options ?? {}),
+		onPayload: async (params: any, model: any) => {
+			const { max_tokens: _a, max_completion_tokens: _b, ...rest } = (await prior?.(params, model)) ?? params;
+			return rest;
+		},
+	};
+}
+
 function errorEvent(text: string, base?: AssistantMessage): AssistantMessageEvent {
 	const error: AssistantMessage = {
 		role: "assistant",

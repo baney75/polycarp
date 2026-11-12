@@ -71,7 +71,7 @@ import {
 } from "./messages/NavigationMessage.js";
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
-import { guardContext, toolBudgetChars } from "./models/context-guard.js";
+import { guardContext, toolBudgetChars, withoutReplyCap } from "./models/context-guard.js";
 import { modelLabelParts } from "./models/display.js";
 import { FREE_KEY_NOTE, FREE_PRIVACY_NOTE, FREE_SHORT_NOTE } from "./models/free-mode.js";
 import { freeComposerText, installFreeMode, setFreeMode, streamFree } from "./models/free-panel.js";
@@ -801,9 +801,9 @@ const updateUrl = (sessionId: string) => {
 };
 
 /**
- * The panel's model calls, under its gates: removed sign-ins, private mode, free mode and subscription routing. Every
- * provider, custom ones (LM Studio, vLLM, SGLang, llama.cpp) too, gets the max_tokens the guard reserved for the reply
- * (context-guard.ts): a server left to pick its own reply length can run input plus reply past the window.
+ * The panel's model calls, under its gates: removed sign-ins, private mode, free mode and subscription routing. Custom
+ * providers (LM Studio, vLLM, SGLang, llama.cpp) get no max_tokens: the dialog's per-model default (8192) cut thinking
+ * models off mid-answer. The guard still keeps the reply's room in the budget (context-guard.ts).
  */
 function uncappedStreamFn<F extends (model: Model<any>, ...rest: any[]) => any>(inner: F): F {
 	return (async (model: Model<any>, ...rest: any[]) => {
@@ -837,6 +837,9 @@ function uncappedStreamFn<F extends (model: Model<any>, ...rest: any[]) => any>(
 		// ChatGPT and Copilot plans run through the native host's loopback proxy, which holds the tokens.
 		const routed = await routeSubscriptionModel(model, rest[1]);
 		if (routed) return explainErrors(await inner(routed.model, rest[0], routed.options), model.provider);
+		const custom = await storage.customProviders.getAll().catch(() => []);
+		if (model.api === "openai-completions" && custom.some((p) => p.name === model.provider))
+			return inner(model, rest[0], withoutReplyCap(rest[1]));
 		return inner(model, ...rest);
 	}) as F;
 }

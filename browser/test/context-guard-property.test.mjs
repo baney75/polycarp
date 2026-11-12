@@ -121,7 +121,7 @@ function randomHistory(r) {
 			messages.push({ role: "toolResult", toolCallId: id, toolName: big ? "artifacts" : "navigate", content: result, isError: false, timestamp: ++t });
 			// A navigation's note, as the panel's transformer writes it and puts it after the results: mid-turn, user role.
 			if (r() < 0.5)
-				messages.push({ role: "user", content: `${CONTEXT_NOTE_MARK}\n✓ Navigation succeeded: Page ${t}\n</browser-context>\n${r() < 0.3 ? words(30_000) : "skills: none"}`, timestamp: ++t });
+				messages.push({ role: "user", content: `${CONTEXT_NOTE_MARK}\n✓ Navigation succeeded: Page ${t}\n</browser-context>\n${pick(words(30_000), "漢字".repeat(150), "skills: none", "skills: none")}`, timestamp: ++t });
 		}
 		if (!last || r() < 0.5) {
 			if (r() < 0.6)
@@ -134,10 +134,9 @@ function randomHistory(r) {
 /** A system prompt of about `tokens` tokens of plain text. */
 const fixedPrompt = (tokens) => words(tokens * 3);
 
-/** The person's latest message: a context note is Polycarp's, not the person's. */
-function lastUser(messages) {
-	for (let i = messages.length - 1; i >= 0; i--)
-		if (messages[i].role === "user" && !(typeof messages[i].content === "string" && messages[i].content.startsWith(CONTEXT_NOTE_MARK))) return messages[i];
+/** The person's latest message: a context note (by its time in the history, which a cut can't change) is Polycarp's. */
+function lastUser(messages, notes) {
+	for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "user" && !notes.has(messages[i].timestamp)) return messages[i];
 	return undefined;
 }
 
@@ -165,6 +164,7 @@ test("the guard either sends a request that fits, paired and with the latest mes
 	let cases = 0;
 	let sends = 0;
 	let healed = 0;
+	let bare = 0;
 	for (const [w, claimed] of windows.entries())
 		for (const [f, fixedTokens] of fixedParts.entries())
 			for (const [a, actualOf] of [(c) => c, (c) => Math.floor(c / 2), (c) => Math.min(c, 32_000)].entries())
@@ -176,6 +176,7 @@ test("the guard either sends a request that fits, paired and with the latest mes
 					const messages = randomHistory(r);
 					const context = { systemPrompt: fixedPrompt(fixedTokens), tools: [], messages };
 					const fixed = estimateFixedTokens(context);
+					const notes = new Set(messages.filter((m) => m.role === "user" && m.content.startsWith?.(CONTEXT_NOTE_MARK)).map((m) => m.timestamp));
 					const { inner, sent, options } = provider(actual, refusal, r() < 0.5);
 					const guarded = guardContext(inner);
 					let done = false;
@@ -194,8 +195,9 @@ test("the guard either sends a request that fits, paired and with the latest mes
 							assert.ok(size <= claimed, `sent ${size} tokens to a ${claimed} window`);
 							assert.ok(estimateFixedTokens(sent[k]) === fixed, "the fixed part goes whole");
 							assert.ok(pairsIntact(sent[k].messages), "tool calls paired");
-							const person = lastUser(messages);
-							const sentPerson = lastUser(sent[k].messages);
+							const person = lastUser(messages, notes);
+							const sentPerson = lastUser(sent[k].messages, notes);
+							bare += sent[k].messages.filter((m) => notes.has(m.timestamp) && !m.content.startsWith(CONTEXT_NOTE_MARK)).length;
 							assert.equal(sentPerson?.timestamp, person.timestamp, "the person's latest message is sent");
 							if (typeof person.content === "string" && person.content.length < 100) {
 								const said = typeof sentPerson.content === "string" ? [sentPerson.content] : sentPerson.content.map((p) => p.text);
@@ -224,7 +226,8 @@ test("the guard either sends a request that fits, paired and with the latest mes
 					// When the provider names size and its real window has room, the chat works within a few turns.
 					if (refusal === WORDS && actual >= minimumWindow(fixed) + 1024) assert.ok(done, `${model.id}: never answered (actual ${actual}, fixed ${fixed})`);
 				}
-	assert.ok(cases > 180 && sends > 100 && healed > 0, `cases ${cases}, sends ${sends}, healed ${healed}`);
+	// Notes cut to their notice alone are in the grid, and the person's latest message is sent past them.
+	assert.ok(cases > 180 && sends > 100 && healed > 0 && bare > 0, `cases ${cases}, sends ${sends}, healed ${healed}, bare ${bare}`);
 });
 
 // ---- the round 2 highs -----------------------------------------------------------------------

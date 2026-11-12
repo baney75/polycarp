@@ -1216,7 +1216,7 @@ the stored chat keeps everything. A request still over the budget is not sent.
 
 **Whose words they are.** The guard fits the messages as sent: after the panel's transformer, which turns each navigation
 into a user-role note and moves it after the tool results, mid-turn. A note opens with `CONTEXT_NOTE_MARK`
-(`<browser-context>`); it is cut like a tool result and travels with the call it follows. Only the person's messages start
+(`<browser-context>`), read once before any cut, since a cut can leave no room for it; it is cut like a tool result and travels with the call it follows. Only the person's messages start
 a turn or count as the latest message, so a navigation can never push the person's question out as an "earlier turn".
 
 **When the provider disagrees.** One retry, with the conversation halved and the fixed part whole. A smaller window is

@@ -54,9 +54,6 @@ export function isContextNote(m: Message): boolean {
 	return (first ?? "").trimStart().startsWith(CONTEXT_NOTE_MARK);
 }
 
-/** True for a message the person wrote: a user-role message that is not a context note. */
-export const isPersonMessage = (m: Message): boolean => m.role === "user" && !isContextNote(m);
-
 /**
  * The budget for one request, from one rule: the window, minus the reply asked for, minus the fixed part (system
  * prompt and tool schemas, measured from the request itself), leaves what the conversation may hold. The reply shrinks
@@ -286,23 +283,18 @@ function capTextTokens(text: string, maxTokens: number, hint: string | ((kept: s
  */
 type Kind = "result" | "attachment" | "user" | "note";
 
-/** The kind fitting cuts as context in `m` (steps 1 to 3): a result, a note, or else an attached document. */
-const contextKind = (m: Message): Kind =>
-	m.role === "toolResult" ? "result" : isContextNote(m) ? "note" : "attachment";
-
 const isAttachmentPart = (text: string) => text.trimStart().startsWith(ATTACHMENT_MARK);
 
-/** The text parts of `m` that `kind` covers. */
+/** The text parts of `m` that `kind` covers. The caller says whether `m` is a note: a cut note may have lost its mark. */
 function partsOf(m: Message, kind: Kind): string[] {
 	const content = m.content as unknown;
-	const note = isContextNote(m);
-	if (typeof content === "string") return (kind === "user" && !note) || (kind === "note" && note) ? [content] : [];
+	if (typeof content === "string") return m.role === "user" && (kind === "user" || kind === "note") ? [content] : [];
 	const texts = (content as Array<{ type: string; text?: string }>)
 		.filter((p) => p.type === "text")
 		.map((p) => p.text ?? "");
 	if (kind === "result") return m.role === "toolResult" ? texts : [];
-	if (kind === "note") return note ? texts : [];
-	if (m.role !== "user" || note) return [];
+	if (m.role !== "user") return [];
+	if (kind === "note") return texts;
 	return texts.filter((t) => (kind === "attachment" ? isAttachmentPart(t) : !isAttachmentPart(t)));
 }
 
@@ -322,13 +314,9 @@ function capParts(m: Message, kind: Kind, maxTokens: number): Message {
 	if (typeof content === "string")
 		return { ...m, content: capTextTokens(content, maxTokens, (k) => restHint(hintFor, k)) } as Message;
 	const all = content as Array<{ type: string; text?: string }>;
-	const note = isContextNote(m);
 	const covered = (p: { type: string; text?: string }) =>
 		p.type === "text" &&
-		(kind === "result" ||
-			(kind === "note"
-				? note
-				: m.role === "user" && !note && (kind === "attachment") === isAttachmentPart(p.text ?? "")));
+		(kind === "result" || kind === "note" || (kind === "attachment") === isAttachmentPart(p.text ?? ""));
 	const total = all.filter(covered).length;
 	let left = maxTokens;
 	let dropped = 0;
@@ -384,13 +372,11 @@ const ARGUMENT_STUB_TOKENS = 50;
 /**
  * An assistant message held to `maxTokens`: thinking goes first (an old turn's reasoning is not needed again, and a
  * signed thinking block can't be edited, only left out), then large tool call arguments become a short note (the call
- * keeps its id and name, so its result stays paired), then the text is cut from the end. `current` marks the turn in
- * progress, whose thinking stays.
+ * keeps its id and name, so its result stays paired), then the text is cut from the end.
  */
-function capAssistant(m: Message, maxTokens: number, current: boolean): Message {
+function capAssistant(m: Message, maxTokens: number): Message {
 	if (estimateMessageTokens(m) <= maxTokens || !Array.isArray(m.content)) return m;
-	let parts = m.content as unknown as Array<Record<string, unknown>>;
-	if (!current) parts = parts.filter((p) => p.type !== "thinking");
+	let parts = (m.content as unknown as Array<Record<string, unknown>>).filter((p) => p.type !== "thinking");
 	const sized = () => estimateMessageTokens({ ...m, content: parts } as unknown as Message);
 	if (sized() > maxTokens)
 		parts = parts.map((p) => {
@@ -473,14 +459,20 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 		changed = true;
 	};
 	const over = () => total > budget.inputTokens;
-	// The person's latest message: context notes are Polycarp's, so they never start a turn or stand for the person.
+	// Whose each message is, decided once from the history as it came and kept with it: a cut can take a note's mark
+	// away, and must never make it the person's. Notes are Polycarp's: they never start a turn or stand for the person.
+	let notes = messages.map(isContextNote);
+	const isPerson = (i: number) => messages[i].role === "user" && !notes[i];
 	const latestUser = () => {
-		for (let i = messages.length - 1; i >= 0; i--) if (isPersonMessage(messages[i])) return i;
+		for (let i = messages.length - 1; i >= 0; i--) if (isPerson(i)) return i;
 		return -1;
 	};
-	const capPart = (i: number, tokens: number) => replace(i, capParts(messages[i], contextKind(messages[i]), tokens));
-	const cuttable = () => messages.flatMap((m, i) => (partsOf(m, contextKind(m)).length ? [i] : []));
-	const size = (i: number) => partsTokens(messages[i], contextKind(messages[i]));
+	// The kind cut as context (steps 1 to 3): a result, a note, or else an attached document.
+	const kindAt = (i: number): Kind =>
+		messages[i].role === "toolResult" ? "result" : notes[i] ? "note" : "attachment";
+	const capPart = (i: number, tokens: number) => replace(i, capParts(messages[i], kindAt(i), tokens));
+	const cuttable = () => messages.flatMap((m, i) => (partsOf(m, kindAt(i)).length ? [i] : []));
+	const size = (i: number) => partsTokens(messages[i], kindAt(i));
 
 	// 1. Every tool result and attached document to its cap.
 	for (const i of cuttable()) capPart(i, resultTokens);
@@ -496,22 +488,22 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 			if (!over()) break;
 			capPart(i, c);
 		}
-	// 4. Images, oldest first, the latest user message's last.
-	for (const i of messages.map((_, k) => k).filter((k) => k !== latestUser())) {
+	// 4. Images before the latest user message, oldest first: the turn in progress keeps its own until step 11.
+	for (let i = 0; i < latestUser(); i++) {
 		if (!over()) break;
 		replace(i, withoutImages(messages[i]));
 	}
-	// 5. Earlier assistant replies and the turn's own, oldest first, halving.
+	// 5. Earlier assistant replies, oldest first, halving: the turn in progress gives way last (steps 10 and 11).
 	for (const c of halving(STUB_TOKENS * 2, over))
-		for (let i = 0; i < messages.length; i++) {
+		for (let i = 0; i < latestUser(); i++) {
 			if (!over()) break;
-			if (messages[i].role === "assistant") replace(i, capAssistant(messages[i], c, i > latestUser()));
+			if (messages[i].role === "assistant") replace(i, capAssistant(messages[i], c));
 		}
 	// 6. The person's earlier messages, oldest first.
 	for (const c of halving(STUB_TOKENS * 4, over))
 		for (let i = 0; i < latestUser(); i++) {
 			if (!over()) break;
-			if (isPersonMessage(messages[i])) replace(i, capParts(messages[i], "user", c));
+			if (isPerson(i)) replace(i, capParts(messages[i], "user", c));
 		}
 	// 7. The latest user message to half of what the conversation may hold: a paste that big can never go whole, and
 	// cutting it costs less than the chat's earlier turns.
@@ -527,12 +519,13 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 		total -= perMessage.slice(from, to).reduce((a, b) => a + b, 0);
 		messages = [...messages.slice(0, from), ...messages.slice(to)];
 		perMessage = [...perMessage.slice(0, from), ...perMessage.slice(to)];
+		notes = [...notes.slice(0, from), ...notes.slice(to)];
 		changed = true;
 		return to - from;
 	};
 	while (over() && latestUser() > 0) {
 		let next = 1;
-		while (next < latestUser() && !isPersonMessage(messages[next])) next++;
+		while (next < latestUser() && !isPerson(next)) next++;
 		droppedEarlier += drop(0, next);
 	}
 	if (droppedEarlier) {
@@ -562,15 +555,16 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 		if (calls.length < 2) break;
 		// A call goes with its results and the context notes after them (a navigation's note follows its result).
 		let end = calls[0] + 1;
-		while (end < messages.length && (messages[end].role === "toolResult" || isContextNote(messages[end]))) end++;
+		while (end < messages.length && (messages[end].role === "toolResult" || notes[end])) end++;
 		drop(calls[0], end);
 	}
-	// 11. Last, the newest call itself: its thinking, its text, then its arguments. Its id and result stay, so the pair
-	// holds; a provider that wants the thinking back may refuse, which is no worse than a request known not to fit.
+	// 11. Last, the newest call itself: its images, its thinking, its text, then its arguments. Its id and result stay, so
+	// the pair holds; a provider that wants the thinking back may refuse, which is no worse than a request known not to fit.
+	for (let i = latestUser() + 1; i < messages.length && over(); i++) replace(i, withoutImages(messages[i]));
 	for (const c of halving(STUB_TOKENS * 2, over))
 		for (let i = latestUser() + 1; i < messages.length; i++) {
 			if (!over()) break;
-			if (messages[i].role === "assistant") replace(i, capAssistant(messages[i], c, false));
+			if (messages[i].role === "assistant") replace(i, capAssistant(messages[i], c));
 		}
 	const fits = !over();
 	if (!changed) return { context, estimate: original, original, fixed, resultTokens, trimmed: false, fits };
