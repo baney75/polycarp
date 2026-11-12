@@ -169,7 +169,9 @@ verbs, in MCP and the CLI, all on the agent workspace only:
 
 - `workspaces` (read only): each workspace's number and whether it is shown, which one is the agent's, whether
   Donovan is looking at it (`agent_workspace_shown`), and where each window you may use is. No names or titles.
-- `open` returns the window id (waiting up to `wait`, at most 7 s within the claim), takes `new_window` (false reuses
+- `open` returns the window id (waiting up to `wait`, at most 7 s within the claim). When none of a copy it started is on
+  the agent workspace 7 s after the open (and one more full look finds none), it quits that copy, and `open` fails
+  (or, after a shorter `wait`, the copy is quit then and the note says so). It takes `new_window` (false reuses
   this session's window of that app; one open per app runs at a time and never takes a window another session owns. Each
   open is tied to its own launch: a new process's open takes only that process's windows, also after it replied with
   `window_identified: false` (for 30 s); an open of an app already running takes a window only while it is that app's
