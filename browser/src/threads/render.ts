@@ -98,6 +98,10 @@ export function renderMessages(messages: unknown[]): RenderedMessage[] {
 					/\s+\]/,
 					"]",
 				);
+		} else if (role === "compaction") {
+			// The notes the model worked from after this point; the messages they cover are listed above in full.
+			const covered = typeof m.cut === "number" ? `${m.cut} messages` : "earlier messages";
+			text = `[earlier messages summarized: ${covered}]\n${short(typeof m.summary === "string" ? m.summary : "", TEXT_CHARS)}`;
 		} else if (role === "welcome" || role === "artifact") return;
 		else text = textOf(m.content) || `[${role}]`;
 		out.push({ index: i + 1, role, text: redactSecrets(text) });

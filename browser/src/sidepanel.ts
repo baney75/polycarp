@@ -35,6 +35,7 @@ import { followSystem } from "./appearance/mode.js";
 import type { HeaderMenuItem } from "./components/HeaderMenu.js";
 import { Toast } from "./components/Toast.js";
 import { composerChips, knownSkills, knownTabs } from "./composer/chips.js";
+import "./composer/ContextMeter.js";
 import { skillMenuItems, tabMenuItems } from "./composer/menus.js";
 import {
 	type ComposerRefs,
@@ -63,6 +64,7 @@ import { SiteEditsTab } from "./dialogs/SiteEditsTab.js";
 import { SkillsTab } from "./dialogs/SkillsTab.js";
 import { UpdatesTab } from "./dialogs/UpdatesTab.js";
 import { type WelcomeChoice, WelcomeSetupDialog } from "./dialogs/WelcomeSetupDialog.js";
+import { registerCompactionRenderer } from "./messages/CompactionMessage.js";
 import { browserMessageTransformer } from "./messages/message-transformer.js";
 import {
 	createNavigationMessage,
@@ -71,6 +73,7 @@ import {
 } from "./messages/NavigationMessage.js";
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
+import { type Compactor, createCompactor, fixedRequestTokens, streamSummarizer } from "./models/compactor.js";
 import { guardContext, toolBudgetChars } from "./models/context-guard.js";
 import { modelLabelParts } from "./models/display.js";
 import { FREE_KEY_NOTE, FREE_PRIVACY_NOTE, FREE_SHORT_NOTE } from "./models/free-mode.js";
@@ -124,6 +127,7 @@ setTranscriptRenderer(tabkyraTranscript);
 
 // Register custom message renderers
 registerNavigationRenderer();
+registerCompactionRenderer();
 registerExtractImageRenderer();
 registerPageToolRenderers();
 
@@ -171,6 +175,8 @@ let currentSessionId: string | undefined;
 let currentTitle = "";
 let isEditingTitle = false;
 let agent: Agent;
+/** Summarizes earlier messages for this chat's agent when the window fills (models/compactor.ts). */
+let compactor: Compactor | undefined;
 let chatPanel: ChatPanel;
 let agentUnsubscribe: (() => void) | undefined;
 let currentWindowId: number;
@@ -329,6 +335,18 @@ async function libraryWithCommunity() {
  * skills for other sites. Choosing one inserts `/<name>`; on send the skill runs with the rest
  * of the message as its task (src/composer/refs.ts).
  */
+/** The context meter's button: summarize the earlier messages now. */
+async function compactNow(): Promise<void> {
+	if (!agent || !compactor || agent.state.isStreaming) return;
+	try {
+		const out = await compactor.compactNow(agent.state.messages);
+		if ("nothing" in out) Toast.info(out.nothing);
+	} catch (err) {
+		Toast.error(`Couldn't summarize the earlier messages: ${err instanceof Error ? err.message : String(err)}`, 8000);
+	}
+	chatPanel?.agentInterface?.requestUpdate();
+}
+
 function buildSkillSlashProvider() {
 	return async (query: string) => {
 		const url = await currentPageUrl();
@@ -929,6 +947,34 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 	// Messages from a saved chat keep what they were sent with; only new ones get references resolved.
 	const loadedMessages = new WeakSet<object>(initialState?.messages ?? []);
+	// Outermost: every request is fitted to the model's window, whichever route sends it (context-guard.ts).
+	const streamFn = guardContext(
+		uncappedStreamFn(
+			createStreamFn(async () => {
+				const enabled = await storage.settings.get<boolean>("proxy.enabled");
+				if (!enabled) return undefined;
+				return (await storage.settings.get<string>("proxy.url")) || undefined;
+			}),
+		),
+	);
+	const getApiKey = async (provider: string) => {
+		const stored = await storage.providerKeys.get(provider);
+		if (!stored) return undefined;
+		return resolveApiKey(stored, provider);
+	};
+	const chatCompactor = createCompactor({
+		model: () => agent?.state.model,
+		fixedTokens: () => fixedRequestTokens(agent?.state),
+		summarize: streamSummarizer(streamFn, getApiKey),
+		// The record joins the stored chat: the transcript shows the marker, and later requests start from it.
+		onCompacted: (record) => {
+			agent.appendMessage(record);
+			chatPanel?.agentInterface?.requestUpdate();
+			void saveSession();
+		},
+		onFailure: (message) => Toast.error(message, 8000),
+	});
+	compactor = chatCompactor;
 	agent = new Agent({
 		initialState: initialState
 			? { ...initialState, model: initialState.model ?? defaultModel }
@@ -944,21 +990,10 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			return browserMessageTransformer(messages);
 		},
 		toolExecution: "sequential",
-		// Outermost: every request is fitted to the model's window, whichever route sends it (context-guard.ts).
-		streamFn: guardContext(
-			uncappedStreamFn(
-				createStreamFn(async () => {
-					const enabled = await storage.settings.get<boolean>("proxy.enabled");
-					if (!enabled) return undefined;
-					return (await storage.settings.get<string>("proxy.url")) || undefined;
-				}),
-			),
-		),
-		getApiKey: async (provider: string) => {
-			const stored = await storage.providerKeys.get(provider);
-			if (!stored) return undefined;
-			return resolveApiKey(stored, provider);
-		},
+		// Before each request: earlier messages become notes when the window fills (compactor.ts).
+		transformContext: (messages, signal) => chatCompactor.transform(messages, signal),
+		streamFn,
+		getApiKey,
 	});
 
 	if (shouldSave) {
@@ -1179,7 +1214,12 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 		chatPanel.agentInterface.composerAccessory = composerChips;
 		// The microphone: speech to text on this device (src/dictation/).
 		chatPanel.agentInterface.composerActions = (value, setValue) =>
-			html`<tabkyra-dictation .value=${value} .setValue=${setValue}></tabkyra-dictation>`;
+			html`<tabkyra-context-meter
+					.meter=${compactor?.meter(agent.state.messages)}
+					.running=${agent.state.isStreaming}
+					.onCompact=${compactNow}
+				></tabkyra-context-meter>
+				<tabkyra-dictation .value=${value} .setValue=${setValue}></tabkyra-dictation>`;
 		refreshModelLabel(true);
 		void refreshProviderless();
 		// ArrowUp in an empty composer recalls the last prompt for editing or resending.

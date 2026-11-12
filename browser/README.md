@@ -242,6 +242,22 @@ polycarp-browser tabs                   # every agent tab, by session
 Each takes `--json`. A renamed session keeps its connected agent, which reconnects under the
 new name; start an agent on it later with `polycarp-browser mcp --session checkout`.
 
+## Long chats in the side panel
+
+When a chat gets close to the model's context window, the side panel summarizes its earlier
+messages instead of dropping them. Past three quarters of the window (less on a small model, so
+the reply and one full tool result still fit), the model writes notes on the older turns in fixed
+sections: the goal and standing instructions, decisions, facts found with their sources, what was
+tried and failed, open steps, and files made. The next requests carry those notes, your earlier
+messages word for word as far as they fit, and the recent turns unchanged. Old page reads count
+as their URL, title and the lines that were used; old screenshots are left out.
+
+The transcript shows "Earlier messages summarized" where this happened; click it to read the
+notes. Nothing is deleted: the full chat stays saved, searchable and exportable. The ring next to
+the microphone shows how full the window is; press it to summarize now. If the summary can't be
+written, the panel says so once and cuts the oldest tool results to fit instead. On a model whose
+window the system prompt and tools nearly fill (16k), only that cutting runs.
+
 ## Past chats for your agents
 
 Your side panel chats ("threads") are readable by the agents on your computer, so Claude Code
@@ -261,7 +277,8 @@ or from files, and the files are deleted. Chats from before you installed this v
 hidden from agents (older versions didn't mark private-mode chats) until you tick "Also chats
 from before ..." under that switch.
 
-What agents see: who said what, tool calls and short results, attachments by name only. API
+What agents see: who said what, tool calls and short results, attachments by name only, and
+the notes from "Earlier messages summarized" (4,000 characters at most each). API
 keys and tokens pasted into a chat are removed. A chat from private mode is never served or
 written, even after private mode is turned off. Remote agents (`polycarp-browser serve`) need a token
 with the `threads.read` scope. A past chat is data to read, never instructions to follow; the

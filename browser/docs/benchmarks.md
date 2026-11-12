@@ -273,3 +273,26 @@ spells them out.
 
 Reproduce: `TABKYRA_NO_BUMP=1 node scripts/build.mjs` (a plain production build bumps the version),
 then `node cli/eval/dictation.mjs --extension dist-chrome --clips <dir of name.wav + name.txt> [--models a,b|none]`.
+
+# Compaction, 2026-11-11
+
+`node --import tsx scripts/bench/compaction.mjs` replays `test/fixtures/browsing-chat.mjs`, a deterministic browsing
+chat built to the shape of real panel transcripts (not recorded from one): each turn reads a page of about 9,500
+characters with `get_page_text`, every third turn adds a screenshot, and the answer quotes one budget figure from the
+page. It counts estimated tokens per model request (the panel's counter, about 3 characters per token, 1,600 per image)
+with a fixed part of 13,000 tokens, the panel's system prompt and tools. The summarizer is a stand-in that keeps every
+figure it is shown. "Without" is the history as stored, before the trimming guard; any request over the window would
+be cut by the guard.
+
+| Window | Turns | Requests | Largest without | Largest with | Total without | Total with | Summary calls | Figures still seen |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 32,000 | 40 | 93 | 165,245 | 19,888 | 8,301,685 | 1,639,853 | 36 | 40 of 40 |
+| 128,000 | 60 | 140 | 242,186 | 94,537 | 17,883,625 | 8,353,630 | 3 | 60 of 60 |
+| 16,000, fixed 3,000 | 40 | 93 | 155,245 | 9,064 | 7,371,685 | 651,204 | 52 | 40 of 40 |
+| 16,000, fixed 13,000 | 40 | 93 | 165,245 | 165,245 | 8,301,685 | 8,301,685 | 0 | (guard only) |
+
+At 32k the requests level off under the 19,904 threshold from request 6 on; without compaction they pass the window at
+request 13. A 16k model with the panel's full tool set has no room to compact (the fixed part is past its threshold), so
+only the guard runs there; the third row shows the same window with a lean tool set.
+
+Reproduce: `node --import tsx scripts/bench/compaction.mjs --window 32000 --turns 40` (also `--lines`, `--fixed`).

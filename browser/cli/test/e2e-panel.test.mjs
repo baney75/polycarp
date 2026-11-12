@@ -727,4 +727,122 @@ test("act x/y from a screenshot still lands after Chrome stops and restarts the 
 			await stub.close();
 		}
 	});
+// Compaction (src/models/compactor.ts): a long browsing chat on a 32k-window model reads one big document per turn.
+// Without compaction the requests grow until the trimming guard cuts them; with it, the earlier turns become notes
+// once the estimate passes the threshold, the transcript shows "Earlier messages summarized", and the chat goes on.
+test("a long document-reading chat on a 32k model is summarized, shows the marker, and keeps answering", async () => {
+	const TURNS = 6;
+	const filler = "The committee reviewed the proposal and noted points on cost, schedule and risk to weigh before the next meeting.";
+	const pdfs = new Map();
+	for (let d = 1; d <= TURNS; d++) pdfs.set(`/doc-${d}.pdf`, makePdf(12, 20, (n, i) => (n === 1 && i === 2 ? `FACT ${d}: budget line ${d} is ${d * 1000} thousand dollars.` : `Doc ${d} page ${n} line ${i}. ${filler}`)));
+	const sizes = [];
+	const summarizerCalls = [];
+	let sawNotesInRequest = false;
+	const notes = (n) =>
+		["Goal and standing instructions", "Decisions", "Facts found", "Tried and failed", "Open steps", "Files and artifacts"]
+			.map((s, i) => `## ${s}\n- ${i === 2 ? `NOTE-FACTS through doc ${n}` : "none"}`)
+			.join("\n");
+	const cors = { "access-control-allow-origin": "*" };
+	await context.route("https://docs.stub.test/**", (r) => {
+		const body = pdfs.get(new URL(r.request().url()).pathname);
+		return body ? r.fulfill({ status: 200, contentType: "application/pdf", headers: cors, body }) : r.fulfill({ status: 404, headers: cors, body: "" });
+	});
+	await context.route("https://llm.stub.test/**", async (r) => {
+		const body = r.request().postData() ?? "";
+		const { messages } = JSON.parse(body);
+		const system = messages.find((m) => m.role === "system" || m.role === "developer");
+		const systemText = typeof system?.content === "string" ? system.content : JSON.stringify(system?.content ?? "");
+		if (systemText.startsWith("You keep the notes")) {
+			summarizerCalls.push(body.length);
+			return r.fulfill({ status: 200, contentType: "text/event-stream", headers: cors, body: sse({ text: notes(summarizerCalls.length) }) });
+		}
+		sizes.push(body.length);
+		if (body.includes("Polycarp summarized the earlier part of this chat")) sawNotesInRequest = true;
+		const last = messages.at(-1);
+		const lastUser = [...messages].reverse().find((m) => m.role === "user");
+		const asked = /doc-(\d+)/.exec(typeof lastUser?.content === "string" ? lastUser.content : JSON.stringify(lastUser?.content))?.[1];
+		if (last.role !== "tool") return r.fulfill({ status: 200, contentType: "text/event-stream", headers: cors, body: sse({ tool: "extract_document", args: { url: `https://docs.stub.test/doc-${asked}.pdf` } }) });
+		return r.fulfill({ status: 200, contentType: "text/event-stream", headers: cors, body: sse({ text: `STUB-READ doc ${asked}.` }) });
+	});
+	const model = {
+		id: "stub-32k",
+		name: "Stub 32k",
+		api: "openai-completions",
+		provider: "stub",
+		baseUrl: "https://llm.stub.test/v1",
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 32_000,
+		maxTokens: 2048,
+	};
+	const page = await context.newPage();
+	try {
+		// A new chat: otherwise the panel reopens the last test's chat, with its own model.
+		await page.goto(`${PANEL}?new=true`);
+		await page.getByPlaceholder(/Ask about this page/).waitFor({ timeout: 20_000 });
+		await page.evaluate(async (m) => {
+			await chrome.storage.local.set({ "tk-welcome-seen": true });
+			const db = await new Promise((resolve, reject) => {
+				const open = indexedDB.open("tabkyra-storage");
+				open.onsuccess = () => resolve(open.result);
+				open.onerror = () => reject(open.error);
+			});
+			await new Promise((resolve, reject) => {
+				const tx = db.transaction(["settings", "provider-keys"], "readwrite");
+				tx.objectStore("settings").put(m, "lastUsedModel");
+				tx.objectStore("provider-keys").put("sk-stub", "stub");
+				tx.oncomplete = resolve;
+				tx.onerror = () => reject(tx.error);
+			});
+			db.close();
+		}, model);
+		await page.reload();
+		const box = page.getByPlaceholder(/Ask about this page/);
+		await box.waitFor({ timeout: 20_000 });
+		const meter = page.locator("[data-context-meter]");
+		await meter.waitFor({ timeout: 10_000 });
+		for (let d = 1; d <= TURNS; d++) {
+			await box.fill(`Read https://docs.stub.test/doc-${d}.pdf and give me its budget line.`);
+			await box.press("Enter");
+			await page.getByText(`STUB-READ doc ${d}.`).first().waitFor({ timeout: 60_000 });
+		}
+		assert.equal(await page.getByText(/400 status code|too long for the model|couldn't summarize/).count(), 0, `no error; sizes ${sizes.join(", ")}`);
+		assert.ok(summarizerCalls.length >= 1, `the summarizer ran; request sizes ${sizes.join(", ")}`);
+		assert.ok(sawNotesInRequest, "later requests carry the notes in place of the earlier turns");
+		const marker = page.locator("[data-compaction]");
+		await marker.first().waitFor({ timeout: 10_000 });
+		assert.match(await marker.first().locator("summary").innerText(), /Earlier messages summarized/);
+		await marker.first().locator("summary").click();
+		await page.getByText(/NOTE-FACTS through doc/).first().waitFor({ timeout: 5_000 });
+		// The full history stays in the transcript above the marker.
+		assert.ok(await page.getByText("STUB-READ doc 1.").count(), "the first turn is still shown");
+		assert.match((await meter.getAttribute("aria-label")) ?? "", /Context: about [\d,]+ of 32,000 tokens/);
+		// The saved chat keeps every message, and the record with the notes beside them.
+		let saved = { people: 0, records: 0 };
+		for (let i = 0; i < 20 && (saved.people < TURNS || !saved.records); i++) {
+			saved = await page.evaluate(async () => {
+				const db = await new Promise((resolve, reject) => {
+					const open = indexedDB.open("tabkyra-storage");
+					open.onsuccess = () => resolve(open.result);
+					open.onerror = () => reject(open.error);
+				});
+				const all = await new Promise((resolve, reject) => {
+					const req = db.transaction("sessions").objectStore("sessions").getAll();
+					req.onsuccess = () => resolve(req.result);
+					req.onerror = () => reject(req.error);
+				});
+				db.close();
+				const chat = all.find((s) => (s.messages ?? []).some((m) => m.role === "compaction"))?.messages ?? [];
+				return { people: chat.filter((m) => m.role === "user").length, records: chat.filter((m) => m.role === "compaction").length };
+			});
+			if (saved.people < TURNS || !saved.records) await new Promise((r) => setTimeout(r, 250));
+		}
+		assert.equal(saved.people, TURNS, "every message the person sent is saved");
+		assert.ok(saved.records >= 1, "the compaction record is saved with the chat");
+	} finally {
+		await context.unroute("https://docs.stub.test/**");
+		await context.unroute("https://llm.stub.test/**");
+		await page.close();
+	}
 });

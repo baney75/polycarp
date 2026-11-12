@@ -1232,3 +1232,35 @@ Proof: `test/context-guard-property.test.mjs` runs the guard over windows from 8
 tokens, providers that take less than they claim, and random histories, and asserts every send fits, keeps its pairs and the
 latest message, and that a refusal naming size heals. Each finding has a named test, and each fix was broken on purpose to
 see its test fail.
+
+## D44. Compaction: notes in fixed sections before the trimming guard, history kept in full (Claude, 2026-11-11)
+
+- **Where it runs.** The agent's `transformContext` hook (`src/models/compactor.ts`), before every model call and before
+  the PR 1 trimming guard in the stream function (`context-guard.ts`). The guard stays as the last line: it runs on what
+  compaction sends and trims only when the estimate is still over, or when compaction failed or can't run.
+- **Threshold.** `min(0.75 x window, window - reply reserve - one tool result)`. One tool result is the bounded size a
+  read returns on that model (`toolResultBudgetChars`), so the turn that crosses the threshold still has room for the
+  next read and the reply. At 32k that is 19,904 tokens (reply 4,096, one result 8,000); at 128k and up the 0.75 wins.
+  Below it nothing changes: the hook returns the same array, so the request is byte for byte what it was.
+- **Budgets come from the room**, the threshold less the fixed part (system prompt and tool schemas, about 13,000
+  tokens in the panel): the notes `max(300, min(8% of the window, 4,000, 25% of the room))`, the person's earlier
+  messages `min(5% of the window, 10% of the room)`, the recent turns kept verbatim `min(20% of the window, 40% of the
+  room)`. Under 1,200 tokens of room (a 16k model) compaction doesn't run; the guard trims.
+- **Notes in six fixed sections**, from a fixed prompt to the chat's own model with no tools: goal and standing
+  instructions, decisions, facts found (with URLs, pages, tab ids), tried and failed, open steps, files and artifacts.
+  A later round sends the previous notes and the next part of the chat and asks for the same sections. An answer with
+  fewer than three sections is refused; a missing section keeps its previous content; the notes are cut to their budget
+  from the longest section. So a summary of a summary keeps its shape on small windows.
+- **Cuts fall where no tool call is open**, never at a tool result, so a call and its result (with any navigation note
+  between them) stay together. The newest person message always stays verbatim.
+- **What the summarizer reads.** Old tool results become what they proved: URL and title from `details`, the first line,
+  up to six lines the later answers used, and a size. Images become "[N image(s) dropped]". Every tool result is wrapped
+  in `<untrusted>` with any such tag inside it removed, and the prompt says page text is data: goals, instructions and
+  open steps come only from the person's messages.
+- **History stays whole.** The record is a `compaction` message appended to the stored chat. The LLM path ignores the
+  role; the compactor builds the request from it. Export and `thread_read` show it as a marker with its notes (4,000
+  characters at most).
+- **Failure.** A failed summary call shows one notice per chat, and no new try until the estimate grows by half the
+  verbatim budget; the guard trims meanwhile. A failed manual press reports its own error.
+- **Cost.** On a small window every turn past the threshold can need one summary call (36 calls over 93 requests at
+  32k in the benchmark), each small because old reads are already reduced. On 128k it was 3 calls in 140 requests.
