@@ -6,6 +6,7 @@
  * Units are what the format has: pages for a PDF, slides for a PPTX, sheets for an XLSX. A DOCX (and plain text) has
  * no pages in its text, so it is split into parts of about PART_CHARS characters at paragraph breaks.
  */
+import { CHARS_PER_TOKEN, estimateTextTokens } from "../models/context-budget.js";
 
 export type UnitKind = "page" | "slide" | "sheet" | "part";
 
@@ -80,6 +81,39 @@ export function parseExtracted(extracted: string, format: string): ParsedDocumen
 	}
 	const totalChars = units.reduce((n, u) => n + u.text.length, 0);
 	return { format, kind, units, totalChars };
+}
+
+/** A PDF as the bridge reads it ("--- Page N of M ---" before each page), as pages. */
+export function parsePdfPages(text: string): ParsedDocument {
+	const units: DocUnit[] = [];
+	for (const m of text.matchAll(/--- Page (\d+) of \d+ ---\n([\s\S]*?)(?=--- Page \d+ of \d+ ---|$)/g)) {
+		const body = m[2].trim();
+		units.push({ n: Number(m[1]), name: "", text: body === "(no text layer on this page)" ? "" : body });
+	}
+	return { format: "pdf", kind: "page", units, totalChars: units.reduce((n, u) => n + u.text.length, 0) };
+}
+
+/** The readable text of an HTML page a URL serves: scripts, styles and tags out, each block on its own line. */
+export function htmlText(html: string): string {
+	return decode(
+		html
+			.replace(/<(script|style|noscript|template|svg|head)\b[\s\S]*?<\/\1>/gi, " ")
+			.replace(/<!--[\s\S]*?-->/g, " ")
+			.replace(
+				/<\/?(p|div|br|li|h[1-6]|tr|section|article|blockquote|pre|table|ul|ol|header|footer|main)\b[^>]*>/gi,
+				"\n",
+			)
+			.replace(/<[^>]+>/g, " ")
+			.replace(/&nbsp;/g, " ")
+			// A code point past Unicode's last stays as written: fromCodePoint would throw and fail the whole read.
+			.replace(/&#(x[0-9a-f]+|\d+);/gi, (entity, d: string) => {
+				const code = d[0].toLowerCase() === "x" ? Number.parseInt(d.slice(1), 16) : Number(d);
+				return code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+			}),
+	)
+		.replace(/[ \t]+/g, " ")
+		.replace(/ ?\n[ \n]*/g, (gap) => (gap.split("\n").length > 2 ? "\n\n" : "\n"))
+		.trim();
 }
 
 const KIND_WORD: Record<UnitKind, [string, string]> = {
@@ -316,27 +350,60 @@ export function searchDocument(doc: ParsedDocument, query: string, limit = 5): {
 	return { terms, hits: hits.slice(0, limit) };
 }
 
-/** The search as the model reads it: ranked units with numbers and snippets, and the next steps. */
-export function readSearch(doc: ParsedDocument, fileName: string, query: string, budget: number, url = ""): ReadResult {
+/** What a caller tells a search about reading its hits, when that isn't "pages" (a long page reads on by offset). */
+export interface SearchHints {
+	/** A hit's name on its line, with what reading it takes, like "Part 7 (offset 19840)". */
+	label?: (n: number) => string;
+	/** The sentence on reading a hit in full. */
+	readOn?: (top: number) => string;
+	/** What else to try when nothing matches. */
+	noHits?: string;
+	/** A line on what the search did not cover, such as a text that was cut. */
+	note?: string;
+}
+
+/**
+ * The search as the model reads it: ranked units with numbers and snippets, and the next steps. It fits `budget` (in
+ * characters, measured as the guard measures tokens) by dropping the weakest hits, never the note on reading on.
+ */
+export function readSearch(
+	doc: ParsedDocument,
+	fileName: string,
+	query: string,
+	budget: number,
+	url = "",
+	hints: SearchHints = {},
+): ReadResult {
 	const [word, plural] = KIND_WORD[doc.kind];
 	const { terms, hits } = searchDocument(doc, query, 8);
-	const head = `${summaryLine(doc, fileName)}\nSearch: ${JSON.stringify(query)}${terms.length ? ` (words: ${terms.join(", ")})` : ""}\n`;
+	const head = `${summaryLine(doc, fileName)}${hints.note ? `\n${hints.note}` : ""}\nSearch: ${JSON.stringify(query)}${terms.length ? ` (words: ${terms.join(", ")})` : ""}\n`;
 	if (!terms.length)
 		return {
 			text: `${head}No words to search for: give a few distinctive words from the passage.`,
 		};
 	if (!hits.length)
 		return {
-			text: `${head}No ${word.toLowerCase()} has these words. Try other words the author would use (a synonym, the original term), or read a range with pages.${emptyNote(doc)}`,
+			text: `${head}No ${word.toLowerCase()} has these words. Try other words the author would use (a synonym, the original term), or ${hints.noHits ?? "read a range with pages"}.${emptyNote(doc)}`,
 		};
-	const lines = hits.map((h, i) => `${i + 1}. ${word} ${h.n}: ${h.snippet}`);
+	const label = hints.label ?? ((n: number) => `${word} ${n}`);
+	const lines = hits.map((h, i) => `${i + 1}. ${label(h.n)}: ${h.snippet}`);
 	const top = hits[0].n;
 	const open =
 		doc.kind === "page" && /^https?:/i.test(url)
 			? ` To show the user the page, navigate to ${url.split("#")[0]}#page=${top} (Chrome's PDF viewer opens at that page).`
 			: "";
-	const tail = `\n\nBest match first. Read a ${word.toLowerCase()} in full with pages (like "${top}" or "${Math.max(1, top - 1)}-${Math.min(doc.units.length, top + 1)}") before you quote it.${open}`;
-	let text = `${head}\nMatching ${plural}:\n${lines.join("\n")}${tail}`;
-	if (text.length > budget) text = `${text.slice(0, Math.max(0, budget - 40))}\n[more matches cut]`;
-	return { text };
+	const read =
+		hints.readOn?.(top) ??
+		`Read a ${word.toLowerCase()} in full with pages (like "${top}" or "${Math.max(1, top - 1)}-${Math.min(doc.units.length, top + 1)}") before you quote it.`;
+	const tail = `\n\nBest match first. ${read}${open}`;
+	const allowed = Math.floor(budget / CHARS_PER_TOKEN);
+	const build = (n: number) =>
+		`${head}\nMatching ${plural}:\n${lines.slice(0, n).join("\n")}${n < lines.length ? `\n(${lines.length - n} more matches cut to fit)` : ""}${tail}`;
+	let n = lines.length;
+	while (n > 1 && estimateTextTokens(build(n)) > allowed) n--;
+	// One hit still over (a dense script): its snippet gives way, its number and the note on reading it stay.
+	const keep = `1. ${label(top)}: `.length;
+	while (estimateTextTokens(build(1)) > allowed && lines[0].length > keep + 3)
+		lines[0] = `${lines[0].slice(0, Math.max(keep, Math.floor(lines[0].length * 0.8) - 3))}...`;
+	return { text: build(n) };
 }

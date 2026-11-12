@@ -254,11 +254,11 @@ await createOrUpdateArtifact('results.json', results);
 
 export const EXTRACT_DOCUMENT_TOOL_DESCRIPTION = `# Extract Document
 
-Read the text of a document on the web (PDF, DOCX, XLSX, PPTX or a text file), or of a file the person attached, a part at a time. The answer is always cut to fit the model's context, and says what was left out and how to get it.
+Read the text of a document on the web (PDF, DOCX, XLSX, PPTX, a text file or a long web page), or of a file the person attached, a part at a time. The answer is always cut to fit the model's context, and says what was left out and how to get it.
 
 ## Input
 - { url } - the page count and the first pages, with a note on the rest
-- { attachment: "book.pdf" } - a file attached to the chat, by its name; takes pages, query and offset the same way
+- { attachment: "book.pdf" } - a file attached to the chat, by its name; takes pages, query and offset the same way. The newest of that name is read; copy: 2 reads the one before
 - { url, query: "contemplation needs no external goods" } - the pages that match, best first, with page numbers and snippets. Use this to find a passage; it is one cheap call even in a 500-page book
 - { url, pages: "40-55" } - exactly those pages (slides for PPTX, sheets for XLSX, parts of about 3,000 characters for DOCX)
 - { url, pages: "40-55", offset: 12000 } - the same range from that character on, when the note says it was cut

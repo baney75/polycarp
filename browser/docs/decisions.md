@@ -1316,3 +1316,57 @@ counter) gets a new ref each look, so at most 200 such kept refs stay between re
 Platforms: all of it runs in the extension's service worker and the page, with no code per operating system, so Chrome,
 Helium and the other Chromium browsers on the Mac, Linux and Windows behave the same. Run on the Mac (the e2e and panel
 suites) and on Linux (CI); not run on Windows.
+
+## D44. Search a document instead of reading it, with the tools agents already have (Claude, 2026-11-12)
+
+**Problem.** A 400-page PDF is about 560,000 characters. Read whole, it killed the chat (D42 now cuts it to fit, but
+a cut book still can't answer "what does Aristotle say about friendship in Book VIII"). Paging through it 50,000
+characters at a time takes a dozen calls and fills the context with pages nobody asked about.
+
+**Decision.** Search first, then read the pages that matched. `get_page_text` takes `query`: on a PDF tab the answer is
+the matching pages, best first, with numbers and snippets (the same ranking as the panel's `extract_document`,
+`src/tools/document-reader.ts`), and `pages` then reads them; on a long page it is the matching parts of about 3,000
+characters, each with the `offset` that reads it. The parsed PDF is kept by URL (six at a time) while the extension
+runs. Over MCP the tool already existed, so `query` costs 143 bytes of tools/list, not a new tool's 600 or more. The
+side panel keeps `extract_document` for URLs and attachments (and now long web pages), and gets the same `query` on
+its own `get_page_text`. Nothing is platform-specific: pdf.js runs in the extension's offscreen document on every
+Chromium browser, Mac, Linux and Windows alike.
+
+**Not done.** A document store that outlives the extension (IndexedDB, a Documents tab): a URL is fetched again after
+a restart, and an attachment is kept in the chat itself. It can come when a measured case needs it.
+
+**Proof.** `test/document-search.test.mjs` (the bridge's real handler on a PDF tab and a long page; one parse for two
+searches; offsets that read the part that matched), and the 32k panel e2e above.
+
+## D45. Long chats are summarized when the guard would drop turns, and the notes are kept in the chat (Claude, 2026-11-12)
+
+Problem: on a small window the guard (D42) keeps a long chat going by cutting it, and past a point by dropping its
+earliest turns whole, so the person's first instructions and what was found go with them.
+
+Decision:
+
+- **When.** The agent's `transformContext` hook (`src/models/compactor.ts`) runs the guard's own `fitContext` on what it
+  would send, with the guard's budget (the learned window included). Only when that would drop earlier messages
+  (`Fitted.dropped`) does it summarize; otherwise the request is the same array, byte for byte. One rule, so the two
+  never disagree on what fits. The guard still runs after it, as the last line.
+- **What.** The chat's own model, through the panel's guarded stream function and with no tools, writes notes in six
+  fixed sections. Older tool results reach it reduced to what they proved (URL, title, the lines later answers used),
+  inside `<untrusted>` blocks; goals and instructions come only from the person's messages. A later round rewrites the
+  notes with the next part of the chat; a section left out keeps its earlier points.
+- **Budgets** come from the guard's room (its input budget less the system prompt and tools): notes up to a quarter of
+  it, the person's earlier words a tenth, the recent turns kept verbatim two fifths. Under 1,200 tokens of room the
+  guard cuts instead.
+- **The latest question** is never summarized: the cut falls before the person's last message, never between a tool
+  call and its result.
+- **Kept.** The record is a `compaction` message appended to the stored chat. The model path ignores the role; the
+  compactor builds the request from the latest record, so a reloaded panel sends the same notes with no new call.
+  History and export stay whole.
+- **Failure.** A failed or unsectioned summary shows one notice per chat and sends the request as it was, for the guard
+  to cut; no new try until the chat grows by about half the verbatim budget.
+
+Not done: the context meter and the "summarize now" press from the first draft of this change (PR 140), to keep this
+change small; they can follow.
+
+Proof: `test/compaction.test.mjs`, with each of the five rules above broken on purpose to see a test fail, and a panel
+e2e that runs a chat on an 18k stub model until it is summarized, reloads the panel, and checks the next request
+carries the stored notes and the latest question with no new summary and nothing dropped.

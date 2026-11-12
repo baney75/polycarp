@@ -17,6 +17,7 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { loadTs } from "./helpers/bundle-ts.mjs";
+import { ethicsPdf, FAR_LINE, FRIENDSHIP_PAGES, makePdf } from "./helpers/pdf.mjs";
 import { lastToolResult, seedStubScript, stubModelServer } from "./helpers/stub-model.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -428,28 +429,33 @@ test("a real side panel (no tab) is served by the real Connect relay, not discon
 	}
 });
 
-/** A real PDF of `pages` pages, uncompressed, with `line(n, i)` as the text of line i on page n. */
-function makePdf(pages, linesPerPage, line) {
-	const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
-	const kids = [];
-	for (let n = 1; n <= pages; n++) {
-		const lines = Array.from({ length: linesPerPage }, (_, i) => `(${line(n, i).replace(/[()\\]/g, "")}) Tj T*`).join("\n");
-		const stream = `BT /F1 7 Tf 9 TL 20 770 Td\n${lines}\nET`;
-		objects.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
-		objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${objects.length} 0 R >>`);
-		kids.push(`${objects.length} 0 R`);
-	}
-	objects[1] = `<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${pages} >>`;
-	let out = "%PDF-1.4\n";
-	const offsets = objects.map((body, i) => {
-		const at = out.length;
-		out += `${i + 1} 0 obj\n${body}\nendobj\n`;
-		return at;
-	});
-	const xref = out.length;
-	out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}`;
-	out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-	return Buffer.from(out, "latin1");
+/** Open the panel on `model` (a stub provider with a key), and send it `message`. */
+async function askPanel(page, model, message, { fresh = false } = {}) {
+	await page.goto(PANEL);
+	await page.getByPlaceholder(/Ask about this page/).waitFor({ timeout: 20_000 });
+	await page.evaluate(async (m) => {
+		await chrome.storage.local.set({ "tk-welcome-seen": true });
+		const db = await new Promise((resolve, reject) => {
+			const open = indexedDB.open("tabkyra-storage");
+			open.onsuccess = () => resolve(open.result);
+			open.onerror = () => reject(open.error);
+		});
+		await new Promise((resolve, reject) => {
+			const tx = db.transaction(["settings", "provider-keys"], "readwrite");
+			tx.objectStore("settings").put(m, "lastUsedModel");
+			tx.objectStore("provider-keys").put("sk-stub", "stub");
+			tx.oncomplete = resolve;
+			tx.onerror = () => reject(tx.error);
+		});
+		db.close();
+	}, model);
+	// fresh: a new chat, not the one an earlier test left open.
+	if (fresh) await page.goto(`${PANEL}?new=true`);
+	else await page.reload();
+	const box = page.getByPlaceholder(/Ask about this page/);
+	await box.waitFor({ timeout: 20_000 });
+	await box.fill(message);
+	await box.press("Enter");
 }
 
 /** One OpenAI-style streamed reply: either a tool call or text. */
@@ -503,29 +509,7 @@ test("a 400-page PDF read on a small-window model ends with an answer, not a 400
 	};
 	const page = await context.newPage();
 	try {
-		await page.goto(PANEL);
-		await page.getByPlaceholder(/Ask about this page/).waitFor({ timeout: 20_000 });
-		await page.evaluate(async (m) => {
-			await chrome.storage.local.set({ "tk-welcome-seen": true });
-			const db = await new Promise((resolve, reject) => {
-				const open = indexedDB.open("tabkyra-storage");
-				open.onsuccess = () => resolve(open.result);
-				open.onerror = () => reject(open.error);
-			});
-			await new Promise((resolve, reject) => {
-				const tx = db.transaction(["settings", "provider-keys"], "readwrite");
-				tx.objectStore("settings").put(m, "lastUsedModel");
-				tx.objectStore("provider-keys").put("sk-stub", "stub");
-				tx.oncomplete = resolve;
-				tx.onerror = () => reject(tx.error);
-			});
-			db.close();
-		}, model);
-		await page.reload();
-		const box = page.getByPlaceholder(/Ask about this page/);
-		await box.waitFor({ timeout: 20_000 });
-		await box.fill("Read https://docs.stub.test/ethics.pdf and tell me how long it is.");
-		await box.press("Enter");
+		await askPanel(page, model, "Read https://docs.stub.test/ethics.pdf and tell me how long it is.");
 		const answer = page.getByText("STUB-ANSWER: the book has 400 pages.");
 		const refused = page.getByText(/400 status code|too long for the model/);
 		await Promise.race([answer.first().waitFor({ timeout: 60_000 }), refused.first().waitFor({ timeout: 60_000 })]);
@@ -540,6 +524,60 @@ test("a 400-page PDF read on a small-window model ends with an answer, not a 400
 		assert.doesNotMatch(toolResult, /Polycarp cut this here/);
 		// The reply asked for is what the budget kept room for.
 		assert.ok(maxTokens.every((n) => n <= 2048), `max tokens asked: ${maxTokens.join(", ")}`);
+	} finally {
+		await context.unroute("https://docs.stub.test/**");
+		await context.unroute("https://llm.stub.test/**");
+		await page.close();
+	}
+});
+
+// The acceptance case for documents: "what does Aristotle say about friendship in Book VIII" on a 32k model, against a
+// 400-page Ethics. The stand-in model does what the tool description teaches: search, read the best pages, answer with
+// their numbers. The book never enters the context: each tool answer is bounded, and page 300 is never sent.
+test("a 32k model finds Book VIII in a 400-page PDF by searching, reads those pages and cites them, without the whole book", async () => {
+	const pdf = ethicsPdf();
+	const url = "https://docs.stub.test/nicomachean-ethics.pdf";
+	const calls = [];
+	const results = [];
+	const bodies = [];
+	const reply = (r, body) => r.fulfill({ status: 200, contentType: "text/event-stream", headers: { "access-control-allow-origin": "*" }, body: sse(body) });
+	await context.route("https://docs.stub.test/**", (r) => r.fulfill({ status: 200, contentType: "application/pdf", headers: { "access-control-allow-origin": "*" }, body: pdf }));
+	await context.route("https://llm.stub.test/**", async (r) => {
+		const body = r.request().postData() ?? "";
+		bodies.push(body);
+		// This question's tool answers only: the panel may reopen an earlier test's chat, with its own.
+		const sent = JSON.parse(body).messages;
+		const asked = sent.findLastIndex((m) => m.role === "user" && JSON.stringify(m.content).includes("Book VIII?"));
+		const tools = sent.slice(asked + 1).filter((m) => m.role === "tool");
+		const last = tools.at(-1);
+		if (last) results.push(typeof last.content === "string" ? last.content : JSON.stringify(last.content));
+		if (!tools.length) return reply(r, (calls.push({ url, query: "friendship Book VIII" }), { tool: "extract_document", args: calls.at(-1) }));
+		if (tools.length === 1) {
+			const top = Number(/1\. Page (\d+):/.exec(results.at(-1))?.[1]);
+			return reply(r, (calls.push({ url, pages: `${top}-${top + 1}` }), { tool: "extract_document", args: calls.at(-1) }));
+		}
+		return reply(r, { text: `BOOK-VIII-ANSWER: friendship is a virtue, and the friend is another self (pages ${calls[1].pages}).` });
+	});
+	const model = { id: "stub-32k", name: "Stub 32k", api: "openai-completions", provider: "stub", baseUrl: "https://llm.stub.test/v1", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32_768, maxTokens: 4096 };
+	const page = await context.newPage();
+	try {
+		await askPanel(page, model, `What does Aristotle say about friendship in Book VIII? The book: ${url}`, { fresh: true });
+		// Its own marker: the panel may still show an earlier test's answer.
+		await page.getByText(/BOOK-VIII-ANSWER/).first().waitFor({ timeout: 60_000 });
+		assert.equal(calls.length, 2, "one search, one read");
+		const [first, last] = calls[1].pages.split("-").map(Number);
+		assert.ok(first >= FRIENDSHIP_PAGES[0] && first <= FRIENDSHIP_PAGES[1], `the search led to page ${first}:\n${results[0]}`);
+		assert.match(results[0], /400 pages/);
+		assert.match(results[1], new RegExp(`Page ${first} of 400[\\s\\S]*another self[\\s\\S]*Page ${last} of 400`));
+		for (const t of results) {
+			assert.ok(t.length < 40_000, `a tool answer of ${t.length} characters`);
+			assert.doesNotMatch(t, /Polycarp cut this here/, "the tool's answer fit as it was");
+		}
+		for (const b of bodies) {
+			assert.ok(!b.includes(FAR_LINE.slice(0, 15)), "page 300 was never sent");
+			assert.ok(b.length < 32_768 * 4, `a request of ${b.length} bytes`);
+		}
+		assert.ok(await page.getByText(new RegExp(`pages ${first}-${last}`)).count(), "the answer cites the pages");
 	} finally {
 		await context.unroute("https://docs.stub.test/**");
 		await context.unroute("https://llm.stub.test/**");
@@ -729,4 +767,64 @@ test("act x/y from a screenshot still lands after Chrome stops and restarts the 
 			await stub.close();
 		}
 	});
+});
+
+// Compaction (src/models/compactor.ts) in the real panel: a long chat on a small model goes on until the guard would
+// drop its earliest turns; they are summarized instead, the transcript shows the marker, and after a reload the next
+// request still starts from the stored notes, with no new summary and the latest question whole.
+test("a long chat is summarized when the guard would drop turns, and the notes hold across a reload", async () => {
+	const filler = "The committee reviewed the proposal and noted points on cost, schedule and risk to weigh before the next meeting. ".repeat(18);
+	const cors = { "access-control-allow-origin": "*" };
+	const summaries = [];
+	const requests = [];
+	const textOf = (m) => (typeof m?.content === "string" ? m.content : JSON.stringify(m?.content ?? ""));
+	await context.route("https://llm.stub.test/**", async (r) => {
+		const body = r.request().postData() ?? "";
+		const { messages } = JSON.parse(body);
+		if (textOf(messages.find((m) => m.role === "system" || m.role === "developer")).startsWith("You keep the notes")) {
+			summaries.push(body.length);
+			const notes = ["Goal and standing instructions", "Decisions", "Facts found", "Tried and failed", "Open steps", "Files and artifacts"].map((s, i) => `## ${s}\n- ${i === 2 ? `NOTE-FACTS ${summaries.length}` : "none"}`).join("\n");
+			return r.fulfill({ status: 200, contentType: "text/event-stream", headers: cors, body: sse({ text: notes }) });
+		}
+		requests.push(body);
+		const q = /(Q\d+|LAST-Q)/.exec(textOf(messages.filter((m) => m.role === "user").at(-1)))?.[1];
+		return r.fulfill({ status: 200, contentType: "text/event-stream", headers: cors, body: sse({ text: `ANSWER-${q}. ${filler}` }) });
+	});
+	const model = { id: "stub-18k", name: "Stub 18k", api: "openai-completions", provider: "stub", baseUrl: "https://llm.stub.test/v1", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 18_000, maxTokens: 1024 };
+	const page = await context.newPage();
+	try {
+		let turn = 1;
+		await askPanel(page, model, `Q${turn}: ${filler}`, { fresh: true });
+		const box = page.getByPlaceholder(/Ask about this page/);
+		for (;;) {
+			await page.getByText(`ANSWER-Q${turn}.`).first().waitFor({ timeout: 60_000 });
+			if (summaries.length || turn >= 80) break;
+			turn++;
+			await box.fill(`Q${turn}: ${filler}`);
+			await box.press("Enter");
+		}
+		assert.ok(summaries.length, `the summarizer ran within ${turn} turns`);
+		const sent = requests.at(-1);
+		assert.match(sent, /Polycarp summarized the earlier part of this chat/);
+		assert.match(sent, new RegExp(`Q${turn}: The committee`), "the latest question is sent whole");
+		assert.doesNotMatch(sent, /earliest messages of this chat/, "nothing was dropped");
+		await page.locator("[data-compaction]").first().waitFor({ timeout: 10_000 });
+		// A reload: the panel reopens this chat from storage, with a new agent and compactor.
+		const before = summaries.length;
+		await page.reload();
+		await box.waitFor({ timeout: 20_000 });
+		await page.locator("[data-compaction]").first().waitFor({ timeout: 10_000 });
+		await box.fill("LAST-Q: what did we settle?");
+		await box.press("Enter");
+		await page.getByText("ANSWER-LAST-Q.").first().waitFor({ timeout: 60_000 });
+		const after = requests.at(-1);
+		assert.match(after, new RegExp(`NOTE-FACTS ${before}`), "the stored notes are sent after the reload");
+		assert.match(after, /LAST-Q: what did we settle\?/);
+		assert.doesNotMatch(after, /earliest messages of this chat/);
+		assert.equal(summaries.length, before, "no new summary was needed");
+		assert.equal(await page.getByText(/400 status code|too long for the model|couldn't summarize/).count(), 0);
+	} finally {
+		await context.unroute("https://llm.stub.test/**");
+		await page.close();
+	}
 });

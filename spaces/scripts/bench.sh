@@ -1,7 +1,7 @@
 #!/bin/bash
 # Times workspace switches on this Mac and fails if they got slower. It switches to the workspace
-# you're on (nothing on screen changes) 10 times through BaneySpaces' URL command and reads the
-# times from timing.log. Run it with BaneySpaces installed and running.
+# you're on (nothing on screen changes) 10 times through Polycarp's URL command and reads the
+# times from timing.log. Run it with Polycarp installed and running.
 #   scripts/bench.sh           fail if the median switch takes over 40 ms
 #   BUDGET_MS=25 scripts/bench.sh
 # It also reports the switches you really made with the running build (each between two
@@ -12,17 +12,17 @@
 set -euo pipefail
 BUDGET_MS="${BUDGET_MS:-40}"
 REAL_P90_MS="${REAL_P90_MS:-250}"
-DIR="$HOME/Library/Application Support/BaneySpaces"
+DIR="$HOME/Library/Application Support/Polycarp"
 LOG="$DIR/timing.log"
-pgrep -f "BaneySpaces.app/Contents/MacOS/BaneySpaces" >/dev/null || { echo "BaneySpaces isn't running." >&2; exit 2; }
+pgrep -f "Polycarp.app/Contents/MacOS/Polycarp" >/dev/null || { echo "Polycarp isn't running." >&2; exit 2; }
 current=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['current'])" "$DIR/state.json")
 start=$(date +%s)
 noop=0
 real=0
 # When the running build started: only its switches count toward the real-use budget.
-lstart=$(LC_ALL=C ps -o lstart= -p "$(pgrep -f "BaneySpaces.app/Contents/MacOS/BaneySpaces" | head -1)" | tr -s ' ' | sed 's/^ //; s/ $//')
+lstart=$(LC_ALL=C ps -o lstart= -p "$(pgrep -f "Polycarp.app/Contents/MacOS/Polycarp" | head -1)" | tr -s ' ' | sed 's/^ //; s/ $//')
 launched=$(LC_ALL=C date -j -f "%a %b %d %T %Y" "$lstart" +%s)
-for _ in $(seq 1 10); do open -g "baneyspaces://switch/$current"; sleep 0.8; done
+for _ in $(seq 1 10); do open -g "polycarp://switch/$current"; sleep 0.8; done
 sleep 0.5
 python3 -c '
 import re, statistics, sys

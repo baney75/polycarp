@@ -774,17 +774,40 @@ final class Spaces {
         Trace.log("fill window=\(w.id) \(filling ? "on" : "off")")
     }
 
-    /// A filled window's title bar was dragged away: it goes back to its earlier size under the pointer.
+    /// A window's title bar started moving: a window this filled goes back to its earlier size under the pointer.
     func unfillForDrag(_ id: WindowID, at pointer: CGPoint) {
         guard active, !switching, FullScreenGestures.isEnabled else { return }
         refresh()
-        guard let w = windows[id], let current = w.frame,
-              let next = FullScreenFill.unfilled(current: current, fill: Windows.visibleArea(near: current),
-                                                 record: filled[id], pointer: pointer) else { return }
-        w.setFrame(next)
-        filled[id] = nil
-        saveFilled()
-        Trace.log("fill window=\(id) off: dragged away")
+        guard let w = windows[id], let current = w.frame else { return }
+        switch FullScreenFill.dragStart(current: current, fill: Windows.visibleArea(near: current), record: filled[id], pointer: pointer) {
+        case let .unfill(next):
+            w.setFrame(next)
+            filled[id] = nil
+            saveFilled()
+            Trace.log("fill window=\(id) off: dragged away from=\(current) to=\(next)")
+        case .forget:
+            filled[id] = nil
+            saveFilled()
+            Trace.log("fill window=\(id) record dropped: resized since it filled, frame=\(current)")
+        case .leftToMacOS:
+            Trace.log("fill window=\(id) drag left to macOS: full size, no record, frame=\(current)")
+        case .ordinary:
+            break
+        }
+    }
+
+    /// A drag of a window ended and it has held still: one left off its display comes back inside the visible area,
+    /// moved once and never resized. Only a window on the workspace you're on; a release in one of macOS's tile zones is
+    /// macOS's.
+    func keepOnScreen(_ id: WindowID, releasedAt p: CGPoint) {
+        guard active, !switching, let w = windows[id], model.workspace(of: id).map(model.isShown) == true,
+              !w.isMinimized, let f = w.frame else { return }
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let displays = NSScreen.screens.map { (frame: Geometry.toAX($0.frame, primaryHeight: primaryHeight),
+                                              visible: Geometry.toAX($0.visibleFrame, primaryHeight: primaryHeight)) }
+        guard let next = DragRelease.onScreen(f, releasedAt: p, displays: displays) else { return }
+        w.setOrigin(next.origin)
+        Trace.log("drag end window=\(id) off screen at \(f), moved to \(next.origin)")
     }
 
     /// Windows this filled, so a second press puts each back. Kept across launches: an update or a restart must not leave

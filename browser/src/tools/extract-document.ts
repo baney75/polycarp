@@ -13,6 +13,7 @@ import { type Static, Type } from "@sinclair/typebox";
 import { CHARS_PER_TOKEN, estimateTextTokens } from "../models/context-budget.js";
 import { EXTRACT_DOCUMENT_TOOL_DESCRIPTION } from "../prompts/prompts.js";
 import {
+	htmlText,
 	type ParsedDocument,
 	parseExtracted,
 	parseRange,
@@ -34,6 +35,11 @@ const schema = Type.Object({
 	),
 	query: Type.Optional(
 		Type.String({ description: "Words to find: returns the matching pages, best first, with numbers and snippets" }),
+	),
+	copy: Type.Optional(
+		Type.Number({
+			description: "With attachment, when several share the name: 1 is the newest (the default), 2 the one before",
+		}),
 	),
 	offset: Type.Optional(
 		Type.Number({ description: "Skip this many characters of the pages asked for (the cut note gives it)" }),
@@ -123,6 +129,12 @@ async function loadFromWeb(
 	}
 	let fileName = url.split("#")[0].split("?")[0].split("/").pop() || "document";
 	if (url.startsWith("https://arxiv.org/") && !fileName.includes(".")) fileName = `${fileName}.pdf`;
+	// A long web page reads as text in parts, like a text file.
+	if (/^\s*(<!doctype html|<html)/i.test(new TextDecoder().decode(data.slice(0, 512)))) {
+		const extractedText = htmlText(new TextDecoder().decode(data));
+		const name = `${fileName.replace(/\.html?$/i, "") || new URL(url).host}.txt`;
+		return { extractedText, fileName: name, mimeType: "text/plain", size: data.byteLength };
+	}
 	const attachment = await loadAttachment(data, fileName);
 	if (!attachment.extractedText)
 		throw new Error("This format can't be read as text. Supported: PDF, DOCX, XLSX, PPTX and text files.");
@@ -143,13 +155,27 @@ export interface ExtractDocumentOptions {
 	attachments?: () => LoadedDocument[];
 }
 
-/** The attached document called `name` (exactly, else the one whose name holds it), or a message saying what is. */
-function findAttachment(files: LoadedDocument[], name: string): LoadedDocument {
+/**
+ * The attached document called `name` (exactly, else the one whose name holds it), newest first: the person who attaches
+ * a revised report.pdf means that one. `copy` picks an older one of the same name. Or a message saying what is attached.
+ */
+function findAttachment(files: LoadedDocument[], name: string, copy: number): { file: LoadedDocument; same: number } {
 	const want = name.trim().toLowerCase();
-	const file =
-		files.find((f) => f.fileName.toLowerCase() === want) ??
-		files.find((f) => f.fileName.toLowerCase().includes(want));
-	if (file) return file;
+	const newest = [...files].reverse();
+	let named = newest.filter((f) => f.fileName.toLowerCase() === want);
+	if (!named.length) named = newest.filter((f) => f.fileName.toLowerCase().includes(want));
+	// Copies are of one name: a part of a name that fits several documents names none of them.
+	const names = [...new Set(named.map((f) => f.fileName))];
+	if (names.length > 1)
+		throw new Error(
+			`${JSON.stringify(name)} fits ${names.length} attached documents: ${names.map((n) => `"${n}"`).join(", ")}. Give the whole name.`,
+		);
+	const file = named[copy - 1];
+	if (file) return { file, same: named.length };
+	if (named.length)
+		throw new Error(
+			`${named.length} attached documents are called ${JSON.stringify(name)}: copy is 1 to ${named.length}.`,
+		);
 	throw new Error(
 		files.length
 			? `No attached document is called ${JSON.stringify(name)}. Attached: ${files.map((f) => JSON.stringify(f.fileName)).join(", ")}.`
@@ -173,8 +199,10 @@ export function createExtractDocumentTool(options: ExtractDocumentOptions): Extr
 			if (!url === !attachment) throw new Error("Give url or attachment, one of them.");
 			let key: string;
 			let attached: LoadedDocument | undefined;
+			let same = 1;
+			const copy = Math.max(1, Math.floor(Number(args.copy) || 1));
 			if (attachment) {
-				attached = findAttachment(options.attachments?.() ?? [], attachment);
+				({ file: attached, same } = findAttachment(options.attachments?.() ?? [], attachment, copy));
 				// By content, not name and size: another chat's report.pdf of the same size is another document.
 				key = `attachment:${attached.extractedText.length}:${textHash(attached.extractedText)}:${attached.fileName}`;
 			} else {
@@ -201,7 +229,9 @@ export function createExtractDocumentTool(options: ExtractDocumentOptions): Extr
 			}
 			cache.set(key, entry);
 			const { doc, fileName } = entry;
-			const chars = Math.max(1000, Math.floor(options.budgetChars()));
+			// The allowance is the guard's as given, never raised: 120 characters are 40 tokens, whatever the read starts at.
+			const given = Math.floor(options.budgetChars());
+			const chars = Math.max(200, given);
 			let range: { first: number; last: number } | undefined;
 			if (!args.query?.trim() && args.pages?.trim()) {
 				range = parseRange(args.pages, doc.units.length);
@@ -211,23 +241,37 @@ export function createExtractDocumentTool(options: ExtractDocumentOptions): Extr
 					);
 			}
 			const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
+			const which =
+				same > 1
+					? `[${same} attached documents are called ${JSON.stringify(fileName)}: this is copy ${copy}, 1 being the newest.]\n`
+					: "";
 			const read = (budget: number): string => {
-				if (args.query?.trim()) return readSearch(doc, fileName, args.query, budget, attached ? "" : key).text;
-				if (range) return readRange(doc, fileName, range, offset, budget).text;
-				if (offset) return readRange(doc, fileName, { first: 1, last: doc.units.length }, offset, budget).text;
-				return readOverview(doc, fileName, budget).text;
+				const b = Math.max(0, budget - which.length);
+				if (args.query?.trim()) return which + readSearch(doc, fileName, args.query, b, attached ? "" : key).text;
+				if (range) return which + readRange(doc, fileName, range, offset, b).text;
+				if (offset) return which + readRange(doc, fileName, { first: 1, last: doc.units.length }, offset, b).text;
+				return which + readOverview(doc, fileName, b).text;
 			};
 			// The guard measures a result in tokens by script (context-budget.ts), and a page of CJK text or code holds
 			// more of them than its length suggests. An answer over that would be cut again and lose its own note on how
 			// to read on, so it is read again, smaller, until the guard's own estimate fits.
-			const allowed = Math.floor(chars / CHARS_PER_TOKEN);
+			const allowed = Math.floor(given / CHARS_PER_TOKEN);
 			let budget = chars;
 			let text = read(budget);
-			for (let i = 0; i < 6; i++) {
+			for (let i = 0; i < 10; i++) {
 				const tokens = estimateTextTokens(text);
-				if (tokens <= allowed || budget <= 1000) break;
-				budget = Math.max(1000, Math.floor((budget * allowed * 0.95) / tokens));
+				if (tokens <= allowed || budget <= 200) break;
+				budget = Math.max(200, Math.floor((budget * allowed * 0.9) / tokens));
 				text = read(budget);
+			}
+			// Too little room for even the shortest read: say so in a line, within the allowance, which the guard won't cut again.
+			if (estimateTextTokens(text) > allowed) {
+				const ask = args.query?.trim()
+					? "search with fewer words"
+					: `ask for one ${doc.kind} at a time, or use query`;
+				text = `${which}${fileName}: ${doc.units.length} ${doc.kind}s. The model's context has no room for this read: ${ask}.`;
+				while (text.length > 1 && estimateTextTokens(text) > allowed)
+					text = text.slice(0, Math.floor(text.length * 0.8));
 			}
 			return {
 				content: [{ type: "text", text }],
