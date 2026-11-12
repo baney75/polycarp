@@ -112,4 +112,11 @@ public enum EngineVerdict {
         if code == .timeout, verdict != "safe" { retry = .never }
         return retry
     }
+
+    /// The suggestion an agent sees for an engine error. The engine's `window_not_found` says "Run 'list-windows' to see
+    /// available window IDs.", a command of the engine's own CLI that no Polycarp agent has (seen 11-12 on every window
+    /// that quit mid-call): it names ours instead.
+    public static func suggestion(_ engine: String) -> String {
+        engine.contains("list-windows") ? "Run `polycarp-spaces agent windows` for the current ids." : engine
+    }
 }
