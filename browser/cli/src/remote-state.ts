@@ -229,6 +229,8 @@ export interface StatusCheck {
 	name: string;
 	status: "ok" | "warn" | "fail";
 	detail: string;
+	/** "dns_lookup": the resolver answered that the lookup failed (SERVFAIL, REFUSED), which waiting doesn't fix. */
+	code?: string;
 }
 
 /**
@@ -255,7 +257,9 @@ export function stateFromStatus(input: {
 		// Public DNS (and so the public fetch) lags a fresh Funnel by minutes: code "dns" lets an app treat that, and only that, as still pending.
 		const failures = input.checks.filter((x) => x.status === "fail");
 		const dnsOnly = failures.some((x) => x.name === "public DNS") && failures.every((x) => x.name === "public DNS" || x.name === "public fetch");
-		return { state: "problem", message: `${failed.name}: ${failed.detail}`, ...(dnsOnly ? { code: "dns" } : {}) };
+		// A failed lookup is a fault with the name's records, not a name still publishing: its own code, never "dns".
+		const lookup = failures.find((x) => x.code === "dns_lookup");
+		return { state: "problem", message: `${(lookup ?? failed).name}: ${(lookup ?? failed).detail}`, ...(lookup ? { code: "dns_lookup" } : dnsOnly ? { code: "dns" } : {}) };
 	}
 	if (input.extensionConnected === false) return { state: "no_browser_connected", message: "Remote access is on, but no browser has Polycarp's extension connected." };
 	return { state: "on", message: "Remote access is on." };

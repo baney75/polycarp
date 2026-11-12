@@ -2,6 +2,7 @@
 // NODE_EXTRA_CA_CERTS) stands in for the internet side, and a fake DNS-over-HTTPS server says where the public name points.
 // Nothing here touches a real Tailscale, cloudflared, service manager or ~/.config/tabkyra.
 import assert from "node:assert/strict";
+import { loadTs } from "./helpers/bundle-ts.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
@@ -586,18 +587,26 @@ test("a gateway status or no answer past TLS is a tunnel that hasn't connected y
 	}
 });
 
-test("setup keeps polling while the tunnel answers 530, and is on once it connects", async () => {
-	const pub = await fakePublic({ gateway: 2 });
+test("on your own front door (--public-url) a 530 is a fault named at once, never a wait or remote fix, even at a terminal", async () => {
+	const pub = await fakePublic({ gateway: Infinity });
 	const doh = await fakeDoh();
 	const local = await localServe(pub.publicUrl);
 	try {
-		const m = machine("gw-then-up", undefined, doh.url);
-		const wait = { TABKYRA_PUBLIC_WAIT_MS: "5000", TABKYRA_PUBLIC_POLL_MS: "200" };
-		const r = await m.run(["remote", "setup", "--json", "--no-service", "--public-url", pub.publicUrl, "--port", String(local.port)], wait);
-		assert.equal(r.code, 0, r.stdout + r.stderr);
-		assert.equal(r.json().state, "on");
-		assert.equal(byName(r.json(), "resource_metadata").status, "ok");
-		assert.equal(pub.seen.gateway, 2);
+		const m = machine("gw-custom", undefined, doh.url);
+		const args = ["remote", "setup", "--no-service", "--public-url", pub.publicUrl, "--port", String(local.port)];
+		const r = await m.run([...args, "--json"]);
+		assert.equal(r.code, 1, r.stdout + r.stderr);
+		const report = r.json();
+		assert.equal(report.state, "problem");
+		assert.equal(report.code, "resource_metadata");
+		assert.match(report.message, new RegExp(`answered 530.*Point it at 127\\.0\\.0\\.1:${local.port}`));
+		assert.doesNotMatch(report.message, /remote fix/);
+		assert.equal(report.next, undefined);
+		const before = pub.seen.gateway;
+		const t = await m.run([...args, "--no-input"], { TABKYRA_ASSUME_TTY: "1", TABKYRA_PUBLIC_POLL_MS: "100" });
+		assert.equal(t.code, 1, t.stdout + t.stderr);
+		assert.match(t.stdout + t.stderr, /Point it at 127\.0\.0\.1/);
+		assert.ok(pub.seen.gateway - before <= 3, `a terminal run asked once, not in a loop (${pub.seen.gateway - before} answers)`);
 	} finally {
 		await pub.close();
 		await doh.close();
@@ -605,36 +614,14 @@ test("setup keeps polling while the tunnel answers 530, and is on once it connec
 	}
 });
 
-test("setup that sees 530 until the deadline fails: the tunnel hasn't connected, with what to do next", async () => {
-	const pub = await fakePublic({ gateway: Infinity });
-	const doh = await fakeDoh();
-	const local = await localServe(pub.publicUrl);
-	try {
-		const m = machine("gw-never", undefined, doh.url);
-		const wait = { TABKYRA_PUBLIC_WAIT_MS: "1500", TABKYRA_PUBLIC_POLL_MS: "200" };
-		const started = Date.now();
-		const r = await m.run(["remote", "setup", "--json", "--no-service", "--public-url", pub.publicUrl, "--port", String(local.port)], wait);
-		assert.ok(Date.now() - started >= 1300, "it polled to the deadline");
-		assert.ok(pub.seen.gateway > 6, `it asked more than once (${pub.seen.gateway} answers)`);
-		// A failure whose next a person runs: exit 3, as every setup report with a next.
-		assert.equal(r.code, 3, r.stdout + r.stderr);
-		const report = r.json();
-		assert.equal(report.ok, false);
-		assert.equal(report.state, "problem");
-		assert.equal(report.code, "resource_metadata");
-		assert.match(report.message, /tunnel .*hasn't connected/);
-		assert.match(report.message, /answered 530/);
-		assert.deepEqual(report.next, { kind: "run_command", command: "polycarp-browser remote fix" });
-		assert.equal(byName(report, "resource_metadata").pending, true);
-		assert.ok(existsSync(join(m.env.TABKYRA_CONFIG_DIR, "remote.json")), "remote.json is kept");
-		const t = await m.run(["remote", "setup", "--no-service", "--public-url", pub.publicUrl, "--port", String(local.port)], wait);
-		assert.equal(t.code, 3, t.stdout);
-		assert.match(t.stdout + t.stderr, /hasn't connected/);
-	} finally {
-		await pub.close();
-		await doh.close();
-		await local.close();
-	}
+test("tunnelPlan: a Tailscale or Cloudflare tunnel is polled only with a person waiting, else reported at once; your own front door is a fault", async () => {
+	const { tunnelPlan } = await loadTs(`export { tunnelPlan } from "@src/remote-setup.ts";`);
+	assert.equal(tunnelPlan("cloudflare", true), "poll");
+	assert.equal(tunnelPlan("funnel", true), "poll");
+	assert.equal(tunnelPlan("cloudflare", false), "report", "--json, --no-wait and no terminal never wait");
+	assert.equal(tunnelPlan("funnel", false), "report");
+	assert.equal(tunnelPlan("custom", true), "fault");
+	assert.equal(tunnelPlan("custom", false), "fault");
 });
 
 test("public DNS that answers SERVFAIL fails dns as a fault; an HTTP error from the resolver is pending, like one it can't reach", async () => {
@@ -673,5 +660,56 @@ test("a name with only an AAAA record is reached over IPv6", async () => {
 	} finally {
 		await pub.close();
 		await doh.close();
+	}
+});
+
+test("remote status --json on a name whose lookup fails (SERVFAIL) is code dns_lookup, not the pending dns", async () => {
+	const doh = await fakeDoh("127.0.0.1", { status: 2 });
+	try {
+		const m = machine("status-servfail", `https://${HOST}:8443`, doh.url);
+		const r = await m.run(["remote", "status", "--json"]);
+		assert.equal(r.json().state, "problem", r.stdout);
+		assert.equal(r.json().code, "dns_lookup", r.stdout);
+	} finally {
+		await doh.close();
+	}
+});
+
+test("setup on a private address literal (--public-url https://127.0.0.1:port) is on with a warning; a public name with the same fault fails", async () => {
+	const pub = await fakePublic();
+	const doh = await fakeDoh();
+	const literal = `https://127.0.0.1:${new URL(pub.publicUrl).port}`;
+	const local = await localServe(literal);
+	try {
+		const m = machine("private-literal", undefined, doh.url);
+		// No reachable hook: the address is what it is, private, and the certificate is for another name.
+		const run = (args) =>
+			new Promise((resolve) => {
+				const child = spawn(process.execPath, [cli, "remote", "setup", "--no-service", "--port", String(local.port), ...args], { env: m.env });
+				let stdout = "";
+				child.stdout.on("data", (d) => (stdout += d));
+				let stderr = "";
+				child.stderr.on("data", (d) => (stderr += d));
+				child.on("close", (status) => resolve({ status, stdout: stdout + (status === 0 ? "" : stderr) }));
+			});
+		const j = await run(["--public-url", literal, "--json"]);
+		assert.equal(j.status, 0, j.stdout);
+		assert.equal(JSON.parse(j.stdout).state, "on");
+		const t = await run(["--public-url", literal]);
+		assert.equal(t.status, 0, t.stdout);
+		assert.match(t.stdout, /127\.0\.0\.1 is a private address, so only this computer or its network reaches the connector/);
+		// The same refused certificate on a public name is a fault.
+		const forName = await localServe(pub.publicUrl);
+		try {
+			const named = await m.run(["remote", "setup", "--json", "--no-service", "--public-url", pub.publicUrl, "--port", String(forName.port)], { NODE_EXTRA_CA_CERTS: "" });
+			assert.equal(named.code, 1, named.stdout);
+			assert.equal(named.json().code, "tls");
+		} finally {
+			await forName.close();
+		}
+	} finally {
+		await pub.close();
+		await doh.close();
+		await local.close();
 	}
 });
