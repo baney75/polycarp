@@ -99,6 +99,10 @@ export async function beforeAction(
 /** The note for a report with a side missing: never "nothing changed", which would read as a failed action. */
 const UNCOMPARED = "could not be compared; read_page shows it";
 const TOO_LARGE = "too large to compare quickly; read_page shows it";
+/** Reports given without a look: a full navigation is a new document, so a diff would be the page. */
+export const NEW_PAGE = "new page; read_page lists it";
+export const STILL_LOADING = "still loading; read_page shows it";
+export const movedTo = (tabId: number) => `moved to tab ${tabId}; read_page shows it`;
 
 /**
  * After the action (and its settle wait): the report, or "nothing changed". `tabs` are the
@@ -172,14 +176,31 @@ async function report(
 		return out;
 	}
 	const old = new Map(b.look.nodes.map((n) => [n.ref, n]));
-	const appeared = a.nodes.filter((n) => !old.has(n.ref)).map(line);
+	const goneSet = new Set(a.gone);
+	// A control that only changed its name (a live counter, "Save" -> "Saved") gets a new ref; the
+	// same role in the same place is one changed line, not a gone and an appeared one.
+	const at = (n: Node) => `${n.role}@${Math.round(n.x)},${Math.round(n.y)}`;
+	const stale = new Map(b.look.nodes.filter((n) => goneSet.has(n.ref)).map((n) => [at(n), n]));
+	const renamed = new Map<string, Node>();
+	for (const n of a.nodes) {
+		const was = !old.has(n.ref) && stale.get(at(n));
+		if (was) {
+			renamed.set(n.ref, was);
+			stale.delete(at(n));
+		}
+	}
+	const paired = new Set([...renamed.values()].map((n) => n.ref));
+	const appeared = a.nodes.filter((n) => !old.has(n.ref) && !renamed.has(n.ref)).map(line);
 	const changed = a.nodes.flatMap((n) => {
 		const o = old.get(n.ref);
 		const d = o && delta(o, n);
 		return d ? [d] : [];
 	});
-	const goneSet = new Set(a.gone);
-	const vanished = b.look.nodes.filter((n) => goneSet.has(n.ref)).map(line);
+	for (const [ref, was] of renamed) {
+		const d = delta(was, a.nodes.find((n) => n.ref === ref) as Node);
+		if (d) changed.push(cut(`${d} (was ${was.ref})`, LINE_CHARS));
+	}
+	const vanished = b.look.nodes.filter((n) => goneSet.has(n.ref) && !paired.has(n.ref)).map(line);
 	let room = MAX_LINES;
 	const take = (list: string[], key: string) => {
 		if (!list.length) return;

@@ -2132,9 +2132,10 @@ test("change report: what an action did, with refs that work, and nothing when n
 	const opened = await act("Open quiet");
 	assert.match(opened.tabsOpened?.[0]?.url ?? "", /\/quiet$/, JSON.stringify(opened));
 	await tool("tabs_close", { tabId: opened.tabsOpened[0].tabId });
-	const nav = JSON.parse(await tool("navigate", { url: `${pageUrl}quiet` })).changes;
-	assert.match(nav.url, /\/quiet$/);
-	assert.match(nav.page, /^new page, \d+ controls/);
+	const navigated = JSON.parse(await tool("navigate", { url: `${pageUrl}quiet` }));
+	assert.match(navigated.url, /\/quiet$/);
+	// A full load is a new document: the report says so without looking (no diff of two pages).
+	assert.deepEqual(navigated.changes, { page: "new page; read_page lists it" });
 });
 
 test("change report: controls with live counters do not pile up refs between reads", async () => {

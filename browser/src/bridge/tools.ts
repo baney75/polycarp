@@ -31,7 +31,7 @@ import {
 	stopScreencast,
 	typeText,
 } from "../browser/cdp.js";
-import { afterAction, type Before, beforeAction } from "../browser/changes.js";
+import { afterAction, type Before, beforeAction, movedTo, NEW_PAGE, STILL_LOADING } from "../browser/changes.js";
 import { injectScript } from "../browser/inject.js";
 import {
 	fillElement,
@@ -133,7 +133,8 @@ async function settleAfter(
 	tabId: number,
 	since: number,
 	delivered: Record<string, unknown>,
-	options: { watched?: boolean; before?: Before } = {},
+	// `noSettle`: the report without the settle wait (drag). `changes`: a report known without a look.
+	options: { watched?: boolean; before?: Before; noSettle?: boolean; changes?: Record<string, unknown> } = {},
 ): Promise<Record<string, unknown>> {
 	if (ctx.batch) {
 		// The step is over: a dialog from a later step is not this one's.
@@ -142,16 +143,19 @@ async function settleAfter(
 	}
 	ctx.delivered(delivered, tabId);
 	try {
-		const settled = await settle(tabId, {
-			since,
-			stop: ctx.aborted,
-			skip: (u) => ctx.isGuarded(u),
-			guardedHosts: ctx.guardedHosts,
-			watched: options.watched ?? true,
-		}).catch(() => undefined);
+		const settled = options.noSettle
+			? undefined
+			: await settle(tabId, {
+					since,
+					stop: ctx.aborted,
+					skip: (u) => ctx.isGuarded(u),
+					guardedHosts: ctx.guardedHosts,
+					watched: options.watched ?? true,
+				}).catch(() => undefined);
 		const out: Record<string, unknown> = settled ? unsettledNote(settled) : {};
+		if (options.changes && !openDialog(tabId)) out.changes = options.changes;
 		// A box froze the page: there is nothing to look at until it is answered.
-		if (options.before && !openDialog(tabId) && !ctx.aborted()) {
+		else if (options.before && !openDialog(tabId) && !ctx.aborted()) {
 			// A navigation in flight counts: its pendingUrl is where the tab is going (#94).
 			const urlOf = async (id: number) => {
 				const tab = await chrome.tabs.get(id);
@@ -598,9 +602,9 @@ export const handlers: Record<string, Handler> = {
 			const tabId = tab.id as number;
 			// The approval page is blanked before anything is run in it.
 			const landed = await refuseGuardedLanding(ctx, tabId, await tabSummary(tabId, !ready));
-			if (!ready) return { ...landed, ...(note ? { note } : {}) };
+			if (!ready) return { ...landed, ...(note ? { note } : {}), changes: { page: STILL_LOADING } };
 			// The tab is new: settleStart had none to turn Network on in, so the wait does.
-			const settled = await settleAfter(ctx, tabId, since, landed, { watched: false });
+			const settled = await settleAfter(ctx, tabId, since, landed, { watched: false, changes: { page: NEW_PAGE } });
 			return refuseGuardedLanding(ctx, tabId, {
 				...(await tabSummary(tabId)),
 				...settled,
@@ -609,7 +613,11 @@ export const handlers: Record<string, Handler> = {
 		}
 		const tabId = await resolveTab(ctx, params, false);
 		let timedOut = false;
-		const before = await changesBefore(ctx, tabId);
+		// A full load is a new document: the report says so without two looks. Only back, forward
+		// and a jump within the page (a new hash) can keep the document, so only they are compared.
+		const from = (await chrome.tabs.get(tabId).catch(() => undefined))?.url ?? "";
+		const samePage = history || (url.includes("#") && url.split("#")[0] === from.split("#")[0]);
+		const before = samePage ? await changesBefore(ctx, tabId) : undefined;
 		const since = await actionStart(ctx, tabId);
 		watchGuardedCommits(ctx, tabId);
 		if (url === "back") timedOut = !(await goBack(tabId));
@@ -622,8 +630,14 @@ export const handlers: Record<string, Handler> = {
 		// Content a script draws after the load (a fetch, a skeleton) is there before the agent reads.
 		// The approval page is blanked before anything is run in it.
 		const landed = await refuseGuardedLanding(ctx, tabId, await tabSummary(tabId, timedOut));
-		if (timedOut) return landed;
-		const settled = await settleAfter(ctx, tabId, since, landed, { before });
+		if (timedOut) return { ...landed, changes: { page: STILL_LOADING } };
+		const settled = await settleAfter(
+			ctx,
+			tabId,
+			since,
+			landed,
+			samePage ? { before } : { changes: { page: NEW_PAGE } },
+		);
 		return refuseGuardedLanding(ctx, tabId, { ...(await tabSummary(tabId)), ...settled });
 	},
 
@@ -797,11 +811,12 @@ export const handlers: Record<string, Handler> = {
 				'from and to are required, e.g. {"from":{"x":200,"y":200},"to":{"x":360,"y":300}}',
 			);
 		const before = await changesBefore(ctx, tabId);
-		const since = await actionStart(ctx, tabId);
+		// No settle wait for a drag (D41 lists the tools that wait): only the report's looks.
+		const since = Date.now();
 		await drag(tabId, screenshotToCss(tabId, from), screenshotToCss(tabId, to));
 		return {
 			dragged: { from, to },
-			...(await settleAfter(ctx, tabId, since, { dragged: { from, to } }, { before })),
+			...(await settleAfter(ctx, tabId, since, { dragged: { from, to } }, { before, noSettle: true })),
 		};
 	},
 
@@ -1068,7 +1083,8 @@ export const handlers: Record<string, Handler> = {
 					batchStart,
 					{ steps: done.length, notRun: 0 },
 					// A step moved to another tab: Network was never turned on there.
-					{ before, watched: last.id === firstId },
+					// The report compares the tab it looked at first; on another tab it says where the batch went.
+					last.id === firstId ? { before } : { watched: false, changes: { page: movedTo(last.id) } },
 				),
 			);
 		if (wantShot) out.screenshot = await handlers.screenshot(ctx, { tabId: params.tabId });

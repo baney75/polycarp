@@ -154,7 +154,7 @@ test("first-F4: a reused row's old ref is reported gone, since it fails now", as
 	assert.deepEqual([...gone], ["e1"]);
 });
 
-async function startBridge() {
+async function startBridge({ tab = true } = {}) {
 	const fake = installFakeChrome();
 	noEvents();
 	const native = await import(`../src/bridge/native.ts?ctx=${Math.random()}`);
@@ -179,6 +179,7 @@ async function startBridge() {
 	};
 	port.deliver({ type: "client_connected", clientId: "c1", client: { name: "claude", session: "changes" } });
 	await chrome.storage.local.set({ bridge_permission_mode: "allow_all" });
+	if (!tab) return { fake, request };
 	const created = await request("tabs.create");
 	assert.equal(created.error, undefined, JSON.stringify(created.error));
 	const tabId = created.result.tabId;
@@ -267,4 +268,141 @@ test("fitChanges: drops new text, then element lines, counts them, and never say
 	assert.equal(report.appeared.length, 6, "the input is not changed");
 	assert.deepEqual(fitChanges(report, 40), { page: CHANGES_TOO_LONG });
 	assert.equal(fitChanges("nothing changed", 5), "nothing changed");
+});
+
+/** Loads land in the fake: a URL set on a tab commits and fires DOMContentLoaded. */
+function loadsLand(fake) {
+	const update = chrome.tabs.update;
+	chrome.tabs.update = async (id, p) => {
+		const t = await update(id, p);
+		if (p.url && p.url !== "about:blank")
+			setTimeout(() => {
+				const at = { tabId: id, frameId: 0, url: p.url };
+				if (p.url.includes("#")) {
+					Object.assign(t, { url: p.url });
+					for (const fn of chrome.webNavigation.onReferenceFragmentUpdated.listeners) fn(at);
+					return;
+				}
+				fake.commitNav(id, p.url);
+				setTimeout(() => {
+					for (const fn of chrome.webNavigation.onDOMContentLoaded.listeners) fn(at);
+				}, 30);
+			}, 10);
+		return t;
+	};
+}
+
+test("leftover first-F4: navigate always returns changes, the first of a session and a load that timed out too", async () => {
+	const { fake, request } = await startBridge({ tab: false });
+	const { NEW_PAGE, STILL_LOADING } = await import("../src/browser/changes.ts");
+	const slow = await request("navigate", { url: "https://shop.example/", timeoutMs: 1 });
+	assert.deepEqual(slow.result.changes, { page: STILL_LOADING }, JSON.stringify(slow));
+	loadsLand(fake);
+	const timed = await request("navigate", { url: "https://shop.example/slow", timeoutMs: 1 });
+	assert.deepEqual(timed.result.changes, { page: STILL_LOADING }, JSON.stringify(timed));
+	const { request: fresh, fake: f2 } = await startBridge({ tab: false });
+	loadsLand(f2);
+	const first = await fresh("navigate", { url: "https://shop.example/" });
+	assert.deepEqual(first.result?.changes, { page: NEW_PAGE }, JSON.stringify(first));
+});
+
+test("leftover second-S3: a full navigation takes no look; a jump within the page is compared", async () => {
+	const { fake, request } = await startBridge();
+	const { NEW_PAGE } = await import("../src/browser/changes.ts");
+	loadsLand(fake);
+	const sent = recordCommands((method, params) => (method === "Runtime.evaluate" && isLook(params) ? says(look([node("e1", "Buy")])) : undefined));
+	const nav = await request("navigate", { url: "https://other.example/" });
+	assert.deepEqual(nav.result?.changes, { page: NEW_PAGE }, JSON.stringify(nav));
+	assert.equal(sent.filter((c) => isLook(c.params)).length, 0, "a full load looked at the page");
+	await request("navigate", { url: "https://other.example/#reviews" });
+	assert.equal(sent.filter((c) => isLook(c.params)).length, 2, "a hash jump keeps the document: it is compared");
+});
+
+test("leftover first-F1: drag reports its changes without the settle wait (no Network turned on)", async () => {
+	const { request } = await startBridge();
+	const sent = recordCommands((method, params) => (method === "Runtime.evaluate" && isLook(params) ? says(look([node("e1", "Card")])) : undefined));
+	const t0 = Date.now();
+	const reply = await request("drag", { from: { x: 10, y: 10 }, to: { x: 50, y: 50 } });
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	assert.equal(reply.result.changes, "nothing changed");
+	assert.equal(sent.filter((c) => c.method === "Network.enable").length, 0, "drag ran the settle wait");
+	assert.ok(Date.now() - t0 < 2 * 750 + 500, `${Date.now() - t0} ms`);
+});
+
+test("leftover first-F1: scroll keeps the wait (new rows load after it) and on a page that never goes quiet returns within its bound", async () => {
+	const { request } = await startBridge();
+	// The settle probe says a loader is up every time; looks answer at once.
+	recordCommands((method, params) =>
+		method !== "Runtime.evaluate"
+			? undefined
+			: isLook(params)
+				? says(look([node("e1", "Row")]))
+				: /scrollX/.test(params.expression)
+					? says({ scrollX: 0, scrollY: 400 })
+					: says({ since: 0, parsing: false, busy: "loading placeholder" }),
+	);
+	const t0 = Date.now();
+	const reply = await request("scroll", { dy: 400 });
+	const ms = Date.now() - t0;
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	assert.equal(reply.result.settled, false, JSON.stringify(reply.result));
+	// D41's cap (2.5 s), Network.enable (0.5 s) and two looks (1.5 s), with room for the test machine.
+	assert.ok(ms < 2500 + 500 + 1500 + 700, `${ms} ms`);
+});
+
+test("leftover first-F3: a control that only changed its name is one changed line, not gone and appeared", async () => {
+	const { fake, beforeAction, afterAction } = await load();
+	const tabId = fake.addTab({ url: "https://shop.example/", status: "complete" });
+	let n = 0;
+	recordCommands((method, params) => {
+		if (method !== "Runtime.evaluate" || !isLook(params)) return undefined;
+		return says(
+			n++
+				? look([node("e3", "Clock at 2"), node("e2", "Buy", { x: 1, y: 40 }), node("e4", "Added", { x: 1, y: 80 })], { gone: ["e1"] })
+				: look([node("e1", "Clock at 1"), node("e2", "Buy", { x: 1, y: 40 })]),
+		);
+	});
+	const b = await beforeAction(tabId, [tabId], undefined, GUARDED);
+	const r = await afterAction(b, [tabId], async () => "https://shop.example/", () => false);
+	assert.deepEqual(r.changed, ['e3 button "Clock at 2": name "Clock at 1" -> "Clock at 2" (was e1)'], JSON.stringify(r));
+	assert.deepEqual(r.appeared, ['e4 button "Added"']);
+	assert.equal(r.gone, undefined);
+});
+
+test("leftover second-S1: actions whose step moved to another tab says so, never nothing changed", async () => {
+	const { request, tabId: other } = await startBridge();
+	const { movedTo } = await import("../src/browser/changes.ts");
+	const a = await request("tabs.create");
+	await chrome.tabs.update(a.result.tabId, { url: "https://shop.example/a", status: "complete" });
+	recordCommands((method, params) => (method === "Runtime.evaluate" && isLook(params) ? says(look([node("e1", "Buy")])) : undefined));
+	const reply = await request("actions", { steps: [{ press: { key: "a", tabId: other } }] });
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	assert.deepEqual(reply.result.changes, { page: movedTo(other) }, JSON.stringify(reply.result));
+});
+
+test("leftover first-F2: a reload of the same URL is a new document, so its refusals start over", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { settle } = await import(`../src/browser/settle.ts?ctx=${Math.random()}`);
+	const tabId = fake.addTab({ url: "https://viewer.example/doc", status: "complete" });
+	// Refused until the reload, then a page that is still drawing.
+	let reloaded = false;
+	recordCommands((method) =>
+		method !== "Runtime.evaluate"
+			? undefined
+			: reloaded
+				? says({ since: 0, parsing: false, busy: "loading placeholder" })
+				: Promise.reject(new Error("cannot be scripted")),
+	);
+	const navigated = (loaderId) => {
+		for (const fn of chrome.debugger.onEvent.listeners) fn({ tabId }, "Page.frameNavigated", { frame: { id: "main", loaderId } });
+	};
+	setTimeout(() => navigated("L1"), 5);
+	setTimeout(() => {
+		reloaded = true;
+		navigated("L2");
+	}, 300);
+	const r = await settle(tabId, { quietMs: 300, capMs: 1500 });
+	assert.equal(r.settled, false, `the reloaded page was never probed: ${JSON.stringify(r)}`);
+	assert.equal(r.waitingOn, "loading");
 });
