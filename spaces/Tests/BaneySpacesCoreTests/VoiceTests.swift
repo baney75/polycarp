@@ -511,10 +511,18 @@ final class InstallerLoginPathTests: XCTestCase {
         addTeardownBlock { try? FileManager.default.removeItem(at: d) }
         return d
     }
+    /// A test shell, run once untimed before any test times it. 11-12: the first exec of a new unsigned file waits on
+    /// Gatekeeper's scan (syspolicyd "GK performScan"), and that scan checks notarization online: with the network slow
+    /// or just back from sleep it took over 3 s (cloudkit -1001 at 3.0 s), the shell printed nothing and a timed read
+    /// failed 1 run in 4. The scan runs once per file, so after this warm-up the deadlines time only `readLoginPath`.
+    /// A real login shell is a signed system binary and never waits like this.
     private func script(_ body: String, at url: URL) {
         try! FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try! Data("#!/bin/sh\n\(body)\n".utf8).write(to: url)
+        try! Data("#!/bin/sh\n[ \"$1\" = warm ] && exit 0\n\(body)\n".utf8).write(to: url)
         try! FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        let warm = Process(); warm.executableURL = url; warm.arguments = ["warm"]
+        try! warm.run(); warm.waitUntilExit()
+        XCTAssertEqual(warm.terminationStatus, 0, "the warm-up exits before the body runs")
     }
 
     func testTheLoginPathReadsWithinItsDeadlineEvenIfTheProfileLeavesAProcessBehind() {

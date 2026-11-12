@@ -6,15 +6,29 @@ import Foundation
 /// Measured 11-12: Calculator and Font Book each waited the full 7.1 s, answered `window_identified: false`, and their
 /// windows stayed drawn on Donovan's workspace. A window of the agent's own copy must never be left there: when Polycarp
 /// still can't place it after one more full look, that copy is quit and `open` fails, so the caller retries.
+/// Placing failed is enough: it doesn't matter whether the window server draws the copy's window yet. 11-12, PR 172: a copy
+/// launched hidden drew nothing while hidden, so `stray` was 0, the check said wait, and the window then showed unplaced
+/// on Donovan's screen. A window that isn't drawn yet is drawn a moment later, in the same wrong place.
 /// Only a copy this very request started is ever quit: one the agent-started record holds, whose process began after
 /// the request did. A copy Donovan started, or one an earlier request started, is left alone.
 public enum OpenMiss: Equatable, Sendable {
-    /// Nothing of the launch is drawn: its window may still come, and the pending open takes it.
+    /// No pid for the launch: nothing of it can be told from anyone else's.
     case wait
-    /// The agent's own copy drew a window outside the agent workspace: quit it.
+    /// A window of the launch is on the agent workspace: the app is placed, and anything of it elsewhere is its sheet,
+    /// panel or child, which `opened` reports. Never quit for it (review 157 F3).
+    case placed
+    /// The agent's own copy has no window on the agent workspace: quit it.
     case quit(pid: Int32)
-    /// A window is drawn outside the agent workspace, but the process isn't one this request started: never quit it.
+    /// Nothing of it is placed, but the process isn't one this request started: never quit it.
     case leave
+
+    /// When the miss check runs.
+    public enum When: Equatable, Sendable {
+        /// Now, inside the request: the caller waited the full claim, off the main thread.
+        case now
+        /// On a background queue this many seconds from now: once the claim has passed.
+        case after(TimeInterval)
+    }
 
     /// The slack between the request's clock and the kernel's process start record.
     public static let startSlack: TimeInterval = 0.5
@@ -23,23 +37,25 @@ public enum OpenMiss: Equatable, Sendable {
     /// A window smaller than this either way isn't one a person sees (a status item, a helper's 1 x 1 window).
     public static let minSide: CGFloat = 50
 
-    /// Whether a miss gets the extra look and may quit the copy. Only when the caller waited the full claim window: a
-    /// shorter wait ends while the claim may still place the window, and quitting then would kill a copy whose window
-    /// was about to land (review 157 F2). Never on the main thread: the extra look and the quit sleep (F5).
-    public static func looksAgain(wait: TimeInterval, mainThread: Bool) -> Bool { wait >= claimWait && !mainThread }
+    /// The miss check always runs once the claim window has passed, whatever the caller's `wait` or thread (review 163
+    /// second-F5). A caller that waited the full claim off main gets it in its answer. A shorter wait answers now and the
+    /// check follows at `claimWait` after the request began, never sooner, so a window about to land isn't quit (157 F2);
+    /// on the main thread it never sleeps through the look and the quit (157 F5).
+    public static func check(wait: TimeInterval, mainThread: Bool, elapsed: TimeInterval) -> When {
+        wait >= claimWait && !mainThread ? .now : .after(max(0, claimWait - elapsed))
+    }
 
-    /// Whether a window the window server draws is one a person can see: not clear, and over `minSide` both ways (F3).
+    /// Whether a window the window server lists is one a person can see: not clear, and over `minSide` both ways (F3).
     public static func visible(alpha: Double, bounds: CGRect) -> Bool {
         alpha > 0 && bounds.width > minSide && bounds.height > minSide
     }
 
     /// `launched`: the pid the launch's own completion reported. `startedAt`: that process's start, in seconds since 1970.
-    /// `requestStart`: when the request began, the same clock. `stray`: visible windows of that pid the window server
-    /// draws that the agent workspace doesn't hold. `held`: windows of that pid the agent workspace holds: when it holds
-    /// any, the app is placed and a stray one is its sheet, panel or child, which `opened` reports; never quit for it (F3).
+    /// `requestStart`: when the request began, the same clock. `held`: windows of that pid the agent workspace holds.
     public static func decide(launched: Int32?, agentStarted: Set<Int32>, startedAt: TimeInterval?, requestStart: TimeInterval,
-                              stray: Int, held: Int) -> OpenMiss {
-        guard let pid = launched, stray > 0, held == 0 else { return .wait }
+                              held: Int) -> OpenMiss {
+        guard let pid = launched else { return .wait }
+        guard held == 0 else { return .placed }
         guard agentStarted.contains(pid), let t = startedAt, t >= requestStart - startSlack else { return .leave }
         return .quit(pid: pid)
     }

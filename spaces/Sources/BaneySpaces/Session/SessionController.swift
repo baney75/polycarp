@@ -505,6 +505,9 @@ final class SessionController {
     /// brings itself forward as it launches), and for a few seconds it can't keep your keyboard (`AgentLaunchFocus`).
     func adoptAgentStartedProcess(_ pid: pid_t, workspace n: Int, title: String?, host h: AgentHost, grantAccess: Bool) {
         AgentOwned.shared.add(pid)
+        // A miss before this record took the hung back-off (5 s, then 30 s: past the claim). Now that it is the agent's,
+        // it is asked again at once, and later misses while it starts take the young schedule (review 163 second-F6).
+        Windows.markResponsive(pid)
         if grantAccess { AgentAccess.shared.grant(pid) }
         AgentActivity.shared.markLaunch(pid: pid, for: 8)
         h.claim(pid, n, true, title)

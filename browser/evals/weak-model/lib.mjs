@@ -1,6 +1,6 @@
 // The runner's checkable parts, kept apart from run.mjs so test/weak-model-harness.test.mjs can hold each one.
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -31,13 +31,25 @@ export async function loadTasks(dir) {
 	return tasks;
 }
 
-/** A Polycarp session name under 64 characters that keeps the task and trial whole, so trials never share a session. */
+/** The one sanitizer for labels and task ids in names and URL paths: lower case, letters, digits, `_` and `-`. */
+export const safeId = (s) => String(s).replace(/[^a-z0-9_-]/gi, "-").toLowerCase();
+
+/** The harness mount for a run: a URL path segment, so the page's POST and the scorer's lookup name the same path. */
+export const mountId = (label, taskId, trial) => `${safeId(taskId)}-${safeId(label)}-${trial}`;
+
+/**
+ * A Polycarp session name of at most 64 characters: `wm-<task>-<trial>-<hash of label and task>`. A long task id is cut
+ * from its start, so the trial and the hash always survive and no two runs share a session.
+ */
 export function sessionName(label, taskId, trial) {
-	const tag = createHash("sha256").update(label).digest("hex").slice(0, 8);
-	return `wm-${tag}-${taskId}-${trial}`
-		.replace(/[^a-z0-9_-]/gi, "-")
-		.toLowerCase()
-		.slice(-64);
+	const tag = createHash("sha256").update(`${label}\0${taskId}`).digest("hex").slice(0, 8);
+	return `wm-${safeId(taskId)}-${trial}-${tag}`.slice(-64);
+}
+
+/** A whole number above zero from a --name value, or a ClearError-ready message. */
+export function positiveInt(name, value) {
+	const n = Number(value);
+	return Number.isInteger(n) && n > 0 ? { n } : { error: `--${name} takes a whole number above 0, not ${JSON.stringify(value)}` };
 }
 
 /**
@@ -57,42 +69,4 @@ export async function settledState(read, { quietMs = 1500, deadlineMs = 8000, st
 		} else if (Date.now() - since >= quietMs) break;
 	}
 	return last;
-}
-
-/** Pids of app copies this run started: the helper's computer_open answers that started a copy (reused false). */
-export function ownPids(calls) {
-	const pids = new Set();
-	for (const c of calls) {
-		if (c.tool !== "computer_open" || c.error !== false) continue;
-		try {
-			const d = JSON.parse(c.result).data;
-			if (d?.reused === false && Number.isInteger(d.pid)) pids.add(d.pid);
-		} catch {}
-	}
-	return pids;
-}
-
-/**
- * Puts the apps' preferences back: imports each backup, and deletes a domain that did not exist before the run, so
- * prefs an agent copy wrote are not left behind. A domain whose export failed for another reason is left alone.
- */
-export function restorePrefs(backup, exec) {
-	for (const { domain, file, absent } of backup) {
-		try {
-			if (file) exec("defaults", ["import", domain, file]);
-			else if (absent) exec("defaults", ["delete", domain]);
-		} catch (err) {
-			if (!absent) console.error(`could not restore ${domain}: ${err.message}; backup kept at ${file}`);
-		}
-	}
-}
-
-/** What a stopped run (Ctrl-C) still undoes on the way out: its own app copies and its fixture folder. */
-export function stopCleanup(pids, dir) {
-	for (const pid of pids) {
-		try {
-			process.kill(pid, "SIGTERM");
-		} catch {}
-	}
-	rmSync(dir, { recursive: true, force: true });
 }
