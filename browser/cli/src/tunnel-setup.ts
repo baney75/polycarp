@@ -2,7 +2,9 @@
  * The Connect panel's "Set up with Cloudflare" button, host side: the same setup as `remote setup --cloudflare <host>`,
  * run as five steps the panel can show. Nothing here prints to stdout, which is the native host's channel to the browser.
  *
- * Each step reports progress `{step, state, detail?, url?}`. A step that fails reports `failed` with the reason and throws.
+ * Each step reports progress `{step, state, detail?, url?}`. A step that fails reports `failed` with the reason and throws, except
+ * the tunnel step when `remote setup` answers with a state of its own (a taken name, a domain off the account): that report comes
+ * back as `problem`, so the panel draws the step's own sentence and action (first-F1).
  */
 import { existsSync } from "node:fs";
 import type { TunnelStepId } from "../../src/connect/types.ts";
@@ -65,30 +67,38 @@ export const realTunnelHooks: TunnelHooks = {
 	},
 	signedIn: cloudflareSignedIn,
 	login: (bin, onUrl) => cloudflareLoginForPanel(bin, onUrl),
-	async setup(options) {
-		let report: SetupReport | undefined;
-		const code = await remoteSetup({ ...options, report: (r) => (report = r) });
-		if (code !== 0 || !report?.ok) throw new Error(report?.message ?? "Setup didn't finish.");
-		return report;
-	},
+	setup: (options) => setupReport(options),
 	check: (publicUrl) => metadata(`${publicUrl}${METADATA_PATH}`, 10_000, publicUrl),
 };
+
+/** `remote setup` for the tunnel, as its report: refused or not, the report is the answer. Only no report at all throws. */
+export async function setupReport(options: SetupOptions, run: typeof remoteSetup = remoteSetup): Promise<SetupReport> {
+	let report: SetupReport | undefined;
+	await run({ ...options, report: (r) => (report = r) });
+	if (!report) throw new Error("Setup didn't finish.");
+	return report;
+}
 
 export interface TunnelTimings {
 	checkTotalMs?: number;
 	checkEveryMs?: number;
 }
 
-/** Runs the five steps for `host` (already normalized). Returns the public origin. Throws TunnelError. */
-export async function setupTunnel(host: string, progress: (p: TunnelProgress) => void, hooks: TunnelHooks = realTunnelHooks, timings: TunnelTimings = {}): Promise<{ publicUrl: string; checks?: SetupReport["checks"] }> {
+/**
+ * Runs the five steps for `host` (already normalized). Returns the public origin, or the report setup refused with as `problem`.
+ * Throws TunnelError.
+ */
+export async function setupTunnel(host: string, progress: (p: TunnelProgress) => void, hooks: TunnelHooks = realTunnelHooks, timings: TunnelTimings = {}): Promise<{ publicUrl: string; checks?: SetupReport["checks"]; problem?: SetupReport }> {
 	const name = normalizeCloudflareHost(host);
 	if (!name) throw new TunnelError("cloudflared", `${host} isn't a name a tunnel can have. Use one like polycarp.yourdomain.com.`);
 	const publicUrl = `https://${name}`;
-	const run = async <T>(step: TunnelStep, work: () => Promise<T>): Promise<T> => {
+	/** `refused` names an answer that stops the setup without an error: the step shows failed with those words. */
+	const run = async <T>(step: TunnelStep, work: () => Promise<T>, refused?: (out: T) => string | undefined): Promise<T> => {
 		progress({ step, state: "running" });
 		try {
 			const out = await work();
-			progress({ step, state: "done" });
+			const why = refused?.(out);
+			progress(why === undefined ? { step, state: "done" } : { step, state: "failed", detail: why.slice(0, 500) });
 			return out;
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
@@ -126,7 +136,14 @@ export async function setupTunnel(host: string, progress: (p: TunnelProgress) =>
 
 	// Always run: setup again on the same name picks up where a failed run stopped (a service that never started). Funnel, when
 	// it is the route now, closes inside setup only after Cloudflare has made the tunnel.
-	const report = await run("tunnel", async () => (await hooks.setup({ cloudflare: name, service: true, passcode: false, replaceFunnel: previous?.route === "funnel" })) || undefined);
+	// A report that isn't ok is setup's own answer (a taken name, a domain off the account): the step fails with its words and
+	// the report goes back whole, so the panel draws that state's sentence and action instead of a bare error.
+	const report = await run(
+		"tunnel",
+		async () => (await hooks.setup({ cloudflare: name, service: true, passcode: false, replaceFunnel: previous?.route === "funnel" })) || undefined,
+		(r) => (r && !r.ok ? r.message : undefined),
+	);
+	if (report && !report.ok) return { publicUrl, problem: report };
 
 	// The tunnel and its record are made, so a name that isn't answering yet is on with a lagging check, not a failed setup: a new
 	// record takes minutes. The check is left waiting, pending, and the panel checks again from the result by itself.
@@ -140,5 +157,7 @@ export async function setupTunnel(host: string, progress: (p: TunnelProgress) =>
 	const detail = result.detail.slice(0, 500);
 	progress({ step: "check", state: "waiting", detail });
 	const lagging = { name: "resource_metadata" as const, status: "fail" as const, detail, pending: true };
-	return { publicUrl, checks: [...checks.filter((c) => c.name !== "resource_metadata"), lagging] };
+	// In place, so the checklist keeps the report's order (first-F5); appended only when the report had none.
+	const at = checks.findIndex((c) => c.name === "resource_metadata");
+	return { publicUrl, checks: at < 0 ? [...checks, lagging] : checks.map((c, i) => (i === at ? lagging : c)) };
 }

@@ -50,7 +50,7 @@ import {
 	tailscaleAccessDenied,
 	tailscaleDownloadUrl,
 } from "./remote-state.ts";
-import { installService, removeService, run, serviceFile, serviceLogHint, serviceRunning, sleep, writeAtomic } from "./service.ts";
+import { installService, removeService, run, runAsync, serviceFile, serviceLogHint, serviceRunning, sleep, writeAtomic } from "./service.ts";
 import { configDir, listClients, mintApprovalCode, passcodeSet, setPasscode } from "./oauth.ts";
 import { hubFile } from "./hub-state.ts";
 import { DohAnswerError, dohAddresses } from "./doh.ts";
@@ -122,15 +122,17 @@ type ServeTcp = Record<string, { HTTPS?: boolean; TCPForward?: string }>;
 /** What `tailscale` says about this machine: not connected, unreadable serve status, or its DNS name, Web entries and which host:ports Funnel is on for. */
 type TailscaleState = { kind: "disconnected" } | { kind: "unreadable" } | { kind: "ok"; dns: string; web: ServeWeb; tcp: ServeTcp; allowFunnel: Record<string, boolean> };
 
-function readTailscale(bin: string): TailscaleState {
-	let dns = "";
+/** The DNS name `tailscale status --json` gives, or "" when Tailscale isn't connected. */
+function dnsFrom(statusOut: string): string {
 	try {
-		dns = String((JSON.parse(run(bin, ["status", "--json"]).out) as { Self?: { DNSName?: string } }).Self?.DNSName ?? "").replace(/\.$/, "");
+		return String((JSON.parse(statusOut) as { Self?: { DNSName?: string } }).Self?.DNSName ?? "").replace(/\.$/, "");
 	} catch {
-		/* not connected */
+		return "";
 	}
-	if (!dns) return { kind: "disconnected" };
-	const serveStatus = run(bin, ["serve", "status", "--json"]);
+}
+
+/** `tailscale serve status --json`, read for one DNS name. */
+function serveFrom(dns: string, serveStatus: { code: number; out: string }): TailscaleState {
 	try {
 		if (serveStatus.code !== 0) throw new Error("serve status failed");
 		const parsed = JSON.parse(serveStatus.out || "{}") as { Web?: ServeWeb; TCP?: ServeTcp; AllowFunnel?: Record<string, boolean> };
@@ -140,31 +142,80 @@ function readTailscale(bin: string): TailscaleState {
 	}
 }
 
+function readTailscale(bin: string): TailscaleState {
+	const dns = dnsFrom(run(bin, ["status", "--json"]).out);
+	if (!dns) return { kind: "disconnected" };
+	return serveFrom(dns, run(bin, ["serve", "status", "--json"]));
+}
+
+/**
+ * How the native host's probes run a command: without blocking the event loop, which relays every agent's traffic (first-F3),
+ * and with a short limit, since each is a read Tailscale answers at once when it is well.
+ */
+export type ProbeRun = (cmd: string, args: string[]) => Promise<{ code: number; out: string }>;
+export const PROBE_TIMEOUT_MS = 15_000;
+const probeRun: ProbeRun = (cmd, args) => runAsync(cmd, args, PROBE_TIMEOUT_MS);
+
+/** Stand-ins for the probes, so a test reads Tailscale without running it. */
+export interface ProbeSeam {
+	run?: ProbeRun;
+	tailscale?: () => string | undefined;
+}
+
+async function readTailscaleAsync(bin: string, exec: ProbeRun): Promise<TailscaleState> {
+	const dns = dnsFrom((await exec(bin, ["status", "--json"])).out);
+	if (!dns) return { kind: "disconnected" };
+	return serveFrom(dns, await exec(bin, ["serve", "status", "--json"]));
+}
+
 const LOCAL_PROXY = /^http:\/\/(127\.0\.0\.1|localhost):/;
 
 type FunnelBlock = { ok: false; state: RemoteState; message: string; code?: string };
 type FunnelPlan = { ok: true; bin: string; dns: string } | FunnelBlock;
 
-/** The Tailscale part of planning: installed, no Tailnet Lock, signed in. What `remote status` re-checks once remote.json exists. */
-export function tailscaleReady(): { ok: true; bin: string; state: TailscaleState } | FunnelBlock {
-	const bin = tailscaleBinary();
-	if (!bin) return { ok: false, state: "tailscale_missing", message: `Tailscale isn't installed. Install it from ${tailscaleDownloadUrl()} and sign in, or use --cloudflare name.yourdomain.com for a domain on your Cloudflare account.` };
-	if (/tailnet lock is enabled/i.test(run(bin, ["lock", "status"]).out)) {
-		return {
-			ok: false,
-			state: "tailnet_lock",
-			message:
-				"This tailnet has Tailnet Lock on, and Tailscale Funnel doesn't work on a Tailnet Lock tailnet. Nothing was changed. Use --public-url with a Cloudflare named tunnel (free); docs/remote.md has the steps.",
-		};
-	}
-	const state = readTailscale(bin);
+const TAILNET_LOCKED: FunnelBlock = {
+	ok: false,
+	state: "tailnet_lock",
+	message:
+		"This tailnet has Tailnet Lock on, and Tailscale Funnel doesn't work on a Tailnet Lock tailnet. Nothing was changed. Use --public-url with a Cloudflare named tunnel (free); docs/remote.md has the steps.",
+};
+const tailscaleAbsent = (): FunnelBlock => ({ ok: false, state: "tailscale_missing", message: `Tailscale isn't installed. Install it from ${tailscaleDownloadUrl()} and sign in, or use --cloudflare name.yourdomain.com for a domain on your Cloudflare account.` });
+const tailnetLocked = (lockOut: string): boolean => /tailnet lock is enabled/i.test(lockOut);
+type TailscaleReady = { ok: true; bin: string; state: TailscaleState } | FunnelBlock;
+
+function readyFrom(bin: string, state: TailscaleState): TailscaleReady {
 	if (state.kind === "disconnected") return { ok: false, state: "tailscale_signed_out", message: `Tailscale isn't connected. ${tailscaleSignIn()}, then try again.` };
 	return { ok: true, bin, state };
 }
 
+/** The Tailscale part of planning: installed, no Tailnet Lock, signed in. What `remote status` re-checks once remote.json exists. */
+export function tailscaleReady(): TailscaleReady {
+	const bin = tailscaleBinary();
+	if (!bin) return tailscaleAbsent();
+	if (tailnetLocked(run(bin, ["lock", "status"]).out)) return TAILNET_LOCKED;
+	return readyFrom(bin, readTailscale(bin));
+}
+
+/** `tailscaleReady` for the native host: the same answer, without blocking it. */
+export async function tailscaleReadyAsync(seam: ProbeSeam = {}): Promise<TailscaleReady> {
+	const exec = seam.run ?? probeRun;
+	const bin = (seam.tailscale ?? tailscaleBinary)();
+	if (!bin) return tailscaleAbsent();
+	if (tailnetLocked((await exec(bin, ["lock", "status"])).out)) return TAILNET_LOCKED;
+	return readyFrom(bin, await readTailscaleAsync(bin, exec));
+}
+
 /** Everything that can refuse Funnel, checked before anything changes. `ports` are the local ports that count as ours on 8443. */
 export function planFunnel(ports: number[]): FunnelPlan {
-	const basics = tailscaleReady();
+	return planFrom(tailscaleReady(), ports);
+}
+
+/** `planFunnel` for the native host and the read-only preflight: the same plan, without blocking. */
+export async function planFunnelAsync(ports: number[], seam: ProbeSeam = {}): Promise<FunnelPlan> {
+	return planFrom(await tailscaleReadyAsync(seam), ports);
+}
+
+function planFrom(basics: TailscaleReady, ports: number[]): FunnelPlan {
 	if (!basics.ok) return basics;
 	const { bin, state } = basics;
 	if (state.kind === "unreadable") return { ok: false, state: "problem", message: "Couldn't read tailscale serve status, so nothing was changed." };
@@ -281,7 +332,7 @@ function openFunnelProcess(bin: string, port: number): Promise<FunnelOpen> {
 export async function openFunnel(bin: string, dns: string, port: number): Promise<FunnelOpen> {
 	const result = await openFunnelProcess(bin, port);
 	if (result.kind !== "opened") return result;
-	const after = readTailscale(bin);
+	const after = await readTailscaleAsync(bin, probeRun);
 	if (after.kind === "ok" && after.allowFunnel[`${dns}:${FUNNEL_PORT}`] === true) return result;
 	return { kind: "failed", message: `tailscale funnel finished, but Funnel isn't on for ${dns}:${FUNNEL_PORT}${after.kind === "ok" ? "" : " (and tailscale serve status can't be read)"}.` };
 }
@@ -1020,17 +1071,28 @@ export async function dnsCheck(host: string): Promise<Check> {
 
 /** Which ways of reaching this computer are ready. Reads only; never signs in or installs anything. */
 export function remoteRoutes(): RemoteRoutes {
-	const tailscale = tailscaleReady();
+	return routesFrom(tailscaleReady());
+}
+
+/** `remoteRoutes` for the native host, without blocking it. */
+export async function remoteRoutesAsync(seam: ProbeSeam = {}): Promise<RemoteRoutes> {
+	return routesFrom(await tailscaleReadyAsync(seam));
+}
+
+function routesFrom(tailscale: TailscaleReady): RemoteRoutes {
 	return {
 		tailscale: { installed: tailscale.ok || tailscale.state !== "tailscale_missing", signedIn: tailscale.ok },
 		cloudflare: { installed: Boolean(cloudflaredBinary()), signedIn: cloudflareSignedIn() },
 	};
 }
 
-/** Read-only: can setup go ahead? ready, or the first thing in the way. Runs the same checks setup runs before it changes anything. */
-export async function preflight(): Promise<{ state: RemoteState; message: string; code?: string }> {
+/**
+ * Read-only: can setup go ahead? ready, or the first thing in the way. Runs the same checks setup runs before it changes
+ * anything, without blocking the event loop (the native host asks it every few seconds).
+ */
+export async function preflight(seam: ProbeSeam = {}): Promise<{ state: RemoteState; message: string; code?: string }> {
 	if (existsSync(hubFile())) return { state: "problem", message: `This install is set up as a hub (${hubFile()}), and an install has one public route. Run ${COMMAND_NAME} hub off first.`, code: "hub" };
-	const plan = planFunnel([DEFAULT_PORT]);
+	const plan = await planFunnelAsync([DEFAULT_PORT], seam);
 	if (!plan.ok) return { state: plan.state, message: plan.message, ...(plan.code ? { code: plan.code } : {}) };
 	const probe = await probeLocal(DEFAULT_PORT, `https://${plan.dns}:${FUNNEL_PORT}`);
 	if (probe.state === "other") return { state: "port_busy", message: `Something already listens on 127.0.0.1:${DEFAULT_PORT} and isn't Polycarp serve (${probe.detail}).`, code: "local_port" };

@@ -8,7 +8,7 @@
 import { execFile } from "node:child_process";
 import { cloudflaredBinary } from "./cloudflare.ts";
 import { cloudflaredAsset } from "./cloudflared-download.ts";
-import { loadRemoteConfig, openFunnel, planFunnel, preflight, type RemoteConfig, remoteRoutes, remoteSetup, tailscaleReady } from "./remote-setup.ts";
+import { loadRemoteConfig, openFunnel, planFunnelAsync, preflight, type ProbeSeam, type RemoteConfig, remoteRoutesAsync, remoteSetup, tailscaleReadyAsync } from "./remote-setup.ts";
 import { CLOUDFLARED_DOWNLOAD_URL, type RemoteNext, type RemoteState, type SetupReport, TAILSCALE_OPERATOR_FIX, tailscaleAccessDenied, tailscaleDownloadUrl } from "./remote-state.ts";
 import { publicChecks, realFault } from "./remote-test.ts";
 import { COMMAND_NAME, selfExec, selfPrefix } from "./self.ts";
@@ -112,25 +112,26 @@ function cloudflaredNext(host: string | undefined): RemoteNext {
  * Where remote access stands, read without changing anything and without the network: cheap enough to ask every few seconds
  * while a step waits on the person. With nothing set up it is `remote setup`'s preflight (ready, or the first thing in the
  * way); set up, it is what stops the route from working on this computer (Tailscale gone or signed out, Funnel closed,
- * cloudflared gone), else `on`. The outside checks are `remoteTest`, asked for on their own.
+ * cloudflared gone), else `on`. The outside checks are `remoteTest`, asked for on their own. Every Tailscale read is async with
+ * a time limit (first-F3): this process relays every agent's traffic, and a poll must never hold it up.
  */
-export async function remoteState(): Promise<RemoteAnswer> {
+export async function remoteState(seam: ProbeSeam = {}): Promise<RemoteAnswer> {
 	let config: RemoteConfig | undefined;
 	try {
 		config = loadRemoteConfig();
 	} catch (err) {
-		const routes = routesView(remoteRoutes());
+		const routes = routesView(await remoteRoutesAsync(seam));
 		return { ...configProblem(err), ...(routes ? { routes } : {}) };
 	}
-	const routes = remoteRoutes();
+	const routes = await remoteRoutesAsync(seam);
 	if (!config) {
-		const pf = await preflight();
+		const pf = await preflight(seam);
 		const next = nextFor(pf.state);
 		return remoteAnswer({ ...pf, ...(next ? { next } : {}), routes });
 	}
 	const base = { routes, route: config.route, connectorUrl: `${config.publicUrl}/mcp` };
 	if (config.route === "funnel") {
-		const ready = tailscaleReady();
+		const ready = await tailscaleReadyAsync(seam);
 		if (!ready.ok) {
 			const next = nextFor(ready.state);
 			return remoteAnswer({ ...base, state: ready.state, message: ready.message, ...(ready.code ? { code: ready.code } : {}), ...(next ? { next } : {}) });
@@ -161,7 +162,7 @@ export async function remoteSetupTailscale(run: typeof remoteSetup = remoteSetup
 /** Seams for `remoteOpenFunnel`, so a test runs it without Tailscale. */
 export interface FunnelSeam {
 	load?: () => RemoteConfig | undefined;
-	plan?: typeof planFunnel;
+	plan?: (ports: number[]) => ReturnType<typeof planFunnelAsync> | Awaited<ReturnType<typeof planFunnelAsync>>;
 	open?: typeof openFunnel;
 	checks?: typeof publicChecks;
 }
@@ -176,7 +177,7 @@ export async function remoteOpenFunnel(seam: FunnelSeam = {}): Promise<RemoteAns
 	const config = (seam.load ?? loadRemoteConfig)();
 	if (!config || config.route !== "funnel") return remoteAnswer({ state: "problem", code: "not_set_up", message: "Funnel isn't this computer's route, so there is nothing to open.", next: { kind: "run_command", command: `${COMMAND_NAME} remote setup` } });
 	const base = { route: config.route, connectorUrl: `${config.publicUrl}/mcp` };
-	const plan = (seam.plan ?? planFunnel)([config.port]);
+	const plan = await (seam.plan ?? planFunnelAsync)([config.port]);
 	if (!plan.ok) {
 		const next = nextFor(plan.state);
 		return remoteAnswer({ ...base, state: plan.state, message: plan.message, ...(plan.code ? { code: plan.code } : {}), ...(next ? { next } : {}) });
@@ -244,6 +245,9 @@ export async function remoteFix(dryRun: boolean, run: RunSelf = runSelf): Promis
 		.slice(0, 10)
 		.map((a) => ({ kind: cap(String(a.kind), 40), what: cap(String(a.what), 300), status: cap(String(a.status), 20) }));
 	const checks = checkViews(parsed.checks);
+	// A step only the person can take (second-N1): what to do next and the advice, so a Repair that stops says why.
+	const next = nextView(parsed.next);
+	const advice = adviceViews(parsed.advice);
 	return {
 		available: true,
 		ok: parsed.ok === true,
@@ -252,5 +256,21 @@ export async function remoteFix(dryRun: boolean, run: RunSelf = runSelf): Promis
 		...(typeof parsed.message === "string" ? { message: cap(parsed.message) } : {}),
 		actions,
 		...(checks?.length ? { checks } : {}),
+		...(next ? { next } : {}),
+		...(advice.length ? { advice } : {}),
 	};
+}
+
+/** `remote fix`'s advice as the panel draws it: `{name, detail, command?}`, capped, a command only on one short line. */
+export function adviceViews(advice: unknown): NonNullable<RemoteFixAnswer["advice"]> {
+	if (!Array.isArray(advice)) return [];
+	return advice
+		.filter((a): a is Record<string, unknown> => Boolean(a) && typeof a === "object")
+		.filter((a) => typeof a.name === "string" && typeof a.detail === "string")
+		.slice(0, 10)
+		.map((a) => ({
+			name: cap(String(a.name), 40),
+			detail: cap(String(a.detail), 400),
+			...(typeof a.command === "string" && a.command.length <= 300 && !/[\r\n]/.test(a.command) ? { command: a.command } : {}),
+		}));
 }

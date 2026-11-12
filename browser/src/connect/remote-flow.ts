@@ -35,10 +35,18 @@ export interface FlowInput {
 	fix?: RemoteFixAnswer;
 	/** The ten-minute Funnel retry ran out: the step stops waiting and its button checks again. */
 	funnelGaveUp?: boolean;
+	/** The result waited WAITING_FOR_MS on a pending check: it is a failure now, with Repair (second-N2). */
+	waitingGaveUp?: boolean;
 }
 
 /** Funnel is retried by itself for this long after a refusal; then the step's button checks again (funnel_gave_up). */
 export const FUNNEL_RETRY_FOR_MS = 10 * 60_000;
+
+/**
+ * How long the result says "still being published" before a pending check counts as failed (second-N2). Public DNS for a new
+ * name and a new tunnel both answer within minutes; setup already waited 5 of them.
+ */
+export const WAITING_FOR_MS = 15 * 60_000;
 
 /** The result's heading: on, on and waiting for a pending check, on with a failed check, or on with no browser. */
 export type ResultHead = Extract<RemoteCopyKey, "on" | "on_waiting" | "check_failed" | "no_browser_connected">;
@@ -71,6 +79,8 @@ export type FlowScreen =
 			repair: boolean;
 			/** No passcode is set, so "No passcode was made here" is true. */
 			noPasscode: boolean;
+			/** The wait ran out (WAITING_FOR_MS): the pending checks are drawn as failed. */
+			gaveUp: boolean;
 	  };
 
 /** States that stop the saved route from working on this computer: they come ahead of the result, whatever an older run said. */
@@ -100,14 +110,18 @@ export const repairAvailable = (fix?: RemoteFixAnswer): boolean =>
 
 function step(answer: RemoteAnswer, input: FlowInput, route?: ChosenRoute): Extract<FlowScreen, { kind: "step" }> {
 	let copy: RemoteStepCopy & { key: string } = stepCopy(answer);
+	const saved = input.status?.route === "remote";
 	if (copy.key === "funnel_not_allowed" && input.funnelGaveUp)
 		copy = { key: "funnel_gave_up", ...STEP_COPY.funnel_gave_up };
+	// The operator refusal waits only while the Funnel retry runs; once it stopped, or with nothing saved to retry, the button
+	// checks again (first-F2).
+	if (copy.key === "tailscale_operator" && (input.funnelGaveUp || !saved))
+		copy = { key: "tailscale_operator_check", ...STEP_COPY.tailscale_operator_check };
 	// A button with nothing behind it is not drawn: Repair needs `remote fix` and a plan.
 	if (copy.action?.kind === "repair" && !repairAvailable(input.fix)) {
 		const { action: _drop, ...rest } = copy;
 		copy = rest;
 	}
-	const saved = input.status?.route === "remote";
 	return {
 		kind: "step",
 		step: STEP_TWO.has(copy.key) ? 2 : 3,
@@ -122,23 +136,29 @@ function step(answer: RemoteAnswer, input: FlowInput, route?: ChosenRoute): Extr
 function result(input: FlowInput, connectorUrl: string, answer?: RemoteAnswer): FlowScreen {
 	// The newest checks speak; before any arrive, the answer's own (or an older helper's bare dns code) does.
 	const checks = input.checks ?? answer?.checks;
-	const failed = realFailures(checks);
-	const waiting = !failed.length && (waitingChecks(checks) || (!checks?.length && answer?.code === "dns"));
-	const head: ResultHead = failed.length
-		? "check_failed"
-		: waiting
-			? "on_waiting"
-			: answer?.state === "no_browser_connected"
-				? "no_browser_connected"
-				: "on";
+	const real = realFailures(checks);
+	const pending = !real.length && (waitingChecks(checks) || (!checks?.length && answer?.code === "dns"));
+	// Past the wait, a pending check is a failure like any other, and Repair can try (second-N2).
+	const gaveUp = pending && input.waitingGaveUp === true;
+	const failed = gaveUp ? (checks ?? []).filter((c) => c.status === "fail") : real;
+	const waiting = pending && !gaveUp;
+	const head: ResultHead =
+		failed.length || gaveUp
+			? "check_failed"
+			: waiting
+				? "on_waiting"
+				: answer?.state === "no_browser_connected"
+					? "no_browser_connected"
+					: "on";
 	return {
 		kind: "result",
 		connectorUrl,
 		...(answer ? { answer } : {}),
 		head,
 		waiting,
-		repair: failed.length > 0 && repairAvailable(input.fix),
+		repair: (failed.length > 0 || gaveUp) && repairAvailable(input.fix),
 		noPasscode: input.status?.passcodeSet === false,
+		gaveUp,
 	};
 }
 
@@ -163,13 +183,15 @@ export function flowScreen(input: FlowInput): FlowScreen {
 	if (isOn(run) && run?.connectorUrl) return result(input, run.connectorUrl, run);
 	if (status.route === "remote" && status.publicUrl) {
 		// "Use Cloudflare instead" on a Funnel route: the Cloudflare form, until it turns on or the person goes back.
-		if (chosen === "cloudflare" && routeOf(status) !== "cloudflare") return { kind: "cloudflare", step: 3 };
+		// A refusal from that form (a taken name) is drawn as its own step first (first-F1).
+		if (chosen === "cloudflare" && routeOf(status) !== "cloudflare" && !(run && !isOn(run)))
+			return { kind: "cloudflare", step: 3 };
 		// Set up. Something about Tailscale or cloudflared itself comes first; then the last run's answer (Funnel not allowed
 		// yet carries the page to open, a retry's operator refusal its command); else the result, with what was last found from
 		// outside. funnel_closed is only what a newer run is trying to fix, so any run that isn't on comes ahead of it.
 		if (remote && BLOCKING.has(remote.state) && !(run && !isOn(run) && remote.state === "funnel_closed"))
 			return step(remote, input, routeOf(status));
-		if (run && !isOn(run)) return step(run, input, routeOf(status));
+		if (run && !isOn(run)) return step(run, input, chosen === "cloudflare" ? "cloudflare" : routeOf(status));
 		return result(input, `${status.publicUrl}/mcp`, remote);
 	}
 	// Nothing set up yet.
@@ -197,9 +219,15 @@ export interface Poll {
 export const STATE_POLL_MS = 3_000;
 export const FUNNEL_POLL_MS = 5_000;
 export const DNS_POLL_MS = 30_000;
+/**
+ * The choose screen once the routes are read: an install or sign-in in another window still shows up, without asking Tailscale
+ * every 3 seconds while nobody acts (first-F3).
+ */
+export const CHOOSE_POLL_MS = 15_000;
 
 export function pollFor(screen: FlowScreen, input: FlowInput): Poll | undefined {
-	if (screen.kind === "choose") return { method: "remoteState", everyMs: STATE_POLL_MS };
+	if (screen.kind === "choose")
+		return { method: "remoteState", everyMs: screen.routes ? CHOOSE_POLL_MS : STATE_POLL_MS };
 	// A new address takes minutes to reach public DNS, and a new tunnel a minute to connect: check again until it answers.
 	if (screen.kind === "result") return screen.waiting ? { method: "remoteTest", everyMs: DNS_POLL_MS } : undefined;
 	if (screen.kind !== "step" || input.busy) return undefined;
@@ -242,6 +270,39 @@ export function settleRunAfterTest(run: RemoteAnswer | undefined, test: RemoteAn
 	if (!run || isOn(run) || !isOn(test)) return run;
 	const k = copyKey(run);
 	return k === "dns" || k === "check_failed" ? undefined : run;
+}
+
+/** What a Repair that stopped says: the step only the person can take, its command or page, and `remote fix`'s advice. */
+export interface RepairOutcome {
+	copy: RemoteStepCopy & { key: string };
+	message?: string;
+	command?: string;
+	url?: string;
+	advice: NonNullable<RemoteFixAnswer["advice"]>;
+}
+
+/**
+ * The block a failed Repair draws (second-N1), or undefined when it worked or never ran. Nothing polls for it, so a step that
+ * would say it moves on by itself says to check again instead.
+ */
+export function repairOutcome(done: RemoteFixAnswer | undefined): RepairOutcome | undefined {
+	if (!done?.available || done.ok !== false) return undefined;
+	const answer = {
+		state: done.state ?? "problem",
+		...(done.code ? { code: done.code } : {}),
+		message: done.message ?? "",
+		...(done.next ? { next: done.next } : {}),
+	};
+	let copy: RemoteStepCopy & { key: string } = stepCopy(answer);
+	if (copy.key === "tailscale_operator")
+		copy = { key: "tailscale_operator_check", ...STEP_COPY.tailscale_operator_check };
+	return {
+		copy,
+		...(done.message ? { message: done.message } : {}),
+		...(done.next?.command ? { command: done.next.command } : {}),
+		...(done.next?.url ? { url: done.next.url } : {}),
+		advice: done.advice ?? [],
+	};
 }
 
 /** Two answers draw the same: a poll that brings nothing new must not touch the screen (the side panel jitter, PR 117). */

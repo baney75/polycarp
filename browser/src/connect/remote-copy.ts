@@ -1,8 +1,8 @@
 /**
  * Every sentence of "Use Polycarp from Claude, ChatGPT and Grok", in one place: the side panel draws from it, the Mac app
- * holds the same strings (spaces/Sources/BaneySpacesCore/BrowserRemote.swift, held equal by test/remote-copy.test.mjs),
- * and the assistant steps are the lines `remote setup` prints. Types and constants only, so the extension and the helper
- * both import it.
+ * is to show the same strings, and the assistant steps are the lines `remote setup` prints (test/remote-copy.test.mjs holds
+ * those equal). No test reads the Mac app's copy yet, so a change here is one to make there too. Types and constants only, so
+ * the extension and the helper both import it.
  *
  * The helper's JSON is the contract: `state`, `code` and `next.kind` pick one entry here (`copyKey`). A known state never
  * falls back to a generic sentence; only a state or code this table doesn't know shows the helper's own `message`.
@@ -118,6 +118,15 @@ export const STEP_COPY = {
 		body: "Tailscale refused because your user isn't its operator. Run this command once in a terminal; Polycarp never runs sudo. This page moves on by itself.",
 		action: { kind: "copy_command", label: "Copy the command" },
 		waits: true,
+	},
+	/**
+	 * The surface's own: the operator refusal when nothing checks for it by itself (the Funnel retry stopped, or nothing is saved
+	 * yet to retry), so the button checks again.
+	 */
+	tailscale_operator_check: {
+		title: "Let your user control Tailscale",
+		body: "Tailscale refused because your user isn't its operator. Run this command once in a terminal; Polycarp never runs sudo. Then press Check again.",
+		action: { kind: "open_funnel", label: "Check again" },
 	},
 	launcher: {
 		title: "Finish installing Polycarp",
@@ -307,6 +316,14 @@ export function waitingChecks(checks: readonly CheckLike[] | undefined): boolean
 }
 
 /**
+ * The helper says the next step is `remote fix` (setup's deadline passed with a check still pending): waiting is over, and the
+ * answer is a failure that offers Repair, never "still being published" (second-N2).
+ */
+export function needsRepair(answer: { next?: { kind?: string; command?: string } }): boolean {
+	return answer.next?.kind === "run_command" && /(^|\s)remote fix(\s|$)/.test(answer.next.command ?? "");
+}
+
+/**
  * The route is on, as a person should read it: the helper says on, or it saved an address and the only failures are ones that
  * waiting fixes (setup's own rule), or an older helper's bare `dns` code with the address. The host mints a pressed Turn on's
  * code by this too.
@@ -315,10 +332,11 @@ export function answerOn(answer: {
 	state: string;
 	code?: string;
 	connectorUrl?: string;
+	next?: { kind?: string; command?: string };
 	checks?: readonly CheckLike[];
 }): boolean {
 	if (answer.state === "on" || answer.state === "no_browser_connected") return true;
-	if (answer.state !== "problem" || !answer.connectorUrl) return false;
+	if (answer.state !== "problem" || !answer.connectorUrl || needsRepair(answer)) return false;
 	return answer.checks?.length ? waitingChecks(answer.checks) : answer.code === "dns";
 }
 
@@ -397,6 +415,16 @@ export const RESULT_COPY = {
 	copy: "Copy",
 	copied: "Copied.",
 } as const;
+
+/**
+ * RESULT_COPY entries the side panel never draws: the Mac app shows the passcode once (the panel never sees one, D33) and has a
+ * Turn off button. Kept here so both surfaces read one table (first-F4).
+ */
+export const MAC_ONLY_RESULT = [
+	"passcodeLabel",
+	"passcodeNote",
+	"turnOff",
+] as const satisfies readonly (keyof typeof RESULT_COPY)[];
 
 /** "1 check failed", "2 checks failed". */
 export function checksFailed(n: number): string {

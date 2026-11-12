@@ -1,7 +1,8 @@
 // "Use Polycarp from Claude, ChatGPT and Grok" in a real Chromium, at the panel's narrowest width (320 px), light and dark.
 // A stand-in plays the helper behind the Connect relay, one scenario per page, so each screen is drawn from the same JSON
 // the helper sends: choose a way, sign in (which moves on by itself), Turn on, Funnel not allowed (retried by itself), the
-// result with its code and checks, Repair only when `remote fix` exists, Tailnet Lock, and the Cloudflare form.
+// result with its code and checks, Repair only when `remote fix` exists and what it says when it stops, Tailnet Lock, the
+// Cloudflare form and its name refusal.
 //
 // Needs the extension built into dist-chrome without a version bump, as e2e-panel.test.mjs does:
 //   TABKYRA_NO_BUMP=1 TABKYRA_OUT_DIR=$PWD/dist-chrome npm run build   (repo root)
@@ -83,6 +84,24 @@ before(async () => {
 					case "remoteFixPlan":
 						if (sc === "repair" || sc === "dns") return { available: true, ok: true, state: "problem", code: "fix_pending", message: "Would renew the certificate.", actions: [{ kind: "serve", what: "Restart Tailscale serve", status: "planned" }] };
 						throw { code: "bad_params", message: 'Unknown method "remoteFixPlan".' };
+					case "remoteFix": {
+						// Repair stops on a step only the person can take (round 2, second-N1).
+						const checks = okChecks.map((c) => (c.name === "tls" ? { ...c, status: "fail", detail: "The certificate for laptop.tail1a2b.ts.net expired." } : c));
+						return {
+							available: true,
+							ok: false,
+							state: "problem",
+							code: "tailscale_operator",
+							message: "Tailscale's words: Access denied: serve config denied",
+							next: { kind: "run_command", command: "sudo tailscale set --operator=$USER" },
+							advice: [{ name: "linger", detail: "Services stop when you log out until lingering is on.", command: "loginctl enable-linger laptop" }],
+							actions: [],
+							checks,
+						};
+					}
+					case "setupTunnel":
+						// Cloudflare refuses the name (round 2, first-F1): setup's own state, with no code.
+						return { publicUrl: "https://polycarp.example.com", connectorUrl: "https://polycarp.example.com/mcp", problem: { state: "problem", code: "cloudflare_dns", message: "A DNS record for polycarp.example.com already exists.", next: { kind: "choose_name" } } };
 					case "approvalCode":
 						return { code: "TK-9PQM-4RTX", expiresAt: Date.now() + 10 * 60_000, connectorUrl: `${publicUrl}/mcp` };
 					default:
@@ -260,6 +279,15 @@ for (const theme of ["light", "dark"]) {
 			assert.match(await page.locator("[data-result-title]").textContent(), /a check from the internet failed/);
 			assert.equal(await page.locator('[data-check="tls"]').getAttribute("data-status"), "fail");
 			await shot(page, `06-check-failed-repair-${theme}`);
+			// Repair stops on the operator step: its command and the advice show, and Repair is offered again.
+			await page.getByRole("button", { name: "Repair", exact: true }).click();
+			const outcome = page.locator('[data-repair-outcome="tailscale_operator_check"]');
+			await outcome.waitFor({ timeout: 10_000 });
+			assert.match(await outcome.textContent(), /Let your user control Tailscale/);
+			assert.match(await outcome.locator('[data-copy="repair-command"] code').textContent(), /sudo tailscale set --operator=\$USER/);
+			assert.match(await outcome.locator('[data-copy="advice-linger"] code').textContent(), /loginctl enable-linger laptop/);
+			await page.getByRole("button", { name: "Repair", exact: true }).waitFor({ timeout: 10_000 });
+			await shot(page, `06b-repair-stopped-${theme}`);
 		} finally {
 			await page.close();
 		}
@@ -284,6 +312,15 @@ for (const theme of ["light", "dark"]) {
 			await page.locator("[data-tunnel-form]").waitFor();
 			await page.getByPlaceholder("polycarp.yourdomain.com").fill("polycarp.example.com");
 			await shot(page, `08-cloudflare-${theme}`);
+			// A taken name is its own step with its own button, which goes back to the form.
+			await page.locator("[data-tunnel-form]").getByRole("button", { name: "Turn on", exact: true }).click();
+			const refused = page.locator('[data-remote-step="cloudflare_name_refused"]');
+			await refused.waitFor({ timeout: 10_000 });
+			assert.match(await refused.textContent(), /Pick another name/);
+			assert.equal(await page.locator("[data-tunnel-steps] [data-state=failed]").count(), 0, "a red Failed row");
+			await shot(page, `10-cloudflare-name-refused-${theme}`);
+			await refused.getByRole("button", { name: "Turn on", exact: true }).click();
+			await page.locator("[data-tunnel-form]").waitFor();
 		} finally {
 			await page.close();
 		}

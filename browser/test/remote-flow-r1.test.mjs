@@ -96,14 +96,14 @@ test("first-F1: a stale run is dropped once a later test says on, so the step ne
 	assert.match(read("src/dialogs/RemoteFlow.ts"), /settleRunAfterTest\(this\.run, answer\)/);
 });
 
-test("setup's 'tunnel not connected by the deadline' is waiting on the result, with no Repair", () => {
+test("setup's 'tunnel not connected by the deadline' names remote fix: a failed check with Repair, not waiting (round 2, second-N2)", () => {
 	const stuck = { state: "problem", code: "resource_metadata", message: "", connectorUrl: URL_, next: { kind: "run_command", command: "polycarp remote fix" }, checks: failing("resource_metadata", true) };
 	const input = { status: funnelRoute, run: stuck, checks: stuck.checks, fix: { available: true, actions: [{ kind: "restart_serve", what: "Restart", status: "planned" }] } };
 	const screen = flowScreen(input);
-	assert.equal(screen.kind, "result");
-	assert.equal(screen.head, "on_waiting");
-	assert.equal(screen.repair, false);
-	assert.equal(pollFor(screen, input).method, "remoteTest");
+	assert.equal(screen.kind, "step");
+	assert.equal(screen.copy.key, "check_failed");
+	assert.equal(screen.copy.action.kind, "repair");
+	assert.equal(pollFor(screen, input), undefined);
 });
 
 test("second-N3: a check that fails after the tunnel was made is on with a lagging check, not a failed setup", () => {

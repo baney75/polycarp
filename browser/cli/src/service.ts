@@ -48,7 +48,7 @@ export function runAsync(cmd: string, args: string[], timeoutMs = 60_000): Promi
 		};
 		let child: ReturnType<typeof spawn>;
 		try {
-			child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+			child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
 		} catch (err) {
 			resolve({ code: 1, out: err instanceof Error ? err.message : String(err) });
 			return;

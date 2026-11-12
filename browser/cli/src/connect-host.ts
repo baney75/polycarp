@@ -33,7 +33,7 @@ import { deviceRows } from "./hub-admin.ts";
 import { devicesFile, devicesReadable, hubFile, loadHubConfig, mintConnectCode, validDeviceName } from "./hub-state.ts";
 import { type EnrollHooks, type EnrollResult, enrollDevice, HubCodeError, LinkError, linkFile, linkOnline, loadLinkConfig, mintViaHub, normalizeHubUrl, readLinkLive, setLinkBusyAsync } from "./link.ts";
 import { configDir, DEFAULT_GRANT, mintApprovalCode, passcodeSet } from "./oauth.ts";
-import { checkViews } from "./remote-panel.ts";
+import { checkViews, remoteAnswer } from "./remote-panel.ts";
 
 const tryPasscodeSet = (): boolean => {
 	try {
@@ -431,6 +431,8 @@ export class ConnectService {
 		const keepAlive = setInterval(() => last && progress(last), this.keepAliveMs);
 		try {
 			const done = await setupTunnel(call.host, send, this.tunnel, this.tunnelCheckMs !== undefined ? { checkTotalMs: this.tunnelCheckMs, checkEveryMs: Math.min(1000, this.tunnelCheckMs) } : {});
+			// Setup's own refusal (first-F1) goes back as its state, for the panel's step copy. It isn't on, so no code is made.
+			if (done.problem) return { publicUrl: done.publicUrl, connectorUrl: `${done.publicUrl}/mcp`, problem: remoteAnswer(done.problem) };
 			const checks = checkViews(done.checks);
 			return { publicUrl: done.publicUrl, connectorUrl: `${done.publicUrl}/mcp`, ...(checks?.length ? { checks } : {}), passcodeSet: tryPasscodeSet(), ...this.resultCode() };
 		} catch (err) {
