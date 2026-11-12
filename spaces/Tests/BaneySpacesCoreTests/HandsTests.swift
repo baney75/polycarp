@@ -600,6 +600,17 @@ final class EngineRetryTests: XCTestCase {
         }
     }
 
+    /// 11-12: a window that quit mid-call answered "Run 'list-windows' to see available window IDs.", a command no agent
+    /// has. The engine's own text, word for word, becomes ours; every other suggestion passes through.
+    func testAnEngineSuggestionNamesOnlyCommandsAgentsHave() throws {
+        let engine = "Run 'list-windows' to see available window IDs."
+        XCTAssertEqual(EngineVerdict.suggestion(engine), "Run `polycarp-spaces agent windows` for the current ids.")
+        XCTAssertFalse(EngineVerdict.suggestion(engine).contains("list-windows"))
+        XCTAssertEqual(EngineVerdict.suggestion("Take a new snapshot and try again."), "Take a new snapshot and try again.")
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsEngine.swift")
+        XCTAssertTrue(src.contains("let suggestion = EngineVerdict.suggestion(err[\"suggestion\"]?.string"), "translate rewrites it")
+    }
+
     /// The engine's own error JSON: a TIMEOUT or APP_UNRESPONSIVE with no disposition at all is not "safe".
     func testATimeoutWithNoDispositionIsNeverRetriedAndNeverCalledSafe() throws {
         let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsEngine.swift")
@@ -1091,7 +1102,7 @@ final class AgentOpenLaunchTests: XCTestCase {
         let helper = try XCTUnwrap(HandsSourceTests.block(after: "func adoptAgentStartedProcess(", in: src))
         XCTAssertTrue(helper.contains("h.claim(pid, n, true, title)"))
         XCTAssertTrue(helper.contains("AgentActivity.shared.markLaunch(pid: pid, for: 8)"))
-        XCTAssertTrue(launch.contains("guard !before.contains(app.processIdentifier) else { return }"), "a launch that ran inside Donovan's copy is left alone")
+        XCTAssertTrue(launch.contains("guard !before.contains(app.processIdentifier) else {"), "a launch that ran inside Donovan's copy is left alone")
         let claim = try XCTUnwrap(launch.range(of: "adoptAgentStartedProcess("))
         let press = try XCTUnwrap(launch.range(of: "newWindow(app)"))
         XCTAssertTrue(claim.lowerBound < press.lowerBound, "claimed before anything else happens")

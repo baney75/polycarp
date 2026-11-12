@@ -67,6 +67,10 @@ final class HandsRouter {
     private static let refusedLock = NSLock()
     private var snaps: [String: Snap] = [:]
     private let lock = NSLock()
+    /// Each session's reads as rows: what `since: "latest"` compares with, and what a bare row number means.
+    private var rowsMemory = SnapshotRowsMemory()
+    private let rowsLock = NSLock()
+    private func withRows<T>(_ f: (inout SnapshotRowsMemory) -> T) -> T { rowsLock.lock(); defer { rowsLock.unlock() }; return f(&rowsMemory) }
 
     /// Files an agent may hand to an app live here.
     static var handoffFolder: URL { HandsEngine.home.appendingPathComponent("handoff", isDirectory: true) }
@@ -89,6 +93,13 @@ final class HandsRouter {
         if HandsTools.userOnly.contains(req.verb) { return .failure(HandsParse.askedForLend(req.string("app"))) }
         if let e = AgentAccessGate.refusal(verb: req.verb, mode: access) { return .failure(e) }
         if remote, let e = WorkspaceVerbs.connectorRefusal(verb: req.verb) { return .failure(e) }
+        var req = req
+        if let r = req.string("ref"), let n = SnapshotRows.bareNumber(r) {
+            switch bareRef(n, req) {
+            case .success(let full): req.args["ref"] = .string(full)
+            case .failure(let e): return .failure(e)
+            }
+        }
         if req.verb != "windows", req.verb != "workspaces", req.verb != "open", let problem = HandsEngine.shared.permissionProblem() { return .failure(problem) }
         switch req.verb {
         case "windows": return windows(session: req.session ?? "")
@@ -403,6 +414,7 @@ final class HandsRouter {
                 var o = data.object ?? [:]
                 o["target"] = targetJSON(w, scope)
                 if let note { o["note"] = .string(note) }
+                var notes = note.map { [$0] } ?? []
                 // A sheet on this window: its elements are part of the tree, marked, so the agent can answer it.
                 if let tree = o["tree"] {
                     let (marked, sheets) = SheetMark.mark(tree)
@@ -410,9 +422,35 @@ final class HandsRouter {
                         o["tree"] = marked
                         o["sheets"] = .int(sheets)
                         o["sheet_note"] = "a sheet is up on this window and blocks it: its elements are marked sheet and in_sheet"
+                        notes.append("a sheet is up on this window and blocks it; its rows are marked sheet")
                     }
                 }
-                return .success(.object(o))
+                if o["complete"]?.bool == false { notes.append("the read stopped before the end of the tree; pass a larger depth for the rest") }
+                let sid = o["snapshot_id"]?.string ?? ""
+                let rows = SnapshotRows.rows(of: o["tree"] ?? .null)
+                let session = req.session ?? ""
+                let view = "\(req.bool("interactive"))|\(req.bool("compact"))|\(req.int("depth") ?? 10)"
+                let since = req.snapshotFormat == "rows" && req.string("since") == "latest"
+                let previous = withRows { m -> SnapshotRowsMemory.Read? in
+                    let p = m.previous(session: session, window: w.id, view: view)
+                    let k = SnapshotRowsMemory.kind(since: since && p != nil, query: req.string("query"), rows: rows.count, max: req.int("max_elements"))
+                    m.remember(session: session, window: w.id, view: view, snapshot: sid, rows: rows, now: Date(), listed: k.listed, baseline: k.baseline)
+                    return p
+                }
+                guard req.snapshotFormat == "rows" else { return .success(.object(o)) }
+                let text: String
+                if since, let previous {
+                    text = SnapshotRows.renderSince(SnapshotRows.changes(from: previous.rows, to: rows), new: rows, snapshot: sid, previous: previous.snapshot,
+                                                    window: w.id, notes: notes, query: req.string("query"))
+                } else {
+                    if req.string("since") != nil { notes.append("no earlier read of this window in this session, so this is all of it") }
+                    text = SnapshotRows.render(rows, snapshot: sid, window: w.id, title: o["window"]?["title"]?.string ?? "", app: w.app,
+                                               refs: o["ref_count"]?.int ?? rows.compactMap(\.number).count, notes: notes,
+                                               query: req.string("query"), max: req.int("max_elements"), also: Self.viewArguments(req))
+                }
+                return .success(.object(["format": "rows", "text": .string(text), "snapshot_id": .string(sid), "window": .int(Int(w.id)),
+                                         "ref_count": o["ref_count"] ?? .null, "complete": o["complete"] ?? .null,
+                                         "target": targetJSON(w, scope)]))
             }
         }
     }
@@ -438,12 +476,30 @@ final class HandsRouter {
                     for c in o["children"]?.array ?? [] { walk(c) }
                 }
                 if let tree = data["tree"] { walk(tree) }
+                if let sid = data["snapshot_id"]?.string {
+                    let rows = SnapshotRows.rows(of: data["tree"] ?? .null)
+                    withRows { $0.remember(session: req.session ?? "", window: w.id, view: "find", snapshot: sid, rows: rows, now: Date(), listed: false) }
+                }
                 return .success(.object(["snapshot_id": data["snapshot_id"] ?? .null, "window": .int(Int(w.id)), "count": .int(found.count), "matches": .array(found)]))
             }
         }
     }
 
+    /// The read's view arguments as JSON members, for a call that must read the same view.
+    static func viewArguments(_ req: HandsRequest) -> String {
+        ["interactive", "compact"].compactMap { k in req.args[k] == nil ? nil : ",\"\(k)\":\(req.bool(k))" }.joined()
+            + (req.int("depth").map { ",\"depth\":\($0)" } ?? "")
+    }
+
     // MARK: refs
+
+    /// The full ref a bare row number stands for in this session, or why it can't stand for one, with the call to make instead.
+    private func bareRef(_ n: Int, _ req: HandsRequest) -> Result<String, HandsError> {
+        switch withRows({ $0.resolve(bare: n, session: req.session ?? "", now: Date()) }) {
+        case .ref(let full): return .success(full)
+        case .refused(let code, let message, let latest): return .failure(SnapshotRowsMemory.error(code, message, latest: latest))
+        }
+    }
 
     /// A ref is good for the snapshot that printed it: that snapshot's window, in that process. Any other
     /// window, a window that changed process, or one that left the agent's scope fails here.
@@ -698,7 +754,8 @@ final class HandsRouter {
         var window: HandsWindow?
         // Inside the 8 s claim on its window (`claimNextWindow`), so a window seen here was placed by that claim. At most
         // `wait` seconds (7 when it says more or nothing); 0 looks once.
-        let deadline = Date().addingTimeInterval(min(InUseRule.bound(req.int("wait")), 7))
+        let wait = InUseRule.bound(req.int("wait"))
+        let deadline = Date().addingTimeInterval(min(wait, OpenMiss.claimWait))
         func lookOnce() -> HandsWindow? {
             let (all, agent) = listWindows(fresh: true)
             let candidates = all.filter { matches($0, reply.info?["app"] ?? display) && $0.workspace == agent && (!separate || !pidsBefore.contains($0.pid)) }
@@ -717,9 +774,12 @@ final class HandsRouter {
         }
         // The launch's own process, when it started one: the only one a miss below may quit.
         let launched = runningPid == nil ? AgentLaunches.shared.pid(token) : nil
-        if window == nil, start != .overlap, let pid = launched {
+        if window == nil, start != .overlap, let pid = launched,
+           OpenMiss.looksAgain(wait: wait, mainThread: Thread.isMainThread) {
             // One more full look: an app still starting answers Accessibility late, and its window then joins the
             // agent workspace (`Spaces.adoptBackgroundWindows` takes an agent-started process's windows a moment after).
+            // Its bench is cleared first, or the rescan would skip the very app it is for (review 157 F1).
+            Windows.markResponsive(pid)
             onMain { host.rescan() }
             let until = Date().addingTimeInterval(1)
             repeat {
@@ -730,8 +790,9 @@ final class HandsRouter {
                 let (all, agent) = listWindows()
                 let held = Set(all.filter { $0.pid == pid && $0.workspace != nil && $0.workspace == agent }.map(\.id))
                 let stray = Self.drawnWindows(of: pid).subtracting(held)
-                switch OpenMiss.decide(launched: pid, agentStarted: host.agentOwned(), startedAt: AgentOwned.startTime(pid),
-                                       requestStart: requestStart.timeIntervalSince1970, stray: stray.count) {
+                let owned = onMain { host.agentOwned() }
+                switch OpenMiss.decide(launched: pid, agentStarted: owned, startedAt: AgentOwned.startTime(pid),
+                                       requestStart: requestStart.timeIntervalSince1970, stray: stray.count, held: held.count) {
                 case .quit(let p):
                     childLocked { sessionWindows.cancelOpen(token) }
                     Self.quit(p)
@@ -772,14 +833,22 @@ final class HandsRouter {
         return .success(.object(data))
     }
 
-    /// Whether every running copy of the app was already running before the launch.
-    /// The ordinary windows of `pid` the window server is drawing (layer 0, on screen), parked ones included.
+    /// The ordinary windows of `pid` the window server draws that a person can see (layer 0, on screen, not clear, over
+    /// 50 x 50: `OpenMiss.visible`), parked ones included.
     static func drawnWindows(of pid: pid_t) -> Set<UInt32> {
         let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
         return Set(info.compactMap { w -> UInt32? in
-            guard (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid, (w[kCGWindowLayer as String] as? Int) == 0 else { return nil }
+            guard (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid, (w[kCGWindowLayer as String] as? Int) == 0,
+                  let b = (w[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) }),
+                  OpenMiss.visible(alpha: (w[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1, bounds: b) else { return nil }
             return (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value
         })
+    }
+
+    /// Whether the window server still lists window `id` at all (parked and hidden ones included): `close`'s read-back.
+    static func serverLists(_ id: UInt32) -> Bool {
+        let info = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        return info.contains { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == id }
     }
 
     /// Quits a copy an agent's own launch started (`OpenMiss.quit`): asked first, forced if it hasn't gone in 2 s.
@@ -791,6 +860,7 @@ final class HandsRouter {
         if !app.isTerminated { app.forceTerminate() }
     }
 
+    /// Whether every running copy of the app was already running before the launch.
     private func noNewProcess(bundle: String, before: Set<pid_t>) -> Bool {
         let now = NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundle }.map(\.processIdentifier)
         return now.allSatisfy { before.contains($0) }

@@ -9,8 +9,9 @@ public struct HandsMCP {
     public static let instructions = """
     Polycarp's hands: read and act on apps on the user's Mac without touching their screen. \
     Work in a loop: `open` an app (it lands on the agent workspace), `windows` for its window id, \
-    `snapshot` that window (interactive) to get refs, act on a ref (`click`, `type`, `set_value`, `press`, \
-    `scroll`, `select`, `toggle`), then read the evidence in the result and `get` or snapshot again to check. \
+    `snapshot` that window (one row per element, `[N] role "name"`), act on a row (`click`, `type`, `set_value`, `press`, \
+    `scroll`, `select`, `toggle`) with ref "N" or the full ref, then read the evidence in the result and snapshot again \
+    with since "latest" to see only what changed. On an error, make the call in `next_call` when there is one. \
     Refs go stale when the UI changes: on a stale_ref error take a new snapshot. Only windows on the agent \
     workspace or of apps Donovan has lent are allowed; anything else returns outside_agent_workspace (you cannot lend). \
     Never ask the user to switch away from what they are doing. \
@@ -83,9 +84,14 @@ public struct HandsMCP {
             let envelope: HandsEnvelope
             switch HandsParse.call(name: name, arguments: arguments, session: session) {
             case .failure(let e): envelope = .failure(e)
-            case .success(let r): envelope = perform(r)
+            case .success(var r):
+                // A model reads rows far cheaper than the tree: they are the default here, never on the command line.
+                if r.verb == "snapshot", r.args["format"] == nil { r.args["format"] = "rows" }
+                envelope = perform(r)
             }
-            var content: [JSONValue] = [.object(["type": "text", "text": .string(envelope.line)])]
+            // Rows go out as they are: one line per element, not a JSON string full of escapes.
+            let rows = envelope.ok && envelope.data?["format"]?.string == "rows" ? envelope.data?["text"]?.string : nil
+            var content: [JSONValue] = [.object(["type": "text", "text": .string(rows ?? envelope.line)])]
             if envelope.ok, HandsTools.tool(verb: name)?.verb == "shot", let path = envelope.data?["path"]?.string,
                let png = readImage(path) {
                 content.append(.object(["type": "image", "data": .string(png.base64EncodedString()), "mimeType": "image/png"]))

@@ -79,6 +79,8 @@ final class Spaces {
     /// Windows agents asked for with `baneyspaces agent open` or `agent run`: the next window
     /// each app opens goes to that workspace, until the time runs out.
     private var claims: [pid_t: [Claim]] = [:]
+    /// Agent copies launched hidden, shown once their windows are placed (`HiddenLaunches`).
+    private var hiddenLaunches = HiddenLaunches()
     private struct Claim {
         let id = UUID()
         let workspace: Int
@@ -185,6 +187,7 @@ final class Spaces {
         clock.scan = firstScan ? "first" : full ? "full" : last(lastScan!, snap.appWindows, pids, offKnown)
         RunningApps.invalidate()
         let pidsNow = RunningApps.regular
+        Windows.keepBench(pidsNow)
         let (list, unsure, listed, partial, nonStandard, asks) = Windows.all(owners: snap.owners)
         notWindows = nonStandard
         asking = asks
@@ -276,6 +279,7 @@ final class Spaces {
                                                       notWindows: notWindows, unsure: unsure),
                          known: knownWindows, now: now)
         placedBefore.formUnion(model.home.keys)
+        releaseHiddenLaunches()
         scheduleHeal()
         updateAttention()
     }
@@ -416,6 +420,34 @@ final class Spaces {
         drop(claim, of: pid)
         Trace.log("claimed \(early.count) window(s) \(early.map(String.init).joined(separator: ",")) of pid \(pid) for workspace \(n): open before the claim")
         move(early, to: n)
+    }
+
+    /// An agent's copy started hidden (no flash of its first window where the app draws it): shown once its windows are
+    /// placed, and by `HiddenLaunches.limit` whatever happens.
+    func launchedHidden(_ pid: pid_t) {
+        hiddenLaunches.launched(pid, at: Date())
+        Trace.log("agent launch: pid \(pid) started hidden; shown once its window is placed")
+        DispatchQueue.main.asyncAfter(deadline: .now() + HiddenLaunches.limit + 0.05) { [weak self] in self?.releaseHiddenLaunches() }
+    }
+
+    /// Shows each hidden agent copy whose windows are all in sight or parked, or whose time ran out. Not mid-switch: the
+    /// switch's end looks again. A copy Spaces has since hidden itself (`saved.hiddenApps`) stays hidden.
+    private func releaseHiddenLaunches() {
+        guard !hiddenLaunches.isEmpty, !switching else { return }
+        let screens = Windows.screens()
+        let released = hiddenLaunches.release(now: Date()) { [self] pid in
+            windows.values.filter { $0.pid == pid }.compactMap { w in
+                model.workspace(of: w.id).map { ws in
+                    HiddenLaunches.Placed(workspaceShown: model.isShown(ws),
+                                          atHidingSpot: w.frame.map { Geometry.isStranded($0, screens: screens) } ?? false)
+                }
+            }
+        }
+        for (pid, why) in released {
+            guard !saved.hiddenApps.contains(pid), let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else { continue }
+            if app.isHidden { app.unhide() }
+            Trace.log("agent launch: pid \(pid) shown \(why == .placed ? "with its windows placed" : "after \(HiddenLaunches.limit)s, its window unplaced")")
+        }
     }
 
     /// An agent's request that came to nothing: its claim goes, so it can't take your next window.
@@ -1238,9 +1270,6 @@ final class Spaces {
         persist()
     }
 
-    /// The display layout changed: put hidden windows at the new hiding spot. macOS sends a burst
-    /// of these on wake and on plugging in a display, so act once, after it settles, and leave
-    /// focus where it is (a dialog may hold it).
     /// The Mac woke. Apps that missed Accessibility while it slept were benched (up to 10 minutes) as if hung, so their
     /// windows went unplaced after wake: every app is asked again, the window list is read in full, and the workspace
     /// you're on is applied again, as for a display change.
@@ -1253,6 +1282,9 @@ final class Spaces {
         screensChanged()
     }
 
+    /// The display layout changed: put hidden windows at the new hiding spot. macOS sends a burst
+    /// of these on wake and on plugging in a display, so act once, after it settles, and leave
+    /// focus where it is (a dialog may hold it).
     func screensChanged() {
         screensWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -1759,6 +1791,7 @@ final class Spaces {
     /// activation BaneySpaces didn't cause.
     private func finish() {
         switching = false
+        releaseHiddenLaunches()
         updateAttention()
         onChange?()
         while !switching, !queued.isEmpty {
