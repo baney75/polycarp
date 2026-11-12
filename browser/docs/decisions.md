@@ -1054,6 +1054,17 @@ Agents could not attach a file to a form or keep a file a page offers. One tool,
   Cloudflare setup whose last check times out after the tunnel was made is the same case, not a failed setup.
 - **Repair is feature-detected.** The host runs `remote fix --json --dry-run`; exit 2 or no `actions` array means this
   helper has none, and the button stays hidden. Repair also stays hidden when the plan's `actions` is empty.
+- **The Mac app retries Funnel by running setup again, every 15 seconds.** It has no `remoteFunnel` call, and setup run a
+  second time makes no new passcode (one exists) and reopens only what `remote.json` names. 15 seconds, not 5, because a
+  setup run costs more than opening Funnel. The same 10-minute limit, then one Check again button. The retry runs setup
+  without `--connect-code`, so, as in the panel, only a press (Turn on, Check again, New code) makes a code.
+- **Leaving Settings > Browser pauses the Funnel retry; coming back resumes it with a fresh 10 minutes.** Coming back
+  tries at once, because Funnel was most likely allowed while the window was away, and never reopens Tailscale's page.
+  A fresh limit, not what was left of the old one, so a person who allowed Funnel slowly isn't sent to the gave-up step
+  the moment they return. The passcode and connect code stay through a tab switch and go when the window closes.
+- **`launcher` has a Mac entry of its own (`launcher_app`).** The terminal's remedy is `polycarp install`; the app's is
+  Connect in the Browsers section, which installs the launcher. The entry lives in the shared table, so the words still
+  come from one place.
 - **Replaced claim.** "claude.ai often can't reach Tailscale Funnel addresses" had no source and is gone. The true reason
   Funnel fails on some networks is Tailnet Lock (D30), which the Tailnet Lock step now says.
 - **`remote fix` ends the wait (review round 2, second-N2).** An answer whose `next` is `run_command ... remote fix` is

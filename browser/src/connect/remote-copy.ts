@@ -1,8 +1,8 @@
 /**
  * Every sentence of "Use Polycarp from Claude, ChatGPT and Grok", in one place: the side panel draws from it, the Mac app
- * is to show the same strings, and the assistant steps are the lines `remote setup` prints (test/remote-copy.test.mjs holds
- * those equal). No test reads the Mac app's copy yet, so a change here is one to make there too. Types and constants only, so
- * the extension and the helper both import it.
+ * holds the same strings (spaces/Sources/BaneySpacesCore/RemoteSharedCopy.swift, held equal by test/remote-copy.test.mjs),
+ * and the assistant steps are the lines `remote setup` prints. Types and constants only, so the extension and the helper
+ * both import it.
  *
  * The helper's JSON is the contract: `state`, `code` and `next.kind` pick one entry here (`copyKey`). A known state never
  * falls back to a generic sentence; only a state or code this table doesn't know shows the helper's own `message`.
@@ -135,6 +135,11 @@ export const STEP_COPY = {
 		title: "Finish installing Polycarp",
 		body: "Polycarp's launcher isn't set up on this computer, so the background service would have nothing to start. Run this command once in a terminal, then try again.",
 		action: { kind: "copy_command", label: "Copy the command" },
+	},
+	launcher_app: {
+		title: "Connect a browser first",
+		body: "Polycarp needs a browser connected before an assistant can use it. Use Connect in the Browsers section above, then press Check again.",
+		action: { kind: "check_again", label: "Check again" },
 	},
 	hub: {
 		title: "This computer is a hub",
