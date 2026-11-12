@@ -1,0 +1,3 @@
+# Per-run records and page dumps stay local: a round is committed as runs.jsonl and summary.json.
+results/*/*-t[0-9]*.json
+results/read-size-*/
