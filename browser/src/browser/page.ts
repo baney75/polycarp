@@ -1076,6 +1076,11 @@ export interface ChangeLook {
 	doc: string;
 	/** Of `before`, the refs not listed now whose element left the page or is hidden. */
 	gone: string[];
+	/**
+	 * Of `gone`, the refs whose element is still the page's, listed now under a new ref because what it
+	 * shows changed (a live counter, "Save" -> "Saved"): old ref to new. A node put in its place is not.
+	 */
+	same?: Record<string, string>;
 	/** The page's rendered text, as read_page gives it (capped). */
 	text: string;
 }
@@ -1124,6 +1129,23 @@ export function refsGone(refs: string[], live: (el: Element) => boolean, print: 
 }
 
 /**
+ * Of the refs gone, those whose element is the same one, listed now under a new ref (the snapshot gave
+ * it one because what it shows changed): old ref to new. Runs in the page, after the look's snapshot.
+ */
+export function refsRenewed(gone: string[], listed: Set<string>): Record<string, string> {
+	const w = window as unknown as { __tabkyraRefs?: unknown; __tabkyraRefOf?: unknown };
+	const map = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : undefined;
+	const refOf = w.__tabkyraRefOf instanceof WeakMap ? (w.__tabkyraRefOf as WeakMap<Element, string>) : undefined;
+	const out: Record<string, string> = {};
+	for (const r of gone) {
+		const el = map?.get(r);
+		const now = el && refOf?.get(el);
+		if (now && now !== r && listed.has(now)) out[r] = now;
+	}
+	return out;
+}
+
+/**
  * One side of the change report, in one round trip: the interactive elements with their refs (the
  * same refs read_page gives, so they stay valid), focus, the document, and which of `before` went.
  */
@@ -1141,7 +1163,8 @@ export async function changeLook(
 		const s = (${pageSnapshot.toString()})(${maxNodes}, 20000, "interactive", ${refLive.toString()}, ${refPrint.toString()}, true);
 		const listed = new Set(s.nodes.map((n) => n.ref));
 		const gone = (${refsGone.toString()})(${JSON.stringify(before)}.filter((r) => !listed.has(r)), ${refLive.toString()}, ${refPrint.toString()});
-		return { url: s.url, title: s.title, nodes: s.nodes, gone, text: s.text, ...(${focusProbe.toString()})() };
+		const same = (${refsRenewed.toString()})(gone, listed);
+		return { url: s.url, title: s.title, nodes: s.nodes, gone, same, text: s.text, ...(${focusProbe.toString()})() };
 	})()`;
 	const look = await runInPage<ChangeLook | "guarded" | "large">(tabId, code);
 	if (typeof look === "string") return look;
