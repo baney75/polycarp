@@ -1295,9 +1295,10 @@ serviceTest("remote off exits 1 and keeps the service file and remote.json when 
 	assert.deepEqual(s.remoteJson(), { publicUrl: FUNNEL_URL, port, route: "funnel" });
 });
 
-test("remote off on a custom route never turns Funnel off and says your own tunnel still forwards", () => {
+// Setup gets a free port: without one it takes 8787 and fails on a machine where a real Polycarp server listens there.
+test("remote off on a custom route never turns Funnel off and says your own tunnel still forwards", async () => {
 	const s = remoteScenario("off-custom");
-	assert.equal(s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--no-service"]).code, 0);
+	assert.equal(s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--port", String(await freePort()), "--no-service"]).code, 0);
 	const r = s.run(["remote", "off"]);
 	assert.equal(r.code, 0, r.out);
 	assert.ok(!s.calls().some((x) => x.startsWith("tailscale funnel")), s.calls().join("\n"));
@@ -1308,7 +1309,7 @@ test("remote off on a custom route never turns Funnel off and says your own tunn
 test("remote off on a custom route also closes a Funnel on 8443 that proxies to Polycarp", async () => {
 	const port = await freePort();
 	const s = remoteScenario("off-custom-stray");
-	assert.equal(s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--no-service"]).code, 0);
+	assert.equal(s.run(["remote", "setup", "--public-url", "https://tabkyra.example.com", "--port", String(port), "--no-service"]).code, 0);
 	const withFunnel = remoteScenario("off-custom-stray", { serveStatus: proxyStatus(port) });
 	const local = await localServer("https://tabkyra.example.com/mcp", port);
 	try {
