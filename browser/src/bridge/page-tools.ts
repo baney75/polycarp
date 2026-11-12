@@ -322,7 +322,7 @@ export function formatPageResult(
 
 /** The system prompt's part about these tools: the loop, briefly. */
 export const PAGE_TOOLS_PROMPT = `# Working on Pages
-Loop: read_page {"filter":"interactive"} (refs) -> act {"action":"click","ref":"e5"} (or type, fill...) -> read_page again to confirm. Refs expire when the page changes. find gets refs by words; get_page_text reads; act wait beats reading again and again; act screenshot only for layout or canvas. A click that opens a dialog worked: answer it with handle_dialog, never click again. If a call fails with interrupted, read_page before you repeat it. Use the repl to run code: data work, a skill's functions, a recorded workflow's replay() and skill code you write; your own clicks and keys go through act.`;
+Loop: read_page {"filter":"interactive"} (refs) -> act {"action":"click","ref":"e5"} (or type, fill...); its changes list new refs and what changed; if not enough, read_page again to confirm. Refs expire when the page changes. find gets refs by words; get_page_text reads; act wait beats reading again and again; act screenshot only for layout or canvas. A click that opens a dialog worked: answer it with handle_dialog, never click again. If a call fails with interrupted, read_page before you repeat it. Use the repl to run code: data work, a skill's functions, a recorded workflow's replay() and skill code you write; your own clicks and keys go through act.`;
 
 /** The side panel's request to the service worker (src/bridge/panel-calls.ts): one bridge method on its session. */
 export const PANEL_CALL = "polycarp-page-tool";

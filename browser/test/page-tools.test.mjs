@@ -490,6 +490,8 @@ test("the system prompt teaches the loop and gives one rule for the REPL and the
 	assert.doesNotMatch(REPL_TOOL_DESCRIPTION([BROWSERJS_RUNTIME_PROVIDER_DESCRIPTION]), /document\.title|Read current page/);
 	assert.ok(SYSTEM_PROMPT.includes(PAGE_TOOLS_PROMPT));
 	assert.match(PAGE_TOOLS_PROMPT, /read_page[^\n]*act[^\n]*read_page again/);
+	// The panel acts on the change report (D42) like MCP clients do.
+	assert.match(PAGE_TOOLS_PROMPT, /its changes list new refs and what changed/);
 	assert.match(PAGE_TOOLS_PROMPT, /Refs expire when the page changes/);
 	assert.match(PAGE_TOOLS_PROMPT, /handle_dialog, never click again/);
 	// One rule for driving pages: the repl runs code (skills, replay(), skill code under test); your own input is act.

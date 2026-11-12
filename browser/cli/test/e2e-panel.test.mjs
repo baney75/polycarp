@@ -542,6 +542,8 @@ test("the panel's model reads a page, clicks a ref with act, the page changes, a
 			const [read, clicked, readAgain] = [2, 3, 4].map((i) => lastToolResult(stub.requests[i]));
 			assert.match(read, /use the ref with act/);
 			assert.doesNotMatch(clicked, /^[a-z_]+: /, `the click worked: ${clicked}`);
+			// The panel's act reports what the click changed (D42), as MCP's click does.
+			assert.match(clicked, /"changes":\{[^]*Answer: 42/, `no change report: ${clicked}`);
 			assert.match(readAgain, /Answer: 42/);
 			assert.doesNotMatch(readAgain, /Show answer/);
 			const [readSecond, readAfterSwitch] = [6, 8].map((i) => lastToolResult(stub.requests[i]));

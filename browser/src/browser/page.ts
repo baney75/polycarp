@@ -471,6 +471,7 @@ function pageSnapshot(
 	filter: string,
 	live: (el: Element) => boolean,
 	print: (el: Element) => string,
+	keepStale = false,
 ): unknown {
 	const w = window as unknown as {
 		__tabkyraRefs?: unknown;
@@ -730,8 +731,12 @@ function pageSnapshot(
 		const fp = print(el);
 		let ref = refOf.get(el);
 		if (ref && prints.get(ref) !== fp) {
-			refs.delete(ref);
-			prints.delete(ref);
+			// A change report's look (keepStale) is not the agent reading the page: the old ref
+			// goes on saying the row was reused, as it would have without the look.
+			if (!keepStale) {
+				refs.delete(ref);
+				prints.delete(ref);
+			}
 			ref = undefined;
 		}
 		if (!ref) {
@@ -1057,7 +1062,7 @@ function refsGone(refs: string[], live: (el: Element) => boolean): string[] {
  */
 export async function changeLook(tabId: number, maxNodes: number, before: string[] = []): Promise<ChangeLook> {
 	const code = `(() => {
-		const s = (${pageSnapshot.toString()})(${maxNodes}, 20000, "interactive", ${refLive.toString()}, ${refPrint.toString()});
+		const s = (${pageSnapshot.toString()})(${maxNodes}, 20000, "interactive", ${refLive.toString()}, ${refPrint.toString()}, true);
 		const listed = new Set(s.nodes.map((n) => n.ref));
 		const gone = (${refsGone.toString()})(${JSON.stringify(before)}.filter((r) => !listed.has(r)), ${refLive.toString()});
 		return { url: s.url, title: s.title, nodes: s.nodes, gone, text: s.text, ...(${focusProbe.toString()})() };

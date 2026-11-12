@@ -1182,17 +1182,20 @@ their `settleMs` pause, so canvas batches are not slowed. Not counted: requests 
 
 Network bookkeeping: Network is turned on just before every action (a batch's first step included), not once per tab,
 because a debugging session can end with no event (a worker restart, a silent detach) and take the domain with it; the e2e
-run caught that. Each action sends it once, and waits at most 0.5 s for it. A frame's current document is the one
+run caught that. Each action sends it once (a whole `actions` batch too, in the tab it names), and waits at most 0.5 s for it. A frame's current document is the one
 `Page.frameNavigated` last committed; what an older document of that frame had in flight is dropped. A request for a document
 never moves that mark: a download or a 204 asks for one that never commits, and the old page keeps its own requests.
 
 What it can never do: hold an action longer than the cap plus that 0.5 s (a timer ends the wait at the cap whatever the page
 or the debugger does, and one DOM probe gets at most 0.4 s), or fail an action that already ran. A box the page opens while
 it settles is the action's result, with the dialog note, for every tool that settles. A page Polycarp may not script (the
-Chrome Web Store, the PDF viewer) is judged by its requests alone after two refused probes; a probe that times out means the
+Chrome Web Store, the PDF viewer) is judged by its requests alone after two refused probes, counted per document, so a page reached from there is probed again; a probe that times out means the
 page's main thread is busy (`waitingOn: "loading"`). A loader counts only when a person could see it: an ancestor's opacity or
 visibility hides it, and so does being outside the window on any side. A landing on the approval page (#94) is blanked
-before anything runs in it, so the wait never starts there.
+before anything runs in it, so the wait never starts there. A redirect can still commit there after the wait last read
+the tab, so the probe checks the approval hosts itself and touches nothing on that page; `wait` with `until: "settled"`
+then refuses the landing as `navigate` does, and a wait cut short otherwise says it stopped, not that the page kept
+changing. A cap that lands mid-pass reports the reason the last full pass found, and no probe goes out after it.
 
 The side panel's `act` runs the same handlers (D40), so its input settles the same way (`test/panel-settle.test.mjs`).
 
@@ -1227,3 +1230,15 @@ check. One action takes 369 ms on average against 365 ms without the report. The
 read `changes` and to call `read_page` again only when they say too little. Cost in the schema: the instructions grow by 47
 bytes (about 12 tokens, budget 2,995 in `cli/test/mcp.test.mjs`); tools/list is unchanged at 31,894 bytes, since no tool
 gained a parameter.
+
+The side panel's `act` runs the same handlers (D40), so its results carry `changes` too, and its prompt's loop line says
+the same thing as the server instructions: 13 tokens more in the panel's system prompt (1,996 to 2,009, o200k_base), tool
+list unchanged at 8,613 (`cli/test/e2e-panel.test.mjs` checks a click's report).
+
+The looks leave refs as the agent last saw them. A look snapshots the page, and a snapshot gives a reused row a new ref; the
+looks keep the old ref too, so a click by it still fails with "now shows something else", as it would with no look
+(`keepStale` in `pageSnapshot`). Only `read_page` and `find` retire a ref.
+
+Platforms: all of it runs in the extension's service worker and the page, with no code per operating system, so Chrome,
+Helium and the other Chromium browsers on the Mac, Linux and Windows behave the same. Run on the Mac (the e2e and panel
+suites) and on Linux (CI); not run on Windows.

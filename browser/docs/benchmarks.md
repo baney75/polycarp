@@ -259,6 +259,10 @@ every task's own check.
 31% fewer calls and 25% fewer tokens; each saved call is also one model turn. Time: one action averages 369 ms with the
 report and 365 ms on the build before it (d56c4ab0, the same loop), so the two looks cost about 5 ms on these pages.
 
+Schema cost: the MCP server instructions grow 47 bytes (about 12 tokens) and tools/list is unchanged at 31,894 bytes. The
+side panel's system prompt grows 13 tokens (1,996 to 2,009, `cli/eval/panel-prompt-size.mjs`, o200k_base), and its tool
+list is unchanged at 8,613.
+
 # Dictation, 2026-10-29
 
 `cli/eval/dictation.mjs` on the built extension in Playwright's Chromium on an M-series Mac
