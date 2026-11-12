@@ -310,18 +310,30 @@ public enum BrowserBundle {
         let exited = DispatchSemaphore(value: 0)
         p.terminationHandler = { _ in exited.signal() }
         do { try p.run() } catch { return nil }
-        // Read off this thread; whatever has arrived by the deadline is all there is.
+        // Read on a thread of its own, never one from the global pool: with the pool full (the test runner, a busy app) the
+        // read never started and a good shell answered nil. That thread owns the pipe and closes it when the read ends: a
+        // handle closed under a read still running raised NSFileHandleOperationException. Whatever has arrived by the
+        // deadline is all there is.
         let box = LoginPathBox()
         let reading = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
-            let d = pipe.fileHandleForReading.readDataToEndOfFile()
-            box.set(d)
+        let reader = Thread {
+            let fd = pipe.fileHandleForReading.fileDescriptor
+            var data = Data()
+            var buf = [UInt8](repeating: 0, count: 4096)
+            while true {
+                let n = read(fd, &buf, buf.count)
+                if n > 0 { data.append(buf, count: n) } else if n < 0, errno == EINTR { continue } else { break }
+            }
+            box.set(data)
             reading.signal()
+            try? pipe.fileHandleForReading.close()
         }
+        reader.name = "login PATH read"
+        reader.start()
         let deadline = DispatchTime.now() + timeout
-        guard exited.wait(timeout: deadline) == .success else { p.terminate(); try? pipe.fileHandleForReading.close(); return nil }
+        guard exited.wait(timeout: deadline) == .success else { p.terminate(); return nil }
         // The shell is done; its output is complete unless something it started still holds the pipe, so wait only to the deadline.
-        guard reading.wait(timeout: deadline) == .success, p.terminationStatus == 0 else { try? pipe.fileHandleForReading.close(); return nil }
+        guard reading.wait(timeout: deadline) == .success, p.terminationStatus == 0 else { return nil }
         return String(decoding: box.get(), as: UTF8.self)
     }
 
