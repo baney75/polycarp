@@ -185,6 +185,7 @@ final class Spaces {
         clock.scan = firstScan ? "first" : full ? "full" : last(lastScan!, snap.appWindows, pids, offKnown)
         RunningApps.invalidate()
         let pidsNow = RunningApps.regular
+        Windows.keepBench(pidsNow)
         let (list, unsure, listed, partial, nonStandard, asks) = Windows.all(owners: snap.owners)
         notWindows = nonStandard
         asking = asks
