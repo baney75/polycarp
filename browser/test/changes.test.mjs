@@ -271,6 +271,8 @@ test("fitChanges: drops new text, then element lines, counts them, and never say
 });
 
 /** Loads land in the fake: a URL set on a tab commits and fires DOMContentLoaded. */
+// A URL ending in -204 loads no document, as Chrome reports one: no commit, no DOMContentLoaded, only the
+// navigation's abort (r2 first-F2).
 function loadsLand(fake) {
 	const update = chrome.tabs.update;
 	chrome.tabs.update = async (id, p) => {
@@ -278,6 +280,10 @@ function loadsLand(fake) {
 		if (p.url && p.url !== "about:blank")
 			setTimeout(() => {
 				const at = { tabId: id, frameId: 0, url: p.url };
+				if (p.url.endsWith("-204")) {
+					for (const fn of chrome.webNavigation.onErrorOccurred.listeners) fn({ ...at, error: "net::ERR_ABORTED" });
+					return;
+				}
 				if (p.url.includes("#")) {
 					Object.assign(t, { url: p.url });
 					for (const fn of chrome.webNavigation.onReferenceFragmentUpdated.listeners) fn(at);
@@ -494,8 +500,10 @@ test("r1 first-F3: a navigate that loads no new document (a 204) says so, not ne
 	loadsLand(fake);
 	let loader = "L1";
 	recordCommands((method) => (method === "Page.getFrameTree" ? { frameTree: { frame: { id: "main", loaderId: loader } } } : undefined));
-	const kept = await request("navigate", { url: "https://shop.example/empty-204" });
+	const start = Date.now();
+	const kept = await request("navigate", { url: "https://shop.example/empty-204", timeoutMs: 5000 });
 	assert.deepEqual(kept.result?.changes, { page: NOT_LOADED }, JSON.stringify(kept));
+	assert.ok(Date.now() - start < 3000, `${Date.now() - start} ms: the 204 waited out the load timeout`);
 	const real = chrome.tabs.update;
 	chrome.tabs.update = async (...args) => {
 		loader = "L2";
@@ -516,6 +524,107 @@ test("r1 second-S2-3: actions on a named tab with only a wait step moves nowhere
 	assert.notDeepEqual(reply.result.changes, { page: movedTo(a.result.tabId) });
 	assert.equal(reply.result.changes, "nothing changed", JSON.stringify(reply.result));
 	assert.equal(sent.filter((c) => isLook(c.params)).length, 2, "a before and an after look, on the named tab");
+});
+
+test("r2 second-N2: a debugger that never answers fails navigate in about 2 s, saying nothing was navigated and what to call", async () => {
+	const { fake, request, tabId } = await startBridge();
+	const { LOADER_STUCK } = await import("../src/bridge/tools.ts");
+	loadsLand(fake);
+	recordCommands((method) => (method === "Page.getFrameTree" ? new Promise(() => {}) : undefined));
+	let start = Date.now();
+	const stuck = await request("navigate", { url: "https://shop.example/next" });
+	assert.equal(stuck.error?.code, "timeout", JSON.stringify(stuck));
+	assert.match(stuck.error.message, /nothing was navigated\. Call navigate again; if it fails the same way, tabs_create/);
+	assert.ok(Date.now() - start < 3500, `${Date.now() - start} ms`);
+	assert.equal((await chrome.tabs.get(tabId)).url, "https://shop.example/", "the tab was not navigated");
+	// It stops answering during the load: the load is reported, not compared.
+	let calls = 0;
+	recordCommands((method) =>
+		method === "Page.getFrameTree" ? (calls++ ? new Promise(() => {}) : { frameTree: { frame: { loaderId: "L1" } } }) : undefined,
+	);
+	start = Date.now();
+	const late = await request("navigate", { url: "https://shop.example/next" });
+	assert.equal(late.error, undefined, JSON.stringify(late.error));
+	assert.deepEqual(late.result.changes, { page: LOADER_STUCK }, JSON.stringify(late.result));
+	assert.ok(Date.now() - start < 2000 + 2500 + 1500, `${Date.now() - start} ms`);
+});
+
+test("r2 second-N3: a hash added to a URL with no path is a jump within the page, compared, not no new page", async () => {
+	const { fake, request, tabId } = await startBridge();
+	const { NOT_LOADED } = await import("../src/browser/changes.ts");
+	await chrome.tabs.update(tabId, { url: "https://example.com/" });
+	loadsLand(fake);
+	const sent = recordCommands((method, params) =>
+		method === "Page.getFrameTree"
+			? { frameTree: { frame: { loaderId: "L1" } } }
+			: method === "Runtime.evaluate" && isLook(params)
+				? says(look([node("e1", "Buy")]))
+				: undefined,
+	);
+	const reply = await request("navigate", { url: "https://example.com#reviews" });
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	assert.notDeepEqual(reply.result.changes, { page: NOT_LOADED }, JSON.stringify(reply.result));
+	assert.equal(sent.filter((c) => isLook(c.params)).length, 2, "a look before and after the jump");
+});
+
+test("r2 first-F3: a tab the page opens while it settles is in tabsOpened", async () => {
+	const { fake, request, tabId } = await startBridge();
+	const { BrowserSession } = await import("../src/browser/session.ts");
+	loadsLand(fake);
+	let loader = "L1";
+	const popup = fake.addTab({ url: "https://shop.example/popup", status: "complete" });
+	let opened = false;
+	recordCommands(async (method, params) => {
+		if (method === "Page.getFrameTree") return { frameTree: { frame: { loaderId: loader } } };
+		if (method !== "Runtime.evaluate" || isLook(params)) return undefined;
+		// A settle probe after the load: the page's script opens a tab now.
+		if (!opened && (await chrome.tabs.get(tabId)).url === "https://shop.example/next") {
+			opened = true;
+			await BrowserSession.instance(Object.keys(fake.table())[0]).adopt(popup, false);
+		}
+		return says({ since: 1000, parsing: false, busy: "" });
+	});
+	const real = chrome.tabs.update;
+	chrome.tabs.update = async (...args) => {
+		loader = "L2";
+		return real(...args);
+	};
+	const reply = await request("navigate", { url: "https://shop.example/next" });
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	assert.ok(opened, "the settle ran after the load");
+	assert.equal(reply.result.changes.tabsOpened?.[0]?.tabId, popup, JSON.stringify(reply.result));
+});
+
+test("r2 first-F1: a scroll step in actions pairs nothing, so recycled rows are not renames", async () => {
+	const { request } = await startBridge();
+	const row = (ref, name) => node(ref, name, { role: "row" });
+	let n = 0;
+	recordCommands((method, params) =>
+		method !== "Runtime.evaluate"
+			? undefined
+			: isLook(params)
+				? says(n++ ? look([row("e21", "Item 21")], { gone: ["e5"], same: { e5: "e21" } }) : look([row("e5", "Item 1")]))
+				: /scrollX/.test(params.expression)
+					? says({ scrollX: 0, scrollY: 400 })
+					: says({ since: 1000, parsing: false, busy: "" }),
+	);
+	const reply = await request("actions", { steps: [{ scroll: { dy: 400 } }] });
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	assert.deepEqual(reply.result.changes, { appeared: ['e21 row "Item 21"'], gone: ['e5 row "Item 1"'] }, JSON.stringify(reply.result));
+});
+
+test("r2 second-N1: actions whose last step acts on the tab that was current says it moved there", async () => {
+	const { request, tabId: named } = await startBridge();
+	const { movedTo } = await import("../src/browser/changes.ts");
+	const a = await request("tabs.create");
+	const current = a.result.tabId;
+	await chrome.tabs.update(current, { url: "https://shop.example/a", status: "complete" });
+	recordCommands((method, params) => (method === "Runtime.evaluate" && isLook(params) ? says(look([node("e1", "Buy")])) : undefined));
+	for (const steps of [[{ press: { key: "a" } }, { press: { key: "b", tabId: current } }], [{ press: { key: "b", tabId: current } }]]) {
+		const reply = await request("actions", { tabId: named, steps });
+		assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+		assert.deepEqual(reply.result.changes, { page: movedTo(current) }, JSON.stringify(reply.result));
+	}
 });
 
 test("r1 first-F1: refsRenewed maps an old ref to its element's new ref, never to a node put in its place", async () => {

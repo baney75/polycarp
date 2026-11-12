@@ -30,9 +30,9 @@ retry in a loop. `status` adds the site permissions when you need them.
 3. Act by ref: `click {"ref":"e12"}`, `fill {"ref":"e4","value":"Ada"}`,
    `type {"ref":"e4","text":"Ada","submit":true}`, `press {"key":"Enter"}`.
 4. Check the result's `changes` (new refs, what changed or went) for what you wanted:
-   no error does not mean it worked. If they say too little, call `read_page` again to verify.
+   no error does not mean it worked.
 
-Repeat 2 to 4 until the task is done. Prefer refs over selectors, and selectors over x/y.
+Repeat 3 and 4, acting on the refs in `changes`; go back to 2 only when they say too little. Prefer refs over selectors, and selectors over x/y.
 
 ## Stale refs, waits and dialogs
 
@@ -123,7 +123,8 @@ and email.
 tabs_context {}
 navigate {"url":"https://example.com/contact"}
 read_page {"filter":"interactive"}     -> e3 textbox "Name", e4 textbox "Email", e5 button "Send"
-fill {"ref":"e3","value":"Ada Lovelace"} -> changes: appeared e7 textbox "Email", e8 button "Send"
+fill {"ref":"e3","value":"Ada Lovelace"}
+  -> changes: {"appeared":["e7 textbox \"Email\"","e8 button \"Send\""],"changed":["e3 textbox \"Name\": value \"\" -> \"Ada Lovelace\""],"gone":["e4 textbox \"Email\"","e5 button \"Send\""]}
 fill {"ref":"e7","value":"ada@example.com"}
 click {"ref":"e8"}
 wait {"text":"Thanks"}

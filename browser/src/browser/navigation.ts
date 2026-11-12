@@ -66,6 +66,9 @@ export function isPdfPageJump(from: string | undefined, to: string): boolean {
 	return a.href === b.href;
 }
 
+/** How long an aborted navigation waits for a newer one to commit before the tab counts as kept. */
+const ABORT_GRACE_MS = 500;
+
 function waitForNavigation(
 	tabId: number,
 	url: string,
@@ -102,9 +105,21 @@ function waitForNavigation(
 			if (top(d)) finish(() => resolve({ url: d.url, timedOut: false }));
 		};
 		const onError = (d: chrome.webNavigation.WebNavigationFramedErrorCallbackDetails) => {
-			// ERR_ABORTED is a superseded navigation (redirect to a download, a newer navigate).
-			if (top(d) && !d.error.includes("ERR_ABORTED"))
+			if (!top(d)) return;
+			if (!d.error.includes("ERR_ABORTED"))
 				finish(() => reject(new Error(`Navigation to ${url} failed: ${d.error}`)));
+			// ERR_ABORTED with nothing committed: a URL that loads no document (a 204, a download), so the tab
+			// stays on its page; or a newer navigation took over, which commits within moments and is waited for.
+			else if (!committed)
+				setTimeout(() => {
+					if (!committed)
+						finish(() =>
+							chrome.tabs.get(tabId).then(
+								(tab) => resolve({ url: tab.url ?? url, timedOut: false }),
+								() => reject(new Error("The tab closed during the navigation")),
+							),
+						);
+				}, ABORT_GRACE_MS);
 		};
 		const onAbort = () => finish(() => reject(new Error("Aborted")));
 		const timer = setTimeout(() => {
