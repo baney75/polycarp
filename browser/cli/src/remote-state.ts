@@ -245,7 +245,7 @@ export function stateFromStatus(input: {
 	checks: StatusCheck[];
 	extensionConnected?: boolean;
 	preflight?: { state: RemoteState; message: string; code?: string };
-	tailscale?: { state: RemoteState; message: string };
+	tailscale?: { state: RemoteState; message: string; code?: string };
 }): { state: RemoteState; message: string; code?: string } {
 	const failed = input.checks.find((x) => x.status === "fail");
 	if (!input.configured) {

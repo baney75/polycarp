@@ -170,6 +170,7 @@ test("PR 136 second-S2 and first-F2: no stopped Repair claims to wait, and the b
 		dns: { state: "problem", code: "dns" },
 		cloudflared_manual: { state: "cloudflared_missing" },
 		cloudflare_login: { state: "problem", code: "cloudflare_login" },
+		tailscale_silent: { state: "problem", code: "tailscale_silent" },
 	};
 	for (const [key] of waits) {
 		const a = answers[key];

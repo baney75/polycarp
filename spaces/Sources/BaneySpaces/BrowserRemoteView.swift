@@ -641,9 +641,9 @@ struct BrowserRemoteView: View {
             let asksName = RemoteFlow.cloudflareNameKeys.contains(copy.key)
             if asksName { nameField { act("turn_on", key: copy.key) } }
             HStack(spacing: 10) {
-                // A button with nothing behind it is not drawn: Repair needs `remote fix` and a plan with something in it.
-                if let label = entry.action, let kind = entry.kind, kind != "copy_command", kind != "repair" || RemoteFlow.repairAvailable(model.fixPlan) {
-                    Button(label) { act(kind, key: copy.key) }.keyboardShortcut(.defaultAction).disabled(model.working || model.fixing)
+                // Repair with nothing planned is Check again, so the step never loses its way forward (PR 136 r2 first-F2).
+                if let action = RemoteFlow.problemAction(key: copy.key, plan: model.fixPlan) {
+                    Button(action.label) { act(action.kind, key: copy.key) }.keyboardShortcut(.defaultAction).disabled(model.working || model.fixing || model.checking)
                 }
                 Button(RemoteCopy.startOverButton) { model.turnOff() }.disabled(model.working)
             }
@@ -665,6 +665,7 @@ struct BrowserRemoteView: View {
         case "choose": model.choose(nil)
         case "use_cloudflare": model.choose(.cloudflare)
         case "sign_in_cloudflare": model.signInToCloudflare()
+        case "check_again" where RemoteFlow.checkAgainTests(key: key): model.checkFromOutside(force: true)
         default: model.checkAgain()
         }
     }

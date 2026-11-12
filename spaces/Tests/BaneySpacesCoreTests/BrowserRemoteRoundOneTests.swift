@@ -76,9 +76,10 @@ final class BrowserRemoteRoundOneTests: XCTestCase {
         XCTAssertEqual(real.checks.first?.pending, true)
         let some = RemoteCommand.parseFix(exitCode: 0, Data(#"{"ok":true,"state":"problem","message":"m","publicUrl":null,"actions":[{"kind":"funnel","what":"Open Funnel again","status":"planned","detail":"x"}],"advice":[]}"#.utf8))
         XCTAssertEqual(some.actions.map(\.kind), ["funnel"])
-        // A step whose button is Repair draws it only when the plan has something in it.
-        let src = try source(view)
-        XCTAssertTrue(src.contains(#"kind != "repair" || RemoteFlow.repairAvailable(model.fixPlan)"#))
+        // A step whose button is Repair draws it only when the plan has something in it; else Check again (PR 136 r2 first-F2).
+        XCTAssertEqual(RemoteFlow.problemAction(key: "check_failed", plan: real)?.kind, "check_again")
+        XCTAssertEqual(RemoteFlow.problemAction(key: "check_failed", plan: some)?.kind, "repair")
+        XCTAssertTrue(try source(view).contains("RemoteFlow.problemAction(key: copy.key, plan: model.fixPlan)"))
     }
 
     /// second-N2: the quiet Funnel retry runs by itself, so it never asks for a connect code. Only a press makes one.

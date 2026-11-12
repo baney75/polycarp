@@ -15,10 +15,10 @@ after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDe
 const mod = await loadTs(`
 export { ConnectService } from "@src/connect-host.ts";
 export { remoteFix, remoteState } from "@src/remote-panel.ts";
-export { tailscaleReadyAsync } from "@src/remote-setup.ts";
+export { remoteStatus, tailscaleReadyAsync } from "@src/remote-setup.ts";
 export * as tunnel from "@src/tunnel-setup.ts";
 `);
-const { ConnectService, remoteFix, remoteState, tailscaleReadyAsync, tunnel } = mod;
+const { ConnectService, remoteFix, remoteState, remoteStatus, tailscaleReadyAsync, tunnel } = mod;
 
 async function inConfig(name, fn) {
 	const dir = join(root, name);
@@ -182,15 +182,16 @@ test("second-N2: a Turn on that ends with `remote fix` gets no connect code", as
 async function noTailscale(dir, fn) {
 	const empty = join(dir, "empty");
 	mkdirSync(empty, { recursive: true });
-	const saved = { PATH: process.env.PATH, APPLICATIONS_DIR: process.env.APPLICATIONS_DIR };
+	// TABKYRA_APPLICATIONS_DIR is the name tailscaleAppPath reads, so the real Tailscale app is never found either.
+	const saved = { PATH: process.env.PATH, APPLICATIONS_DIR: process.env.TABKYRA_APPLICATIONS_DIR };
 	process.env.PATH = empty;
-	process.env.APPLICATIONS_DIR = empty;
+	process.env.TABKYRA_APPLICATIONS_DIR = empty;
 	try {
 		return await fn();
 	} finally {
 		process.env.PATH = saved.PATH;
-		if (saved.APPLICATIONS_DIR === undefined) delete process.env.APPLICATIONS_DIR;
-		else process.env.APPLICATIONS_DIR = saved.APPLICATIONS_DIR;
+		if (saved.APPLICATIONS_DIR === undefined) delete process.env.TABKYRA_APPLICATIONS_DIR;
+		else process.env.TABKYRA_APPLICATIONS_DIR = saved.APPLICATIONS_DIR;
 	}
 }
 
@@ -270,4 +271,58 @@ test("PR 136 second-S5: a Tailscale read that times out is unreadable, not signe
 	// A plain empty answer still means signed out.
 	const out = await tailscaleReadyAsync({ run: async (_c, a) => ({ code: 0, out: a[0] === "lock" ? "" : "{}" }), tailscale: () => "/stand-in/tailscale" });
 	assert.equal(out.state, "tailscale_signed_out");
+});
+
+// ---------- PR 136 review round 2: first-F1 and second-S1 ----------
+
+/** A stand-in Tailscale whose `which` read hits the probe limit; every other read is a signed-in machine with Funnel open. */
+const hung = (which) => async (_cmd, args) => {
+	const read = args.join(" ");
+	if (read === which) return { code: 1, out: "tailscale timed out after 15 s", timedOut: true };
+	if (read === "lock status") return { code: 0, out: "Tailnet lock is NOT enabled." };
+	if (read === "status --json") return { code: 0, out: JSON.stringify({ Self: { DNSName: "m.tail1.ts.net." } }) };
+	return { code: 0, out: JSON.stringify({ AllowFunnel: { "m.tail1.ts.net:8443": true } }) };
+};
+const FUNNEL_JSON = JSON.stringify({ publicUrl: "https://m.tail1.ts.net:8443", port: 8787, route: "funnel" });
+
+test("PR 136 r2 first-F1 and second-S1: Tailscale not answering carries tailscale_silent, saved route or not", async () => {
+	for (const which of ["lock status", "status --json", "serve status --json"]) {
+		for (const saved of [false, true]) {
+			await inConfig(`r136r2-silent-${saved ? "funnel" : "none"}-${which.replaceAll(" ", "-")}`, async (dir) => {
+				if (saved) writeFileSync(join(dir, "remote.json"), FUNNEL_JSON);
+				const answer = await noTailscale(dir, () => remoteState({ run: hung(which), tailscale: () => "/stand-in/tailscale" }));
+				assert.equal(answer.state, "problem", which);
+				assert.equal(answer.code, "tailscale_silent", `${which}, ${saved ? "saved" : "nothing saved"}`);
+				assert.match(answer.message, /didn't answer within 15 seconds/);
+			});
+		}
+	}
+});
+
+test("PR 136 r2 first-F1: remote status --json, the Mac app's read, answers a hung Tailscale with tailscale_silent from the 15 s probe", async () => {
+	for (const saved of [false, true]) {
+		await inConfig(`r136r2-status-${saved ? "funnel" : "none"}`, async (dir) => {
+			if (saved) writeFileSync(join(dir, "remote.json"), FUNNEL_JSON);
+			const calls = [];
+			const run = async (cmd, args) => (calls.push(args.join(" ")), hung("serve status --json")(cmd, args));
+			let printed = "";
+			const write = process.stdout.write;
+			// The report is one string write; the test runner's own frames (Buffers) pass through untouched.
+			process.stdout.write = (chunk, ...rest) => (typeof chunk === "string" ? ((printed += chunk), true) : write.call(process.stdout, chunk, ...rest));
+			let exit;
+			try {
+				// No tailscale on PATH: only the probe seam can reach the stand-in, so a sync read would say "not installed".
+				exit = await noTailscale(dir, () => remoteStatus({ json: true }, { run, tailscale: () => "/stand-in/tailscale" }));
+			} finally {
+				process.stdout.write = write;
+			}
+			const report = JSON.parse(printed);
+			assert.equal(report.state, "problem", printed);
+			assert.equal(report.code, "tailscale_silent", printed);
+			if (saved) assert.equal(report.ok, false, "a saved route that Tailscale can't confirm is not ok");
+			assert.equal(exit, report.ok ? 0 : 1);
+			// Tailscale is read once, through the probes and their limit.
+			assert.equal(calls.filter((c) => c === "serve status --json").length, 1, calls.join(", "));
+		});
+	}
 });

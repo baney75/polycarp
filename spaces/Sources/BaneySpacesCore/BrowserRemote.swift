@@ -287,7 +287,7 @@ public enum RemoteFlow {
                     return (.on(connectorURL: url, browserConnected: status?.extensionConnected ?? true), setup)
                 }
             } else if !setup.answerOn {
-                if !(status.map { moreBasic.contains($0.state) } ?? false) { return (screen(for: setup, configured: status?.configured ?? false), setup) }
+                if !(status.map(isMoreBasic) ?? false) { return (screen(for: setup, configured: status?.configured ?? false), setup) }
             }
         }
         guard let status else { return (.checking, nil) }
@@ -296,6 +296,15 @@ public enum RemoteFlow {
 
     /// Tailscale itself being gone is more basic than any refusal about Funnel or a busy connection.
     private static let moreBasic: Set<RemoteState> = [.tailscaleMissing, .tailscaleSignedOut, .tailnetLock, .cloudflaredMissing]
+
+    /// The helper's code for a Tailscale read that hit its 15 s limit: Tailscale is slow or stuck (PR 136 r2 first-F1).
+    public static let tailscaleSilentCode = "tailscale_silent"
+
+    /// A status that comes ahead of an older setup answer and keeps the window polling quickly: Tailscale or cloudflared gone,
+    /// or Tailscale not answering in time, which is never "on" and never a dead "Setup stopped".
+    public static func isMoreBasic(_ status: RemoteReport) -> Bool {
+        moreBasic.contains(status.state) || (status.state == .problem && status.code == tailscaleSilentCode)
+    }
 
     /// The `setup` answer to keep once a status read arrives. A success was only a bridge: a status that confirms it ends it. A
     /// refusal about Tailscale itself ends once status no longer says the same thing, so signing in moves the window on.
@@ -380,6 +389,18 @@ public enum RemoteFlow {
     /// This helper has `remote fix` (feature-detected) and its plan has something in it. remote-flow.ts's repairAvailable.
     public static func repairAvailable(_ plan: RemoteFixPlan?) -> Bool { (plan?.available ?? false) && !(plan?.actions.isEmpty ?? true) }
 
+    /// A problem step's one button: the entry's, except a Repair with nothing planned becomes Check again, so the step keeps a
+    /// way forward (PR 136 r2 first-F2). Nil for no button; a copy_command step's command box is its action.
+    public static func problemAction(key: String, plan: RemoteFixPlan?) -> (label: String, kind: String)? {
+        guard let entry = RemoteSharedCopy.steps[key], let label = entry.action, let kind = entry.kind, kind != "copy_command" else { return nil }
+        if kind == "repair", !repairAvailable(plan) { return (RemoteSharedCopy.result["checkAgain"] ?? "Check again", "check_again") }
+        return (label, kind)
+    }
+
+    /// Check again on a failed check runs `remote test` again, as remote-flow.ts's checkAgainMethod does, and keeps the step
+    /// until a test says the route is on. Any other step reads status again, which on the Mac reruns the DNS checks too.
+    public static func checkAgainTests(key: String) -> Bool { key == "check_failed" }
+
     /// What a Repair that didn't finish says, and the helper's words to show under Details. Nil when it finished. The note names
     /// Details only when there are words to put there (PR 134 round 2 first-F4).
     public static func repairNote(_ done: RemoteFixPlan) -> (note: String, details: String?)? {
@@ -420,7 +441,7 @@ public enum RemoteFlow {
     public static func pollInterval(for screen: RemoteScreen, status: RemoteReport? = nil, bridging: Bool = false) -> TimeInterval {
         if bridging { return 4 }
         if case .on = screen { return 30 }
-        if let status, status.configured, !moreBasic.contains(status.state) { return 30 }
+        if let status, status.configured, !isMoreBasic(status) { return 30 }
         return 4
     }
 

@@ -152,8 +152,10 @@ test("first-F4: Repair shows only when remote fix exists and has actions, on a s
 	const run = { state: "problem", code: "tls", message: "", checks: failing("tls", false) };
 	const none = flowScreen({ status: status(), chosen: "tailscale", run });
 	assert.equal(none.copy.key, "check_failed");
-	assert.equal(none.copy.action, undefined, "no Repair without remote fix");
-	for (const fix of [{ available: false }, { available: true, actions: [] }]) assert.equal(flowScreen({ status: status(), chosen: "tailscale", run, fix }).copy.action, undefined);
+	// No Repair without remote fix; Check again keeps a way forward (PR 136 r2 first-F2).
+	const checkAgain = { kind: "check_again", label: RESULT_COPY.checkAgain };
+	assert.deepEqual(none.copy.action, checkAgain, "no Repair without remote fix");
+	for (const fix of [{ available: false }, { available: true, actions: [] }]) assert.deepEqual(flowScreen({ status: status(), chosen: "tailscale", run, fix }).copy.action, checkAgain);
 	const fix = { available: true, actions: [{ kind: "restart_serve", what: "Restart serve", status: "planned" }] };
 	assert.equal(flowScreen({ status: status(), chosen: "tailscale", run, fix }).copy.action.kind, "repair");
 	// The result: a real failure plus a plan with actions.

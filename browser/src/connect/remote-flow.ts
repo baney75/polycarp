@@ -135,6 +135,19 @@ const STEP_TWO = new Set([
 
 const isOn = (a?: RemoteAnswer): boolean => Boolean(a && answerOn(a));
 
+/**
+ * Comes ahead of the result on a saved route, whatever an older run said: a state that stops the route on this computer, or
+ * Tailscale not answering in time, which must never read as "on" (PR 136 r2 first-F1).
+ */
+const blocks = (a: RemoteAnswer): boolean =>
+	BLOCKING.has(a.state) || (a.state === "problem" && a.code === "tailscale_silent");
+
+/** What Check again asks: the outside checks again for a step about them, else where things stand on this computer. */
+export function checkAgainMethod(answer: RemoteAnswer): "remoteState" | "remoteTest" {
+	const k = copyKey(answer);
+	return k === "dns" || k === "dns_lookup" || k === "check_failed" ? "remoteTest" : "remoteState";
+}
+
 /** Repair needs this helper's `remote fix` (feature-detected) and a plan with something in it. */
 export const repairAvailable = (fix?: RemoteFixAnswer): boolean =>
 	fix?.available === true && (fix.actions?.length ?? 0) > 0;
@@ -148,11 +161,10 @@ function step(answer: RemoteAnswer, input: FlowInput, route?: ChosenRoute): Extr
 	// checks again (first-F2).
 	if (copy.key === "tailscale_operator" && (input.funnelGaveUp || !saved))
 		copy = { key: "tailscale_operator_check", ...STEP_COPY.tailscale_operator_check };
-	// A button with nothing behind it is not drawn: Repair needs `remote fix` and a plan.
-	if (copy.action?.kind === "repair" && !repairAvailable(input.fix)) {
-		const { action: _drop, ...rest } = copy;
-		copy = rest;
-	}
+	// A button with nothing behind it is not drawn: Repair needs `remote fix` and a plan. The step still keeps a way forward,
+	// checking from outside again, since nothing else would ever end it (PR 136 r2 first-F2).
+	if (copy.action?.kind === "repair" && !repairAvailable(input.fix))
+		copy = { ...copy, action: { kind: "check_again", label: RESULT_COPY.checkAgain } };
 	return {
 		kind: "step",
 		step: STEP_TWO.has(copy.key) ? 2 : 3,
@@ -221,7 +233,7 @@ export function flowScreen(input: FlowInput): FlowScreen {
 		// Set up. Something about Tailscale or cloudflared itself comes first; then the last run's answer (Funnel not allowed
 		// yet carries the page to open, a retry's operator refusal its command); else the result, with what was last found from
 		// outside. funnel_closed is only what a newer run is trying to fix, so any run that isn't on comes ahead of it.
-		if (remote && BLOCKING.has(remote.state) && !(run && !isOn(run) && remote.state === "funnel_closed"))
+		if (remote && blocks(remote) && !(run && !isOn(run) && remote.state === "funnel_closed"))
 			return step(remote, input, routeOf(status));
 		if (run && !isOn(run)) return step(run, input, chosen === "cloudflare" ? "cloudflare" : routeOf(status));
 		return result(input, `${status.publicUrl}/mcp`, remote);

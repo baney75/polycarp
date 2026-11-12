@@ -144,6 +144,11 @@
 		},
 		{
 			"state": "problem",
+			"code": "tailscale_silent",
+			"key": "tailscale_silent"
+		},
+		{
+			"state": "problem",
 			"code": "tls",
 			"key": "check_failed"
 		},

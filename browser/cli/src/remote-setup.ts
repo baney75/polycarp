@@ -122,7 +122,7 @@ type ServeTcp = Record<string, { HTTPS?: boolean; TCPForward?: string }>;
 /** What `tailscale` says about this machine: not connected, unreadable serve status, or its DNS name, Web entries and which host:ports Funnel is on for. */
 type TailscaleState =
 	| { kind: "disconnected" }
-	| { kind: "unreadable"; why?: string }
+	| { kind: "unreadable"; why?: string; code?: "tailscale_silent" }
 	| { kind: "ok"; dns: string; web: ServeWeb; tcp: ServeTcp; allowFunnel: Record<string, boolean> };
 
 /** The DNS name `tailscale status --json` gives, or "" when Tailscale isn't connected. */
@@ -168,6 +168,8 @@ export interface ProbeSeam {
 /** Tailscale took longer than the probe's limit: it is slow or stuck, which says nothing about being signed in (PR 136 second-S5). */
 const tailscaleSilent = (): TailscaleState => ({
 	kind: "unreadable",
+	// Its own code, so a panel or the Mac shows a step that keeps checking, not "Setup stopped" (PR 136 r2 second-S1).
+	code: "tailscale_silent",
 	why: `Tailscale didn't answer within ${Math.round(PROBE_TIMEOUT_MS / 1000)} seconds, so nothing was changed. Check that Tailscale is running, then try again.`,
 });
 
@@ -232,7 +234,7 @@ export async function planFunnelAsync(ports: number[], seam: ProbeSeam = {}): Pr
 function planFrom(basics: TailscaleReady, ports: number[]): FunnelPlan {
 	if (!basics.ok) return basics;
 	const { bin, state } = basics;
-	if (state.kind === "unreadable") return { ok: false, state: "problem", message: state.why ?? "Couldn't read tailscale serve status, so nothing was changed." };
+	if (state.kind === "unreadable") return { ok: false, state: "problem", message: state.why ?? "Couldn't read tailscale serve status, so nothing was changed.", ...(state.code ? { code: state.code } : {}) };
 	if (state.kind !== "ok") return { ok: false, state: "problem", message: "Couldn't read tailscale, so nothing was changed." };
 	const tcp = state.tcp[String(FUNNEL_PORT)];
 	if (tcp && tcp.HTTPS !== true) {
@@ -1109,7 +1111,7 @@ export async function preflight(seam: ProbeSeam = {}, read?: TailscaleReady): Pr
 	return { state: "ready", message: "Ready to turn on." };
 }
 
-export async function remoteStatus(options: { json: boolean }): Promise<number> {
+export async function remoteStatus(options: { json: boolean }, seam: ProbeSeam = {}): Promise<number> {
 	const checks: Check[] = [];
 	let config: RemoteConfig | undefined;
 	try {
@@ -1123,10 +1125,18 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 		checks.push({ name: "remote.json", status: "fail", detail: `${remoteFile()} not found. Run ${COMMAND_NAME} remote setup.` });
 	}
 	let clients = 0;
+	// Tailscale is read once, with the probes' 15 s limit, so a hung daemon is answered as one well inside the Mac app's wait on
+	// this command, not after a minute as "signed out" (PR 136 r2 first-F1). The routes and the preflight come from the same read,
+	// so a plain-text status off the Funnel route doesn't ask.
+	const ready = config?.route === "funnel" || options.json ? await tailscaleReadyAsync(seam) : undefined;
 	// On the Funnel route, Tailscale going away (quit, signed out, uninstalled, Tailnet Lock turned on) is the first thing to say, and
 	// nothing past it can work, so the internet-side checks are skipped.
-	const blocked = config?.route === "funnel" ? tailscaleReady() : undefined;
-	let tailscale: { state: RemoteState; message: string } | undefined = blocked && !blocked.ok ? { state: blocked.state, message: blocked.message } : undefined;
+	const blocked = config?.route === "funnel" ? ready : undefined;
+	let tailscale: { state: RemoteState; message: string; code?: string } | undefined = blocked && !blocked.ok ? { state: blocked.state, message: blocked.message } : undefined;
+	// Tailscale didn't answer in time: say so, with the code that keeps checking, never "on".
+	if (blocked?.ok && blocked.state.kind === "unreadable" && blocked.state.code) {
+		tailscale = { state: "problem", message: blocked.state.why ?? "Tailscale didn't answer.", code: blocked.state.code };
+	}
 	if (blocked?.ok && config && blocked.state.kind === "ok") {
 		// Signed in, but Funnel isn't open for the address remote.json names (turned off in Tailscale, or an earlier refusal never retried):
 		// the connector can't be reached from the internet, whatever else answers.
@@ -1193,14 +1203,15 @@ export async function remoteStatus(options: { json: boolean }): Promise<number> 
 	if (options.json) {
 		// The state is the app's answer; the checks stay for anyone who wants the detail. The passcode itself is never here.
 		const extensionConnected = config && !tailscale ? (await connectionChecks()).checks.some((x) => x.id === "connected" && x.status === "ok") : undefined;
-		const { state, message, code } = stateFromStatus({ configured: Boolean(config), checks, extensionConnected, preflight: config ? undefined : await preflight(), tailscale });
+		const { state, message, code } = stateFromStatus({ configured: Boolean(config), checks, extensionConnected, preflight: config ? undefined : await preflight(seam, ready), tailscale });
+		const routes = routesFrom(ready ?? (await tailscaleReadyAsync(seam)));
 		printReport({
 			ok,
 			state,
 			message,
 			...(code ? { code } : {}),
 			route: config?.route ?? null,
-			routes: remoteRoutes(),
+			routes,
 			publicUrl: config?.publicUrl ?? null,
 			connectorUrl: config ? `${config.publicUrl}/mcp` : null,
 			passcodeSet: passcodeSet(),
