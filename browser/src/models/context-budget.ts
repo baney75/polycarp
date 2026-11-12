@@ -164,9 +164,19 @@ export function toolResultBudgetChars(
  * dense with, about two characters a token; Latin letters, digits and spaces CHARS_PER_TOKEN.
  */
 export function estimateTextTokens(text: string): number {
+	return tokensUpTo(text, Number.POSITIVE_INFINITY).tokens;
+}
+
+/** The longest start of `text` that estimateTextTokens puts within `maxTokens`, found in one pass that stops there. */
+export function tokenPrefix(text: string, maxTokens: number): string {
+	return text.slice(0, tokensUpTo(text, maxTokens).end);
+}
+
+function tokensUpTo(text: string, maxTokens: number): { tokens: number; end: number } {
 	let wide = 0;
 	let dense = 0;
 	let plain = 0;
+	let tokens = 0;
 	for (let i = 0; i < text.length; i++) {
 		const c = text.charCodeAt(i);
 		if (c < 0x80) {
@@ -175,9 +185,13 @@ export function estimateTextTokens(text: string): number {
 			else dense++;
 		} else if ((c >= 0x2e80 && c <= 0xd7ff) || (c >= 0xf900 && c <= 0xffef) || (c >= 0xd800 && c <= 0xdbff)) wide++;
 		else if (c < 0xdc00 || c > 0xdfff) dense++;
-		// The second half of a surrogate pair is counted with the first.
+		// The second half of a surrogate pair is counted with the first, so a cut never falls inside a pair.
+		else continue;
+		const next = Math.ceil(wide + dense / 2 + plain / CHARS_PER_TOKEN);
+		if (next > maxTokens) return { tokens, end: i };
+		tokens = next;
 	}
-	return Math.ceil(wide + dense / 2 + plain / CHARS_PER_TOKEN);
+	return { tokens, end: text.length };
 }
 
 /** Estimated tokens of one message as a provider would see it. */
@@ -305,7 +319,7 @@ type Kind = "result" | "attachment" | "user" | "note" | "notes";
  * Compaction's notes with one of their two text parts held to `maxTokens`: 1 is Polycarp's working notes (the last
  * part), 0 the person's own words (the first). A notes message of one part is all working notes.
  */
-function capNotesPart(m: Message, which: 0 | 1, maxTokens: number): Message {
+function capNotesPart(m: Message, which: 0 | 1, maxTokens: number, over = 0): Message {
 	const content = m.content as unknown;
 	if (!Array.isArray(content)) return which === 1 ? capParts(m, "notes", maxTokens) : m;
 	const parts = content as Array<{ type: string; text?: string }>;
@@ -313,6 +327,8 @@ function capNotesPart(m: Message, which: 0 | 1, maxTokens: number): Message {
 	if (which === 0 && texts.length < 2) return m;
 	const at = which === 1 ? texts[texts.length - 1] : texts[0];
 	const text = parts[at]?.text ?? "";
+	// A part a little over gives up about what is over (and room for the hint), not half of itself.
+	maxTokens = Math.max(maxTokens, estimateTextTokens(text) - over - 40);
 	if (at === undefined || estimateTextTokens(text) <= maxTokens) return m;
 	const out = [...parts];
 	out[at] = {
@@ -584,19 +600,22 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 			: `[Polycarp left out the ${n} earliest messages of this chat to fit the model's context.]`;
 	// The note saying so goes on the latest message, so its room is kept once anything is dropped.
 	const noteRoom = estimateTextTokens(dropNote(9_999_999)) + 8;
-	const overWithNote = () => total + (droppedEarlier ? noteRoom : 0) > budget.inputTokens;
-	while (overWithNote() && latestUser() > head()) {
+	const overBy = () => total + (droppedEarlier ? noteRoom : 0) - budget.inputTokens;
+	while (overBy() > 0 && latestUser() > head()) {
 		const from = head();
 		let next = from + 1;
 		while (next < latestUser() && !isPerson(next)) next++;
 		droppedEarlier += drop(from, next);
 	}
-	// 8b. The notes themselves, halving, before anything of the latest message or the turn in progress: the working
-	// notes first, the person's own words last.
-	for (const which of [1, 0] as const)
-		for (const c of halving(STUB_TOKENS * 4, overWithNote))
-			for (let i = 0; i < messages.length && overWithNote(); i++)
-				if (summaries[i]) replace(i, capNotesPart(messages[i], which, c));
+	// 8b. Polycarp's working notes, halving, before anything of the latest message or the turn in progress. The person's
+	// own words in the notes message (which 0) give way only after the turn in progress (step 10), in step 10b.
+	const capNotes = (which: 0 | 1, excess: () => number) => {
+		const going = () => excess() > 0;
+		for (const c of halving(STUB_TOKENS * 4, going))
+			for (let i = 0; i < messages.length && going(); i++)
+				if (summaries[i]) replace(i, capNotesPart(messages[i], which, c, excess()));
+	};
+	capNotes(1, overBy);
 	if (droppedEarlier) {
 		const i = latestUser();
 		const note = {
@@ -609,13 +628,6 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 			content: typeof content === "string" ? [note, { type: "text", text: content }] : [note, ...(content as [])],
 		} as Message);
 	}
-	// 9. The latest user message: its images, then its documents and text.
-	if (over() && latestUser() >= 0) replace(latestUser(), withoutImages(messages[latestUser()]));
-	for (const c of halving(STUB_TOKENS * 4, over)) {
-		const i = latestUser();
-		if (i < 0) break;
-		replace(i, capParts(capParts(messages[i], "attachment", c), "user", c));
-	}
 	// 10. The turn in progress: its oldest tool calls, each with its results, keeping the newest.
 	for (;;) {
 		if (!over()) break;
@@ -626,6 +638,15 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 		let end = calls[0] + 1;
 		while (end < messages.length && (messages[end].role === "toolResult" || notes[end])) end++;
 		drop(calls[0], end);
+	}
+	// 10b. The person's own earlier words, from their end: a standing instruction outlasts reads from many steps ago.
+	capNotes(0, () => total - budget.inputTokens);
+	// 9. The latest user message: its images, then its documents and text.
+	if (over() && latestUser() >= 0) replace(latestUser(), withoutImages(messages[latestUser()]));
+	for (const c of halving(STUB_TOKENS * 4, over)) {
+		const i = latestUser();
+		if (i < 0) break;
+		replace(i, capParts(capParts(messages[i], "attachment", c), "user", c));
 	}
 	// 11. Last, the newest call itself: its images, its thinking, its text, then its arguments. Its id and result stay, so
 	// the pair holds; a provider that wants the thinking back may refuse, which is no worse than a request known not to fit.

@@ -1426,3 +1426,9 @@ Amended after review (PR 153 round 2, 2026-11-12):
 Amended (PR 162 round 1), replacing the "none" and "left out" rules above: "none" empties only Not finished. Past a
 line each, the person's part keeps the first, newest and newest others' starts, and a gap line names the rest. The drop
 note's room comes from the notes, never the latest message. Old goal sections are not sent.
+
+Amended after review (PR 162 leftovers, issue 138): the person's standing instructions outlive a gap. The summarizer
+copies them word for word into their own section; code sends only lines it finds in the person's messages, naming
+each one's message, so a page can't add one. The guard cuts the person's words after the turn in progress gives up
+its old tool calls, and its first cut of the notes takes about what is over. Old goal sections never reach the
+summarizer again.

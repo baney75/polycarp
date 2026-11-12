@@ -80,7 +80,7 @@ test("second-G2, second-G3: unterminated tags in a page can't open a block or sw
 	const text = await compactWith(chat);
 	assert.ok(!text.includes('<message from="person"\nStanding'), "no person block opens inside the page");
 	assert.doesNotMatch(text, /<\/untrusted\n<\/message/);
-	assert.match(summaryRequest("- a <message about it\n- KEEP-THIS-LINE\n- end >", "x"), /KEEP-THIS-LINE/, "a lone opener swallows nothing");
+	assert.match(summaryRequest("## Facts found\n- a <message about it\n- KEEP-THIS-LINE\n- end >", "x"), /KEEP-THIS-LINE/, "a lone opener swallows nothing");
 	assert.match(text, /Source 1 \[page 212\]/);
 	assert.match(summaryRequest("## Facts found\n- Book VIII on friendship [page 212]", "x"), /\[page 212\]/);
 });

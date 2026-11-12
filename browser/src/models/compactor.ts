@@ -104,6 +104,7 @@ export function createCompactor(deps: CompactorDeps): Compactor {
 		const record: CompactionMessage = {
 			role: "compaction",
 			summary: notes as string,
+			quotes: s.standingQuotes(notes as string, convo.slice(0, cut), plan.userTokens / 2 - 30),
 			cut,
 			round,
 			turn,

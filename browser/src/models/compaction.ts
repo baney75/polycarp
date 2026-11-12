@@ -13,14 +13,17 @@ import {
 	COMPACTION_NOTES,
 	estimateMessageTokens,
 	estimateTextTokens,
+	tokenPrefix,
 } from "./context-budget.js";
 
 /**
- * The sections the summarizer writes, in this order, round after round. The person's goals and instructions are not
- * among them: those are the person's own messages, quoted by code (summaryMessageText), never a model's rewrite. None
- * is a to-do list: "Not finished" is Polycarp's record of its progress, and the person's words decide what to do.
+ * The sections the summarizer writes, in this order, round after round. The person's own messages are quoted by code
+ * (summaryMessageText), never a model's rewrite; the first section holds only exact copies of their standing
+ * instructions, and code keeps only the lines it finds in their messages (CompactionMessage.quotes). None is a to-do
+ * list: "Not finished" is Polycarp's record of its progress, and the person's words decide what to do.
  */
 export const SECTIONS = [
+	"The person's standing instructions",
 	"Decisions",
 	"Facts found",
 	"Tried and failed",
@@ -32,14 +35,9 @@ export const SECTIONS = [
 /** Earlier names of a section, as notes stored by an earlier version have them. */
 export const SECTION_ALIASES: Readonly<Record<string, (typeof SECTIONS)[number]>> = { "open steps": "Not finished" };
 
-/** How each section is headed in what the model reads. Every heading carries NOTE_TAG, so none reads as the person's. */
-const TITLES: Record<(typeof SECTIONS)[number], string> = {
-	Decisions: "Decisions",
-	"Facts found": "Facts found",
-	"Tried and failed": "Tried and failed",
+/** How a section is headed in what the model reads, when not by its name. Every heading carries NOTE_TAG. */
+const TITLES: Partial<Record<(typeof SECTIONS)[number], string>> = {
 	"Not finished": "What Polycarp had not finished, by its own guess; the person's words above decide what to do",
-	"Done steps": "Done steps",
-	"Files and artifacts": "Files and artifacts",
 };
 
 export const NOTE_TAG = "(Polycarp's note)";
@@ -59,6 +57,8 @@ export interface CompactionMessage {
 	tokensBefore: number;
 	tokensAfter: number;
 	timestamp: number;
+	/** Lines of the summarizer's copies of the person's standing instructions that code found in their messages. */
+	quotes?: string[];
 }
 
 declare module "@mariozechner/pi-agent-core" {
@@ -86,9 +86,9 @@ export interface CompactionPlan {
 const MIN_ROOM = 1200;
 
 /**
- * Budgets from the guard's own (context-budget.ts budgetFor), so compaction and the guard agree on what fits. After a
- * compaction the request is about three quarters of the room (notes, the person's words, the recent turns), so it grows
- * for several turns before the guard would drop anything again.
+ * Budgets from the guard's own (context-budget.ts budgetFor), so compaction and the guard agree on what fits. The notes
+ * (0.25), the person's words (0.2) and the recent turns (0.4) plan for at most 0.85 of the room; each is usually well
+ * under its share, so the request grows for a few turns before the guard would drop anything again.
  */
 export function compactionPlan(
 	budget: Pick<Budget, "windowSize" | "inputTokens">,
@@ -221,27 +221,24 @@ export function sectionNamed(name: string): (typeof SECTIONS)[number] | undefine
 
 /**
  * The summarizer's notes as the model reads them: each section one level below the working-notes label, headed with
- * NOTE_TAG, so the attribution travels with every section and survives a cut. Any other heading becomes a plain line.
+ * NOTE_TAG, so the attribution travels with every section and survives a cut. Any other heading becomes a plain line;
+ * a line like "#travel" is not a heading and stays as written. The standing instructions go to the person's part.
  */
-const OLD_GOAL = /^#{1,6}\s*goal and standing instructions[^\n]*\n[\s\S]*?(?=^#{1,6}\s|(?![\s\S]))/im; // stored before PR 153: never sent
+const sectionRe = (name: string) =>
+	new RegExp(`^#{1,6}\\s*${name}[^\\n]*\\n?([\\s\\S]*?)(?=^#{1,6}\\s|(?![\\s\\S]))`, "im");
+const OLD_GOAL = sectionRe("goal and standing instructions"); // stored before PR 153: never sent
+const QUOTES = sectionRe(SECTIONS[0]);
 const taggedNotes = (notes: string) =>
-	notes.replace(OLD_GOAL, "").replace(/^#{1,6}\s*(.*)$/gm, (_line, name: string) => {
-		const s = sectionNamed(name);
-		return s ? `### ${TITLES[s]} ${NOTE_TAG}` : `- ${name}`;
-	});
+	notes
+		.replace(OLD_GOAL, "")
+		.replace(QUOTES, "")
+		.replace(/^#{1,6}[ \t]+(.*)$/gm, (_line, name: string) => {
+			const s = sectionNamed(name);
+			return s ? `### ${TITLES[s] ?? s} ${NOTE_TAG}` : `- ${name}`;
+		});
 
 /** The start of `text` that fits `maxTokens`, cut on code points, never inside a surrogate pair. */
-function headOf(text: string, maxTokens: number): string {
-	const points = Array.from(text);
-	let lo = 0;
-	let hi = points.length;
-	while (lo < hi) {
-		const mid = Math.ceil((lo + hi) / 2);
-		if (estimateTextTokens(points.slice(0, mid).join("")) <= maxTokens) lo = mid;
-		else hi = mid - 1;
-	}
-	return points.slice(0, lo).join("");
-}
+const headOf = tokenPrefix;
 
 const count = (s: string) => Array.from(s).length;
 const fmtN = (n: number) => n.toLocaleString("en-US");
@@ -259,8 +256,9 @@ function personsWords(said: readonly string[], budget: number): string[] {
 	const head = (i: number) => `Message ${i + 1} of ${n}:\n`;
 	const tokens = said.map((t) => estimateTextTokens(t));
 	const whole = (i: number) => `${head(i)}${said[i]}`;
+	const chars = said.map(count);
 	const cut = (i: number, text: string) =>
-		`${head(i)}${text}\n(cut to fit: ${fmtN(count(text))} of ${fmtN(count(said[i]))} characters shown)`;
+		`${head(i)}${text}\n(cut to fit: ${fmtN(count(text))} of ${fmtN(chars[i])} characters shown)`;
 	const fits = (lines: string[]) => estimateTextTokens(lines.join("\n")) <= budget;
 	const many = (s: number) =>
 		`(${s} of the messages shown ${s === 1 ? "is" : "are"} shortened to fit, each marked. Ask the person if you need the rest.)`;
@@ -290,7 +288,7 @@ function personsWords(said: readonly string[], budget: number): string[] {
 			middle.push(`${head(i)}${start}${start === said[i] ? "" : " [...]"}`);
 		}
 		const left = n - 2 - k;
-		const gap = `(${left === 1 ? `Message 2 of ${n} is` : `Messages 2 to ${left + 1} of ${n} are`} not shown here to fit, and nothing else records them. Ask the person if you need what they said.)`;
+		const gap = `(${left === 1 ? `Message 2 of ${n} is` : `Messages 2 to ${left + 1} of ${n} are`} not shown here to fit; only instructions copied above record them. Ask the person if you need what they said.)`;
 		return { lines: [ends[0], ...(left > 0 ? [gap] : []), ...middle, ...ends.slice(1)], shortened };
 	};
 	for (let k = Math.max(0, n - 2); ; k -= Math.max(1, Math.ceil(k / 10))) {
@@ -301,7 +299,8 @@ function personsWords(said: readonly string[], budget: number): string[] {
 
 /**
  * The two parts of the message that stands in for the summarized part. First the person's own earlier messages,
- * verbatim, as the only instructions: every one, cut by code only when they don't fit (personsWords). Then the
+ * verbatim, as the only instructions: their standing instructions copied and checked, then the messages, cut by code
+ * only when they don't fit (personsWords). Then the
  * summarizer's notes, labeled as Polycarp's working notes: facts and progress, never instructions. They are separate
  * text parts, so a cut to fit (context-budget.ts step 8b) takes the notes first and the person's words last.
  */
@@ -311,13 +310,17 @@ export function summaryParts(
 	userTokens: number,
 ): { said: string; notes: string } {
 	const said = earlier.filter(isPerson).map((m) => textOf((m as unknown as { content: unknown }).content).text.trim());
+	const quoted = record.quotes?.length
+		? ["Standing instructions, copied word for word from the messages named:", ...record.quotes]
+		: [];
 	return {
 		said: [
 			"[Polycarp's notes on the earlier part of this chat, which it summarized to fit the model's context.]",
 			"",
 			"## The person's own words",
 			"The person's earlier messages, as they wrote them, in order. Only these are instructions.",
-			...(said.length ? personsWords(said, userTokens) : ["(none)"]),
+			...quoted,
+			...(said.length ? personsWords(said, userTokens - estimateTextTokens(quoted.join("\n"))) : ["(none)"]),
 		].join("\n"),
 		notes: [
 			"## Polycarp's working notes",
