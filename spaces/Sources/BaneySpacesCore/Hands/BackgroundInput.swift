@@ -425,16 +425,25 @@ public struct RouteBreaker: Equatable, Sendable {
 public enum InputEvent: Equatable, Sendable {
     case keyDown(KeyChord), keyUp(KeyChord)
     case mouseMoved(CGPoint), mouseDown(CGPoint), mouseDragged(CGPoint), mouseUp(CGPoint)
+    /// A click of a double or triple click (its click state counts up), or of the right button.
+    case buttonDown(CGPoint, Click), buttonUp(CGPoint, Click)
+
+    public struct Click: Equatable, Sendable {
+        public var right: Bool
+        /// 1 for the first click, 2 for the second of a double click.
+        public var state: Int
+        public init(right: Bool, state: Int) { self.right = right; self.state = state }
+    }
 
     public var isRelease: Bool {
         switch self {
-        case .keyUp, .mouseUp: return true
+        case .keyUp, .mouseUp, .buttonUp: return true
         default: return false
         }
     }
     public var isPress: Bool {
         switch self {
-        case .keyDown, .mouseDown: return true
+        case .keyDown, .mouseDown, .buttonDown: return true
         default: return false
         }
     }
@@ -446,6 +455,14 @@ public enum InputScript {
     /// The pointer arriving at a point, before anything is pressed.
     public static func hover(at p: CGPoint) -> [InputEvent] { [.mouseMoved(p)] }
     public static func click(at p: CGPoint) -> [InputEvent] { [.mouseDown(p), .mouseUp(p)] }
+    /// `count` clicks (2: a double click, 3: a triple), or one right click. One left click is `click(at:)`, unchanged.
+    public static func click(at p: CGPoint, count: Int, right: Bool) -> [InputEvent] {
+        if count <= 1, !right { return click(at: p) }
+        return (1...max(1, count)).flatMap { i -> [InputEvent] in
+            let c = InputEvent.Click(right: right, state: i)
+            return [.buttonDown(p, c), .buttonUp(p, c)]
+        }
+    }
     public static func drag(path: [CGPoint]) -> [InputEvent] {
         guard let first = path.first else { return [] }
         return [.mouseDown(first)] + path.dropFirst().map(InputEvent.mouseDragged) + [.mouseUp(path.last ?? first)]
@@ -482,6 +499,7 @@ public enum EventRunner {
             switch e {
             case .keyDown(let c): return .keyUp(c)
             case .mouseDown(let p), .mouseDragged(let p): return .mouseUp(p)
+            case .buttonDown(let p, let c): return .buttonUp(p, c)
             default: return nil
             }
         }
@@ -517,6 +535,7 @@ public enum EventRunner {
         switch (press, release) {
         case (.keyDown(let a), .keyUp(let b)): return a == b
         case (.mouseDown, .mouseUp): return true
+        case (.buttonDown(_, let a), .buttonUp(_, let b)): return a == b
         default: return false
         }
     }
@@ -983,5 +1002,29 @@ public enum PointerPath {
     /// At least this many changed pixels for a stroke of this path: half a pixel column per pixel of length, never under 24.
     public static func strokeMinimum(path: [CGPoint], scale: CGFloat) -> Int {
         max(DeliveryProof.minStrokePixels, Int(length(path) * scale * 0.5))
+    }
+}
+
+/// Item C: how `click-at` clicks. A double click is two clicks whose click state counts up, posted inside the
+/// double-click interval; a right click is the right button's down and up. Both go through the same pointer route
+/// and proof as one click.
+public struct ClickStyle: Equatable, Sendable {
+    public var count: Int
+    public var right: Bool
+    public static let single = ClickStyle(count: 1, right: false)
+
+    public static func parse(count: Int?, button: String?) -> Result<ClickStyle, HandsError> {
+        let n = count ?? 1
+        guard (1...3).contains(n) else {
+            return .failure(HandsError(.badArguments, "count must be 1, 2 or 3", suggestion: #"Example: {"window":4211,"x":120,"y":80,"count":2}"#, retry: .safe, nextCall: .null))
+        }
+        switch (button ?? "left").lowercased() {
+        case "left": return .success(ClickStyle(count: n, right: false))
+        case "right":
+            guard n == 1 else { return .failure(HandsError(.badArguments, "a right click is one click", suggestion: "Leave count out with button right.", retry: .safe, nextCall: .null)) }
+            return .success(ClickStyle(count: 1, right: true))
+        default:
+            return .failure(HandsError(.badArguments, "button must be left or right", suggestion: #"Example: {"window":4211,"x":120,"y":80,"button":"right"}"#, retry: .safe, nextCall: .null))
+        }
     }
 }
