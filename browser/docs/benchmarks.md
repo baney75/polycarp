@@ -198,9 +198,9 @@ Score: main 4/20, review 1 (328e9f6) 12/20, review 2 (8a21dfc) 16/20, review 3 (
 Chromium aborts an opaque JSON or HTML response before a body exists, which would make that
 probe pass on any build.
 
-Settle probes, 2026-11-11, headless Chromium. With D40 all 24 pass: navigate takes 1084 ms on the late page, type
-1012 ms, click 1246 ms; on the page that never goes quiet the click returns in 2551 ms and
-`wait {until:"settled","timeoutMs":1500}` in 1510 ms, both saying `settled: false`. The same build with the action cap
+Settle probes, 2026-11-12 (after review round 1), headless Chromium. With D40 all 24 pass: navigate takes 1106 ms on the
+late page, type 1102 ms, click 1309 ms; on the page that never goes quiet the click returns in 2550 ms and
+`wait {until:"settled","timeoutMs":1500}` in 1511 ms, both saying `settled: false`. The same build with the action cap
 set to 0 (no wait after an action) fails `settle-late`, `settle-autocomplete` and `settle-skeleton`: the content is not
 there yet when the action returns.
 

@@ -1123,6 +1123,16 @@ says `settled: false` and what it was waiting on; one that settled says nothing 
 opens, and the dialog stays the action's effect (it is reported as before, not as `dialog_open`). Steps inside `actions` keep
 their `settleMs` pause, so canvas batches are not slowed. Not counted: requests and mutations inside cross-origin frames.
 
-Network bookkeeping: Network is turned on just before every action, not once per tab, because a debugging session can end
-with no event (a worker restart, a silent detach) and take the domain with it; the e2e run caught that. When a frame starts a
-new document, what its old document had in flight is dropped, keyed on the loader id in the same ordered event stream.
+Network bookkeeping: Network is turned on just before every action (a batch's first step included), not once per tab,
+because a debugging session can end with no event (a worker restart, a silent detach) and take the domain with it; the e2e
+run caught that. Each action sends it once, and waits at most 0.5 s for it. A frame's current document is the one
+`Page.frameNavigated` last committed; what an older document of that frame had in flight is dropped. A request for a document
+never moves that mark: a download or a 204 asks for one that never commits, and the old page keeps its own requests.
+
+What it can never do: hold an action longer than the cap plus that 0.5 s (a timer ends the wait at the cap whatever the page
+or the debugger does, and one DOM probe gets at most 0.4 s), or fail an action that already ran. A box the page opens while
+it settles is the action's result, with the dialog note, for every tool that settles. A page Polycarp may not script (the
+Chrome Web Store, the PDF viewer) is judged by its requests alone after two refused probes; a probe that times out means the
+page's main thread is busy (`waitingOn: "loading"`). A loader counts only when a person could see it: an ancestor's opacity or
+visibility hides it, and so does being outside the window on any side. A landing on the approval page (#94) is blanked
+before anything runs in it, so the wait never starts there.

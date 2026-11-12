@@ -129,6 +129,24 @@ extraPages["/chatty"] = `<!doctype html><title>Polycarp chatty</title><p id="n">
 b.onclick = () => { r.textContent = "clicked"; fetch("/settle/poll"); };</script>`;
 extraPages["/quiet"] = `<!doctype html><title>Polycarp quiet</title><button onclick="document.getElementById('r').textContent='done'">Do it</button><p id="r">idle</p>`;
 
+// A save that answers with a box about 200 ms after its fetch: the box is the action's effect, not a failure.
+extraPages["/saved"] = `<!doctype html><title>Polycarp saved</title><form id="f"><input id="n" aria-label="Name"></form>
+<input id="e" aria-label="Email"><p id="r">unsaved</p>
+<script>const save = (what) => fetch("/settle/ok").then(() => setTimeout(() => { alert("Saved " + what); r.textContent = "saved " + what; }, 200));
+f.onsubmit = (ev) => { ev.preventDefault(); save(n.value); }; e.onchange = () => save(e.value);</script>`;
+extraPages["/welcome"] = `<!doctype html><title>Polycarp welcome</title><p>Hi</p>
+<script>fetch("/settle/ok").then(() => setTimeout(() => alert("Welcome back"), 200));</script>`;
+// A link that answers 204 (no page commits), then a button whose slow fetch draws the content.
+extraPages["/nocontent"] = `<!doctype html><title>Polycarp no content</title><a href="/settle/nocontent">Nothing here</a>
+<button id="b">Load later</button><p id="o">empty</p>
+<script>b.onclick = () => fetch("/settle/slow").then((r) => r.text()).then((t) => { o.textContent = t; });</script>`;
+// Loaders left in the page but not seen: faded out under an ancestor, hidden, and parked off screen to the left.
+extraPages["/faded"] = `<!doctype html><title>Polycarp faded</title>
+<div style="opacity:0;position:fixed;inset:0;pointer-events:none"><div class="spinner" style="width:40px;height:40px"></div></div>
+<div style="visibility:hidden"><div class="loading" style="width:40px;height:40px"></div></div>
+<div class="skeleton-row" style="position:absolute;left:-9999px;top:10px;width:200px;height:20px"></div>
+<button onclick="document.getElementById('r').textContent='done'">Do it</button><p id="r">idle</p>`;
+
 /** The settle pages' data: slow on purpose, and a long poll that answers only after the run. */
 function serveSettle(req, res) {
 	const path = req.url.split("?")[0];
@@ -141,6 +159,10 @@ function serveSettle(req, res) {
 	if (path === "/settle/slow") return later(700, "text/plain", "Late content 8181");
 	if (path === "/settle/suggest") return later(400, "application/json", JSON.stringify(["Paris, France", "Parma, Italy"]));
 	if (path === "/settle/poll") return later(60_000, "text/plain", "poll");
+	if (path === "/settle/nocontent") {
+		res.writeHead(204);
+		return res.end();
+	}
 	return later(0, "text/plain", "ok");
 }
 extraPages["/edit"] = `<!doctype html><title>Polycarp edit</title>
@@ -1983,6 +2005,43 @@ test("settle: content drawn after the load, a debounced autocomplete and a skele
 	await tool("click", { ref: refFor(await tool("read_page", { filter: "interactive" }), "Load orders") });
 	const text = await tool("get_page_text");
 	assert.match(text, /Order 5521 shipped/);
+});
+
+test("settle: a box the page opens while it settles is the action's effect: ok with a note, never dialog_open", async () => {
+	const expectBox = async (name, args, message) => {
+		const r = await mcp.callTool({ name, arguments: args });
+		const text = r.content.map((c) => c.text).join("\n");
+		// A failure here made agents repeat the action: submit the form twice, say.
+		assert.ok(!r.isError, `${name}: ${text}`);
+		// actions reports in prose, the other tools in JSON.
+		if (name === "actions") assert.match(text, new RegExp(`That worked\\. An alert dialog is now open on tab \\d+: "${message}"`));
+		else assert.equal(JSON.parse(text).dialog?.message, message, text);
+		assert.match(text, /handle_dialog/);
+		assert.equal(JSON.parse(await tool("handle_dialog", { accept: true })).message, message);
+	};
+	await go("saved");
+	const page = await tool("read_page", { filter: "interactive" });
+	await expectBox("type", { ref: refFor(page, "Name"), text: "Ann", submit: true }, "Saved Ann");
+	await expectBox("press", { key: "Enter" }, "Saved Ann");
+	await expectBox("fill", { ref: refFor(page, "Email"), value: "a@example.com" }, "Saved a@example.com");
+	await tool("fill", { ref: refFor(page, "Name"), value: "Bo" }); // no box: the form is not submitted
+	await expectBox("actions", { steps: [{ click: { ref: refFor(page, "Name") } }, { press: "Enter" }] }, "Saved Bo");
+	await expectBox("navigate", { url: `${pageUrl}welcome` }, "Welcome back");
+});
+
+test("settle: after a link that answers 204, the page's own requests still hold the wait", async () => {
+	await go("nocontent");
+	await tool("click", { ref: refFor(await tool("read_page", { filter: "interactive" }), "Nothing here") });
+	await tool("click", { ref: refFor(await tool("read_page", { filter: "interactive" }), "Load later") });
+	assert.match(await tool("get_page_text"), /Late content 8181/);
+});
+
+test("settle: a loader faded out, hidden or parked off screen does not hold the wait", async () => {
+	await go("faded");
+	const t0 = Date.now();
+	const r = JSON.parse(await tool("click", { ref: refFor(await tool("read_page", { filter: "interactive" }), "Do it") }));
+	assert.equal(r.settled, undefined, JSON.stringify(r));
+	assert.ok(Date.now() - t0 < 1500, `took ${Date.now() - t0} ms`);
 });
 
 test("settle: a page that never goes quiet costs at most the cap, says so, and a quiet page returns fast", async () => {

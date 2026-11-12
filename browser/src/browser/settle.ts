@@ -28,14 +28,17 @@ interface Pending {
 	type: string;
 	at: number;
 	frameId: string;
+	loaderId: string;
 }
 
 const pending = new Map<number, Map<string, Pending>>();
 /** When the last counted request on a tab finished. */
 const lastEnd = new Map<number, number>();
 /**
- * Each frame's current document loader, per tab. A frame's navigation request starts a new one:
- * whatever the old document had in flight dies with it, and the browser does not always say so.
+ * Each frame's committed document loader, per tab, from Page.frameNavigated. A document that
+ * replaced another takes what the old one had in flight with it, and the browser does not always
+ * say so. Set on commit, never on the request: a download or a 204 asks for a document that never
+ * commits, and the old page goes on with its own loader.
  */
 const loaders = new Map<number, Map<string, string>>();
 let installed = false;
@@ -53,23 +56,25 @@ function install(): void {
 			if (!COUNTED.has(type)) return;
 			const map = pending.get(tabId) ?? new Map<string, Pending>();
 			pending.set(tabId, map);
-			const frames = loaders.get(tabId) ?? new Map<string, string>();
-			loaders.set(tabId, frames);
 			const id = String(p.requestId);
 			const frameId = String(p.frameId ?? "");
-			if (type === "Document" && p.loaderId && id === p.loaderId) {
-				// The frame is loading a new document: drop what its old one was waiting on. These
-				// events arrive in order, so nothing the new document asks for is lost.
-				frames.set(frameId, p.loaderId);
-				if (frames.size > 100) frames.delete(frames.keys().next().value as string);
-				for (const [k, r] of map) if (r.frameId === frameId && k !== id) map.delete(k);
-			} else if (p.loaderId && frames.has(frameId) && frames.get(frameId) !== p.loaderId) {
-				return; // the old document, still running until the new one commits
-			}
+			const loaderId = String(p.loaderId ?? "");
+			// A request from a document that was already replaced: it is going away with that page.
+			const current = loaders.get(tabId)?.get(frameId);
+			if (current && loaderId && loaderId !== current && !(type === "Document" && id === loaderId)) return;
 			// A redirect reuses the request id: it is the same wait, timed from its first hop.
 			const at = map.get(id)?.at ?? Date.now();
-			map.set(id, { type, at, frameId });
+			map.set(id, { type, at, frameId, loaderId });
 			if (map.size > 500) map.delete(map.keys().next().value as string);
+		} else if (method === "Page.frameNavigated") {
+			const frame = (params as { frame?: { id?: string; loaderId?: string } }).frame;
+			if (!frame?.id || !frame.loaderId) return;
+			const frames = loaders.get(tabId) ?? new Map<string, string>();
+			loaders.set(tabId, frames);
+			frames.set(frame.id, frame.loaderId);
+			if (frames.size > 100) frames.delete(frames.keys().next().value as string);
+			const map = pending.get(tabId);
+			for (const [k, r] of map ?? []) if (r.frameId === frame.id && r.loaderId !== frame.loaderId) map?.delete(k);
 		} else if (method === "Network.loadingFinished" || method === "Network.loadingFailed") {
 			const map = pending.get(tabId);
 			if (map?.delete(String(p.requestId))) lastEnd.set(tabId, Date.now());
@@ -98,9 +103,12 @@ async function watchNetwork(tabId: number): Promise<void> {
 	install();
 	await Promise.race([
 		cdpSend(tabId, "Network.enable").catch(() => undefined),
-		new Promise((r) => setTimeout(r, 1500)),
+		new Promise((r) => setTimeout(r, ENABLE_MS)),
 	]);
 }
+
+/** The most turning Network on may take; a stuck debugger is not worth more. */
+const ENABLE_MS = 500;
 
 /**
  * Call just before an action: start listening (and counting the tab's requests) so a request the
@@ -151,9 +159,17 @@ function settleProbe(veil: string): { since: number; parsing: boolean; busy: str
 		const el = marked[i];
 		if (el.getAttribute("aria-busy") !== "true" && !Array.from(el.classList).some((c) => token.test(c))) continue;
 		const r = el.getBoundingClientRect();
-		if (r.width === 0 || r.height === 0 || r.bottom < 0 || r.top > innerHeight) continue;
-		const st = getComputedStyle(el);
-		if (st.visibility === "hidden" || st.display === "none" || st.opacity === "0") continue;
+		if (r.width === 0 || r.height === 0 || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth)
+			continue;
+		// Seen means seen: a loader faded out (opacity 0 on an ancestor) or hidden by one stays in the
+		// page after many transitions, and must not hold every wait.
+		const check = (el as Element & { checkVisibility?: (o?: Record<string, boolean>) => boolean }).checkVisibility;
+		if (check) {
+			if (!check.call(el, { opacityProperty: true, visibilityProperty: true })) continue;
+		} else {
+			const st = getComputedStyle(el);
+			if (st.visibility === "hidden" || st.display === "none" || st.opacity === "0") continue;
+		}
 		busy = el.getAttribute("aria-busy") === "true" ? "aria-busy" : "loading placeholder";
 	}
 	return { since: Math.round(now - s.last), parsing: document.readyState === "loading", busy };
@@ -169,56 +185,105 @@ export interface SettleResult {
 }
 
 /**
- * Wait until the tab's page has been quiet for `quietMs`, at most `capMs`. `since` is when the
- * action began: requests started earlier don't hold the wait (0 counts every request in flight).
- * Stops at once, unsettled, when `stop()` says so or a dialog opens: the page is frozen then.
+ * Wait until the tab's page has been quiet for `quietMs`, at most `capMs`, which is a hard limit:
+ * the result comes at the cap whatever the page or the debugger does. `since` is when the action
+ * began: requests started earlier don't hold the wait (0 counts every request in flight).
+ * Stops at once, unsettled, when `stop()` says so, a dialog opens (the page is frozen then) or the
+ * tab lands on a page no tool may touch (`skip`). `watched`: settleStart already turned Network on.
  */
 export async function settle(
 	tabId: number,
-	options: { quietMs?: number; capMs?: number; longMs?: number; since?: number; stop?: () => boolean } = {},
+	options: {
+		quietMs?: number;
+		capMs?: number;
+		longMs?: number;
+		since?: number;
+		stop?: () => boolean;
+		skip?: (url: string) => boolean;
+		watched?: boolean;
+	} = {},
 ): Promise<SettleResult> {
 	const { quietMs = ACTION_SETTLE.quietMs, capMs = ACTION_SETTLE.capMs, longMs = ACTION_SETTLE.longMs } = options;
 	const start = Date.now();
 	const since = options.since ?? start;
 	const deadline = start + capMs;
-	await watchNetwork(tabId);
-	const veil = (await veilTag(tabId).catch(() => undefined)) ?? "";
-	const code = `(${settleProbe.toString()})(${JSON.stringify(veil)})`;
-	let lastActivity = start;
+	let over = false;
 	let waitingOn: SettleResult["waitingOn"];
-	for (;;) {
-		if (options.stop?.() || openDialog(tabId)) return { settled: false, ms: Date.now() - start, stopped: true };
-		waitingOn = undefined;
-		const tab = await chrome.tabs.get(tabId).catch(() => undefined);
-		if (!tab) return { settled: false, ms: Date.now() - start, stopped: true };
-		const t0 = Date.now();
-		// A page in the middle of a navigation can't answer; never let one probe hold the loop.
-		const page = tab.pendingUrl
-			? undefined
-			: await Promise.race([
-					runInPage<ReturnType<typeof settleProbe>>(tabId, code).catch(() => undefined),
-					new Promise<undefined>((r) => setTimeout(() => r(undefined), 400)),
-				]);
-		const now = Date.now();
-		if (!page) {
-			waitingOn = "navigation";
-			lastActivity = now;
-		} else {
-			// The probe's clock is the page's: its "since" is measured at the page, about when the call went out.
-			lastActivity = Math.max(lastActivity, t0 - page.since);
-			if (page.parsing || page.busy) {
-				waitingOn = "loading";
-				lastActivity = now;
+	const run = async (): Promise<SettleResult> => {
+		if (!options.watched) await watchNetwork(tabId);
+		const veil = (await within(veilTag(tabId), 300)) ?? "";
+		const code = `(${settleProbe.toString()})(${JSON.stringify(veil)})`;
+		let lastActivity = start;
+		/** Probes refused in a row. A page the extension may not script (a store page, a viewer) is judged by its requests alone. */
+		let refused = 0;
+		for (;;) {
+			if (over) return { settled: false, ms: Date.now() - start };
+			if (options.stop?.() || openDialog(tabId)) return { settled: false, ms: Date.now() - start, stopped: true };
+			const before = waitingOn;
+			waitingOn = undefined;
+			const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+			if (!tab || options.skip?.(tab.pendingUrl || tab.url || ""))
+				return { settled: false, ms: Date.now() - start, stopped: true };
+			const t0 = Date.now();
+			if (tab.pendingUrl) {
+				waitingOn = "navigation";
+				lastActivity = t0;
+			} else if (refused < 2) {
+				// Never let one probe hold the loop, or run past the cap.
+				const budget = Math.max(0, Math.min(PROBE_MS, deadline - t0));
+				const page = await within(
+					runInPage<ReturnType<typeof settleProbe>>(tabId, code).then(
+						(v) => v ?? "refused",
+						() => "refused" as const,
+					),
+					budget,
+				);
+				if (page === "refused") refused++;
+				else if (page !== undefined) refused = 0;
+				if (page === undefined) {
+					// No answer in time: the page's main thread is busy (a long task, hydration). Cut
+					// short by the cap instead, it says nothing new about the page.
+					waitingOn = budget < PROBE_MS ? (before ?? "dom") : "loading";
+					lastActivity = Date.now();
+				} else if (page !== "refused") {
+					// The probe's clock is the page's: its "since" is measured at the page, about when the call went out.
+					lastActivity = Math.max(lastActivity, t0 - page.since);
+					if (page.parsing || page.busy) {
+						waitingOn = "loading";
+						lastActivity = Date.now();
+					}
+				} else if (refused < 2) lastActivity = Date.now(); // once may be a document being swapped
 			}
+			const now = Date.now();
+			if (inFlight(tabId, since, longMs, now) > 0) {
+				waitingOn = "network";
+				lastActivity = now;
+			} else lastActivity = Math.max(lastActivity, Math.min(now, lastEnd.get(tabId) ?? 0));
+			if (!waitingOn && now - lastActivity >= quietMs) return { settled: true, ms: now - start };
+			if (now >= deadline) return { settled: false, ms: now - start, waitingOn: waitingOn ?? "dom" };
+			await new Promise((r) => setTimeout(r, Math.max(10, Math.min(100, deadline - now))));
 		}
-		if (inFlight(tabId, since, longMs, now) > 0) {
-			waitingOn = "network";
-			lastActivity = now;
-		} else lastActivity = Math.max(lastActivity, Math.min(now, lastEnd.get(tabId) ?? 0));
-		if (!waitingOn && now - lastActivity >= quietMs) return { settled: true, ms: now - start };
-		if (now >= deadline) return { settled: false, ms: now - start, waitingOn: waitingOn ?? "dom" };
-		await new Promise((r) => setTimeout(r, Math.max(10, Math.min(100, deadline - now))));
+	};
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const capped = new Promise<SettleResult>((r) => {
+		timer = setTimeout(() => {
+			over = true;
+			r({ settled: false, ms: Date.now() - start, waitingOn: waitingOn ?? "dom" });
+		}, capMs);
+	});
+	try {
+		return await Promise.race([run(), capped]);
+	} finally {
+		clearTimeout(timer);
 	}
+}
+
+/** The longest one DOM probe may take before the page counts as busy. */
+const PROBE_MS = 400;
+
+/** A promise's value, or undefined once `ms` have passed. */
+function within<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
+	return Promise.race([p.catch(() => undefined), new Promise<undefined>((r) => setTimeout(() => r(undefined), ms))]);
 }
 
 /** What an action's result carries when the page did not settle in time; nothing when it did. */
