@@ -114,12 +114,14 @@ test("a navigate that lands on the approval host is blanked before anything runs
 	const tabId = first.result.tabId;
 	const guarded = "https://tabkyra.example.com/authorize";
 	const order = [];
+	let onApproval = false;
 	const update = chrome.tabs.update;
 	chrome.tabs.update = async (id, p) => {
 		if (p.url === "about:blank") {
 			// The commit watcher's reset is slow to land: the tab stays on the approval page meanwhile.
 			await new Promise((r) => setTimeout(r, 300));
 			const t = await update(id, p);
+			onApproval = false;
 			order.push("blank");
 			return t;
 		}
@@ -127,6 +129,7 @@ test("a navigate that lands on the approval host is blanked before anything runs
 		if (p.url === "https://redirect.example.com/")
 			setTimeout(() => {
 				// The load redirects to the approval page, commits there and finishes loading.
+				onApproval = true;
 				fake.commitNav(id, guarded);
 				setTimeout(() => {
 					for (const fn of chrome.webNavigation.onDOMContentLoaded.listeners) fn({ tabId: id, frameId: 0, url: guarded });
@@ -135,7 +138,8 @@ test("a navigate that lands on the approval host is blanked before anything runs
 		return t;
 	};
 	recordCommands((method) => {
-		if (method === "Runtime.evaluate") order.push("evaluate");
+		// A look at the page before the navigation (the change report, D42) is not in the approval page.
+		if (method === "Runtime.evaluate" && onApproval) order.push("evaluate");
 		return undefined;
 	});
 	const reply = await request("navigate", { url: "https://redirect.example.com/", timeoutMs: 2000 });

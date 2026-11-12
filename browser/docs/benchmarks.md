@@ -236,6 +236,29 @@ late page, type 1102 ms, click 1309 ms; on the page that never goes quiet the cl
 set to 0 (no wait after an action) fails `settle-late`, `settle-autocomplete` and `settle-skeleton`: the content is not
 there yet when the action returns.
 
+# Change report, 2026-11-12
+
+`cli/eval/change-report.mjs` (D42) on 8 multi-step tasks from the DOM benchmark's pages, solved by a scripted agent (no
+model) in headless Chromium. "Before" is the read-act-read loop the server instructions taught: `read_page`, act,
+`read_page` again to confirm and for the next refs. "After" reads once and acts on what each result's `changes` lists,
+reading again only when the next control is not there or nothing changed. Tokens are response bytes / 4. Both modes pass
+every task's own check.
+
+| task | before | after |
+| --- | --- | --- |
+| 08-combobox | 5 calls, 196 tok | 3 calls, 149 tok |
+| 10-select-custom | 5 calls, 227 tok | 3 calls, 214 tok |
+| 11-multi-chips | 7 calls, 402 tok | 5 calls, 276 tok |
+| 17-validation-error | 5 calls, 267 tok | 4 calls, 212 tok |
+| 23-tabs | 7 calls, 380 tok | 5 calls, 300 tok |
+| 24-accordion | 5 calls, 275 tok | 4 calls, 226 tok |
+| 27-modal-focus-trap | 7 calls, 361 tok | 4 calls, 218 tok |
+| 41-pagination | 7 calls, 1123 tok | 5 calls, 816 tok |
+| total | 48 calls, 3231 tok | 33 calls, 2411 tok |
+
+31% fewer calls and 25% fewer tokens; each saved call is also one model turn. Time: one action averages 369 ms with the
+report and 365 ms on the build before it (d56c4ab0, the same loop), so the two looks cost about 5 ms on these pages.
+
 # Dictation, 2026-10-29
 
 `cli/eval/dictation.mjs` on the built extension in Playwright's Chromium on an M-series Mac

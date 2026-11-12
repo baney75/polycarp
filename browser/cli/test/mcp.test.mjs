@@ -83,7 +83,8 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// wait's until:"settled" adds 131 (D41): the page settling is otherwise a read_page loop. The budget goes up by
 	// the 100 that did not fit under it.
 	assert.ok(bytes <= 31900, `tools/list is ${bytes} bytes, over the 31,900 budget`);
-	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2950, "instructions over 2,950 bytes");
+	// The loop line teaching `changes` (D42) adds 47 bytes; it saves a read_page after most actions.
+	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2995, "instructions over 2,995 bytes");
 });
 
 test("instructions state the safety rules", () => {

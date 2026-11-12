@@ -1,4 +1,4 @@
-// Tool calls and tokens per task with and without the change report (decision D41). A measurement,
+// Tool calls and tokens per task with and without the change report (decision D42). A measurement,
 // not a gate: eight multi-step tasks from the DOM benchmark's fixture pages, each solved twice by
 // the same scripted agent in a throwaway headless Chromium (no model).
 //
@@ -9,7 +9,8 @@
 //           changed); read_page again only when the next target is not known or the report says
 //           nothing changed.
 //
-// Tokens are estimated as response bytes / 4. Both modes must pass the case's own check.
+// Tokens are estimated as response bytes / 4. Both modes must pass the case's own check. Times are
+// wall clock; for the cost of the report itself, run the before mode on a build without it.
 //   cd browser/cli && npm run build && node eval/change-report.mjs [--out file.json]
 import { writeFileSync } from "node:fs";
 import { startHarness } from "../test/e2e-harness.mjs";
@@ -75,6 +76,9 @@ try {
 			await h.tool("navigate", { url });
 			let calls = 0;
 			let bytes = 0;
+			let acts = 0;
+			let actMs = 0;
+			const t0 = Date.now();
 			const charge = (text) => {
 				calls++;
 				bytes += Buffer.byteLength(text);
@@ -89,7 +93,10 @@ try {
 			let lastChanges;
 			const act = async (step, target) => {
 				const args = step.act === "click" ? { ref: target.ref } : step.act === "fill" ? { ref: target.ref, value: step.text } : { ref: target.ref, text: step.text };
+				const ta = Date.now();
 				const raw = await h.tool(step.act === "fill" ? "fill" : step.act, args);
+				acts++;
+				actMs += Date.now() - ta;
 				const result = JSON.parse(raw);
 				lastChanges = result.changes;
 				if (mode === "before") {
@@ -133,7 +140,7 @@ try {
 				pass = (await c.check(page).catch(() => false)) === true;
 				if (!pass) await new Promise((r) => setTimeout(r, 250));
 			}
-			row[mode] = { calls, tokens: Math.round(bytes / 4), pass };
+			row[mode] = { calls, tokens: Math.round(bytes / 4), pass, ms: Date.now() - t0, acts, actMs };
 		}
 		rows.push(row);
 		process.stderr.write(`${id}: before ${row.before.calls} calls ${row.before.tokens} tok, after ${row.after.calls} calls ${row.after.tokens} tok\n`);
@@ -148,7 +155,9 @@ for (const r of rows)
 	console.log(
 		`${r.id.padEnd(22)} ${`${r.before.calls} calls ${r.before.tokens}`.padStart(16)} ${`${r.after.calls} calls ${r.after.tokens}`.padStart(16)}${r.before.pass && r.after.pass ? "" : "  CHECK FAILED"}`,
 	);
-const total = { before: { calls: sum("before", "calls"), tokens: sum("before", "tokens") }, after: { calls: sum("after", "calls"), tokens: sum("after", "tokens") } };
+const totals = (mode) => ({ calls: sum(mode, "calls"), tokens: sum(mode, "tokens"), ms: sum(mode, "ms"), actMsEach: Math.round(sum(mode, "actMs") / sum(mode, "acts")) });
+const total = { before: totals("before"), after: totals("after") };
 console.log(`${"total".padEnd(22)} ${`${total.before.calls} calls ${total.before.tokens}`.padStart(16)} ${`${total.after.calls} calls ${total.after.tokens}`.padStart(16)}`);
+console.log(`wall time: before ${total.before.ms} ms, after ${total.after.ms} ms; one action: before ${total.before.actMsEach} ms, after ${total.after.actMsEach} ms`);
 if (outArg > 0) writeFileSync(process.argv[outArg + 1], `${JSON.stringify({ rows, total }, null, 2)}\n`);
 if (rows.some((r) => !r.before.pass || !r.after.pass)) process.exitCode = 1;

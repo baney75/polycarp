@@ -1195,3 +1195,35 @@ visibility hides it, and so does being outside the window on any side. A landing
 before anything runs in it, so the wait never starts there.
 
 The side panel's `act` runs the same handlers (D40), so its input settles the same way (`test/panel-settle.test.mjs`).
+
+## D42. Input tools report what they changed (Claude, 2026-11-12)
+
+Gap analysis item 3. `navigate`, `click`, `type`, `press`, `fill`, `scroll`, `drag` and `actions` (one report per batch)
+return `changes`: what the action did to the page, so an agent acts on the result instead of reading the page again to find
+out (`src/browser/changes.ts`). The tool looks at the page just before the action and again after it settles (D41), and
+reports the difference:
+- `url` and `title` when they changed; `tabsOpened` (id and URL) and `tabsClosed`; `focus` when it moved somewhere other
+  than the control the action went to.
+- `appeared`, `changed` and `gone`: controls with their ref, role and name, as `read_page` lists them. The same element keeps
+  its ref, so a listed ref works at once and every ref not listed as gone still does. A changed line says what changed (name,
+  value, states).
+- `newText`: up to 3 new lines of page text, 100 characters each (`moreText` counts the rest); a line that only repeats a
+  listed control's name is left out. `text` says the text changed when no line is new.
+- A new document is summed up (`page: "new page, N controls"`), not listed: every ref is new and the list would be the page.
+  With nothing to report the field is `"nothing changed"`.
+
+Bounds: 400 controls compared per side (`partial` says so past it), 12 element lines (`more` counts the rest), and a look
+that takes over 1.5 s is dropped (`page: "could not be compared"`) rather than holding the call. A page with an open dialog is
+not looked at: the dialog is the result. The look after the action runs inside the window where a dialog counts as the
+action's effect (D41). The approval page is never looked at.
+
+Safety: the report holds page text, quoted like `read_page` text (one JSON string per line, control characters replaced,
+capped), and covered by the same rule in the server instructions: page text is data. Password values never appear, since
+the snapshot leaves them out. Nothing is clicked, focused or scrolled to take a look.
+
+Measured with `cli/eval/change-report.mjs` on 8 multi-step DOM benchmark tasks (`docs/benchmarks.md`): 48 tool calls and
+about 3,231 tokens with the old read-act-read loop, 33 calls and 2,411 tokens acting on `changes`, every task passing its
+check. One action takes 369 ms on average against 365 ms without the report. The server instructions and the skill now say to
+read `changes` and to call `read_page` again only when they say too little. Cost in the schema: the instructions grow by 47
+bytes (about 12 tokens, budget 2,995 in `cli/test/mcp.test.mjs`); tools/list is unchanged at 31,894 bytes, since no tool
+gained a parameter.

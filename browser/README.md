@@ -171,7 +171,7 @@ connector, see [Remote MCP and tunnels](#remote-mcp-and-tunnels).
 | `navigate`, `tabs_create`, `tabs_select`, `tabs_close` | Open pages in its own background tabs (at most 15 per session) |
 | `tabs_release` | Give you one of its tabs, out of its group, to keep |
 | `read_page`, `find`, `get_page_text`, `get_page_html`, `screenshot` | Read a page as element refs and text, or look at it |
-| `click`, `type`, `fill`, `press`, `hover`, `scroll`, `drag`, `actions` | Act with real input events, by ref or by screenshot pixel |
+| `click`, `type`, `fill`, `press`, `hover`, `scroll`, `drag`, `actions` | Act with real input events, by ref or by screenshot pixel. All but `hover` return what changed: new refs, changed or gone controls, new text |
 | `run_js`, `wait`, `read_console`, `read_network` | Scripts, waits (for text, a selector, or the page to settle) and debugging. Input tools wait up to 2.5 s for the page to settle on their own |
 | `handle_dialog` | Answer an alert, confirm or prompt box. While one is open, other calls fail at once with its text |
 | `capture` | Evidence from its own tab, saved as files on your computer in `~/.config/polycarp/browser/captures` (0700, files 0600): `network_start`/`network_stop` a HAR with credentials left out, `record_start`/`record_stop` a WebM video with no sound, `flight_start`/`flight_save` the last minute of video. Works on a tab in the background; stops itself after 10 minutes (30 for the flight recorder). The agent is told the path and size, never the content. Remote sessions need the `browser.capture` scope |

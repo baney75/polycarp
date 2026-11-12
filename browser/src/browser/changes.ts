@@ -4,7 +4,7 @@
  * return the difference: URL and title, tabs opened or closed, focus, the controls that
  * appeared, went or changed, each with its ref, role and name, and new lines of text. Refs are the ones read_page gives
  * (the same element keeps its ref), so a ref the report lists works at once and a ref that
- * survived stays valid. A new document is summed up, not listed. Decision D41.
+ * survived stays valid. A new document is summed up, not listed. Decision D42.
  *
  * Page text in the report (names, values) is the page's: quoted, on one line, capped, exactly as
  * read_page shows it. Password values never appear (the snapshot leaves them out).
@@ -146,8 +146,8 @@ export async function afterAction(
 	const fresh = added.filter((l) => !listed.has(l));
 	// Each line is one JSON string in the result: data, on one line, capped.
 	if (fresh.length) out.newText = fresh.slice(0, MAX_TEXT_LINES).map((l) => oneLine(l).slice(0, TEXT_LINE_CHARS));
-	if (fresh.length > MAX_TEXT_LINES)
-		out.newText = [...(out.newText as string[]), `${fresh.length - MAX_TEXT_LINES} more lines`];
+	// The count stays out of newText, where it would read as a line of the page.
+	if (fresh.length > MAX_TEXT_LINES) out.moreText = fresh.length - MAX_TEXT_LINES;
 	else if (!added.length && a.text !== b.look.text) out.text = "changed; get_page_text shows it";
 	const more = appeared.length + changed.length + vanished.length - (MAX_LINES - room);
 	if (more > 0) out.more = `${more} more; read_page lists them`;
