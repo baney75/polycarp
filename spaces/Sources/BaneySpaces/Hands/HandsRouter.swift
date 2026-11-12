@@ -557,10 +557,7 @@ final class HandsRouter {
         return nil
     }
 
-    /// A menu command is a click on its menu-bar ref, with the menu's own rule (HandsRouter+Menu.swift).
-    func clickMenuItem(_ req: HandsRequest, rule: @escaping HandsEngine.Check) -> HandsEnvelope { act(req, .click, "menu", also: rule) }
-
-    private func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, text: String? = nil, direction: Int32 = 1, amount: UInt32 = 3, also: HandsEngine.Check? = nil) -> HandsEnvelope {
+    private func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, text: String? = nil, direction: Int32 = 1, amount: UInt32 = 3) -> HandsEnvelope {
         guard let ref = req.string("ref") else { return .failure(HandsError(.badArguments, "ref is missing", suggestion: "usage: polycarp-spaces agent \(name) <ref>", retry: .safe)) }
         let session = req.session ?? ""
         switch resolve(ref, session: session) {
@@ -598,7 +595,7 @@ final class HandsRouter {
                 return clickRow(w, scope: scope, ref: ref, plan: plan, session: session, childrenBefore: childrenBefore)
             }
             // The scope and ref checks run again on the process queue, at the moment the call executes.
-            let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session, also: also))
+            let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session))
             switch reply {
             case .failed(let e): return .failure(e)
             case .ok(let engine):
@@ -781,7 +778,8 @@ final class HandsRouter {
         var window: HandsWindow?
         // Inside the 8 s claim on its window (`claimNextWindow`), so a window seen here was placed by that claim. At most
         // `wait` seconds (7 when it says more or nothing); 0 looks once.
-        let deadline = Date().addingTimeInterval(min(InUseRule.bound(req.int("wait")), 7))
+        let wait = InUseRule.bound(req.int("wait"))
+        let deadline = Date().addingTimeInterval(min(wait, OpenMiss.claimWait))
         func lookOnce() -> HandsWindow? {
             let (all, agent) = listWindows(fresh: true)
             let candidates = all.filter { matches($0, reply.info?["app"] ?? display) && $0.workspace == agent && (!separate || !pidsBefore.contains($0.pid)) }
@@ -800,9 +798,12 @@ final class HandsRouter {
         }
         // The launch's own process, when it started one: the only one a miss below may quit.
         let launched = runningPid == nil ? AgentLaunches.shared.pid(token) : nil
-        if window == nil, start != .overlap, let pid = launched {
+        if window == nil, start != .overlap, let pid = launched,
+           OpenMiss.looksAgain(wait: wait, mainThread: Thread.isMainThread) {
             // One more full look: an app still starting answers Accessibility late, and its window then joins the
             // agent workspace (`Spaces.adoptBackgroundWindows` takes an agent-started process's windows a moment after).
+            // Its bench is cleared first, or the rescan would skip the very app it is for (review 157 F1).
+            Windows.markResponsive(pid)
             onMain { host.rescan() }
             let until = Date().addingTimeInterval(1)
             repeat {
@@ -813,8 +814,9 @@ final class HandsRouter {
                 let (all, agent) = listWindows()
                 let held = Set(all.filter { $0.pid == pid && $0.workspace != nil && $0.workspace == agent }.map(\.id))
                 let stray = Self.drawnWindows(of: pid).subtracting(held)
-                switch OpenMiss.decide(launched: pid, agentStarted: host.agentOwned(), startedAt: AgentOwned.startTime(pid),
-                                       requestStart: requestStart.timeIntervalSince1970, stray: stray.count) {
+                let owned = onMain { host.agentOwned() }
+                switch OpenMiss.decide(launched: pid, agentStarted: owned, startedAt: AgentOwned.startTime(pid),
+                                       requestStart: requestStart.timeIntervalSince1970, stray: stray.count, held: held.count) {
                 case .quit(let p):
                     childLocked { sessionWindows.cancelOpen(token) }
                     Self.quit(p)
@@ -855,14 +857,22 @@ final class HandsRouter {
         return .success(.object(data))
     }
 
-    /// Whether every running copy of the app was already running before the launch.
-    /// The ordinary windows of `pid` the window server is drawing (layer 0, on screen), parked ones included.
+    /// The ordinary windows of `pid` the window server draws that a person can see (layer 0, on screen, not clear, over
+    /// 50 x 50: `OpenMiss.visible`), parked ones included.
     static func drawnWindows(of pid: pid_t) -> Set<UInt32> {
         let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
         return Set(info.compactMap { w -> UInt32? in
-            guard (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid, (w[kCGWindowLayer as String] as? Int) == 0 else { return nil }
+            guard (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid, (w[kCGWindowLayer as String] as? Int) == 0,
+                  let b = (w[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) }),
+                  OpenMiss.visible(alpha: (w[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1, bounds: b) else { return nil }
             return (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value
         })
+    }
+
+    /// Whether the window server still lists window `id` at all (parked and hidden ones included): `close`'s read-back.
+    static func serverLists(_ id: UInt32) -> Bool {
+        let info = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        return info.contains { ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == id }
     }
 
     /// Quits a copy an agent's own launch started (`OpenMiss.quit`): asked first, forced if it hasn't gone in 2 s.
@@ -874,6 +884,7 @@ final class HandsRouter {
         if !app.isTerminated { app.forceTerminate() }
     }
 
+    /// Whether every running copy of the app was already running before the launch.
     private func noNewProcess(bundle: String, before: Set<pid_t>) -> Bool {
         let now = NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundle }.map(\.processIdentifier)
         return now.allSatisfy { before.contains($0) }
