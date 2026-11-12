@@ -35,6 +35,9 @@ final class DragReleaseTests: XCTestCase {
         let inside = DragEnd(pointer: CGPoint(x: 290, y: 498), coveredFrom: before, dropped: false)
         XCTAssertEqual(DragRelease.correction(for: reported, after: inside, displays: [mac]), .backToBeforeOverview(before))
         XCTAssertNil(DragRelease.correction(for: before, after: inside, displays: [mac]), "already there")
+        // Review of #154, first-F3: the pointer itself let go past the left edge, on no display.
+        let pastTheEdge = DragEnd(pointer: CGPoint(x: -130, y: 498), coveredFrom: before, dropped: false)
+        XCTAssertEqual(DragRelease.correction(for: reported, after: pastTheEdge, displays: [mac]), .backToBeforeOverview(before))
     }
 
     func testADropOnAWorkspaceIsTheDrops() {
@@ -127,6 +130,75 @@ final class DragReleaseTests: XCTestCase {
         order = []
         XCTAssertFalse(end(carry: false, release: false).dropped)
         XCTAssertEqual(order, ["carry", "release"])
+    }
+
+    func testASeamCountsOnlyWhereTheOtherDisplayIsAtThePointer() {
+        // Review of #154, second-F6: a laptop with a wider external display above, offset to the right. Its top edge is a
+        // seam only under the external display; left of it, the laptop's top is its own and macOS fills there.
+        let external = CGRect(x: 1000, y: -1080, width: 1920, height: 1080)
+        XCTAssertEqual(DragRelease.tileEdge(CGPoint(x: 400, y: 2), on: mac.frame, displays: [mac.frame, external], edges: [.top]), .top)
+        XCTAssertNil(DragRelease.tileEdge(CGPoint(x: 1200, y: 2), on: mac.frame, displays: [mac.frame, external], edges: [.top]))
+        // The same along a side: a shorter display to the right touches only the top of the right edge.
+        let short = CGRect(x: 1512, y: 0, width: 1024, height: 600)
+        XCTAssertNil(DragRelease.tileEdge(CGPoint(x: 1510, y: 300), on: mac.frame, displays: [mac.frame, short], edges: [.right]))
+        XCTAssertEqual(DragRelease.tileEdge(CGPoint(x: 1510, y: 800), on: mac.frame, displays: [mac.frame, short], edges: [.right]), .right)
+        // A covered release at the top left of the laptop is macOS's fill, not a blind drop, even before the fill lands.
+        let before = CGRect(x: 65, y: 35, width: 900, height: 600)
+        let top = DragEnd(pointer: CGPoint(x: 400, y: 0), coveredFrom: before, dropped: false)
+        let ext = (frame: external, visible: external)
+        XCTAssertNil(DragRelease.correction(for: CGRect(x: 0, y: 10, width: 1300, height: 900), after: top, displays: [mac, ext]))
+    }
+
+    func testACoveredReleaseAtASideEdgeWaitsOutMacOSsHalfTile() {
+        // Review of #154, first-F2: let go blind at the left edge, macOS holds the window where it was let go for a beat,
+        // then animates it into the left half. Corrected at the first settle, it would be sent back mid-animation.
+        let before = CGRect(x: 65, y: 35, width: 1492, height: 928)
+        let blind = CGRect(x: -608, y: 478, width: 1492, height: 928)
+        let leftHalf = CGRect(x: 0, y: 35, width: 756, height: 947)
+        let end = DragEnd(pointer: CGPoint(x: 0, y: 498), coveredFrom: before, dropped: false)
+        func lerp(_ a: CGFloat, _ b: CGFloat, _ t: CGFloat) -> CGFloat { (a + (b - a) * t).rounded() }
+        let animation = (1...10).map { i -> CGRect in
+            let t = CGFloat(i) / 10
+            return CGRect(x: lerp(blind.minX, leftHalf.minX, t), y: lerp(blind.minY, leftHalf.minY, t),
+                          width: lerp(blind.width, leftHalf.width, t), height: lerp(blind.height, leftHalf.height, t))
+        }
+        let frames = Array(repeating: blind, count: 8) + animation + Array(repeating: leftHalf, count: 40)
+        func settled(_ w: SettleWatch) -> (SettleWatch.Verdict, CGRect?) {
+            var w = w
+            for f in frames {
+                let v = w.look(f)
+                if v != .wait { return (v, f) }
+            }
+            return (.wait, nil)
+        }
+        // The plain watch calls it still in the pause, off screen, and the correction would fight macOS's tile.
+        let quick = settled(SettleWatch(from: blind))
+        XCTAssertEqual(quick.0, .still)
+        XCTAssertEqual(quick.1, blind, "mid-animation at the first settle check")
+        XCTAssertEqual(DragRelease.correction(for: blind, after: end, displays: [mac]), .backToBeforeOverview(before))
+        // The watch a covered side release gets waits it out, and the tiled half inside the visible area is left alone.
+        let (verdict, frame) = settled(DragRelease.settleWatch(from: blind, after: end, displays: [mac]))
+        XCTAssertEqual(verdict, .still)
+        XCTAssertEqual(frame, leftHalf)
+        XCTAssertNil(DragRelease.correction(for: leftHalf, after: end, displays: [mac]))
+        // macOS doesn't tile it: still goes back, once it has held still the whole wait.
+        var untiled = DragRelease.settleWatch(from: blind, after: end, displays: [mac])
+        let waits = (1...15).map { _ in untiled.look(blind) }
+        XCTAssertEqual(waits.last, .still)
+        XCTAssertFalse(waits.dropLast().contains(.still))
+        // Only a covered release in a side band waits longer: a plain one, the top, the middle and a seam don't.
+        let side = { (e: DragEnd, d: [(frame: CGRect, visible: CGRect)]) in DragRelease.settleWatch(from: blind, after: e, displays: d).stillLooks }
+        XCTAssertEqual(side(end, [mac]), DragRelease.sideTileStillLooks)
+        XCTAssertEqual(side(DragEnd(pointer: CGPoint(x: 1511, y: 498), coveredFrom: before, dropped: false), [mac]), DragRelease.sideTileStillLooks)
+        XCTAssertEqual(side(plain(CGPoint(x: 0, y: 498)), [mac]), 3)
+        XCTAssertEqual(side(DragEnd(pointer: CGPoint(x: 400, y: 0), coveredFrom: before, dropped: false), [mac]), 3)
+        XCTAssertEqual(side(DragEnd(pointer: CGPoint(x: 700, y: 498), coveredFrom: before, dropped: false), [mac]), 3)
+        XCTAssertEqual(side(DragEnd(pointer: CGPoint(x: 1510, y: 498), coveredFrom: before, dropped: false), [mac, right]), 3)
+        // Still animating after 1.5 s: left alone.
+        var forever = DragRelease.settleWatch(from: blind, after: end, displays: [mac])
+        let all = (1...75).map { forever.look(blind.offsetBy(dx: CGFloat($0), dy: 0)) }
+        XCTAssertEqual(all.last, .gaveUp)
+        XCTAssertFalse(all.contains(.still))
     }
 
     func testAWindowIsCorrectedOnlyOnceItHoldsStill() {

@@ -51,7 +51,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func correctOnceStill(_ id: WindowID, after end: DragEnd) {
         guard !end.dropped else { return }
         clamping.removeValue(forKey: id)?.invalidate()
-        var watch = SettleWatch(from: TopDragWatcher.bounds(of: id))
+        var watch = DragRelease.settleWatch(from: TopDragWatcher.bounds(of: id), after: end, displays: Spaces.dragDisplays())
+        if watch.stillLooks > 3 { Trace.log("drag end window=\(id) let go blind at a side edge: waits \(watch.stillLooks * 20) ms still for macOS's tile") }
         clamping[id] = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { [weak self] timer in
             let now = TopDragWatcher.bounds(of: id)
             let verdict = watch.look(now)
