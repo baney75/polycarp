@@ -159,12 +159,12 @@ tiktoken's `o200k_base` (the command is at the top of the script). Measured 2026
 | main (8 tools) | 1,747 | 7,675 | 9,422 | |
 | 15 separate page tools (not shipped) | 1,939 | 9,421 | 11,360 | +1,938 (+20.6%) |
 | 5 page tools, input grouped as `act` (first review) | 1,957 | 8,537 | 10,494 | +1,072 (+11.4%) |
-| The same, one rule for the REPL and act (shipped) | 1,996 | 8,563 | 10,559 | +1,137 (+12.1%) |
+| The same, one rule for the REPL and act (shipped) | 1,996 | 8,613 | 10,609 | +1,187 (+12.6%) |
 
 The five page tools cost 1,163 tokens: read_page 155, find 110, get_page_text 113, act 642, handle_dialog 143. The REPL's
-description fell from 2,452 to 2,166 (it no longer teaches clicking and typing) and the system prompt grew 249 (the
+description fell from 2,452 to 2,216 (it no longer teaches clicking and typing; its bulk table example costs 50) and the system prompt grew 249 (the
 loop paragraph). Saying where skills and replay() run, so the REPL and act rules agree, cost 65 of the total. In a 32k
-window the growth is 3.5%; in 16k, 6.9%. On the first-review prompt, separate tools cost 864 more than the grouped five
+window the growth is 3.6%; in 16k, 7.2%. On the first-review prompt, separate tools cost 864 more than the grouped five
 (that build also carried a 2-token extract_image note the shipped build dropped, so its row reads 2 high).
 
 ### The benchmarks on the panel's tools

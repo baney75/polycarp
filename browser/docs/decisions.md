@@ -1133,7 +1133,7 @@ Agents could not attach a file to a form or keep a file a page offers. One tool,
   `withTimeout(HANDLER_TIMEOUT_MS)`, now shared from `src/bridge/errors.ts`.
 - **Five tools, not fifteen.** read_page, find, get_page_text and handle_dialog stay separate; the ten input tools (click,
   type, fill, press, hover, scroll, drag, wait, screenshot, actions) are one `act` tool with an `action` field. Fifteen
-  separate tools cost the panel 1,938 tokens a turn over main (+21%); the grouped five cost 1,137 (+12%), measured with
+  separate tools cost the panel 1,938 tokens a turn over main (+21%); the grouped five cost 1,187 (+13%), measured with
   `cli/eval/panel-prompt-size.mjs` (docs/benchmarks.md). Small models run the panel in 16k to 32k windows, and reading
   comes first in the loop, so the reads keep their own names. `actions` is `act` `steps`, and scroll's `to` is `edge`, so
   `to` means only drag's end point.

@@ -181,7 +181,7 @@ The function is **serialized** and executed in the page context. This means:
 #### Example
 Simple extraction:
 \`\`\`javascript
-const title = await browserjs(() => document.title);
+const links = await browserjs(() => [...document.links].map(a => a.href));
 \`\`\`
 
 With parameters (CORRECT):
@@ -321,25 +321,25 @@ Execute JavaScript with access to the user's current page and all browser capabi
 - Word: const docx = await import('https://esm.run/docx');
 
 ## Input
-- { title: "Extract page title", code: "const title = await browserjs(() => document.title);" }
+- { title: "Extract every link", code: "const links = await browserjs(() => [...document.links].map(a => a.href)); return links;" }
 - { title: "Processing CSV data", code: "const files = listAttachments(); const data = readTextAttachment(files[0].id);" }
 
 ## Returns
 Console logs and return value from the code execution.
 
 **IMPORTANT:** To return data to yourself, you MUST use an explicit return statement or console.log(). The "last expression as return value" pattern does NOT work. Examples:
-- ✅ const title = await browserjs(() => document.title); return title;
-- ✅ const title = await browserjs(() => document.title); console.log(title);
-- ❌ const title = await browserjs(() => document.title); // no output - title not returned or logged
+- ✅ const links = await browserjs(() => [...document.links].map(a => a.href)); return links;
+- ✅ const links = await browserjs(() => [...document.links].map(a => a.href)); console.log(links.length);
+- ❌ const links = await browserjs(() => [...document.links].map(a => a.href)); // no output - not returned or logged
 
 ## Examples
 
-Read current page:
+Bulk extraction (one page's table as rows):
 \`\`\`javascript
-const title = await browserjs(() => document.title);
-const links = await browserjs(() =>
-  Array.from(document.querySelectorAll('a')).map(a => a.href)
+const rows = await browserjs(() =>
+  Array.from(document.querySelectorAll('table tr')).map(tr => [...tr.cells].map(c => c.innerText.trim()))
 );
+return rows;
 \`\`\`
 
 Multi-page scraping:

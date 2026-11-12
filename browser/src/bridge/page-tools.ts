@@ -16,20 +16,45 @@
  * and threads (the helper's or the panel's own tools).
  */
 
-import { type TSchema, Type } from "@sinclair/typebox";
 import { formatNodes, formatSnapshot, type SnapNode, type Snapshot } from "./format.js";
+
+/** A JSON Schema. Plain objects, not TypeBox: the CLI bundles this module and doesn't install TypeBox. */
+export type JsonSchema = Record<string, unknown>;
 
 export interface PageToolSpec {
 	name: string;
 	/** What the transcript calls the tool. */
 	label: string;
 	description: string;
-	parameters: TSchema;
+	parameters: JsonSchema;
 }
+
+/** The few TypeBox builders the specs use, emitting the JSON TypeBox would. */
+const optional = new WeakSet<JsonSchema>();
+const Type = {
+	Optional: (s: JsonSchema): JsonSchema => {
+		const copy = { ...s };
+		optional.add(copy);
+		return copy;
+	},
+	Number: (o: JsonSchema = {}): JsonSchema => ({ ...o, type: "number" }),
+	String: (o: JsonSchema = {}): JsonSchema => ({ ...o, type: "string" }),
+	Boolean: (): JsonSchema => ({ type: "boolean" }),
+	Array: (items: JsonSchema): JsonSchema => ({ type: "array", items }),
+	Unknown: (): JsonSchema => ({}),
+	Record: (_key: JsonSchema, value: JsonSchema): JsonSchema => ({
+		type: "object",
+		patternProperties: { "^(.*)$": value },
+	}),
+	Object: (properties: Record<string, JsonSchema>): JsonSchema => {
+		const required = Object.keys(properties).filter((k) => !optional.has(properties[k] as JsonSchema));
+		return { type: "object", ...(required.length ? { required } : {}), properties };
+	},
+};
 
 const point = Type.Object({ x: Type.Number(), y: Type.Number() });
 /** A string from a list, as {type, enum}: Google's API rejects the anyOf a union of literals makes. */
-const oneOf = <T extends string>(values: readonly T[]) => Type.Unsafe<T>({ type: "string", enum: [...values] });
+const oneOf = (values: readonly string[]): JsonSchema => ({ type: "string", enum: [...values] });
 const num = (description?: string) => Type.Optional(Type.Number(description ? { description } : {}));
 const text = (description?: string) => Type.Optional(Type.String(description ? { description } : {}));
 

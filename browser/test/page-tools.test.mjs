@@ -18,7 +18,7 @@ const { setCurrentBrowserSession } = await import("../src/browser/current.ts");
 const { handlers } = await import("../src/bridge/tools.ts");
 const { BridgeError } = await import("../src/bridge/errors.ts");
 const { stepLabel } = await import("../src/transcript/group.ts");
-const { BROWSERJS_RUNTIME_PROVIDER_DESCRIPTION, SKILL_TOOL_DESCRIPTION, SYSTEM_PROMPT } = await import("../src/prompts/prompts.ts");
+const { BROWSERJS_RUNTIME_PROVIDER_DESCRIPTION, REPL_TOOL_DESCRIPTION, SKILL_TOOL_DESCRIPTION, SYSTEM_PROMPT } = await import("../src/prompts/prompts.ts");
 installCdpListeners();
 
 const openDialogOn = (tabId, message) => {
@@ -459,7 +459,35 @@ test("each page tool call gets a clean step label", () => {
 	assert.equal(label("act", { action: "type", text: "x".repeat(80) }).length < 50, true);
 });
 
+test("a worker that stops mid-call gives a plain interrupted, not Chrome's port error", async () => {
+	const original = chrome.runtime.sendMessage;
+	chrome.runtime.sendMessage = async () => {
+		throw new Error("The message port closed before a response was received.");
+	};
+	setCurrentBrowserSession({ id: "s9", currentTab: async () => undefined });
+	try {
+		await assert.rejects(sendToWorker("click", { ref: "e1" }), /^Error: interrupted: The browser restarted the extension[^]*read_page, then try again\.$/);
+	} finally {
+		chrome.runtime.sendMessage = original;
+		setCurrentBrowserSession(undefined);
+		stopKeepalive();
+	}
+});
+
+test("the CLI bundles the tool specs without TypeBox, which it doesn't install", async () => {
+	const { readFile } = await import("node:fs/promises");
+	for (const file of ["../src/bridge/page-tools.ts", "../src/bridge/format.ts"]) {
+		const src = await readFile(new URL(file, import.meta.url), "utf8");
+		assert.doesNotMatch(src, /import\s+\{[^}]*\}\s+from\s+"@sinclair\/typebox"/, file);
+	}
+	const act = PAGE_TOOLS.find((t) => t.name === "act").parameters;
+	assert.deepEqual(act.required, ["action"]);
+	assert.deepEqual(act.properties.from, { type: "object", required: ["x", "y"], properties: { x: { type: "number" }, y: { type: "number" } } });
+});
+
 test("the system prompt teaches the loop and gives one rule for the REPL and the page tools", () => {
+	// The REPL's examples don't read one page with browserjs, which its own rule sends to the page tools.
+	assert.doesNotMatch(REPL_TOOL_DESCRIPTION([BROWSERJS_RUNTIME_PROVIDER_DESCRIPTION]), /document\.title|Read current page/);
 	assert.ok(SYSTEM_PROMPT.includes(PAGE_TOOLS_PROMPT));
 	assert.match(PAGE_TOOLS_PROMPT, /read_page[^\n]*act[^\n]*read_page again/);
 	assert.match(PAGE_TOOLS_PROMPT, /Refs expire when the page changes/);

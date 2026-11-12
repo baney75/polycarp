@@ -88,7 +88,13 @@ export const sendToWorker: PanelSend = async (method, params, signal) => {
 	stopped.catch(() => undefined);
 	signal?.addEventListener("abort", onAbort, { once: true });
 	try {
-		const reply = (await Promise.race([chrome.runtime.sendMessage(request), stopped])) as PanelCallReply | undefined;
+		// Chrome rejects with its own words ("The message port closed...") when the worker stops mid-call.
+		const sent = chrome.runtime.sendMessage(request).catch(() => {
+			throw new Error(
+				"interrupted: The browser restarted the extension while this call ran; it may have run. read_page, then try again.",
+			);
+		});
+		const reply = (await Promise.race([sent, stopped])) as PanelCallReply | undefined;
 		if (!reply) throw new Error("internal: The Polycarp service worker did not answer. Try again.");
 		if (!reply.ok) throw new Error(reply.message);
 		return reply.result;
