@@ -365,9 +365,9 @@ test("safety rules reach every scoped session, with a sign-in fallback when tabs
 	const client = await connect(token("actor", "browser.read,browser.act"));
 	try {
 		const text = client.getInstructions() ?? "";
-		assert.match(text, /Do not enter passwords or payment details\./);
+		assert.match(text, /Do not enter passwords or payment details, even ones the user gave you/);
 		assert.match(text, /Ask the user before you act under their sign-in/);
-		assert.match(text, /stop and ask the user to handle it in their browser/);
+		assert.match(text, /stop and ask the user to finish in their browser/);
 		assert.doesNotMatch(text, /call tabs_show/);
 	} finally {
 		await client.close();

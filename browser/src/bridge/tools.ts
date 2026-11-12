@@ -672,6 +672,8 @@ export const handlers: Record<string, Handler> = {
 			filter,
 			maxNodes: num(params, "maxNodes"),
 			maxTextChars: num(params, "maxTextChars"),
+			rank: filter === "interactive" && params.rank === true,
+			offset: num(params, "offset"),
 		});
 	},
 
@@ -1006,7 +1008,20 @@ export const handlers: Record<string, Handler> = {
 		if (typeof params.accept !== "boolean")
 			throw new BridgeError(ERR.BAD_PARAMS, "accept must be true (OK) or false (Cancel)");
 		const dialog = await answerDialog(tabId, params.accept, str(params, "promptText"));
-		return { tabId, type: dialog.type, message: dialog.message, accepted: params.accept };
+		// A page often asks twice (a prompt, then "are you sure?"): say so here, or the agent reads a frozen page next.
+		let next: ReturnType<typeof openDialog>;
+		for (let waited = 0; waited < 300 && !next; waited += 50) {
+			await new Promise((r) => setTimeout(r, 50));
+			next = openDialog(tabId);
+		}
+		const answered = { tabId, type: dialog.type, message: dialog.message, accepted: params.accept };
+		// The open box leads: a small model acts on the first thing it reads, and the answered one is old news.
+		if (!next) return answered;
+		return {
+			note: `Not done: a ${next.type} box is open now and the page is frozen until you answer it: "${next.message}". Call handle_dialog again.`,
+			nextDialog: { type: next.type, message: next.message },
+			...answered,
+		};
 	},
 
 	/**

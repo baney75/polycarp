@@ -269,6 +269,16 @@ export interface Snapshot {
 	nodes: SnapshotNode[];
 	/** Readable text of the page (truncated). */
 	text: string;
+	/** A ranked read's counts: controls in each tier, covered ones left out, and where this slice starts. */
+	ranked?: {
+		total: number;
+		covered: number;
+		first: number;
+		inView: number;
+		near: number;
+		far: number;
+		offset: number;
+	};
 }
 
 /**
@@ -486,14 +496,40 @@ export function refFrameCover(el: Element, x: number, y: number): string | { off
  * Self-contained; refLive and refPrint come in as arguments.
  */
 function resolveRef(ref: string, live: (el: Element) => boolean, print: (el: Element) => string): Element {
-	const w = window as unknown as { __tabkyraRefs?: unknown; __tabkyraRefPrints?: unknown };
+	const w = window as unknown as {
+		__tabkyraRefs?: unknown;
+		__tabkyraRefPrints?: unknown;
+		__tabkyraRefOf?: unknown;
+		__tabkyraGonePrints?: unknown;
+	};
 	const refs = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : undefined;
 	const prints = w.__tabkyraRefPrints instanceof Map ? (w.__tabkyraRefPrints as Map<string, string>) : undefined;
+	const gone = w.__tabkyraGonePrints instanceof Map ? (w.__tabkyraGonePrints as Map<string, string>) : undefined;
 	const el = refs?.get(ref);
+	const was = prints?.get(ref) ?? gone?.get(ref);
+	if (el && live(el) && was === print(el)) return el;
+	// A page that rebuilt its list (a framework re-render, a todo ticked off and moved) put a new element where the old one
+	// was. When exactly one element on the page now shows what the ref did, down to its row's key and text, it is that
+	// control: the ref follows it. None or several, and the ref fails as before.
+	if (refs && was) {
+		const tag = was.split("|")[0];
+		const same = /^[a-z][a-z0-9-]*$/.test(tag)
+			? Array.from(document.querySelectorAll(tag)).filter((c) => c !== el && live(c) && print(c) === was)
+			: [];
+		if (same.length === 1) {
+			const found = same[0];
+			refs.set(ref, found);
+			prints?.set(ref, was);
+			gone?.delete(ref);
+			if (w.__tabkyraRefOf instanceof WeakMap) {
+				const refOf = w.__tabkyraRefOf as WeakMap<Element, string>;
+				if (!refOf.has(found)) refOf.set(found, ref);
+			}
+			return found;
+		}
+	}
 	if (!el || !live(el)) throw new Error(`Ref ${ref} not found: the page changed. Call read_page for fresh refs.`);
-	if (prints?.get(ref) !== print(el))
-		throw new Error(`Ref ${ref} now shows something else: the page reused it. Call read_page for fresh refs.`);
-	return el;
+	throw new Error(`Ref ${ref} now shows something else: the page reused it. Call read_page for fresh refs.`);
 }
 
 /**
@@ -515,6 +551,11 @@ function pageSnapshot(
 	live: (el: Element) => boolean,
 	print: (el: Element) => string,
 	keepStale = false,
+	rank?: {
+		offset: number;
+		veil: string;
+		point: (el: Element) => { x: number; y: number } | { cover: string } | { offscreen: true };
+	},
 ): unknown {
 	const w = window as unknown as {
 		__tabkyraRefs?: unknown;
@@ -522,6 +563,7 @@ function pageSnapshot(
 		__tabkyraRefOf?: unknown;
 		__tabkyraRefSeq?: unknown;
 		__tabkyraStale?: unknown;
+		__tabkyraGonePrints?: unknown;
 	};
 	// Adopt earlier state only when it is what this function wrote.
 	const refs = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : new Map<string, Element>();
@@ -545,12 +587,22 @@ function pageSnapshot(
 		}
 		stale.clear();
 	}
-	// Forget elements that left the page, so their refs fail instead of piling up.
+	// Forget elements that left the page, so their refs fail instead of piling up. What each showed is kept a while
+	// (at most 300), so a ref to a row the page rebuilt can still find the one element that shows it now (resolveRef).
+	const gone =
+		w.__tabkyraGonePrints instanceof Map ? (w.__tabkyraGonePrints as Map<string, string>) : new Map<string, string>();
+	w.__tabkyraGonePrints = gone;
 	for (const [ref, el] of refs)
 		if (!live(el)) {
+			const p = prints.get(ref);
+			if (p !== undefined) gone.set(ref, p);
 			refs.delete(ref);
 			prints.delete(ref);
 		}
+	for (const old of gone.keys()) {
+		if (gone.size <= 300) break;
+		gone.delete(old);
+	}
 	// A random start among about a billion, so a ref kept from the last page almost never
 	// names something on this one.
 	let seq =
@@ -778,7 +830,64 @@ function pageSnapshot(
 		for (const el of Array.from(at.root.querySelectorAll(selector))) if (!cross.has(el)) place(el, at);
 	// A frame Polycarp can't look into (another site) is still listed, so the agent knows it's there.
 	for (const { el, at } of crossFrames) place(el, at);
-	for (const { el, at } of [...inView, ...offView]) {
+	let order = [...inView, ...offView];
+	// Ranked (read_page's interactive look): what the agent can act on now comes first. The focused
+	// control and an open dialog's, then the viewport's, then within a screen of it, then the rest;
+	// a control something else covers is left out (a click on it would land on the cover) and counted.
+	let ranked: Record<string, number> | undefined;
+	if (rank) {
+		const vh = window.innerHeight;
+		let focus: Element | null = document.activeElement;
+		for (let i = 0; i < 20 && focus; i++) {
+			let deeper: Element | null =
+				(focus as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot?.activeElement ?? null;
+			if (!deeper && /^i?frame$/i.test(focus.tagName)) {
+				try {
+					deeper = (focus as HTMLIFrameElement).contentDocument?.activeElement ?? null;
+				} catch {
+					deeper = null;
+				}
+			}
+			if (!deeper || deeper === focus) break;
+			focus = deeper;
+		}
+		const DIALOG = "[role=dialog],[role=alertdialog],dialog[open],[aria-modal=true]";
+		const tiers: Array<Array<{ el: Element; at: Root }>> = [[], [], [], []];
+		let covered = 0;
+		for (const item of order) {
+			const b = box(item.el, item.at);
+			const tier =
+				item.el === focus || item.el.closest(DIALOG)
+					? 0
+					: b.onScreen
+						? 1
+						: b.top + b.height > -vh && b.top < 2 * vh
+							? 2
+							: 3;
+			if (b.onScreen && item.el !== focus && !cross.has(item.el)) {
+				const p = rank.point(item.el);
+				// Polycarp's own in-use veil is not the page's: it doesn't hide a control from the agent.
+				if ("cover" in p && !(rank.veil && p.cover.split(/[ (]/)[0] === rank.veil)) {
+					covered++;
+					continue;
+				}
+			}
+			tiers[tier].push(item);
+		}
+		order = tiers.flat();
+		const offset = Math.max(0, Math.floor(rank.offset) || 0);
+		ranked = {
+			total: order.length,
+			covered,
+			first: tiers[0].length,
+			inView: tiers[1].length,
+			near: tiers[2].length,
+			far: tiers[3].length,
+			offset,
+		};
+		order = order.slice(offset);
+	}
+	for (const { el, at } of order) {
 		if (nodes.length >= maxNodes) break;
 		const b = box(el, at);
 		// The same element keeps its ref; one that now shows something else (a reused list
@@ -834,6 +943,9 @@ function pageSnapshot(
 		else if (tag === "select" && f.options && f.selectedIndex !== undefined)
 			node.value = f.options[f.selectedIndex]?.text ?? "";
 		const states = statesOf(el);
+		// Said where the model decides, not only in the rules it read long ago: a small model typed a password the user
+		// had given it when nothing at the field said otherwise (evals/weak-model, signup-validation).
+		if (tag === "input" && f.type === "password") states.push("password: leave it empty, the user types it");
 		if (states.length && !node.states) node.states = states;
 		if (at.frame) node.frame = at.frame.slice(0, 120);
 		nodes.push(node);
@@ -895,6 +1007,7 @@ function pageSnapshot(
 		},
 		nodes,
 		text,
+		...(ranked ? { ranked } : {}),
 	};
 }
 
@@ -1054,12 +1167,21 @@ export async function inspectPage(tabId: number): Promise<Record<string, unknown
 
 export async function snapshot(
 	tabId: number,
-	options: { maxNodes?: number; maxTextChars?: number; filter?: "interactive" | "all" } = {},
+	options: {
+		maxNodes?: number;
+		maxTextChars?: number;
+		filter?: "interactive" | "all";
+		rank?: boolean;
+		offset?: number;
+	} = {},
 ): Promise<Snapshot> {
 	const { maxNodes = 300, maxTextChars = 20000, filter = "all" } = options;
+	const rank = options.rank
+		? `, false, { offset: ${Math.max(0, Math.floor(options.offset ?? 0)) || 0}, veil: ${JSON.stringify((await veilTag(tabId)) ?? "")}, point: ${refPoint.toString()} }`
+		: "";
 	const snap = await runInPage<Snapshot>(
 		tabId,
-		`(${pageSnapshot.toString()})(${maxNodes}, ${maxTextChars}, ${JSON.stringify(filter)}, ${refLive.toString()}, ${refPrint.toString()})`,
+		`(${pageSnapshot.toString()})(${maxNodes}, ${maxTextChars}, ${JSON.stringify(filter)}, ${refLive.toString()}, ${refPrint.toString()}${rank})`,
 	);
 	if (typeof snap?.url === "string") snap.url = maskUrl(snap.url);
 	return snap;

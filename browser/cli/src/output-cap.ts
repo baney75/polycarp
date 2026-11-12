@@ -146,6 +146,43 @@ export function fitSnapshot<S extends { nodes: unknown[]; text: string }>(snap: 
 	return { snap: out, note: notes.length ? `\n\n[${notes.join(" ")}]` : "" };
 }
 
+/** A ranked interactive read's counts (src/browser/page.ts pageSnapshot). */
+export interface RankCounts {
+	total: number;
+	covered: number;
+	first: number;
+	inView: number;
+	near: number;
+	far: number;
+	offset: number;
+}
+
+/**
+ * The line under a ranked interactive read: which slice this is, what was left out and the exact call for more, so a
+ * model that needs a control further down knows it exists and how to get it.
+ */
+export function rankNote(r: RankCounts, shown: number): string {
+	const from = r.offset + 1;
+	const to = r.offset + shown;
+	const tiers = [
+		r.first ? `${fmt(r.first)} focused or in a dialog` : "",
+		`${fmt(r.inView)} in view`,
+		r.near ? `${fmt(r.near)} within a screen` : "",
+		r.far ? `${fmt(r.far)} further away` : "",
+	].filter(Boolean);
+	const parts = [
+		shown === 0
+			? `No controls from ${fmt(from)} on (${fmt(r.total)} in all).`
+			: to < r.total || r.offset
+				? `Controls ${fmt(from)}-${fmt(to)} of ${fmt(r.total)}, nearest first (${tiers.join(", ")}).`
+				: `All ${fmt(r.total)} controls (${tiers.join(", ")}).`,
+	];
+	if (r.covered) parts.push(`${fmt(r.covered)} covered by something on top are left out: close or dismiss it first.`);
+	if (to < r.total) parts.push(`More: read_page {"filter":"interactive","offset":${to}}, or find {"query":"..."} for one.`);
+	parts.push("No page text here: get_page_text reads it.");
+	return `\n\n[${parts.join(" ")}]`;
+}
+
 /**
  * The UTF-8 sequence that starts at byte `i`: its length in bytes and the UTF-16 units it decodes to. A byte that
  * doesn't start a valid sequence (a Latin-1 byte, a stray continuation byte, a cut-off sequence) is one unit, U+FFFD,

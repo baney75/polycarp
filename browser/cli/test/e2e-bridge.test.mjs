@@ -684,7 +684,8 @@ test("an old ref fails, never acting elsewhere: navigated frame, reused node, cl
 
 test("a click lands on its element or fails: modal, wrapped link, reused row, editor, closed field", async () => {
 	await tool("navigate", { url: `${pageUrl}hits` });
-	const page = await tool("read_page", { filter: "interactive" });
+	// The full read: it lists a covered control too, which the interactive read leaves out.
+	const page = await tool("read_page", {});
 	const call = async (name, args) => {
 		const res = await mcp.callTool({ name, arguments: args });
 		return { error: res.isError === true, text: res.content.map((c) => c.text).join("\n") };
@@ -721,7 +722,7 @@ test("a click lands on its element or fails: modal, wrapped link, reused row, ed
 test("refs follow rows and clicks reach only their target: prefix rows, grid, focus, label, card, off screen, frame", async () => {
 	await tool("navigate", { url: `${pageUrl}hits2` });
 	const page = await until(async () => {
-		const t = await tool("read_page", { filter: "interactive" });
+		const t = await tool("read_page", {});
 		return t.includes("Frame save") ? t : undefined;
 	}, 10_000, "the frame's button");
 	const call = async (name, args) => {
@@ -763,7 +764,7 @@ test("refs follow rows and clicks reach only their target: prefix rows, grid, fo
 test("web components, a frame in a shadow root, a row's own button, a frame field under a banner", async () => {
 	await tool("navigate", { url: `${pageUrl}hits3` });
 	const page = await until(async () => {
-		const t = await tool("read_page", { filter: "interactive" });
+		const t = await tool("read_page", {});
 		return t.includes("Frame save") && t.includes("Frame field") ? t : undefined;
 	}, 10_000, "both frames");
 	const call = async (name, args) => {
@@ -1247,7 +1248,7 @@ test("expected failures carry their own code and no stack trace; internal is for
 	assert.match(thrown, /^script_error: Error: boom$/);
 	// The element is there but a click can't reach it: its own code.
 	await go("hits");
-	const hits = await tool("read_page", { filter: "interactive" });
+	const hits = await tool("read_page", {});
 	assert.match(await failure("click", { ref: refFor(hits, "Pay now") }), /^not_actionable: .*covered by/);
 });
 
@@ -2174,4 +2175,98 @@ test("change report: controls with live counters do not pile up refs between rea
 	await tool("read_page", { filter: "interactive" });
 	const after = await js("window.__tabkyraRefs.size");
 	assert.ok(after <= 40, `refs after a read: ${after}`);
+});
+
+// A busy page for the interactive read's budget: a focused field, a dialog, 40 links in view, a button a cookie banner
+// covers, and 300 rows below the fold.
+extraPages["/rank"] = `<!doctype html><title>Polycarp rank</title><style>body{margin:0;font:14px sans-serif} nav a{margin:2px}</style>
+<input id="q" aria-label="Search" autofocus>
+<nav>${Array.from({ length: 40 }, (_, i) => `<a href="#n${i + 1}">Nav ${i + 1}</a>`).join("")}</nav>
+<button style="position:fixed;bottom:20px;left:20px">Covered save</button>
+<div style="position:fixed;bottom:0;left:0;right:0;height:90px;background:#eee"><button style="margin:30px">Accept cookies</button></div>
+<div style="margin-top:1200px">${Array.from({ length: 300 }, (_, i) => `<div style="height:30px"><button onclick="document.getElementById('out').textContent='clicked row ${i + 1}'">Row ${i + 1}</button></div>`).join("")}</div>
+<p id="out">none</p>
+<div role="dialog" aria-label="Notice" style="position:fixed;top:300px;right:10px;background:#fff"><button>Dialog OK</button></div>`;
+
+test("an interactive read lists controls nearest first, leaves out covered ones, fits its budget and pages on", async () => {
+	await go("rank");
+	const first = await tool("read_page", { filter: "interactive" });
+	// The ratchet: a first look on a busy page stays under 1,500 tokens (chars / 4).
+	assert.ok(first.length / 4 <= 1500, `${first.length / 4} tokens`);
+	assert.doesNotMatch(first, /\nText:/);
+	assert.doesNotMatch(first, /Covered save/);
+	assert.match(first, /1 covered by something on top/);
+	const lines = first.split("\n");
+	const at = (label) => lines.findIndex((l) => l.includes(`"${label}"`));
+	assert.ok(at("Search") >= 0 && at("Dialog OK") >= 0 && at("Dialog OK") < at("Nav 1"), first);
+	assert.ok(at("Nav 40") < at("Row 1"), "in view before below the fold");
+	assert.match(first, /Controls 1-50 of 343, nearest first/);
+	assert.match(first, /read_page \{"filter":"interactive","offset":50\}/);
+
+	const next = await tool("read_page", { filter: "interactive", offset: 50 });
+	assert.match(next, /Controls 51-100 of 343/);
+	const firstRefs = new Set(first.match(/\be\d+\b/g));
+	assert.ok(!(next.match(/\be\d+\b/g) ?? []).some((r) => firstRefs.has(r)), "the next slice repeats nothing");
+	const row = next.split("\n").find((l) => /button "Row \d+"/.test(l));
+	await tool("click", { ref: row.match(/\b(e\d+)\b/)[1] });
+	assert.match(await tool("get_page_text"), new RegExp(`clicked ${row.match(/Row \d+/)[0].toLowerCase()}`));
+
+	// The full read is as before: text and the covered control included.
+	const all = await tool("read_page", {});
+	assert.match(all, /Covered save/);
+	assert.match(all, /\nText:/);
+});
+
+// A list that rebuilds every row after each tick and moves done items down: refs from one read must keep working.
+extraPages["/rerender"] = `<!doctype html><title>Polycarp rerender</title><ul id="list"></ul><p id="done">done:</p><ul id="twins"><li><button>Same</button></li><li><button>Same</button></li></ul>
+<script>
+const tasks = ["Buy milk", "Walk the dog", "Call mom"]; const done = [];
+function render() { const ul = document.getElementById("list"); ul.innerHTML = "";
+  for (const t of [...tasks.filter((x) => !done.includes(x)), ...done]) { const li = document.createElement("li");
+    li.innerHTML = '<label><input type="checkbox"' + (done.includes(t) ? " checked" : "") + "> " + t + "</label>";
+    li.querySelector("input").onchange = () => { done.push(t); document.getElementById("done").textContent = "done: " + done.join(", "); render(); };
+    ul.appendChild(li); } }
+render();
+document.getElementById("twins").addEventListener("click", () => { const ul = document.getElementById("twins"); ul.innerHTML = ul.innerHTML; });
+</script>`;
+
+test("a ref follows its control when the page rebuilds the list, and still fails when two match", async () => {
+	await go("rerender");
+	const page = await tool("read_page", { filter: "interactive" });
+	const milk = refFor(page, "Buy milk");
+	const mom = refFor(page, "Call mom");
+	await tool("click", { ref: milk });
+	await tool("click", { ref: mom });
+	assert.match(await tool("get_page_text"), /done: Buy milk, Call mom/);
+	// Two identical rows rebuilt: the old ref can't tell which one it was, so it fails rather than guess.
+	const twin = refFor(page, '"Same"');
+	await tool("click", { ref: twin });
+	const again = await mcp.callTool({ name: "click", arguments: { ref: twin } });
+	assert.equal(again.isError, true);
+	assert.match(again.content.map((c) => c.text).join("\n"), /read_page/);
+});
+
+extraPages["/chain"] = `<!doctype html><title>Polycarp chain</title><button onclick="const n=prompt('Name?');document.getElementById('r').textContent=confirm('Save '+n+'?')?'saved '+n:'kept'">Rename</button><p id="r">idle</p>`;
+
+test("handle_dialog says when a second box opened right after the first", async () => {
+	await go("chain");
+	await tool("click", { ref: refFor(await tool("read_page", { filter: "interactive" }), "Rename") });
+	const first = JSON.parse(await tool("handle_dialog", { accept: true, promptText: "Ada" }));
+	assert.equal(first.type, "prompt");
+	assert.deepEqual(first.nextDialog, { type: "confirm", message: "Save Ada?" });
+	// The open box comes first in the result, before the box that was just answered.
+	assert.equal(Object.keys(first)[0], "note");
+	assert.match(first.note, /^Not done: a confirm box is open now .*"Save Ada\?"/);
+	const second = JSON.parse(await tool("handle_dialog", { accept: true }));
+	assert.equal(second.nextDialog, undefined);
+	assert.match(await tool("get_page_text"), /saved Ada/);
+});
+
+extraPages["/pw"] = `<!doctype html><title>Polycarp pw</title><label>Email <input name="email"></label><label>Password <input name="password" type="password"></label>`;
+
+test("read_page marks a password field as the user's to type", async () => {
+	await go("pw");
+	const page = await tool("read_page", { filter: "interactive" });
+	assert.match(page, /textbox "Password" \[password: leave it empty, the user types it\]/);
+	assert.doesNotMatch(page, /"Email" \[password/);
 });

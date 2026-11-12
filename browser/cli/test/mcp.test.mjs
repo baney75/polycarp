@@ -90,13 +90,17 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// page numbers, instead of reading it whole or paging through it 50,000 characters at a time.
 	assert.ok(bytes <= 32824, `tools/list is ${bytes} bytes, over the 32,824 budget`);
 	// The loop line teaching `changes` (D43) adds 47 bytes; it saves a read_page after most actions.
-	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2995, "instructions over 2,995 bytes");
+	// The password rule covering one the user gave, with its tabs_show handoff, adds 92 (evals/weak-model: Haiku typed
+	// the password a signup prompt supplied, and submitted, when the rule didn't say it covered that).
+	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 3087, "instructions over 3,087 bytes");
 });
 
 test("instructions state the safety rules", () => {
 	const instructions = mcp.getInstructions() ?? "";
 	assert.match(instructions, /untrusted data/);
 	assert.match(instructions, /Ask the user before you act under their sign-in/);
+	// A password the user gave is still one Polycarp doesn't type: Haiku typed it when the rule didn't say so.
+	assert.match(instructions, /Do not enter passwords or payment details, even ones the user gave you: fill the rest, leave those empty, don't submit\. Then, or when a page needs a sign-in or captcha, call tabs_show/);
 });
 
 test("skill_match routes a task to one skill, or none, and skill_read returns that skill", async () => {
@@ -139,6 +143,33 @@ test("a tool call without a browser fails fast with the not-connected message", 
 	assert.equal(result.isError, true);
 	assert.equal(result.content[0].text, NOT_CONNECTED);
 	assert.ok(Date.now() - started < 5000, "did not wait for a bridge that never existed");
+});
+
+test("skill_match doesn't send a plain page task to the browser skill the instructions already are", async () => {
+	// Round 1 of evals/weak-model: Haiku read polycarp-browser (8,000 characters) on six plain page tasks.
+	const plain = await mcp.callTool({ name: "skill_match", arguments: { task: "use the polycarp-browser skill to fill the RSVP form" } });
+	assert.match(plain.content[0].text, /^none: .*already loaded/);
+	assert.doesNotMatch(plain.content[0].text, /skill_read/);
+	const research = await mcp.callTool({ name: "skill_match", arguments: { task: "find peer-reviewed studies on sleep and memory" } });
+	assert.match(research.content[0].text, /^academic-research/);
+});
+
+test("page_markdown with no Firecrawl set up names the tools that work instead", async () => {
+	// Round 1 of evals/weak-model: Haiku tried page_markdown on a PDF and got only setup advice meant for the user.
+	const md = await mcp.callTool({ name: "page_markdown", arguments: { url: "https://example.com/" } });
+	assert.equal(md.isError, true);
+	assert.match(md.content[0].text, /read the page with navigate, then get_page_text/);
+});
+
+test("a plain wait {ms} pauses without a browser; a wait for the page still needs one", async () => {
+	// A weak model waiting on a native app used wait {ms} and got not-connected (evals/weak-model, round 1).
+	const started = Date.now();
+	const pause = await mcp.callTool({ name: "wait", arguments: { ms: 300 } });
+	assert.ok(!pause.isError, pause.content[0].text);
+	assert.deepEqual(JSON.parse(pause.content[0].text), { waited: 300 });
+	assert.ok(Date.now() - started >= 280);
+	const forText = await mcp.callTool({ name: "wait", arguments: { text: "Order confirmed", ms: 100 } });
+	assert.equal(forText.content[0].text, NOT_CONNECTED);
 });
 
 test("status reports not connected without failing", async () => {

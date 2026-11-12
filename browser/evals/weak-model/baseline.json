@@ -1,12 +1,20 @@
 {
 	"note": "Recorded scores the ratchet holds (test/weak-model-baseline.test.mjs). Raise a number only with a committed round that reached it; never lower one to make CI pass. Signup is scored under signup-v2 (evals/weak-model/signup-rule.mjs): round 1 was rescored from its transcripts.",
 	"rounds": {
-		"r1-haiku": { "passed": 40, "total": 44 }
+		"r1-haiku": {
+			"passed": 40,
+			"total": 44
+		}
 	},
 	"latest": {
 		"haiku-full": "r1-haiku"
 	},
 	"floor": {
 		"haiku-full": 0.9
+	},
+	"readSize": {
+		"label": "after",
+		"medianTokens": 1500,
+		"maxTokens": 3000
 	}
 }
