@@ -781,9 +781,9 @@ test("a long chat is summarized when the guard would drop turns, and the notes h
 	await context.route("https://llm.stub.test/**", async (r) => {
 		const body = r.request().postData() ?? "";
 		const { messages } = JSON.parse(body);
-		if (textOf(messages.find((m) => m.role === "system" || m.role === "developer")).startsWith("You keep the notes")) {
+		if (textOf(messages.find((m) => m.role === "system" || m.role === "developer")).startsWith("You keep the working notes")) {
 			summaries.push(body.length);
-			const notes = ["Goal and standing instructions", "Decisions", "Facts found", "Tried and failed", "Open steps", "Files and artifacts"].map((s, i) => `## ${s}\n- ${i === 2 ? `NOTE-FACTS ${summaries.length}` : "none"}`).join("\n");
+			const notes = ["Decisions", "Facts found", "Tried and failed", "Open steps", "Done steps", "Files and artifacts"].map((s, i) => `## ${s}\n- ${i === 1 ? `NOTE-FACTS ${summaries.length}` : "none"}`).join("\n");
 			return r.fulfill({ status: 200, contentType: "text/event-stream", headers: cors, body: sse({ text: notes }) });
 		}
 		requests.push(body);
@@ -805,7 +805,7 @@ test("a long chat is summarized when the guard would drop turns, and the notes h
 		}
 		assert.ok(summaries.length, `the summarizer ran within ${turn} turns`);
 		const sent = requests.at(-1);
-		assert.match(sent, /Polycarp summarized the earlier part of this chat/);
+		assert.match(sent, /which it summarized to fit the model's context/);
 		assert.match(sent, new RegExp(`Q${turn}: The committee`), "the latest question is sent whole");
 		assert.doesNotMatch(sent, /earliest messages of this chat/, "nothing was dropped");
 		await page.locator("[data-compaction]").first().waitFor({ timeout: 10_000 });

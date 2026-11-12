@@ -84,7 +84,6 @@ export function createCompactor(deps: CompactorDeps): Compactor {
 		const s = await import("./compaction-summary.js");
 		const chunks = s.transcriptChunks(convo.slice(from, cut), plan.chunkTokens);
 		if (!chunks.length) return undefined;
-		const sources = s.sourcesOf(convo);
 		let notes = previous?.summary;
 		let round = previous?.round ?? 0;
 		const maxWords = Math.max(120, Math.floor(plan.summaryTokens * 0.6));
@@ -97,7 +96,7 @@ export function createCompactor(deps: CompactorDeps): Compactor {
 				maxTokens,
 				signal,
 			});
-			const normalized = s.normalizeSummary(answer, notes, plan.summaryTokens, sources);
+			const normalized = s.normalizeSummary(answer, notes, plan.summaryTokens);
 			if (!normalized) throw new Error("the summary came back without its sections");
 			notes = normalized;
 			round++;

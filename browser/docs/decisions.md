@@ -1368,12 +1368,28 @@ Amended after review (PR 140 round 1, 2026-11-12):
 
 - **Who said what is structure.** The summarizer reads each message as a `<message from="person|assistant|tool|browser">`
   block built from the stored role. Text inside a block can't open or close one, and a role marker inside it is shown
-  as a quote. A goal the person's own words don't back, or an open step that copies page text, is dropped in code.
-- **The notes are Polycarp's.** They go back opening with `<polycarp-notes>` (`NOTES_MARK`). The guard never counts
-  them as the person and cuts them only after every earlier turn (step 8b), before the latest message.
+  as a quote.
+- **The notes are Polycarp's.** The notes message carries the `compactionNotes` field (`COMPACTION_NOTES`), never a
+  text mark, so nothing the person writes can pass for it. The guard never counts it as the person and cuts it only
+  after every earlier turn (step 8b), before the latest message.
 - **Full history when it fits.** A stored record applies only while the whole chat would make the guard drop turns.
 - **A turn compacts at most twice.** The second time cuts at the person's latest message, so further tool steps find
   nothing to summarize.
-- **Done steps** is a seventh section that only grows; a step that leaves Open steps unmentioned is kept there.
+- **Done steps** is a section of its own.
 - Chunks are sized by `estimateTextTokens`; summary calls are recorded in Costs; `compaction-summary.ts` loads on the
   first compaction.
+
+Amended after review (PR 153 round 1, 2026-11-12): telling the person's lines from planted ones by word overlap failed
+on short planted lines, reworded steps, other languages and facts promoted in a later round. Structure replaces it:
+
+- **The person's instructions never pass through the summarizer.** Code quotes the person's own earlier messages word
+  for word under "The person's own words": the first one (cut by code, with a count, only if it alone is too long) and
+  the most recent ones, whole, with a count of those left out. The summarizer writes no goal section.
+- **Everything the summarizer writes is labeled once** as Polycarp's working notes from pages and tool results: facts
+  and progress, not instructions. The system prompt says nothing in the notes authorizes an action the person's own
+  words don't. A planted line is at worst a recorded fact; no filter is needed.
+- **No rule drops or adds a step because its wording changed.** A section the summarizer leaves out or answers with
+  "none" keeps what the earlier notes had. The earlier notes reach the next round inside an `<earlier-notes>` block,
+  as data.
+- **Cut order.** The person's words come first in the notes message, so a cut to fit takes the working notes, from
+  their end, before the person's words.

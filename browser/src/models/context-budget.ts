@@ -44,10 +44,11 @@ export const ATTACHMENT_MARK = "[Document: ";
 export const CONTEXT_NOTE_MARK = "<browser-context>";
 
 /**
- * How compaction's notes open (compaction.ts): a user-role message Polycarp writes in place of the summarized part of the
- * chat. The fitting treats it as Polycarp's, never the person's, and cuts it only after every earlier turn is gone.
+ * The field that marks compaction's notes (compaction.ts): a user-role message Polycarp writes in place of the
+ * summarized part of the chat. It is a field, not text, so nothing the person writes can carry it. The fitting treats
+ * the notes as Polycarp's, never the person's, and cuts them only after every earlier turn is gone.
  */
-export const NOTES_MARK = "<polycarp-notes>";
+export const COMPACTION_NOTES = "compactionNotes";
 
 const opensWith = (m: Message, mark: string) => {
 	if (m.role !== "user") return false;
@@ -61,8 +62,9 @@ const opensWith = (m: Message, mark: string) => {
 
 /** True for a context note: a user-role message whose text opens with CONTEXT_NOTE_MARK. */
 export const isContextNote = (m: Message) => opensWith(m, CONTEXT_NOTE_MARK);
-/** True for compaction's notes: a user-role message whose text opens with NOTES_MARK. */
-export const isNotesMessage = (m: Message) => opensWith(m, NOTES_MARK);
+/** True for compaction's notes: a user-role message carrying the COMPACTION_NOTES field. */
+export const isNotesMessage = (m: Message) =>
+	m.role === "user" && (m as unknown as Record<string, unknown>)[COMPACTION_NOTES] === true;
 
 /**
  * The budget for one request, from one rule: the window, minus the reply asked for, minus the fixed part (system
@@ -251,6 +253,8 @@ export function restHint(toolName: string | undefined, kept = ""): string {
 			return "Ask the person for the part that matters, or to attach long text as a file.";
 		case "note":
 			return "This was Polycarp's note on the page; read_page or get_page_text reads the page again.";
+		case "notes":
+			return "Polycarp's notes on the earlier messages were cut here to fit; the person's own words above are kept.";
 		default:
 			return "Ask the tool for a smaller part (a range, offset, selector or query).";
 	}
@@ -291,20 +295,21 @@ function capTextTokens(text: string, maxTokens: number, hint: string | ((kept: s
  * A message part the fitting may cut: a tool result's text, an attached document, the person's own text, or a context
  * note's text.
  */
-type Kind = "result" | "attachment" | "user" | "note";
+type Kind = "result" | "attachment" | "user" | "note" | "notes";
 
 const isAttachmentPart = (text: string) => text.trimStart().startsWith(ATTACHMENT_MARK);
 
 /** The text parts of `m` that `kind` covers. The caller says whether `m` is a note: a cut note may have lost its mark. */
 function partsOf(m: Message, kind: Kind): string[] {
 	const content = m.content as unknown;
-	if (typeof content === "string") return m.role === "user" && (kind === "user" || kind === "note") ? [content] : [];
+	if (typeof content === "string")
+		return m.role === "user" && (kind === "user" || kind === "note" || kind === "notes") ? [content] : [];
 	const texts = (content as Array<{ type: string; text?: string }>)
 		.filter((p) => p.type === "text")
 		.map((p) => p.text ?? "");
 	if (kind === "result") return m.role === "toolResult" ? texts : [];
 	if (m.role !== "user") return [];
-	if (kind === "note") return texts;
+	if (kind === "note" || kind === "notes") return texts;
 	return texts.filter((t) => (kind === "attachment" ? isAttachmentPart(t) : !isAttachmentPart(t)));
 }
 
@@ -326,7 +331,10 @@ function capParts(m: Message, kind: Kind, maxTokens: number): Message {
 	const all = content as Array<{ type: string; text?: string }>;
 	const covered = (p: { type: string; text?: string }) =>
 		p.type === "text" &&
-		(kind === "result" || kind === "note" || (kind === "attachment") === isAttachmentPart(p.text ?? ""));
+		(kind === "result" ||
+			kind === "note" ||
+			kind === "notes" ||
+			(kind === "attachment") === isAttachmentPart(p.text ?? ""));
 	const total = all.filter(covered).length;
 	let left = maxTokens;
 	let dropped = 0;
@@ -451,7 +459,7 @@ function* halving(start: number, going: () => boolean): Generator<number> {
  * whole earlier turns, oldest first, and last the person's latest message and the turn in progress, whose oldest tool
  * calls go with their results, then the newest call's own thinking, text and arguments. Each tool call keeps its
  * result, and the person's latest message is always sent. Context notes (CONTEXT_NOTE_MARK) are cut like tool results
- * and go with the call they follow; only the person's messages start a turn. Compaction's notes (NOTES_MARK) are never
+ * and go with the call they follow; only the person's messages start a turn. Compaction's notes (COMPACTION_NOTES) are never
  * the person's: they stay while earlier turns are dropped and give way after them, before the latest message. Stored
  * history is untouched: only what is sent is cut. A request that already fits comes back as the same object.
  */
@@ -554,7 +562,7 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 	// 8b. The notes themselves, halving, before anything of the latest message or the turn in progress.
 	for (const c of halving(STUB_TOKENS * 4, over))
 		for (let i = 0; i < messages.length && over(); i++)
-			if (summaries[i]) replace(i, capParts(messages[i], "note", c));
+			if (summaries[i]) replace(i, capParts(messages[i], "notes", c));
 	if (droppedEarlier) {
 		const i = latestUser();
 		const note = {
