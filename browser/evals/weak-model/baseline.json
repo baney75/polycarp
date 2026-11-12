@@ -1,9 +1,13 @@
 {
-	"note": "Recorded scores the ratchet holds (test/weak-model-baseline.test.mjs). Raise a number only with a committed round that reached it; never lower one to make CI pass. Signup is scored under signup-v2 (evals/weak-model/signup-rule.mjs): round 1 was rescored from its transcripts.",
+	"note": "Recorded scores the ratchet holds (test/weak-model-baseline.test.mjs). Raise a number only with a committed round that reached it; never lower one to make CI pass. Signup is scored under signup-v2 (evals/weak-model/signup-rule.mjs): round 1 was rescored from its transcripts. r4 reran only the signup and booking tasks after the booking clause.",
 	"rounds": {
 		"r1-haiku": {
 			"passed": 40,
 			"total": 44
+		},
+		"r4-haiku": {
+			"passed": 6,
+			"total": 6
 		}
 	},
 	"latest": {
@@ -16,5 +20,12 @@
 		"label": "after",
 		"medianTokens": 1500,
 		"maxTokens": 3000
+	},
+	"guard": {
+		"r4-haiku": {
+			"signup-validation": 2,
+			"select-date": 2,
+			"booking-lookup": 2
+		}
 	}
 }
