@@ -2526,9 +2526,9 @@ extraPages["/contact"] = `<!doctype html><title>Contact</title>
 test("the skill's form example is the change report fill really returns", async () => {
 	await go("contact");
 	const page = await tool("read_page", { filter: "interactive" });
-	const filled = JSON.parse(await tool("fill", { ref: refFor(page, "Name"), value: "Ada Lovelace" }));
+	const filled = JSON.parse(await tool("fill", { ref: refFor(page, "Name"), value: "Ada" }));
 	const skill = readFileSync(join(here, "..", "..", "skills", "polycarp-browser", "SKILL.md"), "utf8");
-	const shown = /fill \{"ref":"e3","value":"Ada Lovelace"\}\n {2}-> changes: (.+)\n/.exec(skill);
+	const shown = /fill \{"ref":"e3","value":"Ada"\}\n {2}-> changes: (.+)\n/.exec(skill);
 	assert.ok(shown, "the skill's form example shows fill's changes");
 	// Refs differ run to run: name each by the order it first shows up, the read's three refs first.
 	const order = (refs, text) => {

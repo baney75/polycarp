@@ -29,10 +29,9 @@ retry in a loop. `status` adds the site permissions when you need them.
    For the text, use plain `read_page` (no filter) or `get_page_text`.
 3. Act by ref: `click {"ref":"e12"}`, `fill {"ref":"e4","value":"Ada"}`,
    `type {"ref":"e4","text":"Ada","submit":true}`, `press {"key":"Enter"}`.
-4. Check the result's `changes` (new refs, what changed or went) for what you wanted:
-   no error does not mean it worked.
+4. Check the result's `changes` (new refs, what changed or went): no error does not mean it worked.
 
-Repeat 3 and 4, acting on the refs in `changes`; go back to 2 only when they say too little. Prefer refs over selectors, and selectors over x/y.
+Repeat 3 and 4, acting on the refs in `changes`; go back to 2 only when they say too little. Prefer refs to selectors, selectors to x/y.
 
 ## Stale refs, waits and dialogs
 
@@ -116,19 +115,18 @@ get_page_text {"maxChars":2000}                   -> the story list: answer with
 tabs_close {"tabId":41}
 ```
 
-**Fill and submit a form.** The user asks you to send the contact form with their name
-and email.
+**Fill and submit a form.** The user asks you to send the contact form.
 
 ```
 tabs_context {}
 navigate {"url":"https://example.com/contact"}
-read_page {"filter":"interactive"}     -> e3 textbox "Name", e4 textbox "Email", e5 button "Send"
-fill {"ref":"e3","value":"Ada Lovelace"}
-  -> changes: {"appeared":["e7 textbox \"Email\"","e8 button \"Send\""],"changed":["e3 textbox \"Name\": value \"\" -> \"Ada Lovelace\""],"gone":["e4 textbox \"Email\"","e5 button \"Send\""]}
+read_page {"filter":"interactive"} -> e3 textbox "Name", e4 textbox "Email", e5 button "Send"
+fill {"ref":"e3","value":"Ada"}
+  -> changes: {"appeared":["e7 textbox \"Email\"","e8 button \"Send\""],"changed":["e3 textbox \"Name\": value \"\" -> \"Ada\""],"gone":["e4 textbox \"Email\"","e5 button \"Send\""]}
 fill {"ref":"e7","value":"ada@example.com"}
 click {"ref":"e8"}
 wait {"text":"Thanks"}
-read_page {}                           -> "Thanks, Ada. We got your message."
+read_page {} -> "Thanks, Ada. We got your message."
 tabs_close {"tabId":...}
 ```
 
