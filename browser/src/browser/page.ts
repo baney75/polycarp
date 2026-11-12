@@ -9,9 +9,9 @@ import { isGuardedUrl } from "../bridge/permissions.js";
 import { isPdfTab } from "../offscreen/pdf-client.js";
 import { cdpSend, isRestrictedUrl } from "./cdp.js";
 import {
-	crossOriginFrames,
 	evaluateInFrame,
 	frameForRef,
+	frameSurvey,
 	frameTakesPoint,
 	type PageFrame,
 	scrollFrameIntoView,
@@ -1207,6 +1207,15 @@ export const LARGE_PAGE = 15000;
 /** The state pageSnapshot gives a cross-origin frame (written out there: it runs in the page). */
 const CROSS_NOTE = "cross-origin: read it with navigate to its URL";
 
+/** What a frame's <iframe> line says when its elements aren't read, so none is skipped in silence. */
+export const FRAME_NOT_READ = {
+	guarded: "guarded host: not read, no tool acts in it",
+	"not-web": "not a web page: not read",
+	limit: "not read, past the frame limit: navigate to its URL",
+	refused: "not read: the browser lets no extension script it",
+	unknown: "not read: no access to it; navigate to its URL",
+} as const;
+
 /**
  * Add each cross-origin frame's elements and text to a snapshot (D45): the elements right after
  * the frame's own element, with the frame's tag on their refs and the tab's coordinates, the text
@@ -1220,14 +1229,39 @@ async function readFrames(
 	code: (n: number, t: number) => string,
 	skip?: (url: string) => boolean,
 ): Promise<void> {
-	const frames = await crossOriginFrames(tabId, skip).catch(() => [] as PageFrame[]);
+	const { frames, left } = await frameSurvey(tabId, skip).catch(() => ({ frames: [] as PageFrame[], left: [] }));
+	type Line = SnapshotNode & { states?: string[] };
+	/** The frame's own element: listed by the document around it, its box holding the frame's corner. */
+	const lineAt = (p: { x: number; y: number }) =>
+		snap.nodes.findIndex(
+			(n) =>
+				(n as Line).states?.[0] === CROSS_NOTE &&
+				Math.abs(n.x - p.x) <= n.width / 2 + 1 &&
+				Math.abs(n.y - p.y) <= n.height / 2 + 1,
+		);
+	const lineFor = (url: string, p?: { x: number; y: number }) => {
+		const at = p ? lineAt(p) : -1;
+		return at >= 0
+			? at
+			: snap.nodes.findIndex((n) => (n as Line).states?.[0] === CROSS_NOTE && n.href === maskUrl(url).slice(0, 200));
+	};
+	const note = (at: number, why: string) => {
+		if (at >= 0) (snap.nodes[at] as Line).states = [why];
+	};
+	for (const l of left) note(lineFor(l.url, l.box), FRAME_NOT_READ[l.why]);
 	let room = Math.max(maxNodes - snap.nodes.length, 60);
 	let textRoom = maxTextChars > 0 ? Math.max(maxTextChars - snap.text.length, 2000) : 0;
 	const { width, height } = snap.viewport;
 	for (const f of frames) {
-		if (room <= 0) break;
+		if (room <= 0) {
+			note(lineFor(f.url, f.offset), FRAME_NOT_READ.limit);
+			continue;
+		}
 		const s = await runInFrame<Snapshot>(tabId, f, code(room, textRoom)).catch(() => undefined);
-		if (!s?.nodes) continue;
+		if (!s?.nodes) {
+			note(lineFor(f.url, f.offset), FRAME_NOT_READ.refused);
+			continue;
+		}
 		let label = "";
 		try {
 			label = new URL(f.url).host;
@@ -1248,15 +1282,9 @@ async function readFrames(
 				frame: inner ? `${label} > ${inner}` : label,
 			};
 		});
-		// The frame's own element: listed by the document around it, its box holding the frame's corner.
-		const at = snap.nodes.findIndex(
-			(n) =>
-				(n as SnapshotNode & { states?: string[] }).states?.[0] === CROSS_NOTE &&
-				Math.abs(n.x - f.offset.x) <= n.width / 2 + 1 &&
-				Math.abs(n.y - f.offset.y) <= n.height / 2 + 1,
-		);
+		const at = lineAt(f.offset);
 		if (at >= 0) {
-			(snap.nodes[at] as SnapshotNode & { states?: string[] }).states = ["cross-origin frame, its elements follow"];
+			(snap.nodes[at] as Line).states = ["cross-origin frame, its elements follow"];
 			snap.nodes.splice(at + 1, 0, ...nodes);
 		} else snap.nodes.push(...nodes);
 		room -= nodes.length;
@@ -1266,6 +1294,8 @@ async function readFrames(
 			textRoom -= t.length;
 		}
 	}
+	// A frame no session answered for (an attach the browser refused): said, not skipped.
+	for (const n of snap.nodes as Line[]) if (n.states?.[0] === CROSS_NOTE) n.states = [FRAME_NOT_READ.unknown];
 }
 
 /**

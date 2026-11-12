@@ -1351,20 +1351,27 @@ is reported as a cover rather than clicked. The hit test skips `pointer-events: 
 in-use veil, D37, is one). A ref whose frame navigated or went away fails as stale; a ref from a frame's earlier document
 fails the same way it does in the top page.
 
-Limits: 10 frames and 3 levels, outermost first; a frame past them, or one with no box, keeps its old line, so the agent
-still knows it is there and can `navigate` to it. Only http, https and file frames are read: never an extension page, an
+Limits: 10 frames and 3 levels, outermost first. Only http, https and file frames are read: never an extension page, an
 error page or a browser page. A frame on a guarded host (#94) is left out with everything inside it; the side panel has no
-guarded hosts (D40), as before. Uploads and downloads (D38) run in the top page and refuse a frame ref with a clear message. Not done:
+guarded hosts (D40), as before. No frame is skipped in silence: its `iframe` line keeps its URL and says why it wasn't read
+(guarded, not a web page, past the limit, the browser lets no extension script it, or no access at all, as when a policy
+blocks the attach), so the agent knows it is there and what to do instead. Uploads and downloads (D38) run in the top page and refuse a frame ref with a clear message. Not done:
 `get_page_text` and `page_markdown` stay the top page's, and settle (D41) still doesn't count a frame's own requests.
 
 Safety: nothing here reaches more than the agent could before. A frame is part of the page it is on, which the person allowed;
-its pixels were already in screenshots, and a click at its x and y already reached it. What changes is that the agent reads
+its pixels were already in screenshots, and a click at its x and y already reached it. A guarded host is now closed inside
+frames too: no world is made in it, a ref into it is refused as guarded, and input at a point (click, hover, type's focusing
+click, drag, a wheel) that lands in its drawn box is refused, so a site that frames the approval page can't have an agent
+click Approve, by point or by the `iframe` line's own ref. Keys after focus are not checked: focus gets there only by a
+click this refuses, or by the page's own script. What changes is that the agent reads
 it as text, with the same masking as the top page (passwords never shown, link URLs masked) and with the page's text still
 data, never instructions.
 
 Cost: a page with no cross-origin frame is unchanged (the extra step runs only when the snapshot found one). On a page with
 two, `read_page {"filter":"interactive"}` went from 368 to 831 bytes and from 2 to 6 ms (median of 7, headless Chromium);
-the first read on a tab also turns on auto-attach once. No tool description changed: 0 schema tokens.
+the first read on a tab also turns on auto-attach once. The point check costs one `webNavigation.getAllFrames` per input on a
+page with no frame, and runs only for bridge clients (the side panel has no guarded hosts). No tool description changed:
+0 schema tokens.
 
 Platforms: everything goes through `chrome.debugger`, which Chromium has on macOS, Linux and Windows alike; nothing here is
 per platform. Measured on macOS (e2e and perception) and in CI on Linux; Windows not run.

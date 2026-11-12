@@ -22,10 +22,24 @@ export interface PageFrame {
 	url: string;
 	/** The frame's content box, top left, in the tab's viewport (CSS px). */
 	offset: { x: number; y: number };
+	/** Its <iframe>'s drawn size (CSS px). */
+	size: { width: number; height: number };
 	/** Where the owner session's viewport starts in the tab's: points sent to it subtract this. */
 	base: { x: number; y: number };
 	/** The frame and the frames around it, outermost first, for scrolling and cover checks. */
 	chain: PageFrame[];
+}
+
+/**
+ * A cross-origin frame read_page leaves out, and why, so its <iframe> line can say so: a guarded host
+ * (no tool reads or acts there), a frame that isn't a web page, or one past MAX_FRAMES or MAX_DEPTH.
+ * `box` is where a guarded frame is drawn, so input at a point can't land in it.
+ */
+export interface LeftFrame {
+	tag: string;
+	url: string;
+	why: "guarded" | "not-web" | "limit";
+	box?: { x: number; y: number; width: number; height: number };
 }
 
 const WORLD = "polycarp";
@@ -129,23 +143,51 @@ export async function crossOriginFrames(
 	tabId: number,
 	skip: (url: string) => boolean = () => false,
 ): Promise<PageFrame[]> {
+	return (await frameSurvey(tabId, skip)).frames;
+}
+
+/** The frames read_page reads, and those it leaves out with the reason. */
+export async function frameSurvey(
+	tabId: number,
+	skip: (url: string) => boolean = () => false,
+): Promise<{ frames: PageFrame[]; left: LeftFrame[] }> {
 	await prime(tabId);
 	// Announcements arrive just after auto-attach turns on: wait until every frame the browser
 	// knows of is accounted for, briefly.
 	const expected = (await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null))?.length ?? 0;
 	const until = Date.now() + 300;
-	let found: { frames: PageFrame[]; seen: number };
+	let found: { frames: PageFrame[]; left: LeftFrame[]; seen: number };
 	for (;;) {
 		found = await collect(tabId, skip);
 		if (found.seen >= expected || Date.now() >= until) break;
 		await new Promise((r) => setTimeout(r, 25));
 	}
-	return found.frames;
+	return { frames: found.frames, left: found.left };
 }
 
-async function collect(tabId: number, skip: (url: string) => boolean): Promise<{ frames: PageFrame[]; seen: number }> {
+async function collect(
+	tabId: number,
+	skip: (url: string) => boolean,
+): Promise<{ frames: PageFrame[]; left: LeftFrame[]; seen: number }> {
 	const frames: PageFrame[] = [];
+	const left: LeftFrame[] = [];
 	let seen = 0;
+	/** Why a frame isn't read, before it is placed: a guarded one is placed all the same, for its box. */
+	const whyNot = (url: string, around: PageFrame | undefined): LeftFrame["why"] | undefined =>
+		!web(url)
+			? "not-web"
+			: skip(url)
+				? "guarded"
+				: full() || (around?.chain.length ?? 0) >= MAX_DEPTH
+					? "limit"
+					: undefined;
+	const leave = (frameId: string, url: string, why: LeftFrame["why"], f: PageFrame | undefined) =>
+		left.push({
+			tag: frameTag(frameId),
+			url,
+			why,
+			...(why === "guarded" && f ? { box: { ...f.offset, ...f.size } } : {}),
+		});
 	const kids = children.get(tabId) ?? new Map<string, Child>();
 	const full = () => frames.length >= MAX_FRAMES;
 	/** One session's frame tree, then the out-of-process frames whose <iframe> is in it. */
@@ -161,17 +203,15 @@ async function collect(tabId: number, skip: (url: string) => boolean): Promise<{
 				const url = child.frame.url + (child.frame.urlFragment ?? "");
 				const cross =
 					originOf(child.frame) !== originOf(node.frame) && !/^(about|data|blob):/.test(child.frame.url);
-				// A frame that isn't a web page is left out with everything inside it.
-				if (cross && !web(child.frame.url)) {
-					seen += count(child);
-					continue;
-				}
 				if (cross) {
+					// A frame left out is left out with everything inside it.
+					const why = whyNot(child.frame.url, around);
 					const f =
-						skip(url) || full() || (around?.chain.length ?? 0) >= MAX_DEPTH
+						why === "limit" || why === "not-web"
 							? undefined
 							: await place(tabId, child.frame.id, sessionId, url, around, root);
-					if (!f) {
+					if (why) leave(child.frame.id, url, why, f);
+					if (!f || why) {
 						seen += count(child);
 						continue;
 					}
@@ -190,11 +230,13 @@ async function collect(tabId: number, skip: (url: string) => boolean): Promise<{
 			if (!sub) continue;
 			const top = sub.frameTree;
 			const url = top.frame.url + (top.frame.urlFragment ?? "");
+			const why = whyNot(url, root);
 			const f =
-				!web(url) || skip(url) || full() || (root?.chain.length ?? 0) >= MAX_DEPTH
+				why === "limit" || why === "not-web"
 					? undefined
 					: await place(tabId, targetId, sessionId, url, root, root, c.sessionId);
-			if (!f) {
+			if (why) leave(targetId, url, why, f);
+			if (!f || why) {
 				seen += count(top);
 				continue;
 			}
@@ -204,7 +246,7 @@ async function collect(tabId: number, skip: (url: string) => boolean): Promise<{
 	};
 	const top = await cdpSend<{ frameTree: TreeNode }>(tabId, "Page.getFrameTree");
 	await session(undefined, top.frameTree, undefined);
-	return { frames, seen };
+	return { frames, left, seen };
 }
 
 /** Frames in a subtree, the root included. */
@@ -238,6 +280,7 @@ async function place(
 		ownerSessionId,
 		url,
 		offset: { x: base.x + box.x, y: base.y + box.y },
+		size: { width: box.width, height: box.height },
 		base,
 		chain: [],
 	};
@@ -250,7 +293,7 @@ async function contentBox(
 	tabId: number,
 	sessionId: string | undefined,
 	backendNodeId: number,
-): Promise<{ x: number; y: number } | undefined> {
+): Promise<{ x: number; y: number; width: number; height: number } | undefined> {
 	const quads = await cdpSendSession<{ quads?: number[][] }>(tabId, sessionId, "DOM.getContentQuads", {
 		backendNodeId,
 	}).catch(() => undefined);
@@ -262,10 +305,13 @@ async function contentBox(
 	).catch(() => undefined);
 	const q = quads?.quads?.[0];
 	if (!q || !model?.model) return undefined;
-	// Quads are in the viewport; the box model gives the border and padding inside them.
+	// Quads are in the viewport; the box model gives the border and padding inside them. The size is
+	// the drawn border box's, the most input could land in.
 	return {
 		x: q[0] + model.model.content[0] - model.model.border[0],
 		y: q[1] + model.model.content[1] - model.model.border[1],
+		width: Math.max(...q.filter((_, i) => i % 2 === 0)) - Math.min(...q.filter((_, i) => i % 2 === 0)),
+		height: Math.max(...q.filter((_, i) => i % 2 === 1)) - Math.min(...q.filter((_, i) => i % 2 === 1)),
 	};
 }
 
@@ -362,7 +408,38 @@ export async function frameForRef(
 ): Promise<{ frame: PageFrame; inner: string } | undefined> {
 	const split = splitFrameRef(ref);
 	if (!split) return undefined;
-	const frame = (await crossOriginFrames(tabId, skip)).find((f) => f.tag === split.tag);
+	const { frames, left } = await frameSurvey(tabId, skip);
+	const frame = frames.find((f) => f.tag === split.tag);
+	const guarded = left.find((l) => l.tag === split.tag && l.why === "guarded");
+	if (guarded)
+		throw new Error(`Ref ${ref} is in a frame on a guarded host (${hostOf(guarded.url)}): no tool acts there.`);
 	if (!frame) throw new Error(`Ref ${ref} not found: its frame is gone or changed. Call read_page for fresh refs.`);
 	return { frame, inner: split.inner };
+}
+
+const hostOf = (url: string) => {
+	try {
+		return new URL(url).host;
+	} catch {
+		return url.slice(0, 80);
+	}
+};
+
+/**
+ * The URL of a guarded frame drawn at a point of the tab's viewport (CSS px), if any: input at a point
+ * never lands there, even when the page around it is open (a site framing the approval page).
+ */
+export async function guardedFrameAt(
+	tabId: number,
+	x: number,
+	y: number,
+	skip: (url: string) => boolean,
+): Promise<string | undefined> {
+	// A page with no frame is the common case: one cheap call, no survey.
+	const all = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null);
+	if (all && all.length <= 1) return undefined;
+	const { left } = await frameSurvey(tabId, skip);
+	return left.find(({ why, box }) => {
+		return why === "guarded" && box && x >= box.x && x <= box.x + box.width && y >= box.y && y <= box.y + box.height;
+	})?.url;
 }

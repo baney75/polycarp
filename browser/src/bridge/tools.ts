@@ -32,6 +32,7 @@ import {
 	typeText,
 } from "../browser/cdp.js";
 import { afterAction, type Before, beforeAction } from "../browser/changes.js";
+import { guardedFrameAt } from "../browser/frames.js";
 import { injectScript } from "../browser/inject.js";
 import {
 	fillElement,
@@ -348,6 +349,20 @@ function skipFor(ctx: HandlerContext): (url: string) => boolean {
 	return (u) => ctx.isGuarded(u);
 }
 
+/**
+ * Input at a point never lands in a frame on a guarded host, even when the page around it is open: a
+ * site that frames the approval page can't have an agent click Approve by point or by the frame's ref.
+ */
+async function refuseGuardedPoint(ctx: HandlerContext, tabId: number, p: { x: number; y: number }): Promise<void> {
+	if (!ctx.guardedHosts?.length) return;
+	const url = await guardedFrameAt(tabId, p.x, p.y, skipFor(ctx));
+	if (url)
+		throw new BridgeError(
+			ERR.PERMISSION_DENIED,
+			`That point is in a frame on a guarded host (${new URL(url).host}): no tool acts there.`,
+		);
+}
+
 function target(params: Params): { ref?: string; selector?: string } {
 	return { ref: str(params, "ref"), selector: str(params, "selector") };
 }
@@ -355,7 +370,11 @@ function target(params: Params): { ref?: string; selector?: string } {
 async function pointFor(ctx: HandlerContext, params: Params, tabId: number): Promise<{ x: number; y: number }> {
 	const x = num(params, "x");
 	const y = num(params, "y");
-	if (x !== undefined && y !== undefined) return screenshotToCss(tabId, { x, y });
+	if (x !== undefined && y !== undefined) {
+		const p = screenshotToCss(tabId, { x, y });
+		await refuseGuardedPoint(ctx, tabId, p);
+		return p;
+	}
 	const t = target(params);
 	if (!t.ref && !t.selector)
 		throw new BridgeError(
@@ -363,6 +382,7 @@ async function pointFor(ctx: HandlerContext, params: Params, tabId: number): Pro
 			"Give a ref from read_page (best), a selector, or x and y from your latest screenshot.",
 		);
 	const rect = await locate(tabId, t, skipFor(ctx));
+	await refuseGuardedPoint(ctx, tabId, rect);
 	return { x: rect.x, y: rect.y };
 }
 
@@ -811,7 +831,11 @@ export const handlers: Record<string, Handler> = {
 			);
 		const before = await changesBefore(ctx, tabId);
 		const since = await actionStart(ctx, tabId);
-		await drag(tabId, screenshotToCss(tabId, from), screenshotToCss(tabId, to));
+		const a = screenshotToCss(tabId, from);
+		const b = screenshotToCss(tabId, to);
+		await refuseGuardedPoint(ctx, tabId, a);
+		await refuseGuardedPoint(ctx, tabId, b);
+		await drag(tabId, a, b);
 		return {
 			dragged: { from, to },
 			...(await settleAfter(ctx, tabId, since, { dragged: { from, to } }, { before })),
@@ -829,6 +853,7 @@ export const handlers: Record<string, Handler> = {
 		const attempt = async () => {
 			if (t.ref || t.selector) {
 				const rect = await locate(tabId, t, skipFor(ctx));
+				await refuseGuardedPoint(ctx, tabId, rect);
 				await click(tabId, rect.x, rect.y);
 			}
 			stopIfAborted(ctx);
@@ -892,6 +917,7 @@ export const handlers: Record<string, Handler> = {
 		if (x !== undefined && y !== undefined && !params.ref && !params.selector && !params.to) {
 			// Wheel at a point: scrolls the innermost scrollable under the cursor.
 			const at = screenshotToCss(tabId, { x, y });
+			await refuseGuardedPoint(ctx, tabId, at);
 			await cdpScroll(tabId, at.x, at.y, dx, dy);
 			scrolled = await runInPage(
 				tabId,

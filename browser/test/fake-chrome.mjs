@@ -118,6 +118,8 @@ export function installFakeChrome() {
 		onReferenceFragmentUpdated: event(),
 		onHistoryStateUpdated: event(),
 		onErrorOccurred: event(),
+		/** The tab's frames: just its own document unless a test gives it more. */
+		getAllFrames: async ({ tabId }) => (tabs.has(tabId) ? [{ frameId: 0, parentFrameId: -1 }] : null),
 	};
 	globalThis.chrome = {
 		storage: { local: area("local"), session: area("session"), onChanged },

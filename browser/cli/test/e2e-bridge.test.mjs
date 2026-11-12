@@ -2120,6 +2120,49 @@ test("cross-origin frames: read, click and fill inside a same-site and a cross-s
 	}
 });
 
+// A guarded host (#94) stays closed inside a frame: a page on 127.0.0.1 frames a page on localhost, which
+// remote.json's public URL guards for this test. The frame's line says so, and neither its ref nor a click
+// at its point reaches the button, whose press the server would see.
+test("cross-origin frames: a guarded host in a frame is labeled, never read, and a ref or a point inside it is refused", async () => {
+	let presses = 0;
+	const inner = createServer((req, res) => {
+		if (req.url.startsWith("/hit")) presses++;
+		res.writeHead(200, { "content-type": "text/html" });
+		res.end(`<!doctype html><title>approve</title><button style="width:100%;height:380px" onclick="fetch('/hit')">Approve guarded</button>`);
+	});
+	await new Promise((r) => inner.listen(0, "127.0.0.1", r));
+	const port = inner.address().port;
+	const fresh = join(home, ".config", "polycarp", "browser");
+	const dir = existsSync(fresh) || !existsSync(join(home, ".config", "tabkyra")) ? fresh : join(home, ".config", "tabkyra");
+	const remote = join(dir, "remote.json");
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(remote, JSON.stringify({ publicUrl: "http://localhost/", port: 0, route: "custom" }));
+	try {
+		extraPages["/xo-guard"] = `<!doctype html><title>Polycarp guarded frame</title><body style="margin:0">
+<iframe src="http://localhost:${port}/approve" style="width:600px;height:400px;border:0;display:block"></iframe></body>`;
+		await go("xo-guard");
+		let page = "";
+		await until(async () => {
+			page = await tool("read_page", { filter: "interactive" });
+			return /guarded host: not read/.test(page);
+		}, 10_000, "the guarded frame's line in read_page");
+		assert.doesNotMatch(page, /Approve guarded/, "nothing inside the guarded frame is read");
+		const line = page.split("\n").find((l) => l.includes("guarded host: not read"));
+		const ref = line.match(/\b(e\d+)\b/)[1];
+		const byRef = await mcp.callTool({ name: "click", arguments: { ref } });
+		assert.ok(byRef.isError, "a click on the frame's own ref is refused");
+		assert.match(byRef.content[0].text, /guarded host \(localhost(:\d+)?\)/);
+		const byPoint = await mcp.callTool({ name: "click", arguments: { x: 300, y: 200 } });
+		assert.ok(byPoint.isError, "a click at a point inside it is refused");
+		assert.match(byPoint.content[0].text, /guarded host/);
+		await new Promise((r) => setTimeout(r, 300));
+		assert.equal(presses, 0, "the button inside was never pressed");
+	} finally {
+		rmSync(remote, { force: true });
+		inner.close();
+	}
+});
+
 test("settle: content drawn after the load, a debounced autocomplete and a skeleton are there when the action returns", async () => {
 	await go("late");
 	assert.match(await tool("read_page", { filter: "interactive" }), /Late Buy/);
