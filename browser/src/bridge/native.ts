@@ -9,6 +9,7 @@
 
 import { cancelQuestion, cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
 import { openDialog, type PageDialog, stopScreencastsOwnedBy } from "../browser/cdp.js";
+import { type CallUse, dialogUseBegin, dialogUseEnd } from "../browser/dialog-guard.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
 import { BrowserSession, listSessions, pruneSessions, type SessionMeta, sanitizeLabel } from "../browser/session.js";
 import { probeUserScripts } from "../browser/userscripts-status.js";
@@ -385,7 +386,8 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	state.inFlight = { method: req.method, since: Date.now() };
 	state.lastActivityAt = Date.now();
 	/** The session and the tab the in-use veil counted this call on (src/browser/veil.ts). */
-	let veiled: { session: BrowserSession; tabId: number | undefined } | undefined;
+	let veiled: { session: BrowserSession; tabId: number | undefined; currentBefore: number | undefined } | undefined;
+	let used: { session: BrowserSession; call: CallUse } | undefined;
 	try {
 		if (!(await isBridgeEnabled())) {
 			throw new BridgeError(ERR.DISABLED, "The Polycarp bridge is disabled in Settings > Agents.");
@@ -438,7 +440,12 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
 			if (openOn !== undefined) throw dialogError(openOn, openDialog(openOn) as PageDialog);
 		}
-		veiled = { session, tabId: await veilBegin(session, req.method, req.params).catch(() => undefined) };
+		used = { session, call: dialogUseBegin(session, req.method, req.params) };
+		veiled = {
+			session,
+			currentBefore: session.currentTabId,
+			tabId: await veilBegin(session, req.method, req.params).catch(() => undefined),
+		};
 		const work = handler(ctx, req.params ?? {});
 		const result = await withTimeout(
 			dialogSafe
@@ -465,7 +472,8 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		if (stack) trace(`${req.method} ${error.code}: ${stack.split("\n").slice(0, 6).join(" | ")}`);
 		reply(undefined, error);
 	} finally {
-		if (veiled) veilEnd(veiled.session, req.method, veiled.tabId);
+		if (used) dialogUseEnd(used.session, used.call);
+		if (veiled) veilEnd(veiled.session, req.method, veiled.tabId, veiled.currentBefore);
 		state.abort = undefined;
 		state.inFlight = undefined;
 		state.lastActivityAt = Date.now();

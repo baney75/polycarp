@@ -1363,3 +1363,33 @@ change small; they can follow.
 Proof: `test/compaction.test.mjs`, with each of the five rules above broken on purpose to see a test fail, and a panel
 e2e that runs a chat on an 18k stub model until it is summarized, reloads the panel, and checks the next request
 carries the stored notes and the latest question with no new summary and nothing dropped.
+
+## D46. Only a tab an agent is using may hold the user up (Claude, 2026-11-12)
+
+Problem: the owner saw tabs of one site blocked while an agent worked in only one of them. The cause is a dialog. Chrome
+cancels an alert, confirm or prompt that a hidden tab opens. With Polycarp's debugger attached (`Page.enable` in
+`ensureAttached`, cdp.ts) the box waits for the agent's `handle_dialog` instead, with no limit, and while it waits its
+renderer process runs nothing. Chrome often runs tabs of one site in one process (a tab one page opened, and same-site
+tabs once it nears its process limit), so one agent tab's unanswered box froze every tab of that site, the user's too:
+no script, no click, no key.
+
+Decision:
+
+- **In use** (`src/browser/tab-use.ts`): a tab is in use while a tool call on it runs and for `IN_USE_MS` (the veil's
+  idle window, 15 s) after the last one ended. A call acts on the tab it names, or the session's current tab, and on the
+  tab it moved the session to (the tab navigate or tabs_create opened). A tab that sits in the agent's group, or a current
+  tab a call left alone, is not in use. Non-tab calls (status, tabs_context, tabs_select, tabs_close) use no tab.
+- **The veil** follows the same rule. Before, a call that named a tab still counted on the current tab, and tabs_create
+  counted on the tab it left.
+- **Dialogs** (`src/browser/dialog-guard.ts`, service worker): a box stays open for the agent while its tab is in use, or
+  while it is the active tab in its window, where the user can see and answer it. Otherwise it gets Cancel, Chrome's own
+  answer for a hidden tab, and the session gets a notice (tabs_context, session_info); `handle_dialog` says the box was
+  already answered. So a box can stop the user's tabs of that site for at most the idle window after the agent's last call.
+- Side panel calls count too (they run the same handlers in the worker).
+
+Not done: telling which tabs share a process (Chrome gives extensions no stable API for it), so the rule holds for every
+hidden tab. A worker restart while a box is open loses its timer; the box then waits for the next call on the tab.
+
+Proof: `test/tab-use.test.mjs`, and the e2e "only the tab an agent uses is held up" in `cli/test/e2e-bridge.test.mjs`,
+which opens a same-site tab from the agent's tab (one process, checked by a busy loop), lets the user keep it, and has the
+agent's page open a confirm. On main the user's tab stays frozen and the test fails.

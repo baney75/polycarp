@@ -1,6 +1,7 @@
 import { startBridge, trace } from "./bridge/native.js";
 import { startPanelPageTools } from "./bridge/panel-calls.js";
 import { installCdpListeners, persistCdpMemory } from "./browser/cdp.js";
+import { startDialogGuard } from "./browser/dialog-guard.js";
 import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard.js";
 import { startGroupGestures } from "./browser/group-gestures.js";
 import { BrowserSession, cleanupOrphanGroups } from "./browser/session.js";
@@ -23,6 +24,8 @@ setGuardLogger(trace);
 startGroupGestures(trace);
 // The glow and pill over a page an agent is working in (Settings > Agents turns it off).
 startVeil(trace);
+// A dialog on a tab no call is using gets Cancel, as Chrome gives a hidden tab: an open one stops the whole site.
+startDialogGuard(trace);
 
 // Groups from before an extension reload have no owning session any more; give the tabs back.
 cleanupOrphanGroups().catch(() => undefined);

@@ -32,6 +32,7 @@ import {
 	typeText,
 } from "../browser/cdp.js";
 import { afterAction, type Before, beforeAction } from "../browser/changes.js";
+import { cancelledDialog } from "../browser/dialog-guard.js";
 import { injectScript } from "../browser/inject.js";
 import {
 	fillElement,
@@ -1001,7 +1002,7 @@ export const handlers: Record<string, Handler> = {
 		if (tabId === undefined)
 			throw new BridgeError(
 				ERR.NOT_FOUND,
-				"No dialog is open on your tabs; nothing to answer. Carry on with read_page.",
+				`${cancelledDialog(ctx.session.tabIds) ?? "No dialog is open on your tabs; nothing to answer."} Carry on with read_page.`,
 			);
 		if (typeof params.accept !== "boolean")
 			throw new BridgeError(ERR.BAD_PARAMS, "accept must be true (OK) or false (Cancel)");

@@ -12,6 +12,7 @@ import { checkPolycarpTheme } from "../appearance/polycarp.js";
 import { APPEARANCE_KEY, appearanceVariables, parseChoice } from "../appearance/tokens.js";
 import { isRestrictedUrl, setCaptureCover } from "./cdp.js";
 import { BrowserSession, isAgentSession, sessionOwningTab } from "./session.js";
+import { callTab, movedTo, TAB_METHODS } from "./tab-use.js";
 import { VEIL_CSS, type VeilCommand, type VeilPageResult, type VeilTheme, veilPage } from "./veil-page.js";
 import {
 	isVeilEnabled,
@@ -32,30 +33,6 @@ import {
 	veilViewFor,
 } from "./veil-state.js";
 
-/** Bridge methods that act on a tab: the ones that show the veil. */
-const TAB_METHODS = new Set([
-	"navigate",
-	"tabs.create",
-	"screenshot",
-	"snapshot",
-	"text",
-	"html",
-	"inspect",
-	"find",
-	"click",
-	"hover",
-	"drag",
-	"type",
-	"press",
-	"scroll",
-	"fill",
-	"evaluate",
-	"wait",
-	"dialog",
-	"actions",
-	"console.read",
-	"network.read",
-]);
 /** Methods that hit-test or send pointer input: the pill's button is off while they run. */
 const INPUT_METHODS = new Set(["click", "hover", "drag", "type", "scroll", "fill", "actions"]);
 /** Never let a slow page hold a tool call up for the veil. */
@@ -200,13 +177,6 @@ async function veilOn(): Promise<boolean> {
 	return enabled;
 }
 
-/** The tab a call acts on: the one it names, if the session owns it, else the session's current tab. */
-function targetTab(session: BrowserSession, params: Record<string, unknown> | undefined): number | undefined {
-	const named = Number(params?.tabId);
-	if (params?.tabId !== undefined && Number.isInteger(named) && session.tabIds.includes(named)) return named;
-	return session.currentTabId;
-}
-
 /**
  * A tool call is about to run. Returns the tab it was counted on, to give to `veilEnd`. Waits for
  * the veil's own change (at most EFFECT_TIMEOUT_MS) so an input call never meets the pill's button.
@@ -217,7 +187,7 @@ export async function veilBegin(
 	params: Record<string, unknown> | undefined,
 ): Promise<number | undefined> {
 	if (!TAB_METHODS.has(method) || !isAgentSession(session.id) || !(await veilOn())) return undefined;
-	const tabId = targetTab(session, params);
+	const tabId = callTab(session, method, params);
 	if (tabId === undefined) return undefined;
 	await dispatch({
 		type: "begin",
@@ -230,8 +200,13 @@ export async function veilBegin(
 	return tabId;
 }
 
-/** The call ended. Counts it on the tab it began on, and on the session's current tab if it moved there. */
-export function veilEnd(session: BrowserSession, method: string, begunOn: number | undefined): void {
+/** The call ended. Counts it on the tab it began on, and on the tab it moved the session to (never one it didn't use). */
+export function veilEnd(
+	session: BrowserSession,
+	method: string,
+	begunOn: number | undefined,
+	currentBefore: number | undefined,
+): void {
 	if (!TAB_METHODS.has(method) || !isAgentSession(session.id) || enabled === false) return;
 	const input = INPUT_METHODS.has(method);
 	const at = Date.now();
@@ -243,9 +218,8 @@ export function veilEnd(session: BrowserSession, method: string, begunOn: number
 		if (owned(begunOn)) void dispatch({ type: "end", tabId: begunOn, sessionId: session.id, view, input, at });
 		else if (input) void dispatch({ type: "drop", tabId: begunOn });
 	}
-	const current = session.currentTabId;
-	if (current !== begunOn && owned(current))
-		void dispatch({ type: "end", tabId: current, sessionId: session.id, view, input: false, at });
+	const current = movedTo(session, currentBefore, begunOn);
+	if (owned(current)) void dispatch({ type: "end", tabId: current, sessionId: session.id, view, input: false, at });
 }
 
 /** The session's client left or the session ended: its veils go now. */

@@ -17,6 +17,7 @@
  */
 
 import { cdpMemoryReady, hasScreenshotScale, openDialog, type PageDialog } from "../browser/cdp.js";
+import { dialogUseBegin, dialogUseEnd } from "../browser/dialog-guard.js";
 import { BrowserSession } from "../browser/session.js";
 import { type Delivered, dialogError, isDialogSafe, raceDialogs } from "./dialogs.js";
 import { BridgeError, classify, HANDLER_TIMEOUT_MS, withTimeout } from "./errors.js";
@@ -139,11 +140,13 @@ export async function runPanelCall(
 		},
 		askUpload: async () => false,
 	};
+	const used = dialogUseBegin(session, method, params);
 	try {
 		const work = handler(ctx, params);
 		const raced = safe ? work : raceDialogs(session, work, onAbort, () => delivered);
 		return await withTimeout(raced, deps.timeoutMs ?? HANDLER_TIMEOUT_MS, method);
 	} finally {
+		dialogUseEnd(session, used);
 		signal?.removeEventListener("abort", onAbort);
 	}
 }
