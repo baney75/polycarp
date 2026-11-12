@@ -206,8 +206,9 @@ const inZone = (host: string, zone: string) => host === zone || host.endsWith(`.
  * refuse a name outside the signed-in domain; it adds that domain to the end and makes the record anyway. The certificate says
  * which domain it covers, but it also holds an API token, so it is never read. This refuses only on what is known:
  * - a name outside the zone an earlier try proved this sign-in covers;
- * - a zone public DNS shows is served elsewhere: its SOA names no Cloudflare nameserver or mailbox, and its primary nameserver's
- *   address is outside Cloudflare's ranges.
+ * - a zone public DNS shows is served elsewhere: its SOA names no Cloudflare nameserver or mailbox, its primary nameserver's
+ *   address is outside Cloudflare's ranges, and none of its NS records is Cloudflare's (a Secondary DNS zone on Cloudflare
+ *   keeps the customer's primary in its SOA but publishes Cloudflare's nameservers).
  * Anything it can't tell (no answer, a nameserver it can't look up) goes ahead: the check after the record is made catches a
  * wrong zone, names the record it made and remembers the zone, so the next try is refused here.
  */
@@ -233,6 +234,13 @@ export async function checkCloudflareZone(host: string): Promise<{ ok: true } | 
 		return { ok: true };
 	}
 	if (!addresses.length || addresses.some(cloudflareAddress)) return { ok: true };
+	try {
+		const ns = await dohQuery(found.zone, "NS");
+		const servers = (Array.isArray(ns.Answer) ? ns.Answer : []).filter((a) => a && a.type === 2).map((a) => String(a.data).toLowerCase().replace(/\.$/, ""));
+		if (servers.some((s) => /\.ns\.cloudflare\.com$|\.foundationdns\.(com|net|org)$/.test(s))) return { ok: true };
+	} catch {
+		return { ok: true };
+	}
 	return {
 		ok: false,
 		message: `${host} is in ${found.zone}, and public DNS says ${found.zone} is served by ${found.primary} (${addresses.join(", ")}), not Cloudflare, so nothing was made. Pick a name on a domain in your Cloudflare account, or add ${found.zone} to Cloudflare first.`,

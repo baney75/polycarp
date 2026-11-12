@@ -6,8 +6,17 @@
  * Choose a way -> get it and sign in -> turn on -> the result. A step that waits on the person (install, sign in, allow Funnel)
  * names a poll, and the next answer moves the screen on by itself: nobody presses "try again" to find out it worked.
  */
-import { copyKey, type RemoteStepCopy, stepCopy } from "./remote-copy.js";
-import type { ConnectStatus, RemoteAnswer, RemoteRoutesView } from "./types.js";
+import {
+	answerOn,
+	copyKey,
+	type RemoteCopyKey,
+	type RemoteStepCopy,
+	realFailures,
+	STEP_COPY,
+	stepCopy,
+	waitingChecks,
+} from "./remote-copy.js";
+import type { ConnectStatus, RemoteAnswer, RemoteCheckView, RemoteFixAnswer, RemoteRoutesView } from "./types.js";
 
 export type ChosenRoute = "tailscale" | "cloudflare";
 
@@ -20,16 +29,49 @@ export interface FlowInput {
 	run?: RemoteAnswer;
 	/** A setup is running now. */
 	busy?: "setup" | "tunnel";
+	/** The latest outside checks, from whichever answer brought them last (a run, a test or a repair). */
+	checks?: RemoteCheckView[];
+	/** `remote fix --dry-run`'s plan; Repair shows only when it exists and has actions. */
+	fix?: RemoteFixAnswer;
+	/** The ten-minute Funnel retry ran out: the step stops waiting and its button checks again. */
+	funnelGaveUp?: boolean;
 }
+
+/** Funnel is retried by itself for this long after a refusal; then the step's button checks again (funnel_gave_up). */
+export const FUNNEL_RETRY_FOR_MS = 10 * 60_000;
+
+/** The result's heading: on, on and waiting for a pending check, on with a failed check, or on with no browser. */
+export type ResultHead = Extract<RemoteCopyKey, "on" | "on_waiting" | "check_failed" | "no_browser_connected">;
 
 export type FlowScreen =
 	| { kind: "loading" }
 	/** Not this flow: a hub, a link to a hub, or the person's own front door. Connect draws those as before. */
 	| { kind: "other" }
 	| { kind: "choose"; routes?: RemoteRoutesView; recommended?: ChosenRoute }
-	| { kind: "step"; step: 2 | 3; route?: ChosenRoute; copy: RemoteStepCopy & { key: string }; answer: RemoteAnswer }
+	| {
+			kind: "step";
+			step: 2 | 3;
+			route?: ChosenRoute;
+			copy: RemoteStepCopy & { key: string };
+			answer: RemoteAnswer;
+			/** "Choose another way": only before anything is saved, where choosing again does something. */
+			chooseAgain: boolean;
+			/** "Use Cloudflare instead": on a saved Funnel route, unless the step's own button already is that. */
+			useCloudflare: boolean;
+	  }
 	| { kind: "cloudflare"; step: 3 }
-	| { kind: "result"; connectorUrl: string; answer?: RemoteAnswer };
+	| {
+			kind: "result";
+			connectorUrl: string;
+			answer?: RemoteAnswer;
+			head: ResultHead;
+			/** Every failure is pending: the result checks again by itself. */
+			waiting: boolean;
+			/** A check failed for real and this helper's `remote fix` has something to do. */
+			repair: boolean;
+			/** No passcode is set, so "No passcode was made here" is true. */
+			noPasscode: boolean;
+	  };
 
 /** States that stop the saved route from working on this computer: they come ahead of the result, whatever an older run said. */
 const BLOCKING = new Set([
@@ -50,11 +92,54 @@ const STEP_TWO = new Set([
 	"cloudflare_login",
 ]);
 
-const isOn = (a?: RemoteAnswer): boolean => a?.state === "on" || a?.state === "no_browser_connected";
+const isOn = (a?: RemoteAnswer): boolean => Boolean(a && answerOn(a));
 
-function step(answer: RemoteAnswer, route?: ChosenRoute): FlowScreen {
-	const copy = stepCopy(answer);
-	return { kind: "step", step: STEP_TWO.has(copy.key) ? 2 : 3, ...(route ? { route } : {}), copy, answer };
+/** Repair needs this helper's `remote fix` (feature-detected) and a plan with something in it. */
+export const repairAvailable = (fix?: RemoteFixAnswer): boolean =>
+	fix?.available === true && (fix.actions?.length ?? 0) > 0;
+
+function step(answer: RemoteAnswer, input: FlowInput, route?: ChosenRoute): Extract<FlowScreen, { kind: "step" }> {
+	let copy: RemoteStepCopy & { key: string } = stepCopy(answer);
+	if (copy.key === "funnel_not_allowed" && input.funnelGaveUp)
+		copy = { key: "funnel_gave_up", ...STEP_COPY.funnel_gave_up };
+	// A button with nothing behind it is not drawn: Repair needs `remote fix` and a plan.
+	if (copy.action?.kind === "repair" && !repairAvailable(input.fix)) {
+		const { action: _drop, ...rest } = copy;
+		copy = rest;
+	}
+	const saved = input.status?.route === "remote";
+	return {
+		kind: "step",
+		step: STEP_TWO.has(copy.key) ? 2 : 3,
+		...(route ? { route } : {}),
+		copy,
+		answer,
+		chooseAgain: !saved && route === "tailscale" && copy.key !== "turning_on",
+		useCloudflare: saved && route === "tailscale" && copy.action?.kind !== "use_cloudflare",
+	};
+}
+
+function result(input: FlowInput, connectorUrl: string, answer?: RemoteAnswer): FlowScreen {
+	// The newest checks speak; before any arrive, the answer's own (or an older helper's bare dns code) does.
+	const checks = input.checks ?? answer?.checks;
+	const failed = realFailures(checks);
+	const waiting = !failed.length && (waitingChecks(checks) || (!checks?.length && answer?.code === "dns"));
+	const head: ResultHead = failed.length
+		? "check_failed"
+		: waiting
+			? "on_waiting"
+			: answer?.state === "no_browser_connected"
+				? "no_browser_connected"
+				: "on";
+	return {
+		kind: "result",
+		connectorUrl,
+		...(answer ? { answer } : {}),
+		head,
+		waiting,
+		repair: failed.length > 0 && repairAvailable(input.fix),
+		noPasscode: input.status?.passcodeSet === false,
+	};
 }
 
 /** Recommended: Tailscale when it is installed here (no domain needed). Nothing is pressed on the person otherwise. */
@@ -72,26 +157,23 @@ export function flowScreen(input: FlowInput): FlowScreen {
 	const { status, remote, chosen, run, busy } = input;
 	if (!status) return { kind: "loading" };
 	if (!remoteFlowFor(status)) return { kind: "other" };
-	if (busy === "setup") return step({ state: "turning_on", message: "" }, "tailscale");
+	if (busy === "setup") return step({ state: "turning_on", message: "" }, input, "tailscale");
 	if (busy === "tunnel") return { kind: "cloudflare", step: 3 };
-	// A run that just turned on speaks for itself until the status catches up.
-	if (isOn(run) && run?.connectorUrl) return { kind: "result", connectorUrl: run.connectorUrl, answer: run };
+	// A run that turned on (a new name still being published included) speaks for itself until the status catches up.
+	if (isOn(run) && run?.connectorUrl) return result(input, run.connectorUrl, run);
 	if (status.route === "remote" && status.publicUrl) {
 		// "Use Cloudflare instead" on a Funnel route: the Cloudflare form, until it turns on or the person goes back.
 		if (chosen === "cloudflare" && routeOf(status) !== "cloudflare") return { kind: "cloudflare", step: 3 };
-		// Set up. Something about Tailscale or cloudflared itself comes first; then the last run's refusal (Funnel not allowed
-		// yet carries the page to open); else the result, with what was last found from outside.
-		if (
-			remote &&
-			BLOCKING.has(remote.state) &&
-			!(run && run.state === "funnel_not_allowed" && remote.state === "funnel_closed")
-		)
-			return step(remote, routeOf(status));
-		if (run && !isOn(run)) return step(run, routeOf(status));
-		return { kind: "result", connectorUrl: `${status.publicUrl}/mcp`, ...(remote ? { answer: remote } : {}) };
+		// Set up. Something about Tailscale or cloudflared itself comes first; then the last run's answer (Funnel not allowed
+		// yet carries the page to open, a retry's operator refusal its command); else the result, with what was last found from
+		// outside. funnel_closed is only what a newer run is trying to fix, so any run that isn't on comes ahead of it.
+		if (remote && BLOCKING.has(remote.state) && !(run && !isOn(run) && remote.state === "funnel_closed"))
+			return step(remote, input, routeOf(status));
+		if (run && !isOn(run)) return step(run, input, routeOf(status));
+		return result(input, `${status.publicUrl}/mcp`, remote);
 	}
 	// Nothing set up yet.
-	if (run && !isOn(run)) return step(run, chosen);
+	if (run && !isOn(run)) return step(run, input, chosen);
 	if (!chosen)
 		return {
 			kind: "choose",
@@ -100,7 +182,7 @@ export function flowScreen(input: FlowInput): FlowScreen {
 		};
 	if (chosen === "cloudflare") return { kind: "cloudflare", step: 3 };
 	if (!remote) return { kind: "loading" };
-	return step(remote, "tailscale");
+	return step(remote, input, "tailscale");
 }
 
 const routeOf = (status: ConnectStatus): ChosenRoute | undefined =>
@@ -118,11 +200,8 @@ export const DNS_POLL_MS = 30_000;
 
 export function pollFor(screen: FlowScreen, input: FlowInput): Poll | undefined {
 	if (screen.kind === "choose") return { method: "remoteState", everyMs: STATE_POLL_MS };
-	if (screen.kind === "result") {
-		const code = screen.answer?.code;
-		// A new address takes minutes to reach public DNS: check again by itself until it answers.
-		return code === "dns" ? { method: "remoteTest", everyMs: DNS_POLL_MS } : undefined;
-	}
+	// A new address takes minutes to reach public DNS, and a new tunnel a minute to connect: check again until it answers.
+	if (screen.kind === "result") return screen.waiting ? { method: "remoteTest", everyMs: DNS_POLL_MS } : undefined;
 	if (screen.kind !== "step" || input.busy) return undefined;
 	const key = screen.copy.key;
 	// Allowing Funnel (or making the user Tailscale's operator) happens in Tailscale; opening Funnel again is how to see it worked.
@@ -153,6 +232,16 @@ export function settleRun(
 	)
 		return undefined;
 	return run;
+}
+
+/**
+ * The run answer to keep once a `remoteTest` answers. A run that stopped on a check (dns, or a failed check) is over once a
+ * later test says the route is on, so the step can't outlive what it was about (first-F1). Anything else is the person's.
+ */
+export function settleRunAfterTest(run: RemoteAnswer | undefined, test: RemoteAnswer): RemoteAnswer | undefined {
+	if (!run || isOn(run) || !isOn(test)) return run;
+	const k = copyKey(run);
+	return k === "dns" || k === "check_failed" ? undefined : run;
 }
 
 /** Two answers draw the same: a poll that brings nothing new must not touch the screen (the side panel jitter, PR 117). */

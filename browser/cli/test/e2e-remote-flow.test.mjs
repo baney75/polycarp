@@ -43,7 +43,8 @@ before(async () => {
 			const routes = { tailscale: { installed: true, signedIn: false }, cloudflare: { installed: false, signedIn: false } };
 			const publicUrl = "https://laptop.tail1a2b.ts.net:8443";
 			const okChecks = ["dns", "tls", "resource_metadata", "auth_metadata", "auth_challenge", "streaming"].map((name) => ({ name, status: "ok", detail: "fine" }));
-			const st = { route: "none", stateCalls: 0, funnelCalls: 0, calls: [] };
+			const dnsPending = [{ name: "dns", status: "fail", detail: "laptop.tail1a2b.ts.net has no public address yet.", pending: true }];
+			const st = { route: "none", stateCalls: 0, funnelCalls: 0, testCalls: 0, calls: [] };
 			globalThis.__helper = st;
 			const scenario = () => globalThis.__scenario ?? "choose";
 			const answer = (method) => {
@@ -59,22 +60,28 @@ before(async () => {
 						if (sc === "repair" || sc === "norepair") return { state: "on", message: "Connector ready.", route: "funnel", connectorUrl: `${publicUrl}/mcp` };
 						if (sc === "advance" && st.stateCalls > 2) return { state: "ready", message: "Tailscale is ready.", routes: { ...routes, tailscale: { installed: true, signedIn: true } } };
 						if (sc === "funnel") return st.route === "funnel" ? { state: "funnel_closed", message: "Funnel is closed.", route: "funnel" } : { state: "ready", message: "Tailscale is ready.", routes: { ...routes, tailscale: { installed: true, signedIn: true } } };
+						if (sc === "dns") return st.route === "funnel" ? { state: "on", message: "Remote access is on.", route: "funnel", connectorUrl: `${publicUrl}/mcp` } : { state: "ready", message: "Tailscale is ready.", routes: { ...routes, tailscale: { installed: true, signedIn: true } } };
 						return { state: "tailscale_signed_out", message: "Tailscale is installed but signed out.", next: { kind: "sign_in", command: "tailscale up" }, routes };
 					case "remoteSetup":
 						st.route = "funnel";
+						// A first Turn on with a brand-new name: on, public DNS not there yet, and the press's code.
+						if (sc === "dns") return { state: "on", message: "Connector ready.", route: "funnel", connectorUrl: `${publicUrl}/mcp`, checks: dnsPending, connectCode: CODE, connectCodeExpiresAt: Date.now() + 10 * 60_000 };
 						return { state: "funnel_not_allowed", message: "Funnel isn't enabled for this tailnet yet.", route: "funnel", connectorUrl: `${publicUrl}/mcp`, next: { kind: "open_page", url: "https://login.tailscale.com/f/funnel?node=nX7" } };
 					case "remoteFunnel":
 						st.funnelCalls++;
 						if (st.funnelCalls < 2) return { state: "funnel_not_allowed", message: "Funnel isn't enabled for this tailnet yet.", route: "funnel", connectorUrl: `${publicUrl}/mcp`, next: { kind: "open_page", url: "https://login.tailscale.com/f/funnel?node=nX7" } };
-						return { state: "on", message: "Connector ready.", route: "funnel", connectorUrl: `${publicUrl}/mcp`, checks: okChecks, connectCode: CODE, connectCodeExpiresAt: Date.now() + 10 * 60_000 };
+						// The retry carries no gesture, so it never brings a code (second-N2).
+						return { state: "on", message: "Connector ready.", route: "funnel", connectorUrl: `${publicUrl}/mcp`, checks: okChecks };
 					case "remoteTest":
+						st.testCalls++;
+						if (sc === "dns" && st.testCalls < 2) return { state: "problem", code: "dns", message: "dns: no address yet", route: "funnel", connectorUrl: `${publicUrl}/mcp`, checks: dnsPending };
 						if (sc === "repair" || sc === "norepair") {
 							const checks = okChecks.map((c) => (c.name === "tls" ? { ...c, status: "fail", detail: "The certificate for laptop.tail1a2b.ts.net expired." } : c));
 							return { state: "problem", code: "tls", message: "tls: certificate expired", route: "funnel", connectorUrl: `${publicUrl}/mcp`, checks };
 						}
 						return { state: "on", message: "Reachable.", route: "funnel", connectorUrl: `${publicUrl}/mcp`, checks: okChecks };
 					case "remoteFixPlan":
-						if (sc === "repair") return { available: true, ok: true, state: "problem", code: "fix_pending", message: "Would renew the certificate.", actions: [{ kind: "serve", what: "Restart Tailscale serve", status: "planned" }] };
+						if (sc === "repair" || sc === "dns") return { available: true, ok: true, state: "problem", code: "fix_pending", message: "Would renew the certificate.", actions: [{ kind: "serve", what: "Restart Tailscale serve", status: "planned" }] };
 						throw { code: "bad_params", message: 'Unknown method "remoteFixPlan".' };
 					case "approvalCode":
 						return { code: "TK-9PQM-4RTX", expiresAt: Date.now() + 10 * 60_000, connectorUrl: `${publicUrl}/mcp` };
@@ -188,7 +195,13 @@ for (const theme of ["light", "dark"]) {
 			await page.locator("[data-remote-result]").waitFor({ timeout: 20_000 });
 			const helper = await page.evaluate(() => globalThis.__helper.calls);
 			assert.ok(helper.filter((m) => m === "remoteFunnel").length >= 2, helper.join(","));
-			assert.equal(await page.locator("[data-connect-code]").textContent(), CODE);
+			// The retry made no code: the result asks for a press, and New code is the main button.
+			assert.equal(await page.locator("[data-connect-code]").textContent(), "----");
+			assert.match(await page.locator("[data-code-note]").textContent(), /Press New code/);
+			assert.ok(!helper.includes("approvalCode"), "a code was asked for without a press");
+			await shot(page, `05-result-no-code-${theme}`);
+			await page.getByRole("button", { name: "New code", exact: true }).click();
+			await page.locator("[data-connect-code]", { hasText: "TK-9PQM-4RTX" }).waitFor();
 			assert.match(await page.locator('[role="timer"]').textContent(), /Expires in (9:5\d|10:00)/);
 			assert.deepEqual(await page.locator("[data-assistant]").evaluateAll((els) => els.map((e) => e.dataset.assistant)), ["claude", "chatgpt", "grok"]);
 			assert.match(await page.locator('[data-copy="address"] code').textContent(), /^https:\/\/laptop\.tail1a2b\.ts\.net:8443\/mcp$/);
@@ -203,10 +216,36 @@ for (const theme of ["light", "dark"]) {
 			assert.deepEqual(await where(), first, "the result moved while it polled");
 			// The code reached no storage.
 			const stored = await page.evaluate(async () => JSON.stringify([await chrome.storage.local.get(null), await chrome.storage.session?.get(null), { ...localStorage }, { ...sessionStorage }]));
-			assert.ok(!stored.includes(CODE), "the connect code was stored");
-			// New code replaces it.
-			await page.getByRole("button", { name: "New code", exact: true }).click();
-			await page.locator("[data-connect-code]", { hasText: "TK-9PQM-4RTX" }).waitFor();
+			assert.ok(!stored.includes("TK-9PQM-4RTX"), "the connect code was stored");
+		} finally {
+			await page.close();
+		}
+	});
+
+	test(`a brand-new name: on at once with the code, waiting for DNS with no Repair, then clear by itself (${theme})`, async () => {
+		const page = await connect("dns", theme);
+		try {
+			await page.locator('[data-route="tailscale"]').click();
+			await page.locator('[data-remote-step="ready"]').waitFor();
+			await page.getByRole("button", { name: "Turn on", exact: true }).click();
+			await page.locator("[data-remote-result]").waitFor({ timeout: 10_000 });
+			assert.match(await page.locator("[data-result-title]").textContent(), /still being published/);
+			assert.match(await page.locator("[data-remote-result] [data-remote-wait]").textContent(), /checks again by itself/);
+			assert.equal(await page.locator("[data-connect-code]").textContent(), CODE);
+			assert.equal(await page.locator('[data-check="dns"]').getAttribute("data-status"), "waiting");
+			assert.match(await page.locator('[data-check="dns"]').textContent(), /Waiting/);
+			assert.equal(await page.getByRole("button", { name: "Repair" }).count(), 0, "Repair showed for a pending check");
+			const asked = await page.evaluate(() => globalThis.__helper.calls);
+			assert.ok(!asked.includes("remoteFixPlan"), "a pending check asked what Repair would do");
+			await shot(page, `09-dns-waiting-${theme}`);
+			// The first test still waits; the panel tests again 30 seconds on by itself, the name answers, and the line clears.
+			await page.locator("[data-checks] summary", { hasText: "Every check passed" }).waitFor({ timeout: 45_000 });
+			assert.match(await page.locator("[data-result-title]").textContent(), /On: add Polycarp to an assistant/);
+			assert.equal(await page.locator("[data-remote-result] [data-remote-wait]").count(), 0);
+			assert.equal(await page.locator("[data-connect-code]").textContent(), CODE);
+			await shot(page, `10-dns-cleared-${theme}`);
+			const tests = (await page.evaluate(() => globalThis.__helper.calls)).filter((m) => m === "remoteTest").length;
+			assert.ok(tests >= 2, `checked from outside ${tests} time(s); the still-pending answer should have been followed by another`);
 		} finally {
 			await page.close();
 		}

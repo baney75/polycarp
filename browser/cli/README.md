@@ -58,6 +58,10 @@ it needs no extra step. Reload the extension once after the first install.
 | `tabkyra token create <name> --scope a,b` | a scoped, revocable token, shown once (`token list`, `token revoke <id\|name>`, `token scopes`) |
 | `tabkyra tunnel tailscale [--port N] [--public] [--off]` | reach `serve` over HTTPS through your tailnet (`--public` uses Funnel) |
 | `tabkyra tunnel cloudflare [--port N] [--off]` | reach `serve` through a cloudflared quick tunnel |
+| `tabkyra remote setup [--tailscale\|--cloudflare [name]\|--public-url https://host]` | connect claude.ai, ChatGPT and grok.com in one command, then prove it from outside ([docs/remote.md](../docs/remote.md)) |
+| `tabkyra remote status [--json]` | fast checks from this computer |
+| `tabkyra remote test [--json]` | what an assistant sees from outside: public DNS, TLS, OAuth metadata, the sign-in challenge and a streaming probe |
+| `tabkyra remote fix [--yes] [--dry-run] [--json]` | repair what test or status found, one step at a time, asking first |
 | `tabkyra update [--check] [--rollback] [--channel stable\|nightly]` | install the latest signed release ([docs/updates.md](../docs/updates.md)) |
 | `tabkyra completion zsh\|bash\|fish` | shell completions for commands, subcommands and flags |
 | `tabkyra version [--json]` | the CLI's version, which is the extension's (`static/manifest.chrome.json`) |
@@ -70,7 +74,8 @@ always prints JSON.
 Exit codes, for every command: **0** success; **1** failed, not connected, or nothing found
 (the message says the next step); **2** usage error (an unknown command, option or
 argument). `update --check` exits 100 when an update exists; `library add` exits 3 for a
-retracted source and 4 when the retraction check couldn't finish.
+retracted source and 4 when the retraction check couldn't finish. `remote setup` and `remote fix` exit 3 when a
+person has to act, and `remote test` exits 3 when nothing is set up.
 
 ### Shell completions
 

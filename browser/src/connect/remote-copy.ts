@@ -44,6 +44,7 @@ export const ROUTE_COPY = {
 	installed: "Installed, not signed in",
 	missing: "Not on this computer yet",
 	chooseAgain: "Choose another way",
+	useCloudflareInstead: "Use Cloudflare instead",
 } as const;
 
 /** The route card's status line, from `routes` in the helper's status. */
@@ -72,7 +73,7 @@ export const STEP_COPY = {
 		waits: true,
 	},
 	tailnet_lock: {
-		title: "Tailscale Funnel won't work on this network",
+		title: "Funnel won't work on this tailnet",
 		body: "Your tailnet has Tailnet Lock turned on, and Funnel doesn't work with it. Nothing was changed. Use Cloudflare instead; turning Tailnet Lock off is your decision.",
 		action: { kind: "use_cloudflare", label: "Use Cloudflare" },
 	},
@@ -100,6 +101,12 @@ export const STEP_COPY = {
 		body: "Funnel is the Tailscale setting that lets assistants reach this computer. On Tailscale's page, press the button that enables it. This page moves on by itself once it's allowed.",
 		action: { kind: "open_url", label: "Open Tailscale's page" },
 		waits: true,
+	},
+	/** The surface's own, not the helper's: the ten-minute Funnel retry stopped, so the button checks again. */
+	funnel_gave_up: {
+		title: "Allow Funnel in Tailscale",
+		body: "This page stopped checking after 10 minutes. Once Funnel is allowed on Tailscale's page, press Check again.",
+		action: { kind: "open_funnel", label: "Check again" },
 	},
 	funnel_closed: {
 		title: "Funnel is closed in Tailscale",
@@ -205,6 +212,11 @@ export const STEP_COPY = {
 		body: "The connector answers, but an assistant may not be able to use it. The failed check says why.",
 		action: { kind: "repair", label: "Repair" },
 	},
+	/** The result while a pending check waits: a new name not published yet, or a tunnel still connecting. */
+	on_waiting: {
+		title: "On: the address is still being published",
+		body: "A new address takes a few minutes to reach the internet. This page checks again by itself; add the assistant once it passes.",
+	},
 	on: {
 		title: "On: add Polycarp to an assistant",
 		body: "Assistants you approve can use this browser. Only approve a connection you just started.",
@@ -270,6 +282,8 @@ export function copyKey(answer: {
 			if (code === "cloudflare_name") return "cloudflare_name";
 			if (code === "cloudflare_dns") return next === "choose_name" ? "cloudflare_name_refused" : "cloudflare_dns";
 			if (code === "not_set_up") return "not_set_up";
+			// A new name not published yet is its own calm step that checks again, never a failed check with Repair.
+			if (code === "dns") return "dns";
 			if (code && CHECK_CODES.includes(code)) return "check_failed";
 			if (code && code in STEP_COPY && PROBLEM_CODES.includes(code)) return code as RemoteCopyKey;
 			return "unknown";
@@ -277,6 +291,40 @@ export function copyKey(answer: {
 		default:
 			return "unknown";
 	}
+}
+
+/** One outside check as both surfaces read it: `pending` marks a failure that waiting fixes. */
+export interface CheckLike {
+	name?: string;
+	status: string;
+	pending?: boolean;
+}
+
+/** The failures waiting won't fix. These, and only these, are "failed" and can offer Repair. */
+export function realFailures<T extends CheckLike>(checks: readonly T[] | undefined): T[] {
+	return (checks ?? []).filter((c) => c.status === "fail" && c.pending !== true);
+}
+
+/** Something failed, and every failure is one that waiting fixes: the screen says it is waiting and checks again by itself. */
+export function waitingChecks(checks: readonly CheckLike[] | undefined): boolean {
+	const failed = (checks ?? []).filter((c) => c.status === "fail");
+	return failed.length > 0 && failed.every((c) => c.pending === true);
+}
+
+/**
+ * The route is on, as a person should read it: the helper says on, or it saved an address and the only failures are ones that
+ * waiting fixes (setup's own rule), or an older helper's bare `dns` code with the address. The host mints a pressed Turn on's
+ * code by this too.
+ */
+export function answerOn(answer: {
+	state: string;
+	code?: string;
+	connectorUrl?: string;
+	checks?: readonly CheckLike[];
+}): boolean {
+	if (answer.state === "on" || answer.state === "no_browser_connected") return true;
+	if (answer.state !== "problem" || !answer.connectorUrl) return false;
+	return answer.checks?.length ? waitingChecks(answer.checks) : answer.code === "dns";
 }
 
 /** The `problem` codes that have an entry of their own. */
@@ -341,6 +389,8 @@ export const RESULT_COPY = {
 	passcodeNote:
 		"Shown once. Use it when an assistant you already approved asks again. Keep it in a password manager, but not one the browser Polycarp drives can fill.",
 	noPasscode: "No passcode was made here. To approve an assistant again later, make a new connect code.",
+	codeNone: "Press New code to make the code for your assistant.",
+	checksWaiting: "Waiting for the address to answer.",
 	checksTitle: "Checked from the internet",
 	checksPassed: "Every check passed.",
 	checksRunning: "Checking from the internet...",

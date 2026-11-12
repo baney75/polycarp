@@ -1043,12 +1043,21 @@ Agents could not attach a file to a form or keep a file a page offers. One tool,
   where it can be shown outside the browser (the terminal and the Mac app).
 - **Funnel approval advances by retrying Funnel.** Status can't see Funnel being allowed (it stays `funnel_closed` until
   `tailscale funnel` runs again), so the panel calls `remoteFunnel` every 5 seconds for up to 10 minutes. It reopens only
-  the Funnel `remote.json` already names; it needs no click because it changes nothing the person didn't set up.
+  the Funnel `remote.json` already names; it needs no click because it changes nothing the person didn't set up. For the
+  same reason it never mints a connect code (review round 1, second-N2): a code is made only by a method that needs a
+  gesture (Turn on, Cloudflare's Turn on, New code). After the retry turns Funnel on, the result says to press New code.
+  The gesture token lasts 5 seconds, so a retry minutes later can't carry one; one press is the cost.
+- **A pending check is waiting, not failed.** A failure `remote test` marks `pending` (a new name not in public DNS yet,
+  a tunnel still connecting, a resolver that can't be reached) means the route is on: the panel shows the result with
+  the address, a code when the person pressed Turn on, and "the address is still being published", and runs the outside
+  checks again every 30 seconds until they pass. Only a failure that isn't pending is "failed" and can offer Repair. A
+  Cloudflare setup whose last check times out after the tunnel was made is the same case, not a failed setup.
 - **Repair is feature-detected.** The host runs `remote fix --json --dry-run`; exit 2 or no `actions` array means this
-  helper has none, and the button stays hidden.
+  helper has none, and the button stays hidden. Repair also stays hidden when the plan's `actions` is empty.
 - **The Mac app retries Funnel by running setup again, every 15 seconds.** It has no `remoteFunnel` call, and setup run a
   second time makes no new passcode (one exists) and reopens only what `remote.json` names. 15 seconds, not 5, because a
-  setup run costs more than opening Funnel. The same 10-minute limit, then one Turn on button.
+  setup run costs more than opening Funnel. The same 10-minute limit, then one Check again button. The retry runs setup
+  without `--connect-code`, so, as in the panel, only a press (Turn on, Check again, New code) makes a code.
 - **`launcher` has a Mac entry of its own (`launcher_app`).** The terminal's remedy is `polycarp install`; the app's is
   Connect in the Browsers section, which installs the launcher. The entry lives in the shared table, so the words still
   come from one place.

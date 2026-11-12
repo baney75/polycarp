@@ -48,6 +48,7 @@ import { loadRemoteConfig, remoteFile } from "./remote-setup.ts";
 import { setupTunnel, type TunnelHooks, TunnelError, type TunnelProgress } from "./tunnel-setup.ts";
 import { remoteFix, remoteOpenFunnel, remoteSetupTailscale, remoteState, remoteTest, type FunnelSeam, type RunSelf } from "./remote-panel.ts";
 import type { RemoteAnswer, RemoteFixAnswer, TunnelResult } from "../../src/connect/types.ts";
+import { answerOn } from "../../src/connect/remote-copy.ts";
 import { isAccent, isMode, loadPolycarpPayload, loadTheme, polycarpRefusal, PRESETS, saveTheme } from "./theme.ts";
 
 // ---------- parsing ----------
@@ -387,19 +388,22 @@ export class ConnectService {
 		this.settingUp = true;
 		try {
 			const answer = await (this.remote.setup ?? remoteSetupTailscale)();
-			return answer.state === "on" ? { ...answer, ...this.resultCode() } : answer;
+			// The person pressed Turn on, so a route that is on gets its code, even while a new name is still being published.
+			return answerOn(answer) ? { ...answer, ...this.resultCode() } : answer;
 		} finally {
 			this.settingUp = false;
 		}
 	}
 
-	/** Open the saved Funnel again: the panel calls it every few seconds while it waits for the person to allow Funnel. */
+	/**
+	 * Open the saved Funnel again: the panel calls it every few seconds while it waits for the person to allow Funnel. No gesture
+	 * comes with a retry, so it never mints a connect code (second-N2): the result screen asks for one through New code.
+	 */
 	private async remoteFunnel(): Promise<RemoteAnswer> {
 		if (this.opening || this.settingUp) throw new ConnectError("busy", "Polycarp is already opening Funnel.");
 		this.opening = true;
 		try {
-			const answer = await remoteOpenFunnel(this.remote.funnel);
-			return answer.state === "on" ? { ...answer, ...this.resultCode() } : answer;
+			return await remoteOpenFunnel(this.remote.funnel);
 		} finally {
 			this.opening = false;
 		}

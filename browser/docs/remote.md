@@ -6,50 +6,135 @@ through your own free account with Tailscale or Cloudflare: no account with us, 
 also run as `polycarp browser`, for example `polycarp browser remote setup`.
 
 **In the Polycarp app, use Settings > Browser > "Use Polycarp from Claude, ChatGPT and Grok".** It
-walks you through it one step at a time. First pick Tailscale or Cloudflare; each has a button to create
-a free account if you don't have one. Then get the tool and sign in, then Turn on. If Tailscale needs
-you to allow Funnel for your computer, Polycarp asks you to after you click Turn on, and you try again.
-When it's on, the window shows the address and a passcode (once) and says how to add them in each
-assistant. Behind the buttons it runs the commands below. The rest of this page is the same thing for
-the terminal. One command sets it up.
+walks you through the same steps with buttons. The rest of this page is the terminal.
+
+## Quick start
+
+One command:
 
 ```bash
 polycarp browser remote setup
 ```
 
-It turns on Tailscale Funnel for this computer, sets an approval passcode (shown once), writes
-`remote.json` and installs a user service that keeps `polycarp browser serve` running. When it's done it prints:
+What you will see, in order:
 
-- the connector URL, `https://<this-computer>.<your-tailnet>.ts.net:8443/mcp`;
-- a one-time connect code (`TK-XXXX-XXXX`, good once for 10 minutes). Type it on the approval page when you add
-  Polycarp to an assistant for the first time. `polycarp browser token approval-code` makes another;
-- the passcode, only in the run that made it. It re-approves an assistant you already approved; it can't approve a new one;
-- where to add the connector in claude.ai, ChatGPT and grok.com, and the status command.
+1. If both Tailscale and Cloudflare are ready, or neither is, it asks which one. Tailscale needs no domain, so pick it
+   if you're unsure.
+2. A line for each thing it waits on, if any: installing Tailscale (with the link), signing in, or allowing Funnel on
+   Tailscale's page, which it opens for you. Do that step; setup carries on by itself. Ctrl-C stops it, and running it
+   again continues from where it was.
+3. `From the internet, as an assistant sees it:` and one line per check (public DNS, the certificate, the OAuth
+   metadata, the sign-in challenge, a streaming probe). All ok means an assistant can connect now. A brand-new name
+   can take a few minutes to reach public DNS; then run `polycarp browser remote test` again in a few minutes.
+4. The connector URL, `https://<this-computer>.<your-tailnet>.ts.net:8443/mcp`.
+5. A connect code (`TK-XXXX-XXXX`). It works once, for 10 minutes. `polycarp browser token approval-code` makes another.
+6. The passcode, only in the run that made it. Keep it: it re-approves an assistant you already approved.
+
+Then add the connector URL in each assistant you use:
+
+- **claude.ai**: Settings > Connectors > Add custom connector. Paste the URL, then Add.
+- **ChatGPT**: Settings > Apps & Connectors, turn on developer mode, then Create. Paste the URL and choose OAuth.
+- **grok.com**: grok.com/connectors > New Connector > Custom. Paste the URL.
+
+Each opens Polycarp's approval page. Check the name, tick the permissions, type the connect code and press Allow.
+
+To prove it works from outside at any time, and to repair it:
+
+```bash
+polycarp browser remote test   # what an assistant sees: DNS, TLS, OAuth, sign-in, streaming
+polycarp browser remote fix    # repairs what test or status found, asking before each step
+```
+
+## Mac, Linux and Windows
+
+**Mac.** Install Tailscale from the App Store or tailscale.com and sign in; setup finds the app's own `tailscale` at
+`/Applications/Tailscale.app/Contents/MacOS/Tailscale` when it isn't on PATH. Services run under launchd
+(`~/Library/LaunchAgents/com.polycarp.serve.plist`), and the Mac must stay on and awake.
+
+**Linux.** Two one-time steps that Polycarp prints and never runs for you, because both need root or a session change:
+
+```bash
+sudo tailscale set --operator=$USER   # lets your user open Funnel
+loginctl enable-linger $USER          # keeps your user services running after you log out
+```
+
+Services run as systemd user units (`~/.config/systemd/user/polycarp-serve.service`). `remote status` and `remote fix`
+warn when either step is missing.
+
+**Windows.** Both routes work without administrator rights. Each service is a Task Scheduler task for your account,
+and its log is a file in the config folder ([Windows](#windows)). Task Scheduler words a task's status in the system's
+language, so `remote status` and `remote fix` treat an installed tunnel task as running; `remote test` says whether it answers.
+
+## Troubleshooting
+
+Run `polycarp browser remote fix` first: it repairs what it can, one step at a time, and names the rest. `remote test`
+and `remote status --json` give the `state` or check name in the first column.
+
+| State or check | What it means | Do this |
+| --- | --- | --- |
+| `not_set_up` | Nothing is set up on this computer. | `remote setup` |
+| `tailscale_missing` | Tailscale isn't installed. | Install it from tailscale.com, then `remote setup`. |
+| `tailscale_signed_out` | Tailscale isn't connected. | Open Tailscale and sign in (`tailscale up` on Linux). |
+| `tailnet_lock` | Funnel doesn't work with Tailnet Lock on. | Use Cloudflare: `remote setup --cloudflare <name>`. |
+| `funnel_not_allowed` | Your tailnet hasn't allowed Funnel for this computer. | Open the `adminUrl` page and allow it; setup waits. |
+| `funnel_closed` | Funnel was turned off for this address. | `remote fix` opens it again. |
+| `cloudflared_missing` | cloudflared is gone. | `remote fix` offers the pinned download. |
+| `port_busy` | Another program uses the local port or 8443. | Stop it, or `remote setup --port N`. |
+| `dns` | Public DNS has no public address (A or AAAA) for the name, or the lookup failed (SERVFAIL). | No address yet: wait a few minutes for a new name; else `remote fix`. A failed lookup: fix the name's DNS records or DNSSEC with your DNS provider. |
+| `tls` | The certificate isn't valid for the name, the port speaks plain HTTP, or nothing answers. | `remote fix`; on your own front door, a certificate for the name. |
+| `resource_metadata` | The public name reaches something that isn't this connector, or (`pending`) its tunnel or gateway answers 502, 503, 504, 521, 522, 523 or 530 or nothing: it hasn't connected yet. | A pending one: wait a minute, then `remote test`. Otherwise, or if it stays: `remote fix` (restarts `serve` and the tunnel; a renamed computer gets its new URL). |
+| `auth_metadata` | The OAuth server metadata names another address, or no authorization or token endpoint on this one. | `remote fix`. |
+| `auth_challenge` | `/mcp` doesn't answer a sign-in challenge. | `remote fix`. |
+| `streaming` | The stream's first bytes take over 5 seconds, so assistants time out. | Use Tailscale Funnel or a Cloudflare named tunnel, not a quick tunnel or a buffering proxy. |
+| `probe_cleanup` | `remote test` couldn't delete its probe token. It stops working by itself two minutes after it was made. | The `token revoke <id>` command in `next`. |
+| `passcode` | No passcode is set. | `polycarp browser token passcode` (shown once). |
+| `linger`, `tailscale user` | Linux one-time steps. | The command in [Mac, Linux and Windows](#mac-linux-and-windows). |
+
+`remote fix` restarts the `serve` and `cloudflared` services, opens Funnel, downloads cloudflared after you say yes, and
+rewrites `remote.json` when the computer was renamed. When the name changed it prints the old URL and the new one: add
+the new URL in each assistant; the old one no longer works. It never deletes or overwrites a DNS record, runs sudo,
+touches Tailnet Lock, turns a route off, revokes a token or connector, or makes a passcode. In a terminal it asks
+before each step; `--yes` skips the questions, `--dry-run` lists the steps and changes nothing, and with no terminal and
+no `--yes` it changes nothing and exits 3 with the list.
+
+## Check it
+
+```bash
+polycarp browser remote status   # fast checks from this computer
+polycarp browser remote test     # the proof, from outside
+```
+
+`remote status` checks `remote.json`, the passcode, whether `serve` answers on this computer, public DNS and a public
+fetch. From inside your own tailnet a ts.net name answers even when Funnel isn't reaching the internet, so status adds a
+`public test` line pointing to `remote test` when its fetch could have stayed inside the tailnet.
+
+`remote test` asks public DNS (DNS over HTTPS) for the name and connects to that public address with the name as TLS SNI
+and Host, as an assistant does. It checks the certificate, `/.well-known/oauth-protected-resource/mcp`, the
+authorization server metadata (its issuer, and an authorization and token endpoint, plus any registration endpoint, on
+the connector's own address), that `POST /mcp` without a token answers 401 with a `WWW-Authenticate` naming the
+metadata, and a streaming probe: an authenticated request whose event stream must start within 5 seconds. The probe
+uses a token made for it alone, with the narrowest scope (`skills.read`, no browser access) and a two-minute expiry that
+every token check enforces, and deleted when the probe ends, also on Ctrl-C. If the delete fails, the run fails with a
+`probe_cleanup` check naming the token's id; the token still stops working at its expiry. Its secret is never printed,
+logged or in `--json`. Every request has an absolute deadline, so a proxy that trickles bytes can't stretch it. `remote setup` runs the same checks at its end. The
+computer must stay on, awake and signed in to the browser with Polycarp loaded.
+
+## Setup in detail
+
+`remote setup` turns on Tailscale Funnel for this computer, sets an approval passcode (shown once), writes
+`remote.json` and installs a user service that keeps `polycarp browser serve` running.
 
 In a terminal it waits instead of stopping. With no route flag it uses whichever of Tailscale and Cloudflare is ready,
 and asks when both or neither is. If Tailscale isn't installed it prints the download link and waits; if it's signed
 out it waits for the sign-in; if Funnel isn't allowed yet it opens Tailscale's page, says what to click and tries again
-every 5 seconds for up to 10 minutes; if `polycarp browser install` hasn't run it runs it (it only writes the launcher
-and the native host files, and skips what's current). Each wait prints one line naming what it waits for. Ctrl-C stops
-it, and running setup again continues from where it was. `--no-wait` makes it stop and say what to do instead, and
+every 5 seconds for up to 10 minutes; if the service has no launcher yet it writes one (only the launcher; run
+`polycarp browser install` yourself to register browsers). `--no-wait` makes it stop and say what to do instead, and
 `--no-input` never asks a question (it needs `--tailscale`, `--cloudflare <name>` or `--public-url`). `--json`, or a
-run with no terminal, never waits or asks.
-
-Check it any time:
-
-```bash
-polycarp browser remote status
-```
-
-Each line is ok, warn or fail: `remote.json`, the passcode, whether `serve` answers on this
-computer, whether public DNS resolves the name to an address outside the tailnet, and whether
-the public URL answers. The DNS line matters: from inside your own tailnet, a ts.net name works
-even when Funnel isn't reaching the internet, so a passing public fetch alone can hide a broken
-Funnel. The computer must stay on, awake and signed in to the browser with Polycarp loaded.
+run with no terminal, never waits or asks. A connect code is made for a person at a terminal, or with `--connect-code`.
 
 ## Tailscale or Cloudflare
 
-Both are free and run on your own account. Polycarp never makes an account and doesn't install either tool.
+Both are free and run on your own account. Polycarp never makes an account. It installs neither tool, and downloads cloudflared only when you say yes.
 
 - **Tailscale** needs no domain, so it's the quickest. The address is `https://<computer>.<tailnet>.ts.net:8443`.
 - **Cloudflare** puts the address on a domain you have on your Cloudflare account, because a Cloudflare tunnel with a
@@ -64,10 +149,12 @@ polycarp browser remote setup --cloudflare polycarp.example.com
 
 `setup` makes a tunnel named `polycarp-<this computer>`, or reuses it, adds the DNS record and keeps both `serve` and
 `cloudflared` running as services. It never overwrites or deletes a DNS record: a name already in use is refused, in
-Cloudflare's own words. A sign-in covers one domain, so a name on another domain is refused too, and it says how to sign
-in for that one. Before it makes anything it asks public DNS which zone the name is in and refuses one that isn't on
-Cloudflare, and it remembers the zone your sign-in turned out to cover, so a later name outside it is refused with
-nothing made.
+Cloudflare's own words. Before it makes anything it asks public DNS which zone the name is in, and refuses a zone public
+DNS shows is served somewhere other than Cloudflare, or a name outside the zone an earlier sign-in proved. Polycarp never
+reads cloudflared's sign-in file, so with several zones on your account and no earlier setup it can't tell which one the
+sign-in covers. If Cloudflare then puts the record in another zone, setup stops, names the record it made, and says you
+can delete it in the Cloudflare dashboard (DNS, Records); Polycarp never deletes DNS records. It remembers the zone, so
+the next name outside it is refused with nothing made.
 
 In a terminal, `remote setup --cloudflare` does the rest inline: with no `cloudflared` it offers the download below
 (y/N; `--yes` accepts, and it never downloads without one of those), signs you in to Cloudflare and waits, asks for the
@@ -92,12 +179,15 @@ reaches a command line (the remote methods take no parameters, and the Cloudflar
    sign in, or "Turn on" for Cloudflare, which downloads cloudflared and opens Cloudflare's sign-in. It checks every
    3 seconds and moves on by itself.
 3. **Turn on.** If Tailscale hasn't allowed Funnel yet, the page opens Tailscale's page once and tries Funnel again every
-   5 seconds for up to 10 minutes; no "try again" press is needed.
+   5 seconds for up to 10 minutes; no "try again" press is needed. After 10 minutes it stops and shows "Check again".
 
 The result shows the connector URL, a one-time connect code with a 10-minute countdown and "New code", the steps for
 claude.ai, ChatGPT and grok.com (the same lines `remote setup` prints), and the checks from the internet
-(`remote test`). When a check fails and the helper has `remote fix`, a Repair button runs it; an older helper shows no
-button. The side panel never makes or shows a passcode: a new connect code approves an assistant again. The code lives
+(`remote test`). A code comes only from a press: Turn on makes one, and when the Funnel retry turned the route on by
+itself the result asks you to press New code. A brand-new name that public DNS doesn't have yet, or a tunnel still
+connecting, is a `pending` check: the result says the address is still being published and checks again every 30
+seconds until it passes. When a check fails for real and the helper's `remote fix` has something to do, a Repair button
+runs it; an older helper shows no button. The side panel never makes or shows a passcode: a new connect code approves an assistant again. The code lives
 only in the page's memory and is gone when Settings closes.
 
 The Mac app's Settings > Browser has the same three steps in the same words (they come from one table, held equal by
@@ -148,16 +238,51 @@ keep it. `token passcode --json` makes a new one. It mints no connect code unles
 `connectCode` (`TK-XXXX-XXXX`) and `connectCodeExpiresAt` (milliseconds since 1970, 10 minutes on). Neither is logged.
 
 `setup --json` also says what comes next in `next`: `{kind, url?, command?}`, where `kind` is `install` (with the
-download `url`), `sign_in` (with the `command`), `open_page` (`url`), `run_command` (`command`), `choose_name` (pick
+download `url`), `sign_in` (with the `command`), `open_page` (`url`), `run_command` (`command`; a `<name>` in it is yours to fill in, as in `install --browser <name>`), `choose_name` (pick
 another Cloudflare name) or, on `on`, `add_connector` (`url`, the connector URL). The exit code is 0 for `on`, 1 for a
 failure, 2 for a usage error and 3 when a person has to do something, which `next` names.
 `remote off --json` prints `{ok, message, notes}` with the same 0 or 1.
 
+`setup --json` ends with `checks`, the same list `remote test --json` gives (below). Only a failure marked `pending`
+(no public address yet, or nothing answering yet) is what a new name looks like for a few minutes; setup is then `on` and
+says to run `remote test` later. One kind of pending failure it waits out itself: the name resolves and has a certificate,
+but the tunnel or gateway in front of `serve` answers 502, 503, 504, 521, 522, 523 or 530, or nothing, as a Cloudflare
+tunnel does for a minute after its service starts. Setup asks again every 5 seconds for up to 5 minutes (one deadline with
+the wait for the name), and if the tunnel still hasn't connected it is a `problem` whose `code` is that check's name, with
+`next` `run_command` `remote fix` (exit 3). Any other failed check (a refused certificate, a 421, another connector's metadata, a
+held stream, no sign-in challenge) makes setup a `problem` whose `code` is that check's name, exit 1, with the saved
+`connectorUrl`, and `remote.json` is kept. Every failure after `remote.json` is saved carries `connectorUrl`. With `--connect-code`, a code that can't be made is a `problem` with `code`
+`connect_code`, the reason in `connectCodeProblem`, the `connectorUrl` and, when this run made it, the `passcode`; it exits
+1 and the route stays set up.
+
+`remote test --json` prints `{ok, state, code?, message, publicUrl, connectorUrl, checks}`. `state` is `on` when every
+check passes, else `problem` with `code` naming the first failed check. Each of `checks` is `{name, status, detail,
+next?, pending?}`: `status` is `ok`, `warn` or `fail`, `next` is the one thing to do after a failure, `pending` is true on
+a failure that waiting fixes (no public address yet, a refused connection, no route from this computer, a resolver's
+HTTP error, or a gateway status or no answer past TLS), and `name` is, in order, `dns`, `tls`, `resource_metadata`, `auth_metadata`,
+`auth_challenge`, `streaming` or `probe_cleanup` (only when the probe's token couldn't be deleted). Checks after a failed `dns` or
+`tls` don't run, and `streaming` runs only when `resource_metadata` passed. `remote fix --dry-run` always exits 0, even when
+a step only you can take blocks the rest; the JSON still names it. Nothing set up is `code` `not_set_up` with
+`next` `run_command`. Exit codes: 0 every check passed, 1 a check failed, 2 usage, 3 nothing is set up. No token is
+ever in it.
+
+`remote fix --json` prints `{ok, state, code?, message, next?, publicUrl, oldUrl?, newUrl?, actions, advice, checks?}`.
+Each of `actions` is `{kind, what, status, detail?}`; `kind` is one of `download_cloudflared`, `rename`,
+`restart_serve`, `restart_cloudflared` and `open_funnel` (they run in that order), and `status` is `planned`, `done`,
+`failed` or `declined`. `advice` lists steps only you can take, `{name, detail, command?}` (`passcode`, `linger`,
+`tailscale user`). `oldUrl` and `newUrl` are there after a `rename`: the connector moved, so the old URL no longer works.
+`checks` is the outside proof, run once nothing is left to repair. `code` `fix_pending` means repairs are listed and
+nothing was changed (`--dry-run`, which exits 0, or no terminal and no `--yes`, which exits 3). A step only you can take
+uses the same `state` values as status (`tailscale_signed_out`, `funnel_not_allowed` with `next` `open_page`, and so on)
+and exits 3. Exit codes: 0 ok, 1 a repair or a check failed, 2 usage, 3 a person has to act or nothing is set up.
+
 `code` says why when it matters. For `problem`: `launcher`, `hub`, `service`, `serve` (nothing answers
 on the local port, so nothing was turned on), `funnel` (Tailscale's own words are in `message`),
 `tailscale_operator` (Tailscale refused because your user isn't its operator; `next` has the command),
-`cloudflare_login`, `cloudflare_name` (no name was given), `cloudflare_zone` (the name's zone isn't on Cloudflare or
-isn't the one you signed in for; checked before any record is made), `cloudflare_dns`, `cloudflare_tunnel` or
+`cloudflare_login`, `cloudflare_name` (no name was given), `cloudflare_zone` (public DNS shows the name's zone served
+elsewhere, or it is outside the zone an earlier sign-in proved, both checked before any record is made; or Cloudflare
+put the record in another zone, which `message` names so you can delete it), `cloudflare_dns` (`next` `choose_name` only
+when the name is taken; any other cloudflared error has no `next`), `cloudflare_tunnel` or
 `config`. A failure after the passcode was made, such as a file that can't be written, is a `problem` with
 `code` `config`, `service` or `funnel`, and still carries the `passcode`. For `port_busy`: `tailscale_port` (a saved Tailscale setting already uses 8443) or
 `local_port` (a program on this computer uses the local port). A status read on the Funnel route

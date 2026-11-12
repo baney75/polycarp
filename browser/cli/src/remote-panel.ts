@@ -8,10 +8,9 @@
 import { execFile } from "node:child_process";
 import { cloudflaredBinary } from "./cloudflare.ts";
 import { cloudflaredAsset } from "./cloudflared-download.ts";
-import { passcodeSet } from "./oauth.ts";
 import { loadRemoteConfig, openFunnel, planFunnel, preflight, type RemoteConfig, remoteRoutes, remoteSetup, tailscaleReady } from "./remote-setup.ts";
 import { CLOUDFLARED_DOWNLOAD_URL, type RemoteNext, type RemoteState, type SetupReport, TAILSCALE_OPERATOR_FIX, tailscaleAccessDenied, tailscaleDownloadUrl } from "./remote-state.ts";
-import { answersFromOutside, publicChecks } from "./remote-test.ts";
+import { publicChecks, realFault } from "./remote-test.ts";
 import { COMMAND_NAME, selfExec, selfPrefix } from "./self.ts";
 import type { RemoteAnswer, RemoteCheckView, RemoteFixAnswer, RemoteNextView } from "../../src/connect/types.ts";
 
@@ -47,7 +46,14 @@ export function checkViews(checks: unknown): RemoteCheckView[] | undefined {
 		if (!c || typeof c !== "object") continue;
 		const x = c as Record<string, unknown>;
 		if (typeof x.name !== "string" || !["ok", "warn", "fail"].includes(x.status as string) || typeof x.detail !== "string") continue;
-		out.push({ name: cap(x.name, 40), status: x.status as RemoteCheckView["status"], detail: cap(x.detail, 400), ...(typeof x.next === "string" ? { next: cap(x.next, 400) } : {}) });
+		out.push({
+			name: cap(x.name, 40),
+			status: x.status as RemoteCheckView["status"],
+			detail: cap(x.detail, 400),
+			...(typeof x.next === "string" ? { next: cap(x.next, 400) } : {}),
+			// A failure that waiting fixes (a new name not published yet, a tunnel still connecting): the panel shows it as waiting.
+			...(x.status === "fail" && x.pending === true ? { pending: true } : {}),
+		});
 	}
 	return out;
 }
@@ -82,6 +88,14 @@ function routesView(routes: unknown): RemoteAnswer["routes"] {
 	return { tailscale: one(r.tailscale), cloudflare: one(r.cloudflare) };
 }
 
+/**
+ * remote.json that can't be read. The parser's words can quote the start of the file, so the panel gets a fixed sentence and
+ * `remote status` in a terminal says the rest.
+ */
+export function configProblem(_err: unknown): RemoteAnswer {
+	return remoteAnswer({ state: "problem", code: "config", message: `remote.json couldn't be read. Run ${COMMAND_NAME} remote status to see why.` });
+}
+
 /** What a person does next for a state the planner refused with, as `remote setup` says it. */
 function nextFor(state: RemoteState): RemoteNext | undefined {
 	if (state === "tailscale_missing") return { kind: "install", url: tailscaleDownloadUrl() };
@@ -105,15 +119,16 @@ export async function remoteState(): Promise<RemoteAnswer> {
 	try {
 		config = loadRemoteConfig();
 	} catch (err) {
-		return remoteAnswer({ state: "problem", code: "config", message: err instanceof Error ? err.message : String(err), routes: remoteRoutes() });
+		const routes = routesView(remoteRoutes());
+		return { ...configProblem(err), ...(routes ? { routes } : {}) };
 	}
 	const routes = remoteRoutes();
 	if (!config) {
 		const pf = await preflight();
 		const next = nextFor(pf.state);
-		return remoteAnswer({ ...pf, ...(next ? { next } : {}), routes, passcodeSet: passcodeSet() });
+		return remoteAnswer({ ...pf, ...(next ? { next } : {}), routes });
 	}
-	const base = { routes, route: config.route, connectorUrl: `${config.publicUrl}/mcp`, passcodeSet: passcodeSet() };
+	const base = { routes, route: config.route, connectorUrl: `${config.publicUrl}/mcp` };
 	if (config.route === "funnel") {
 		const ready = tailscaleReady();
 		if (!ready.ok) {
@@ -160,7 +175,7 @@ export interface FunnelSeam {
 export async function remoteOpenFunnel(seam: FunnelSeam = {}): Promise<RemoteAnswer> {
 	const config = (seam.load ?? loadRemoteConfig)();
 	if (!config || config.route !== "funnel") return remoteAnswer({ state: "problem", code: "not_set_up", message: "Funnel isn't this computer's route, so there is nothing to open.", next: { kind: "run_command", command: `${COMMAND_NAME} remote setup` } });
-	const base = { route: config.route, connectorUrl: `${config.publicUrl}/mcp`, passcodeSet: passcodeSet() };
+	const base = { route: config.route, connectorUrl: `${config.publicUrl}/mcp` };
 	const plan = (seam.plan ?? planFunnel)([config.port]);
 	if (!plan.ok) {
 		const next = nextFor(plan.state);
@@ -173,7 +188,9 @@ export async function remoteOpenFunnel(seam: FunnelSeam = {}): Promise<RemoteAns
 	}
 	if (opened.kind === "failed") return remoteAnswer({ ...base, state: "problem", code: "funnel", message: `tailscale funnel failed: ${opened.message}` });
 	const checks = await (seam.checks ?? publicChecks)(config.publicUrl);
-	const fault = answersFromOutside(checks) ? checks.find((x) => x.status === "fail") : undefined;
+	// Setup's rule: only a failure that waiting doesn't fix is a problem. A new name not published yet is on, with its pending
+	// check, and the panel checks again by itself.
+	const fault = realFault(checks);
 	if (fault) return remoteAnswer({ ...base, state: "problem", code: fault.name, message: `${fault.name} failed: ${fault.detail}`, checks });
 	return remoteAnswer({ ...base, state: "on", message: "Connector ready.", next: { kind: "add_connector", url: `${config.publicUrl}/mcp` }, checks });
 }

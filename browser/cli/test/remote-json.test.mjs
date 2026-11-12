@@ -3,7 +3,7 @@
 // a real service manager or ~/.config/tabkyra. Run with --experimental-strip-types (it imports src/remote-state.ts).
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { cloudflareAddress, completeFunnelAdminUrl, funnelAdminUrl, lingerFromLoginctl, operatorFromPrefs, REMOTE_STATES, setupExitCode, stateFromStatus, tailscaleAccessDenied, zoneFromSoa } from "../src/remote-state.ts";
+import { loadTs } from "./helpers/bundle-ts.mjs";
 import { ENABLE_URL, writeTailscaleStub } from "./helpers/tailscale-stub.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -306,8 +307,13 @@ test("remote setup --json with a service and no working launcher is a problem, n
 	const r = s.run(["remote", "setup", "--json"]);
 	assert.equal(r.code, 3);
 	assert.equal(r.json().state, "problem");
-	assert.match(r.json().message, /polycarp-browser install/);
+	assert.match(r.json().message, /polycarp-browser install --browser <name>/);
+	assert.match(r.json().message, /plain install registers every browser/, "it never sends the person to a step that registers every browser unsaid");
 	assert.equal(r.json().code, "launcher", "the app reads the code, not the sentence");
+	const next = r.json().next;
+	assert.equal(next.kind, "run_command");
+	assert.equal(next.command, "polycarp-browser install --browser <name>", "the command an app shows is the one the message names, never plain install");
+	assert.ok(r.json().message.includes(next.command));
 });
 
 // ---------- status once it's set up ----------
@@ -1136,10 +1142,14 @@ test("with --no-wait the same refusal exits 3 at once, and the JSON names the pa
  * A fake DNS-over-HTTPS server: every SOA question gets `primary` as example.com's primary name server (and `mailbox` as its
  * mailbox); an A question for the primary gets `nsAddress`, or no answer when it is empty.
  */
-async function fakeDoh(primary, { mailbox = "hostmaster.example.com.", nsAddress = "199.4.138.53" } = {}) {
+async function fakeDoh(primary, { mailbox = "hostmaster.example.com.", nsAddress = "199.4.138.53", ns = [] } = {}) {
 	const srv = createHttpServer((req, res) => {
 		const q = new URL(req.url, "http://x").searchParams;
 		res.setHeader("content-type", "application/dns-json");
+		if (q.get("type") === "NS") {
+			res.end(JSON.stringify({ Status: 0, Answer: q.get("name") === "example.com" ? ns.map((data) => ({ name: "example.com.", type: 2, data })) : [] }));
+			return;
+		}
 		if (q.get("type") === "A") {
 			const name = q.get("name");
 			res.end(JSON.stringify({ Status: 0, Answer: name === primary.replace(/\.$/, "") && nsAddress ? [{ name: `${name}.`, type: 1, data: nsAddress }] : [] }));
@@ -1178,6 +1188,23 @@ test("a hostname outside the signed-in Cloudflare zone makes no DNS record", asy
 		await local.close();
 		await offCloudflare.close();
 		await onCloudflare.close();
+	}
+});
+
+test("a zone whose SOA names another primary but whose NS records are Cloudflare's (Secondary DNS) goes ahead", async () => {
+	const local = await localServer(`https://${CF_HOST}/mcp`);
+	const secondary = await fakeDoh("ns.icann.org.", { ns: ["ada.ns.cloudflare.com.", "bob.ns.cloudflare.com."] });
+	try {
+		const s = scenario("cf-zone-secondary", { tailscale: false });
+		s.launcher();
+		cloudflared(s);
+		signedIn(s);
+		const r = await s.runAsync(["remote", "setup", "--json", "--cloudflare", CF_HOST, "--port", String(local.port)], { TABKYRA_DOH_URL: secondary.url });
+		assert.notEqual(r.json().code, "cloudflare_zone", r.stdout);
+		assert.equal(cfCalls(s).filter((x) => /route dns/.test(x)).length, 1, cfCalls(s).join("\n"));
+	} finally {
+		await local.close();
+		await secondary.close();
 	}
 });
 
@@ -1451,4 +1478,91 @@ test("in a terminal with no route named, setup asks which one and uses the answe
 	} finally {
 		await local.close();
 	}
+});
+
+// ---------- PR 130 review follow-ups ----------
+
+test("a token with an expiry stops authenticating when it passes, and the next token made drops its record", async () => {
+	const cfg = mkdtempSync(join(tmpdir(), "tabkyra-expiry-"));
+	const saved = process.env.TABKYRA_CONFIG_DIR;
+	process.env.TABKYRA_CONFIG_DIR = cfg;
+	try {
+		const { authenticate, createToken, loadTokens } = await loadTs(`export { authenticate, createToken, loadTokens } from "@src/remote.ts";`);
+		const lasting = createToken("lasting", ["skills.read"]);
+		const brief = createToken("brief", ["skills.read"], undefined, 150);
+		assert.ok(brief.record.expiresAt, "the record carries its expiry");
+		assert.equal(authenticate(`Bearer ${brief.token}`)?.id, brief.record.id, "it works before its expiry");
+		await new Promise((r) => setTimeout(r, 250));
+		assert.equal(authenticate(`Bearer ${brief.token}`), undefined, "and not after it, though its record is still there");
+		assert.equal(authenticate(`Bearer ${lasting.token}`)?.id, lasting.record.id, "a token with no expiry keeps working");
+		createToken("later", ["skills.read"]);
+		assert.deepEqual(loadTokens().map((t) => t.name), ["lasting", "later"], "the expired record is gone");
+	} finally {
+		if (saved === undefined) delete process.env.TABKYRA_CONFIG_DIR;
+		else process.env.TABKYRA_CONFIG_DIR = saved;
+		rmSync(cfg, { recursive: true, force: true });
+	}
+});
+
+test("the metadata serve itself publishes passes remote test's sign-in check; an issuer alone doesn't", async () => {
+	const { authMetadataProblems, authorizationServerMetadata } = await loadTs(`export { authMetadataProblems } from "@src/remote-test.ts"; export { authorizationServerMetadata } from "@src/oauth.ts";`);
+	const publicUrl = "https://mac.example.ts.net";
+	assert.deepEqual(authMetadataProblems(authorizationServerMetadata({ publicUrl, scopes: {} }), publicUrl), []);
+	assert.deepEqual(authMetadataProblems({ issuer: publicUrl }, publicUrl), ["names no authorization_endpoint or token_endpoint"]);
+	assert.match(authMetadataProblems({ issuer: publicUrl, authorization_endpoint: `${publicUrl}/authorize`, token_endpoint: `${publicUrl}/token`, registration_endpoint: "http://mac.example.ts.net/register" }, publicUrl)[0], /registration_endpoint/);
+});
+
+test("deleting a token rewrites token-usage.json whole and drops entries for token ids that have no record", async () => {
+	const cfg = mkdtempSync(join(tmpdir(), "tabkyra-usage-"));
+	const saved = process.env.TABKYRA_CONFIG_DIR;
+	process.env.TABKYRA_CONFIG_DIR = cfg;
+	try {
+		const { createToken, deleteToken } = await loadTs(`export { createToken, deleteToken } from "@src/remote.ts";`);
+		const kept = createToken("kept", ["skills.read"]);
+		const probe = createToken("probe", ["skills.read"]);
+		// A stale entry, as serve's late write after an earlier delete would leave it, and an OAuth grant's, which tokens.json never lists.
+		const usageFile = join(cfg, "token-usage.json");
+		writeFileSync(usageFile, JSON.stringify({ [kept.record.id]: "a", [probe.record.id]: "b", deadbeef: "c", "o-grant1": "d" }));
+		assert.equal(deleteToken(probe.record.id), true);
+		assert.deepEqual(Object.keys(JSON.parse(readFileSync(usageFile, "utf8"))).sort(), [kept.record.id, "o-grant1"].sort());
+		assert.deepEqual(readdirSync(cfg).filter((f) => f.endsWith(".tmp")), [], "no temp file is left");
+	} finally {
+		if (saved === undefined) delete process.env.TABKYRA_CONFIG_DIR;
+		else process.env.TABKYRA_CONFIG_DIR = saved;
+		rmSync(cfg, { recursive: true, force: true });
+	}
+});
+
+test("remote fix's last hint keeps a check's own advice without sending the person back to remote fix, and says to wait on a pending failure", async () => {
+	const { fixHint, COMMAND_NAME } = await loadTs(`export { fixHint } from "@src/remote-fix.ts"; export { COMMAND_NAME } from "@src/self.ts";`);
+	const cases = [
+		{ next: `Assistants refuse this certificate. On your own front door, give it a certificate for x.example.com; on Tailscale or Cloudflare, run ${COMMAND_NAME} remote fix.`, keep: /give it a certificate for x\.example\.com\./ },
+		{ next: `Something on x.example.com speaks plain HTTP or another protocol. Point the name at an HTTPS front door, or run ${COMMAND_NAME} remote fix on Tailscale or Cloudflare.`, keep: /Point the name at an HTTPS front door\./ },
+		{ next: `serve was started for another address. Run ${COMMAND_NAME} remote fix.`, keep: /remote status shows the local side/ },
+		{ next: "Public DNS can't resolve x.example.com. Check its DNS records and DNSSEC with your DNS provider.", keep: /^Public DNS can't resolve x\.example\.com\. Check its DNS records and DNSSEC with your DNS provider\.$/ },
+	];
+	for (const { next, keep } of cases) {
+		const hint = fixHint({ name: "tls", status: "fail", detail: "d", next });
+		assert.match(hint, keep, hint);
+		assert.doesNotMatch(hint, /remote fix/, hint);
+	}
+	const waiting = fixHint({ name: "tls", status: "fail", pending: true, detail: "refused", next: `Nothing public answers. Run ${COMMAND_NAME} remote fix.` });
+	assert.match(waiting, /few minutes/);
+	assert.match(waiting, /remote test/);
+});
+
+test("a TLS connect error from this computer's own network (no route) is pending, not a setup fault", async () => {
+	const { tlsFailure } = await loadTs(`export { tlsFailure } from "@src/remote-test.ts";`);
+	const url = new URL("https://pub.example.com/mcp");
+	const fail = (code) => tlsFailure(Object.assign(new Error(`connect ${code}`), { code }), url, "2001:db8::1", 443);
+	for (const code of ["ENETUNREACH", "EHOSTUNREACH"]) {
+		const c = fail(code);
+		assert.equal(c.status, "fail");
+		assert.equal(c.pending, true, code);
+		assert.match(c.detail, new RegExp(code));
+		assert.match(c.next, /this computer's network/);
+	}
+	assert.equal(fail("ECONNREFUSED").pending, true);
+	assert.equal(fail("ERR_TLS_CERT_ALTNAME_INVALID").pending, undefined);
+	assert.equal(fail("EAI_FAIL").pending, undefined);
 });

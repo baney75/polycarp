@@ -128,9 +128,17 @@ export async function setupTunnel(host: string, progress: (p: TunnelProgress) =>
 	// it is the route now, closes inside setup only after Cloudflare has made the tunnel.
 	const report = await run("tunnel", async () => (await hooks.setup({ cloudflare: name, service: true, passcode: false, replaceFunnel: previous?.route === "funnel" })) || undefined);
 
-	await run("check", async () => {
-		const result = await checkWithRetry(publicUrl, timings.checkTotalMs ?? CHECK_TOTAL_MS, timings.checkEveryMs ?? CHECK_EVERY_MS, hooks.check);
-		if (!result.ok) throw new Error(`${publicUrl} isn't answering yet (${result.detail}). DNS can take a few minutes; reopen Settings to check again.`);
-	});
-	return { publicUrl, ...(report?.checks ? { checks: report.checks } : {}) };
+	// The tunnel and its record are made, so a name that isn't answering yet is on with a lagging check, not a failed setup: a new
+	// record takes minutes. The check is left waiting, pending, and the panel checks again from the result by itself.
+	progress({ step: "check", state: "running" });
+	const result = await checkWithRetry(publicUrl, timings.checkTotalMs ?? CHECK_TOTAL_MS, timings.checkEveryMs ?? CHECK_EVERY_MS, hooks.check);
+	const checks = report?.checks ?? [];
+	if (result.ok) {
+		progress({ step: "check", state: "done" });
+		return { publicUrl, ...(report?.checks ? { checks } : {}) };
+	}
+	const detail = result.detail.slice(0, 500);
+	progress({ step: "check", state: "waiting", detail });
+	const lagging = { name: "resource_metadata" as const, status: "fail" as const, detail, pending: true };
+	return { publicUrl, checks: [...checks.filter((c) => c.name !== "resource_metadata"), lagging] };
 }
