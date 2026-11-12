@@ -8,23 +8,21 @@ import SwiftUI
 final class BrowserRemoteModel: ObservableObject {
     static let shared = BrowserRemoteModel()
     @Published private(set) var status: RemoteReport?
-    @Published private(set) var setup: RemoteReport?
+    /// Setup's last answer, the secrets, the checks, the Repair plan and the Funnel retry's clock, with every decision about
+    /// them (BaneySpacesCore's RemoteSession, tested by value). This model runs the helper and the timers it asks for.
+    @Published private(set) var session = RemoteSession()
     @Published private(set) var settingUp = false
     @Published private(set) var working = false
-    /// The approval passcode, from the run that made it. Memory only: shown until the person says they've saved it.
-    @Published private(set) var passcode: String?
-    @Published private(set) var note: String?
-    /// The one-time code that approves a new assistant, with when it stops working. Memory only, never logged.
-    @Published private(set) var connectCode: ConnectCode?
-    /// Checks from the internet: setup's proof, then `remote test`.
-    @Published private(set) var checks: [RemoteCheck] = []
+    /// Any new note replaces the old one's details.
+    @Published private(set) var note: String? { didSet { noteDetails = nil } }
+    /// The helper's words for the note, under Details.
+    @Published private(set) var noteDetails: String?
     @Published private(set) var checking = false
-    /// What `remote fix` would repair. Nil until asked; `available: false` from a helper without it.
-    @Published private(set) var fixPlan: RemoteFixPlan?
     @Published private(set) var fixing = false
     /// Turn on is running again by itself while Tailscale's Funnel page is open.
     @Published private(set) var retryingFunnel = false
-    @Published private(set) var funnelGaveUp = false
+    /// The render harness's gave-up step.
+    @Published private var renderGaveUp = false
     @Published private(set) var copied: String?
     /// Status reads in a row that gave no usable answer.
     @Published private(set) var failedReads = 0
@@ -32,19 +30,15 @@ final class BrowserRemoteModel: ObservableObject {
     @Published private(set) var route: RemoteRoute?
     @Published private(set) var signingIn = false
     private var setupAt: Date?
-    private var funnel = FunnelRetry() { didSet { if funnelGaveUp != funnel.gaveUp { funnelGaveUp = funnel.gaveUp } } }
     private var funnelTimer: Timer?
     /// `remote test` again while a check waits (a name being published, a tunnel connecting).
     private var waitingTimer: Timer?
     /// The setup command of the last Turn on, so Try again runs the same one. Plain setup until one ran: the helper's plain
     /// setup reuses a route already saved in remote.json, Cloudflare's name included.
     private var lastSetup: RemoteCommand = .setup
-    /// `remote test` ran in this visit to the On screen.
-    private var testedThisVisit = false
     /// Bumped by every click that changes things. A status read that started before the click is out of date and is dropped.
     private var generation = 0
     private var timer: Timer?
-    private var watchers = 0
     private var refreshing = false
     private let queue = DispatchQueue(label: "polycarp.browser.remote", qos: .userInitiated)
     private let pollQueue = DispatchQueue(label: "polycarp.browser.remote.poll", qos: .utility)
@@ -52,10 +46,40 @@ final class BrowserRemoteModel: ObservableObject {
     private var helper: URL? { BrowserBundle.helper(resources: Bundle.main.resourceURL) }
     var available: Bool { helper.map { FileManager.default.isExecutableFile(atPath: $0.path) } ?? false }
 
-    var screen: RemoteScreen {
-        RemoteFlow.screen(helperAvailable: available, settingUp: settingUp, status: status, setup: setup,
-                          setupAge: setupAt.map { Date().timeIntervalSince($0) } ?? 0, readsFailing: failedReads >= RemoteFlow.readFailureLimit,
-                          chosen: route, signingIn: signingIn)
+    var setup: RemoteReport? { session.setup }
+    var passcode: String? { session.passcode }
+    var connectCode: ConnectCode? { session.connectCode }
+    var checks: [RemoteCheck] { session.checks }
+    var fixPlan: RemoteFixPlan? { session.fixPlan }
+    var funnelGaveUp: Bool { session.funnel.gaveUp || renderGaveUp }
+
+    private var shown: (screen: RemoteScreen, answer: RemoteReport?) {
+        RemoteFlow.shown(helperAvailable: available, settingUp: settingUp, status: status, setup: setup,
+                         setupAge: setupAt.map { Date().timeIntervalSince($0) } ?? 0, readsFailing: failedReads >= RemoteFlow.readFailureLimit,
+                         chosen: route, signingIn: signingIn)
+    }
+    var screen: RemoteScreen { shown.screen }
+    /// The answer the screen was drawn from: a step's command and `next` come from it (round 2 first-F3).
+    var screenAnswer: RemoteReport? { shown.answer }
+
+    /// One decision on the session, published only when it changed anything, then its effects.
+    private func update(_ decide: (inout RemoteSession) -> [RemoteSession.Effect]) {
+        var next = session
+        let effects = decide(&next)
+        if next != session { session = next }
+        for effect in effects {
+            switch effect {
+            case .planFix: planFix()
+            case .open(let page): NSWorkspace.shared.open(page)
+            case .startFunnelTimer: startFunnelTimer()
+            case .stopFunnelTimer: funnelTimer?.invalidate(); funnelTimer = nil
+            case .recheckIfWaiting: scheduleWaitingRecheck()
+            case .pause:
+                timer?.invalidate(); timer = nil
+                funnelTimer?.invalidate(); funnelTimer = nil
+                stopWaitingRecheck()
+            }
+        }
     }
     /// A Turn on just succeeded and the status reads haven't confirmed it yet (and the grace period isn't over).
     private var bridging: Bool {
@@ -66,33 +90,22 @@ final class BrowserRemoteModel: ObservableObject {
     // MARK: Reading
 
     func startWatching() {
-        watchers += 1
-        // Back on a step that still refuses Funnel: the retry goes on, without opening Tailscale's page again (first-F1).
-        if watchers == 1, funnel.resume(setup: setup, now: Date()) { startFunnelTimer() }
+        // Back on a step that still refuses Funnel: the retry goes on, without opening Tailscale's page again.
+        update { $0.startWatching(now: Date()) }
         refresh()
         schedule()
     }
 
-    /// Leaving the section (another tab, or the window closing) pauses the reads and retries. The secrets stay until the
-    /// window closes: a tab switch must not lose a passcode shown once (first-F4).
-    func stopWatching() {
-        watchers = max(0, watchers - 1)
-        if watchers == 0 {
-            timer?.invalidate(); timer = nil
-            funnelTimer?.invalidate(); funnelTimer = nil
-            stopWaitingRecheck(); testedThisVisit = false
-        }
-    }
+    /// Leaving the section (another tab, or the window closing) pauses the reads and retries; the secrets stay.
+    func stopWatching() { update { $0.stopWatching() } }
 
     /// The passcode and connect code are shown once: closing the Settings window forgets them (SetupWindowController's
-    /// windowWillClose). Nothing here is ever saved.
-    func clearSecrets() {
-        passcode = nil; connectCode = nil
-    }
+    /// windowWillClose), the copies in setup's answer included. Nothing here is ever saved.
+    func clearSecrets() { update { $0.clearSecrets(); return [] } }
 
     private func schedule() {
         timer?.invalidate()
-        guard watchers > 0 else { return }
+        guard session.watchers > 0 else { return }
         timer = Timer.scheduledTimer(withTimeInterval: RemoteFlow.pollInterval(for: screen, status: status, bridging: bridging), repeats: false) { [weak self] _ in
             self?.refresh()
             self?.schedule()
@@ -113,8 +126,7 @@ final class BrowserRemoteModel: ObservableObject {
                 guard started == self.generation else { self.refresh(); return }
                 guard let parsed else { self.failedReads += 1; return }
                 if self.failedReads != 0 { self.failedReads = 0 }
-                let kept = RemoteFlow.settle(setup: self.setup, status: parsed)
-                if kept != self.setup { self.setup = kept }
+                self.update { _ = $0.settle(status: parsed); return [] }
                 if parsed != self.status { self.status = parsed }
             }
         }
@@ -124,7 +136,8 @@ final class BrowserRemoteModel: ObservableObject {
 
     func choose(_ route: RemoteRoute?) {
         self.route = route
-        setup = nil; setupAt = nil; note = nil
+        update { $0.forgetSetup(stopRetry: false) }
+        setupAt = nil; note = nil
     }
 
     /// cloudflared's own sign-in, in the person's browser. Status notices the sign-in; this only says it's waiting.
@@ -167,11 +180,13 @@ final class BrowserRemoteModel: ObservableObject {
     /// anything for it, so it never asks for a connect code: New code makes one (second-N2).
     private func runSetup(_ command: RemoteCommand, quiet: Bool) {
         guard available, !settingUp, !working, !retryingFunnel else { return }
-        if quiet { retryingFunnel = true; funnel.tried(now: Date()) } else { settingUp = true; note = nil; stopFunnelRetry() }
+        if quiet { retryingFunnel = true } else { settingUp = true; note = nil }
+        var asksForCode = false
+        update { let start = $0.setupStarts(quiet: quiet, now: Date()); asksForCode = start.connectCode; return start.effects }
         lastSetup = command
         generation += 1; failedReads = 0
         queue.async { [weak self] in
-            let result = Self.run(command, connectCode: !quiet)
+            let result = Self.run(command, connectCode: asksForCode)
             let parsed = RemoteReport.parse(result.out)
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -195,67 +210,44 @@ final class BrowserRemoteModel: ObservableObject {
 
     /// `pressed`: a person pressed Turn on, Try again or Check again. Only then is a connect code taken from the answer.
     private func take(_ report: RemoteReport, pressed: Bool) {
-        passcode = RemoteFlow.keepPasscode(current: passcode, from: report)
-        // An answer that needs repair is not on: it brings no code (second-N2).
-        if pressed, report.answerOn, let code = report.connectCode { connectCode = code }
-        if !report.checks.isEmpty { checks = report.checks }
-        setup = report
         setupAt = Date()
-        if report.state == .funnelNotAllowed { startFunnelRetry(admin: report.adminURL) } else { stopFunnelRetry() }
-        let key = RemoteSharedCopy.key(state: report.rawState, code: report.code, nextKind: report.nextKind, nextCommand: report.nextCommand)
-        if report.answerOn {
-            testedThisVisit = true
-            if !report.failedChecks.isEmpty { planFix() }
-            scheduleWaitingRecheck()
-        } else if key == "check_failed" {
-            planFix()
-        }
+        update { $0.take(report, pressed: pressed, now: Date()) }
     }
 
     // MARK: Funnel: allowed in Tailscale, noticed here
 
-    private func startFunnelRetry(admin: URL?) {
-        // The page to allow Funnel opens once per refusal run, since that is the step; the button stays for reopening it.
-        if let page = funnel.refused(admin: admin, now: Date()) { NSWorkspace.shared.open(page) }
-        startFunnelTimer()
-    }
-
     private func startFunnelTimer() {
-        guard funnelTimer == nil, watchers > 0 else { return }
+        guard funnelTimer == nil, session.watchers > 0 else { return }
         funnelTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.funnelTick() }
     }
 
     private func funnelTick() {
-        switch funnel.tick(setup: setup, busy: settingUp || working || retryingFunnel, now: Date()) {
+        var tick = FunnelRetry.Tick.wait
+        let busy = settingUp || working || retryingFunnel
+        update { tick = $0.funnelTick(busy: busy, now: Date()); return [] }
+        switch tick {
         case .gaveUp: funnelTimer?.invalidate(); funnelTimer = nil
         case .run: runSetup(lastSetup, quiet: true)
         case .wait: break
         }
     }
 
-    private func stopFunnelRetry() {
-        funnelTimer?.invalidate(); funnelTimer = nil
-        funnel.stop()
-    }
-
     // MARK: Checks from the internet, and Repair
 
     /// Once per visit to the On screen when nothing has been checked yet, and on Check again.
     func checkFromOutside(force: Bool = false) {
-        guard available, !checking, force || !testedThisVisit else { return }
-        testedThisVisit = true; checking = true
+        guard available, !checking else { return }
+        var go = false
+        update { go = $0.startTest(force: force); return [] }
+        guard go else { return }
+        checking = true
         queue.async { [weak self] in
             let result = Self.run(.test)
             let parsed = RemoteReport.parse(result.out)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.checking = false
-                if let parsed, !parsed.checks.isEmpty { self.checks = parsed.checks }
-                // A run that stopped on dns or a failed check is over once this test says the route is on.
-                let kept = RemoteFlow.settleAfterTest(setup: self.setup, checks: self.checks)
-                if kept != self.setup { self.setup = kept }
-                if !self.checks.filter(\.realFailure).isEmpty { self.planFix() }
-                self.scheduleWaitingRecheck()
+                self.update { $0.tested(parsed) }
             }
         }
     }
@@ -264,7 +256,7 @@ final class BrowserRemoteModel: ObservableObject {
     /// fails for real or the window closes. No button to press.
     private func scheduleWaitingRecheck() {
         waitingTimer?.invalidate(); waitingTimer = nil
-        guard watchers > 0, waitingNow else { return }
+        guard session.watchers > 0, waitingNow else { return }
         waitingTimer = Timer.scheduledTimer(withTimeInterval: RemoteFlow.waitingRecheckEvery, repeats: false) { [weak self] _ in
             guard let self else { return }
             self.waitingTimer = nil
@@ -286,12 +278,12 @@ final class BrowserRemoteModel: ObservableObject {
         queue.async { [weak self] in
             let result = Self.run(.fixPlan)
             let plan = RemoteCommand.parseFix(exitCode: result.code, result.out)
-            DispatchQueue.main.async { self?.fixPlan = plan }
+            DispatchQueue.main.async { self?.update { $0.planned(plan); return [] } }
         }
     }
 
     func repair() {
-        guard available, !fixing, RemoteFlow.offerRepair(checks: checks, plan: fixPlan, answer: setup) else { return }
+        guard available, !fixing, session.offersRepair else { return }
         fixing = true; note = nil; generation += 1
         queue.async { [weak self] in
             let result = Self.run(.fix)
@@ -299,19 +291,18 @@ final class BrowserRemoteModel: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.fixing = false
-                if !done.checks.isEmpty { self.checks = done.checks }
-                if !done.ok { self.note = RemoteCopy.repairFailed }
-                self.fixPlan = nil
-                if !self.checks.filter(\.realFailure).isEmpty { self.planFix() }
-                self.scheduleWaitingRecheck()
+                // The note names Details only when the helper gave words to put there (round 2 first-F4).
+                if let failed = RemoteFlow.repairNote(done) { self.note = failed.note; self.noteDetails = failed.details }
+                // Re-planned whenever Repair would still be offered, so it can be pressed again (round 2 second-F6).
+                self.update { $0.repaired(done) }
                 self.refresh()
             }
         }
     }
 
     func checkAgain() {
-        stopFunnelRetry()
-        setup = nil; note = nil; generation += 1; failedReads = 0
+        update { $0.forgetSetup(stopRetry: true) }
+        note = nil; generation += 1; failedReads = 0
         refresh()
     }
 
@@ -324,8 +315,8 @@ final class BrowserRemoteModel: ObservableObject {
                 guard let self else { return }
                 self.working = false
                 if result.code == 0 {
-                    self.setup = nil; self.setupAt = nil; self.passcode = nil; self.status = nil; self.failedReads = 0; self.route = nil
-                    self.connectCode = nil; self.checks = []; self.fixPlan = nil; self.stopFunnelRetry(); self.stopWaitingRecheck()
+                    self.update { $0.turnedOff() }
+                    self.setupAt = nil; self.status = nil; self.failedReads = 0; self.route = nil; self.stopWaitingRecheck()
                 } else {
                     self.note = RemoteCopy.turnOffFailed + (result.text.isEmpty ? "" : " \(result.text)")
                 }
@@ -343,7 +334,7 @@ final class BrowserRemoteModel: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.working = false
-                if let code { self.passcode = code } else { self.note = RemoteCopy.newPasscodeFailed }
+                if let code { self.update { $0.madePasscode(code); return [] } } else { self.note = RemoteCopy.newPasscodeFailed }
             }
         }
     }
@@ -357,16 +348,17 @@ final class BrowserRemoteModel: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.working = false
-                if let code { self.connectCode = code } else { self.note = RemoteCopy.connectCodeFailed }
+                if let code { self.update { $0.madeConnectCode(code); return [] } } else { self.note = RemoteCopy.connectCodeFailed }
             }
         }
     }
 
-    func savedPasscode() { passcode = nil }
+    func savedPasscode() { update { $0.savedPasscode(); return [] } }
 
     /// The render harness's result screen: a made-up code and checks, in memory, never from the helper.
     func stageForRender(code: ConnectCode?, passcode: String?, checks: [RemoteCheck], plan: RemoteFixPlan?, funnelGaveUp: Bool = false) {
-        connectCode = code; self.passcode = passcode; self.checks = checks; fixPlan = plan; testedThisVisit = true; self.funnelGaveUp = funnelGaveUp
+        update { $0.stageForRender(code: code, passcode: passcode, checks: checks, plan: plan); return [] }
+        renderGaveUp = funnelGaveUp
     }
 
     func copy(_ text: String, label: String, secret: Bool = false) {
@@ -455,7 +447,11 @@ struct BrowserRemoteView: View {
             SettingsBlock {
                 VStack(alignment: .leading, spacing: 10) { content }
             }
-            if let n = model.note { SettingsNote(n, tone: .urgent) }
+            if let n = model.note {
+                SettingsNote(n, tone: .urgent)
+                // The helper's own words for the note, when it gave some (round 2 first-F4).
+                if let words = model.noteDetails { SettingsBlock { details(words) } }
+            }
             SettingsBlock {
                 Link(destination: RemoteCopy.docsURL) {
                     (Text(RemoteCopy.otherWays).font(Chrome.font(11, .medium)).underline() + Text("  \(RemoteCopy.otherWaysHelp)").font(Chrome.font(11)))
@@ -487,7 +483,7 @@ struct BrowserRemoteView: View {
             routeChoice("cloudflare", installed: routes.cloudflareInstalled, signedIn: routes.cloudflareSignedIn, recommended: false,
                         signup: RemoteCopy.cloudflareSignupURL) { model.choose(.cloudflare) }
             footnotes
-        case .getCloudflared(let configured):
+        case .getCloudflared(let configured, let problem):
             step("cloudflared_missing") {
                 if !configured { nameField(onSubmit: getCloudflared) }
                 HStack(spacing: 10) {
@@ -497,6 +493,8 @@ struct BrowserRemoteView: View {
                 }
             }
             if nameRefused { warning(RemoteCopy.cloudflareAddressFirst) }
+            // "Get it for me" stopped before cloudflared was in place: the helper's words say why (round 2 first-F1).
+            if let problem { details(problem) }
             if configured { line(RemoteCopy.stillSetUp) }
         case .cloudflareSignIn(let waiting):
             step("cloudflare_login") {
@@ -632,11 +630,13 @@ struct BrowserRemoteView: View {
             // Reads that stopped answering must not hide a passcode shown once (second-S2).
             passcodeShown
         } else {
-            let copy = Shared.copy(for: RemoteReport(state: .problem, message: message, code: code, nextKind: model.setup?.nextKind, nextCommand: model.setup?.nextCommand))
+            // `next` from the answer this step was drawn from, status's or setup's, never a setup answer not on screen (round 2 first-F3).
+            let next = model.screenAnswer
+            let copy = Shared.copy(for: RemoteReport(state: .problem, message: message, code: code, nextKind: next?.nextKind, nextCommand: next?.nextCommand))
             let entry = Shared.steps[copy.key]!
             header(stepNumber(copy.key))
             stepText(copy.title, copy.body)
-            if let command = model.setup?.nextCommand, entry.kind == "copy_command" { commandBox(command) }
+            if let command = next?.nextCommand, entry.kind == "copy_command" { commandBox(command) }
             // A Cloudflare name step keeps its name field wherever it shows, so Turn on sets up a name, not Tailscale (first-F3).
             let asksName = RemoteFlow.cloudflareNameKeys.contains(copy.key)
             if asksName { nameField { act("turn_on", key: copy.key) } }
@@ -775,7 +775,7 @@ struct BrowserRemoteView: View {
     /// "Get it for me": the helper downloads Cloudflare's pinned release and goes on to set up the address. An install that is
     /// already set up keeps its own address; a new one needs the address first.
     private func getCloudflared() {
-        if case .getCloudflared(true) = current {
+        if case .getCloudflared(true, _) = current {
             guard let url = model.status?.connectorURL, let host = URL(string: url)?.host else { nameRefused = true; return }
             model.turnOn(cloudflare: host, download: true)
             return

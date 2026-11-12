@@ -160,6 +160,12 @@ export const STEP_COPY = {
 		action: { kind: "check_again", label: "Check now" },
 		waits: true,
 	},
+	/** Public DNS answered that the lookup failed (SERVFAIL or REFUSED, often broken DNSSEC): waiting doesn't fix it. */
+	dns_lookup: {
+		title: "Public DNS can't look up this address",
+		body: "Public DNS answered that the lookup failed, often because of broken DNSSEC, so waiting won't fix it. Fix the name's records or DNSSEC with your DNS provider, then check again.",
+		action: { kind: "check_again", label: "Check again" },
+	},
 	cloudflared_missing: {
 		title: "Get cloudflared",
 		body: "cloudflared is Cloudflare's free program for tunnels. Polycarp can download Cloudflare's own release and check its fingerprint before using it.",
@@ -337,6 +343,7 @@ export const PROBLEM_CODES: readonly string[] = [
 	"funnel",
 	"config",
 	"dns",
+	"dns_lookup",
 	"cloudflare_login",
 	"cloudflare_zone",
 	"cloudflare_tunnel",

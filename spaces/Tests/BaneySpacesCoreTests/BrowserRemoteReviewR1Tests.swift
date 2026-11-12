@@ -48,14 +48,6 @@ final class BrowserRemoteReviewR1Tests: XCTestCase {
         XCTAssertFalse(fresh.resume(setup: nil, now: back))
     }
 
-    func testLeavingPausesTheRetryAndComingBackResumesIt() throws {
-        let stop = try body(of: "stopWatching")
-        XCTAssertFalse(stop.contains("stopFunnelRetry()"), "leaving must not end the retry for good")
-        XCTAssertFalse(stop.contains("funnel.stop()"))
-        XCTAssertTrue(stop.contains("funnelTimer?.invalidate()"), "leaving pauses it")
-        XCTAssertTrue(try body(of: "startWatching").contains("funnel.resume(setup: setup"), "coming back resumes it")
-    }
-
     // MARK: first-F2
 
     func testAQuietRetryOnlyTakesARealChange() throws {
@@ -66,7 +58,6 @@ final class BrowserRemoteReviewR1Tests: XCTestCase {
         let other = RemoteReport(state: .problem, message: "m", code: "serve")
         XCTAssertEqual(RemoteFlow.setupOutcome(other, quiet: true), other, "a new problem is a real change")
         XCTAssertEqual(RemoteFlow.setupOutcome(nil, quiet: false)?.message, RemoteCopy.helperSilent, "a press always answers")
-        XCTAssertTrue(try source(view).contains("RemoteFlow.setupOutcome(parsed, quiet: quiet)"), "runSetup decides by it")
     }
 
     // MARK: first-F3
@@ -94,7 +85,11 @@ final class BrowserRemoteReviewR1Tests: XCTestCase {
     // MARK: first-F4 and second-S2
 
     func testSecretsLastUntilTheWindowCloses() throws {
-        XCTAssertFalse(try body(of: "stopWatching").contains("clearSecrets()"), "a tab switch keeps the passcode shown once")
+        var s = RemoteSession()
+        _ = s.take(RemoteReport(ok: true, state: .on, connectorURL: "https://m.ts.net:8443/mcp", passcode: "p"), pressed: true, now: start)
+        _ = s.startWatching(now: start)
+        XCTAssertEqual(s.stopWatching(), [.pause])
+        XCTAssertEqual(s.passcode, "p", "a tab switch keeps the passcode shown once")
         let setup = try source("Sources/BaneySpaces/Setup.swift")
         let close = try XCTUnwrap(setup.range(of: "func windowWillClose(_ n: Notification) {"))
         let closeBody = setup[close.upperBound...].prefix(400)
@@ -155,7 +150,10 @@ final class BrowserRemoteReviewR1Tests: XCTestCase {
         XCTAssertFalse(RemoteFlow.offerRepair(checks: gaveUp.checks, plan: plan), "its only check is pending")
         XCTAssertTrue(RemoteFlow.offerRepair(checks: gaveUp.checks, plan: plan, answer: gaveUp), "Repair runs for it")
         XCTAssertFalse(RemoteFlow.offerRepair(checks: gaveUp.checks, plan: RemoteFixPlan(available: false), answer: gaveUp), "only with remote fix")
-        XCTAssertTrue(try body(of: "repair").contains("offerRepair(checks: checks, plan: fixPlan, answer: setup)"), "the button's press isn't dropped")
+        var s = RemoteSession()
+        _ = s.take(gaveUp, pressed: true, now: start)
+        s.planned(plan)
+        XCTAssertTrue(s.offersRepair, "the button's press isn't dropped")
 
         let soon = try report(#"{"ok":false,"state":"problem","code":"resource_metadata","connectorUrl":"https://m.ts.net:8443/mcp","#
             + #""next":{"kind":"run_command","command":"polycarp remote test"},"#
@@ -165,7 +163,6 @@ final class BrowserRemoteReviewR1Tests: XCTestCase {
         XCTAssertFalse(RemoteReport(state: .problem, nextKind: "run_command", nextCommand: "polycarp remote fixup").needsRepair)
         XCTAssertTrue(RemoteReport(state: .problem, nextKind: "run_command", nextCommand: "remote fix --yes").needsRepair)
         XCTAssertFalse(RemoteReport(state: .problem, nextKind: "copy_command", nextCommand: "polycarp remote fix").needsRepair)
-        XCTAssertTrue(try body(of: "take").contains("if pressed, report.answerOn, let code = report.connectCode"), "no code from an answer that needs repair")
     }
 }
 

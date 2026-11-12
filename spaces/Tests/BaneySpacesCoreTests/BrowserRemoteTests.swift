@@ -326,7 +326,7 @@ final class BrowserRemoteTests: XCTestCase {
         XCTAssertEqual(tab.components(separatedBy: "BrowserRemoteView()").count - 1, 1)
         let view = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/BrowserRemoteView.swift"), encoding: .utf8)
         XCTAssertTrue(view.contains("Self.run(.status)"))
-        XCTAssertEqual(view.components(separatedBy: "Self.run(command, connectCode: !quiet)").count - 1, 1, "setup runs from one place: runSetup()")
+        XCTAssertEqual(view.components(separatedBy: "Self.run(command, connectCode: asksForCode)").count - 1, 1, "setup runs from one place: runSetup()")
         // Setup runs from the Turn on button and Try again only; the poll reads status.
         let from = try XCTUnwrap(view.range(of: "func refresh()")), to = try XCTUnwrap(view.range(of: "// MARK: Acting"))
         let pollBody = String(view[from.lowerBound..<to.lowerBound])
@@ -444,7 +444,8 @@ final class BrowserRemoteTests: XCTestCase {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         return try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
     }
-    private let remoteSources = ["Sources/BaneySpaces/BrowserRemoteView.swift", "Sources/BaneySpacesCore/BrowserRemote.swift", "Sources/BaneySpacesCore/RemoteSharedCopy.swift"]
+    private let remoteSources = ["Sources/BaneySpaces/BrowserRemoteView.swift", "Sources/BaneySpacesCore/BrowserRemote.swift", "Sources/BaneySpacesCore/RemoteSharedCopy.swift",
+                                 "Sources/BaneySpacesCore/BrowserRemoteSession.swift"]
 
     /// "Get it for me" replaced the brew instruction: nobody is sent to a terminal for cloudflared.
     func testTheBrewCommandIsGone() throws {
@@ -457,7 +458,7 @@ final class BrowserRemoteTests: XCTestCase {
     /// Every code the helper sends picks its own sentence, never a generic one, and never just the helper's words.
     func testEveryProblemCodeHasItsOwnSentence() {
         let codes = ["launcher", "hub", "service", "serve", "funnel", "config", "cloudflare_login", "cloudflare_name", "cloudflare_zone", "cloudflare_dns",
-                     "cloudflare_tunnel", "connect_code", "tailscale_operator", "dns", "not_set_up"]
+                     "cloudflare_tunnel", "connect_code", "tailscale_operator", "dns", "dns_lookup", "not_set_up"]
         var titles: [String: String] = [:]
         for code in codes {
             let c = RemoteSharedCopy.copy(for: RemoteReport(state: .problem, message: "helper words", code: code))
@@ -529,9 +530,8 @@ final class BrowserRemoteTests: XCTestCase {
         let stop = try XCTUnwrap(view.range(of: "func stopWatching()")), next = try XCTUnwrap(view.range(of: "func clearSecrets()"))
         XCTAssertFalse(view[stop.lowerBound..<next.lowerBound].contains("clearSecrets()"), "a tab switch keeps them (PR 134 first-F4)")
         XCTAssertTrue(try source("Sources/BaneySpaces/Setup.swift").contains("BrowserRemoteModel.shared.clearSecrets()"), "closing the window forgets them")
-        let clear = try XCTUnwrap(view.range(of: "func clearSecrets() {"))
-        let body = view[clear.upperBound...].prefix(120)
-        XCTAssertTrue(body.contains("passcode = nil") && body.contains("connectCode = nil"))
+        // What clearing forgets is RemoteSession's, held by value in BrowserRemoteReviewR2Tests.testSecretsLeaveSetupsAnswerToo.
+        XCTAssertTrue(view.contains("func clearSecrets() { update { $0.clearSecrets(); return [] } }"))
         // The render harness never reaches the helper: no watching while it previews.
         XCTAssertTrue(view.contains(".onAppear { if preview == nil { model.startWatching() } }"))
     }
