@@ -101,6 +101,7 @@ import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-
 import { AskUserTool, AskUserWhichElementTool, skillTool } from "./tools/index.js";
 import { NativeInputEventsRuntimeProvider } from "./tools/NativeInputEventsRuntimeProvider.js";
 import { isToolNavigating, NavigateTool } from "./tools/navigate.js";
+import { panelPageTools, registerPageToolRenderers } from "./tools/page-tools.js";
 import { createReplTool } from "./tools/repl/repl.js";
 import { BrowserJsRuntimeProvider, NavigateRuntimeProvider } from "./tools/repl/runtime-providers.js";
 import { syncCustomProviderCorsRules } from "./utils/custom-provider-cors.js";
@@ -124,6 +125,7 @@ setTranscriptRenderer(tabkyraTranscript);
 // Register custom message renderers
 registerNavigationRenderer();
 registerExtractImageRenderer();
+registerPageToolRenderers();
 
 // Listen for abort messages from REPL overlay
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -1142,6 +1144,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 			const tools: AgentTool<any, any>[] = [
 				navigateTool,
+				// read_page, find, get_page_text, act, handle_dialog: the bridge's ref tools (src/tools/page-tools.ts),
+				// their reads sized to the budget the guard fits each result to.
+				...panelPageTools(() => toolBudgetChars(agent?.state.model)),
 				selectElementTool,
 				new AskUserTool(),
 				replTool,

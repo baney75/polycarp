@@ -1,5 +1,6 @@
 import { startBridge, trace } from "./bridge/native.js";
-import { installCdpListeners } from "./browser/cdp.js";
+import { startPanelPageTools } from "./bridge/panel-calls.js";
+import { installCdpListeners, persistCdpMemory } from "./browser/cdp.js";
 import { setGuardLogger, startForegroundGuard } from "./browser/foreground-guard.js";
 import { startGroupGestures } from "./browser/group-gestures.js";
 import { BrowserSession, cleanupOrphanGroups } from "./browser/session.js";
@@ -13,6 +14,8 @@ import { setPanelsOpening, startUpdateWorker } from "./update/worker.js";
 
 // Debugger events reach a worker only if its listeners exist when it starts (detaches, page crashes).
 installCdpListeners();
+// Screenshot scales and open dialogs outlive a worker restart (the side panel's page tools rely on them).
+void persistCdpMemory();
 
 // Keep popups opened by agent-driven background tabs from stealing the user's focus.
 startForegroundGuard();
@@ -33,6 +36,8 @@ chrome.webNavigation.onTabReplaced.addListener(({ replacedTabId, tabId }) => {
 // native-messaging bridge. Connects when the CLI has installed the host manifest.
 startBridge();
 startSubscriptionRelay();
+// The side panel's page tools (read_page, act, ...) run here, on the same handlers as the bridge.
+startPanelPageTools();
 startConnectRelay();
 
 // "Update now", the reload after an update (only when no agent runs), automatic updates. A copy

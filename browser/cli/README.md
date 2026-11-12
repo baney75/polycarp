@@ -136,7 +136,7 @@ mode to "allow any site" there. pi: set `TABKYRA_AUTO_ALLOW=1` to auto-approve.
 | `navigate` | open a URL, or go back/forward |
 | `read_page`, `find`, `get_page_text`, `get_page_html`, `screenshot` | read the page |
 | `click`, `hover`, `type`, `press`, `fill`, `scroll`, `drag`, `actions` | act on it |
-| `run_js`, `wait`, `read_console`, `read_network` | scripts, waits and debugging |
+| `run_js`, `wait`, `read_console`, `read_network` | scripts, waits (for text, a selector, or `until: "settled"`) and debugging; input tools wait up to 2.5 s for the page to settle |
 | `handle_dialog` | answer an alert, confirm or prompt box; while one is open, other calls fail at once with `dialog_open` |
 | `capture` | evidence from the agent's own tab as files under `~/.config/tabkyra/captures`: a redacted HAR (`network_start`/`network_stop`), a WebM recording (`record_start`/`record_stop`), the last minute of video (`flight_start`/`flight_save`); `status`, `cancel` |
 | `library_add`, `library_search`, `library_cite` | the source library (`tabkyra library`) |

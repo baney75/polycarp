@@ -47,6 +47,7 @@ import {
 	waitFor,
 } from "../browser/page.js";
 import { type BrowserSession, TabLimitError, takeNotices } from "../browser/session.js";
+import { settle, settleStart, unsettledNote, WAIT_SETTLE } from "../browser/settle.js";
 import { isPdfTab, pdfText } from "../offscreen/pdf-client.js";
 import {
 	added as addedEdit,
@@ -105,6 +106,38 @@ export interface HandlerContext {
 	 * the action has finished, so a dialog from a later step is not blamed on this one.
 	 */
 	delivered(result?: Record<string, unknown>, tabId?: number): void;
+	/** Set for a step of `actions`: the batch settles once, after its last step. */
+	batch?: boolean;
+}
+
+/**
+ * Wait for the page to settle after an action that started at `since` (src/browser/settle.ts),
+ * and return what the result says about it: nothing when it settled, the reason when it did not.
+ * `delivered` is the action's result so far: the action is done, so a dialog the page opens while
+ * it settles is the action's effect, reported with that result, not a dialog_open failure.
+ * `watched`: settleStart already turned Network on in this tab.
+ */
+async function settleAfter(
+	ctx: HandlerContext,
+	tabId: number,
+	since: number,
+	delivered: Record<string, unknown>,
+	watched = true,
+): Promise<Record<string, unknown>> {
+	if (ctx.batch) {
+		// The step is over: a dialog from a later step is not this one's.
+		ctx.delivered();
+		return {};
+	}
+	ctx.delivered(delivered, tabId);
+	try {
+		return unsettledNote(await settle(tabId, { since, stop: ctx.aborted, skip: (u) => ctx.isGuarded(u), watched }));
+	} catch {
+		// The action is done: a wait that broke must not turn it into a failure.
+		return {};
+	} finally {
+		ctx.delivered();
+	}
 }
 
 function stopIfAborted(ctx: HandlerContext): void {
@@ -513,14 +546,23 @@ export const handlers: Record<string, Handler> = {
 		if (!history) await ctx.checkUrl(url);
 		// The first navigate of a session opens its tab (blank, with capture on) and loads the URL into it.
 		if (!history && num(params, "tabId") === undefined && !(await ctx.session.currentTab())) {
+			const since = await settleStart();
 			const { tab, ready, note } = await openCapturedTab(ctx, url, num(params, "timeoutMs") ?? 20000, false);
-			return refuseGuardedLanding(ctx, tab.id!, {
-				...(await tabSummary(tab.id!, !ready)),
+			const tabId = tab.id as number;
+			// The approval page is blanked before anything is run in it.
+			const landed = await refuseGuardedLanding(ctx, tabId, await tabSummary(tabId, !ready));
+			if (!ready) return { ...landed, ...(note ? { note } : {}) };
+			// The tab is new: settleStart had none to turn Network on in, so the wait does.
+			const settled = await settleAfter(ctx, tabId, since, landed, false);
+			return refuseGuardedLanding(ctx, tabId, {
+				...(await tabSummary(tabId)),
+				...settled,
 				...(note ? { note } : {}),
 			});
 		}
 		const tabId = await resolveTab(ctx, params, false);
 		let timedOut = false;
+		const since = await settleStart(tabId);
 		watchGuardedCommits(ctx, tabId);
 		if (url === "back") timedOut = !(await goBack(tabId));
 		else if (url === "forward") timedOut = !(await goForward(tabId));
@@ -529,7 +571,12 @@ export const handlers: Record<string, Handler> = {
 			timedOut = (await navigateTabDetailed(tabId, url, { waitUntil, timeoutMs: num(params, "timeoutMs") ?? 20000 }))
 				.timedOut;
 		}
-		return refuseGuardedLanding(ctx, tabId, await tabSummary(tabId, timedOut));
+		// Content a script draws after the load (a fetch, a skeleton) is there before the agent reads.
+		// The approval page is blanked before anything is run in it.
+		const landed = await refuseGuardedLanding(ctx, tabId, await tabSummary(tabId, timedOut));
+		if (timedOut) return landed;
+		const settled = await settleAfter(ctx, tabId, since, landed);
+		return refuseGuardedLanding(ctx, tabId, { ...(await tabSummary(tabId)), ...settled });
 	},
 
 	screenshot: async (ctx, params) => {
@@ -668,13 +715,15 @@ export const handlers: Record<string, Handler> = {
 		const tabId = await resolveTab(ctx, params, true);
 		const p = await pointFor(ctx, params, tabId);
 		const button = str(params, "button");
+		const since = await settleStart(tabId);
 		await click(tabId, p.x, p.y, {
 			button: button === "right" || button === "middle" ? button : "left",
 			clickCount: num(params, "clickCount") ?? 1,
 			beforeLastEvent: () => ctx.delivered({ clicked: p }, tabId),
 		});
-		ctx.delivered();
-		return { clicked: p };
+		// A dialog the click's page opens while it settles is still the click's doing.
+		const settled = await settleAfter(ctx, tabId, since, { clicked: p });
+		return { clicked: p, ...settled };
 	},
 
 	hover: async (ctx, params) => {
@@ -703,6 +752,7 @@ export const handlers: Record<string, Handler> = {
 		const t = target(params);
 		/** Set just before the first key event goes out: after that the page may hold some of the text. */
 		let keysStarted = false;
+		const since = await settleStart(tabId);
 		const attempt = async () => {
 			if (t.ref || t.selector) {
 				const rect = await locate(tabId, t);
@@ -728,6 +778,8 @@ export const handlers: Record<string, Handler> = {
 			if (keysStarted) throw interruptedError(err, "type", "some of the text may be in the field");
 			try {
 				await reattach(tabId);
+				// The new debugging session has Network off: on again before the keys go out.
+				await settleStart(tabId);
 				await attempt();
 			} catch (again) {
 				if (isDetachError(again))
@@ -739,18 +791,19 @@ export const handlers: Record<string, Handler> = {
 				throw again;
 			}
 		}
-		return { typed: text.length };
+		return { typed: text.length, ...(await settleAfter(ctx, tabId, since, { typed: text.length })) };
 	},
 
 	press: async (ctx, params) => {
 		const key = requireStr(params, "key");
 		const tabId = await resolveTab(ctx, params, true);
 		const repeat = num(params, "repeat") ?? 1;
+		const since = await settleStart(tabId);
 		for (let i = 0; i < repeat; i++) {
 			stopIfAborted(ctx);
 			await pressKey(tabId, key);
 		}
-		return { pressed: key, repeat };
+		return { pressed: key, repeat, ...(await settleAfter(ctx, tabId, since, { pressed: key, repeat })) };
 	},
 
 	scroll: async (ctx, params) => {
@@ -781,8 +834,9 @@ export const handlers: Record<string, Handler> = {
 		const t = target(params);
 		if (!t.ref && !t.selector)
 			throw new BridgeError(ERR.BAD_PARAMS, "fill needs a ref from read_page, or a selector.");
+		const since = await settleStart(tabId);
 		await fillElement(tabId, t, value);
-		return { filled: t };
+		return { filled: t, ...(await settleAfter(ctx, tabId, since, { filled: t })) };
 	},
 
 	evaluate: async (ctx, params) => {
@@ -797,6 +851,25 @@ export const handlers: Record<string, Handler> = {
 	},
 
 	wait: async (ctx, params) => {
+		if (str(params, "until") === "settled") {
+			const tabId = await resolveTab(ctx, params, false);
+			const r = await settle(tabId, {
+				...WAIT_SETTLE,
+				capMs: num(params, "timeoutMs") ?? WAIT_SETTLE.capMs,
+				since: 0,
+				stop: ctx.aborted,
+			});
+			return {
+				...(await tabSummary(tabId)),
+				...(r.settled
+					? { settled: true, ms: r.ms }
+					: {
+							settled: false,
+							waitingOn: r.waitingOn ?? "dom",
+							note: "The page was still changing when the wait ran out (it may never go quiet: live updates, polling). read_page shows it now.",
+						}),
+			};
+		}
 		const ms = num(params, "ms");
 		if (ms !== undefined && !params.selector && !params.text && !params.urlIncludes) {
 			await new Promise((r) => setTimeout(r, Math.min(ms, 30000)));
@@ -854,6 +927,11 @@ export const handlers: Record<string, Handler> = {
 		const settleMs = Math.max(0, Math.min(1000, num(params, "settleMs") ?? 80));
 		let wantShot = params.screenshot === true;
 		const done: unknown[] = [];
+		// Network on for the batch's tab before its first step: a drag or a scroll step turns it on itself.
+		const first = await ctx.session.currentTab().catch(() => undefined);
+		const batchStart = await settleStart(
+			first?.id !== undefined && ctx.session.tabIds.includes(first.id) ? first.id : undefined,
+		);
 		for (let i = 0; i < steps.length; i++) {
 			const [kind, sub] = normalizeStep(steps[i] as Params, i);
 			if (kind === "screenshot") {
@@ -865,6 +943,7 @@ export const handlers: Record<string, Handler> = {
 			// A step that opens a dialog worked, but the steps after it did not run: say so.
 			const stepCtx: HandlerContext = {
 				...ctx,
+				batch: true,
 				delivered: (result, tabId) =>
 					ctx.delivered(
 						result ? { ...result, steps: done.length + 1, notRun: steps.length - i - 1 } : undefined,
@@ -887,7 +966,11 @@ export const handlers: Record<string, Handler> = {
 			if (settleMs > 0 && i < steps.length - 1) await new Promise((r) => setTimeout(r, settleMs));
 		}
 		stopIfAborted(ctx);
+		// Steps keep their short settleMs pause; the page settles once, after the last one.
 		const out: Record<string, unknown> = { steps: done.length };
+		const last = await ctx.session.currentTab().catch(() => undefined);
+		if (last?.id !== undefined && ctx.session.tabIds.includes(last.id))
+			Object.assign(out, await settleAfter(ctx, last.id, batchStart, { steps: done.length, notRun: 0 }));
 		if (wantShot) out.screenshot = await handlers.screenshot(ctx, { tabId: params.tabId });
 		return out;
 	},

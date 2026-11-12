@@ -117,6 +117,7 @@ const navigateRenderer: ToolRenderer<NavigateParams, NavigateResult> = {
 - `repl` - Page JavaScript execution with collapsible code
 - `skill` - Skill management operations (list, get, create, update, delete, patch)
 - `navigate` - Page navigation with favicon display
+- `read_page`, `find`, `get_page_text`, `act`, `handle_dialog` - The page tools (`src/tools/page-tools.ts`): the step label from `stepLabel`, then the result text, screenshots as images
 - `debugger` - Browser debugger tool
 
 ## Best Practices

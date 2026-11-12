@@ -5,6 +5,10 @@
 //
 //   node cli/eval/web-bench.mjs --tasks <aside-benchmarks>/mind2web/results --extension <built extension dir> --out <dir>
 //     [--sample 30] [--seed 1] [--only <id,id>] [--model sonnet] [--grader opus] [--concurrency 3] [--timeout 900]
+//     [--stack panel]
+//
+// --stack panel gives the agent the side panel's tools instead of the MCP set (`polycarp mcp --profile panel`:
+// navigate, read_page, find, get_page_text, act, handle_dialog, with the panel's descriptions and result text).
 //
 // Each task gets its own throwaway browser, home and profile (fixture-browser.mjs), so nothing touches a real browser or
 // sign-in. Agents use the signed-in claude CLI only: ANTHROPIC_API_KEY is removed, and a usage or billing message stops
@@ -151,12 +155,12 @@ function run(args, input, timeoutMs, onLine) {
 	});
 }
 
-async function runAgent(task, fixtureEnv, cli, model, timeoutMs) {
+async function runAgent(task, fixtureEnv, cli, model, timeoutMs, stack = "mcp") {
 	const mcp = {
 		mcpServers: {
 			tabkyra: {
 				command: process.execPath,
-				args: [cli, "mcp"],
+				args: [cli, "mcp", ...(stack === "panel" ? ["--profile", "panel"] : [])],
 				env: { HOME: fixtureEnv.HOME, TABKYRA_SOCKET_DIR: fixtureEnv.TABKYRA_SOCKET_DIR, TABKYRA_AUTO_ALLOW: "1", PATH: fixtureEnv.PATH },
 			},
 		},
@@ -252,6 +256,8 @@ async function main() {
 	if (!out || !extensionDir || !arg("--tasks")) throw new Error("usage: web-bench.mjs --tasks <dir|file> --extension <dir> --out <dir>");
 	mkdirSync(out, { recursive: true });
 	const model = arg("--model", "sonnet");
+	const stack = arg("--stack", "mcp");
+	if (stack !== "mcp" && stack !== "panel") throw new Error(`--stack is mcp or panel, not ${stack}`);
 	const graderModel = arg("--grader", "opus");
 	const timeoutMs = Number(arg("--timeout", "900")) * 1000;
 	const only = arg("--only")?.split(",");
@@ -272,7 +278,7 @@ async function main() {
 				// agent, so the test browser reads as an ordinary one.
 				fixture = await launchFixtureBrowser({ extensionDir, extraArgs: [`--user-agent=${arg("--user-agent", ORDINARY_UA)}`, "--disable-blink-features=AutomationControlled", "--window-size=1440,900"] });
 				await fixture.waitConnected();
-				const agent = await runAgent(task, fixture.env, cli, model, timeoutMs);
+				const agent = await runAgent(task, fixture.env, cli, model, timeoutMs, stack);
 				if (isQuotaStop(`${agent.raw} ${agent.stderr}`)) {
 					quotaStop = true;
 					break;
@@ -308,7 +314,7 @@ async function main() {
 			}
 			if (record) {
 				results.push(record);
-				writeFileSync(resultsFile, JSON.stringify({ model, graderModel, results, summary: summarize(results) }, null, 1));
+				writeFileSync(resultsFile, JSON.stringify({ model, graderModel, stack, results, summary: summarize(results) }, null, 1));
 				console.log(`${results.length}/${tasks.length} ${record.verdict}${record.blocked ? " (blocked)" : ""} ${record.level} ${Math.round(record.ms / 1000)}s ${record.toolCalls} calls: ${record.task.slice(0, 70)}`);
 			}
 		}

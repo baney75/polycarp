@@ -147,10 +147,42 @@ Group titles say "claude 2", "claude 3" and never the project; closing a group l
 session behind; a tab the user drags out or ungroups is pulled back into the group; and
 nothing caps the tabs in a group.
 
+## The side panel's prompt and tool list (D40)
+
+`node cli/eval/panel-prompt-size.mjs --extension <build> --out <file.json>` loads the built extension in a throwaway
+Chromium, answers the panel with a stand-in model (`cli/test/helpers/stub-model.mjs`, no key, no cost) and writes the
+first request: the system prompt and the tool list the panel's model gets on every turn. Tokens counted offline with
+tiktoken's `o200k_base` (the command is at the top of the script). Measured 2026-11-11.
+
+| Build | System prompt | Tools | Total | Change |
+| --- | --- | --- | --- | --- |
+| main (8 tools) | 1,747 | 7,675 | 9,422 | |
+| 15 separate page tools (not shipped) | 1,939 | 9,421 | 11,360 | +1,938 (+20.6%) |
+| 5 page tools, input grouped as `act` (first review) | 1,957 | 8,537 | 10,494 | +1,072 (+11.4%) |
+| The same, one rule for the REPL and act (shipped) | 1,996 | 8,613 | 10,609 | +1,187 (+12.6%) |
+
+The five page tools cost 1,163 tokens: read_page 155, find 110, get_page_text 113, act 642, handle_dialog 143. The REPL's
+description fell from 2,452 to 2,216 (it no longer teaches clicking and typing; its bulk table example costs 50) and the system prompt grew 249 (the
+loop paragraph). Saying where skills and replay() run, so the REPL and act rules agree, cost 65 of the total. In a 32k
+window the growth is 3.6%; in 16k, 7.2%. On the first-review prompt, separate tools cost 864 more than the grouped five
+(that build also carried a 2-token extract_image note the shipped build dropped, so its row reads 2 high).
+
+### The benchmarks on the panel's tools
+
+`polycarp mcp --profile panel` (`cli/src/panel-profile.ts`) serves the panel's exact tool list, descriptions and
+result text over MCP, plus navigate, so the same evals run against it:
+
+- Perception, no model: `node cli/eval/perception.mjs --extension <build> --stack panel`. Input calls go through `act`;
+  a probe that needs a tool the panel leaves out is n/a. 2026-11-11: 15 of 15, 5 n/a (api-request, api-body,
+  embedded-map, xorigin-body and login-masked need read_network or inspect_page). The MCP stack on the same build: 20 of 20.
+- Web tasks: `node cli/eval/web-bench.mjs --tasks <aside-benchmarks>/mind2web/results --extension <build> --out <dir>
+  --stack panel` runs the baseline's 30 tasks with the panel's tools, through the signed-in `claude -p` (no API key).
+  Not run for D40: it takes hours on live sites. Compare its `results.json` with an MCP-stack run of the same seed.
+
 ## Seeing pages: perception eval
 
 `node cli/eval/perception.mjs --extension <build> [--out file.json]` drives the MCP tools against
-local fixture pages (no model) and scores 20 probes:
+local fixture pages (no model) and scores 24 probes:
 - open shadow roots: see, click, fill a nested field, and read their text with `read_page`,
   `get_page_text`, and `get_page_text` on the host; a `display: contents` component
 - same-origin and cross-origin frames, including a scaled, padded frame
@@ -164,6 +196,9 @@ local fixture pages (no model) and scores 20 probes:
   - login passwords in multipart and form bodies are masked
   - `fill` reaches a listener outside the shadow root
   - a newline in a frame URL or a `role` can't fake an element line
+- the settle wait (D41), read straight after the action with no `wait` call: a button a fetch draws after the load,
+  suggestions a debounced search draws after typing, and content that replaces a skeleton after a click; and a page that
+  never goes quiet, where a click and `wait {until:"settled"}` must return within their caps and say they did not settle
 
 Measured 2026-10-28 in headless Chromium, each build with the current CLI. Each review
 column is the head that review saw; its high findings show as that column's failures.
@@ -194,6 +229,12 @@ column is the head that review saw; its high findings show as that column's fail
 Score: main 4/20, review 1 (328e9f6) 12/20, review 2 (8a21dfc) 16/20, review 3 (c2f4df9) 17/20, now 20/20. The cross-site fixture serves text/plain:
 Chromium aborts an opaque JSON or HTML response before a body exists, which would make that
 probe pass on any build.
+
+Settle probes, 2026-11-12 (after review round 1), headless Chromium. With D41 all 24 pass: navigate takes 1106 ms on the
+late page, type 1102 ms, click 1309 ms; on the page that never goes quiet the click returns in 2550 ms and
+`wait {until:"settled","timeoutMs":1500}` in 1511 ms, both saying `settled: false`. The same build with the action cap
+set to 0 (no wait after an action) fails `settle-late`, `settle-autocomplete` and `settle-skeleton`: the content is not
+there yet when the action returns.
 
 # Dictation, 2026-10-29
 

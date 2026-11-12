@@ -171,8 +171,27 @@ export function estimateMessageTokens(message: Message): number {
 export function estimateFixedTokens(context: Pick<Context, "systemPrompt" | "tools">): number {
 	let tokens = estimateTextTokens(context.systemPrompt ?? "");
 	for (const tool of context.tools ?? [])
-		tokens += estimateTextTokens(tool.name + tool.description + JSON.stringify(tool.parameters ?? {}));
+		tokens += estimateSchemaTokens(tool.name + tool.description + JSON.stringify(tool.parameters ?? {}));
 	return tokens;
+}
+
+/**
+ * ASCII characters a token in a tool definition: English descriptions and JSON schema, whose `{"type":"string"}` runs
+ * tokenizers take in few tokens. The panel's 13 tools are 34,451 characters, 8,979 tokens in o200k and 8,943 in
+ * cl100k (3.84 a token); 3.5 counts about 10% over. The general rule (punctuation at 2 a character) counted 1.4 times
+ * the real figure and left no room on a 16k model for a request that fits it.
+ */
+const SCHEMA_CHARS_PER_TOKEN = 3.5;
+
+/** Estimated tokens of a tool definition: ASCII at SCHEMA_CHARS_PER_TOKEN, anything else by the general rule. */
+function estimateSchemaTokens(text: string): number {
+	let ascii = 0;
+	let other = "";
+	for (const ch of text) {
+		if (ch.charCodeAt(0) < 0x80) ascii++;
+		else other += ch;
+	}
+	return Math.ceil(ascii / SCHEMA_CHARS_PER_TOKEN) + (other ? estimateTextTokens(other) : 0);
 }
 
 /** Estimated tokens of a whole request: system prompt, tool definitions and messages. */

@@ -226,7 +226,7 @@ test("first-F2: a 16k model with the real panel prompt and tools chats, with a s
 	const model = { id: "local16", provider: "ollama", contextWindow: 16_384, maxTokens: 16_384 };
 	const context = panel(withResult(words(700_000)));
 	const fixed = estimateFixedTokens(context);
-	assert.ok(fixed > 13_000, `fixed ${fixed}`);
+	assert.ok(fixed > 11_000, `fixed ${fixed}`);
 	const { inner, sent, options } = provider(16_384);
 	const last = await finalOf(await guardContext(inner)(model, context, {}));
 	assert.equal(last.type, "done", last.error?.errorMessage);
@@ -428,4 +428,11 @@ test("a size refusal that leaves no smaller request is learned, so the next turn
 	const next = await finalOf(await guarded(model, context, {}));
 	assert.equal(sent.length, 1, "the next turn is refused here, not by the provider");
 	assert.match(next.error.errorMessage, /This turn is too large/);
+});
+
+test("the fixed part is measured close to a real tokenizer, never under it", () => {
+	// o200k_base counts the fixture's system prompt at 2,062 tokens and its tools at 8,979 (tiktoken, 2026-11-12).
+	const real = 2062 + 8979;
+	const fixed = estimateFixedTokens(panel([]));
+	assert.ok(fixed >= real && fixed <= real * 1.25, `estimated ${fixed}, real ${real}`);
 });

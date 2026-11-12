@@ -65,6 +65,7 @@ export async function answerDialog(tabId: number, accept: boolean, promptText?: 
 	if (!dialog) throw new Error("No dialog is open on this tab");
 	await send(tabId, "Page.handleJavaScriptDialog", { accept, ...(promptText !== undefined ? { promptText } : {}) });
 	openDialogs.delete(tabId);
+	remember(tabId);
 	return dialog;
 }
 
@@ -84,15 +85,18 @@ function installListeners(): void {
 				url: p.url,
 			};
 			openDialogs.set(tabId, dialog);
+			remember(tabId);
 			for (const fn of dialogWatchers) fn(tabId, dialog);
 		} else if (method === "Page.javascriptDialogClosed") {
 			openDialogs.delete(tabId);
+			remember(tabId);
 		}
 	});
 	chrome.debugger.onDetach.addListener((source, reason) => {
 		if (source.tabId === undefined) return;
 		noteCaptureStopped(source.tabId, describeDetach(reason));
 		openDialogs.delete(source.tabId);
+		remember(source.tabId);
 		attachedTabs.delete(source.tabId);
 		viewportTabs.delete(source.tabId);
 		if (reason === "canceled_by_user") bannedTabs.add(source.tabId);
@@ -102,6 +106,8 @@ function installListeners(): void {
 	});
 	chrome.tabs.onRemoved.addListener((tabId) => {
 		openDialogs.delete(tabId);
+		screenshotScale.delete(tabId);
+		remember(tabId);
 		attachedTabs.delete(tabId);
 		viewportTabs.delete(tabId);
 		bannedTabs.delete(tabId);
@@ -297,6 +303,64 @@ export interface CaptureCover {
 }
 let cover: CaptureCover | undefined;
 
+// ---- What survives a service worker restart ------------------------------------
+//
+// With no native host connected nothing keeps the worker alive, and Chrome stops it after about
+// 30 idle seconds. The side panel's page tools run here, so the screenshot scale that act x/y
+// maps by and the dialogs open on its tabs are kept in storage.session too, and read back when
+// the worker starts again. Only the worker keeps them (persistCdpMemory): the panel's own
+// screenshots have their own scales, which must not replace these.
+
+const MEMORY_KEY = "cdp_memory";
+
+interface CdpMemory {
+	scales?: Record<string, number>;
+	dialogs?: Record<string, PageDialog>;
+}
+
+let persisting = false;
+let memoryReady: Promise<void> = Promise.resolve();
+/** Tabs changed in this context before the stored memory was read; what this context saw wins. */
+const touched = new Set<number>();
+let memoryWrites: Promise<void> = Promise.resolve();
+
+/** Keep this context's scales and dialogs in storage.session and read back what an earlier worker kept. */
+export function persistCdpMemory(): Promise<void> {
+	if (persisting) return memoryReady;
+	persisting = true;
+	memoryReady = chrome.storage.session.get(MEMORY_KEY).then(
+		(data) => {
+			const memory = (data[MEMORY_KEY] as CdpMemory | undefined) ?? {};
+			for (const [key, scale] of Object.entries(memory.scales ?? {}))
+				if (!touched.has(Number(key))) screenshotScale.set(Number(key), scale);
+			for (const [key, dialog] of Object.entries(memory.dialogs ?? {}))
+				if (!touched.has(Number(key))) openDialogs.set(Number(key), dialog);
+		},
+		() => undefined,
+	);
+	return memoryReady;
+}
+
+/** Resolves once what an earlier worker kept is back in memory (at once where nothing is kept). */
+export function cdpMemoryReady(): Promise<void> {
+	return memoryReady;
+}
+
+function remember(tabId: number): void {
+	touched.add(tabId);
+	if (!persisting) return;
+	memoryWrites = memoryWrites
+		.then(() => memoryReady)
+		.then(() => {
+			const memory: CdpMemory = {
+				scales: Object.fromEntries(screenshotScale),
+				dialogs: Object.fromEntries(openDialogs),
+			};
+			return chrome.storage.session.set({ [MEMORY_KEY]: memory });
+		})
+		.catch(() => undefined);
+}
+
 export function setCaptureCover(next: CaptureCover | undefined): void {
 	cover = next;
 }
@@ -307,6 +371,17 @@ export function setCaptureCover(next: CaptureCover | undefined): void {
  * asking the model to do the arithmetic.
  */
 const screenshotScale = new Map<number, number>();
+
+/** Whether a viewport screenshot of this tab set the scale that screenshotToCss maps by. */
+export function hasScreenshotScale(tabId: number): boolean {
+	return screenshotScale.has(tabId);
+}
+
+/** @internal Record a screenshot's scale (captureScreenshot does; tests stand in for a capture). */
+export function noteScreenshotScale(tabId: number, cssPerPixel: number): void {
+	screenshotScale.set(tabId, cssPerPixel);
+	remember(tabId);
+}
 
 export function screenshotToCss(tabId: number, p: { x: number; y: number }): { x: number; y: number } {
 	const f = screenshotScale.get(tabId) ?? 1;
@@ -394,7 +469,7 @@ export async function captureScreenshot(
 		const data = await Promise.race([capture(), timeout]);
 		const mimeType = format === "png" ? "image/png" : "image/jpeg";
 		const img = await resizeImage(data, mimeType, options.maxWidth ?? Math.min(css.width, 1280));
-		if (!options.clip && !options.fullPage && img.width > 0) screenshotScale.set(tabId, css.width / img.width);
+		if (!options.clip && !options.fullPage && img.width > 0) noteScreenshotScale(tabId, css.width / img.width);
 		return { ...img, cssWidth: Math.round(css.width), cssHeight: Math.round(css.height) };
 	} finally {
 		clearTimeout(timer);
@@ -801,8 +876,15 @@ function describeDetach(reason: string): string {
 	}
 }
 
+/** Called when a tab's debugging session ended (its domains are off in the next one). */
+const sessionEndWatchers = new Set<(tabId: number) => void>();
+export function onDebuggerSessionEnd(fn: (tabId: number) => void): void {
+	sessionEndWatchers.add(fn);
+}
+
 /** Record that capture on this tab ended just now, for each kind that was on. */
 function noteCaptureStopped(tabId: number, reason: string): void {
+	for (const fn of sessionEndWatchers) fn(tabId);
 	const gap: CaptureGap = { at: Date.now(), reason };
 	const kinds: CaptureKind[] = [];
 	if (consoleBuffers.has(tabId)) kinds.push("console");

@@ -1103,3 +1103,132 @@ Agents could not attach a file to a form or keep a file a page offers. One tool,
   `remote fix`, or a plan with no actions), the check_failed step's button is Check again, which runs `remoteTest` (the
   Mac: `remote test`); a test that says the route is on ends the step.
 
+
+## D40. The side panel's model uses the bridge's ref tools, grouped as one `act` tool (Claude, 2026-11-11)
+
+- **One implementation.** The panel's calls run the bridge's own handlers (`src/bridge/tools.ts`) on its own browser
+  session: the stale-ref refusal, hit-tested clicks, shadow roots, frames and dialog handling are the ones MCP clients get.
+  The specs, routes and result text live once in `src/bridge/page-tools.ts`; the panel adapter (`src/tools/page-tools.ts`)
+  and the CLI's `mcp --profile panel` both use them. Read formatting (`src/bridge/format.ts`) is shared with `cli/src/mcp.ts`.
+- **In the service worker.** The panel sends each routed call as a message and the worker runs it
+  (`src/bridge/panel-calls.ts`). Loading the handlers in the panel pulled their capture, PDF and site-edit code (the public
+  suffix list alone is 150 KB) into what the panel parses to open, 2,061,447 bytes against the 1,900,000 budget even as a
+  lazy import, because the bundler shares those modules with the panel's own. In the worker the panel stays at main's size.
+  The worker answers only `sidepanel.html` of this extension.
+- **One source of truth for the tabs.** The panel and the worker each hold a BrowserSession object for the panel's
+  session; the stored session table is the truth for both. The worker reads it under the table lock for every call
+  (`BrowserSession.existing`), its handlers write it the same way, and the panel reads it back as each call returns, so a
+  navigate {switchToTab} or {newTab} is what the next read_page sees, and a tab the worker made current is the panel's at
+  once (storage.onChanged alone arrives a task later). Tests: a tab switch then a read across two contexts, and in the
+  panel e2e.
+- **Worker restarts.** With no native host connected nothing keeps the worker running, and Chrome stops it after about 30
+  idle seconds. The panel pings it every 20 seconds until five minutes pass with no page tool call, which covers a
+  model's thinking between calls. What act x/y needs is kept anyway: the worker mirrors the screenshot scales and open
+  dialogs into storage.session (`persistCdpMemory` in cdp.ts, the worker only, so the panel's own extract_image scales
+  can't replace them) and reads them back when it starts. act x/y with no screenshot of the tab is refused with
+  `bad_params`, never mapped by a guessed scale. The panel e2e stops the worker over DevTools between act screenshot and
+  act click x/y.
+- **Stop ends the call.** The panel stops waiting the moment the user presses stop (`interrupted`), the worker answers
+  the call at once and stops the handler between steps, and a handler that never settles is cut off by the bridge's
+  `withTimeout(HANDLER_TIMEOUT_MS)`, now shared from `src/bridge/errors.ts`.
+- **Five tools, not fifteen.** read_page, find, get_page_text and handle_dialog stay separate; the ten input tools (click,
+  type, fill, press, hover, scroll, drag, wait, screenshot, actions) are one `act` tool with an `action` field. Fifteen
+  separate tools cost the panel 1,938 tokens a turn over main (+21%); the grouped five cost 1,187 (+13%), measured with
+  `cli/eval/panel-prompt-size.mjs` (docs/benchmarks.md). Small models run the panel in 16k to 32k windows, and reading
+  comes first in the loop, so the reads keep their own names. `actions` is `act` `steps`, and scroll's `to` is `edge`, so
+  `to` means only drag's end point.
+- **Left out.** tabs_* (navigate lists, opens, switches, shows and closes the panel's tabs), run_js and get_page_html (the
+  REPL), files (its approval flow is the bridge's question to the user), read_console, read_network, inspect_page and
+  capture (debugging and evidence for outside agents), site_edit and site_script (Settings > Sites), and search, crawl,
+  skills, library and threads (the helper's or the panel's own tools).
+- **Same reach as before, nothing looser.** The tools act only on tabs in the panel's session (the handlers refuse others),
+  never on a Polycarp page (`isOwnExtensionUrl`), open no site (their `checkUrl` refuses; navigate stays the panel's own
+  tool) and send no file (`askUpload` is false). The bridge's per-host allow list governs outside agents and is not
+  applied: the panel's model could already act on these pages through the REPL, and asking before acting under the user's
+  sign-in stays a system prompt rule, as it was. Guarded hosts are the native host's to name per bridge request, so the
+  panel has none. Page text from read_page, find and get_page_text is listed as untrusted data in the prompt.
+- **Dialogs.** A non-dialog-safe call fails with `dialog_open` while any session tab has a box open, and a click that
+  opened one is the click's success, through the same `raceDialogs` bridge requests use (`isDialogSafe` moved to
+  `src/bridge/dialogs.ts` so both share it). The bridge's messages name MCP tools; the panel rewrites the two that name
+  tabs_context and tabs_select into navigate's words.
+- **One rule for the REPL and the page tools.** The REPL runs code: data work, files, bulk extraction, a skill's
+  functions, a recorded workflow's replay() and skill code under test. The model's own clicks and keys go through act.
+  The tool list, the Working on Pages paragraph, browserjs(), Website automation and the skill tool's Creating Skills
+  steps all say this; a capability is found with read_page and act, then written as skill code and tested in the REPL.
+  nativeClick and friends remain for skills.
+- **act steps reports everything.** Beyond the count and note, every field the batch returns (`notRun`, the dialog it
+  opened, what each step did) reaches the model.
+- **Enums are `{type: "string", enum}`**, not a union of literals: Google's API rejects the anyOf a union makes, as the
+  skill tool already notes.
+
+## D41. Input tools wait for the page to settle, capped at 2.5 seconds (Claude, 2026-11-11)
+
+Gap analysis item 4. `navigate`, `click`, `type`, `press`, `fill` and the end of `actions` wait, after their action, until the
+page has been quiet for 300 ms or 2.5 s have passed; `wait {until:"settled"}` waits for 500 ms of quiet, up to `timeoutMs`
+(default 10 s). Quiet means all three (`src/browser/settle.ts`):
+- **No request the page waits on.** Documents, scripts, stylesheets, fetch and XHR from the tab's debugger Network events;
+  images, media, fonts, pings, EventSource and websockets don't count. Only requests started after the action began count,
+  and only while they are younger than 2 s (5 s for `wait`): a long poll or a stream would otherwise hold every call to its cap.
+- **No DOM change.** A MutationObserver the first wait leaves in the document, in Polycarp's isolated world; the veil's own
+  element is left out.
+- **No loading marker on screen.** `aria-busy="true"`, or a class token `skeleton`, `shimmer`, `spinner` or `loading`
+  on a visible element in the window, and a document still parsing.
+
+Why these numbers: 300 ms covers a 250 ms search debounce, which is common, while keeping a click on a quiet page under half
+a second. The cap bounds a page that never goes quiet (a ticking counter, analytics pings, a feed). A result that hit the cap
+says `settled: false` and what it was waiting on; one that settled says nothing more. The wait stops at once when a dialog
+opens, and the dialog stays the action's effect (it is reported as before, not as `dialog_open`). Steps inside `actions` keep
+their `settleMs` pause, so canvas batches are not slowed. Not counted: requests and mutations inside cross-origin frames.
+
+Network bookkeeping: Network is turned on just before every action (a batch's first step included), not once per tab,
+because a debugging session can end with no event (a worker restart, a silent detach) and take the domain with it; the e2e
+run caught that. Each action sends it once, and waits at most 0.5 s for it. A frame's current document is the one
+`Page.frameNavigated` last committed; what an older document of that frame had in flight is dropped. A request for a document
+never moves that mark: a download or a 204 asks for one that never commits, and the old page keeps its own requests.
+
+What it can never do: hold an action longer than the cap plus that 0.5 s (a timer ends the wait at the cap whatever the page
+or the debugger does, and one DOM probe gets at most 0.4 s), or fail an action that already ran. A box the page opens while
+it settles is the action's result, with the dialog note, for every tool that settles. A page Polycarp may not script (the
+Chrome Web Store, the PDF viewer) is judged by its requests alone after two refused probes; a probe that times out means the
+page's main thread is busy (`waitingOn: "loading"`). A loader counts only when a person could see it: an ancestor's opacity or
+visibility hides it, and so does being outside the window on any side. A landing on the approval page (#94) is blanked
+before anything runs in it, so the wait never starts there.
+
+The side panel's `act` runs the same handlers (D40), so its input settles the same way (`test/panel-settle.test.mjs`).
+
+## D42. Every panel request fits the model's window, by one rule the tests check over a grid (Claude, 2026-11-12)
+
+A 400-page PDF handed whole to a small-window model got `400 status code (no body)` and left the chat dead. The guard
+(`src/models/context-guard.ts`, `src/models/context-budget.ts`) sits outermost on the panel's stream function, so every
+route a request takes is fitted. Two rounds of review found four ways the first version still sent a request that could not
+fit, or locked a model out. They were one bug: the guard was a list of cases. Now it is one rule.
+
+**The budget.** The window, less the reply's room, less the fixed part (system prompt and tools) as measured. The reply
+gets a quarter of the window, at most what was asked; when the conversation would have less than 512 tokens, the reply
+shrinks to 1,024 first. Below that floor nothing is sent and the person reads the window that would work.
+
+**What gives way.** Everything in the history, in this order, until the estimate is under the budget: tool results and
+attached documents (each to one budget however many parts it has, older ones to a stub, then all halved, largest first),
+images, earlier replies (thinking, large tool call arguments, text), the person's earlier messages, whole earlier turns
+(oldest first, with a note), then the latest message and the turn in progress, ending with the newest call's own thinking.
+Every halving ends at the floor itself. Each tool call keeps its result, the latest user message is always sent, and the
+stored chat keeps everything. A request still over the budget is not sent.
+
+**When the provider disagrees.** One retry, with the conversation halved and the fixed part whole. A smaller window is
+learned only on proof (the provider's words name size, or refusals on two turns in a row; a first-try success resets the
+count), never below what the fixed part needs, and forgotten when a probe after 10 good turns works at a larger size.
+
+**Measuring the fixed part.** Text keeps the conservative estimate (3 characters a token, punctuation 2, CJK more), since
+undercounting sends what won't fit. Tool schemas don't: the panel's 13 tools are 8,979 tokens in o200k, and the general
+rule counted 12,536, which left a 16k model no room. Schema ASCII counts at 3.5 characters a token (about 10% over).
+
+**Tools size their own answers to the same budget.** `extract_document`, and since D40 the panel's `get_page_text` and
+`read_page` (`fitPageCall` in `src/bridge/page-tools.ts`), ask for what one result may hold and say how to read on, so the
+guard never cuts their notes away. Screenshots count 1,600 tokens and give way like other images, with a line saying so.
+
+Rejected: sending and letting the provider's refusal decide (a bare 400 says nothing, and the chat is dead in the
+meantime); a real tokenizer in the panel (one per model family, megabytes each, and still an estimate of the chat template).
+Proof: `test/context-guard-property.test.mjs` runs the guard over windows from 8k to 200k, fixed parts from 2,000 to 20,000
+tokens, providers that take less than they claim, and random histories, and asserts every send fits, keeps its pairs and the
+latest message, and that a refusal naming size heals. Each finding has a named test, and each fix was broken on purpose to
+see its test fail.

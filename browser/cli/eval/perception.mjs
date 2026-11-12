@@ -11,8 +11,13 @@
 //   cost                                                 size of an interactive read of a small page
 //   scaled-click, hidden-text, xorigin-body, login-masked, composed-fill, fieldset-disabled, hostile-src
 //                                                        review cases for #73
+//   settle-late, settle-autocomplete, settle-skeleton, settle-bounded
+//                                                        the page has settled when an action returns (no wait call)
 //
-//   node cli/eval/perception.mjs --extension <built extension dir> [--out file.json]
+//   node cli/eval/perception.mjs --extension <built extension dir> [--out file.json] [--stack panel]
+//
+// --stack panel runs the probes through the side panel's tools (`polycarp mcp --profile panel`): input goes through
+// act, and a probe that needs a tool the panel leaves out (inspect_page, read_network, run_js) is n/a, not a fail.
 //
 // A measurement, not a gate: exit 0 even when probes fail, exit 1 only when the harness breaks.
 // Needs the CLI build (cli/dist) and Playwright's Chromium.
@@ -28,6 +33,12 @@ const arg = (name, fallback) => {
 };
 const EXTENSION = arg("--extension");
 const OUT = arg("--out");
+const PANEL = arg("--stack", "mcp") === "panel";
+/** MCP input tools, and the act action each is in the panel. */
+const ACT = { click: "click", type: "type", fill: "fill", press: "press", hover: "hover", scroll: "scroll", drag: "drag", wait: "wait", screenshot: "screenshot", actions: "steps" };
+const PANEL_TOOLS = new Set(["navigate", "read_page", "find", "get_page_text", "act", "handle_dialog"]);
+/** Tools a probe asked for that the panel leaves out, this probe. */
+let missing = [];
 /** A call that has not answered by now counts as a hang. */
 const HANG_MS = 90000;
 const RAW_MAX = 2000;
@@ -140,6 +151,11 @@ customElements.define("x-flat", class extends HTMLElement {
 	constructor() { super(); this.attachShadow({ mode: "open" }).innerHTML = "<button>Flat " + "Buy</button><p>Flat " + "text 3030</p>"; }
 });
 </script>`,
+	// Drawn after the action that changed it: the settle wait (src/browser/settle.ts).
+	"/settle-late": `<p>Loading</p><script>fetch("/slow").then((r) => r.text()).then((t) => document.body.insertAdjacentHTML("beforeend", "<button>Late Buy</button><p>" + t + "</p>"));</script>`,
+	"/settle-ac": `<input id="c" aria-label="City"><ul id="l" role="listbox"></ul><script>let t; c.oninput = () => { clearTimeout(t); t = setTimeout(() => fetch("/suggest").then((r) => r.json()).then((a) => { l.innerHTML = a.map((x) => "<li role=option tabindex=0>" + x + "</li>").join(""); }), 250); };</script>`,
+	"/settle-skeleton": `<button id="b">Load orders</button><div id="o"></div><script>b.onclick = () => { o.innerHTML = '<div class="skeleton-row" style="height:20px;width:200px;background:#ddd"></div>'; setTimeout(() => { o.innerHTML = "<p>Order " + "5521 shipped</p>"; }, 900); };</script>`,
+	"/settle-chatty": `<p id="n">0</p><button id="b">Go</button><p id="r">idle</p><script>setInterval(() => { n.textContent = String(+n.textContent + 1); }, 50); setInterval(() => fetch("/ping"), 150); fetch("/poll"); b.onclick = () => { r.textContent = "went"; fetch("/poll"); };</script>`,
 	"/embedded": `<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"secret":"next-data-5150"}}}</script>
 <form action="/subscribe" method="post"><input name="email"><button>Subscribe</button></form>`,
 };
@@ -152,6 +168,16 @@ const serverA = await serve((req, res) => {
 		res.end("{}");
 		return;
 	}
+	// Slow on purpose; the long poll answers only after the run (unref keeps it from holding the process).
+	const later = (ms, type, body) =>
+		setTimeout(() => {
+			res.writeHead(200, { "content-type": type });
+			res.end(body);
+		}, ms).unref();
+	if (path === "/slow") return later(700, "text/plain", "Late content 8181");
+	if (path === "/suggest") return later(400, "application/json", JSON.stringify(["Paris, France", "Parma, Italy"]));
+	if (path === "/poll") return later(60000, "text/plain", "poll");
+	if (path === "/ping") return later(0, "text/plain", "ok");
 	if (path === "/api/price") {
 		res.writeHead(200, { "content-type": "application/json" });
 		res.end(JSON.stringify({ sku: "A1", price: 4242, hidden: "api-only-9081" }));
@@ -169,9 +195,12 @@ const site = `http://127.0.0.1:${serverA.address().port}`;
 /** The throwaway browser and the MCP client, once started. */
 let fx;
 let client;
+/** With --stack panel, a regular MCP client on the same session, for the harness's own page checks (run_js). */
+let checker;
 
 async function cleanup() {
 	await client?.close().catch(() => {});
+	await checker?.close().catch(() => {});
 	await fx?.close().catch(() => {});
 	serverA.close();
 	serverB.close();
@@ -185,17 +214,26 @@ for (const event of ["uncaughtException", "unhandledRejection"])
 
 // ---- MCP helpers ---------------------------------------------------------------
 
-async function mcpClient(env, { cwd, name = "perception" } = {}) {
+async function mcpClient(env, { cwd, name = "perception", stack = PANEL ? "panel" : "mcp" } = {}) {
 	const client = new Client({ name, version: "0.0.0" });
 	const t0 = performance.now();
 	await client.connect(
-		new StdioClientTransport({ command: process.execPath, args: [cli, "mcp"], env, cwd, stderr: "ignore" }),
+		new StdioClientTransport({ command: process.execPath, args: [cli, "mcp", ...(stack === "panel" ? ["--profile", "panel"] : [])], env, cwd, stderr: "ignore" }),
 	);
 	return { client, initMs: Math.round(performance.now() - t0) };
 }
 
 /** One tool call with a hang guard; never throws. */
-async function call(client, name, args = {}) {
+async function call(client, name, args = {}, { check = false } = {}) {
+	if (PANEL && !check && ACT[name]) {
+		const { to, ...rest } = args;
+		args = { action: ACT[name], ...rest, ...(to === "top" || to === "bottom" ? { edge: to } : to ? { to } : {}) };
+		name = "act";
+	}
+	if (PANEL && !check && !PANEL_TOOLS.has(name)) {
+		missing.push(name);
+		return { outcome: "n/a", ms: 0, text: "", full: "" };
+	}
 	const t0 = performance.now();
 	let timer;
 	const hang = new Promise((resolve) => {
@@ -237,7 +275,8 @@ const lineWith = (output, name) => output.split("\n").find((l) => l.includes(nam
 
 /** A page global or expression, read in the page's own world. */
 const mainJs = async (code) => {
-	const r = await call(client, "run_js", { code, world: "main" });
+	// The probe's check, not the agent's call: on the panel stack it goes through the regular tools.
+	const r = await call(checker ?? client, "run_js", { code, world: "main" }, { check: true });
 	// run_js answers with JSON: {"value": ...} from the bridge, or a bare value.
 	let value = r.full.trim();
 	try {
@@ -258,6 +297,7 @@ const keep = (...calls) => {
 
 async function probe(id, fn) {
 	raw = [];
+	missing = [];
 	let pass = false;
 	let detail;
 	try {
@@ -265,6 +305,7 @@ async function probe(id, fn) {
 	} catch (err) {
 		detail = `harness error: ${err.message}`;
 	}
+	if (missing.length) return void results.push({ id, pass: false, na: true, detail: `n/a: needs ${[...new Set(missing)].join(", ")}, which the panel leaves out`, output: "" });
 	results.push({ id, pass: Boolean(pass), detail, output: raw.join("\n---\n").slice(0, RAW_MAX) });
 }
 
@@ -274,7 +315,10 @@ let exitCode = 0;
 try {
 	fx = await launchFixtureBrowser({ extensionDir: EXTENSION });
 	await fx.waitConnected();
-	({ client } = await mcpClient({ ...fx.env, TABKYRA_SESSION: "perception" }));
+	// One bridge session for both clients: the same client name and session name.
+	const env = { ...fx.env, TABKYRA_SESSION: "perception", TABKYRA_CLIENT_NAME: "perception" };
+	({ client } = await mcpClient(env));
+	if (PANEL) ({ client: checker } = await mcpClient(env, { name: "perception-check", stack: "mcp" }));
 	const { tools } = await client.listTools();
 	const toolNames = new Set(tools.map((t) => t.name));
 	keep(await call(client, "tabs_context"));
@@ -394,6 +438,7 @@ try {
 	});
 
 	await probe("api-body", async () => {
+		if (PANEL) missing.push("read_network");
 		const id = network?.full.match(/"?(?:requestId|request_id|id)"?\s*[:=]\s*"?([\w.-]+)"?/i)?.[1];
 		if (!id) return { pass: false, detail: `no request id in output: ${(network?.full ?? "").slice(0, 300)}` };
 		const body = await call(client, "read_network", { requestId: id });
@@ -403,6 +448,7 @@ try {
 	});
 
 	await probe("embedded-map", async () => {
+		if (PANEL) missing.push("inspect_page");
 		if (!toolNames.has("inspect_page")) return { pass: false, detail: "no inspect_page tool" };
 		await go("/embedded");
 		const page = await call(client, "inspect_page", {});
@@ -499,6 +545,55 @@ try {
 		return { pass: ok && direct, detail: `display:contents ${ok ? "read" : "missing"}, text straight in a shadow root ${direct ? "read" : "missing"}` };
 	});
 
+	// No sleep and no wait call: what the agent reads right after the action is what it gets.
+	const goNow = async (path) => {
+		const nav = await call(client, "navigate", { url: `${site}${path}` });
+		if (nav.outcome !== "ok") throw new Error(`navigate ${path}: ${nav.outcome} ${nav.text}`);
+		return nav;
+	};
+
+	await probe("settle-late", async () => {
+		const nav = await goNow("/settle-late");
+		const read = await interactive();
+		keep(nav, read);
+		const ok = read.full.includes("Late Buy");
+		return { pass: ok, detail: ok ? `listed after navigate (${nav.ms} ms)` : "the button a fetch draws was not there yet" };
+	});
+
+	await probe("settle-autocomplete", async () => {
+		await goNow("/settle-ac");
+		const ref = refFor((await interactive()).full, "City");
+		if (!ref) return { pass: false, detail: "no ref for City" };
+		const typed = await call(client, "type", { ref, text: "Par" });
+		const read = await interactive();
+		keep(typed, read);
+		const ok = read.full.includes("Paris, France");
+		return { pass: ok, detail: ok ? `suggestions listed after type (${typed.ms} ms)` : "the debounced suggestions were not there yet" };
+	});
+
+	await probe("settle-skeleton", async () => {
+		await goNow("/settle-skeleton");
+		const ref = refFor((await interactive()).full, "Load orders");
+		if (!ref) return { pass: false, detail: "no ref for Load orders" };
+		const click = await call(client, "click", { ref });
+		const text = await call(client, "get_page_text", {});
+		keep(click, text);
+		const ok = text.full.includes("Order 5521 shipped");
+		return { pass: ok, detail: ok ? `content in place of the skeleton (${click.ms} ms)` : "still the skeleton" };
+	});
+
+	await probe("settle-bounded", async () => {
+		await goNow("/settle-chatty");
+		const ref = refFor((await interactive()).full, "Go");
+		if (!ref) return { pass: false, detail: "no ref for Go" };
+		const click = await call(client, "click", { ref });
+		const waited = await call(client, "wait", { until: "settled", timeoutMs: 1500 });
+		keep(click, waited);
+		const said = /"settled":\s*false/.test(click.full) && /"settled":\s*false/.test(waited.full);
+		const ok = click.outcome === "ok" && click.ms < 4500 && waited.ms < 3500 && said;
+		return { pass: ok, detail: `click ${click.outcome} ${click.ms} ms, wait ${waited.outcome} ${waited.ms} ms, unsettled ${said ? "reported" : "not reported"}` };
+	});
+
 	// Report in the order the task lists the probes.
 	const order = [
 		"shadow-see",
@@ -521,18 +616,23 @@ try {
 		"fieldset-disabled",
 		"hostile-src",
 		"contents-host",
+		"settle-late",
+		"settle-autocomplete",
+		"settle-skeleton",
+		"settle-bounded",
 	];
 	results.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 
 	const width = Math.max(...results.map((r) => r.id.length));
 	for (const r of results)
-		console.log(`${r.id.padEnd(width)}  ${r.pass ? "pass" : "FAIL"}  ${r.detail.replace(/\s+/g, " ").slice(0, 160)}`);
+		console.log(`${r.id.padEnd(width)}  ${r.na ? "n/a " : r.pass ? "pass" : "FAIL"}  ${r.detail.replace(/\s+/g, " ").slice(0, 160)}`);
 	const score = results.filter((r) => r.pass).length;
-	console.log(`score: ${score}/${order.length}`);
+	const na = results.filter((r) => r.na).length;
+	console.log(`score: ${score}/${order.length - na}${na ? ` (${na} n/a on the panel's tools)` : ""}`);
 	if (OUT)
 		writeFileSync(
 			OUT,
-			`${JSON.stringify({ at: new Date().toISOString(), extension: EXTENSION, score, total: order.length, probes: results }, null, 2)}\n`,
+			`${JSON.stringify({ at: new Date().toISOString(), extension: EXTENSION, stack: PANEL ? "panel" : "mcp", score, total: order.length - na, na, probes: results }, null, 2)}\n`,
 		);
 } catch (err) {
 	console.error(err);
