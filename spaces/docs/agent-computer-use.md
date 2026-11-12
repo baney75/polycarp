@@ -197,6 +197,18 @@ Agents never switch which workspace is shown, never create, delete or rename one
 refuses `arrange`, `move` and `close`, checked again with each target's scope and in use in the main-thread pass that
 makes the change (`MutationGate`; `arrange` applies every frame or none); connectors get `workspaces` only (`WorkspaceVerbs.connectorRefusal`).
 
+Decided 2026-11-12 (Claude, lead agent; Donovan has not ruled on it): `open` does not launch an app hidden. An app that wasn't running may show its first
+window on the current workspace for about 60 ms before the claim moves it; that flash stays. PR 172 tried a hidden
+launch and was reverted (PR 174): on the installed build c1a5f8cd, `swift scripts/agent-open-probe.swift 3 "Font Book"
+"Dictionary"` failed every open. The cause is in the identify path: a copy launched hidden lists no windows through
+its AXWindows (`Windows.all`, Windows.swift:221), so the model never sees them, and the window server lists them
+(`.optionAll`) but can't move them. Moving another app's window needs Accessibility, and parking (hide, move, unhide)
+works only for windows the app has already shown (field note `hidden-macos-apps-stop-answering-accessibility`). The
+harm the hidden launch was meant to stop is covered by the quit rule (PR 179, in review when this was written): a copy the agent started that has no
+window on the agent workspace 7 s after the open is quit, so an unplaced window never stays on Donovan's screen. Don't
+retry a hidden launch without new evidence: a probe showing a hidden copy's window identified and moved without
+Accessibility, or Accessibility answering for that hidden copy.
+
 ## Access modes
 
 Donovan picks how much agents may use in Settings > Agents (Donovan, 2026-11-04). The mode stays until he changes it.
