@@ -115,6 +115,17 @@ final class FullScreenFillTests: XCTestCase {
         XCTAssertEqual(next.size, FullScreenFill.smaller(fill).size)
     }
 
+    func testAFilledWindowResizedByHandLosesItsRecordBeforeMacOSFillsIt() {
+        // Review of #146: filled by Polycarp, resized by hand, dragged to the top. Kept, the record matched again once macOS
+        // filled the window, and the next drag down resized it twice.
+        let record = FullScreenFill.Record(from: small, landed: fill)
+        let resized = CGRect(x: 80, y: 90, width: 1000, height: 700)
+        XCTAssertEqual(FullScreenFill.dragStart(current: resized, fill: fill, record: record, pointer: CGPoint(x: 500, y: 100)), .forget)
+        let macOSFilled = fill.offsetBy(dx: 0, dy: 20)
+        XCTAssertEqual(FullScreenFill.dragStart(current: macOSFilled, fill: fill, record: nil, pointer: CGPoint(x: 700, y: 60)), .leftToMacOS)
+        XCTAssertEqual(FullScreenFill.dragStart(current: small, fill: fill, record: nil, pointer: CGPoint(x: small.midX, y: small.minY)), .ordinary)
+    }
+
     func testDraggingAnOrdinaryWindowLeavesItAlone() {
         XCTAssertNil(FullScreenFill.unfilled(current: small, fill: fill, record: nil, pointer: CGPoint(x: small.midX, y: small.minY)))
     }

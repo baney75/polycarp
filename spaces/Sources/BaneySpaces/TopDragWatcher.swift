@@ -134,6 +134,9 @@ final class TopDragWatcher {
     /// The button came up with the overview open for `grab`. `drop` is false when the drag
     /// ended some other way (the watcher stopped, or a release it missed), so nothing moves.
     var onRelease: (_ grab: TopDrag.Grab, _ drop: Bool) -> Void = { _, _ in }
+    /// A drag of a window's title bar ended with the button let go at this point, however it ended (overview, dock, or
+    /// neither). Called after `onRelease` and `onCarryEnd`.
+    var onDragEnd: (WindowID, CGPoint) -> Void = { _, _ in }
     /// The drag to the top opens the overview. Off, the watcher still follows drags for the dock.
     var topEnabled = true
     /// The window follows the pointer, on every tick until the overview opens for it: the dock
@@ -177,12 +180,15 @@ final class TopDragWatcher {
     /// Ends the drag: the overview, if it opened for it, gets the last position and the release.
     /// Without a position it closes and nothing moves.
     private func released(at p: CGPoint?) {
+        let dragged = open ?? ((state.moving || state.pinned) ? state.grab : nil)
         endCarry(at: p)
         endTicks()
-        guard let g = open else { return }
-        open = nil
-        if let p { onMove(p) }
-        onRelease(g, p != nil)
+        if let g = open {
+            open = nil
+            if let p { onMove(p) }
+            onRelease(g, p != nil)
+        }
+        if let dragged, let p { onDragEnd(dragged.window, p) }
     }
 
     private func pressed(at p: CGPoint) {
@@ -271,9 +277,10 @@ final class TopDragWatcher {
         for w in list {
             guard let bounds = (w[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) }),
                   bounds.contains(p) else { continue }
-            // A fully transparent window (a screen recorder's overlay) isn't what the person pressed. Counting it made every
-            // drag invisible to Polycarp for the length of a recording (Donovan, 2026-11-12).
-            if let alpha = w[kCGWindowAlpha as String] as? Double, alpha == 0 { continue }
+            // A window the press passes through (a screen recorder's overlay) isn't what the person pressed. Counting it made
+            // every drag invisible to Polycarp for the length of a recording (Donovan, 2026-11-12).
+            let number = (w[kCGWindowNumber as String] as? Int).map(UInt32.init)
+            guard PressTarget.takesPress(alpha: w[kCGWindowAlpha as String] as? Double, tags: number.flatMap(TopDragWatcher.tags(of:))) else { continue }
             // The first window under the pointer takes the click, whatever it is.
             guard (w[kCGWindowLayer as String] as? Int) == 0, let pid = w[kCGWindowOwnerPID as String] as? Int32, pid != getpid(),
                   let id = w[kCGWindowNumber as String] as? Int else { return nil }
@@ -287,6 +294,21 @@ final class TopDragWatcher {
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         return list.first { ($0[kCGWindowLayer as String] as? Int) == 0 && ($0[kCGWindowOwnerPID as String] as? Int32) == pid }
             .flatMap { ($0[kCGWindowNumber as String] as? Int).map(WindowID.init) }
+    }
+
+    private typealias MainConnection = @convention(c) () -> Int32
+    private typealias GetTags = @convention(c) (Int32, UInt32, UnsafeMutablePointer<UInt64>, Int32) -> Int32
+    private static let skyLight = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY)
+    private static let getTags: (MainConnection, GetTags)? = {
+        guard let skyLight, let c = dlsym(skyLight, "SLSMainConnectionID"), let t = dlsym(skyLight, "SLSGetWindowTags") else { return nil }
+        return (unsafeBitCast(c, to: MainConnection.self), unsafeBitCast(t, to: GetTags.self))
+    }()
+
+    /// SkyLight's tags for a window, nil if they can't be read.
+    static func tags(of id: UInt32) -> UInt64? {
+        guard let (connection, get) = getTags else { return nil }
+        var t: UInt64 = 0
+        return get(connection(), id, &t, 64) == 0 ? t : nil
     }
 
     static func bounds(of id: WindowID) -> CGRect? {
