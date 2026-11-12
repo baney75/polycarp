@@ -34,7 +34,7 @@ public struct HandsTool: Equatable, Sendable {
 
 /// The commands, once, for the CLI parser, the MCP `tools/list` and the app's dispatcher.
 public enum HandsTools {
-    static let refParam = HandsParam("ref", .string, "A ref printed by snapshot or find, like @s8f3k2p9:e5.", required: true, positional: true)
+    static let refParam = HandsParam("ref", .string, "A ref like @s8f3k2p9:e5, or a row number from your latest snapshot, like 5.", required: true, positional: true)
 
     /// Not agent tools: lending an app is Donovan's decision (see `HandsParse.askedForLend`).
     public static let userOnly: Set<String> = ["lend", "return"]
@@ -51,10 +51,14 @@ public enum HandsTools {
     static let base: [HandsTool] = [
         HandsTool(verb: "windows", summary: "List the windows an agent may use now: those on the agent workspace and those of lent apps, with their ids, plus the dialogs, alerts, sheets and palettes those apps raised (kind, parent, waiting: true when the app is blocked until it is answered). A dialog you may not use is listed with usable: false and the rule that refused it. A window of an app Donovan is using carries in_use: true and in_use_note; reads on it work now, and an action on it waits.", params: [], acts: false),
         HandsTool(verb: "workspaces", summary: "Read only. List the workspaces (number, name, shown or not, which one is the agent workspace) and where each window you may use is. Use it before `move` or `arrange`, or to see whether Donovan is looking at the agent workspace (agent_workspace_shown). Agents never switch, create, rename or delete workspaces.", params: [], acts: false),
-        HandsTool(verb: "snapshot", summary: "Read the accessibility tree of one window and print a ref for each thing you can act on. Only the agent workspace and lent apps. Refs last until the next snapshot of that window changes the UI; after a stale_ref error take a new snapshot.", params: [
+        HandsTool(verb: "snapshot", summary: "Read one window, one row per element: [N] role \"name\" =value (states), indented under its parent. Act on row N with ref \"N\" (this snapshot) or the full ref the header shows. After acting, read again with since: \"latest\" to see only what changed. Example: {\"window\":4211,\"query\":\"Save\"}", params: [
             HandsParam("app", .string, "App name or bundle id. With several windows on the agent workspace the newest is read; pass window to choose."),
             HandsParam("window", .integer, "Window id from `windows`, `open` or a previous snapshot."),
-            HandsParam("interactive", .boolean, "Only elements you can act on (smaller, faster).", short: "i"),
+            HandsParam("query", .string, "Only rows whose role, name or value has this text (any case; several with |), with their parents."),
+            HandsParam("since", .string, "latest: only rows added (+), changed (~) or removed (-) since your last read of this window."),
+            HandsParam("max_elements", .integer, "At most this many rows (default \(SnapshotRows.defaultMax)); a last line says how to get the rest. A since read lists every change."),
+            HandsParam("format", .string, "rows (default over MCP) or json (the full tree, default on the command line)."),
+            HandsParam("interactive", .boolean, "Only elements you can act on.", short: "i"),
             HandsParam("compact", .boolean, "Collapse wrapper groups with no content."),
             HandsParam("depth", .integer, "How deep to read (default 10)."),
         ], acts: false),
@@ -150,6 +154,12 @@ public struct HandsRequest: Codable, Equatable, Sendable {
     public func string(_ k: String) -> String? { args[k]?.string }
     public func int(_ k: String) -> Int? { args[k]?.int }
     public func bool(_ k: String) -> Bool { args[k]?.bool ?? false }
+
+    /// How a snapshot answers: rows when asked, or when it uses an option only rows have; json otherwise.
+    public var snapshotFormat: String {
+        if let f = string("format") { return f }
+        return ["query", "since", "max_elements"].contains { args[$0] != nil } ? "rows" : "json"
+    }
 }
 
 public enum HandsParse {
@@ -277,6 +287,14 @@ public enum HandsParse {
         }
         if tool.verb == "snapshot" || tool.verb == "find", r.args["app"] == nil, r.args["window"] == nil {
             return .failure(usage(tool, "say which window: app or window"))
+        }
+        if tool.verb == "snapshot" {
+            if let f = r.string("format"), f != "rows", f != "json" { return .failure(usage(tool, "format is rows or json, not \(f)")) }
+            if let s = r.string("since"), s != "latest" { return .failure(usage(tool, "since takes \"latest\", not \(s)")) }
+            if let m = r.int("max_elements"), m < 1 { return .failure(usage(tool, "max_elements is 1 or more, not \(m)")) }
+            if r.string("format") == "json", let p = ["query", "since", "max_elements"].first(where: { r.args[$0] != nil }) {
+                return .failure(usage(tool, "\(p) works with format rows only"))
+            }
         }
         return .success(r)
     }
