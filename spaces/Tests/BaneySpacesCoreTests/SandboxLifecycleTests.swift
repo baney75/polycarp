@@ -64,7 +64,7 @@ final class SandboxLifecycleTests: XCTestCase {
 
     func testAVMThatExitsBeforeItsAgentAnswersIsDeleted() {
         let r = rig()
-        r.tart.onSpawn = { _ in r.tart.spawned.last?.proc.stop() } // the process dies as it starts
+        r.tart.onSpawn = { args in r.tart.spawned.last { $0.args == args }?.proc.stop() } // the process dies as it starts
         XCTAssertThrowsError(try r.manager.up(task: "t1")) { XCTAssertEqual(($0 as? SandboxError)?.code, "vm_exited") }
         XCTAssertTrue(r.tart.ours().isEmpty, "\(r.tart.ours())")
     }
@@ -300,7 +300,7 @@ final class SandboxLifecycleTests: XCTestCase {
         let host = FakeWindowHost(); host.workspace = 9; host.current = 1
         // The VM's window first lands on the user's workspace 1.
         r.tart.onSpawn = { args in
-            r.tart.order.append("window-possible")
+            r.tart.note("window-possible")
             if !args.contains("--no-graphics") {
                 let pid = FakeProc.next
                 host.shown = [.init(id: 77, pid: pid, title: "bsx", workspace: 1), .init(id: 78, pid: pid + 99, title: "other app", workspace: 1)]
@@ -559,7 +559,7 @@ final class SandboxViewOrderTests: XCTestCase {
         _ = try r.manager.up(task: "t1")
         XCTAssertTrue(r.manager.waitUntilWarm(limit: 120))
         let host = FakeWindowHost(); host.workspace = 9
-        host.onClaim = { r.tart.order.append("claim") }
+        host.onClaim = { r.tart.note("claim") }
         r.tart.order = []
         _ = try r.manager.view(show: true, host: host)
         let order = r.tart.order
@@ -623,5 +623,24 @@ final class SandboxHardeningTests: XCTestCase {
         let src = (try? String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/baneyspaces-cli/Sandbox.swift"), encoding: .utf8)) ?? ""
         XCTAssertTrue(src.contains("SocketPolicy.refusal(for: request)"))
+    }
+}
+
+final class FakeTartLockTests: XCTestCase {
+    /// The warm build records spawns and calls from its own thread while a test reads them. An unlocked read that met
+    /// an append growing the array saw it empty: TSan, 11-12, buildWarm's spawn (SandboxManager.swift:671) against
+    /// testViewRefusesWithoutAnAgentWorkspaceAndTouchesNothing's count, which read 0 runs of the task VM and then 1.
+    /// A race can't be made to lose every run, so this pins the shape: the lists are private and read under the lock.
+    func testWhatTheFakeRecordedIsReadOnlyUnderItsLock() throws {
+        let c = try CursorSourceTests.code("Tests/BaneySpacesCoreTests/SandboxFakes.swift")
+        for name in ["calls", "spawned", "order"] {
+            XCTAssertTrue(c.contains("private var _\(name):"), "\(name) is stored privately")
+            let getter = try XCTUnwrap(c.range(of: "    var \(name): ").map { String(c[$0.lowerBound...].prefix(260)) }, "\(name) has a reader")
+            XCTAssertTrue(getter.contains("lock.lock(); defer { lock.unlock() }; return _\(name)"), "\(name) is read under the lock: \(getter)")
+        }
+        let spawn = try XCTUnwrap(HandsSourceTests.between("func spawn(_ exe: String", "private func record(", in: c))
+        XCTAssertFalse(spawn.contains("lock.lock()"), "onSpawn runs after the lock, so a hook can read the lists")
+        let tests = try CursorSourceTests.code("Tests/BaneySpacesCoreTests/SandboxLifecycleTests.swift")
+        XCTAssertFalse(tests.contains("tart.order" + ".append("), "a note is one locked step: tart.note(_:)")
     }
 }
