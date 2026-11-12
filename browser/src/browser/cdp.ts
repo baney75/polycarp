@@ -43,8 +43,6 @@ export interface PageDialog {
 	message: string;
 	defaultPrompt?: string;
 	url?: string;
-	/** The child session of the cross-origin frame that opened it (src/browser/frames.ts). */
-	sessionId?: string;
 }
 
 const openDialogs = new Map<number, PageDialog>();
@@ -61,12 +59,20 @@ export function watchDialogs(fn: (tabId: number, dialog: PageDialog) => void): (
 	return () => dialogWatchers.delete(fn);
 }
 
-/** Answer the open dialog: OK (accept) or Cancel, with text for a prompt(). */
-export async function answerDialog(tabId: number, accept: boolean, promptText?: string): Promise<PageDialog> {
+/**
+ * Answer the open dialog: OK (accept) or Cancel, with text for a prompt(). `sessionId` is the cross-origin
+ * frame's session it opened in (frames.ts dialogSession), which alone can answer it.
+ */
+export async function answerDialog(
+	tabId: number,
+	accept: boolean,
+	promptText?: string,
+	sessionId?: string,
+): Promise<PageDialog> {
 	const dialog = openDialogs.get(tabId);
 	if (!dialog) throw new Error("No dialog is open on this tab");
 	const answer = { accept, ...(promptText !== undefined ? { promptText } : {}) };
-	if (dialog.sessionId) await cdpSendSession(tabId, dialog.sessionId, "Page.handleJavaScriptDialog", answer);
+	if (sessionId) await cdpSendSession(tabId, sessionId, "Page.handleJavaScriptDialog", answer);
 	else await send(tabId, "Page.handleJavaScriptDialog", answer);
 	openDialogs.delete(tabId);
 	remember(tabId);
@@ -87,7 +93,6 @@ function installListeners(): void {
 				message: p.message ?? "",
 				defaultPrompt: p.defaultPrompt,
 				url: p.url,
-				...(source.sessionId ? { sessionId: source.sessionId } : {}),
 			};
 			openDialogs.set(tabId, dialog);
 			remember(tabId);

@@ -42,6 +42,7 @@ import {
 	STILL_LOADING,
 	tabChanges,
 } from "../browser/changes.js";
+import { dialogSession } from "../browser/frames.js";
 import { injectScript } from "../browser/inject.js";
 import {
 	fillElement,
@@ -1071,7 +1072,7 @@ export const handlers: Record<string, Handler> = {
 			);
 		if (typeof params.accept !== "boolean")
 			throw new BridgeError(ERR.BAD_PARAMS, "accept must be true (OK) or false (Cancel)");
-		const dialog = await answerDialog(tabId, params.accept, str(params, "promptText"));
+		const dialog = await answerDialog(tabId, params.accept, str(params, "promptText"), dialogSession(tabId));
 		return { tabId, type: dialog.type, message: dialog.message, accepted: params.accept };
 	},
 
