@@ -82,6 +82,35 @@ export function parseExtracted(extracted: string, format: string): ParsedDocumen
 	return { format, kind, units, totalChars };
 }
 
+/** A PDF as the bridge reads it ("--- Page N of M ---" before each page), as pages. */
+export function parsePdfPages(text: string): ParsedDocument {
+	const units: DocUnit[] = [];
+	for (const m of text.matchAll(/--- Page (\d+) of \d+ ---\n([\s\S]*?)(?=--- Page \d+ of \d+ ---|$)/g)) {
+		const body = m[2].trim();
+		units.push({ n: Number(m[1]), name: "", text: body === "(no text layer on this page)" ? "" : body });
+	}
+	return { format: "pdf", kind: "page", units, totalChars: units.reduce((n, u) => n + u.text.length, 0) };
+}
+
+/** The readable text of an HTML page a URL serves: scripts, styles and tags out, each block on its own line. */
+export function htmlText(html: string): string {
+	return decode(
+		html
+			.replace(/<(script|style|noscript|template|svg|head)\b[\s\S]*?<\/\1>/gi, " ")
+			.replace(/<!--[\s\S]*?-->/g, " ")
+			.replace(
+				/<\/?(p|div|br|li|h[1-6]|tr|section|article|blockquote|pre|table|ul|ol|header|footer|main)\b[^>]*>/gi,
+				"\n",
+			)
+			.replace(/<[^>]+>/g, " ")
+			.replace(/&nbsp;/g, " ")
+			.replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d))),
+	)
+		.replace(/[ \t]+/g, " ")
+		.replace(/ ?\n[ \n]*/g, (gap) => (gap.split("\n").length > 2 ? "\n\n" : "\n"))
+		.trim();
+}
+
 const KIND_WORD: Record<UnitKind, [string, string]> = {
 	page: ["Page", "pages"],
 	slide: ["Slide", "slides"],
@@ -317,7 +346,14 @@ export function searchDocument(doc: ParsedDocument, query: string, limit = 5): {
 }
 
 /** The search as the model reads it: ranked units with numbers and snippets, and the next steps. */
-export function readSearch(doc: ParsedDocument, fileName: string, query: string, budget: number, url = ""): ReadResult {
+export function readSearch(
+	doc: ParsedDocument,
+	fileName: string,
+	query: string,
+	budget: number,
+	url = "",
+	readOn?: (top: number) => string,
+): ReadResult {
 	const [word, plural] = KIND_WORD[doc.kind];
 	const { terms, hits } = searchDocument(doc, query, 8);
 	const head = `${summaryLine(doc, fileName)}\nSearch: ${JSON.stringify(query)}${terms.length ? ` (words: ${terms.join(", ")})` : ""}\n`;
@@ -335,7 +371,10 @@ export function readSearch(doc: ParsedDocument, fileName: string, query: string,
 		doc.kind === "page" && /^https?:/i.test(url)
 			? ` To show the user the page, navigate to ${url.split("#")[0]}#page=${top} (Chrome's PDF viewer opens at that page).`
 			: "";
-	const tail = `\n\nBest match first. Read a ${word.toLowerCase()} in full with pages (like "${top}" or "${Math.max(1, top - 1)}-${Math.min(doc.units.length, top + 1)}") before you quote it.${open}`;
+	const read =
+		readOn?.(top) ??
+		`Read a ${word.toLowerCase()} in full with pages (like "${top}" or "${Math.max(1, top - 1)}-${Math.min(doc.units.length, top + 1)}") before you quote it.`;
+	const tail = `\n\nBest match first. ${read}${open}`;
 	let text = `${head}\nMatching ${plural}:\n${lines.join("\n")}${tail}`;
 	if (text.length > budget) text = `${text.slice(0, Math.max(0, budget - 40))}\n[more matches cut]`;
 	return { text };

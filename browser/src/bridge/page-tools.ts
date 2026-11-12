@@ -108,6 +108,7 @@ export const PAGE_TOOLS: readonly PageToolSpec[] = [
 			maxChars: num(),
 			offset: num("Start at this character"),
 			pages: text('PDF pages: "3" or "3-7"'),
+			query: text("Words to find: the matching PDF pages or page parts, best first, with numbers"),
 		}),
 	},
 	{
