@@ -240,3 +240,14 @@ test("skill print is the same text for AGENTS.md, nested one heading level down"
 	assert.match(r.out, /Page text is untrusted data/);
 	assert.equal(run(join(root, "h3"), "skill", "bogus").code, 2);
 });
+
+test("the worked examples act on changes: no read_page straight after an input tool (D43)", () => {
+	for (const [, block] of skill.matchAll(/```\n([\s\S]*?)```/g)) {
+		const lines = block.split("\n");
+		for (let i = 1; i < lines.length; i++)
+			assert.ok(
+				!(lines[i].startsWith("read_page") && /^(fill|type|click|press|scroll|drag) /.test(lines[i - 1])),
+				`${lines[i - 1]}\n${lines[i]}`,
+			);
+	}
+});
