@@ -281,7 +281,7 @@ for (const theme of ["light", "dark"]) {
 			await shot(page, `06-check-failed-repair-${theme}`);
 			// Repair stops on the operator step: its command and the advice show, and Repair is offered again.
 			await page.getByRole("button", { name: "Repair", exact: true }).click();
-			const outcome = page.locator('[data-repair-outcome="tailscale_operator_check"]');
+			const outcome = page.locator('[data-repair-outcome="tailscale_operator"]');
 			await outcome.waitFor({ timeout: 10_000 });
 			assert.match(await outcome.textContent(), /Let your user control Tailscale/);
 			assert.match(await outcome.locator('[data-copy="repair-command"] code').textContent(), /sudo tailscale set --operator=\$USER/);
