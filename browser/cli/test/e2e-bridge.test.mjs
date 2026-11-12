@@ -1842,7 +1842,7 @@ async function userInput(target) {
 	await cdp(ws, "Input.dispatchKeyEvent", { type: "keyUp", key: "a" });
 }
 
-test("only the tab an agent uses is held up: a same-site tab the user keeps runs, takes input and has no veil while the agent's tab has a dialog", async () => {
+test("only the tab an agent uses is held up: when the user brings a same-site tab to the front, the agent's dialog is cancelled after a grace, their tab runs and takes input, and it has no veil", async () => {
 	await connected();
 	const project = join(home, "projects", "same-site");
 	mkdirSync(project, { recursive: true });
@@ -1850,7 +1850,7 @@ test("only the tab an agent uses is held up: a same-site tab the user keeps runs
 	const agent = await agentIn(project);
 	const attached = (tabId) => sw(`chrome.debugger.getTargets().then((ts) => ts.some((t) => t.tabId === ${tabId} && t.attached))`);
 	try {
-		await sw("globalThis.__POLYCARP_VEIL_IDLE_MS = 120000; globalThis.__POLYCARP_IN_USE_MS = 1500");
+		await sw("globalThis.__POLYCARP_VEIL_IDLE_MS = 120000; globalThis.__POLYCARP_DIALOG_GRACE_MS = 1500");
 		const agentTab = JSON.parse(await on(agent, "navigate", { url: `${pageUrl}site?who=agent` })).tabId;
 		const agentPage = await pageTarget("/site?who=agent");
 		// The agent opens a second tab of the site (it shares the first one's renderer process) and lets the user keep it.
@@ -1869,23 +1869,24 @@ test("only the tab an agent uses is held up: a same-site tab the user keeps runs
 		await busy;
 		assert.ok(Date.now() - t0 > 700, "the two tabs run in separate processes, so this test proves nothing");
 
-		// The agent's click opens a confirm box: the agent may answer it while it uses the tab.
+		// The agent's click opens a confirm box: within the grace it is still the agent's to answer.
 		assert.match(await on(agent, "click", { x: 320, y: 60 }), /confirm dialog is now open/);
 		const early = await agent.callTool({ name: "read_page", arguments: {} });
-		assert.ok(early.isError && /dialog/.test(early.content[0].text), "the box was gone while the agent was using the tab");
+		assert.ok(early.isError && /dialog/.test(early.content[0].text), "the box was gone at once");
 
-		// The agent goes quiet. The user's tab of the same site must keep running and take their input.
+		// The user brings their tab of the same site to the front. It must run and take their input after the grace.
+		await sw(`chrome.tabs.update(${userTab}, { active: true })`);
 		await new Promise((r) => setTimeout(r, 2500));
 		assert.notEqual(await answerOrFrozen(userPage, "1", 3000), "frozen", "the user's tab is frozen by the agent's dialog");
 		await userInput(userPage);
 		assert.deepEqual(await inPage(userPage, "({ hits: window.hits || 0, keys: window.keys || 0 })"), { hits: 1, keys: 1 });
 		assert.equal(await inPage(userPage, VEIL_PROBE), null, "the user's tab has a veil");
 		assert.equal(await attached(userTab), false, "the user's tab is debugger-attached");
-		// The box got Cancel, Chrome's own answer for a hidden tab, and the agent hears so.
+		// The box got Cancel, Chrome's own answer for a hidden tab, and the agent hears so once.
 		assert.equal(await inPage(agentPage, "document.getElementById('r').textContent"), "cancelled");
 		const answer = await agent.callTool({ name: "handle_dialog", arguments: { accept: true } });
-		assert.match(answer.content[0].text, /already answered Cancel/);
-		assert.match(await on(agent, "tabs_context"), /answered Cancel, because no call used that tab/);
+		assert.match(answer.content[0].text, /was cancelled, because the person was using a tab on 127\.0\.0\.1 .*The page saw Cancel\. Do the action again/);
+		assert.doesNotMatch(await on(agent, "tabs_context"), /was cancelled, because/, "told twice");
 		assert.ok(await inPage(agentPage, VEIL_PROBE), "the agent's own tab lost its veil");
 
 		// A second tab in the agent's group that it stops using is not in use: its veil fades while the other's stays.
@@ -1901,7 +1902,7 @@ test("only the tab an agent uses is held up: a same-site tab the user keeps runs
 		assert.equal(await inPage(agentPage, VEIL_PROBE), null, "the veil stays on a tab the agent stopped using");
 		assert.ok(await inPage(secondPage, VEIL_PROBE), "the tab the agent is using lost its veil");
 	} finally {
-		await sw("globalThis.__POLYCARP_VEIL_IDLE_MS = undefined; globalThis.__POLYCARP_IN_USE_MS = undefined").catch(() => undefined);
+		await sw("globalThis.__POLYCARP_VEIL_IDLE_MS = undefined; globalThis.__POLYCARP_DIALOG_GRACE_MS = undefined").catch(() => undefined);
 		await agent.close();
 	}
 });

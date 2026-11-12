@@ -136,6 +136,20 @@ export async function addNotice(sessionId: string, text: string): Promise<void> 
 	});
 }
 
+/** Take back a notice not read yet. True when it was still waiting. */
+export async function dropNotice(sessionId: string, text: string): Promise<boolean> {
+	return withTableLock(async () => {
+		const data = await chrome.storage.local.get(NOTICES_KEY);
+		const all = (data[NOTICES_KEY] as Record<string, Array<{ at: number; text: string }>> | undefined) ?? {};
+		const mine = all[sessionId] ?? [];
+		const i = mine.findIndex((n) => n.text === text);
+		if (i < 0) return false;
+		all[sessionId] = mine.filter((_, j) => j !== i);
+		await chrome.storage.local.set({ [NOTICES_KEY]: all });
+		return true;
+	});
+}
+
 /** The session's notices, oldest first, removed as they are read. */
 export async function takeNotices(sessionId: string): Promise<string[]> {
 	return withTableLock(async () => {

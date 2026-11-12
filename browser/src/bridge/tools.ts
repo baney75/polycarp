@@ -1002,7 +1002,7 @@ export const handlers: Record<string, Handler> = {
 		if (tabId === undefined)
 			throw new BridgeError(
 				ERR.NOT_FOUND,
-				`${cancelledDialog(ctx.session.tabIds) ?? "No dialog is open on your tabs; nothing to answer."} Carry on with read_page.`,
+				`${(await cancelledDialog(ctx.session.tabIds)) ?? "No dialog is open on your tabs; nothing to answer."} Carry on with read_page.`,
 			);
 		if (typeof params.accept !== "boolean")
 			throw new BridgeError(ERR.BAD_PARAMS, "accept must be true (OK) or false (Cancel)");

@@ -146,7 +146,7 @@ export async function runPanelCall(
 		const raced = safe ? work : raceDialogs(session, work, onAbort, () => delivered);
 		return await withTimeout(raced, deps.timeoutMs ?? HANDLER_TIMEOUT_MS, method);
 	} finally {
-		dialogUseEnd(session, used);
+		dialogUseEnd(used);
 		signal?.removeEventListener("abort", onAbort);
 	}
 }
