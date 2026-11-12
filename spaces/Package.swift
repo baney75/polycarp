@@ -6,9 +6,6 @@ import PackageDescription
 // An absolute path, because the linker's working directory isn't always the package's.
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 
-// scripts/ holds many files; the cursor probe is the only one SwiftPM builds.
-let scriptsExceptTheProbe = ((try? FileManager.default.contentsOfDirectory(atPath: root + "/scripts")) ?? []).filter { $0 != "cursor-probe.swift" }
-
 let package = Package(
     name: "BaneySpaces",
     platforms: [.macOS(.v13)],
@@ -48,7 +45,11 @@ let package = Package(
         .executableTarget(name: "baneyspaces-cli", dependencies: ["BaneySpacesCore"]),
         // `swift run -c release cursor-probe`: 100 glides on an offscreen overlay, frame times and the real pointer.
         .executableTarget(name: "cursor-probe", dependencies: ["BaneySpacesCore", "BaneySpacesCursor"],
-                          path: "scripts", exclude: scriptsExceptTheProbe),
+                          // scripts/ holds many files; the cursor probe is the only one SwiftPM builds. Named here, not
+                          // found by listing the folder: SwiftPM caches the evaluated manifest, so a list made while the
+                          // manifest runs goes stale when a script is added, and the new script is then compiled into
+                          // this target (PR 146 broke `make install` that way).
+                          path: "scripts", sources: ["cursor-probe.swift"]),
         .testTarget(name: "BaneySpacesCoreTests", dependencies: ["BaneySpacesCore"]),
         // The overlay's real layers: marks attached, cursors surviving a display change, the panel never key or main.
         .testTarget(name: "BaneySpacesCursorTests", dependencies: ["BaneySpacesCore", "BaneySpacesCursor"]),

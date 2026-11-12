@@ -185,7 +185,7 @@ result text over MCP, plus navigate, so the same evals run against it:
 local fixture pages (no model) and scores 26 probes:
 - open shadow roots: see, click, fill a nested field, and read their text with `read_page`,
   `get_page_text`, and `get_page_text` on the host; a `display: contents` component
-- same-origin and cross-origin frames, including a scaled, padded frame, and inside cross-origin frames (D45): a
+- same-origin and cross-origin frames, including a scaled, padded frame, and inside cross-origin frames (D46): a
   button in a same-site frame (another port) and one in another site's frame, seen and clicked by ref
 - control states, including a disabled fieldset
 - a page's own `fetch()` and its response body
@@ -265,7 +265,7 @@ side panel's system prompt grows 13 tokens (1,996 to 2,009, `cli/eval/panel-prom
 list grows 9 tokens (8,613 to 8,622), since `act` now says to read its `changes`. Added time per action is bounded at
 1.5 s (two looks of at most 0.75 s), held by `test/changes.test.mjs`, "... both looks add at most 2 x LOOK_MS".
 Cross-origin frame probes, 2026-11-12, headless Chromium. `xorigin-see` (both buttons listed with frame refs) and
-`xorigin-click` (both clicks reach their frame, which posts to the page) pass on the D45 branch, 26/26, and fail on main
+`xorigin-click` (both clicks reach their frame, which posts to the page) pass on the D46 branch, 26/26, and fail on main
 (7f7491b0), 24/26: the frames there are one `iframe` line each. Through the side panel's tools (`--stack panel`) the
 branch scores 21/21 with 5 n/a. A page with two such frames reads in 831 bytes and 6 ms instead of 368 bytes and 2 ms
 (`read_page {"filter":"interactive"}`, median of 7); a page without one is unchanged (197 bytes, 3 ms on both).

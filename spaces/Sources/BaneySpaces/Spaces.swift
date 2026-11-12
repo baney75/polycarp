@@ -774,17 +774,44 @@ final class Spaces {
         Trace.log("fill window=\(w.id) \(filling ? "on" : "off")")
     }
 
-    /// A filled window's title bar was dragged away: it goes back to its earlier size under the pointer.
+    /// A window's title bar started moving: a window this filled goes back to its earlier size under the pointer.
     func unfillForDrag(_ id: WindowID, at pointer: CGPoint) {
         guard active, !switching, FullScreenGestures.isEnabled else { return }
         refresh()
-        guard let w = windows[id], let current = w.frame,
-              let next = FullScreenFill.unfilled(current: current, fill: Windows.visibleArea(near: current),
-                                                 record: filled[id], pointer: pointer) else { return }
-        w.setFrame(next)
-        filled[id] = nil
-        saveFilled()
-        Trace.log("fill window=\(id) off: dragged away")
+        guard let w = windows[id], let current = w.frame else { return }
+        switch FullScreenFill.dragStart(current: current, fill: Windows.visibleArea(near: current), record: filled[id], pointer: pointer) {
+        case let .unfill(next):
+            w.setFrame(next)
+            filled[id] = nil
+            saveFilled()
+            Trace.log("fill window=\(id) off: dragged away from=\(current) to=\(next)")
+        case .forget:
+            filled[id] = nil
+            saveFilled()
+            Trace.log("fill window=\(id) record dropped: resized since it filled, frame=\(current)")
+        case .leftToMacOS:
+            Trace.log("fill window=\(id) drag left to macOS: full size, no record, frame=\(current)")
+        case .ordinary:
+            break
+        }
+    }
+
+    /// A drag of a window ended and it has held still: one the overview covered and that dropped nowhere goes back to its
+    /// frame from before the overview, and one whose title bar is out of reach comes back far enough to grab. Anything
+    /// else stays where the person put it. Only a window on the workspace you're on.
+    func correctAfterDrag(_ id: WindowID, end: DragEnd) {
+        guard active, !switching, let w = windows[id], model.workspace(of: id).map(model.isShown) == true,
+              !w.isMinimized, let f = w.frame else { return }
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let displays = NSScreen.screens.map { (frame: Geometry.toAX($0.frame, primaryHeight: primaryHeight),
+                                              visible: Geometry.toAX($0.visibleFrame, primaryHeight: primaryHeight)) }
+        guard let fix = DragRelease.correction(for: f, after: end, displays: displays) else { return }
+        let next = fix.frame
+        if next.size == f.size { w.setOrigin(next.origin) } else { w.setFrame(next) }
+        switch fix {
+        case .backToBeforeOverview: Trace.log("drag end window=\(id) back to its frame before the overview: \(f) to \(next)")
+        case .titleBarBackInReach: Trace.log("drag end window=\(id) title bar out of reach at \(f), moved to \(next.origin)")
+        }
     }
 
     /// Windows this filled, so a second press puts each back. Kept across launches: an update or a restart must not leave

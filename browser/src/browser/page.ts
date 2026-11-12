@@ -1208,7 +1208,7 @@ export const LARGE_PAGE = 15000;
 const CROSS_NOTE = "cross-origin: read it with navigate to its URL";
 
 /**
- * Add each cross-origin frame's elements and text to a snapshot (D45): the elements right after
+ * Add each cross-origin frame's elements and text to a snapshot (D46): the elements right after
  * the frame's own element, with the frame's tag on their refs and the tab's coordinates, the text
  * under the frame's host. Frames get at least a small share when the page used up the budget.
  */

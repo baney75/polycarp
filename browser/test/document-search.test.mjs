@@ -67,8 +67,8 @@ test("get_page_text {query} on a long page names the offset that reads each matc
 	};
 	try {
 		const r = await handlers.text(ctxFor(tabId), { query: "another self" });
-		const [, part, offset] = /Read part (\d+) in full with get_page_text offset (\d+)/.exec(r.text).map(Number);
-		assert.match(r.text, new RegExp(`^1\\. Part ${part}: .*another self`, "m"));
+		const [, , offset] = /^1\. Part (\d+) \(offset (\d+)\): .*another self/m.exec(r.text).map(Number);
+		assert.match(r.text, /get_page_text \{"offset":N\}, N being the offset on its line/);
 		assert.match(page.slice(offset, offset + 3000), /another self/, "the offset reads the part that matched");
 		assert.equal(page.slice(offset - 2, offset), "\n\n", "and starts where the part does");
 	} finally {

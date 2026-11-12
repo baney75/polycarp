@@ -101,10 +101,29 @@ final class FullScreenFillTests: XCTestCase {
         XCTAssertEqual(next.minY, moved.minY)
     }
 
-    func testDraggingAFullSizeWindowWithNoRecordStillShrinksIt() throws {
+    func testDraggingAWindowMacOSFilledLeavesItToMacOS() {
+        // Donovan, 2026-11-12: Helium filled by a drag to the top, then dragged down. macOS put back its old size and Spaces
+        // shrank it as well in the same 10 ms, so the window changed size twice and jumped off the pointer.
         let moved = fill.offsetBy(dx: 12, dy: 30)
-        let next = try XCTUnwrap(FullScreenFill.unfilled(current: moved, fill: fill, record: nil, pointer: CGPoint(x: moved.midX, y: moved.minY + 8)))
+        XCTAssertNil(FullScreenFill.unfilled(current: moved, fill: fill, record: nil, pointer: CGPoint(x: moved.midX, y: moved.minY + 8)))
+    }
+
+    func testAFilledWindowWhoseEarlierSizeWasFullShrinksWhenDragged() throws {
+        let record = FullScreenFill.Record(from: fill, landed: fill)
+        let moved = fill.offsetBy(dx: 0, dy: 30)
+        let next = try XCTUnwrap(FullScreenFill.unfilled(current: moved, fill: fill, record: record, pointer: CGPoint(x: moved.midX, y: moved.minY + 8)))
         XCTAssertEqual(next.size, FullScreenFill.smaller(fill).size)
+    }
+
+    func testAFilledWindowResizedByHandLosesItsRecordBeforeMacOSFillsIt() {
+        // Review of #146: filled by Polycarp, resized by hand, dragged to the top. Kept, the record matched again once macOS
+        // filled the window, and the next drag down resized it twice.
+        let record = FullScreenFill.Record(from: small, landed: fill)
+        let resized = CGRect(x: 80, y: 90, width: 1000, height: 700)
+        XCTAssertEqual(FullScreenFill.dragStart(current: resized, fill: fill, record: record, pointer: CGPoint(x: 500, y: 100)), .forget)
+        let macOSFilled = fill.offsetBy(dx: 0, dy: 20)
+        XCTAssertEqual(FullScreenFill.dragStart(current: macOSFilled, fill: fill, record: nil, pointer: CGPoint(x: 700, y: 60)), .leftToMacOS)
+        XCTAssertEqual(FullScreenFill.dragStart(current: small, fill: fill, record: nil, pointer: CGPoint(x: small.midX, y: small.minY)), .ordinary)
     }
 
     func testDraggingAnOrdinaryWindowLeavesItAlone() {

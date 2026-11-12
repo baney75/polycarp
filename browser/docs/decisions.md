@@ -1331,7 +1331,39 @@ a restart, and an attachment is kept in the chat itself. It can come when a meas
 **Proof.** `test/document-search.test.mjs` (the bridge's real handler on a PDF tab and a long page; one parse for two
 searches; offsets that read the part that matched), and the 32k panel e2e above.
 
-## D45. Cross-origin frames are read and acted on by ref, through the debugger (Claude, 2026-11-12)
+## D45. Long chats are summarized when the guard would drop turns, and the notes are kept in the chat (Claude, 2026-11-12)
+
+Problem: on a small window the guard (D42) keeps a long chat going by cutting it, and past a point by dropping its
+earliest turns whole, so the person's first instructions and what was found go with them.
+
+Decision:
+
+- **When.** The agent's `transformContext` hook (`src/models/compactor.ts`) runs the guard's own `fitContext` on what it
+  would send, with the guard's budget (the learned window included). Only when that would drop earlier messages
+  (`Fitted.dropped`) does it summarize; otherwise the request is the same array, byte for byte. One rule, so the two
+  never disagree on what fits. The guard still runs after it, as the last line.
+- **What.** The chat's own model, through the panel's guarded stream function and with no tools, writes notes in six
+  fixed sections. Older tool results reach it reduced to what they proved (URL, title, the lines later answers used),
+  inside `<untrusted>` blocks; goals and instructions come only from the person's messages. A later round rewrites the
+  notes with the next part of the chat; a section left out keeps its earlier points.
+- **Budgets** come from the guard's room (its input budget less the system prompt and tools): notes up to a quarter of
+  it, the person's earlier words a tenth, the recent turns kept verbatim two fifths. Under 1,200 tokens of room the
+  guard cuts instead.
+- **The latest question** is never summarized: the cut falls before the person's last message, never between a tool
+  call and its result.
+- **Kept.** The record is a `compaction` message appended to the stored chat. The model path ignores the role; the
+  compactor builds the request from the latest record, so a reloaded panel sends the same notes with no new call.
+  History and export stay whole.
+- **Failure.** A failed or unsectioned summary shows one notice per chat and sends the request as it was, for the guard
+  to cut; no new try until the chat grows by about half the verbatim budget.
+
+Not done: the context meter and the "summarize now" press from the first draft of this change (PR 140), to keep this
+change small; they can follow.
+
+Proof: `test/compaction.test.mjs`, with each of the five rules above broken on purpose to see a test fail, and a panel
+e2e that runs a chat on an 18k stub model until it is summarized, reloads the panel, and checks the next request
+carries the stored notes and the latest question with no new summary and nothing dropped.
+## D46. Cross-origin frames are read and acted on by ref, through the debugger (Claude, 2026-11-12)
 
 Gap analysis item 5. Before this, `read_page` listed a frame from another origin as one `iframe` line with its URL, and the
 agent had to `navigate` there, which loses the page around it (a checkout's card field, an embedded form, a widget). Now its

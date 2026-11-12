@@ -41,6 +41,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// one up again bumps its generation, so its stale move never runs, even one queued.
     private var settling: [WindowID: Timer] = [:]
     private var dropGeneration: [WindowID: Int] = [:]
+    /// Windows waiting to hold still after a drag before `correctAfterDrag` looks at them.
+    private var clamping: [WindowID: Timer] = [:]
+
+    /// Waits for the window server, the app and any tile animation to finish the drop (still for three looks 20 ms apart,
+    /// no longer than 0.5 s), then lets Spaces correct a blind drop or an unreachable title bar. A window dropped on a
+    /// workspace is the drop's. One still moving after 0.5 s (an app animating its own frame) is left alone: moving it
+    /// then would fight the animation.
+    private func correctOnceStill(_ id: WindowID, after end: DragEnd) {
+        guard !end.dropped else { return }
+        clamping.removeValue(forKey: id)?.invalidate()
+        var watch = SettleWatch(from: TopDragWatcher.bounds(of: id))
+        clamping[id] = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { [weak self] timer in
+            let now = TopDragWatcher.bounds(of: id)
+            let verdict = watch.look(now)
+            guard verdict != .wait else { return }
+            timer.invalidate()
+            guard let self, self.clamping[id] === timer else { return }
+            self.clamping[id] = nil
+            guard verdict == .still, now != nil else {
+                if end.coveredFrom != nil { Trace.log("drag end window=\(id) still moving after \(watch.looks * 20) ms; left alone") }
+                return
+            }
+            self.spaces.correctAfterDrag(id, end: end)
+        }
+    }
 
     /// Cancels the drop waiting for window `id`, or every one.
     private func cancelSettling(_ id: WindowID? = nil) {
@@ -67,10 +92,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         t.onPress = { [weak self] id in
             guard let self, let id else { return }
             self.cancelSettling(id)
+            self.clamping.removeValue(forKey: id)?.invalidate()
         }
-        t.onRelease = { [weak self] grab, drop in
-            guard let self, let n = self.viewer.endCarrying(), drop else { return }
+        t.overviewCovers = { [weak self] p in self?.viewer.carryCovers(p) ?? false }
+        t.onRelease = { [weak self] grab, p in
+            guard let self, let n = self.viewer.endCarrying(at: p), p != nil else { return false }
             self.dropCarried(grab, on: n)
+            return true
         }
         // The same drag taken down to the Workspace Dock: let go on a tile, it goes there.
         t.onCarry = { [weak self] grab, _ in
@@ -78,9 +106,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.dock.carryMoved(grab)
         }
         t.onCarryEnd = { [weak self] grab, p in
-            guard let self, let n = self.dock.endCarry(grab, at: p), p != nil else { return }
+            guard let self, let n = self.dock.endCarry(grab, at: p), p != nil else { return false }
             self.dropCarried(grab, on: n)
+            return true
         }
+        // A drag the overview covered and that dropped nowhere goes back where it was; any other is the person's own.
+        t.onDragEnd = { [weak self] id, end in self?.correctOnceStill(id, after: end) }
         return t
     }()
 

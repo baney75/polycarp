@@ -420,6 +420,8 @@ export interface Fitted {
 	resultTokens: number;
 	/** True when something was cut. */
 	trimmed: boolean;
+	/** Whole earlier messages left out (step 8); compaction (compactor.ts) summarizes them instead when it can. */
+	dropped: number;
 	/** True when what is sent is within the budget. False only when even the latest message and its turn, cut to their least, don't fit. */
 	fits: boolean;
 }
@@ -567,8 +569,18 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 			if (messages[i].role === "assistant") replace(i, capAssistant(messages[i], c));
 		}
 	const fits = !over();
-	if (!changed) return { context, estimate: original, original, fixed, resultTokens, trimmed: false, fits };
-	return { context: { ...context, messages }, estimate: total, original, fixed, resultTokens, trimmed: true, fits };
+	const dropped = droppedEarlier;
+	if (!changed) return { context, estimate: original, original, fixed, resultTokens, trimmed: false, dropped, fits };
+	return {
+		context: { ...context, messages },
+		estimate: total,
+		original,
+		fixed,
+		resultTokens,
+		trimmed: true,
+		dropped,
+		fits,
+	};
 }
 
 /**

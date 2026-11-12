@@ -56,17 +56,39 @@ public enum FullScreenFill {
                       width: size.width, height: size.height)
     }
 
-    /// Where a filled window goes when its title bar is dragged away: its earlier size, with the pointer over the same
-    /// share of the title bar. Nil for a window that isn't filled. Compares size only, since the drag has moved it.
+    /// Where a window this filled goes when its title bar is dragged away: its earlier size, with the pointer over the same
+    /// share of the title bar. Nil for any window this didn't fill. Compares size only, since the drag has moved it.
+    /// A full-size window with no record was filled by macOS (a drag to the top) or sized by hand. macOS gives a tiled
+    /// window its old size back on its own as the drag starts, so resizing it here too made two size changes in one drag
+    /// and threw the window off the pointer (Donovan, 2026-11-12).
     public static func unfilled(current: CGRect, fill: CGRect, record: Record?, pointer: CGPoint) -> CGRect? {
         func sameSize(_ a: CGRect, _ b: CGRect) -> Bool {
             abs(a.width - b.width) <= 3 && abs(a.height - b.height) <= 3
         }
-        guard sameSize(current, record?.landed ?? fill) else { return nil }
-        let from = record?.from
-        let size = from.flatMap { sameSize($0, current) ? nil : $0.size } ?? smaller(fill).size
+        guard let record, sameSize(current, record.landed) else { return nil }
+        let size = sameSize(record.from, current) ? smaller(fill).size : record.from.size
         let share = current.width > 0 ? min(max((pointer.x - current.minX) / current.width, 0), 1) : 0.5
         return CGRect(x: (pointer.x - share * size.width).rounded(), y: current.minY, width: size.width, height: size.height)
+    }
+
+    /// What a drag of a window's title bar does to it as the drag starts.
+    public enum DragStart: Equatable, Sendable {
+        /// Polycarp filled it and it's still that size: its earlier size comes back under the pointer.
+        case unfill(CGRect)
+        /// Polycarp filled it, but it has been resized since: the fill is over, so the record goes. Kept, it matched again
+        /// once macOS filled the window and resized it a second time in the next drag (review of #146).
+        case forget
+        /// Full size with no record: macOS filled it (a drag to the top) and puts it back itself.
+        case leftToMacOS
+        /// Any other window: nothing to do or log.
+        case ordinary
+    }
+
+    public static func dragStart(current: CGRect, fill: CGRect, record: Record?, pointer: CGPoint) -> DragStart {
+        if let next = unfilled(current: current, fill: fill, record: record, pointer: pointer) { return .unfill(next) }
+        if record != nil { return .forget }
+        let full = abs(current.width - fill.width) <= 3 && abs(current.height - fill.height) <= 3
+        return full ? .leftToMacOS : .ordinary
     }
 
     /// Whether a click could be on a window's green button, from the window server's geometry alone: within the corner where

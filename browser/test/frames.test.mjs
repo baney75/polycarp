@@ -1,4 +1,4 @@
-// Cross-origin frames (D45): a frame's refs carry its tag, and a ref read inside a frame stays
+// Cross-origin frames (D46): a frame's refs carry its tag, and a ref read inside a frame stays
 // live there, though the document around the frame is another origin's.
 import assert from "node:assert/strict";
 import test from "node:test";

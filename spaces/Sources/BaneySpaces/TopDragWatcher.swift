@@ -131,9 +131,17 @@ final class TopDragWatcher {
     var onMove: (CGPoint) -> Void = { _ in }
     /// A window's title bar started moving, once per drag: a filled window shrinks here.
     var onDragStart: (WindowID, CGPoint) -> Void = { _, _ in }
-    /// The button came up with the overview open for `grab`. `drop` is false when the drag
-    /// ended some other way (the watcher stopped, or a release it missed), so nothing moves.
-    var onRelease: (_ grab: TopDrag.Grab, _ drop: Bool) -> Void = { _, _ in }
+    /// The button came up with the overview open for `grab`, at `at`. Nil when the drag ended
+    /// some other way (the watcher stopped, or a release it missed), so nothing moves.
+    /// Returns whether the window was dropped on a workspace.
+    var onRelease: (_ grab: TopDrag.Grab, _ at: CGPoint?) -> Bool = { _, _ in false }
+    /// Whether the overview is showing over the display holding this point right now. Asked at release, before
+    /// `onRelease` closes it: a drag counts as covered only then (it may have closed mid-carry, or the window may have
+    /// been carried to another display, where the person could see it).
+    var overviewCovers: (CGPoint) -> Bool = { _ in false }
+    /// A drag of a window's title bar ended with the button let go, however it ended (overview, dock, or neither): where,
+    /// whether the overview covered the window and from what frame, and whether a drop took it. Called last.
+    var onDragEnd: (WindowID, DragEnd) -> Void = { _, _ in }
     /// The drag to the top opens the overview. Off, the watcher still follows drags for the dock.
     var topEnabled = true
     /// The window follows the pointer, on every tick until the overview opens for it: the dock
@@ -141,13 +149,16 @@ final class TopDragWatcher {
     var onCarry: (TopDrag.Grab, CGPoint) -> Void = { _, _ in }
     /// That drag ended: let go at the point given, or nil when it ended some other way (the
     /// overview took it, the window went away, the watcher stopped), so nothing moves.
-    var onCarryEnd: (TopDrag.Grab, CGPoint?) -> Void = { _, _ in }
+    /// Returns whether the window was dropped on a workspace.
+    var onCarryEnd: (TopDrag.Grab, CGPoint?) -> Bool = { _, _ in false }
 
     private var monitor: Any?
     private var upMonitor: Any?
     private var timer: Timer?
     private var state = TopDrag()
     private var open: TopDrag.Grab?
+    /// The window's frame when the overview opened over it, for `DragEnd.coveredFrom`.
+    private var coveredFrom: CGRect?
     /// The drag `onCarry` has been told about.
     private var carried: TopDrag.Grab?
     /// The app whose window was pressed.
@@ -177,12 +188,21 @@ final class TopDragWatcher {
     /// Ends the drag: the overview, if it opened for it, gets the last position and the release.
     /// Without a position it closes and nothing moves.
     private func released(at p: CGPoint?) {
-        endCarry(at: p)
-        endTicks()
-        guard let g = open else { return }
+        let dragged = open ?? ((state.moving || state.pinned) ? state.grab : nil)
+        let from = coveredFrom, g = open
+        coveredFrom = nil
         open = nil
-        if let p { onMove(p) }
-        onRelease(g, p != nil)
+        let end = ReleaseOrder.end(
+            at: p ?? .zero, coveredFrom: g != nil ? from : nil,
+            overviewCovers: { [self] in p.map(overviewCovers) ?? false },
+            endCarry: { [self] in
+                let dropped = endCarry(at: p)
+                endTicks()
+                if g != nil, let p { onMove(p) }
+                return dropped
+            },
+            release: g.map { g in { [self] in onRelease(g, p) } })
+        if let dragged, p != nil { onDragEnd(dragged.window, end) }
     }
 
     private func pressed(at p: CGPoint) {
@@ -226,6 +246,7 @@ final class TopDragWatcher {
                 Trace.log("topDrag overview open after \(Int(((now - (state.topSince ?? now)) * 1000).rounded())) ms window=\(g.window)")
                 endCarry(at: nil)
                 open = g
+                coveredFrom = TopDragWatcher.bounds(of: g.window)
             case false?:
                 Trace.log("topDrag overview declined window=\(g.window)")
                 endTicks()
@@ -244,10 +265,11 @@ final class TopDragWatcher {
         }
     }
 
-    private func endCarry(at p: CGPoint?) {
-        guard let g = carried else { return }
+    @discardableResult
+    private func endCarry(at p: CGPoint?) -> Bool {
+        guard let g = carried else { return false }
         carried = nil
-        onCarryEnd(g, p)
+        return onCarryEnd(g, p)
     }
 
     private func endTicks() {
@@ -271,6 +293,10 @@ final class TopDragWatcher {
         for w in list {
             guard let bounds = (w[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) }),
                   bounds.contains(p) else { continue }
+            // A window the press passes through (a screen recorder's overlay) isn't what the person pressed. Counting it made
+            // every drag invisible to Polycarp for the length of a recording (Donovan, 2026-11-12).
+            let number = (w[kCGWindowNumber as String] as? Int).map(UInt32.init)
+            guard PressTarget.takesPress(alpha: w[kCGWindowAlpha as String] as? Double, tags: number.flatMap(TopDragWatcher.tags(of:))) else { continue }
             // The first window under the pointer takes the click, whatever it is.
             guard (w[kCGWindowLayer as String] as? Int) == 0, let pid = w[kCGWindowOwnerPID as String] as? Int32, pid != getpid(),
                   let id = w[kCGWindowNumber as String] as? Int else { return nil }
@@ -284,6 +310,21 @@ final class TopDragWatcher {
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         return list.first { ($0[kCGWindowLayer as String] as? Int) == 0 && ($0[kCGWindowOwnerPID as String] as? Int32) == pid }
             .flatMap { ($0[kCGWindowNumber as String] as? Int).map(WindowID.init) }
+    }
+
+    private typealias MainConnection = @convention(c) () -> Int32
+    private typealias GetTags = @convention(c) (Int32, UInt32, UnsafeMutablePointer<UInt64>, Int32) -> Int32
+    private static let skyLight = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY)
+    private static let getTags: (MainConnection, GetTags)? = {
+        guard let skyLight, let c = dlsym(skyLight, "SLSMainConnectionID"), let t = dlsym(skyLight, "SLSGetWindowTags") else { return nil }
+        return (unsafeBitCast(c, to: MainConnection.self), unsafeBitCast(t, to: GetTags.self))
+    }()
+
+    /// SkyLight's tags for a window, nil if they can't be read.
+    static func tags(of id: UInt32) -> UInt64? {
+        guard let (connection, get) = getTags else { return nil }
+        var t: UInt64 = 0
+        return get(connection(), id, &t, 64) == 0 ? t : nil
     }
 
     static func bounds(of id: WindowID) -> CGRect? {

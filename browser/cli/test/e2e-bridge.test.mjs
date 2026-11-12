@@ -2039,7 +2039,7 @@ test("files save_pdf: the page as a PDF file on this computer", async () => {
 	}
 });
 
-// Cross-origin frames (D45): one on another port of this host (same site, the same process) and
+// Cross-origin frames (D46): one on another port of this host (same site, the same process) and
 // one on localhost (another site, its own process). Both are read and acted on by ref.
 const FRAME_INNER = (k) => `<!doctype html><title>inner ${k}</title>
 <button onclick="document.getElementById('r').textContent='Paid ${k}'">Pay ${k}</button>

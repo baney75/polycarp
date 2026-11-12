@@ -54,6 +54,17 @@ test("a thread reads as compact text: tool calls and results short, attachments 
 	assert.doesNotMatch(render.renderPage(t, 4, 2), /More:/);
 });
 
+test("a compaction record reads as its notes, bounded, with the key redacted", () => {
+	const notes = `## Goal and standing instructions\n- Find hotels. Key ${KEY}\n${"- fact\n".repeat(2000)}`;
+	const t = thread("cmp", {});
+	t.messages.push({ role: "compaction", summary: notes, cut: 6, round: 2, tokensBefore: 9000, tokensAfter: 3000, timestamp: 6 });
+	const rendered = render.renderMessages(t.messages).at(-1);
+	assert.equal(rendered.role, "compaction");
+	assert.match(rendered.text, /^\[earlier messages summarized: 6 messages\]\n## Goal and standing instructions/);
+	assert.doesNotMatch(rendered.text, /sk-ant-api03/);
+	assert.ok(rendered.text.length < 4200, `bounded: ${rendered.text.length}`);
+});
+
 test("text is redacted before it is cut, so no part of a key survives at the cut", () => {
 	const hex32 = "0123456789abcdef".repeat(2);
 	const mixed = ["Zq9", "Xw8", "Vt7", "Ur6", "Ts5", "Sq4", "Rp3", "Qo2", "Pn1", "Om0", "Nl9", "Mk8", "Lj7", "Ki6"].join("");

@@ -1,5 +1,5 @@
 /**
- * Cross-origin frames (decision D45). A frame from another origin is closed to the page's own
+ * Cross-origin frames (decision D46). A frame from another origin is closed to the page's own
  * script, so the snapshot only listed it. Through the debugger every frame is reachable:
  * - one from another site runs in its own process: `Target.setAutoAttach` (flatten) gives it a
  *   child session, and commands go to `{tabId, sessionId}`;
