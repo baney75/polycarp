@@ -2,6 +2,7 @@
 // read with extract_document({url}) came back as 706,000 characters, the next request was refused with
 // "400 status code (no body)", and "continue" resent the same history, so the chat was dead for good.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 
@@ -11,8 +12,8 @@ const {
 	estimateContextTokens,
 	estimateTextTokens,
 	fitContext,
+	estimateFixedTokens,
 	isSizeRefusal,
-	resultTokensFor,
 	sizeEvidence,
 	toolResultBudgetChars,
 } = await import("../src/models/context-budget.ts");
@@ -20,7 +21,6 @@ const { guardContext, resetLearnedWindows, toolBudgetChars } = await import("../
 const { attachedText, ATTACHMENT_INLINE_CHARS, browserMessageTransformer } = await import(
 	"../src/messages/message-transformer.ts"
 );
-const prompts = await import("../src/prompts/prompts.ts");
 const { createExtractDocumentTool, clearDocumentCache } = await import("../src/tools/extract-document.ts");
 const { parseExtracted } = await import("../src/tools/document-reader.ts");
 const { isPdfPageJump } = await import("../src/browser/page.ts");
@@ -335,12 +335,10 @@ test("first-F3: Chinese text and dense code count more tokens a character than E
 	assert.ok(kept.length < fitted.resultTokens * 1.2);
 });
 
-/** The panel's fixed text: its system prompt and the descriptions of its own tools (the panel sends more). */
+/** The side panel's real system prompt and tool schemas, as sent (test/fixtures/panel-request.json). */
+const PANEL = JSON.parse(readFileSync(new URL("./fixtures/panel-request.json", import.meta.url), "utf8"));
 function panelContext(messages) {
-	const tools = Object.entries(prompts)
-		.filter(([k, v]) => k !== "SYSTEM_PROMPT" && typeof v === "string")
-		.map(([name, description]) => ({ name, description, parameters: { type: "object" } }));
-	return { systemPrompt: prompts.SYSTEM_PROMPT, tools, messages };
+	return { systemPrompt: PANEL.systemPrompt, tools: PANEL.tools, messages };
 }
 
 test("second-N2: on an 8k model the real system prompt and tools leave no room, so nothing is sent and the error says why", async () => {
@@ -349,26 +347,27 @@ test("second-N2: on an 8k model the real system prompt and tools leave no room, 
 	const last = await finalOf(await guardContext(inner)(SMALL, panelContext([{ role: "user", content: "hi", timestamp: 1 }]), {}));
 	assert.equal(sent.length, 0, "no request the provider must refuse");
 	assert.equal(last.type, "error");
-	assert.match(last.error.errorMessage, /context window \(8,192 tokens\) is too small for Polycarp: its instructions and tools alone take about [\d,]+ tokens/);
+	assert.match(last.error.errorMessage, /context window \(8,192 tokens\) is too small for Polycarp's tools: its instructions and tools alone take about [\d,]+ tokens, and nothing was sent\. Pick a model with a window of at least [\d,]+ tokens\./);
 });
 
-test("second-N2: on a 16k model the result budget comes from what the system prompt and tools leave", async () => {
+test("second-N2: on a 32k model the result budget comes from what the system prompt and tools leave", async () => {
 	resetLearnedWindows();
-	const MID = { id: "mid", provider: "local", contextWindow: 16_384, maxTokens: 16_384 };
+	const MID = { id: "mid", provider: "local", contextWindow: 32_000, maxTokens: 32_000 };
 	const context = panelContext(history(book(400)).messages);
-	const budget = budgetFor(MID);
+	const fixed = estimateFixedTokens(context);
+	assert.ok(fixed > 12_000, `fixed ${fixed}`);
+	const budget = budgetFor(MID, undefined, undefined, fixed);
+	assert.equal(budget.conversationTokens, budget.inputTokens - fixed);
+	assert.ok(budget.toolResultTokens <= budget.conversationTokens / 2);
 	const fitted = fitContext(context, budget);
-	assert.ok(fitted.fixed > 6000, `fixed ${fitted.fixed}`);
-	assert.ok(fitted.resultTokens < budget.toolResultTokens, "less than the window's share: the rest is taken");
-	assert.equal(fitted.resultTokens, resultTokensFor(budget, fitted.fixed));
-	assert.ok(fitted.estimate <= budget.inputTokens);
+	assert.ok(fitted.fits && fitted.estimate <= budget.inputTokens);
 	const { inner, sent, options } = stub(() => ({ text: "ok" }));
 	await finalOf(await guardContext(inner)(MID, context, {}));
 	assert.equal(sent.length, 1);
 	// A tool sizing its answer after this request gets the guard's own budget, so its answer is never cut again.
-	assert.equal(toolBudgetChars(MID), fitted.resultTokens * 3);
+	assert.equal(toolBudgetChars(MID), budget.toolResultTokens * 3);
 	assert.ok(toolBudgetChars(MID) < toolResultBudgetChars(MID));
-	// second-N3: the reply asked for is the one the budget kept room for, not the model's 16,384.
+	// second-N3: the reply asked for is the one the budget kept room for, not the model's 32,000.
 	assert.equal(options[0].maxTokens, budget.replyTokens);
 	assert.ok(estimateContextTokens(sent[0]) + options[0].maxTokens <= MID.contextWindow);
 });

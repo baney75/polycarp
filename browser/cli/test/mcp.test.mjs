@@ -839,6 +839,14 @@ test("read tools cap what they hand an agent, say when they cut, and page with o
 		assert.equal(other.isError, true);
 		assert.match(other.content[0].text, /run it without offset first/);
 		assert.equal(evaluations(), ran);
+		// second-N4: after a tab switch, reading on would serve the old tab's value as the new page's; it is refused.
+		await run("run_js", { code: "big" });
+		await run("tabs_select", { tabId: 2 });
+		const stale = await c.callTool({ name: "run_js", arguments: { code: "big", offset: 50_000 } });
+		assert.equal(stale.isError, true, "no value kept across a tab switch");
+		await run("run_js", { code: "big" });
+		await run("navigate", { url: "https://page.test/next" });
+		assert.equal((await c.callTool({ name: "run_js", arguments: { code: "big", offset: 50_000 } })).isError, true, "nor across a navigate");
 		// read_page: says the element list and the text were cut, and how to read on.
 		const page = await run("read_page");
 		assert.match(page, /element list stopped at 300/);

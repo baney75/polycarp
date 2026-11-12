@@ -10,6 +10,18 @@ export const ENTRY_CHARS = 2000;
 export const DEFAULT_ENTRIES = 100;
 /** Characters a PDF read returns by default, as the PDF reader's own default. */
 export const PDF_DEFAULT_CHARS = 50000;
+/**
+ * The most a text, HTML or PDF read returns in one call, whatever maxChars asks. It keeps an answer under the MCP
+ * output cap (100,000 characters with its JSON), so the cap's head and tail cut never drops the middle of a part whose
+ * note says to read on from its end.
+ */
+export const READ_MAX_CHARS = 50000;
+
+/** maxChars as a read uses it: a positive number held to READ_MAX_CHARS; anything else (none, 0, negative) is `def`. */
+export function readChars(value: unknown, def?: number): number | undefined {
+	const n = Math.floor(Number(value));
+	return Number.isFinite(n) && n > 0 ? Math.min(n, READ_MAX_CHARS) : def;
+}
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 
@@ -41,7 +53,8 @@ export function pdfWindow(
 	const text = pdf.text.slice(offset, offset + max);
 	// More follows when the reader stopped at its cap or this window ends before what it read.
 	const truncated = pdf.truncated || offset + text.length < pdf.text.length;
-	return { text, truncated, ...(truncated ? { next: offset + text.length } : {}) };
+	// A window that read nothing names no offset to read on from: the same one would read nothing again.
+	return { text, truncated, ...(truncated && text.length ? { next: offset + text.length } : {}) };
 }
 
 /** The note for a PDF read cut at its character cap: which page it stopped in and the offset that reads on exactly. */

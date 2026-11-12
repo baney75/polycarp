@@ -69,6 +69,13 @@ const MAX_SIZE = 50 * 1024 * 1024;
 const CACHE_ENTRIES = 6;
 const cache = new Map<string, Cached>();
 
+/** A hash of a document's text (FNV-1a, 32 bits): with its length, what tells two attachments apart. */
+function textHash(text: string): string {
+	let h = 0x811c9dc5;
+	for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
+	return (h >>> 0).toString(36);
+}
+
 /** Drop the parsed documents (tests). */
 export function clearDocumentCache(): void {
 	cache.clear();
@@ -168,7 +175,8 @@ export function createExtractDocumentTool(options: ExtractDocumentOptions): Extr
 			let attached: LoadedDocument | undefined;
 			if (attachment) {
 				attached = findAttachment(options.attachments?.() ?? [], attachment);
-				key = `attachment:${attached.fileName}:${attached.size}`;
+				// By content, not name and size: another chat's report.pdf of the same size is another document.
+				key = `attachment:${attached.extractedText.length}:${textHash(attached.extractedText)}:${attached.fileName}`;
 			} else {
 				try {
 					new URL(url);

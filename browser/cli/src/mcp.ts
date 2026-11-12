@@ -472,7 +472,15 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		return { content: text(isNotConnected(err) ? NOT_CONNECTED : errorMessage(err)), isError: true };
 	}
 
+	/**
+	 * The last run_js value, for offset reads of it (one value per session, the newest). Any other tool that can change
+	 * the page or which tab is current (navigate, tabs_select, a click) drops it, so reading on never serves an old
+	 * tab's value as the current page's.
+	 */
+	let lastValue: { key: string; json: string } | undefined;
+
 	async function call(method: string, params: Record<string, unknown> = {}): Promise<{ content: Content[]; isError?: boolean }> {
+		lastValue = undefined;
 		try {
 			const result = await client.call(method, params);
 			return { content: text(result) };
@@ -825,6 +833,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 		async (args) => {
 			try {
+				lastValue = undefined;
 				const res = (await client.call("actions", args)) as {
 					steps: number;
 					/** Set when a step opened a dialog: what it is and how to answer it. */
@@ -845,8 +854,6 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			}
 		},
 	);
-	/** The last run_js value, for offset reads of it (one value per session, the newest). */
-	let lastValue: { key: string; json: string } | undefined;
 	server.registerTool(
 		"run_js",
 		{

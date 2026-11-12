@@ -169,12 +169,20 @@ export function readRange(
 	return { text: `${head}${body}${note}` };
 }
 
+/** Sheets the overview names; the rest are counted. */
+const SHEET_LIST = 30;
+
 /** The first units up to the budget, with what was left out and how to get it. */
 export function readOverview(doc: ParsedDocument, fileName: string, budget: number): ReadResult {
 	const [word, plural] = KIND_WORD[doc.kind];
 	const sheetList =
 		doc.kind === "sheet"
-			? `\nSheets: ${doc.units.map((u) => `${u.n} "${u.name}" (${fmt(u.text.length)} characters)`).join(", ")}.`
+			? `\nSheets: ${doc.units
+					.slice(0, SHEET_LIST)
+					.map((u) => `${u.n} "${u.name.slice(0, 80)}" (${fmt(u.text.length)} characters)`)
+					.join(
+						", ",
+					)}${doc.units.length > SHEET_LIST ? `, and ${fmt(doc.units.length - SHEET_LIST)} more (read one with pages)` : ""}.`
 			: "";
 	const head = `${summaryLine(doc, fileName)}${sheetList}${emptyNote(doc)}\n\n`;
 	const room = Math.max(100, budget - head.length - 600);

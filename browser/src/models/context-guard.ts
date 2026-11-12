@@ -15,11 +15,14 @@ import {
 	type Budget,
 	budgetFor,
 	CHARS_PER_TOKEN,
+	CONVERSATION_FLOOR_TOKENS,
+	estimateFixedTokens,
+	type Fitted,
 	fitContext,
-	replyReserve,
-	resultTokensFor,
+	minimumWindow,
 	sizeEvidence,
 	sizeRefusalMessage,
+	turnTooLargeMessage,
 	unclearRefusalMessage,
 	windowTooSmallMessage,
 } from "./context-budget.js";
@@ -30,41 +33,59 @@ type Inner = (
 	options?: any,
 ) => AssistantMessageEventStream | Promise<AssistantMessageEventStream>;
 
-/** The retry asks for half of what was refused, and no more than this. */
-const RETRY_CEILING_TOKENS = 24000;
+/** After this many turns that worked under a learned window, the next one tries the model's own window again. */
+export const PROBE_AFTER_TURNS = 10;
 
 /**
- * Windows learned from refusals, per provider and model: a model list can claim more than the provider takes. Kept for
- * the panel's life, so later turns don't hit the same refusal first. A window is learned when the provider's words
- * name size, or the second time a bare 400 was cured by a shorter request: once could be anything.
+ * What the guard knows about one model (provider and id), kept for the panel's life. A model list can claim a larger
+ * window than the provider takes; `learned` is the size of a request that the provider took after it refused a larger
+ * one, stored only on proof (the provider's words named size, or a refusal on two turns in a row) and never below
+ * what the fixed part needs. A later turn that works at a larger size clears it.
  */
-const learned = new Map<string, number>();
-const strikes = new Map<string, number>();
-/** The system prompt and tool definitions of the last request, per model, so a tool can size its answer. */
-const lastFixed = new Map<string, number>();
+interface ModelState {
+	learned?: { window: number; evidence: "words" | "strikes" };
+	/** Turns in a row whose first request was refused for size and cured by the retry. */
+	strikes: number;
+	/** Turns that worked first time under the learned window, since it was learned or last probed. */
+	okSince: number;
+	/** The fixed part (system prompt and tools) of the last request, so a tool can size its answer. */
+	fixed?: number;
+}
+const states = new Map<string, ModelState>();
 const keyOf = (model: Pick<Model<any>, "provider" | "id">) => `${model.provider}/${model.id}`;
+const stateOf = (key: string): ModelState => {
+	const known = states.get(key);
+	if (known) return known;
+	const state: ModelState = { strikes: 0, okSince: 0 };
+	states.set(key, state);
+	return state;
+};
 
 /** Forget what was learned (tests). */
 export function resetLearnedWindows(): void {
-	learned.clear();
-	strikes.clear();
-	lastFixed.clear();
+	states.clear();
+}
+
+/** The window learned for a model, if any (tests and diagnostics). */
+export function learnedWindow(model: Pick<Model<any>, "provider" | "id">): number | undefined {
+	return states.get(keyOf(model))?.learned?.window;
 }
 
 /**
  * Characters one tool result may hold on this model's next request: the same budget the guard will fit it to, from the
- * learned window and the last request's system prompt and tools. A tool that answers within it is never cut after.
+ * learned window and the last request's fixed part. A tool that answers within it is never cut after.
  */
 export function toolBudgetChars(model: Model<any> | undefined): number {
-	if (!model) return resultTokensFor(budgetFor(undefined), 0) * CHARS_PER_TOKEN;
-	const key = keyOf(model);
-	return resultTokensFor(budgetFor(model, learned.get(key)), lastFixed.get(key) ?? 0) * CHARS_PER_TOKEN;
+	if (!model) return budgetFor(undefined).toolResultTokens * CHARS_PER_TOKEN;
+	const state = states.get(keyOf(model));
+	return budgetFor(model, state?.learned?.window, undefined, state?.fixed ?? 0).toolResultTokens * CHARS_PER_TOKEN;
 }
 
 /** `options` asking for no more reply than the budget kept room for. */
-function withReply(options: any, model: Model<any>, budget: Budget): any {
-	const asked = replyReserve(model, options?.maxTokens, Number.POSITIVE_INFINITY);
-	return budget.replyTokens < asked ? { ...(options ?? {}), maxTokens: budget.replyTokens } : options;
+function withReply(options: any, budget: Budget): any {
+	const asked = Number(options?.maxTokens);
+	if (Number.isFinite(asked) && asked > 0 && asked <= budget.replyTokens) return options;
+	return { ...(options ?? {}), maxTokens: budget.replyTokens };
 }
 
 function errorEvent(text: string, base?: AssistantMessage): AssistantMessageEvent {
@@ -104,25 +125,25 @@ async function pipe(from: AsyncIterator<AssistantMessageEvent>, out: AssistantMe
 export function guardContext<F extends Inner>(inner: F): F {
 	return (async (model: Model<any>, context: Context, options?: any) => {
 		const key = keyOf(model);
-		const budget = budgetFor(model, learned.get(key), options?.maxTokens);
-		const first = fitContext(context, budget);
-		lastFixed.set(key, first.fixed);
+		const state = stateOf(key);
+		const fixed = estimateFixedTokens(context);
+		state.fixed = fixed;
 		const out = createAssistantMessageEventStream();
-		if (first.fixed >= budget.inputTokens) {
-			// Nothing can be cut that would make this fit: say so instead of sending a request that must be refused.
-			out.push(
-				errorEvent(
-					windowTooSmallMessage({
-						fixed: first.fixed,
-						inputTokens: budget.inputTokens,
-						windowSize: budget.windowSize,
-					}),
-				),
-			);
+		const fail = (text: string, base?: AssistantMessage) => {
+			out.push(errorEvent(text, base));
 			out.end();
 			return out;
-		}
-		const stream = await inner(model, first.context, withReply(options, model, budget));
+		};
+		// Every so often a model with a learned window tries its own again, so one bad hour doesn't last all day.
+		const probing = state.learned !== undefined && state.okSince >= PROBE_AFTER_TURNS;
+		if (probing) state.okSince = 0;
+		const budget = budgetFor(model, probing ? undefined : state.learned?.window, options?.maxTokens, fixed);
+		if (budget.tooSmall)
+			return fail(windowTooSmallMessage({ fixed, windowSize: budget.windowSize, needed: minimumWindow(fixed) }));
+		const first = fitContext(context, budget);
+		if (!first.fits) return fail(turnTooLargeMessage({ windowSize: budget.windowSize }));
+		const sentSize = (f: Fitted, b: Budget) => f.estimate + b.replyTokens;
+		const stream = await inner(model, first.context, withReply(options, budget));
 		void (async () => {
 			const iterator = stream[Symbol.asyncIterator]();
 			const head = await iterator.next();
@@ -132,39 +153,72 @@ export function guardContext<F extends Inner>(inner: F): F {
 				event.type === "error" && event.reason === "error"
 					? sizeEvidence(event.error.errorMessage, first.estimate, budget.windowSize, first.original)
 					: undefined;
-			// Only a refusal before anything streamed can be retried unseen; anything else passes through.
 			if (event.type !== "error" || !evidence) {
+				if (event.type !== "error") {
+					// A first try that worked ends a run of refusals, and counts toward trying the full window again.
+					state.strikes = 0;
+					if (state.learned) {
+						if (probing && sentSize(first, budget) > state.learned.window) state.learned = undefined;
+						else state.okSince++;
+					}
+				}
 				out.push(event);
 				return pipe(iterator, out);
 			}
 			const refused = event.error.errorMessage ?? "";
-			const ceiling = Math.max(2048, Math.min(Math.floor(first.estimate / 2), RETRY_CEILING_TOKENS));
-			const harder = budgetFor(model, ceiling, options?.maxTokens);
-			const second = fitContext(context, harder);
-			const retry = (await inner(model, second.context, withReply(options, model, harder)))[Symbol.asyncIterator]();
+			const proven = (again?: string) =>
+				evidence === "words" ||
+				evidence === "likely" ||
+				(again !== undefined && sizeEvidence(again, 0, 1) === "words");
+			const report = (again?: string) =>
+				proven(again)
+					? sizeRefusalMessage({
+							estimate: first.estimate,
+							provider: model.provider,
+							detail: providerDetail(refused),
+						})
+					: unclearRefusalMessage({ estimate: first.estimate, first: refused });
+			// The retry halves the conversation, never the fixed part: it can't go under what the instructions and tools
+			// need plus the least conversation, so it is never sent knowing it can't fit.
+			const conversation = first.estimate - fixed;
+			const ceiling = fixed + Math.max(CONVERSATION_FLOOR_TOKENS, Math.floor(conversation / 2)) + budget.replyTokens;
+			const harder = budgetFor(model, ceiling, options?.maxTokens, fixed);
+			const second = harder.tooSmall ? undefined : fitContext(context, harder);
+			if (!second?.fits || sentSize(second, harder) >= sentSize(first, budget)) {
+				// Nothing smaller can be sent: say why it was refused instead of sending the same request again. When the
+				// provider named size, the next turn starts below what it refused, so the same refusal doesn't repeat.
+				if (evidence === "words") {
+					const window = Math.max(minimumWindow(fixed), Math.floor(sentSize(first, budget) * 0.75));
+					state.learned = { window, evidence: "words" };
+					state.okSince = 0;
+				}
+				out.push(errorEvent(report(), event.error));
+				return out.end();
+			}
+			state.strikes++;
+			const retry = (await inner(model, second.context, withReply(options, harder)))[Symbol.asyncIterator]();
 			const head2 = await retry.next();
 			if (head2.done) return out.end();
 			const again = head2.value;
 			if (again.type === "error" && again.reason === "error") {
 				const message = again.error.errorMessage ?? "";
-				const evidence2 = sizeEvidence(message, second.estimate, harder.windowSize);
-				if (message === refused || evidence2) {
-					// Size is claimed only on proof: the provider said so, or the first request was at the window.
-					const proven = evidence === "words" || evidence === "likely" || evidence2 === "words";
-					const text = proven
-						? sizeRefusalMessage({
-								estimate: second.estimate,
-								provider: model.provider,
-								detail: providerDetail(refused),
-							})
-						: unclearRefusalMessage({ estimate: second.estimate, first: refused });
-					out.push(errorEvent(text, again.error));
+				if (message === refused || sizeEvidence(message, second.estimate, harder.windowSize)) {
+					// The smaller request was refused too. On proof, the next turn starts below it, so a model that claims far
+					// more than it takes gets there in a few turns instead of failing the same way on every one.
+					if (evidence === "words" || sizeEvidence(message, 0, 1) === "words" || state.strikes >= 2) {
+						const window = Math.max(minimumWindow(fixed), Math.floor(sentSize(second, harder) * 0.75));
+						state.learned = { window, evidence: evidence === "words" ? "words" : "strikes" };
+						state.okSince = 0;
+					}
+					out.push(errorEvent(report(message), again.error));
 					return out.end();
 				}
-			} else {
-				const n = (strikes.get(key) ?? 0) + 1;
-				strikes.set(key, n);
-				if (evidence === "words" || n >= 2) learned.set(key, Math.min(learned.get(key) ?? ceiling, ceiling));
+			} else if (evidence === "words" || state.strikes >= 2) {
+				// The provider took this size after refusing a larger one: keep to it, but never to less than the fixed
+				// part needs, which the request that just worked carried.
+				const window = Math.max(minimumWindow(fixed), sentSize(second, harder));
+				state.learned = { window, evidence: evidence === "words" ? "words" : "strikes" };
+				state.okSince = 0;
 			}
 			out.push(again);
 			return pipe(retry, out);

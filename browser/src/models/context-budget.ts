@@ -18,31 +18,45 @@ export const CHARS_PER_TOKEN = 3;
 export const IMAGE_TOKENS = 1600;
 /** One tool result may take this share of the window ... */
 export const TOOL_RESULT_SHARE = 0.25;
-/** ... and this share of what the system prompt and tool definitions leave ... */
-const TOOL_RESULT_SHARE_OF_FREE = 0.5;
-/** ... and never more than this many tokens, whatever the window ... */
+/** ... and this share of what the conversation may hold ... */
+const TOOL_RESULT_SHARE_OF_CONVERSATION = 0.5;
+/** ... and never more than this many tokens, whatever the window. */
 export const TOOL_RESULT_HARD_CAP_TOKENS = 20000;
-/** ... and never less, so a tiny window still gets a useful page. */
-export const TOOL_RESULT_FLOOR_TOKENS = 500;
 /** A part that has to give way is first cut to this, oldest first. */
 const STUB_TOKENS = 500;
 /** The least a part keeps when the request still doesn't fit. */
 const MIN_PART_TOKENS = 100;
 /** The reply the request asks for when the model lists none. */
 const DEFAULT_REPLY_TOKENS = 4096;
+/** The smallest reply the guard asks for before it gives up on a window: room for a short answer or a tool call. */
+export const REPLY_FLOOR_TOKENS = 1024;
+/** The least room the conversation needs beside the fixed part: the latest message, cut, and the turn's tool calls. */
+export const CONVERSATION_FLOOR_TOKENS = 512;
 
 /** A user message's text part that carries an attached document (message-transformer.ts writes it). */
 export const ATTACHMENT_MARK = "[Document: ";
 
+/**
+ * The budget for one request, from one rule: the window, minus the reply asked for, minus the fixed part (system
+ * prompt and tool schemas, measured from the request itself), leaves what the conversation may hold. The reply shrinks
+ * toward REPLY_FLOOR_TOKENS before the conversation goes under CONVERSATION_FLOOR_TOKENS; when even that leaves too
+ * little, the window is too small and nothing is sent.
+ */
 export interface Budget {
-	/** Tokens the request (system prompt, tools, messages) may hold. */
-	inputTokens: number;
+	/** The window the budget came from, in tokens (the model's, or a smaller one learned from refusals). */
+	windowSize: number;
 	/** Tokens kept for the reply: what the request asks the provider for (maxTokens). */
 	replyTokens: number;
-	/** Tokens one tool result may hold, before the fixed part of a request is known. */
+	/** The system prompt and tool definitions, measured. */
+	fixedTokens: number;
+	/** Tokens the whole request (fixed part and messages) may hold: windowSize minus replyTokens. */
+	inputTokens: number;
+	/** Tokens the messages may hold: inputTokens minus fixedTokens. */
+	conversationTokens: number;
+	/** Tokens one tool result (or one attached document) may hold. */
 	toolResultTokens: number;
-	/** The window the budget came from, in tokens. */
-	windowSize: number;
+	/** The window can't hold the fixed part, the smallest reply and the smallest conversation. */
+	tooSmall: boolean;
 }
 
 /** The model's window in tokens, or DEFAULT_CONTEXT_TOKENS when it isn't known. */
@@ -51,52 +65,59 @@ export function contextWindowOf(model: Pick<Model<never>, "contextWindow"> | und
 	return Number.isFinite(w) && w > 0 ? w : DEFAULT_CONTEXT_TOKENS;
 }
 
-/**
- * The reply the request will ask for: `requested` (the stream's maxTokens) or what pi-ai asks by default (the model's
- * own cap, at most 32,000), held to a quarter of the window. When that is less than would be asked, the guard sends
- * this as maxTokens, so input plus reply always fits the window.
- */
-export function replyReserve(
-	model: Pick<Model<never>, "contextWindow" | "maxTokens"> | undefined,
-	requested?: number,
-	windowSize = contextWindowOf(model),
-): number {
+/** The reply a request would ask for: `requested` (the stream's maxTokens), else pi-ai's default (the model's cap, at most 32,000). */
+export function askedReply(model: Pick<Model<never>, "maxTokens"> | undefined, requested?: number): number {
+	if (Number.isFinite(requested) && Number(requested) > 0) return Math.floor(Number(requested));
 	const listed = Number(model?.maxTokens);
-	const asked =
-		Number.isFinite(requested) && Number(requested) > 0
-			? Number(requested)
-			: Number.isFinite(listed) && listed > 0
-				? Math.min(listed, 32000)
-				: DEFAULT_REPLY_TOKENS;
-	return Math.max(1024, Math.min(asked, Math.floor(windowSize * 0.25)));
+	return Number.isFinite(listed) && listed > 0 ? Math.min(listed, 32000) : DEFAULT_REPLY_TOKENS;
+}
+
+/** The smallest window that holds this fixed part: it, the smallest reply and the smallest conversation. */
+export function minimumWindow(fixedTokens: number): number {
+	return fixedTokens + REPLY_FLOOR_TOKENS + CONVERSATION_FLOOR_TOKENS;
 }
 
 /**
  * The budget for one request. `ceilingTokens` lowers the window when a provider has refused a request under the
- * window it claims (a model list can overstate it). `requestedReply` is the maxTokens the request will ask for.
+ * window it claims (a model list can overstate it). `requestedReply` is the maxTokens the request would ask for;
+ * `fixedTokens` the measured system prompt and tool definitions (estimateFixedTokens).
  */
 export function budgetFor(
 	model: Pick<Model<never>, "contextWindow" | "maxTokens"> | undefined,
 	ceilingTokens?: number,
 	requestedReply?: number,
+	fixedTokens = 0,
 ): Budget {
 	const claimed = contextWindowOf(model);
-	const windowSize = ceilingTokens && ceilingTokens > 0 ? Math.min(claimed, ceilingTokens) : claimed;
-	const replyTokens = replyReserve(model, requestedReply, windowSize);
+	const windowSize = ceilingTokens && ceilingTokens > 0 ? Math.min(claimed, Math.floor(ceilingTokens)) : claimed;
+	const asked = askedReply(model, requestedReply);
+	const floor = Math.min(asked, REPLY_FLOOR_TOKENS);
+	// A quarter of the window for the reply, never under the floor, never over what was asked ...
+	let replyTokens = Math.min(asked, Math.max(REPLY_FLOOR_TOKENS, Math.floor(windowSize * 0.25)));
+	// ... and less, down to the floor, when the conversation would otherwise not have its room: then what the fixed
+	// part leaves is shared evenly between the reply and the conversation.
+	const free = windowSize - fixedTokens;
+	if (replyTokens > free - CONVERSATION_FLOOR_TOKENS)
+		replyTokens = Math.max(floor, Math.min(free - CONVERSATION_FLOOR_TOKENS, Math.floor(free / 2)));
+	const inputTokens = windowSize - replyTokens;
+	const conversationTokens = inputTokens - fixedTokens;
 	const toolResultTokens = Math.max(
-		TOOL_RESULT_FLOOR_TOKENS,
-		Math.min(TOOL_RESULT_HARD_CAP_TOKENS, Math.floor(windowSize * TOOL_RESULT_SHARE)),
+		MIN_PART_TOKENS,
+		Math.min(
+			TOOL_RESULT_HARD_CAP_TOKENS,
+			Math.floor(windowSize * TOOL_RESULT_SHARE),
+			Math.floor(conversationTokens * TOOL_RESULT_SHARE_OF_CONVERSATION),
+		),
 	);
-	return { inputTokens: Math.max(1024, windowSize - replyTokens), replyTokens, toolResultTokens, windowSize };
-}
-
-/**
- * Tokens one tool result may hold once the fixed part of the request (system prompt and tool definitions, `fixed`
- * tokens) is known: a share of what is left, never more than the window's share, never under the floor.
- */
-export function resultTokensFor(budget: Budget, fixed: number): number {
-	const free = Math.floor((budget.inputTokens - fixed) * TOOL_RESULT_SHARE_OF_FREE);
-	return Math.max(TOOL_RESULT_FLOOR_TOKENS, Math.min(budget.toolResultTokens, free));
+	return {
+		windowSize,
+		replyTokens,
+		fixedTokens,
+		inputTokens,
+		conversationTokens,
+		toolResultTokens,
+		tooSmall: conversationTokens < CONVERSATION_FLOOR_TOKENS,
+	};
 }
 
 /** Characters of Latin text one tool result may hold for this model, before the fixed part is known. */
@@ -294,7 +315,7 @@ function capParts(m: Message, kind: Kind, maxTokens: number): Message {
 	return { ...m, content: out } as Message;
 }
 
-/** The result with its images replaced by a line saying so. */
+/** The message with its images replaced by a line saying so. */
 function withoutImages(m: Message): Message {
 	const content = m.content as unknown;
 	if (!Array.isArray(content) || !content.some((p) => p.type === "image")) return m;
@@ -306,6 +327,50 @@ function withoutImages(m: Message): Message {
 				: p,
 		),
 	} as Message;
+}
+
+/** Tool call arguments larger than this are replaced by a line saying so when an old assistant message gives way. */
+const ARGUMENT_STUB_TOKENS = 50;
+
+/**
+ * An assistant message held to `maxTokens`: thinking goes first (an old turn's reasoning is not needed again, and a
+ * signed thinking block can't be edited, only left out), then large tool call arguments become a short note (the call
+ * keeps its id and name, so its result stays paired), then the text is cut from the end. `current` marks the turn in
+ * progress, whose thinking stays.
+ */
+function capAssistant(m: Message, maxTokens: number, current: boolean): Message {
+	if (estimateMessageTokens(m) <= maxTokens || !Array.isArray(m.content)) return m;
+	let parts = m.content as unknown as Array<Record<string, unknown>>;
+	if (!current) parts = parts.filter((p) => p.type !== "thinking");
+	const sized = () => estimateMessageTokens({ ...m, content: parts } as unknown as Message);
+	if (sized() > maxTokens)
+		parts = parts.map((p) => {
+			if (p.type !== "toolCall") return p;
+			const json = JSON.stringify(p.arguments ?? {});
+			if (estimateTextTokens(json) <= ARGUMENT_STUB_TOKENS) return p;
+			return {
+				...p,
+				arguments: {
+					left_out: `Polycarp left out these arguments (${fmt(json.length)} characters) to fit the model's context.`,
+				},
+			};
+		});
+	const texts = parts.filter((p) => p.type === "text");
+	if (sized() > maxTokens && texts.length) {
+		const other = estimateMessageTokens({
+			...m,
+			content: parts.filter((p) => p.type !== "text"),
+		} as unknown as Message);
+		let left = Math.max(MIN_PART_TOKENS, maxTokens - other);
+		parts = parts.map((p) => {
+			if (p.type !== "text") return p;
+			const text = String(p.text ?? "");
+			const kept = capTextTokens(text, Math.max(0, left), "The rest of this earlier reply was not sent.");
+			left -= estimateTextTokens(kept);
+			return kept === text ? p : { ...p, text: kept };
+		});
+	}
+	return { ...m, content: parts } as unknown as Message;
 }
 
 export interface Fitted {
@@ -320,21 +385,32 @@ export interface Fitted {
 	resultTokens: number;
 	/** True when something was cut. */
 	trimmed: boolean;
+	/** True when what is sent is within the budget. False only when even the latest message and its turn, cut to their least, don't fit. */
+	fits: boolean;
+}
+
+/** `start`, then half of it and half again, ending at the floor itself, while `going()` holds. */
+function* halving(start: number, going: () => boolean): Generator<number> {
+	for (let c = Math.max(start, MIN_PART_TOKENS); going(); c = Math.max(MIN_PART_TOKENS, Math.floor(c / 2))) {
+		yield c;
+		if (c === MIN_PART_TOKENS) return;
+	}
 }
 
 /**
- * Fit a request to a budget. Every tool result and every attached document in a user message is first held to the
- * per-result cap. When the whole request is still over, they give way: older ones to a stub first, oldest first; then
- * all are halved, largest first, down to a floor; then images go. Only when that is not enough is the person's own
- * text cut, oldest message first, the newest last. No message is removed, so each tool call keeps its result. A
- * request that already fits comes back as the same object.
+ * Fit a request to a budget. Everything in the history can give way, in this order, until the request fits: tool
+ * results and attached documents (to their cap, then older ones to a stub, then all halved, largest first), images,
+ * earlier assistant replies (thinking, then large tool call arguments, then text), the person's earlier messages, then
+ * whole earlier turns, oldest first, and last the person's latest message and the turn in progress, whose oldest tool
+ * calls go with their results, then the newest call's own thinking, text and arguments. Each tool call keeps its result, and the latest user message is always sent. Stored
+ * history is untouched: only what is sent is cut. A request that already fits comes back as the same object.
  */
 export function fitContext(context: Context, budget: Budget): Fitted {
-	const messages = context.messages.slice();
+	let messages = context.messages.slice();
 	const original = estimateContextTokens(context);
 	const fixed = estimateFixedTokens(context);
-	const resultTokens = resultTokensFor(budget, fixed);
-	const perMessage = messages.map(estimateMessageTokens);
+	const resultTokens = budget.toolResultTokens;
+	let perMessage = messages.map(estimateMessageTokens);
 	let total = fixed + perMessage.reduce((a, b) => a + b, 0);
 	let changed = false;
 	const replace = (i: number, next: Message) => {
@@ -346,51 +422,108 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 		changed = true;
 	};
 	const over = () => total > budget.inputTokens;
-	const cuttable = (kind: "result" | "attachment") => messages.flatMap((m, i) => (partsOf(m, kind).length ? [i] : []));
-	const results = cuttable("result");
-	const attachments = cuttable("attachment");
-	const both = [...new Set([...results, ...attachments])].sort((a, b) => a - b);
-	const cap = (i: number, tokens: number) => {
-		let next = messages[i];
-		if (kindOf(next) === "result") next = capParts(next, "result", tokens);
-		else next = capParts(next, "attachment", tokens);
-		replace(i, next);
+	const latestUser = () => {
+		for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "user") return i;
+		return -1;
 	};
-
-	for (const i of both) cap(i, resultTokens);
-	// The latest turn is what the model is working on: it gives way last.
-	let lastAssistant = -1;
-	for (let i = messages.length - 1; i >= 0; i--)
-		if (messages[i].role === "assistant") {
-			lastAssistant = i;
-			break;
-		}
-	for (const i of both.filter((j) => j < lastAssistant)) {
-		if (!over()) break;
-		cap(i, STUB_TOKENS);
-	}
+	const capPart = (i: number, tokens: number) =>
+		replace(i, capParts(messages[i], kindOf(messages[i]) === "result" ? "result" : "attachment", tokens));
+	const cuttable = () =>
+		messages.flatMap((m, i) => (partsOf(m, "result").length || partsOf(m, "attachment").length ? [i] : []));
 	const size = (i: number) => partsTokens(messages[i], kindOf(messages[i]) === "result" ? "result" : "attachment");
-	for (let c = Math.floor(resultTokens / 2); over() && c >= MIN_PART_TOKENS; c = Math.floor(c / 2)) {
-		for (const i of both.slice().sort((a, b) => size(b) - size(a) || a - b)) {
-			if (!over()) break;
-			cap(i, c);
-		}
+
+	// 1. Every tool result and attached document to its cap.
+	for (const i of cuttable()) capPart(i, resultTokens);
+	// 2. Older ones to a stub, oldest first: the latest turn is what the model is working on.
+	const last = latestUser();
+	for (const i of cuttable().filter((j) => j < last)) {
+		if (!over()) break;
+		capPart(i, STUB_TOKENS);
 	}
-	for (const i of both) {
+	// 3. All of them halved, largest first, down to a floor.
+	for (const c of halving(Math.floor(resultTokens / 2), over))
+		for (const i of cuttable().sort((a, b) => size(b) - size(a) || a - b)) {
+			if (!over()) break;
+			capPart(i, c);
+		}
+	// 4. Images, oldest first, the latest user message's last.
+	for (const i of messages.map((_, k) => k).filter((k) => k !== latestUser())) {
 		if (!over()) break;
 		replace(i, withoutImages(messages[i]));
 	}
-	// Last: the person's own words (typed, pasted, a skill they chose, a page they shared), oldest first. A message is
-	// kept whole whenever the request fits with it whole.
-	const users = messages.flatMap((m, i) => (m.role === "user" ? [i] : []));
-	for (let c = STUB_TOKENS * 4; over() && c >= MIN_PART_TOKENS; c = Math.floor(c / 2)) {
-		for (const i of users) {
+	// 5. Earlier assistant replies and the turn's own, oldest first, halving.
+	for (const c of halving(STUB_TOKENS * 2, over))
+		for (let i = 0; i < messages.length; i++) {
 			if (!over()) break;
-			replace(i, capParts(messages[i], "user", c));
+			if (messages[i].role === "assistant") replace(i, capAssistant(messages[i], c, i > latestUser()));
 		}
+	// 6. The person's earlier messages, oldest first.
+	for (const c of halving(STUB_TOKENS * 4, over))
+		for (let i = 0; i < latestUser(); i++) {
+			if (!over()) break;
+			if (messages[i].role === "user") replace(i, capParts(messages[i], "user", c));
+		}
+	// 7. The latest user message to half of what the conversation may hold: a paste that big can never go whole, and
+	// cutting it costs less than the chat's earlier turns.
+	if (over() && latestUser() >= 0) {
+		const half = Math.max(MIN_PART_TOKENS, Math.floor(budget.conversationTokens / 2));
+		const i = latestUser();
+		replace(i, capParts(capParts(messages[i], "attachment", half), "user", half));
 	}
-	if (!changed) return { context, estimate: original, original, fixed, resultTokens, trimmed: false };
-	return { context: { ...context, messages }, estimate: total, original, fixed, resultTokens, trimmed: true };
+	// 8. Whole earlier turns, oldest first. A turn runs from one user message to the next, so its tool calls and
+	// results go together.
+	let droppedEarlier = 0;
+	const drop = (from: number, to: number) => {
+		total -= perMessage.slice(from, to).reduce((a, b) => a + b, 0);
+		messages = [...messages.slice(0, from), ...messages.slice(to)];
+		perMessage = [...perMessage.slice(0, from), ...perMessage.slice(to)];
+		changed = true;
+		return to - from;
+	};
+	while (over() && latestUser() > 0) {
+		let next = 1;
+		while (next < latestUser() && messages[next].role !== "user") next++;
+		droppedEarlier += drop(0, next);
+	}
+	if (droppedEarlier) {
+		const i = latestUser();
+		const note = {
+			type: "text" as const,
+			text: `[Polycarp left out the ${droppedEarlier} earliest messages of this chat to fit the model's context.]`,
+		};
+		const content = messages[i].content as unknown;
+		replace(i, {
+			...messages[i],
+			content: typeof content === "string" ? [note, { type: "text", text: content }] : [note, ...(content as [])],
+		} as Message);
+	}
+	// 9. The latest user message: its images, then its documents and text.
+	if (over() && latestUser() >= 0) replace(latestUser(), withoutImages(messages[latestUser()]));
+	for (const c of halving(STUB_TOKENS * 4, over)) {
+		const i = latestUser();
+		if (i < 0) break;
+		replace(i, capParts(capParts(messages[i], "attachment", c), "user", c));
+	}
+	// 10. The turn in progress: its oldest tool calls, each with its results, keeping the newest.
+	for (;;) {
+		if (!over()) break;
+		const start = latestUser() + 1;
+		const calls = messages.flatMap((m, k) => (k >= start && m.role === "assistant" ? [k] : []));
+		if (calls.length < 2) break;
+		let end = calls[0] + 1;
+		while (end < messages.length && messages[end].role === "toolResult") end++;
+		drop(calls[0], end);
+	}
+	// 11. Last, the newest call itself: its thinking, its text, then its arguments. Its id and result stay, so the pair
+	// holds; a provider that wants the thinking back may refuse, which is no worse than a request known not to fit.
+	for (const c of halving(STUB_TOKENS * 2, over))
+		for (let i = latestUser() + 1; i < messages.length; i++) {
+			if (!over()) break;
+			if (messages[i].role === "assistant") replace(i, capAssistant(messages[i], c, false));
+		}
+	const fits = !over();
+	if (!changed) return { context, estimate: original, original, fixed, resultTokens, trimmed: false, fits };
+	return { context: { ...context, messages }, estimate: total, original, fixed, resultTokens, trimmed: true, fits };
 }
 
 /** Words providers use when a request is over the window. */
@@ -442,6 +575,11 @@ export function unclearRefusalMessage(info: { estimate: number; first: string })
 }
 
 /** What the person reads when the model's window can't hold Polycarp's instructions and tools at all. */
-export function windowTooSmallMessage(info: { fixed: number; inputTokens: number; windowSize: number }): string {
-	return `This model's context window (${fmt(info.windowSize)} tokens) is too small for Polycarp: its instructions and tools alone take about ${fmt(info.fixed)} tokens, and only ${fmt(info.inputTokens)} can be sent with room for a reply. Pick a model with a window of at least ${fmt(Math.ceil((info.fixed * 2.5) / 1024) * 1024)} tokens.`;
+export function windowTooSmallMessage(info: { fixed: number; windowSize: number; needed: number }): string {
+	return `This model's context window (${fmt(info.windowSize)} tokens) is too small for Polycarp's tools: its instructions and tools alone take about ${fmt(info.fixed)} tokens, and nothing was sent. Pick a model with a window of at least ${fmt(Math.ceil(info.needed / 1024) * 1024)} tokens.`;
+}
+
+/** What the person reads when even the latest message and its turn, cut to their least, don't fit. */
+export function turnTooLargeMessage(info: { windowSize: number }): string {
+	return `This turn is too large for the model's context window (${fmt(info.windowSize)} tokens), even with everything earlier left out and the latest message cut, so nothing was sent. Start a new chat and ask for a smaller part, or pick a model with a larger window.`;
 }

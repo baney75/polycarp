@@ -64,7 +64,7 @@ import { BUILD } from "../update/build.js";
 import { BridgeError, classify, detachedError, interruptedError, navigatedError } from "./errors.js";
 import { dropTransfersForSession, fileHandlers } from "./files.js";
 import { rankMatches } from "./find.js";
-import { newestPage, PDF_DEFAULT_CHARS, pdfCutNote, pdfWindow, sliceInfo } from "./paging.js";
+import { newestPage, PDF_DEFAULT_CHARS, pdfCutNote, pdfWindow, readChars, sliceInfo } from "./paging.js";
 import { getAllowedHosts, getPermissionMode } from "./permissions.js";
 import { ERR } from "./protocol.js";
 
@@ -585,7 +585,7 @@ export const handlers: Record<string, Handler> = {
 		if (!str(params, "selector") && (await isPdfTab(tabId))) {
 			const tab = await chrome.tabs.get(tabId);
 			const offset = Math.max(0, Math.floor(num(params, "offset") ?? 0));
-			const max = num(params, "maxChars") ?? PDF_DEFAULT_CHARS;
+			const max = readChars(params.maxChars, PDF_DEFAULT_CHARS) ?? PDF_DEFAULT_CHARS;
 			// The page stream is the same on every read, so offset + max characters of it, from offset, is the exact
 			// continuation of the read before.
 			const pdf = await pdfText(tab.url ?? "", offset + max, num(params, "firstPage"), num(params, "lastPage"));
@@ -611,13 +611,13 @@ export const handlers: Record<string, Handler> = {
 				text: part.text,
 			};
 		}
-		const slice = await pageText(tabId, str(params, "selector"), num(params, "maxChars"), num(params, "offset"));
+		const slice = await pageText(tabId, str(params, "selector"), readChars(params.maxChars), num(params, "offset"));
 		return { ...(await tabSummary(tabId)), text: slice.text, ...sliceInfo(slice) };
 	},
 
 	html: async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, false);
-		const slice = await pageHtml(tabId, str(params, "selector"), num(params, "maxChars"), num(params, "offset"));
+		const slice = await pageHtml(tabId, str(params, "selector"), readChars(params.maxChars), num(params, "offset"));
 		return { ...(await tabSummary(tabId)), html: slice.text, ...sliceInfo(slice) };
 	},
 

@@ -9,8 +9,9 @@ export const OUTPUT_CAP = 100000;
 /** run_js values and page_markdown text return this much by default. */
 export const VALUE_CHARS = 50000;
 export const MARKDOWN_CHARS = 40000;
-/** crawl shows each page's markdown up to this. */
+/** crawl shows each page's markdown up to this, and up to this in all, so its JSON stays whole under OUTPUT_CAP. */
 export const CRAWL_PAGE_CHARS = 3000;
+export const CRAWL_TOTAL_CHARS = 60000;
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 
@@ -38,24 +39,41 @@ export function sliceText(text: string, offset: number | undefined, max: number,
 	return `${head}${part}${tail}`;
 }
 
-/** A crawl result with each page's markdown cut to CRAWL_PAGE_CHARS, the URL kept, and a note on how to read one. */
+/**
+ * A crawl result with each page's markdown cut to CRAWL_PAGE_CHARS and all of it to CRAWL_TOTAL_CHARS, every URL
+ * kept, and a note on how to read a page in full.
+ */
 export function capCrawl(result: unknown): unknown {
 	if (!result || typeof result !== "object") return result;
 	const data = (result as { data?: unknown }).data;
 	if (!Array.isArray(data)) return result;
 	let cut = 0;
+	let omitted = 0;
+	let left = CRAWL_TOTAL_CHARS;
 	const pages = data.map((page) => {
 		if (!page || typeof page !== "object") return page;
 		const md = (page as { markdown?: unknown }).markdown;
-		if (typeof md !== "string" || md.length <= CRAWL_PAGE_CHARS) return page;
+		if (typeof md !== "string") return page;
+		if (left <= 0 && md) {
+			omitted++;
+			const { markdown: _md, ...rest } = page as Record<string, unknown>;
+			return { ...rest, markdown_left_out: md.length };
+		}
+		const max = Math.min(CRAWL_PAGE_CHARS, left);
+		left -= Math.min(md.length, max);
+		if (md.length <= max) return page;
 		cut++;
-		return { ...page, markdown: `${md.slice(0, CRAWL_PAGE_CHARS)}\n[cut: ${fmt(md.length - CRAWL_PAGE_CHARS)} more characters]` };
+		return { ...page, markdown: `${md.slice(0, max)}\n[cut: ${fmt(md.length - max)} more characters]` };
 	});
-	if (!cut) return result;
+	if (!cut && !omitted) return result;
+	const notes = [
+		cut ? `${cut} page${cut === 1 ? "'s" : "s'"} markdown cut to ${fmt(CRAWL_PAGE_CHARS)} characters or less.` : "",
+		omitted ? `${omitted} page${omitted === 1 ? "'s" : "s'"} markdown left out: the crawl's ${fmt(CRAWL_TOTAL_CHARS)} characters were used up (markdown_left_out gives each one's length).` : "",
+	].filter(Boolean);
 	return {
 		...(result as object),
 		data: pages,
-		note: `${cut} page${cut === 1 ? "'s" : "s'"} markdown cut to ${fmt(CRAWL_PAGE_CHARS)} characters. Read one in full with page_markdown and its URL (it takes offset).`,
+		note: `${notes.join(" ")} Read one in full with page_markdown and its URL (it takes offset).`,
 	};
 }
 
