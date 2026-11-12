@@ -33,6 +33,7 @@ final class HandsEngine {
     static let headlessPolicy: Int32 = 0
     // AdResult values from agent_desktop.h (the type itself is ambiguous in Swift).
     static let surfaceWindow: Int32 = 0 // AD_SNAPSHOT_SURFACE_WINDOW
+    static let surfaceMenubar: Int32 = 3 // AD_SNAPSHOT_SURFACE_MENUBAR: the window's app's menu bar, refs still of this window
     static let resultOK: Int32 = 0
     static let resultPermDenied: Int32 = -1
     // AdActionKind values from agent_desktop.h. No key action: see the rules above.
@@ -220,9 +221,9 @@ final class HandsEngine {
 
     /// One window's tree with refs. `windowID` is the engine's id for it ("w-4211"). `evidence` reads use
     /// their own store, so they never push the agent's refs out.
-    func snapshot(window w: HandsWindow, interactive: Bool, compact: Bool, depth: UInt8, evidence: Bool = false, check: @escaping Check) -> Reply {
+    func snapshot(window w: HandsWindow, interactive: Bool, compact: Bool, depth: UInt8, evidence: Bool = false, surface: Int32 = surfaceWindow, check: @escaping Check) -> Reply {
         run(window: w, budget: Budget.snapshot, mutating: false, check: check) { [self] _ in
-            doSnapshot(windowID: w.id, interactive: interactive, compact: compact, depth: depth, evidence: evidence)
+            doSnapshot(windowID: w.id, interactive: interactive, compact: compact, depth: depth, evidence: evidence, surface: surface)
         }
     }
 
@@ -232,7 +233,7 @@ final class HandsEngine {
         return doSnapshot(windowID: w.id, interactive: interactive, compact: compact, depth: depth, evidence: evidence)
     }
 
-    private func doSnapshot(windowID: UInt32, interactive: Bool, compact: Bool, depth: UInt8, evidence: Bool) -> Reply {
+    private func doSnapshot(windowID: UInt32, interactive: Bool, compact: Bool, depth: UInt8, evidence: Bool, surface: Int32 = surfaceWindow) -> Reply {
         if let e = ready() { return .failed(e) }
         guard let adapter = evidence ? evidenceAdapter : adapter else { return .failed(HandsError(.engineError, "the engine isn't ready", suggestion: "Check `polycarp-spaces doctor`.", retry: .never)) }
         var out: UnsafeMutablePointer<CChar>?
@@ -240,7 +241,7 @@ final class HandsEngine {
         // The exact window id alone names the window. The app's name is not passed: two copies of an app share
         // it, and the engine would match by name first.
         let code = id.withCString { w in
-            ad_snapshot_window(adapter, nil, w, Self.surfaceWindow, depth, interactive, compact, &out)
+            ad_snapshot_window(adapter, nil, w, surface, depth, interactive, compact, &out)
         }
         return finish(code, out)
     }

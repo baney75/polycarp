@@ -254,7 +254,7 @@ final class AgentAccessSurfaceTests: XCTestCase {
         XCTAssertTrue(decide.contains("selfPid: getpid()"), "BaneySpaces' own windows (first-F4)")
         XCTAssertTrue(decide.contains("d == .onAgentWorkspace, mode != .full, AgentAccess.shared.grantedUnderFull(w.pid)"), "grants end with Full Access (first-F1)")
         let act = try XCTUnwrap(HandsSourceTests.block(after: "private func act(", in: router))
-        XCTAssertTrue(act.contains("check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session))"), "Read Only at delivery (sol-F2)")
+        XCTAssertTrue(act.contains("check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session, also: also))"), "Read Only at delivery (sol-F2)")
         let bg = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
         XCTAssertTrue(bg.contains("let scopeCheck = actingCheck(w, ref: ref, verb: name, delivery: .posted, session: session)"), "and for keys and pointer, retries included")
         XCTAssertTrue(bg.contains("access == .full && !owned.contains(w.pid) ? .full : .agentWorkspace"), "sol-F3")

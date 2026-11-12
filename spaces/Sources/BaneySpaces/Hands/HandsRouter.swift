@@ -119,6 +119,7 @@ final class HandsRouter {
         case "scroll": return scroll(req)
         case "select": return act(req, .select, "select", text: req.string("option"))
         case "toggle": return act(req, .toggle, "toggle")
+        case "menu": return menu(req)
         case "shot": return shot(req)
         case "open": return open(req)
         default: return .failure(HandsError(.badArguments, "unknown agent command \(req.verb)", suggestion: "Commands: " + HandsTools.all.map(\.verb).joined(separator: ", ")))
@@ -164,9 +165,10 @@ final class HandsRouter {
 
     /// The same for a call that changes something: Read Only, set after the request was let in, stops it here too, and so
     /// does Donovan coming back to the app after the wait found it free (the in-use rule, read again at this moment).
-    func actingCheck(_ w: HandsWindow, ref: String? = nil, verb: String, delivery: InUseDelivery, session: String = "") -> HandsEngine.Check {
+    /// `also`: a verb's own rule, read at the same moment (a menu command's key-window rule).
+    func actingCheck(_ w: HandsWindow, ref: String? = nil, verb: String, delivery: InUseDelivery, session: String = "", also: HandsEngine.Check? = nil) -> HandsEngine.Check {
         let scope = check(w, ref: ref, session: session)
-        return { [self] in AgentAccessGate.actingRefusal(mode: access) ?? scope() ?? inUseProblem(w, verb: verb, delivery: delivery) }
+        return { [self] in AgentAccessGate.actingRefusal(mode: access) ?? scope() ?? inUseProblem(w, verb: verb, delivery: delivery) ?? also?() }
     }
 
     // MARK: in use
@@ -389,8 +391,8 @@ final class HandsRouter {
     }
 
     /// `register: false` for the snapshots taken as evidence: the agent never sees their refs, so they must not push its refs out.
-    func read(_ w: HandsWindow, interactive: Bool, compact: Bool, depth: UInt8 = 10, register: Bool = true, session: String = "") -> Result<JSONValue, HandsError> {
-        switch HandsEngine.shared.snapshot(window: w, interactive: interactive, compact: compact, depth: depth, evidence: !register, check: check(w, session: session)) {
+    func read(_ w: HandsWindow, interactive: Bool, compact: Bool, depth: UInt8 = 10, register: Bool = true, surface: Int32 = HandsEngine.surfaceWindow, session: String = "") -> Result<JSONValue, HandsError> {
+        switch HandsEngine.shared.snapshot(window: w, interactive: interactive, compact: compact, depth: depth, evidence: !register, surface: surface, check: check(w, session: session)) {
         case .failed(let e): return .failure(e)
         case .ok(let data):
             // The engine must have read the window we asked for, never its neighbor.
@@ -555,7 +557,10 @@ final class HandsRouter {
         return nil
     }
 
-    private func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, text: String? = nil, direction: Int32 = 1, amount: UInt32 = 3) -> HandsEnvelope {
+    /// A menu command is a click on its menu-bar ref, with the menu's own rule (HandsRouter+Menu.swift).
+    func clickMenuItem(_ req: HandsRequest, rule: @escaping HandsEngine.Check) -> HandsEnvelope { act(req, .click, "menu", also: rule) }
+
+    private func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, text: String? = nil, direction: Int32 = 1, amount: UInt32 = 3, also: HandsEngine.Check? = nil) -> HandsEnvelope {
         guard let ref = req.string("ref") else { return .failure(HandsError(.badArguments, "ref is missing", suggestion: "usage: polycarp-spaces agent \(name) <ref>", retry: .safe)) }
         let session = req.session ?? ""
         switch resolve(ref, session: session) {
@@ -593,7 +598,7 @@ final class HandsRouter {
                 return clickRow(w, scope: scope, ref: ref, plan: plan, session: session, childrenBefore: childrenBefore)
             }
             // The scope and ref checks run again on the process queue, at the moment the call executes.
-            let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session))
+            let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session, also: also))
             switch reply {
             case .failed(let e): return .failure(e)
             case .ok(let engine):

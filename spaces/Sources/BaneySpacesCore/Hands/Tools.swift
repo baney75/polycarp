@@ -110,6 +110,10 @@ public enum HandsTools {
             refParam,
             HandsParam("option", .string, "The text of the option to choose.", required: true, positional: true, rest: true),
         ], acts: true),
+        HandsTool(verb: "menu", summary: "Run a menu-bar command of the window's app by its titles, without opening the menu on screen. Only for a copy of the app Polycarp started, with this its one window. Example: {\"window\":4211,\"path\":\"Format > Font > Bold\"}", params: [
+            HandsParam("window", .integer, "Window id from `windows`.", required: true),
+            HandsParam("path", .string, "Menu titles from the menu bar down, separated by >.", required: true, positional: true, rest: true),
+        ], acts: true),
         HandsTool(verb: "toggle", summary: "Flip a checkbox, switch or disclosure by ref. Prints the state it read back.", params: [refParam], acts: true),
         HandsTool(verb: "shot", summary: "Capture one window as a PNG, even while it is parked out of view. Needs Screen Recording for Polycarp. The file stays on this Mac.", params: [
             HandsParam("window", .integer, "Window id.", required: true),
