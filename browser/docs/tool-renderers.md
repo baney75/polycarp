@@ -110,7 +110,7 @@ const navigateRenderer: ToolRenderer<NavigateParams, NavigateResult> = {
 **web-ui Package:**
 - `bash` - Command execution with console output (BashRenderer)
 - `javascript_repl` - Sandboxed JavaScript REPL with console output
-- `extract_document` - Document extraction from web pages
+- `extract_document` - Document extraction from web pages (the tool itself is Polycarp's, `src/tools/extract-document.ts`, which reads by pages or query; the renderer is web-ui's)
 - `artifacts` - File artifact management (ArtifactsToolRenderer)
 
 **sitegeist Extension:**

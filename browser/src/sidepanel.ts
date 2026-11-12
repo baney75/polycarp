@@ -11,7 +11,6 @@ import {
 import { getModel, getModels, type Model } from "@mariozechner/pi-ai";
 import {
 	ChatPanel,
-	createExtractDocumentTool,
 	createStreamFn,
 	ModelSelector,
 	// PersistentStorageDialog,
@@ -72,6 +71,8 @@ import {
 } from "./messages/NavigationMessage.js";
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
+import { toolResultBudgetChars } from "./models/context-budget.js";
+import { guardContext } from "./models/context-guard.js";
 import { modelLabelParts } from "./models/display.js";
 import { FREE_KEY_NOTE, FREE_PRIVACY_NOTE, FREE_SHORT_NOTE } from "./models/free-mode.js";
 import { freeComposerText, installFreeMode, setFreeMode, streamFree } from "./models/free-panel.js";
@@ -96,6 +97,7 @@ import {
 	routeSubscriptionModel,
 } from "./subscriptions/stream.js";
 import { DebuggerTool } from "./tools/debugger.js";
+import { createExtractDocumentTool } from "./tools/extract-document.js";
 import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-image.js";
 import { AskUserTool, AskUserWhichElementTool, skillTool } from "./tools/index.js";
 import { NativeInputEventsRuntimeProvider } from "./tools/NativeInputEventsRuntimeProvider.js";
@@ -919,12 +921,15 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			return browserMessageTransformer(messages);
 		},
 		toolExecution: "sequential",
-		streamFn: uncappedStreamFn(
-			createStreamFn(async () => {
-				const enabled = await storage.settings.get<boolean>("proxy.enabled");
-				if (!enabled) return undefined;
-				return (await storage.settings.get<string>("proxy.url")) || undefined;
-			}),
+		// Outermost: every request is fitted to the model's window, whichever route sends it (context-guard.ts).
+		streamFn: guardContext(
+			uncappedStreamFn(
+				createStreamFn(async () => {
+					const enabled = await storage.settings.get<boolean>("proxy.enabled");
+					if (!enabled) return undefined;
+					return (await storage.settings.get<string>("proxy.url")) || undefined;
+				}),
+			),
 		),
 		getApiKey: async (provider: string) => {
 			const stored = await storage.providerKeys.get(provider);
@@ -1084,8 +1089,10 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			const navigateTool = new NavigateTool();
 			const selectElementTool = new AskUserWhichElementTool();
 
-			// Create extract_document tool with CORS proxy from settings (loaded above)
-			const extractDocumentTool = createExtractDocumentTool();
+			// Polycarp's bounded extract_document (pages, query), with the CORS proxy from settings (loaded above).
+			const extractDocumentTool = createExtractDocumentTool({
+				budgetChars: () => toolResultBudgetChars(agent?.state.model),
+			});
 			if (corsProxyEnabled && corsProxyUrl) {
 				extractDocumentTool.corsProxyUrl = `${corsProxyUrl}/?url=`;
 			}

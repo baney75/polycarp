@@ -7,11 +7,11 @@ import {
 	ARTIFACTS_RUNTIME_PROVIDER_DESCRIPTION_RW,
 	ARTIFACTS_TOOL_DESCRIPTION,
 	ATTACHMENTS_RUNTIME_DESCRIPTION,
-	EXTRACT_DOCUMENT_DESCRIPTION,
 } from "../../../pi-mono/packages/web-ui/dist/prompts/prompts.js";
 import {
 	ASK_USER_WHICH_ELEMENT_TOOL_DESCRIPTION,
 	BROWSERJS_RUNTIME_PROVIDER_DESCRIPTION,
+	EXTRACT_DOCUMENT_TOOL_DESCRIPTION,
 	NATIVE_INPUT_EVENTS_DESCRIPTION,
 	NAVIGATE_RUNTIME_PROVIDER_DESCRIPTION,
 	NAVIGATE_TOOL_DESCRIPTION,
@@ -171,13 +171,23 @@ export const TOOL_DEFINITIONS = [
 	},
 	{
 		name: "extract_document",
-		description: EXTRACT_DOCUMENT_DESCRIPTION,
+		description: EXTRACT_DOCUMENT_TOOL_DESCRIPTION,
 		input_schema: {
 			type: "object",
 			properties: {
-				url: {
+				url: { type: "string", description: "URL of the document (PDF, DOCX, XLSX, PPTX or text)" },
+				pages: {
 					type: "string",
-					description: "URL of the document to extract text from (PDF, DOCX, XLSX, or PPTX)",
+					description:
+						'Pages to read, like "40-55" or "12" (slides for PPTX, sheets for XLSX, parts of about 3,000 characters for DOCX)',
+				},
+				query: {
+					type: "string",
+					description: "Words to find: returns the matching pages, best first, with numbers and snippets",
+				},
+				offset: {
+					type: "number",
+					description: "Skip this many characters of the pages asked for (the cut note gives it)",
 				},
 			},
 			required: ["url"],

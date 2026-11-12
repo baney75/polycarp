@@ -64,6 +64,7 @@ import { BUILD } from "../update/build.js";
 import { BridgeError, classify, detachedError, interruptedError, navigatedError } from "./errors.js";
 import { dropTransfersForSession, fileHandlers } from "./files.js";
 import { rankMatches } from "./find.js";
+import { newestPage, pdfCutNote, sliceInfo } from "./paging.js";
 import { getAllowedHosts, getPermissionMode } from "./permissions.js";
 import { ERR } from "./protocol.js";
 
@@ -589,6 +590,8 @@ export const handlers: Record<string, Handler> = {
 				num(params, "firstPage"),
 				num(params, "lastPage"),
 			);
+			const first = num(params, "firstPage") ?? 1;
+			const last = Math.min(pdf.pages, num(params, "lastPage") ?? pdf.pages);
 			const note = !pdf.read
 				? `There is no such page: this PDF has ${pdf.pages}.`
 				: pdf.empty.length === pdf.read
@@ -596,20 +599,21 @@ export const handlers: Record<string, Handler> = {
 					: pdf.empty.length
 						? `Pages ${pdf.empty.join(", ")} have no text layer (images); read those with screenshot.`
 						: undefined;
+			const cut = pdf.truncated ? pdfCutNote(pdf.text, first, last) : undefined;
 			return {
 				...(await tabSummary(tabId)),
-				pdf: { pages: pdf.pages, truncated: pdf.truncated, ...(note ? { note } : {}) },
+				pdf: { pages: pdf.pages, truncated: pdf.truncated, ...(note ? { note } : {}), ...(cut ? { cut } : {}) },
 				text: pdf.text,
 			};
 		}
-		const text = await pageText(tabId, str(params, "selector"), num(params, "maxChars"));
-		return { ...(await tabSummary(tabId)), text };
+		const slice = await pageText(tabId, str(params, "selector"), num(params, "maxChars"), num(params, "offset"));
+		return { ...(await tabSummary(tabId)), text: slice.text, ...sliceInfo(slice, "get_page_text") };
 	},
 
 	html: async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, false);
-		const html = await pageHtml(tabId, str(params, "selector"), num(params, "maxChars"));
-		return { ...(await tabSummary(tabId)), html };
+		const slice = await pageHtml(tabId, str(params, "selector"), num(params, "maxChars"), num(params, "offset"));
+		return { ...(await tabSummary(tabId)), html: slice.text, ...sliceInfo(slice, "get_page_html") };
 	},
 
 	inspect: async (ctx, params) => {
@@ -893,7 +897,7 @@ export const handlers: Record<string, Handler> = {
 			const re = new RegExp(pattern, "i");
 			entries = entries.filter((e) => re.test(e.text));
 		}
-		return { ...(capture ? { capture } : {}), entries: entries.slice(-(num(params, "limit") ?? 100)) };
+		return { ...(capture ? { capture } : {}), ...newestPage(entries, params, "read_console", "text") };
 	},
 
 	/**
@@ -928,6 +932,6 @@ export const handlers: Record<string, Handler> = {
 		}
 		const type = str(params, "type");
 		if (type) entries = entries.filter((e) => e.type?.toLowerCase() === type.toLowerCase());
-		return { ...(capture ? { capture } : {}), entries: entries.slice(-(num(params, "limit") ?? 100)) };
+		return { ...(capture ? { capture } : {}), ...newestPage(entries, params, "read_network", "url") };
 	},
 };

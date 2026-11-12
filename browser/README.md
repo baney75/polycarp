@@ -181,6 +181,8 @@ connector, see [Remote MCP and tunnels](#remote-mcp-and-tunnels).
 | `library_add`, `library_search`, `library_cite` | Save verified sources and cite them (see [Library](#library)) |
 | `computer_status`, `computer_*` | On a Mac with Polycarp's app: native apps on the agent workspace, in the background, never taking focus (below) |
 
+**How much a read returns.** Each read tool answers with a bounded part and says when it cut, with the call that reads on, so one page can't fill an agent's context: `get_page_text` and `get_page_html` 50,000 characters (a PDF tab by pages), `run_js` values 50,000 and `page_markdown` 40,000, all with `offset`; `read_page` 300 elements and 3,000 characters of text; `read_console` and `read_network` the newest 100 entries at 2,000 characters each, older ones by `offset`; `crawl` 3,000 characters a page; `files` `read` 50 KB of text (up to 200 KB with `max_bytes`) and `offset`. No tool result is longer than 100,000 characters.
+
 Every tool's description documents its parameters and includes an example. `actions`
 batches up to 40 input steps (keys, clicks, drags, typing) in one call, which is what
 canvas apps need.
