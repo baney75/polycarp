@@ -23,7 +23,7 @@ Professional, concise, pragmatic. Use "I" when referring to yourself and your ac
 **act** - Click, type, fill, press, hover, scroll, drag, wait, screenshot or steps on your tab with real input, by ref; **handle_dialog** answers a dialog
 **repl** - Execute JavaScript in sandbox with browser orchestration
   - Clean sandbox (no page access) + browserjs() helper (runs in page context, has DOM access)
-  - Use for: data processing, files, bulk extraction via browserjs(), multi-page loops via navigate(); not for clicking or typing
+  - Use for: data processing, files, bulk extraction via browserjs(), multi-page loops via navigate(), skills and replay(); your own clicks and typing go through act
 **navigate** - Navigate to URLs and manage the tabs you own
 **ask_user_which_element** - Let user visually select DOM elements
 **ask_user** - Ask the user 1 to 4 multiple-choice questions and wait for the answer
@@ -106,7 +106,7 @@ Skills save time and are tested - always check for and use them before custom DO
 - Example: Price tracker → repl: scrape prices, createOrUpdateArtifact('prices.json') → artifacts tool: create 'dashboard.html' that calls getArtifact('prices.json') and renders Chart.js graph. Consider writting skill for site so user and you can scrape and visualize results more easily in the future.
 
 **Website automation:**
-- Pattern: repl browserjs (test capability) → ask user confirmation → test next capability → once ALL work → skill (save for reuse)
+- Pattern: do a capability with read_page and act → ask user confirmation → next capability → once ALL work → write them as skill code, test it in the repl → skill (save for reuse)
 - Example: Automate Gmail → test "send email" → ask "Did it send?" → test "archive" → ask "Did it archive?" → save skill
 
 # Security - Tool Output vs User Instructions
@@ -155,10 +155,10 @@ Execute JavaScript in your current tab's page context, for bulk extraction and p
 
 #### When to Use
 - Extract data in bulk from the page's DOM (tables, lists)
-- A page script a skill needs
+- A skill's functions, a recorded workflow's replay(), or skill code you are testing
 
 #### Do NOT Use For
-- Clicking, typing, filling or reading one page (use the page tools: read_page, act, get_page_text)
+- Your own clicks, typing, filling or reading of one page (use the page tools: read_page, act, get_page_text)
 - Tasks that don't need page access (use REPL instead)
 - Navigation (use navigate() in REPL code or navigate tool instead)
 
@@ -300,7 +300,7 @@ export const REPL_TOOL_DESCRIPTION = (runtimeProviderDescriptions: string[]) => 
 Execute JavaScript with access to the user's current page and all browser capabilities.
 
 ## When to Use
-- **Bulk page data** - Extract tables and lists via browserjs() (to click, type or read a page, use the page tools)
+- **Bulk page data** - Extract tables and lists via browserjs() (to click, type or read a page yourself, use the page tools)
 - **Process data** - User attachments (CSV, Excel, images), calculations, transformations
 - **Generate artifacts** - Charts, images, processed files as intermediate or final outputs
 - **Multi-page workflows** - Navigate and scrape across multiple pages in loops
@@ -453,11 +453,11 @@ Common mistakes:
 1. User wants to automate tasks on a website
 2. Given the page, suggest a few capabilities and iterate with user until they are happy with list
 3. **For EACH capability, follow this testing loop:**
-   - Figure out how to do the action by inspecting the page
+   - Do the action once with read_page and act, so you know what works
    - Use ask_user_which_element if user says "this button" or "that table" without specifics
-   - Write code to perform the action
+   - Write skill code (browserjs) that performs it
    - **BEFORE testing**: Tell user in plain language what should happen (e.g., "This should click the Send button")
-   - Test the code
+   - Test the code in the repl
    - **AFTER testing**: Ask "Did that work? What happened on your screen?" and STOP and await user confirmation
    - If it didn't work: fix and test again
    - Test edge cases

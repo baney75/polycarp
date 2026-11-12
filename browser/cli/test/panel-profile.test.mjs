@@ -1,6 +1,7 @@
 // `polycarp mcp --profile panel`: the side panel's page tools over MCP, for the benchmarks. The tool list and the
 // results are the panel's own (src/bridge/page-tools.ts); calls go to the bridge handlers by the panel's routes.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -94,6 +95,24 @@ test("polycarp mcp --profile panel serves that list over stdio", async () => {
 		assert.match(client.getInstructions() ?? "", /act/);
 	} finally {
 		await client.close();
+		rmSync(home, { recursive: true, force: true });
+	}
+});
+
+test("a --profile other than panel is a usage error, not the full server", () => {
+	const home = mkdtempSync(join(tmpdir(), "polycarp-panel-profile-"));
+	try {
+		for (const args of [["--profile", "pannel"], ["--profile=full"], ["--profile"]]) {
+			const run = spawnSync(process.execPath, [cli, "mcp", ...args], {
+				env: { HOME: home, USERPROFILE: home, PATH: process.env.PATH ?? "", TABKYRA_SOCKET_DIR: join(home, "sock") },
+				input: "",
+				encoding: "utf8",
+				timeout: 15000,
+			});
+			assert.notEqual(run.status, 0, `${args.join(" ")} exits with an error`);
+			assert.match(`${run.stdout}${run.stderr}`, /--profile (takes panel|needs a value)/, args.join(" "));
+		}
+	} finally {
 		rmSync(home, { recursive: true, force: true });
 	}
 });

@@ -274,10 +274,13 @@ export function formatPageResult(
 		case "screenshot":
 			return { content: shotContent(r as unknown as Shot), details: {} };
 		case "steps": {
-			const shot = r.screenshot as Shot | undefined;
+			// Everything the batch reported reaches the model: steps a dialog left not run, the dialog, what each did.
+			const { steps, note, screenshot, ...rest } = r;
+			const shot = screenshot as Shot | undefined;
+			const more = Object.keys(rest).length ? `\n${JSON.stringify(rest)}` : "";
 			const done: PageContent = {
 				type: "text",
-				text: `${String(r.steps)} steps done.${r.note ? ` ${String(r.note)}` : ""}`,
+				text: `${String(steps)} ${steps === 1 ? "step" : "steps"} done.${note ? ` ${String(note)}` : ""}${more}`,
 			};
 			return { content: shot ? [done, ...shotContent(shot)] : [done], details: {} };
 		}
@@ -294,12 +297,14 @@ export function formatPageResult(
 
 /** The system prompt's part about these tools: the loop, briefly. */
 export const PAGE_TOOLS_PROMPT = `# Working on Pages
-Loop: read_page {"filter":"interactive"} (refs) -> act {"action":"click","ref":"e5"} (or type, fill...) -> read_page again to confirm. Refs expire when the page changes. find gets refs by words; get_page_text reads; act wait beats reading again and again; act screenshot only for layout or canvas. A click that opens a dialog worked: answer it with handle_dialog, never click again. If a call fails with interrupted, read_page before you repeat it. Use the repl for data work and page scripts, not to click or type.`;
+Loop: read_page {"filter":"interactive"} (refs) -> act {"action":"click","ref":"e5"} (or type, fill...) -> read_page again to confirm. Refs expire when the page changes. find gets refs by words; get_page_text reads; act wait beats reading again and again; act screenshot only for layout or canvas. A click that opens a dialog worked: answer it with handle_dialog, never click again. If a call fails with interrupted, read_page before you repeat it. Use the repl to run code: data work, a skill's functions, a recorded workflow's replay() and skill code you write; your own clicks and keys go through act.`;
 
 /** The side panel's request to the service worker (src/bridge/panel-calls.ts): one bridge method on its session. */
 export const PANEL_CALL = "polycarp-page-tool";
 /** The panel's stop button: abort the call with this `callId`. */
 export const PANEL_ABORT = "polycarp-page-tool-abort";
+/** Sent by the panel while its model works, so Chrome doesn't stop the worker between page tool calls. */
+export const PANEL_KEEPALIVE = "polycarp-page-tool-keepalive";
 
 export interface PanelCallMessage {
 	type: typeof PANEL_CALL;
@@ -307,6 +312,9 @@ export interface PanelCallMessage {
 	sessionId: string;
 	method: string;
 	params: Record<string, unknown>;
+}
+export interface PanelKeepaliveMessage {
+	type: typeof PANEL_KEEPALIVE;
 }
 export interface PanelAbortMessage {
 	type: typeof PANEL_ABORT;

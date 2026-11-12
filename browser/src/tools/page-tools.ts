@@ -14,43 +14,88 @@ import {
 	PAGE_TOOLS,
 	PANEL_ABORT,
 	PANEL_CALL,
+	PANEL_KEEPALIVE,
 	PageToolArgsError,
 	type PageToolDetails,
 	type PanelAbortMessage,
 	type PanelCallMessage,
 	type PanelCallReply,
+	type PanelKeepaliveMessage,
 	routePageTool,
 } from "../bridge/page-tools.js";
-import { getCurrentBrowserSession } from "../browser/current.js";
+import { getCurrentBrowserSession, hasCurrentBrowserSession } from "../browser/current.js";
 import { stepLabel } from "../transcript/group.js";
 
 /** Runs one bridge method for the panel and returns its result, or throws the error text the model reads. */
 export type PanelSend = (method: string, params: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>;
 
-/** Send one call to the service worker on the panel's current session; the stop button aborts it there. */
+/** Chrome stops an idle worker after about 30 seconds; a ping every 20 keeps it, and what it holds, alive. */
+export const KEEPALIVE_EVERY_MS = 20_000;
+/** A model's turn pauses between page tool calls to think; pings stop after this long with no call. */
+export const KEEPALIVE_IDLE_MS = 5 * 60_000;
+
+let keepalive: ReturnType<typeof setInterval> | undefined;
+let lastCallAt = 0;
+
+/** Keep the worker running from this call until KEEPALIVE_IDLE_MS pass with no page tool call. */
+function keepWorkerAwake(): void {
+	lastCallAt = Date.now();
+	if (keepalive !== undefined) return;
+	keepalive = setInterval(() => {
+		if (Date.now() - lastCallAt > KEEPALIVE_IDLE_MS) {
+			clearInterval(keepalive);
+			keepalive = undefined;
+			return;
+		}
+		const ping: PanelKeepaliveMessage = { type: PANEL_KEEPALIVE };
+		chrome.runtime.sendMessage(ping).catch(() => undefined);
+	}, KEEPALIVE_EVERY_MS);
+	// Node (the unit tests) would wait on the timer before exiting; a browser has no unref.
+	(keepalive as { unref?: () => void }).unref?.();
+}
+
+/** @internal Stop the pings (tests start each case from no timer). */
+export function stopKeepalive(): void {
+	clearInterval(keepalive);
+	keepalive = undefined;
+}
+
+/**
+ * Send one call to the service worker on the panel's current session. Stop answers at once: the panel stops waiting
+ * and the worker stops the handler between steps (a handler that hangs is cut off by the worker's time limit).
+ */
 export const sendToWorker: PanelSend = async (method, params, signal) => {
 	if (signal?.aborted) throw new Error("interrupted: The chat was stopped before this call ran.");
+	if (!hasCurrentBrowserSession())
+		throw new Error("no_tab: Your browser session has ended. navigate to start a new one.");
+	const session = getCurrentBrowserSession();
 	// Unique across every open panel: each window's panel sends to the same worker.
 	const callId = crypto.randomUUID();
-	const request: PanelCallMessage = {
-		type: PANEL_CALL,
-		callId,
-		sessionId: getCurrentBrowserSession().id,
-		method,
-		params,
-	};
-	const onAbort = () => {
-		const stop: PanelAbortMessage = { type: PANEL_ABORT, callId };
-		chrome.runtime.sendMessage(stop).catch(() => undefined);
-	};
+	const request: PanelCallMessage = { type: PANEL_CALL, callId, sessionId: session.id, method, params };
+	keepWorkerAwake();
+	let onAbort = () => {};
+	const stopped = new Promise<never>((_, reject) => {
+		onAbort = () => {
+			const stop: PanelAbortMessage = { type: PANEL_ABORT, callId };
+			chrome.runtime.sendMessage(stop).catch(() => undefined);
+			reject(
+				new Error(
+					"interrupted: You stopped the chat while this call ran; it may have run. read_page before you repeat it.",
+				),
+			);
+		};
+	});
+	stopped.catch(() => undefined);
 	signal?.addEventListener("abort", onAbort, { once: true });
 	try {
-		const reply = (await chrome.runtime.sendMessage(request)) as PanelCallReply | undefined;
+		const reply = (await Promise.race([chrome.runtime.sendMessage(request), stopped])) as PanelCallReply | undefined;
 		if (!reply) throw new Error("internal: The Polycarp service worker did not answer. Try again.");
 		if (!reply.ok) throw new Error(reply.message);
 		return reply.result;
 	} finally {
 		signal?.removeEventListener("abort", onAbort);
+		// The stored session is the one source of truth for the current tab; a handler may have changed it.
+		await session.currentTab().catch(() => undefined);
 	}
 };
 

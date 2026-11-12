@@ -3,8 +3,12 @@
  * handlers (src/bridge/tools.ts) and the panel's browser session. One implementation for both surfaces: the stale-ref
  * refusal, hit-tested clicks, shadow roots, frames and dialog handling are the ones outside agents get through MCP.
  * The panel sends each call as a message (src/tools/page-tools.ts), so it never loads the handlers' capture, PDF and
- * site-edit code (test/panel-size.test.mjs holds the panel's budget), and the screenshot scale that act x/y reads is
- * the one act screenshot recorded, both in this context.
+ * site-edit code (test/panel-size.test.mjs holds the panel's budget).
+ *
+ * The session's tabs and current tab have one source of truth, the stored session table: the worker reads it under
+ * the table lock for each call, its handlers write it the same way, and the panel reads it back after each reply. The
+ * screenshot scale act x/y maps by and the open dialogs live here; cdp.ts keeps them in storage.session so they
+ * outlive a worker restart, and the panel pings while its model works so the worker isn't stopped mid-turn.
  *
  * What the panel's model may reach is what it reached before: only tabs in its own session (the handlers refuse any
  * other tab), never a Polycarp page, and no tool here opens a site (navigate stays the panel's own tool). Whether to
@@ -12,14 +16,15 @@
  * does for the bridge, with the same messages. Only the side panel page may send these calls.
  */
 
-import { openDialog, type PageDialog } from "../browser/cdp.js";
+import { cdpMemoryReady, hasScreenshotScale, openDialog, type PageDialog } from "../browser/cdp.js";
 import { BrowserSession } from "../browser/session.js";
 import { type Delivered, dialogError, isDialogSafe, raceDialogs } from "./dialogs.js";
-import { BridgeError, classify } from "./errors.js";
+import { BridgeError, classify, HANDLER_TIMEOUT_MS, withTimeout } from "./errors.js";
 import {
 	PAGE_TOOL_METHODS,
 	PANEL_ABORT,
 	PANEL_CALL,
+	PANEL_KEEPALIVE,
 	PageToolArgsError,
 	type PanelAbortMessage,
 	type PanelCallMessage,
@@ -47,6 +52,24 @@ export interface PanelRunDeps {
 	handlers: Record<string, Handler>;
 	/** The dialog open on a tab, if any (cdp.ts openDialog). */
 	openDialog?: (tabId: number) => PageDialog | undefined;
+	/** Whether a screenshot of the tab set the scale x/y map by (cdp.ts hasScreenshotScale). */
+	hasScreenshotScale?: (tabId: number) => boolean;
+	/** How long a handler may run (HANDLER_TIMEOUT_MS; tests shorten it). */
+	timeoutMs?: number;
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+
+/** A screen point the handler maps through the last screenshot's scale: x/y, or drag's from/to. */
+function hasPoint(p: Record<string, unknown>): boolean {
+	return (typeof p.x === "number" && typeof p.y === "number") || isObject(p.from) || isObject(p.to);
+}
+
+/** Whether a call gives act a point in screenshot pixels, at the top level or in any step. */
+function takesPoint(params: Record<string, unknown>): boolean {
+	if (hasPoint(params)) return true;
+	const steps = Array.isArray(params.steps) ? params.steps : [];
+	return steps.some((step) => isObject(step) && Object.values(step).some((v) => isObject(v) && hasPoint(v)));
 }
 
 /** The bridge says MCP tool names; the panel lists its tabs with navigate. */
@@ -70,6 +93,8 @@ export async function runPanelCall(
 	if (!PAGE_TOOL_METHODS.has(method) || !handler)
 		throw new BridgeError(ERR.NOT_FOUND, `${method} is not a side panel page tool`);
 	const { session } = deps;
+	// After a worker restart, the scales and dialogs an earlier worker saw come back first.
+	await cdpMemoryReady();
 	const dialogOf = deps.openDialog ?? openDialog;
 	const safe = isDialogSafe(method, params);
 	if (!safe) {
@@ -83,6 +108,14 @@ export async function runPanelCall(
 				"Your current tab shows a Polycarp page, which the page tools never act on. navigate to the site first.",
 			);
 	}
+	// x/y are pixels of an act screenshot of this tab. With no scale recorded the point would be guessed, and a
+	// guessed click can land on the wrong control under the user's sign-in.
+	const scaled = deps.hasScreenshotScale ?? hasScreenshotScale;
+	if (takesPoint(params) && (session.currentTabId === undefined || !scaled(session.currentTabId)))
+		throw new BridgeError(
+			ERR.BAD_PARAMS,
+			"x/y are pixels of an act screenshot of this tab, and there is none yet. Act by ref, or take act screenshot first.",
+		);
 	let aborted = signal?.aborted === true;
 	const onAbort = () => {
 		aborted = true;
@@ -108,7 +141,8 @@ export async function runPanelCall(
 	};
 	try {
 		const work = handler(ctx, params);
-		return await (safe ? work : raceDialogs(session, work, onAbort, () => delivered));
+		const raced = safe ? work : raceDialogs(session, work, onAbort, () => delivered);
+		return await withTimeout(raced, deps.timeoutMs ?? HANDLER_TIMEOUT_MS, method);
 	} finally {
 		signal?.removeEventListener("abort", onAbort);
 	}
@@ -129,26 +163,52 @@ function fromSidePanel(sender: chrome.runtime.MessageSender): boolean {
 	return sender.id === chrome.runtime.id && sender.url?.startsWith(chrome.runtime.getURL("sidepanel.html")) === true;
 }
 
+/** A call in flight: its abort, and its one reply. */
+interface Running {
+	abort: AbortController;
+	reply: (reply: PanelCallReply) => void;
+}
+
 /** Answer the side panel's page tool calls. `handlers` is injectable for tests. */
 export function startPanelPageTools(
 	handlers: Record<string, Handler> = bridgeHandlers as Record<string, Handler>,
 ): void {
-	const running = new Map<string, AbortController>();
+	const running = new Map<string, Running>();
 	chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse: (reply: PanelCallReply) => void) => {
-		const m = message as Partial<PanelCallMessage> | Partial<PanelAbortMessage> | null;
-		if (m?.type !== PANEL_CALL && m?.type !== PANEL_ABORT) return undefined;
-		if (!fromSidePanel(sender) || typeof m.callId !== "string") {
-			if (m.type === PANEL_CALL) sendResponse({ ok: false, message: "permission_denied: Refused" });
+		const m = message as Partial<PanelCallMessage> | Partial<PanelAbortMessage> | { type?: unknown } | null;
+		const type = m?.type;
+		if (type !== PANEL_CALL && type !== PANEL_ABORT && type !== PANEL_KEEPALIVE) return undefined;
+		const callId = (m as { callId?: unknown }).callId;
+		if (!fromSidePanel(sender) || (type !== PANEL_KEEPALIVE && typeof callId !== "string")) {
+			if (type === PANEL_CALL) sendResponse({ ok: false, message: "permission_denied: Refused" });
 			return undefined;
 		}
-		if (m.type === PANEL_ABORT) {
-			running.get(m.callId)?.abort();
+		// A message is an event, and an event restarts the worker's idle timer: nothing else to do.
+		if (type === PANEL_KEEPALIVE) return undefined;
+		if (type === PANEL_ABORT) {
+			// Stop the handler between steps, and answer the panel now, whatever the handler does next.
+			const call = running.get(callId as string);
+			call?.abort.abort();
+			call?.reply({
+				ok: false,
+				message:
+					"interrupted: You stopped the chat while this call ran; it may have run. read_page before you repeat it.",
+			});
 			return undefined;
 		}
-		const { callId, sessionId, method, params } = m as Partial<PanelCallMessage>;
+		const { sessionId, method, params } = m as Partial<PanelCallMessage>;
 		const name = typeof method === "string" ? method : "";
-		const ac = new AbortController();
-		running.set(callId as string, ac);
+		let answered = false;
+		const call: Running = {
+			abort: new AbortController(),
+			reply: (reply) => {
+				if (answered) return;
+				answered = true;
+				running.delete(callId as string);
+				sendResponse(reply);
+			},
+		};
+		running.set(callId as string, call);
 		void (async () => {
 			try {
 				const session = typeof sessionId === "string" ? await BrowserSession.existing(sessionId) : undefined;
@@ -157,14 +217,12 @@ export function startPanelPageTools(
 				const result = await runPanelCall(
 					{ session, handlers },
 					name,
-					params && typeof params === "object" ? params : {},
-					ac.signal,
+					isObject(params) ? params : {},
+					call.abort.signal,
 				);
-				sendResponse({ ok: true, result });
+				call.reply({ ok: true, result });
 			} catch (err) {
-				sendResponse({ ok: false, message: panelError(err, name).message });
-			} finally {
-				running.delete(callId as string);
+				call.reply({ ok: false, message: panelError(err, name).message });
 			}
 		})();
 		return true;

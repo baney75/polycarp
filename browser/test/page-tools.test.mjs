@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { installFakeChrome } from "./fake-chrome.mjs";
 
-installFakeChrome();
+const fake = installFakeChrome();
 const noEvent = () => ({ addListener() {}, removeListener() {} });
 chrome.tabs.onActivated ??= noEvent();
 chrome.webNavigation ??= {};
@@ -13,12 +13,12 @@ const { isDialogSafe } = await import("../src/bridge/dialogs.ts");
 const { ACT_ACTIONS, PAGE_TOOL_METHODS, PAGE_TOOL_NAMES, PAGE_TOOLS, PAGE_TOOLS_PROMPT, formatPageResult, pageRange, routePageTool } =
 	await import("../src/bridge/page-tools.ts");
 const { panelError, runPanelCall, startPanelPageTools } = await import("../src/bridge/panel-calls.ts");
-const { createPageTools, sendToWorker } = await import("../src/tools/page-tools.ts");
+const { createPageTools, sendToWorker, stopKeepalive } = await import("../src/tools/page-tools.ts");
 const { setCurrentBrowserSession } = await import("../src/browser/current.ts");
 const { handlers } = await import("../src/bridge/tools.ts");
 const { BridgeError } = await import("../src/bridge/errors.ts");
 const { stepLabel } = await import("../src/transcript/group.ts");
-const { SYSTEM_PROMPT } = await import("../src/prompts/prompts.ts");
+const { BROWSERJS_RUNTIME_PROVIDER_DESCRIPTION, SKILL_TOOL_DESCRIPTION, SYSTEM_PROMPT } = await import("../src/prompts/prompts.ts");
 installCdpListeners();
 
 const openDialogOn = (tabId, message) => {
@@ -187,7 +187,7 @@ test("an act tool call reaches the bridge handler and the model reads the result
 	await assert.rejects(act.execute("c2", { action: "eval" }), /^Error: bad_params: act needs action/);
 });
 
-test("the service worker answers only the side panel page, and the panel's stop aborts the call there", async () => {
+test("the service worker answers only the side panel page, and the panel's stop ends the call there at once", async () => {
 	const seen = [];
 	let release;
 	startPanelPageTools({
@@ -233,12 +233,44 @@ test("the service worker answers only the side panel page, and the panel's stop 
 	await new Promise((r) => setTimeout(r, 20));
 	assert.equal(typeof release, "function", "the handler started");
 	await send({ type: "polycarp-page-tool-abort", callId: "c2" }, panel);
+	// The panel is answered before the handler finishes; the handler sees the stop between steps.
+	const stopped = await running;
+	assert.equal(stopped.ok, false);
+	assert.match(stopped.message, /^interrupted: You stopped the chat/);
 	release();
-	assert.deepEqual(await running, { ok: true, result: { waited: true } });
+	await new Promise((r) => setTimeout(r, 0));
 	assert.deepEqual(seen, [true]);
+	// A ping from the panel is taken (it keeps the worker running) and answers nothing.
+	assert.equal(listener({ type: "polycarp-page-tool-keepalive" }, panel, () => assert.fail("no reply")), undefined);
 });
 
-test("the panel sends each call to the worker on its session, and the stop button aborts it there", async () => {
+test("a handler that never settles can't hold the panel's turn: stop answers at once, and the worker times it out", async () => {
+	const { deps } = fakeDeps();
+	deps.handlers.wait = () => new Promise(() => {});
+	await assert.rejects(runPanelCall({ ...deps, timeoutMs: 30 }, "wait", { ms: 10 }), (err) => err.code === "timeout");
+	// The panel side: the worker never answers, and stop still ends the call.
+	const original = chrome.runtime.sendMessage;
+	const sent = [];
+	chrome.runtime.sendMessage = (m) => {
+		sent.push(m.type);
+		return new Promise(() => {});
+	};
+	setCurrentBrowserSession({ id: "s9", currentTab: async () => undefined });
+	try {
+		const ac = new AbortController();
+		const call = sendToWorker("wait", { ms: 60000 }, ac.signal);
+		setTimeout(() => ac.abort(), 5);
+		await assert.rejects(call, /^Error: interrupted: You stopped the chat/);
+		assert.deepEqual(sent, ["polycarp-page-tool", "polycarp-page-tool-abort"]);
+	} finally {
+		chrome.runtime.sendMessage = original;
+		setCurrentBrowserSession(undefined);
+	}
+});
+
+test("the panel sends each call to the worker on its session, keeps the worker awake, and stop ends the call", async (t) => {
+	stopKeepalive();
+	t.mock.timers.enable({ apis: ["setInterval", "Date"] });
 	const sent = [];
 	const original = chrome.runtime.sendMessage;
 	let answer;
@@ -246,7 +278,10 @@ test("the panel sends each call to the worker on its session, and the stop butto
 		sent.push(m);
 		return m.type === "polycarp-page-tool" ? new Promise((r) => (answer = r)) : Promise.resolve();
 	};
-	setCurrentBrowserSession({ id: "s9" });
+	// No session (it ended, and nothing navigated since): the model reads a plain message, not a TypeError.
+	await assert.rejects(sendToWorker("click", { ref: "e1" }), /^Error: no_tab: Your browser session has ended/);
+	assert.equal(sent.length, 0);
+	setCurrentBrowserSession({ id: "s9", currentTab: async () => undefined });
 	try {
 		const ac = new AbortController();
 		const pending = sendToWorker("click", { ref: "e1" }, ac.signal);
@@ -255,19 +290,123 @@ test("the panel sends each call to the worker on its session, and the stop butto
 		assert.deepEqual([sent[0].method, sent[0].params], ["click", { ref: "e1" }]);
 		ac.abort();
 		assert.deepEqual(sent[1], { type: "polycarp-page-tool-abort", callId: sent[0].callId });
-		answer({ ok: false, message: "stale_ref: e1 is gone. read_page again." });
-		await assert.rejects(pending, /^Error: stale_ref: e1 is gone/);
-		// Each call has its own id, and a call made after the stop never leaves the panel.
-		const next = sendToWorker("snapshot", {});
+		await assert.rejects(pending, /^Error: interrupted: /);
+		// The worker's error text is what the model reads; each call has its own id.
+		const failing = sendToWorker("click", { ref: "e1" });
 		assert.notEqual(sent[2].callId, sent[0].callId);
+		answer({ ok: false, message: "stale_ref: e1 is gone. read_page again." });
+		await assert.rejects(failing, /^Error: stale_ref: e1 is gone/);
+		const next = sendToWorker("snapshot", {});
 		answer({ ok: true, result: { url: "https://shop.test/" } });
 		assert.deepEqual(await next, { url: "https://shop.test/" });
+		// A call made after the stop never leaves the panel.
 		await assert.rejects(sendToWorker("click", {}, ac.signal), /^Error: interrupted: /);
-		assert.equal(sent.length, 3);
+		assert.equal(sent.length, 4);
+		// While the model works the worker gets a ping every 20 seconds; after five idle minutes the pings stop.
+		t.mock.timers.tick(20_000);
+		assert.deepEqual(sent[4], { type: "polycarp-page-tool-keepalive" });
+		t.mock.timers.tick(6 * 60_000);
+		const pings = sent.length;
+		t.mock.timers.tick(60_000);
+		assert.equal(sent.length, pings, "no pings once the turn has gone quiet");
 	} finally {
 		chrome.runtime.sendMessage = original;
 		setCurrentBrowserSession(undefined);
 	}
+});
+
+test("one source of truth for the current tab: the panel switches tabs, then the page tools act on the new one", async () => {
+	// The panel's session lives in another context than the worker's: its own instance of session.ts.
+	const { BrowserSession: PanelSession } = await import(`../src/browser/session.ts?ctx=panel-${Math.random()}`);
+	const a = fake.addTab({ url: "https://a.test/" });
+	const b = fake.addTab({ url: "https://b.test/" });
+	const panelSession = await PanelSession.open("panel-tabs", "chat", 1);
+	await panelSession.adopt(a, true);
+	await panelSession.adopt(b, false);
+	startPanelPageTools({
+		snapshot: async (ctx) => ({ url: (await ctx.session.requireCurrentTab()).url }),
+		// A handler that moves the current tab, as a dialog answer on another tab can.
+		click: async (ctx, params) => {
+			await ctx.session.setCurrent(params.tab);
+			return { clicked: true };
+		},
+	});
+	const listener = chrome.runtime.onMessage.listeners.at(-1);
+	const panel = { id: chrome.runtime.id, url: chrome.runtime.getURL("sidepanel.html") };
+	const original = chrome.runtime.sendMessage;
+	chrome.runtime.sendMessage = (m) =>
+		new Promise((resolve) => {
+			if (listener(m, panel, resolve) !== true) resolve(undefined);
+		});
+	setCurrentBrowserSession(panelSession);
+	try {
+		// The first call warms the worker's own copy of the session on tab A.
+		assert.equal((await sendToWorker("snapshot", {})).url, "https://a.test/");
+		await panelSession.setCurrent(b); // navigate {switchToTab}
+		assert.equal((await sendToWorker("snapshot", {})).url, "https://b.test/");
+		// The other way: the worker moved the current tab, and the panel knows as soon as the call returns.
+		await sendToWorker("click", { tab: a });
+		assert.equal(panelSession.currentTabId, a);
+	} finally {
+		chrome.runtime.sendMessage = original;
+		setCurrentBrowserSession(undefined);
+	}
+});
+
+test("the screenshot scale and an open dialog outlive a worker restart", async () => {
+	const before = await import(`../src/browser/cdp.ts?ctx=worker-1-${Math.random()}`);
+	before.installCdpListeners();
+	await before.persistCdpMemory();
+	before.noteScreenshotScale(41, 1.5);
+	openDialogOn(41, "Leave the page?");
+	await new Promise((r) => setTimeout(r, 20));
+	// Chrome stops the idle worker; the next one starts with nothing in memory.
+	const after = await import(`../src/browser/cdp.ts?ctx=worker-2-${Math.random()}`);
+	assert.deepEqual(after.screenshotToCss(41, { x: 100, y: 10 }), { x: 100, y: 10 }, "a new worker starts empty");
+	assert.equal(after.openDialog(41), undefined);
+	await after.persistCdpMemory();
+	assert.equal(after.hasScreenshotScale(41), true);
+	assert.deepEqual(after.screenshotToCss(41, { x: 100, y: 10 }), { x: 150, y: 15 });
+	assert.equal(after.openDialog(41)?.message, "Leave the page?");
+	closeDialogOn(41);
+});
+
+test("act x/y with no screenshot of the tab is refused, not guessed", async () => {
+	const { deps, calls } = fakeDeps();
+	const scaled = new Set();
+	deps.hasScreenshotScale = (id) => scaled.has(id);
+	const refused = (err) => err.code === "bad_params" && /take act screenshot first/.test(err.message);
+	await assert.rejects(runPanelCall(deps, "click", { x: 10, y: 20 }), refused);
+	await assert.rejects(runPanelCall(deps, "drag", { from: { x: 1, y: 2 }, to: { x: 3, y: 4 } }), refused);
+	await assert.rejects(runPanelCall(deps, "actions", { steps: [{ press: "Tab" }, { click: { x: 1, y: 2 } }] }), refused);
+	assert.equal(calls.length, 0);
+	// By ref, or a scroll to an edge, needs no screenshot.
+	await runPanelCall(deps, "click", { ref: "e1" });
+	await runPanelCall(deps, "scroll", { to: "bottom" });
+	scaled.add(7);
+	await runPanelCall(deps, "click", { x: 10, y: 20 });
+	assert.deepEqual(
+		calls.map((c) => c.method),
+		["click", "scroll", "click"],
+	);
+});
+
+test("act steps tells the model everything the batch reported: a dialog, the steps it left not run", () => {
+	const out = formatPageResult(
+		"act",
+		{
+			steps: 1,
+			notRun: 2,
+			clicked: { x: 1, y: 2 },
+			dialog: { type: "confirm", message: "Really delete?" },
+			note: "A confirm dialog is now open; answer it with handle_dialog. The 2 later steps did not run.",
+		},
+		"steps",
+	).content[0].text;
+	assert.match(out, /^1 step done\. A confirm dialog is now open/);
+	assert.match(out, /"notRun":2/);
+	assert.match(out, /"message":"Really delete\?"/);
+	assert.match(out, /"clicked"/);
 });
 
 test("read_page prints refs to act on; find, text, screenshots and steps read cleanly", () => {
@@ -320,12 +459,20 @@ test("each page tool call gets a clean step label", () => {
 	assert.equal(label("act", { action: "type", text: "x".repeat(80) }).length < 50, true);
 });
 
-test("the system prompt teaches the loop and keeps the REPL off clicking", () => {
+test("the system prompt teaches the loop and gives one rule for the REPL and the page tools", () => {
 	assert.ok(SYSTEM_PROMPT.includes(PAGE_TOOLS_PROMPT));
 	assert.match(PAGE_TOOLS_PROMPT, /read_page[^\n]*act[^\n]*read_page again/);
 	assert.match(PAGE_TOOLS_PROMPT, /Refs expire when the page changes/);
 	assert.match(PAGE_TOOLS_PROMPT, /handle_dialog, never click again/);
-	assert.match(PAGE_TOOLS_PROMPT, /repl for data work and page scripts, not to click or type/);
+	// One rule for driving pages: the repl runs code (skills, replay(), skill code under test); your own input is act.
+	assert.match(PAGE_TOOLS_PROMPT, /repl to run code: data work, a skill's functions, a recorded workflow's replay\(\) and skill code you write; your own clicks and keys go through act/);
+	assert.match(SYSTEM_PROMPT, /call replay\(\) inside browserjs\(\)/, "recorded workflows still replay in the repl");
+	assert.doesNotMatch(SYSTEM_PROMPT, /repl browserjs \(test capability\)/);
+	assert.match(SYSTEM_PROMPT, /Pattern: do a capability with read_page and act/);
+	assert.match(SKILL_TOOL_DESCRIPTION, /Do the action once with read_page and act/);
+	assert.match(SKILL_TOOL_DESCRIPTION, /Test the code in the repl/);
+	assert.match(BROWSERJS_RUNTIME_PROVIDER_DESCRIPTION, /a recorded workflow's replay\(\)/);
+	assert.doesNotMatch(SYSTEM_PROMPT, /not for clicking or typing|not to click or type/);
 	// Page text stays untrusted for the new readers too.
 	assert.match(SYSTEM_PROMPT, /read_page, get_page_text, find, browserjs\(\)/);
 });

@@ -332,6 +332,9 @@ async function main(): Promise<void> {
 			return;
 		case "mcp":
 			// --profile panel: the side panel's page tools, for measuring the panel's tool surface (eval/web-bench.mjs).
+			// A mistyped profile must fail, not quietly serve the full tool list to a run that measures the panel's.
+			if (argv.some((a) => a === "--profile" || a.startsWith("--profile=")) && option("--profile") !== "panel")
+				throw new UsageError(`--profile takes panel. Usage: ${COMMAND_NAME} mcp [--session <name>] [--profile panel]`);
 			if (option("--profile") === "panel") await runPanelProfile({ session: option("--session") });
 			else await runMcpServer({ session: option("--session") });
 			return;

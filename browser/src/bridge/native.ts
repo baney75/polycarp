@@ -20,7 +20,7 @@ import { asBuildInfo, BUILD, type BuildInfo } from "../update/build.js";
 import type { UpdateAction } from "../update/logic.js";
 import { runningFromStore } from "../update/store-install.js";
 import { type Delivered, dialogError, isDialogSafe, raceDialogs } from "./dialogs.js";
-import { BridgeError, classify } from "./errors.js";
+import { BridgeError, classify, HANDLER_TIMEOUT_MS, withTimeout } from "./errors.js";
 import { dropAllTransfers, dropTransfersForClient } from "./files.js";
 import {
 	addPendingRequest,
@@ -98,28 +98,6 @@ interface ClientState {
 	/** When a request last started or ended; the update idle gate reads it. */
 	lastActivityAt: number;
 	lastError?: string;
-}
-
-/** A handler that never settles must not wedge the client's queue forever. */
-const HANDLER_TIMEOUT_MS = 90000;
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-	return new Promise<T>((resolve, reject) => {
-		const timer = setTimeout(
-			() => reject(new BridgeError(ERR.TIMEOUT, `${label} did not finish within ${ms} ms`)),
-			ms,
-		);
-		promise.then(
-			(v) => {
-				clearTimeout(timer);
-				resolve(v);
-			},
-			(e) => {
-				clearTimeout(timer);
-				reject(e);
-			},
-		);
-	});
 }
 
 let port: chrome.runtime.Port | undefined;
