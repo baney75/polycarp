@@ -327,6 +327,9 @@ final class Spaces {
         let candidates = added.filter { id in
             guard let w = windows[id] else { return false }
             if NSRunningApplication(processIdentifier: w.pid)?.bundleIdentifier.map(ids.contains) == true { return true }
+            // A process started for an agent, even its first window: one Polycarp couldn't read until after the launch's
+            // claim ran out (an app still starting answers Accessibility late) is still the agent's, not yours.
+            if agent != nil, AgentOwned.shared.pids.contains(w.pid) { return true }
             // An app that lives on the agent workspace, too.
             return agent != nil && windows.values.contains { $0.pid == w.pid && $0.id != id && model.workspace(of: $0.id) == agent }
         }
@@ -336,11 +339,14 @@ final class Spaces {
             let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
             var moved = false
             for id in candidates {
-                guard let w = self.windows[id], w.pid != front, let here = self.model.workspace(of: id), self.model.isShown(here) else { continue }
+                // A process started for an agent may bring itself forward as it launches; its window goes all the same (`ClaimRule`).
+                guard let w = self.windows[id], let here = self.model.workspace(of: id), self.model.isShown(here) else { continue }
+                let owned = AgentOwned.shared.pids.contains(w.pid)
+                guard ClaimRule.applies(windowPid: w.pid, frontPid: front, agentStartedProcess: owned) else { continue }
                 let others = self.windows.values.filter { $0.pid == w.pid && $0.id != id }.compactMap { self.model.workspace(of: $0.id) }
                 // Every new window of a process BaneySpaces started for an agent belongs to the agent workspace, for
                 // as long as the process lives (a panel or a second document opened long after the launch claim ran out).
-                if let to = AgentWorkspace.homeForNewWindow(appFront: false, appWorkspaces: Set(others), claimed: AgentOwned.shared.pids.contains(w.pid) ? agent : nil,
+                if let to = AgentWorkspace.homeForNewWindow(appFront: false, appWorkspaces: Set(others), claimed: owned ? agent : nil,
                                                             current: here, agent: agent) {
                     Trace.log("agent window \(id) of \(w.appName) joins workspace \(to)")
                     self.model.assign(id, to: to, focus: false)
@@ -408,6 +414,7 @@ final class Spaces {
         let early = windows.values.filter { $0.pid == pid && model.workspace(of: $0.id) != n }.map(\.id)
         guard !early.isEmpty else { return }
         drop(claim, of: pid)
+        Trace.log("claimed \(early.count) window(s) \(early.map(String.init).joined(separator: ",")) of pid \(pid) for workspace \(n): open before the claim")
         move(early, to: n)
     }
 
@@ -555,6 +562,12 @@ final class Spaces {
         Dictionary(uniqueKeysWithValues: ids.compactMap { id in windows[id].map { (id, $0.title) } })
     }
 
+    /// A full scan for an agent's `open` that hasn't seen its window yet: every app asked again. Never mid-switch.
+    func rescanForAgent() {
+        guard active, !switching else { return }
+        refresh(full: true)
+    }
+
     /// Saves state.json now (a lend changed).
     func saveState() { persist() }
 
@@ -604,13 +617,17 @@ final class Spaces {
 
     /// Re-reads apps that a scan couldn't, once they're willing to answer again, in the
     /// background between switches, so the wait never lands on a key press.
-    private var retryPending = false
+    private var retry: (work: DispatchWorkItem, due: Date)?
     private func scheduleRetry() {
-        guard !retryPending else { return }
-        retryPending = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.5) { [weak self] in
+        // When the first app that didn't answer may be asked again: within a second for one still starting. A timer
+        // already set for later (a hung app's) gives way to the sooner one.
+        let delay = Windows.retryDelay()
+        let due = Date().addingTimeInterval(delay)
+        if let r = retry, r.due <= due.addingTimeInterval(0.05) { return }
+        retry?.work.cancel()
+        let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            self.retryPending = false
+            self.retry = nil
             guard self.active else { return }
             self.watcher.retry()
             guard let unsure = self.lastScan?.unsure, unsure.contains(where: Windows.isResponsive) else {
@@ -621,6 +638,8 @@ final class Spaces {
             self.refresh(full: true)
             self.persist()
         }
+        retry = (work, due)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     /// Looks again at unplaced windows when the first is due, without waiting for a switch or the
@@ -796,9 +815,6 @@ final class Spaces {
         }
     }
 
-    /// A drag of a window ended and it has held still: one the overview covered and that dropped nowhere goes back to its
-    /// frame from before the overview, and one whose title bar is out of reach comes back far enough to grab. Anything
-    /// else stays where the person put it. Only a window on the workspace you're on.
     /// Each display's whole frame and visible area in window-server coordinates, as `DragRelease` takes them.
     static func dragDisplays() -> [(frame: CGRect, visible: CGRect)] {
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
@@ -806,6 +822,9 @@ final class Spaces {
                                        visible: Geometry.toAX($0.visibleFrame, primaryHeight: primaryHeight)) }
     }
 
+    /// A drag of a window ended and it has held still: one the overview covered and that dropped nowhere goes back to its
+    /// frame from before the overview, and one whose title bar is out of reach comes back far enough to grab. Anything
+    /// else stays where the person put it. Only a window on the workspace you're on.
     func correctAfterDrag(_ id: WindowID, end: DragEnd) {
         guard active, !switching, let w = windows[id], model.workspace(of: id).map(model.isShown) == true,
               !w.isMinimized, let f = w.frame else { return }

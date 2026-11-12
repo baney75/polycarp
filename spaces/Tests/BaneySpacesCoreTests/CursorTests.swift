@@ -899,16 +899,22 @@ final class CursorOverheadTests: XCTestCase {
         let e = HandsActionEvent(kind: "click", ref: "r", window: 1, pid: 1, app: "A", point: nil, session: "a", scope: "agent_workspace", workspace: 9)
         // Against a baseline with no listener, measured the same way in the same run: a slow runner
         // slows both (#157). A bounds read would add its modelled 8 ms; jitter stays well under half that.
+        // The two sides alternate over rounds and each keeps its fastest: one stall under load (11-12: 41.1 ms against
+        // 30.4 ms in a single pass each, at load 9) lands in one round of one side, not in the result.
         func each(listening: Bool) -> Double {
             HandsEvents.setListener(listening ? director : nil)
             let t0 = ProcessInfo.processInfo.systemUptime
-            for _ in 0..<100 { hands.run(e) }
-            return (ProcessInfo.processInfo.systemUptime - t0) * 10
+            for _ in 0..<20 { hands.run(e) }
+            return (ProcessInfo.processInfo.systemUptime - t0) * 50
         }
         FakeHands.framesWanted = 0
-        let without = each(listening: false)
-        XCTAssertEqual(FakeHands.framesWanted, 0, "with no listener, no action asks for bounds")
-        let with = each(listening: true)
+        var withouts: [Double] = [], withs: [Double] = []
+        for _ in 0..<9 {
+            withouts.append(each(listening: false))
+            withs.append(each(listening: true))
+        }
+        let without = withouts.min()!, with = withs.min()!
+        HandsEvents.setListener(director)
         // Not timed, so a slow runner can't hide it: a hidden cursor makes no action read bounds.
         XCTAssertEqual(FakeHands.framesWanted, 0, "with the cursor hidden, no action asks for bounds")
         XCTAssertLessThan(with - without, hands.boundsRead * 1000 / 2,
