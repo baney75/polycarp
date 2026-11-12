@@ -768,3 +768,63 @@ test("act x/y from a screenshot still lands after Chrome stops and restarts the 
 		}
 	});
 });
+
+// Compaction (src/models/compactor.ts) in the real panel: a long chat on a small model goes on until the guard would
+// drop its earliest turns; they are summarized instead, the transcript shows the marker, and after a reload the next
+// request still starts from the stored notes, with no new summary and the latest question whole.
+test("a long chat is summarized when the guard would drop turns, and the notes hold across a reload", async () => {
+	const filler = "The committee reviewed the proposal and noted points on cost, schedule and risk to weigh before the next meeting. ".repeat(18);
+	const cors = { "access-control-allow-origin": "*" };
+	const summaries = [];
+	const requests = [];
+	const textOf = (m) => (typeof m?.content === "string" ? m.content : JSON.stringify(m?.content ?? ""));
+	await context.route("https://llm.stub.test/**", async (r) => {
+		const body = r.request().postData() ?? "";
+		const { messages } = JSON.parse(body);
+		if (textOf(messages.find((m) => m.role === "system" || m.role === "developer")).startsWith("You keep the notes")) {
+			summaries.push(body.length);
+			const notes = ["Goal and standing instructions", "Decisions", "Facts found", "Tried and failed", "Open steps", "Files and artifacts"].map((s, i) => `## ${s}\n- ${i === 2 ? `NOTE-FACTS ${summaries.length}` : "none"}`).join("\n");
+			return r.fulfill({ status: 200, contentType: "text/event-stream", headers: cors, body: sse({ text: notes }) });
+		}
+		requests.push(body);
+		const q = /(Q\d+|LAST-Q)/.exec(textOf(messages.filter((m) => m.role === "user").at(-1)))?.[1];
+		return r.fulfill({ status: 200, contentType: "text/event-stream", headers: cors, body: sse({ text: `ANSWER-${q}. ${filler}` }) });
+	});
+	const model = { id: "stub-18k", name: "Stub 18k", api: "openai-completions", provider: "stub", baseUrl: "https://llm.stub.test/v1", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 18_000, maxTokens: 1024 };
+	const page = await context.newPage();
+	try {
+		let turn = 1;
+		await askPanel(page, model, `Q${turn}: ${filler}`, { fresh: true });
+		const box = page.getByPlaceholder(/Ask about this page/);
+		for (;;) {
+			await page.getByText(`ANSWER-Q${turn}.`).first().waitFor({ timeout: 60_000 });
+			if (summaries.length || turn >= 80) break;
+			turn++;
+			await box.fill(`Q${turn}: ${filler}`);
+			await box.press("Enter");
+		}
+		assert.ok(summaries.length, `the summarizer ran within ${turn} turns`);
+		const sent = requests.at(-1);
+		assert.match(sent, /Polycarp summarized the earlier part of this chat/);
+		assert.match(sent, new RegExp(`Q${turn}: The committee`), "the latest question is sent whole");
+		assert.doesNotMatch(sent, /earliest messages of this chat/, "nothing was dropped");
+		await page.locator("[data-compaction]").first().waitFor({ timeout: 10_000 });
+		// A reload: the panel reopens this chat from storage, with a new agent and compactor.
+		const before = summaries.length;
+		await page.reload();
+		await box.waitFor({ timeout: 20_000 });
+		await page.locator("[data-compaction]").first().waitFor({ timeout: 10_000 });
+		await box.fill("LAST-Q: what did we settle?");
+		await box.press("Enter");
+		await page.getByText("ANSWER-LAST-Q.").first().waitFor({ timeout: 60_000 });
+		const after = requests.at(-1);
+		assert.match(after, new RegExp(`NOTE-FACTS ${before}`), "the stored notes are sent after the reload");
+		assert.match(after, /LAST-Q: what did we settle\?/);
+		assert.doesNotMatch(after, /earliest messages of this chat/);
+		assert.equal(summaries.length, before, "no new summary was needed");
+		assert.equal(await page.getByText(/400 status code|too long for the model|couldn't summarize/).count(), 0);
+	} finally {
+		await context.unroute("https://llm.stub.test/**");
+		await page.close();
+	}
+});
