@@ -12,8 +12,8 @@ scored from what the page recorded, even after the model closed its tab. A compu
 folder of our own inside Polycarp's agent handoff folder, and is scored by reading the agent workspace back through the
 helper in connector mode (`hands.mjs`). With no task files, the runner says so and exits.
 
-- `tasks/browser.mjs`: 15 browser tasks on local fixtures: signup validation, a contact form, a wizard, table filter,
-  modal confirm, native dialogs, select and date, a form in an iframe, a long article, PDF search, pagination, a new
+- `tasks/browser.mjs`: 16 browser tasks on local fixtures: signup validation, a contact form, a wizard, table filter,
+  a booking lookup, modal confirm, native dialogs, select and date, a form in an iframe, a long article, PDF search, pagination, a new
   tab, a late element, a list that re-renders, autocomplete.
 - `tasks/computer.mjs`: 8 Mac tasks in Calculator, TextEdit and Preview, scored from the window and, for a save task,
   the saved file.
@@ -35,6 +35,7 @@ node evals/weak-model/run.mjs --label r2-haiku                    # all tasks, 2
 node evals/weak-model/run.mjs --label s-sonnet --model claude-sonnet-5-5 --trials 1 --only wizard,pagination
 node evals/weak-model/report.mjs r2-haiku                         # per run: calls, errors, repeats, failures
 node evals/weak-model/rescore.mjs r1-haiku                        # rescore saved signup runs under the signup-v2 rule
+node evals/weak-model/measure-read.mjs after                      # read_page and tools/list sizes on 8 public pages
 ```
 
 Results go to `results/<label>/`: one record per run (`<task>-t<n>.json`, every call with its arguments, error flag,
@@ -45,7 +46,8 @@ runs by task and trial). `results/r1-haiku/classes.json` classifies every round 
 ## The ratchet
 
 `baseline.json` holds the recorded score of each round that counts. `test/weak-model-baseline.test.mjs` fails if a
-committed round scores below its baseline (recounted from `runs.jsonl`) or if the latest round drops below the floor.
+committed round scores below its baseline (recounted from `runs.jsonl`), if the latest round drops below the floor, if a
+guarded task loses a pass it recorded, or if the committed read-size measurement leaves its token budget.
 CI never calls a model: it checks the committed numbers, `test/weak-model-harness.test.mjs` holds the runner's own
 logic, and the cheap deterministic tests in `cli/test` hold each fix.
 
