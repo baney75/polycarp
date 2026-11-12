@@ -42,7 +42,7 @@ import {
 	STILL_LOADING,
 	tabChanges,
 } from "../browser/changes.js";
-import { cancelledDialog } from "../browser/dialog-guard.js";
+import { cancelledDialog, type DialogTarget, dialogTarget } from "../browser/dialog-guard.js";
 import { injectScript } from "../browser/inject.js";
 import {
 	fillElement,
@@ -111,6 +111,8 @@ export interface HandlerContext {
 	askUpload(url: string, files: Array<{ name: string; bytes: number }>, askId: string): Promise<boolean>;
 	/** Stable id of the calling client. */
 	clientId: string;
+	/** handle_dialog's box, resolved when the call began (dialog-guard.ts `dialogUseBegin`). */
+	dialog?: DialogTarget;
 	/** Push an event to the calling client only. */
 	emit(event: string, data: Record<string, unknown>): void;
 	/**
@@ -515,6 +517,22 @@ export async function extensionStatus() {
 		permissionMode,
 		allowedHosts,
 	};
+}
+
+/** Why handle_dialog answered no box, with the boxes still open and the call that answers one. */
+async function dialogRefusal(t: Extract<DialogTarget, { refuse: string }>): Promise<BridgeError> {
+	const open = t.open.map((id) => `tab ${id}: ${JSON.stringify(openDialog(id)?.message)}`).join("; ");
+	const next = open
+		? ` Still open: ${open}. To answer one, call handle_dialog with its tabId.`
+		: " Carry on with read_page.";
+	if (t.refuse === "several")
+		return new BridgeError(ERR.BAD_PARAMS, `Dialogs are open on more than one tab (${open}). Pass tabId.`);
+	if (t.refuse === "cancelled") {
+		const told = t.tabId === undefined ? undefined : await cancelledDialog([t.tabId]);
+		return new BridgeError(ERR.NOT_FOUND, `${told ?? `The dialog on tab ${t.tabId} was cancelled.`}${next}`);
+	}
+	const where = t.tabId === undefined ? "on your tabs" : `on tab ${t.tabId}`;
+	return new BridgeError(ERR.NOT_FOUND, `No dialog is open ${where}; nothing to answer.${next}`);
 }
 
 export const handlers: Record<string, Handler> = {
@@ -1045,25 +1063,13 @@ export const handlers: Record<string, Handler> = {
 
 	/** Answer an alert, confirm or prompt box: accept presses OK, otherwise Cancel. */
 	dialog: async (ctx, params) => {
-		const requested = num(params, "tabId");
-		const open = ctx.session.tabIds.filter((id) => !!openDialog(id));
-		if (requested !== undefined && !open.includes(requested))
-			throw new BridgeError(ERR.NOT_FOUND, `No dialog is open on tab ${requested}; nothing to answer there.`);
-		// Never guess between two boxes: OK on the wrong one could delete or send something.
-		if (requested === undefined && open.length > 1) {
-			const list = open.map((id) => `tab ${id}: ${JSON.stringify(openDialog(id)?.message)}`).join("; ");
-			throw new BridgeError(ERR.BAD_PARAMS, `Dialogs are open on more than one tab (${list}). Pass tabId.`);
-		}
-		const tabId = requested ?? open[0];
-		if (tabId === undefined)
-			throw new BridgeError(
-				ERR.NOT_FOUND,
-				`${(await cancelledDialog(ctx.session.tabIds)) ?? "No dialog is open on your tabs; nothing to answer."} Carry on with read_page.`,
-			);
 		if (typeof params.accept !== "boolean")
 			throw new BridgeError(ERR.BAD_PARAMS, "accept must be true (OK) or false (Cancel)");
-		const dialog = await answerDialog(tabId, params.accept, str(params, "promptText"));
-		return { tabId, type: dialog.type, message: dialog.message, accepted: params.accept };
+		// Resolved once when the call began (dialog-guard.ts), the same box the guard holds for it.
+		const target = ctx.dialog ?? dialogTarget(ctx.session.tabIds, num(params, "tabId"));
+		if ("refuse" in target) throw await dialogRefusal(target);
+		const dialog = await answerDialog(target.tabId, params.accept, str(params, "promptText"));
+		return { tabId: target.tabId, type: dialog.type, message: dialog.message, accepted: params.accept };
 	},
 
 	/**

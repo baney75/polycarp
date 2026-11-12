@@ -53,6 +53,11 @@ export function openDialog(tabId: number): PageDialog | undefined {
 	return openDialogs.get(tabId);
 }
 
+/** The tabs with a dialog open, including ones an earlier worker kept (after `cdpMemoryReady`). */
+export function dialogTabs(): number[] {
+	return [...openDialogs.keys()];
+}
+
 /** Called whenever a dialog opens on any attached tab. Returns an unsubscribe function. */
 export function watchDialogs(fn: (tabId: number, dialog: PageDialog) => void): () => void {
 	dialogWatchers.add(fn);

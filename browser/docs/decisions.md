@@ -1391,31 +1391,41 @@ script, no click, no key.
 Decision (`src/browser/dialog-guard.ts`, service worker):
 
 - **Same site is the proxy.** Which tabs share a renderer process can't be read from an extension (no stable API), so the
-  guard asks whether the person has a tab on the box's site: its registrable domain, approximated without the public
-  suffix list (`siteOf`: the last two labels, three under a two-letter country code with a short second level). The
-  person's tabs are tabs no agent session owns; the side panel's tabs count as theirs.
+  guard asks whether the person has a tab on the box's site: its registrable domain by the Public Suffix List with its
+  private section, the list Polycarp already ships for site edits (`siteOf`; mail.web.de and www.web.de are one site,
+  alice.github.io and bob.github.io two, as Chrome groups them). An IP address or a one-label host is its own site. The
+  person's tabs are tabs no agent session owns; the side panel's tabs count as theirs. Where the proxy errs it should
+  over-match: a box cancelled for nothing costs the agent one retry, a missed match freezes the person's tab.
 - **No tab of the person's on the site: the box stays open**, as before this change, with no timer. An agent that clicks
   Delete and gets `confirm()` may think for minutes or ask the person first.
 - **One of them is in front** (the active tab of its window, or becomes it): Cancel after a 3 second grace.
 - **They have one, not in front:** Cancel once the box has been open a minute.
-- **Never mid-call.** A call on the box's tab (`handle_dialog` included), or a tabs_create or first navigate of the
-  owning session (its new tab is busy before it is owned), holds the box; its end looks again. Counts balance: a call
-  undoes exactly what its own start counted, whichever tab it ends on. Everything is read after the guard's awaits, with
-  none before Cancel, so a `handle_dialog` that began meanwhile wins.
+- **Never mid-call, from arrival.** A call holds every box of its session from the moment it is taken off the wire
+  (before the install gate, the enabled check and the session open), then, once it knows its session, only the tab it
+  acts on; a tabs_create or first navigate keeps holding the session's boxes (its new tab is busy before it is owned).
+  Each call is one token, so it ends exactly itself, and a tab replacement (`onTabReplaced`) moves the token's tab with
+  the box. Everything is read after the guard's awaits, with none before Cancel, so a call that began meanwhile wins.
+- **One target for `handle_dialog`,** resolved once when the call knows its session, before anything is awaited, and
+  used for both the hold and the answer: the tab it names, or with no tabId the one box open on the session's tabs,
+  wherever it is. With several open, or after the guard cancelled the box the agent was told about, it answers none and
+  refuses with the boxes still open, their tabIds and the call that answers one.
 - **A pending `ask_user`** from the owning session puts the box under the one-minute rule, not the grace.
 - **The agent hears once:** a notice says the box was cancelled because the person was using (or had) a tab on the site,
   that the page saw Cancel, and to do the action again when ready. `handle_dialog` says it instead if the notice is still
   unread, and takes it back; after that nothing repeats it.
-- A tab replaced by a prerender keeps its counts and its box (`onTabReplaced`).
+- **A worker restart** rebuilds the open boxes from the dialog memory cdp.ts restores, with a clock from the restart,
+  and looks at them once.
 - **The veil** credits only the tab a call acted on (`src/browser/tab-use.ts`), plus a tab the call moved the session to;
   before, a call that named a tab still counted on the current tab.
 
-Not done: the public suffix list (a shared host such as github.io counts as one site, which only cancels sooner), and a
-worker restart while a box is open loses its timers until the next call or tab event.
+Not done: the list is a snapshot (`scripts/gen-public-suffixes.mjs` refreshes it), and Chrome's own process grouping
+can put sites together that the proxy keeps apart (a tab opened by another site's page).
 
 Proof: `test/dialog-guard.test.mjs` (fake timers): a Delete confirm with no person tab stays open for minutes; the
 person's same-site tab in front cancels after the grace and tells the agent once; `handle_dialog` racing the guard wins;
-a box during tabs_create stays until the call ends; a pending ask_user waits the minute; balanced counts across tabs.
+a box during tabs_create stays until the call ends; a pending ask_user waits the minute; balanced counts across tabs;
+handle_dialog holds the box on a tab that isn't current, and refuses after a Cancel; a call holds from arrival; a tab
+replaced mid-call is not left busy; a box kept across a worker restart; sites by the Public Suffix List.
 The e2e "only the tab an agent uses is held up" in `cli/test/e2e-bridge.test.mjs` opens a same-site tab from the agent's
 tab (one process, checked by a busy loop), lets the user keep it, has the agent's page open a confirm and brings the
 user's tab to the front. On main the user's tab stays frozen and the test fails.

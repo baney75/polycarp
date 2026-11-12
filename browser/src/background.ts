@@ -24,7 +24,7 @@ setGuardLogger(trace);
 startGroupGestures(trace);
 // The glow and pill over a page an agent is working in (Settings > Agents turns it off).
 startVeil(trace);
-// A dialog on a tab no call is using gets Cancel, as Chrome gives a hidden tab: an open one stops the whole site.
+// A dialog on an agent's tab is cancelled only when it would freeze a tab of the person's on that site (D46).
 startDialogGuard(trace);
 
 // Groups from before an extension reload have no owning session any more; give the tabs back.

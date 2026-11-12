@@ -29,15 +29,6 @@ export const TAB_METHODS = new Set([
 	"network.read",
 ]);
 
-export interface TabUse {
-	/** Calls on the tab in flight. */
-	busy: number;
-	/** When the last call on the tab began or ended (ms). */
-	lastAt: number;
-}
-
-export type TabUses = Readonly<Record<number, TabUse>>;
-
 /** The tab a call acts on: the one it names, if the session owns it, else the session's current tab. */
 export function callTab(
 	session: { tabIds: readonly number[]; currentTabId?: number },

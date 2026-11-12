@@ -17,7 +17,7 @@
  */
 
 import { cdpMemoryReady, hasScreenshotScale, openDialog, type PageDialog } from "../browser/cdp.js";
-import { dialogUseBegin, dialogUseEnd } from "../browser/dialog-guard.js";
+import { type CallUse, dialogArrive, dialogUseBegin, dialogUseEnd } from "../browser/dialog-guard.js";
 import { BrowserSession } from "../browser/session.js";
 import { type Delivered, dialogError, isDialogSafe, raceDialogs } from "./dialogs.js";
 import { BridgeError, classify, HANDLER_TIMEOUT_MS, withTimeout } from "./errors.js";
@@ -94,6 +94,24 @@ export async function runPanelCall(
 	if (!PAGE_TOOL_METHODS.has(method) || !handler)
 		throw new BridgeError(ERR.NOT_FOUND, `${method} is not a side panel page tool`);
 	const { session } = deps;
+	// The call wins over the dialog guard from here, before the first await (dialog-guard.ts).
+	const use = dialogArrive(session.id);
+	try {
+		return await runArrived(deps, method, params, handler, use, signal);
+	} finally {
+		dialogUseEnd(use);
+	}
+}
+
+async function runArrived(
+	deps: PanelRunDeps,
+	method: string,
+	params: Record<string, unknown>,
+	handler: Handler,
+	use: CallUse,
+	signal?: AbortSignal,
+): Promise<unknown> {
+	const { session } = deps;
 	// After a worker restart, the scales and dialogs an earlier worker saw come back first.
 	await cdpMemoryReady();
 	const dialogOf = deps.openDialog ?? openDialog;
@@ -140,13 +158,12 @@ export async function runPanelCall(
 		},
 		askUpload: async () => false,
 	};
-	const used = dialogUseBegin(session, method, params);
+	ctx.dialog = dialogUseBegin(use, session, method, params).dialog;
 	try {
 		const work = handler(ctx, params);
 		const raced = safe ? work : raceDialogs(session, work, onAbort, () => delivered);
 		return await withTimeout(raced, deps.timeoutMs ?? HANDLER_TIMEOUT_MS, method);
 	} finally {
-		dialogUseEnd(used);
 		signal?.removeEventListener("abort", onAbort);
 	}
 }

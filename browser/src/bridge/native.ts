@@ -9,7 +9,7 @@
 
 import { cancelQuestion, cancelQuestionsFor, handleBridgeAsk, startAskBridge } from "../ask/bridge-worker.js";
 import { openDialog, type PageDialog, stopScreencastsOwnedBy } from "../browser/cdp.js";
-import { type CallUse, dialogAsk, dialogUseBegin, dialogUseEnd } from "../browser/dialog-guard.js";
+import { type CallUse, dialogArrive, dialogAsk, dialogUseBegin, dialogUseEnd } from "../browser/dialog-guard.js";
 import { setCdpMessageHandler } from "../browser/inject.js";
 import { BrowserSession, listSessions, pruneSessions, type SessionMeta, sanitizeLabel } from "../browser/session.js";
 import { probeUserScripts } from "../browser/userscripts-status.js";
@@ -346,7 +346,17 @@ function resolveDecision(requestId: string, decision: PermissionDecision): boole
 	return true;
 }
 
+/** The agent's call wins over the dialog guard from the moment it is taken off the wire, until it ends however it ends. */
 async function runRequest(state: ClientState, req: HostForwardedRequest): Promise<void> {
+	const use = dialogArrive(state.sessionKey);
+	try {
+		await runArrived(state, req, use);
+	} finally {
+		dialogUseEnd(use);
+	}
+}
+
+async function runArrived(state: ClientState, req: HostForwardedRequest, use: CallUse): Promise<void> {
 	const reply = (result?: unknown, error?: BridgeError) =>
 		send({
 			type: "response",
@@ -387,7 +397,6 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 	state.lastActivityAt = Date.now();
 	/** The session and the tab the in-use veil counted this call on (src/browser/veil.ts). */
 	let veiled: { session: BrowserSession; tabId: number | undefined; currentBefore: number | undefined } | undefined;
-	let used: CallUse | undefined;
 	try {
 		if (!(await isBridgeEnabled())) {
 			throw new BridgeError(ERR.DISABLED, "The Polycarp bridge is disabled in Settings > Agents.");
@@ -440,7 +449,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
 			if (openOn !== undefined) throw dialogError(openOn, openDialog(openOn) as PageDialog);
 		}
-		used = dialogUseBegin(session, req.method, req.params);
+		ctx.dialog = dialogUseBegin(use, session, req.method, req.params).dialog;
 		veiled = {
 			session,
 			currentBefore: session.currentTabId,
@@ -472,7 +481,6 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 		if (stack) trace(`${req.method} ${error.code}: ${stack.split("\n").slice(0, 6).join(" | ")}`);
 		reply(undefined, error);
 	} finally {
-		if (used) dialogUseEnd(used);
 		if (veiled) veilEnd(veiled.session, req.method, veiled.tabId, veiled.currentBefore);
 		state.abort = undefined;
 		state.inFlight = undefined;

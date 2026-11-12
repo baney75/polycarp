@@ -6,11 +6,15 @@ import {
 	cancelledDialog,
 	consider,
 	deps,
+	dialogArrive,
 	dialogAsk,
 	dialogOpened,
+	dialogTarget,
 	dialogUseBegin,
 	dialogUseEnd,
+	replaced,
 	resetDialogGuard,
+	restoreDialogs,
 	siteOf,
 } from "../src/browser/dialog-guard.ts";
 
@@ -24,11 +28,14 @@ let cancels;
 
 const flush = () => new Promise((r) => setImmediate(r));
 const tick = async (ms) => {
+	for (let i = 0; i < 5; i++) await flush(); // what is already running looks at the clock first
 	mock.timers.tick(ms);
 	for (let i = 0; i < 5; i++) await flush();
 };
 const confirmOn = (tabId) => dialogs.set(tabId, { type: "confirm", message: "Delete this record?", url: "https://shop.example.com/admin" });
 const personTab = (id, url, active) => tabs.push({ id, url, active });
+/** A call that arrives and knows its session at once. */
+const dialogUse = (s, method, params) => dialogUseBegin(dialogArrive(s.id), s, method, params);
 
 beforeEach(() => {
 	mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
@@ -46,6 +53,7 @@ beforeEach(() => {
 		},
 		tabs: async () => tabs,
 		owners: async () => owners,
+		restored: async () => [],
 		notice: async (owner, text) => void notices.push({ owner, text }),
 		unnotice: async (owner, text) => {
 			const i = notices.findIndex((n) => n.owner === owner && n.text === text);
@@ -57,11 +65,14 @@ beforeEach(() => {
 		open: () => 60_000,
 	});
 });
-afterEach(() => mock.timers.reset());
+afterEach(() => {
+	resetDialogGuard(); // its timers belong to this test's fake clock
+	mock.timers.reset();
+});
 
 /** The agent clicks Delete: the click opens the box and returns. */
 async function clickOpensConfirm() {
-	const call = dialogUseBegin(session, "click", { ref: "e4" });
+	const call = dialogUse(session, "click", { ref: "e4" });
 	confirmOn(1);
 	dialogOpened(1);
 	dialogUseEnd(call);
@@ -109,7 +120,7 @@ test("handle_dialog in flight wins, also when it starts while the guard is readi
 	await clickOpensConfirm();
 	// The agent answers at the deadline: its call is running, so nothing is cancelled.
 	await tick(2_000);
-	const answer = dialogUseBegin(session, "dialog", { accept: true });
+	const answer = dialogUse(session, "dialog", { accept: true });
 	await tick(5_000);
 	assert.deepEqual(cancels, []);
 	dialogs.delete(1);
@@ -125,7 +136,7 @@ test("handle_dialog in flight wins, also when it starts while the guard is readi
 	deps.tabs = () => new Promise((r) => (release = () => r(tabs)));
 	mock.timers.tick(3_100);
 	await flush();
-	const late = dialogUseBegin(session, "dialog", { accept: true });
+	const late = dialogUse(session, "dialog", { accept: true });
 	release();
 	await tick(0);
 	assert.deepEqual(cancels, [], "the guard cancelled a box the agent was answering");
@@ -135,7 +146,7 @@ test("handle_dialog in flight wins, also when it starts while the guard is readi
 test("a box a page opens while tabs_create or the first navigate is still loading it stays open until the call ends", async () => {
 	personTab(5, "https://example.com/", true);
 	const fresh = { id: AGENT, tabIds: [], currentTabId: undefined };
-	const call = dialogUseBegin(fresh, "tabs.create", { url: "https://shop.example.com/admin" });
+	const call = dialogUse(fresh, "tabs.create", { url: "https://shop.example.com/admin" });
 	tabs.push({ id: 7, url: "https://shop.example.com/admin", active: false });
 	confirmOn(7);
 	dialogOpened(7); // not owned yet
@@ -145,10 +156,10 @@ test("a box a page opens while tabs_create or the first navigate is still loadin
 	await tick(10_000);
 	assert.deepEqual(cancels, []);
 	dialogUseEnd(call);
-	await tick(0);
+	await tick(100);
 	assert.deepEqual(cancels, [7], "after the call it is an ordinary box");
-	const nav = dialogUseBegin(fresh, "navigate", { url: "https://shop.example.com/" });
-	assert.deepEqual(nav, { opening: AGENT });
+	const nav = dialogUse(fresh, "navigate", { url: "https://shop.example.com/" });
+	assert.equal(nav.holds, "session");
 	dialogUseEnd(nav);
 });
 
@@ -195,8 +206,8 @@ test("another agent's tab on the site is not the person's, and the agent's own a
 test("a call that ends on another tab never ends a call still running there", async () => {
 	personTab(5, "https://example.com/", true);
 	const two = { ...session, tabIds: [1, 2] };
-	const first = dialogUseBegin(two, "click", { tabId: 1 });
-	const second = dialogUseBegin(two, "actions", { tabId: 1 });
+	const first = dialogUse(two, "click", { tabId: 1 });
+	const second = dialogUse(two, "actions", { tabId: 1 });
 	confirmOn(1);
 	dialogOpened(1);
 	await tick(0);
@@ -209,11 +220,93 @@ test("a call that ends on another tab never ends a call still running there", as
 	assert.deepEqual(cancels, [1]);
 });
 
-test("site is the registrable domain, approximately", () => {
+test("handle_dialog with no tabId holds and answers the one open box, also on a tab that isn't the current one", async () => {
+	personTab(5, "https://example.com/", true);
+	const two = { ...session, tabIds: [1, 2], currentTabId: 1 };
+	tabs.push({ id: 2, url: "https://shop.example.com/b", active: false });
+	owners.set(2, AGENT);
+	confirmOn(2);
+	dialogOpened(2);
+	await tick(2_000);
+	const answer = dialogUse(two, "dialog", { accept: true });
+	assert.deepEqual(answer.dialog, { tabId: 2 });
+	await tick(5_000);
+	assert.deepEqual(cancels, [], "the guard cancelled the box handle_dialog was answering");
+	dialogUseEnd(answer);
+});
+
+test("handle_dialog never answers a box it wasn't told about: after a Cancel it refuses and lists what is open", async () => {
+	personTab(5, "https://example.com/", true);
+	const two = { ...session, tabIds: [1, 2] };
+	owners.set(2, AGENT);
+	tabs.push({ id: 2, url: "https://other.net/", active: false });
+	await clickOpensConfirm();
+	dialogs.set(2, { type: "confirm", message: "Send?", url: "https://other.net/" });
+	dialogOpened(2);
+	await tick(3_100);
+	assert.deepEqual(cancels, [1]);
+	assert.deepEqual(dialogTarget(two.tabIds, undefined), { refuse: "cancelled", tabId: 1, open: [2] });
+	assert.deepEqual(dialogTarget(two.tabIds, 1), { refuse: "cancelled", tabId: 1, open: [2] });
+	assert.deepEqual(dialogTarget(two.tabIds, 2), { tabId: 2 });
+	dialogs.set(1, { type: "alert", message: "x" });
+	assert.deepEqual(dialogTarget([1, 2, 3], undefined).refuse, "cancelled");
+	await cancelledDialog([1]);
+	assert.deepEqual(dialogTarget([1, 2], undefined), { refuse: "several", open: [1, 2] });
+});
+
+test("a call holds the session's boxes from the moment it arrives, before it knows its session", async () => {
+	personTab(5, "https://example.com/", true);
+	await clickOpensConfirm();
+	await tick(2_000);
+	const use = dialogArrive(AGENT); // gateReady, isBridgeEnabled and getSession still to come
+	await tick(10_000);
+	assert.deepEqual(cancels, [], "Cancel raced a call that was already on its way");
+	dialogUseEnd(use);
+	await tick(3_200);
+	assert.deepEqual(cancels, [1]);
+});
+
+test("a tab replaced during a call: the call ends on the new tab, which is not left busy", async () => {
+	personTab(5, "https://example.com/", true);
+	const ten = { ...session, tabIds: [10], currentTabId: 10 };
+	owners.set(11, AGENT);
+	tabs.push({ id: 11, url: "https://shop.example.com/admin", active: false });
+	const call = dialogUse(ten, "navigate", { url: "https://shop.example.com/admin" });
+	replaced(10, 11);
+	confirmOn(11);
+	dialogOpened(11);
+	await tick(5_000);
+	assert.deepEqual(cancels, [], "the call moved to the new tab");
+	dialogUseEnd(call);
+	await tick(3_200);
+	assert.deepEqual(cancels, [11]);
+});
+
+test("a box an earlier worker kept gets the same rules after a restart", async () => {
+	personTab(5, "https://example.com/", true);
+	confirmOn(1); // no dialogOpened: this worker never saw it open
+	deps.restored = async () => [1];
+	await restoreDialogs();
+	await tick(100);
+	await tick(3_100);
+	assert.deepEqual(cancels, [1]);
+});
+
+test("site is the registrable domain by the Public Suffix List", () => {
 	assert.equal(siteOf("https://mail.google.com/x"), "google.com");
+	assert.equal(siteOf("https://www.web.de/"), "web.de");
+	assert.equal(siteOf("https://mail.web.de/"), "web.de");
+	assert.equal(siteOf("https://web.de/"), "web.de");
+	assert.equal(siteOf("https://shop.abc.de/"), siteOf("https://www.abc.de/"));
 	assert.equal(siteOf("https://www.bbc.co.uk/news"), "bbc.co.uk");
+	assert.equal(siteOf("https://co.uk/"), "co.uk");
+	assert.equal(siteOf("https://alice.github.io/"), "alice.github.io");
+	assert.notEqual(siteOf("https://alice.github.io/"), siteOf("https://bob.github.io/"));
+	assert.equal(siteOf("https://docs.alice.github.io/"), "alice.github.io");
+	assert.equal(siteOf("https://WWW.Example.COM./"), "example.com");
 	assert.equal(siteOf("http://localhost:3000/"), "localhost");
 	assert.equal(siteOf("http://127.0.0.1:8080/"), "127.0.0.1");
+	assert.equal(siteOf("http://[::1]:8080/"), "[::1]");
 	assert.equal(siteOf("chrome://settings"), undefined);
 	assert.equal(siteOf(undefined), undefined);
 });
