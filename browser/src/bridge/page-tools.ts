@@ -102,7 +102,12 @@ export const PAGE_TOOLS: readonly PageToolSpec[] = [
 		label: "Read text",
 		description:
 			'Readable text of the tab or one element: the cheapest way to read. On a PDF, text by page. {"selector":"article"}',
-		parameters: Type.Object({ selector: text(), maxChars: num(), pages: text('PDF pages: "3" or "3-7"') }),
+		parameters: Type.Object({
+			selector: text(),
+			maxChars: num(),
+			offset: num("Start at this character"),
+			pages: text('PDF pages: "3" or "3-7"'),
+		}),
 	},
 	{
 		name: "act",
@@ -234,6 +239,40 @@ export function routePageTool(
 	return { method, params };
 }
 
+/** What read_page shows: the caller asks the page for one more of each, so a cut is known, not guessed. */
+export interface PageLimits {
+	maxNodes?: number;
+	maxTextChars?: number;
+}
+
+/** Characters a page tool's answer leaves for its header and notes. */
+const NOTE_ROOM = 600;
+
+/**
+ * A routed read sized to `budgetChars`, the characters the model's next request keeps for one tool result
+ * (context-guard.ts toolBudgetChars): get_page_text asks for no more than fits, so its own "read on from offset" note
+ * stays true and the guard never cuts it again; read_page holds its element list and text to the same room. Other
+ * calls pass through. `limits` is what formatPageResult shows of read_page.
+ */
+export function fitPageCall(
+	name: string,
+	params: Record<string, unknown>,
+	budgetChars: number,
+): { params: Record<string, unknown>; limits?: PageLimits } {
+	const room = Math.max(500, Math.floor(budgetChars) - NOTE_ROOM);
+	const asked = (v: unknown) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.floor(Number(v)) : undefined);
+	if (name === "get_page_text")
+		return { params: { ...params, maxChars: Math.min(asked(params.maxChars) ?? room, room) } };
+	if (name !== "read_page") return { params };
+	// About 70 characters a listed element; the text gets what a third of the room holds.
+	const maxNodes = Math.min(asked(params.maxNodes) ?? 300, Math.max(20, Math.floor((room * 0.66) / 70)));
+	const maxTextChars = Math.min(asked(params.maxTextChars) ?? 3000, Math.max(200, Math.floor(room / 3)));
+	return {
+		params: { ...params, maxNodes: maxNodes + 1, maxTextChars: maxTextChars + 1 },
+		limits: { maxNodes, maxTextChars },
+	};
+}
+
 export type PageContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
 export interface PageToolDetails {
@@ -265,14 +304,28 @@ export function formatPageResult(
 	name: string,
 	result: unknown,
 	action?: string,
+	limits?: PageLimits,
 ): { content: PageContent[]; details: PageToolDetails } {
 	const r = (result ?? {}) as Record<string, unknown>;
 	const text = (t: string): PageContent[] => [{ type: "text", text: t }];
 	switch (name === "act" ? action : name) {
 		case "read_page": {
-			const snap = r as unknown as Snapshot;
+			let snap = r as unknown as Snapshot;
+			const notes: string[] = [];
+			if (limits?.maxNodes !== undefined && snap.nodes.length > limits.maxNodes) {
+				snap = { ...snap, nodes: snap.nodes.slice(0, limits.maxNodes) };
+				notes.push(
+					`The element list stopped at ${limits.maxNodes}: use find for what you need, or filter "interactive".`,
+				);
+			}
+			if (limits?.maxTextChars !== undefined && (snap.text ?? "").length > limits.maxTextChars) {
+				snap = { ...snap, text: snap.text.slice(0, limits.maxTextChars) };
+				notes.push(
+					`The text stopped at ${limits.maxTextChars} characters: get_page_text reads all of it, in parts.`,
+				);
+			}
 			return {
-				content: text(formatSnapshot(snap, "act")),
+				content: text(`${formatSnapshot(snap, "act")}${notes.length ? `\n\n[${notes.join(" ")}]` : ""}`),
 				details: { url: snap.url, title: snap.title, count: snap.nodes.length },
 			};
 		}
@@ -286,13 +339,15 @@ export function formatPageResult(
 			};
 		}
 		case "get_page_text": {
-			const pdf = r.pdf as { pages: number; truncated?: boolean; note?: string } | undefined;
+			const pdf = r.pdf as { pages: number; truncated?: boolean; note?: string; cut?: string } | undefined;
 			const head = `Page: ${String(r.title ?? "")} | ${String(r.url ?? "")}`;
 			const pdfLine = pdf
 				? `\nPDF, ${pdf.pages} pages${pdf.truncated ? " (cut short)" : ""}.${pdf.note ? ` ${pdf.note}` : ""}`
 				: "";
+			// The bridge's own note on where it cut and the offset that reads on (paging.ts), after the text.
+			const cut = pdf?.cut ?? (typeof r.note === "string" ? r.note : undefined);
 			return {
-				content: text(`${head}${pdfLine}\n\n${String(r.text ?? "")}`),
+				content: text(`${head}${pdfLine}\n\n${String(r.text ?? "")}${cut ? `\n\n[${cut}]` : ""}`),
 				details: { url: String(r.url ?? ""), title: String(r.title ?? "") },
 			};
 		}

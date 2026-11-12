@@ -17,7 +17,7 @@ const TOOLS: Array<{ name: string; method: string; description: string; params: 
 	{ name: "browser_show_tab", method: "tabs.show", description: "Bring a tab in front of the user (only when they must see it)", params: "{ tabId: Type.Optional(Type.Number()) }" },
 	{ name: "browser_screenshot", method: "screenshot", description: "Screenshot the current tab (returns an image)", params: "{ tabId: Type.Optional(Type.Number()), fullPage: Type.Optional(Type.Boolean()), maxWidth: Type.Optional(Type.Number()) }" },
 	{ name: "browser_read_page", method: "snapshot", description: "Interactive elements with refs plus page text", params: "{ tabId: Type.Optional(Type.Number()), filter: Type.Optional(Type.String()), maxNodes: Type.Optional(Type.Number()) }" },
-	{ name: "browser_text", method: "text", description: "Readable text of the page or a selector", params: "{ tabId: Type.Optional(Type.Number()), selector: Type.Optional(Type.String()), maxChars: Type.Optional(Type.Number()) }" },
+	{ name: "browser_text", method: "text", description: "Readable text of the page or a selector, 50,000 characters at a time (offset reads on)", params: "{ tabId: Type.Optional(Type.Number()), selector: Type.Optional(Type.String()), maxChars: Type.Optional(Type.Number()), offset: Type.Optional(Type.Number()) }" },
 	{ name: "browser_find", method: "find", description: "Find elements by words in role/label/value/href", params: "{ query: Type.String(), tabId: Type.Optional(Type.Number()) }" },
 	{ name: "browser_click", method: "click", description: "Click by ref, selector, or x/y", params: "{ ref: Type.Optional(Type.String()), selector: Type.Optional(Type.String()), x: Type.Optional(Type.Number()), y: Type.Optional(Type.Number()), tabId: Type.Optional(Type.Number()) }" },
 	{ name: "browser_type", method: "type", description: "Type text with real key events; submit presses Enter", params: "{ text: Type.String(), ref: Type.Optional(Type.String()), selector: Type.Optional(Type.String()), submit: Type.Optional(Type.Boolean()), tabId: Type.Optional(Type.Number()) }" },
@@ -27,7 +27,7 @@ const TOOLS: Array<{ name: string; method: string; description: string; params: 
 	{ name: "browser_actions", method: "actions", description: "Several input steps in one call (press/click/drag/type/hover/scroll/wait, x/y = latest screenshot pixels), optional screenshot at the end", params: "{ steps: Type.Array(Type.Record(Type.String(), Type.Any())), screenshot: Type.Optional(Type.Boolean()), tabId: Type.Optional(Type.Number()) }" },
 	{ name: "browser_js", method: "evaluate", description: "Run JavaScript in the page and return its JSON value", params: "{ code: Type.String(), world: Type.Optional(Type.String()), tabId: Type.Optional(Type.Number()) }" },
 	{ name: "browser_wait", method: "wait", description: "Wait for selector/text/url, a settled page (until: settled) or ms", params: "{ until: Type.Optional(Type.String()), selector: Type.Optional(Type.String()), text: Type.Optional(Type.String()), urlIncludes: Type.Optional(Type.String()), ms: Type.Optional(Type.Number()), timeoutMs: Type.Optional(Type.Number()), tabId: Type.Optional(Type.Number()) }" },
-	{ name: "browser_console", method: "console.read", description: "Console messages captured on the tab", params: "{ onlyErrors: Type.Optional(Type.Boolean()), pattern: Type.Optional(Type.String()), clear: Type.Optional(Type.Boolean()), tabId: Type.Optional(Type.Number()) }" },
+	{ name: "browser_console", method: "console.read", description: "Console messages captured on the tab, newest 100 (offset skips the newest)", params: "{ onlyErrors: Type.Optional(Type.Boolean()), pattern: Type.Optional(Type.String()), clear: Type.Optional(Type.Boolean()), limit: Type.Optional(Type.Number()), offset: Type.Optional(Type.Number()), tabId: Type.Optional(Type.Number()) }" },
 ];
 
 function extensionSource(): string {
@@ -178,7 +178,13 @@ function toResult(value: unknown): { content: Array<{ type: "text"; text: string
 			details: { width: shot.width, height: shot.height },
 		};
 	}
-	return { content: [{ type: "text" as const, text: JSON.stringify(value) }], details: value };
+	// No result is longer than 100,000 characters: its head and tail, and how much was left out.
+	let text = JSON.stringify(value) ?? "null";
+	if (text.length > 100000) {
+		const dropped = text.length - 90000;
+		text = \`\${text.slice(0, 63000)}\n\n[Polycarp left out \${dropped} of \${text.length} characters here. Ask for a smaller part: a selector, an offset or a filter.]\n\n\${text.slice(-27000)}\`;
+	}
+	return { content: [{ type: "text" as const, text }], details: value };
 }
 
 export default function polycarpExtension(pi: ExtensionAPI) {

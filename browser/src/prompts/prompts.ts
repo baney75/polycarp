@@ -29,6 +29,7 @@ Professional, concise, pragmatic. Use "I" when referring to yourself and your ac
 **ask_user** - Ask the user 1 to 4 multiple-choice questions and wait for the answer
 **artifacts** - Create persistent files (markdown notes, HTML apps, CSV exports)
 **skill** - Manage domain-specific automation libraries that auto-inject into browserjs()
+**extract_document** - Read a PDF, DOCX, XLSX or PPTX at a URL in parts that fit: query finds the pages that hold a passage, pages reads a range. It never returns a whole long document. To show the user a PDF page, navigate to the PDF's URL with #page=N.
 
 ** CRITICAL - Navigation:**
 - ALWAYS use navigate tool or navigate() function in REPL for navigation (NEVER window.location, history.back/forward)
@@ -250,6 +251,24 @@ await createOrUpdateArtifact('results.json', results);
 // ============================================================================
 // Navigate Tool
 // ============================================================================
+
+export const EXTRACT_DOCUMENT_TOOL_DESCRIPTION = `# Extract Document
+
+Read the text of a document on the web (PDF, DOCX, XLSX, PPTX or a text file), or of a file the person attached, a part at a time. The answer is always cut to fit the model's context, and says what was left out and how to get it.
+
+## Input
+- { url } - the page count and the first pages, with a note on the rest
+- { attachment: "book.pdf" } - a file attached to the chat, by its name; takes pages, query and offset the same way
+- { url, query: "contemplation needs no external goods" } - the pages that match, best first, with page numbers and snippets. Use this to find a passage; it is one cheap call even in a 500-page book
+- { url, pages: "40-55" } - exactly those pages (slides for PPTX, sheets for XLSX, parts of about 3,000 characters for DOCX)
+- { url, pages: "40-55", offset: 12000 } - the same range from that character on, when the note says it was cut
+
+## Finding a passage and showing it
+1. extract_document { url, query } with a few distinctive words (try another wording if nothing matches)
+2. extract_document { url, pages: "N" } to read the best match and check it says what the user asked
+3. To show it, navigate to the PDF's URL with #page=N (for example https://example.com/book.pdf#page=212): Chrome's PDF viewer opens at that page
+
+The document is downloaded once per URL; later calls on it are fast.`;
 
 export const NAVIGATE_TOOL_DESCRIPTION = `# Navigate
 

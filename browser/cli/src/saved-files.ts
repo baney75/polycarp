@@ -25,7 +25,8 @@ export const MAX_SESSION_BYTES = 500 * 1024 * 1024;
 export const MAX_SESSION_FILES = 200;
 /** What every session together may keep: a caller that opens session after session still can't fill the disk. */
 export const MAX_ALL_BYTES = 2 * 1024 * 1024 * 1024;
-/** `read`: how much text goes back, and the most an image or other file may be. */
+/** `read`: how much text goes back by default and at most (max_bytes), and the most an image or other file may be. */
+export const READ_TEXT_DEFAULT = 50 * 1024;
 export const READ_TEXT_CAP = 200 * 1024;
 export const READ_BLOB_CAP = 8 * 1024 * 1024;
 

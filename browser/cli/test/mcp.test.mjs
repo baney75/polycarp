@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -80,9 +81,12 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// files adds 1,319 (30,434 to 31,753): uploads, downloads, a page as PDF and the saved files in one tool with an
 	// action, not six (docs/decisions.md, D38). Its nine arguments are what cost; the description is three lines. The
 	// budget goes up by the 700 that did not fit, and no other tool was shortened for it.
-	// wait's until:"settled" adds 131 (D41): the page settling is otherwise a read_page loop. The budget goes up by
-	// the 100 that did not fit under it.
-	assert.ok(bytes <= 31900, `tools/list is ${bytes} bytes, over the 31,900 budget`);
+	// Bounded reads add about 760 (to 32,513): an offset on get_page_text, get_page_html, run_js, read_console,
+	// read_network, page_markdown and files read, so an agent can read past each tool's new cap instead of getting a
+	// result too big for its context. Each integer argument costs about 110 bytes of schema; the prose was cut first.
+	// wait's until:"settled" adds 131 (D41): the page settling is otherwise a read_page loop. With the bounded reads
+	// above, the budget is theirs plus these 131 (32,676 measured).
+	assert.ok(bytes <= 32681, `tools/list is ${bytes} bytes, over the 32,681 budget`);
 	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2950, "instructions over 2,950 bytes");
 });
 
@@ -583,7 +587,7 @@ async function filesHost(name, behave = {}) {
 					reply(msg.id, { transferId: "d1", bytes: file.announce ?? file.body.length, chunks: Math.ceil((file.announce ?? file.body.length) / PIECE_IN), mime: file.mime, name: file.name, url: file.url ?? "https://files.test/get" });
 				} else if (msg.method === "files.download.chunk") {
 					reply(msg.id, { index: p.index, data: host.serve.body.subarray(p.index * PIECE_IN, (p.index + 1) * PIECE_IN).toString("base64") });
-				} else reply(msg.id, {});
+				} else reply(msg.id, behave.answer?.(msg.method, p) ?? {});
 			}
 		});
 	});
@@ -783,6 +787,123 @@ test("files upload: a path outside the client's roots asks the person each time,
 	}
 });
 
+test("read tools cap what they hand an agent, say when they cut, and page with offset", async () => {
+	const big = "x".repeat(200_000);
+	const host = await filesHost("caps", {
+		answer: (method) => {
+			if (method === "evaluate") return { value: big };
+			if (method === "html") return { url: "https://page.test/", html: "y".repeat(300_000) };
+			if (method === "snapshot")
+				return {
+					url: "https://page.test/",
+					title: "Long",
+					viewport: { width: 1, height: 1, scrollY: 0, pageHeight: 1 },
+					nodes: Array.from({ length: 301 }, (_, i) => ({ ref: `e${i}`, role: "link", name: `n${i}`, visible: true })),
+					text: "t".repeat(3001),
+				};
+			return undefined;
+		},
+	});
+	const markdown = "m".repeat(90_000);
+	const firecrawl = createHttpServer((req, res) => {
+		res.setHeader("content-type", "application/json");
+		let body = "";
+		req.on("data", (d) => (body += d));
+		req.on("end", () => {
+			const url = JSON.parse(body || "{}").url ?? "";
+			// second-S4: a failed or html-only scrape has no markdown; first-F3: a page of quotes doubles when escaped.
+			if (req.url === "/v2/scrape" && url.includes("nomd")) return res.end(JSON.stringify({ success: true, data: { html: "<p>x</p>", metadata: { sourceURL: url } } }));
+			if (req.url === "/v2/scrape") return res.end(JSON.stringify({ success: true, data: { markdown: url.includes("quotes") ? '"'.repeat(90_000) : markdown, metadata: { sourceURL: "https://page.test/" } } }));
+			res.end(JSON.stringify({ success: true, data: [{ url: "https://page.test/a", markdown }] }));
+		});
+	});
+	await new Promise((r) => firecrawl.listen(0, "127.0.0.1", r));
+	const fx = filesFixture("caps");
+	const c = new Client({ name: "tabkyra-mcp-caps", version: "0.0.0" });
+	await c.connect(
+		new StdioClientTransport({
+			command: process.execPath,
+			args: [cli, "mcp"],
+			cwd: fx.proj,
+			env: { HOME: join(root, "home"), PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: host.dir, TABKYRA_CONFIG_DIR: fx.config, POLYCARP_SPACES_BIN: join(root, "no-helper"), FIRECRAWL_API_URL: `http://127.0.0.1:${firecrawl.address().port}` },
+			stderr: "ignore",
+		}),
+	);
+	const run = async (name, args = {}) => (await c.callTool({ name, arguments: args })).content.map((x) => x.text ?? "").join("\n");
+	const last = (m) => host.requests.filter((r) => r.method === m).at(-1).params;
+	try {
+		// run_js: 50,000 characters of the value, then the offset that reads on.
+		const js = await run("run_js", { code: "big" });
+		assert.ok(js.length <= 50_200, `run_js returned ${js.length}`);
+		assert.match(js, /\[Cut at character 50,000 of 200,01\d\. For the rest, return a smaller value, or call run_js again with offset 50000\.\]/);
+		const evaluations = () => host.requests.filter((r) => r.method === "evaluate").length;
+		const ran = evaluations();
+		const on = await run("run_js", { code: "big", offset: 50_000 });
+		assert.match(on, /^\[Characters 50,000 to 100,000 of 200,01\d\.\]/);
+		// Reading on serves the value kept from the run before: code with side effects never runs twice.
+		await run("run_js", { code: "big", offset: 100_000 });
+		assert.equal(evaluations(), ran, "an offset read does not run the code again");
+		// Other code (or another world or tab) has no value kept, so an offset is refused rather than run.
+		const other = await c.callTool({ name: "run_js", arguments: { code: "other", offset: 50_000 } });
+		assert.equal(other.isError, true);
+		assert.match(other.content[0].text, /run it without offset first/);
+		assert.equal(evaluations(), ran);
+		// second-N4: after a tab switch, reading on would serve the old tab's value as the new page's; it is refused.
+		await run("run_js", { code: "big" });
+		await run("tabs_select", { tabId: 2 });
+		const stale = await c.callTool({ name: "run_js", arguments: { code: "big", offset: 50_000 } });
+		assert.equal(stale.isError, true, "no value kept across a tab switch");
+		await run("run_js", { code: "big" });
+		await run("navigate", { url: "https://page.test/next" });
+		assert.equal((await c.callTool({ name: "run_js", arguments: { code: "big", offset: 50_000 } })).isError, true, "nor across a navigate");
+		// sol-F2, first-F6: read_page with a tabId makes that tab current, find and files reach the page too; every tool
+		// but run_js drops the kept value, whichever way it calls the browser.
+		for (const [name, args] of [["read_page", { tabId: 2 }], ["find", { query: "x" }], ["files", { action: "list" }], ["status", {}]]) {
+			await run("run_js", { code: "big" });
+			await c.callTool({ name, arguments: args });
+			assert.equal((await c.callTool({ name: "run_js", arguments: { code: "big", offset: 50_000 } })).isError, true, `no value kept across ${name}`);
+		}
+		// read_page: says the element list and the text were cut, and how to read on.
+		const page = await run("read_page");
+		assert.match(page, /element list stopped at 300/);
+		assert.match(page, /The text stopped at 3,000 characters: get_page_text reads all of it, in parts, from the top\./);
+		assert.doesNotMatch(page, /offset 3000/, "read_page's text offsets don't match get_page_text's");
+		assert.equal(last("snapshot").maxNodes, 301, "asks for one more than it shows, to know it cut");
+		assert.equal(last("snapshot").maxTextChars, 3001);
+		assert.doesNotMatch(page, /\be300\b/);
+		// The net under every tool: a 300,000 character answer comes back at 100,000 with what was left out.
+		const html = await run("get_page_html");
+		assert.ok(html.length <= 100_000, `get_page_html returned ${html.length}`);
+		assert.match(JSON.parse(html).html, /\[cut: [\d,]+ more characters, to fit the result\]$/, "still JSON, its field cut");
+		// get_page_text, read_console and read_network page in the extension; the offset reaches it.
+		await run("get_page_text", { offset: 50_000 });
+		await run("read_console", { offset: 100 });
+		await run("read_network", { offset: 100 });
+		assert.equal(last("text").offset, 50_000);
+		assert.equal(last("console.read").offset, 100);
+		assert.equal(last("network.read").offset, 100);
+		// page_markdown: 40,000 characters at a time; crawl: 3,000 per page.
+		const md = JSON.parse(await run("page_markdown", { url: "https://page.test/" }));
+		assert.ok(md.markdown.length <= 40_200);
+		assert.match(md.markdown, /For the rest, call page_markdown again with offset 40000\./);
+		const quoted = await run("page_markdown", { url: "https://page.test/quotes" });
+		assert.ok(quoted.length < 41_000, `page_markdown of quotes returned ${quoted.length}`);
+		assert.match(JSON.parse(quoted).markdown, /again with offset 20000\.\]$/);
+		// second-S4: a scrape with no markdown says so plainly (firecrawl.ts), never a TypeError from slicing it.
+		const bare = await c.callTool({ name: "page_markdown", arguments: { url: "https://page.test/nomd" } });
+		assert.equal(bare.isError, true);
+		assert.match(bare.content[0].text, /Firecrawl scrape returned no markdown\./);
+		assert.doesNotMatch(bare.content[0].text, /TypeError|undefined/);
+		const crawl = JSON.parse(await run("crawl", { url: "https://page.test/" }));
+		assert.ok(crawl.data[0].markdown.length < 3_100);
+		assert.match(crawl.note, /page_markdown/);
+	} finally {
+		await c.close().catch(() => {});
+		host.close();
+		firecrawl.close();
+	}
+});
+
 test("files download, save_pdf, list, read, remove: private files with an id, and read is capped", async () => {
 	const fx = filesFixture("down");
 	const host = await filesHost("down");
@@ -835,7 +956,7 @@ test("files download, save_pdf, list, read, remove: private files with an id, an
 		assert.deepEqual([pdf.name, pdf.mime, pdf.sourceUrl], ["My page.pdf", "application/pdf", "https://files.test/page"]);
 		assert.equal(readFileSync(pdf.path, "latin1").slice(0, 4), "%PDF");
 
-		// read: text is text and is cut at 200 KB; an image is an image only by its bytes; anything else is a blob; over 8 MB is an error with the size.
+		// read: text is text and is cut at 50 KB by default, with the offset that reads on; an image is an image only by its bytes; anything else is a blob; over 8 MB is an error with the size.
 		const save = async (served) => {
 			host.serve = served;
 			const r = await run({ action: "download", url: "https://files.test/x" });
@@ -845,10 +966,37 @@ test("files download, save_pdf, list, read, remove: private files with an id, an
 		const longText = await save({ body: Buffer.from("line of text\n".repeat(30000)), name: "long.txt", mime: "text/plain; charset=utf-8" });
 		const read = await run({ action: "read", id: longText.id });
 		assert.equal(read.content.length, 1);
-		assert.match(read.text, /\[Cut: the first 200 KB of 381 KB \(long\.txt\)/);
-		assert.ok(Buffer.byteLength(read.text) <= 200 * 1024 + 300, `read returned ${Buffer.byteLength(read.text)} bytes`);
+		assert.match(read.text, /\[Cut: the first 50 KB of 381 KB \(long\.txt\)\. For the rest, read again with offset 51200\./);
+		const on = await run({ action: "read", id: longText.id, offset: 51200 });
+		assert.match(on.text, /\[Cut: bytes 51200 to 102400 of 381 KB \(long\.txt\)\. For the rest, read again with offset 102400\./);
+		assert.ok(Buffer.byteLength(read.text) <= 50 * 1024 + 300, `read returned ${Buffer.byteLength(read.text)} bytes`);
 		const less = await run({ action: "read", id: longText.id, max_bytes: 1000 });
 		assert.ok(Buffer.byteLength(less.text) <= 1300 && /\[Cut: the first 1000 bytes/.test(less.text), less.text.slice(-200));
+		// Text with characters of 2, 3 and 4 bytes, read in small parts by the offset each part gives: no character is
+		// split or lost, and the parts join to the file.
+		const wide = "Ωmega 日本語のテキスト 🙂 café ".repeat(400);
+		const wideFile = await save({ body: Buffer.from(wide), name: "wide.txt", mime: "text/plain; charset=utf-8" });
+		let joined = "";
+		let at = 0;
+		for (let i = 0; i < 200; i++) {
+			const part = await run({ action: "read", id: wideFile.id, offset: at, max_bytes: 997 });
+			const cut = part.text.lastIndexOf("\n\n[Cut:");
+			assert.ok(cut >= 0, part.text.slice(-200));
+			const body = part.text.slice(0, cut);
+			assert.doesNotMatch(body, /\ufffd/);
+			joined += body;
+			const next = /read again with offset (\d+)\./.exec(part.text.slice(cut));
+			if (!next) break;
+			at = Number(next[1]);
+		}
+		assert.equal(joined, wide);
+		// The largest read (200 KB) of plain text stays under the 100,000 character output cap, and the offset it gives
+		// is where it really stopped.
+		const max = await run({ action: "read", id: longText.id, max_bytes: 200 * 1024 });
+		assert.ok(max.text.length <= 100_000, `read returned ${max.text.length} characters`);
+		const next = Number(/read again with offset (\d+)\./.exec(max.text)[1]);
+		const shown = max.text.slice(0, max.text.lastIndexOf("\n\n[Cut:"));
+		assert.equal(next, Buffer.byteLength(shown));
 		const whole = await run({ action: "read", id: (await save({ body: Buffer.from('{"a":1}'), name: "data.json", mime: "application/json" })).id });
 		assert.equal(whole.text, '{"a":1}');
 

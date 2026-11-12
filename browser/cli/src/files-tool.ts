@@ -12,6 +12,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { FILE_ASK_TIMEOUT_MS, FILE_CHUNK_FROM_EXTENSION, FILE_CHUNK_TO_EXTENSION } from "../../src/bridge/protocol.ts";
 import { type BridgeClient, BridgeRpcError } from "./client.ts";
+import { OUTPUT_CAP, utf8Window } from "./output-cap.ts";
 import { checkUploadCaps, checkUploadPath, MAX_UPLOAD_FILES, type RuleEnv } from "./file-rules.ts";
 import {
 	byteSize,
@@ -21,6 +22,7 @@ import {
 	mimeFor,
 	READ_BLOB_CAP,
 	READ_TEXT_CAP,
+	READ_TEXT_DEFAULT,
 	privateDirsHere,
 	realOrSelf,
 	type SavedFile,
@@ -241,18 +243,21 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 		}
 	}
 
-	function read(args: { id?: string; max_bytes?: number }): Result {
+	function read(args: { id?: string; max_bytes?: number; offset?: number }): Result {
 		const file = args.id ? saved.get(args.id) : undefined;
 		if (!file) return refuse(`No saved file has the id ${String(args.id)}. Call files with action "list".`);
 		const where = o.remote ? "" : ` It is at ${saved.pathOf(file)}.`;
 		const limit = args.max_bytes && args.max_bytes > 0 ? args.max_bytes : undefined;
 		if (isTextMime(file.mime)) {
-			const cap = Math.min(limit ?? READ_TEXT_CAP, READ_TEXT_CAP);
+			const cap = Math.min(limit ?? READ_TEXT_DEFAULT, READ_TEXT_CAP);
 			const all = saved.read(file);
-			const cut = all.length > cap;
-			// A cut may land inside a character; the broken tail is dropped.
-			const body = (cut ? all.subarray(0, cap) : all).toString("utf8").replace(/\ufffd+$/, "");
-			return say(cut ? `${body}\n\n[Cut: the first ${byteSize(cap)} of ${byteSize(all.length)} (${file.name}).${where}]` : body);
+			// Both ends on a character boundary, and under the output cap with room for the note, so the offset given
+			// for the rest is exactly where this part stopped.
+			const { text: body, from, end } = utf8Window(all, args.offset ?? 0, cap, OUTPUT_CAP - 1000);
+			if (!from && end === all.length) return say(body);
+			const which = from ? `bytes ${from} to ${end}` : `the first ${byteSize(end)}`;
+			const more = end < all.length ? ` For the rest, read again with offset ${end}.` : "";
+			return say(`${body}\n\n[Cut: ${which} of ${byteSize(all.length)} (${file.name}).${more}${where}]`);
 		}
 		const cap = Math.min(limit ?? READ_BLOB_CAP, READ_BLOB_CAP);
 		if (file.bytes > cap)
@@ -284,11 +289,12 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 				ids: z.array(z.string()).optional().describe("upload: saved file ids"),
 				url: z.string().optional().describe("download: file URL"),
 				id: z.string().optional().describe("read, remove: saved file id"),
-				max_bytes: z.number().int().positive().optional().describe("read: byte limit"),
+				max_bytes: z.number().int().positive().optional().describe("read: byte limit (text: 50 KB default)"),
+				offset: z.number().int().nonnegative().optional().describe("read: start byte, text"),
 			},
 		},
 		async (raw): Promise<Result> => {
-			const args = raw as { action: string; tabId?: number; ref?: string; selector?: string; paths?: string[]; ids?: string[]; url?: string; id?: string; max_bytes?: number };
+			const args = raw as { action: string; tabId?: number; ref?: string; selector?: string; paths?: string[]; ids?: string[]; url?: string; id?: string; max_bytes?: number; offset?: number };
 			const denied = o.denied?.(args);
 			if (denied) return refuse(denied);
 			// Decided before the bridge hears of the call, whatever the path.

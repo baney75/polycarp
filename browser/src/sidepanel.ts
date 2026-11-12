@@ -11,7 +11,6 @@ import {
 import { getModel, getModels, type Model } from "@mariozechner/pi-ai";
 import {
 	ChatPanel,
-	createExtractDocumentTool,
 	createStreamFn,
 	ModelSelector,
 	// PersistentStorageDialog,
@@ -72,6 +71,7 @@ import {
 } from "./messages/NavigationMessage.js";
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
+import { guardContext, toolBudgetChars, withoutReplyCap } from "./models/context-guard.js";
 import { modelLabelParts } from "./models/display.js";
 import { FREE_KEY_NOTE, FREE_PRIVACY_NOTE, FREE_SHORT_NOTE } from "./models/free-mode.js";
 import { freeComposerText, installFreeMode, setFreeMode, streamFree } from "./models/free-panel.js";
@@ -96,6 +96,7 @@ import {
 	routeSubscriptionModel,
 } from "./subscriptions/stream.js";
 import { DebuggerTool } from "./tools/debugger.js";
+import { createExtractDocumentTool, type LoadedDocument } from "./tools/extract-document.js";
 import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-image.js";
 import { AskUserTool, AskUserWhichElementTool, skillTool } from "./tools/index.js";
 import { NativeInputEventsRuntimeProvider } from "./tools/NativeInputEventsRuntimeProvider.js";
@@ -800,9 +801,9 @@ const updateUrl = (sessionId: string) => {
 };
 
 /**
- * Self-hosted OpenAI-compatible endpoints (custom providers: Local Studio, vLLM, SGLang,
- * llama.cpp) get no max_tokens: the dialog's per-model default was 8192, which cut
- * thinking models off mid-answer. The server then applies the model's full context.
+ * The panel's model calls, under its gates: removed sign-ins, private mode, free mode and subscription routing. Custom
+ * providers (LM Studio, vLLM, SGLang, llama.cpp) get no max_tokens: the dialog's per-model default (8192) cut thinking
+ * models off mid-answer. The guard still keeps the reply's room in the budget (context-guard.ts).
  */
 function uncappedStreamFn<F extends (model: Model<any>, ...rest: any[]) => any>(inner: F): F {
 	return (async (model: Model<any>, ...rest: any[]) => {
@@ -836,14 +837,33 @@ function uncappedStreamFn<F extends (model: Model<any>, ...rest: any[]) => any>(
 		// ChatGPT and Copilot plans run through the native host's loopback proxy, which holds the tokens.
 		const routed = await routeSubscriptionModel(model, rest[1]);
 		if (routed) return explainErrors(await inner(routed.model, rest[0], routed.options), model.provider);
-		if (model.api === "openai-completions") {
-			const custom = await storage.customProviders.getAll().catch(() => []);
-			if (custom.some((p) => p.name === model.provider)) {
-				model = { ...model, compat: { ...(model.compat ?? {}), omitMaxTokens: true } };
-			}
-		}
+		const custom = await storage.customProviders.getAll().catch(() => []);
+		if (model.api === "openai-completions" && custom.some((p) => p.name === model.provider))
+			return inner(model, rest[0], withoutReplyCap(rest[1]));
 		return inner(model, ...rest);
 	}) as F;
+}
+
+/** Documents attached to this chat's messages, with their extracted text, for extract_document {attachment}. */
+function chatDocuments(): LoadedDocument[] {
+	const out: LoadedDocument[] = [];
+	for (const m of agent?.state.messages ?? []) {
+		if (m.role !== "user-with-attachments") continue;
+		for (const a of (
+			m as {
+				attachments?: Array<{
+					type: string;
+					fileName: string;
+					mimeType: string;
+					size: number;
+					extractedText?: string;
+				}>;
+			}
+		).attachments ?? [])
+			if (a.type === "document" && a.extractedText)
+				out.push({ extractedText: a.extractedText, fileName: a.fileName, mimeType: a.mimeType, size: a.size });
+	}
+	return out;
 }
 
 const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true) => {
@@ -921,12 +941,15 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			return browserMessageTransformer(messages);
 		},
 		toolExecution: "sequential",
-		streamFn: uncappedStreamFn(
-			createStreamFn(async () => {
-				const enabled = await storage.settings.get<boolean>("proxy.enabled");
-				if (!enabled) return undefined;
-				return (await storage.settings.get<string>("proxy.url")) || undefined;
-			}),
+		// Outermost: every request is fitted to the model's window, whichever route sends it (context-guard.ts).
+		streamFn: guardContext(
+			uncappedStreamFn(
+				createStreamFn(async () => {
+					const enabled = await storage.settings.get<boolean>("proxy.enabled");
+					if (!enabled) return undefined;
+					return (await storage.settings.get<string>("proxy.url")) || undefined;
+				}),
+			),
 		),
 		getApiKey: async (provider: string) => {
 			const stored = await storage.providerKeys.get(provider);
@@ -1086,8 +1109,12 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			const navigateTool = new NavigateTool();
 			const selectElementTool = new AskUserWhichElementTool();
 
-			// Create extract_document tool with CORS proxy from settings (loaded above)
-			const extractDocumentTool = createExtractDocumentTool();
+			// Polycarp's bounded extract_document (pages, query), with the CORS proxy from settings (loaded above).
+			const extractDocumentTool = createExtractDocumentTool({
+				// The budget the guard fits each result to, so what the tool returns is never cut again.
+				budgetChars: () => toolBudgetChars(agent?.state.model),
+				attachments: chatDocuments,
+			});
 			if (corsProxyEnabled && corsProxyUrl) {
 				extractDocumentTool.corsProxyUrl = `${corsProxyUrl}/?url=`;
 			}
@@ -1114,8 +1141,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 			const tools: AgentTool<any, any>[] = [
 				navigateTool,
-				// read_page, find, get_page_text, act, handle_dialog: the bridge's ref tools (src/tools/page-tools.ts).
-				...panelPageTools(),
+				// read_page, find, get_page_text, act, handle_dialog: the bridge's ref tools (src/tools/page-tools.ts),
+				// their reads sized to the budget the guard fits each result to.
+				...panelPageTools(() => toolBudgetChars(agent?.state.model)),
 				selectElementTool,
 				new AskUserTool(),
 				replTool,
