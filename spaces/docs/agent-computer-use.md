@@ -169,7 +169,9 @@ verbs, in MCP and the CLI, all on the agent workspace only:
 
 - `workspaces` (read only): each workspace's number and whether it is shown, which one is the agent's, whether
   Donovan is looking at it (`agent_workspace_shown`), and where each window you may use is. No names or titles.
-- `open` returns the window id (waiting up to `wait`, at most 7 s within the claim), takes `new_window` (false reuses
+- `open` returns the window id (waiting up to `wait`, at most 7 s within the claim). When none of a copy it started is on
+  the agent workspace 7 s after the open (and one more full look finds none), it quits that copy, and `open` fails
+  (or, after a shorter `wait`, the copy is quit then and the note says so). It takes `new_window` (false reuses
   this session's window of that app; one open per app runs at a time and never takes a window another session owns. Each
   open is tied to its own launch: a new process's open takes only that process's windows, also after it replied with
   `window_identified: false` (for 30 s); an open of an app already running takes a window only while it is that app's
@@ -194,6 +196,18 @@ verbs, in MCP and the CLI, all on the agent workspace only:
 Agents never switch which workspace is shown, never create, delete or rename one, and never focus a window. Read Only
 refuses `arrange`, `move` and `close`, checked again with each target's scope and in use in the main-thread pass that
 makes the change (`MutationGate`; `arrange` applies every frame or none); connectors get `workspaces` only (`WorkspaceVerbs.connectorRefusal`).
+
+Decided 2026-11-12 (Claude, lead agent; Donovan has not ruled on it): `open` does not launch an app hidden. An app that wasn't running may show its first
+window on the current workspace for about 60 ms before the claim moves it; that flash stays. PR 172 tried a hidden
+launch and was reverted (PR 174): on the installed build c1a5f8cd, `swift scripts/agent-open-probe.swift 3 "Font Book"
+"Dictionary"` failed every open. The cause is in the identify path: a copy launched hidden lists no windows through
+its AXWindows (`Windows.all`, Windows.swift:221), so the model never sees them, and the window server lists them
+(`.optionAll`) but can't move them. Moving another app's window needs Accessibility, and parking (hide, move, unhide)
+works only for windows the app has already shown (field note `hidden-macos-apps-stop-answering-accessibility`). The
+harm the hidden launch was meant to stop is covered by the quit rule (PR 179, in review when this was written): a copy the agent started that has no
+window on the agent workspace 7 s after the open is quit, so an unplaced window never stays on Donovan's screen. Don't
+retry a hidden launch without new evidence: a probe showing a hidden copy's window identified and moved without
+Accessibility, or Accessibility answering for that hidden copy.
 
 ## Access modes
 
