@@ -799,34 +799,18 @@ final class HandsRouter {
         }
         // The launch's own process, when it started one: the only one a miss below may quit.
         let launched = runningPid == nil ? AgentLaunches.shared.pid(token) : nil
-        if window == nil, start != .overlap, let pid = launched,
-           OpenMiss.looksAgain(wait: wait, mainThread: Thread.isMainThread) {
-            // One more full look: an app still starting answers Accessibility late, and its window then joins the
-            // agent workspace (`Spaces.adoptBackgroundWindows` takes an agent-started process's windows a moment after).
-            // Its bench is cleared first, or the rescan would skip the very app it is for (review 157 F1).
-            Windows.markResponsive(pid)
-            onMain { host.rescan() }
-            let until = Date().addingTimeInterval(1)
-            repeat {
-                Thread.sleep(forTimeInterval: 0.15)
-                window = lookOnce()
-            } while window == nil && Date() < until
-            if window == nil {
-                let (all, agent) = listWindows()
-                let held = Set(all.filter { $0.pid == pid && $0.workspace != nil && $0.workspace == agent }.map(\.id))
-                let stray = Self.drawnWindows(of: pid).subtracting(held)
-                let owned = onMain { host.agentOwned() }
-                switch OpenMiss.decide(launched: pid, agentStarted: owned, startedAt: AgentOwned.startTime(pid),
-                                       requestStart: requestStart.timeIntervalSince1970, stray: stray.count, held: held.count) {
-                case .quit(let p):
-                    childLocked { sessionWindows.cancelOpen(token) }
-                    Self.quit(p)
-                    Trace.log("agent open \(display): quit its copy (pid \(p)), window(s) \(stray.sorted().map(String.init).joined(separator: ",")) drawn outside the agent workspace")
-                    return .failure(HandsError(.actionFailed, "\(display) opened a window Polycarp couldn't put on the agent workspace, so that copy was quit",
-                                               suggestion: "Run `open` again.", retry: .safe))
-                case .leave:
-                    Trace.log("agent open \(display): pid \(pid) drew \(stray.count) window(s) outside the agent workspace; not this request's copy, left alone")
-                case .wait: break
+        var missLater = false
+        if window == nil, start != .overlap, let pid = launched {
+            switch OpenMiss.check(wait: wait, mainThread: Thread.isMainThread, elapsed: Date().timeIntervalSince(requestStart)) {
+            case .now:
+                let miss = missCheck(pid: pid, display: display, token: token, requestStart: requestStart, look: lookOnce)
+                if let e = miss.error { return .failure(e) }
+                window = miss.window
+            case .after(let delay):
+                // A short wait, or the main thread, answers now; the check still runs once the claim has passed (163 second-F5).
+                missLater = true
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [self] in
+                    _ = missCheck(pid: pid, display: display, token: token, requestStart: requestStart, look: lookOnce)
                 }
             }
         }
@@ -853,15 +837,52 @@ final class HandsRouter {
             // Its window may still come: when its own launch's window appears within 30 s it is this session's. An open that
             // overlapped another open of the same running app gets none.
             childLocked { sessionWindows.endOpen(token) }
-            data["note"] = .string(OpenNote.text(start, app: display))
+            data["note"] = .string(OpenNote.text(start, app: display)
+                + (missLater ? ". If no window of it is on the agent workspace \(Int(OpenMiss.claimWait)) s after the open, Polycarp quits that copy" : ""))
         }
         return .success(.object(data))
     }
 
-    /// The ordinary windows of `pid` the window server draws that a person can see (layer 0, on screen, not clear, over
-    /// 50 x 50: `OpenMiss.visible`), parked ones included.
-    static func drawnWindows(of pid: pid_t) -> Set<UInt32> {
-        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+    /// The miss check (`OpenMiss`): the launch's own copy with no window on the agent workspace once the claim has passed
+    /// gets one more full look, and is quit when that finds none, so no window of it is left on Donovan's screen, drawn
+    /// now or later. Answers the window that look found, or the error `open` returns for a quit copy.
+    private func missCheck(pid: pid_t, display: String, token: Int, requestStart: Date, look: () -> HandsWindow?) -> (window: HandsWindow?, error: HandsError?) {
+        // One more full look: an app still starting answers Accessibility late, and its window then joins the agent
+        // workspace (`Spaces.adoptBackgroundWindows` takes an agent-started process's windows a moment after). Its bench is
+        // cleared first, or the rescan would skip the very app it is for (review 157 F1).
+        Windows.markResponsive(pid)
+        onMain { host.rescan() }
+        var window: HandsWindow?
+        let until = Date().addingTimeInterval(1)
+        repeat {
+            Thread.sleep(forTimeInterval: 0.15)
+            window = look()
+        } while window == nil && Date() < until
+        if let window { return (window, nil) }
+        let (all, agent) = listWindows()
+        let held = Set(all.filter { $0.pid == pid && $0.workspace != nil && $0.workspace == agent }.map(\.id))
+        let elsewhere = Self.listedWindows(of: pid).subtracting(held)
+        let owned = onMain { host.agentOwned() }
+        let waited = String(format: "%.1f", Date().timeIntervalSince(requestStart))
+        switch OpenMiss.decide(launched: pid, agentStarted: owned, startedAt: AgentOwned.startTime(pid),
+                               requestStart: requestStart.timeIntervalSince1970, held: held.count) {
+        case .quit(let p):
+            childLocked { sessionWindows.cancelOpen(token) }
+            Self.quit(p)
+            Trace.log("agent open \(display): quit its copy (pid \(p)), no window on the agent workspace in \(waited)s; window(s) elsewhere: \(elsewhere.isEmpty ? "none" : elsewhere.sorted().map(String.init).joined(separator: ","))")
+            return (nil, HandsError(.actionFailed, "\(display) opened no window Polycarp could put on the agent workspace, so that copy was quit",
+                                    suggestion: "Run `open` again.", retry: .safe))
+        case .leave:
+            Trace.log("agent open \(display): pid \(pid) has no window on the agent workspace; not this request's copy, left alone")
+        case .placed, .wait: break
+        }
+        return (nil, nil)
+    }
+
+    /// The ordinary windows of `pid` the window server lists that a person could see (layer 0, not clear, over 50 x 50:
+    /// `OpenMiss.visible`), drawn or not: a hidden app's and parked ones included. For the miss check's trace line.
+    static func listedWindows(of pid: pid_t) -> Set<UInt32> {
+        let info = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
         return Set(info.compactMap { w -> UInt32? in
             guard (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid, (w[kCGWindowLayer as String] as? Int) == 0,
                   let b = (w[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) }),
