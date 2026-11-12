@@ -996,6 +996,77 @@ export async function snapshot(
 	return snap;
 }
 
+/** What the change report compares, one side of an action (src/browser/changes.ts). */
+export interface ChangeLook {
+	url: string;
+	title: string;
+	nodes: Array<SnapshotNode & { states?: string[] }>;
+	/** The focused element's ref, or "" (nothing focused, or focus on something unlisted). */
+	focus: string;
+	/** Stands for the document: a new one means a new page, whatever the URL says. */
+	doc: string;
+	/** Of `before`, the refs not listed now whose element left the page or is hidden. */
+	gone: string[];
+	/** The page's rendered text, as read_page gives it (capped). */
+	text: string;
+}
+
+/**
+ * Page side of a change look: what has focus, through open shadow roots and same-origin frames,
+ * and an id for this document. Self-contained.
+ */
+function focusProbe(): { focus: string; doc: string } {
+	const w = window as unknown as { __tabkyraRefOf?: unknown; __tabkyraDocId?: unknown };
+	if (typeof w.__tabkyraDocId !== "string") w.__tabkyraDocId = Math.random().toString(36).slice(2);
+	let el: Element | null = document.activeElement;
+	for (let i = 0; i < 20 && el; i++) {
+		let inner: Element | null =
+			(el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot?.activeElement ?? null;
+		if (!inner && /^i?frame$/i.test(el.tagName)) {
+			try {
+				inner = (el as HTMLIFrameElement).contentDocument?.activeElement ?? null;
+			} catch {
+				inner = null;
+			}
+		}
+		if (!inner || inner === el) break;
+		el = inner;
+	}
+	const refOf = w.__tabkyraRefOf instanceof WeakMap ? (w.__tabkyraRefOf as WeakMap<Element, string>) : undefined;
+	const blank = !el || el.tagName === "BODY" || el.tagName === "HTML";
+	return { focus: blank ? "" : (refOf?.get(el as Element) ?? ""), doc: w.__tabkyraDocId as string };
+}
+
+/** Page side: which of `refs` left the page or are hidden now. Self-contained. */
+function refsGone(refs: string[], live: (el: Element) => boolean): string[] {
+	const w = window as unknown as { __tabkyraRefs?: unknown };
+	const map = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : undefined;
+	return refs.filter((r) => {
+		const el = map?.get(r);
+		if (!el || !live(el)) return true;
+		const b = el.getBoundingClientRect();
+		if (b.width === 0 || b.height === 0) return true;
+		const st = (el.ownerDocument.defaultView ?? window).getComputedStyle(el);
+		return st.visibility === "hidden" || st.display === "none" || st.opacity === "0";
+	});
+}
+
+/**
+ * One side of the change report, in one round trip: the interactive elements with their refs (the
+ * same refs read_page gives, so they stay valid), focus, the document, and which of `before` went.
+ */
+export async function changeLook(tabId: number, maxNodes: number, before: string[] = []): Promise<ChangeLook> {
+	const code = `(() => {
+		const s = (${pageSnapshot.toString()})(${maxNodes}, 20000, "interactive", ${refLive.toString()}, ${refPrint.toString()});
+		const listed = new Set(s.nodes.map((n) => n.ref));
+		const gone = (${refsGone.toString()})(${JSON.stringify(before)}.filter((r) => !listed.has(r)), ${refLive.toString()});
+		return { url: s.url, title: s.title, nodes: s.nodes, gone, text: s.text, ...(${focusProbe.toString()})() };
+	})()`;
+	const look = await runInPage<ChangeLook>(tabId, code);
+	if (typeof look?.url === "string") look.url = maskUrl(look.url);
+	return look;
+}
+
 /**
  * Page-side statements that leave the element a ref or selector names in `el`, with the errors
  * locate gives. For code that runs in the snapshot world (the default of runInPage), where refs live.
