@@ -1,20 +1,23 @@
 {
-	"note": "Recorded scores the ratchet holds (test/weak-model-baseline.test.mjs). Raise a number only with a committed round that reached it; never lower one to make CI pass. Signup is scored under signup-v2 (evals/weak-model/signup-rule.mjs): round 1 was rescored from its transcripts.",
+	"note": "Recorded scores the ratchet holds (test/weak-model-baseline.test.mjs). Raise a number only with a committed round that reached it; never lower one to make CI pass. Signup is scored under signup-v2 in every round (evals/weak-model/signup-rule.mjs): rounds 1 and 2 were rescored from their transcripts.",
 	"rounds": {
-		"r1-haiku": {
-			"passed": 40,
-			"total": 44
-		}
+		"r1-haiku": { "passed": 40, "total": 44 },
+		"r2-haiku": { "passed": 26, "total": 28 },
+		"r2-small": { "passed": 26, "total": 28 },
+		"s-sonnet": { "passed": 5, "total": 6 },
+		"r3-haiku": { "passed": 30, "total": 30 },
+		"r3-small": { "passed": 28, "total": 30 },
+		"r3-sonnet": { "passed": 6, "total": 6 }
 	},
 	"latest": {
-		"haiku-full": "r1-haiku"
+		"haiku-full": "r3-haiku",
+		"haiku-small": "r3-small",
+		"sonnet-full": "r3-sonnet"
 	},
 	"floor": {
-		"haiku-full": 0.9
+		"haiku-full": 0.9,
+		"haiku-small": 0.85,
+		"sonnet-full": 0.9
 	},
-	"readSize": {
-		"label": "after",
-		"medianTokens": 1500,
-		"maxTokens": 3000
-	}
+	"readSize": { "label": "after", "medianTokens": 1500, "maxTokens": 3000 }
 }

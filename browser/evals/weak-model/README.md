@@ -26,6 +26,7 @@ From `browser/`, after `npm run build` in `cli/` and an extension build with `TA
 ```sh
 node evals/weak-model/run.mjs --label r2-haiku                    # all tasks, 2 trials, claude-haiku-5-5
 node evals/weak-model/run.mjs --label s-sonnet --model claude-sonnet-5-5 --trials 1 --only wizard,pagination
+node evals/weak-model/run.mjs --label r2-small --profile small    # the small tool profile
 node evals/weak-model/report.mjs r2-haiku                         # per run: calls, errors, repeats, failures
 node evals/weak-model/measure-read.mjs after                      # read_page and tools/list sizes on 8 public pages
 ```
