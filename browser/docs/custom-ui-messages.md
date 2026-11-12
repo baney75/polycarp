@@ -259,5 +259,6 @@ document.addEventListener("tutorial-selected", (e: CustomEvent) => {
 **Examples:**
 - `sitegeist/src/messages/NavigationMessage.ts` - Navigation message
 - `sitegeist/src/messages/WelcomeMessage.ts` - UI-only message
+- `browser/src/messages/CompactionMessage.ts` - UI-only message the model never sees directly; `compactor.ts` puts its notes in the request
 - `sitegeist/src/message-transformer.ts` - Message transformation
 - `sitegeist/src/sidepanel.ts` - Agent setup and event handling

@@ -63,6 +63,7 @@ import { SiteEditsTab } from "./dialogs/SiteEditsTab.js";
 import { SkillsTab } from "./dialogs/SkillsTab.js";
 import { UpdatesTab } from "./dialogs/UpdatesTab.js";
 import { type WelcomeChoice, WelcomeSetupDialog } from "./dialogs/WelcomeSetupDialog.js";
+import { registerCompactionRenderer } from "./messages/CompactionMessage.js";
 import { browserMessageTransformer } from "./messages/message-transformer.js";
 import {
 	createNavigationMessage,
@@ -71,6 +72,7 @@ import {
 } from "./messages/NavigationMessage.js";
 import { registerUserMessageRenderer } from "./messages/UserMessageRenderer.js";
 import { createWelcomeMessage, registerWelcomeRenderer } from "./messages/WelcomeMessage.js";
+import { createCompactor, streamSummarizer } from "./models/compactor.js";
 import { guardContext, toolBudgetChars, withoutReplyCap } from "./models/context-guard.js";
 import { modelLabelParts } from "./models/display.js";
 import { FREE_KEY_NOTE, FREE_PRIVACY_NOTE, FREE_SHORT_NOTE } from "./models/free-mode.js";
@@ -124,6 +126,7 @@ setTranscriptRenderer(tabkyraTranscript);
 
 // Register custom message renderers
 registerNavigationRenderer();
+registerCompactionRenderer();
 registerExtractImageRenderer();
 registerPageToolRenderers();
 
@@ -926,6 +929,35 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 
 	// Messages from a saved chat keep what they were sent with; only new ones get references resolved.
 	const loadedMessages = new WeakSet<object>(initialState?.messages ?? []);
+	// Outermost: every request is fitted to the model's window, whichever route sends it (context-guard.ts).
+	const streamFn = guardContext(
+		uncappedStreamFn(
+			createStreamFn(async () => {
+				const enabled = await storage.settings.get<boolean>("proxy.enabled");
+				if (!enabled) return undefined;
+				return (await storage.settings.get<string>("proxy.url")) || undefined;
+			}),
+		),
+	);
+	const getApiKey = async (provider: string) => {
+		const stored = await storage.providerKeys.get(provider);
+		if (!stored) return undefined;
+		return resolveApiKey(stored, provider);
+	};
+	// When the guard would drop earlier turns, they are summarized instead (compactor.ts).
+	const compactor = createCompactor({
+		model: () => agent?.state.model,
+		request: () => ({ systemPrompt: agent?.state.systemPrompt ?? "", tools: (agent?.state.tools ?? []) as never }),
+		toLlm: browserMessageTransformer,
+		summarize: streamSummarizer(streamFn, getApiKey),
+		// The record joins the stored chat, so the notes hold across a reload and the transcript shows the marker.
+		onCompacted: (record) => {
+			agent.appendMessage(record);
+			chatPanel?.agentInterface?.requestUpdate();
+			void saveSession();
+		},
+		onFailure: (message) => Toast.error(message, 8000),
+	});
 	agent = new Agent({
 		initialState: initialState
 			? { ...initialState, model: initialState.model ?? defaultModel }
@@ -941,21 +973,9 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			return browserMessageTransformer(messages);
 		},
 		toolExecution: "sequential",
-		// Outermost: every request is fitted to the model's window, whichever route sends it (context-guard.ts).
-		streamFn: guardContext(
-			uncappedStreamFn(
-				createStreamFn(async () => {
-					const enabled = await storage.settings.get<boolean>("proxy.enabled");
-					if (!enabled) return undefined;
-					return (await storage.settings.get<string>("proxy.url")) || undefined;
-				}),
-			),
-		),
-		getApiKey: async (provider: string) => {
-			const stored = await storage.providerKeys.get(provider);
-			if (!stored) return undefined;
-			return resolveApiKey(stored, provider);
-		},
+		transformContext: (messages, signal) => compactor.transform(messages, signal),
+		streamFn,
+		getApiKey,
 	});
 
 	if (shouldSave) {
