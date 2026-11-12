@@ -2,14 +2,16 @@
 // decide which account a run bills, which session and app copies it owns, and how its runs are scored and kept.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { spawn } from "node:child_process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { HandsClient } from "../evals/weak-model/hands.mjs";
-import { childEnv, KEY_VARS, keyVarsSet, ownPids, restorePrefs, sessionName, settledState, stopCleanup } from "../evals/weak-model/lib.mjs";
+import { Cleanup, ClearError, onExits, restorePrefsOrKeep, spawnClaude } from "../evals/weak-model/cleanup.mjs";
+import { childEnv, KEY_VARS, keyVarsSet, mountId, safeId, sessionName, settledState } from "../evals/weak-model/lib.mjs";
+import { Transcript } from "../evals/weak-model/transcript.mjs";
 import { handedOff, rescoreSignup } from "../evals/weak-model/signup-rule.mjs";
 import { loadRuns, summarize } from "../evals/weak-model/summarize.mjs";
 
@@ -47,16 +49,6 @@ test("a key variable in the parent stops the run before anything starts, and nev
 	const env = childEnv({ ...parent, HOME: "/h", PATH: "/bin" });
 	assert.deepEqual(env, { HOME: "/h", PATH: "/bin" });
 	for (const k of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"]) assert.ok(KEY_VARS.includes(k), k);
-});
-
-test("a long label keeps each trial in its own session", () => {
-	const label = "s-sonnet-5-5-read-page-budget-after-fix-round-3-with-a-much-longer-tail";
-	const a = sessionName(label, "signup-validation", 1);
-	const b = sessionName(label, "signup-validation", 2);
-	assert.notEqual(a, b);
-	assert.ok(a.length <= 64 && b.length <= 64);
-	assert.match(a, /-signup-validation-1$/);
-	assert.notEqual(sessionName("r1-haiku", "wizard", 1), sessionName("r2-haiku", "wizard", 1), "labels stay apart");
 });
 
 test("the scorer waits for a POST that lands after claude exits, past the old fixed 600 ms", async () => {
@@ -97,50 +89,6 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", (l
 	}
 });
 
-test("the runner owns only the app copies its own computer_open calls started", () => {
-	const open = (data, error = false) => ({ tool: "computer_open", error, result: JSON.stringify({ ok: true, data }) });
-	const calls = [
-		open({ app: "TextEdit", pid: 101, reused: false }),
-		open({ app: "TextEdit", pid: 202, reused: true }),
-		open({ app: "Calculator", window_identified: false }),
-		open({ app: "Preview", pid: 303, reused: false }, true),
-		{ tool: "computer_open", args: { app: "Preview" } },
-		{ tool: "computer_windows", error: false, result: JSON.stringify({ data: { windows: [{ pid: 404 }] } }) },
-	];
-	assert.deepEqual([...ownPids(calls)], [101]);
-});
-
-test("a stopped run removes its fixture folder and closes only its own copies", async () => {
-	const dir = mkdtempSync(join(tmpdir(), "wm-handoff-"));
-	mkdirSync(join(dir, "wizard-1"));
-	writeFileSync(join(dir, "wizard-1", "notes.txt"), "x");
-	const mine = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"]);
-	const other = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"]);
-	const exited = new Promise((r) => mine.on("exit", (_c, sig) => r(sig)));
-	try {
-		stopCleanup(new Set([mine.pid]), dir);
-		assert.equal(await exited, "SIGTERM");
-		assert.equal(existsSync(dir), false);
-		assert.equal(other.exitCode, null, "a copy the run did not start keeps running");
-	} finally {
-		mine.kill("SIGKILL");
-		other.kill("SIGKILL");
-	}
-});
-
-test("prefs restore imports a backup, deletes a domain that did not exist, and leaves an unknown one alone", () => {
-	const ran = [];
-	restorePrefs(
-		[
-			{ domain: "com.apple.calculator", file: "/b/calc.plist" },
-			{ domain: "com.apple.TextEdit", file: undefined, absent: true },
-			{ domain: "com.apple.Preview", file: undefined, absent: false },
-		],
-		(cmd, args) => ran.push([cmd, ...args].join(" ")),
-	);
-	assert.deepEqual(ran, ["defaults import com.apple.calculator /b/calc.plist", "defaults delete com.apple.TextEdit"]);
-});
-
 const round = () => {
 	const root = mkdtempSync(join(tmpdir(), "wm-results-"));
 	mkdirSync(join(root, "r9"));
@@ -167,15 +115,6 @@ test("a partial rerun replaces only its own runs in the committed round", () => 
 	assert.equal(readFileSync(join(root, "r9", "runs.jsonl"), "utf8").trim().split("\n").length, 3);
 });
 
-test("a finished rerun clears an old stopped mark; a bare rebuild keeps it", () => {
-	const root = round();
-	writeFileSync(join(root, "r9", "a-t1.json"), JSON.stringify(rec("a", 1, true)));
-	writeFileSync(join(root, "r9", "summary.json"), JSON.stringify({ stopped: true }));
-	assert.equal(summarize("r9", { root }).stopped, true, "bare rebuild keeps the old mark");
-	assert.equal(summarize("r9", { root, stopped: false }).stopped, undefined);
-	assert.equal(JSON.parse(readFileSync(join(root, "r9", "summary.json"), "utf8")).stopped, undefined);
-});
-
 test("a handoff counts only when its call returned without error", () => {
 	assert.equal(handedOff([{ tool: "tabs_show", args: {} }]), false, "in flight at timeout: no result recorded");
 	assert.equal(handedOff([{ tool: "tabs_show", error: true }]), false);
@@ -187,4 +126,219 @@ test("the rescore does not read 'unchecked' or 'none' as accepting the terms", (
 	const page = { tool: "read_page", error: false, result: 'e1 checkbox "I accept the terms"' };
 	for (const value of ["unchecked", "none"]) assert.ok(rescoreSignup({ calls: [page, { tool: "fill", error: false, args: { ref: "e1", value } }] }).includes("terms not accepted"), value);
 	assert.ok(!rescoreSignup({ calls: [page, { tool: "fill", error: false, args: { ref: "e1", value: "checked" } }] }).includes("terms not accepted"));
+});
+
+// ---------- one cleanup registry, run once from every way out ----------
+
+/** A registry of three named undos that record the order they ran in. */
+function registry() {
+	const ran = [];
+	const logged = [];
+	const cleanup = new Cleanup({ log: (l) => logged.push(l) });
+	for (const name of ["scratch", "chromium", "claude"]) cleanup.add(name, () => ran.push(name));
+	return { cleanup, ran, logged };
+}
+
+test("cleanup runs every undo in reverse, once, and still runs one added after it began", async () => {
+	const { cleanup, ran } = registry();
+	const gone = cleanup.add("closed early", () => ran.push("closed early"));
+	await gone.undo();
+	await Promise.all([cleanup.run(), cleanup.run()]);
+	assert.deepEqual(ran, ["closed early", "claude", "chromium", "scratch"]);
+	cleanup.add("late pid", () => ran.push("late pid"));
+	await new Promise((r) => setImmediate(r));
+	assert.deepEqual(ran.slice(-1), ["late pid"], "an app copy seen during cleanup is still closed");
+	await cleanup.run();
+	assert.equal(ran.length, 5, "a second run undoes nothing again");
+});
+
+for (const [event, code, arg] of [
+	["SIGINT", 130],
+	["SIGTERM", 143],
+	["SIGHUP", 129],
+	["uncaughtException", 1, new Error("boom")],
+	["unhandledRejection", 1, new Error("lost")],
+]) {
+	test(`${event}: cleanup runs once in reverse, then the run exits ${code}`, async () => {
+		const { cleanup, ran } = registry();
+		const proc = new EventEmitter();
+		const exits = [];
+		const lines = [];
+		onExits(cleanup, { proc, exit: (c) => exits.push([c, [...ran]]), log: (l) => lines.push(l) });
+		proc.emit(event, arg);
+		proc.emit(event, arg);
+		await cleanup.run();
+		await new Promise((r) => setImmediate(r));
+		assert.deepEqual(exits, [[code, ["claude", "chromium", "scratch"]]], "exit comes after the whole cleanup, once");
+		assert.equal(lines.length, 1, lines.join("\n"));
+	});
+}
+
+test("a normal end and a thrown error leave through the same once-only cleanup", async () => {
+	for (const [how, code] of [
+		["end", 0],
+		["throw", 1],
+	]) {
+		const { cleanup, ran } = registry();
+		const exits = [];
+		const { leave, fail } = onExits(cleanup, { proc: new EventEmitter(), exit: (c) => exits.push(c), log: () => {} });
+		await (how === "end" ? leave(0) : fail(new Error("x")));
+		await leave(0);
+		assert.deepEqual(ran, ["claude", "chromium", "scratch"], how);
+		assert.deepEqual(exits, [code], how);
+	}
+});
+
+/** A stand-in for spawn: a child with a pid, streams and a recorded kill. */
+function fakeSpawn() {
+	const made = [];
+	const spawnFn = (cmd, args, opts) => {
+		const child = new EventEmitter();
+		child.pid = 4242;
+		child.stdout = new EventEmitter();
+		child.stderr = new EventEmitter();
+		made.push({ cmd, opts, child });
+		return child;
+	};
+	return { made, spawnFn };
+}
+
+test("claude -p runs in its own process group, and cleanup kills the whole group", async () => {
+	const { made, spawnFn } = fakeSpawn();
+	const kills = [];
+	const cleanup = new Cleanup({ log: () => {} });
+	const { closed } = spawnClaude(["-p", "x"], { cleanup, cwd: "/", env: {}, spawnFn, kill: (pid, sig) => kills.push([pid, sig]), graceMs: 10 });
+	assert.equal(made[0].opts.detached, true, "a group of its own");
+	await cleanup.run();
+	assert.deepEqual(kills, [
+		[-4242, "SIGTERM"],
+		[-4242, "SIGKILL"],
+	]);
+	made[0].child.emit("close", 0);
+	assert.equal(await closed, 0);
+	assert.equal(kills.length, 2, "killed once");
+});
+
+test("claude not on PATH: one clear line, cleanup, then a non-zero exit", async () => {
+	const { made, spawnFn } = fakeSpawn();
+	const { cleanup, ran } = registry();
+	const order = [];
+	const { fail } = onExits(cleanup, { proc: new EventEmitter(), exit: (c) => order.push(`exit ${c}`), log: (l) => order.push(l) });
+	const { closed } = spawnClaude(["-p", "x"], { cleanup, cwd: "/", env: {}, spawnFn, kill: () => {}, graceMs: 10 });
+	made[0].child.pid = undefined;
+	made[0].child.emit("error", Object.assign(new Error("spawn claude ENOENT"), { code: "ENOENT" }));
+	await closed.then(
+		() => assert.fail("closed should reject"),
+		async (err) => {
+			assert.ok(err instanceof ClearError);
+			await fail(err);
+		},
+	);
+	assert.deepEqual(order, ["claude not found on PATH: install Claude Code or put it on PATH, then run again", "exit 1"]);
+	assert.deepEqual(ran, ["claude", "chromium", "scratch"]);
+});
+
+// ---------- the copies a run started, known as their answers stream in ----------
+
+const toolUse = (id, name, input) => ({ type: "assistant", message: { content: [{ type: "tool_use", id, name: `mcp__polycarp__${name}`, input }] } });
+const toolResult = (id, text, isError = false) => ({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, is_error: isError, content: [{ type: "text", text }] }] } });
+const opened = (data) => JSON.stringify({ ok: true, data });
+
+test("a started copy is recorded the moment its answer arrives: long answers and more_tools included", () => {
+	const seen = [];
+	const t = new Transcript({ onStarted: (pid) => seen.push(pid) });
+	t.push(toolUse("a", "computer_open", { app: "TextEdit" }));
+	t.push(toolResult("a", opened({ app: "TextEdit", pid: 101, reused: false, windows: "x".repeat(5000) })));
+	assert.deepEqual(seen, [101], "before claude exits, from a 5,000-character answer");
+	assert.match(t.calls[0].result, /more chars\]$/, "the record is still clipped");
+	t.push(toolUse("b", "more_tools", { name: "computer_open", arguments: { app: "Preview" } }));
+	t.push(toolResult("b", opened({ app: "Preview", pid: 202, reused: false })));
+	t.push(toolUse("c", "computer_open", { app: "Calculator" }));
+	t.push(toolResult("c", opened({ app: "Calculator", pid: 303, reused: true })));
+	t.push(toolUse("d", "computer_open", { app: "Calculator" }));
+	t.push(toolResult("d", opened({ app: "Calculator", pid: 404, reused: false }), true));
+	t.push(toolUse("e", "computer_windows", {}));
+	t.push(toolResult("e", opened({ windows: [{ pid: 505 }] })));
+	assert.deepEqual(seen, [101, 202], "never a reused copy, an error or a window read");
+});
+
+test("a failed prefs restore keeps the backups in a named folder and keeps scratch", async () => {
+	const scratch = mkdtempSync(join(tmpdir(), "wm-scratch-"));
+	const file = join(scratch, "com.apple.TextEdit.plist");
+	writeFileSync(file, "plist");
+	const keepDir = join(mkdtempSync(join(tmpdir(), "wm-keep-")), "prefs-1");
+	const lines = [];
+	const cleanup = new Cleanup({ log: () => {} });
+	let keep = false;
+	cleanup.add("scratch", () => {
+		if (!keep) rmSync(scratch, { recursive: true, force: true });
+	});
+	cleanup.add("app preferences", () => {
+		keep = !restorePrefsOrKeep([{ domain: "com.apple.TextEdit", file }], {
+			exec: () => {
+				throw new Error("rejected");
+			},
+			keepDir,
+			log: (l) => lines.push(l),
+		});
+	});
+	await cleanup.run();
+	assert.deepEqual(readdirSync(keepDir), ["com.apple.TextEdit.plist"]);
+	assert.ok(existsSync(file), "scratch is kept when a restore failed");
+	assert.match(lines.join("\n"), new RegExp(`kept at ${keepDir}`));
+	const ran = [];
+	assert.equal(restorePrefsOrKeep([{ domain: "a", file: "/b/a.plist" }, { domain: "c", absent: true }, { domain: "d", absent: false }], { exec: (c, a) => ran.push([c, ...a].join(" ")), keepDir: "/never" }), true);
+	assert.deepEqual(ran, ["defaults import a /b/a.plist", "defaults delete c"]);
+});
+
+// ---------- honest summaries ----------
+
+test("only a run that made every job clears stopped; model and trials come from the runs", () => {
+	const root = round();
+	writeFileSync(join(root, "r9", "runs.jsonl"), `${[rec("a", 1, true), rec("a", 2, true), rec("b", 1, true), rec("b", 2, false)].map((r) => JSON.stringify(r)).join("\n")}\n`);
+	writeFileSync(join(root, "r9", "summary.json"), JSON.stringify({ stopped: true, model: "m", trials: 2 }));
+	writeFileSync(join(root, "r9", "a-t1.json"), JSON.stringify(rec("a", 1, true, { model: "m" })));
+	const partial = summarize("r9", { root, stopped: false, complete: false });
+	assert.equal(partial.stopped, true, "a --only rerun keeps the mark");
+	assert.equal(partial.trials, 2, "a --trials 1 rerun doesn't rewrite the round's trials");
+	assert.equal(partial.model, "m");
+	assert.equal(summarize("r9", { root }).stopped, true, "a bare rebuild keeps it");
+	assert.equal(summarize("r9", { root, stopped: false, complete: true }).stopped, undefined);
+	assert.equal(summarize("r9", { root, stopped: true, complete: false }).stopped, true);
+	writeFileSync(join(root, "r9", "b-t2.json"), JSON.stringify(rec("b", 2, true, { model: "s" })));
+	assert.equal(summarize("r9", { root }).model, "m,s", "a mixed round names both models");
+});
+
+test("bad numbers, an unknown --kind or an empty selection exit 2 with the reason and write nothing", () => {
+	const dir = mkdtempSync(join(tmpdir(), "wm-tasks-"));
+	writeFileSync(join(dir, "demo.mjs"), `export const demo = [{ id: "demo", kind: "browser", prompt: (u) => u }, { id: "calc", kind: "computer", prompt: (u) => u }];\n`);
+	const label = `wm-test-${process.pid}`;
+	for (const [args, why] of [
+		[["--trials", "two"], /--trials takes a whole number above 0, not "two"/],
+		[["--concurrency", "x"], /--concurrency takes/],
+		[["--turns", "0"], /--turns takes/],
+		[["--wall", "1.5"], /--wall takes/],
+		[["--kind", "brwser"], /--kind takes browser, computer or all, not "brwser"/],
+		[["--only", "calc"], /no task matches --kind browser and --only calc \(computer tasks are off/],
+	]) {
+		const r = spawnSync(process.execPath, [run, "--label", label, ...args, "--list"], { env: cleanEnv({ WM_TASKS_DIR: dir, WM_ALLOW_COMPUTER: "" }), encoding: "utf8", timeout: 30_000 });
+		assert.equal(r.status, 2, `${args.join(" ")}: ${r.stdout}${r.stderr}`);
+		assert.match(r.stderr, why);
+		assert.equal(r.stdout, "");
+	}
+	assert.equal(existsSync(join(dirname(run), "results", label)), false, "no results folder");
+});
+
+test("one sanitizer names the mount and the session; the session keeps its trial and hash", () => {
+	assert.equal(safeId("r2 Haiku/1"), "r2-haiku-1");
+	assert.equal(mountId("r2 haiku", "wizard", 1), "wizard-r2-haiku-1", "no %20 between the page's POST and the scorer's lookup");
+	const long = "a-task-id-of-sixty-characters-that-goes-on-and-on-and-on-xyz";
+	const a = sessionName("r1-haiku", long, 1);
+	const b = sessionName("r2-haiku", long, 1);
+	const c = sessionName("r1-haiku", long, 2);
+	assert.ok([a, b, c].every((s) => s.length <= 64 && /^[a-z0-9_-]+$/.test(s)), [a, b, c].join(" "));
+	assert.notEqual(a, b, "labels stay apart however long the task id");
+	assert.notEqual(a, c, "trials stay apart");
+	assert.match(a, /-1-[0-9a-f]{8}$/);
+	assert.notEqual(sessionName("x", "wizard", 1), sessionName("x", "pagination", 1));
 });

@@ -24,18 +24,22 @@ export function loadRuns(label, root = join(here, "results")) {
 	return [...byRun.values()].sort((a, b) => a.task.localeCompare(b.task) || a.trial - b.trial);
 }
 
-/** Writes summary.json and runs.jsonl. meta.stopped is the run's own boolean; only a bare rebuild (no meta) keeps the old one. */
+/**
+ * Writes summary.json and runs.jsonl. The model and trials come from the merged runs, never from one rerun. `stopped`
+ * is set by a run that stopped (meta.stopped true), cleared only by a run that made every job of the round
+ * (meta.complete true), and otherwise kept: a partial rerun never clears it.
+ */
 export function summarize(label, meta = {}, runs = loadRuns(label, meta.root), root = meta.root ?? join(here, "results")) {
 	const dir = join(root, label);
 	const old = existsSync(join(dir, "summary.json")) ? JSON.parse(readFileSync(join(dir, "summary.json"), "utf8")) : {};
 	const sum = (f) => runs.reduce((n, r) => n + f(r), 0);
 	const head = {
 		label,
-		model: meta.model ?? old.model ?? runs[0]?.model,
-		trials: meta.trials ?? old.trials,
+		model: [...new Set(runs.map((r) => r.model).filter(Boolean))].sort().join(",") || old.model,
+		trials: runs.length ? Math.max(...runs.map((r) => r.trial)) : old.trials,
 		profile: meta.profile ?? old.profile ?? "full",
 		date: meta.date ?? old.date ?? new Date().toISOString(),
-		stopped: (meta.stopped ?? old.stopped) || undefined,
+		stopped: meta.stopped === true || (meta.complete !== true && old.stopped === true) || undefined,
 		passed: runs.filter((r) => r.pass).length,
 		total: runs.length,
 		calls: sum((r) => r.calls.length),
