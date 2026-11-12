@@ -68,7 +68,8 @@ enum HandsCLI {
             exit(2)
         case .success(let req):
             let env = send(req)
-            print(env.line)
+            // `--format rows` (or a rows-only option) prints the rows themselves, like the MCP tool.
+            if env.ok, env.data?["format"]?.string == "rows", let text = env.data?["text"]?.string { print(text) } else { print(env.line) }
             exit(env.ok ? 0 : 1)
         }
     }

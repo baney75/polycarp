@@ -8,6 +8,10 @@ import Foundation
 /// +0.58 s, each a 0.25 s timeout). Benching it like a hung app hid its first window for 35 s, past the 8 s claim an
 /// agent's `open` holds on it, so the window stayed where macOS drew it: on your screen. A young app is asked again within
 /// a second, and those misses don't count toward the hung back-off.
+///
+/// Only an app Polycarp is waiting on (one an agent's launch started) gets the young schedule. Any other app that just
+/// launched and hangs at once keeps the hung back-off, so it can't cost a timeout every 0.3 s on each switch for 15 s
+/// (review 157 F8).
 public struct AXBench: Equatable, Sendable {
     /// Seconds benched after each miss in a row by an app past `launching`; the last repeats.
     public static let hung: [TimeInterval] = [5, 30, 120, 600]
@@ -23,11 +27,12 @@ public struct AXBench: Equatable, Sendable {
     public init() {}
 
     /// Records a miss. `age` is the seconds since the app launched, nil when unknown (it counts as an old app).
-    /// Returns how long it is benched.
+    /// `waitedOn`: Polycarp is waiting for this app's first window (an agent's launch started it). Returns how long it is
+    /// benched.
     @discardableResult
-    public mutating func missed(_ pid: Int32, age: TimeInterval?, now: Date) -> TimeInterval {
+    public mutating func missed(_ pid: Int32, age: TimeInterval?, waitedOn: Bool, now: Date) -> TimeInterval {
         let delay: TimeInterval
-        if let age, age >= 0, age < Self.launching {
+        if waitedOn, let age, age >= 0, age < Self.launching {
             let n = youngMisses[pid, default: 0]
             youngMisses[pid] = n + 1
             delay = Self.young[min(n, Self.young.count - 1)]
