@@ -133,10 +133,11 @@ final class TopDragWatcher {
     var onDragStart: (WindowID, CGPoint) -> Void = { _, _ in }
     /// The button came up with the overview open for `grab`. `drop` is false when the drag
     /// ended some other way (the watcher stopped, or a release it missed), so nothing moves.
-    var onRelease: (_ grab: TopDrag.Grab, _ drop: Bool) -> Void = { _, _ in }
-    /// A drag of a window's title bar ended with the button let go at this point, however it ended (overview, dock, or
-    /// neither). Called after `onRelease` and `onCarryEnd`.
-    var onDragEnd: (WindowID, CGPoint) -> Void = { _, _ in }
+    /// Returns whether the window was dropped on a workspace.
+    var onRelease: (_ grab: TopDrag.Grab, _ drop: Bool) -> Bool = { _, _ in false }
+    /// A drag of a window's title bar ended with the button let go, however it ended (overview, dock, or neither): where,
+    /// whether the overview covered the window and from what frame, and whether a drop took it. Called last.
+    var onDragEnd: (WindowID, DragEnd) -> Void = { _, _ in }
     /// The drag to the top opens the overview. Off, the watcher still follows drags for the dock.
     var topEnabled = true
     /// The window follows the pointer, on every tick until the overview opens for it: the dock
@@ -144,13 +145,16 @@ final class TopDragWatcher {
     var onCarry: (TopDrag.Grab, CGPoint) -> Void = { _, _ in }
     /// That drag ended: let go at the point given, or nil when it ended some other way (the
     /// overview took it, the window went away, the watcher stopped), so nothing moves.
-    var onCarryEnd: (TopDrag.Grab, CGPoint?) -> Void = { _, _ in }
+    /// Returns whether the window was dropped on a workspace.
+    var onCarryEnd: (TopDrag.Grab, CGPoint?) -> Bool = { _, _ in false }
 
     private var monitor: Any?
     private var upMonitor: Any?
     private var timer: Timer?
     private var state = TopDrag()
     private var open: TopDrag.Grab?
+    /// The window's frame when the overview opened over it, for `DragEnd.coveredFrom`.
+    private var coveredFrom: CGRect?
     /// The drag `onCarry` has been told about.
     private var carried: TopDrag.Grab?
     /// The app whose window was pressed.
@@ -181,14 +185,16 @@ final class TopDragWatcher {
     /// Without a position it closes and nothing moves.
     private func released(at p: CGPoint?) {
         let dragged = open ?? ((state.moving || state.pinned) ? state.grab : nil)
-        endCarry(at: p)
+        let covered = open != nil ? coveredFrom : nil
+        coveredFrom = nil
+        var dropped = endCarry(at: p)
         endTicks()
         if let g = open {
             open = nil
             if let p { onMove(p) }
-            onRelease(g, p != nil)
+            dropped = onRelease(g, p != nil) || dropped
         }
-        if let dragged, let p { onDragEnd(dragged.window, p) }
+        if let dragged, let p { onDragEnd(dragged.window, DragEnd(pointer: p, coveredFrom: covered, dropped: dropped)) }
     }
 
     private func pressed(at p: CGPoint) {
@@ -232,6 +238,7 @@ final class TopDragWatcher {
                 Trace.log("topDrag overview open after \(Int(((now - (state.topSince ?? now)) * 1000).rounded())) ms window=\(g.window)")
                 endCarry(at: nil)
                 open = g
+                coveredFrom = TopDragWatcher.bounds(of: g.window)
             case false?:
                 Trace.log("topDrag overview declined window=\(g.window)")
                 endTicks()
@@ -250,10 +257,11 @@ final class TopDragWatcher {
         }
     }
 
-    private func endCarry(at p: CGPoint?) {
-        guard let g = carried else { return }
+    @discardableResult
+    private func endCarry(at p: CGPoint?) -> Bool {
+        guard let g = carried else { return false }
         carried = nil
-        onCarryEnd(g, p)
+        return onCarryEnd(g, p)
     }
 
     private func endTicks() {

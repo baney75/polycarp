@@ -4,11 +4,13 @@
 // came back 40% off the left edge).
 //
 // Each case opens its own window, asserts the state the case is about (macOS filled it, Polycarp filled it, the overview
-// let it go over no workspace), and fails if that didn't happen, so a case can't pass without testing anything. The
-// judged drags never stop at the top, where Polycarp's overview would take the drag. Samples go next to the trace.
+// let it go over no workspace, it was let go hanging off the edge), and asserts the trace lines that show Polycarp took
+// part, so a case can't pass without testing anything; an unreadable trace fails. The judged drags never stop at the top,
+// where Polycarp's overview would take the drag. Samples go next to the trace.
 //
 // It takes the pointer, so it refuses to run unless the Mac has been idle 10 minutes. Before every press it checks that the
-// window under the press point is its own, and stops if not, so no click can land in another app.
+// window under the press point is its own, and stops if not, so no click can land in another app. It posts ⌃⌘F only when
+// its own window is frontmost and key, checked just before, so no key can land in another app either.
 //
 //   swift scripts/fill-drag-probe.swift --self-test   the judge alone, on the frames from the report (no pointer)
 //   swift scripts/fill-drag-probe.swift [--record]    the live cases, with Polycarp installed and running
@@ -49,6 +51,31 @@ func judge(_ samples: [Sample], visible: CGRect) -> [String] {
     return out
 }
 
+/// The trace lines not found: each entry is the parts one line must hold together. An empty trace misses them all.
+func missing(_ trace: [String], _ wanted: [[String]]) -> [[String]] {
+    wanted.filter { parts in !trace.contains { line in parts.allSatisfy(line.contains) } }
+}
+/// Polycarp watched a drag of `id` and left a full-size window's size to macOS.
+func macOSFillDrag(_ id: UInt32) -> [[String]] { [["topDrag moving window=\(id)"], ["fill window=\(id) drag left to macOS"]] }
+/// The overview opened over `id`, let it go over no workspace, and the window went back to where it was.
+func overviewPutBack(_ id: UInt32) -> [[String]] {
+    [["topDrag overview open", "window=\(id)"], ["release target=none"], ["drag end window=\(id) back to its frame before the overview"]]
+}
+/// ⌃⌘F goes to whatever app is frontmost, so the probe posts it only into its own key window.
+func mayPostKey(frontmost: pid_t?, me: pid_t, probeWindowIsKey: Bool) -> Bool { frontmost == me && probeWindowIsKey }
+func backNear(_ a: CGRect?, _ b: CGRect?, within d: CGFloat) -> Bool {
+    guard let a, let b else { return false }
+    return abs(a.minX - b.minX) <= d && abs(a.minY - b.minY) <= d && abs(a.width - b.width) <= d && abs(a.height - b.height) <= d
+}
+/// Lines appended to `url` since `offset`, or nil when the file can't be read.
+func traceSince(_ offset: UInt64, in url: URL) -> [String]? {
+    guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
+    defer { try? h.close() }
+    let size = (try? h.seekToEnd()) ?? 0
+    try? h.seek(toOffset: offset <= size ? offset : 0)
+    return String(decoding: h.readDataToEndOfFile(), as: UTF8.self).split(separator: "\n").map(String.init)
+}
+
 var failures: [String] = []
 func expect(_ ok: Bool, _ what: String) {
     print(ok ? "  ok    \(what)" : "  FAIL  \(what)")
@@ -76,6 +103,25 @@ if CommandLine.arguments.contains("--self-test") {
     let good = [s(0, (700, 40), (0, 35, 1512, 947)), s(0.02, (700, 50), (100, 40, 1200, 800)), s(0.04, (700, 60), (100, 45, 1200, 800)),
                 s(0.06, (710, 80), (110, 65, 1200, 800)), s(0.08, (720, 100), (120, 85, 1200, 800)), s(0.3, (720, 100), (120, 85, 1200, 800), down: false)]
     expect(judge(good, visible: visible).isEmpty, "a clean drag passes (\(judge(good, visible: visible)))")
+
+    // Review of #150: case 1 passed when Polycarp never saw the drag, case 3 never showed the correction ran.
+    let seen = ["10:32:04.100 topDrag moving window=7", "10:32:04.101 fill window=7 drag left to macOS: full size, no record, frame=(0,35,1512,947)"]
+    expect(missing(seen, macOSFillDrag(7)).isEmpty, "case 1 passes on the lines Polycarp logs")
+    expect(missing([], macOSFillDrag(7)).count == 2, "case 1 fails on an empty trace")
+    expect(!missing(["10:32:04.100 topDrag moving window=8"] + seen.dropFirst(), macOSFillDrag(7)).isEmpty, "case 1 fails on another window's drag")
+    let putBack = ["10:31:56.9 topDrag overview open after 410 ms window=7", "10:32:00.279 topDrag release target=none",
+                   "10:32:00.5 drag end window=7 back to its frame before the overview: (-608,478) to (65,35)"]
+    expect(missing(putBack, overviewPutBack(7)).isEmpty, "case 3 passes when the correction ran")
+    expect(missing(Array(putBack.prefix(2)), overviewPutBack(7)).count == 1, "case 3 fails when the correction never ran")
+    expect(backNear(CGRect(x: 66, y: 35, width: 900, height: 600), CGRect(x: 65, y: 36, width: 900, height: 600), within: 3), "back near its frame")
+    expect(!backNear(CGRect(x: -608, y: 478, width: 900, height: 600), CGRect(x: 65, y: 35, width: 900, height: 600), within: 40), "left off screen is not back")
+    expect(!backNear(nil, CGRect(x: 65, y: 35, width: 900, height: 600), within: 40), "no frame is not back")
+    expect(traceSince(0, in: URL(fileURLWithPath: "/nonexistent/trace.log")) == nil, "an unreadable trace is nil, not an empty pass")
+    // Review of #150, F3: ⌃⌘F only into the probe's own key window.
+    expect(mayPostKey(frontmost: 42, me: 42, probeWindowIsKey: true), "frontmost and key: posts")
+    expect(!mayPostKey(frontmost: 99, me: 42, probeWindowIsKey: true), "another app frontmost: no key")
+    expect(!mayPostKey(frontmost: nil, me: 42, probeWindowIsKey: true), "frontmost unknown: no key")
+    expect(!mayPostKey(frontmost: 42, me: 42, probeWindowIsKey: false), "probe frontmost but its window not key: no key")
     print(failures.isEmpty ? "PASS" : "FAIL: \(failures.count)")
     exit(failures.isEmpty ? 0 : 1)
 }
@@ -102,11 +148,11 @@ guard !NSRunningApplication.runningApplications(withBundleIdentifier: "com.baney
 let traceURL = support.appendingPathComponent("trace.log")
 func traceEnd() -> UInt64 { ((try? FileManager.default.attributesOfItem(atPath: traceURL.path))?[.size] as? UInt64) ?? 0 }
 func traceSince(_ offset: UInt64) -> [String] {
-    guard let h = try? FileHandle(forReadingFrom: traceURL) else { return [] }
-    defer { try? h.close() }
-    let size = (try? h.seekToEnd()) ?? 0
-    try? h.seek(toOffset: offset <= size ? offset : 0)
-    return String(decoding: h.readDataToEndOfFile(), as: UTF8.self).split(separator: "\n").map(String.init)
+    guard let lines = traceSince(offset, in: traceURL) else {
+        expect(false, "trace.log readable at \(traceURL.path)")
+        return []
+    }
+    return lines
 }
 func currentWorkspace() -> (current: Int, agent: Int?, used: Set<Int>) {
     let url = support.appendingPathComponent("state.json")
@@ -232,7 +278,9 @@ func judgedDrag(_ id: CGWindowID, _ name: String) -> UInt64 {
                                               CGPoint(x: grab.x + 80, y: visible.maxY - 12)], speed: 250)
     let lines = samples.map { "\(String(format: "%.3f", $0.t)) \($0.down ? "down" : "up") p=\(Int($0.pointer.x)),\(Int($0.pointer.y)) f=\(Int($0.frame.minX)),\(Int($0.frame.minY)),\(Int($0.frame.width))x\(Int($0.frame.height))" }
     try? lines.joined(separator: "\n").write(to: support.appendingPathComponent("fill-drag-probe-\(name).log"), atomically: true, encoding: .utf8)
-    let opened = traceSince(start).contains { $0.contains("overview open") && $0.contains("window=\(id)") }
+    let trace = traceSince(start)
+    expect(missing(trace, [["topDrag moving window=\(id)"]]).isEmpty, "\(name): precondition, Polycarp watched the drag")
+    let opened = trace.contains { $0.contains("overview open") && $0.contains("window=\(id)") }
     expect(!opened, "\(name): precondition, the overview stayed shut, so this was the plain drag")
     let problems = judge(samples, visible: visible)
     expect(problems.isEmpty, "\(name): the window followed the pointer and ended on screen \(problems)")
@@ -249,8 +297,9 @@ DispatchQueue.global().async {
     let rec1 = capture("macos-fill", seconds: 12)
     if macOSFill(id1, "macos-fill") {
         let from = judgedDrag(id1, "macos-fill")
-        expect(!traceSince(from).contains { $0.contains("off: dragged away") && $0.contains("window=\(id1)") },
-               "macos-fill: Polycarp left the size to macOS")
+        let trace = traceSince(from)
+        expect(missing(trace, macOSFillDrag(id1)).isEmpty, "macos-fill: Polycarp saw the drag and left the size to macOS \(missing(trace, macOSFillDrag(id1)))")
+        expect(!trace.contains { $0.contains("off: dragged away") && $0.contains("window=\(id1)") }, "macos-fill: Polycarp didn't resize it")
     }
     rec1?.waitUntilExit()
     DispatchQueue.main.sync { w1.close() }
@@ -259,13 +308,20 @@ DispatchQueue.global().async {
     print("Polycarp fill, then drag down")
     let (w2, id2) = makeWindow("Polycarp fill-drag probe (Polycarp fill)")
     let before2 = traceEnd()
-    for down in [true, false] {
-        let e = CGEvent(keyboardEventSource: CGEventSource(stateID: .hidSystemState), virtualKey: 3, keyDown: down)
-        e?.flags = [.maskControl, .maskCommand]
-        e?.post(tap: .cgSessionEventTap)
+    var posted = false
+    DispatchQueue.main.sync {
+        // Checked and posted in one main-thread turn, so nothing can take focus in between.
+        guard mayPostKey(frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier, me: getpid(), probeWindowIsKey: w2.isKeyWindow) else { return }
+        for down in [true, false] {
+            let e = CGEvent(keyboardEventSource: CGEventSource(stateID: .hidSystemState), virtualKey: 3, keyDown: down)
+            e?.flags = [.maskControl, .maskCommand]
+            e?.post(tap: .cgSessionEventTap)
+        }
+        posted = true
     }
-    usleep(1_200_000)
-    let filledByUs = fills(frame(id2)) && traceSince(before2).contains { $0.contains("fill window=\(id2) on") }
+    expect(posted, "polycarp-fill: the probe's window was frontmost and key, so ⌃⌘F could go only to it")
+    if posted { usleep(1_200_000) }
+    let filledByUs = posted && fills(frame(id2)) && traceSince(before2).contains { $0.contains("fill window=\(id2) on") }
     expect(filledByUs, "polycarp-fill: precondition, Polycarp filled the window (frame \(String(describing: frame(id2))))")
     let rec2 = capture("polycarp-fill", seconds: 10)
     if filledByUs {
@@ -274,6 +330,23 @@ DispatchQueue.global().async {
     }
     rec2?.waitUntilExit()
     DispatchQueue.main.sync { w2.close() }
+
+    // Case 4, review of #150: a window dragged on purpose until a third hangs off the right edge stays where it was put.
+    print("drag off the right edge, let go")
+    let (w4, id4) = makeWindow("Polycarp fill-drag probe (off the edge)")
+    if let f = frame(id4) {
+        let before = traceEnd()
+        let grab = CGPoint(x: f.midX, y: titleY(f))
+        let samples = drag(id4, from: grab, path: [CGPoint(x: visible.maxX - 150, y: grab.y + 40)], speed: 400)
+        usleep(800_000)
+        let trace = traceSince(before)
+        let put = samples.last(where: { $0.down })?.frame
+        expect(put.map { $0.maxX > visible.maxX + 100 } == true, "off-edge: precondition, let go with part of it past the right edge (\(String(describing: put)))")
+        expect(missing(trace, [["topDrag moving window=\(id4)"]]).isEmpty, "off-edge: precondition, Polycarp watched the drag")
+        expect(!trace.contains { $0.contains("drag end window=\(id4)") }, "off-edge: Polycarp didn't correct it")
+        expect(backNear(frame(id4), put, within: 3), "off-edge: it stayed where it was let go (\(String(describing: frame(id4))))")
+    }
+    DispatchQueue.main.sync { w4.close() }
 
     // Case 3, the sequence before Donovan's glitch: a workspace switch away and back, the overview let go over no
     // workspace with the window off the left edge, then a fill and the drag down.
@@ -289,12 +362,18 @@ DispatchQueue.global().async {
         // Held near its right end, so letting go at x 160 leaves most of the window off the left edge.
         let grab = CGPoint(x: f.maxX - 60, y: titleY(f))
         let samples = drag(id3, from: grab, path: [CGPoint(x: grab.x, y: 0), CGPoint(x: 160, y: 520)], speed: 500, hold: 0.7)
+        usleep(800_000)
         let trace = traceSince(before)
-        let none = trace.contains { $0.contains("overview open") && $0.contains("window=\(id3)") } && trace.contains { $0.contains("release target=none") }
+        let none = missing(trace, Array(overviewPutBack(id3).prefix(2))).isEmpty
         expect(none, "overview: precondition, the overview opened and let go over no workspace")
+        // The frame while it waited at the top, which is the frame the overview opened over.
+        let covered = samples.last(where: { $0.down && $0.pointer.y <= 2 })?.frame
+        let letGo = samples.last(where: { $0.down })?.frame
+        expect(letGo.map { !visible.contains($0) } == true, "overview: precondition, let go with the window off screen (\(String(describing: letGo)))")
         if none {
-            let after = samples.last?.frame ?? .null
-            expect(visible.insetBy(dx: -2, dy: -2).contains(after), "overview: the window let go off screen came back on screen (\(after))")
+            expect(missing(trace, overviewPutBack(id3)).isEmpty, "overview: Polycarp put it back \(missing(trace, overviewPutBack(id3)))")
+            expect(backNear(frame(id3), covered, within: 40),
+                   "overview: back at its frame from before the overview (\(String(describing: frame(id3))) vs \(String(describing: covered)))")
             if macOSFill(id3, "overview") {
                 if let saved = frame(id3) { print("  filled at \(saved)") }
                 _ = judgedDrag(id3, "overview")
