@@ -129,6 +129,12 @@ public enum EngineVerdict {
     /// available window IDs.", a command of the engine's own CLI that no Polycarp agent has (seen 11-12 on every window
     /// that quit mid-call): it names ours instead.
     public static func suggestion(_ engine: String) -> String {
-        engine.contains("list-windows") ? "Run `polycarp-spaces agent windows` for the current ids." : engine
+        if engine.contains("list-windows") { return "Run `polycarp-spaces agent windows` for the current ids." }
+        // The engine's own advice for a field with no text write is its clipboard and the paste key: both reach the
+        // general pasteboard, which is Donovan's.
+        if engine.localizedCaseInsensitiveContains("clipboard") || engine.localizedCaseInsensitiveContains("paste") {
+            return "This field takes no text through accessibility. Try set-value on it, or click_at into it and press the keys one by one; the Mac's clipboard is not used."
+        }
+        return engine
     }
 }

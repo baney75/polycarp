@@ -74,11 +74,13 @@ public enum HandsTools {
         HandsTool(verb: "get", summary: "Read one property of an element from the live window: value, text, title, role, bounds or states.", params: [
             refParam,
             HandsParam("property", .string, "value (default), text, title, role, bounds or states.", positional: true),
+            HandsParam("copy", .boolean, "Also hold the text on the agent clipboard, for type with paste: true. Never the Mac's clipboard."),
         ], acts: false),
         HandsTool(verb: "click", summary: "Click an element by ref, without moving the pointer or raising the window. Prints what it verified.", params: [refParam], acts: true),
-        HandsTool(verb: "type", summary: "Type text into an element by ref: inserts it at the element's selection through accessibility, never by posting keys. Prints the value it read back.", params: [
+        HandsTool(verb: "type", summary: "Type text into an element by ref: inserts it at the element's selection through accessibility, never by posting keys. Prints the value it read back. paste: true types what you copied with get. Example: {\"ref\":\"7\",\"paste\":true}", params: [
             refParam,
-            HandsParam("text", .string, "The text.", required: true, positional: true, rest: true),
+            HandsParam("text", .string, "The text.", positional: true, rest: true),
+            HandsParam("paste", .boolean, "Type what this session copied (get with copy: true) instead of text."),
         ], acts: true),
         HandsTool(verb: "set-value", summary: "Replace an element's whole value (a text field, a slider). Prints the value it read back.", params: [
             refParam,
