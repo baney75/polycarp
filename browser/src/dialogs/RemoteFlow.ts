@@ -28,25 +28,31 @@ import {
 import {
 	APPROVAL_STEP,
 	ASSISTANT_STEPS,
+	answerOn,
 	CHECK_LABELS,
 	checksFailed,
+	copyKey,
 	FLOW_STEPS,
 	REMOTE_TITLE,
 	RESULT_COPY,
 	type RemoteActionKind,
 	ROUTE_COPY,
+	realFailures,
 	routeStatus,
 	STEP_COPY,
+	waitingChecks,
 } from "../connect/remote-copy.js";
 import {
 	type ChosenRoute,
 	type FlowInput,
 	type FlowScreen,
 	FUNNEL_POLL_MS,
+	FUNNEL_RETRY_FOR_MS,
 	flowScreen,
 	pollFor,
 	sameAnswer,
 	settleRun,
+	settleRunAfterTest,
 } from "../connect/remote-flow.js";
 import {
 	type ConnectStatus,
@@ -56,9 +62,6 @@ import {
 	TUNNEL_STEPS,
 	type TunnelStepId,
 } from "../connect/types.js";
-
-/** Funnel is retried by itself for this long after a refusal; then the button is the way to try again. */
-export const FUNNEL_RETRY_FOR_MS = 10 * 60_000;
 
 async function copyText(text: string, done: string): Promise<void> {
 	try {
@@ -107,6 +110,8 @@ export class RemoteFlow extends LitElement {
 	@state() private tunnelHost = "";
 	@state() private tunnelSteps?: Partial<Record<TunnelStepId, TunnelProgressView>>;
 	@state() private tunnelError?: string;
+	/** The Funnel retry ran out (FUNNEL_RETRY_FOR_MS): state, so the step redraws with its Check again button. */
+	@state() private funnelGaveUp = false;
 	private ticker?: ReturnType<typeof setInterval>;
 	private lastPoll = 0;
 	private polling = false;
@@ -139,6 +144,9 @@ export class RemoteFlow extends LitElement {
 			...(this.chosen ? { chosen: this.chosen } : {}),
 			...(this.run ? { run: this.run } : {}),
 			...(this.busy ? { busy: this.busy } : {}),
+			...(this.checks ? { checks: this.checks } : {}),
+			...(this.fix ? { fix: this.fix } : {}),
+			...(this.funnelGaveUp ? { funnelGaveUp: true } : {}),
 		};
 	}
 
@@ -157,7 +165,10 @@ export class RemoteFlow extends LitElement {
 		if (!poll || now - this.lastPoll < poll.everyMs) return;
 		if (poll.method === "remoteFunnel") {
 			this.funnelSince ??= now;
-			if (now - this.funnelSince > FUNNEL_RETRY_FOR_MS) return;
+			if (now - this.funnelSince > FUNNEL_RETRY_FOR_MS) {
+				this.funnelGaveUp = true;
+				return;
+			}
 		} else this.funnelSince = undefined;
 		void this.ask(poll.method);
 	}
@@ -181,6 +192,9 @@ export class RemoteFlow extends LitElement {
 				this.takeChecks(answer.checks);
 				if (!sameAnswer(answer, this.remote))
 					this.remote = { ...answer, ...(this.remote?.routes ? { routes: this.remote.routes } : {}) };
+				// A step about a check (dns, a failed check) ends once a later test says the route is on.
+				const kept = settleRunAfterTest(this.run, answer);
+				if (kept !== this.run) this.run = kept;
 			}
 			if (this.error) this.error = undefined;
 		} catch (err) {
@@ -204,10 +218,14 @@ export class RemoteFlow extends LitElement {
 		}
 		this.codeProblem = connectCodeProblem;
 		if (rest.checks) this.takeChecks(rest.checks);
+		// A run that stopped on a failed check offers Repair only once `remote fix` says what it would do.
+		if (copyKey(rest) === "check_failed" && !this.fix) void this.planFix();
 		this.run = rest;
-		if (rest.state === "on" || rest.state === "no_browser_connected") {
+		// On, a new name still being published included: the status reads the saved route now.
+		if (answerOn(rest)) {
 			this.chosen = undefined;
 			this.funnelSince = undefined;
+			this.funnelGaveUp = false;
 			this.dispatchEvent(new CustomEvent("remote-changed", { bubbles: true }));
 		}
 		// Tailscale's page to allow Funnel opens once by itself; the button opens it again.
@@ -217,7 +235,8 @@ export class RemoteFlow extends LitElement {
 	private takeChecks(checks: RemoteCheckView[] | undefined): void {
 		if (!checks || sameAnswer(checks, this.checks)) return;
 		this.checks = checks;
-		if (checks.some((c) => c.status === "fail") && !this.fix) void this.planFix();
+		// A pending failure (a new name, a tunnel still connecting) waits; only a real one asks what Repair would do.
+		if (realFailures(checks).length && !this.fix) void this.planFix();
 	}
 
 	/** Repair shows only when this helper has `remote fix` and the plan has something to do. */
@@ -249,6 +268,7 @@ export class RemoteFlow extends LitElement {
 		this.busy = "setup";
 		this.error = undefined;
 		this.funnelSince = undefined;
+		this.funnelGaveUp = false;
 		try {
 			this.takeRun(await connectRemoteSetup());
 		} catch (err) {
@@ -263,6 +283,7 @@ export class RemoteFlow extends LitElement {
 
 	private async openFunnel(): Promise<void> {
 		this.funnelSince = undefined;
+		this.funnelGaveUp = false;
 		this.lastPoll = 0;
 		await this.ask("remoteFunnel");
 	}
@@ -443,7 +464,9 @@ export class RemoteFlow extends LitElement {
 		const { copy, answer } = screen;
 		const action = copy.action;
 		const command = action?.kind === "copy_command" ? answer.next?.command : undefined;
-		const url = action?.kind === "open_url" ? safeHelpUrl(answer.next?.url) : undefined;
+		// Once the Funnel retry stopped, the button checks again and Tailscale's page stays one link away.
+		const url =
+			action?.kind === "open_url" || copy.key === "funnel_gave_up" ? safeHelpUrl(answer.next?.url) : undefined;
 		// A step whose button would have nothing to do draws no button.
 		const showAction = action && (action.kind !== "copy_command" || command) && (action.kind !== "open_url" || url);
 		// The helper's own words help only when something went wrong; on a calm step they repeat the sentence above.
@@ -452,14 +475,10 @@ export class RemoteFlow extends LitElement {
 				? answer.message
 				: undefined;
 		const turning = copy.key === "turning_on";
-		const gaveUp =
-			copy.key === "funnel_not_allowed" &&
-			this.funnelSince !== undefined &&
-			Date.now() - this.funnelSince > FUNNEL_RETRY_FOR_MS;
 		return html`
 			${this.stepHeader(screen.step)}
 			<div class="flex flex-col gap-2" role="group" aria-labelledby="remote-step-title" data-remote-step=${copy.key}>
-				<p id="remote-step-title" class="text-sm font-medium text-foreground">${copy.title}</p>
+				<p id="remote-step-title" class="text-sm font-medium text-foreground [overflow-wrap:anywhere]">${copy.title}</p>
 				<p class="text-xs text-foreground">${copy.body}</p>
 				${command ? this.copyBox("Command", command, "command") : nothing}
 				${
@@ -471,7 +490,7 @@ export class RemoteFlow extends LitElement {
 						: nothing
 				}
 				<p class="min-h-4 text-xs text-muted-foreground" role="status" aria-live="polite" data-remote-wait>
-					${turning ? "Working..." : copy.waits && !gaveUp ? "Waiting for you. This page checks by itself." : " "}
+					${turning ? "Working..." : copy.waits ? "Waiting for you. This page checks by itself." : " "}
 				</p>
 				${
 					detail
@@ -481,7 +500,8 @@ export class RemoteFlow extends LitElement {
 							</details>`
 						: nothing
 				}
-				${screen.route === "tailscale" && copy.key !== "turning_on" ? html`<button type="button" class="self-start text-xs text-muted-foreground underline cursor-pointer ${FOCUS}" @click=${() => this.act("choose", answer)}>${ROUTE_COPY.chooseAgain}</button>` : nothing}
+				${screen.chooseAgain ? html`<button type="button" class="self-start text-xs text-muted-foreground underline cursor-pointer ${FOCUS}" @click=${() => this.act("choose", answer)}>${ROUTE_COPY.chooseAgain}</button>` : nothing}
+				${screen.useCloudflare ? html`<button type="button" class="self-start text-xs text-muted-foreground underline cursor-pointer ${FOCUS}" @click=${() => this.act("use_cloudflare", answer)}>${ROUTE_COPY.useCloudflareInstead}</button>` : nothing}
 			</div>
 		`;
 	}
@@ -525,7 +545,7 @@ export class RemoteFlow extends LitElement {
 		const st = p?.state === "waiting" ? "running" : (p?.state ?? "pending");
 		const mark = st === "done" ? "Done" : st === "failed" ? "Failed" : st === "running" ? "Working" : "Waiting";
 		return html`<li class="${st === "failed" ? "text-destructive" : st === "pending" ? "text-muted-foreground" : "text-foreground"}" data-step=${id} data-state=${st}>
-			<span class="font-medium">${TUNNEL_STEP_LABELS[id]}</span>: ${mark}${p?.state === "waiting" ? " for you to sign in" : ""}
+			<span class="font-medium">${TUNNEL_STEP_LABELS[id]}</span>: ${mark}${p?.state === "waiting" && id === "signin" ? " for you to sign in" : ""}
 			${p?.state === "failed" && p.detail ? html`<span class="block [overflow-wrap:anywhere]">${p.detail}</span>` : nothing}
 		</li>`;
 	}
@@ -533,26 +553,28 @@ export class RemoteFlow extends LitElement {
 	private result(screen: Extract<FlowScreen, { kind: "result" }>): TemplateResult {
 		const code = this.code;
 		const left = code ? countdown(code.expiresAt, this.now) : undefined;
-		const checks = this.checks;
-		const failed = checks?.filter((c) => c.status === "fail") ?? [];
-		const canRepair = failed.length > 0 && this.fix?.available === true && (this.fix.actions?.length ?? 0) > 0;
+		const checks = this.checks ?? screen.answer?.checks;
+		const failed = realFailures(checks);
+		const canRepair = screen.repair;
 		const summary = this.checking
 			? RESULT_COPY.checksRunning
-			: !checks
-				? RESULT_COPY.checksNone
-				: failed.length
-					? checksFailed(failed.length)
-					: RESULT_COPY.checksPassed;
-		const head = failed.length
-			? STEP_COPY.check_failed
-			: screen.answer?.state === "no_browser_connected"
-				? STEP_COPY.no_browser_connected
-				: STEP_COPY.on;
+			: failed.length
+				? checksFailed(failed.length)
+				: screen.waiting || waitingChecks(checks)
+					? RESULT_COPY.checksWaiting
+					: !checks
+						? RESULT_COPY.checksNone
+						: RESULT_COPY.checksPassed;
+		const head = STEP_COPY[screen.head];
 		return html`
 			<div class="flex flex-col gap-3" data-remote-result>
 				<div>
-					<p class="text-sm font-medium text-foreground" data-result-title>${head.title}</p>
-					<p class="text-xs text-muted-foreground">${head.body}</p>
+					<p data-result-title class="text-sm font-medium text-foreground [overflow-wrap:anywhere]">${head.title}</p>
+					${
+						screen.waiting
+							? html`<p class="text-xs text-muted-foreground" role="status" aria-live="polite" data-remote-wait>${head.body}</p>`
+							: html`<p class="text-xs text-muted-foreground">${head.body}</p>`
+					}
 				</div>
 				<div class="flex flex-col gap-1.5">
 					<p class="text-xs font-medium text-foreground">${RESULT_COPY.assistantsStep}</p>
@@ -582,12 +604,12 @@ export class RemoteFlow extends LitElement {
 							${code && left ? Button({ size: "sm", variant: "secondary", children: RESULT_COPY.copy, onClick: () => void copyText(code.code, "Code copied.") }) : nothing}
 						</div>
 						<div class="flex items-center justify-between gap-2">
-							<span class="text-xs text-muted-foreground">${RESULT_COPY.codeNote}</span>
-							${Button({ size: "sm", variant: "outline", disabled: this.minting, children: RESULT_COPY.newCode, onClick: () => void this.newCode() })}
+							<span class="text-xs text-muted-foreground" data-code-note>${code ? RESULT_COPY.codeNote : RESULT_COPY.codeNone}</span>
+							${Button({ size: "sm", variant: code ? "outline" : "default", disabled: this.minting, children: RESULT_COPY.newCode, onClick: () => void this.newCode() })}
 						</div>
 						${this.codeProblem ? html`<p class="text-xs text-destructive" role="alert" data-code-problem>${this.codeProblem}</p>` : nothing}
 					</div>
-					<p class="text-xs text-muted-foreground" data-no-passcode>${RESULT_COPY.noPasscode}</p>
+					${screen.noPasscode ? html`<p class="text-xs text-muted-foreground" data-no-passcode>${RESULT_COPY.noPasscode}</p>` : nothing}
 				</div>
 				<details class="rounded-md border border-border p-2 text-xs" data-checks ?open=${failed.length > 0}>
 					<summary class="cursor-pointer text-foreground ${FOCUS}"><span class="font-medium">${RESULT_COPY.checksTitle}:</span> <span aria-live="polite">${summary}</span></summary>
@@ -595,8 +617,8 @@ export class RemoteFlow extends LitElement {
 						${(checks ?? []).map(
 							(
 								c,
-							) => html`<li class=${c.status === "fail" ? "text-destructive" : "text-foreground"} data-check=${c.name} data-status=${c.status}>
-								<span class="font-medium">${c.status === "ok" ? "Passed" : c.status === "warn" ? "Warning" : "Failed"}:</span> ${CHECK_LABELS[c.name] ?? c.name}
+							) => html`<li class=${c.status === "fail" && !c.pending ? "text-destructive" : "text-foreground"} data-check=${c.name} data-status=${c.pending ? "waiting" : c.status}>
+								<span class="font-medium">${c.status === "ok" ? "Passed" : c.status === "warn" ? "Warning" : c.pending ? "Waiting" : "Failed"}:</span> ${CHECK_LABELS[c.name] ?? c.name}
 								${c.status !== "ok" && c.detail ? html`<span class="block text-muted-foreground [overflow-wrap:anywhere]">${c.detail}</span>` : nothing}
 							</li>`,
 						)}
@@ -606,7 +628,7 @@ export class RemoteFlow extends LitElement {
 						${canRepair ? Button({ size: "sm", disabled: this.fixing, children: this.fixing ? RESULT_COPY.repairing : RESULT_COPY.repair, onClick: () => void this.repair() }) : nothing}
 					</div>
 				</details>
-				${this.routeNow() === "tailscale" ? html`<button type="button" class="self-start text-xs text-muted-foreground underline cursor-pointer ${FOCUS}" @click=${() => this.act("use_cloudflare", { state: "", message: "" })}>Use Cloudflare instead</button>` : nothing}
+				${this.routeNow() === "tailscale" ? html`<button type="button" class="self-start text-xs text-muted-foreground underline cursor-pointer ${FOCUS}" @click=${() => this.act("use_cloudflare", { state: "", message: "" })}>${ROUTE_COPY.useCloudflareInstead}</button>` : nothing}
 			</div>
 		`;
 	}
@@ -625,7 +647,7 @@ export class RemoteFlow extends LitElement {
 		if (screen.kind === "other") return html``;
 		return html`
 			<section class="flex flex-col gap-3 pt-5 border-t border-border" aria-labelledby="remote-flow-title" data-remote-flow=${screen.kind}>
-				<h3 id="remote-flow-title" class="text-sm font-semibold text-foreground">${REMOTE_TITLE}</h3>
+				<h3 id="remote-flow-title" class="text-sm font-semibold text-foreground [overflow-wrap:anywhere]">${REMOTE_TITLE}</h3>
 				${this.error ? html`<p class="text-xs text-destructive" role="alert" data-remote-error>${this.error}</p>` : nothing}
 				${
 					screen.kind === "loading"

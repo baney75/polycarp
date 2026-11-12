@@ -147,6 +147,8 @@ export interface RemoteCheckView {
 	status: "ok" | "warn" | "fail";
 	detail: string;
 	next?: string;
+	/** On a failure: waiting fixes it (a new name not published yet, a tunnel still connecting). Shown as waiting, never as Repair. */
+	pending?: boolean;
 }
 
 export interface RemoteRoutesView {

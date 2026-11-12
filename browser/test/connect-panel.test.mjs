@@ -661,7 +661,7 @@ test("the flow advances by itself: signing in, allowing Funnel and DNS all poll,
 	for (const [k, v] of Object.entries(STEP_COPY)) if (v.waits) assert.notEqual(v.action?.kind, "try_again", k);
 	assert.doesNotMatch(read("src/connect/remote-copy.ts"), /I've allowed it/);
 	// The component gives up retrying after ten minutes, and the button still opens Funnel again.
-	assert.match(read("src/dialogs/RemoteFlow.ts"), /FUNNEL_RETRY_FOR_MS = 10 \* 60_000/);
+	assert.match(read("src/connect/remote-flow.ts"), /FUNNEL_RETRY_FOR_MS = 10 \* 60_000/);
 });
 
 test("signing in or a Tailnet Lock refusal ends when the state moves on, and Use Cloudflare switches the form in", async () => {
@@ -685,8 +685,8 @@ test("the result screen shows the address, the code with a countdown and New cod
 	}
 	assert.deepEqual(ASSISTANT_STEPS.map((a) => a.name), ["claude.ai", "ChatGPT", "grok.com"]);
 	assert.match(RESULT_COPY.noPasscode, /No passcode was made here/);
-	// Repair shows only when this helper has `remote fix` (feature-detected) and a check failed.
-	assert.match(result, /failed\.length > 0 && this\.fix\?\.available === true/);
+	// Repair shows only when this helper has `remote fix` (feature-detected) with actions and a check really failed.
+	assert.match(read("src/connect/remote-flow.ts"), /repair: failed\.length > 0 && repairAvailable\(input\.fix\)/);
 	// The panel setups make no passcode (D33), so nothing about one can reach the page.
 	assert.match(read("cli/src/remote-panel.ts"), /passcode: false/);
 	assert.doesNotMatch(flow, /\.passcode\b/);

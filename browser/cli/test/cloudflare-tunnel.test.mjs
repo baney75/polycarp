@@ -299,13 +299,18 @@ test("a failing step reports failed with its text and stops the steps after it",
 	});
 });
 
-test("the check retries while DNS settles, then fails with a reason", async () => {
+test("the check retries while DNS settles, then leaves it waiting with the reason", async () => {
 	await inConfig("retry", async () => {
 		let n = 0;
 		const h = hooks({ signedIn: () => true, check: async () => (++n < 3 ? { ok: false, detail: "no answer" } : { ok: true, detail: "ok" }) });
 		await setupTunnel("polycarp.example.com", () => {}, h, { checkTotalMs: 5_000, checkEveryMs: 5 });
 		assert.equal(n, 3);
 		const never = hooks({ signedIn: () => true, check: async () => ({ ok: false, detail: "no answer" }) });
-		await assert.rejects(setupTunnel("polycarp.example.com", () => {}, never, { checkTotalMs: 50, checkEveryMs: 10 }), /isn't answering yet/);
+		// The tunnel was made, so a name that isn't answering yet is on with a lagging check (second-N3), never a failed setup.
+		const seen = [];
+		const done = await setupTunnel("polycarp.example.com", (p) => seen.push(p), never, { checkTotalMs: 50, checkEveryMs: 10 });
+		assert.equal(done.publicUrl, "https://polycarp.example.com");
+		assert.deepEqual(done.checks, [{ name: "resource_metadata", status: "fail", detail: "no answer", pending: true }]);
+		assert.deepEqual(seen.at(-1), { step: "check", state: "waiting", detail: "no answer" });
 	});
 });

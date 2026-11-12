@@ -179,12 +179,15 @@ reaches a command line (the remote methods take no parameters, and the Cloudflar
    sign in, or "Turn on" for Cloudflare, which downloads cloudflared and opens Cloudflare's sign-in. It checks every
    3 seconds and moves on by itself.
 3. **Turn on.** If Tailscale hasn't allowed Funnel yet, the page opens Tailscale's page once and tries Funnel again every
-   5 seconds for up to 10 minutes; no "try again" press is needed.
+   5 seconds for up to 10 minutes; no "try again" press is needed. After 10 minutes it stops and shows "Check again".
 
 The result shows the connector URL, a one-time connect code with a 10-minute countdown and "New code", the steps for
 claude.ai, ChatGPT and grok.com (the same lines `remote setup` prints), and the checks from the internet
-(`remote test`). When a check fails and the helper has `remote fix`, a Repair button runs it; an older helper shows no
-button. The side panel never makes or shows a passcode: a new connect code approves an assistant again. The code lives
+(`remote test`). A code comes only from a press: Turn on makes one, and when the Funnel retry turned the route on by
+itself the result asks you to press New code. A brand-new name that public DNS doesn't have yet, or a tunnel still
+connecting, is a `pending` check: the result says the address is still being published and checks again every 30
+seconds until it passes. When a check fails for real and the helper's `remote fix` has something to do, a Repair button
+runs it; an older helper shows no button. The side panel never makes or shows a passcode: a new connect code approves an assistant again. The code lives
 only in the page's memory and is gone when Settings closes.
 
 The Linux desktop app has no remote screen; on Linux, use the side panel or the terminal. On Windows the helper finds
