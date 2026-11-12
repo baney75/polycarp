@@ -136,6 +136,7 @@ async function settleAfter(
 			since,
 			stop: ctx.aborted,
 			skip: (u) => ctx.isGuarded(u),
+			guardedHosts: ctx.guardedHosts,
 			watched: options.watched ?? true,
 		}).catch(() => undefined);
 		const out: Record<string, unknown> = settled ? unsettledNote(settled) : {};
@@ -896,7 +897,15 @@ export const handlers: Record<string, Handler> = {
 				capMs: num(params, "timeoutMs") ?? WAIT_SETTLE.capMs,
 				since: 0,
 				stop: ctx.aborted,
+				skip: (u) => ctx.isGuarded(u),
+				guardedHosts: ctx.guardedHosts,
 			});
+			if (r.stopped) {
+				// Not the page still changing: the call was stopped, a box opened or the tab left for the approval page.
+				stopIfAborted(ctx);
+				const summary = await refuseGuardedLanding(ctx, tabId, await tabSummary(tabId));
+				return { ...summary, settled: false, stopped: true, note: "The wait stopped before the page went quiet." };
+			}
 			return {
 				...(await tabSummary(tabId)),
 				...(r.settled

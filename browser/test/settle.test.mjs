@@ -3,6 +3,7 @@
 // requests alone, and never runs anything in the approval page before the tab is blanked.
 import assert from "node:assert/strict";
 import test from "node:test";
+import vm from "node:vm";
 import { installFakeChrome } from "./fake-chrome.mjs";
 
 const GUARDED = ["tabkyra.example.com"];
@@ -25,6 +26,10 @@ function recordCommands(answer = () => undefined) {
 	};
 	return sent;
 }
+
+/** A probe's answer, as Runtime.evaluate returns the wrapped value. */
+const probeSays = (value) => ({ result: { value: { ok: true, value } } });
+const BUSY = { since: 0, parsing: false, busy: "loading placeholder" };
 
 async function startBridge() {
 	const fake = installFakeChrome();
@@ -171,4 +176,125 @@ test("a batch that names a tab other than the current one watches that tab's req
 	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
 	const enables = sent.filter((c) => c.method === "Network.enable").map((c) => c.tabId);
 	assert.deepEqual(enables, [named.result.tabId], `Network.enable went to ${enables.join(", ")}`);
+});
+
+test("a page that refused its probes does not stop probes on the next page", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { settle } = await import(`../src/browser/settle.ts?ctx=${Math.random()}`);
+	// The web store refuses every probe (two in the first 200 ms); a link there then leads to a page
+	// that draws a skeleton without a request.
+	const tabId = fake.addTab({ url: "https://chromewebstore.google.com/detail/x", status: "complete" });
+	recordCommands((method) => (method === "Runtime.evaluate" ? probeSays(BUSY) : undefined));
+	setTimeout(() => chrome.tabs.update(tabId, { url: "https://example.com/", status: "complete" }), 250);
+	const r = await settle(tabId, { quietMs: 300, capMs: 1500 });
+	assert.equal(r.settled, false, `settled on a page whose skeleton is still up: ${JSON.stringify(r)}`);
+	assert.equal(r.waitingOn, "loading");
+});
+
+test("a cap that lands in the middle of a pass keeps the reason the last pass found", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { settle } = await import(`../src/browser/settle.ts?ctx=${Math.random()}`);
+	const tabId = fake.addTab({ url: "https://example.com/", status: "complete" });
+	// A spinner that never goes away; after 300 ms the browser is slow to say where the tab is, so
+	// the cap lands while a pass reads the tab.
+	recordCommands((method) => (method === "Runtime.evaluate" ? probeSays(BUSY) : undefined));
+	const get = chrome.tabs.get;
+	const t = Date.now();
+	chrome.tabs.get = async (id) => {
+		if (Date.now() - t > 300) await new Promise((r) => setTimeout(r, 700));
+		return get(id);
+	};
+	const r = await settle(tabId, { quietMs: 300, capMs: 500 });
+	assert.equal(r.settled, false);
+	assert.equal(r.waitingOn, "loading", JSON.stringify(r));
+	// The pass the cap cut short sends no probe after it.
+	await new Promise((r) => setTimeout(r, 800));
+});
+
+test("a probe that lands on the approval page touches nothing there and stops the wait", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { settle } = await import(`../src/browser/settle.ts?ctx=${Math.random()}`);
+	// The tab still reads as the old page: the redirect committed after the loop looked.
+	const tabId = fake.addTab({ url: "https://example.com/", status: "complete" });
+	const touched = [];
+	const page = {
+		location: { href: "https://tabkyra.example.com/authorize" },
+		URL,
+		performance,
+		get window() {
+			touched.push("window");
+			return {};
+		},
+		get document() {
+			touched.push("document");
+			return {};
+		},
+	};
+	recordCommands((method, params) =>
+		method === "Runtime.evaluate"
+			? vm.runInNewContext(params.expression, page).then((value) => ({ result: { value } }))
+			: undefined,
+	);
+	const r = await settle(tabId, {
+		quietMs: 300,
+		capMs: 1500,
+		skip: (u) => u.includes("tabkyra.example.com"),
+		guardedHosts: GUARDED,
+	});
+	assert.equal(r.stopped, true, JSON.stringify(r));
+	assert.deepEqual(touched, []);
+});
+
+test("wait until settled that lands on the approval page refuses, not 'still changing'", async () => {
+	const { request } = await startBridge();
+	const first = await request("navigate", { url: "https://example.com/", timeoutMs: 1 });
+	assert.equal(first.error, undefined, JSON.stringify(first.error));
+	const tabId = first.result.tabId;
+	// The tab moves there with no commit event, so the commit watcher's reset never runs.
+	setTimeout(() => chrome.tabs.update(tabId, { url: "https://tabkyra.example.com/authorize" }), 100);
+	const reply = await request("wait", { until: "settled", timeoutMs: 3000 });
+	assert.equal(reply.error?.code, "permission_denied", JSON.stringify(reply));
+});
+
+test("the veil coming or going is not the page changing", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { settle } = await import(`../src/browser/settle.ts?ctx=${Math.random()}`);
+	const { rememberVeilTag } = await import("../src/browser/veil-shared.ts");
+	const tabId = fake.addTab({ url: "https://example.com/", status: "complete" });
+	await rememberVeilTag(tabId, "abcde-fghijk");
+	// The real probe, in a page whose only change is the veil added to body.
+	const body = { nodeType: 1, localName: "body", parentNode: null };
+	const veil = { nodeType: 1, localName: "abcde-fghijk", parentNode: body };
+	let observer;
+	const page = {
+		location: { href: "https://example.com/" },
+		URL,
+		performance,
+		// tsx names the probe's inner functions with esbuild's helper; the extension's bundle doesn't.
+		__name: (f) => f,
+		innerHeight: 800,
+		innerWidth: 1200,
+		MutationObserver: class {
+			constructor(fn) {
+				observer = fn;
+			}
+			observe() {}
+		},
+		document: { readyState: "complete", querySelectorAll: () => [] },
+	};
+	page.window = page;
+	let probes = 0;
+	recordCommands((method, params) => {
+		if (method !== "Runtime.evaluate") return undefined;
+		const answer = vm.runInNewContext(params.expression, page);
+		if (++probes === 1) setTimeout(() => observer([{ type: "childList", target: body, addedNodes: [veil], removedNodes: [] }]), 150);
+		return answer.then((value) => ({ result: { value } }));
+	});
+	const r = await settle(tabId, { quietMs: 300, capMs: 2000 });
+	assert.equal(r.settled, true, JSON.stringify(r));
+	assert.ok(r.ms < 470, `the veil held the wait: ${r.ms} ms`);
 });

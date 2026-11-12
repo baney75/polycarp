@@ -13,6 +13,7 @@
  */
 
 import { cdpSend, onDebuggerSessionEnd, openDialog } from "./cdp.js";
+import { isGuardedUrl } from "../bridge/permissions.js";
 import { runInPage } from "./page.js";
 import { veilTag } from "./veil-shared.js";
 
@@ -130,8 +131,15 @@ function inFlight(tabId: number, since: number, longMs: number, now: number): nu
 /**
  * Page side: leave a MutationObserver in the document once, and say how long ago the page last
  * changed, whether it is still parsing, and whether a loading marker is on screen. Self-contained.
+ * On a guarded page (the approval address, #94) it touches nothing and says so: a navigation can
+ * commit there after the loop last read the tab's URL.
  */
-function settleProbe(veil: string): { since: number; parsing: boolean; busy: string } {
+function settleProbe(
+	veil: string,
+	hosts: readonly string[],
+	guarded: (url: string, hosts: readonly string[]) => boolean,
+): { since: number; parsing: boolean; busy: string } | { guarded: true } {
+	if (guarded(location.href, hosts)) return { guarded: true };
 	const w = window as unknown as { __tabkyraSettle?: { last: number; doc: Document } };
 	const now = performance.now();
 	let s = w.__tabkyraSettle;
@@ -144,8 +152,14 @@ function settleProbe(veil: string): { since: number; parsing: boolean; busy: str
 				if (p.nodeType === 1 && (p as Element).localName === veil) return true;
 			return false;
 		};
+		// The veil coming or going is not the page changing: a childList record's target is its parent.
+		const veilOnly = (r: MutationRecord) => {
+			if (inVeil(r.target)) return true;
+			const nodes = r.type === "childList" ? [...Array.from(r.addedNodes), ...Array.from(r.removedNodes)] : [];
+			return nodes.length > 0 && nodes.every((n) => inVeil(n));
+		};
 		new MutationObserver((records) => {
-			if (records.some((r) => !inVeil(r.target))) mark.last = performance.now();
+			if (records.some((r) => !veilOnly(r))) mark.last = performance.now();
 		}).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
 	}
 	// A loading marker a person would read as "not ready": aria-busy, or a skeleton, shimmer or
@@ -200,6 +214,8 @@ export async function settle(
 		since?: number;
 		stop?: () => boolean;
 		skip?: (url: string) => boolean;
+		/** The hosts behind `skip`: the probe checks them itself before it touches the page. */
+		guardedHosts?: readonly string[];
 		watched?: boolean;
 	} = {},
 ): Promise<SettleResult> {
@@ -209,22 +225,32 @@ export async function settle(
 	const deadline = start + capMs;
 	let over = false;
 	let waitingOn: SettleResult["waitingOn"];
+	/** The reason the last full pass found, for a cap that lands in the middle of a pass. */
+	let lastReason: SettleResult["waitingOn"];
 	const run = async (): Promise<SettleResult> => {
 		if (!options.watched) await watchNetwork(tabId);
 		const veil = (await within(veilTag(tabId), 300)) ?? "";
-		const code = `(${settleProbe.toString()})(${JSON.stringify(veil)})`;
+		const code = `(${settleProbe.toString()})(${JSON.stringify(veil)}, ${JSON.stringify(options.guardedHosts ?? [])}, ${isGuardedUrl.toString()})`;
 		let lastActivity = start;
 		/** Probes refused in a row. A page the extension may not script (a store page, a viewer) is judged by its requests alone. */
 		let refused = 0;
+		/** The document the refusals were counted on: a new one may be scriptable. */
+		let refusedOn = "";
 		for (;;) {
 			if (over) return { settled: false, ms: Date.now() - start };
 			if (options.stop?.() || openDialog(tabId)) return { settled: false, ms: Date.now() - start, stopped: true };
 			const before = waitingOn;
 			waitingOn = undefined;
 			const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+			// The cap came while the tab was read: no probe goes out after it.
+			if (over) return { settled: false, ms: Date.now() - start };
 			if (!tab || options.skip?.(tab.pendingUrl || tab.url || ""))
 				return { settled: false, ms: Date.now() - start, stopped: true };
 			const t0 = Date.now();
+			if (tab.pendingUrl || tab.url !== refusedOn) {
+				refused = 0;
+				refusedOn = tab.url ?? "";
+			}
 			if (tab.pendingUrl) {
 				waitingOn = "navigation";
 				lastActivity = t0;
@@ -238,6 +264,8 @@ export async function settle(
 					),
 					budget,
 				);
+				if (page && page !== "refused" && "guarded" in page)
+					return { settled: false, ms: Date.now() - start, stopped: true };
 				if (page === "refused") refused++;
 				else if (page !== undefined) refused = 0;
 				if (page === undefined) {
@@ -245,7 +273,7 @@ export async function settle(
 					// short by the cap instead, it says nothing new about the page.
 					waitingOn = budget < PROBE_MS ? (before ?? "dom") : "loading";
 					lastActivity = Date.now();
-				} else if (page !== "refused") {
+				} else if (page !== "refused" && !("guarded" in page)) {
 					// The probe's clock is the page's: its "since" is measured at the page, about when the call went out.
 					lastActivity = Math.max(lastActivity, t0 - page.since);
 					if (page.parsing || page.busy) {
@@ -259,6 +287,7 @@ export async function settle(
 				waitingOn = "network";
 				lastActivity = now;
 			} else lastActivity = Math.max(lastActivity, Math.min(now, lastEnd.get(tabId) ?? 0));
+			lastReason = waitingOn;
 			if (!waitingOn && now - lastActivity >= quietMs) return { settled: true, ms: now - start };
 			if (now >= deadline) return { settled: false, ms: now - start, waitingOn: waitingOn ?? "dom" };
 			await new Promise((r) => setTimeout(r, Math.max(10, Math.min(100, deadline - now))));
@@ -268,7 +297,7 @@ export async function settle(
 	const capped = new Promise<SettleResult>((r) => {
 		timer = setTimeout(() => {
 			over = true;
-			r({ settled: false, ms: Date.now() - start, waitingOn: waitingOn ?? "dom" });
+			r({ settled: false, ms: Date.now() - start, waitingOn: waitingOn ?? lastReason ?? "dom" });
 		}, capMs);
 	});
 	try {
