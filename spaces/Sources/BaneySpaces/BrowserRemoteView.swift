@@ -35,6 +35,8 @@ final class BrowserRemoteModel: ObservableObject {
     private var funnelFirstRefusal: Date?
     private var funnelLastTry: Date?
     private var funnelTimer: Timer?
+    /// `remote test` again while a check waits (a name being published, a tunnel connecting).
+    private var waitingTimer: Timer?
     private var openedAdmin: URL?
     /// The setup command of the last Turn on, so Try again runs the same one.
     private var lastSetup: RemoteCommand = .setup
@@ -58,7 +60,7 @@ final class BrowserRemoteModel: ObservableObject {
     }
     /// A Turn on just succeeded and the status reads haven't confirmed it yet (and the grace period isn't over).
     private var bridging: Bool {
-        setup?.state == .on && (setupAt.map { Date().timeIntervalSince($0) < RemoteFlow.grace(for: status) } ?? false)
+        (setup?.answerOn ?? false) && (setupAt.map { Date().timeIntervalSince($0) < RemoteFlow.grace(for: status) } ?? false)
     }
     var passcodeSet: Bool { status?.passcodeSet ?? setup?.passcodeSet ?? false }
 
@@ -72,7 +74,7 @@ final class BrowserRemoteModel: ObservableObject {
 
     func stopWatching() {
         watchers = max(0, watchers - 1)
-        if watchers == 0 { timer?.invalidate(); timer = nil; stopFunnelRetry(); clearSecrets() }
+        if watchers == 0 { timer?.invalidate(); timer = nil; stopFunnelRetry(); stopWaitingRecheck(); clearSecrets() }
     }
 
     /// The passcode and connect code are shown once: closing the window forgets them. Nothing here is ever saved.
@@ -142,14 +144,15 @@ final class BrowserRemoteModel: ObservableObject {
     /// Try again: the same setup as last time.
     func tryAgain() { runSetup(lastSetup, quiet: false) }
 
-    /// `quiet`: the Funnel retry. The screen stays as it is (no "Turning on") until an answer changes it.
+    /// `quiet`: the Funnel retry. The screen stays as it is (no "Turning on") until an answer changes it. Nobody pressed
+    /// anything for it, so it never asks for a connect code: New code makes one (second-N2).
     private func runSetup(_ command: RemoteCommand, quiet: Bool) {
         guard available, !settingUp, !working, !retryingFunnel else { return }
         if quiet { retryingFunnel = true; funnelLastTry = Date() } else { settingUp = true; note = nil; stopFunnelRetry() }
         lastSetup = command
         generation += 1; failedReads = 0
         queue.async { [weak self] in
-            let result = Self.run(command)
+            let result = Self.run(command, connectCode: !quiet)
             let parsed = RemoteReport.parse(result.out)
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -157,8 +160,8 @@ final class BrowserRemoteModel: ObservableObject {
                 let report = parsed ?? RemoteReport(state: .problem, message: RemoteCopy.helperSilent)
                 // A quiet retry that hears the same refusal changes nothing on screen.
                 if quiet, report.state == .funnelNotAllowed { self.refresh(); return }
-                self.take(report)
-                if report.state == .on {
+                self.take(report, pressed: !quiet)
+                if report.answerOn {
                     // The success speaks for itself only briefly: when the grace is over, whatever status says takes over.
                     for grace in [RemoteFlow.setupGrace, RemoteFlow.dnsGrace] {
                         DispatchQueue.main.asyncAfter(deadline: .now() + grace + 0.5) { [weak self] in
@@ -172,14 +175,22 @@ final class BrowserRemoteModel: ObservableObject {
         }
     }
 
-    private func take(_ report: RemoteReport) {
+    /// `pressed`: a person pressed Turn on, Try again or Check again. Only then is a connect code taken from the answer.
+    private func take(_ report: RemoteReport, pressed: Bool) {
         passcode = RemoteFlow.keepPasscode(current: passcode, from: report)
-        if let code = report.connectCode { connectCode = code }
+        if pressed, let code = report.connectCode { connectCode = code }
         if !report.checks.isEmpty { checks = report.checks }
         setup = report
         setupAt = Date()
         if report.state == .funnelNotAllowed { startFunnelRetry(admin: report.adminURL) } else { stopFunnelRetry() }
-        if report.state == .on { testedThisVisit = true; if !report.failedChecks.isEmpty { planFix() } }
+        let key = RemoteSharedCopy.key(state: report.rawState, code: report.code, nextKind: report.nextKind, nextCommand: report.nextCommand)
+        if report.answerOn {
+            testedThisVisit = true
+            if !report.failedChecks.isEmpty { planFix() }
+            scheduleWaitingRecheck()
+        } else if key == "check_failed" {
+            planFix()
+        }
     }
 
     // MARK: Funnel: allowed in Tailscale, noticed here
@@ -221,9 +232,33 @@ final class BrowserRemoteModel: ObservableObject {
                 guard let self else { return }
                 self.checking = false
                 if let parsed, !parsed.checks.isEmpty { self.checks = parsed.checks }
-                if !self.checks.filter(\.failed).isEmpty { self.planFix() }
+                // A run that stopped on dns or a failed check is over once this test says the route is on.
+                let kept = RemoteFlow.settleAfterTest(setup: self.setup, checks: self.checks)
+                if kept != self.setup { self.setup = kept }
+                if !self.checks.filter(\.realFailure).isEmpty { self.planFix() }
+                self.scheduleWaitingRecheck()
             }
         }
+    }
+
+    /// While the On screen waits on a check, `remote test` runs again every `waitingRecheckEvery` seconds, until it passes,
+    /// fails for real or the window closes. No button to press.
+    private func scheduleWaitingRecheck() {
+        waitingTimer?.invalidate(); waitingTimer = nil
+        guard watchers > 0, waitingNow else { return }
+        waitingTimer = Timer.scheduledTimer(withTimeInterval: RemoteFlow.waitingRecheckEvery, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.waitingTimer = nil
+            if self.waitingNow { self.checkFromOutside(force: true) }
+        }
+    }
+
+    private func stopWaitingRecheck() { waitingTimer?.invalidate(); waitingTimer = nil }
+
+    /// The On screen is up and says it is waiting.
+    var waitingNow: Bool {
+        guard case .on(_, let connected) = screen else { return false }
+        return RemoteFlow.resultHead(checks: checks, answer: setup ?? status, browserConnected: connected).waiting
     }
 
     /// Asks `remote fix --dry-run` what it would repair. Changes nothing; an older helper answers "not available".
@@ -248,7 +283,8 @@ final class BrowserRemoteModel: ObservableObject {
                 if !done.checks.isEmpty { self.checks = done.checks }
                 if !done.ok { self.note = RemoteCopy.repairFailed }
                 self.fixPlan = nil
-                if !self.checks.filter(\.failed).isEmpty { self.planFix() }
+                if !self.checks.filter(\.realFailure).isEmpty { self.planFix() }
+                self.scheduleWaitingRecheck()
                 self.refresh()
             }
         }
@@ -270,7 +306,7 @@ final class BrowserRemoteModel: ObservableObject {
                 self.working = false
                 if result.code == 0 {
                     self.setup = nil; self.setupAt = nil; self.passcode = nil; self.status = nil; self.failedReads = 0; self.route = nil
-                    self.connectCode = nil; self.checks = []; self.fixPlan = nil; self.stopFunnelRetry()
+                    self.connectCode = nil; self.checks = []; self.fixPlan = nil; self.stopFunnelRetry(); self.stopWaitingRecheck()
                 } else {
                     self.note = RemoteCopy.turnOffFailed + (result.text.isEmpty ? "" : " \(result.text)")
                 }
@@ -310,8 +346,8 @@ final class BrowserRemoteModel: ObservableObject {
     func savedPasscode() { passcode = nil }
 
     /// The render harness's result screen: a made-up code and checks, in memory, never from the helper.
-    func stageForRender(code: ConnectCode?, passcode: String?, checks: [RemoteCheck], plan: RemoteFixPlan?) {
-        connectCode = code; self.passcode = passcode; self.checks = checks; fixPlan = plan; testedThisVisit = true
+    func stageForRender(code: ConnectCode?, passcode: String?, checks: [RemoteCheck], plan: RemoteFixPlan?, funnelGaveUp: Bool = false) {
+        connectCode = code; self.passcode = passcode; self.checks = checks; fixPlan = plan; testedThisVisit = true; self.funnelGaveUp = funnelGaveUp
     }
 
     func copy(_ text: String, label: String, secret: Bool = false) {
@@ -351,11 +387,12 @@ final class BrowserRemoteModel: ObservableObject {
     struct Result { var code: Int32; var out: Data; var text: String }
 
     /// Runs the helper as the person, in their home, never through a shell, and waits at most the command's own time.
-    static func run(_ command: RemoteCommand) -> Result {
+    /// `connectCode`: false for a run nobody pressed (the Funnel retry), so its setup asks for no connect code.
+    static func run(_ command: RemoteCommand, connectCode: Bool = true) -> Result {
         guard let exe = BrowserBundle.helper(resources: Bundle.main.resourceURL) else { return Result(code: 127, out: Data(), text: "") }
         let p = Process()
         p.executableURL = exe
-        p.arguments = command.arguments
+        p.arguments = command.arguments(connectCode: connectCode)
         p.environment = BrowserBundle.environment(base: ProcessInfo.processInfo.environment, loginPath: Self.loginPath)
         let out = Pipe(), err = Pipe()
         p.standardOutput = out
@@ -494,17 +531,18 @@ struct BrowserRemoteView: View {
                 Button(Shared.steps["launcher_app"]!.action!) { model.checkAgain() }.keyboardShortcut(.defaultAction)
             }
         case .funnelNotAllowed(let admin):
-            step("funnel_not_allowed", header: 3) {
+            step(model.funnelGaveUp ? "funnel_gave_up" : "funnel_not_allowed", header: 3) {
                 HStack(spacing: 10) {
-                    if let admin { Button(Shared.steps["funnel_not_allowed"]!.action!) { NSWorkspace.shared.open(admin) }.keyboardShortcut(.defaultAction) }
+                    if model.funnelGaveUp {
+                        // Ten minutes passed: the waiting line goes and the one button checks again (a press, first-F3).
+                        Button(Shared.steps["funnel_gave_up"]!.action!) { model.tryAgain() }.keyboardShortcut(.defaultAction)
+                        if let admin { Button(Shared.steps["funnel_not_allowed"]!.action!) { NSWorkspace.shared.open(admin) }.buttonStyle(.link).font(Chrome.font(11)) }
+                    } else if let admin {
+                        Button(Shared.steps["funnel_not_allowed"]!.action!) { NSWorkspace.shared.open(admin) }.keyboardShortcut(.defaultAction)
+                    }
                     turnOffButton
                 }
-                if model.funnelGaveUp {
-                    HStack(spacing: 10) {
-                        warning(RemoteCopy.funnelGaveUp)
-                        Button(Shared.steps["ready"]!.action!) { model.tryAgain() }
-                    }
-                } else {
+                if !model.funnelGaveUp {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small).opacity(model.retryingFunnel ? 1 : 0.5)
                         line(RemoteCopy.funnelWaiting)
@@ -580,7 +618,8 @@ struct BrowserRemoteView: View {
             stepText(copy.title, copy.body)
             if let command = model.setup?.nextCommand, entry.kind == "copy_command" { commandBox(command) }
             HStack(spacing: 10) {
-                if let label = entry.action, let kind = entry.kind, kind != "copy_command" {
+                // A button with nothing behind it is not drawn: Repair needs `remote fix` and a plan with something in it.
+                if let label = entry.action, let kind = entry.kind, kind != "copy_command", kind != "repair" || RemoteFlow.repairAvailable(model.fixPlan) {
                     Button(label) { act(kind) }.keyboardShortcut(.defaultAction).disabled(model.working || model.fixing)
                 }
                 Button(RemoteCopy.startOverButton) { model.turnOff() }.disabled(model.working)
@@ -734,14 +773,16 @@ struct BrowserRemoteView: View {
     private func result(_ key: String) -> String { Shared.result[key]! }
 
     private func onView(address: String, browserConnected: Bool) -> some View {
-        let failed = model.checks.filter(\.failed)
-        let head = !failed.isEmpty ? "check_failed" : browserConnected ? "on" : "no_browser_connected"
+        let failed = model.checks.filter(\.realFailure)
+        // A new name still being published is On and waiting: calm, and it checks again by itself (first-F1).
+        let (head, waiting) = RemoteFlow.resultHead(checks: model.checks, answer: model.setup ?? model.status, browserConnected: browserConnected)
+        let good = head == "on"
         return VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: failed.isEmpty && browserConnected ? "checkmark.circle.fill" : "exclamationmark.circle")
-                    .foregroundStyle(failed.isEmpty && browserConnected ? Chrome.done : Chrome.working)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: good ? "checkmark.circle.fill" : waiting ? "clock" : "exclamationmark.circle")
+                    .foregroundStyle(good ? Chrome.done : waiting ? Chrome.muted : Chrome.working)
                     .accessibilityHidden(true)
-                Text(Shared.steps[head]!.title).font(Chrome.font(13, .semibold)).accessibilityAddTraits(.isHeader)
+                Text(Shared.steps[head]!.title).font(Chrome.font(13, .semibold)).fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
             }
             line(Shared.steps[head]!.body!)
 
@@ -761,10 +802,11 @@ struct BrowserRemoteView: View {
             numbered(result("codeStep")) {
                 line(Shared.approvalStep)
                 codeBox
-                line(result("codeNote"))
+                // A run nobody pressed (the Funnel retry) brings no code: the line says to press New code.
+                line(model.connectCode == nil ? result("codeNone") : result("codeNote"))
             }
             passcodeBlock
-            checksBlock(failed: failed)
+            checksBlock(failed: failed, waiting: waiting)
             footnotes
             Button(Shared.result["turnOff"]!) { model.turnOff() }.disabled(model.working)
         }
@@ -795,7 +837,11 @@ struct BrowserRemoteView: View {
                 if left > 0, let code = model.connectCode {
                     Button(result("copy")) { model.copy(code.code, label: "connect code", secret: true) }.controlSize(.small).accessibilityLabel("Copy the connect code")
                 }
-                Button(result("newCode")) { model.newConnectCode() }.controlSize(.small).disabled(model.working)
+                if model.connectCode == nil {
+                    Button(result("newCode")) { model.newConnectCode() }.controlSize(.small).buttonStyle(.borderedProminent).disabled(model.working)
+                } else {
+                    Button(result("newCode")) { model.newConnectCode() }.controlSize(.small).disabled(model.working)
+                }
             }
         }
     }
@@ -824,19 +870,20 @@ struct BrowserRemoteView: View {
         }
     }
 
-    /// The outside checks as a checklist, with Repair only when one failed and the helper can repair it.
-    private func checksBlock(failed: [RemoteCheck]) -> some View {
+    /// The outside checks as a checklist, with Repair only when one failed for real and the helper can repair it. A pending
+    /// check is Waiting, never red.
+    private func checksBlock(failed: [RemoteCheck], waiting: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(result("checksTitle")).font(Chrome.font(12, .semibold)).accessibilityAddTraits(.isHeader)
                 Text(model.checking ? result("checksRunning") : model.checks.isEmpty ? result("checksNone")
-                     : failed.isEmpty ? result("checksPassed") : Shared.checksFailed(failed.count))
+                     : !failed.isEmpty ? Shared.checksFailed(failed.count) : waiting ? result("checksWaiting") : result("checksPassed"))
                     .font(Chrome.font(11)).foregroundStyle(failed.isEmpty ? Chrome.muted : Chrome.working)
             }
             ForEach(model.checks) { check in
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: check.status == "ok" ? "checkmark.circle" : check.failed ? "xmark.circle" : "exclamationmark.circle")
-                        .foregroundStyle(check.status == "ok" ? Chrome.done : Chrome.working).accessibilityHidden(true)
+                    Image(systemName: check.status == "ok" ? "checkmark.circle" : check.waiting ? "clock" : check.failed ? "xmark.circle" : "exclamationmark.circle")
+                        .foregroundStyle(check.status == "ok" ? Chrome.done : check.waiting ? Chrome.muted : Chrome.working).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(Shared.checkLabels[check.name] ?? check.name).font(Chrome.font(12))
                         if check.status != "ok", !check.detail.isEmpty {
@@ -845,7 +892,7 @@ struct BrowserRemoteView: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(Shared.checkLabels[check.name] ?? check.name): \(check.status == "ok" ? "passed" : check.failed ? "failed" : "warning")")
+                .accessibilityLabel("\(Shared.checkLabels[check.name] ?? check.name): \(check.status == "ok" ? "passed" : check.waiting ? "waiting" : check.failed ? "failed" : "warning")")
             }
             HStack(spacing: 10) {
                 Button(result("checkAgain")) { model.checkFromOutside(force: true) }.controlSize(.small).disabled(model.checking || model.fixing)

@@ -322,6 +322,18 @@ enum Render {
         remote.stageForRender(code: ConnectCode(code: "TK-7QF3-K2MD", expiresAt: Date().addingTimeInterval(545)), passcode: "abcde-fghij-klmno-pqrst", checks: failed,
                               plan: RemoteFixPlan(available: true, actions: [.init(kind: "funnel", what: "Open Funnel again", status: "planned")]))
         guard remotePage(.on(connectorURL: "https://studio.tail1234.ts.net:8443/mcp", browserConnected: true), "remote-on-repair.png") else { return 1 }
+        // A brand-new name still being published: On and waiting, the check marked Waiting, no Repair.
+        var waiting = passed
+        waiting[0] = RemoteCheck(name: "dns", status: "fail", detail: "studio.tail1234.ts.net doesn't resolve from public DNS yet.", pending: true)
+        remote.stageForRender(code: ConnectCode(code: "TK-7QF3-K2MD", expiresAt: Date().addingTimeInterval(545)), passcode: nil, checks: waiting,
+                              plan: RemoteFixPlan(available: true, actions: [.init(kind: "funnel", what: "Open Funnel again", status: "planned")]))
+        guard remotePage(.on(connectorURL: "https://studio.tail1234.ts.net:8443/mcp", browserConnected: true), "remote-on-waiting.png") else { return 1 }
+        // On after the Funnel retry, which makes no code: the line says to press New code.
+        remote.stageForRender(code: nil, passcode: nil, checks: passed, plan: nil)
+        guard remotePage(.on(connectorURL: "https://studio.tail1234.ts.net:8443/mcp", browserConnected: true), "remote-on-no-code.png") else { return 1 }
+        // Ten minutes of Funnel retries: the waiting line is gone and the button checks again.
+        remote.stageForRender(code: nil, passcode: nil, checks: [], plan: nil, funnelGaveUp: true)
+        guard remotePage(.funnelNotAllowed(adminURL: URL(string: "https://login.tailscale.com/f/funnel")), "remote-funnel-gave-up.png") else { return 1 }
         remote.clearSecrets()
 
         // The whole Permissions section, Optional open, at the section's width.

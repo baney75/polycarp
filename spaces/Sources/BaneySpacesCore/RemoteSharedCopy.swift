@@ -25,12 +25,13 @@ public enum RemoteSharedCopy {
     public static let steps: [String: RemoteStepCopy] = [
         "tailscale_missing": RemoteStepCopy(title: "Get Tailscale", body: "Tailscale is free and runs on your own account. Install it and sign in; this page moves on by itself.", action: "Get Tailscale", kind: "open_url", waits: true),
         "tailscale_signed_out": RemoteStepCopy(title: "Sign in to Tailscale", body: "Tailscale is installed but not signed in. Open Tailscale and sign in, or run the command below in a terminal. This page moves on by itself.", action: "Copy the command", kind: "copy_command", waits: true),
-        "tailnet_lock": RemoteStepCopy(title: "Tailscale Funnel won't work on this network", body: "Your tailnet has Tailnet Lock turned on, and Funnel doesn't work with it. Nothing was changed. Use Cloudflare instead; turning Tailnet Lock off is your decision.", action: "Use Cloudflare", kind: "use_cloudflare", waits: false),
+        "tailnet_lock": RemoteStepCopy(title: "Funnel won't work on this tailnet", body: "Your tailnet has Tailnet Lock turned on, and Funnel doesn't work with it. Nothing was changed. Use Cloudflare instead; turning Tailnet Lock off is your decision.", action: "Use Cloudflare", kind: "use_cloudflare", waits: false),
         "local_port": RemoteStepCopy(title: "Another program is using Polycarp's port", body: "A program on this computer already listens on the port Polycarp needs, so nothing was changed. Quit it, then check again.", action: "Check again", kind: "check_again", waits: false),
         "tailscale_port": RemoteStepCopy(title: "A Tailscale setting is using port 8443", body: "A setting saved in Tailscale already uses the port Funnel needs, so nothing was changed. Turn that setting off in Tailscale, then check again.", action: "Check again", kind: "check_again", waits: false),
         "ready": RemoteStepCopy(title: "Ready to turn on", body: "Tailscale is signed in. Turning on gives you an address to add in each assistant and a one-time connect code that approves it.", action: "Turn on", kind: "turn_on", waits: false),
         "turning_on": RemoteStepCopy(title: "Turning on", body: "This can take about a minute the first time.", action: nil, kind: nil, waits: false),
         "funnel_not_allowed": RemoteStepCopy(title: "Allow Funnel in Tailscale", body: "Funnel is the Tailscale setting that lets assistants reach this computer. On Tailscale's page, press the button that enables it. This page moves on by itself once it's allowed.", action: "Open Tailscale's page", kind: "open_url", waits: true),
+        "funnel_gave_up": RemoteStepCopy(title: "Allow Funnel in Tailscale", body: "This page stopped checking after 10 minutes. Once Funnel is allowed on Tailscale's page, press Check again.", action: "Check again", kind: "open_funnel", waits: false),
         "funnel_closed": RemoteStepCopy(title: "Funnel is closed in Tailscale", body: "Remote access is set up, but Funnel isn't open for this computer, so assistants can't reach it.", action: "Open Funnel again", kind: "open_funnel", waits: false),
         "tailscale_operator": RemoteStepCopy(title: "Let your user control Tailscale", body: "Tailscale refused because your user isn't its operator. Run this command once in a terminal; Polycarp never runs sudo. This page moves on by itself.", action: "Copy the command", kind: "copy_command", waits: true),
         "launcher": RemoteStepCopy(title: "Finish installing Polycarp", body: "Polycarp's launcher isn't set up on this computer, so the background service would have nothing to start. Run this command once in a terminal, then try again.", action: "Copy the command", kind: "copy_command", waits: false),
@@ -51,6 +52,7 @@ public enum RemoteSharedCopy {
         "cloudflare_tunnel": RemoteStepCopy(title: "Cloudflare couldn't make the tunnel", body: "Details has Cloudflare's words. Fix that, then try again.", action: "Try again", kind: "try_again", waits: false),
         "connect_code": RemoteStepCopy(title: "On, but no connect code yet", body: "The connector is set up, but the one-time connect code couldn't be made. Make a new code before you add an assistant.", action: "New code", kind: "new_code", waits: false),
         "check_failed": RemoteStepCopy(title: "On, but a check from the internet failed", body: "The connector answers, but an assistant may not be able to use it. The failed check says why.", action: "Repair", kind: "repair", waits: false),
+        "on_waiting": RemoteStepCopy(title: "On: the address is still being published", body: "A new address takes a few minutes to reach the internet. This page checks again by itself; add the assistant once it passes.", action: nil, kind: nil, waits: false),
         "on": RemoteStepCopy(title: "On: add Polycarp to an assistant", body: "Assistants you approve can use this browser. Only approve a connection you just started.", action: nil, kind: nil, waits: false),
         "no_browser_connected": RemoteStepCopy(title: "On, but no browser is connected", body: "Open your browser with Polycarp's extension, and assistants can use it.", action: nil, kind: nil, waits: false),
         "not_set_up": RemoteStepCopy(title: "Nothing is set up yet", body: "Choose how assistants reach this computer.", action: "Choose a way", kind: "choose", waits: false),
@@ -75,6 +77,8 @@ public enum RemoteSharedCopy {
         "passcodeLabel": "Passcode, for re-approving",
         "passcodeNote": "Shown once. Use it when an assistant you already approved asks again. Keep it in a password manager, but not one the browser Polycarp drives can fill.",
         "noPasscode": "No passcode was made here. To approve an assistant again later, make a new connect code.",
+        "codeNone": "Press New code to make the code for your assistant.",
+        "checksWaiting": "Waiting for the address to answer.",
         "checksTitle": "Checked from the internet",
         "checksPassed": "Every check passed.",
         "checksRunning": "Checking from the internet...",
@@ -108,6 +112,7 @@ public enum RemoteSharedCopy {
         "installed": "Installed, not signed in",
         "missing": "Not on this computer yet",
         "chooseAgain": "Choose another way",
+        "useCloudflareInstead": "Use Cloudflare instead",
     ]
     public static let problemCodes: [String] = ["tailscale_operator", "launcher", "hub", "service", "serve", "funnel", "config", "dns", "cloudflare_login", "cloudflare_zone", "cloudflare_tunnel", "connect_code"]
     public static let flowSteps: [String] = ["Choose a way", "Get it and sign in", "Turn on"]
@@ -130,6 +135,8 @@ public enum RemoteSharedCopy {
             if code == "launcher" { return "launcher_app" }
             if code == "cloudflare_name" || code == "not_set_up" { return code }
             if code == "cloudflare_dns" { return nextKind == "choose_name" ? "cloudflare_name_refused" : "cloudflare_dns" }
+            // A new name not published yet has words of its own; any other check is check_failed.
+            if code == "dns" { return "dns" }
             if checkCodes.contains(code) { return "check_failed" }
             if problemCodes.contains(code), steps[code] != nil { return code }
             return "unknown"

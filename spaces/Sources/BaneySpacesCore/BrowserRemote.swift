@@ -43,9 +43,18 @@ public struct RemoteCheck: Equatable, Identifiable {
     /// ok, warn or fail.
     public var status: String
     public var detail: String
+    /// A failure that waiting fixes (a new name not published yet, a tunnel still connecting): the helper checks again. Only
+    /// ever true on a failure.
+    public var pending: Bool
     public var id: String { name }
     public var failed: Bool { status == "fail" }
-    public init(name: String, status: String, detail: String = "") { self.name = name; self.status = status; self.detail = detail }
+    /// Failed, and waiting is what fixes it: shown as waiting, never as a failure and never with Repair.
+    public var waiting: Bool { failed && pending }
+    /// Failed for real: what Repair and "N checks failed" count.
+    public var realFailure: Bool { failed && !pending }
+    public init(name: String, status: String, detail: String = "", pending: Bool = false) {
+        self.name = name; self.status = status; self.detail = detail; self.pending = pending && status == "fail"
+    }
 
     /// Only the six outside checks, each once, with their words capped: anything else in `checks` is the status read's own list.
     static func parse(_ json: Any?) -> [RemoteCheck] {
@@ -55,7 +64,8 @@ public struct RemoteCheck: Equatable, Identifiable {
             guard let name = item["name"] as? String, RemoteSharedCopy.checkCodes.contains(name), !seen.contains(name),
                   let status = item["status"] as? String, ["ok", "warn", "fail"].contains(status) else { return nil }
             seen.insert(name)
-            return RemoteCheck(name: name, status: status, detail: String((item["detail"] as? String ?? "").prefix(300)))
+            return RemoteCheck(name: name, status: status, detail: String((item["detail"] as? String ?? "").prefix(300)),
+                               pending: item["pending"] as? Bool == true)
         }
     }
 }
@@ -151,8 +161,16 @@ public struct RemoteReport: Equatable {
         return t.isEmpty || t.count > 300 || t.contains(where: \.isNewline) ? nil : t
     }
 
-    /// Something failed from the internet.
-    public var failedChecks: [RemoteCheck] { checks.filter(\.failed) }
+    /// Something failed from the internet for real (a pending failure is waiting, not failed).
+    public var failedChecks: [RemoteCheck] { checks.filter(\.realFailure) }
+
+    /// The route is on, as a person should read it: the helper says on, or it saved an address and the only failures are ones
+    /// that waiting fixes, or an older helper's bare `dns` code with the address. remote-copy.ts's answerOn.
+    public var answerOn: Bool {
+        if state == .on || state == .noBrowserConnected { return true }
+        guard state == .problem, connectorURL != nil else { return false }
+        return checks.isEmpty ? code == "dns" : RemoteFlow.waitingOnly(checks)
+    }
 
     /// An https address on tailscale.com (or a subdomain, like login.tailscale.com). Anything else is dropped, so a button
     /// never opens an address the helper's output chose.
@@ -223,11 +241,13 @@ public enum RemoteFlow {
         if settingUp { return .turningOn }
         // Reads that keep failing come before the last good answer: an old "On" must not stay up while the helper is silent.
         if readsFailing { return .problem(code: RemoteCopy.helperSilentCode, message: RemoteCopy.helperSilent) }
-        if let status, status.state == .on || status.state == .noBrowserConnected, let url = status.connectorURL {
-            return .on(connectorURL: url, browserConnected: status.state == .on)
+        if let status, status.answerOn, let url = status.connectorURL {
+            // A name still being published (a problem that is only waiting) says nothing against the browser unless status does.
+            let connected = status.state == .problem ? status.extensionConnected ?? true : status.state == .on
+            return .on(connectorURL: url, browserConnected: connected)
         }
         // Nothing set up: the choice comes first, then the chosen route's steps. A problem (no browser yet, a hub) comes ahead of both.
-        if let status, !status.configured, status.state != .problem, setup?.state != .on, let routes = status.routes {
+        if let status, !status.configured, status.state != .problem, !(setup?.answerOn ?? false), let routes = status.routes {
             if chosen == nil, setup == nil { return .chooseRoute(routes) }
             if chosen == .cloudflare {
                 if !routes.cloudflareInstalled { return .getCloudflared(configured: false) }
@@ -236,12 +256,13 @@ public enum RemoteFlow {
             }
         }
         if let setup {
-            if setup.state == .on, let url = setup.connectorURL {
-                // Just turned on. Before the first status read, or while it lags (inside the grace period), this stands in for it.
+            if setup.answerOn, let url = setup.connectorURL {
+                // Just turned on (a new name still being published included). Before the first status read, or while it lags
+                // (inside the grace period), this stands in for it.
                 if status == nil || setupAge < grace(for: status) {
                     return .on(connectorURL: url, browserConnected: status?.extensionConnected ?? true)
                 }
-            } else if setup.state != .on {
+            } else if !setup.answerOn {
                 if !(status.map { moreBasic.contains($0.state) } ?? false) { return screen(for: setup, configured: status?.configured ?? false) }
             }
         }
@@ -256,7 +277,7 @@ public enum RemoteFlow {
     /// refusal about Tailscale itself ends once status no longer says the same thing, so signing in moves the window on.
     public static func settle(setup: RemoteReport?, status: RemoteReport) -> RemoteReport? {
         guard let setup else { return nil }
-        if status.state == .on || status.state == .noBrowserConnected, status.connectorURL != nil { return nil }
+        if status.answerOn, status.connectorURL != nil { return nil }
         if moreBasic.contains(setup.state), status.state != setup.state { return nil }
         return setup
     }
@@ -292,9 +313,37 @@ public enum RemoteFlow {
         return now.timeIntervalSince(lastTry ?? firstRefusal) >= funnelRetryEvery
     }
 
-    /// Repair shows only when a check from the internet failed and this helper has `remote fix` with something to do.
+    /// Repair shows only when a check from the internet failed for real and this helper has `remote fix` with something to do.
     public static func offerRepair(checks: [RemoteCheck], plan: RemoteFixPlan?) -> Bool {
-        checks.contains(where: \.failed) && (plan?.available ?? false) && !(plan?.actions.isEmpty ?? true)
+        checks.contains(where: \.realFailure) && repairAvailable(plan)
+    }
+
+    /// This helper has `remote fix` (feature-detected) and its plan has something in it. remote-flow.ts's repairAvailable.
+    public static func repairAvailable(_ plan: RemoteFixPlan?) -> Bool { (plan?.available ?? false) && !(plan?.actions.isEmpty ?? true) }
+
+    /// Something failed, and every failure is one waiting fixes. remote-copy.ts's waitingChecks.
+    public static func waitingOnly(_ checks: [RemoteCheck]) -> Bool {
+        let failed = checks.filter(\.failed)
+        return !failed.isEmpty && failed.allSatisfy(\.pending)
+    }
+
+    /// While a check waits (a name being published, a tunnel connecting), `remote test` runs again this often by itself.
+    public static let waitingRecheckEvery: TimeInterval = 30
+
+    /// The On screen's heading and whether it is waiting, from the newest checks, else the answer's own code (an older helper's
+    /// bare `dns`). remote-flow.ts's result().
+    public static func resultHead(checks: [RemoteCheck], answer: RemoteReport?, browserConnected: Bool) -> (head: String, waiting: Bool) {
+        if checks.contains(where: \.realFailure) { return ("check_failed", false) }
+        if waitingOnly(checks) || (checks.isEmpty && answer?.code == "dns" && answer?.connectorURL != nil) { return ("on_waiting", true) }
+        return (browserConnected ? "on" : "no_browser_connected", false)
+    }
+
+    /// The setup answer to keep once `remote test` answers. A run that stopped on dns or a failed check is over once a later
+    /// test finds nothing failed for real (waiting is on), so the step can't outlive what it was about. remote-flow.ts's settleRunAfterTest.
+    public static func settleAfterTest(setup: RemoteReport?, checks: [RemoteCheck]) -> RemoteReport? {
+        guard let setup, !setup.answerOn, !checks.isEmpty, !checks.contains(where: \.realFailure) else { return setup }
+        let k = RemoteSharedCopy.key(state: setup.rawState, code: setup.code, nextKind: setup.nextKind, nextCommand: setup.nextCommand)
+        return k == "dns" || k == "check_failed" ? nil : setup
     }
 
     /// Seconds until the next status read. Quick while a step waits on the person and the read is cheap; slow whenever status
@@ -340,19 +389,23 @@ public enum RemoteCommand: Equatable {
     /// `remote fix` (from a newer helper): what it would repair, changing nothing; then the repair itself.
     case fixPlan, fix
 
-    public var arguments: [String] {
+    public var arguments: [String] { arguments(connectCode: true) }
+
+    /// `connectCode`: a person pressed the button, so setup's answer may carry the one-time code a new assistant needs
+    /// (`--connect-code`). The Funnel retry runs by itself and passes false: a code is made only by a press.
+    public func arguments(connectCode: Bool) -> [String] {
+        let code = connectCode ? ["--connect-code"] : []
         switch self {
-        case .status: ["remote", "status", "--json"]
-        // --connect-code: the answer carries the one-time code a new assistant needs.
-        case .setup: ["remote", "setup", "--json", "--connect-code"]
-        case .off: ["remote", "off"]
-        case .newPasscode: ["token", "passcode", "--json"]
-        case .setupCloudflare(let host, let download): ["remote", "setup", "--json", "--connect-code", "--cloudflare", host] + (download ? ["--yes"] : [])
-        case .cloudflareLogin: ["remote", "cloudflare", "login", "--json"]
-        case .approvalCode: ["token", "approval-code", "--json"]
-        case .test: ["remote", "test", "--json"]
-        case .fixPlan: ["remote", "fix", "--json", "--dry-run"]
-        case .fix: ["remote", "fix", "--json", "--yes"]
+        case .status: return ["remote", "status", "--json"]
+        case .setup: return ["remote", "setup", "--json"] + code
+        case .off: return ["remote", "off"]
+        case .newPasscode: return ["token", "passcode", "--json"]
+        case .setupCloudflare(let host, let download): return ["remote", "setup", "--json"] + code + ["--cloudflare", host] + (download ? ["--yes"] : [])
+        case .cloudflareLogin: return ["remote", "cloudflare", "login", "--json"]
+        case .approvalCode: return ["token", "approval-code", "--json"]
+        case .test: return ["remote", "test", "--json"]
+        case .fixPlan: return ["remote", "fix", "--json", "--dry-run"]
+        case .fix: return ["remote", "fix", "--json", "--yes"]
         }
     }
 
@@ -433,7 +486,6 @@ public enum RemoteCopy {
     /// "Get it for me" needs the address first: the helper downloads cloudflared and goes on to set that address up.
     public static let cloudflareAddressFirst = "Type this computer's address first, like polycarp.yourdomain.com."
     public static let funnelWaiting = "Waiting for Funnel to be allowed. This window tries again by itself."
-    public static let funnelGaveUp = "Still not allowed after 10 minutes. Allow Funnel on Tailscale's page, then press Turn on."
 
     public static let intro = "Let the assistants you use on the web work in this computer's browser and, if you allow it, in apps on its agent workspace. It's off until you turn it on."
     public static let honest = "This runs on your own account. Assistants you approve can use your signed-in browser, so only approve ones you trust. Computer use stays off for each one unless you tick it when you approve it."
@@ -467,7 +519,7 @@ public enum RemoteCopy {
     /// The Mac's own sentences, for the tests that hold them to the rules. The shared ones are held by remote-copy.test.mjs.
     public static var everySentence: [String] {
         [title, createAccountButton, openTailscaleButton, openDownloadPage, cloudflareWaiting, cloudflareAddressInvalid, cloudflareAddressFirst,
-         funnelWaiting, funnelGaveUp, intro, honest, staysOn, stillSetUp, startOverButton, detailsLabel, commandLabel, copyCommandButton,
+         funnelWaiting, intro, honest, staysOn, stillSetUp, startOverButton, detailsLabel, commandLabel, copyCommandButton,
          passcodeSaved, passcodeEarlier, newPasscodeButton, newPasscodeFailed, connectCodeFailed, repairFailed, turnOffFailed, helperSilent,
          unavailable, otherWays, otherWaysHelp, menusNote]
     }

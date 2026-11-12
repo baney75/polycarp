@@ -241,8 +241,8 @@ final class BrowserRemoteTests: XCTestCase {
         let late = RemoteFlow.setupGrace + 30
         XCTAssertEqual(screen(status: dns, setup: done, age: late), .on(connectorURL: url, browserConnected: true))
         XCTAssertEqual(screen(status: .init(state: .problem, message: "local serve: down", connectorURL: url), setup: done, age: late), .problem(code: nil, message: "local serve: down"), "any other problem ends the bridge on time")
-        // Once the DNS grace is over it is a problem like any other.
-        XCTAssertEqual(screen(status: dns, setup: done, age: RemoteFlow.dnsGrace + 1), .problem(code: "dns", message: "public DNS: no A record"))
+        // Past the DNS grace too it stays On and waiting: the name is still being published, not broken (PR 133 first-F1).
+        XCTAssertEqual(screen(status: dns, setup: done, age: RemoteFlow.dnsGrace + 1), .on(connectorURL: url, browserConnected: true))
         XCTAssertEqual(try? report(#"{"state":"problem","code":"dns","message":"m","connectorUrl":"\#(url)"}"#).code, "dns")
     }
 
@@ -326,7 +326,7 @@ final class BrowserRemoteTests: XCTestCase {
         XCTAssertEqual(tab.components(separatedBy: "BrowserRemoteView()").count - 1, 1)
         let view = try String(contentsOf: root.appendingPathComponent("Sources/BaneySpaces/BrowserRemoteView.swift"), encoding: .utf8)
         XCTAssertTrue(view.contains("Self.run(.status)"))
-        XCTAssertEqual(view.components(separatedBy: "Self.run(command)").count - 1, 1, "setup runs from one place: runSetup()")
+        XCTAssertEqual(view.components(separatedBy: "Self.run(command, connectCode: !quiet)").count - 1, 1, "setup runs from one place: runSetup()")
         // Setup runs from the Turn on button and Try again only; the poll reads status.
         let from = try XCTUnwrap(view.range(of: "func refresh()")), to = try XCTUnwrap(view.range(of: "// MARK: Acting"))
         let pollBody = String(view[from.lowerBound..<to.lowerBound])
@@ -508,7 +508,9 @@ final class BrowserRemoteTests: XCTestCase {
         XCTAssertEqual(screen(status: half, setup: on), .on(connectorURL: url, browserConnected: true))
         // And the screen has no "try again" button: its only buttons are the page and Turn off.
         let view = try source(remoteSources[0])
-        let a = try XCTUnwrap(view.range(of: "case .funnelNotAllowed(let admin):")), b = try XCTUnwrap(view.range(of: "if model.funnelGaveUp {"))
+        let start = try XCTUnwrap(view.range(of: "case .funnelNotAllowed(let admin):"))
+        let a = try XCTUnwrap(view.range(of: "} else if let admin {", range: start.upperBound..<view.endIndex))
+        let b = try XCTUnwrap(view.range(of: "turnOffButton", range: a.upperBound..<view.endIndex))
         let buttons = view[a.lowerBound..<b.lowerBound].components(separatedBy: "Button(").count - 1
         XCTAssertEqual(buttons, 1, "Open Tailscale's page only (Turn off is turnOffButton)")
         XCTAssertFalse(view.contains("I've allowed it"))
