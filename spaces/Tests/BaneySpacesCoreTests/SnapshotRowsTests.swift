@@ -253,6 +253,47 @@ final class SnapshotRowsTests: XCTestCase {
         guard case .changed(let r) = c.first else { return XCTFail("\(c)") }
         XCTAssertEqual(r.name, "1.180591620717e21")
     }
+
+    // Review r2 first-F1: the full re-read that next_call asks for clears the refusal, even with the older read in the horizon.
+    func testTheReReadNextCallAsksForClearsTheRefusal() {
+        var m = SnapshotRowsMemory()
+        let t = Date()
+        m.remember(session: "a", window: 9, view: "v", snapshot: "sOld", rows: rows(["OK", "Cancel"]), now: t)
+        m.remember(session: "a", window: 9, view: "v", snapshot: "sNew", rows: rows(["Delete", "OK", "Cancel"]), now: t)
+        XCTAssertEqual(m.resolve(bare: 2, session: "a", now: t).code, .staleBareRow)
+        m.remember(session: "a", window: 9, view: "v", snapshot: "sFull", rows: rows(["Delete", "OK", "Cancel"]), now: t)
+        XCTAssertEqual(m.resolve(bare: 2, session: "a", now: t), .ref("@sFull:e2"))
+        // A since read is not that re-read.
+        XCTAssertEqual(m.resolve(bare: 9, session: "a", now: t).code, .unknownRef)
+        m.remember(session: "a", window: 9, view: "v", snapshot: "sSince", rows: rows(["Delete", "OK"]), now: t, listed: false)
+        XCTAssertEqual(m.resolve(bare: 2, session: "a", now: t).code, .staleBareRow)
+    }
+
+    // Review r2 second-S1 and first-F2: a since read with a query keeps the baseline, and a cut read's numbers aren't bare numbers.
+    func testWhatAReadCountsAs() {
+        XCTAssertEqual(SnapshotRowsMemory.kind(since: true, query: "Save", rows: 3, max: nil).baseline, false)
+        XCTAssertEqual(SnapshotRowsMemory.kind(since: true, query: nil, rows: 3, max: nil).baseline, true)
+        XCTAssertEqual(SnapshotRowsMemory.kind(since: false, query: nil, rows: 401, max: nil).listed, false)
+        XCTAssertEqual(SnapshotRowsMemory.kind(since: false, query: nil, rows: 11, max: 10).listed, false)
+        XCTAssertEqual(SnapshotRowsMemory.kind(since: false, query: nil, rows: 10, max: 10).listed, true)
+        XCTAssertEqual(SnapshotRowsMemory.kind(since: false, query: " ", rows: 10, max: nil).listed, true)
+        var m = SnapshotRowsMemory()
+        let t = Date()
+        m.remember(session: "a", window: 9, view: "v", snapshot: "s1", rows: rows(["OK"]), now: t)
+        m.remember(session: "a", window: 9, view: "v", snapshot: "s2", rows: rows(["OK", "Replace"]), now: t, listed: false, baseline: false)
+        let base = m.previous(session: "a", window: 9, view: "v")
+        XCTAssertEqual(base?.snapshot, "s1", "the query hid Replace, so the next since read still compares with s1")
+        XCTAssertEqual(SnapshotRows.changes(from: base?.rows ?? [], to: rows(["OK", "Replace"])).map(\.row.name), ["Replace"])
+    }
+
+    // Review r2 second-S2: the truncated call reads the same view.
+    func testTheTruncatedCallRepeatsTheView() throws {
+        let d = try load("calculator")
+        let text = SnapshotRows.render(SnapshotRows.rows(of: d["tree"] ?? .null), snapshot: "s", window: 5, title: "", app: "", refs: 0,
+                                       query: nil, max: 3, also: #","interactive":true,"depth":4"#)
+        XCTAssertTrue(text.hasSuffix(#"{"window":5,"interactive":true,"depth":4,"query":"<a word from the row you want>"}"#), text)
+        XCTAssertTrue(text.contains(#"{"window":5,"interactive":true,"depth":4,"max_elements":"#), text)
+    }
 }
 
 private extension SnapshotRowsMemory.Bare {

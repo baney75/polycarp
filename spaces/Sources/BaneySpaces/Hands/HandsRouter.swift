@@ -433,7 +433,8 @@ final class HandsRouter {
                 let since = req.snapshotFormat == "rows" && req.string("since") == "latest"
                 let previous = withRows { m -> SnapshotRowsMemory.Read? in
                     let p = m.previous(session: session, window: w.id, view: view)
-                    m.remember(session: session, window: w.id, view: view, snapshot: sid, rows: rows, now: Date(), listed: !(since && p != nil) && (req.string("query") ?? "").isEmpty)
+                    let k = SnapshotRowsMemory.kind(since: since && p != nil, query: req.string("query"), rows: rows.count, max: req.int("max_elements"))
+                    m.remember(session: session, window: w.id, view: view, snapshot: sid, rows: rows, now: Date(), listed: k.listed, baseline: k.baseline)
                     return p
                 }
                 guard req.snapshotFormat == "rows" else { return .success(.object(o)) }
@@ -445,7 +446,7 @@ final class HandsRouter {
                     if req.string("since") != nil { notes.append("no earlier read of this window in this session, so this is all of it") }
                     text = SnapshotRows.render(rows, snapshot: sid, window: w.id, title: o["window"]?["title"]?.string ?? "", app: w.app,
                                                refs: o["ref_count"]?.int ?? rows.compactMap(\.number).count, notes: notes,
-                                               query: req.string("query"), max: req.int("max_elements"))
+                                               query: req.string("query"), max: req.int("max_elements"), also: Self.viewArguments(req))
                 }
                 return .success(.object(["format": "rows", "text": .string(text), "snapshot_id": .string(sid), "window": .int(Int(w.id)),
                                          "ref_count": o["ref_count"] ?? .null, "complete": o["complete"] ?? .null,
@@ -482,6 +483,12 @@ final class HandsRouter {
                 return .success(.object(["snapshot_id": data["snapshot_id"] ?? .null, "window": .int(Int(w.id)), "count": .int(found.count), "matches": .array(found)]))
             }
         }
+    }
+
+    /// The read's view arguments as JSON members, for a call that must read the same view.
+    static func viewArguments(_ req: HandsRequest) -> String {
+        ["interactive", "compact"].compactMap { k in req.args[k] == nil ? nil : ",\"\(k)\":\(req.bool(k))" }.joined()
+            + (req.int("depth").map { ",\"depth\":\($0)" } ?? "")
     }
 
     // MARK: refs

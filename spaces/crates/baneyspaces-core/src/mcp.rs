@@ -64,8 +64,13 @@ pub fn rows_not_supported(asked: &[&str]) -> Envelope {
 
 /// The refusal for a CLI `agent snapshot` given `--format`, `--query`, `--since` or `--max_elements`.
 pub fn rows_flags_refusal(args: &[String]) -> Option<Envelope> {
-    let asked: Vec<&str> =
-        ROWS_ARGS.iter().copied().filter(|k| args.iter().any(|a| a.strip_prefix("--").and_then(|s| s.split('=').next()) == Some(*k))).collect();
+    // `--format json` asks for what this platform returns, so it passes.
+    let json = |i: usize| args[i] == "--format=json" || (args[i] == "--format" && args.get(i + 1).is_some_and(|v| v == "json"));
+    let asked: Vec<&str> = ROWS_ARGS
+        .iter()
+        .copied()
+        .filter(|k| (0..args.len()).any(|i| !json(i) && args[i].strip_prefix("--").and_then(|s| s.split('=').next()) == Some(*k)))
+        .collect();
     (!asked.is_empty()).then(|| rows_not_supported(&asked))
 }
 
@@ -87,7 +92,7 @@ fn rows_refusal(name: &str, args: &Value) -> Option<Envelope> {
     if let Some(e) = args.get("ref").and_then(Value::as_str).and_then(bare_ref_refusal) {
         return Some(e);
     }
-    let asked: Vec<&str> = ROWS_ARGS.iter().copied().filter(|k| args.get(*k).is_some()).collect();
+    let asked: Vec<&str> = ROWS_ARGS.iter().copied().filter(|k| args.get(*k).is_some_and(|v| !(*k == "format" && v == "json"))).collect();
     (name == "agent_snapshot" && !asked.is_empty()).then(|| rows_not_supported(&asked))
 }
 
@@ -241,6 +246,12 @@ mod tests {
         for a in ["--format=rows", "--query=Save", "--since=latest", "--max_elements=3"] {
             assert!(rows_flags_refusal(&v(&["--window", "0x1", a])).is_some(), "{a}");
         }
+        // Review r2 second-S3: json is what this platform returns.
+        assert!(rows_flags_refusal(&v(&["--window", "0x1", "--format=json"])).is_none());
+        assert!(rows_flags_refusal(&v(&["--window", "0x1", "--format", "json"])).is_none());
+        assert!(rows_flags_refusal(&v(&["--window", "0x1", "--format", "rows"])).is_some());
+        assert!(rows_refusal("agent_snapshot", &json!({"window": "0x1", "format": "json"})).is_none());
+        assert!(rows_refusal("agent_snapshot", &json!({"window": "0x1", "format": "rows"})).is_some());
     }
 
     // Review r1 second-F7: a bare row number as a ref is refused, from MCP and for the CLI.

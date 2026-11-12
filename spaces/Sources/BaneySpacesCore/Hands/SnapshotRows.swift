@@ -141,7 +141,7 @@ public enum SnapshotRows {
 
     /// The whole answer for a read: the header (one line for a query), notes, rows, and a truncated line when `max` cut some.
     public static func render(_ rows: [Row], snapshot: String, window: UInt32, title: String, app: String, refs: Int,
-                              notes: [String] = [], query: String?, max: Int?) -> String {
+                              notes: [String] = [], query: String?, max: Int?, also: String = "") -> String {
         let q = (query ?? "").trimmingCharacters(in: .whitespaces)
         let picked = select(rows, query: q)
         var lines: [String]
@@ -155,13 +155,14 @@ public enum SnapshotRows {
         lines += notes.map { "note: " + $0 }
         let limit = Swift.max(1, max ?? defaultMax)
         lines += picked.prefix(limit).map { rows[$0].line }
-        if picked.count > limit { lines.append(truncated(shown: limit, total: picked.count, window: window, query: q)) }
+        if picked.count > limit { lines.append(truncated(shown: limit, total: picked.count, window: window, query: q, also: also)) }
         return lines.joined(separator: "\n")
     }
 
-    static func truncated(shown: Int, total: Int, window: UInt32, query: String) -> String {
-        let all = query.isEmpty ? "{\"window\":\(window),\"max_elements\":\(total)}" : "{\"window\":\(window),\"query\":\(quoted(query)),\"max_elements\":\(total)}"
-        let narrower = query.isEmpty ? " or {\"window\":\(window),\"query\":\"<a word from the row you want>\"}" : ""
+    /// `also`: the read's view arguments as JSON members (`,"interactive":true`), repeated so the next call reads the same view.
+    static func truncated(shown: Int, total: Int, window: UInt32, query: String, also: String = "") -> String {
+        let all = query.isEmpty ? "{\"window\":\(window)\(also),\"max_elements\":\(total)}" : "{\"window\":\(window)\(also),\"query\":\(quoted(query)),\"max_elements\":\(total)}"
+        let narrower = query.isEmpty ? " or {\"window\":\(window)\(also),\"query\":\"<a word from the row you want>\"}" : ""
         return "truncated: \(shown) of \(total) rows shown. For the rest call snapshot with \(all)\(narrower)"
     }
 
@@ -223,6 +224,8 @@ public struct SnapshotRowsMemory: Sendable {
         /// Whether the read printed every row with its number. A since read or a find did not, so a bare number after one
         /// may mean a row the agent saw in an older read.
         public var listed: Bool = true
+        /// The order the session's reads were made in.
+        var seq = 0
         /// Row number to row key, for comparing two snapshots' row N.
         var keys: [Int: String] { Dictionary(rows.compactMap { r in r.number.map { ($0, r.key) } }, uniquingKeysWith: { a, _ in a }) }
         func row(_ n: Int) -> SnapshotRows.Row? { rows.first { $0.number == n } }
@@ -236,6 +239,11 @@ public struct SnapshotRowsMemory: Sendable {
 
     private var last: [String: Read] = [:]
     private var recent: [String: [Read]] = [:]
+    /// Per session: reads up to this one are not compared any more (a full read after a refusal), and the window a refusal
+    /// asked the agent to read again.
+    private var floor: [String: Int] = [:]
+    private var needsRead: [String: UInt32] = [:]
+    private var seq = 0
 
     public init() {}
 
@@ -246,15 +254,32 @@ public struct SnapshotRowsMemory: Sendable {
         last[Self.viewKey(session: session, window: window, view: view)]
     }
 
-    public mutating func remember(session: String, window: UInt32, view: String, snapshot: String, rows: [SnapshotRows.Row], now: Date, listed: Bool = true) {
-        let read = Read(snapshot: snapshot, window: window, rows: rows, at: now, listed: listed)
-        last[Self.viewKey(session: session, window: window, view: view)] = read
+    /// What a read counts as. Listed: it printed every row (not a since read, a query or a cut read), so its numbers are
+    /// bare numbers. Baseline: the next since read compares with it (not a since read with a query, which hid changes).
+    public static func kind(since: Bool, query: String?, rows: Int, max: Int?) -> (listed: Bool, baseline: Bool) {
+        let query = !(query ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+        let cut = !since && rows > Swift.max(1, max ?? SnapshotRows.defaultMax)
+        return (!since && !query && !cut, !(since && query))
+    }
+
+    /// `baseline`: whether the next since read of this view compares with this one (not after a since read with a query,
+    /// which didn't list every change).
+    public mutating func remember(session: String, window: UInt32, view: String, snapshot: String, rows: [SnapshotRows.Row], now: Date,
+                                  listed: Bool = true, baseline: Bool = true) {
+        seq += 1
+        var read = Read(snapshot: snapshot, window: window, rows: rows, at: now, listed: listed)
+        read.seq = seq
+        // The full read a refusal's next_call asked for: the agent has seen these numbers, so older reads don't count.
+        if listed, needsRead[session] == window { floor[session] = seq; needsRead[session] = nil }
+        if baseline { last[Self.viewKey(session: session, window: window, view: view)] = read }
         var list = recent[session] ?? []
         list.append(read)
         if list.count > Self.history { list.removeFirst(list.count - Self.history) }
         recent[session] = list
+        let kept = Set(list.map(\.seq))
+        last = last.filter { !$0.key.hasPrefix(session + "\u{1}") || kept.contains($0.value.seq) }
         if recent.count > Self.sessions, let oldest = recent.min(by: { ($0.value.last?.at ?? .distantPast) < ($1.value.last?.at ?? .distantPast) })?.key {
-            recent[oldest] = nil
+            recent[oldest] = nil; floor[oldest] = nil; needsRead[oldest] = nil
             last = last.filter { !$0.key.hasPrefix(oldest + "\u{1}") }
         }
     }
@@ -268,7 +293,14 @@ public struct SnapshotRowsMemory: Sendable {
 
     /// Row N of the session's latest snapshot, unless a recent earlier snapshot has a different row N (another window, or
     /// another element): then the number alone can't say which the agent saw, and it must pass the full ref.
-    public func resolve(bare n: Int, session: String, now: Date) -> Bare {
+    /// A refusal marks its window: the next full read of it (the one next_call asks for) clears the refusal.
+    public mutating func resolve(bare n: Int, session: String, now: Date) -> Bare {
+        let answer = check(bare: n, session: session, now: now)
+        if case .refused(_, _, let latest?) = answer { needsRead[session] = latest.window }
+        return answer
+    }
+
+    func check(bare n: Int, session: String, now: Date) -> Bare {
         guard let list = recent[session], let latest = list.last else {
             return .refused(code: .unknownRef, message: "\"\(n)\" is a row number, and this session has no snapshot yet", latest: nil)
         }
@@ -280,7 +312,7 @@ public struct SnapshotRowsMemory: Sendable {
             return .refused(code: .unknownRef, message: "row \(n) isn't in your latest snapshot \(latest.snapshot) of window \(latest.window) (its rows go up to \(top))", latest: latest)
         }
         let key = latest.keys[n]
-        for earlier in list.dropLast().reversed() where now.timeIntervalSince(earlier.at) < Self.horizon {
+        for earlier in list.dropLast().reversed() where now.timeIntervalSince(earlier.at) < Self.horizon && earlier.seq > (floor[session] ?? 0) {
             guard let other = earlier.row(n) else { continue }
             if earlier.window != latest.window || earlier.keys[n] != key {
                 return .refused(code: .staleBareRow,

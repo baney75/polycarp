@@ -30,8 +30,8 @@ public enum HandsErrorCode: String, Codable, CaseIterable, Sendable {
     case staleRef = "stale_ref"
     /// The ref matched more than one plausible element now.
     case ambiguousTarget = "ambiguous_target"
-    /// A bare row number (`5`) that means different elements in the latest snapshot and an earlier one of this session.
-    /// Nothing was sent; `next_call` carries the full ref from the latest snapshot.
+    /// A bare row number (`5`) that could mean a row from an older read of this session.
+    /// Nothing was sent; `next_call` is a full snapshot of the window, after which the number means that read's row.
     case staleBareRow = "stale_bare_row"
     /// The element can't do that (no such action, not settable).
     case notSupported = "not_supported"
