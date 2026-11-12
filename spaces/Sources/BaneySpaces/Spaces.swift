@@ -187,6 +187,7 @@ final class Spaces {
         clock.scan = firstScan ? "first" : full ? "full" : last(lastScan!, snap.appWindows, pids, offKnown)
         RunningApps.invalidate()
         let pidsNow = RunningApps.regular
+        Windows.keepBench(pidsNow)
         let (list, unsure, listed, partial, nonStandard, asks) = Windows.all(owners: snap.owners)
         notWindows = nonStandard
         asking = asks
@@ -1269,9 +1270,6 @@ final class Spaces {
         persist()
     }
 
-    /// The display layout changed: put hidden windows at the new hiding spot. macOS sends a burst
-    /// of these on wake and on plugging in a display, so act once, after it settles, and leave
-    /// focus where it is (a dialog may hold it).
     /// The Mac woke. Apps that missed Accessibility while it slept were benched (up to 10 minutes) as if hung, so their
     /// windows went unplaced after wake: every app is asked again, the window list is read in full, and the workspace
     /// you're on is applied again, as for a display change.
@@ -1284,6 +1282,9 @@ final class Spaces {
         screensChanged()
     }
 
+    /// The display layout changed: put hidden windows at the new hiding spot. macOS sends a burst
+    /// of these on wake and on plugging in a display, so act once, after it settles, and leave
+    /// focus where it is (a dialog may hold it).
     func screensChanged() {
         screensWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
