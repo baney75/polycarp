@@ -67,6 +67,26 @@ interface Incoming {
 	url?: string;
 }
 
+/** The folders the agent already works in: the client's roots, or the working directory when it has none to give. */
+export async function clientWorkFolders(server: McpServer): Promise<string[]> {
+	if (server.server.getClientCapabilities()?.roots) {
+		try {
+			const { roots } = await server.server.listRoots(undefined, { timeout: 3000 });
+			return roots.flatMap((r) => {
+				try {
+					return r.uri.startsWith("file:") ? [realOrSelf(fileURLToPath(r.uri))] : [];
+				} catch {
+					return [];
+				}
+			});
+		} catch {
+			// A client that says it has roots and then can't list them has none: every path asks.
+			return [];
+		}
+	}
+	return [realOrSelf(process.cwd())];
+}
+
 /** What mcp.ts and remote.ts do to a session's saved files from outside the tool. */
 export interface FilesTool {
 	/** The session ended: its saved files go. */
@@ -105,25 +125,7 @@ export function registerFiles(server: McpServer, client: BridgeClient, o: FilesT
 	/** What the caller is told about a saved file. Only a local caller learns where it is on disk. */
 	const describe = (f: SavedFile) => ({ ...f, ...(o.remote ? {} : { path: saved.pathOf(f) }) });
 
-	/** The folders the agent already works in: the client's roots, or the working directory when it has none to give. */
-	async function workFolders(): Promise<string[]> {
-		if (server.server.getClientCapabilities()?.roots) {
-			try {
-				const { roots } = await server.server.listRoots(undefined, { timeout: 3000 });
-				return roots.flatMap((r) => {
-					try {
-						return r.uri.startsWith("file:") ? [realOrSelf(fileURLToPath(r.uri))] : [];
-					} catch {
-						return [];
-					}
-				});
-			} catch {
-				// A client that says it has roots and then can't list them has none: every path asks.
-				return [];
-			}
-		}
-		return [realOrSelf(process.cwd())];
-	}
+	const workFolders = () => clientWorkFolders(server);
 
 	async function upload(args: { tabId?: number; ref?: string; selector?: string; paths?: string[]; ids?: string[] }): Promise<Result> {
 		const paths = args.paths ?? [];

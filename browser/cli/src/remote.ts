@@ -70,6 +70,14 @@ export const SCOPES: Record<string, { tools: string[]; what: string }> = {
 	},
 	"library.read": { tools: ["library_search", "library_cite"], what: "Search and cite the source library" },
 	"library.write": { tools: ["library_add"], what: "Add sources to the library (fetches from doi.org, OpenAlex, Crossref)" },
+	"documents.read": {
+		tools: ["document_search", "document_read", "documents"],
+		what: "Search and read the documents stored in your browser (PDFs and files agents or the side panel brought in), and list them",
+	},
+	"documents.write": {
+		tools: ["document_get"],
+		what: "Bring documents into that store from the web (with your sign-in, site permissions apply) or the agent's tab, and rename or delete them",
+	},
 	"threads.read": {
 		tools: ["threads_list", "thread_read", "thread_search"],
 		what: "Read your past Polycarp side panel chats (never private-mode ones)",

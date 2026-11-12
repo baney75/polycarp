@@ -76,6 +76,19 @@ function reorderMessages(messages: Message[]): Message[] {
 
 // Custom message transformer for browser extension
 // Handles navigation messages and app-specific message types
+/**
+ * A document attached to a message goes to the model as its text when that is short. A long one (a book, a report)
+ * would fill the model's window on every turn, so the model is told to bring it into the document store and read it
+ * by page instead (src/tools/documents.ts).
+ */
+export const ATTACHMENT_INLINE_CHARS = 20_000;
+
+export function attachedText(a: { fileName: string; extractedText?: string }): string {
+	const text = a.extractedText ?? "";
+	if (text.length <= ATTACHMENT_INLINE_CHARS) return `\n\n[Document: ${a.fileName}]\n${text}`;
+	return `\n\n[Document: ${a.fileName}, ${text.length.toLocaleString("en-US")} characters of text, too long to include here. Call document_get with {"attachment": ${JSON.stringify(a.fileName)}} to store it, then document_search and document_read to read it by page.]`;
+}
+
 export async function browserMessageTransformer(messages: AgentMessage[]): Promise<Message[]> {
 	const transformed = [];
 
@@ -111,8 +124,7 @@ export async function browserMessageTransformer(messages: AgentMessage[]): Promi
 					: [...(base.content as Array<TextContent | ImageContent>)];
 			for (const a of attachments ?? []) {
 				if (a.type === "image") parts.push({ type: "image", data: a.content, mimeType: a.mimeType });
-				else if (a.type === "document" && a.extractedText)
-					parts.push({ type: "text", text: `\n\n[Document: ${a.fileName}]\n${a.extractedText}` });
+				else if (a.type === "document" && a.extractedText) parts.push({ type: "text", text: attachedText(a) });
 			}
 			transformed.push({ ...base, content: parts } as Message);
 			continue;

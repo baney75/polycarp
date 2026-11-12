@@ -61,6 +61,7 @@ import {
 	switched as switchedEdit,
 } from "../site-edits/store.js";
 import { BUILD } from "../update/build.js";
+import { documentHandlers } from "./documents.js";
 import { BridgeError, classify, detachedError, interruptedError, navigatedError } from "./errors.js";
 import { dropTransfersForSession, fileHandlers } from "./files.js";
 import { rankMatches } from "./find.js";
@@ -409,6 +410,7 @@ export async function extensionStatus() {
 export const handlers: Record<string, Handler> = {
 	...editHandlers,
 	...fileHandlers(resolveTab),
+	...documentHandlers(resolveTab),
 	/** For the MCP `status` tool: what this session may open and where its tabs are. */
 	status: async (ctx) => {
 		const [extension, tabs] = await Promise.all([extensionStatus(), ctx.session.tabs()]);

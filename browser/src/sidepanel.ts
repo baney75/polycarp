@@ -54,6 +54,7 @@ import { BridgeTab } from "./dialogs/BridgeTab.js";
 import { CombinedTab } from "./dialogs/CombinedTab.js";
 import { ConnectTab } from "./dialogs/ConnectTab.js";
 import { CostsTab } from "./dialogs/CostsTab.js";
+import { DocumentsTab } from "./dialogs/DocumentsTab.js";
 import { PrivacyTab } from "./dialogs/PrivacyTab.js";
 import { RecordSkillDialog } from "./dialogs/RecordSkillDialog.js";
 import { SessionCostDialog } from "./dialogs/SessionCostDialog.js";
@@ -63,6 +64,8 @@ import { SiteEditsTab } from "./dialogs/SiteEditsTab.js";
 import { SkillsTab } from "./dialogs/SkillsTab.js";
 import { UpdatesTab } from "./dialogs/UpdatesTab.js";
 import { type WelcomeChoice, WelcomeSetupDialog } from "./dialogs/WelcomeSetupDialog.js";
+import type { DocumentService } from "./documents/service.js";
+import { openDocumentStore } from "./lazy/documents.js";
 import { browserMessageTransformer } from "./messages/message-transformer.js";
 import {
 	createNavigationMessage,
@@ -97,6 +100,7 @@ import {
 	routeSubscriptionModel,
 } from "./subscriptions/stream.js";
 import { DebuggerTool } from "./tools/debugger.js";
+import { type AttachmentFile, createDocumentTools } from "./tools/documents.js";
 import { createExtractDocumentTool } from "./tools/extract-document.js";
 import { ExtractImageTool, registerExtractImageRenderer } from "./tools/extract-image.js";
 import { AskUserTool, AskUserWhichElementTool, skillTool } from "./tools/index.js";
@@ -637,6 +641,32 @@ async function hasAnyApiKey(): Promise<boolean> {
 	return providers.length > 0;
 }
 
+/** The document store's CORS proxy, from Settings (loaded with the rest of the settings). */
+let documentProxy: string | undefined;
+let documentService: Promise<DocumentService> | undefined;
+/**
+ * The document store (src/documents/), shared by the panel's tools and Settings > Privacy > Documents. It loads on first
+ * use; a failed load (an update replaced the files under an open panel) is tried again next time.
+ */
+function documents(): Promise<DocumentService> {
+	documentService ??= openDocumentStore(() => documentProxy).catch((error) => {
+		documentService = undefined;
+		throw error;
+	});
+	return documentService;
+}
+
+/** Files attached to this chat's messages, newest last. */
+function chatAttachments(): AttachmentFile[] {
+	const out: AttachmentFile[] = [];
+	for (const m of agent?.state.messages ?? []) {
+		if (m.role !== "user-with-attachments") continue;
+		for (const a of (m as { attachments?: Array<AttachmentFile & { type: string }> }).attachments ?? [])
+			if (a.type === "document" && a.content) out.push(a);
+	}
+	return out;
+}
+
 /**
  * Settings, a page over the chat with eight tabs: Providers (keys and custom providers), Agents (who
  * may drive the browser from outside), Connect (use it from claude.ai, ChatGPT or grok.com, and your
@@ -658,7 +688,10 @@ function openApiKeysDialog(show?: { tab: string; anchor?: string }): Promise<voi
 		]),
 		new SkillsTab(),
 		new SiteEditsTab(),
-		new CombinedTab("Privacy", [{ tab: new PrivacyTab() }]),
+		new CombinedTab("Privacy", [
+			{ tab: new PrivacyTab() },
+			{ tab: new DocumentsTab(documents), heading: "Documents" },
+		]),
 		new AppearanceTab(),
 		new CombinedTab("About", [
 			{ tab: new AboutTab() },
@@ -1089,13 +1122,18 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 			const navigateTool = new NavigateTool();
 			const selectElementTool = new AskUserWhichElementTool();
 
-			// Polycarp's bounded extract_document (pages, query), with the CORS proxy from settings (loaded above).
+			// The document store's downloads use the CORS proxy from settings (loaded above) when a site can't be reached.
+			documentProxy = corsProxyEnabled && corsProxyUrl ? `${corsProxyUrl}/?url=` : undefined;
+			// Polycarp's bounded extract_document (pages, query), over the document store.
 			const extractDocumentTool = createExtractDocumentTool({
 				budgetChars: () => toolResultBudgetChars(agent?.state.model),
+				store: documents,
 			});
-			if (corsProxyEnabled && corsProxyUrl) {
-				extractDocumentTool.corsProxyUrl = `${corsProxyUrl}/?url=`;
-			}
+			const documentTools = createDocumentTools({
+				service: documents,
+				budgetChars: () => toolResultBudgetChars(agent?.state.model),
+				attachments: chatAttachments,
+			});
 
 			const replTool = createReplTool();
 			replTool.sandboxUrlProvider = () => chrome.runtime.getURL("sandbox.html");
@@ -1123,6 +1161,7 @@ const createAgent = async (initialState?: Partial<AgentState>, shouldSave = true
 				new AskUserTool(),
 				replTool,
 				skillTool,
+				...documentTools,
 				extractDocumentTool,
 				extractImageTool,
 			];

@@ -22,6 +22,8 @@ const pageEntryPoints = {
 	sidepanel: join(packageRoot, "src/sidepanel.ts"),
 	// The hidden page that reads PDFs for get_page_text (src/offscreen/pdf-text.ts): pdf.js needs a worker a service worker can't start.
 	"pdf-text": join(packageRoot, "src/offscreen/pdf-text.ts"),
+	// The same hidden page runs the document store for outside agents (src/offscreen/documents.ts).
+	documents: join(packageRoot, "src/offscreen/documents.ts"),
 	// The same hidden page encodes tab recordings (src/offscreen/recorder.ts): MediaRecorder isn't there in a service worker.
 	recorder: join(packageRoot, "src/offscreen/recorder.ts"),
 };

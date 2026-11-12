@@ -8,9 +8,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { ASK_USER_INSTRUCTION, registerAskUser } from "./ask.ts";
+import { registerDocumentTools } from "./documents-tool.ts";
 import { type FilesTool, registerFiles } from "./files-tool.ts";
 import { FILE_ASK_TIMEOUT_MS } from "../../src/bridge/protocol.ts";
-import { byteSize } from "./saved-files.ts";
+import { byteSize, filesRoot, sessionFolder } from "./saved-files.ts";
 import { registerThreadTools, THREADS_INSTRUCTION } from "./threads.ts";
 import { BridgeClient, BridgeRpcError, isConnectionError, NOT_CONNECTED } from "./client.ts";
 import { install, isInstalled } from "./install.ts";
@@ -170,7 +171,7 @@ function harnessName(): string {
 const BULK_ACTIONS_INSTRUCTION = 'For one action on many items on a website (delete all), skill_read {"name":"bulk-actions"}.';
 
 /** Tool names an instruction sentence mentions; used to drop sentences about tools a session lacks. */
-const INSTRUCTION_TOOLS = ["status", "tabs_context", "session_info", "session_end", "tabs_release", "wait", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "skill_match", "skill_read", "ask_user", "threads_list", "thread_read", "thread_search", "search", "page_markdown", "map", "crawl", "site_edit", "site_script"];
+const INSTRUCTION_TOOLS = ["status", "tabs_context", "session_info", "session_end", "tabs_release", "wait", "navigate", "read_page", "click", "type", "fill", "actions", "tabs_create", "tabs_close", "get_page_text", "handle_dialog", "tabs_show", "run_js", "library_add", "library_search", "library_cite", "document_get", "document_search", "document_read", "documents", "skill_match", "skill_read", "ask_user", "threads_list", "thread_read", "thread_search", "search", "page_markdown", "map", "crawl", "site_edit", "site_script"];
 
 function mentionedTools(sentence: string): string[] {
 	return INSTRUCTION_TOOLS.filter((t) => new RegExp(`(^|[^a-z_])${t}([^a-z_]|$)`).test(sentence));
@@ -274,6 +275,12 @@ export const ARGUMENT_RULES: ReadonlyArray<{ tool: string; arg: string; needs: s
 	{ tool: "read_network", arg: "requestId", needs: "run_js" },
 	// Naming the group changes what the user sees: a read-only session may look, not rename.
 	{ tool: "session_info", arg: "label", needs: "navigate" },
+	// A document from a url is downloaded with the user's sign-in on that site, as opening it would be.
+	{ tool: "document_get", arg: "url", needs: "navigate" },
+	// The page or PDF in the agent's tab is what reading the page would give.
+	{ tool: "document_get", arg: "tab", needs: "get_page_text" },
+	// Renaming and deleting change the store; listing only reads it.
+	{ tool: "documents", arg: "action", when: (action) => action !== "list", needs: "document_get" },
 ];
 
 /** The tools this call needs beyond `tool` itself, by ARGUMENT_RULES. */
@@ -1192,6 +1199,21 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 		shapes: { tabId, ref, selector },
 		bridgeError: errorResult as (err: unknown) => { content: Array<{ type: "text"; text: string }>; isError: true },
+	});
+	// document_get, document_search, document_read, documents (cli/src/documents-tool.ts): the browser's document store.
+	registerDocumentTools(server, client, {
+		remote: Boolean(options.remote || allowedTools),
+		sessionDir: () => join(filesRoot(), sessionFolder(client.session ?? choice.name)),
+		denied: (tool, args) => {
+			const lacks = allowedTools ? argumentNeeds(tool, args).find((t) => !allowedTools.has(t)) : undefined;
+			if (!lacks) return undefined;
+			if (lacks === "document_get") return "permission_denied: Renaming or deleting a document needs the documents.write scope. List them without it.";
+			if (lacks === "navigate") return "permission_denied: Downloading a document needs the browser.navigate scope: it is fetched the way opening it would be.";
+			return "permission_denied: Getting the document in your tab needs the browser.read scope.";
+		},
+		findCitekey: (citekey) => search("").some((item) => item.id === citekey),
+		bridgeError: errorResult as (err: unknown) => { content: Array<{ type: "text"; text: string }>; isError: true },
+		cap: capOutput,
 	});
 	// threads_list, thread_read, thread_search (cli/src/threads.ts): past side panel chats.
 	registerThreadTools(server, client);

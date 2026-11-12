@@ -198,7 +198,8 @@ export function usableRoot(root: string, env: Pick<RuleEnv, "platform" | "home">
 const refuse = (code: RefusalCode, reason: string): PathVerdict => ({ ok: false, code, reason });
 
 /** Whether one local path may be uploaded, and whether the person has to say yes first. */
-export function checkUploadPath(given: string, env: RuleEnv): PathVerdict {
+/** `maxBytes`: the document store takes larger files than a page upload (cli/src/documents-tool.ts). */
+export function checkUploadPath(given: string, env: RuleEnv, maxBytes = MAX_UPLOAD_BYTES): PathVerdict {
 	if (env.remote) return refuse("remote", "A remote session can't upload from a path. Use ids of files this session saved (download or save_pdf).");
 	const l = lib(env.platform);
 	if (typeof given !== "string" || !l.isAbsolute(given)) return refuse("not_absolute", `${String(given)} is not an absolute path.`);
@@ -221,7 +222,7 @@ export function checkUploadPath(given: string, env: RuleEnv): PathVerdict {
 		return refuse("private_dir", `${name} is in a folder Polycarp never uploads from (its own settings, a browser profile or a key store).`);
 	if (!facts.isFile) return refuse("not_file", `${name} is not a regular file.`);
 	if (facts.nlink > 1) return refuse("hard_link", `${name} has more than one hard link, so another name reaches the same file. Copy it first.`);
-	if (facts.bytes > MAX_UPLOAD_BYTES) return refuse("too_big", `${name} is ${facts.bytes} bytes; one upload takes at most ${MAX_UPLOAD_BYTES} bytes in all.`);
+	if (facts.bytes > maxBytes) return refuse("too_big", `${name} is ${facts.bytes} bytes; one upload takes at most ${maxBytes} bytes in all.`);
 	const known = isInside(real, env.sessionDir, env.platform) || env.roots.some((r) => usableRoot(r, env) && isInside(real, r, env.platform));
 	return { ok: true, path: real, name: l.basename(real), bytes: facts.bytes, ask: !known };
 }

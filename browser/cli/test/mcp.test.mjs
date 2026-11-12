@@ -84,7 +84,10 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// Bounded reads add about 760 (to 32,513): an offset on get_page_text, get_page_html, run_js, read_console,
 	// read_network, page_markdown and files read, so an agent can read past each tool's new cap instead of getting a
 	// result too big for its context. Each integer argument costs about 110 bytes of schema; the prose was cut first.
-	assert.ok(bytes <= 32550, `tools/list is ${bytes} bytes, over the 32,550 budget`);
+	// The document tools add 2,844 (32,513 to 35,357): document_get, document_search, document_read and documents, so an
+	// agent searches a 400 page PDF and reads two pages instead of pulling the whole text into its context (D40). The
+	// descriptions were cut from 4,086 first, and tabId and title left out (tabs_select and rename cover them).
+	assert.ok(bytes <= 35400, `tools/list is ${bytes} bytes, over the 35,400 budget`);
 	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2950, "instructions over 2,950 bytes");
 });
 
