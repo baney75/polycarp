@@ -1,17 +1,8 @@
 // Computer tasks for the weak-model eval. Only apps `polycarp-spaces agent open` starts on the host
 // (TextEdit, Preview on a handoff file, Calculator), on fixture files in a folder of our own inside the
 // agent handoff folder. Scored by reading the agent workspace back through the helper (`windows`,
-// `snapshot`) and, for a save, the file itself. `{dir}` in a prompt is the task's fixture folder.
+// `snapshot`, flattened by hands.mjs treeText) and, for a save, the file itself. `{dir}` in a prompt is the task's fixture folder.
 import { makePdf } from "../../../cli/test/helpers/pdf.mjs";
-
-/** Every value and name in a snapshot tree, flattened, so a check can look for text anywhere in a window. */
-export function treeText(node, out = []) {
-	if (!node || typeof node !== "object") return out;
-	for (const key of ["value", "name", "description", "title"]) if (typeof node[key] === "string") out.push(node[key]);
-	if (node.native_id?.value) out.push(String(node.native_id.value));
-	for (const child of node.children ?? []) treeText(child, out);
-	return out;
-}
 
 const digits = (s) => s.replace(/[,\s  ]/g, "");
 

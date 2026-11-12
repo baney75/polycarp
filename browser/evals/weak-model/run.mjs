@@ -1,7 +1,8 @@
 // Weak-model eval: a small model does real tasks with Polycarp's MCP tools and nothing else, and each run
 // is scored by machine. See README.md. Usage:
 //   node evals/weak-model/run.mjs --label r1-haiku [--model claude-haiku-5-5] [--trials 2] [--kind browser|computer|all]
-//        [--only id,id] [--concurrency 3] [--turns 30] [--wall 240]
+//        [--only id,id] [--concurrency 3] [--turns 30] [--wall 240] [--list]
+// Tasks come from every tasks/*.mjs file (WM_TASKS_DIR overrides the folder); --list prints them and starts nothing.
 // Needs `npm run build` at browser/ (dist-chrome) and in cli/, and a Playwright Chromium. Never calls an API key:
 // the responder is `claude -p` under the signed-in Claude Code account.
 import { execFileSync, spawn } from "node:child_process";
@@ -9,12 +10,17 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { startHarness } from "../../cli/test/e2e-harness.mjs";
-import { browserTasks } from "./tasks/browser.mjs";
+import { HandsClient, treeText } from "./hands.mjs";
+import { childEnv, keyVarsSet, loadTasks, ownPids, restorePrefs as restoreFrom, sessionName, settledState, stopCleanup } from "./lib.mjs";
 import { handedOff } from "./signup-rule.mjs";
-import { computerTasks, treeText } from "./tasks/computer.mjs";
-import { HandsClient } from "./hands.mjs";
 import { summarize } from "./summarize.mjs";
+
+// A key variable makes claude -p bill an API key instead of the owner's sign-in: refuse before anything starts.
+const keys = keyVarsSet(process.env);
+if (keys.length) {
+	console.error(`refusing to start: ${keys.join(", ")} set; runs must use the Claude Code sign-in, so unset ${keys.length > 1 ? "them" : "it"}`);
+	process.exit(2);
+}
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cli = join(here, "..", "..", "cli", "dist", "index.js");
@@ -40,13 +46,23 @@ const wallBrowser = Number(opt("wall", "240")) * 1000;
 const wallComputer = Number(opt("wall-computer", "300")) * 1000;
 const profile = opt("profile", "");
 
-const all = [...browserTasks, ...computerTasks];
+const tasksDir = process.env.WM_TASKS_DIR || join(here, "tasks");
+const all = await loadTasks(tasksDir);
+if (!all.length) {
+	console.error(`no tasks: ${tasksDir} has no task files (each tasks/*.mjs exports an array of { id, kind, prompt, ... })`);
+	process.exit(2);
+}
 const unknown = only.filter((id) => !all.some((t) => t.id === id));
 if (unknown.length) {
 	console.error(`unknown task: ${unknown.join(", ")}`);
 	process.exit(2);
 }
 const chosen = all.filter((t) => (kind === "all" || t.kind === kind) && (!only.length || only.includes(t.id)));
+if (argv.includes("--list")) {
+	for (const t of chosen) console.log(`${t.kind}\t${t.id}`);
+	process.exit(0);
+}
+const { startHarness } = await import("../../cli/test/e2e-harness.mjs");
 const outDir = join(here, "results", label);
 mkdirSync(outDir, { recursive: true });
 const scratch = mkdtempSync(join(tmpdir(), "wm-eval-"));
@@ -77,7 +93,10 @@ for (const sig of ["SIGINT", "SIGTERM"])
 	process.on(sig, () => {
 		stopAll = true;
 		hands?.close();
-		if (needsComputer) restorePrefs();
+		if (needsComputer) {
+			stopCleanup(started, join(handoff, `weak-model-${process.pid}`));
+			restorePrefs();
+		}
 		void (h?.stop() ?? Promise.resolve()).finally(() => process.exit(130));
 	});
 const serverEnv = h
@@ -88,6 +107,8 @@ if (!h) mkdirSync(serverEnv.HOME, { recursive: true });
 const prefsBackup = needsComputer ? backupPrefs() : [];
 const hands = needsComputer ? new HandsClient(helper) : undefined;
 let stopAll = false;
+/** App copies this run's opens started, by pid: the only ones it ever closes. */
+const started = new Set();
 
 function backupPrefs() {
 	const saved = [];
@@ -97,45 +118,25 @@ function backupPrefs() {
 			execFileSync("defaults", ["export", domain, file], { stdio: "ignore" });
 			saved.push({ domain, file });
 		} catch {
-			saved.push({ domain, file: undefined });
+			// Only a domain that did not exist is deleted on restore; any other export failure leaves it alone.
+			let absent = false;
+			try {
+				execFileSync("defaults", ["read", domain], { stdio: "pipe" });
+			} catch (err) {
+				absent = /does not exist/i.test(String(err.stderr));
+			}
+			saved.push({ domain, file: undefined, absent });
 		}
 	}
 	return saved;
 }
 
 function restorePrefs() {
-	for (const { domain, file } of prefsBackup) {
-		try {
-			if (file) execFileSync("defaults", ["import", domain, file], { stdio: "ignore" });
-		} catch (err) {
-			console.error(`could not restore ${domain}: ${err.message}; backup kept at ${file}`);
-		}
-	}
+	restoreFrom(prefsBackup, (cmd, args) => execFileSync(cmd, args, { stdio: "ignore" }));
 }
 
-/** Pids of agent copies of an app: started by the helper, which passes -ApplePersistenceIgnoreState. */
-function agentPids(app) {
-	let out = "";
-	try {
-		out = execFileSync("pgrep", ["-x", app], { encoding: "utf8" });
-	} catch {
-		return [];
-	}
-	return out
-		.split("\n")
-		.filter(Boolean)
-		.map(Number)
-		.filter((pid) => {
-			try {
-				return execFileSync("ps", ["-o", "args=", "-p", String(pid)], { encoding: "utf8" }).includes("ApplePersistenceIgnoreState");
-			} catch {
-				return false;
-			}
-		});
-}
-
-async function killAgentCopies(app, keep) {
-	const pids = agentPids(app).filter((p) => !keep.has(p));
+/** Closes the app copies this run's own computer_open calls started; never one the owner or another session opened. */
+async function killOwnCopies(pids) {
 	for (const pid of pids) {
 		try {
 			process.kill(pid, "SIGTERM");
@@ -191,7 +192,7 @@ function runClaude(prompt, session, wallMs) {
 			String(turns),
 			"--no-session-persistence",
 		];
-		const child = spawn("claude", args, { cwd: emptyCwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+		const child = spawn("claude", args, { cwd: emptyCwd, env: childEnv(process.env), stdio: ["ignore", "pipe", "pipe"] });
 		const events = [];
 		let buf = "";
 		let stderr = "";
@@ -276,8 +277,7 @@ async function scoreBrowser(task, mountId, run) {
 	let pass = true;
 	if (task.state) {
 		// The page's last posted state, read with the task's own expression; the page itself may be closed by now.
-		await new Promise((r) => setTimeout(r, 600));
-		const posted = h.posted(mountId);
+		const posted = await settledState(() => h.posted(mountId));
 		let ok = false;
 		try {
 			ok = posted !== undefined && new Function("window", `return (${task.state});`)({ __state: posted }) === true;
@@ -337,7 +337,7 @@ async function scoreComputer(task, dir, run, before) {
 }
 
 async function runOne(task, trial) {
-	const session = `wm-${label}-${task.id}-${trial}`.replace(/[^a-z0-9_-]/gi, "-").toLowerCase().slice(0, 64);
+	const session = sessionName(label, task.id, trial);
 	let run;
 	let score;
 	if (task.kind === "browser") {
@@ -350,10 +350,13 @@ async function runOne(task, trial) {
 		rmSync(dir, { recursive: true, force: true });
 		mkdirSync(dir, { recursive: true });
 		for (const [name, body] of Object.entries(task.files ?? {})) writeFileSync(join(dir, name), body);
-		const before = new Set(agentPids(task.app));
+		const before = new Set((await hands.call("windows", {})).data?.windows?.map((w) => w.pid) ?? []);
 		run = await runClaude(task.prompt(dir), session, wallComputer);
+		const mine = ownPids(run.calls);
+		for (const pid of mine) started.add(pid);
 		score = await scoreComputer(task, dir, run, before);
-		await killAgentCopies(task.app, before);
+		await killOwnCopies(mine);
+		for (const pid of mine) started.delete(pid);
 		rmSync(dir, { recursive: true, force: true });
 	}
 	if (run.apiError && QUOTA.test(run.apiError)) {
@@ -396,6 +399,6 @@ try {
 	rmSync(join(handoff, `weak-model-${process.pid}`), { recursive: true, force: true });
 }
 
-const summary = summarize(label, { model, trials, profile: profile || "full", date: new Date().toISOString(), stopped: stopAll || undefined });
+const summary = summarize(label, { model, trials, profile: profile || "full", date: new Date().toISOString(), stopped: stopAll });
 console.log(`${label}: this run ${records.filter((r) => r.pass).length}/${records.length}, folder ${summary.passed}/${summary.total}${stopAll ? " (stopped early)" : ""}`);
 rmSync(scratch, { recursive: true, force: true });

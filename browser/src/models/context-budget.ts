@@ -43,16 +43,28 @@ export const ATTACHMENT_MARK = "[Document: ";
  */
 export const CONTEXT_NOTE_MARK = "<browser-context>";
 
-/** True for a context note: a user-role message whose text opens with CONTEXT_NOTE_MARK. */
-export function isContextNote(m: Message): boolean {
+/**
+ * The field that marks compaction's notes (compaction.ts): a user-role message Polycarp writes in place of the
+ * summarized part of the chat. It is a field, not text, so nothing the person writes can carry it. The fitting treats
+ * the notes as Polycarp's, never the person's, and cuts them only after every earlier turn is gone.
+ */
+export const COMPACTION_NOTES = "compactionNotes";
+
+const opensWith = (m: Message, mark: string) => {
 	if (m.role !== "user") return false;
 	const content = m.content as unknown;
 	const first =
 		typeof content === "string"
 			? content
 			: (content as Array<{ type: string; text?: string }>).find((p) => p.type === "text")?.text;
-	return (first ?? "").trimStart().startsWith(CONTEXT_NOTE_MARK);
-}
+	return (first ?? "").trimStart().startsWith(mark);
+};
+
+/** True for a context note: a user-role message whose text opens with CONTEXT_NOTE_MARK. */
+export const isContextNote = (m: Message) => opensWith(m, CONTEXT_NOTE_MARK);
+/** True for compaction's notes: a user-role message carrying the COMPACTION_NOTES field. */
+export const isNotesMessage = (m: Message) =>
+	m.role === "user" && (m as unknown as Record<string, unknown>)[COMPACTION_NOTES] === true;
 
 /**
  * The budget for one request, from one rule: the window, minus the reply asked for, minus the fixed part (system
@@ -241,6 +253,10 @@ export function restHint(toolName: string | undefined, kept = ""): string {
 			return "Ask the person for the part that matters, or to attach long text as a file.";
 		case "note":
 			return "This was Polycarp's note on the page; read_page or get_page_text reads the page again.";
+		case "notes":
+			return "Polycarp's working notes were cut here to fit.";
+		case "said":
+			return "The person's earlier messages were cut here to fit; ask the person if you need what they said.";
 		default:
 			return "Ask the tool for a smaller part (a range, offset, selector or query).";
 	}
@@ -261,7 +277,9 @@ export function capText(
 		`\n\n[Polycarp cut this here to fit the model's context: ${fmt(text.length - kept.length)} of ${fmt(text.length)} characters after this point were not sent. ${typeof hint === "function" ? hint(kept) : hint}]`;
 	// The note's own length depends on what is kept, so measure it at its widest first.
 	const room = Math.max(0, maxChars - say(text.slice(0, maxChars)).length);
-	const kept = text.slice(0, room);
+	// Never between the two halves of a surrogate pair: a lone half is invalid Unicode some providers refuse.
+	const end = room > 0 && /[\uD800-\uDBFF]/.test(text[room - 1]) ? room - 1 : room;
+	const kept = text.slice(0, end);
 	return `${kept}${say(kept)}`;
 }
 
@@ -281,20 +299,42 @@ function capTextTokens(text: string, maxTokens: number, hint: string | ((kept: s
  * A message part the fitting may cut: a tool result's text, an attached document, the person's own text, or a context
  * note's text.
  */
-type Kind = "result" | "attachment" | "user" | "note";
+type Kind = "result" | "attachment" | "user" | "note" | "notes";
+
+/**
+ * Compaction's notes with one of their two text parts held to `maxTokens`: 1 is Polycarp's working notes (the last
+ * part), 0 the person's own words (the first). A notes message of one part is all working notes.
+ */
+function capNotesPart(m: Message, which: 0 | 1, maxTokens: number): Message {
+	const content = m.content as unknown;
+	if (!Array.isArray(content)) return which === 1 ? capParts(m, "notes", maxTokens) : m;
+	const parts = content as Array<{ type: string; text?: string }>;
+	const texts = parts.flatMap((p, i) => (p.type === "text" ? [i] : []));
+	if (which === 0 && texts.length < 2) return m;
+	const at = which === 1 ? texts[texts.length - 1] : texts[0];
+	const text = parts[at]?.text ?? "";
+	if (at === undefined || estimateTextTokens(text) <= maxTokens) return m;
+	const out = [...parts];
+	out[at] = {
+		...parts[at],
+		text: capTextTokens(text, Math.max(MIN_PART_TOKENS, maxTokens), (k) => restHint(which ? "notes" : "said", k)),
+	};
+	return { ...m, content: out } as Message;
+}
 
 const isAttachmentPart = (text: string) => text.trimStart().startsWith(ATTACHMENT_MARK);
 
 /** The text parts of `m` that `kind` covers. The caller says whether `m` is a note: a cut note may have lost its mark. */
 function partsOf(m: Message, kind: Kind): string[] {
 	const content = m.content as unknown;
-	if (typeof content === "string") return m.role === "user" && (kind === "user" || kind === "note") ? [content] : [];
+	if (typeof content === "string")
+		return m.role === "user" && (kind === "user" || kind === "note" || kind === "notes") ? [content] : [];
 	const texts = (content as Array<{ type: string; text?: string }>)
 		.filter((p) => p.type === "text")
 		.map((p) => p.text ?? "");
 	if (kind === "result") return m.role === "toolResult" ? texts : [];
 	if (m.role !== "user") return [];
-	if (kind === "note") return texts;
+	if (kind === "note" || kind === "notes") return texts;
 	return texts.filter((t) => (kind === "attachment" ? isAttachmentPart(t) : !isAttachmentPart(t)));
 }
 
@@ -316,7 +356,10 @@ function capParts(m: Message, kind: Kind, maxTokens: number): Message {
 	const all = content as Array<{ type: string; text?: string }>;
 	const covered = (p: { type: string; text?: string }) =>
 		p.type === "text" &&
-		(kind === "result" || kind === "note" || (kind === "attachment") === isAttachmentPart(p.text ?? ""));
+		(kind === "result" ||
+			kind === "note" ||
+			kind === "notes" ||
+			(kind === "attachment") === isAttachmentPart(p.text ?? ""));
 	const total = all.filter(covered).length;
 	let left = maxTokens;
 	let dropped = 0;
@@ -441,8 +484,9 @@ function* halving(start: number, going: () => boolean): Generator<number> {
  * whole earlier turns, oldest first, and last the person's latest message and the turn in progress, whose oldest tool
  * calls go with their results, then the newest call's own thinking, text and arguments. Each tool call keeps its
  * result, and the person's latest message is always sent. Context notes (CONTEXT_NOTE_MARK) are cut like tool results
- * and go with the call they follow; only the person's messages start a turn. Stored history is untouched: only what
- * is sent is cut. A request that already fits comes back as the same object.
+ * and go with the call they follow; only the person's messages start a turn. Compaction's notes (COMPACTION_NOTES) are never
+ * the person's: they stay while earlier turns are dropped and give way after them, before the latest message. Stored
+ * history is untouched: only what is sent is cut. A request that already fits comes back as the same object.
  */
 export function fitContext(context: Context, budget: Budget): Fitted {
 	let messages = context.messages.slice();
@@ -464,7 +508,9 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 	// Whose each message is, decided once from the history as it came and kept with it: a cut can take a note's mark
 	// away, and must never make it the person's. Notes are Polycarp's: they never start a turn or stand for the person.
 	let notes = messages.map(isContextNote);
-	const isPerson = (i: number) => messages[i].role === "user" && !notes[i];
+	// Compaction's notes are Polycarp's too, and hold the summarized past: they give way after every earlier turn.
+	let summaries = messages.map(isNotesMessage);
+	const isPerson = (i: number) => messages[i].role === "user" && !notes[i] && !summaries[i];
 	const latestUser = () => {
 		for (let i = messages.length - 1; i >= 0; i--) if (isPerson(i)) return i;
 		return -1;
@@ -473,7 +519,7 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 	const kindAt = (i: number): Kind =>
 		messages[i].role === "toolResult" ? "result" : notes[i] ? "note" : "attachment";
 	const capPart = (i: number, tokens: number) => replace(i, capParts(messages[i], kindAt(i), tokens));
-	const cuttable = () => messages.flatMap((m, i) => (partsOf(m, kindAt(i)).length ? [i] : []));
+	const cuttable = () => messages.flatMap((m, i) => (!summaries[i] && partsOf(m, kindAt(i)).length ? [i] : []));
 	const size = (i: number) => partsTokens(messages[i], kindAt(i));
 
 	// 1. Every tool result and attached document to its cap.
@@ -522,19 +568,40 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 		messages = [...messages.slice(0, from), ...messages.slice(to)];
 		perMessage = [...perMessage.slice(0, from), ...perMessage.slice(to)];
 		notes = [...notes.slice(0, from), ...notes.slice(to)];
+		summaries = [...summaries.slice(0, from), ...summaries.slice(to)];
 		changed = true;
 		return to - from;
 	};
-	while (over() && latestUser() > 0) {
-		let next = 1;
+	// The notes lead the history and stay: the turns after them go first.
+	const head = () => {
+		let k = 0;
+		while (k < messages.length && summaries[k]) k++;
+		return k;
+	};
+	const dropNote = (n: number) =>
+		head()
+			? `[Polycarp left out the ${n} messages after its notes on the earlier part of this chat, to fit the model's context.]`
+			: `[Polycarp left out the ${n} earliest messages of this chat to fit the model's context.]`;
+	// The note saying so goes on the latest message, so its room is kept once anything is dropped.
+	const noteRoom = estimateTextTokens(dropNote(9_999_999)) + 8;
+	const overWithNote = () => total + (droppedEarlier ? noteRoom : 0) > budget.inputTokens;
+	while (overWithNote() && latestUser() > head()) {
+		const from = head();
+		let next = from + 1;
 		while (next < latestUser() && !isPerson(next)) next++;
-		droppedEarlier += drop(0, next);
+		droppedEarlier += drop(from, next);
 	}
+	// 8b. The notes themselves, halving, before anything of the latest message or the turn in progress: the working
+	// notes first, the person's own words last.
+	for (const which of [1, 0] as const)
+		for (const c of halving(STUB_TOKENS * 4, overWithNote))
+			for (let i = 0; i < messages.length && overWithNote(); i++)
+				if (summaries[i]) replace(i, capNotesPart(messages[i], which, c));
 	if (droppedEarlier) {
 		const i = latestUser();
 		const note = {
 			type: "text" as const,
-			text: `[Polycarp left out the ${droppedEarlier} earliest messages of this chat to fit the model's context.]`,
+			text: dropNote(droppedEarlier),
 		};
 		const content = messages[i].content as unknown;
 		replace(i, {
