@@ -16,6 +16,7 @@
  * and threads (the helper's or the panel's own tools).
  */
 
+import { fitChanges } from "./fit-changes.js";
 import { formatNodes, formatSnapshot, type SnapNode, type Snapshot } from "./format.js";
 
 /** A JSON Schema. Plain objects, not TypeBox: the CLI bundles this module and doesn't install TypeBox. */
@@ -112,7 +113,7 @@ export const PAGE_TOOLS: readonly PageToolSpec[] = [
 	{
 		name: "act",
 		label: "Act",
-		description: `Act on your current tab with real mouse and key events, then read_page to confirm. Aim with ref (best), selector, or x/y from your latest screenshot.
+		description: `Act on your current tab with real mouse and key events. Its changes say what changed; read_page only if they say too little. Aim with ref (best), selector, or x/y from your latest screenshot.
 click {ref} (clickCount 2 doubles, button right)
 type {text, ref?, submit?}: clicks the field, types; submit presses Enter
 fill {ref, value}: sets an input, select (value or label) or checkbox ("true"/"false")
@@ -243,6 +244,8 @@ export function routePageTool(
 export interface PageLimits {
 	maxNodes?: number;
 	maxTextChars?: number;
+	/** The most an act result's change report (D43) may take; fitChanges shortens it to that. */
+	changesChars?: number;
 }
 
 /** Characters a page tool's answer leaves for its header and notes. */
@@ -263,6 +266,8 @@ export function fitPageCall(
 	const asked = (v: unknown) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.floor(Number(v)) : undefined);
 	if (name === "get_page_text")
 		return { params: { ...params, maxChars: Math.min(asked(params.maxChars) ?? room, room) } };
+	// An act's change report counts against the same room as any read.
+	if (name === "act") return { params, limits: { changesChars: room } };
 	if (name !== "read_page") return { params };
 	// About 70 characters a listed element; the text gets what a third of the room holds.
 	const maxNodes = Math.min(asked(params.maxNodes) ?? 300, Math.max(20, Math.floor((room * 0.66) / 70)));
@@ -297,6 +302,13 @@ function shotContent(shot: Shot): PageContent[] {
 		{ type: "image", data: shot.data, mimeType: shot.mimeType },
 		{ type: "text", text: `${shot.width}x${shot.height} screenshot. ${SHOT_NOTE}` },
 	];
+}
+
+/** A result with its change report held to `limits.changesChars`. */
+function fitted(r: Record<string, unknown>, limits?: PageLimits): Record<string, unknown> {
+	return limits?.changesChars !== undefined && r.changes !== undefined
+		? { ...r, changes: fitChanges(r.changes, limits.changesChars) }
+		: r;
 }
 
 /** What the model reads back from one panel tool call. */
@@ -355,7 +367,7 @@ export function formatPageResult(
 			return { content: shotContent(r as unknown as Shot), details: {} };
 		case "steps": {
 			// Everything the batch reported reaches the model: steps a dialog left not run, the dialog, what each did.
-			const { steps, note, screenshot, ...rest } = r;
+			const { steps, note, screenshot, ...rest } = fitted(r, limits);
 			const shot = screenshot as Shot | undefined;
 			const more = Object.keys(rest).length ? `\n${JSON.stringify(rest)}` : "";
 			const done: PageContent = {
@@ -366,7 +378,7 @@ export function formatPageResult(
 		}
 		default:
 			return {
-				content: text(JSON.stringify(result ?? null)),
+				content: text(JSON.stringify(result && typeof result === "object" ? fitted(r, limits) : (result ?? null))),
 				details:
 					typeof r.url === "string"
 						? { url: r.url, title: typeof r.title === "string" ? r.title : undefined }
@@ -377,7 +389,7 @@ export function formatPageResult(
 
 /** The system prompt's part about these tools: the loop, briefly. */
 export const PAGE_TOOLS_PROMPT = `# Working on Pages
-Loop: read_page {"filter":"interactive"} (refs) -> act {"action":"click","ref":"e5"} (or type, fill...) -> read_page again to confirm. Refs expire when the page changes. find gets refs by words; get_page_text reads; act wait beats reading again and again; act screenshot only for layout or canvas. A click that opens a dialog worked: answer it with handle_dialog, never click again. If a call fails with interrupted, read_page before you repeat it. Use the repl to run code: data work, a skill's functions, a recorded workflow's replay() and skill code you write; your own clicks and keys go through act.`;
+Loop: read_page {"filter":"interactive"} (refs) -> act {"action":"click","ref":"e5"} (or type, fill...); its changes list new refs and what changed; if not enough, read_page again to confirm. Refs expire when the page changes. find gets refs by words; get_page_text reads; act wait beats reading again and again; act screenshot only for layout or canvas. A click that opens a dialog worked: answer it with handle_dialog, never click again. If a call fails with interrupted, read_page before you repeat it. Use the repl to run code: data work, a skill's functions, a recorded workflow's replay() and skill code you write; your own clicks and keys go through act.`;
 
 /** The side panel's request to the service worker (src/bridge/panel-calls.ts): one bridge method on its session. */
 export const PANEL_CALL = "polycarp-page-tool";

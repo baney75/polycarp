@@ -31,6 +31,7 @@ import {
 	stopScreencast,
 	typeText,
 } from "../browser/cdp.js";
+import { afterAction, type Before, beforeAction } from "../browser/changes.js";
 import { injectScript } from "../browser/inject.js";
 import {
 	fillElement,
@@ -121,17 +122,18 @@ export interface HandlerContext {
 
 /**
  * Wait for the page to settle after an action that started at `since` (src/browser/settle.ts),
- * and return what the result says about it: nothing when it settled, the reason when it did not.
+ * then say what changed (src/browser/changes.ts) when `before` was taken. Returns what the result
+ * adds: the reason when the page did not settle, and `changes`.
  * `delivered` is the action's result so far: the action is done, so a dialog the page opens while
- * it settles is the action's effect, reported with that result, not a dialog_open failure.
- * `watched`: settleStart already turned Network on in this tab.
+ * it settles or is looked at is the action's effect, reported with that result, not a dialog_open
+ * failure. `watched`: settleStart already turned Network on in this tab.
  */
 async function settleAfter(
 	ctx: HandlerContext,
 	tabId: number,
 	since: number,
 	delivered: Record<string, unknown>,
-	watched = true,
+	options: { watched?: boolean; before?: Before } = {},
 ): Promise<Record<string, unknown>> {
 	if (ctx.batch) {
 		// The step is over: a dialog from a later step is not this one's.
@@ -140,13 +142,49 @@ async function settleAfter(
 	}
 	ctx.delivered(delivered, tabId);
 	try {
-		return unsettledNote(await settle(tabId, { since, stop: ctx.aborted, skip: (u) => ctx.isGuarded(u), watched }));
-	} catch {
-		// The action is done: a wait that broke must not turn it into a failure.
-		return {};
+		const settled = await settle(tabId, {
+			since,
+			stop: ctx.aborted,
+			skip: (u) => ctx.isGuarded(u),
+			guardedHosts: ctx.guardedHosts,
+			watched: options.watched ?? true,
+		}).catch(() => undefined);
+		const out: Record<string, unknown> = settled ? unsettledNote(settled) : {};
+		// A box froze the page: there is nothing to look at until it is answered.
+		if (options.before && !openDialog(tabId) && !ctx.aborted()) {
+			// A navigation in flight counts: its pendingUrl is where the tab is going (#94).
+			const urlOf = async (id: number) => {
+				const tab = await chrome.tabs.get(id);
+				return tab.pendingUrl || tab.url || "";
+			};
+			const changes = await afterAction(options.before, ctx.session.tabIds, urlOf, (u) => ctx.isGuarded(u)).catch(
+				() => undefined,
+			);
+			if (changes) out.changes = changes;
+		}
+		return out;
 	} finally {
 		ctx.delivered();
 	}
+}
+
+/**
+ * When an action starts, for its settle wait: Network on in its tab. A batch step skips it, since the
+ * batch turned Network on once before its first step and settles once after its last.
+ */
+function actionStart(ctx: HandlerContext, tabId: number): Promise<number> {
+	return ctx.batch ? Promise.resolve(Date.now()) : settleStart(tabId);
+}
+
+/**
+ * Look at the page before an action, for its change report (src/browser/changes.ts). A tab on, or
+ * on its way to, a guarded host (#94) gets no look: the action's own check refuses it.
+ */
+async function changesBefore(ctx: HandlerContext, tabId: number, params?: Params): Promise<Before | undefined> {
+	if (ctx.batch) return undefined;
+	const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+	if (!tab || ctx.isGuarded(tab.pendingUrl || tab.url || "")) return undefined;
+	return beforeAction(tabId, ctx.session.tabIds, params ? str(params, "ref") : undefined, ctx.guardedHosts ?? []);
 }
 
 function stopIfAborted(ctx: HandlerContext): void {
@@ -281,11 +319,11 @@ async function refuseGuardedLanding<T extends { url: string }>(
 ): Promise<T> {
 	if (!ctx.isGuarded(summary.url)) return summary;
 	await chrome.tabs.update(tabId, { url: "about:blank" }).catch(() => undefined);
-	throw new BridgeError(
-		ERR.PERMISSION_DENIED,
-		"That page led to this computer's Polycarp approval address, which an agent never opens. The tab was reset to a blank page.",
-	);
+	throw new BridgeError(ERR.PERMISSION_DENIED, GUARDED_LANDING);
 }
+
+const GUARDED_LANDING =
+	"That page led to this computer's Polycarp approval address, which an agent never opens. The tab was reset to a blank page.";
 
 /** How long after a navigation starts a late redirect is still caught. */
 const GUARD_WATCH_MS = 120000;
@@ -562,7 +600,7 @@ export const handlers: Record<string, Handler> = {
 			const landed = await refuseGuardedLanding(ctx, tabId, await tabSummary(tabId, !ready));
 			if (!ready) return { ...landed, ...(note ? { note } : {}) };
 			// The tab is new: settleStart had none to turn Network on in, so the wait does.
-			const settled = await settleAfter(ctx, tabId, since, landed, false);
+			const settled = await settleAfter(ctx, tabId, since, landed, { watched: false });
 			return refuseGuardedLanding(ctx, tabId, {
 				...(await tabSummary(tabId)),
 				...settled,
@@ -571,7 +609,8 @@ export const handlers: Record<string, Handler> = {
 		}
 		const tabId = await resolveTab(ctx, params, false);
 		let timedOut = false;
-		const since = await settleStart(tabId);
+		const before = await changesBefore(ctx, tabId);
+		const since = await actionStart(ctx, tabId);
 		watchGuardedCommits(ctx, tabId);
 		if (url === "back") timedOut = !(await goBack(tabId));
 		else if (url === "forward") timedOut = !(await goForward(tabId));
@@ -584,7 +623,7 @@ export const handlers: Record<string, Handler> = {
 		// The approval page is blanked before anything is run in it.
 		const landed = await refuseGuardedLanding(ctx, tabId, await tabSummary(tabId, timedOut));
 		if (timedOut) return landed;
-		const settled = await settleAfter(ctx, tabId, since, landed);
+		const settled = await settleAfter(ctx, tabId, since, landed, { before });
 		return refuseGuardedLanding(ctx, tabId, { ...(await tabSummary(tabId)), ...settled });
 	},
 
@@ -725,16 +764,19 @@ export const handlers: Record<string, Handler> = {
 
 	click: async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, true);
+		// The look first: the point is found right before the input goes out, so a layout that
+		// moved during the look can't misplace the click.
+		const before = await changesBefore(ctx, tabId, params);
 		const p = await pointFor(ctx, params, tabId);
 		const button = str(params, "button");
-		const since = await settleStart(tabId);
+		const since = await actionStart(ctx, tabId);
 		await click(tabId, p.x, p.y, {
 			button: button === "right" || button === "middle" ? button : "left",
 			clickCount: num(params, "clickCount") ?? 1,
 			beforeLastEvent: () => ctx.delivered({ clicked: p }, tabId),
 		});
 		// A dialog the click's page opens while it settles is still the click's doing.
-		const settled = await settleAfter(ctx, tabId, since, { clicked: p });
+		const settled = await settleAfter(ctx, tabId, since, { clicked: p }, { before });
 		return { clicked: p, ...settled };
 	},
 
@@ -754,8 +796,13 @@ export const handlers: Record<string, Handler> = {
 				ERR.BAD_PARAMS,
 				'from and to are required, e.g. {"from":{"x":200,"y":200},"to":{"x":360,"y":300}}',
 			);
+		const before = await changesBefore(ctx, tabId);
+		const since = await actionStart(ctx, tabId);
 		await drag(tabId, screenshotToCss(tabId, from), screenshotToCss(tabId, to));
-		return { dragged: { from, to } };
+		return {
+			dragged: { from, to },
+			...(await settleAfter(ctx, tabId, since, { dragged: { from, to } }, { before })),
+		};
 	},
 
 	type: async (ctx, params) => {
@@ -764,7 +811,8 @@ export const handlers: Record<string, Handler> = {
 		const t = target(params);
 		/** Set just before the first key event goes out: after that the page may hold some of the text. */
 		let keysStarted = false;
-		const since = await settleStart(tabId);
+		const before = await changesBefore(ctx, tabId, params);
+		const since = await actionStart(ctx, tabId);
 		const attempt = async () => {
 			if (t.ref || t.selector) {
 				const rect = await locate(tabId, t);
@@ -803,19 +851,20 @@ export const handlers: Record<string, Handler> = {
 				throw again;
 			}
 		}
-		return { typed: text.length, ...(await settleAfter(ctx, tabId, since, { typed: text.length })) };
+		return { typed: text.length, ...(await settleAfter(ctx, tabId, since, { typed: text.length }, { before })) };
 	},
 
 	press: async (ctx, params) => {
 		const key = requireStr(params, "key");
 		const tabId = await resolveTab(ctx, params, true);
 		const repeat = num(params, "repeat") ?? 1;
-		const since = await settleStart(tabId);
+		const before = await changesBefore(ctx, tabId);
+		const since = await actionStart(ctx, tabId);
 		for (let i = 0; i < repeat; i++) {
 			stopIfAborted(ctx);
 			await pressKey(tabId, key);
 		}
-		return { pressed: key, repeat, ...(await settleAfter(ctx, tabId, since, { pressed: key, repeat })) };
+		return { pressed: key, repeat, ...(await settleAfter(ctx, tabId, since, { pressed: key, repeat }, { before })) };
 	},
 
 	scroll: async (ctx, params) => {
@@ -824,20 +873,30 @@ export const handlers: Record<string, Handler> = {
 		const y = num(params, "y");
 		const dx = num(params, "dx") ?? 0;
 		const dy = num(params, "dy") ?? 0;
+		const before = await changesBefore(ctx, tabId);
+		const since = await actionStart(ctx, tabId);
+		let scrolled: unknown;
 		if (x !== undefined && y !== undefined && !params.ref && !params.selector && !params.to) {
 			// Wheel at a point: scrolls the innermost scrollable under the cursor.
 			const at = screenshotToCss(tabId, { x, y });
 			await cdpScroll(tabId, at.x, at.y, dx, dy);
-			return runInPage(tabId, "({ scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY) })");
+			scrolled = await runInPage(
+				tabId,
+				"({ scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY) })",
+			);
+		} else {
+			const to = str(params, "to");
+			scrolled = await scrollPage(tabId, {
+				dx,
+				dy,
+				ref: str(params, "ref"),
+				selector: str(params, "selector"),
+				to: to === "top" || to === "bottom" ? to : undefined,
+			});
 		}
-		const to = str(params, "to");
-		return scrollPage(tabId, {
-			dx,
-			dy,
-			ref: str(params, "ref"),
-			selector: str(params, "selector"),
-			to: to === "top" || to === "bottom" ? to : undefined,
-		});
+		// An infinite list loads its next rows after the scroll: they are in the report.
+		const result = scrolled as Record<string, unknown>;
+		return { ...result, ...(await settleAfter(ctx, tabId, since, result, { before })) };
 	},
 
 	fill: async (ctx, params) => {
@@ -846,9 +905,10 @@ export const handlers: Record<string, Handler> = {
 		const t = target(params);
 		if (!t.ref && !t.selector)
 			throw new BridgeError(ERR.BAD_PARAMS, "fill needs a ref from read_page, or a selector.");
-		const since = await settleStart(tabId);
+		const before = await changesBefore(ctx, tabId, params);
+		const since = await actionStart(ctx, tabId);
 		await fillElement(tabId, t, value);
-		return { filled: t, ...(await settleAfter(ctx, tabId, since, { filled: t })) };
+		return { filled: t, ...(await settleAfter(ctx, tabId, since, { filled: t }, { before })) };
 	},
 
 	evaluate: async (ctx, params) => {
@@ -870,7 +930,22 @@ export const handlers: Record<string, Handler> = {
 				capMs: num(params, "timeoutMs") ?? WAIT_SETTLE.capMs,
 				since: 0,
 				stop: ctx.aborted,
+				skip: (u) => ctx.isGuarded(u),
+				guardedHosts: ctx.guardedHosts,
 			});
+			if (r.stopped) {
+				// Not the page still changing: the call was stopped, a box opened or the tab left for the approval page.
+				stopIfAborted(ctx);
+				// The tab may still show the old URL while it goes to the approval page: where it is
+				// going decides, and so does the page's own check.
+				const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+				if (r.guarded || ctx.isGuarded(tab?.pendingUrl || tab?.url || "")) {
+					await chrome.tabs.update(tabId, { url: "about:blank" }).catch(() => undefined);
+					throw new BridgeError(ERR.PERMISSION_DENIED, GUARDED_LANDING);
+				}
+				const summary = await refuseGuardedLanding(ctx, tabId, await tabSummary(tabId));
+				return { ...summary, settled: false, stopped: true, note: "The wait stopped before the page went quiet." };
+			}
 			return {
 				...(await tabSummary(tabId)),
 				...(r.settled
@@ -940,10 +1015,12 @@ export const handlers: Record<string, Handler> = {
 		let wantShot = params.screenshot === true;
 		const done: unknown[] = [];
 		// Network on for the batch's tab before its first step: a drag or a scroll step turns it on itself.
-		const first = await ctx.session.currentTab().catch(() => undefined);
-		const batchStart = await settleStart(
-			first?.id !== undefined && ctx.session.tabIds.includes(first.id) ? first.id : undefined,
-		);
+		// The batch's tab is the one it names, else the current one.
+		const named = num(params, "tabId");
+		const first = named !== undefined ? { id: named } : await ctx.session.currentTab().catch(() => undefined);
+		const firstId = first?.id !== undefined && ctx.session.tabIds.includes(first.id) ? first.id : undefined;
+		const before = firstId !== undefined ? await changesBefore(ctx, firstId) : undefined;
+		const batchStart = await settleStart(firstId);
 		for (let i = 0; i < steps.length; i++) {
 			const [kind, sub] = normalizeStep(steps[i] as Params, i);
 			if (kind === "screenshot") {
@@ -982,7 +1059,18 @@ export const handlers: Record<string, Handler> = {
 		const out: Record<string, unknown> = { steps: done.length };
 		const last = await ctx.session.currentTab().catch(() => undefined);
 		if (last?.id !== undefined && ctx.session.tabIds.includes(last.id))
-			Object.assign(out, await settleAfter(ctx, last.id, batchStart, { steps: done.length, notRun: 0 }));
+			// One report for the whole batch: per step it would cost a page look per keystroke.
+			Object.assign(
+				out,
+				await settleAfter(
+					ctx,
+					last.id,
+					batchStart,
+					{ steps: done.length, notRun: 0 },
+					// A step moved to another tab: Network was never turned on there.
+					{ before, watched: last.id === firstId },
+				),
+			);
 		if (wantShot) out.screenshot = await handlers.screenshot(ctx, { tabId: params.tabId });
 		return out;
 	},

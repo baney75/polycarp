@@ -18,19 +18,19 @@ browser is signed in as the user, so act as carefully as on their own laptop.
 ## Step 1: call `tabs_context`
 
 Call `tabs_context` first. It shows your session, your tab group and your tabs, including
-tabs left from earlier work in this project, and news from the user (a tab they took back,
+ones from earlier work in this project, and news from the user (a tab they took back,
 or gave you). If it says Polycarp isn't connected, stop and pass that to the user. Don't
 retry in a loop. `status` adds the site permissions when you need them.
 
 ## Step 2: the core loop
 
 1. `navigate` with a full URL (`https://...`). It opens your tab.
-2. `read_page` with `{"filter":"interactive"}`. Each control gets a ref like `e417003` (examples shorten it).
+2. `read_page` with `{"filter":"interactive"}`. Each control gets a ref like `e417003`.
    For the text, use plain `read_page` (no filter) or `get_page_text`.
 3. Act by ref: `click {"ref":"e12"}`, `fill {"ref":"e4","value":"Ada"}`,
    `type {"ref":"e4","text":"Ada","submit":true}`, `press {"key":"Enter"}`.
-4. Call `read_page` again to verify. Check that the page shows the result you wanted:
-   no error does not mean it worked.
+4. Check the result's `changes` (new refs, what changed or went) for what you wanted:
+   no error does not mean it worked. If they say too little, call `read_page` again to verify.
 
 Repeat 2 to 4 until the task is done. Prefer refs over selectors, and selectors over x/y.
 
@@ -46,9 +46,8 @@ Repeat 2 to 4 until the task is done. Prefer refs over selectors, and selectors 
   (Settings > Agents) or with `polycarp browser allow <host>`. Don't try another URL to get around it.
 - **Sign-in, captcha or payment**: never type passwords or card numbers. Call `tabs_show`
   so the user sees the tab, ask them to finish, and continue after they say so.
-- **Error `dialog_open`**: an alert, confirm or prompt box froze the page until it is
-  answered. The error quotes the box's text and its tab. Answer
-  with `handle_dialog`: `{"tabId":41,"accept":false}` is Cancel, which is always safe, and
+- **Error `dialog_open`**: an alert, confirm or prompt box froze the page. The error
+  quotes its text and tab. Answer with `handle_dialog`: `{"tabId":41,"accept":false}` is Cancel, which is always safe, and
   `"accept":true` is OK. Press OK when the box confirms exactly what
   the user asked for ("Send this message?" after they said to send it). Otherwise ask the
   user before OK on anything that acts under their sign-in ("Delete your account?"). Then

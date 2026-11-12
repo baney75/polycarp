@@ -252,7 +252,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				"Call tabs_context before any browser tool: it shows your session, your tab group and tabs (earlier ones too) and news from the user. If it says Polycarp isn't connected, tell the user and stop browser work.",
 				"status adds the site permissions.",
 				"Your tabs are in your own group, never take focus, and you can't see the user's other tabs.",
-				"Loop: navigate(url) -> read_page {\"filter\":\"interactive\"} (refs) -> click/type/fill by ref -> read_page again to confirm the result. Refs expire when the page changes.",
+				"Loop: navigate(url) -> read_page {\"filter\":\"interactive\"} (refs) -> click/type/fill by ref; its changes list new refs and what changed; if not enough, read_page again to confirm. Refs expire when the page changes.",
 				"Prefer read_page/get_page_text over screenshots for reading, and wait over polling.",
 				"Reuse your current tab; tabs_create only when two pages must stay open. When done, tabs_close your tabs, tabs_release a tab the user should keep, or session_end.",
 				"For canvas apps (Excalidraw, tldraw) and multi-step input, batch steps with actions and check the final screenshot; use the app's shortcuts and drags, not run_js on its internals.",

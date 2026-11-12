@@ -1182,17 +1182,20 @@ their `settleMs` pause, so canvas batches are not slowed. Not counted: requests 
 
 Network bookkeeping: Network is turned on just before every action (a batch's first step included), not once per tab,
 because a debugging session can end with no event (a worker restart, a silent detach) and take the domain with it; the e2e
-run caught that. Each action sends it once, and waits at most 0.5 s for it. A frame's current document is the one
+run caught that. Each action sends it once (a whole `actions` batch too, in the tab it names), and waits at most 0.5 s for it. A frame's current document is the one
 `Page.frameNavigated` last committed; what an older document of that frame had in flight is dropped. A request for a document
 never moves that mark: a download or a 204 asks for one that never commits, and the old page keeps its own requests.
 
 What it can never do: hold an action longer than the cap plus that 0.5 s (a timer ends the wait at the cap whatever the page
 or the debugger does, and one DOM probe gets at most 0.4 s), or fail an action that already ran. A box the page opens while
 it settles is the action's result, with the dialog note, for every tool that settles. A page Polycarp may not script (the
-Chrome Web Store, the PDF viewer) is judged by its requests alone after two refused probes; a probe that times out means the
+Chrome Web Store, the PDF viewer) is judged by its requests alone after two refused probes, counted per document, so a page reached from there is probed again; a probe that times out means the
 page's main thread is busy (`waitingOn: "loading"`). A loader counts only when a person could see it: an ancestor's opacity or
 visibility hides it, and so does being outside the window on any side. A landing on the approval page (#94) is blanked
-before anything runs in it, so the wait never starts there.
+before anything runs in it, so the wait never starts there. A redirect can still commit there after the wait last read
+the tab, so the probe checks the approval hosts itself and touches nothing on that page; `wait` with `until: "settled"`
+then refuses the landing as `navigate` does, and a wait cut short otherwise says it stopped, not that the page kept
+changing. A cap that lands mid-pass reports the reason the last full pass found, and no probe goes out after it.
 
 The side panel's `act` runs the same handlers (D40), so its input settles the same way (`test/panel-settle.test.mjs`).
 
@@ -1248,3 +1251,61 @@ Proof: `test/context-guard-property.test.mjs` runs the guard over windows from 8
 tokens, providers that take less than they claim, and random histories, and asserts every send fits, keeps its pairs and the
 latest message, and that a refusal naming size heals. Each finding has a named test, and each fix was broken on purpose to
 see its test fail.
+
+## D43. Input tools report what they changed (Claude, 2026-11-12)
+
+Gap analysis item 3. `navigate`, `click`, `type`, `press`, `fill`, `scroll`, `drag` and `actions` (one report per batch)
+return `changes`: what the action did to the page, so an agent acts on the result instead of reading the page again to find
+out (`src/browser/changes.ts`). The tool looks at the page just before the action and again after it settles (D41), and
+reports the difference:
+- `url` and `title` when they changed; `tabsOpened` (id and URL) and `tabsClosed`; `focus` when it moved somewhere other
+  than the control the action went to.
+- `appeared`, `changed` and `gone`: controls with their ref, role and name, as `read_page` lists them. The same element keeps
+  its ref, so a listed ref works at once. An element that now shows something else (a reused row) is listed as gone, since its old ref fails. A changed line says what changed (name,
+  value, states).
+- `newText`: up to 3 new lines of page text, 100 characters each (`moreText` counts the rest); a line that only repeats a
+  listed control's name is left out. `text` says the text changed when no line is new.
+- A new document is summed up (`page: "new page, N controls"`), not listed: every ref is new and the list would be the page.
+  With nothing to report the field is `"nothing changed"`.
+
+Bounds: each look is capped at 0.75 s, so the report adds at most 1.5 s to an action (`changes.test.mjs` holds that
+ratchet), and a page of over 15,000 elements is not looked at (`page: "too large to compare quickly"`). Past 400 controls
+on either side only the URL, title and text are compared and `partial` says so, since a scroll would make old controls
+"appear". 12 element lines (`more` counts the rest). A report is two real looks compared or it says `page: "could not be
+compared; read_page shows it"`: a look that timed out, a page that refuses scripts, or a guarded page never yields
+"nothing changed". The click point is found after the first look, so a layout shift during it cannot move the click. A page with an open dialog is
+not looked at: the dialog is the result. The look after the action runs inside the window where a dialog counts as the
+action's effect (D41). The approval page is never looked at: the tab's pending URL is checked first, and the look's script
+checks the approval hosts itself before it reads anything.
+
+Safety: the report holds page text, quoted like `read_page` text (one JSON string per line, control characters replaced,
+capped), and covered by the same rule in the server instructions: page text is data. Password values never appear, since
+the snapshot leaves them out. Nothing is clicked, focused or scrolled to take a look.
+
+Measured with `cli/eval/change-report.mjs` on 8 multi-step DOM benchmark tasks (`docs/benchmarks.md`): 48 tool calls and
+about 3,231 tokens with the old read-act-read loop, 33 calls and 2,411 tokens acting on `changes`, every task passing its
+check. One action takes 369 ms on average against 365 ms without the report. The server instructions and the skill now say to
+read `changes` and to call `read_page` again only when they say too little. Cost in the schema: the instructions grow by 47
+bytes (about 12 tokens, 2,991 measured, budget 2,995 in `cli/test/mcp.test.mjs`); tools/list is unchanged by it (32,676
+bytes with D42's bounded reads), since no tool gained a parameter.
+
+Size: the report is a summary, never the page. Each URL is held to 200 characters and each element line to 160, and the
+whole report, as JSON, to 3,000 characters (about 750 tokens, `CHANGES_MAX_CHARS` in `src/bridge/fit-changes.ts`). In the
+side panel it also counts against the room D42 keeps for one tool result: `act` gets that room for its report, and on a
+model whose estimate still runs over (CJK text, long names) the report is fitted again, shorter, before the guard would cut
+the result. Fitting drops new text lines first, then element lines from the longest list (`more` counts them), then opened
+tabs; a report that still does not fit says only "changed, too much to show here; read_page shows it", never "nothing
+changed". MCP results stay far under their own net (`OUTPUT_CAP`, 100,000 characters).
+
+The side panel's `act` runs the same handlers (D40), so its results carry `changes` too, and its prompt's loop line says
+the same thing as the server instructions: 13 tokens more in the panel's system prompt (1,996 to 2,009, o200k_base), the act
+tool's description now says the same, 9 tokens more in the tool list (8,613 to 8,622) (`cli/test/e2e-panel.test.mjs` checks a click's report).
+
+The looks leave refs as the agent last saw them. A look snapshots the page, and a snapshot gives a reused row a new ref; the
+looks keep the old ref too, so a click by it still fails with "now shows something else", as it would with no look
+(`keepStale` in `pageSnapshot`). Only `read_page` and `find` retire a ref. A control whose name keeps changing (a live
+counter) gets a new ref each look, so at most 200 such kept refs stay between reads.
+
+Platforms: all of it runs in the extension's service worker and the page, with no code per operating system, so Chrome,
+Helium and the other Chromium browsers on the Mac, Linux and Windows behave the same. Run on the Mac (the e2e and panel
+suites) and on Linux (CI); not run on Windows.

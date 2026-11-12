@@ -5,6 +5,7 @@
  * are not active.
  */
 
+import { isGuardedUrl } from "../bridge/permissions.js";
 import { isPdfTab } from "../offscreen/pdf-client.js";
 import { cdpSend, isRestrictedUrl } from "./cdp.js";
 import { maskUrl } from "./mask-body.js";
@@ -513,12 +514,14 @@ function pageSnapshot(
 	filter: string,
 	live: (el: Element) => boolean,
 	print: (el: Element) => string,
+	keepStale = false,
 ): unknown {
 	const w = window as unknown as {
 		__tabkyraRefs?: unknown;
 		__tabkyraRefPrints?: unknown;
 		__tabkyraRefOf?: unknown;
 		__tabkyraRefSeq?: unknown;
+		__tabkyraStale?: unknown;
 	};
 	// Adopt earlier state only when it is what this function wrote.
 	const refs = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : new Map<string, Element>();
@@ -531,6 +534,17 @@ function pageSnapshot(
 	w.__tabkyraRefs = refs;
 	w.__tabkyraRefPrints = prints;
 	w.__tabkyraRefOf = refOf;
+	// Refs a change report's look kept for an element that now shows something else (below). The
+	// agent's own read retires them all, as it retires the one it finds; until then at most 200 stay.
+	const stale = w.__tabkyraStale instanceof Set ? (w.__tabkyraStale as Set<string>) : new Set<string>();
+	w.__tabkyraStale = stale;
+	if (!keepStale) {
+		for (const ref of stale) {
+			refs.delete(ref);
+			prints.delete(ref);
+		}
+		stale.clear();
+	}
 	// Forget elements that left the page, so their refs fail instead of piling up.
 	for (const [ref, el] of refs)
 		if (!live(el)) {
@@ -772,8 +786,21 @@ function pageSnapshot(
 		const fp = print(el);
 		let ref = refOf.get(el);
 		if (ref && prints.get(ref) !== fp) {
-			refs.delete(ref);
-			prints.delete(ref);
+			// A change report's look (keepStale) is not the agent reading the page: the old ref
+			// goes on saying the row was reused, as it would have without the look.
+			if (!keepStale) {
+				refs.delete(ref);
+				prints.delete(ref);
+			} else {
+				stale.add(ref);
+				// A control whose name keeps changing (a live counter) gets a new ref each look: bounded.
+				for (const old of stale) {
+					if (stale.size <= 200) break;
+					stale.delete(old);
+					refs.delete(old);
+					prints.delete(old);
+				}
+			}
 			ref = undefined;
 		}
 		if (!ref) {
@@ -1037,6 +1064,93 @@ export async function snapshot(
 	if (typeof snap?.url === "string") snap.url = maskUrl(snap.url);
 	return snap;
 }
+
+/** What the change report compares, one side of an action (src/browser/changes.ts). */
+export interface ChangeLook {
+	url: string;
+	title: string;
+	nodes: Array<SnapshotNode & { states?: string[] }>;
+	/** The focused element's ref, or "" (nothing focused, or focus on something unlisted). */
+	focus: string;
+	/** Stands for the document: a new one means a new page, whatever the URL says. */
+	doc: string;
+	/** Of `before`, the refs not listed now whose element left the page or is hidden. */
+	gone: string[];
+	/** The page's rendered text, as read_page gives it (capped). */
+	text: string;
+}
+
+/**
+ * Page side of a change look: what has focus, through open shadow roots and same-origin frames,
+ * and an id for this document. Self-contained.
+ */
+function focusProbe(): { focus: string; doc: string } {
+	const w = window as unknown as { __tabkyraRefOf?: unknown; __tabkyraDocId?: unknown };
+	if (typeof w.__tabkyraDocId !== "string") w.__tabkyraDocId = Math.random().toString(36).slice(2);
+	let el: Element | null = document.activeElement;
+	for (let i = 0; i < 20 && el; i++) {
+		let inner: Element | null =
+			(el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot?.activeElement ?? null;
+		if (!inner && /^i?frame$/i.test(el.tagName)) {
+			try {
+				inner = (el as HTMLIFrameElement).contentDocument?.activeElement ?? null;
+			} catch {
+				inner = null;
+			}
+		}
+		if (!inner || inner === el) break;
+		el = inner;
+	}
+	const refOf = w.__tabkyraRefOf instanceof WeakMap ? (w.__tabkyraRefOf as WeakMap<Element, string>) : undefined;
+	const blank = !el || el.tagName === "BODY" || el.tagName === "HTML";
+	return { focus: blank ? "" : (refOf?.get(el as Element) ?? ""), doc: w.__tabkyraDocId as string };
+}
+
+/** Page side: which of `refs` left the page or are hidden now. Self-contained. */
+export function refsGone(refs: string[], live: (el: Element) => boolean, print: (el: Element) => string): string[] {
+	const w = window as unknown as { __tabkyraRefs?: unknown; __tabkyraRefPrints?: unknown };
+	const map = w.__tabkyraRefs instanceof Map ? (w.__tabkyraRefs as Map<string, Element>) : undefined;
+	const prints = w.__tabkyraRefPrints instanceof Map ? (w.__tabkyraRefPrints as Map<string, string>) : undefined;
+	return refs.filter((r) => {
+		const el = map?.get(r);
+		if (!el || !live(el)) return true;
+		// Reused for something else (a list row with new content): the old ref fails now, so it is gone.
+		if (prints?.get(r) !== print(el)) return true;
+		const b = el.getBoundingClientRect();
+		if (b.width === 0 || b.height === 0) return true;
+		const st = (el.ownerDocument.defaultView ?? window).getComputedStyle(el);
+		return st.visibility === "hidden" || st.display === "none" || st.opacity === "0";
+	});
+}
+
+/**
+ * One side of the change report, in one round trip: the interactive elements with their refs (the
+ * same refs read_page gives, so they stay valid), focus, the document, and which of `before` went.
+ */
+export async function changeLook(
+	tabId: number,
+	maxNodes: number,
+	before: string[] = [],
+	guardedHosts: readonly string[] = [],
+): Promise<ChangeLook | "guarded" | "large"> {
+	// The approval page (#94) can commit between the URL check and this script: the script checks
+	// again before it touches anything. A page this big is not read twice per action (D43).
+	const code = `(() => {
+		if ((${isGuardedUrl.toString()})(location.href, ${JSON.stringify(guardedHosts)})) return "guarded";
+		if (document.getElementsByTagName("*").length > ${LARGE_PAGE}) return "large";
+		const s = (${pageSnapshot.toString()})(${maxNodes}, 20000, "interactive", ${refLive.toString()}, ${refPrint.toString()}, true);
+		const listed = new Set(s.nodes.map((n) => n.ref));
+		const gone = (${refsGone.toString()})(${JSON.stringify(before)}.filter((r) => !listed.has(r)), ${refLive.toString()}, ${refPrint.toString()});
+		return { url: s.url, title: s.title, nodes: s.nodes, gone, text: s.text, ...(${focusProbe.toString()})() };
+	})()`;
+	const look = await runInPage<ChangeLook | "guarded" | "large">(tabId, code);
+	if (typeof look === "string") return look;
+	if (typeof look?.url === "string") look.url = maskUrl(look.url);
+	return look;
+}
+
+/** Elements in a document past which a change report does not look (each look reads the whole page). */
+export const LARGE_PAGE = 15000;
 
 /**
  * Page-side statements that leave the element a ref or selector names in `el`, with the errors

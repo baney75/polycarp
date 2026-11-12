@@ -3,6 +3,7 @@
 // requests alone, and never runs anything in the approval page before the tab is blanked.
 import assert from "node:assert/strict";
 import test from "node:test";
+import vm from "node:vm";
 import { installFakeChrome } from "./fake-chrome.mjs";
 
 const GUARDED = ["tabkyra.example.com"];
@@ -25,6 +26,10 @@ function recordCommands(answer = () => undefined) {
 	};
 	return sent;
 }
+
+/** A probe's answer, as Runtime.evaluate returns the wrapped value. */
+const probeSays = (value) => ({ result: { value: { ok: true, value } } });
+const BUSY = { since: 0, parsing: false, busy: "loading placeholder" };
 
 async function startBridge() {
 	const fake = installFakeChrome();
@@ -114,12 +119,14 @@ test("a navigate that lands on the approval host is blanked before anything runs
 	const tabId = first.result.tabId;
 	const guarded = "https://tabkyra.example.com/authorize";
 	const order = [];
+	let onApproval = false;
 	const update = chrome.tabs.update;
 	chrome.tabs.update = async (id, p) => {
 		if (p.url === "about:blank") {
 			// The commit watcher's reset is slow to land: the tab stays on the approval page meanwhile.
 			await new Promise((r) => setTimeout(r, 300));
 			const t = await update(id, p);
+			onApproval = false;
 			order.push("blank");
 			return t;
 		}
@@ -127,6 +134,7 @@ test("a navigate that lands on the approval host is blanked before anything runs
 		if (p.url === "https://redirect.example.com/")
 			setTimeout(() => {
 				// The load redirects to the approval page, commits there and finishes loading.
+				onApproval = true;
 				fake.commitNav(id, guarded);
 				setTimeout(() => {
 					for (const fn of chrome.webNavigation.onDOMContentLoaded.listeners) fn({ tabId: id, frameId: 0, url: guarded });
@@ -135,10 +143,171 @@ test("a navigate that lands on the approval host is blanked before anything runs
 		return t;
 	};
 	recordCommands((method) => {
-		if (method === "Runtime.evaluate") order.push("evaluate");
+		// A look at the page before the navigation (the change report, D43) is not in the approval page.
+		if (method === "Runtime.evaluate" && onApproval) order.push("evaluate");
 		return undefined;
 	});
 	const reply = await request("navigate", { url: "https://redirect.example.com/", timeoutMs: 2000 });
 	assert.equal(reply.error?.code, "permission_denied", JSON.stringify(reply));
 	assert.equal(order[0], "blank", `ran in the approval page first: ${order.join(", ")}`);
+});
+
+test("a batch of press steps turns Network on once, not once per step", async () => {
+	const { request } = await startBridge();
+	const created = await request("tabs.create");
+	assert.equal(created.error, undefined, JSON.stringify(created.error));
+	await chrome.tabs.update(created.result.tabId, { url: "https://example.com/", status: "complete" });
+	const sent = recordCommands();
+	const reply = await request("actions", { steps: [{ press: { key: "a" } }, { press: { key: "b" } }, { press: { key: "c" } }] });
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	assert.ok(sent.some((c) => c.method.startsWith("Input.")), "no input was sent");
+	assert.equal(sent.filter((c) => c.method === "Network.enable").length, 1);
+});
+
+test("a batch that names a tab other than the current one watches that tab's requests", async () => {
+	const { request } = await startBridge();
+	const named = await request("tabs.create");
+	const current = await request("tabs.create");
+	assert.equal(current.error, undefined, JSON.stringify(current.error));
+	for (const t of [named, current])
+		await chrome.tabs.update(t.result.tabId, { url: "https://example.com/", status: "complete" });
+	const sent = recordCommands();
+	const reply = await request("actions", { tabId: named.result.tabId, steps: [{ hover: { x: 10, y: 10 } }] });
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	const enables = sent.filter((c) => c.method === "Network.enable").map((c) => c.tabId);
+	assert.deepEqual(enables, [named.result.tabId], `Network.enable went to ${enables.join(", ")}`);
+});
+
+test("a page that refused its probes does not stop probes on the next page", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { settle } = await import(`../src/browser/settle.ts?ctx=${Math.random()}`);
+	// The web store refuses every probe (two in the first 200 ms); a link there then leads to a page
+	// that draws a skeleton without a request.
+	const tabId = fake.addTab({ url: "https://chromewebstore.google.com/detail/x", status: "complete" });
+	recordCommands((method) => (method === "Runtime.evaluate" ? probeSays(BUSY) : undefined));
+	setTimeout(() => chrome.tabs.update(tabId, { url: "https://example.com/", status: "complete" }), 250);
+	const r = await settle(tabId, { quietMs: 300, capMs: 1500 });
+	assert.equal(r.settled, false, `settled on a page whose skeleton is still up: ${JSON.stringify(r)}`);
+	assert.equal(r.waitingOn, "loading");
+});
+
+test("a cap that lands in the middle of a pass keeps the reason the last pass found", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { settle } = await import(`../src/browser/settle.ts?ctx=${Math.random()}`);
+	const tabId = fake.addTab({ url: "https://example.com/", status: "complete" });
+	// A spinner that never goes away; after 300 ms the browser is slow to say where the tab is, so
+	// the cap lands while a pass reads the tab.
+	const probes = [];
+	recordCommands((method) => {
+		if (method !== "Runtime.evaluate") return undefined;
+		probes.push(Date.now());
+		return probeSays(BUSY);
+	});
+	const get = chrome.tabs.get;
+	const t = Date.now();
+	let slow = true;
+	chrome.tabs.get = async (id) => {
+		// One slow read: a probe the cut-short pass sent after it would go out at once.
+		if (slow && Date.now() - t > 300) {
+			slow = false;
+			await new Promise((r) => setTimeout(r, 700));
+		}
+		return get(id);
+	};
+	const r = await settle(tabId, { quietMs: 300, capMs: 500 });
+	const done = Date.now();
+	assert.equal(r.settled, false);
+	assert.equal(r.waitingOn, "loading", JSON.stringify(r));
+	// The pass the cap cut short sends no probe after it.
+	await new Promise((r) => setTimeout(r, 800));
+	assert.ok(probes.length > 0, "the wait probed the page before the cap");
+	assert.deepEqual(probes.filter((at) => at >= done), [], "no probe goes out after settle returned");
+});
+
+test("a probe that lands on the approval page touches nothing there and stops the wait", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { settle } = await import(`../src/browser/settle.ts?ctx=${Math.random()}`);
+	// The tab still reads as the old page: the redirect committed after the loop looked.
+	const tabId = fake.addTab({ url: "https://example.com/", status: "complete" });
+	const touched = [];
+	const page = {
+		location: { href: "https://tabkyra.example.com/authorize" },
+		URL,
+		performance,
+		get window() {
+			touched.push("window");
+			return {};
+		},
+		get document() {
+			touched.push("document");
+			return {};
+		},
+	};
+	recordCommands((method, params) =>
+		method === "Runtime.evaluate"
+			? vm.runInNewContext(params.expression, page).then((value) => ({ result: { value } }))
+			: undefined,
+	);
+	const r = await settle(tabId, {
+		quietMs: 300,
+		capMs: 1500,
+		skip: (u) => u.includes("tabkyra.example.com"),
+		guardedHosts: GUARDED,
+	});
+	assert.equal(r.stopped, true, JSON.stringify(r));
+	assert.deepEqual(touched, []);
+});
+
+test("wait until settled that lands on the approval page refuses, not 'still changing'", async () => {
+	const { request } = await startBridge();
+	const first = await request("navigate", { url: "https://example.com/", timeoutMs: 1 });
+	assert.equal(first.error, undefined, JSON.stringify(first.error));
+	const tabId = first.result.tabId;
+	// The tab moves there with no commit event, so the commit watcher's reset never runs.
+	setTimeout(() => chrome.tabs.update(tabId, { url: "https://tabkyra.example.com/authorize" }), 100);
+	const reply = await request("wait", { until: "settled", timeoutMs: 3000 });
+	assert.equal(reply.error?.code, "permission_denied", JSON.stringify(reply));
+});
+
+test("the veil coming or going is not the page changing", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { settle } = await import(`../src/browser/settle.ts?ctx=${Math.random()}`);
+	const { rememberVeilTag } = await import("../src/browser/veil-shared.ts");
+	const tabId = fake.addTab({ url: "https://example.com/", status: "complete" });
+	await rememberVeilTag(tabId, "abcde-fghijk");
+	// The real probe, in a page whose only change is the veil added to body.
+	const body = { nodeType: 1, localName: "body", parentNode: null };
+	const veil = { nodeType: 1, localName: "abcde-fghijk", parentNode: body };
+	let observer;
+	const page = {
+		location: { href: "https://example.com/" },
+		URL,
+		performance,
+		// tsx names the probe's inner functions with esbuild's helper; the extension's bundle doesn't.
+		__name: (f) => f,
+		innerHeight: 800,
+		innerWidth: 1200,
+		MutationObserver: class {
+			constructor(fn) {
+				observer = fn;
+			}
+			observe() {}
+		},
+		document: { readyState: "complete", querySelectorAll: () => [] },
+	};
+	page.window = page;
+	let probes = 0;
+	recordCommands((method, params) => {
+		if (method !== "Runtime.evaluate") return undefined;
+		const answer = vm.runInNewContext(params.expression, page);
+		if (++probes === 1) setTimeout(() => observer([{ type: "childList", target: body, addedNodes: [veil], removedNodes: [] }]), 150);
+		return answer.then((value) => ({ result: { value } }));
+	});
+	const r = await settle(tabId, { quietMs: 300, capMs: 2000 });
+	assert.equal(r.settled, true, JSON.stringify(r));
+	assert.ok(r.ms < 470, `the veil held the wait: ${r.ms} ms`);
 });

@@ -85,6 +85,7 @@ test("server instructions and the skill teach the same rules", () => {
 		[/fails with interrupted/, /Error `interrupted`/],
 		[/"filter":"interactive"/, /"filter":"interactive"/],
 		[/read_page again to confirm/, /`read_page` again to verify/],
+		[/changes list new refs/, /`changes` \(new refs/],
 		[/Refs expire/, /refs are gone/],
 		[/handle_dialog/, /handle_dialog/],
 		[/Cancel is always safe/, /Cancel, which is always safe/],

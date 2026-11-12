@@ -172,6 +172,11 @@ export function createPageTools(
 							maxTextChars: Math.max(100, Math.floor(maxTextChars * share)),
 						},
 					};
+				} else if (spec.name === "act" && fitted.limits?.changesChars !== undefined) {
+					// The change report is the part that grows with the page: the same answer, its report shorter.
+					const { changesChars } = fitted.limits;
+					if (changesChars <= 100) break;
+					fitted = { ...fitted, limits: { changesChars: Math.max(100, Math.floor(changesChars * share)) } };
 				} else if (spec.name === "get_page_text") {
 					if (room <= MIN_ROOM) break;
 					room = Math.max(MIN_ROOM, Math.floor(room * share));

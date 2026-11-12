@@ -62,3 +62,22 @@ test("a short read says nothing about cuts", async () => {
 	const out = textOf(await tool(send, "read_page").execute("c", {}));
 	assert.doesNotMatch(out, /stopped at/);
 });
+
+test("an act's change report counts against the budget: on a tight one it gets shorter, not cut mid-JSON", async () => {
+	const { CHARS_PER_TOKEN } = await import("../src/models/context-budget.ts");
+	// CJK names hold more tokens than their characters suggest, so the first fit by characters is not enough.
+	const lines = (k) => Array.from({ length: 6 }, (_, i) => `e${i} button "${k} ${"注文を確定する".repeat(8)}"`);
+	const changes = { url: "https://shop.test/cart", appeared: lines("新"), changed: lines("変"), newText: ["合計 ¥1,200"] };
+	const send = async () => ({ clicked: true, x: 10, y: 10, changes });
+	const tight = 1200;
+	const act = createPageTools(send, () => tight).find((t) => t.name === "act");
+	const out = textOf(await act.execute("c1", { action: "click", ref: "e5" }));
+	assert.ok(estimateTextTokens(out) <= Math.floor(tight / CHARS_PER_TOKEN), `${estimateTextTokens(out)} tokens`);
+	const r = JSON.parse(out);
+	assert.equal(r.clicked, true, "the action's own result stays whole");
+	assert.match(JSON.stringify(r.changes), /read_page/);
+	assert.notEqual(r.changes, "nothing changed");
+	// With room, the report goes whole.
+	const roomy = createPageTools(send, () => BUDGET).find((t) => t.name === "act");
+	assert.deepEqual(JSON.parse(textOf(await roomy.execute("c2", { action: "click", ref: "e5" }))).changes, changes);
+});
