@@ -200,7 +200,7 @@ final class HandsEngine {
     static func translate(_ err: JSONValue) -> HandsError {
         let code = err["code"]?.string ?? ""
         let message = err["message"]?.string ?? "the engine refused"
-        let suggestion = err["suggestion"]?.string ?? "Take a new snapshot and try again."
+        let suggestion = EngineVerdict.suggestion(err["suggestion"]?.string ?? "Take a new snapshot and try again.")
         let mapped: HandsErrorCode
         switch code {
         case "STALE_REF", "SNAPSHOT_NOT_FOUND", "ELEMENT_NOT_FOUND": mapped = .staleRef
