@@ -343,11 +343,16 @@ function watchGuardedCommits(ctx: HandlerContext, tabId: number): void {
 	setTimeout(() => chrome.webNavigation.onCommitted.removeListener(onCommitted), GUARD_WATCH_MS);
 }
 
+/** Frames no tool may read or touch: the guarded hosts (the approval page among them). */
+function skipFor(ctx: HandlerContext): (url: string) => boolean {
+	return (u) => ctx.isGuarded(u);
+}
+
 function target(params: Params): { ref?: string; selector?: string } {
 	return { ref: str(params, "ref"), selector: str(params, "selector") };
 }
 
-async function pointFor(_ctx: HandlerContext, params: Params, tabId: number): Promise<{ x: number; y: number }> {
+async function pointFor(ctx: HandlerContext, params: Params, tabId: number): Promise<{ x: number; y: number }> {
 	const x = num(params, "x");
 	const y = num(params, "y");
 	if (x !== undefined && y !== undefined) return screenshotToCss(tabId, { x, y });
@@ -357,7 +362,7 @@ async function pointFor(_ctx: HandlerContext, params: Params, tabId: number): Pr
 			ERR.BAD_PARAMS,
 			"Give a ref from read_page (best), a selector, or x and y from your latest screenshot.",
 		);
-	const rect = await locate(tabId, t);
+	const rect = await locate(tabId, t, skipFor(ctx));
 	return { x: rect.x, y: rect.y };
 }
 
@@ -672,6 +677,7 @@ export const handlers: Record<string, Handler> = {
 			filter,
 			maxNodes: num(params, "maxNodes"),
 			maxTextChars: num(params, "maxTextChars"),
+			skip: skipFor(ctx),
 		});
 	},
 
@@ -765,7 +771,7 @@ export const handlers: Record<string, Handler> = {
 	find: async (ctx, params) => {
 		const query = requireStr(params, "query").toLowerCase();
 		const tabId = await resolveTab(ctx, params, false);
-		const snap = await snapshot(tabId, { filter: "all", maxNodes: 600, maxTextChars: 0 });
+		const snap = await snapshot(tabId, { filter: "all", maxNodes: 600, maxTextChars: 0, skip: skipFor(ctx) });
 		return { matches: rankMatches(snap.nodes, query, num(params, "limit") ?? 20) };
 	},
 
@@ -822,7 +828,7 @@ export const handlers: Record<string, Handler> = {
 		const since = await actionStart(ctx, tabId);
 		const attempt = async () => {
 			if (t.ref || t.selector) {
-				const rect = await locate(tabId, t);
+				const rect = await locate(tabId, t, skipFor(ctx));
 				await click(tabId, rect.x, rect.y);
 			}
 			stopIfAborted(ctx);
@@ -893,13 +899,17 @@ export const handlers: Record<string, Handler> = {
 			);
 		} else {
 			const to = str(params, "to");
-			scrolled = await scrollPage(tabId, {
-				dx,
-				dy,
-				ref: str(params, "ref"),
-				selector: str(params, "selector"),
-				to: to === "top" || to === "bottom" ? to : undefined,
-			});
+			scrolled = await scrollPage(
+				tabId,
+				{
+					dx,
+					dy,
+					ref: str(params, "ref"),
+					selector: str(params, "selector"),
+					to: to === "top" || to === "bottom" ? to : undefined,
+				},
+				skipFor(ctx),
+			);
 		}
 		// An infinite list loads its next rows after the scroll: they are in the report.
 		const result = scrolled as Record<string, unknown>;
@@ -914,7 +924,7 @@ export const handlers: Record<string, Handler> = {
 			throw new BridgeError(ERR.BAD_PARAMS, "fill needs a ref from read_page, or a selector.");
 		const before = await changesBefore(ctx, tabId, params);
 		const since = await actionStart(ctx, tabId);
-		await fillElement(tabId, t, value);
+		await fillElement(tabId, t, value, skipFor(ctx));
 		return { filled: t, ...(await settleAfter(ctx, tabId, since, { filled: t }, { before })) };
 	},
 

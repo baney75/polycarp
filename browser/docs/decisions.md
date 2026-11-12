@@ -1331,3 +1331,40 @@ a restart, and an attachment is kept in the chat itself. It can come when a meas
 **Proof.** `test/document-search.test.mjs` (the bridge's real handler on a PDF tab and a long page; one parse for two
 searches; offsets that read the part that matched), and the 32k panel e2e above.
 
+## D45. Cross-origin frames are read and acted on by ref, through the debugger (Claude, 2026-11-12)
+
+Gap analysis item 5. Before this, `read_page` listed a frame from another origin as one `iframe` line with its URL, and the
+agent had to `navigate` there, which loses the page around it (a checkout's card field, an embedded form, a widget). Now its
+elements follow that line, and click, type, fill, hover and scroll take their refs (`src/browser/frames.ts`).
+
+How: a page script can't look into another origin's frame, so the service worker does it over the tab's debugger. A frame in
+the tab's own process (another port of the same host, say) is in `Page.getFrameTree`; one in its own process (another site)
+is reached with `Target.setAutoAttach` (flatten), which gives it a session on the same `chrome.debugger` attachment. Either
+way the snapshot runs in Polycarp's isolated world in that frame (`Page.createIsolatedWorld`, the same world each time, so
+its refs stay), with the same code as the top page: the same masking, the same limits. Its refs get the frame's tag
+(`fk3z9e12`: "f", four characters from the frame id, then the ref inside), its points are moved by the frame's content box
+(`DOM.getFrameOwner` and its box model), and its text follows the page's under `[frame host]`.
+
+An action by a frame ref resolves the ref in that frame, scrolls the frame into view, and before a click checks two things
+in the tab: the point is inside the viewport, and the hit test at that point lands in the frame, so a banner over the frame
+is reported as a cover rather than clicked. The hit test skips `pointer-events: none` layers, as a real click does (the
+in-use veil, D37, is one). A ref whose frame navigated or went away fails as stale; a ref from a frame's earlier document
+fails the same way it does in the top page.
+
+Limits: 10 frames and 3 levels, outermost first; a frame past them, or one with no box, keeps its old line, so the agent
+still knows it is there and can `navigate` to it. Only http, https and file frames are read: never an extension page, an
+error page or a browser page. A frame on a guarded host (#94) is left out with everything inside it; the side panel has no
+guarded hosts (D40), as before. Uploads and downloads (D38) run in the top page and refuse a frame ref with a clear message. Not done:
+`get_page_text` and `page_markdown` stay the top page's, and settle (D41) still doesn't count a frame's own requests.
+
+Safety: nothing here reaches more than the agent could before. A frame is part of the page it is on, which the person allowed;
+its pixels were already in screenshots, and a click at its x and y already reached it. What changes is that the agent reads
+it as text, with the same masking as the top page (passwords never shown, link URLs masked) and with the page's text still
+data, never instructions.
+
+Cost: a page with no cross-origin frame is unchanged (the extra step runs only when the snapshot found one). On a page with
+two, `read_page {"filter":"interactive"}` went from 368 to 831 bytes and from 2 to 6 ms (median of 7, headless Chromium);
+the first read on a tab also turns on auto-attach once. No tool description changed: 0 schema tokens.
+
+Platforms: everything goes through `chrome.debugger`, which Chromium has on macOS, Linux and Windows alike; nothing here is
+per platform. Measured on macOS (e2e and perception) and in CI on Linux; Windows not run.

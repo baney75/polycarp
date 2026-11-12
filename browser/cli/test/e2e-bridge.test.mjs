@@ -2039,6 +2039,87 @@ test("files save_pdf: the page as a PDF file on this computer", async () => {
 	}
 });
 
+// Cross-origin frames (D45): one on another port of this host (same site, the same process) and
+// one on localhost (another site, its own process). Both are read and acted on by ref.
+const FRAME_INNER = (k) => `<!doctype html><title>inner ${k}</title>
+<button onclick="document.getElementById('r').textContent='Paid ${k}'">Pay ${k}</button>
+<input aria-label="Card name ${k}" oninput="document.getElementById('echo').textContent='Name is '+this.value">
+<input type="password" aria-label="Pin ${k}" value="pin${k}SECRET42">
+<a href="/inner2">Next ${k}</a>
+<p id="r">unpaid ${k}</p><p id="echo"></p>`;
+
+function frameRef(snapshot, label) {
+	const line = snapshot.split("\n").find((l) => l.includes(label));
+	return line?.match(/\b(f[0-9a-z]{4}e\d+)\b/)?.[1];
+}
+
+test("cross-origin frames: read, click and fill inside a same-site and a cross-site frame; a covered or gone frame refuses", async () => {
+	const inner = createServer((req, res) => {
+		res.writeHead(200, { "content-type": "text/html" });
+		if (req.url.startsWith("/inner2")) return res.end("<!doctype html><title>inner2</title><p>Second page</p>");
+		res.end(FRAME_INNER(new URL(req.url, "http://x").searchParams.get("k")));
+	});
+	await new Promise((r) => inner.listen(0, "127.0.0.1", r));
+	const port = inner.address().port;
+	try {
+		extraPages["/xo"] = `<!doctype html><title>Polycarp frames</title><h1>Shop</h1>
+<iframe src="http://127.0.0.1:${port}/inner?k=same" style="width:400px;height:160px;border:3px solid #ccc;margin:10px"></iframe>
+<iframe src="http://localhost:${port}/inner?k=cross" style="width:400px;height:160px;border:0"></iframe>`;
+		// Below the fold, in a frame taller than the window: the click scrolls the page and the frame.
+		extraPages["/xo-far"] = `<!doctype html><title>Polycarp far frame</title><div style="height:1400px">Top</div>
+<iframe src="http://localhost:${port}/inner?k=far" style="width:400px;height:1200px;border:0"></iframe><div style="height:600px"></div>`;
+		extraPages["/xo-cover"] = `<!doctype html><title>Polycarp covered frame</title>
+<div style="position:relative;width:420px;height:170px"><iframe src="http://localhost:${port}/inner?k=under" style="width:400px;height:160px;border:0"></iframe><div style="position:absolute;inset:0;background:rgba(0,0,0,.2)">Cookie wall</div></div>`;
+		await go("xo");
+		// The frames load after the page: wait until both are in the snapshot.
+		let page = "";
+		await until(async () => {
+			page = await tool("read_page", { filter: "interactive" });
+			return frameRef(page, "Pay same") && frameRef(page, "Pay cross");
+		}, 10_000, "both frames in read_page");
+		assert.doesNotMatch(page, /pinsameSECRET42|pincrossSECRET42/, "a password in a frame stays masked");
+
+		for (const k of ["same", "cross"]) {
+			await tool("click", { ref: frameRef(page, `Pay ${k}`) });
+			await tool("fill", { ref: frameRef(page, `Card name ${k}`), value: `Ann ${k}` });
+			const all = await tool("read_page", {});
+			assert.match(all, new RegExp(`Paid ${k}`), `the click reached the ${k} frame`);
+			assert.match(all, new RegExp(`Name is Ann ${k}`), `fill reached the ${k} frame`);
+		}
+		const found = await tool("find", { query: "pay cross" });
+		assert.match(found, /f[0-9a-z]{4}e\d+/, "find returns the frame ref");
+
+		// The frame navigates away: its old refs fail, never acting elsewhere.
+		const old = frameRef(page, "Pay cross");
+		await tool("click", { ref: frameRef(page, "Next cross") });
+		const stale = await mcp.callTool({ name: "click", arguments: { ref: old } });
+		assert.ok(stale.isError, "an old frame ref fails");
+		assert.match(stale.content[0].text, /not found|something else/);
+
+		await go("xo-far");
+		let far = "";
+		await until(async () => {
+			far = await tool("read_page", { filter: "interactive" });
+			return frameRef(far, "Pay far");
+		}, 10_000, "the far frame in read_page");
+		await tool("click", { ref: frameRef(far, "Pay far") });
+		assert.match(await tool("read_page", {}), /Paid far/, "a click below the fold reaches the frame");
+
+		await go("xo-cover");
+		let covered = "";
+		await until(async () => {
+			covered = await tool("read_page", { filter: "interactive" });
+			return frameRef(covered, "Pay under");
+		}, 10_000, "the covered frame in read_page");
+		const r = await mcp.callTool({ name: "click", arguments: { ref: frameRef(covered, "Pay under") } });
+		assert.ok(r.isError, "a click into a covered frame refuses");
+		assert.match(r.content[0].text, /covered/);
+		assert.doesNotMatch(await tool("read_page", {}), /Paid under/);
+	} finally {
+		inner.close();
+	}
+});
+
 test("settle: content drawn after the load, a debounced autocomplete and a skeleton are there when the action returns", async () => {
 	await go("late");
 	assert.match(await tool("read_page", { filter: "interactive" }), /Late Buy/);

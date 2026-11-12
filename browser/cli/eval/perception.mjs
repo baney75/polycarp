@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Perception eval, no model: how well do Tabkyra's MCP tools let an agent SEE and act on hard
-// pages? The script calls the tools directly against local fixture pages and scores 20 probes
+// pages? The script calls the tools directly against local fixture pages and scores 26 probes
 // pass/fail from tool output and page state:
 //
 //   shadow-see, shadow-click, nested-fill, shadow-text   open shadow roots, nested (text: read_page and get_page_text)
 //   frame-see, frame-click, xorigin-flag                 same-origin and cross-origin iframes
+//   xorigin-see, xorigin-click                           inside a cross-origin frame: same site (another port) and another site
 //   states                                               expanded, pressed, disabled, selected, checked
 //   api-request, api-body                                a page's own fetch() seen over the network
 //   embedded-map                                         embedded JSON and forms (inspect_page)
@@ -75,6 +76,11 @@ const serverB = await serve((req, res) => {
 		res.end("account balance opaque-7070");
 		return;
 	}
+	if (new URL(req.url, "http://x").pathname === "/xbtn") {
+		const k = new URL(req.url, "http://x").searchParams.get("k");
+		html(res, `<button onclick="parent.postMessage('xo-${k}', '*')">XO Pay ${k}</button>`);
+		return;
+	}
 	html(res, `<p>Cross origin 6161</p>`);
 });
 const portB = serverB.address().port;
@@ -102,6 +108,12 @@ customElements.define("x-card", class extends HTMLElement {
 </script>`,
 	"/frames": `<h1>Frames</h1><iframe src="/inner" width="300" height="100"></iframe><iframe src="http://127.0.0.1:${portB}/x" width="300" height="100"></iframe>`,
 	"/inner": `<button onclick="parent.__clicked='frame'">Frame Pay</button>`,
+	// 127.0.0.1 on another port is the same site (one process); localhost is another site (its own process).
+	"/xframes": `<h1>Frames</h1><iframe src="http://127.0.0.1:${portB}/xbtn?k=same" width="300" height="80"></iframe>
+<iframe src="http://localhost:${portB}/xbtn?k=cross" width="300" height="80"></iframe><script>
+window.__xo = [];
+addEventListener("message", (e) => { if (typeof e.data === "string" && e.data.startsWith("xo-")) window.__xo.push(e.data); });
+</script>`,
 	"/states": `<button aria-expanded="true">Menu</button>
 <button aria-pressed="true">Bold</button>
 <button disabled>Submit order</button>
@@ -271,6 +283,12 @@ const refFor = (output, name) => {
 	return line?.match(/\be\d+\b/)?.[0];
 };
 
+/** A ref inside a cross-origin frame (fk3z9e12) on the line that mentions `name`. */
+const frameRefFor = (output, name) => {
+	const line = output.split("\n").find((l) => l.includes(name));
+	return line?.match(/\bf[0-9a-z]{4}e\d+\b/)?.[0];
+};
+
 const lineWith = (output, name) => output.split("\n").find((l) => l.includes(name)) ?? "";
 
 /** A page global or expression, read in the page's own world. */
@@ -393,6 +411,30 @@ try {
 		const byHost = page.full.includes(`127.0.0.1:${portB}`);
 		const byWord = /iframe/i.test(page.full);
 		return { pass: byHost || byWord, detail: `host ${byHost ? "yes" : "no"}, word iframe ${byWord ? "yes" : "no"}` };
+	});
+
+	let xoRead;
+	await probe("xorigin-see", async () => {
+		await go("/xframes");
+		xoRead = await interactive();
+		keep(xoRead);
+		const same = Boolean(frameRefFor(xoRead.full, "XO Pay same"));
+		const cross = Boolean(frameRefFor(xoRead.full, "XO Pay cross"));
+		return { pass: same && cross, detail: `same site ${same ? "listed" : "missing"}, another site ${cross ? "listed" : "missing"}` };
+	});
+
+	await probe("xorigin-click", async () => {
+		const out = [];
+		for (const k of ["same", "cross"]) {
+			const ref = frameRefFor(xoRead?.full ?? "", `XO Pay ${k}`);
+			if (!ref) return { pass: false, detail: `no ref for XO Pay ${k}` };
+			const click = await call(client, "click", { ref });
+			keep(click);
+			out.push(`${k} ${click.outcome}`);
+		}
+		const js = await mainJs("window.__xo.join(',')");
+		keep(js);
+		return { pass: js.value === "xo-same,xo-cross", detail: `${out.join(", ")}, page got ${js.value || "nothing"}` };
 	});
 
 	await probe("states", async () => {
@@ -603,6 +645,8 @@ try {
 		"frame-see",
 		"frame-click",
 		"xorigin-flag",
+		"xorigin-see",
+		"xorigin-click",
 		"states",
 		"api-request",
 		"api-body",
