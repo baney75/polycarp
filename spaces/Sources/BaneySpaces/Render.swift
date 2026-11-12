@@ -299,12 +299,42 @@ enum Render {
             (.getCloudflared(configured: false), "remote-get-cloudflared.png"),
             (.cloudflareSignIn(waiting: false), "remote-cloudflare-signin.png"),
             (.cloudflareAddress(problem: nil), "remote-cloudflare-address.png"),
+            (.signIn(configured: false), "remote-sign-in.png"),
+            (.ready, "remote-ready.png"),
+            (.funnelNotAllowed(adminURL: URL(string: "https://login.tailscale.com/f/funnel")), "remote-allow-funnel.png"),
+            (.tailnetLock(configured: false), "remote-tailnet-lock.png"),
+            (.problem(code: "service", message: "launchctl bootstrap failed: 5: Input/output error"), "remote-problem-service.png"),
+            (.problem(code: "launcher", message: ""), "remote-problem-launcher.png"),
         ]
-        for (step, name) in remoteSteps {
+        let remote = BrowserRemoteModel.shared
+        func remotePage(_ step: RemoteScreen, _ name: String) -> Bool {
             let page = VStack(alignment: .leading, spacing: 12) { BrowserRemoteView(preview: step) }
                 .padding(20).frame(width: 620, alignment: .leading).background(Chrome.panel()).foregroundStyle(Chrome.wash())
-            guard save(page, name, CGSize(width: 620, height: 0)) else { return 1 }
+            return save(page, name, CGSize(width: 620, height: 0))
         }
+        for (step, name) in remoteSteps { guard remotePage(step, name) else { return 1 } }
+        // The result: a made-up connect code with nine minutes left and every check passed; then a failed check with Repair.
+        let passed = ["dns", "tls", "resource_metadata", "auth_metadata", "auth_challenge", "streaming"].map { RemoteCheck(name: $0, status: "ok") }
+        remote.stageForRender(code: ConnectCode(code: "TK-7QF3-K2MD", expiresAt: Date().addingTimeInterval(545)), passcode: nil, checks: passed, plan: nil)
+        guard remotePage(.on(connectorURL: "https://studio.tail1234.ts.net:8443/mcp", browserConnected: true), "remote-on.png") else { return 1 }
+        var failed = passed
+        failed[0] = RemoteCheck(name: "dns", status: "fail", detail: "studio.tail1234.ts.net doesn't resolve from public DNS yet.")
+        remote.stageForRender(code: ConnectCode(code: "TK-7QF3-K2MD", expiresAt: Date().addingTimeInterval(545)), passcode: "abcde-fghij-klmno-pqrst", checks: failed,
+                              plan: RemoteFixPlan(available: true, actions: [.init(kind: "funnel", what: "Open Funnel again", status: "planned")]))
+        guard remotePage(.on(connectorURL: "https://studio.tail1234.ts.net:8443/mcp", browserConnected: true), "remote-on-repair.png") else { return 1 }
+        // A brand-new name still being published: On and waiting, the check marked Waiting, no Repair.
+        var waiting = passed
+        waiting[0] = RemoteCheck(name: "dns", status: "fail", detail: "studio.tail1234.ts.net doesn't resolve from public DNS yet.", pending: true)
+        remote.stageForRender(code: ConnectCode(code: "TK-7QF3-K2MD", expiresAt: Date().addingTimeInterval(545)), passcode: nil, checks: waiting,
+                              plan: RemoteFixPlan(available: true, actions: [.init(kind: "funnel", what: "Open Funnel again", status: "planned")]))
+        guard remotePage(.on(connectorURL: "https://studio.tail1234.ts.net:8443/mcp", browserConnected: true), "remote-on-waiting.png") else { return 1 }
+        // On after the Funnel retry, which makes no code: the line says to press New code.
+        remote.stageForRender(code: nil, passcode: nil, checks: passed, plan: nil)
+        guard remotePage(.on(connectorURL: "https://studio.tail1234.ts.net:8443/mcp", browserConnected: true), "remote-on-no-code.png") else { return 1 }
+        // Ten minutes of Funnel retries: the waiting line is gone and the button checks again.
+        remote.stageForRender(code: nil, passcode: nil, checks: [], plan: nil, funnelGaveUp: true)
+        guard remotePage(.funnelNotAllowed(adminURL: URL(string: "https://login.tailscale.com/f/funnel")), "remote-funnel-gave-up.png") else { return 1 }
+        remote.clearSecrets()
 
         // The whole Permissions section, Optional open, at the section's width.
         let pane = PermissionsPane(optionalOpen: true).padding(28).frame(width: SettingsSidebar.windowSize.width - SettingsSidebar.width)
