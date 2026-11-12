@@ -1363,3 +1363,17 @@ change small; they can follow.
 Proof: `test/compaction.test.mjs`, with each of the five rules above broken on purpose to see a test fail, and a panel
 e2e that runs a chat on an 18k stub model until it is summarized, reloads the panel, and checks the next request
 carries the stored notes and the latest question with no new summary and nothing dropped.
+
+Amended after review (PR 140 round 1, 2026-11-12):
+
+- **Who said what is structure.** The summarizer reads each message as a `<message from="person|assistant|tool|browser">`
+  block built from the stored role. Text inside a block can't open or close one, and a role marker inside it is shown
+  as a quote. A goal the person's own words don't back, or an open step that copies page text, is dropped in code.
+- **The notes are Polycarp's.** They go back opening with `<polycarp-notes>` (`NOTES_MARK`). The guard never counts
+  them as the person and cuts them only after every earlier turn (step 8b), before the latest message.
+- **Full history when it fits.** A stored record applies only while the whole chat would make the guard drop turns.
+- **A turn compacts at most twice.** The second time cuts at the person's latest message, so further tool steps find
+  nothing to summarize.
+- **Done steps** is a seventh section that only grows; a step that leaves Open steps unmentioned is kept there.
+- Chunks are sized by `estimateTextTokens`; summary calls are recorded in Costs; `compaction-summary.ts` loads on the
+  first compaction.

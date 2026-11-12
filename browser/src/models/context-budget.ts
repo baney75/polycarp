@@ -43,16 +43,26 @@ export const ATTACHMENT_MARK = "[Document: ";
  */
 export const CONTEXT_NOTE_MARK = "<browser-context>";
 
-/** True for a context note: a user-role message whose text opens with CONTEXT_NOTE_MARK. */
-export function isContextNote(m: Message): boolean {
+/**
+ * How compaction's notes open (compaction.ts): a user-role message Polycarp writes in place of the summarized part of the
+ * chat. The fitting treats it as Polycarp's, never the person's, and cuts it only after every earlier turn is gone.
+ */
+export const NOTES_MARK = "<polycarp-notes>";
+
+const opensWith = (m: Message, mark: string) => {
 	if (m.role !== "user") return false;
 	const content = m.content as unknown;
 	const first =
 		typeof content === "string"
 			? content
 			: (content as Array<{ type: string; text?: string }>).find((p) => p.type === "text")?.text;
-	return (first ?? "").trimStart().startsWith(CONTEXT_NOTE_MARK);
-}
+	return (first ?? "").trimStart().startsWith(mark);
+};
+
+/** True for a context note: a user-role message whose text opens with CONTEXT_NOTE_MARK. */
+export const isContextNote = (m: Message) => opensWith(m, CONTEXT_NOTE_MARK);
+/** True for compaction's notes: a user-role message whose text opens with NOTES_MARK. */
+export const isNotesMessage = (m: Message) => opensWith(m, NOTES_MARK);
 
 /**
  * The budget for one request, from one rule: the window, minus the reply asked for, minus the fixed part (system
@@ -441,8 +451,9 @@ function* halving(start: number, going: () => boolean): Generator<number> {
  * whole earlier turns, oldest first, and last the person's latest message and the turn in progress, whose oldest tool
  * calls go with their results, then the newest call's own thinking, text and arguments. Each tool call keeps its
  * result, and the person's latest message is always sent. Context notes (CONTEXT_NOTE_MARK) are cut like tool results
- * and go with the call they follow; only the person's messages start a turn. Stored history is untouched: only what
- * is sent is cut. A request that already fits comes back as the same object.
+ * and go with the call they follow; only the person's messages start a turn. Compaction's notes (NOTES_MARK) are never
+ * the person's: they stay while earlier turns are dropped and give way after them, before the latest message. Stored
+ * history is untouched: only what is sent is cut. A request that already fits comes back as the same object.
  */
 export function fitContext(context: Context, budget: Budget): Fitted {
 	let messages = context.messages.slice();
@@ -464,7 +475,9 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 	// Whose each message is, decided once from the history as it came and kept with it: a cut can take a note's mark
 	// away, and must never make it the person's. Notes are Polycarp's: they never start a turn or stand for the person.
 	let notes = messages.map(isContextNote);
-	const isPerson = (i: number) => messages[i].role === "user" && !notes[i];
+	// Compaction's notes are Polycarp's too, and hold the summarized past: they give way after every earlier turn.
+	let summaries = messages.map(isNotesMessage);
+	const isPerson = (i: number) => messages[i].role === "user" && !notes[i] && !summaries[i];
 	const latestUser = () => {
 		for (let i = messages.length - 1; i >= 0; i--) if (isPerson(i)) return i;
 		return -1;
@@ -473,7 +486,7 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 	const kindAt = (i: number): Kind =>
 		messages[i].role === "toolResult" ? "result" : notes[i] ? "note" : "attachment";
 	const capPart = (i: number, tokens: number) => replace(i, capParts(messages[i], kindAt(i), tokens));
-	const cuttable = () => messages.flatMap((m, i) => (partsOf(m, kindAt(i)).length ? [i] : []));
+	const cuttable = () => messages.flatMap((m, i) => (!summaries[i] && partsOf(m, kindAt(i)).length ? [i] : []));
 	const size = (i: number) => partsTokens(messages[i], kindAt(i));
 
 	// 1. Every tool result and attached document to its cap.
@@ -522,14 +535,26 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 		messages = [...messages.slice(0, from), ...messages.slice(to)];
 		perMessage = [...perMessage.slice(0, from), ...perMessage.slice(to)];
 		notes = [...notes.slice(0, from), ...notes.slice(to)];
+		summaries = [...summaries.slice(0, from), ...summaries.slice(to)];
 		changed = true;
 		return to - from;
 	};
-	while (over() && latestUser() > 0) {
-		let next = 1;
+	// The notes lead the history and stay: the turns after them go first.
+	const head = () => {
+		let k = 0;
+		while (k < messages.length && summaries[k]) k++;
+		return k;
+	};
+	while (over() && latestUser() > head()) {
+		const from = head();
+		let next = from + 1;
 		while (next < latestUser() && !isPerson(next)) next++;
-		droppedEarlier += drop(0, next);
+		droppedEarlier += drop(from, next);
 	}
+	// 8b. The notes themselves, halving, before anything of the latest message or the turn in progress.
+	for (const c of halving(STUB_TOKENS * 4, over))
+		for (let i = 0; i < messages.length && over(); i++)
+			if (summaries[i]) replace(i, capParts(messages[i], "note", c));
 	if (droppedEarlier) {
 		const i = latestUser();
 		const note = {

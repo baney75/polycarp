@@ -2,7 +2,9 @@
  * Runs compaction (compaction.ts) for one chat, before each request (the agent's transformContext). When the guard
  * (context-guard.ts) would drop earlier turns to fit the request, the older part is summarized instead: notes written
  * by a model call, recorded with onCompacted (the panel appends the record to the stored chat, so it holds across
- * reloads). When the call fails it says so once and leaves the request to the guard, which cuts as before.
+ * reloads). When the call fails it says so once and leaves the request to the guard, which cuts as before. The notes
+ * apply only while the whole chat doesn't fit: on a larger model, or after the guard would keep everything, the full
+ * history is sent. A turn compacts at most twice, however many tool steps it takes.
  */
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessageEventStream, Context, Message, Model } from "@mariozechner/pi-ai";
@@ -14,11 +16,8 @@ import {
 	compactionPlan,
 	conversation,
 	estimateAgentMessages,
+	isPerson,
 	latestCompaction,
-	normalizeSummary,
-	summaryPrompt,
-	summaryRequest,
-	transcriptChunks,
 } from "./compaction.js";
 import { budgetFor, estimateFixedTokens, fitContext } from "./context-budget.js";
 import { learnedWindow } from "./context-guard.js";
@@ -37,7 +36,7 @@ export interface CompactorDeps {
 	request: () => Pick<Context, "systemPrompt" | "tools">;
 	/** The stored messages as the model gets them (the agent's convertToLlm, without its side effects). */
 	toLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
-	/** One summarizer call: the model's text answer. Throws on a model error. */
+	/** One summarizer call: the model's text answer. Throws on a model error. Its cost is the caller's to record. */
 	summarize: (request: SummarizeRequest) => Promise<string>;
 	/** A new record, to keep in the stored chat. */
 	onCompacted: (record: CompactionMessage) => void;
@@ -76,10 +75,16 @@ export function createCompactor(deps: CompactorDeps): Compactor {
 	): Promise<CompactionMessage | undefined> {
 		const convo = conversation(messages);
 		const from = previous?.cut ?? 0;
-		const cut = chooseCut(convo, plan.keepTokens, from);
+		let turn = convo.length - 1;
+		while (turn >= 0 && !isPerson(convo[turn])) turn--;
+		// Once this turn has compacted, the next one takes everything before the person's latest message, so the turn's
+		// further steps find nothing new to summarize and cost no model call.
+		const cut = chooseCut(convo, previous?.turn === turn ? 0 : plan.keepTokens, from);
 		if (cut <= from) return undefined;
-		const chunks = transcriptChunks(convo.slice(from, cut), plan.chunkTokens);
+		const s = await import("./compaction-summary.js");
+		const chunks = s.transcriptChunks(convo.slice(from, cut), plan.chunkTokens);
 		if (!chunks.length) return undefined;
+		const sources = s.sourcesOf(convo);
 		let notes = previous?.summary;
 		let round = previous?.round ?? 0;
 		const maxWords = Math.max(120, Math.floor(plan.summaryTokens * 0.6));
@@ -87,12 +92,12 @@ export function createCompactor(deps: CompactorDeps): Compactor {
 		for (const chunk of chunks) {
 			const answer = await deps.summarize({
 				model,
-				systemPrompt: summaryPrompt(maxWords),
-				text: summaryRequest(notes, chunk),
+				systemPrompt: s.summaryPrompt(maxWords),
+				text: s.summaryRequest(notes, chunk),
 				maxTokens,
 				signal,
 			});
-			const normalized = normalizeSummary(answer, notes, plan.summaryTokens);
+			const normalized = s.normalizeSummary(answer, notes, plan.summaryTokens, sources);
 			if (!normalized) throw new Error("the summary came back without its sections");
 			notes = normalized;
 			round++;
@@ -102,6 +107,7 @@ export function createCompactor(deps: CompactorDeps): Compactor {
 			summary: notes as string,
 			cut,
 			round,
+			turn,
 			tokensBefore: before,
 			tokensAfter: 0,
 			timestamp: now(),
@@ -124,10 +130,16 @@ export function createCompactor(deps: CompactorDeps): Compactor {
 			const plan = compactionPlan(budget, fixed);
 			const sent = record ? applyCompaction(messages, record, plan.userTokens) : messages;
 			if (budget.tooSmall || !canCompact(plan)) return sent;
-			// The guard's own verdict on what would be sent: compaction runs only when it would drop earlier turns.
-			const fit = fitContext({ ...request, messages: await deps.toLlm(sent) }, budget);
-			if (fit.fits && !fit.dropped) return sent;
-			const before = fit.original;
+			const drops = async (m: AgentMessage[]) =>
+				fitContext({ ...request, messages: await deps.toLlm(m) }, budget).dropped > 0;
+			// The whole chat when the guard would keep all of it, notes or no notes (a larger model, say).
+			const whole = record ? conversation(messages) : messages;
+			if (record && !(await drops(whole))) return whole;
+			// The guard's own verdict on what would be sent: compaction runs only when it would drop earlier turns. A
+			// latest turn too large on its own is the guard's to cut: notes on the past wouldn't make it fit.
+			if (!(await drops(sent))) return sent;
+			// Before and after on one measure: the conversation's messages, without the fixed part.
+			const before = estimateAgentMessages(whole);
 			// After a failure, wait until the chat has grown by a turn or so before calling the model again.
 			if (failedAt !== undefined && before < failedAt + plan.keepTokens / 2) return sent;
 			try {
@@ -162,6 +174,8 @@ type StreamLike = (
 export function streamSummarizer(
 	streamFn: StreamLike,
 	getApiKey: (provider: string) => Promise<string | undefined>,
+	/** Each call's cost, for the Costs tab: a summary is billed like any other request. */
+	onCost?: (model: Model<any>, cost: number) => void,
 ): (request: SummarizeRequest) => Promise<string> {
 	return async ({ model, systemPrompt, text, maxTokens, signal }) => {
 		const apiKey = await getApiKey(model.provider);
@@ -171,6 +185,8 @@ export function streamSummarizer(
 			{ apiKey, signal, maxTokens },
 		);
 		const answer = await stream.result();
+		const cost = answer.usage?.cost?.total ?? 0;
+		if (cost > 0) onCost?.(model, cost);
 		if (answer.stopReason === "error" || answer.stopReason === "aborted")
 			throw new Error(answer.errorMessage || "the model gave no summary");
 		const out = answer.content

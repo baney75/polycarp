@@ -814,7 +814,8 @@ test("a long chat is summarized when the guard would drop turns, and the notes h
 		await page.reload();
 		await box.waitFor({ timeout: 20_000 });
 		await page.locator("[data-compaction]").first().waitFor({ timeout: 10_000 });
-		await box.fill("LAST-Q: what did we settle?");
+		// As long as the other questions, so the whole chat still doesn't fit: when it does, it is sent whole instead.
+		await box.fill(`LAST-Q: what did we settle? ${filler}`);
 		await box.press("Enter");
 		await page.getByText("ANSWER-LAST-Q.").first().waitFor({ timeout: 60_000 });
 		const after = requests.at(-1);
