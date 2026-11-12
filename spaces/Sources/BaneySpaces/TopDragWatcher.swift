@@ -131,10 +131,14 @@ final class TopDragWatcher {
     var onMove: (CGPoint) -> Void = { _ in }
     /// A window's title bar started moving, once per drag: a filled window shrinks here.
     var onDragStart: (WindowID, CGPoint) -> Void = { _, _ in }
-    /// The button came up with the overview open for `grab`. `drop` is false when the drag
-    /// ended some other way (the watcher stopped, or a release it missed), so nothing moves.
+    /// The button came up with the overview open for `grab`, at `at`. Nil when the drag ended
+    /// some other way (the watcher stopped, or a release it missed), so nothing moves.
     /// Returns whether the window was dropped on a workspace.
-    var onRelease: (_ grab: TopDrag.Grab, _ drop: Bool) -> Bool = { _, _ in false }
+    var onRelease: (_ grab: TopDrag.Grab, _ at: CGPoint?) -> Bool = { _, _ in false }
+    /// Whether the overview is showing over the display holding this point right now. Asked at release, before
+    /// `onRelease` closes it: a drag counts as covered only then (it may have closed mid-carry, or the window may have
+    /// been carried to another display, where the person could see it).
+    var overviewCovers: (CGPoint) -> Bool = { _ in false }
     /// A drag of a window's title bar ended with the button let go, however it ended (overview, dock, or neither): where,
     /// whether the overview covered the window and from what frame, and whether a drop took it. Called last.
     var onDragEnd: (WindowID, DragEnd) -> Void = { _, _ in }
@@ -185,16 +189,20 @@ final class TopDragWatcher {
     /// Without a position it closes and nothing moves.
     private func released(at p: CGPoint?) {
         let dragged = open ?? ((state.moving || state.pinned) ? state.grab : nil)
-        let covered = open != nil ? coveredFrom : nil
+        let from = coveredFrom, g = open
         coveredFrom = nil
-        var dropped = endCarry(at: p)
-        endTicks()
-        if let g = open {
-            open = nil
-            if let p { onMove(p) }
-            dropped = onRelease(g, p != nil) || dropped
-        }
-        if let dragged, let p { onDragEnd(dragged.window, DragEnd(pointer: p, coveredFrom: covered, dropped: dropped)) }
+        open = nil
+        let end = ReleaseOrder.end(
+            at: p ?? .zero, coveredFrom: g != nil ? from : nil,
+            overviewCovers: { [self] in p.map(overviewCovers) ?? false },
+            endCarry: { [self] in
+                let dropped = endCarry(at: p)
+                endTicks()
+                if g != nil, let p { onMove(p) }
+                return dropped
+            },
+            release: g.map { g in { [self] in onRelease(g, p) } })
+        if let dragged, p != nil { onDragEnd(dragged.window, end) }
     }
 
     private func pressed(at p: CGPoint) {

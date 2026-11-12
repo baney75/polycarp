@@ -2158,9 +2158,31 @@ test("change report: what an action did, with refs that work, and nothing when n
 	const opened = await act("Open quiet");
 	assert.match(opened.tabsOpened?.[0]?.url ?? "", /\/quiet$/, JSON.stringify(opened));
 	await tool("tabs_close", { tabId: opened.tabsOpened[0].tabId });
-	const nav = JSON.parse(await tool("navigate", { url: `${pageUrl}quiet` })).changes;
-	assert.match(nav.url, /\/quiet$/);
-	assert.match(nav.page, /^new page, \d+ controls/);
+	const navigated = JSON.parse(await tool("navigate", { url: `${pageUrl}quiet` }));
+	assert.match(navigated.url, /\/quiet$/);
+	// A full load is a new document: the report says so without looking (no diff of two pages).
+	assert.deepEqual(navigated.changes, { page: "new page; read_page lists it" });
+});
+
+// PR 147 review round 1, first-F1: in a real page, the same element relabeled is one changed line
+// naming its old ref, and an identical field put in a field's place is appeared plus gone.
+extraPages["/pairing"] = `<!doctype html><title>Polycarp pairing</title>
+<button id="s" onclick="this.textContent='Saved'">Save</button>
+<button onclick="const f=document.getElementById('f'); const n=f.cloneNode(); f.replaceWith(n)">Rerender</button>
+<input id="f" aria-label="Email">`;
+test("change report: the same element relabeled names its old ref; a node put in a field's place is appeared and gone", async () => {
+	await go("pairing");
+	const page = await tool("read_page", { filter: "interactive" });
+	const save = refFor(page, "Save");
+	const email = refFor(page, "Email");
+	const saved = JSON.parse(await tool("click", { ref: save })).changes;
+	assert.equal(saved.changed?.length, 1, JSON.stringify(saved));
+	assert.match(saved.changed[0], new RegExp(`^e\\d+ \\(was ${save}\\) button "Saved": name "Save" -> "Saved"$`));
+	assert.equal(saved.gone, undefined, JSON.stringify(saved));
+	const redrawn = JSON.parse(await tool("click", { ref: refFor(page, "Rerender") })).changes;
+	assert.deepEqual(redrawn.gone, [`${email} textbox "Email"`], JSON.stringify(redrawn));
+	assert.match(redrawn.appeared?.[0] ?? "", /^e\d+ textbox "Email"$/, JSON.stringify(redrawn));
+	assert.equal(redrawn.changed, undefined, JSON.stringify(redrawn));
 });
 
 test("change report: controls with live counters do not pile up refs between reads", async () => {
