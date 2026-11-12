@@ -1,0 +1,21 @@
+{
+	"label": "r1-haiku",
+	"rescored": "signup-validation follows signup-v2 (evals/weak-model/signup-rule.mjs): both round 1 runs left the password empty, filled the rest, called tabs_show and did not submit, so they pass. They had been counted as refused_by_policy failures.",
+	"note": "Every failed run and every tool error in passing runs, classified by reading its transcript (node evals/weak-model/report.mjs r1-haiku). Classes: wrong_tool, wrong_args, stale_ref, gave_up_after_error, looped, never_verified, false_success, tool_bug, timeout, refused_by_policy, tool_limit.",
+	"failures": [
+		{ "run": "textedit-replace t2", "class": "tool_bug", "detail": "computer_open answered not_running (\"the Polycarp app here can't take connector calls\"), apparently transient; the model also passed a relative path." },
+		{ "run": "textedit-save t1", "class": "tool_limit", "detail": "computer_press cmd+s in the background is unverified and does not save; the file on disk is unchanged." },
+		{ "run": "textedit-save t2", "class": "tool_limit", "detail": "Same: no background save." },
+		{ "run": "calc-toggle t1", "class": "tool_bug", "detail": "computer_open answered window_identified:false and computer_windows stayed empty; the second open said focus changed:true. The model also used the browser wait as a sleep and got not-connected." }
+	],
+	"friction_in_passing_runs": [
+		{ "class": "wrong_tool", "count": 5, "detail": "computer_select with a browser ref (e123...) on a web <select>: \"isn't a ref\"." },
+		{ "class": "stale_ref", "count": 5, "detail": "rerender-list: clicking several checkboxes from one read while the list rebuilt itself (4); computer_get on a changed window (1)." },
+		{ "class": "wrong_tool", "count": 4, "detail": "Browser tools in computer tasks: wait {ms} as a pause (3), run_js (1): \"Polycarp isn't connected\"." },
+		{ "class": "wrong_tool", "count": 3, "detail": "read_page while a dialog was open: handle_dialog's result didn't say a second box (confirm after prompt) had opened." },
+		{ "class": "wrong_tool", "count": 6, "detail": "skill_match sent plain page tasks to polycarp-browser and the model read its 8,000 characters (48k chars in all)." },
+		{ "class": "gave_up_after_error", "count": 1, "detail": "page_markdown on a local PDF: the Firecrawl setup message named no tool that works instead; the model then used get_page_text." },
+		{ "class": "wrong_args", "count": 2, "detail": "computer_press key names (\"parenleft\") refused." }
+	],
+	"size": { "calls": 399, "tool_errors": 28, "result_chars": 298000, "computer_snapshot_chars_avg": 4700, "read_page_chars_avg": 462 }
+}
