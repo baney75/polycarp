@@ -29,7 +29,7 @@ test("first-F1: a Cloudflare refusal from setup is drawn as its step, even over 
 	assert.equal(fresh.kind, "step");
 	assert.equal(fresh.copy.key, "cloudflare_name_refused");
 	// "Use Cloudflare instead" on a Funnel route: the refusal comes ahead of the form.
-	const switching = flowScreen({ status: funnelRoute, chosen: "cloudflare", run: refused });
+	const switching = flowScreen({ status: funnelRoute, chosen: "cloudflare", run: refused, runFromForm: true });
 	assert.equal(switching.kind, "step");
 	assert.equal(switching.copy.key, "cloudflare_name_refused");
 	// The form still shows when nothing was refused.
@@ -89,7 +89,9 @@ test("second-N1: a Repair that stops on a step the person must take shows that s
 		actions: [],
 	};
 	const out = flow.repairOutcome(done);
-	assert.equal(out.copy.key, "tailscale_operator_check", "nothing polls after a repair, so the step checks again");
+	assert.equal(out.copy.key, "tailscale_operator");
+	assert.doesNotMatch(out.copy.body, /by itself/, "nothing polls after a repair");
+	assert.equal(out.copy.action.kind, "repair", "so its button is Repair again (PR 136 second-S2)");
 	assert.equal(out.command, "sudo tailscale set --operator=$USER");
 	assert.equal(out.message, "Tailscale refused: access denied");
 	assert.deepEqual(out.advice, done.advice);
@@ -142,4 +144,71 @@ test("second-N4: remote-copy.ts names a Swift file as held equal only when the t
 	const m = src.match(/\(([^()]+\.swift), held equal by test\/remote-copy\.test\.mjs\)/);
 	if (m) assert.ok(read("test/remote-copy.test.mjs").includes(m[1].split("/").pop()), `${m[1]} is named but never read`);
 	assert.ok(STEP_COPY.tailscale_operator_check);
+});
+
+// PR 136 review round 1, panel side. The host side is at the end of cli/test/remote-r2.test.mjs.
+
+test("PR 136 second-S1: only a refusal from the Cloudflare form skips the form; a late Funnel answer doesn't", () => {
+	const late = { state: "funnel_not_allowed", message: "Funnel isn't allowed", next: { kind: "open_page", url: "https://login.tailscale.com/admin" } };
+	assert.equal(flowScreen({ status: funnelRoute, chosen: "cloudflare", run: late }).kind, "cloudflare", "the form, with no way stuck on Funnel");
+	const refused = { state: "problem", code: "cloudflare_zone", message: "off the account", next: { kind: "choose_name" } };
+	assert.equal(flowScreen({ status: funnelRoute, chosen: "cloudflare", run: refused, runFromForm: true }).kind, "step");
+	const el = read("src/dialogs/RemoteFlow.ts");
+	assert.match(el, /this\.takeRun\(result\.problem\);\s*this\.refusedHost = host;/, "the form's refusal is tagged");
+	assert.match(el, /this\.run && this\.refusedHost !== undefined \? \{ runFromForm: true \}/);
+	assert.match(el, /if \(this\.chosen !== "cloudflare" && !sameAnswer\(answer, this\.run\)\) this\.takeRun\(answer\)/, "a Funnel answer after the switch is dropped");
+});
+
+test("PR 136 second-S2 and first-F2: no stopped Repair claims to wait, and the button its words name is drawn", () => {
+	const waits = Object.entries(STEP_COPY).filter(([, v]) => v.waits);
+	assert.ok(waits.length >= 6);
+	const answers = {
+		tailscale_missing: { state: "tailscale_missing" },
+		tailscale_signed_out: { state: "tailscale_signed_out", next: { kind: "run_command", command: "tailscale up" } },
+		funnel_not_allowed: { state: "funnel_not_allowed", next: { kind: "open_page", url: "https://login.tailscale.com/admin" } },
+		tailscale_operator: { state: "problem", code: "tailscale_operator" },
+		dns: { state: "problem", code: "dns" },
+		cloudflared_manual: { state: "cloudflared_missing" },
+		cloudflare_login: { state: "problem", code: "cloudflare_login" },
+	};
+	for (const [key] of waits) {
+		const a = answers[key];
+		assert.ok(a, `a stand-in answer for ${key}`);
+		const out = flow.repairOutcome({ available: true, ok: false, message: "m", actions: [], ...a });
+		assert.equal(out.copy.key, key);
+		assert.doesNotMatch(out.copy.body, /by itself/i, key);
+		assert.match(out.copy.body, /Then press Repair again\.$/, key);
+		assert.doesNotMatch(out.copy.body, /;\s*\.|\.\s*\./, `${key} reads as sentences`);
+		assert.equal(out.copy.action.kind, "repair", key);
+		assert.equal(out.copy.action.label, RESULT_COPY.repair);
+	}
+	// A step that doesn't wait keeps its own button, and the block draws it.
+	const hub = flow.repairOutcome({ available: true, ok: false, state: "problem", code: "hub", message: "m", actions: [] });
+	assert.equal(hub.copy.action?.kind, STEP_COPY.hub.action?.kind);
+	const el = read("src/dialogs/RemoteFlow.ts");
+	assert.match(el, /\$\{this\.outcomeButton\(out\)\}/, "repairBlock draws the outcome's button");
+	assert.match(el, /onClick: \(\) => this\.act\(action\.kind, out\.answer\)/);
+	assert.match(el, /canRepair && repairOutcome\(this\.repaired\)\?\.copy\.action\?\.kind !== "repair"/, "one Repair button, not two");
+});
+
+test("PR 136 second-S3: a Cloudflare step's button sets up the refused name, never the Funnel route's ts.net name", () => {
+	const cf = status({ route: "remote", remoteKind: "cloudflare", publicUrl: "https://pc.example.com" });
+	assert.equal(flow.cloudflareHostFor(funnelRoute, "new.example.com", "typed.example.com"), "new.example.com");
+	assert.equal(flow.cloudflareHostFor(funnelRoute, undefined, " typed.example.com "), "typed.example.com");
+	assert.equal(flow.cloudflareHostFor(cf, "new.example.com", ""), "pc.example.com", "a saved Cloudflare route keeps its name");
+	assert.equal(flow.cloudflareHostFor(status(), "new.example.com", ""), "new.example.com");
+	assert.match(read("src/dialogs/RemoteFlow.ts"), /const host = cloudflareHostFor\(this\.status, this\.refusedHost, this\.tunnelHost\);/);
+});
+
+test("PR 136 second-S4: the 15 minute wait counts only time the panel was shown", () => {
+	let w = flow.waitedMs(undefined, 0);
+	for (let t = 1000; t <= 60_000; t += 1000) w = flow.waitedMs(w, t);
+	assert.equal(w.ms, 60_000, "a visible minute is a minute");
+	// Hidden for 20 minutes: the ticks stop, and the first one back adds at most one gap.
+	w = flow.waitedMs(w, 60_000 + 20 * 60_000);
+	assert.ok(w.ms <= 60_000 + flow.WAIT_TICK_GAP_MS, String(w.ms));
+	assert.ok(w.ms < flow.WAITING_FOR_MS, "not given up on coming back");
+	const el = read("src/dialogs/RemoteFlow.ts");
+	assert.match(el, /this\.waited = waitedMs\(this\.waited, now\);\s*if \(this\.waited\.ms > WAITING_FOR_MS\)/);
+	assert.doesNotMatch(el, /waitingSince/, "no wall-clock wait left");
 });

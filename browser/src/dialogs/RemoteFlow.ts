@@ -44,17 +44,20 @@ import {
 } from "../connect/remote-copy.js";
 import {
 	type ChosenRoute,
+	cloudflareHostFor,
 	type FlowInput,
 	type FlowScreen,
 	FUNNEL_POLL_MS,
 	FUNNEL_RETRY_FOR_MS,
 	flowScreen,
 	pollFor,
+	type RepairOutcome,
 	repairOutcome,
 	sameAnswer,
 	settleRun,
 	settleRunAfterTest,
 	WAITING_FOR_MS,
+	waitedMs,
 } from "../connect/remote-flow.js";
 import {
 	type ConnectStatus,
@@ -118,7 +121,11 @@ export class RemoteFlow extends LitElement {
 	@state() private waitingGaveUp = false;
 	/** The last real Repair, when it stopped on a step only the person can take (second-N1). */
 	@state() private repaired?: RemoteFixAnswer;
-	private waitingSince?: number;
+	/** The Cloudflare name of the run the form's refusal answered: `run` came from the form (second-S1), and its buttons set
+	 * up this name again (second-S3). Cleared by any other answer. */
+	@state() private refusedHost?: string;
+	/** Visible time the result has waited on a pending check (second-S4). */
+	private waited?: { ms: number; at: number };
 	private planning = false;
 	private ticker?: ReturnType<typeof setInterval>;
 	private lastPoll = 0;
@@ -156,6 +163,7 @@ export class RemoteFlow extends LitElement {
 			...(this.fix ? { fix: this.fix } : {}),
 			...(this.funnelGaveUp ? { funnelGaveUp: true } : {}),
 			...(this.waitingGaveUp ? { waitingGaveUp: true } : {}),
+			...(this.run && this.refusedHost !== undefined ? { runFromForm: true } : {}),
 		};
 	}
 
@@ -172,13 +180,14 @@ export class RemoteFlow extends LitElement {
 		const screen = flowScreen(input);
 		// A result can't say "still being published" forever: past the wait, the pending check is a failure with Repair.
 		if (screen.kind === "result" && screen.waiting) {
-			this.waitingSince ??= now;
-			if (now - this.waitingSince > WAITING_FOR_MS) {
+			// Only time the panel was shown counts, so coming back after hiding it never gives up on an old test (second-S4).
+			this.waited = waitedMs(this.waited, now);
+			if (this.waited.ms > WAITING_FOR_MS) {
 				this.waitingGaveUp = true;
 				if (!this.fix) void this.planFix();
 				return;
 			}
-		} else if (screen.kind !== "result" || !screen.gaveUp) this.waitingSince = undefined;
+		} else if (screen.kind !== "result" || !screen.gaveUp) this.waited = undefined;
 		const poll = pollFor(screen, input);
 		if (!poll || now - this.lastPoll < poll.everyMs) return;
 		if (poll.method === "remoteFunnel") {
@@ -203,7 +212,8 @@ export class RemoteFlow extends LitElement {
 				if (kept !== this.run) this.run = kept;
 			} else if (method === "remoteFunnel") {
 				const answer = await connectRemoteFunnel();
-				if (!sameAnswer(answer, this.run)) this.takeRun(answer);
+				// "Use Cloudflare instead" was pressed while this retry was out: its answer is about Funnel, so it's dropped (second-S1).
+				if (this.chosen !== "cloudflare" && !sameAnswer(answer, this.run)) this.takeRun(answer);
 			} else {
 				this.checking = true;
 				const answer = await connectRemoteTest();
@@ -229,6 +239,7 @@ export class RemoteFlow extends LitElement {
 	/** A run's answer: its code moves into `code` (the run keeps no copy) and its checks into the checklist. */
 	private takeRun(answer: RemoteAnswer): void {
 		const { connectCode, connectCodeExpiresAt, connectCodeProblem, ...rest } = answer;
+		this.refusedHost = undefined;
 		// The panel checks the code's shape itself, as it does for every code it shows.
 		if (connectCode && CONNECT_CODE.test(connectCode) && Number.isFinite(connectCodeExpiresAt)) {
 			this.code = { code: connectCode, expiresAt: connectCodeExpiresAt as number };
@@ -255,7 +266,7 @@ export class RemoteFlow extends LitElement {
 		this.checks = checks;
 		// Every check passed: the wait and a stopped Repair are over.
 		if (!checks.some((c) => c.status === "fail")) {
-			this.waitingSince = undefined;
+			this.waited = undefined;
 			this.waitingGaveUp = false;
 			this.repaired = undefined;
 		}
@@ -297,7 +308,7 @@ export class RemoteFlow extends LitElement {
 		this.error = undefined;
 		this.funnelSince = undefined;
 		this.funnelGaveUp = false;
-		this.waitingSince = undefined;
+		this.waited = undefined;
 		this.waitingGaveUp = false;
 		try {
 			this.takeRun(await connectRemoteSetup());
@@ -340,9 +351,10 @@ export class RemoteFlow extends LitElement {
 			// Setup's own refusal (a taken name, a domain off the account) is drawn as its step, with its action (first-F1).
 			if (result.problem) {
 				this.takeRun(result.problem);
+				this.refusedHost = host;
 				return;
 			}
-			this.waitingSince = undefined;
+			this.waited = undefined;
 			this.waitingGaveUp = false;
 			this.takeRun({ state: "on", message: "", ...result });
 		} catch (err) {
@@ -393,7 +405,7 @@ export class RemoteFlow extends LitElement {
 	private async checkAgain(method: "remoteState" | "remoteTest" = "remoteState"): Promise<void> {
 		this.run = undefined;
 		// The person asked: a new wait starts from now.
-		this.waitingSince = undefined;
+		this.waited = undefined;
 		this.waitingGaveUp = false;
 		await this.ask(method);
 	}
@@ -419,7 +431,8 @@ export class RemoteFlow extends LitElement {
 				return;
 			case "download":
 			case "sign_in_cloudflare": {
-				const host = this.status?.publicUrl ? new URL(this.status.publicUrl).hostname : this.tunnelHost.trim();
+				// The saved Cloudflare name, else the refused run's, else the typed one; never the Funnel route's (second-S3).
+				const host = cloudflareHostFor(this.status, this.refusedHost, this.tunnelHost);
 				this.chosen = "cloudflare";
 				this.tunnelHost = host;
 				void this.setupTunnel(host);
@@ -676,7 +689,7 @@ export class RemoteFlow extends LitElement {
 					</ul>
 					<div class="mt-2 flex items-center gap-2">
 						${Button({ size: "sm", variant: "outline", disabled: this.checking, children: RESULT_COPY.checkAgain, onClick: () => void this.checkAgain("remoteTest") })}
-						${canRepair ? Button({ size: "sm", disabled: this.fixing, children: this.fixing ? RESULT_COPY.repairing : RESULT_COPY.repair, onClick: () => void this.repair() }) : nothing}
+						${canRepair && repairOutcome(this.repaired)?.copy.action?.kind !== "repair" ? Button({ size: "sm", disabled: this.fixing, children: this.fixing ? RESULT_COPY.repairing : RESULT_COPY.repair, onClick: () => void this.repair() }) : nothing}
 					</div>
 				</details>
 				${this.repairBlock()}
@@ -695,6 +708,7 @@ export class RemoteFlow extends LitElement {
 				<p class="text-xs font-medium text-foreground [overflow-wrap:anywhere]">${out.copy.title}</p>
 				<p class="text-xs text-foreground">${out.copy.body}</p>
 				${out.command ? this.copyBox("Command", out.command, "repair-command") : nothing}
+				${this.outcomeButton(out)}
 				${url ? html`<a class="self-start text-xs text-muted-foreground underline [overflow-wrap:anywhere] ${FOCUS}" href=${url} target="_blank" rel="noopener noreferrer">${new URL(url).hostname}</a>` : nothing}
 				${out.advice.map(
 					(a) => html`<div class="flex flex-col gap-1" data-repair-advice=${a.name}>
@@ -712,6 +726,17 @@ export class RemoteFlow extends LitElement {
 				}
 			</div>
 		`;
+	}
+
+	/** The button the outcome's words name (first-F2): its own action, or Repair for a step that would have waited. A copy
+	 * or a page is drawn already, as the command box and the link. */
+	private outcomeButton(out: RepairOutcome): TemplateResult | typeof nothing {
+		const action = out.copy.action;
+		if (!action || action.kind === "copy_command" || action.kind === "open_url") return nothing;
+		const label = action.kind === "repair" && this.fixing ? RESULT_COPY.repairing : action.label;
+		return html`<div class="flex items-center gap-2" data-repair-action=${action.kind}>
+			${Button({ size: "sm", disabled: this.fixing, children: label, onClick: () => this.act(action.kind, out.answer) })}
+		</div>`;
 	}
 
 	protected override updated(): void {

@@ -34,6 +34,9 @@ export interface RemoteStepCopy {
 
 export const REMOTE_TITLE = "Use Polycarp from Claude, ChatGPT and Grok";
 
+/** What a stopped Repair's step ends with in place of "this page moves on by itself": nothing polls there. */
+export const REPAIR_AGAIN = "Then press Repair again.";
+
 export const ROUTE_COPY = {
 	chooseTitle: "How should assistants reach this computer?",
 	chooseBody: "Both ways are free and run on your own account. Polycarp never sees the account or makes one for you.",

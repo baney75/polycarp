@@ -9,6 +9,8 @@
 import {
 	answerOn,
 	copyKey,
+	REPAIR_AGAIN,
+	RESULT_COPY,
 	type RemoteCopyKey,
 	type RemoteStepCopy,
 	realFailures,
@@ -37,6 +39,8 @@ export interface FlowInput {
 	funnelGaveUp?: boolean;
 	/** The result waited WAITING_FOR_MS on a pending check: it is a failure now, with Repair (second-N2). */
 	waitingGaveUp?: boolean;
+	/** `run` is a refusal from the Cloudflare form (setupTunnel's problem), not a Funnel answer (PR 136 second-S1). */
+	runFromForm?: boolean;
 }
 
 /** Funnel is retried by itself for this long after a refusal; then the step's button checks again (funnel_gave_up). */
@@ -47,6 +51,33 @@ export const FUNNEL_RETRY_FOR_MS = 10 * 60_000;
  * name and a new tunnel both answer within minutes; setup already waited 5 of them.
  */
 export const WAITING_FOR_MS = 15 * 60_000;
+
+/** The longest gap between two ticks that counts as waiting: a panel hidden longer than this wasn't watching (second-S4). */
+export const WAIT_TICK_GAP_MS = 2_000;
+
+/**
+ * Waiting time the person could see. Each tick adds the time since the last one, at most WAIT_TICK_GAP_MS, and the tick
+ * stops while the panel is hidden, so a panel left hidden for 15 minutes doesn't come back gave-up on an old test (second-S4).
+ */
+export function waitedMs(prev: { ms: number; at?: number } | undefined, now: number): { ms: number; at: number } {
+	const ms = prev?.ms ?? 0;
+	const step = prev?.at === undefined ? 0 : Math.min(Math.max(0, now - prev.at), WAIT_TICK_GAP_MS);
+	return { ms: ms + step, at: now };
+}
+
+/**
+ * The Cloudflare name a step's download or sign-in button sets up: the saved Cloudflare address, else the name the refused run
+ * was for, else what was typed. Never a Funnel route's ts.net name (PR 136 second-S3).
+ */
+export function cloudflareHostFor(
+	status: ConnectStatus | undefined,
+	refusedHost: string | undefined,
+	typed: string,
+): string {
+	if (status?.route === "remote" && status.remoteKind === "cloudflare" && status.publicUrl)
+		return new URL(status.publicUrl).hostname;
+	return refusedHost ?? typed.trim();
+}
 
 /** The result's heading: on, on and waiting for a pending check, on with a failed check, or on with no browser. */
 export type ResultHead = Extract<RemoteCopyKey, "on" | "on_waiting" | "check_failed" | "no_browser_connected">;
@@ -183,8 +214,9 @@ export function flowScreen(input: FlowInput): FlowScreen {
 	if (isOn(run) && run?.connectorUrl) return result(input, run.connectorUrl, run);
 	if (status.route === "remote" && status.publicUrl) {
 		// "Use Cloudflare instead" on a Funnel route: the Cloudflare form, until it turns on or the person goes back.
-		// A refusal from that form (a taken name) is drawn as its own step first (first-F1).
-		if (chosen === "cloudflare" && routeOf(status) !== "cloudflare" && !(run && !isOn(run)))
+		// A refusal from that form (a taken name) is drawn as its own step first (first-F1). Only one from the form: a Funnel
+		// answer that lands after "Use Cloudflare instead" must not hide the form (PR 136 second-S1).
+		if (chosen === "cloudflare" && routeOf(status) !== "cloudflare" && !(run && !isOn(run) && input.runFromForm))
 			return { kind: "cloudflare", step: 3 };
 		// Set up. Something about Tailscale or cloudflared itself comes first; then the last run's answer (Funnel not allowed
 		// yet carries the page to open, a retry's operator refusal its command); else the result, with what was last found from
@@ -274,6 +306,8 @@ export function settleRunAfterTest(run: RemoteAnswer | undefined, test: RemoteAn
 
 /** What a Repair that stopped says: the step only the person can take, its command or page, and `remote fix`'s advice. */
 export interface RepairOutcome {
+	/** The step Repair stopped on, as an answer, for the step's own button. */
+	answer: RemoteAnswer;
 	copy: RemoteStepCopy & { key: string };
 	message?: string;
 	command?: string;
@@ -281,9 +315,18 @@ export interface RepairOutcome {
 	advice: NonNullable<RemoteFixAnswer["advice"]>;
 }
 
+/** A step's body without its claim that the page moves on by itself, for a place where nothing polls. */
+export function withoutWaiting(body: string): string {
+	return body
+		.replace(/;\s*this page [^.]*\./gi, ".")
+		.replace(/\s*This page [^.]*\./g, "")
+		.trim();
+}
+
 /**
- * The block a failed Repair draws (second-N1), or undefined when it worked or never ran. Nothing polls for it, so a step that
- * would say it moves on by itself says to check again instead.
+ * The block a failed Repair draws (second-N1), or undefined when it worked or never ran. Nothing polls for it, so every step
+ * that would say it moves on by itself (every `waits` entry) says to press Repair again instead, and its button is Repair
+ * (PR 136 second-S2 and first-F2). Any other step keeps its own button, which the block draws.
  */
 export function repairOutcome(done: RemoteFixAnswer | undefined): RepairOutcome | undefined {
 	if (!done?.available || done.ok !== false) return undefined;
@@ -293,10 +336,17 @@ export function repairOutcome(done: RemoteFixAnswer | undefined): RepairOutcome 
 		message: done.message ?? "",
 		...(done.next ? { next: done.next } : {}),
 	};
-	let copy: RemoteStepCopy & { key: string } = stepCopy(answer);
-	if (copy.key === "tailscale_operator")
-		copy = { key: "tailscale_operator_check", ...STEP_COPY.tailscale_operator_check };
+	const step = stepCopy(answer);
+	const copy: RemoteStepCopy & { key: string } = step.waits
+		? {
+				key: step.key,
+				title: step.title,
+				body: `${withoutWaiting(step.body ?? "")} ${REPAIR_AGAIN}`,
+				action: { kind: "repair", label: RESULT_COPY.repair },
+			}
+		: step;
 	return {
+		answer,
 		copy,
 		...(done.message ? { message: done.message } : {}),
 		...(done.next?.command ? { command: done.next.command } : {}),

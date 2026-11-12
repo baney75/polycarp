@@ -192,7 +192,8 @@ connecting, is a `pending` check: the result says the address is still being pub
 seconds until it passes. After 15 minutes of that, or when setup's answer names `remote fix`, the check counts as failed.
 When a check fails for real and the helper's `remote fix` has something to do, a Repair button runs it; an older helper
 shows no button. When Repair stops on something only you can do, the page shows that step with its command, and each
-piece of `remote fix`'s advice with its own. The side panel never makes or shows a passcode: a new connect code approves an assistant again. The code lives
+piece of `remote fix`'s advice with its own; do the step, then press Repair again. If Tailscale doesn't answer within 15
+seconds, the page says so and changes nothing, rather than asking you to sign in. The side panel never makes or shows a passcode: a new connect code approves an assistant again. The code lives
 only in the page's memory and is gone when Settings closes.
 
 The Linux desktop app has no remote screen; on Linux, use the side panel or the terminal. On Windows the helper finds

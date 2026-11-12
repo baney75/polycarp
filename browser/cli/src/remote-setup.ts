@@ -120,7 +120,10 @@ type ServeWeb = Record<string, { Handlers?: Record<string, { Proxy?: string }> }
 type ServeTcp = Record<string, { HTTPS?: boolean; TCPForward?: string }>;
 
 /** What `tailscale` says about this machine: not connected, unreadable serve status, or its DNS name, Web entries and which host:ports Funnel is on for. */
-type TailscaleState = { kind: "disconnected" } | { kind: "unreadable" } | { kind: "ok"; dns: string; web: ServeWeb; tcp: ServeTcp; allowFunnel: Record<string, boolean> };
+type TailscaleState =
+	| { kind: "disconnected" }
+	| { kind: "unreadable"; why?: string }
+	| { kind: "ok"; dns: string; web: ServeWeb; tcp: ServeTcp; allowFunnel: Record<string, boolean> };
 
 /** The DNS name `tailscale status --json` gives, or "" when Tailscale isn't connected. */
 function dnsFrom(statusOut: string): string {
@@ -152,7 +155,7 @@ function readTailscale(bin: string): TailscaleState {
  * How the native host's probes run a command: without blocking the event loop, which relays every agent's traffic (first-F3),
  * and with a short limit, since each is a read Tailscale answers at once when it is well.
  */
-export type ProbeRun = (cmd: string, args: string[]) => Promise<{ code: number; out: string }>;
+export type ProbeRun = (cmd: string, args: string[]) => Promise<{ code: number; out: string; timedOut?: boolean }>;
 export const PROBE_TIMEOUT_MS = 15_000;
 const probeRun: ProbeRun = (cmd, args) => runAsync(cmd, args, PROBE_TIMEOUT_MS);
 
@@ -162,10 +165,19 @@ export interface ProbeSeam {
 	tailscale?: () => string | undefined;
 }
 
+/** Tailscale took longer than the probe's limit: it is slow or stuck, which says nothing about being signed in (PR 136 second-S5). */
+const tailscaleSilent = (): TailscaleState => ({
+	kind: "unreadable",
+	why: `Tailscale didn't answer within ${Math.round(PROBE_TIMEOUT_MS / 1000)} seconds, so nothing was changed. Check that Tailscale is running, then try again.`,
+});
+
 async function readTailscaleAsync(bin: string, exec: ProbeRun): Promise<TailscaleState> {
-	const dns = dnsFrom((await exec(bin, ["status", "--json"])).out);
+	const status = await exec(bin, ["status", "--json"]);
+	if (status.timedOut) return tailscaleSilent();
+	const dns = dnsFrom(status.out);
 	if (!dns) return { kind: "disconnected" };
-	return serveFrom(dns, await exec(bin, ["serve", "status", "--json"]));
+	const serve = await exec(bin, ["serve", "status", "--json"]);
+	return serve.timedOut ? tailscaleSilent() : serveFrom(dns, serve);
 }
 
 const LOCAL_PROXY = /^http:\/\/(127\.0\.0\.1|localhost):/;
@@ -181,7 +193,7 @@ const TAILNET_LOCKED: FunnelBlock = {
 };
 const tailscaleAbsent = (): FunnelBlock => ({ ok: false, state: "tailscale_missing", message: `Tailscale isn't installed. Install it from ${tailscaleDownloadUrl()} and sign in, or use --cloudflare name.yourdomain.com for a domain on your Cloudflare account.` });
 const tailnetLocked = (lockOut: string): boolean => /tailnet lock is enabled/i.test(lockOut);
-type TailscaleReady = { ok: true; bin: string; state: TailscaleState } | FunnelBlock;
+export type TailscaleReady = { ok: true; bin: string; state: TailscaleState } | FunnelBlock;
 
 function readyFrom(bin: string, state: TailscaleState): TailscaleReady {
 	if (state.kind === "disconnected") return { ok: false, state: "tailscale_signed_out", message: `Tailscale isn't connected. ${tailscaleSignIn()}, then try again.` };
@@ -201,7 +213,9 @@ export async function tailscaleReadyAsync(seam: ProbeSeam = {}): Promise<Tailsca
 	const exec = seam.run ?? probeRun;
 	const bin = (seam.tailscale ?? tailscaleBinary)();
 	if (!bin) return tailscaleAbsent();
-	if (tailnetLocked((await exec(bin, ["lock", "status"])).out)) return TAILNET_LOCKED;
+	const lock = await exec(bin, ["lock", "status"]);
+	if (lock.timedOut) return readyFrom(bin, tailscaleSilent());
+	if (tailnetLocked(lock.out)) return TAILNET_LOCKED;
 	return readyFrom(bin, await readTailscaleAsync(bin, exec));
 }
 
@@ -218,7 +232,7 @@ export async function planFunnelAsync(ports: number[], seam: ProbeSeam = {}): Pr
 function planFrom(basics: TailscaleReady, ports: number[]): FunnelPlan {
 	if (!basics.ok) return basics;
 	const { bin, state } = basics;
-	if (state.kind === "unreadable") return { ok: false, state: "problem", message: "Couldn't read tailscale serve status, so nothing was changed." };
+	if (state.kind === "unreadable") return { ok: false, state: "problem", message: state.why ?? "Couldn't read tailscale serve status, so nothing was changed." };
 	if (state.kind !== "ok") return { ok: false, state: "problem", message: "Couldn't read tailscale, so nothing was changed." };
 	const tcp = state.tcp[String(FUNNEL_PORT)];
 	if (tcp && tcp.HTTPS !== true) {
@@ -1074,12 +1088,7 @@ export function remoteRoutes(): RemoteRoutes {
 	return routesFrom(tailscaleReady());
 }
 
-/** `remoteRoutes` for the native host, without blocking it. */
-export async function remoteRoutesAsync(seam: ProbeSeam = {}): Promise<RemoteRoutes> {
-	return routesFrom(await tailscaleReadyAsync(seam));
-}
-
-function routesFrom(tailscale: TailscaleReady): RemoteRoutes {
+export function routesFrom(tailscale: TailscaleReady): RemoteRoutes {
 	return {
 		tailscale: { installed: tailscale.ok || tailscale.state !== "tailscale_missing", signedIn: tailscale.ok },
 		cloudflare: { installed: Boolean(cloudflaredBinary()), signedIn: cloudflareSignedIn() },
@@ -1090,9 +1099,10 @@ function routesFrom(tailscale: TailscaleReady): RemoteRoutes {
  * Read-only: can setup go ahead? ready, or the first thing in the way. Runs the same checks setup runs before it changes
  * anything, without blocking the event loop (the native host asks it every few seconds).
  */
-export async function preflight(seam: ProbeSeam = {}): Promise<{ state: RemoteState; message: string; code?: string }> {
+export async function preflight(seam: ProbeSeam = {}, read?: TailscaleReady): Promise<{ state: RemoteState; message: string; code?: string }> {
 	if (existsSync(hubFile())) return { state: "problem", message: `This install is set up as a hub (${hubFile()}), and an install has one public route. Run ${COMMAND_NAME} hub off first.`, code: "hub" };
-	const plan = await planFunnelAsync([DEFAULT_PORT], seam);
+	// `read`: Tailscale as the caller already read it this poll, so it is asked once (PR 136 first-F3).
+	const plan = planFrom(read ?? (await tailscaleReadyAsync(seam)), [DEFAULT_PORT]);
 	if (!plan.ok) return { state: plan.state, message: plan.message, ...(plan.code ? { code: plan.code } : {}) };
 	const probe = await probeLocal(DEFAULT_PORT, `https://${plan.dns}:${FUNNEL_PORT}`);
 	if (probe.state === "other") return { state: "port_busy", message: `Something already listens on 127.0.0.1:${DEFAULT_PORT} and isn't Polycarp serve (${probe.detail}).`, code: "local_port" };

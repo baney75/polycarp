@@ -15,9 +15,10 @@ after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDe
 const mod = await loadTs(`
 export { ConnectService } from "@src/connect-host.ts";
 export { remoteFix, remoteState } from "@src/remote-panel.ts";
+export { tailscaleReadyAsync } from "@src/remote-setup.ts";
 export * as tunnel from "@src/tunnel-setup.ts";
 `);
-const { ConnectService, remoteFix, remoteState, tunnel } = mod;
+const { ConnectService, remoteFix, remoteState, tailscaleReadyAsync, tunnel } = mod;
 
 async function inConfig(name, fn) {
 	const dir = join(root, name);
@@ -173,4 +174,100 @@ test("second-N2: a Turn on that ends with `remote fix` gets no connect code", as
 		assert.equal(result.code, "resource_metadata");
 		assert.equal(result.connectCode, undefined);
 	});
+});
+
+// PR 136 review round 1, host side. The panel side is at the end of test/remote-flow-r2.test.mjs.
+
+/** No real tailscale or Tailscale app is found while `fn` runs. */
+async function noTailscale(dir, fn) {
+	const empty = join(dir, "empty");
+	mkdirSync(empty, { recursive: true });
+	const saved = { PATH: process.env.PATH, APPLICATIONS_DIR: process.env.APPLICATIONS_DIR };
+	process.env.PATH = empty;
+	process.env.APPLICATIONS_DIR = empty;
+	try {
+		return await fn();
+	} finally {
+		process.env.PATH = saved.PATH;
+		if (saved.APPLICATIONS_DIR === undefined) delete process.env.APPLICATIONS_DIR;
+		else process.env.APPLICATIONS_DIR = saved.APPLICATIONS_DIR;
+	}
+}
+
+test("PR 136 first-F1: a new tunnel still connecting is on and waiting with its connect code, not a refusal", async () => {
+	await inConfig("r136-f1", async () => {
+		const lagging = { name: "resource_metadata", status: "fail", detail: "502 from the tunnel", pending: true };
+		const connecting = {
+			ok: false,
+			state: "problem",
+			code: "resource_metadata",
+			message: "The tunnel hasn't connected yet.",
+			connectorUrl: "https://polycarp.example.com/mcp",
+			next: { kind: "run_command", command: "polycarp remote test" },
+			checks: OK_CHECKS.map((c) => (c.name === "resource_metadata" ? lagging : c)),
+		};
+		const h = tunnelHooks({ setup: async () => (h.calls.push("setup"), connecting), check: async () => (h.calls.push("check"), { ok: false, detail: "502" }) });
+		const seen = [];
+		const done = await tunnel.setupTunnel("polycarp.example.com", (p) => seen.push(p), h, { checkTotalMs: 30, checkEveryMs: 10 });
+		assert.equal(done.problem, undefined, "not drawn as a refusal");
+		assert.ok(h.calls.includes("check"), "the check step runs");
+		assert.equal(seen.some((p) => p.step === "tunnel" && p.state === "failed"), false, "the tunnel row isn't marked failed");
+		assert.equal(done.checks.find((c) => c.name === "resource_metadata").pending, true);
+
+		const service = new ConnectService({ tunnel: tunnelHooks({ setup: async () => connecting, check: async () => ({ ok: false, detail: "502" }) }), tunnelCheckMs: 30 });
+		const { result, error } = await ask(service, "setupTunnel", { host: "polycarp.example.com" });
+		assert.equal(error, undefined);
+		assert.equal(result.problem, undefined);
+		assert.match(result.connectCode, /^TK-/, "the press gets its code");
+
+		// Setup that gave up waiting and names remote fix is still a refusal: a problem with Repair and no code.
+		const stuck = { ...connecting, next: { kind: "run_command", command: "polycarp remote fix" } };
+		const h2 = tunnelHooks({ setup: async () => stuck });
+		assert.deepEqual((await tunnel.setupTunnel("polycarp.example.com", () => {}, h2, { checkTotalMs: 30, checkEveryMs: 10 })).problem, stuck);
+	});
+});
+
+test("PR 136 first-F3: one remoteState poll reads Tailscale once", async () => {
+	const answers = {
+		"lock status": "Tailnet lock is NOT enabled.",
+		"status --json": JSON.stringify({ Self: { DNSName: "m.tail1.ts.net." } }),
+		"serve status --json": JSON.stringify({ AllowFunnel: { "m.tail1.ts.net:8443": true } }),
+	};
+	for (const saved of [undefined, { publicUrl: "https://m.tail1.ts.net:8443", port: 8787, route: "funnel" }]) {
+		await inConfig(`r136-f3-${saved ? "funnel" : "none"}`, async (dir) => {
+			if (saved) writeFileSync(join(dir, "remote.json"), JSON.stringify(saved));
+			const calls = [];
+			const run = async (_cmd, args) => (calls.push(args.join(" ")), { code: 0, out: answers[args.join(" ")] ?? "" });
+			await noTailscale(dir, () => remoteState({ run, tailscale: () => "/stand-in/tailscale" }));
+			for (const read of Object.keys(answers)) assert.equal(calls.filter((c) => c === read).length, 1, `${read} on ${saved ? "a Funnel route" : "nothing saved"}: ${calls.join(", ")}`);
+		});
+	}
+});
+
+test("PR 136 second-S5: a Tailscale read that times out is unreadable, not signed out", async () => {
+	const slow = (which) => async (_cmd, args) =>
+		args.join(" ") === which ? { code: 1, out: "tailscale timed out after 15 s", timedOut: true } : { code: 0, out: args[0] === "lock" ? "Tailnet lock is NOT enabled." : JSON.stringify({ Self: { DNSName: "m.tail1.ts.net." } }) };
+	for (const which of ["status --json", "lock status", "serve status --json"]) {
+		const ready = await tailscaleReadyAsync({ run: slow(which), tailscale: () => "/stand-in/tailscale" });
+		assert.equal(ready.ok, true, which);
+		assert.equal(ready.state.kind, "unreadable", which);
+		assert.match(ready.state.why, /didn't answer/, which);
+	}
+	// Nothing saved: the step says Tailscale didn't answer, never "Sign in to Tailscale".
+	await inConfig("r136-s5", async (dir) => {
+		const answer = await noTailscale(dir, () => remoteState({ run: slow("status --json"), tailscale: () => "/stand-in/tailscale" }));
+		assert.notEqual(answer.state, "tailscale_signed_out");
+		assert.equal(answer.state, "problem");
+		assert.match(answer.message, /didn't answer/);
+	});
+	// On a saved Funnel route too: a problem in Tailscale's words, never the sign-in step and never "on".
+	await inConfig("r136-s5-funnel", async (dir) => {
+		writeFileSync(join(dir, "remote.json"), JSON.stringify({ publicUrl: "https://m.tail1.ts.net:8443", port: 8787, route: "funnel" }));
+		const answer = await noTailscale(dir, () => remoteState({ run: slow("serve status --json"), tailscale: () => "/stand-in/tailscale" }));
+		assert.equal(answer.state, "problem");
+		assert.match(answer.message, /didn't answer/);
+	});
+	// A plain empty answer still means signed out.
+	const out = await tailscaleReadyAsync({ run: async (_c, a) => ({ code: 0, out: a[0] === "lock" ? "" : "{}" }), tailscale: () => "/stand-in/tailscale" });
+	assert.equal(out.state, "tailscale_signed_out");
 });

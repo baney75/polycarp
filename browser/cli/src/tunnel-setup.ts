@@ -7,6 +7,7 @@
  * back as `problem`, so the panel draws the step's own sentence and action (first-F1).
  */
 import { existsSync } from "node:fs";
+import { answerOn } from "../../src/connect/remote-copy.ts";
 import type { TunnelStepId } from "../../src/connect/types.ts";
 import { cloudflareLoginForPanel, cloudflaredBinary, cloudflareSignedIn, normalizeCloudflareHost } from "./cloudflare.ts";
 import { downloadCloudflared } from "./cloudflared-download.ts";
@@ -136,14 +137,17 @@ export async function setupTunnel(host: string, progress: (p: TunnelProgress) =>
 
 	// Always run: setup again on the same name picks up where a failed run stopped (a service that never started). Funnel, when
 	// it is the route now, closes inside setup only after Cloudflare has made the tunnel.
-	// A report that isn't ok is setup's own answer (a taken name, a domain off the account): the step fails with its words and
-	// the report goes back whole, so the panel draws that state's sentence and action instead of a bare error.
+	// A refusal is setup's own answer that isn't on (a taken name, a domain off the account): the step fails with its words and
+	// the report goes back whole, so the panel draws that state's sentence and action instead of a bare error. A report that
+	// isn't ok but is on (a new tunnel answering 502 in its first minute: only pending checks, address saved) is not a refusal:
+	// it goes on to the check step and the result with its connect code (PR 136 first-F1).
+	const refusal = (r: SetupReport | undefined) => !!r && !r.ok && !answerOn(r);
 	const report = await run(
 		"tunnel",
 		async () => (await hooks.setup({ cloudflare: name, service: true, passcode: false, replaceFunnel: previous?.route === "funnel" })) || undefined,
-		(r) => (r && !r.ok ? r.message : undefined),
+		(r) => (refusal(r) ? r?.message : undefined),
 	);
-	if (report && !report.ok) return { publicUrl, problem: report };
+	if (report && refusal(report)) return { publicUrl, problem: report };
 
 	// The tunnel and its record are made, so a name that isn't answering yet is on with a lagging check, not a failed setup: a new
 	// record takes minutes. The check is left waiting, pending, and the panel checks again from the result by itself.

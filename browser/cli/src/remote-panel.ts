@@ -8,7 +8,7 @@
 import { execFile } from "node:child_process";
 import { cloudflaredBinary } from "./cloudflare.ts";
 import { cloudflaredAsset } from "./cloudflared-download.ts";
-import { loadRemoteConfig, openFunnel, planFunnelAsync, preflight, type ProbeSeam, type RemoteConfig, remoteRoutesAsync, remoteSetup, tailscaleReadyAsync } from "./remote-setup.ts";
+import { loadRemoteConfig, openFunnel, planFunnelAsync, preflight, type ProbeSeam, type RemoteConfig, remoteSetup, routesFrom, tailscaleReadyAsync } from "./remote-setup.ts";
 import { CLOUDFLARED_DOWNLOAD_URL, type RemoteNext, type RemoteState, type SetupReport, TAILSCALE_OPERATOR_FIX, tailscaleAccessDenied, tailscaleDownloadUrl } from "./remote-state.ts";
 import { publicChecks, realFault } from "./remote-test.ts";
 import { COMMAND_NAME, selfExec, selfPrefix } from "./self.ts";
@@ -120,22 +120,25 @@ export async function remoteState(seam: ProbeSeam = {}): Promise<RemoteAnswer> {
 	try {
 		config = loadRemoteConfig();
 	} catch (err) {
-		const routes = routesView(await remoteRoutesAsync(seam));
+		const routes = routesView(routesFrom(await tailscaleReadyAsync(seam)));
 		return { ...configProblem(err), ...(routes ? { routes } : {}) };
 	}
-	const routes = await remoteRoutesAsync(seam);
+	// Tailscale is read once per poll; the routes, the preflight and the Funnel route's readiness all come from it (first-F3).
+	const ready = await tailscaleReadyAsync(seam);
+	const routes = routesFrom(ready);
 	if (!config) {
-		const pf = await preflight(seam);
+		const pf = await preflight(seam, ready);
 		const next = nextFor(pf.state);
 		return remoteAnswer({ ...pf, ...(next ? { next } : {}), routes });
 	}
 	const base = { routes, route: config.route, connectorUrl: `${config.publicUrl}/mcp` };
 	if (config.route === "funnel") {
-		const ready = await tailscaleReadyAsync(seam);
 		if (!ready.ok) {
 			const next = nextFor(ready.state);
 			return remoteAnswer({ ...base, state: ready.state, message: ready.message, ...(ready.code ? { code: ready.code } : {}), ...(next ? { next } : {}) });
 		}
+		// Tailscale didn't answer in time: say so, not "on" and not "signed out" (PR 136 second-S5).
+		if (ready.state.kind === "unreadable" && ready.state.why) return remoteAnswer({ ...base, state: "problem", message: ready.state.why });
 		const address = new URL(config.publicUrl);
 		const key = `${address.hostname}:${address.port || "443"}`;
 		if (ready.state.kind === "ok" && ready.state.allowFunnel[key] !== true) {
