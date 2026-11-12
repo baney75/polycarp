@@ -86,7 +86,9 @@ test("tools/list stays small: no schema dialect line, and a byte budget", async 
 	// result too big for its context. Each integer argument costs about 110 bytes of schema; the prose was cut first.
 	// wait's until:"settled" adds 131 (D41): the page settling is otherwise a read_page loop. With the bounded reads
 	// above, the budget is theirs plus these 131 (32,676 measured).
-	assert.ok(bytes <= 32681, `tools/list is ${bytes} bytes, over the 32,681 budget`);
+	// get_page_text's query adds 143 (32,824): finding a passage in a 400-page PDF or a long page by its words, with
+	// page numbers, instead of reading it whole or paging through it 50,000 characters at a time.
+	assert.ok(bytes <= 32824, `tools/list is ${bytes} bytes, over the 32,824 budget`);
 	// The loop line teaching `changes` (D43) adds 47 bytes; it saves a read_page after most actions.
 	assert.ok(Buffer.byteLength(mcp.getInstructions() ?? "") <= 2995, "instructions over 2,995 bytes");
 });

@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { chromium } from "playwright-core";
+import { ethicsPdf, FAR_LINE, FRIENDSHIP_PAGES } from "./helpers/pdf.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cli = join(here, "..", "dist", "index.js");
@@ -449,6 +450,10 @@ before(async () => {
 			res.writeHead(200, { "content-type": "application/json" });
 			return res.end('{"ok":true}');
 		}
+		if (req.url === "/ethics.pdf") {
+			res.writeHead(200, { "content-type": "application/pdf" });
+			return res.end(ethicsPdf());
+		}
 		if (serveFileData(req, res)) return;
 		if (req.url.startsWith("/settle/")) return serveSettle(req, res);
 		res.writeHead(200, { "content-type": "text/html" });
@@ -596,6 +601,26 @@ test("open a page, snapshot, type, click and read back through MCP", async () =>
 		"the greeting",
 	);
 	assert.match(text, /Hello, Donovan!/);
+});
+
+// The case that broke the chat, over MCP: a 400-page PDF is searched, not read whole. The search names the pages by
+// number, pages reads the best one, and neither answer comes near the whole book (about 560,000 characters).
+test("get_page_text {query} on a 400-page PDF finds Book VIII by page number, and pages reads it, each bounded", async () => {
+	await tool("navigate", { url: `${pageUrl}ethics.pdf` });
+	let last = "";
+	const found = await until(async () => {
+		last = await tool("get_page_text", { query: "friendship another self" }).catch((err) => String(err));
+		return /Page \d+:/.test(last) ? last : undefined;
+	}, 20_000, "the PDF search").catch((err) => assert.fail(`${err.message}; the last answer: ${last.slice(0, 1500)}`));
+	const top = Number(/1\. Page (\d+):/.exec(found)?.[1]);
+	assert.ok(top >= FRIENDSHIP_PAGES[0] && top <= FRIENDSHIP_PAGES[1], found);
+	assert.match(found, /400 pages/);
+	assert.ok(found.length < 6000, `the search answered ${found.length} characters`);
+	const read = await tool("get_page_text", { pages: `${top}` });
+	assert.match(read, new RegExp(`Page ${top} of 400`));
+	assert.match(read, /another self/);
+	assert.ok(read.length < 10_000, `the page read answered ${read.length} characters`);
+	for (const t of [found, read]) assert.ok(!t.includes(FAR_LINE.slice(0, 15)), "page 300 never sent");
 });
 
 /** The ref of the first line in a read_page result that names `label`. */

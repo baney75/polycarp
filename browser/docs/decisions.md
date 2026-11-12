@@ -1309,3 +1309,25 @@ counter) gets a new ref each look, so at most 200 such kept refs stay between re
 Platforms: all of it runs in the extension's service worker and the page, with no code per operating system, so Chrome,
 Helium and the other Chromium browsers on the Mac, Linux and Windows behave the same. Run on the Mac (the e2e and panel
 suites) and on Linux (CI); not run on Windows.
+
+## D44. Search a document instead of reading it, with the tools agents already have (Claude, 2026-11-12)
+
+**Problem.** A 400-page PDF is about 560,000 characters. Read whole, it killed the chat (D42 now cuts it to fit, but
+a cut book still can't answer "what does Aristotle say about friendship in Book VIII"). Paging through it 50,000
+characters at a time takes a dozen calls and fills the context with pages nobody asked about.
+
+**Decision.** Search first, then read the pages that matched. `get_page_text` takes `query`: on a PDF tab the answer is
+the matching pages, best first, with numbers and snippets (the same ranking as the panel's `extract_document`,
+`src/tools/document-reader.ts`), and `pages` then reads them; on a long page it is the matching parts of about 3,000
+characters, each with the `offset` that reads it. The parsed PDF is kept by URL (six at a time) while the extension
+runs. Over MCP the tool already existed, so `query` costs 143 bytes of tools/list, not a new tool's 600 or more. The
+side panel keeps `extract_document` for URLs and attachments (and now long web pages), and gets the same `query` on
+its own `get_page_text`. Nothing is platform-specific: pdf.js runs in the extension's offscreen document on every
+Chromium browser, Mac, Linux and Windows alike.
+
+**Not done.** A document store that outlives the extension (IndexedDB, a Documents tab): a URL is fetched again after
+a restart, and an attachment is kept in the chat itself. It can come when a measured case needs it.
+
+**Proof.** `test/document-search.test.mjs` (the bridge's real handler on a PDF tab and a long page; one parse for two
+searches; offsets that read the part that matched), and the 32k panel e2e above.
+

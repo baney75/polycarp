@@ -63,6 +63,7 @@ import {
 	switched as switchedEdit,
 } from "../site-edits/store.js";
 import { BUILD } from "../update/build.js";
+import { searchTab } from "./document-search.js";
 import { BridgeError, classify, detachedError, interruptedError, navigatedError } from "./errors.js";
 import { dropTransfersForSession, fileHandlers } from "./files.js";
 import { rankMatches } from "./find.js";
@@ -676,6 +677,12 @@ export const handlers: Record<string, Handler> = {
 
 	text: async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, false);
+		const query = str(params, "query");
+		if (query)
+			return {
+				...(await tabSummary(tabId)),
+				text: await searchTab(tabId, str(params, "selector"), query, readChars(params.maxChars) ?? READ_MAX_CHARS),
+			};
 		// The PDF viewer has no page text to read: its text comes from the file, page by page.
 		if (!str(params, "selector") && (await isPdfTab(tabId))) {
 			const tab = await chrome.tabs.get(tabId);

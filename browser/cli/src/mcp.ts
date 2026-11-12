@@ -606,13 +606,14 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"get_page_text",
 		{
 			title: "Get page text",
-			description: "Readable text of the page or one element, up to 50,000 characters (offset reads on). Cheaper than read_page when you only need to read. On a PDF: text by page. Example: {\"selector\":\"article\"}",
+			description: "Readable text of the page or one element, up to 50,000 characters (offset reads on). Cheaper than read_page when you only need to read. On a PDF: text by page. query finds passages in a long PDF or page. Example: {\"selector\":\"article\"}",
 			inputSchema: {
 				tabId,
 				selector,
 				maxChars: z.number().int().optional().describe("Cap on returned characters"),
 				offset: z.number().int().optional().describe("Start at this character"),
 				pages: z.string().optional().describe('PDF: "3" or "3-7"'),
+				query: z.string().optional().describe("Find: matching pages (PDF) or parts, best first, with numbers"),
 			},
 		},
 		(args) => {
