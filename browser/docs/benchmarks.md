@@ -261,7 +261,8 @@ report and 365 ms on the build before it (d56c4ab0, the same loop), so the two l
 
 Schema cost: the MCP server instructions grow 47 bytes (about 12 tokens) and tools/list is unchanged at 31,894 bytes. The
 side panel's system prompt grows 13 tokens (1,996 to 2,009, `cli/eval/panel-prompt-size.mjs`, o200k_base), and its tool
-list is unchanged at 8,613.
+list grows 9 tokens (8,613 to 8,622), since `act` now says to read its `changes`. Added time per action is bounded at
+1.5 s (two looks of at most 0.75 s), held by `test/changes.test.mjs`, "... both looks add at most 2 x LOOK_MS".
 
 # Dictation, 2026-10-29
 

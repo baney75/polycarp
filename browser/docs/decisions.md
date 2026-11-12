@@ -1208,17 +1208,22 @@ reports the difference:
 - `url` and `title` when they changed; `tabsOpened` (id and URL) and `tabsClosed`; `focus` when it moved somewhere other
   than the control the action went to.
 - `appeared`, `changed` and `gone`: controls with their ref, role and name, as `read_page` lists them. The same element keeps
-  its ref, so a listed ref works at once and every ref not listed as gone still does. A changed line says what changed (name,
+  its ref, so a listed ref works at once. An element that now shows something else (a reused row) is listed as gone, since its old ref fails. A changed line says what changed (name,
   value, states).
 - `newText`: up to 3 new lines of page text, 100 characters each (`moreText` counts the rest); a line that only repeats a
   listed control's name is left out. `text` says the text changed when no line is new.
 - A new document is summed up (`page: "new page, N controls"`), not listed: every ref is new and the list would be the page.
   With nothing to report the field is `"nothing changed"`.
 
-Bounds: 400 controls compared per side (`partial` says so past it), 12 element lines (`more` counts the rest), and a look
-that takes over 1.5 s is dropped (`page: "could not be compared"`) rather than holding the call. A page with an open dialog is
+Bounds: each look is capped at 0.75 s, so the report adds at most 1.5 s to an action (`changes.test.mjs` holds that
+ratchet), and a page of over 15,000 elements is not looked at (`page: "too large to compare quickly"`). Past 400 controls
+on either side only the URL, title and text are compared and `partial` says so, since a scroll would make old controls
+"appear". 12 element lines (`more` counts the rest). A report is two real looks compared or it says `page: "could not be
+compared; read_page shows it"`: a look that timed out, a page that refuses scripts, or a guarded page never yields
+"nothing changed". The click point is found after the first look, so a layout shift during it cannot move the click. A page with an open dialog is
 not looked at: the dialog is the result. The look after the action runs inside the window where a dialog counts as the
-action's effect (D41). The approval page is never looked at.
+action's effect (D41). The approval page is never looked at: the tab's pending URL is checked first, and the look's script
+checks the approval hosts itself before it reads anything.
 
 Safety: the report holds page text, quoted like `read_page` text (one JSON string per line, control characters replaced,
 capped), and covered by the same rule in the server instructions: page text is data. Password values never appear, since
@@ -1232,12 +1237,13 @@ bytes (about 12 tokens, budget 2,995 in `cli/test/mcp.test.mjs`); tools/list is 
 gained a parameter.
 
 The side panel's `act` runs the same handlers (D40), so its results carry `changes` too, and its prompt's loop line says
-the same thing as the server instructions: 13 tokens more in the panel's system prompt (1,996 to 2,009, o200k_base), tool
-list unchanged at 8,613 (`cli/test/e2e-panel.test.mjs` checks a click's report).
+the same thing as the server instructions: 13 tokens more in the panel's system prompt (1,996 to 2,009, o200k_base), the act
+tool's description now says the same, 9 tokens more in the tool list (8,613 to 8,622) (`cli/test/e2e-panel.test.mjs` checks a click's report).
 
 The looks leave refs as the agent last saw them. A look snapshots the page, and a snapshot gives a reused row a new ref; the
 looks keep the old ref too, so a click by it still fails with "now shows something else", as it would with no look
-(`keepStale` in `pageSnapshot`). Only `read_page` and `find` retire a ref.
+(`keepStale` in `pageSnapshot`). Only `read_page` and `find` retire a ref. A control whose name keeps changing (a live
+counter) gets a new ref each look, so at most 200 such kept refs stay between reads.
 
 Platforms: all of it runs in the extension's service worker and the page, with no code per operating system, so Chrome,
 Helium and the other Chromium browsers on the Mac, Linux and Windows behave the same. Run on the Mac (the e2e and panel

@@ -199,18 +199,31 @@ test("a cap that lands in the middle of a pass keeps the reason the last pass fo
 	const tabId = fake.addTab({ url: "https://example.com/", status: "complete" });
 	// A spinner that never goes away; after 300 ms the browser is slow to say where the tab is, so
 	// the cap lands while a pass reads the tab.
-	recordCommands((method) => (method === "Runtime.evaluate" ? probeSays(BUSY) : undefined));
+	const probes = [];
+	recordCommands((method) => {
+		if (method !== "Runtime.evaluate") return undefined;
+		probes.push(Date.now());
+		return probeSays(BUSY);
+	});
 	const get = chrome.tabs.get;
 	const t = Date.now();
+	let slow = true;
 	chrome.tabs.get = async (id) => {
-		if (Date.now() - t > 300) await new Promise((r) => setTimeout(r, 700));
+		// One slow read: a probe the cut-short pass sent after it would go out at once.
+		if (slow && Date.now() - t > 300) {
+			slow = false;
+			await new Promise((r) => setTimeout(r, 700));
+		}
 		return get(id);
 	};
 	const r = await settle(tabId, { quietMs: 300, capMs: 500 });
+	const done = Date.now();
 	assert.equal(r.settled, false);
 	assert.equal(r.waitingOn, "loading", JSON.stringify(r));
 	// The pass the cap cut short sends no probe after it.
 	await new Promise((r) => setTimeout(r, 800));
+	assert.ok(probes.length > 0, "the wait probed the page before the cap");
+	assert.deepEqual(probes.filter((at) => at >= done), [], "no probe goes out after settle returned");
 });
 
 test("a probe that lands on the approval page touches nothing there and stops the wait", async () => {

@@ -196,6 +196,8 @@ export interface SettleResult {
 	waitingOn?: "network" | "dom" | "loading" | "navigation";
 	/** Cut short by the caller or a dialog: the call reports that instead. */
 	stopped?: boolean;
+	/** Stopped because the tab is on, or going to, a page no tool may touch (#94). */
+	guarded?: boolean;
 }
 
 /**
@@ -244,8 +246,9 @@ export async function settle(
 			const tab = await chrome.tabs.get(tabId).catch(() => undefined);
 			// The cap came while the tab was read: no probe goes out after it.
 			if (over) return { settled: false, ms: Date.now() - start };
-			if (!tab || options.skip?.(tab.pendingUrl || tab.url || ""))
-				return { settled: false, ms: Date.now() - start, stopped: true };
+			if (!tab) return { settled: false, ms: Date.now() - start, stopped: true };
+			if (options.skip?.(tab.pendingUrl || tab.url || ""))
+				return { settled: false, ms: Date.now() - start, stopped: true, guarded: true };
 			const t0 = Date.now();
 			if (tab.pendingUrl || tab.url !== refusedOn) {
 				refused = 0;
@@ -265,7 +268,7 @@ export async function settle(
 					budget,
 				);
 				if (page && page !== "refused" && "guarded" in page)
-					return { settled: false, ms: Date.now() - start, stopped: true };
+					return { settled: false, ms: Date.now() - start, stopped: true, guarded: true };
 				if (page === "refused") refused++;
 				else if (page !== undefined) refused = 0;
 				if (page === undefined) {

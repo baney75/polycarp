@@ -142,7 +142,11 @@ async function settleAfter(
 		const out: Record<string, unknown> = settled ? unsettledNote(settled) : {};
 		// A box froze the page: there is nothing to look at until it is answered.
 		if (options.before && !openDialog(tabId) && !ctx.aborted()) {
-			const urlOf = async (id: number) => (await chrome.tabs.get(id)).url ?? "";
+			// A navigation in flight counts: its pendingUrl is where the tab is going (#94).
+			const urlOf = async (id: number) => {
+				const tab = await chrome.tabs.get(id);
+				return tab.pendingUrl || tab.url || "";
+			};
 			const changes = await afterAction(options.before, ctx.session.tabIds, urlOf, (u) => ctx.isGuarded(u)).catch(
 				() => undefined,
 			);
@@ -162,9 +166,15 @@ function actionStart(ctx: HandlerContext, tabId: number): Promise<number> {
 	return ctx.batch ? Promise.resolve(Date.now()) : settleStart(tabId);
 }
 
-/** Look at the page before an action, for its change report (src/browser/changes.ts). */
+/**
+ * Look at the page before an action, for its change report (src/browser/changes.ts). A tab on, or
+ * on its way to, a guarded host (#94) gets no look: the action's own check refuses it.
+ */
 async function changesBefore(ctx: HandlerContext, tabId: number, params?: Params): Promise<Before | undefined> {
-	return ctx.batch ? undefined : beforeAction(tabId, ctx.session.tabIds, params ? str(params, "ref") : undefined);
+	if (ctx.batch) return undefined;
+	const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+	if (!tab || ctx.isGuarded(tab.pendingUrl || tab.url || "")) return undefined;
+	return beforeAction(tabId, ctx.session.tabIds, params ? str(params, "ref") : undefined, ctx.guardedHosts ?? []);
 }
 
 function stopIfAborted(ctx: HandlerContext): void {
@@ -299,11 +309,11 @@ async function refuseGuardedLanding<T extends { url: string }>(
 ): Promise<T> {
 	if (!ctx.isGuarded(summary.url)) return summary;
 	await chrome.tabs.update(tabId, { url: "about:blank" }).catch(() => undefined);
-	throw new BridgeError(
-		ERR.PERMISSION_DENIED,
-		"That page led to this computer's Polycarp approval address, which an agent never opens. The tab was reset to a blank page.",
-	);
+	throw new BridgeError(ERR.PERMISSION_DENIED, GUARDED_LANDING);
 }
+
+const GUARDED_LANDING =
+	"That page led to this computer's Polycarp approval address, which an agent never opens. The tab was reset to a blank page.";
 
 /** How long after a navigation starts a late redirect is still caught. */
 const GUARD_WATCH_MS = 120000;
@@ -733,9 +743,11 @@ export const handlers: Record<string, Handler> = {
 
 	click: async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, true);
+		// The look first: the point is found right before the input goes out, so a layout that
+		// moved during the look can't misplace the click.
+		const before = await changesBefore(ctx, tabId, params);
 		const p = await pointFor(ctx, params, tabId);
 		const button = str(params, "button");
-		const before = await changesBefore(ctx, tabId, params);
 		const since = await actionStart(ctx, tabId);
 		await click(tabId, p.x, p.y, {
 			button: button === "right" || button === "middle" ? button : "left",
@@ -903,6 +915,13 @@ export const handlers: Record<string, Handler> = {
 			if (r.stopped) {
 				// Not the page still changing: the call was stopped, a box opened or the tab left for the approval page.
 				stopIfAborted(ctx);
+				// The tab may still show the old URL while it goes to the approval page: where it is
+				// going decides, and so does the page's own check.
+				const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+				if (r.guarded || ctx.isGuarded(tab?.pendingUrl || tab?.url || "")) {
+					await chrome.tabs.update(tabId, { url: "about:blank" }).catch(() => undefined);
+					throw new BridgeError(ERR.PERMISSION_DENIED, GUARDED_LANDING);
+				}
 				const summary = await refuseGuardedLanding(ctx, tabId, await tabSummary(tabId));
 				return { ...summary, settled: false, stopped: true, note: "The wait stopped before the page went quiet." };
 			}

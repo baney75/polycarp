@@ -107,7 +107,7 @@ export const PAGE_TOOLS: readonly PageToolSpec[] = [
 	{
 		name: "act",
 		label: "Act",
-		description: `Act on your current tab with real mouse and key events, then read_page to confirm. Aim with ref (best), selector, or x/y from your latest screenshot.
+		description: `Act on your current tab with real mouse and key events. Its changes say what changed; read_page only if they say too little. Aim with ref (best), selector, or x/y from your latest screenshot.
 click {ref} (clickCount 2 doubles, button right)
 type {text, ref?, submit?}: clicks the field, types; submit presses Enter
 fill {ref, value}: sets an input, select (value or label) or checkbox ("true"/"false")
