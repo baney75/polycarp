@@ -31,6 +31,9 @@ struct HandsHost {
     var move: (UInt32, Int) -> Void = { _, _ in }
     /// Presses a window's close button from behind; false when it has none.
     var close: (UInt32) -> Bool = { _ in false }
+    /// A full scan now, every app asked again (`Spaces.refresh(full:)`): a window an app still starting couldn't show
+    /// a moment ago is placed.
+    var rescan: () -> Void = {}
 }
 
 /// Runs one agent command: checks scope, calls the engine, returns evidence. Lives in the app process,
@@ -712,6 +715,7 @@ final class HandsRouter {
         let (frontBefore, returnsBefore) = onMain { (NSWorkspace.shared.frontmostApplication?.processIdentifier, AgentLaunchFocus.shared.returns) }
         // This request's own launch: the session's `open` hands the token to the launch's completion, which reports its pid.
         let token = AgentLaunches.shared.newToken()
+        let requestStart = Date()
         let reply = onMain { () -> Wire.Reply in
             AgentLaunches.shared.current = token
             defer { AgentLaunches.shared.current = nil }
@@ -744,19 +748,54 @@ final class HandsRouter {
         // Inside the 8 s claim on its window (`claimNextWindow`), so a window seen here was placed by that claim. At most
         // `wait` seconds (7 when it says more or nothing); 0 looks once.
         let deadline = Date().addingTimeInterval(min(InUseRule.bound(req.int("wait")), 7))
-        var looked = false
-        while start != .overlap, window == nil, !looked || Date() < deadline {
-            looked = true
+        func lookOnce() -> HandsWindow? {
             let (all, agent) = listWindows(fresh: true)
             let candidates = all.filter { matches($0, reply.info?["app"] ?? display) && $0.workspace == agent && (!separate || !pidsBefore.contains($0.pid)) }
             // Provenance: `close` closes only windows this session's `open` made. Claimed under the lock, only a window of this
             // request's own launch, never one another session owns, and nothing while another open of the same running app overlaps.
-            window = childLocked { () -> HandsWindow? in
+            return childLocked { () -> HandsWindow? in
                 syncLaunchPids()
                 return sessionWindows.claim(token, windows: candidates, now: Date())
             }
+        }
+        var looked = false
+        while start != .overlap, window == nil, !looked || Date() < deadline {
+            looked = true
+            window = lookOnce()
             if window == nil { Thread.sleep(forTimeInterval: 0.15) }
         }
+        // The launch's own process, when it started one: the only one a miss below may quit.
+        let launched = runningPid == nil ? AgentLaunches.shared.pid(token) : nil
+        if window == nil, start != .overlap, let pid = launched {
+            // One more full look: an app still starting answers Accessibility late, and its window then joins the
+            // agent workspace (`Spaces.adoptBackgroundWindows` takes an agent-started process's windows a moment after).
+            onMain { host.rescan() }
+            let until = Date().addingTimeInterval(1)
+            repeat {
+                Thread.sleep(forTimeInterval: 0.15)
+                window = lookOnce()
+            } while window == nil && Date() < until
+            if window == nil {
+                let (all, agent) = listWindows()
+                let held = Set(all.filter { $0.pid == pid && $0.workspace != nil && $0.workspace == agent }.map(\.id))
+                let stray = Self.drawnWindows(of: pid).subtracting(held)
+                switch OpenMiss.decide(launched: pid, agentStarted: host.agentOwned(), startedAt: AgentOwned.startTime(pid),
+                                       requestStart: requestStart.timeIntervalSince1970, stray: stray.count) {
+                case .quit(let p):
+                    childLocked { sessionWindows.cancelOpen(token) }
+                    Self.quit(p)
+                    Trace.log("agent open \(display): quit its copy (pid \(p)), window(s) \(stray.sorted().map(String.init).joined(separator: ",")) drawn outside the agent workspace")
+                    return .failure(HandsError(.actionFailed, "\(display) opened a window Polycarp couldn't put on the agent workspace, so that copy was quit",
+                                               suggestion: "Run `open` again.", retry: .safe))
+                case .leave:
+                    Trace.log("agent open \(display): pid \(pid) drew \(stray.count) window(s) outside the agent workspace; not this request's copy, left alone")
+                case .wait: break
+                }
+            }
+        }
+        let waited = String(format: "%.1f", Date().timeIntervalSince(requestStart))
+        if let window { Trace.log("agent open \(display): window \(window.id) of pid \(window.pid) in \(waited)s") }
+        else { Trace.log("agent open \(display): no window identified in \(waited)s (launched pid \(launched.map(String.init) ?? runningPid.map(String.init) ?? "unknown"))") }
         var data: [String: JSONValue] = (reply.info ?? [:]).mapValues(JSONValue.string)
         let (frontAfter, returnsAfter) = onMain { (NSWorkspace.shared.frontmostApplication?.processIdentifier, AgentLaunchFocus.shared.returns) }
         data["focus"] = .object(["changed": .bool(frontAfter != frontBefore), "returned": .bool(returnsAfter > returnsBefore)])
@@ -783,6 +822,24 @@ final class HandsRouter {
     }
 
     /// Whether every running copy of the app was already running before the launch.
+    /// The ordinary windows of `pid` the window server is drawing (layer 0, on screen), parked ones included.
+    static func drawnWindows(of pid: pid_t) -> Set<UInt32> {
+        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+        return Set(info.compactMap { w -> UInt32? in
+            guard (w[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid, (w[kCGWindowLayer as String] as? Int) == 0 else { return nil }
+            return (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value
+        })
+    }
+
+    /// Quits a copy an agent's own launch started (`OpenMiss.quit`): asked first, forced if it hasn't gone in 2 s.
+    static func quit(_ pid: pid_t) {
+        guard let app = NSRunningApplication(processIdentifier: pid) else { return }
+        app.terminate()
+        let end = Date().addingTimeInterval(2)
+        while !app.isTerminated, Date() < end { Thread.sleep(forTimeInterval: 0.1) }
+        if !app.isTerminated { app.forceTerminate() }
+    }
+
     private func noNewProcess(bundle: String, before: Set<pid_t>) -> Bool {
         let now = NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundle }.map(\.processIdentifier)
         return now.allSatisfy { before.contains($0) }
