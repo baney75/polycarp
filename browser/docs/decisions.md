@@ -1391,5 +1391,19 @@ on short planted lines, reworded steps, other languages and facts promoted in a 
 - **No rule drops or adds a step because its wording changed.** A section the summarizer leaves out or answers with
   "none" keeps what the earlier notes had. The earlier notes reach the next round inside an `<earlier-notes>` block,
   as data.
-- **Cut order.** The person's words come first in the notes message, so a cut to fit takes the working notes, from
-  their end, before the person's words.
+- **Cut order.** The notes message has two text parts, the person's words and the working notes. A cut to fit takes
+  the working notes first and the person's words last, each with its own hint.
+
+Amended after review (PR 153 round 2, 2026-11-12):
+
+- **No to-do list.** "Open steps" is now "Not finished", sent as "What Polycarp had not finished, by its own guess;
+  the person's words above decide what to do". Notes stored under "Open steps" are read as it.
+- **"none" is an answer.** It empties the section; only a section whose heading is left out keeps the earlier
+  content.
+- **No person message vanishes.** Every one is quoted. When they don't fit, long ones are cut by code to one share,
+  marked; when a share would be under a line, the first and newest stay whole and the rest keep their start, with a
+  count of those shortened.
+- **Every heading is attributed.** The summarizer's sections are `###` headings under the label, each ending in
+  "(Polycarp's note)".
+- **True notes.** The drop note says the dropped messages came after Polycarp's notes, and its room is reserved.
+  Cuts fall on code points.

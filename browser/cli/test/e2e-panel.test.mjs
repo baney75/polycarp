@@ -783,7 +783,7 @@ test("a long chat is summarized when the guard would drop turns, and the notes h
 		const { messages } = JSON.parse(body);
 		if (textOf(messages.find((m) => m.role === "system" || m.role === "developer")).startsWith("You keep the working notes")) {
 			summaries.push(body.length);
-			const notes = ["Decisions", "Facts found", "Tried and failed", "Open steps", "Done steps", "Files and artifacts"].map((s, i) => `## ${s}\n- ${i === 1 ? `NOTE-FACTS ${summaries.length}` : "none"}`).join("\n");
+			const notes = ["Decisions", "Facts found", "Tried and failed", "Not finished", "Done steps", "Files and artifacts"].map((s, i) => `## ${s}\n- ${i === 1 ? `NOTE-FACTS ${summaries.length}` : "none"}`).join("\n");
 			return r.fulfill({ status: 200, contentType: "text/event-stream", headers: cors, body: sse({ text: notes }) });
 		}
 		requests.push(body);
@@ -807,7 +807,7 @@ test("a long chat is summarized when the guard would drop turns, and the notes h
 		const sent = requests.at(-1);
 		assert.match(sent, /which it summarized to fit the model's context/);
 		assert.match(sent, new RegExp(`Q${turn}: The committee`), "the latest question is sent whole");
-		assert.doesNotMatch(sent, /earliest messages of this chat/, "nothing was dropped");
+		assert.doesNotMatch(sent, /Polycarp left out the \d+ (earliest messages|messages after its notes)/, "nothing was dropped");
 		await page.locator("[data-compaction]").first().waitFor({ timeout: 10_000 });
 		// A reload: the panel reopens this chat from storage, with a new agent and compactor.
 		const before = summaries.length;
@@ -821,7 +821,7 @@ test("a long chat is summarized when the guard would drop turns, and the notes h
 		const after = requests.at(-1);
 		assert.match(after, new RegExp(`NOTE-FACTS ${before}`), "the stored notes are sent after the reload");
 		assert.match(after, /LAST-Q: what did we settle\?/);
-		assert.doesNotMatch(after, /earliest messages of this chat/);
+		assert.doesNotMatch(after, /Polycarp left out the \d+ (earliest messages|messages after its notes)/);
 		assert.equal(summaries.length, before, "no new summary was needed");
 		assert.equal(await page.getByText(/400 status code|too long for the model|couldn't summarize/).count(), 0);
 	} finally {
