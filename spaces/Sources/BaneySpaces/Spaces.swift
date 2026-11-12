@@ -796,18 +796,22 @@ final class Spaces {
         }
     }
 
-    /// A drag of a window ended and it has held still: one left off its display comes back inside the visible area,
-    /// moved once and never resized. Only a window on the workspace you're on; a release in one of macOS's tile zones is
-    /// macOS's.
-    func keepOnScreen(_ id: WindowID, releasedAt p: CGPoint) {
+    /// A drag of a window ended and it has held still: one the overview covered and that dropped nowhere goes back to its
+    /// frame from before the overview, and one whose title bar is out of reach comes back far enough to grab. Anything
+    /// else stays where the person put it. Only a window on the workspace you're on.
+    func correctAfterDrag(_ id: WindowID, end: DragEnd) {
         guard active, !switching, let w = windows[id], model.workspace(of: id).map(model.isShown) == true,
               !w.isMinimized, let f = w.frame else { return }
         let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
         let displays = NSScreen.screens.map { (frame: Geometry.toAX($0.frame, primaryHeight: primaryHeight),
                                               visible: Geometry.toAX($0.visibleFrame, primaryHeight: primaryHeight)) }
-        guard let next = DragRelease.onScreen(f, releasedAt: p, displays: displays) else { return }
-        w.setOrigin(next.origin)
-        Trace.log("drag end window=\(id) off screen at \(f), moved to \(next.origin)")
+        guard let fix = DragRelease.correction(for: f, after: end, displays: displays) else { return }
+        let next = fix.frame
+        if next.size == f.size { w.setOrigin(next.origin) } else { w.setFrame(next) }
+        switch fix {
+        case .backToBeforeOverview: Trace.log("drag end window=\(id) back to its frame before the overview: \(f) to \(next)")
+        case .titleBarBackInReach: Trace.log("drag end window=\(id) title bar out of reach at \(f), moved to \(next.origin)")
+        }
     }
 
     /// Windows this filled, so a second press puts each back. Kept across launches: an update or a restart must not leave

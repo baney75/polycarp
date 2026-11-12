@@ -41,13 +41,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// one up again bumps its generation, so its stale move never runs, even one queued.
     private var settling: [WindowID: Timer] = [:]
     private var dropGeneration: [WindowID: Int] = [:]
-    /// Windows waiting to hold still after a drag before `keepOnScreen` looks at them.
+    /// Windows waiting to hold still after a drag before `correctAfterDrag` looks at them.
     private var clamping: [WindowID: Timer] = [:]
 
     /// Waits for the window server, the app and any tile animation to finish the drop (still for three looks 20 ms apart,
-    /// no longer than 0.5 s), then keeps the window on screen. A window whose drop moves it to a workspace is left to that.
-    private func keepOnScreenOnceStill(_ id: WindowID, releasedAt p: CGPoint) {
-        guard settling[id] == nil else { return }
+    /// no longer than 0.5 s), then lets Spaces correct a blind drop or an unreachable title bar. A window dropped on a
+    /// workspace is the drop's. One still moving after 0.5 s (an app animating its own frame) is left alone: moving it
+    /// then would fight the animation.
+    private func correctOnceStill(_ id: WindowID, after end: DragEnd) {
+        guard !end.dropped else { return }
         clamping.removeValue(forKey: id)?.invalidate()
         var last = TopDragWatcher.bounds(of: id)
         var looks = 0, still = 0
@@ -56,12 +58,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let now = TopDragWatcher.bounds(of: id)
             still = now == last ? still + 1 : 0
             last = now
-            guard (looks >= 5 && still >= 3) || looks >= 25 else { return }
+            let heldStill = looks >= 5 && still >= 3
+            guard heldStill || looks >= 25 else { return }
             timer.invalidate()
             guard let self, self.clamping[id] === timer else { return }
             self.clamping[id] = nil
-            guard self.settling[id] == nil, now != nil else { return }
-            self.spaces.keepOnScreen(id, releasedAt: p)
+            guard heldStill, now != nil else {
+                if end.coveredFrom != nil { Trace.log("drag end window=\(id) still moving after \(looks * 20) ms; left alone") }
+                return
+            }
+            self.spaces.correctAfterDrag(id, end: end)
         }
     }
 
@@ -93,8 +99,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.clamping.removeValue(forKey: id)?.invalidate()
         }
         t.onRelease = { [weak self] grab, drop in
-            guard let self, let n = self.viewer.endCarrying(), drop else { return }
+            guard let self, let n = self.viewer.endCarrying(), drop else { return false }
             self.dropCarried(grab, on: n)
+            return true
         }
         // The same drag taken down to the Workspace Dock: let go on a tile, it goes there.
         t.onCarry = { [weak self] grab, _ in
@@ -102,11 +109,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.dock.carryMoved(grab)
         }
         t.onCarryEnd = { [weak self] grab, p in
-            guard let self, let n = self.dock.endCarry(grab, at: p), p != nil else { return }
+            guard let self, let n = self.dock.endCarry(grab, at: p), p != nil else { return false }
             self.dropCarried(grab, on: n)
+            return true
         }
-        // Any drag, once its own drop (if any) is under way: a window left off the screen comes back on it.
-        t.onDragEnd = { [weak self] id, p in self?.keepOnScreenOnceStill(id, releasedAt: p) }
+        // A drag the overview covered and that dropped nowhere goes back where it was; any other is the person's own.
+        t.onDragEnd = { [weak self] id, end in self?.correctOnceStill(id, after: end) }
         return t
     }()
 
