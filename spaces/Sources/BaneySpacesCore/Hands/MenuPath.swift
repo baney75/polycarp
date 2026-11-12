@@ -60,15 +60,6 @@ public enum MenuPath {
         return out
     }
 
-    /// Whether the path starts in the app menu: the bar's second menu item, named or not.
-    public static func inAppMenu(_ tree: JSONValue, path: [String]) -> Bool {
-        var all: [JSONValue] = []
-        func walk(_ n: JSONValue) { for c in n["children"]?.array ?? [] { if c["role"]?.string == "menuitem" { all.append(c) } else { walk(c) } } }
-        walk(tree)
-        guard all.count > 1, let first = path.first else { return false }
-        return same(all[1]["name"]?.string ?? "", first)
-    }
-
     /// The first menu item in the bar, named or not.
     static func firstItem(under node: JSONValue) -> JSONValue? {
         for child in node["children"]?.array ?? [] {
@@ -85,7 +76,7 @@ public enum MenuPath {
     }
 
     /// Any case, and "Save As…" matches "Save As..." and "Save As".
-    static func same(_ a: String, _ b: String) -> Bool {
+    public static func same(_ a: String, _ b: String) -> Bool {
         func plain(_ s: String) -> String {
             var s = s.lowercased().replacingOccurrences(of: "\u{2026}", with: "...")
             while s.hasSuffix(".") { s.removeLast() }
@@ -124,10 +115,15 @@ public enum MenuPath {
     /// agent's own `open` started (never Donovan's process: not lent, not under Full Access), with no other window, that
     /// window focused in the app, and the app not in front (Donovan would be using it). `front` is left out of the check
     /// before the in-use wait (which handles it) and kept in the one at the press.
-    public static func refusal(app: String, window: UInt32, agentOwned: Bool, otherWindows: Int, focusedWindow: UInt32?, front: Bool) -> HandsError? {
+    /// `sessionOwns`: this session's `open` made the window (another session's copy is not yours either).
+    public static func refusal(app: String, window: UInt32, agentOwned: Bool, sessionOwns: Bool, otherWindows: Int, focusedWindow: UInt32?, front: Bool) -> HandsError? {
         if !agentOwned {
             return HandsError(.needsLend, "menus work only in the agent's own copy of \(app), one your `open` started; this window belongs to Donovan's copy",
-                              suggestion: "Open your own copy with `open`, then run `menu` in that window.", retry: .never, nextCall: HandsError.call("open", ["app": .string(app)]))
+                              suggestion: "Open your own copy with `open`, then run `menu` in that window.", retry: .never, nextCall: .null)
+        }
+        if !sessionOwns {
+            return HandsError(.notSupported, "window \(window) is not one your `open` made; menus work only in a window of your own session",
+                              suggestion: "Open your own copy of \(app) with `open`, then run `menu` in that window.", retry: .never, nextCall: .null)
         }
         if front { return BackgroundRefusal.inUse(app) }
         if otherWindows > 0 {
@@ -141,37 +137,93 @@ public enum MenuPath {
         return nil
     }
 
-    /// One item of the app menu (the bar's second item), as accessibility reports it.
-    public struct AppMenuItem: Equatable, Sendable {
+    /// One menu item as accessibility reports it; a separator has an empty title.
+    public struct MenuItem: Equatable, Sendable {
         public var identifier: String?, cmdChar: String?
-        /// AXMenuItemCmdModifiers: 1 shift, 2 option, 4 control, 8 no command key.
+        /// AXMenuItemCmdModifiers: 1 shift, 2 option, 4 control, 8 no command key. Unread with a key is plain command, AppKit's default.
         public var modifiers: Int?
         public var title: String
-        public init(identifier: String? = nil, cmdChar: String? = nil, modifiers: Int? = nil, title: String) {
-            self.identifier = identifier; self.cmdChar = cmdChar; self.modifiers = modifiers; self.title = title
+        public var submenu: Bool
+        public init(identifier: String? = nil, cmdChar: String? = nil, modifiers: Int? = nil, title: String, submenu: Bool = false) {
+            self.identifier = identifier; self.cmdChar = cmdChar; self.modifiers = modifiers; self.title = title; self.submenu = submenu
         }
+        var key: String { (cmdChar ?? "").lowercased() }
+        var bits: Int { modifiers ?? 0 }
+        var command: Bool { cmdChar != nil && bits & 8 == 0 }
+        func chord(_ k: String, shift: Bool = false, option: Bool = false, control: Bool = false) -> Bool {
+            command && key == k && (bits & 1 != 0) == shift && (bits & 2 != 0) == option && (bits & 4 != 0) == control
+        }
+        var id: String { (identifier ?? "").lowercased() }
+        var name: String { title.lowercased() }
     }
 
-    /// Quit, Hide Others and Services in the app menu: never pressed (`close` promises no app is quit; the others act on
-    /// other apps). Known by identifier, then key equivalent (cmd+q, opt+cmd+h), and by title only when neither is there.
-    public static func appMenuRefusal(_ item: AppMenuItem) -> HandsError? {
-        let id = (item.identifier ?? "").lowercased()
-        let command = item.modifiers.map { $0 & 8 == 0 } ?? false
-        let key = (item.cmdChar ?? "").lowercased()
-        let option = (item.modifiers ?? 0) & 2 != 0
-        var what: String?
-        if id.contains("terminate") || id.contains("quit") { what = "Quit" }
-        else if id.contains("hideotherapplications") || id.contains("hideothers") { what = "Hide Others" }
-        else if id.contains("services") { what = "Services" }
-        else if command, key == "q" { what = "Quit" }
-        else if command, option, key == "h" { what = "Hide Others" }
-        else if item.cmdChar == nil {
-            let t = item.title.lowercased()
-            if t.hasPrefix("quit") { what = "Quit" } else if t == "hide others" { what = "Hide Others" } else if t == "services" { what = "Services" }
+    /// One menu on the path: its items in order and the one the path takes. The first step is the bar itself.
+    public struct Step: Equatable, Sendable {
+        public var items: [MenuItem], at: Int
+        public init(items: [MenuItem], at: Int) { self.items = items; self.at = at }
+        var chosen: MenuItem { items[at] }
+    }
+
+    /// Commands never pressed, wherever they sit and in any language: known by the bar's position, the key equivalents
+    /// macOS gives them and identifiers, with English titles only as a last resort. Checked on every level of the path
+    /// before anything is pressed or listed, so a submenu's choices (Open Recent's documents) are never shown either.
+    public static func policy(_ steps: [Step]) -> HandsError? {
+        guard let bar = steps.first, bar.items.indices.contains(bar.at) else { return nil }
+        if bar.at == 0 { return error(.appleMenu, path: [], window: 0) }
+        let path = steps.map { $0.chosen.title }.joined(separator: " > ")
+        guard steps.count > 1 else { return nil }
+        let menu = steps[1], top = bar.chosen.name
+        if bar.at == 1 {
+            // The app menu: About (its first command) and Settings (cmd+,) only. The rest quit, hide or act on other apps.
+            let first = menu.items.firstIndex { !$0.title.isEmpty }
+            return steps.count == 2 && (menu.at == first || menu.chosen.chord(",")) ? nil : refuse(path, why: appMenu)
         }
-        guard let what else { return nil }
-        let why = what == "Quit" ? "no app is ever quit for an agent" : "it acts on other apps, not on your window"
-        return HandsError(.notSupported, "\(item.title) (\(what) in the app menu) is never used: \(why)", suggestion: "Close your window with `close`.", retry: .never, nextCall: .null)
+        if isWindowMenu(menu.items, title: top) { return refuse(path, why: windows) }
+        for (k, step) in steps.enumerated().dropFirst() {
+            let i = step.chosen
+            if i.chord("f", control: true) || i.id.contains("fullscreen") || i.name.contains("full screen") { return refuse(path, why: windows) }
+            if i.chord("\\", shift: true) || i.id.contains("taboverview") || i.name.contains("all tabs") { return refuse(path, why: windows) }
+            if i.command && ["c", "x", "v"].contains(i.key) || ["cut:", "copy:"].contains(i.id) || i.id.hasPrefix("paste") { return clipboard(path) }
+            if i.chord("o") || i.id.hasPrefix("opendocument") { return refuse(path, why: documents) }
+            let afterOpen = step.at > 0 && step.items[step.at - 1].chord("o")
+            if i.submenu && (afterOpen || i.id.contains("recent") || i.name.contains("open recent")) { return refuse(path, why: documents) }
+            if k == 1, isEditMenu(menu.items, title: top), clipboardGroup(menu.items, at: menu.at) { return clipboard(path) }
+            if i.cmdChar == nil, ["cut", "copy", "paste"].contains(where: { i.name.hasPrefix($0) }) { return clipboard(path) }
+        }
+        return nil
+    }
+
+    /// The Window menu: it minimizes (cmd+m), or is titled so. Every command in it moves, sizes, tiles or raises windows.
+    static func isWindowMenu(_ items: [MenuItem], title: String) -> Bool {
+        title == "window" || items.contains { $0.chord("m") || $0.id.contains("arrangeinfront") }
+    }
+
+    /// The Edit menu: it undoes (cmd+z) or copies (cmd+c), or is titled so.
+    static func isEditMenu(_ items: [MenuItem], title: String) -> Bool {
+        title == "edit" || items.contains { $0.chord("z") || $0.chord("c") }
+    }
+
+    /// The Edit menu's second group (after Undo and Redo): Cut, Copy, Paste, Paste and Match Style, Delete. Select All (cmd+a) stays.
+    static func clipboardGroup(_ items: [MenuItem], at: Int) -> Bool {
+        let group = items[..<at].filter { $0.title.isEmpty }.count
+        return group == 1 && !items[at].chord("a")
+    }
+
+    static let appMenu = "the app menu's commands quit, hide or act on other apps (only About and Settings are used)"
+    static let windows = "it moves, raises, fills or tiles windows or switches to full screen, which changes what Donovan sees"
+    static let documents = "it opens documents, and an agent opens only files from the handoff folder"
+
+    static func refuse(_ path: String, why: String) -> HandsError {
+        let suggestion = why == documents ? "`open` the app with a file from the agent handoff folder."
+            : why == windows ? "Lay out agent windows with `arrange` or `move`." : "Close your window with `close`."
+        return HandsError(.notSupported, "\(path) is never used: \(why)", suggestion: suggestion, retry: .never, nextCall: .null)
+    }
+
+    /// Cut, copy and paste reach the Mac's clipboard, which is Donovan's.
+    static func clipboard(_ path: String) -> HandsError {
+        HandsError(.notSupported, "\(path) uses the Mac's clipboard, which is Donovan's, so Polycarp doesn't send it",
+                   suggestion: "Use the agent clipboard, held per session: `get` with copy, then `type` with paste. To delete a selection, press Delete.",
+                   retry: .never, nextCall: .null)
     }
 
     /// After the press: the windows (and sheets) of the app that are Open or Save panels, by subrole, identifier and
@@ -181,6 +233,23 @@ public enum MenuPath {
     public static func panelRefusal(_ app: String, cancelled: Bool) -> HandsError {
         HandsError(.notSupported, "the command opened an Open or Save panel in \(app); agents never get one, and \(cancelled ? "it was cancelled" : "it could not be cancelled, so it is still open")",
                    suggestion: "Work with files through the agent handoff folder: `open` the app with a file from it, and save to that document.", retry: .never, nextCall: .null)
+    }
+
+    /// The titles the path got through before it stopped: what `policy` judges, whatever `find` answered.
+    public static func reached(_ found: Found, path: [String]) -> [String] {
+        switch found {
+        case .item(_, let p), .disabled(let p), .submenu(let p, _), .noRef(let p): return p
+        case .missing(let level, _): return Array(path.prefix(level))
+        case .appleMenu: return []
+        }
+    }
+
+    /// The panel's Cancel title: what its AXCancelButton names, else a button whose identifier says cancel.
+    public static func cancelTitle(_ panel: AXNodeInfo, cancelButton: String?) -> String? {
+        if let cancelButton { return cancelButton }
+        if panel.role == "AXButton", (panel.identifier ?? "").lowercased().contains("cancel"), let t = panel.title { return t }
+        for c in panel.children { if let t = cancelTitle(c, cancelButton: nil) { return t } }
+        return nil
     }
 
     /// The panel's Cancel button in an engine read: the button named as the panel's AXCancelButton says (read live, so any language).

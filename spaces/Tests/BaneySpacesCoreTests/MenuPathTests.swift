@@ -53,14 +53,19 @@ final class MenuPathTests: XCTestCase {
 
     /// first-F1: only the agent's own copy, whatever the workspace (lent, or Donovan's own under Full Access).
     func testOnlyTheAgentsOwnCopyEverGetsAMenuCommand() {
-        func r(owned: Bool = true, others: Int = 0, focused: UInt32? = 7, front: Bool = false) -> HandsError? {
-            MenuPath.refusal(app: "TextEdit", window: 7, agentOwned: owned, otherWindows: others, focusedWindow: focused, front: front)
+        func r(owned: Bool = true, mine: Bool = true, others: Int = 0, focused: UInt32? = 7, front: Bool = false) -> HandsError? {
+            MenuPath.refusal(app: "TextEdit", window: 7, agentOwned: owned, sessionOwns: mine, otherWindows: others, focusedWindow: focused, front: front)
         }
         XCTAssertNil(r())
         let lent = r(owned: false)
         XCTAssertEqual(lent?.code, .needsLend, "a lent window, or Donovan's own window under Full Access: his process either way")
         XCTAssertTrue(lent?.message.contains("menus work only in the agent's own copy") == true)
-        XCTAssertEqual(lent?.nextCall, HandsError.call("open", ["app": "TextEdit"]))
+        XCTAssertEqual(lent?.nextCall, .null, "r1 first-F3: next_call is a read or none, never an open")
+        XCTAssertTrue(lent?.suggestion.contains("`open`") == true, "the advice stays in the text")
+        let theirs = r(mine: false)
+        XCTAssertEqual(theirs?.code, .notSupported, "r1 second-S2: another session's copy is not yours")
+        XCTAssertTrue(theirs?.message.contains("not one your `open` made") == true)
+        XCTAssertEqual(theirs?.nextCall, .null)
         XCTAssertEqual(r(owned: false, front: true)?.code, .needsLend, "ownership first")
         XCTAssertEqual(r(front: true)?.code, .inUse)
         XCTAssertEqual(r(others: 1)?.code, .notSupported)
@@ -69,7 +74,7 @@ final class MenuPathTests: XCTestCase {
 
     /// first-F4: the focus refusal names no call that can't work.
     func testTheFocusRefusalSaysNoCallFocusesTheWindow() throws {
-        let e = try XCTUnwrap(MenuPath.refusal(app: "TextEdit", window: 7, agentOwned: true, otherWindows: 0, focusedWindow: 8, front: false))
+        let e = try XCTUnwrap(MenuPath.refusal(app: "TextEdit", window: 7, agentOwned: true, sessionOwns: true, otherWindows: 0, focusedWindow: 8, front: false))
         XCTAssertFalse(e.suggestion.contains("`click` an element in this window first"))
         XCTAssertTrue(e.suggestion.contains("cannot focus a window"), e.suggestion)
         XCTAssertEqual(e.nextCall, .null)
@@ -85,26 +90,88 @@ final class MenuPathTests: XCTestCase {
         apple["name"] = nil
         kids[0] = .object(apple); o["children"] = .array(kids)
         XCTAssertEqual(MenuPath.find(.object(o), path: ["File", "New"]), .item(ref: "@sm:e4", path: ["File", "New"]), "an untitled Apple menu doesn't shift the bar")
-        XCTAssertTrue(MenuPath.inAppMenu(.object(o), path: ["File"]), "the untitled Apple menu still counts: File is second, the app menu's place")
-        XCTAssertFalse(MenuPath.inAppMenu(.object(o), path: ["Format"]))
         let e = try XCTUnwrap(MenuPath.error(.appleMenu, path: ["Apple"], window: 7))
         XCTAssertTrue(e.message.contains("whole Mac"), e.message)
     }
 
-    /// first-F2: Quit, Hide Others and Services in the app menu, by identifier, then key equivalent, title last.
-    func testQuitHideOthersAndServicesAreRefusedInTheAppMenu() {
-        typealias I = MenuPath.AppMenuItem
-        func refused(_ i: I) -> Bool { MenuPath.appMenuRefusal(i) != nil }
-        XCTAssertTrue(refused(I(identifier: "terminate:", title: "Beenden")))
-        XCTAssertTrue(refused(I(cmdChar: "Q", modifiers: 0, title: "TextEdit beenden")), "cmd+q in German")
-        XCTAssertTrue(refused(I(cmdChar: "Q", modifiers: 2, title: "Quit and Keep Windows")), "opt+cmd+q")
-        XCTAssertTrue(refused(I(cmdChar: "H", modifiers: 2, title: "Andere ausblenden")), "opt+cmd+h")
-        XCTAssertTrue(refused(I(title: "Services")), "no key equivalent: the title, last")
-        XCTAssertTrue(refused(I(title: "Quit TextEdit")))
-        XCTAssertFalse(refused(I(cmdChar: "H", modifiers: 0, title: "Hide TextEdit")), "plain Hide hides only this app")
-        XCTAssertFalse(refused(I(cmdChar: ",", modifiers: 0, title: "Settings\u{2026}")))
-        XCTAssertFalse(refused(I(cmdChar: "S", modifiers: 0, title: "Quitter-ish but cmd+s")), "a key equivalent wins over the title")
-        XCTAssertTrue(MenuPath.appMenuRefusal(I(cmdChar: "Q", modifiers: 0, title: "Quit TextEdit"))?.message.contains("no app is ever quit") == true)
+    typealias I = MenuPath.MenuItem
+    static let sep = I(title: "")
+    /// A German bar: nothing below goes by an English title.
+    static let deBar = ["Apple", "TextEdit", "Ablage", "Bearbeiten", "Format", "Darstellung", "Fenster", "Hilfe"].map { I(title: $0, submenu: true) }
+    func steps(_ top: Int, _ menu: [I], _ at: Int, sub: [I]? = nil, _ subAt: Int = 0) -> [MenuPath.Step] {
+        [.init(items: Self.deBar, at: top), .init(items: menu, at: at)] + (sub.map { [.init(items: $0, at: subAt)] } ?? [])
+    }
+
+    /// r1 second-S3 and the class: the app menu gives About and Settings only, by place and key, whatever it is called.
+    func testTheAppMenuGivesOnlyAboutAndSettings() {
+        let app = [I(title: "\u{DC}ber TextEdit"), Self.sep, I(cmdChar: ",", modifiers: 0, title: "Einstellungen \u{2026}"), Self.sep,
+                   I(title: "Dienste", submenu: true), Self.sep, I(cmdChar: "H", modifiers: 0, title: "TextEdit ausblenden"),
+                   I(cmdChar: "H", modifiers: 2, title: "Andere ausblenden"), I(title: "Alle einblenden"), Self.sep, I(cmdChar: "Q", modifiers: nil, title: "TextEdit beenden")]
+        XCTAssertNil(MenuPath.policy(steps(1, app, 0)), "About")
+        XCTAssertNil(MenuPath.policy(steps(1, app, 2)), "Settings")
+        for at in [6, 7, 8, 10] { XCTAssertNotNil(MenuPath.policy(steps(1, app, at)), app[at].title) }
+        XCTAssertNotNil(MenuPath.policy(steps(1, app, 4, sub: [I(title: "Etwas")])), "a service")
+        XCTAssertTrue(MenuPath.policy(steps(1, app, 10))?.message.contains("TextEdit > TextEdit beenden is never used") == true, "cmd+q with its modifiers unread")
+        XCTAssertNotNil(MenuPath.policy([.init(items: Self.deBar, at: 0)]), "the Apple menu")
+    }
+
+    /// r1 first-F2 as a class: window moves, full screen and the tab overview, by key equivalent and identifier.
+    func testCommandsThatChangeWhatDonovanSeesAreRefused() {
+        let window = [I(cmdChar: "M", modifiers: 0, title: "Im Dock ablegen"), I(title: "Zoomen"), Self.sep, I(title: "Alle nach vorne bringen"), I(title: "notes.txt")]
+        for at in window.indices where !window[at].title.isEmpty {
+            XCTAssertTrue(MenuPath.policy(steps(6, window, at))?.message.contains("changes what Donovan sees") == true, window[at].title)
+        }
+        let renamed = [I(title: "Mitte"), I(identifier: "arrangeInFront:", title: "Vorne")]
+        XCTAssertNotNil(MenuPath.policy(steps(4, renamed, 0)), "a Window menu known by its Bring All to Front")
+        let view = [I(cmdChar: "F", modifiers: 4, title: "Vollbildmodus aktivieren"), I(cmdChar: "\\", modifiers: 1, title: "Alle Tabs einblenden"),
+                    I(identifier: "toggleFullScreen:", title: "Gro\u{DF}"), I(cmdChar: "+", modifiers: 0, title: "Gr\u{F6}\u{DF}er")]
+        for at in 0...2 { XCTAssertNotNil(MenuPath.policy(steps(5, view, at)), view[at].title) }
+        XCTAssertNil(MenuPath.policy(steps(5, view, 3)), "zoom in on the text")
+        XCTAssertNil(MenuPath.policy(steps(4, [I(cmdChar: "B", modifiers: 0, title: "Fett")], 0)))
+    }
+
+    /// r1 first-F1: Open, Open Recent and its documents are refused before anything is listed or pressed.
+    func testDocumentsAreNeverOpenedFromAMenu() {
+        let file = [I(cmdChar: "N", modifiers: 0, title: "Neu"), I(cmdChar: "O", modifiers: 0, title: "\u{D6}ffnen \u{2026}"),
+                    I(title: "Benutzte Dokumente", submenu: true), Self.sep, I(cmdChar: "W", modifiers: 0, title: "Schlie\u{DF}en")]
+        let recent = [I(title: "geheim.txt"), I(title: "notes.txt"), Self.sep, I(title: "Eintr\u{E4}ge l\u{F6}schen")]
+        XCTAssertNil(MenuPath.policy(steps(2, file, 0)))
+        XCTAssertNil(MenuPath.policy(steps(2, file, 4)))
+        XCTAssertNotNil(MenuPath.policy(steps(2, file, 1)), "Open")
+        let stop = MenuPath.policy(steps(2, file, 2))
+        XCTAssertTrue(stop?.message.contains("handoff folder") == true && stop?.message.contains("geheim") == false, "the submenu is refused, its documents unlisted")
+        XCTAssertNotNil(MenuPath.policy(steps(2, file, 2, sub: recent, 1)), "a recent document")
+        let byID = [I(identifier: "_NSRecentDocumentsMenu", title: "Zuletzt", submenu: true), I(title: "x")]
+        XCTAssertNotNil(MenuPath.policy(steps(2, byID, 0)), "by identifier, with no Open above it")
+        XCTAssertEqual(MenuPath.reached(.submenu(path: ["Ablage", "Benutzte Dokumente"], choices: ["geheim.txt"]), path: ["Ablage", "Benutzte Dokumente"]), ["Ablage", "Benutzte Dokumente"])
+        XCTAssertEqual(MenuPath.reached(.missing(level: 2, choices: ["geheim.txt"]), path: ["Ablage", "Benutzte Dokumente", "x"]), ["Ablage", "Benutzte Dokumente"])
+    }
+
+    /// The clipboard is Donovan's: cut, copy and paste by key, by place in the Edit menu, and by identifier.
+    func testClipboardCommandsAreRefusedByKeyAndPlace() {
+        let edit = [I(cmdChar: "Z", modifiers: 0, title: "Widerrufen"), I(cmdChar: "Z", modifiers: 1, title: "Wiederholen"), Self.sep,
+                    I(cmdChar: "X", modifiers: 0, title: "Ausschneiden"), I(cmdChar: "C", modifiers: 0, title: "Kopieren"), I(cmdChar: "V", modifiers: 0, title: "Einsetzen"),
+                    I(cmdChar: "V", modifiers: 3, title: "Einsetzen und Stil anpassen"), I(title: "L\u{F6}schen"), I(cmdChar: "A", modifiers: 0, title: "Alles ausw\u{E4}hlen"),
+                    Self.sep, I(title: "Suchen", submenu: true)]
+        for at in 3...7 { XCTAssertTrue(MenuPath.policy(steps(3, edit, at))?.message.contains("Mac's clipboard") == true, edit[at].title) }
+        XCTAssertTrue(MenuPath.policy(steps(3, edit, 4))?.suggestion.contains("agent clipboard") == true)
+        XCTAssertNil(MenuPath.policy(steps(3, edit, 0)), "Undo")
+        XCTAssertNil(MenuPath.policy(steps(3, edit, 8)), "Select All")
+        XCTAssertNil(MenuPath.policy(steps(3, edit, 10, sub: [I(cmdChar: "F", modifiers: 0, title: "Suchen \u{2026}")])), "Find")
+        var bare = edit
+        for i in 3...6 { bare[i].cmdChar = nil; bare[i].modifiers = nil }
+        XCTAssertNotNil(MenuPath.policy(steps(3, bare, 4)), "no key equivalent: its place after Undo and Redo")
+        XCTAssertNotNil(MenuPath.policy(steps(4, [I(cmdChar: "C", modifiers: 2, title: "Stil kopieren")], 0)), "opt+cmd+c elsewhere")
+        XCTAssertNotNil(MenuPath.policy(steps(4, [I(identifier: "pasteAsPlainText:", title: "Als Text")], 0)))
+    }
+
+    /// r1 first-F4: with no AXCancelButton, the button whose identifier says cancel.
+    func testAPanelWithNoCancelButtonAttributeIsStillCancelled() {
+        let panel = AXNodeInfo(role: "AXSheet", children: [AXNodeInfo(role: "AXGroup", children: [
+            AXNodeInfo(role: "AXButton", identifier: "SaveButton", title: "Sichern"), AXNodeInfo(role: "AXButton", identifier: "_NS:CancelButton", title: "Abbrechen")])])
+        XCTAssertEqual(MenuPath.cancelTitle(panel, cancelButton: nil), "Abbrechen")
+        XCTAssertEqual(MenuPath.cancelTitle(panel, cancelButton: "Annuler"), "Annuler", "the attribute first")
+        XCTAssertNil(MenuPath.cancelTitle(AXNodeInfo(role: "AXSheet"), cancelButton: nil))
     }
 
     /// first-F3: a panel after the press is found by what it is, cancelled, and refused; an alert sheet is not one.
@@ -139,7 +206,7 @@ final class MenuPathTests: XCTestCase {
 
     /// second-F5: in front, a menu command waits like posted keys, then acts or answers in_use.
     func testAMenuCommandWaitsWhileDonovanHasTheCopyInFront() {
-        XCTAssertNil(MenuPath.refusal(app: "TextEdit", window: 7, agentOwned: true, otherWindows: 0, focusedWindow: 7, front: false), "the early check leaves front to the wait")
+        XCTAssertNil(MenuPath.refusal(app: "TextEdit", window: 7, agentOwned: true, sessionOwns: true, otherWindows: 0, focusedWindow: 7, front: false), "the early check leaves front to the wait")
         XCTAssertEqual(InUseRule.decide(verb: "menu", state: .front, onAgentWorkspace: true, isFocusedWindow: true, isMainWindow: true, delivery: .posted), .wait)
         let c = InUseTests.Clock()
         var looks = 0
@@ -152,13 +219,17 @@ final class MenuPathTests: XCTestCase {
         let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Menu.swift")
         let menu = try XCTUnwrap(HandsSourceTests.block(after: "func menu(_ req: HandsRequest) -> HandsEnvelope", in: src))
         func at(_ s: String) throws -> String.Index { try XCTUnwrap(menu.range(of: s), s).lowerBound }
-        let early = try at("menuRule(w, front: false)()"), wait = try at(#"awaitUse(w, verb: "menu", delivery: .posted, wait: req.int("wait")"#)
+        let early = try at("menuRule(w, session: session, front: false)()"), wait = try at(#"awaitUse(w, verb: "menu", delivery: .posted, wait: req.int("wait")"#)
         let tx = try at("HandsEngine.shared.transaction(")
         XCTAssertTrue(early < wait && wait < tx, "ownership and windows refuse before anything is read or pressed; front is waited out")
-        XCTAssertTrue(menu.contains("also: menuRule(w, front: true)"), "the full rule again at the press")
+        XCTAssertTrue(menu.contains("also: menuRule(w, session: session, front: true)"), "the full rule again at the press")
         XCTAssertTrue(menu.contains("evidence: true, surface: HandsEngine.surfaceMenubar"), "the menu bar read never takes the agent's snapshot slots")
         XCTAssertTrue(menu.contains("kind: .click, evidence: true"), "pressed from that read")
         XCTAssertFalse(menu.contains("read(w,"), "never through the registered read")
-        XCTAssertTrue(try at("cancelPanels(w") > at("actInline("), "panels are looked for after the press, inside the transaction")
+        XCTAssertTrue(try at("MenuPath.policy(steps)") < at("guard case .item(let ref"), "r1 first-F1: judged before a submenu's choices are listed")
+        XCTAssertTrue(try at("MenuPath.policy(steps)") < at("actInline("), "and before the press")
+        XCTAssertTrue(try at("cancelPanels(w, within: 0.3)") > at("if case .failed(let e) = reply"), "r1 second-S4: panels are looked for after the transaction, off the app's queue")
+        XCTAssertTrue(menu.contains("cancelPanels(w, within: 3)"), "r1 first-F4: a slow panel is still cancelled")
+        XCTAssertTrue(menu.contains("sessionOwns: mine") || src.contains("sessionOwns: mine"), "r1 second-S2")
     }
 }
