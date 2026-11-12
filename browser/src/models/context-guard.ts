@@ -116,9 +116,42 @@ function providerDetail(message: string): string | undefined {
 	return /^\s*\d{3}\s+status code\s*\(no body\)\s*$/i.test(message) ? undefined : message.slice(0, 200);
 }
 
-async function pipe(from: AsyncIterator<AssistantMessageEvent>, out: AssistantMessageEventStream): Promise<void> {
-	for (let next = await from.next(); !next.done; next = await from.next()) out.push(next.value);
+/** Push `held` and `first`, then the rest of the stream; `onEnd` gets the type of the last event pushed. */
+async function follow(
+	from: AsyncIterator<AssistantMessageEvent>,
+	out: AssistantMessageEventStream,
+	held: AssistantMessageEvent[],
+	first: AssistantMessageEvent | undefined,
+	onEnd: (last: AssistantMessageEvent["type"] | undefined) => void,
+): Promise<void> {
+	let last: AssistantMessageEvent["type"] | undefined;
+	for (const event of first ? [...held, first] : held) {
+		out.push(event);
+		last = event.type;
+	}
+	if (first && first.type !== "done" && first.type !== "error")
+		for (let next = await from.next(); !next.done; next = await from.next()) {
+			out.push(next.value);
+			last = next.value.type;
+		}
 	out.end();
+	onEnd(last);
+}
+
+/**
+ * The first event that says how a request went, and the `start` events before it, held back. A provider stream can
+ * announce its start before the HTTP status arrives, so a size refusal may come second; it still gets its retry.
+ */
+async function opening(
+	from: AsyncIterator<AssistantMessageEvent>,
+): Promise<{ held: AssistantMessageEvent[]; event?: AssistantMessageEvent }> {
+	const held: AssistantMessageEvent[] = [];
+	for (;;) {
+		const next = await from.next();
+		if (next.done) return { held };
+		if (next.value.type !== "start") return { held, event: next.value };
+		held.push(next.value);
+	}
 }
 
 /** Wrap a stream function so every request fits the model's window, with one harder retry on a size refusal. */
@@ -134,94 +167,102 @@ export function guardContext<F extends Inner>(inner: F): F {
 			out.end();
 			return out;
 		};
+		// A learned window is what one past request proved, not a law: when the instructions or tools have grown past what
+		// it can hold, it says nothing about today's request, so it is dropped and the model's own window is tried.
+		if (state.learned && state.learned.window < minimumWindow(fixed)) {
+			state.learned = undefined;
+			state.okSince = 0;
+		}
 		// Every so often a model with a learned window tries its own again, so one bad hour doesn't last all day.
 		const probing = state.learned !== undefined && state.okSince >= PROBE_AFTER_TURNS;
 		if (probing) state.okSince = 0;
-		const budget = budgetFor(model, probing ? undefined : state.learned?.window, options?.maxTokens, fixed);
+		const known = state.learned;
+		const budget = budgetFor(model, probing ? undefined : known?.window, options?.maxTokens, fixed);
 		if (budget.tooSmall)
 			return fail(windowTooSmallMessage({ fixed, windowSize: budget.windowSize, needed: minimumWindow(fixed) }));
 		const first = fitContext(context, budget);
 		if (!first.fits) return fail(turnTooLargeMessage({ windowSize: budget.windowSize }));
 		const sentSize = (f: Fitted, b: Budget) => f.estimate + b.replyTokens;
+		// A probe goes past the learned window; one that is refused falls back to it, the size known to work.
+		const probedPast = probing && known !== undefined && sentSize(first, budget) > known.window;
+		// What a refusal teaches: never more than was learned before, and never less than the fixed part needs.
+		const learn = (window: number, evidence: "words" | "strikes") => {
+			const floor = Math.max(minimumWindow(fixed), window);
+			state.learned = { window: known ? Math.min(known.window, floor) : floor, evidence };
+			state.okSince = 0;
+		};
 		const stream = await inner(model, first.context, withReply(options, budget));
 		void (async () => {
 			const iterator = stream[Symbol.asyncIterator]();
-			const head = await iterator.next();
-			if (head.done) return out.end();
-			const event = head.value;
+			const { held, event } = await opening(iterator);
+			if (!event) return follow(iterator, out, held, undefined, () => {});
 			const evidence =
 				event.type === "error" && event.reason === "error"
 					? sizeEvidence(event.error.errorMessage, first.estimate, budget.windowSize, first.original)
 					: undefined;
 			if (event.type !== "error" || !evidence) {
-				if (event.type !== "error") {
+				// Only a reply that ran to its end counts as the request working: a stream can start and then fail.
+				return follow(iterator, out, held, event, (last) => {
+					if (last !== "done") return;
 					// A first try that worked ends a run of refusals, and counts toward trying the full window again.
 					state.strikes = 0;
 					if (state.learned) {
-						if (probing && sentSize(first, budget) > state.learned.window) state.learned = undefined;
+						if (probedPast) state.learned = undefined;
 						else state.okSince++;
 					}
-				}
-				out.push(event);
-				return pipe(iterator, out);
+				});
 			}
 			const refused = event.error.errorMessage ?? "";
 			const proven = (again?: string) =>
 				evidence === "words" ||
 				evidence === "likely" ||
 				(again !== undefined && sizeEvidence(again, 0, 1) === "words");
-			const report = (again?: string) =>
+			const report = (estimate: number, again?: string) =>
 				proven(again)
-					? sizeRefusalMessage({
-							estimate: first.estimate,
-							provider: model.provider,
-							detail: providerDetail(refused),
-						})
-					: unclearRefusalMessage({ estimate: first.estimate, first: refused });
+					? sizeRefusalMessage({ estimate, provider: model.provider, detail: providerDetail(again ?? refused) })
+					: unclearRefusalMessage({ estimate, first: refused });
 			// The retry halves the conversation, never the fixed part: it can't go under what the instructions and tools
-			// need plus the least conversation, so it is never sent knowing it can't fit.
+			// need plus the least conversation, so it is never sent knowing it can't fit. A refused probe retries at the
+			// learned window instead.
 			const conversation = first.estimate - fixed;
-			const ceiling = fixed + Math.max(CONVERSATION_FLOOR_TOKENS, Math.floor(conversation / 2)) + budget.replyTokens;
+			const ceiling = probedPast
+				? known.window
+				: fixed + Math.max(CONVERSATION_FLOOR_TOKENS, Math.floor(conversation / 2)) + budget.replyTokens;
 			const harder = budgetFor(model, ceiling, options?.maxTokens, fixed);
 			const second = harder.tooSmall ? undefined : fitContext(context, harder);
 			if (!second?.fits || sentSize(second, harder) >= sentSize(first, budget)) {
 				// Nothing smaller can be sent: say why it was refused instead of sending the same request again. When the
 				// provider named size, the next turn starts below what it refused, so the same refusal doesn't repeat.
-				if (evidence === "words") {
-					const window = Math.max(minimumWindow(fixed), Math.floor(sentSize(first, budget) * 0.75));
-					state.learned = { window, evidence: "words" };
-					state.okSince = 0;
-				}
-				out.push(errorEvent(report(), event.error));
+				if (evidence === "words") learn(Math.floor(sentSize(first, budget) * 0.75), "words");
+				out.push(errorEvent(report(first.estimate), event.error));
 				return out.end();
 			}
-			state.strikes++;
+			// A refused probe is no new strike: the learned window already says the provider takes less.
+			if (!probedPast) state.strikes++;
 			const retry = (await inner(model, second.context, withReply(options, harder)))[Symbol.asyncIterator]();
-			const head2 = await retry.next();
-			if (head2.done) return out.end();
-			const again = head2.value;
-			if (again.type === "error" && again.reason === "error") {
-				const message = again.error.errorMessage ?? "";
+			const again = await opening(retry);
+			if (!again.event) return follow(retry, out, again.held, undefined, () => {});
+			const next = again.event;
+			if (next.type === "error" && next.reason === "error") {
+				const message = next.error.errorMessage ?? "";
 				if (message === refused || sizeEvidence(message, second.estimate, harder.windowSize)) {
 					// The smaller request was refused too. On proof, the next turn starts below it, so a model that claims far
 					// more than it takes gets there in a few turns instead of failing the same way on every one.
-					if (evidence === "words" || sizeEvidence(message, 0, 1) === "words" || state.strikes >= 2) {
-						const window = Math.max(minimumWindow(fixed), Math.floor(sentSize(second, harder) * 0.75));
-						state.learned = { window, evidence: evidence === "words" ? "words" : "strikes" };
-						state.okSince = 0;
-					}
-					out.push(errorEvent(report(message), again.error));
+					if (evidence === "words" || sizeEvidence(message, 0, 1) === "words" || state.strikes >= 2)
+						learn(Math.floor(sentSize(second, harder) * 0.75), evidence === "words" ? "words" : "strikes");
+					out.push(errorEvent(report(second.estimate, message), next.error));
 					return out.end();
 				}
-			} else if (evidence === "words" || state.strikes >= 2) {
+			}
+			return follow(retry, out, again.held, next, (last) => {
+				if (last !== "done") return;
+				// A refused probe that worked at the learned window keeps it as it was, and the next probe waits its turn.
+				if (probedPast) state.okSince = 0;
 				// The provider took this size after refusing a larger one: keep to it, but never to less than the fixed
 				// part needs, which the request that just worked carried.
-				const window = Math.max(minimumWindow(fixed), sentSize(second, harder));
-				state.learned = { window, evidence: evidence === "words" ? "words" : "strikes" };
-				state.okSince = 0;
-			}
-			out.push(again);
-			return pipe(retry, out);
+				else if (evidence === "words" || state.strikes >= 2)
+					learn(sentSize(second, harder), evidence === "words" ? "words" : "strikes");
+			});
 		})().catch((err) => {
 			out.push(errorEvent(err instanceof Error ? err.message : String(err)));
 			out.end();

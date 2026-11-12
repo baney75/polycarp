@@ -2,7 +2,7 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent, Message, TextContent } from "@mariozechner/pi-ai";
 import { noAnswer, outcomeText, validateAskParams } from "../ask/core.js";
 import { type ComposerRefs, refsForModel } from "../composer/refs.js";
-import { ATTACHMENT_MARK } from "../models/context-budget.js";
+import { ATTACHMENT_MARK, CONTEXT_NOTE_MARK } from "../models/context-budget.js";
 import type { NavigationMessage } from "./NavigationMessage.js";
 
 // Helper: Check if a message has toolCall blocks
@@ -127,7 +127,8 @@ export async function browserMessageTransformer(messages: AgentMessage[]): Promi
 
 			transformed.push({
 				role: "user",
-				content: `<browser-context>
+				// CONTEXT_NOTE_MARK tells the guard this is Polycarp's note, not the person (context-budget.ts).
+				content: `${CONTEXT_NOTE_MARK}
 ✓ Navigation succeeded: ${nav.title}${tabInfo}
 ✓ URL: ${nav.url}
 </browser-context>

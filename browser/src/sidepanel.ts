@@ -801,9 +801,9 @@ const updateUrl = (sessionId: string) => {
 };
 
 /**
- * Self-hosted OpenAI-compatible endpoints (custom providers: Local Studio, vLLM, SGLang,
- * llama.cpp) get no max_tokens: the dialog's per-model default was 8192, which cut
- * thinking models off mid-answer. The server then applies the model's full context.
+ * The panel's model calls, under its gates: removed sign-ins, private mode, free mode and subscription routing. Every
+ * provider, custom ones (LM Studio, vLLM, SGLang, llama.cpp) too, gets the max_tokens the guard reserved for the reply
+ * (context-guard.ts): a server left to pick its own reply length can run input plus reply past the window.
  */
 function uncappedStreamFn<F extends (model: Model<any>, ...rest: any[]) => any>(inner: F): F {
 	return (async (model: Model<any>, ...rest: any[]) => {
@@ -837,12 +837,6 @@ function uncappedStreamFn<F extends (model: Model<any>, ...rest: any[]) => any>(
 		// ChatGPT and Copilot plans run through the native host's loopback proxy, which holds the tokens.
 		const routed = await routeSubscriptionModel(model, rest[1]);
 		if (routed) return explainErrors(await inner(routed.model, rest[0], routed.options), model.provider);
-		if (model.api === "openai-completions") {
-			const custom = await storage.customProviders.getAll().catch(() => []);
-			if (custom.some((p) => p.name === model.provider)) {
-				model = { ...model, compat: { ...(model.compat ?? {}), omitMaxTokens: true } };
-			}
-		}
 		return inner(model, ...rest);
 	}) as F;
 }

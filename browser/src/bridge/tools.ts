@@ -65,7 +65,16 @@ import { BUILD } from "../update/build.js";
 import { BridgeError, classify, detachedError, interruptedError, navigatedError } from "./errors.js";
 import { dropTransfersForSession, fileHandlers } from "./files.js";
 import { rankMatches } from "./find.js";
-import { newestPage, PDF_DEFAULT_CHARS, pdfCutNote, pdfWindow, readChars, sliceInfo } from "./paging.js";
+import {
+	fitSlice,
+	newestPage,
+	PDF_DEFAULT_CHARS,
+	pdfCutNote,
+	pdfWindow,
+	READ_MAX_CHARS,
+	readChars,
+	sliceInfo,
+} from "./paging.js";
 import { getAllowedHosts, getPermissionMode } from "./permissions.js";
 import { ERR } from "./protocol.js";
 
@@ -658,13 +667,16 @@ export const handlers: Record<string, Handler> = {
 				text: part.text,
 			};
 		}
-		const slice = await pageText(tabId, str(params, "selector"), readChars(params.maxChars), num(params, "offset"));
+		const max = readChars(params.maxChars) ?? READ_MAX_CHARS;
+		// Measured as JSON carries it, so the note's offset holds after a page of quotes or newlines is escaped.
+		const slice = fitSlice(await pageText(tabId, str(params, "selector"), max, num(params, "offset")), max);
 		return { ...(await tabSummary(tabId)), text: slice.text, ...sliceInfo(slice) };
 	},
 
 	html: async (ctx, params) => {
 		const tabId = await resolveTab(ctx, params, false);
-		const slice = await pageHtml(tabId, str(params, "selector"), readChars(params.maxChars), num(params, "offset"));
+		const max = readChars(params.maxChars) ?? READ_MAX_CHARS;
+		const slice = fitSlice(await pageHtml(tabId, str(params, "selector"), max, num(params, "offset")), max);
 		return { ...(await tabSummary(tabId)), html: slice.text, ...sliceInfo(slice) };
 	},
 

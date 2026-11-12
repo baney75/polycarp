@@ -25,6 +25,47 @@ export function readChars(value: unknown, def?: number): number | undefined {
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 
+/** Characters `text` takes inside a JSON string, as JSON.stringify writes it: what an MCP result actually carries. */
+export function encodedLength(text: string): number {
+	return JSON.stringify(text).length - 2;
+}
+
+/**
+ * The longest head of `text` that takes at most `max` characters inside a JSON string. A quote or backslash takes 2,
+ * a control character 2 or 6, a lone surrogate 6; a surrogate pair is never split. Limits on what a read returns are
+ * in these characters, so a page of quotes or newlines can't double past a cap after its note was written.
+ */
+export function encodedHead(text: string, max: number): string {
+	if (text.length * 6 <= max || encodedLength(text) <= max) return text;
+	let used = 0;
+	let i = 0;
+	for (; i < text.length; i++) {
+		const c = text.charCodeAt(i);
+		const pair = c >= 0xd800 && c <= 0xdbff && (text.charCodeAt(i + 1) & 0xfc00) === 0xdc00;
+		const width = pair
+			? 2
+			: c === 0x22 || c === 0x5c
+				? 2
+				: c < 0x20
+					? c === 8 || c === 9 || c === 10 || c === 12 || c === 13
+						? 2
+						: 6
+					: c >= 0xd800 && c <= 0xdfff
+						? 6
+						: 1;
+		if (used + width > max) break;
+		used += width;
+		if (pair) i++;
+	}
+	return text.slice(0, i);
+}
+
+/** A page read held to `max` characters as JSON carries them, so sliceInfo's offset is where it really stopped. */
+export function fitSlice<S extends { text: string }>(slice: S, max: number): S {
+	const text = encodedHead(slice.text, max);
+	return text === slice.text ? slice : { ...slice, text };
+}
+
 /** The fields a sliced page read adds: where it was cut, and the call for the rest. */
 export function sliceInfo(slice: { text: string; offset: number; total: number }): {
 	totalChars: number;
@@ -44,13 +85,16 @@ export function sliceInfo(slice: { text: string; offset: number; total: number }
 	return info;
 }
 
-/** A PDF read's window: `max` characters of the page stream from `offset`, from a read of offset + max characters. */
+/**
+ * A PDF read's window: `max` characters (as JSON carries them) of the page stream from `offset`, from a read of
+ * offset + max characters.
+ */
 export function pdfWindow(
 	pdf: { text: string; truncated: boolean },
 	offset: number,
 	max: number,
 ): { text: string; truncated: boolean; next?: number } {
-	const text = pdf.text.slice(offset, offset + max);
+	const text = encodedHead(pdf.text.slice(offset, offset + max), max);
 	// More follows when the reader stopped at its cap or this window ends before what it read.
 	const truncated = pdf.truncated || offset + text.length < pdf.text.length;
 	// A window that read nothing names no offset to read on from: the same one would read nothing again.

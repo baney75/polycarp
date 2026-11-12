@@ -1,8 +1,11 @@
 /**
  * Bounds on what the MCP tools hand an outside agent. A client caps a tool result too (Claude Code warns past about
  * 25,000 tokens), and one result over its window can end the agent's run, so each tool answers with a part and says
- * when it cut and how to read on. OUTPUT_CAP is the net under all of them.
+ * when it cut and how to read on. OUTPUT_CAP is the net under all of them. Limits are in the characters the result
+ * carries: a string field inside JSON is measured as JSON writes it (encodedLength), so escaping never pushes a part
+ * past the cap after its "read on from N" note was written.
  */
+import { encodedHead, encodedLength } from "../../src/bridge/paging.ts";
 
 /** No MCP text result is longer than this; a longer one keeps its head and tail. */
 export const OUTPUT_CAP = 100000;
@@ -26,13 +29,58 @@ export function capOutput(text: string, max = OUTPUT_CAP, hint = "Ask for a smal
 }
 
 /**
- * `max` characters of `text` from `offset`, with a line after them when there is more: the call that reads on.
- * `again` names it, for example "call run_js again with offset".
+ * A JSON value as text within `max`, still valid JSON: the longest string fields are cut first (each says how much it
+ * lost), then the longest arrays lose their tail. Only a value with nothing left to cut falls back to capOutput.
  */
-export function sliceText(text: string, offset: number | undefined, max: number, again: string): string {
+export function capJson(value: unknown, max = OUTPUT_CAP): string {
+	let json = JSON.stringify(value) ?? "null";
+	if (json.length <= max) return json;
+	const copy = JSON.parse(json) as unknown;
+	type Slot = { holder: Record<string, unknown> | unknown[]; key: string | number; size: number };
+	const largest = (want: "string" | "array"): Slot | undefined => {
+		let best: Slot | undefined;
+		const visit = (v: unknown) => {
+			if (!v || typeof v !== "object") return;
+			const holder = v as Record<string, unknown> | unknown[];
+			for (const [k, child] of Object.entries(holder)) {
+				const key = Array.isArray(holder) ? Number(k) : k;
+				const size = want === "string" ? (typeof child === "string" ? encodedLength(child) : -1) : Array.isArray(child) ? child.length : -1;
+				if (size > (best?.size ?? 0)) best = { holder, key, size };
+				visit(child);
+			}
+		};
+		if (want === "array" && Array.isArray(copy) && copy.length > (best?.size ?? 0)) best = { holder: [copy], key: 0, size: copy.length };
+		visit(copy);
+		return best;
+	};
+	for (let round = 0; round < 200 && json.length > max; round++) {
+		const over = json.length - max;
+		const str = largest("string");
+		if (str && str.size > 300) {
+			const text = (str.holder as Record<string | number, string>)[str.key];
+			const kept = encodedHead(text, Math.max(100, str.size - over - 120));
+			(str.holder as Record<string | number, unknown>)[str.key] = `${kept} [cut: ${fmt(text.length - kept.length)} more characters, to fit the result]`;
+		} else {
+			const arr = largest("array");
+			if (!arr || arr.size < 2) break;
+			const list = (arr.holder as Record<string | number, unknown[]>)[arr.key];
+			const keep = Math.max(1, Math.floor(list.length / 2));
+			list.splice(keep, list.length - keep, `[${fmt(list.length - keep)} more items left out, to fit the result]`);
+		}
+		json = JSON.stringify(copy);
+	}
+	return json.length <= max ? json : capOutput(json, max);
+}
+
+/**
+ * `max` characters of `text` from `offset`, with a line after them when there is more: the call that reads on.
+ * `again` names it, for example "call run_js again with offset". `encoded` measures the part as a JSON string field
+ * carries it (page_markdown returns an object), so a page of quotes or backslashes still fits.
+ */
+export function sliceText(text: string, offset: number | undefined, max: number, again: string, encoded = false): string {
 	const from = Math.max(0, Math.floor(offset ?? 0));
 	if (from >= text.length && from > 0) return `[offset ${fmt(from)} is past the end: there are ${fmt(text.length)} characters.]`;
-	const part = text.slice(from, from + max);
+	const part = encoded ? encodedHead(text.slice(from, from + max), max) : text.slice(from, from + max);
 	const end = from + part.length;
 	const head = from ? `[Characters ${fmt(from)} to ${fmt(end)} of ${fmt(text.length)}.]\n` : "";
 	const tail = end < text.length ? `\n\n[Cut at character ${fmt(end)} of ${fmt(text.length)}. For the rest, ${again} ${end}.]` : "";
@@ -59,11 +107,13 @@ export function capCrawl(result: unknown): unknown {
 			const { markdown: _md, ...rest } = page as Record<string, unknown>;
 			return { ...rest, markdown_left_out: md.length };
 		}
+		// In the characters the JSON carries: a page of backslashes or newlines takes twice its length.
 		const max = Math.min(CRAWL_PAGE_CHARS, left);
-		left -= Math.min(md.length, max);
-		if (md.length <= max) return page;
+		const kept = encodedHead(md, max);
+		left -= encodedLength(kept);
+		if (kept.length === md.length) return page;
 		cut++;
-		return { ...page, markdown: `${md.slice(0, max)}\n[cut: ${fmt(md.length - max)} more characters]` };
+		return { ...page, markdown: `${kept}\n[cut: ${fmt(md.length - kept.length)} more characters]` };
 	});
 	if (!cut && !omitted) return result;
 	const notes = [
@@ -97,27 +147,54 @@ export function fitSnapshot<S extends { nodes: unknown[]; text: string }>(snap: 
 }
 
 /**
+ * The UTF-8 sequence that starts at byte `i`: its length in bytes and the UTF-16 units it decodes to. A byte that
+ * doesn't start a valid sequence (a Latin-1 byte, a stray continuation byte, a cut-off sequence) is one unit, U+FFFD,
+ * as TextDecoder reads it: the bytes of the longest valid start of a sequence go together.
+ */
+function sequenceAt(all: Uint8Array, i: number): { bytes: number; units: number } {
+	const b = all[i];
+	if (b < 0x80) return { bytes: 1, units: 1 };
+	const need = b >= 0xc2 && b <= 0xdf ? 1 : b >= 0xe0 && b <= 0xef ? 2 : b >= 0xf0 && b <= 0xf4 ? 3 : 0;
+	if (!need) return { bytes: 1, units: 1 };
+	// The second byte's range narrows for some leads (no overlong forms, no surrogates, nothing past U+10FFFF).
+	const low = b === 0xe0 ? 0xa0 : b === 0xf0 ? 0x90 : 0x80;
+	const high = b === 0xed ? 0x9f : b === 0xf4 ? 0x8f : 0xbf;
+	let n = 1;
+	for (; n <= need && i + n < all.length; n++) {
+		const c = all[i + n];
+		if (n === 1 ? c < low || c > high : (c & 0xc0) !== 0x80) break;
+	}
+	if (n <= need) return { bytes: n, units: 1 };
+	return { bytes: need + 1, units: need === 3 ? 2 : 1 };
+}
+
+/** `i`, or the end of the valid UTF-8 sequence `i` falls inside: a window never starts or ends inside a character. */
+function boundaryAt(all: Uint8Array, i: number): number {
+	for (let back = 1; back <= 3 && i - back >= 0; back++) {
+		const lead = all[i - back];
+		if ((lead & 0xc0) === 0x80) continue;
+		const { bytes } = sequenceAt(all, i - back);
+		return i - back + bytes > i ? i - back + bytes : i;
+	}
+	return i;
+}
+
+/**
  * A window of UTF-8 bytes as text: at most `maxBytes` from `offset` and at most `maxChars` characters, both ends on a
- * character boundary, so no character is split and `end` is the exact offset that reads on.
+ * character boundary, so no character is split and `end` is the exact offset that reads on. Bytes that are not
+ * UTF-8 are counted as TextDecoder reads them, one character each, so `end` holds for a Latin-1 file too.
  */
 export function utf8Window(all: Uint8Array, offset: number, maxBytes: number, maxChars: number): { text: string; from: number; end: number } {
-	const cont = (i: number) => i < all.length && (all[i] & 0xc0) === 0x80;
-	let from = Math.min(Math.max(0, Math.floor(offset)), all.length);
-	while (cont(from)) from++;
-	let end = Math.min(all.length, from + Math.max(1, maxBytes));
-	while (end > from && cont(end)) end--;
-	// A limit smaller than one character still reads that character, so a reader always moves on.
-	if (end === from && from < all.length) {
-		end++;
-		while (cont(end)) end++;
+	const from = boundaryAt(all, Math.min(Math.max(0, Math.floor(offset)), all.length));
+	const limit = Math.min(all.length, from + Math.max(1, maxBytes));
+	let end = from;
+	let units = 0;
+	while (end < all.length) {
+		const { bytes, units: u } = sequenceAt(all, end);
+		// A limit smaller than one character still reads that character, so a reader always moves on.
+		if (end > from && (end + bytes > limit || units + u > maxChars)) break;
+		end += bytes;
+		units += u;
 	}
-	let text = new TextDecoder().decode(all.subarray(from, end));
-	if (text.length > maxChars) {
-		let cut = maxChars;
-		const code = text.charCodeAt(cut - 1);
-		if (code >= 0xd800 && code <= 0xdbff) cut--;
-		text = text.slice(0, cut);
-		end = from + new TextEncoder().encode(text).length;
-	}
-	return { text, from, end };
+	return { text: new TextDecoder().decode(all.subarray(from, end)), from, end };
 }

@@ -807,8 +807,15 @@ test("read tools cap what they hand an agent, say when they cut, and page with o
 	const markdown = "m".repeat(90_000);
 	const firecrawl = createHttpServer((req, res) => {
 		res.setHeader("content-type", "application/json");
-		if (req.url === "/v2/scrape") return res.end(JSON.stringify({ success: true, data: { markdown, metadata: { sourceURL: "https://page.test/" } } }));
-		res.end(JSON.stringify({ success: true, data: [{ url: "https://page.test/a", markdown }] }));
+		let body = "";
+		req.on("data", (d) => (body += d));
+		req.on("end", () => {
+			const url = JSON.parse(body || "{}").url ?? "";
+			// second-S4: a failed or html-only scrape has no markdown; first-F3: a page of quotes doubles when escaped.
+			if (req.url === "/v2/scrape" && url.includes("nomd")) return res.end(JSON.stringify({ success: true, data: { html: "<p>x</p>", metadata: { sourceURL: url } } }));
+			if (req.url === "/v2/scrape") return res.end(JSON.stringify({ success: true, data: { markdown: url.includes("quotes") ? '"'.repeat(90_000) : markdown, metadata: { sourceURL: "https://page.test/" } } }));
+			res.end(JSON.stringify({ success: true, data: [{ url: "https://page.test/a", markdown }] }));
+		});
 	});
 	await new Promise((r) => firecrawl.listen(0, "127.0.0.1", r));
 	const fx = filesFixture("caps");
@@ -849,6 +856,13 @@ test("read tools cap what they hand an agent, say when they cut, and page with o
 		await run("run_js", { code: "big" });
 		await run("navigate", { url: "https://page.test/next" });
 		assert.equal((await c.callTool({ name: "run_js", arguments: { code: "big", offset: 50_000 } })).isError, true, "nor across a navigate");
+		// sol-F2, first-F6: read_page with a tabId makes that tab current, find and files reach the page too; every tool
+		// but run_js drops the kept value, whichever way it calls the browser.
+		for (const [name, args] of [["read_page", { tabId: 2 }], ["find", { query: "x" }], ["files", { action: "list" }], ["status", {}]]) {
+			await run("run_js", { code: "big" });
+			await c.callTool({ name, arguments: args });
+			assert.equal((await c.callTool({ name: "run_js", arguments: { code: "big", offset: 50_000 } })).isError, true, `no value kept across ${name}`);
+		}
 		// read_page: says the element list and the text were cut, and how to read on.
 		const page = await run("read_page");
 		assert.match(page, /element list stopped at 300/);
@@ -860,7 +874,7 @@ test("read tools cap what they hand an agent, say when they cut, and page with o
 		// The net under every tool: a 300,000 character answer comes back at 100,000 with what was left out.
 		const html = await run("get_page_html");
 		assert.ok(html.length <= 100_000, `get_page_html returned ${html.length}`);
-		assert.match(html, /Polycarp left out [\d,]+ of [\d,]+ characters here/);
+		assert.match(JSON.parse(html).html, /\[cut: [\d,]+ more characters, to fit the result\]$/, "still JSON, its field cut");
 		// get_page_text, read_console and read_network page in the extension; the offset reaches it.
 		await run("get_page_text", { offset: 50_000 });
 		await run("read_console", { offset: 100 });
@@ -872,6 +886,14 @@ test("read tools cap what they hand an agent, say when they cut, and page with o
 		const md = JSON.parse(await run("page_markdown", { url: "https://page.test/" }));
 		assert.ok(md.markdown.length <= 40_200);
 		assert.match(md.markdown, /For the rest, call page_markdown again with offset 40000\./);
+		const quoted = await run("page_markdown", { url: "https://page.test/quotes" });
+		assert.ok(quoted.length < 41_000, `page_markdown of quotes returned ${quoted.length}`);
+		assert.match(JSON.parse(quoted).markdown, /again with offset 20000\.\]$/);
+		// second-S4: a scrape with no markdown says so plainly (firecrawl.ts), never a TypeError from slicing it.
+		const bare = await c.callTool({ name: "page_markdown", arguments: { url: "https://page.test/nomd" } });
+		assert.equal(bare.isError, true);
+		assert.match(bare.content[0].text, /Firecrawl scrape returned no markdown\./);
+		assert.doesNotMatch(bare.content[0].text, /TypeError|undefined/);
 		const crawl = JSON.parse(await run("crawl", { url: "https://page.test/" }));
 		assert.ok(crawl.data[0].markdown.length < 3_100);
 		assert.match(crawl.note, /page_markdown/);

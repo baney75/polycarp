@@ -37,6 +37,27 @@ export const CONVERSATION_FLOOR_TOKENS = 512;
 export const ATTACHMENT_MARK = "[Document: ";
 
 /**
+ * How a context note opens: a user-role message Polycarp adds, not the person (message-transformer.ts writes one for
+ * each navigation, and reorders it after the tool results, so it can sit in the middle of a turn). The fitting treats
+ * it as context that can be cut, like a tool result, and never as the person's words or the start of a turn.
+ */
+export const CONTEXT_NOTE_MARK = "<browser-context>";
+
+/** True for a context note: a user-role message whose text opens with CONTEXT_NOTE_MARK. */
+export function isContextNote(m: Message): boolean {
+	if (m.role !== "user") return false;
+	const content = m.content as unknown;
+	const first =
+		typeof content === "string"
+			? content
+			: (content as Array<{ type: string; text?: string }>).find((p) => p.type === "text")?.text;
+	return (first ?? "").trimStart().startsWith(CONTEXT_NOTE_MARK);
+}
+
+/** True for a message the person wrote: a user-role message that is not a context note. */
+export const isPersonMessage = (m: Message): boolean => m.role === "user" && !isContextNote(m);
+
+/**
  * The budget for one request, from one rule: the window, minus the reply asked for, minus the fixed part (system
  * prompt and tool schemas, measured from the request itself), leaves what the conversation may hold. The reply shrinks
  * toward REPLY_FLOOR_TOKENS before the conversation goes under CONVERSATION_FLOOR_TOKENS; when even that leaves too
@@ -221,6 +242,8 @@ export function restHint(toolName: string | undefined, kept = ""): string {
 			return 'Read the file in parts with extract_document {"attachment": "<its file name>"} and pages or a query.';
 		case "user":
 			return "Ask the person for the part that matters, or to attach long text as a file.";
+		case "note":
+			return "This was Polycarp's note on the page; read_page or get_page_text reads the page again.";
 		default:
 			return "Ask the tool for a smaller part (a range, offset, selector or query).";
 	}
@@ -257,26 +280,29 @@ function capTextTokens(text: string, maxTokens: number, hint: string | ((kept: s
 	}
 }
 
-/** A message part the fitting may cut: a tool result's text, an attached document, or the person's own text. */
-type Kind = "result" | "attachment" | "user";
+/**
+ * A message part the fitting may cut: a tool result's text, an attached document, the person's own text, or a context
+ * note's text.
+ */
+type Kind = "result" | "attachment" | "user" | "note";
 
-function kindOf(m: Message): Kind | undefined {
-	if (m.role === "toolResult") return "result";
-	if (m.role === "user") return "user";
-	return undefined;
-}
+/** The kind fitting cuts as context in `m` (steps 1 to 3): a result, a note, or else an attached document. */
+const contextKind = (m: Message): Kind =>
+	m.role === "toolResult" ? "result" : isContextNote(m) ? "note" : "attachment";
 
 const isAttachmentPart = (text: string) => text.trimStart().startsWith(ATTACHMENT_MARK);
 
 /** The text parts of `m` that `kind` covers. */
 function partsOf(m: Message, kind: Kind): string[] {
 	const content = m.content as unknown;
-	if (typeof content === "string") return kind === "user" ? [content] : [];
+	const note = isContextNote(m);
+	if (typeof content === "string") return (kind === "user" && !note) || (kind === "note" && note) ? [content] : [];
 	const texts = (content as Array<{ type: string; text?: string }>)
 		.filter((p) => p.type === "text")
 		.map((p) => p.text ?? "");
 	if (kind === "result") return m.role === "toolResult" ? texts : [];
-	if (m.role !== "user") return [];
+	if (kind === "note") return note ? texts : [];
+	if (m.role !== "user" || note) return [];
 	return texts.filter((t) => (kind === "attachment" ? isAttachmentPart(t) : !isAttachmentPart(t)));
 }
 
@@ -296,9 +322,13 @@ function capParts(m: Message, kind: Kind, maxTokens: number): Message {
 	if (typeof content === "string")
 		return { ...m, content: capTextTokens(content, maxTokens, (k) => restHint(hintFor, k)) } as Message;
 	const all = content as Array<{ type: string; text?: string }>;
+	const note = isContextNote(m);
 	const covered = (p: { type: string; text?: string }) =>
 		p.type === "text" &&
-		(kind === "result" || (m.role === "user" && (kind === "attachment") === isAttachmentPart(p.text ?? "")));
+		(kind === "result" ||
+			(kind === "note"
+				? note
+				: m.role === "user" && !note && (kind === "attachment") === isAttachmentPart(p.text ?? "")));
 	const total = all.filter(covered).length;
 	let left = maxTokens;
 	let dropped = 0;
@@ -421,8 +451,10 @@ function* halving(start: number, going: () => boolean): Generator<number> {
  * results and attached documents (to their cap, then older ones to a stub, then all halved, largest first), images,
  * earlier assistant replies (thinking, then large tool call arguments, then text), the person's earlier messages, then
  * whole earlier turns, oldest first, and last the person's latest message and the turn in progress, whose oldest tool
- * calls go with their results, then the newest call's own thinking, text and arguments. Each tool call keeps its result, and the latest user message is always sent. Stored
- * history is untouched: only what is sent is cut. A request that already fits comes back as the same object.
+ * calls go with their results, then the newest call's own thinking, text and arguments. Each tool call keeps its
+ * result, and the person's latest message is always sent. Context notes (CONTEXT_NOTE_MARK) are cut like tool results
+ * and go with the call they follow; only the person's messages start a turn. Stored history is untouched: only what
+ * is sent is cut. A request that already fits comes back as the same object.
  */
 export function fitContext(context: Context, budget: Budget): Fitted {
 	let messages = context.messages.slice();
@@ -441,15 +473,14 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 		changed = true;
 	};
 	const over = () => total > budget.inputTokens;
+	// The person's latest message: context notes are Polycarp's, so they never start a turn or stand for the person.
 	const latestUser = () => {
-		for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "user") return i;
+		for (let i = messages.length - 1; i >= 0; i--) if (isPersonMessage(messages[i])) return i;
 		return -1;
 	};
-	const capPart = (i: number, tokens: number) =>
-		replace(i, capParts(messages[i], kindOf(messages[i]) === "result" ? "result" : "attachment", tokens));
-	const cuttable = () =>
-		messages.flatMap((m, i) => (partsOf(m, "result").length || partsOf(m, "attachment").length ? [i] : []));
-	const size = (i: number) => partsTokens(messages[i], kindOf(messages[i]) === "result" ? "result" : "attachment");
+	const capPart = (i: number, tokens: number) => replace(i, capParts(messages[i], contextKind(messages[i]), tokens));
+	const cuttable = () => messages.flatMap((m, i) => (partsOf(m, contextKind(m)).length ? [i] : []));
+	const size = (i: number) => partsTokens(messages[i], contextKind(messages[i]));
 
 	// 1. Every tool result and attached document to its cap.
 	for (const i of cuttable()) capPart(i, resultTokens);
@@ -480,7 +511,7 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 	for (const c of halving(STUB_TOKENS * 4, over))
 		for (let i = 0; i < latestUser(); i++) {
 			if (!over()) break;
-			if (messages[i].role === "user") replace(i, capParts(messages[i], "user", c));
+			if (isPersonMessage(messages[i])) replace(i, capParts(messages[i], "user", c));
 		}
 	// 7. The latest user message to half of what the conversation may hold: a paste that big can never go whole, and
 	// cutting it costs less than the chat's earlier turns.
@@ -501,7 +532,7 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 	};
 	while (over() && latestUser() > 0) {
 		let next = 1;
-		while (next < latestUser() && messages[next].role !== "user") next++;
+		while (next < latestUser() && !isPersonMessage(messages[next])) next++;
 		droppedEarlier += drop(0, next);
 	}
 	if (droppedEarlier) {
@@ -529,8 +560,9 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 		const start = latestUser() + 1;
 		const calls = messages.flatMap((m, k) => (k >= start && m.role === "assistant" ? [k] : []));
 		if (calls.length < 2) break;
+		// A call goes with its results and the context notes after them (a navigation's note follows its result).
 		let end = calls[0] + 1;
-		while (end < messages.length && messages[end].role === "toolResult") end++;
+		while (end < messages.length && (messages[end].role === "toolResult" || isContextNote(messages[end]))) end++;
 		drop(calls[0], end);
 	}
 	// 11. Last, the newest call itself: its thinking, its text, then its arguments. Its id and result stay, so the pair
@@ -545,9 +577,12 @@ export function fitContext(context: Context, budget: Budget): Fitted {
 	return { context: { ...context, messages }, estimate: total, original, fixed, resultTokens, trimmed: true, fits };
 }
 
-/** Words providers use when a request is over the window. */
+/**
+ * Words providers use when a request is over the window. Each names the context, the prompt or tokens: "image too
+ * large" or "file exceeds the maximum size" is about one part, not the window, and is not proof of size.
+ */
 const SIZE_WORDS =
-	/context[ _-]?(length|window|limit)|maximum context|too many tokens|prompt is too long|input is too long|too large|request entity|payload too large|reduce the length|exceeds? (the )?(model'?s? )?(maximum|max|context|token)|token limit|maximum (number of )?tokens|\b413\b/i;
+	/context[ _-]?(length|window|limit|size)|maximum context|too many tokens|(prompt|input|request|context|messages?|conversation) (is |are )?too (long|large)|too (long|large) for (the )?(model|context)|request entity too large|payload too large|reduce the length|exceeds? (the )?(model'?s? )?(available )?(context|tokens?|max(imum)? (number of )?(context|tokens|input))|token limit|maximum (number of )?(input )?tokens|\b413\b/i;
 /** A refusal that says nothing at all: "400 status code (no body)" and the like. */
 const BARE_400 = /^\s*(error:\s*)?400\b[^a-z]*(status code)?\s*(\(no body\))?\s*$/i;
 

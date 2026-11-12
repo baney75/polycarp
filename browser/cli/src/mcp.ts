@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import { checkSkill, listSkills, matchTask, readSkill, removeSkill, skillInfo, syncCommunity, writeSkill } from "./skill.ts";
 import { stageCases } from "./skill-submit.ts";
 import { firecrawlCrawl, firecrawlMap, pageMarkdown } from "./firecrawl.ts";
-import { capCrawl, capOutput, fitSnapshot, MARKDOWN_CHARS, sliceText, VALUE_CHARS } from "./output-cap.ts";
+import { capCrawl, capJson, capOutput, fitSnapshot, MARKDOWN_CHARS, sliceText, VALUE_CHARS } from "./output-cap.ts";
 import { searxSearch } from "./searx.ts";
 import { selfExec, selfPrefix } from "./self.ts";
 import { VERSION } from "./version.ts";
@@ -36,8 +36,9 @@ import type { RosterDevice } from "./link-protocol.ts";
 type Content = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
 function text(value: unknown): Content[] {
-	// The net under every tool: no result an agent gets is longer than OUTPUT_CAP (output-cap.ts).
-	return [{ type: "text", text: capOutput(typeof value === "string" ? value : JSON.stringify(value)) }];
+	// The net under every tool: no result an agent gets is longer than OUTPUT_CAP (output-cap.ts). A value stays valid
+	// JSON: its longest fields are cut, never the JSON text in the middle.
+	return [{ type: "text", text: typeof value === "string" ? capOutput(value) : capJson(value) }];
 }
 
 function errorMessage(err: unknown): string {
@@ -418,14 +419,24 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 	}
 
 	/**
-	 * The last run_js value, for offset reads of it (one value per session, the newest). Any other tool that can change
-	 * the page or which tab is current (navigate, tabs_select, a click) drops it, so reading on never serves an old
-	 * tab's value as the current page's.
+	 * The last run_js value, for offset reads of it (one value per session, the newest). Every other tool drops it
+	 * before it runs (the wrapper below), whatever it does: navigate, a click, files, read_page with a tabId (which makes
+	 * that tab current) all can change the page or which tab is current, so reading on never serves an old tab's value.
 	 */
 	let lastValue: { key: string; json: string } | undefined;
+	{
+		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
+		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, cb: unknown, ...rest: unknown[]) => {
+			if (name === "run_js" || typeof cb !== "function") return register(name, config, cb, ...rest);
+			const handler = cb as (...a: unknown[]) => unknown;
+			return register(name, config, (...a: unknown[]) => {
+				lastValue = undefined;
+				return handler(...a);
+			}, ...rest);
+		};
+	}
 
 	async function call(method: string, params: Record<string, unknown> = {}): Promise<{ content: Content[]; isError?: boolean }> {
-		lastValue = undefined;
 		try {
 			const result = await client.call(method, params);
 			return { content: text(result) };
@@ -778,7 +789,6 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 		async (args) => {
 			try {
-				lastValue = undefined;
 				const res = (await client.call("actions", args)) as {
 					steps: number;
 					/** Set when a step opened a dialog: what it is and how to answer it. */
@@ -1074,7 +1084,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		(args) =>
 			webtool(async () => {
 				const page = await pageMarkdown(args.url);
-				const markdown = sliceText(page.markdown, args.offset, MARKDOWN_CHARS, "call page_markdown again with offset");
+				const markdown = sliceText(page.markdown, args.offset, MARKDOWN_CHARS, "call page_markdown again with offset", true);
 				return { ...page, markdown };
 			}),
 	);

@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 
-const { budgetFor, estimateContextTokens, estimateFixedTokens, fitContext, minimumWindow } = await import(
+const { budgetFor, CONTEXT_NOTE_MARK, estimateContextTokens, estimateFixedTokens, fitContext, minimumWindow } = await import(
 	"../src/models/context-budget.ts"
 );
 const { guardContext, learnedWindow, PROBE_AFTER_TURNS, resetLearnedWindows } = await import(
@@ -20,8 +20,11 @@ const PANEL = JSON.parse(readFileSync(new URL("./fixtures/panel-request.json", i
 const BARE = "400 status code (no body)";
 const WORDS = "This model's maximum context length is exceeded";
 
-/** A provider that takes a request only when its estimate plus the reply asked for is within `actual` tokens. */
-function provider(actual, refusal = WORDS) {
+/**
+ * A provider that takes a request only when its estimate plus the reply asked for is within `actual` tokens. With
+ * `startFirst` it announces its start before it refuses, as a stream does when the status comes after the first chunk.
+ */
+function provider(actual, refusal = WORDS, startFirst = false) {
 	const sent = [];
 	const options = [];
 	const inner = async (_model, context, opts) => {
@@ -30,8 +33,10 @@ function provider(actual, refusal = WORDS) {
 		const s = createAssistantMessageEventStream();
 		const size = estimateContextTokens(context) + Number(opts?.maxTokens ?? 0);
 		queueMicrotask(() => {
-			if (size > actual)
+			if (size > actual) {
+				if (startFirst) s.push({ type: "start", partial: { role: "assistant", content: [], stopReason: "stop", timestamp: 0 } });
 				s.push({ type: "error", reason: "error", error: { role: "assistant", content: [], stopReason: "error", errorMessage: refusal, timestamp: 0 } });
+			}
 			else {
 				const message = { role: "assistant", content: [{ type: "text", text: "ok" }], stopReason: "stop", timestamp: 0 };
 				s.push({ type: "start", partial: message });
@@ -114,6 +119,9 @@ function randomHistory(r) {
 							? [{ type: "text", text: "screenshot" }, IMAGE]
 							: [{ type: "text", text: "done" }];
 			messages.push({ role: "toolResult", toolCallId: id, toolName: big ? "artifacts" : "navigate", content: result, isError: false, timestamp: ++t });
+			// A navigation's note, as the panel's transformer writes it and puts it after the results: mid-turn, user role.
+			if (r() < 0.5)
+				messages.push({ role: "user", content: `${CONTEXT_NOTE_MARK}\n✓ Navigation succeeded: Page ${t}\n</browser-context>\n${r() < 0.3 ? words(30_000) : "skills: none"}`, timestamp: ++t });
 		}
 		if (!last || r() < 0.5) {
 			if (r() < 0.6)
@@ -126,8 +134,10 @@ function randomHistory(r) {
 /** A system prompt of about `tokens` tokens of plain text. */
 const fixedPrompt = (tokens) => words(tokens * 3);
 
+/** The person's latest message: a context note is Polycarp's, not the person's. */
 function lastUser(messages) {
-	for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "user") return messages[i];
+	for (let i = messages.length - 1; i >= 0; i--)
+		if (messages[i].role === "user" && !(typeof messages[i].content === "string" && messages[i].content.startsWith(CONTEXT_NOTE_MARK))) return messages[i];
 	return undefined;
 }
 
@@ -166,13 +176,17 @@ test("the guard either sends a request that fits, paired and with the latest mes
 					const messages = randomHistory(r);
 					const context = { systemPrompt: fixedPrompt(fixedTokens), tools: [], messages };
 					const fixed = estimateFixedTokens(context);
-					const { inner, sent, options } = provider(actual, refusal);
+					const { inner, sent, options } = provider(actual, refusal, r() < 0.5);
 					const guarded = guardContext(inner);
 					let done = false;
 					for (let turn = 0; turn < 8 && !done; turn++) {
 						cases++;
 						const before = sent.length;
+						const learnedBefore = learnedWindow(model);
 						const last = await finalOf(await guarded(model, context, {}));
+						// What a refusal teaches never rises above what was learned before.
+						if (last.type === "error" && learnedBefore !== undefined && learnedWindow(model) !== undefined)
+							assert.ok(learnedWindow(model) <= learnedBefore, `learned rose from ${learnedBefore} to ${learnedWindow(model)}`);
 						assert.ok(sent.length - before <= 2, "at most one retry");
 						for (let k = before; k < sent.length; k++) {
 							sends++;
@@ -180,7 +194,13 @@ test("the guard either sends a request that fits, paired and with the latest mes
 							assert.ok(size <= claimed, `sent ${size} tokens to a ${claimed} window`);
 							assert.ok(estimateFixedTokens(sent[k]) === fixed, "the fixed part goes whole");
 							assert.ok(pairsIntact(sent[k].messages), "tool calls paired");
-							assert.equal(lastUser(sent[k].messages)?.timestamp, lastUser(messages).timestamp, "the latest user message is sent");
+							const person = lastUser(messages);
+							const sentPerson = lastUser(sent[k].messages);
+							assert.equal(sentPerson?.timestamp, person.timestamp, "the person's latest message is sent");
+							if (typeof person.content === "string" && person.content.length < 100) {
+								const said = typeof sentPerson.content === "string" ? [sentPerson.content] : sentPerson.content.map((p) => p.text);
+								assert.ok(said.includes(person.content), "a short question goes whole");
+							}
 						}
 						if (last.type === "done") {
 							done = true;

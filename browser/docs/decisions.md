@@ -1211,16 +1211,32 @@ shrinks to 1,024 first. Below that floor nothing is sent and the person reads th
 attached documents (each to one budget however many parts it has, older ones to a stub, then all halved, largest first),
 images, earlier replies (thinking, large tool call arguments, text), the person's earlier messages, whole earlier turns
 (oldest first, with a note), then the latest message and the turn in progress, ending with the newest call's own thinking.
-Every halving ends at the floor itself. Each tool call keeps its result, the latest user message is always sent, and the
-stored chat keeps everything. A request still over the budget is not sent.
+Every halving ends at the floor itself. Each tool call keeps its result, the person's latest message is always sent, and
+the stored chat keeps everything. A request still over the budget is not sent.
+
+**Whose words they are.** The guard fits the messages as sent: after the panel's transformer, which turns each navigation
+into a user-role note and moves it after the tool results, mid-turn. A note opens with `CONTEXT_NOTE_MARK`
+(`<browser-context>`); it is cut like a tool result and travels with the call it follows. Only the person's messages start
+a turn or count as the latest message, so a navigation can never push the person's question out as an "earlier turn".
 
 **When the provider disagrees.** One retry, with the conversation halved and the fixed part whole. A smaller window is
 learned only on proof (the provider's words name size, or refusals on two turns in a row; a first-try success resets the
 count), never below what the fixed part needs, and forgotten when a probe after 10 good turns works at a larger size.
+Proof means the provider's words name the context, the prompt or tokens ("image too large" does not), and a request worked
+only when its reply ran to `done`: a stream can start and then fail, so the outcome is read past `start`. A refused probe
+falls back to the learned window, the size known to work, and nothing a refusal teaches rises above what was learned. A
+learned window is evidence about a past request, not a law: when the instructions or tools grow past what it can hold, it
+is dropped and the model's own window is tried. The reply the guard reserves is sent to every provider, custom ones too.
 
 **Measuring the fixed part.** Text keeps the conservative estimate (3 characters a token, punctuation 2, CJK more), since
 undercounting sends what won't fit. Tool schemas don't: the panel's 13 tools are 8,979 tokens in o200k, and the general
 rule counted 12,536, which left a 16k model no room. Schema ASCII counts at 3.5 characters a token (about 10% over).
+
+**Each limit in its own unit.** A cap is checked on what crosses it, in the unit it is in. The guard's limit is tokens, so
+`extract_document` and the panel's page tools measure their answer with `estimateTextTokens` and read again smaller when
+it is over. The MCP cap is characters of JSON, so the bridge's reads, `page_markdown` and `crawl` measure their text as
+JSON writes it (`encodedHead`), and the net keeps a value valid JSON by cutting its longest fields. A file read counts bytes
+that aren't UTF-8 as the decoder does, so its offset is exact.
 
 **Tools size their own answers to the same budget.** `extract_document`, and since D40 the panel's `get_page_text` and
 `read_page` (`fitPageCall` in `src/bridge/page-tools.ts`), ask for what one result may hold and say how to read on, so the
