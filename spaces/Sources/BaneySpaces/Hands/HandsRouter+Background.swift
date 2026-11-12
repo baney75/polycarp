@@ -35,7 +35,10 @@ extension HandsRouter {
 
     func clickAt(_ req: HandsRequest) -> HandsEnvelope {
         guard let x = req.int("x"), let y = req.int("y") else { return .failure(pointArguments("click-at --window <id> --x <points> --y <points>")) }
-        return pointer(req, path: [CGPoint(x: x, y: y)], drag: false, name: "click-at")
+        switch ClickStyle.parse(count: req.int("count"), button: req.string("button")) {
+        case .failure(let e): return .failure(e)
+        case .success(let style): return pointer(req, path: [CGPoint(x: x, y: y)], drag: false, name: "click-at", style: style)
+        }
     }
 
     func drag(_ req: HandsRequest) -> HandsEnvelope {
@@ -50,12 +53,12 @@ extension HandsRouter {
         HandsError(.badArguments, "the point is missing", suggestion: "usage: polycarp-spaces agent " + usage, retry: .safe)
     }
 
-    private func pointer(_ req: HandsRequest, path: [CGPoint], drag: Bool, name: String) -> HandsEnvelope {
+    private func pointer(_ req: HandsRequest, path: [CGPoint], drag: Bool, name: String, style: ClickStyle = .single) -> HandsEnvelope {
         guard req.int("window") != nil else { return .failure(pointArguments("\(name) --window <id> ...")) }
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, scope, _)):
-            return background(w, scope, name: name, kind: .pointer, ref: nil, chords: [], path: path, drag: drag, session: req.session ?? "", wait: req.int("wait"))
+            return background(w, scope, name: name, kind: .pointer, ref: nil, chords: [], path: path, drag: drag, style: style, session: req.session ?? "", wait: req.int("wait"))
         }
     }
 
@@ -75,7 +78,7 @@ extension HandsRouter {
     }
 
     private func background(_ w: HandsWindow, _ scope: ScopeDecision, name: String, kind: InputKind, ref: String?,
-                            chords: [KeyChord], path: [CGPoint], drag: Bool, session: String, wait: Int?) -> HandsEnvelope {
+                            chords: [KeyChord], path: [CGPoint], drag: Bool, style: ClickStyle = .single, session: String, wait: Int?) -> HandsEnvelope {
         // Keys and the pointer are posted events: while Donovan uses the app they always wait (never the other-window rule).
         // Before the mark, so an activation while it waits is his.
         if let e = awaitUse(w, verb: name, delivery: .posted, wait: wait, session: session) { return .failure(e) }
@@ -90,7 +93,7 @@ extension HandsRouter {
         // The child windows the app has now: one that appears after this is the action's (`ChildAttribution`).
         let childrenBefore = noteAction(session: session, pid: w.pid)
         let reply = HandsEngine.shared.transaction(window: w, check: scopeCheck) { [self] cancelled in
-            transact(w, scope, name: name, kind: kind, ref: ref, chords: chords, path: path, drag: drag, session: session, scopeCheck: scopeCheck, cancelled: cancelled)
+            transact(w, scope, name: name, kind: kind, ref: ref, chords: chords, path: path, drag: drag, style: style, session: session, scopeCheck: scopeCheck, cancelled: cancelled)
         }
         switch reply {
         case .failed(let e): return .failure(e)
@@ -103,7 +106,7 @@ extension HandsRouter {
     }
 
     /// Runs on the process queue. Everything it reads goes through the engine's inline calls.
-    private func transact(_ w: HandsWindow, _ scope: ScopeDecision, name: String, kind: InputKind, ref: String?, chords: [KeyChord], path: [CGPoint], drag: Bool, session: String,
+    private func transact(_ w: HandsWindow, _ scope: ScopeDecision, name: String, kind: InputKind, ref: String?, chords: [KeyChord], path: [CGPoint], drag: Bool, style: ClickStyle, session: String,
                           scopeCheck: @escaping HandsEngine.Check, cancelled: () -> Bool) -> HandsEngine.Reply {
         // From planning to a second after the last post: every activation, and every session event, is seen.
         let activations = ActivationWatch()
@@ -242,7 +245,7 @@ extension HandsRouter {
             Thread.sleep(forTimeInterval: verifier.hasPixels ? 0.2 : 0.05)
             let shotBefore = verifier.hasPixels ? WindowShot.pixels(window: w.id, check: scopeCheck) : nil
             if verifier == .pixels, shotBefore == nil { return .failed(BackgroundRefusal.noVerifier(w.app)) }     // nothing is pressed yet
-            let press = BackgroundPoster.pointer(drag ? InputScript.drag(path: path) : InputScript.click(at: path[0]), frame: frame, drag: drag,
+            let press = BackgroundPoster.pointer(drag ? InputScript.drag(path: path) : InputScript.click(at: path[0], count: style.count, right: style.right), frame: frame, drag: drag,
                                                  gesture: gesture, permit: permit, stop: stop)
             aimed += press.screenPoints
             posted += press.report.posted.count; released = press.report.released; lastPostAt = Date()

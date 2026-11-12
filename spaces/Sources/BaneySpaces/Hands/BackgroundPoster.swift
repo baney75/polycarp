@@ -108,15 +108,19 @@ enum BackgroundPoster {
         var aimed: [CGPoint] = []
         let report = EventRunner.run(events, stop: stop) { event in
             let type: CGEventType, local: CGPoint, state: Int64, subtype: Int64, pause: TimeInterval
+            var button = CGMouseButton.left
             switch event {
             case .mouseMoved(let p): (type, local, state, subtype, pause) = (.mouseMoved, p, 0, 3, 0.02)
             case .mouseDown(let p): (type, local, state, subtype, pause) = (.leftMouseDown, p, 1, drag ? 0 : 3, drag ? 0.03 : 0.06)
             case .mouseDragged(let p): (type, local, state, subtype, pause) = (.leftMouseDragged, p, 1, 0, 0.012)
             case .mouseUp(let p): (type, local, state, subtype, pause) = (.leftMouseUp, p, 1, drag ? 0 : 3, 0)
+            // Clicks of a double click follow well inside the double-click interval.
+            case .buttonDown(let p, let c): (type, local, state, subtype, pause) = (c.right ? .rightMouseDown : .leftMouseDown, p, Int64(c.state), 3, 0.05); if c.right { button = .right }
+            case .buttonUp(let p, let c): (type, local, state, subtype, pause) = (c.right ? .rightMouseUp : .leftMouseUp, p, Int64(c.state), 3, 0.04); if c.right { button = .right }
             default: return nil
             }
             let screen = PointerPath.screenPoint(local: local, frame: frame)
-            guard let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: screen, mouseButton: .left) else { return nil }
+            guard let e = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: screen, mouseButton: button) else { return nil }
             let raw = Unmanaged.passUnretained(e).toOpaque()
             setField(raw, 1, state)
             setField(raw, 3, 0)

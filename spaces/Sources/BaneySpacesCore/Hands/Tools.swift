@@ -88,10 +88,12 @@ public enum HandsTools {
             refParam,
             HandsParam("key", .string, "Key name with optional modifiers, like cmd+shift+z; several keys are separated by spaces (at most 64).", required: true, positional: true, rest: true),
         ], acts: true),
-        HandsTool(verb: "click-at", summary: "Click a point in a window that is not in front, by process, with window-local coordinates (points from the window's top-left corner). Never moves the real pointer or raises the window. For surfaces with no accessibility tree (a canvas); prefer `click` on a ref. Answers unverified (retry never) when neither the window's tree nor the pixels around the point changed.", params: [
+        HandsTool(verb: "click-at", summary: "Click a point in a window that is not in front, by process, with window-local coordinates (points from the window's top-left corner). Never moves the real pointer or raises the window. For surfaces with no accessibility tree (a canvas); prefer `click` on a ref. Double click: {\"window\":4211,\"x\":120,\"y\":80,\"count\":2}. Answers unverified (retry never) when neither the window's tree nor the pixels around the point changed.", params: [
             HandsParam("window", .integer, "Window id from `windows`.", required: true),
             HandsParam("x", .integer, "Points from the window's left edge.", required: true),
             HandsParam("y", .integer, "Points from the window's top edge.", required: true),
+            HandsParam("count", .integer, "2 for a double click, 3 for a triple (default 1)."),
+            HandsParam("button", .string, "left (default) or right, for a context menu."),
         ], acts: true),
         HandsTool(verb: "drag", summary: "Press at a point, drag to another and release, in a window that is not in front, by process, with window-local coordinates. Never moves the real pointer or raises the window. Verified by an accessibility change or by pixels changing along the path while the rest of the window stays put.", params: [
             HandsParam("window", .integer, "Window id from `windows`.", required: true),
