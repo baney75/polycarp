@@ -1,4 +1,4 @@
-// The settle wait after input tools (D40), on the fake browser: it never runs past its cap, turns
+// The settle wait after input tools (D41), on the fake browser: it never runs past its cap, turns
 // Network on once per action and before the first input, judges a page it may not script by its
 // requests alone, and never runs anything in the approval page before the tab is blanked.
 import assert from "node:assert/strict";

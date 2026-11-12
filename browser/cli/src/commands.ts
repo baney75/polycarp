@@ -52,6 +52,7 @@ export const VALUE_HINTS: Record<string, string> = {
 	"--offset": "N",
 	"--limit": "N",
 	"--session": "<name>",
+	"--profile": "panel",
 	"--top": "N",
 	"--to": "<version>",
 	"--cases": "<file>",
@@ -95,7 +96,7 @@ const PATH_VALUES = new Set(["--cases", "--base", "--router", "--out", "--file"]
 export const COMMANDS: CommandSpec[] = [
 	{ name: "setup", selfParsed: true, what: "Build, register, load, connect and add to your agents", group: "Get started", flags: SETUP_FLAGS },
 	{ name: "status", what: "Is the extension connected? Which sites are allowed?", group: "Get started", flags: ["--json"] },
-	{ name: "mcp", what: "MCP server on stdio (what Claude Code, Codex, OpenCode run)", group: "Agents", flags: ["--session"] },
+	{ name: "mcp", what: "MCP server on stdio (what Claude Code, Codex, OpenCode run)", group: "Agents", flags: ["--session", "--profile"] },
 	{
 		name: "copilot-sdk",
 		summary: "GitHub's Copilot SDK, for the side panel's Copilot sign-in",

@@ -23,6 +23,28 @@ export class BridgeError extends Error {
 	}
 }
 
+/** A handler that never settles must not wedge the client's queue (the bridge) or the panel's turn forever. */
+export const HANDLER_TIMEOUT_MS = 90000;
+
+export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(
+			() => reject(new BridgeError(ERR.TIMEOUT, `${label} did not finish within ${ms} ms`)),
+			ms,
+		);
+		promise.then(
+			(v) => {
+				clearTimeout(timer);
+				resolve(v);
+			},
+			(e) => {
+				clearTimeout(timer);
+				reject(e);
+			},
+		);
+	});
+}
+
 /**
  * The debugger detached from the tab while a call was running. Like a dropped connection, the
  * call may have run: the agent checks the page before repeating it. Never the raw CDP message.

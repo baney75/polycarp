@@ -14,7 +14,10 @@
 //   settle-late, settle-autocomplete, settle-skeleton, settle-bounded
 //                                                        the page has settled when an action returns (no wait call)
 //
-//   node cli/eval/perception.mjs --extension <built extension dir> [--out file.json]
+//   node cli/eval/perception.mjs --extension <built extension dir> [--out file.json] [--stack panel]
+//
+// --stack panel runs the probes through the side panel's tools (`polycarp mcp --profile panel`): input goes through
+// act, and a probe that needs a tool the panel leaves out (inspect_page, read_network, run_js) is n/a, not a fail.
 //
 // A measurement, not a gate: exit 0 even when probes fail, exit 1 only when the harness breaks.
 // Needs the CLI build (cli/dist) and Playwright's Chromium.
@@ -30,6 +33,12 @@ const arg = (name, fallback) => {
 };
 const EXTENSION = arg("--extension");
 const OUT = arg("--out");
+const PANEL = arg("--stack", "mcp") === "panel";
+/** MCP input tools, and the act action each is in the panel. */
+const ACT = { click: "click", type: "type", fill: "fill", press: "press", hover: "hover", scroll: "scroll", drag: "drag", wait: "wait", screenshot: "screenshot", actions: "steps" };
+const PANEL_TOOLS = new Set(["navigate", "read_page", "find", "get_page_text", "act", "handle_dialog"]);
+/** Tools a probe asked for that the panel leaves out, this probe. */
+let missing = [];
 /** A call that has not answered by now counts as a hang. */
 const HANG_MS = 90000;
 const RAW_MAX = 2000;
@@ -186,9 +195,12 @@ const site = `http://127.0.0.1:${serverA.address().port}`;
 /** The throwaway browser and the MCP client, once started. */
 let fx;
 let client;
+/** With --stack panel, a regular MCP client on the same session, for the harness's own page checks (run_js). */
+let checker;
 
 async function cleanup() {
 	await client?.close().catch(() => {});
+	await checker?.close().catch(() => {});
 	await fx?.close().catch(() => {});
 	serverA.close();
 	serverB.close();
@@ -202,17 +214,26 @@ for (const event of ["uncaughtException", "unhandledRejection"])
 
 // ---- MCP helpers ---------------------------------------------------------------
 
-async function mcpClient(env, { cwd, name = "perception" } = {}) {
+async function mcpClient(env, { cwd, name = "perception", stack = PANEL ? "panel" : "mcp" } = {}) {
 	const client = new Client({ name, version: "0.0.0" });
 	const t0 = performance.now();
 	await client.connect(
-		new StdioClientTransport({ command: process.execPath, args: [cli, "mcp"], env, cwd, stderr: "ignore" }),
+		new StdioClientTransport({ command: process.execPath, args: [cli, "mcp", ...(stack === "panel" ? ["--profile", "panel"] : [])], env, cwd, stderr: "ignore" }),
 	);
 	return { client, initMs: Math.round(performance.now() - t0) };
 }
 
 /** One tool call with a hang guard; never throws. */
-async function call(client, name, args = {}) {
+async function call(client, name, args = {}, { check = false } = {}) {
+	if (PANEL && !check && ACT[name]) {
+		const { to, ...rest } = args;
+		args = { action: ACT[name], ...rest, ...(to === "top" || to === "bottom" ? { edge: to } : to ? { to } : {}) };
+		name = "act";
+	}
+	if (PANEL && !check && !PANEL_TOOLS.has(name)) {
+		missing.push(name);
+		return { outcome: "n/a", ms: 0, text: "", full: "" };
+	}
 	const t0 = performance.now();
 	let timer;
 	const hang = new Promise((resolve) => {
@@ -254,7 +275,8 @@ const lineWith = (output, name) => output.split("\n").find((l) => l.includes(nam
 
 /** A page global or expression, read in the page's own world. */
 const mainJs = async (code) => {
-	const r = await call(client, "run_js", { code, world: "main" });
+	// The probe's check, not the agent's call: on the panel stack it goes through the regular tools.
+	const r = await call(checker ?? client, "run_js", { code, world: "main" }, { check: true });
 	// run_js answers with JSON: {"value": ...} from the bridge, or a bare value.
 	let value = r.full.trim();
 	try {
@@ -275,6 +297,7 @@ const keep = (...calls) => {
 
 async function probe(id, fn) {
 	raw = [];
+	missing = [];
 	let pass = false;
 	let detail;
 	try {
@@ -282,6 +305,7 @@ async function probe(id, fn) {
 	} catch (err) {
 		detail = `harness error: ${err.message}`;
 	}
+	if (missing.length) return void results.push({ id, pass: false, na: true, detail: `n/a: needs ${[...new Set(missing)].join(", ")}, which the panel leaves out`, output: "" });
 	results.push({ id, pass: Boolean(pass), detail, output: raw.join("\n---\n").slice(0, RAW_MAX) });
 }
 
@@ -291,7 +315,10 @@ let exitCode = 0;
 try {
 	fx = await launchFixtureBrowser({ extensionDir: EXTENSION });
 	await fx.waitConnected();
-	({ client } = await mcpClient({ ...fx.env, TABKYRA_SESSION: "perception" }));
+	// One bridge session for both clients: the same client name and session name.
+	const env = { ...fx.env, TABKYRA_SESSION: "perception", TABKYRA_CLIENT_NAME: "perception" };
+	({ client } = await mcpClient(env));
+	if (PANEL) ({ client: checker } = await mcpClient(env, { name: "perception-check", stack: "mcp" }));
 	const { tools } = await client.listTools();
 	const toolNames = new Set(tools.map((t) => t.name));
 	keep(await call(client, "tabs_context"));
@@ -411,6 +438,7 @@ try {
 	});
 
 	await probe("api-body", async () => {
+		if (PANEL) missing.push("read_network");
 		const id = network?.full.match(/"?(?:requestId|request_id|id)"?\s*[:=]\s*"?([\w.-]+)"?/i)?.[1];
 		if (!id) return { pass: false, detail: `no request id in output: ${(network?.full ?? "").slice(0, 300)}` };
 		const body = await call(client, "read_network", { requestId: id });
@@ -420,6 +448,7 @@ try {
 	});
 
 	await probe("embedded-map", async () => {
+		if (PANEL) missing.push("inspect_page");
 		if (!toolNames.has("inspect_page")) return { pass: false, detail: "no inspect_page tool" };
 		await go("/embedded");
 		const page = await call(client, "inspect_page", {});
@@ -596,13 +625,14 @@ try {
 
 	const width = Math.max(...results.map((r) => r.id.length));
 	for (const r of results)
-		console.log(`${r.id.padEnd(width)}  ${r.pass ? "pass" : "FAIL"}  ${r.detail.replace(/\s+/g, " ").slice(0, 160)}`);
+		console.log(`${r.id.padEnd(width)}  ${r.na ? "n/a " : r.pass ? "pass" : "FAIL"}  ${r.detail.replace(/\s+/g, " ").slice(0, 160)}`);
 	const score = results.filter((r) => r.pass).length;
-	console.log(`score: ${score}/${order.length}`);
+	const na = results.filter((r) => r.na).length;
+	console.log(`score: ${score}/${order.length - na}${na ? ` (${na} n/a on the panel's tools)` : ""}`);
 	if (OUT)
 		writeFileSync(
 			OUT,
-			`${JSON.stringify({ at: new Date().toISOString(), extension: EXTENSION, score, total: order.length, probes: results }, null, 2)}\n`,
+			`${JSON.stringify({ at: new Date().toISOString(), extension: EXTENSION, stack: PANEL ? "panel" : "mcp", score, total: order.length - na, na, probes: results }, null, 2)}\n`,
 		);
 } catch (err) {
 	console.error(err);
