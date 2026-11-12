@@ -4,7 +4,7 @@
 // came back 40% off the left edge).
 //
 // Each case opens its own window, asserts the state the case is about (macOS filled it, Polycarp filled it, the overview
-// let it go over no workspace, it was let go hanging off the edge), and asserts the trace lines that show Polycarp took
+// let it go over no workspace, it was let go hanging off the edge, macOS filled it and it must hold), and asserts the trace lines that show Polycarp took
 // part, so a case can't pass without testing anything; an unreadable trace fails. The judged drags never stop at the top,
 // where Polycarp's overview would take the drag. Samples go next to the trace.
 //
@@ -59,7 +59,12 @@ func missing(_ trace: [String], _ wanted: [[String]]) -> [[String]] {
 func macOSFillDrag(_ id: UInt32) -> [[String]] { [["topDrag moving window=\(id)"], ["fill window=\(id) drag left to macOS"]] }
 /// The overview opened over `id`, let it go over no workspace, and the window went back to where it was.
 func overviewPutBack(_ id: UInt32) -> [[String]] {
-    [["topDrag overview open", "window=\(id)"], ["release target=none"], ["drag end window=\(id) back to its frame before the overview"]]
+    [["topDrag overview open", "window=\(id)"], ["topDrag release at=", "target=none"], ["drag end window=\(id) back to its frame before the overview"]]
+}
+/// The first frame in `frames` that moved or resized more than `slack` from `held`, by index: a window macOS filled must
+/// stay filled (2026-11-12 10:32:29.69: Helium went from (0, 35, 1512x949) to (0, 540, 1512x444) with no input).
+func firstChange(from held: CGRect, in frames: [CGRect?], slack: CGFloat = 2) -> Int? {
+    frames.firstIndex { f in !backNear(f, held, within: slack) }
 }
 /// ⌃⌘F goes to whatever app is frontmost, so the probe posts it only into its own key window.
 func mayPostKey(frontmost: pid_t?, me: pid_t, probeWindowIsKey: Bool) -> Bool { frontmost == me && probeWindowIsKey }
@@ -109,7 +114,7 @@ if CommandLine.arguments.contains("--self-test") {
     expect(missing(seen, macOSFillDrag(7)).isEmpty, "case 1 passes on the lines Polycarp logs")
     expect(missing([], macOSFillDrag(7)).count == 2, "case 1 fails on an empty trace")
     expect(!missing(["10:32:04.100 topDrag moving window=8"] + seen.dropFirst(), macOSFillDrag(7)).isEmpty, "case 1 fails on another window's drag")
-    let putBack = ["10:31:56.9 topDrag overview open after 410 ms window=7", "10:32:00.279 topDrag release target=none",
+    let putBack = ["10:31:56.9 topDrag overview open after 410 ms window=7", "10:32:00.279 topDrag release at=0,498 target=none",
                    "10:32:00.5 drag end window=7 back to its frame before the overview: (-608,478) to (65,35)"]
     expect(missing(putBack, overviewPutBack(7)).isEmpty, "case 3 passes when the correction ran")
     expect(missing(Array(putBack.prefix(2)), overviewPutBack(7)).count == 1, "case 3 fails when the correction never ran")
@@ -117,6 +122,12 @@ if CommandLine.arguments.contains("--self-test") {
     expect(!backNear(CGRect(x: -608, y: 478, width: 900, height: 600), CGRect(x: 65, y: 35, width: 900, height: 600), within: 40), "left off screen is not back")
     expect(!backNear(nil, CGRect(x: 65, y: 35, width: 900, height: 600), within: 40), "no frame is not back")
     expect(traceSince(0, in: URL(fileURLWithPath: "/nonexistent/trace.log")) == nil, "an unreadable trace is nil, not an empty pass")
+    // The lower-half jump: filled, then moved and resized with nothing pressed.
+    let filled = CGRect(x: 0, y: 35, width: 1512, height: 949)
+    let jumped: [CGRect?] = [filled, filled, CGRect(x: 0, y: 35, width: 1513, height: 948), CGRect(x: 0, y: 540, width: 1512, height: 444), filled]
+    expect(firstChange(from: filled, in: jumped) == 3, "a filled window that jumps to the lower half fails at the jump")
+    expect(firstChange(from: filled, in: [filled, filled, filled]) == nil, "a filled window that holds passes")
+    expect(firstChange(from: filled, in: [filled, nil]) == 1, "a window that can't be read fails")
     // Review of #150, F3: ⌃⌘F only into the probe's own key window.
     expect(mayPostKey(frontmost: 42, me: 42, probeWindowIsKey: true), "frontmost and key: posts")
     expect(!mayPostKey(frontmost: 99, me: 42, probeWindowIsKey: true), "another app frontmost: no key")
@@ -310,7 +321,9 @@ DispatchQueue.global().async {
     let before2 = traceEnd()
     var posted = false
     DispatchQueue.main.sync {
-        // Checked and posted in one main-thread turn, so nothing can take focus in between.
+        // Checked just before the post, in one main-thread turn. The window server delivers the key later, so focus could
+        // still move in between; the check after the post catches that, though it can't call the key back. Posting to
+        // the probe's own pid instead would skip Polycarp's session tap, and with it the fill under test.
         guard mayPostKey(frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier, me: getpid(), probeWindowIsKey: w2.isKeyWindow) else { return }
         for down in [true, false] {
             let e = CGEvent(keyboardEventSource: CGEventSource(stateID: .hidSystemState), virtualKey: 3, keyDown: down)
@@ -320,7 +333,13 @@ DispatchQueue.global().async {
         posted = true
     }
     expect(posted, "polycarp-fill: the probe's window was frontmost and key, so ⌃⌘F could go only to it")
-    if posted { usleep(1_200_000) }
+    if posted {
+        usleep(200_000)
+        var stillOurs = false
+        DispatchQueue.main.sync { stillOurs = NSWorkspace.shared.frontmostApplication?.processIdentifier == getpid() && w2.isKeyWindow }
+        expect(stillOurs, "polycarp-fill: still frontmost and key once ⌃⌘F was delivered (if not, it may have reached another app)")
+        usleep(1_000_000)
+    }
     let filledByUs = posted && fills(frame(id2)) && traceSince(before2).contains { $0.contains("fill window=\(id2) on") }
     expect(filledByUs, "polycarp-fill: precondition, Polycarp filled the window (frame \(String(describing: frame(id2))))")
     let rec2 = capture("polycarp-fill", seconds: 10)
@@ -382,6 +401,20 @@ DispatchQueue.global().async {
     }
     rec3?.waitUntilExit()
     DispatchQueue.main.sync { w3.close() }
+
+    // Case 5, the lower-half jump (10:32:29.69 and 34.42): macOS fills it by a drag to the top and a release, then the
+    // window must hold that frame for 2 s with nothing pressed.
+    print("macOS fill, then hold 2 s")
+    let (w5, id5) = makeWindow("Polycarp fill-drag probe (fill holds)")
+    let rec5 = capture("fill-holds", seconds: 6)
+    if macOSFill(id5, "fill-holds"), let held = frame(id5) {
+        var frames: [CGRect?] = []
+        for _ in 0..<40 { usleep(50_000); frames.append(frame(id5)) }
+        let changed = firstChange(from: held, in: frames)
+        expect(changed == nil, "fill-holds: the filled frame \(held) held 2 s\(changed.map { ", changed after \(($0 + 1) * 50) ms to \(String(describing: frames[$0]))" } ?? "")")
+    }
+    rec5?.waitUntilExit()
+    DispatchQueue.main.sync { w5.close() }
 
     print(failures.isEmpty ? "PASS" : "FAIL: \(failures.count)")
     exit(failures.isEmpty ? 0 : 1)

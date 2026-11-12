@@ -51,20 +51,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func correctOnceStill(_ id: WindowID, after end: DragEnd) {
         guard !end.dropped else { return }
         clamping.removeValue(forKey: id)?.invalidate()
-        var last = TopDragWatcher.bounds(of: id)
-        var looks = 0, still = 0
+        var watch = SettleWatch(from: TopDragWatcher.bounds(of: id))
         clamping[id] = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { [weak self] timer in
-            looks += 1
             let now = TopDragWatcher.bounds(of: id)
-            still = now == last ? still + 1 : 0
-            last = now
-            let heldStill = looks >= 5 && still >= 3
-            guard heldStill || looks >= 25 else { return }
+            let verdict = watch.look(now)
+            guard verdict != .wait else { return }
             timer.invalidate()
             guard let self, self.clamping[id] === timer else { return }
             self.clamping[id] = nil
-            guard heldStill, now != nil else {
-                if end.coveredFrom != nil { Trace.log("drag end window=\(id) still moving after \(looks * 20) ms; left alone") }
+            guard verdict == .still, now != nil else {
+                if end.coveredFrom != nil { Trace.log("drag end window=\(id) still moving after \(watch.looks * 20) ms; left alone") }
                 return
             }
             self.spaces.correctAfterDrag(id, end: end)
@@ -98,8 +94,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.cancelSettling(id)
             self.clamping.removeValue(forKey: id)?.invalidate()
         }
-        t.onRelease = { [weak self] grab, drop in
-            guard let self, let n = self.viewer.endCarrying(), drop else { return false }
+        t.overviewCovers = { [weak self] p in self?.viewer.carryCovers(p) ?? false }
+        t.onRelease = { [weak self] grab, p in
+            guard let self, let n = self.viewer.endCarrying(at: p), p != nil else { return false }
             self.dropCarried(grab, on: n)
             return true
         }
