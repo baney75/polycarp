@@ -30,6 +30,9 @@ public enum HandsErrorCode: String, Codable, CaseIterable, Sendable {
     case staleRef = "stale_ref"
     /// The ref matched more than one plausible element now.
     case ambiguousTarget = "ambiguous_target"
+    /// A bare row number (`5`) that means different elements in the latest snapshot and an earlier one of this session.
+    /// Nothing was sent; `next_call` carries the full ref from the latest snapshot.
+    case staleBareRow = "stale_bare_row"
     /// The element can't do that (no such action, not settable).
     case notSupported = "not_supported"
     /// The engine acted, but what it read back contradicts the request.
@@ -52,7 +55,7 @@ public enum HandsErrorCode: String, Codable, CaseIterable, Sendable {
     public var defaultRetry: HandsRetry {
         switch self {
         case .staleRef, .unknownRef, .ambiguousTarget, .ambiguousWindow: return .afterSnapshot
-        case .timeout, .notRunning, .appNotFound, .windowNotFound, .badArguments, .permissionDenied, .ambiguous, .inUse: return .safe
+        case .timeout, .notRunning, .appNotFound, .windowNotFound, .badArguments, .permissionDenied, .ambiguous, .inUse, .staleBareRow: return .safe
         case .outsideAgentWorkspace, .agentWorkspaceOff, .notSupported, .actionFailed, .unverified, .engineError, .needsLend, .needsSandbox: return .never
         }
     }
@@ -73,9 +76,18 @@ public struct HandsError: Codable, Equatable, Error, Sendable {
     public var message: String
     public var retry: HandsRetry
     public var suggestion: String
+    /// The exact call to make next, `{"tool","arguments"}`: a read, or the same verb with a full ref when nothing was sent.
+    public var nextCall: JSONValue?
 
-    public init(_ code: HandsErrorCode, _ message: String, suggestion: String, retry: HandsRetry? = nil) {
-        self.code = code; self.message = message; self.suggestion = suggestion; self.retry = retry ?? code.defaultRetry
+    enum CodingKeys: String, CodingKey { case code, message, retry, suggestion, nextCall = "next_call" }
+
+    public init(_ code: HandsErrorCode, _ message: String, suggestion: String, retry: HandsRetry? = nil, nextCall: JSONValue? = nil) {
+        self.code = code; self.message = message; self.suggestion = suggestion; self.retry = retry ?? code.defaultRetry; self.nextCall = nextCall
+    }
+
+    /// `{"tool": "snapshot", "arguments": {...}}`: tool is the MCP name without the `computer_` prefix a connector adds.
+    public static func call(_ tool: String, _ arguments: [String: JSONValue]) -> JSONValue {
+        .object(["tool": .string(tool.replacingOccurrences(of: "-", with: "_")), "arguments": .object(arguments)])
     }
 }
 

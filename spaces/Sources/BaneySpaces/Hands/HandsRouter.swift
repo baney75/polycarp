@@ -64,6 +64,10 @@ final class HandsRouter {
     private static let refusedLock = NSLock()
     private var snaps: [String: Snap] = [:]
     private let lock = NSLock()
+    /// Each session's reads as rows: what `since: "latest"` compares with, and what a bare row number means.
+    private var rowsMemory = SnapshotRowsMemory()
+    private let rowsLock = NSLock()
+    private func withRows<T>(_ f: (inout SnapshotRowsMemory) -> T) -> T { rowsLock.lock(); defer { rowsLock.unlock() }; return f(&rowsMemory) }
 
     /// Files an agent may hand to an app live here.
     static var handoffFolder: URL { HandsEngine.home.appendingPathComponent("handoff", isDirectory: true) }
@@ -86,6 +90,13 @@ final class HandsRouter {
         if HandsTools.userOnly.contains(req.verb) { return .failure(HandsParse.askedForLend(req.string("app"))) }
         if let e = AgentAccessGate.refusal(verb: req.verb, mode: access) { return .failure(e) }
         if remote, let e = WorkspaceVerbs.connectorRefusal(verb: req.verb) { return .failure(e) }
+        var req = req
+        if let r = req.string("ref"), let n = SnapshotRows.bareNumber(r) {
+            switch bareRef(n, req) {
+            case .success(let full): req.args["ref"] = .string(full)
+            case .failure(let e): return .failure(e)
+            }
+        }
         if req.verb != "windows", req.verb != "workspaces", req.verb != "open", let problem = HandsEngine.shared.permissionProblem() { return .failure(problem) }
         switch req.verb {
         case "windows": return windows(session: req.session ?? "")
@@ -400,6 +411,7 @@ final class HandsRouter {
                 var o = data.object ?? [:]
                 o["target"] = targetJSON(w, scope)
                 if let note { o["note"] = .string(note) }
+                var notes = note.map { [$0] } ?? []
                 // A sheet on this window: its elements are part of the tree, marked, so the agent can answer it.
                 if let tree = o["tree"] {
                     let (marked, sheets) = SheetMark.mark(tree)
@@ -407,9 +419,31 @@ final class HandsRouter {
                         o["tree"] = marked
                         o["sheets"] = .int(sheets)
                         o["sheet_note"] = "a sheet is up on this window and blocks it: its elements are marked sheet and in_sheet"
+                        notes.append("a sheet is up on this window and blocks it; its rows are marked sheet")
                     }
                 }
-                return .success(.object(o))
+                if o["complete"]?.bool == false { notes.append("the read stopped before the end of the tree; pass a larger depth for the rest") }
+                let sid = o["snapshot_id"]?.string ?? ""
+                let rows = SnapshotRows.rows(of: o["tree"] ?? .null)
+                let session = req.session ?? ""
+                let view = "\(req.bool("interactive"))|\(req.bool("compact"))|\(req.int("depth") ?? 10)"
+                let previous = withRows { m -> SnapshotRowsMemory.Read? in
+                    defer { m.remember(session: session, window: w.id, view: view, snapshot: sid, rows: rows, now: Date()) }
+                    return m.previous(session: session, window: w.id, view: view)
+                }
+                guard req.snapshotFormat == "rows" else { return .success(.object(o)) }
+                let text: String
+                if req.string("since") == "latest", let previous {
+                    text = SnapshotRows.renderSince(SnapshotRows.changes(from: previous.rows, to: rows), new: rows, snapshot: sid, previous: previous.snapshot,
+                                                    window: w.id, query: req.string("query"), max: req.int("max_elements"))
+                } else {
+                    if req.string("since") != nil { notes.append("no earlier read of this window in this session, so this is all of it") }
+                    text = SnapshotRows.render(rows, snapshot: sid, window: w.id, title: o["window"]?["title"]?.string ?? "", app: w.app,
+                                               refs: o["ref_count"]?.int ?? rows.compactMap(\.number).count, notes: notes,
+                                               query: req.string("query"), max: req.int("max_elements"))
+                }
+                return .success(.object(["format": "rows", "text": .string(text), "snapshot_id": .string(sid), "window": .int(Int(w.id)),
+                                         "ref_count": o["ref_count"] ?? .null, "target": targetJSON(w, scope)]))
             }
         }
     }
@@ -435,12 +469,36 @@ final class HandsRouter {
                     for c in o["children"]?.array ?? [] { walk(c) }
                 }
                 if let tree = data["tree"] { walk(tree) }
+                if let sid = data["snapshot_id"]?.string {
+                    let rows = SnapshotRows.rows(of: data["tree"] ?? .null)
+                    withRows { $0.remember(session: req.session ?? "", window: w.id, view: "find", snapshot: sid, rows: rows, now: Date()) }
+                }
                 return .success(.object(["snapshot_id": data["snapshot_id"] ?? .null, "window": .int(Int(w.id)), "count": .int(found.count), "matches": .array(found)]))
             }
         }
     }
 
     // MARK: refs
+
+    /// The full ref a bare row number stands for in this session, or why it can't stand for one, with the call to make instead.
+    private func bareRef(_ n: Int, _ req: HandsRequest) -> Result<String, HandsError> {
+        switch withRows({ $0.resolve(bare: n, session: req.session ?? "", now: Date()) }) {
+        case .ref(let full): return .success(full)
+        case .refused(let code, let message, let latest):
+            guard let latest else {
+                return .failure(HandsError(code, message, suggestion: "Call windows for the window id, then snapshot it and use its row numbers.", retry: .afterSnapshot,
+                                           nextCall: HandsError.call("windows", [:])))
+            }
+            if code == .staleBareRow {
+                var args = req.args
+                args["ref"] = .string("@\(latest.snapshot):e\(n)")
+                return .failure(HandsError(code, message, suggestion: "Nothing was sent. Make next_call to act on row \(n) of the latest snapshot, or pass the other snapshot's full ref.", retry: .safe,
+                                           nextCall: HandsError.call(req.verb, args)))
+            }
+            return .failure(HandsError(code, message, suggestion: "Nothing was sent. Read the window again and use a row number it prints.", retry: .afterSnapshot,
+                                       nextCall: HandsError.call("snapshot", ["window": .int(Int(latest.window))])))
+        }
+    }
 
     /// A ref is good for the snapshot that printed it: that snapshot's window, in that process. Any other
     /// window, a window that changed process, or one that left the agent's scope fails here.

@@ -213,6 +213,9 @@ fn hands_request(verb: &str, mut a: Vec<String>) -> Result<Value, Envelope> {
     }
     match verb {
         "snapshot" => {
+            if let Some(e) = baneyspaces_core::mcp::rows_flags_refusal(&a) {
+                return Err(e);
+            }
             args["interactive"] =
                 json!(take_switch(&mut a, "-i") | take_switch(&mut a, "--interactive"));
             args["compact"] = json!(take_switch(&mut a, "--compact"));
@@ -454,5 +457,7 @@ mod tests {
         let r = request(v(&["agent", "snapshot", "--window", "w-1", "-i"])).unwrap();
         assert_eq!(r["args"]["window"], "w-1");
         assert_eq!(r["args"]["interactive"], true);
+        let e = request(v(&["agent", "snapshot", "--window", "W", "--query", "Save"])).unwrap_err();
+        assert_eq!(e.error.as_ref().map(|e| e.code.as_str()), Some("not_supported"), "rows are macOS only for now");
     }
 }
