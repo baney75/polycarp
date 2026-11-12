@@ -110,7 +110,7 @@ public enum HandsTools {
             refParam,
             HandsParam("option", .string, "The text of the option to choose.", required: true, positional: true, rest: true),
         ], acts: true),
-        HandsTool(verb: "menu", summary: "Run a menu-bar command of the window's app by its titles, without opening the menu on screen. Only for a copy of the app Polycarp started, with this its one window. Example: {\"window\":4211,\"path\":\"Format > Font > Bold\"}", params: [
+        HandsTool(verb: "menu", summary: "Run a menu-bar command of the window's app by its titles, without opening the menu on screen. Only in your own copy (one your `open` started), with this its one window; never the Apple menu, Quit, Hide Others or Services, and an Open or Save panel it raises is cancelled. Example: {\"window\":4211,\"path\":\"Format > Font > Bold\"}", params: [
             HandsParam("window", .integer, "Window id from `windows`.", required: true),
             HandsParam("path", .string, "Menu titles from the menu bar down, separated by >.", required: true, positional: true, rest: true),
         ], acts: true),

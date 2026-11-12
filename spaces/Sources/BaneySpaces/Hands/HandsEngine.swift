@@ -228,9 +228,9 @@ final class HandsEngine {
     }
 
     /// The same read, directly, for a caller already on the process's queue (`transaction`). Never queues, so it cannot wait on itself.
-    func snapshotInline(window w: HandsWindow, interactive: Bool, compact: Bool, depth: UInt8, evidence: Bool = false) -> Reply {
+    func snapshotInline(window w: HandsWindow, interactive: Bool, compact: Bool, depth: UInt8, evidence: Bool = false, surface: Int32 = surfaceWindow) -> Reply {
         precondition(isOnQueue(of: w.pid), "snapshotInline runs inside a transaction")
-        return doSnapshot(windowID: w.id, interactive: interactive, compact: compact, depth: depth, evidence: evidence)
+        return doSnapshot(windowID: w.id, interactive: interactive, compact: compact, depth: depth, evidence: evidence, surface: surface)
     }
 
     private func doSnapshot(windowID: UInt32, interactive: Bool, compact: Bool, depth: UInt8, evidence: Bool, surface: Int32 = surfaceWindow) -> Reply {
@@ -291,14 +291,15 @@ final class HandsEngine {
     }
 
     /// The same action, directly, for a caller already on the process's queue (`transaction`).
-    func actInline(window w: HandsWindow, ref: String, kind: Kind, text: String? = nil, check: @escaping Check, cancelled: () -> Bool) -> Reply {
+    /// `evidence`: a ref from an evidence read in the same transaction (a menu bar read that must not cost the agent's refs).
+    func actInline(window w: HandsWindow, ref: String, kind: Kind, text: String? = nil, evidence: Bool = false, check: @escaping Check, cancelled: () -> Bool) -> Reply {
         precondition(isOnQueue(of: w.pid), "actInline runs inside a transaction")
-        return doAct(ref: ref, kind: kind, text: text, direction: 1, amount: 3, check: check, cancelled: cancelled)
+        return doAct(ref: ref, kind: kind, text: text, direction: 1, amount: 3, evidence: evidence, check: check, cancelled: cancelled)
     }
 
-    private func doAct(ref: String, kind: Kind, text: String?, direction: Int32, amount: UInt32, check: @escaping Check, cancelled: () -> Bool) -> Reply {
+    private func doAct(ref: String, kind: Kind, text: String?, direction: Int32, amount: UInt32, evidence: Bool = false, check: @escaping Check, cancelled: () -> Bool) -> Reply {
             if let e = ready() { return .failed(e) }
-            guard let adapter else { return .failed(HandsError(.engineError, "the engine isn't ready", suggestion: "Check `polycarp-spaces doctor`.", retry: .never)) }
+            guard let adapter = evidence ? evidenceAdapter : adapter else { return .failed(HandsError(.engineError, "the engine isn't ready", suggestion: "Check `polycarp-spaces doctor`.", retry: .never)) }
             var out: UnsafeMutablePointer<CChar>?
             var action = AdAction()
             action.kind = kind.rawValue

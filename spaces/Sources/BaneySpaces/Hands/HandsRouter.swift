@@ -557,10 +557,7 @@ final class HandsRouter {
         return nil
     }
 
-    /// A menu command is a click on its menu-bar ref, with the menu's own rule (HandsRouter+Menu.swift).
-    func clickMenuItem(_ req: HandsRequest, rule: @escaping HandsEngine.Check) -> HandsEnvelope { act(req, .click, "menu", also: rule) }
-
-    private func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, text: String? = nil, direction: Int32 = 1, amount: UInt32 = 3, also: HandsEngine.Check? = nil) -> HandsEnvelope {
+    private func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, text: String? = nil, direction: Int32 = 1, amount: UInt32 = 3) -> HandsEnvelope {
         guard let ref = req.string("ref") else { return .failure(HandsError(.badArguments, "ref is missing", suggestion: "usage: polycarp-spaces agent \(name) <ref>", retry: .safe)) }
         let session = req.session ?? ""
         switch resolve(ref, session: session) {
@@ -598,7 +595,7 @@ final class HandsRouter {
                 return clickRow(w, scope: scope, ref: ref, plan: plan, session: session, childrenBefore: childrenBefore)
             }
             // The scope and ref checks run again on the process queue, at the moment the call executes.
-            let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session, also: also))
+            let reply = HandsEngine.shared.act(window: w, ref: ref, kind: kind, text: text, direction: direction, amount: amount, check: actingCheck(w, ref: ref, verb: name, delivery: .headlessAX, session: session))
             switch reply {
             case .failed(let e): return .failure(e)
             case .ok(let engine):
