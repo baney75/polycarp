@@ -140,34 +140,38 @@ enum RunningApps {
 }
 
 enum Windows {
-    /// Apps that stopped answering Accessibility, and until when to leave them alone. One hung
-    /// app costs a full timeout per call; skipping it keeps every switch quick.
-    private static var unresponsiveUntil: [pid_t: Date] = [:]
-    /// How many times in a row each app failed to answer. Each strike waits longer before
-    /// asking again (5 s, 30 s, 2 min, 10 min), so a frozen app costs a timeout rarely.
-    private static var strikes: [pid_t: Int] = [:]
+    /// Apps that stopped answering Accessibility, and when to ask them again (`AXBench`): one hung app costs a full
+    /// timeout per call, so skipping it keeps every switch quick; one still starting is asked again within a second.
+    private static var bench = AXBench()
     private static let unresponsiveLock = NSLock()
 
     static func isResponsive(_ pid: pid_t) -> Bool {
         unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
-        guard let until = unresponsiveUntil[pid] else { return true }
-        if until < Date() { unresponsiveUntil[pid] = nil; return true }
-        return false
+        return !bench.isBenched(pid, now: Date())
     }
 
     static func markUnresponsive(_ pid: pid_t) {
-        unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
-        let backoff: [TimeInterval] = [5, 30, 120, 600]
-        let n = strikes[pid, default: 0]
-        strikes[pid] = n + 1
-        unresponsiveUntil[pid] = Date().addingTimeInterval(backoff[min(n, backoff.count - 1)])
+        let app = NSRunningApplication(processIdentifier: pid)
+        let age = app?.launchDate.map { -$0.timeIntervalSinceNow }
+        unresponsiveLock.lock()
+        let now = Date()
+        let already = bench.isBenched(pid, now: now)
+        let delay = bench.missed(pid, age: age, now: now)
+        unresponsiveLock.unlock()
+        // Which app went unseen and for how long: a window it opens meanwhile isn't placed until it answers.
+        if !already { Trace.log(String(format: "accessibility: %@ (pid %d) didn't answer; asked again in %.1fs", app?.localizedName ?? "app", pid, delay)) }
     }
 
     /// The app answered, or the person brought it forward: give it a clean slate.
     static func markResponsive(_ pid: pid_t) {
         unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
-        unresponsiveUntil[pid] = nil
-        strikes[pid] = nil
+        bench.answered(pid)
+    }
+
+    /// Seconds until the first benched app may be asked again, for the retry timer.
+    static func retryDelay() -> TimeInterval {
+        unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
+        return bench.retryDelay(now: Date())
     }
 
     /// Every standard window of every regular app except BaneySpaces itself. Dialogs, panels,

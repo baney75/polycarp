@@ -1163,9 +1163,10 @@ Agents could not attach a file to a form or keep a file a page offers. One tool,
 
 ## D41. Input tools wait for the page to settle, capped at 2.5 seconds (Claude, 2026-11-11)
 
-Gap analysis item 4. `navigate`, `click`, `type`, `press`, `fill` and the end of `actions` wait, after their action, until the
+Gap analysis item 4. `navigate`, `click`, `type`, `press`, `fill`, `scroll` and the end of `actions` wait, after their action, until the
 page has been quiet for 300 ms or 2.5 s have passed; `wait {until:"settled"}` waits for 500 ms of quiet, up to `timeoutMs`
-(default 10 s). Quiet means all three (`src/browser/settle.ts`):
+(default 10 s). `drag` waits for 200 ms of quiet, up to 0.6 s, with Network left as it is. Quiet means all three
+(`src/browser/settle.ts`):
 - **No request the page waits on.** Documents, scripts, stylesheets, fetch and XHR from the tab's debugger Network events;
   images, media, fonts, pings, EventSource and websockets don't count. Only requests started after the action began count,
   and only while they are younger than 2 s (5 s for `wait`): a long poll or a stream would otherwise hold every call to its cap.
@@ -1189,7 +1190,7 @@ never moves that mark: a download or a 204 asks for one that never commits, and 
 What it can never do: hold an action longer than the cap plus that 0.5 s (a timer ends the wait at the cap whatever the page
 or the debugger does, and one DOM probe gets at most 0.4 s), or fail an action that already ran. A box the page opens while
 it settles is the action's result, with the dialog note, for every tool that settles. A page Polycarp may not script (the
-Chrome Web Store, the PDF viewer) is judged by its requests alone after two refused probes, counted per document, so a page reached from there is probed again; a probe that times out means the
+Chrome Web Store, the PDF viewer) is judged by its requests alone after two refused probes, counted per document (the main frame's loaderId, so a reload starts over and a hash change does not), so a page reached from there is probed again; a probe that times out means the
 page's main thread is busy (`waitingOn: "loading"`). A loader counts only when a person could see it: an ancestor's opacity or
 visibility hides it, and so does being outside the window on any side. A landing on the approval page (#94) is blanked
 before anything runs in it, so the wait never starts there. A redirect can still commit there after the wait last read
@@ -1261,11 +1262,25 @@ reports the difference:
 - `url` and `title` when they changed; `tabsOpened` (id and URL) and `tabsClosed`; `focus` when it moved somewhere other
   than the control the action went to.
 - `appeared`, `changed` and `gone`: controls with their ref, role and name, as `read_page` lists them. The same element keeps
-  its ref, so a listed ref works at once. An element that now shows something else (a reused row) is listed as gone, since its old ref fails. A changed line says what changed (name,
+  its ref, so a listed ref works at once. An element that now shows something else (a reused row, a live counter) gets a new
+  ref; when the look finds the same element under it, that is one changed line naming the old ref right after the new one
+  (`e9 (was e5) ...`), since that ref fails now. An identical node put in a control's place (a form re-render) is a new
+  element, so it is listed as appeared and the old ref as gone, never paired by role and place. A scroll pairs nothing: a
+  list that recycles its rows shows new items in old elements. Anything else whose old ref fails is listed as gone. A changed line says what changed (name,
   value, states).
 - `newText`: up to 3 new lines of page text, 100 characters each (`moreText` counts the rest); a line that only repeats a
   listed control's name is left out. `text` says the text changed when no line is new.
-- A new document is summed up (`page: "new page, N controls"`), not listed: every ref is new and the list would be the page.
+- A full navigation is a new document: `navigate` says `page: "new page; read_page lists it"` without looking, since every
+  ref is new and the list would be the page; back, forward and a jump to a hash are compared. A URL that loads no document
+  (a 204, a download) leaves the main frame's loader as it was (`Page.getFrameTree`), and then the report says `"no new page
+  loaded"`. Tabs the load opened or closed are in both. A load that timed out says
+  `"still loading"`, so `navigate` always returns `changes`. `actions` whose step changed the current tab says `"moved to tab
+  N"`: the look was on the first tab; a batch that names a tab and only waits stays on it. `drag` waits briefly (0.6 s cap,
+  0.2 s quiet, Network left as it is), so a drop that reorders a frame or a transition later is in the report, at most about
+  2.1 s with the looks; `scroll` keeps the full wait, since a list loads its
+  next rows after the scroll, so a scroll on a page that never goes quiet takes at most about 4.5 s (Network on 0.5 s, the
+  2.5 s cap, two looks of 0.75 s), held by a test in `test/changes.test.mjs` that runs each part to its full time and allows
+  300 ms for the test machine.
   With nothing to report the field is `"nothing changed"`.
 
 Bounds: each look is capped at 0.75 s, so the report adds at most 1.5 s to an action (`changes.test.mjs` holds that

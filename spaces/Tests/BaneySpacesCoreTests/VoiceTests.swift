@@ -537,4 +537,20 @@ final class InstallerLoginPathTests: XCTestCase {
         script("exit 3", at: failing)
         XCTAssertNil(BrowserBundle.readLoginPath(shell: failing, timeout: 3))
     }
+
+    /// 11-12, run 3 of 5 at load 9: the good shell answered nil at its 3 s deadline. The read waited for a thread from the
+    /// global pool, which the parallel tests had filled. Every global thread busy here: the answer must still come.
+    func testTheLoginPathReadsEvenWhenEveryGlobalThreadIsBusy() {
+        let good = temp().appendingPathComponent("good-shell")
+        script("printf %s /Users/x/bin:/usr/bin", at: good)
+        let release = DispatchSemaphore(value: 0)
+        let started = DispatchSemaphore(value: 0)
+        for _ in 0..<256 { DispatchQueue.global().async { started.signal(); release.wait() } }
+        // At least the pool's width is blocked before the read starts.
+        for _ in 0..<32 { _ = started.wait(timeout: .now() + 2) }
+        defer { for _ in 0..<256 { release.signal() } }
+        let t0 = Date()
+        XCTAssertEqual(BrowserBundle.readLoginPath(shell: good, timeout: 3), "/Users/x/bin:/usr/bin")
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 3)
+    }
 }

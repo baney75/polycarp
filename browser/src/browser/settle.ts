@@ -42,6 +42,8 @@ const lastEnd = new Map<number, number>();
  * commits, and the old page goes on with its own loader.
  */
 const loaders = new Map<number, Map<string, string>>();
+/** Each tab's main document (its loaderId): a reload of the same URL is a new one. */
+const mainDoc = new Map<number, string>();
 let installed = false;
 
 function install(): void {
@@ -68,8 +70,9 @@ function install(): void {
 			map.set(id, { type, at, frameId, loaderId });
 			if (map.size > 500) map.delete(map.keys().next().value as string);
 		} else if (method === "Page.frameNavigated") {
-			const frame = (params as { frame?: { id?: string; loaderId?: string } }).frame;
+			const frame = (params as { frame?: { id?: string; loaderId?: string; parentId?: string } }).frame;
 			if (!frame?.id || !frame.loaderId) return;
+			if (!frame.parentId) mainDoc.set(tabId, frame.loaderId);
 			const frames = loaders.get(tabId) ?? new Map<string, string>();
 			loaders.set(tabId, frames);
 			frames.set(frame.id, frame.loaderId);
@@ -85,6 +88,7 @@ function install(): void {
 		pending.delete(tabId);
 		lastEnd.delete(tabId);
 		loaders.delete(tabId);
+		mainDoc.delete(tabId);
 	};
 	chrome.debugger.onDetach.addListener((source) => {
 		if (source.tabId !== undefined) forget(source.tabId);
@@ -250,9 +254,11 @@ export async function settle(
 			if (options.skip?.(tab.pendingUrl || tab.url || ""))
 				return { settled: false, ms: Date.now() - start, stopped: true, guarded: true };
 			const t0 = Date.now();
-			if (tab.pendingUrl || tab.url !== refusedOn) {
+			// Per document, not per URL: a reload is a new document, a hash change is not.
+			const doc = mainDoc.get(tabId) ?? tab.url ?? "";
+			if (tab.pendingUrl || doc !== refusedOn) {
 				refused = 0;
-				refusedOn = tab.url ?? "";
+				refusedOn = doc;
 			}
 			if (tab.pendingUrl) {
 				waitingOn = "navigation";

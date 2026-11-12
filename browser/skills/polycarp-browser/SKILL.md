@@ -123,8 +123,7 @@ and email.
 tabs_context {}
 navigate {"url":"https://example.com/contact"}
 read_page {"filter":"interactive"}     -> e3 textbox "Name", e4 textbox "Email", e5 button "Send"
-fill {"ref":"e3","value":"Ada Lovelace"}
-read_page {"filter":"interactive"}     -> the form re-rendered; Email is now e7, Send is e8
+fill {"ref":"e3","value":"Ada Lovelace"} -> changes: appeared e7 textbox "Email", e8 button "Send"
 fill {"ref":"e7","value":"ada@example.com"}
 click {"ref":"e8"}
 wait {"text":"Thanks"}

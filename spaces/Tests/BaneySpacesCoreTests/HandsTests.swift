@@ -1113,7 +1113,8 @@ final class AgentOpenLaunchTests: XCTestCase {
 
     func testEveryLaterWindowOfAnAgentProcessGoesToTheAgentWorkspaceToo() throws {
         let spaces = try HandsSourceTests.code("Sources/BaneySpaces/Spaces.swift")
-        XCTAssertTrue(spaces.contains("claimed: AgentOwned.shared.pids.contains(w.pid) ? agent : nil"), "a standing rule for the life of the process")
+        XCTAssertTrue(spaces.contains("let owned = AgentOwned.shared.pids.contains(w.pid)") && spaces.contains("claimed: owned ? agent : nil"),
+                      "a standing rule for the life of the process")
     }
 
     func testNewProcessClaimsTakeEveryWindowOfTheLaunch() throws {
