@@ -56,12 +56,16 @@ public struct RemoteCheck: Equatable, Identifiable {
         self.name = name; self.status = status; self.detail = detail; self.pending = pending && status == "fail"
     }
 
-    /// Only the six outside checks, each once, with their words capped: anything else in `checks` is the status read's own list.
+    /// The outside checks the window keeps: the six proof checks, and `probe_cleanup`, the failure `remote test` adds when its
+    /// probe token couldn't be deleted. Without it a failed test whose only failure is that cleanup reads as passed (second-S3).
+    public static let names: Set<String> = RemoteSharedCopy.checkCodes.union(["probe_cleanup"])
+
+    /// Only the outside checks, each once, with their words capped: anything else in `checks` is the status read's own list.
     static func parse(_ json: Any?) -> [RemoteCheck] {
         guard let list = json as? [[String: Any]] else { return [] }
         var seen = Set<String>()
         return list.compactMap { item in
-            guard let name = item["name"] as? String, RemoteSharedCopy.checkCodes.contains(name), !seen.contains(name),
+            guard let name = item["name"] as? String, names.contains(name), !seen.contains(name),
                   let status = item["status"] as? String, ["ok", "warn", "fail"].contains(status) else { return nil }
             seen.insert(name)
             return RemoteCheck(name: name, status: status, detail: String((item["detail"] as? String ?? "").prefix(300)),
@@ -168,8 +172,17 @@ public struct RemoteReport: Equatable {
     /// that waiting fixes, or an older helper's bare `dns` code with the address. remote-copy.ts's answerOn.
     public var answerOn: Bool {
         if state == .on || state == .noBrowserConnected { return true }
+        // The helper gave up waiting and names `remote fix`: a problem to repair, not a name still publishing (second-N2).
+        if needsRepair { return false }
         guard state == .problem, connectorURL != nil else { return false }
         return checks.isEmpty ? code == "dns" : RemoteFlow.waitingOnly(checks)
+    }
+
+    /// The helper's next step is `remote fix`: setup waited out its deadline on a check that was only pending. The window shows
+    /// check_failed with Repair, and takes no connect code from the answer. remote-copy.ts's needsRepair.
+    public var needsRepair: Bool {
+        guard nextKind == "run_command", let command = nextCommand else { return false }
+        return command.range(of: #"(^|\s)remote fix(\s|$)"#, options: .regularExpression) != nil
     }
 
     /// An https address on tailscale.com (or a subdomain, like login.tailscale.com). Anything else is dropped, so a button
@@ -313,9 +326,44 @@ public enum RemoteFlow {
         return now.timeIntervalSince(lastTry ?? firstRefusal) >= funnelRetryEvery
     }
 
-    /// Repair shows only when a check from the internet failed for real and this helper has `remote fix` with something to do.
-    public static func offerRepair(checks: [RemoteCheck], plan: RemoteFixPlan?) -> Bool {
-        checks.contains(where: \.realFailure) && repairAvailable(plan)
+    /// What a setup run's answer puts on screen. A pressed run always shows something: the helper's answer, or that it said
+    /// nothing. A quiet run (the Funnel retry) shows only a real change; no JSON, a timeout or the same refusal leave the screen
+    /// as it is and the retry goes on (first-F2). Nil: change nothing.
+    public static func setupOutcome(_ parsed: RemoteReport?, quiet: Bool) -> RemoteReport? {
+        guard quiet else { return parsed ?? RemoteReport(state: .problem, message: RemoteCopy.helperSilent) }
+        guard let parsed, parsed.state != .funnelNotAllowed else { return nil }
+        return parsed
+    }
+
+    /// The steps whose Turn on needs a Cloudflare name: the name field is on the step, and Turn on sets up that name.
+    public static let cloudflareNameKeys: Set<String> = ["cloudflare_name", "cloudflare_name_refused", "cloudflare_zone"]
+
+    /// What a problem step's Turn on does. A Cloudflare name step asks for the name, never plain setup, which would turn on
+    /// Tailscale (first-F3). Otherwise the last setup runs again, or plain setup, which reuses a route already saved.
+    public static func turnOnStep(key: String, last: RemoteCommand?) -> TurnOnStep {
+        if cloudflareNameKeys.contains(key) { return .askName }
+        if let last, case .setupCloudflare = last { return .run(last) }
+        return .run(.setup)
+    }
+
+    public enum TurnOnStep: Equatable {
+        case run(RemoteCommand)
+        /// Set up the name in the step's field.
+        case askName
+    }
+
+    /// The words above the Cloudflare name field: the step a name problem names, else the plain name step. A problem about
+    /// anything else (a sign-in, a tunnel) has words that don't fit a name field (second-S1).
+    public static func addressStepKey(code: String?, nextKind: String?) -> String {
+        guard let code else { return "cloudflare_name" }
+        let k = RemoteSharedCopy.key(state: "problem", code: code, nextKind: nextKind)
+        return cloudflareNameKeys.contains(k) || k == "cloudflare_dns" ? k : "cloudflare_name"
+    }
+
+    /// Repair shows only when a check from the internet failed for real, or the answer names `remote fix` (second-N2), and this
+    /// helper has `remote fix` with something to do.
+    public static func offerRepair(checks: [RemoteCheck], plan: RemoteFixPlan?, answer: RemoteReport? = nil) -> Bool {
+        (checks.contains(where: \.realFailure) || answer?.needsRepair == true) && repairAvailable(plan)
     }
 
     /// This helper has `remote fix` (feature-detected) and its plan has something in it. remote-flow.ts's repairAvailable.
@@ -452,6 +500,45 @@ public enum RemoteCommand: Equatable {
     }
 }
 
+/// The Funnel retry's clock: when the refusals began, the last try, the admin page opened, and whether ten minutes ran out.
+/// Leaving Settings or switching tab pauses it; coming back to a step that still refuses Funnel resumes it, without opening
+/// the admin page again (first-F1).
+public struct FunnelRetry: Equatable {
+    public private(set) var firstRefusal: Date?
+    public private(set) var lastTry: Date?
+    public private(set) var openedAdmin: URL?
+    public private(set) var gaveUp = false
+    public init() {}
+
+    /// Setup said Funnel isn't allowed. Returns the page to open: once per refusal run, since allowing Funnel is the step.
+    public mutating func refused(admin: URL?, now: Date) -> URL? {
+        if firstRefusal == nil { firstRefusal = now; gaveUp = false }
+        guard let admin, openedAdmin != admin else { return nil }
+        openedAdmin = admin
+        return admin
+    }
+
+    /// The window is back. True when the last answer still refuses Funnel: the retry starts again, tries at once (Funnel may have
+    /// been allowed meanwhile) and has a fresh ten minutes. The page counts as opened, so it doesn't open again.
+    public mutating func resume(setup: RemoteReport?, now: Date) -> Bool {
+        guard setup?.state == .funnelNotAllowed else { return false }
+        firstRefusal = now; lastTry = .distantPast; gaveUp = false
+        openedAdmin = setup?.adminURL ?? openedAdmin
+        return true
+    }
+
+    public mutating func tried(now: Date) { lastTry = now }
+
+    public enum Tick: Equatable { case wait, run, gaveUp }
+
+    public mutating func tick(setup: RemoteReport?, busy: Bool, now: Date) -> Tick {
+        if let first = firstRefusal, now.timeIntervalSince(first) >= RemoteFlow.funnelRetryFor { gaveUp = true; return .gaveUp }
+        return RemoteFlow.funnelRetryDue(setup: setup, busy: busy, firstRefusal: firstRefusal, lastTry: lastTry, now: now) ? .run : .wait
+    }
+
+    public mutating func stop() { self = FunnelRetry() }
+}
+
 /// What `remote fix` would do, or did.
 public struct RemoteFixPlan: Equatable {
     public struct Action: Equatable {
@@ -509,6 +596,10 @@ public enum RemoteCopy {
     public static let unavailable = "This copy of Polycarp doesn't include the browser helper."
     public static let otherWays = "Other ways"
     public static let otherWaysHelp = "Use your own front door, like a server you already run"
+    /// Labels for the checks only `remote test` sends, which the shared table doesn't list.
+    public static let testCheckLabels = ["probe_cleanup": "Test token removed"]
+    /// A check's label: the shared one, else the Mac's, else its name.
+    public static func checkLabel(_ name: String) -> String { RemoteSharedCopy.checkLabels[name] ?? testCheckLabels[name] ?? name }
     public static let menusNote = "Menus change; if you can't find it, look for connectors in the assistant's settings."
 
     /// "Step 2 of 3: Get it and sign in".
@@ -521,6 +612,6 @@ public enum RemoteCopy {
         [title, createAccountButton, openTailscaleButton, openDownloadPage, cloudflareWaiting, cloudflareAddressInvalid, cloudflareAddressFirst,
          funnelWaiting, intro, honest, staysOn, stillSetUp, startOverButton, detailsLabel, commandLabel, copyCommandButton,
          passcodeSaved, passcodeEarlier, newPasscodeButton, newPasscodeFailed, connectCodeFailed, repairFailed, turnOffFailed, helperSilent,
-         unavailable, otherWays, otherWaysHelp, menusNote]
+         unavailable, otherWays, otherWaysHelp, menusNote] + testCheckLabels.values.sorted()
     }
 }

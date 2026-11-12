@@ -11,6 +11,7 @@ import {
 	APPROVAL_STEP,
 	ASSISTANT_STEPS,
 	CHECK_LABELS,
+	copyKey,
 	FLOW_STEPS,
 	PROBLEM_CODES,
 	RESULT_COPY,
@@ -93,4 +94,11 @@ test("the Mac app's key function names every state and code copyKey does", () =>
 	}
 	for (const code of ["tailscale_port", "cloudflare_name", "not_set_up", "cloudflare_dns", "choose_name", "launcher"]) assert.ok(src.includes(`"${code}"`), code);
 	assert.ok(STEP_COPY.launcher_app, "the app's launcher entry lives in the shared table too");
+});
+
+test("copyKey picks the entry the shared fixture names, the one the Mac app's XCTest holds its key() to", () => {
+	// browser/test/fixtures/remote-copy-keys.json: BrowserRemoteKeyFixtureTests.swift asserts the same rows against the Swift key().
+	const { cases } = JSON.parse(read("test/fixtures/remote-copy-keys.json"));
+	assert.ok(cases.length >= 40, "the fixture lost its rows");
+	for (const { key, macKey: _mac, ...answer } of cases) assert.equal(copyKey(answer), key, JSON.stringify(answer));
 });

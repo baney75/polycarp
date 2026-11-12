@@ -32,13 +32,12 @@ final class BrowserRemoteModel: ObservableObject {
     @Published private(set) var route: RemoteRoute?
     @Published private(set) var signingIn = false
     private var setupAt: Date?
-    private var funnelFirstRefusal: Date?
-    private var funnelLastTry: Date?
+    private var funnel = FunnelRetry() { didSet { if funnelGaveUp != funnel.gaveUp { funnelGaveUp = funnel.gaveUp } } }
     private var funnelTimer: Timer?
     /// `remote test` again while a check waits (a name being published, a tunnel connecting).
     private var waitingTimer: Timer?
-    private var openedAdmin: URL?
-    /// The setup command of the last Turn on, so Try again runs the same one.
+    /// The setup command of the last Turn on, so Try again runs the same one. Plain setup until one ran: the helper's plain
+    /// setup reuses a route already saved in remote.json, Cloudflare's name included.
     private var lastSetup: RemoteCommand = .setup
     /// `remote test` ran in this visit to the On screen.
     private var testedThisVisit = false
@@ -68,18 +67,27 @@ final class BrowserRemoteModel: ObservableObject {
 
     func startWatching() {
         watchers += 1
+        // Back on a step that still refuses Funnel: the retry goes on, without opening Tailscale's page again (first-F1).
+        if watchers == 1, funnel.resume(setup: setup, now: Date()) { startFunnelTimer() }
         refresh()
         schedule()
     }
 
+    /// Leaving the section (another tab, or the window closing) pauses the reads and retries. The secrets stay until the
+    /// window closes: a tab switch must not lose a passcode shown once (first-F4).
     func stopWatching() {
         watchers = max(0, watchers - 1)
-        if watchers == 0 { timer?.invalidate(); timer = nil; stopFunnelRetry(); stopWaitingRecheck(); clearSecrets() }
+        if watchers == 0 {
+            timer?.invalidate(); timer = nil
+            funnelTimer?.invalidate(); funnelTimer = nil
+            stopWaitingRecheck(); testedThisVisit = false
+        }
     }
 
-    /// The passcode and connect code are shown once: closing the window forgets them. Nothing here is ever saved.
+    /// The passcode and connect code are shown once: closing the Settings window forgets them (SetupWindowController's
+    /// windowWillClose). Nothing here is ever saved.
     func clearSecrets() {
-        passcode = nil; connectCode = nil; testedThisVisit = false
+        passcode = nil; connectCode = nil
     }
 
     private func schedule() {
@@ -144,11 +152,22 @@ final class BrowserRemoteModel: ObservableObject {
     /// Try again: the same setup as last time.
     func tryAgain() { runSetup(lastSetup, quiet: false) }
 
+    /// A problem step's Turn on, on the route that step is about. `name`: the Cloudflare name typed on the step, for the steps
+    /// that ask for one (first-F3). Nil when the step wants a name and none fits.
+    func turnOn(step key: String, name: String?) -> Bool {
+        switch RemoteFlow.turnOnStep(key: key, last: lastSetup) {
+        case .run(let command): runSetup(command, quiet: false); return true
+        case .askName:
+            guard let name else { return false }
+            turnOn(cloudflare: name); return true
+        }
+    }
+
     /// `quiet`: the Funnel retry. The screen stays as it is (no "Turning on") until an answer changes it. Nobody pressed
     /// anything for it, so it never asks for a connect code: New code makes one (second-N2).
     private func runSetup(_ command: RemoteCommand, quiet: Bool) {
         guard available, !settingUp, !working, !retryingFunnel else { return }
-        if quiet { retryingFunnel = true; funnelLastTry = Date() } else { settingUp = true; note = nil; stopFunnelRetry() }
+        if quiet { retryingFunnel = true; funnel.tried(now: Date()) } else { settingUp = true; note = nil; stopFunnelRetry() }
         lastSetup = command
         generation += 1; failedReads = 0
         queue.async { [weak self] in
@@ -157,9 +176,8 @@ final class BrowserRemoteModel: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.settingUp = false; self.retryingFunnel = false
-                let report = parsed ?? RemoteReport(state: .problem, message: RemoteCopy.helperSilent)
-                // A quiet retry that hears the same refusal changes nothing on screen.
-                if quiet, report.state == .funnelNotAllowed { self.refresh(); return }
+                // A quiet retry that hears the same refusal, times out or prints no JSON changes nothing on screen (first-F2).
+                guard let report = RemoteFlow.setupOutcome(parsed, quiet: quiet) else { self.refresh(); return }
                 self.take(report, pressed: !quiet)
                 if report.answerOn {
                     // The success speaks for itself only briefly: when the grace is over, whatever status says takes over.
@@ -178,7 +196,8 @@ final class BrowserRemoteModel: ObservableObject {
     /// `pressed`: a person pressed Turn on, Try again or Check again. Only then is a connect code taken from the answer.
     private func take(_ report: RemoteReport, pressed: Bool) {
         passcode = RemoteFlow.keepPasscode(current: passcode, from: report)
-        if pressed, let code = report.connectCode { connectCode = code }
+        // An answer that needs repair is not on: it brings no code (second-N2).
+        if pressed, report.answerOn, let code = report.connectCode { connectCode = code }
         if !report.checks.isEmpty { checks = report.checks }
         setup = report
         setupAt = Date()
@@ -196,27 +215,27 @@ final class BrowserRemoteModel: ObservableObject {
     // MARK: Funnel: allowed in Tailscale, noticed here
 
     private func startFunnelRetry(admin: URL?) {
-        if funnelFirstRefusal == nil { funnelFirstRefusal = Date(); funnelGaveUp = false }
         // The page to allow Funnel opens once per refusal run, since that is the step; the button stays for reopening it.
-        if let admin, openedAdmin != admin { openedAdmin = admin; NSWorkspace.shared.open(admin) }
-        guard funnelTimer == nil else { return }
+        if let page = funnel.refused(admin: admin, now: Date()) { NSWorkspace.shared.open(page) }
+        startFunnelTimer()
+    }
+
+    private func startFunnelTimer() {
+        guard funnelTimer == nil, watchers > 0 else { return }
         funnelTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.funnelTick() }
     }
 
     private func funnelTick() {
-        let now = Date()
-        if let first = funnelFirstRefusal, now.timeIntervalSince(first) >= RemoteFlow.funnelRetryFor {
-            funnelTimer?.invalidate(); funnelTimer = nil; funnelGaveUp = true
-            return
-        }
-        if RemoteFlow.funnelRetryDue(setup: setup, busy: settingUp || working || retryingFunnel, firstRefusal: funnelFirstRefusal, lastTry: funnelLastTry, now: now) {
-            runSetup(lastSetup, quiet: true)
+        switch funnel.tick(setup: setup, busy: settingUp || working || retryingFunnel, now: Date()) {
+        case .gaveUp: funnelTimer?.invalidate(); funnelTimer = nil
+        case .run: runSetup(lastSetup, quiet: true)
+        case .wait: break
         }
     }
 
     private func stopFunnelRetry() {
         funnelTimer?.invalidate(); funnelTimer = nil
-        funnelFirstRefusal = nil; funnelLastTry = nil; openedAdmin = nil; funnelGaveUp = false
+        funnel.stop()
     }
 
     // MARK: Checks from the internet, and Repair
@@ -272,7 +291,7 @@ final class BrowserRemoteModel: ObservableObject {
     }
 
     func repair() {
-        guard available, !fixing, RemoteFlow.offerRepair(checks: checks, plan: fixPlan) else { return }
+        guard available, !fixing, RemoteFlow.offerRepair(checks: checks, plan: fixPlan, answer: setup) else { return }
         fixing = true; note = nil; generation += 1
         queue.async { [weak self] in
             let result = Self.run(.fix)
@@ -493,8 +512,7 @@ struct BrowserRemoteView: View {
                 }
             }
         case .cloudflareAddress(let problem, let code):
-            let key = code.map { Shared.key(state: "problem", code: $0, nextKind: model.setup?.nextKind) } ?? "cloudflare_name"
-            step(key == "unknown" ? "cloudflare_name" : key) {
+            step(RemoteFlow.addressStepKey(code: code, nextKind: model.setup?.nextKind)) {
                 nameField(onSubmit: turnOnCloudflare)
                 HStack(spacing: 10) {
                     Button(Shared.steps["cloudflare_name"]!.action!, action: turnOnCloudflare).keyboardShortcut(.defaultAction)
@@ -611,30 +629,37 @@ struct BrowserRemoteView: View {
         if code == RemoteCopy.helperSilentCode {
             stepText(Shared.steps["unknown"]!.title, RemoteCopy.helperSilent)
             Button(Shared.steps["unknown"]!.action!) { model.checkAgain() }.keyboardShortcut(.defaultAction)
+            // Reads that stopped answering must not hide a passcode shown once (second-S2).
+            passcodeShown
         } else {
             let copy = Shared.copy(for: RemoteReport(state: .problem, message: message, code: code, nextKind: model.setup?.nextKind, nextCommand: model.setup?.nextCommand))
             let entry = Shared.steps[copy.key]!
             header(stepNumber(copy.key))
             stepText(copy.title, copy.body)
             if let command = model.setup?.nextCommand, entry.kind == "copy_command" { commandBox(command) }
+            // A Cloudflare name step keeps its name field wherever it shows, so Turn on sets up a name, not Tailscale (first-F3).
+            let asksName = RemoteFlow.cloudflareNameKeys.contains(copy.key)
+            if asksName { nameField { act("turn_on", key: copy.key) } }
             HStack(spacing: 10) {
                 // A button with nothing behind it is not drawn: Repair needs `remote fix` and a plan with something in it.
                 if let label = entry.action, let kind = entry.kind, kind != "copy_command", kind != "repair" || RemoteFlow.repairAvailable(model.fixPlan) {
-                    Button(label) { act(kind) }.keyboardShortcut(.defaultAction).disabled(model.working || model.fixing)
+                    Button(label) { act(kind, key: copy.key) }.keyboardShortcut(.defaultAction).disabled(model.working || model.fixing)
                 }
                 Button(RemoteCopy.startOverButton) { model.turnOff() }.disabled(model.working)
             }
+            if asksName, nameRefused { warning(RemoteCopy.cloudflareAddressInvalid) }
             // The helper's own words, unless they already are the body.
             if copy.key != "unknown" { details(message) }
             passcodeShown
         }
     }
 
-    /// What a step's one button does. The kinds are remote-copy.ts's.
-    private func act(_ kind: String) {
+    /// What a step's one button does. The kinds are remote-copy.ts's. `key`: the step, so Turn on stays on its route.
+    private func act(_ kind: String, key: String) {
         switch kind {
         case "try_again": model.tryAgain()
-        case "turn_on", "open_funnel": model.turnOn()
+        case "turn_on": if !model.turnOn(step: key, name: RemoteFlow.cloudflareHost(cloudflareName)) { nameRefused = true }
+        case "open_funnel": model.turnOn()
         case "new_code": model.newConnectCode()
         case "repair": model.repair()
         case "choose": model.choose(nil)
@@ -885,14 +910,14 @@ struct BrowserRemoteView: View {
                     Image(systemName: check.status == "ok" ? "checkmark.circle" : check.waiting ? "clock" : check.failed ? "xmark.circle" : "exclamationmark.circle")
                         .foregroundStyle(check.status == "ok" ? Chrome.done : check.waiting ? Chrome.muted : Chrome.working).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(Shared.checkLabels[check.name] ?? check.name).font(Chrome.font(12))
+                        Text(RemoteCopy.checkLabel(check.name)).font(Chrome.font(12))
                         if check.status != "ok", !check.detail.isEmpty {
                             Text(check.detail).font(Chrome.font(11)).foregroundStyle(Chrome.muted).fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(Shared.checkLabels[check.name] ?? check.name): \(check.status == "ok" ? "passed" : check.waiting ? "waiting" : check.failed ? "failed" : "warning")")
+                .accessibilityLabel("\(RemoteCopy.checkLabel(check.name)): \(check.status == "ok" ? "passed" : check.waiting ? "waiting" : check.failed ? "failed" : "warning")")
             }
             HStack(spacing: 10) {
                 Button(result("checkAgain")) { model.checkFromOutside(force: true) }.controlSize(.small).disabled(model.checking || model.fixing)

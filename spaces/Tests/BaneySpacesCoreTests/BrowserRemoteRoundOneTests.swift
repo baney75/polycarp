@@ -90,7 +90,7 @@ final class BrowserRemoteRoundOneTests: XCTestCase {
         let src = try source(view)
         XCTAssertTrue(src.contains("Self.run(command, connectCode: !quiet)"), "the retry's run carries no --connect-code")
         XCTAssertTrue(src.contains("self.take(report, pressed: !quiet)"))
-        XCTAssertTrue(src.contains("if pressed, let code = report.connectCode { connectCode = code }"), "a code only from a pressed run")
+        XCTAssertTrue(src.contains("if pressed, report.answerOn, let code = report.connectCode { connectCode = code }"), "a code only from a pressed run")
         XCTAssertFalse(src.contains("if let code = report.connectCode { connectCode = code }"))
     }
 

@@ -527,7 +527,8 @@ final class BrowserRemoteTests: XCTestCase {
         }
         let view = try source(remoteSources[0])
         let stop = try XCTUnwrap(view.range(of: "func stopWatching()")), next = try XCTUnwrap(view.range(of: "func clearSecrets()"))
-        XCTAssertTrue(view[stop.lowerBound..<next.lowerBound].contains("clearSecrets()"), "closing the window forgets them")
+        XCTAssertFalse(view[stop.lowerBound..<next.lowerBound].contains("clearSecrets()"), "a tab switch keeps them (PR 134 first-F4)")
+        XCTAssertTrue(try source("Sources/BaneySpaces/Setup.swift").contains("BrowserRemoteModel.shared.clearSecrets()"), "closing the window forgets them")
         let clear = try XCTUnwrap(view.range(of: "func clearSecrets() {"))
         let body = view[clear.upperBound...].prefix(120)
         XCTAssertTrue(body.contains("passcode = nil") && body.contains("connectCode = nil"))

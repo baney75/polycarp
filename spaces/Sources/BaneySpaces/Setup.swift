@@ -1254,6 +1254,8 @@ final class SetupWindowController: NSWindowController, NSWindowDelegate {
 
     func windowWillClose(_ n: Notification) {
         model.stopWatching()
+        // The remote section's passcode and connect code are shown once: closing Settings forgets them, a tab switch doesn't.
+        BrowserRemoteModel.shared.clearSecrets()
         model.finish()
     }
 }

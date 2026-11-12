@@ -1,0 +1,208 @@
+{
+	"comment": "One helper answer per row and the entry both surfaces pick for it: copyKey in remote-copy.ts (test/remote-copy.test.mjs) and RemoteSharedCopy.key in the Mac app (BrowserRemoteKeyFixtureTests.swift). macKey: the Mac's own entry where it differs on purpose.",
+	"cases": [
+		{
+			"state": "tailscale_missing",
+			"key": "tailscale_missing"
+		},
+		{
+			"state": "tailscale_signed_out",
+			"key": "tailscale_signed_out"
+		},
+		{
+			"state": "tailnet_lock",
+			"key": "tailnet_lock"
+		},
+		{
+			"state": "ready",
+			"key": "ready"
+		},
+		{
+			"state": "funnel_not_allowed",
+			"key": "funnel_not_allowed"
+		},
+		{
+			"state": "funnel_closed",
+			"key": "funnel_closed"
+		},
+		{
+			"state": "on",
+			"key": "on"
+		},
+		{
+			"state": "no_browser_connected",
+			"key": "no_browser_connected"
+		},
+		{
+			"state": "turning_on",
+			"key": "turning_on"
+		},
+		{
+			"state": "something_new",
+			"key": "unknown"
+		},
+		{
+			"state": "cloudflared_missing",
+			"key": "cloudflared_manual"
+		},
+		{
+			"state": "cloudflared_missing",
+			"next": {
+				"kind": "run_command",
+				"command": "polycarp remote setup --cloudflare a.example.com --yes"
+			},
+			"key": "cloudflared_missing"
+		},
+		{
+			"state": "port_busy",
+			"key": "local_port"
+		},
+		{
+			"state": "port_busy",
+			"code": "tailscale_port",
+			"key": "tailscale_port"
+		},
+		{
+			"state": "port_busy",
+			"code": "local_port",
+			"key": "local_port"
+		},
+		{
+			"state": "problem",
+			"key": "unknown"
+		},
+		{
+			"state": "problem",
+			"code": "tailscale_operator",
+			"key": "tailscale_operator"
+		},
+		{
+			"state": "problem",
+			"code": "launcher",
+			"key": "launcher",
+			"macKey": "launcher_app"
+		},
+		{
+			"state": "problem",
+			"code": "hub",
+			"key": "hub"
+		},
+		{
+			"state": "problem",
+			"code": "service",
+			"key": "service"
+		},
+		{
+			"state": "problem",
+			"code": "serve",
+			"key": "serve"
+		},
+		{
+			"state": "problem",
+			"code": "funnel",
+			"key": "funnel"
+		},
+		{
+			"state": "problem",
+			"code": "config",
+			"key": "config"
+		},
+		{
+			"state": "problem",
+			"code": "dns",
+			"key": "dns"
+		},
+		{
+			"state": "problem",
+			"code": "cloudflare_login",
+			"key": "cloudflare_login"
+		},
+		{
+			"state": "problem",
+			"code": "cloudflare_zone",
+			"key": "cloudflare_zone"
+		},
+		{
+			"state": "problem",
+			"code": "cloudflare_tunnel",
+			"key": "cloudflare_tunnel"
+		},
+		{
+			"state": "problem",
+			"code": "connect_code",
+			"key": "connect_code"
+		},
+		{
+			"state": "problem",
+			"code": "dns",
+			"key": "dns"
+		},
+		{
+			"state": "problem",
+			"code": "tls",
+			"key": "check_failed"
+		},
+		{
+			"state": "problem",
+			"code": "resource_metadata",
+			"key": "check_failed"
+		},
+		{
+			"state": "problem",
+			"code": "auth_metadata",
+			"key": "check_failed"
+		},
+		{
+			"state": "problem",
+			"code": "auth_challenge",
+			"key": "check_failed"
+		},
+		{
+			"state": "problem",
+			"code": "streaming",
+			"key": "check_failed"
+		},
+		{
+			"state": "problem",
+			"code": "cloudflare_name",
+			"key": "cloudflare_name"
+		},
+		{
+			"state": "problem",
+			"code": "not_set_up",
+			"key": "not_set_up"
+		},
+		{
+			"state": "problem",
+			"code": "cloudflare_dns",
+			"key": "cloudflare_dns"
+		},
+		{
+			"state": "problem",
+			"code": "probe_cleanup",
+			"key": "unknown"
+		},
+		{
+			"state": "problem",
+			"code": "something_new",
+			"key": "unknown"
+		},
+		{
+			"state": "problem",
+			"code": "cloudflare_dns",
+			"next": {
+				"kind": "choose_name"
+			},
+			"key": "cloudflare_name_refused"
+		},
+		{
+			"state": "problem",
+			"code": "resource_metadata",
+			"next": {
+				"kind": "run_command",
+				"command": "polycarp remote fix"
+			},
+			"key": "check_failed"
+		}
+	]
+}

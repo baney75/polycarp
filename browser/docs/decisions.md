@@ -1058,6 +1058,10 @@ Agents could not attach a file to a form or keep a file a page offers. One tool,
   second time makes no new passcode (one exists) and reopens only what `remote.json` names. 15 seconds, not 5, because a
   setup run costs more than opening Funnel. The same 10-minute limit, then one Check again button. The retry runs setup
   without `--connect-code`, so, as in the panel, only a press (Turn on, Check again, New code) makes a code.
+- **Leaving Settings > Browser pauses the Funnel retry; coming back resumes it with a fresh 10 minutes.** Coming back
+  tries at once, because Funnel was most likely allowed while the window was away, and never reopens Tailscale's page.
+  A fresh limit, not what was left of the old one, so a person who allowed Funnel slowly isn't sent to the gave-up step
+  the moment they return. The passcode and connect code stay through a tab switch and go when the window closes.
 - **`launcher` has a Mac entry of its own (`launcher_app`).** The terminal's remedy is `polycarp install`; the app's is
   Connect in the Browsers section, which installs the launcher. The entry lives in the shared table, so the words still
   come from one place.
