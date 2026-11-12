@@ -180,6 +180,11 @@ export function tlsFailure(err: NodeJS.ErrnoException, url: URL, address: string
 			next: `Assistants refuse this certificate. On your own front door, give it a certificate for ${url.hostname}; on Tailscale or Cloudflare, run ${COMMAND_NAME} remote fix.`,
 		};
 	}
+	// A TLS alert: the server refused the handshake for this name, so it has no certificate for it (Cloudflare's Universal SSL
+	// covers one level below the domain, not a.b.example.com).
+	if (/^ERR_SSL_(SSLV3|TLSV1(_\d)?)_ALERT_/.test(code)) {
+		return { name: "tls", status: "fail", detail: `${address}:${port} refused the TLS handshake for ${url.hostname}, so it has no certificate for that name: ${why}`, next: `Give the front door a certificate for ${url.hostname}. On Cloudflare, use a name one level below your domain, such as polycarp.example.com.` };
+	}
 	if (/^(ERR_SSL_|ERR_TLS_|EPROTO$)/.test(code)) {
 		return { name: "tls", status: "fail", detail: `${address}:${port} answers, but not with HTTPS: ${why}`, next: `Something on ${url.host} speaks plain HTTP or another protocol. Point the name at an HTTPS front door, or run ${COMMAND_NAME} remote fix on Tailscale or Cloudflare.` };
 	}

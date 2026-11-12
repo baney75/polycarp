@@ -1566,3 +1566,52 @@ test("a TLS connect error from this computer's own network (no route) is pending
 	assert.equal(fail("ERR_TLS_CERT_ALTNAME_INVALID").pending, undefined);
 	assert.equal(fail("EAI_FAIL").pending, undefined);
 });
+
+test("a TLS alert is a handshake refused for this name (no certificate for it); a wrong version or plain HTTP stays \"not HTTPS\"", async () => {
+	const { tlsFailure } = await loadTs(`export { tlsFailure } from "@src/remote-test.ts";`);
+	const url = new URL("https://a.b.example.com/mcp");
+	const fail = (code) => tlsFailure(Object.assign(new Error(code), { code }), url, "203.0.113.5", 443);
+	for (const code of ["ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE", "ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR"]) {
+		const c = fail(code);
+		assert.match(c.detail, /refused the TLS handshake for a\.b\.example\.com/, code);
+		assert.doesNotMatch(c.detail + c.next, /not with HTTPS|plain HTTP/, code);
+	}
+	for (const code of ["ERR_SSL_PACKET_LENGTH_TOO_LONG", "ERR_SSL_WRONG_VERSION_NUMBER", "EPROTO"]) assert.match(fail(code).detail, /not with HTTPS/, code);
+});
+
+test("stateFromStatus: a failed DNS lookup is code dns_lookup, never dns, which means still publishing", () => {
+	const fetchFail = { name: "public fetch", status: "fail", detail: "no answer" };
+	const pending = stateFromStatus({ configured: true, checks: [{ name: "public DNS", status: "fail", detail: "no address" }, fetchFail] });
+	assert.equal(pending.code, "dns");
+	const servfail = stateFromStatus({ configured: true, checks: [fetchFail, { name: "public DNS", status: "fail", code: "dns_lookup", detail: "SERVFAIL" }] });
+	assert.equal(servfail.code, "dns_lookup");
+	assert.match(servfail.message, /SERVFAIL/);
+});
+
+test("remote --help (exit 0), or remote alone (exit 2), prints the five remote commands in order, one line each", () => {
+	const s = scenario("remote-guide");
+	for (const [args, code] of [[["remote", "--help"], 0], [["remote", "-h"], 0], [["remote"], 2]]) {
+		const r = s.run(args);
+		assert.equal(r.code, code, `${args.join(" ")}: ${r.stdout}${r.stderr}`);
+		const lines = r.stdout.trim().split("\n");
+		assert.ok(lines.length <= 9, `a short guide, not the whole help (${lines.length} lines)`);
+		const order = lines.map((l) => / remote (setup|status|test|fix|off) /.exec(l)?.[1]).filter(Boolean);
+		assert.deepEqual(order, ["setup", "status", "test", "fix", "off"], r.stdout);
+	}
+	assert.match(s.run(["remote", "setup", "--help"]).stdout, /Library/, "a subcommand's --help is still the full help");
+});
+
+test("the --help exit codes name every remote exit code the remote docs give", async () => {
+	const { EXIT_CODES } = await loadTs(`export { EXIT_CODES } from "@src/commands.ts";`);
+	const docs = readFileSync(join(here, "..", "..", "docs", "remote.md"), "utf8").replace(/\s+/g, " ");
+	const pairs = [
+		["exit code is 0 for `on`, 1 for a failure, 2 for a usage error and 3 when a person has to do something", "remote setup 3 when a person has to act"],
+		["Exit codes: 0 every check passed, 1 a check failed, 2 usage, 3 nothing is set up.", "remote test 3 when nothing is set up"],
+		["Exit codes: 0 ok, 1 a repair or a check failed, 2 usage, 3 a person has to act or nothing is set up.", "remote fix 3 when a person has to act or nothing is set up"],
+	];
+	for (const [said, listed] of pairs) {
+		assert.ok(docs.includes(said), `remote.md says: ${said}`);
+		assert.ok(EXIT_CODES.includes(listed), `EXIT_CODES lists: ${listed}`);
+	}
+	assert.match(EXIT_CODES, /0 success, 1 failed.*2 usage error/);
+});
