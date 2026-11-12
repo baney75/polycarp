@@ -431,6 +431,11 @@ final class ViewerController {
 
     /// The top-left of the screen a carried window's overview is on, in window-server space.
     private var carryOrigin = CGPoint.zero
+    /// That screen's whole frame, in window-server space: the overview covers it and no other.
+    private var carryScreen = CGRect.null
+
+    /// Whether the carry overview is showing over the screen holding `p` (window-server space).
+    func carryCovers(_ p: CGPoint) -> Bool { isOpen && model.carrying && carryScreen.contains(p) }
 
     /// Opens over the screen under `p` for a window being dragged to the top of the screen, in
     /// place of Mission Control. The drag stays the window server's: the viewer takes neither
@@ -450,6 +455,7 @@ final class ViewerController {
         model.reset()
         model.load(from: spaces)
         carryOrigin = CGPoint(x: screen.frame.minX, y: mainHeight - screen.frame.maxY)
+        carryScreen = cgFrames[i]
         let panel = panel ?? makePanel()
         self.panel = panel
         panel.ignoresMouseEvents = true
@@ -473,11 +479,13 @@ final class ViewerController {
         model.drag = d
     }
 
-    /// The button came up: the workspace the window was let go over, if not its own. Closes.
-    func endCarrying() -> Int? {
+    /// The button came up at `p` (nil when the drag ended some other way): the workspace the window was let go over, if
+    /// not its own. Closes.
+    func endCarrying(at p: CGPoint?) -> Int? {
         guard isOpen, model.carrying else { return nil }
         let target = model.dropTarget
-        Trace.log("topDrag release target=\(target.map(String.init) ?? "none")")
+        let at = p.map { "\(Int($0.x.rounded())),\(Int($0.y.rounded()))" } ?? "none"
+        Trace.log("topDrag release at=\(at) target=\(target.map(String.init) ?? "none")")
         close()
         return target
     }
