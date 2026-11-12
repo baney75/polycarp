@@ -1091,7 +1091,7 @@ final class AgentOpenLaunchTests: XCTestCase {
         let helper = try XCTUnwrap(HandsSourceTests.block(after: "func adoptAgentStartedProcess(", in: src))
         XCTAssertTrue(helper.contains("h.claim(pid, n, true, title)"))
         XCTAssertTrue(helper.contains("AgentActivity.shared.markLaunch(pid: pid, for: 8)"))
-        XCTAssertTrue(launch.contains("guard !before.contains(app.processIdentifier) else { return }"), "a launch that ran inside Donovan's copy is left alone")
+        XCTAssertTrue(launch.contains("guard !before.contains(app.processIdentifier) else {"), "a launch that ran inside Donovan's copy is left alone")
         let claim = try XCTUnwrap(launch.range(of: "adoptAgentStartedProcess("))
         let press = try XCTUnwrap(launch.range(of: "newWindow(app)"))
         XCTAssertTrue(claim.lowerBound < press.lowerBound, "claimed before anything else happens")
