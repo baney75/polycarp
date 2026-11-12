@@ -1241,6 +1241,18 @@ final class Spaces {
     /// The display layout changed: put hidden windows at the new hiding spot. macOS sends a burst
     /// of these on wake and on plugging in a display, so act once, after it settles, and leave
     /// focus where it is (a dialog may hold it).
+    /// The Mac woke. Apps that missed Accessibility while it slept were benched (up to 10 minutes) as if hung, so their
+    /// windows went unplaced after wake: every app is asked again, the window list is read in full, and the workspace
+    /// you're on is applied again, as for a display change.
+    func didWake() {
+        Windows.clearBench()
+        RunningApps.invalidate()
+        Trace.log("wake: every app asked again; workspace \(model.current) applied again")
+        guard active else { return }
+        if !switching { refresh(full: true) }
+        screensChanged()
+    }
+
     func screensChanged() {
         screensWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
