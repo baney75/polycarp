@@ -58,7 +58,8 @@ public enum SnapshotRows {
             let shown = (number != nil || !name.isEmpty || !value.isEmpty) && !echo
             var childDepth = depth, childParent = parent, childPath = path
             if shown, !isRoot {
-                let slot = path + "/" + role + ":" + name
+                // A name that is the element's content (Calculator's display) changes with it, so it can't name it.
+                let slot = path + "/" + role + ":" + (name == value ? "" : name)
                 let ordinal = siblings[slot, default: 0]
                 siblings[slot] = ordinal + 1
                 let key = slot + "#\(ordinal)"
@@ -105,9 +106,12 @@ public enum SnapshotRows {
 
     /// Numbers short (a scroll bar's 0.18518517911434174 is 0.19), text quoted and cut at `valueLimit`.
     static func shownValue(_ v: String) -> String {
-        if let d = Double(v), v.contains(".") {
-            let r = (d * 100).rounded() / 100
-            return r == r.rounded() ? String(Int(r)) : String(r)
+        // Only a short plain decimal is rounded; anything else (2^70 as 1.180591620717e21, 1.0e999) prints as read.
+        if v.count <= 24, v.contains("."), !v.contains(where: { $0 == "e" || $0 == "E" }), let d = Double(v), d.isFinite, abs(d) < 1e15 {
+            var t = String(format: "%.2f", d)
+            while t.hasSuffix("0") { t.removeLast() }
+            if t.hasSuffix(".") { t.removeLast() }
+            return t == "-0" ? "0" : t
         }
         if Double(v) != nil { return v }
         guard v.count > valueLimit else { return quoted(v) }
@@ -151,12 +155,14 @@ public enum SnapshotRows {
         lines += notes.map { "note: " + $0 }
         let limit = Swift.max(1, max ?? defaultMax)
         lines += picked.prefix(limit).map { rows[$0].line }
-        if picked.count > limit { lines.append(truncated(shown: limit, total: picked.count, window: window)) }
+        if picked.count > limit { lines.append(truncated(shown: limit, total: picked.count, window: window, query: q)) }
         return lines.joined(separator: "\n")
     }
 
-    static func truncated(shown: Int, total: Int, window: UInt32) -> String {
-        "truncated: \(shown) of \(total) rows shown. For the rest call snapshot with {\"window\":\(window),\"query\":\"<a word from the row you want>\"} or {\"window\":\(window),\"max_elements\":\(total)}"
+    static func truncated(shown: Int, total: Int, window: UInt32, query: String) -> String {
+        let all = query.isEmpty ? "{\"window\":\(window),\"max_elements\":\(total)}" : "{\"window\":\(window),\"query\":\(quoted(query)),\"max_elements\":\(total)}"
+        let narrower = query.isEmpty ? " or {\"window\":\(window),\"query\":\"<a word from the row you want>\"}" : ""
+        return "truncated: \(shown) of \(total) rows shown. For the rest call snapshot with \(all)\(narrower)"
     }
 
     public enum Change: Equatable, Sendable {
@@ -172,22 +178,26 @@ public enum SnapshotRows {
         var out: [Change] = []
         for r in new {
             guard let was = before[r.key] else { out.append(.added(r)); continue }
-            if was.value != r.value || was.states != r.states { out.append(.changed(r)) }
+            if was.name != r.name || was.value != r.value || was.states != r.states { out.append(.changed(r)) }
         }
         for r in old where !now.contains(r.key) { out.append(.removed(r)) }
         return out
     }
 
-    /// The answer for `since: "latest"`: the changes only. A read with none is one short line.
-    public static func renderSince(_ changes: [Change], new: [Row], snapshot: String, previous: String, window: UInt32, query: String?, max: Int?) -> String {
-        guard !changes.isEmpty else { return "snapshot \(snapshot) · window \(window) · no change since \(previous)" }
+    /// The answer for `since: "latest"`: the notes and every change (`max` doesn't cut it: the next since read starts from
+    /// this one, so a cut change would never be listed). A read with none is one short line. Its numbers are this read's, and
+    /// a bare number is refused after it, so the header names the full ref.
+    public static func renderSince(_ changes: [Change], new: [Row], snapshot: String, previous: String, window: UInt32,
+                                   notes: [String] = [], query: String?) -> String {
+        let notes = notes.map { "note: " + $0 }
+        guard !changes.isEmpty else { return (["snapshot \(snapshot) · window \(window) · no change since \(previous)"] + notes).joined(separator: "\n") }
         // A query keeps the changed rows that match it; their parents aren't listed in a change list.
         let kept = select(changes.map { var r = $0.row; r.parent = nil; return r }, query: query).map { changes[$0] }
         var added = 0, changed = 0, removed = 0
         for c in kept { switch c { case .added: added += 1; case .changed: changed += 1; case .removed: removed += 1 } }
-        var lines = ["snapshot \(snapshot) · window \(window) · since \(previous): \(added) added, \(changed) changed, \(removed) removed"]
-        let limit = Swift.max(1, max ?? defaultMax)
-        for c in kept.prefix(limit) {
+        var lines = ["snapshot \(snapshot) · window \(window) · since \(previous): \(added) added, \(changed) changed, \(removed) removed · act by full ref @\(snapshot):eN"]
+        lines += notes
+        for c in kept {
             switch c {
             case .added(let r):
                 let under = r.parent.flatMap { new[$0].number }.map { " under [\($0)]" } ?? ""
@@ -198,7 +208,6 @@ public enum SnapshotRows {
                 lines.append("- " + gone.flat)
             }
         }
-        if kept.count > limit { lines.append(truncated(shown: limit, total: kept.count, window: window)) }
         return lines.joined(separator: "\n")
     }
 }
@@ -211,6 +220,9 @@ public struct SnapshotRowsMemory: Sendable {
         public var window: UInt32
         public var rows: [SnapshotRows.Row]
         public var at: Date
+        /// Whether the read printed every row with its number. A since read or a find did not, so a bare number after one
+        /// may mean a row the agent saw in an older read.
+        public var listed: Bool = true
         /// Row number to row key, for comparing two snapshots' row N.
         var keys: [Int: String] { Dictionary(rows.compactMap { r in r.number.map { ($0, r.key) } }, uniquingKeysWith: { a, _ in a }) }
         func row(_ n: Int) -> SnapshotRows.Row? { rows.first { $0.number == n } }
@@ -234,8 +246,8 @@ public struct SnapshotRowsMemory: Sendable {
         last[Self.viewKey(session: session, window: window, view: view)]
     }
 
-    public mutating func remember(session: String, window: UInt32, view: String, snapshot: String, rows: [SnapshotRows.Row], now: Date) {
-        let read = Read(snapshot: snapshot, window: window, rows: rows, at: now)
+    public mutating func remember(session: String, window: UInt32, view: String, snapshot: String, rows: [SnapshotRows.Row], now: Date, listed: Bool = true) {
+        let read = Read(snapshot: snapshot, window: window, rows: rows, at: now, listed: listed)
         last[Self.viewKey(session: session, window: window, view: view)] = read
         var list = recent[session] ?? []
         list.append(read)
@@ -260,6 +272,9 @@ public struct SnapshotRowsMemory: Sendable {
         guard let list = recent[session], let latest = list.last else {
             return .refused(code: .unknownRef, message: "\"\(n)\" is a row number, and this session has no snapshot yet", latest: nil)
         }
+        guard latest.listed else {
+            return .refused(code: .staleBareRow, message: "\"\(n)\" is a bare row number, and your last read of window \(latest.window) (\(latest.snapshot)) listed changes or matches, not every row, so the number could mean a row from an older read. Nothing was sent", latest: latest)
+        }
         guard let row = latest.row(n) else {
             let top = latest.rows.compactMap(\.number).max() ?? 0
             return .refused(code: .unknownRef, message: "row \(n) isn't in your latest snapshot \(latest.snapshot) of window \(latest.window) (its rows go up to \(top))", latest: latest)
@@ -269,10 +284,20 @@ public struct SnapshotRowsMemory: Sendable {
             guard let other = earlier.row(n) else { continue }
             if earlier.window != latest.window || earlier.keys[n] != key {
                 return .refused(code: .staleBareRow,
-                                message: "row \(n) means \(row.flat) in your latest snapshot \(latest.snapshot) (window \(latest.window)), but \(other.flat) in snapshot \(earlier.snapshot) (window \(earlier.window)); pass the full ref",
+                                message: "row \(n) means \(row.flat) in your latest snapshot \(latest.snapshot) (window \(latest.window)), but \(other.flat) in snapshot \(earlier.snapshot) (window \(earlier.window)). Nothing was sent",
                                 latest: latest)
             }
         }
         return .ref("@\(latest.snapshot):e\(n)")
+    }
+
+    /// The error for a refused bare number. Its next call is always a read, never the action on a guessed element.
+    public static func error(_ code: HandsErrorCode, _ message: String, latest: Read?) -> HandsError {
+        guard let latest else {
+            return HandsError(code, message, suggestion: "Call windows for the window id, then snapshot it and use its row numbers.", retry: .afterSnapshot,
+                              nextCall: HandsError.call("windows", [:]))
+        }
+        return HandsError(code, message, suggestion: "Read the window again with next_call, then act on a row it prints or on a full ref like @\(latest.snapshot):e5.",
+                          retry: .afterSnapshot, nextCall: HandsError.call("snapshot", ["window": .int(Int(latest.window))]))
     }
 }

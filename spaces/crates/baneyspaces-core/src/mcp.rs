@@ -64,11 +64,29 @@ pub fn rows_not_supported(asked: &[&str]) -> Envelope {
 
 /// The refusal for a CLI `agent snapshot` given `--format`, `--query`, `--since` or `--max_elements`.
 pub fn rows_flags_refusal(args: &[String]) -> Option<Envelope> {
-    let asked: Vec<&str> = ROWS_ARGS.iter().copied().filter(|k| args.iter().any(|a| a.strip_prefix("--") == Some(*k))).collect();
+    let asked: Vec<&str> =
+        ROWS_ARGS.iter().copied().filter(|k| args.iter().any(|a| a.strip_prefix("--").and_then(|s| s.split('=').next()) == Some(*k))).collect();
     (!asked.is_empty()).then(|| rows_not_supported(&asked))
 }
 
+/// A bare row number (`5`, `e5`, `[5]`) as a ref is macOS only for now. Other malformed refs are left to the hands.
+pub fn bare_ref_refusal(r: &str) -> Option<Envelope> {
+    let n = r.strip_prefix('[').and_then(|r| r.strip_suffix(']')).unwrap_or(r);
+    let n = n.strip_prefix('e').unwrap_or(n);
+    (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).then(|| {
+        Envelope::err(
+            "not_supported",
+            format!("{r:?} is a bare row number, which is macOS only for now; pass the full ref from a snapshot, like @s8f3k2p9:e5"),
+            Retry::Never,
+            "Snapshot the window and pass the full ref of the element.",
+        )
+    })
+}
+
 fn rows_refusal(name: &str, args: &Value) -> Option<Envelope> {
+    if let Some(e) = args.get("ref").and_then(Value::as_str).and_then(bare_ref_refusal) {
+        return Some(e);
+    }
     let asked: Vec<&str> = ROWS_ARGS.iter().copied().filter(|k| args.get(*k).is_some()).collect();
     (name == "agent_snapshot" && !asked.is_empty()).then(|| rows_not_supported(&asked))
 }
@@ -219,6 +237,24 @@ mod tests {
         let e = rows_flags_refusal(&v(&["--window", "0x1", "--max_elements", "5"])).expect("refused");
         assert_eq!(e.error.as_ref().map(|e| e.code.as_str()), Some("not_supported"));
         assert!(rows_flags_refusal(&v(&["--window", "0x1", "-i", "--compact"])).is_none());
+        // Review r1 first-F4: the inline spelling too.
+        for a in ["--format=rows", "--query=Save", "--since=latest", "--max_elements=3"] {
+            assert!(rows_flags_refusal(&v(&["--window", "0x1", a])).is_some(), "{a}");
+        }
+    }
+
+    // Review r1 second-F7: a bare row number as a ref is refused, from MCP and for the CLI.
+    #[test]
+    fn a_bare_row_number_ref_is_not_supported_here() {
+        for r in ["5", "e5", "[5]"] {
+            assert_eq!(bare_ref_refusal(r).and_then(|e| e.error).map(|e| e.code), Some("not_supported".to_string()), "{r}");
+        }
+        for r in ["@s8f3k2p9:e5", "e", "[]", "five"] {
+            assert!(bare_ref_refusal(r).is_none(), "{r}");
+        }
+        let mut call = |_: &str, _: &Value| Envelope::ok(json!(null));
+        let r = handle(&json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"agent_click","arguments":{"ref":"5"}}}), &mut call).unwrap();
+        assert_eq!(r["result"]["structuredContent"]["error"]["code"], "not_supported");
     }
 
     #[test]

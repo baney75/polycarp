@@ -56,7 +56,7 @@ public enum HandsTools {
             HandsParam("window", .integer, "Window id from `windows`, `open` or a previous snapshot."),
             HandsParam("query", .string, "Only rows whose role, name or value has this text (any case; several with |), with their parents."),
             HandsParam("since", .string, "latest: only rows added (+), changed (~) or removed (-) since your last read of this window."),
-            HandsParam("max_elements", .integer, "At most this many rows (default \(SnapshotRows.defaultMax)); a last line says how to get the rest."),
+            HandsParam("max_elements", .integer, "At most this many rows (default \(SnapshotRows.defaultMax)); a last line says how to get the rest. A since read lists every change."),
             HandsParam("format", .string, "rows (default over MCP) or json (the full tree, default on the command line)."),
             HandsParam("interactive", .boolean, "Only elements you can act on.", short: "i"),
             HandsParam("compact", .boolean, "Collapse wrapper groups with no content."),

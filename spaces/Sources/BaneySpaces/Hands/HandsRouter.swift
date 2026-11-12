@@ -427,15 +427,17 @@ final class HandsRouter {
                 let rows = SnapshotRows.rows(of: o["tree"] ?? .null)
                 let session = req.session ?? ""
                 let view = "\(req.bool("interactive"))|\(req.bool("compact"))|\(req.int("depth") ?? 10)"
+                let since = req.snapshotFormat == "rows" && req.string("since") == "latest"
                 let previous = withRows { m -> SnapshotRowsMemory.Read? in
-                    defer { m.remember(session: session, window: w.id, view: view, snapshot: sid, rows: rows, now: Date()) }
-                    return m.previous(session: session, window: w.id, view: view)
+                    let p = m.previous(session: session, window: w.id, view: view)
+                    m.remember(session: session, window: w.id, view: view, snapshot: sid, rows: rows, now: Date(), listed: !(since && p != nil) && (req.string("query") ?? "").isEmpty)
+                    return p
                 }
                 guard req.snapshotFormat == "rows" else { return .success(.object(o)) }
                 let text: String
-                if req.string("since") == "latest", let previous {
+                if since, let previous {
                     text = SnapshotRows.renderSince(SnapshotRows.changes(from: previous.rows, to: rows), new: rows, snapshot: sid, previous: previous.snapshot,
-                                                    window: w.id, query: req.string("query"), max: req.int("max_elements"))
+                                                    window: w.id, notes: notes, query: req.string("query"))
                 } else {
                     if req.string("since") != nil { notes.append("no earlier read of this window in this session, so this is all of it") }
                     text = SnapshotRows.render(rows, snapshot: sid, window: w.id, title: o["window"]?["title"]?.string ?? "", app: w.app,
@@ -443,7 +445,8 @@ final class HandsRouter {
                                                query: req.string("query"), max: req.int("max_elements"))
                 }
                 return .success(.object(["format": "rows", "text": .string(text), "snapshot_id": .string(sid), "window": .int(Int(w.id)),
-                                         "ref_count": o["ref_count"] ?? .null, "target": targetJSON(w, scope)]))
+                                         "ref_count": o["ref_count"] ?? .null, "complete": o["complete"] ?? .null,
+                                         "target": targetJSON(w, scope)]))
             }
         }
     }
@@ -471,7 +474,7 @@ final class HandsRouter {
                 if let tree = data["tree"] { walk(tree) }
                 if let sid = data["snapshot_id"]?.string {
                     let rows = SnapshotRows.rows(of: data["tree"] ?? .null)
-                    withRows { $0.remember(session: req.session ?? "", window: w.id, view: "find", snapshot: sid, rows: rows, now: Date()) }
+                    withRows { $0.remember(session: req.session ?? "", window: w.id, view: "find", snapshot: sid, rows: rows, now: Date(), listed: false) }
                 }
                 return .success(.object(["snapshot_id": data["snapshot_id"] ?? .null, "window": .int(Int(w.id)), "count": .int(found.count), "matches": .array(found)]))
             }
@@ -484,19 +487,7 @@ final class HandsRouter {
     private func bareRef(_ n: Int, _ req: HandsRequest) -> Result<String, HandsError> {
         switch withRows({ $0.resolve(bare: n, session: req.session ?? "", now: Date()) }) {
         case .ref(let full): return .success(full)
-        case .refused(let code, let message, let latest):
-            guard let latest else {
-                return .failure(HandsError(code, message, suggestion: "Call windows for the window id, then snapshot it and use its row numbers.", retry: .afterSnapshot,
-                                           nextCall: HandsError.call("windows", [:])))
-            }
-            if code == .staleBareRow {
-                var args = req.args
-                args["ref"] = .string("@\(latest.snapshot):e\(n)")
-                return .failure(HandsError(code, message, suggestion: "Nothing was sent. Make next_call to act on row \(n) of the latest snapshot, or pass the other snapshot's full ref.", retry: .safe,
-                                           nextCall: HandsError.call(req.verb, args)))
-            }
-            return .failure(HandsError(code, message, suggestion: "Nothing was sent. Read the window again and use a row number it prints.", retry: .afterSnapshot,
-                                       nextCall: HandsError.call("snapshot", ["window": .int(Int(latest.window))])))
+        case .refused(let code, let message, let latest): return .failure(SnapshotRowsMemory.error(code, message, latest: latest))
         }
     }
 

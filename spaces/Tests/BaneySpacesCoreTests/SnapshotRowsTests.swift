@@ -32,7 +32,7 @@ final class SnapshotRowsTests: XCTestCase {
             let query = full(data, app: r.app, query: r.query)
             let tree = SnapshotRows.rows(of: data["tree"] ?? .null)
             let same = SnapshotRows.renderSince(SnapshotRows.changes(from: tree, to: tree), new: tree, snapshot: "s1a2b3c4d5e6f7", previous: "s7f6e5d4c3b2a1",
-                                                window: 54978, query: nil, max: nil)
+                                                window: 54978, query: nil)
             print("ratchet \(r.file): json \(json), rows \(rows), query \(query.count), since \(same.count)")
             XCTAssertLessThanOrEqual(Double(rows), 0.30 * Double(json), "\(r.file): rows \(rows) of json \(json)")
             XCTAssertLessThanOrEqual(Double(query.count), 0.10 * Double(json), "\(r.file): query \(query.count) of json \(json):\n\(query)")
@@ -94,9 +94,9 @@ final class SnapshotRowsTests: XCTestCase {
         }
         let old = SnapshotRows.rows(of: tree([("Audio", []), ("Bluetooth", ["selected"]), ("Camera", [])], first: 1))
         let new = SnapshotRows.rows(of: tree([("Audio", ["selected"]), ("Bluetooth", []), ("Disc", [])], first: 7))
-        let text = SnapshotRows.renderSince(SnapshotRows.changes(from: old, to: new), new: new, snapshot: "sB", previous: "sA", window: 9, query: nil, max: nil)
+        let text = SnapshotRows.renderSince(SnapshotRows.changes(from: old, to: new), new: new, snapshot: "sB", previous: "sA", window: 9, query: nil)
         XCTAssertEqual(text, """
-        snapshot sB · window 9 · since sA: 1 added, 2 changed, 1 removed
+        snapshot sB · window 9 · since sA: 1 added, 2 changed, 1 removed · act by full ref @sB:eN
         ~ [7] treeitem "Audio" (selected)
         ~ [8] treeitem "Bluetooth"
         + [9] treeitem "Disc"
@@ -188,6 +188,70 @@ final class SnapshotRowsTests: XCTestCase {
         XCTAssertTrue(line.contains(#""next_call":{"arguments":{"ref":"@sNew:e2"},"tool":"click"}"#), line)
         XCTAssertEqual(HandsEnvelope.decode(line)?.error?.nextCall?["tool"]?.string, "click")
         XCTAssertFalse(HandsEnvelope.failure(HandsError(.timeout, "slow", suggestion: "wait")).line.contains("next_call"), "absent when there is none")
+    }
+
+    // Review r1 first-F1: a since read renumbers rows (old [1] OK, new [1] Delete); a bare number after it must not act.
+    func testAfterASinceReadABareNumberIsRefusedAndTheNextCallIsARead() throws {
+        var m = SnapshotRowsMemory()
+        let t = Date()
+        m.remember(session: "a", window: 9, view: "v", snapshot: "sOld", rows: rows(["OK", "Cancel"]), now: t.addingTimeInterval(-SnapshotRowsMemory.horizon - 5))
+        m.remember(session: "a", window: 9, view: "v", snapshot: "sNew", rows: rows(["Delete", "OK", "Cancel"]), now: t, listed: false)
+        guard case .refused(let code, let message, let latest) = m.resolve(bare: 2, session: "a", now: t) else { return XCTFail("click 2 after a since read must not act") }
+        XCTAssertEqual(code, .staleBareRow)
+        let e = SnapshotRowsMemory.error(code, message, latest: latest)
+        XCTAssertEqual(e.retry, .afterSnapshot)
+        XCTAssertEqual(e.nextCall, HandsError.call("snapshot", ["window": 9]), "a read, never the click on a guessed row")
+        // The disagreeing-snapshots refusal reads too.
+        var n = SnapshotRowsMemory()
+        n.remember(session: "a", window: 9, view: "v", snapshot: "sOld", rows: rows(["OK", "Cancel"]), now: t)
+        n.remember(session: "a", window: 9, view: "v", snapshot: "sNew", rows: rows(["Delete", "OK", "Cancel"]), now: t)
+        guard case .refused(let c2, let m2, let l2) = n.resolve(bare: 2, session: "a", now: t) else { return XCTFail("stale") }
+        XCTAssertEqual(SnapshotRowsMemory.error(c2, m2, latest: l2).nextCall?["tool"]?.string, "snapshot")
+        // A full read afterwards makes its numbers good again.
+        m.remember(session: "a", window: 9, view: "v", snapshot: "sFull", rows: rows(["Delete", "OK", "Cancel"]), now: t)
+        XCTAssertEqual(m.resolve(bare: 2, session: "a", now: t), .ref("@sFull:e2"))
+    }
+
+    // Review r1 second-F5: huge or infinite decimal strings print as read instead of trapping.
+    func testHugeAndInfiniteDecimalValuesPrintAsRead() {
+        for v in ["1.180591620717e21", "99999999999999999999.5", "1.0e999", "-1.5e20", "9223372036854775808.0"] {
+            XCTAssertEqual(SnapshotRows.shownValue(v), v)
+        }
+        XCTAssertEqual(SnapshotRows.shownValue("0.18518517911434174"), "0.19")
+        XCTAssertEqual(SnapshotRows.shownValue("1.0"), "1")
+        XCTAssertEqual(SnapshotRows.shownValue("-0.001"), "0")
+        let tree: JSONValue = .object(["role": "window", "children": .array([.object(["role": "statictext", "name": "Result", "value": "1.0e999", "ref_id": "@s:e1"])])])
+        XCTAssertEqual(SnapshotRows.rows(of: tree).first?.line, "[1] statictext \"Result\" =1.0e999")
+    }
+
+    // Review r1 first-F2: a since read keeps the notes.
+    func testASinceReadPrintsItsNotes() {
+        let r = rows(["OK"])
+        let none = SnapshotRows.renderSince([], new: r, snapshot: "sB", previous: "sA", window: 9, notes: ["a sheet is up on this window and blocks it"], query: nil)
+        XCTAssertTrue(none.hasSuffix("\nnote: a sheet is up on this window and blocks it"), none)
+        let some = SnapshotRows.renderSince([.added(r[0])], new: r, snapshot: "sB", previous: "sA", window: 9, notes: ["the read stopped before the end of the tree"], query: nil)
+        XCTAssertTrue(some.contains("\nnote: the read stopped before the end of the tree\n+ [1] button \"OK\""), some)
+    }
+
+    // Review r1 second-F6: the truncated line's call keeps the query.
+    func testTheTruncatedCallKeepsTheQuery() throws {
+        let text = full(try load("system-information"), app: "System Information", query: "textfield", max: 20)
+        let last = try XCTUnwrap(text.split(separator: "\n").last)
+        XCTAssertTrue(last.contains(#"{"window":54978,"query":"textfield","max_elements":"#), String(last))
+        XCTAssertFalse(last.contains("<a word"), String(last))
+    }
+
+    // Review r1 first-F3: Calculator's display is named by its content; a new number is a change, not a remove and an add.
+    func testAnElementNamedByItsContentChangesInPlace() {
+        func tree(_ shown: String) -> JSONValue {
+            .object(["role": "window", "children": .array([.object(["role": "scrollarea", "ref_id": "@s:e1", "children": .array([
+                .object(["role": "statictext", "name": .string(shown), "value": .string(shown)])])])])])
+        }
+        let a = SnapshotRows.rows(of: tree("0")), b = SnapshotRows.rows(of: tree("1.180591620717e21"))
+        let c = SnapshotRows.changes(from: a, to: b)
+        XCTAssertEqual(c.count, 1, "\(c)")
+        guard case .changed(let r) = c.first else { return XCTFail("\(c)") }
+        XCTAssertEqual(r.name, "1.180591620717e21")
     }
 }
 

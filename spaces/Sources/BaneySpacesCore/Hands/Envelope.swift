@@ -54,8 +54,8 @@ public enum HandsErrorCode: String, Codable, CaseIterable, Sendable {
     /// What to do next when the caller has no better idea.
     public var defaultRetry: HandsRetry {
         switch self {
-        case .staleRef, .unknownRef, .ambiguousTarget, .ambiguousWindow: return .afterSnapshot
-        case .timeout, .notRunning, .appNotFound, .windowNotFound, .badArguments, .permissionDenied, .ambiguous, .inUse, .staleBareRow: return .safe
+        case .staleRef, .unknownRef, .ambiguousTarget, .ambiguousWindow, .staleBareRow: return .afterSnapshot
+        case .timeout, .notRunning, .appNotFound, .windowNotFound, .badArguments, .permissionDenied, .ambiguous, .inUse: return .safe
         case .outsideAgentWorkspace, .agentWorkspaceOff, .notSupported, .actionFailed, .unverified, .engineError, .needsLend, .needsSandbox: return .never
         }
     }
