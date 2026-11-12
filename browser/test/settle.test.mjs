@@ -146,3 +146,29 @@ test("a navigate that lands on the approval host is blanked before anything runs
 	assert.equal(reply.error?.code, "permission_denied", JSON.stringify(reply));
 	assert.equal(order[0], "blank", `ran in the approval page first: ${order.join(", ")}`);
 });
+
+test("a batch of press steps turns Network on once, not once per step", async () => {
+	const { request } = await startBridge();
+	const created = await request("tabs.create");
+	assert.equal(created.error, undefined, JSON.stringify(created.error));
+	await chrome.tabs.update(created.result.tabId, { url: "https://example.com/", status: "complete" });
+	const sent = recordCommands();
+	const reply = await request("actions", { steps: [{ press: { key: "a" } }, { press: { key: "b" } }, { press: { key: "c" } }] });
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	assert.ok(sent.some((c) => c.method.startsWith("Input.")), "no input was sent");
+	assert.equal(sent.filter((c) => c.method === "Network.enable").length, 1);
+});
+
+test("a batch that names a tab other than the current one watches that tab's requests", async () => {
+	const { request } = await startBridge();
+	const named = await request("tabs.create");
+	const current = await request("tabs.create");
+	assert.equal(current.error, undefined, JSON.stringify(current.error));
+	for (const t of [named, current])
+		await chrome.tabs.update(t.result.tabId, { url: "https://example.com/", status: "complete" });
+	const sent = recordCommands();
+	const reply = await request("actions", { tabId: named.result.tabId, steps: [{ hover: { x: 10, y: 10 } }] });
+	assert.equal(reply.error, undefined, JSON.stringify(reply.error));
+	const enables = sent.filter((c) => c.method === "Network.enable").map((c) => c.tabId);
+	assert.deepEqual(enables, [named.result.tabId], `Network.enable went to ${enables.join(", ")}`);
+});

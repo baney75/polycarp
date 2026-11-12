@@ -153,6 +153,14 @@ async function settleAfter(
 	}
 }
 
+/**
+ * When an action starts, for its settle wait: Network on in its tab. A batch step skips it, since the
+ * batch turned Network on once before its first step and settles once after its last.
+ */
+function actionStart(ctx: HandlerContext, tabId: number): Promise<number> {
+	return ctx.batch ? Promise.resolve(Date.now()) : settleStart(tabId);
+}
+
 /** Look at the page before an action, for its change report (src/browser/changes.ts). */
 async function changesBefore(ctx: HandlerContext, tabId: number, params?: Params): Promise<Before | undefined> {
 	return ctx.batch ? undefined : beforeAction(tabId, ctx.session.tabIds, params ? str(params, "ref") : undefined);
@@ -581,7 +589,7 @@ export const handlers: Record<string, Handler> = {
 		const tabId = await resolveTab(ctx, params, false);
 		let timedOut = false;
 		const before = await changesBefore(ctx, tabId);
-		const since = await settleStart(tabId);
+		const since = await actionStart(ctx, tabId);
 		watchGuardedCommits(ctx, tabId);
 		if (url === "back") timedOut = !(await goBack(tabId));
 		else if (url === "forward") timedOut = !(await goForward(tabId));
@@ -727,7 +735,7 @@ export const handlers: Record<string, Handler> = {
 		const p = await pointFor(ctx, params, tabId);
 		const button = str(params, "button");
 		const before = await changesBefore(ctx, tabId, params);
-		const since = await settleStart(tabId);
+		const since = await actionStart(ctx, tabId);
 		await click(tabId, p.x, p.y, {
 			button: button === "right" || button === "middle" ? button : "left",
 			clickCount: num(params, "clickCount") ?? 1,
@@ -755,7 +763,7 @@ export const handlers: Record<string, Handler> = {
 				'from and to are required, e.g. {"from":{"x":200,"y":200},"to":{"x":360,"y":300}}',
 			);
 		const before = await changesBefore(ctx, tabId);
-		const since = await settleStart(tabId);
+		const since = await actionStart(ctx, tabId);
 		await drag(tabId, screenshotToCss(tabId, from), screenshotToCss(tabId, to));
 		return {
 			dragged: { from, to },
@@ -770,7 +778,7 @@ export const handlers: Record<string, Handler> = {
 		/** Set just before the first key event goes out: after that the page may hold some of the text. */
 		let keysStarted = false;
 		const before = await changesBefore(ctx, tabId, params);
-		const since = await settleStart(tabId);
+		const since = await actionStart(ctx, tabId);
 		const attempt = async () => {
 			if (t.ref || t.selector) {
 				const rect = await locate(tabId, t);
@@ -817,7 +825,7 @@ export const handlers: Record<string, Handler> = {
 		const tabId = await resolveTab(ctx, params, true);
 		const repeat = num(params, "repeat") ?? 1;
 		const before = await changesBefore(ctx, tabId);
-		const since = await settleStart(tabId);
+		const since = await actionStart(ctx, tabId);
 		for (let i = 0; i < repeat; i++) {
 			stopIfAborted(ctx);
 			await pressKey(tabId, key);
@@ -832,7 +840,7 @@ export const handlers: Record<string, Handler> = {
 		const dx = num(params, "dx") ?? 0;
 		const dy = num(params, "dy") ?? 0;
 		const before = await changesBefore(ctx, tabId);
-		const since = await settleStart(tabId);
+		const since = await actionStart(ctx, tabId);
 		let scrolled: unknown;
 		if (x !== undefined && y !== undefined && !params.ref && !params.selector && !params.to) {
 			// Wheel at a point: scrolls the innermost scrollable under the cursor.
@@ -864,7 +872,7 @@ export const handlers: Record<string, Handler> = {
 		if (!t.ref && !t.selector)
 			throw new BridgeError(ERR.BAD_PARAMS, "fill needs a ref from read_page, or a selector.");
 		const before = await changesBefore(ctx, tabId, params);
-		const since = await settleStart(tabId);
+		const since = await actionStart(ctx, tabId);
 		await fillElement(tabId, t, value);
 		return { filled: t, ...(await settleAfter(ctx, tabId, since, { filled: t }, { before })) };
 	},
@@ -958,7 +966,9 @@ export const handlers: Record<string, Handler> = {
 		let wantShot = params.screenshot === true;
 		const done: unknown[] = [];
 		// Network on for the batch's tab before its first step: a drag or a scroll step turns it on itself.
-		const first = await ctx.session.currentTab().catch(() => undefined);
+		// The batch's tab is the one it names, else the current one.
+		const named = num(params, "tabId");
+		const first = named !== undefined ? { id: named } : await ctx.session.currentTab().catch(() => undefined);
 		const firstId = first?.id !== undefined && ctx.session.tabIds.includes(first.id) ? first.id : undefined;
 		const before = firstId !== undefined ? await changesBefore(ctx, firstId) : undefined;
 		const batchStart = await settleStart(firstId);
@@ -1001,7 +1011,17 @@ export const handlers: Record<string, Handler> = {
 		const last = await ctx.session.currentTab().catch(() => undefined);
 		if (last?.id !== undefined && ctx.session.tabIds.includes(last.id))
 			// One report for the whole batch: per step it would cost a page look per keystroke.
-			Object.assign(out, await settleAfter(ctx, last.id, batchStart, { steps: done.length, notRun: 0 }, { before }));
+			Object.assign(
+				out,
+				await settleAfter(
+					ctx,
+					last.id,
+					batchStart,
+					{ steps: done.length, notRun: 0 },
+					// A step moved to another tab: Network was never turned on there.
+					{ before, watched: last.id === firstId },
+				),
+			);
 		if (wantShot) out.screenshot = await handlers.screenshot(ctx, { tabId: params.tabId });
 		return out;
 	},
