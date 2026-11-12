@@ -6,6 +6,14 @@
  */
 
 import { cdpSend, isRestrictedUrl } from "./cdp.js";
+import {
+	crossOriginFrames,
+	evaluateInFrame,
+	frameForRef,
+	frameTakesPoint,
+	type PageFrame,
+	scrollFrameIntoView,
+} from "./frames.js";
 import { maskUrl } from "./mask-body.js";
 import { isUserScriptsGated, userScriptsApi } from "./userscripts-status.js";
 import { veilTag } from "./veil-shared.js";
@@ -147,7 +155,7 @@ export async function runInPage<T = unknown>(
 	if (tab.url && isRestrictedUrl(tab.url)) {
 		throw new Error(`Cannot run scripts on ${tab.url}: browser-internal pages are protected.`);
 	}
-	const wrapped = `(async () => { try { const __v = await (${code}); return { ok: true, value: __v }; } catch (e) { return { ok: false, error: String(e && e.stack || e) }; } })()`;
+	const wrapped = wrapCode(code);
 	// userScripts needs the "Allow user scripts" toggle; without it, evaluate through the
 	// debugger in the main world (CSP does not apply to Runtime.evaluate).
 	const api = userScriptsApi();
@@ -179,6 +187,37 @@ export async function runInPage<T = unknown>(
 	if (!first) throw new Error("Script returned no result");
 	if (first.error) throw new Error(String((first.error as { message?: string }).message ?? first.error));
 	return unwrap<T>(first.result);
+}
+
+/** Page code as an expression that always resolves: its value, or the error it threw. */
+function wrapCode(code: string): string {
+	return `(async () => { try { const __v = await (${code}); return { ok: true, value: __v }; } catch (e) { return { ok: false, error: String(e && e.stack || e) }; } })()`;
+}
+
+/** Page code in a cross-origin frame's isolated world (src/browser/frames.ts), where its refs live. */
+export async function runInFrame<T = unknown>(tabId: number, frame: PageFrame, code: string): Promise<T> {
+	return unwrap<T>(await evaluateInFrame(tabId, frame, wrapCode(code)));
+}
+
+/**
+ * Run code where a ref's element lives: the top document, or the cross-origin frame the ref's
+ * tag names, with the ref as that frame knows it. An error names the ref the agent used. In a
+ * frame `inFrame` is true: a selector given with the ref is the top page's, never tried there.
+ */
+async function runForRef<T>(
+	tabId: number,
+	ref: string | undefined,
+	code: (ref: string | undefined, inFrame: boolean) => string,
+	skip?: (url: string) => boolean,
+): Promise<{ value: T; frame?: PageFrame }> {
+	const hit = ref ? await frameForRef(tabId, ref, skip) : undefined;
+	if (!hit) return { value: await runInPage<T>(tabId, code(ref, false)) };
+	try {
+		return { value: await runInFrame<T>(tabId, hit.frame, code(hit.inner, true)), frame: hit.frame };
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		throw new Error(message.split(`Ref ${hit.inner} `).join(`Ref ${ref} `));
+	}
 }
 
 function unwrap<T>(raw: unknown): T {
@@ -234,7 +273,7 @@ export interface Snapshot {
  * removed leaves its old document attached to itself, so isConnected alone says yes.
  * Stringified and injected, so it must be self-contained.
  */
-function refLive(el: Element): boolean {
+export function refLive(el: Element): boolean {
 	if (!el.isConnected) return false;
 	let doc: Document = el.ownerDocument;
 	for (let hops = 0; hops < 20; hops++) {
@@ -242,6 +281,9 @@ function refLive(el: Element): boolean {
 		if (!win) return false;
 		if (win === win.parent) return true;
 		const frame = win.frameElement;
+		// The top of what this script sees: in a cross-origin frame, its own window (the
+		// document around it is another origin's, so it has no frameElement).
+		if (!frame && win === window) return true;
 		if (!frame || !frame.isConnected || (frame as HTMLIFrameElement).contentDocument !== doc) return false;
 		doc = frame.ownerDocument;
 	}
@@ -826,6 +868,7 @@ function pageSnapshot(
 		},
 		nodes,
 		text,
+		...(crossFrames.length ? { crossFrames: crossFrames.length } : {}),
 	};
 }
 
@@ -985,15 +1028,88 @@ export async function inspectPage(tabId: number): Promise<Record<string, unknown
 
 export async function snapshot(
 	tabId: number,
-	options: { maxNodes?: number; maxTextChars?: number; filter?: "interactive" | "all" } = {},
+	options: {
+		maxNodes?: number;
+		maxTextChars?: number;
+		filter?: "interactive" | "all";
+		/** A frame no tool may touch (the approval page): left listed, never read. */
+		skip?: (url: string) => boolean;
+	} = {},
 ): Promise<Snapshot> {
 	const { maxNodes = 300, maxTextChars = 20000, filter = "all" } = options;
-	const snap = await runInPage<Snapshot>(
-		tabId,
-		`(${pageSnapshot.toString()})(${maxNodes}, ${maxTextChars}, ${JSON.stringify(filter)}, ${refLive.toString()}, ${refPrint.toString()})`,
-	);
+	const code = (n: number, t: number) =>
+		`(${pageSnapshot.toString()})(${n}, ${t}, ${JSON.stringify(filter)}, ${refLive.toString()}, ${refPrint.toString()})`;
+	const snap = await runInPage<Snapshot & { crossFrames?: number }>(tabId, code(maxNodes, maxTextChars));
 	if (typeof snap?.url === "string") snap.url = maskUrl(snap.url);
+	if (snap?.crossFrames) {
+		delete snap.crossFrames;
+		await readFrames(tabId, snap, maxNodes, maxTextChars, code, options.skip);
+	}
 	return snap;
+}
+
+/** The state pageSnapshot gives a cross-origin frame (written out there: it runs in the page). */
+const CROSS_NOTE = "cross-origin: read it with navigate to its URL";
+
+/**
+ * Add each cross-origin frame's elements and text to a snapshot (D43): the elements right after
+ * the frame's own element, with the frame's tag on their refs and the tab's coordinates, the text
+ * under the frame's host. Frames get at least a small share when the page used up the budget.
+ */
+async function readFrames(
+	tabId: number,
+	snap: Snapshot,
+	maxNodes: number,
+	maxTextChars: number,
+	code: (n: number, t: number) => string,
+	skip?: (url: string) => boolean,
+): Promise<void> {
+	const frames = await crossOriginFrames(tabId, skip).catch(() => [] as PageFrame[]);
+	let room = Math.max(maxNodes - snap.nodes.length, 60);
+	let textRoom = maxTextChars > 0 ? Math.max(maxTextChars - snap.text.length, 2000) : 0;
+	const { width, height } = snap.viewport;
+	for (const f of frames) {
+		if (room <= 0) break;
+		const s = await runInFrame<Snapshot>(tabId, f, code(room, textRoom)).catch(() => undefined);
+		if (!s?.nodes) continue;
+		let label = "";
+		try {
+			label = new URL(f.url).host;
+		} catch {
+			label = "(frame)";
+		}
+		const nodes = s.nodes.map((n) => {
+			const x = n.x + f.offset.x;
+			const y = n.y + f.offset.y;
+			const inner = (n as SnapshotNode & { frame?: string }).frame;
+			return {
+				...n,
+				ref: f.tag + n.ref,
+				x,
+				y,
+				visible: n.visible && x >= 0 && y >= 0 && x < width && y < height,
+				...(n.href ? { href: maskUrl(n.href) } : {}),
+				frame: inner ? `${label} > ${inner}` : label,
+			};
+		});
+		// The frame's own element: listed by the document around it, its box holding the frame's corner.
+		const at = snap.nodes.findIndex(
+			(n) =>
+				(n as SnapshotNode & { states?: string[] }).states?.[0] === CROSS_NOTE &&
+				Math.abs(n.x - f.offset.x) <= n.width / 2 + 1 &&
+				Math.abs(n.y - f.offset.y) <= n.height / 2 + 1,
+		);
+		if (at >= 0) {
+			(snap.nodes[at] as SnapshotNode & { states?: string[] }).states = ["cross-origin frame, its elements follow"];
+			snap.nodes.splice(at + 1, 0, ...nodes);
+		} else snap.nodes.push(...nodes);
+		room -= nodes.length;
+		if (textRoom > 0 && s.text) {
+			const t = `[frame ${label}]\n${s.text}`.slice(0, textRoom);
+			snap.text = snap.text ? `${snap.text}\n\n${t}` : t;
+			textRoom -= t.length;
+		}
+	}
 }
 
 /**
@@ -1017,11 +1133,12 @@ export function elementCode(target: { ref?: string; selector?: string }): string
 export async function locate(
 	tabId: number,
 	target: { ref?: string; selector?: string },
+	skip?: (url: string) => boolean,
 ): Promise<{ x: number; y: number; width: number; height: number }> {
-	const code = `(async () => {
+	const code = (r: string | undefined, inFrame: boolean) => `(async () => {
 		let el = null;
-		const ref = ${JSON.stringify(target.ref ?? "")};
-		const sel = ${JSON.stringify(target.selector ?? "")};
+		const ref = ${JSON.stringify(r ?? "")};
+		const sel = ${JSON.stringify(inFrame ? "" : (target.selector ?? ""))};
 		// A ref that no longer resolves falls back to a selector given with it, as before.
 		if (ref) {
 			try { el = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); }
@@ -1070,7 +1187,34 @@ export async function locate(
 		}
 		return { x, y, width: w, height: h };
 	})()`;
-	return runInPage(tabId, code);
+	const framed = target.ref ? await frameForRef(tabId, target.ref, skip) : undefined;
+	if (framed) await scrollFrameIntoView(tabId, framed.frame);
+	const { value: p, frame } = await runForRef<{ x: number; y: number; width: number; height: number }>(
+		tabId,
+		target.ref,
+		code,
+		skip,
+	);
+	if (!frame) return p;
+	// The point in the frame, in the tab's viewport: it must be on screen and land in the frame.
+	// Measured again: bringing the element into view can scroll the page around the frame too.
+	const now = (await frameForRef(tabId, target.ref as string, skip))?.frame ?? frame;
+	const at = { ...p, x: p.x + now.offset.x, y: p.y + now.offset.y };
+	const view = await cdpSend<{ cssLayoutViewport?: { clientWidth: number; clientHeight: number } }>(
+		tabId,
+		"Page.getLayoutMetrics",
+	).catch(() => undefined);
+	const vw = view?.cssLayoutViewport?.clientWidth ?? Number.POSITIVE_INFINITY;
+	const vh = view?.cssLayoutViewport?.clientHeight ?? Number.POSITIVE_INFINITY;
+	if (at.x < 0 || at.y < 0 || at.x >= vw || at.y >= vh)
+		throw new Error(
+			`Ref ${target.ref} is outside the visible page (its frame is cut off), so a click can't reach it.`,
+		);
+	if (!(await frameTakesPoint(tabId, now, at.x, at.y)))
+		throw new Error(
+			`Ref ${target.ref} is covered by something over its frame, which would take the click. Close or dismiss it, then call read_page.`,
+		);
+	return at;
 }
 
 /** Set a form control's value the way frameworks expect (native setter + input/change). */
@@ -1078,12 +1222,13 @@ export async function fillElement(
 	tabId: number,
 	target: { ref?: string; selector?: string },
 	value: string,
+	skip?: (url: string) => boolean,
 ): Promise<void> {
-	const code = `(async () => {
+	const code = (r: string | undefined, inFrame: boolean) => `(async () => {
 		let el = null;
 		let byRef = false;
-		const ref = ${JSON.stringify(target.ref ?? "")};
-		const sel = ${JSON.stringify(target.selector ?? "")};
+		const ref = ${JSON.stringify(r ?? "")};
+		const sel = ${JSON.stringify(inFrame ? "" : (target.selector ?? ""))};
 		// A ref that no longer resolves falls back to a selector given with it, as before.
 		if (ref) {
 			try { el = (${resolveRef.toString()})(ref, ${refLive.toString()}, ${refPrint.toString()}); byRef = true; }
@@ -1146,7 +1291,7 @@ export async function fillElement(
 		}
 		throw new Error("Element is not a form control: use click or type on it instead of fill.");
 	})()`;
-	await runInPage(tabId, code);
+	await runForRef(tabId, target.ref, code, skip);
 }
 
 export async function pageText(tabId: number, selector?: string, maxChars = 50000): Promise<string> {
@@ -1216,6 +1361,7 @@ export async function pageHtml(tabId: number, selector?: string, maxChars = 2000
 export async function scrollPage(
 	tabId: number,
 	options: { dx?: number; dy?: number; selector?: string; ref?: string; to?: "top" | "bottom" },
+	skip?: (url: string) => boolean,
 ): Promise<{
 	scrollX: number;
 	scrollY: number;
@@ -1227,8 +1373,8 @@ export async function scrollPage(
 	clientHeight?: number;
 	atEnd?: boolean;
 }> {
-	const code = `(async () => {
-		const o = ${JSON.stringify(options)};
+	const code = (r: string | undefined, inFrame: boolean) => `(async () => {
+		const o = ${JSON.stringify({ ...options, ref: r, ...(inFrame ? { selector: undefined } : {}) })};
 		let target = null;
 		// A ref that no longer resolves falls back to a selector given with it, as click and fill do.
 		if (o.ref) {
@@ -1271,7 +1417,11 @@ export async function scrollPage(
 		else window.scrollBy(o.dx || 0, o.dy || 0);
 		return { scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY), pageHeight: document.documentElement.scrollHeight };
 	})()`;
-	return runInPage(tabId, code);
+	if (options.ref) {
+		const framed = await frameForRef(tabId, options.ref, skip);
+		if (framed) await scrollFrameIntoView(tabId, framed.frame);
+	}
+	return (await runForRef<Awaited<ReturnType<typeof scrollPage>>>(tabId, options.ref, code, skip)).value;
 }
 
 /** Wait until a selector appears, text is present, or the URL matches. */

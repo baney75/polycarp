@@ -43,6 +43,8 @@ export interface PageDialog {
 	message: string;
 	defaultPrompt?: string;
 	url?: string;
+	/** The child session of the cross-origin frame that opened it (src/browser/frames.ts). */
+	sessionId?: string;
 }
 
 const openDialogs = new Map<number, PageDialog>();
@@ -63,7 +65,9 @@ export function watchDialogs(fn: (tabId: number, dialog: PageDialog) => void): (
 export async function answerDialog(tabId: number, accept: boolean, promptText?: string): Promise<PageDialog> {
 	const dialog = openDialogs.get(tabId);
 	if (!dialog) throw new Error("No dialog is open on this tab");
-	await send(tabId, "Page.handleJavaScriptDialog", { accept, ...(promptText !== undefined ? { promptText } : {}) });
+	const answer = { accept, ...(promptText !== undefined ? { promptText } : {}) };
+	if (dialog.sessionId) await cdpSendSession(tabId, dialog.sessionId, "Page.handleJavaScriptDialog", answer);
+	else await send(tabId, "Page.handleJavaScriptDialog", answer);
 	openDialogs.delete(tabId);
 	remember(tabId);
 	return dialog;
@@ -83,6 +87,7 @@ function installListeners(): void {
 				message: p.message ?? "",
 				defaultPrompt: p.defaultPrompt,
 				url: p.url,
+				...(source.sessionId ? { sessionId: source.sessionId } : {}),
 			};
 			openDialogs.set(tabId, dialog);
 			remember(tabId);
@@ -265,6 +270,21 @@ export async function detachTab(tabId: number, force = false): Promise<void> {
 	} catch {
 		/* not attached or tab gone */
 	}
+}
+
+/**
+ * A command in one of the tab's child sessions: an out-of-process frame that frames.ts attached.
+ * No session means the tab's own.
+ */
+export async function cdpSendSession<T = unknown>(
+	tabId: number,
+	sessionId: string | undefined,
+	method: string,
+	params?: Record<string, unknown>,
+): Promise<T> {
+	if (!sessionId) return cdpSend<T>(tabId, method, params);
+	await ensureAttached(tabId);
+	return (await chrome.debugger.sendCommand({ tabId, sessionId }, method, params)) as T;
 }
 
 export async function cdpSend<T = unknown>(
@@ -767,6 +787,8 @@ function installCaptureListener(): void {
 		const tabId = source.tabId;
 		if (tabId === undefined) return;
 		const p = (params ?? {}) as Record<string, unknown>;
+		// A frame's own session (frames.ts) detaching or crashing is that frame's, not the tab's.
+		if ((source as { sessionId?: string }).sessionId) return;
 		if (method === "Inspector.detached") {
 			noteCaptureStopped(tabId, `the page's inspector detached (${String(p.reason ?? "unknown reason")})`);
 		} else if (method === "Inspector.targetCrashed") {
