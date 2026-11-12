@@ -64,6 +64,13 @@ public struct AXBench: Equatable, Sendable {
         return min(ceiling, max(floor, t.timeIntervalSince(now) + 0.05))
     }
 
+    /// Every app asked again at once: after the Mac wakes, an app that missed while it slept isn't hung (`Spaces.didWake`).
+    public mutating func clear() {
+        strikes = [:]
+        youngMisses = [:]
+        until = [:]
+    }
+
     /// Forgets apps that quit.
     public mutating func keep(_ alive: Set<Int32>) {
         strikes = strikes.filter { alive.contains($0.key) }
