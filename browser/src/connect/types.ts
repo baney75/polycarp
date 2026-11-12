@@ -183,6 +183,10 @@ export interface RemoteFixAnswer {
 	/** What it would do, or did: `{kind, what, status}`. */
 	actions?: { kind: string; what: string; status: string }[];
 	checks?: RemoteCheckView[];
+	/** A step only the person can take, when the repair stopped on one (second-N1). */
+	next?: RemoteNextView;
+	/** Steps only the person can take, as `remote fix` words them: `{name, detail, command?}`. */
+	advice?: { name: string; detail: string; command?: string }[];
 }
 
 /** What "Set up with Cloudflare" answers when it finishes. */
@@ -194,4 +198,9 @@ export interface TunnelResult {
 	connectCodeProblem?: string;
 	checks?: RemoteCheckView[];
 	passcodeSet?: boolean;
+	/**
+	 * Setup refused or stopped with a state of its own (a taken name, a domain off the account, a tunnel error): the panel draws
+	 * it as that step (first-F1). No code is made for it.
+	 */
+	problem?: RemoteAnswer;
 }

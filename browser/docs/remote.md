@@ -177,17 +177,23 @@ reaches a command line (the remote methods take no parameters, and the Cloudflar
 1. **Choose a way.** Tailscale (no domain; recommended when it is installed) or Cloudflare (a domain on your account).
 2. **Get it and sign in.** The page names what is missing, with one button: Tailscale's download page, the command to
    sign in, or "Turn on" for Cloudflare, which downloads cloudflared and opens Cloudflare's sign-in. It checks every
-   3 seconds and moves on by itself.
+   3 seconds and moves on by itself. The first screen, once it has shown which ways are ready, checks every 15 seconds.
 3. **Turn on.** If Tailscale hasn't allowed Funnel yet, the page opens Tailscale's page once and tries Funnel again every
    5 seconds for up to 10 minutes; no "try again" press is needed. After 10 minutes it stops and shows "Check again".
+   On Linux, when Tailscale refuses because your user isn't its operator, the page shows the command to run once and
+   retries the same way; after the retry stops, or before anything was saved, it shows "Check again". A Cloudflare name
+   that is taken or not on your signed-in domain shows its own step, such as "Pick another name".
 
 The result shows the connector URL, a one-time connect code with a 10-minute countdown and "New code", the steps for
 claude.ai, ChatGPT and grok.com (the same lines `remote setup` prints), and the checks from the internet
 (`remote test`). A code comes only from a press: Turn on makes one, and when the Funnel retry turned the route on by
 itself the result asks you to press New code. A brand-new name that public DNS doesn't have yet, or a tunnel still
 connecting, is a `pending` check: the result says the address is still being published and checks again every 30
-seconds until it passes. When a check fails for real and the helper's `remote fix` has something to do, a Repair button
-runs it; an older helper shows no button. The side panel never makes or shows a passcode: a new connect code approves an assistant again. The code lives
+seconds until it passes. After 15 minutes of that, or when setup's answer names `remote fix`, the check counts as failed.
+When a check fails for real and the helper's `remote fix` has something to do, a Repair button runs it; an older helper
+shows no button. When Repair stops on something only you can do, the page shows that step with its command, and each
+piece of `remote fix`'s advice with its own; do the step, then press Repair again. If Tailscale doesn't answer within 15
+seconds, the page says so and changes nothing, rather than asking you to sign in. The side panel never makes or shows a passcode: a new connect code approves an assistant again. The code lives
 only in the page's memory and is gone when Settings closes.
 
 The Mac app's Settings > Browser has the same three steps in the same words (they come from one table, held equal by

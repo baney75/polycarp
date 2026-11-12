@@ -35,20 +35,22 @@ export function run(cmd: string, args: string[], timeoutMs = 60_000): { code: nu
  * explicit stdio and the same 60 s limit; `timeoutMs` is for tests. A command that outlives the limit
  * is killed and its pipes closed, so a grandchild that holds them cannot keep this waiting.
  */
-export function runAsync(cmd: string, args: string[], timeoutMs = 60_000): Promise<{ code: number; out: string }> {
+export function runAsync(cmd: string, args: string[], timeoutMs = 60_000): Promise<{ code: number; out: string; timedOut?: boolean }> {
 	return new Promise((resolve) => {
 		let out = "";
 		let done = false;
+		// Set when the limit killed it, so a caller can tell "too slow" from what the command said (PR 136 second-S5).
+		let timedOut = false;
 		const finish = (code: number, extra?: string) => {
 			if (done) return;
 			done = true;
 			clearTimeout(timer);
 			const text = [out.trim(), extra].filter(Boolean).join("\n");
-			resolve({ code, out: text });
+			resolve({ code, out: text, ...(timedOut ? { timedOut: true } : {}) });
 		};
 		let child: ReturnType<typeof spawn>;
 		try {
-			child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+			child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
 		} catch (err) {
 			resolve({ code: 1, out: err instanceof Error ? err.message : String(err) });
 			return;
@@ -57,6 +59,7 @@ export function runAsync(cmd: string, args: string[], timeoutMs = 60_000): Promi
 			child.kill("SIGKILL");
 			child.stdout?.destroy();
 			child.stderr?.destroy();
+			timedOut = true;
 			finish(1, `${cmd} timed out after ${Math.round(timeoutMs / 1000)} s`);
 		}, timeoutMs);
 		for (const stream of [child.stdout, child.stderr]) stream?.on("data", (chunk: Buffer) => (out += chunk.toString("utf8")));

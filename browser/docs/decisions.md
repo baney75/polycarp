@@ -1067,4 +1067,32 @@ Agents could not attach a file to a form or keep a file a page offers. One tool,
   come from one place.
 - **Replaced claim.** "claude.ai often can't reach Tailscale Funnel addresses" had no source and is gone. The true reason
   Funnel fails on some networks is Tailnet Lock (D30), which the Tailnet Lock step now says.
+- **`remote fix` ends the wait (review round 2, second-N2).** An answer whose `next` is `run_command ... remote fix` is
+  setup saying the wait is over, so it is a failed check with Repair, not "still being published", and the host makes no
+  code for it. Any result still waiting after 15 minutes (`WAITING_FOR_MS`) draws its pending check as failed and offers
+  Repair. 15 minutes: setup already waited 5, and a new public name or tunnel answers well inside that.
+- **Nothing claims to wait unless something polls (first-F2).** The operator refusal waits only while the Funnel retry
+  runs on a saved route; once it stopped, or before anything is saved, the step is `tailscale_operator_check`: the command
+  and "Check again" (Funnel again on a saved route, Turn on otherwise). A stopped Repair never says it waits (PR 136
+  review round 1, second-S2 and first-F2): every step that would wait drops its "this page checks" sentence, ends "Then
+  press Repair again.", and draws one Repair button in place of the checklist's.
+- **Probes never block the host (first-F3).** `remoteState` and the Funnel retry read Tailscale through async commands
+  with a 15-second limit (`PROBE_TIMEOUT_MS`). The choose screen asks every 3 seconds until it has read the routes, then
+  every 15 (`CHOOSE_POLL_MS`): an install or sign-in in another window still shows up, at a fifth of the cost.
+- **Setup's refusals are steps (first-F1).** The Cloudflare tunnel step returns setup's report when it isn't ok, and the
+  panel draws its state, so every `cloudflare_*` entry is reachable. Only a setup with no report at all is an error.
+- **Mac-only result strings stay in the one table (first-F4).** `passcodeLabel`, `passcodeNote` and `turnOff` are for the
+  Mac app (it shows a passcode once and has Turn off); `MAC_ONLY_RESULT` names them, and a test fails on any other result
+  string the panel doesn't draw.
+- **Only a refusal is a refusal (PR 136 review round 1, first-F1).** Setup's report counts as a refusal only when it isn't
+  on (`answerOn` false). A new Cloudflare tunnel that answers 502 or 530 in its first minute is on and pending: the panel
+  keeps the result, its code and the 30-second check. A late `remoteFunnel` answer after "Use Cloudflare instead" is
+  dropped, and the Cloudflare form is skipped only for a refusal that came from that form (second-S1). Retrying after a
+  refusal uses the saved hostname only when the saved route is Cloudflare, else the name the refused run was for (second-S3).
+- **One Tailscale read per poll (first-F3).** `remoteState` reads lock status, status and serve status once and derives
+  the routes, the plan and the Funnel check from that one result.
+- **The 15-minute wait counts visible time (second-S4).** Each tick adds at most 2 seconds (`WAIT_TICK_GAP_MS`), so a
+  hidden or asleep panel doesn't jump straight to failed when it wakes.
+- **A Tailscale that doesn't answer is unreadable, not signed out (second-S5).** A probe that hits its 15-second limit
+  reports "Tailscale didn't answer within 15 seconds", with nothing changed, never the sign-in step and never "on".
 
