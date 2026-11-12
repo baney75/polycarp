@@ -41,6 +41,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// one up again bumps its generation, so its stale move never runs, even one queued.
     private var settling: [WindowID: Timer] = [:]
     private var dropGeneration: [WindowID: Int] = [:]
+    /// Windows waiting to hold still after a drag before `keepOnScreen` looks at them.
+    private var clamping: [WindowID: Timer] = [:]
+
+    /// Waits for the window server, the app and any tile animation to finish the drop (still for three looks 20 ms apart,
+    /// no longer than 0.5 s), then keeps the window on screen. A window whose drop moves it to a workspace is left to that.
+    private func keepOnScreenOnceStill(_ id: WindowID, releasedAt p: CGPoint) {
+        guard settling[id] == nil else { return }
+        clamping.removeValue(forKey: id)?.invalidate()
+        var last = TopDragWatcher.bounds(of: id)
+        var looks = 0, still = 0
+        clamping[id] = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { [weak self] timer in
+            looks += 1
+            let now = TopDragWatcher.bounds(of: id)
+            still = now == last ? still + 1 : 0
+            last = now
+            guard (looks >= 5 && still >= 3) || looks >= 25 else { return }
+            timer.invalidate()
+            guard let self, self.clamping[id] === timer else { return }
+            self.clamping[id] = nil
+            guard self.settling[id] == nil, now != nil else { return }
+            self.spaces.keepOnScreen(id, releasedAt: p)
+        }
+    }
 
     /// Cancels the drop waiting for window `id`, or every one.
     private func cancelSettling(_ id: WindowID? = nil) {
@@ -67,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         t.onPress = { [weak self] id in
             guard let self, let id else { return }
             self.cancelSettling(id)
+            self.clamping.removeValue(forKey: id)?.invalidate()
         }
         t.onRelease = { [weak self] grab, drop in
             guard let self, let n = self.viewer.endCarrying(), drop else { return }
@@ -81,6 +105,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self, let n = self.dock.endCarry(grab, at: p), p != nil else { return }
             self.dropCarried(grab, on: n)
         }
+        // Any drag, once its own drop (if any) is under way: a window left off the screen comes back on it.
+        t.onDragEnd = { [weak self] id, p in self?.keepOnScreenOnceStill(id, releasedAt: p) }
         return t
     }()
 

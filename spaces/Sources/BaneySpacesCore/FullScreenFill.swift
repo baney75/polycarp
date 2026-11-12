@@ -71,6 +71,26 @@ public enum FullScreenFill {
         return CGRect(x: (pointer.x - share * size.width).rounded(), y: current.minY, width: size.width, height: size.height)
     }
 
+    /// What a drag of a window's title bar does to it as the drag starts.
+    public enum DragStart: Equatable, Sendable {
+        /// Polycarp filled it and it's still that size: its earlier size comes back under the pointer.
+        case unfill(CGRect)
+        /// Polycarp filled it, but it has been resized since: the fill is over, so the record goes. Kept, it matched again
+        /// once macOS filled the window and resized it a second time in the next drag (review of #146).
+        case forget
+        /// Full size with no record: macOS filled it (a drag to the top) and puts it back itself.
+        case leftToMacOS
+        /// Any other window: nothing to do or log.
+        case ordinary
+    }
+
+    public static func dragStart(current: CGRect, fill: CGRect, record: Record?, pointer: CGPoint) -> DragStart {
+        if let next = unfilled(current: current, fill: fill, record: record, pointer: pointer) { return .unfill(next) }
+        if record != nil { return .forget }
+        let full = abs(current.width - fill.width) <= 3 && abs(current.height - fill.height) <= 3
+        return full ? .leftToMacOS : .ordinary
+    }
+
     /// Whether a click could be on a window's green button, from the window server's geometry alone: within the corner where
     /// the traffic lights sit. Only such a click is worth asking the app about, so ordinary clicks cost no call to any app.
     public static func isInButtonCorner(_ point: CGPoint, window: CGRect) -> Bool {
