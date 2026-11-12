@@ -271,6 +271,9 @@ final class TopDragWatcher {
         for w in list {
             guard let bounds = (w[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) }),
                   bounds.contains(p) else { continue }
+            // A fully transparent window (a screen recorder's overlay) isn't what the person pressed. Counting it made every
+            // drag invisible to Polycarp for the length of a recording (Donovan, 2026-11-12).
+            if let alpha = w[kCGWindowAlpha as String] as? Double, alpha == 0 { continue }
             // The first window under the pointer takes the click, whatever it is.
             guard (w[kCGWindowLayer as String] as? Int) == 0, let pid = w[kCGWindowOwnerPID as String] as? Int32, pid != getpid(),
                   let id = w[kCGWindowNumber as String] as? Int else { return nil }

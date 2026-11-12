@@ -56,15 +56,17 @@ public enum FullScreenFill {
                       width: size.width, height: size.height)
     }
 
-    /// Where a filled window goes when its title bar is dragged away: its earlier size, with the pointer over the same
-    /// share of the title bar. Nil for a window that isn't filled. Compares size only, since the drag has moved it.
+    /// Where a window this filled goes when its title bar is dragged away: its earlier size, with the pointer over the same
+    /// share of the title bar. Nil for any window this didn't fill. Compares size only, since the drag has moved it.
+    /// A full-size window with no record was filled by macOS (a drag to the top) or sized by hand. macOS gives a tiled
+    /// window its old size back on its own as the drag starts, so resizing it here too made two size changes in one drag
+    /// and threw the window off the pointer (Donovan, 2026-11-12).
     public static func unfilled(current: CGRect, fill: CGRect, record: Record?, pointer: CGPoint) -> CGRect? {
         func sameSize(_ a: CGRect, _ b: CGRect) -> Bool {
             abs(a.width - b.width) <= 3 && abs(a.height - b.height) <= 3
         }
-        guard sameSize(current, record?.landed ?? fill) else { return nil }
-        let from = record?.from
-        let size = from.flatMap { sameSize($0, current) ? nil : $0.size } ?? smaller(fill).size
+        guard let record, sameSize(current, record.landed) else { return nil }
+        let size = sameSize(record.from, current) ? smaller(fill).size : record.from.size
         let share = current.width > 0 ? min(max((pointer.x - current.minX) / current.width, 0), 1) : 0.5
         return CGRect(x: (pointer.x - share * size.width).rounded(), y: current.minY, width: size.width, height: size.height)
     }
