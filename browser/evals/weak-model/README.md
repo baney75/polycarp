@@ -6,41 +6,33 @@ helps.
 
 ## What it runs
 
-- `tasks/browser.mjs`: 14 browser tasks on local fixtures: signup validation, a wizard, table filter, modal confirm,
-  native dialogs, select and date, a form in an iframe, a long article, PDF search, pagination, a new tab, a late
-  element, a list that re-renders, autocomplete. Each page posts its own `window.__state` to the harness, so a task is
-  scored from what the page recorded, even after the model closed its tab.
-- `tasks/computer.mjs`: 8 Mac tasks in Calculator, TextEdit and Preview, on fixture files in a folder of our own inside
-  Polycarp's agent handoff folder. They are scored by reading the agent workspace back through the helper in connector
-  mode (`hands.mjs`), and by reading the saved file for a save task.
+Tasks come from `tasks/*.mjs`: each file exports arrays of tasks, `{ id, kind: "browser" | "computer", prompt, ... }`.
+A browser task serves its own fixture pages, and each page posts its own `window.__state` to the harness, so the run is
+scored from what the page recorded, even after the model closed its tab. A computer task works on fixture files in a
+folder of our own inside Polycarp's agent handoff folder, and is scored by reading the agent workspace back through the
+helper in connector mode (`hands.mjs`). With no task files, the runner says so and exits.
 
-Each run is `claude -p` on the owner's sign-in (no API key), with only the `polycarp` MCP server, a fresh throwaway
-headless Chromium (`cli/test/e2e-harness.mjs`), a turn cap (30) and a wall-clock cap (240 s browser, 300 s computer).
+Each run is `claude -p` on the owner's sign-in. The runner refuses to start while `ANTHROPIC_API_KEY` or another key
+variable (`lib.mjs` KEY_VARS) is set, and removes them from the child's environment. Each run has only the `polycarp` MCP server, a fresh throwaway headless
+Chromium (`cli/test/e2e-harness.mjs`), a turn cap (30) and a wall-clock cap (240 s browser, 300 s computer).
 The computer tools go through `polycarp-spaces mcp --connector`, which holds the model to the agent workspace and
-lent apps. The runner backs up and restores the three apps' preferences and closes only the app copies it started.
+lent apps. The runner backs up and restores the apps' preferences and closes only the app copies its own
+`computer_open` calls started.
 
 ## Commands
 
 From `browser/`, after `npm run build` in `cli/` and an extension build with `TABKYRA_NO_BUMP=1 TABKYRA_OUT_DIR=$PWD/dist-chrome`:
 
 ```sh
+node evals/weak-model/run.mjs --list                              # the tasks a run would do; starts nothing
 node evals/weak-model/run.mjs --label r2-haiku                    # all tasks, 2 trials, claude-haiku-5-5
 node evals/weak-model/run.mjs --label s-sonnet --model claude-sonnet-5-5 --trials 1 --only wizard,pagination
-node evals/weak-model/report.mjs r2-haiku                         # per run: calls, errors, repeats, failures
-node evals/weak-model/measure-read.mjs after                      # read_page and tools/list sizes on 8 public pages
 ```
 
 Results go to `results/<label>/`: one record per run (`<task>-t<n>.json`, every call with its arguments, error flag,
 size and a clipped result), kept locally, and what is committed: `runs.jsonl` (the same records, one per line) and
-`summary.json` (`node evals/weak-model/summarize.mjs <label>` rebuilds both). `results/r1-haiku/classes.json` classifies every round 1
-failure.
-
-## The ratchet
-
-`baseline.json` holds the recorded score of each round that counts. `test/weak-model-baseline.test.mjs` fails if a
-committed round scores below its baseline (recounted from `runs.jsonl`), if the latest round drops below the floor, or
-if the committed read-size measurement leaves its token budget. CI never calls
-a model: it checks the committed numbers, and the cheap deterministic tests in `cli/test` hold each fix.
+`summary.json` (`node evals/weak-model/summarize.mjs <label>` rebuilds both, laying local records over the committed
+runs by task and trial). CI never calls a model; `test/weak-model-harness.test.mjs` holds the runner's own logic.
 
 ## Platforms
 

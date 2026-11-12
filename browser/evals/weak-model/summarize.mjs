@@ -7,20 +7,26 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-/** Every run of a round: the local record files when there are any, else the committed runs.jsonl. */
-export function loadRuns(label) {
-	const dir = join(here, "results", label);
-	const files = readdirSync(dir).filter((f) => /-t\d+\.json$/.test(f));
-	const runs = files.length
-		? files.map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")))
-		: existsSync(join(dir, "runs.jsonl"))
-			? readFileSync(join(dir, "runs.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l))
-			: [];
-	return runs.sort((a, b) => a.task.localeCompare(b.task) || a.trial - b.trial);
+/**
+ * Every run of a round: the committed runs.jsonl, with each local record file laid over it by task and trial, so a
+ * partial rerun replaces only the runs it made.
+ */
+export function loadRuns(label, root = join(here, "results")) {
+	const dir = join(root, label);
+	const byRun = new Map();
+	const key = (r) => `${r.task}\t${r.trial}`;
+	if (existsSync(join(dir, "runs.jsonl")))
+		for (const l of readFileSync(join(dir, "runs.jsonl"), "utf8").split("\n").filter(Boolean)) byRun.set(key(JSON.parse(l)), JSON.parse(l));
+	for (const f of readdirSync(dir).filter((n) => /-t\d+\.json$/.test(n))) {
+		const r = JSON.parse(readFileSync(join(dir, f), "utf8"));
+		byRun.set(key(r), r);
+	}
+	return [...byRun.values()].sort((a, b) => a.task.localeCompare(b.task) || a.trial - b.trial);
 }
 
-export function summarize(label, meta = {}, runs = loadRuns(label)) {
-	const dir = join(here, "results", label);
+/** Writes summary.json and runs.jsonl. meta.stopped is the run's own boolean; only a bare rebuild (no meta) keeps the old one. */
+export function summarize(label, meta = {}, runs = loadRuns(label, meta.root), root = meta.root ?? join(here, "results")) {
+	const dir = join(root, label);
 	const old = existsSync(join(dir, "summary.json")) ? JSON.parse(readFileSync(join(dir, "summary.json"), "utf8")) : {};
 	const sum = (f) => runs.reduce((n, r) => n + f(r), 0);
 	const head = {
@@ -29,7 +35,7 @@ export function summarize(label, meta = {}, runs = loadRuns(label)) {
 		trials: meta.trials ?? old.trials,
 		profile: meta.profile ?? old.profile ?? "full",
 		date: meta.date ?? old.date ?? new Date().toISOString(),
-		stopped: meta.stopped ?? old.stopped,
+		stopped: (meta.stopped ?? old.stopped) || undefined,
 		passed: runs.filter((r) => r.pass).length,
 		total: runs.length,
 		calls: sum((r) => r.calls.length),

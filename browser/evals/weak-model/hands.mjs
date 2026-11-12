@@ -21,7 +21,11 @@ export class HandsClient {
 			this.waiting.delete(m.id);
 			w(m);
 		});
-		this.ready = this.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "weak-model-scorer", version: "1" } });
+		// MCP: initialize, then the initialized notification, before any other request.
+		this.ready = this.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "weak-model-scorer", version: "1" } }).then((m) => {
+			this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+			return m;
+		});
 	}
 
 	rpc(method, params) {
@@ -51,4 +55,13 @@ export class HandsClient {
 	close() {
 		this.child.kill();
 	}
+}
+
+/** Every value and name in a snapshot tree, flattened, so a check can look for text anywhere in a window. */
+export function treeText(node, out = []) {
+	if (!node || typeof node !== "object") return out;
+	for (const key of ["value", "name", "description", "title"]) if (typeof node[key] === "string") out.push(node[key]);
+	if (node.native_id?.value) out.push(String(node.native_id.value));
+	for (const child of node.children ?? []) treeText(child, out);
+	return out;
 }
