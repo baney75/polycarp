@@ -12,8 +12,8 @@
  * page last changed; Polycarp's own veil element is left out.
  */
 
-import { cdpSend, onDebuggerSessionEnd, openDialog } from "./cdp.js";
 import { isGuardedUrl } from "../bridge/permissions.js";
+import { cdpSend, onDebuggerSessionEnd, openDialog } from "./cdp.js";
 import { runInPage } from "./page.js";
 import { veilTag } from "./veil-shared.js";
 
