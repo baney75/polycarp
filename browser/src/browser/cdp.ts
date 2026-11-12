@@ -802,7 +802,14 @@ function describeDetach(reason: string): string {
 }
 
 /** Record that capture on this tab ended just now, for each kind that was on. */
+/** Called when a tab's debugging session ended (its domains are off in the next one). */
+const sessionEndWatchers = new Set<(tabId: number) => void>();
+export function onDebuggerSessionEnd(fn: (tabId: number) => void): void {
+	sessionEndWatchers.add(fn);
+}
+
 function noteCaptureStopped(tabId: number, reason: string): void {
+	for (const fn of sessionEndWatchers) fn(tabId);
 	const gap: CaptureGap = { at: Date.now(), reason };
 	const kinds: CaptureKind[] = [];
 	if (consoleBuffers.has(tabId)) kinds.push("console");

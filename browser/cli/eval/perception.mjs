@@ -11,6 +11,8 @@
 //   cost                                                 size of an interactive read of a small page
 //   scaled-click, hidden-text, xorigin-body, login-masked, composed-fill, fieldset-disabled, hostile-src
 //                                                        review cases for #73
+//   settle-late, settle-autocomplete, settle-skeleton, settle-bounded
+//                                                        the page has settled when an action returns (no wait call)
 //
 //   node cli/eval/perception.mjs --extension <built extension dir> [--out file.json]
 //
@@ -140,6 +142,11 @@ customElements.define("x-flat", class extends HTMLElement {
 	constructor() { super(); this.attachShadow({ mode: "open" }).innerHTML = "<button>Flat " + "Buy</button><p>Flat " + "text 3030</p>"; }
 });
 </script>`,
+	// Drawn after the action that changed it: the settle wait (src/browser/settle.ts).
+	"/settle-late": `<p>Loading</p><script>fetch("/slow").then((r) => r.text()).then((t) => document.body.insertAdjacentHTML("beforeend", "<button>Late Buy</button><p>" + t + "</p>"));</script>`,
+	"/settle-ac": `<input id="c" aria-label="City"><ul id="l" role="listbox"></ul><script>let t; c.oninput = () => { clearTimeout(t); t = setTimeout(() => fetch("/suggest").then((r) => r.json()).then((a) => { l.innerHTML = a.map((x) => "<li role=option tabindex=0>" + x + "</li>").join(""); }), 250); };</script>`,
+	"/settle-skeleton": `<button id="b">Load orders</button><div id="o"></div><script>b.onclick = () => { o.innerHTML = '<div class="skeleton-row" style="height:20px;width:200px;background:#ddd"></div>'; setTimeout(() => { o.innerHTML = "<p>Order " + "5521 shipped</p>"; }, 900); };</script>`,
+	"/settle-chatty": `<p id="n">0</p><button id="b">Go</button><p id="r">idle</p><script>setInterval(() => { n.textContent = String(+n.textContent + 1); }, 50); setInterval(() => fetch("/ping"), 150); fetch("/poll"); b.onclick = () => { r.textContent = "went"; fetch("/poll"); };</script>`,
 	"/embedded": `<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"secret":"next-data-5150"}}}</script>
 <form action="/subscribe" method="post"><input name="email"><button>Subscribe</button></form>`,
 };
@@ -152,6 +159,16 @@ const serverA = await serve((req, res) => {
 		res.end("{}");
 		return;
 	}
+	// Slow on purpose; the long poll answers only after the run (unref keeps it from holding the process).
+	const later = (ms, type, body) =>
+		setTimeout(() => {
+			res.writeHead(200, { "content-type": type });
+			res.end(body);
+		}, ms).unref();
+	if (path === "/slow") return later(700, "text/plain", "Late content 8181");
+	if (path === "/suggest") return later(400, "application/json", JSON.stringify(["Paris, France", "Parma, Italy"]));
+	if (path === "/poll") return later(60000, "text/plain", "poll");
+	if (path === "/ping") return later(0, "text/plain", "ok");
 	if (path === "/api/price") {
 		res.writeHead(200, { "content-type": "application/json" });
 		res.end(JSON.stringify({ sku: "A1", price: 4242, hidden: "api-only-9081" }));
@@ -499,6 +516,55 @@ try {
 		return { pass: ok && direct, detail: `display:contents ${ok ? "read" : "missing"}, text straight in a shadow root ${direct ? "read" : "missing"}` };
 	});
 
+	// No sleep and no wait call: what the agent reads right after the action is what it gets.
+	const goNow = async (path) => {
+		const nav = await call(client, "navigate", { url: `${site}${path}` });
+		if (nav.outcome !== "ok") throw new Error(`navigate ${path}: ${nav.outcome} ${nav.text}`);
+		return nav;
+	};
+
+	await probe("settle-late", async () => {
+		const nav = await goNow("/settle-late");
+		const read = await interactive();
+		keep(nav, read);
+		const ok = read.full.includes("Late Buy");
+		return { pass: ok, detail: ok ? `listed after navigate (${nav.ms} ms)` : "the button a fetch draws was not there yet" };
+	});
+
+	await probe("settle-autocomplete", async () => {
+		await goNow("/settle-ac");
+		const ref = refFor((await interactive()).full, "City");
+		if (!ref) return { pass: false, detail: "no ref for City" };
+		const typed = await call(client, "type", { ref, text: "Par" });
+		const read = await interactive();
+		keep(typed, read);
+		const ok = read.full.includes("Paris, France");
+		return { pass: ok, detail: ok ? `suggestions listed after type (${typed.ms} ms)` : "the debounced suggestions were not there yet" };
+	});
+
+	await probe("settle-skeleton", async () => {
+		await goNow("/settle-skeleton");
+		const ref = refFor((await interactive()).full, "Load orders");
+		if (!ref) return { pass: false, detail: "no ref for Load orders" };
+		const click = await call(client, "click", { ref });
+		const text = await call(client, "get_page_text", {});
+		keep(click, text);
+		const ok = text.full.includes("Order 5521 shipped");
+		return { pass: ok, detail: ok ? `content in place of the skeleton (${click.ms} ms)` : "still the skeleton" };
+	});
+
+	await probe("settle-bounded", async () => {
+		await goNow("/settle-chatty");
+		const ref = refFor((await interactive()).full, "Go");
+		if (!ref) return { pass: false, detail: "no ref for Go" };
+		const click = await call(client, "click", { ref });
+		const waited = await call(client, "wait", { until: "settled", timeoutMs: 1500 });
+		keep(click, waited);
+		const said = /"settled":\s*false/.test(click.full) && /"settled":\s*false/.test(waited.full);
+		const ok = click.outcome === "ok" && click.ms < 4500 && waited.ms < 3500 && said;
+		return { pass: ok, detail: `click ${click.outcome} ${click.ms} ms, wait ${waited.outcome} ${waited.ms} ms, unsettled ${said ? "reported" : "not reported"}` };
+	});
+
 	// Report in the order the task lists the probes.
 	const order = [
 		"shadow-see",
@@ -521,6 +587,10 @@ try {
 		"fieldset-disabled",
 		"hostile-src",
 		"contents-host",
+		"settle-late",
+		"settle-autocomplete",
+		"settle-skeleton",
+		"settle-bounded",
 	];
 	results.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 

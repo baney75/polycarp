@@ -150,7 +150,7 @@ nothing caps the tabs in a group.
 ## Seeing pages: perception eval
 
 `node cli/eval/perception.mjs --extension <build> [--out file.json]` drives the MCP tools against
-local fixture pages (no model) and scores 20 probes:
+local fixture pages (no model) and scores 24 probes:
 - open shadow roots: see, click, fill a nested field, and read their text with `read_page`,
   `get_page_text`, and `get_page_text` on the host; a `display: contents` component
 - same-origin and cross-origin frames, including a scaled, padded frame
@@ -164,6 +164,9 @@ local fixture pages (no model) and scores 20 probes:
   - login passwords in multipart and form bodies are masked
   - `fill` reaches a listener outside the shadow root
   - a newline in a frame URL or a `role` can't fake an element line
+- the settle wait (D40), read straight after the action with no `wait` call: a button a fetch draws after the load,
+  suggestions a debounced search draws after typing, and content that replaces a skeleton after a click; and a page that
+  never goes quiet, where a click and `wait {until:"settled"}` must return within their caps and say they did not settle
 
 Measured 2026-10-28 in headless Chromium, each build with the current CLI. Each review
 column is the head that review saw; its high findings show as that column's failures.
@@ -194,6 +197,12 @@ column is the head that review saw; its high findings show as that column's fail
 Score: main 4/20, review 1 (328e9f6) 12/20, review 2 (8a21dfc) 16/20, review 3 (c2f4df9) 17/20, now 20/20. The cross-site fixture serves text/plain:
 Chromium aborts an opaque JSON or HTML response before a body exists, which would make that
 probe pass on any build.
+
+Settle probes, 2026-11-11, headless Chromium. With D40 all 24 pass: navigate takes 1084 ms on the late page, type
+1012 ms, click 1246 ms; on the page that never goes quiet the click returns in 2551 ms and
+`wait {until:"settled","timeoutMs":1500}` in 1510 ms, both saying `settled: false`. The same build with the action cap
+set to 0 (no wait after an action) fails `settle-late`, `settle-autocomplete` and `settle-skeleton`: the content is not
+there yet when the action returns.
 
 # Dictation, 2026-10-29
 

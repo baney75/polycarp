@@ -115,6 +115,34 @@ const FRAME_C = `<!doctype html><input aria-label="Frame field">`;
 
 // Pages added by the tool-fix tests, served by path (see the server in before()).
 const extraPages = {};
+
+// Pages that draw after the action that changed them: the settle wait (src/browser/settle.ts).
+extraPages["/late"] = `<!doctype html><title>Polycarp late</title><p>Loading</p>
+<script>fetch("/settle/slow").then((r) => r.text()).then((t) => document.body.insertAdjacentHTML("beforeend", "<button>Late Buy</button><p>" + t + "</p>"));</script>`;
+extraPages["/ac"] = `<!doctype html><title>Polycarp autocomplete</title><input id="c" aria-label="City"><ul id="l" role="listbox"></ul>
+<script>let t; c.oninput = () => { clearTimeout(t); t = setTimeout(() => fetch("/settle/suggest?q=" + encodeURIComponent(c.value)).then((r) => r.json()).then((a) => { l.innerHTML = a.map((x) => "<li role=option tabindex=0>" + x + "</li>").join(""); }), 250); };</script>`;
+extraPages["/skeleton"] = `<!doctype html><title>Polycarp skeleton</title><button id="b">Load orders</button><div id="o"></div>
+<script>b.onclick = () => { o.innerHTML = '<div class="skeleton-row" style="height:20px;width:200px;background:#ddd"></div>'; setTimeout(() => { o.innerHTML = "<p>Order " + "5521 shipped</p>"; }, 900); };</script>`;
+// Never quiet: a counter every 50 ms, a ping every 150 ms, a long poll from the start and another per click.
+extraPages["/chatty"] = `<!doctype html><title>Polycarp chatty</title><p id="n">0</p><button id="b">Go</button><p id="r">idle</p>
+<script>setInterval(() => { n.textContent = String(+n.textContent + 1); }, 50); setInterval(() => fetch("/settle/ping"), 150); fetch("/settle/poll");
+b.onclick = () => { r.textContent = "clicked"; fetch("/settle/poll"); };</script>`;
+extraPages["/quiet"] = `<!doctype html><title>Polycarp quiet</title><button onclick="document.getElementById('r').textContent='done'">Do it</button><p id="r">idle</p>`;
+
+/** The settle pages' data: slow on purpose, and a long poll that answers only after the run. */
+function serveSettle(req, res) {
+	const path = req.url.split("?")[0];
+	// unref: the long poll's answer must not keep the test process alive after the browser is gone.
+	const later = (ms, type, body) =>
+		setTimeout(() => {
+			res.writeHead(200, { "content-type": type });
+			res.end(body);
+		}, ms).unref();
+	if (path === "/settle/slow") return later(700, "text/plain", "Late content 8181");
+	if (path === "/settle/suggest") return later(400, "application/json", JSON.stringify(["Paris, France", "Parma, Italy"]));
+	if (path === "/settle/poll") return later(60_000, "text/plain", "poll");
+	return later(0, "text/plain", "ok");
+}
 extraPages["/edit"] = `<!doctype html><title>Polycarp edit</title>
 <input id="t" aria-label="Task" value="first task"><p id="r">untouched</p>`;
 
@@ -378,6 +406,7 @@ before(async () => {
 			return res.end('{"ok":true}');
 		}
 		if (serveFileData(req, res)) return;
+		if (req.url.startsWith("/settle/")) return serveSettle(req, res);
 		res.writeHead(200, { "content-type": "text/html" });
 		if (req.url === "/counter") return res.end(COUNTER_PAGE);
 		if (req.url === "/refs") return res.end(REFS_PAGE);
@@ -1939,4 +1968,45 @@ test("files save_pdf: the page as a PDF file on this computer", async () => {
 	} finally {
 		await a.close();
 	}
+});
+
+test("settle: content drawn after the load, a debounced autocomplete and a skeleton are there when the action returns", async () => {
+	await go("late");
+	assert.match(await tool("read_page", { filter: "interactive" }), /Late Buy/);
+
+	await go("ac");
+	const city = refFor(await tool("read_page", { filter: "interactive" }), "City");
+	await tool("type", { ref: city, text: "Par" });
+	assert.match(await tool("read_page", { filter: "interactive" }), /Paris, France/);
+
+	await go("skeleton");
+	await tool("click", { ref: refFor(await tool("read_page", { filter: "interactive" }), "Load orders") });
+	const text = await tool("get_page_text");
+	assert.match(text, /Order 5521 shipped/);
+});
+
+test("settle: a page that never goes quiet costs at most the cap, says so, and a quiet page returns fast", async () => {
+	await go("chatty");
+	const go1 = refFor(await tool("read_page", { filter: "interactive" }), "Go");
+	let t0 = Date.now();
+	const clicked = JSON.parse(await tool("click", { ref: go1 }));
+	const clickMs = Date.now() - t0;
+	assert.ok(clickMs < 4500, `click took ${clickMs} ms`);
+	assert.equal(clicked.settled, false, JSON.stringify(clicked));
+	assert.ok(["dom", "network"].includes(clicked.waitingOn), JSON.stringify(clicked));
+	assert.match(await tool("get_page_text"), /clicked/);
+
+	t0 = Date.now();
+	const waited = JSON.parse(await tool("wait", { until: "settled", timeoutMs: 1500 }));
+	assert.ok(Date.now() - t0 < 3500, `wait took ${Date.now() - t0} ms`);
+	assert.equal(waited.settled, false);
+
+	await go("quiet");
+	t0 = Date.now();
+	const quick = JSON.parse(await tool("click", { ref: refFor(await tool("read_page", { filter: "interactive" }), "Do it") }));
+	const quickMs = Date.now() - t0;
+	assert.equal(quick.settled, undefined, JSON.stringify(quick));
+	assert.ok(quickMs < 1500, `a click on a quiet page took ${quickMs} ms`);
+	const settled = JSON.parse(await tool("wait", { until: "settled" }));
+	assert.equal(settled.settled, true);
 });

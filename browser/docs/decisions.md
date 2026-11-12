@@ -1103,3 +1103,26 @@ Agents could not attach a file to a form or keep a file a page offers. One tool,
   `remote fix`, or a plan with no actions), the check_failed step's button is Check again, which runs `remoteTest` (the
   Mac: `remote test`); a test that says the route is on ends the step.
 
+
+## D40. Input tools wait for the page to settle, capped at 2.5 seconds (Claude, 2026-11-11)
+
+Gap analysis item 4. `navigate`, `click`, `type`, `press`, `fill` and the end of `actions` wait, after their action, until the
+page has been quiet for 300 ms or 2.5 s have passed; `wait {until:"settled"}` waits for 500 ms of quiet, up to `timeoutMs`
+(default 10 s). Quiet means all three (`src/browser/settle.ts`):
+- **No request the page waits on.** Documents, scripts, stylesheets, fetch and XHR from the tab's debugger Network events;
+  images, media, fonts, pings, EventSource and websockets don't count. Only requests started after the action began count,
+  and only while they are younger than 2 s (5 s for `wait`): a long poll or a stream would otherwise hold every call to its cap.
+- **No DOM change.** A MutationObserver the first wait leaves in the document, in Polycarp's isolated world; the veil's own
+  element is left out.
+- **No loading marker on screen.** `aria-busy="true"`, or a class token `skeleton`, `shimmer`, `spinner` or `loading`
+  on a visible element in the window, and a document still parsing.
+
+Why these numbers: 300 ms covers a 250 ms search debounce, which is common, while keeping a click on a quiet page under half
+a second. The cap bounds a page that never goes quiet (a ticking counter, analytics pings, a feed). A result that hit the cap
+says `settled: false` and what it was waiting on; one that settled says nothing more. The wait stops at once when a dialog
+opens, and the dialog stays the action's effect (it is reported as before, not as `dialog_open`). Steps inside `actions` keep
+their `settleMs` pause, so canvas batches are not slowed. Not counted: requests and mutations inside cross-origin frames.
+
+Network bookkeeping: Network is turned on just before every action, not once per tab, because a debugging session can end
+with no event (a worker restart, a silent detach) and take the domain with it; the e2e run caught that. When a frame starts a
+new document, what its old document had in flight is dropped, keyed on the loader id in the same ordered event stream.
