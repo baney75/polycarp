@@ -571,7 +571,9 @@ final class HandsRouter {
             let beforeValue: String? = writes ? valueOf(w, ref, session: session) : nil
             // Tree before the action, to show what it changed.
             var before: JSONValue?
-            if !writes, kind != .toggle, case .success(let d) = read(w, interactive: false, compact: true, register: false, session: session) { before = d["tree"] }
+            // A row click reads the selection itself; the full read before is for the plain path only (first-F7).
+            let plan = kind == .click ? rowPlan(ref, session: session) : nil
+            if !writes, kind != .toggle, plan == nil, case .success(let d) = read(w, interactive: false, compact: true, register: false, session: session) { before = d["tree"] }
             // Scope again, at the moment of dispatch: the window may have moved since resolving.
             // Every action reports its target before dispatch. When the agent cursor will draw it (it is on, and Donovan is
             // looking at this window) the target's frame is measured on the process queue and follows as `frameMeasured`:
@@ -589,7 +591,7 @@ final class HandsRouter {
             }
             // The child windows the app has now: one that appears after this is the action's (`ChildAttribution`).
             let childrenBefore = noteAction(session: session, pid: w.pid)
-            if kind == .click, let plan = rowPlan(ref, session: session) {
+            if let plan {
                 return clickRow(w, scope: scope, ref: ref, plan: plan, session: session, childrenBefore: childrenBefore)
             }
             // The scope and ref checks run again on the process queue, at the moment the call executes.
@@ -636,12 +638,11 @@ final class HandsRouter {
     }
 
     /// The window a request is about, for its error's next call: the window it names, or the one its ref's snapshot read.
+    /// A bare row number counts through what it stands for in this session (review r1 first-F2).
     private func windowOf(_ req: HandsRequest) -> Int? {
-        if let w = req.int("window") { return w }
-        guard let r = req.string("ref"), r.hasPrefix("@"), let colon = r.firstIndex(of: ":") else { return nil }
-        let sid = String(r[r.index(after: r.startIndex)..<colon])
-        lock.lock(); defer { lock.unlock() }
-        return snaps[sid].map { Int($0.window) }
+        RefWindow.of(window: req.int("window"), ref: req.string("ref"),
+                     bare: { n in if case .success(let full) = bareRef(n, req) { return full } else { return nil } },
+                     snapshotWindow: { sid in lock.lock(); defer { lock.unlock() }; return snaps[sid].map { Int($0.window) } })
     }
 
     /// The selection write a click on `ref` falls back to, when the ref is an item in an outline, table or list.

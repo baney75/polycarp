@@ -13,7 +13,8 @@ final class ClickFallbackTests: XCTestCase {
 
     func testARowInTheOutlineWritesTheSelectionOnTheOutlineByItsLabel() throws {
         let (rows, sid, _) = try outline()
-        let want = ClickFallback.Plan(container: "@\(sid):e2", label: "Bluetooth", itemRole: "treeitem")
+        let key = try XCTUnwrap(rows.first { $0.number == 2 }?.key)
+        let want = ClickFallback.Plan(container: "@\(sid):e2", label: "Bluetooth", itemRole: "treeitem", containerKey: key)
         XCTAssertEqual(ClickFallback.plan(rows: rows, snapshot: sid, number: 12), want, "the row")
         XCTAssertEqual(ClickFallback.plan(rows: rows, snapshot: sid, number: 13), want, "the text field in the row")
         XCTAssertNil(ClickFallback.plan(rows: rows, snapshot: sid, number: 1), "the scroll area is no item")
@@ -89,6 +90,81 @@ final class ClickFallbackTests: XCTestCase {
         XCTAssertEqual(HandsEnvelope.decode(text)?.error?.nextCall, HandsError.call("snapshot", ["window": 7]))
         let bad = s.handle(#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"snapshot","arguments":{"window":7,"format":"xml"}}}"#).flatMap(JSONValue.parse)
         XCTAssertTrue(bad?["result"]?["content"]?.array?.first?["text"]?.string?.contains(#""next_call":null"#) == true, "a bad argument: none")
+    }
+
+    func tree(_ children: [JSONValue]) -> [SnapshotRows.Row] {
+        SnapshotRows.rows(of: .object(["role": "window", "children": .array(children)]))
+    }
+    func node(_ role: String, _ name: String, _ n: Int, states: [String] = [], _ kids: [JSONValue] = []) -> JSONValue {
+        .object(["role": .string(role), "name": .string(name), "ref_id": .string("@s:e\(n)"), "states": .array(states.map(JSONValue.string)), "children": .array(kids)])
+    }
+
+    // Review r1 first-F1: a control inside a row does what it is pressed for; no selection write follows it.
+    func testAControlInsideARowKeepsThePlainPress() throws {
+        let rows = tree([node("table", "", 1, [node("row", "", 2, [node("checkbox", "Wi-Fi on", 3), node("statictext", "Wi-Fi", 4)]),
+                                               node("row", "", 5, [node("cell", "", 6, [node("button", "Info", 7)])])])])
+        XCTAssertNil(ClickFallback.plan(rows: rows, snapshot: "s", number: 3), "the checkbox")
+        XCTAssertNil(ClickFallback.plan(rows: rows, snapshot: "s", number: 7), "a button in a cell")
+        XCTAssertEqual(ClickFallback.plan(rows: rows, snapshot: "s", number: 4)?.itemRole, "row", "the row's text still falls back")
+    }
+
+    // Review r1 first-F3: selection is the row's, so a cell's click reads and writes it on the row.
+    func testACellResolvesToItsRow() throws {
+        let rows = tree([node("table", "", 1, [node("row", "", 2, states: ["selected"], [node("cell", "", 3, [node("statictext", "Draft", 4)])])])])
+        let plan = try XCTUnwrap(ClickFallback.plan(rows: rows, snapshot: "s", number: 3))
+        XCTAssertEqual(plan.itemRole, "row")
+        XCTAssertEqual(plan.label, "Draft")
+        XCTAssertEqual(ClickFallback.plan(rows: rows, snapshot: "s", number: 4), plan)
+        XCTAssertEqual(ClickFallback.selected(rows, plan), true, "the row's selected state, not the cell's")
+    }
+
+    // Review r1 second-F8: two collections with a row of the same name; the readback stays in the clicked one.
+    func testTheReadbackStaysInTheContainerThePlanCameFrom() throws {
+        func window(sidebar: Bool, list: Bool) -> [SnapshotRows.Row] {
+            tree([node("outline", "Sidebar", 1, [node("treeitem", "Documents", 2, states: sidebar ? ["selected"] : [])]),
+                  node("list", "Files", 3, [node("row", "Documents", 4, states: list ? ["selected"] : [])])])
+        }
+        let plan = try XCTUnwrap(ClickFallback.plan(rows: window(sidebar: true, list: false), snapshot: "s", number: 4))
+        XCTAssertEqual(ClickFallback.selected(window(sidebar: true, list: false), plan), false)
+        XCTAssertEqual(ClickFallback.selected(window(sidebar: false, list: true), plan), true)
+        let two = tree([node("list", "Files", 3, [node("row", "Documents", 4)]), node("outline", "Sidebar", 1, [node("row", "Documents", 2, states: ["selected"])])])
+        XCTAssertEqual(ClickFallback.selected(two, plan), false, "a same-named row elsewhere is never read")
+    }
+
+    // Review r1 first-F4: with no readback, the press's own evidence decides, as on the plain path.
+    func testWithNoReadbackThePressEvidenceDecides() {
+        typealias C = ClickFallback
+        XCTAssertTrue(C.verified(landed: .none, afterPress: nil, engineVerified: true, treeChanged: false))
+        XCTAssertTrue(C.verified(landed: .none, afterPress: nil, engineVerified: false, treeChanged: true))
+        XCTAssertFalse(C.verified(landed: .none, afterPress: nil, engineVerified: false, treeChanged: false))
+        XCTAssertFalse(C.verified(landed: .none, afterPress: false, engineVerified: true, treeChanged: true), "a readback that says not selected wins")
+        XCTAssertTrue(C.verified(landed: .press, afterPress: true, engineVerified: false, treeChanged: false))
+    }
+
+    // Review r1 second-F9 and first-F5: a refused write keeps its code for the next call; a failed write is said.
+    func testARefusedOrFailedWriteIsReported() throws {
+        XCTAssertEqual(ClickFallback.nextCode(verified: false, writeError: .inUse), .inUse)
+        XCTAssertEqual(ClickFallback.nextCode(verified: false, writeError: .outsideAgentWorkspace), .outsideAgentWorkspace)
+        XCTAssertEqual(ClickFallback.nextCode(verified: false, writeError: nil), .unverified)
+        XCTAssertNil(ClickFallback.nextCode(verified: true, writeError: nil))
+        let e = ClickFallback.failure(press: HandsError(.actionFailed, "no press", suggestion: ""), write: HandsError(.actionFailed, "no write", suggestion: ""))
+        XCTAssertTrue(e.message.contains("selection write was tried too and failed: no write"), e.message)
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+RowClick.swift")
+        XCTAssertTrue(src.contains("if let e = acting() { writeError = e; break }"))
+        XCTAssertFalse(src.contains("acting() == nil else { break }"))
+    }
+
+    // Review r1 first-F2: a bare row number names its window for the next call.
+    func testABareRowNumberNamesItsWindow() throws {
+        let w = RefWindow.of(window: nil, ref: "12", bare: { $0 == 12 ? "@sx:e12" : nil }, snapshotWindow: { $0 == "sx" ? 4211 : nil })
+        XCTAssertEqual(w, 4211)
+        XCTAssertEqual(RefWindow.of(window: nil, ref: "@sx:e3", bare: { _ in nil }, snapshotWindow: { _ in 4211 }), 4211)
+        XCTAssertEqual(RefWindow.of(window: 9, ref: "12", bare: { _ in nil }, snapshotWindow: { _ in nil }), 9)
+        XCTAssertNil(RefWindow.of(window: nil, ref: "12", bare: { _ in nil }, snapshotWindow: { _ in 1 }))
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        XCTAssertTrue(src.contains("RefWindow.of(window: req.int(\"window\"), ref: req.string(\"ref\")"))
+        // first-F7: a row click skips the plain path's full read before.
+        XCTAssertTrue(src.contains("if !writes, kind != .toggle, plan == nil, case .success"))
     }
 
     /// The tree with only the item labeled `label` selected.

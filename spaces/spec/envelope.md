@@ -11,8 +11,8 @@ Every `baneyspaces` command and every MCP tool result is one JSON object.
 - `error.data` (optional): extra facts about the failure, never content.
 - `error.code`: one of the codes below. `error.message`: for a person. `error.suggestion`: what to
   do next, always present (may be empty only for `internal`).
-- `error.next_call` (optional, macOS for now): the one call to make next, `{ "tool", "arguments" }`, always a read or
-  the same safe verb with a fixed argument, never a foreground action. Absent when there is none.
+- `error.next_call` (macOS for now, MCP and CLI alike): the one call to make next, `{ "tool", "arguments" }`, always a read
+  or the same safe verb with a fixed argument, never a foreground action. `null` when there is none.
 - `error.retry`:
   - `safe`: nothing was delivered; the same call can be sent again.
   - `after_snapshot`: take a new snapshot first; refs from the old one no longer hold.
@@ -26,7 +26,7 @@ Every `baneyspaces` command and every MCP tool result is one JSON object.
   writes the selection on the container in the same transaction. `data.landed` is `press`, `selection_write`,
   `already_selected` or `none`, and `data.evidence` (`kind: selection_readback`) holds the selection read before, after
   the press and after the write. The write is never made after a press that selected the row. Linux and Windows: the press only.
-- MCP, macOS: every error carries `error.next_call`, a read or `null` for none, and an unverified result carries
+- MCP and CLI, macOS: every error carries `error.next_call`, a read or `null` for none, and an unverified result carries
   `data.next_call`. Linux and Windows: not yet.
 - Exit status of the CLI: 0 for `ok`, 1 for an error, 2 for `invalid_args`.
 
