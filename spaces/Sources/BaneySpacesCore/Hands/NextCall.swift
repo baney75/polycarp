@@ -28,3 +28,15 @@ public enum HandsNextCall {
         return .failure(e)
     }
 }
+
+/// The window a request is about, for its error's next call: the window it names, or the one its ref's snapshot read.
+/// A bare row number (`12`, the advertised default) is first turned into the full ref it stands for.
+public enum RefWindow {
+    public static func of(window: Int?, ref: String?, bare: (Int) -> String?, snapshotWindow: (String) -> Int?) -> Int? {
+        if let window { return window }
+        guard var r = ref else { return nil }
+        if let n = SnapshotRows.bareNumber(r) { guard let full = bare(n) else { return nil }; r = full }
+        guard r.hasPrefix("@"), let colon = r.firstIndex(of: ":") else { return nil }
+        return snapshotWindow(String(r[r.index(after: r.startIndex)..<colon]))
+    }
+}
