@@ -158,6 +158,8 @@ for (const width of [400, 320]) {
 	test(`Connect's command boxes show the whole command at ${width} px, and nothing runs past the panel`, async () => {
 		const page = await settings("Agents", "light", width);
 		try {
+			// The terminal commands sit under "Other ways"; open it so the boxes are drawn.
+			await page.evaluate(() => document.querySelectorAll("details[data-other-ways]").forEach((d) => (d.open = true)));
 			const boxes = await page.evaluate(() =>
 				[...document.querySelectorAll("tabkyra-settings code")].map((c) => {
 					const r = c.getBoundingClientRect();

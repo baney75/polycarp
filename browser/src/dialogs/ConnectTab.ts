@@ -13,7 +13,6 @@ import {
 	connectDeviceCode,
 	connectJoinHub,
 	connectSetBusy,
-	connectSetupTunnel,
 	connectStatus,
 	isNoHost,
 } from "../connect/client.js";
@@ -27,22 +26,12 @@ import {
 	lastSeen,
 	linkCommand,
 	malformedCodeMessage,
-	parseTunnelProgress,
-	safeSignInUrl,
-	TUNNEL_STEP_LABELS,
-	type TunnelProgressView,
-	tunnelFormOffered,
 	validApprovalCode,
 	validDeviceCode,
 } from "../connect/format.js";
-import {
-	type ApprovalCode,
-	type ConnectStatus,
-	type DeviceCode,
-	type JoinScope,
-	TUNNEL_STEPS,
-	type TunnelStepId,
-} from "../connect/types.js";
+import { remoteFlowFor } from "../connect/remote-flow.js";
+import type { ApprovalCode, ConnectStatus, DeviceCode, JoinScope } from "../connect/types.js";
+import "./RemoteFlow.js";
 
 const POLL_MS = 10_000;
 
@@ -88,12 +77,6 @@ export class ConnectTab extends SettingsTab {
 	@state() private busyPending = false;
 	/** A refused or failed Busy toggle. Its own field: the status poll clears `error`, and this must outlast it. */
 	@state() private busyError?: string;
-	@state() private tunnelHost = "";
-	/** Set while the Cloudflare setup runs or after it stopped; each step's latest report. */
-	@state() private tunnelSteps?: Partial<Record<TunnelStepId, TunnelProgressView>>;
-	@state() private tunnelRunning = false;
-	@state() private tunnelError?: string;
-	private signInOpened = false;
 	private timer?: ReturnType<typeof setInterval>;
 	private lastLoad = 0;
 	private loading = false;
@@ -115,6 +98,9 @@ export class ConnectTab extends SettingsTab {
 	override disconnectedCallback(): void {
 		super.disconnectedCallback();
 		clearInterval(this.timer);
+		// A connect code is shown once; leaving Settings forgets it.
+		this.approval = undefined;
+		this.device = undefined;
 	}
 
 	private visible(): boolean {
@@ -232,96 +218,6 @@ export class ConnectTab extends SettingsTab {
 		await this.load();
 	}
 
-	/** Opens the Cloudflare sign-in in a new tab, only for an https dash.cloudflare.com address. */
-	private openSignIn(url: unknown): void {
-		const safe = safeSignInUrl(url);
-		if (!safe) return;
-		try {
-			void chrome.tabs.create({ url: safe });
-		} catch {
-			/* the link under the steps still works */
-		}
-	}
-
-	private async setupTunnel(): Promise<void> {
-		const host = this.tunnelHost.trim();
-		if (!host || this.tunnelRunning) return;
-		this.tunnelRunning = true;
-		this.tunnelError = undefined;
-		this.tunnelSteps = {};
-		this.signInOpened = false;
-		try {
-			await connectSetupTunnel(host, (p) => {
-				const view = parseTunnelProgress(p);
-				if (!view) return;
-				this.tunnelSteps = { ...this.tunnelSteps, [view.step]: view };
-				if (view.step === "signin" && view.state === "waiting" && view.url && !this.signInOpened) {
-					this.signInOpened = true;
-					this.openSignIn(view.url);
-				}
-			});
-			this.tunnelSteps = undefined;
-		} catch (err) {
-			if (isNoHost(err)) this.noHost = true;
-			const failed = Object.values(this.tunnelSteps ?? {}).some((x) => x?.state === "failed");
-			// A failed step already shows its own reason; the error line covers a failure before any step.
-			this.tunnelError = failed ? undefined : err instanceof Error ? err.message : String(err);
-		} finally {
-			this.tunnelRunning = false;
-		}
-		await this.load();
-	}
-
-	private tunnelForm(s: ConnectStatus): TemplateResult | typeof nothing {
-		const kind = tunnelFormOffered(s);
-		if (!kind && !this.tunnelSteps) return nothing;
-		const inputClass =
-			"w-full h-9 px-3 text-sm rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50";
-		const steps = this.tunnelSteps;
-		const signIn = steps?.signin;
-		return html`
-			<div class="flex flex-col gap-2" data-tunnel-form>
-				${kind === "funnel" ? html`<p class="text-xs text-foreground" data-funnel-note>claude.ai often can't reach Tailscale Funnel addresses. Setting up Cloudflare turns Funnel off.</p>` : nothing}
-				<label class="flex flex-col gap-1 text-xs text-muted-foreground">
-					<span>Address</span>
-					<input class=${inputClass} placeholder="polycarp.yourdomain.com" autocomplete="off" spellcheck="false" ?disabled=${this.tunnelRunning} .value=${this.tunnelHost} @input=${(
-						e: Event,
-					) => {
-						this.tunnelHost = (e.target as HTMLInputElement).value;
-					}} />
-				</label>
-				<div class="flex flex-col gap-1.5 items-start">
-					${Button({
-						size: "sm",
-						disabled: this.tunnelRunning || !this.tunnelHost.trim(),
-						children: "Set up with Cloudflare",
-						onClick: () => void this.setupTunnel(),
-					})}
-					<p class="text-xs text-muted-foreground">Uses your own Cloudflare account and a domain on it. You sign in to Cloudflare once, in a new tab.</p>
-				</div>
-				<ol class="flex flex-col gap-1 text-xs" aria-live="polite" data-tunnel-steps>
-					${steps ? TUNNEL_STEPS.map((id) => this.tunnelStepRow(id, steps[id])) : nothing}
-				</ol>
-				${
-					signIn?.state === "waiting" && signIn.url
-						? html`<p class="text-xs text-muted-foreground">Didn't a tab open? <a class="underline" href=${signIn.url} target="_blank" rel="noopener noreferrer">Sign in to Cloudflare</a></p>`
-						: nothing
-				}
-				${this.tunnelError ? html`<p class="text-xs text-destructive" role="alert">${this.tunnelError}</p>` : nothing}
-			</div>
-		`;
-	}
-
-	private tunnelStepRow(id: TunnelStepId, p: TunnelProgressView | undefined): TemplateResult {
-		const state = p?.state === "waiting" ? "running" : (p?.state ?? "pending");
-		const mark =
-			state === "done" ? "Done" : state === "failed" ? "Failed" : state === "running" ? "Working" : "Waiting";
-		return html`<li class="${state === "failed" ? "text-destructive" : state === "pending" ? "text-muted-foreground" : "text-foreground"}" data-step=${id} data-state=${state}>
-			<span class="font-medium">${TUNNEL_STEP_LABELS[id]}</span>: ${mark}${p?.state === "waiting" ? " for you to sign in" : ""}
-			${p?.state === "failed" && p.detail ? html`<span class="block [overflow-wrap:anywhere]">${p.detail}</span>` : nothing}
-		</li>`;
-	}
-
 	private command(label: string, text: string): TemplateResult {
 		return html`
 			<div class="flex flex-col gap-1">
@@ -390,45 +286,18 @@ export class ConnectTab extends SettingsTab {
 
 	private assistants(s: ConnectStatus): TemplateResult {
 		const origin = s.route === "link" ? s.link?.hubUrl : s.publicUrl;
-		if (s.route === "none" || !origin) {
-			return this.section(
-				"Use from claude.ai, ChatGPT or grok.com",
-				html`
-					<p class="text-xs text-muted-foreground">
-						This computer has no public address yet, so those assistants can't reach your browser. Pick one command: the first for this
-						computer alone, the second for an always-on box that several of your computers connect to.
-					</p>
-					${this.tunnelForm(s)}
-					${this.command("One computer (needs Tailscale)", `${hostCommand()} remote setup`)}
-					${this.command("Many devices, one address", `${hostCommand()} hub setup --public-url https://ADDRESS`)}
-					<div class="flex flex-col gap-1.5 items-start">
-						${Button({
-							size: "sm",
-							variant: "secondary",
-							children: "Copy a setup prompt for your agent",
-							onClick: () => {
-								try {
-									void copyText(
-										remoteSetupPrompt(extensionVersion(), hostCommand()),
-										"Setup prompt copied. Paste it into your agent.",
-									);
-								} catch (err) {
-									Toast.error(
-										`Couldn't build the setup prompt: ${err instanceof Error ? err.message : String(err)}`,
-									);
-								}
-							},
-						})}
-						<p class="text-xs text-muted-foreground">Your agent runs those steps for you and hands back a one-time code.</p>
-					</div>
-				`,
-			);
+		// No address yet, or this computer's own Tailscale or Cloudflare address: the one-button flow (RemoteFlow.ts).
+		if (remoteFlowFor(s)) {
+			return html`
+				<tabkyra-remote-flow .status=${s} @remote-changed=${() => void this.load()}></tabkyra-remote-flow>
+				${s.route === "none" ? this.otherWays() : nothing}
+			`;
 		}
+		if (!origin) return s.route === "none" ? this.otherWays() : html``;
 		const canMint = s.route !== "link" || s.link?.manage;
 		return this.section(
 			"Use from claude.ai, ChatGPT or grok.com",
 			html`
-				${this.tunnelForm(s)}
 				${
 					s.route === "link"
 						? validApprovalCode(this.approval)
@@ -455,6 +324,39 @@ export class ConnectTab extends SettingsTab {
 				</div>
 			`,
 		);
+	}
+
+	/** The other ways in, for someone who'd rather type or ask an agent: a hub for many devices, or a setup prompt. */
+	private otherWays(): TemplateResult {
+		return html`
+			<details class="text-xs text-muted-foreground" data-other-ways>
+				<summary class="cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring rounded">Other ways: a terminal, a hub, or your coding agent</summary>
+				<div class="mt-2 flex flex-col gap-3">
+					${this.command("One computer, from a terminal", `${hostCommand()} remote setup`)}
+					${this.command("Many devices, one address", `${hostCommand()} hub setup --public-url https://ADDRESS`)}
+					<div class="flex flex-col gap-1.5 items-start">
+						${Button({
+							size: "sm",
+							variant: "secondary",
+							children: "Copy a setup prompt for your agent",
+							onClick: () => {
+								try {
+									void copyText(
+										remoteSetupPrompt(extensionVersion(), hostCommand()),
+										"Setup prompt copied. Paste it into your agent.",
+									);
+								} catch (err) {
+									Toast.error(
+										`Couldn't build the setup prompt: ${err instanceof Error ? err.message : String(err)}`,
+									);
+								}
+							},
+						})}
+						<p>Your agent runs those steps for you and hands back a one-time code.</p>
+					</div>
+				</div>
+			</details>
+		`;
 	}
 
 	private devices(s: ConnectStatus): TemplateResult | typeof nothing {

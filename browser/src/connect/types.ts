@@ -80,6 +80,12 @@ export const CONNECT_METHODS = [
 	"joinHub",
 	"setupTunnel",
 	"setTheme",
+	"remoteState",
+	"remoteSetup",
+	"remoteFunnel",
+	"remoteTest",
+	"remoteFixPlan",
+	"remoteFix",
 ] as const;
 export type ConnectMethod = (typeof CONNECT_METHODS)[number];
 
@@ -101,7 +107,14 @@ export interface Gesture {
 }
 
 /** Methods that hand out a code, give a hub control of this browser, or open a public tunnel: they need a gesture token. */
-export const GESTURE_METHODS: readonly string[] = ["approvalCode", "deviceCode", "joinHub", "setupTunnel"];
+export const GESTURE_METHODS: readonly string[] = [
+	"approvalCode",
+	"deviceCode",
+	"joinHub",
+	"setupTunnel",
+	"remoteSetup",
+	"remoteFix",
+];
 
 /** How long a gesture token is good for. */
 export const GESTURE_MS = 5_000;
@@ -117,3 +130,68 @@ export interface ConnectReply {
 /** Codes minted per window; the host refuses more (10 per 10 minutes). */
 export const CODE_LIMIT = 10;
 export const CODE_WINDOW_MS = 10 * 60_000;
+
+/**
+ * What the helper says about remote access, as the panel reads it: the same `state`, `code` and `next` as
+ * `remote setup --json` and `remote status --json` (docs/remote.md, "For an app"), checked field by field in the host.
+ * Never a passcode (D33). `connectCode` is there once, in the answer of the run that turned remote access on.
+ */
+export interface RemoteNextView {
+	kind: "install" | "sign_in" | "open_page" | "run_command" | "choose_name" | "add_connector";
+	url?: string;
+	command?: string;
+}
+
+export interface RemoteCheckView {
+	name: string;
+	status: "ok" | "warn" | "fail";
+	detail: string;
+	next?: string;
+	/** On a failure: waiting fixes it (a new name not published yet, a tunnel still connecting). Shown as waiting, never as Repair. */
+	pending?: boolean;
+}
+
+export interface RemoteRoutesView {
+	tailscale: { installed: boolean; signedIn: boolean };
+	cloudflare: { installed: boolean; signedIn: boolean };
+}
+
+export interface RemoteAnswer {
+	state: string;
+	code?: string;
+	message: string;
+	next?: RemoteNextView;
+	routes?: RemoteRoutesView;
+	/** The route remote.json is on, when it exists. */
+	route?: "funnel" | "cloudflare" | "custom";
+	connectorUrl?: string;
+	passcodeSet?: boolean;
+	checks?: RemoteCheckView[];
+	connectCode?: string;
+	connectCodeExpiresAt?: number;
+	/** Why the connect code this run should have made wasn't made. */
+	connectCodeProblem?: string;
+}
+
+/** `remote fix --dry-run --json` (or the real run) as the panel reads it. `available` is false when the helper has no `remote fix`. */
+export interface RemoteFixAnswer {
+	available: boolean;
+	ok?: boolean;
+	state?: string;
+	code?: string;
+	message?: string;
+	/** What it would do, or did: `{kind, what, status}`. */
+	actions?: { kind: string; what: string; status: string }[];
+	checks?: RemoteCheckView[];
+}
+
+/** What "Set up with Cloudflare" answers when it finishes. */
+export interface TunnelResult {
+	publicUrl: string;
+	connectorUrl: string;
+	connectCode?: string;
+	connectCodeExpiresAt?: number;
+	connectCodeProblem?: string;
+	checks?: RemoteCheckView[];
+	passcodeSet?: boolean;
+}
