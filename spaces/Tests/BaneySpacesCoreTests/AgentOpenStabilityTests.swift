@@ -272,3 +272,26 @@ final class AgentOpenStabilitySourceTests: XCTestCase {
         XCTAssertTrue(wake.contains("Windows.clearBench()") && wake.contains("refresh(full: true)") && wake.contains("screensChanged()"))
     }
 }
+
+/// Issue #252 (second-S2): the open cover can hold a launch back after its request, so the wait for its window counts
+/// from the launch, not the request.
+final class OpenWaitFromLaunchTests: XCTestCase {
+    func testTheWaitForAWindowCountsFromALateLaunch() {
+        XCTAssertEqual(OpenMiss.waitEnds(request: 100, launched: 102.5, wait: 7), 109.5, accuracy: 1e-9)
+        XCTAssertEqual(OpenMiss.waitEnds(request: 100, launched: 102.5, wait: 3), 105.5, accuracy: 1e-9)
+    }
+
+    func testWithNoLaunchOrAnEarlyOneTheWaitCountsFromTheRequest() {
+        XCTAssertEqual(OpenMiss.waitEnds(request: 100, launched: nil, wait: 7), 107, accuracy: 1e-9)
+        XCTAssertEqual(OpenMiss.waitEnds(request: 100, launched: 99, wait: 30), 107, accuracy: 1e-9)
+    }
+
+    func testOpenWaitsAndJudgesAMissFromTheLaunch() throws {
+        let s = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        XCTAssertTrue(s.contains("OpenMiss.waitEnds(") && s.contains("Date() < deadline()"))
+        XCTAssertTrue(s.contains("AgentLaunches.shared.launchedAt(token)"))
+        XCTAssertTrue(s.contains("elapsed: Date().timeIntervalSince(since)"))
+        let l = try HandsSourceTests.code("Sources/BaneySpaces/Hands/AgentLaunches.swift")
+        XCTAssertTrue(l.contains("func launchedAt("))
+    }
+}
