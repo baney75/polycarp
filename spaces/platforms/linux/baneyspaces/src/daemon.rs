@@ -1993,6 +1993,51 @@ pub(crate) mod tests {
         }
     }
 
+    /// A window that maps while its process's environ still reads empty (right after the exec; CI run 43364792159 at
+    /// the test below, `left: None`) is still its session's: the adopt reads the environ again.
+    #[test]
+    fn a_window_whose_environ_reads_empty_at_first_is_still_its_sessions() {
+        let kids: std::sync::Arc<Mutex<Vec<std::process::Child>>> = Default::default();
+        let spawned = kids.clone();
+        let (core, _log) = fake_hypr("empty-environ", move |r| {
+            if let Some(i) = r.find("BANEYSPACES_AGENT_TOKEN=") {
+                let tok: String = r[i + 24..].chars().take_while(|ch| ch.is_ascii_hexdigit()).collect();
+                let child = std::process::Command::new("sleep").arg("30").env("BANEYSPACES_AGENT_TOKEN", tok).spawn().unwrap();
+                spawned.lock().unwrap().push(child);
+                return "ok".into();
+            }
+            match r {
+                "j/clients" => "[]".into(),
+                "j/monitors" => json!([mon(0, "A", true, 1)]).to_string(),
+                "j/workspaces" => "[]".into(),
+                _ => "ok".into(),
+            }
+        });
+        let shared: Shared = std::sync::Arc::new(Mutex::new(core));
+        let e = agent_open(&shared, "t", &json!({ "app": "sleep", "args": ["30"], "private_bus": false, "session": "s1", "wait": 0 }), true);
+        assert!(e.data.is_some(), "{:?}", e.error);
+        let pid = kids.lock().unwrap()[0].id();
+        // Past the real window: the token is readable now, so only the forced read below can read empty.
+        let t = Instant::now();
+        while proc::token_of(pid).is_none() {
+            assert!(t.elapsed() < Duration::from_secs(5), "pid {pid} never showed its token");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        proc::EMPTY_ENVIRON_READS.with(|n| n.set(1));
+        let w = json!({ "address": "0xe9", "pid": pid, "workspace": { "id": -98, "name": AGENT_SPECIAL }, "monitor": 0, "class": "sleep", "title": "t", "mapped": true, "floating": false, "stableId": "9" });
+        {
+            let mut c = shared.lock().unwrap();
+            let cl = Core::parse_clients(&json!([w]))[0].clone();
+            c.open_client(&cl, false);
+            assert_eq!(c.sessions.owner("0xe9"), Some("s1"), "an empty first read of the environ lost the window");
+        }
+        assert_eq!(proc::EMPTY_ENVIRON_READS.with(|n| n.get()), 0, "the forced empty read was the adopt's");
+        for k in kids.lock().unwrap().iter_mut() {
+            let _ = k.kill();
+            let _ = k.wait();
+        }
+    }
+
     /// `open` with `wait: 0` answers before the window exists; the window still goes to that session,
     /// and two sessions' launches of the same app each get only their own process's window.
     #[test]

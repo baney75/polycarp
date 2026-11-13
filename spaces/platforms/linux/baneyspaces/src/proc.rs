@@ -31,7 +31,21 @@ pub fn token_of(pid: u32) -> Option<String> {
 /// mapped then would not be taken for the agent's. An empty read is tried again, 5 times 10 ms apart at most. Not for
 /// sweeps over /proc: kernel threads have an empty environ for good.
 pub fn settled_token_of(pid: u32) -> Option<String> {
-    settle(|| fs::read(format!("/proc/{pid}/environ")).ok(), 5, || std::thread::sleep(std::time::Duration::from_millis(10)))
+    settle(|| read_environ(pid), 5, || std::thread::sleep(std::time::Duration::from_millis(10)))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: this many of this thread's next adopt reads come back empty, as right after an exec.
+    pub static EMPTY_ENVIRON_READS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+fn read_environ(pid: u32) -> Option<Vec<u8>> {
+    #[cfg(test)]
+    if EMPTY_ENVIRON_READS.with(|n| n.get() > 0 && { n.set(n.get() - 1); true }) {
+        return Some(Vec::new());
+    }
+    fs::read(format!("/proc/{pid}/environ")).ok()
 }
 
 /// Reads until a read is not empty or `tries` are used; a failed read (the process is gone) ends it at once.
