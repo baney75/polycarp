@@ -2543,7 +2543,7 @@ test("the skill's form example is the change report fill really returns", async 
 		order(read.map((n) => refFor(page, n)), JSON.stringify(filled.changes)),
 		order(["e3", "e4", "e5"], JSON.stringify(JSON.parse(shown[1]))),
 	);
-	assert.match(skill, /Repeat 3 and 4, acting on the refs in `changes`; go back to 2 only when they say too little\./);
+	assert.match(skill, /Repeat 3 and 4, acting on the refs in `changes`; call `read_page` again to verify when they say too little\./);
 	assert.doesNotMatch(skill, /Repeat 2 to 4/);
 });
 

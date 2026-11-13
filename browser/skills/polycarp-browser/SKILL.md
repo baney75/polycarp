@@ -31,7 +31,7 @@ retry in a loop. `status` adds the site permissions when you need them.
    `type {"ref":"e4","text":"Ada","submit":true}`, `press {"key":"Enter"}`.
 4. Check the result's `changes` (new refs, what changed or went): no error does not mean it worked.
 
-Repeat 3 and 4, acting on the refs in `changes`; go back to 2 only when they say too little. Prefer refs to selectors, selectors to x/y.
+Repeat 3 and 4, acting on the refs in `changes`; call `read_page` again to verify when they say too little. Prefer refs to selectors, selectors to x/y.
 
 ## Stale refs, waits and dialogs
 
