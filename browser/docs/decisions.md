@@ -1444,17 +1444,24 @@ Decision:
   read_page, find, get_page_html and screenshots never see it.
 - **How it moves**: cdp.ts reports each pointer action (`cuePointer`: click, hover, drag, scroll, type, press; tools.ts
   adds fill and a scroll to a ref). veil.ts sends a `point` command in its own order per tab, after the veil changes
-  already queued, without waiting for it, so input never waits on it. Nothing waits on a point: the capture cover and
-  the next call's veilBegin do not queue behind one a busy page leaves unanswered, and of the cues that pile up behind
-  it only the newest is sent. A press cues after its key is up, where focus moved to. It glides to the point (210 ms), then reacts: a squash and ring on click, a perk on hover, a
-  tug and a slow follow on drag, a tap and caret on typing, a nudge on scroll; then idles with a slow sway and a blink.
+  already queued, without waiting for it, so input never waits on it. Nothing waits on a point: a point that a busy
+  page leaves unanswered adds no timeout of its own in front of the capture cover or the next call's veilBegin. A busy
+  page answers none of the worker's injects, so the veil's own change there still waits out its one EFFECT_TIMEOUT_MS
+  (1.5 s); before, the stalled point's 1.5 s came first. Of the cues that pile up behind a stalled point only the newest
+  is sent. A press cues after its key is up, where focus moved to; an Enter that submits a form and leaves the page
+  cues a document that is going or new, so it does not move the character, and the next pointer action on the new page
+  does. It glides to the point (210 ms), then reacts: a squash and ring on click, a perk on hover, a tug and a slow
+  follow on drag, a tap and caret on typing, a nudge on scroll; then idles with a slow sway and a blink.
   Typing has no point: the page finds the focused field through open shadow roots and same-origin frames; in a
   cross-origin frame it points at the frame's box, and with nothing focused it stays put.
 - **Coordinates**: the points are main-frame CSS pixels, the same ones page.ts reads from `getBoundingClientRect` (frame
   offsets added) and the overlay is drawn in, so scroll and page zoom need no conversion.
 - **Settings > Agents**: "Show the agent's pointer" (`veil_pointer`, on by default) sits under the veil's own switch. Off
   hides the character on open veils at once and keeps the veil. A veil drawn before a restarted worker has read the
-  setting waits for that read, so it never shows the character the person turned off.
+  setting waits for that read, so it never shows the character the person turned off. The input call reads it before
+  the veil's change is queued, so a slow read never holds a timed change. A show that still waits on the browser when
+  its time runs out draws the tab as it is by then (concealed for a capture queued after it), or nothing if the veil
+  is gone.
 - **Motion**: off under prefers-reduced-motion or a Polycarp theme with motion off (it jumps and holds still); Highlight
   colors under forced colors.
 

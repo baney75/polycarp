@@ -26,6 +26,7 @@ import {
 } from "./veil-shared.js";
 import {
 	EMPTY_VEIL,
+	isConcealed,
 	type PointerAction,
 	pointerCue,
 	VEIL_IDLE_MS,
@@ -102,7 +103,12 @@ function dispatch(event: VeilEvent): Promise<void> {
 
 function queue(effect: VeilEffect): Promise<void> {
 	const prev = chains.get(effect.tabId) ?? Promise.resolve();
-	const run = prev.then(() => withTimeout(apply(effect))).catch(() => undefined);
+	const run = prev
+		.then(() => {
+			const late = { fired: false };
+			return withTimeout(apply(effect, late), late);
+		})
+		.catch(() => undefined);
 	chains.set(effect.tabId, run);
 	void run.then(() => {
 		if (chains.get(effect.tabId) === run) chains.delete(effect.tabId);
@@ -110,8 +116,17 @@ function queue(effect: VeilEffect): Promise<void> {
 	return run;
 }
 
-function withTimeout<T>(p: Promise<T>): Promise<T | undefined> {
-	return Promise.race([p, new Promise<undefined>((r) => setTimeout(() => r(undefined), EFFECT_TIMEOUT_MS))]);
+/** `late.fired` turns true when the time is up, so work still running behind it can tell the chain moved on. */
+function withTimeout<T>(p: Promise<T>, late?: { fired: boolean }): Promise<T | undefined> {
+	return Promise.race([
+		p,
+		new Promise<undefined>((r) =>
+			setTimeout(() => {
+				if (late) late.fired = true;
+				r(undefined);
+			}, EFFECT_TIMEOUT_MS),
+		),
+	]);
 }
 
 async function inject(tabId: number, cmd: VeilCommand): Promise<VeilPageResult | undefined> {
@@ -125,7 +140,12 @@ async function inject(tabId: number, cmd: VeilCommand): Promise<VeilPageResult |
 	return first?.result as VeilPageResult | undefined;
 }
 
-async function apply(effect: VeilEffect): Promise<void> {
+/**
+ * Carry out one effect. A show still waiting on the browser when its time ran out (second-S1 of the #189 review) no
+ * longer draws what was true when it was queued: the chain has moved on, so it draws the tab's facts as they are now
+ * (concealed for a capture that came after it, say), or nothing if the tab has no veil any more.
+ */
+async function apply(effect: VeilEffect, late: { fired: boolean } = { fired: false }): Promise<void> {
 	const { tabId } = effect;
 	try {
 		if (effect.kind === "show") {
@@ -135,6 +155,17 @@ async function apply(effect: VeilEffect): Promise<void> {
 			// A tag of its own for each document; stored before it is drawn, so a reader never misses it.
 			const tag = (await veilTag(tabId)) ?? newVeilTag();
 			await rememberVeilTag(tabId, tag);
+			const pointerShown = pointer ?? (await pointerOn());
+			let { interactive, concealed } = effect;
+			if (late.fired) {
+				const now = state.tabs[tabId];
+				if (!now) {
+					await rememberVeilTag(tabId, undefined);
+					return;
+				}
+				interactive = now.input === 0;
+				concealed = isConcealed(state, tabId);
+			}
 			const result = await inject(tabId, {
 				op: "show",
 				tag,
@@ -143,9 +174,9 @@ async function apply(effect: VeilEffect): Promise<void> {
 				detail: effect.view.detail,
 				color: effect.view.color,
 				theme: await theme(),
-				interactive: effect.interactive,
-				concealed: effect.concealed,
-				pointer: await pointerOn(),
+				interactive,
+				concealed,
+				pointer: pointerShown,
 				mote: MOTE,
 			});
 			if (!result?.tag) await rememberVeilTag(tabId, undefined);
@@ -266,6 +297,9 @@ export async function veilBegin(
 	if (!TAB_METHODS.has(method) || !isAgentSession(session.id) || !(await veilOn())) return undefined;
 	const tabId = targetTab(session, params);
 	if (tabId === undefined) return undefined;
+	// Read before the veil's change is queued, so the setting's read (slow after a worker restart) is never what holds
+	// a timed show (second-S1 of the #189 review).
+	await pointerOn();
 	await dispatch({
 		type: "begin",
 		tabId,
