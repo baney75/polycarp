@@ -180,8 +180,10 @@ final class SandboxLifecycleTests: XCTestCase {
         let s = r.manager.snapshot()
         XCTAssertNotEqual(s.vm, old)
         XCTAssertFalse(r.tart.vmNames().contains(old), "the old VM is deleted")
-        let resume = r.tart.spawned.last!.args
-        XCTAssertTrue(resume.contains("--no-graphics")); XCTAssertEqual(resume.last, s.vm)
+        // reset starts the next warm build at once, and its spawn can land last (11-12: bsx-s-id3 against id2), so the
+        // swapped-in guest's resume is found by its name.
+        let resume = try XCTUnwrap(r.tart.spawned.last { $0.args.last == s.vm }, "the swapped-in guest was resumed").args
+        XCTAssertTrue(resume.contains("--no-graphics"))
         XCTAssertTrue(resume.contains { $0.contains("/slots/") }, "the warm clone's own slot")
         XCTAssertTrue(r.manager.waitUntilWarm(limit: 120), "the next warm clone is built")
         XCTAssertTrue(r.manager.waitUntilVerified(limit: 60))
@@ -578,7 +580,8 @@ final class SandboxViewOrderTests: XCTestCase {
         XCTAssertFalse(r.tart.order.contains("release"), "the held process was never released")
         XCTAssertFalse(r.manager.snapshot().graphics)
         XCTAssertNotNil(r.manager.snapshot().vm, "the sandbox is still up, headless")
-        XCTAssertTrue(r.tart.spawned.last!.args.contains("--no-graphics"))
+        let vm = r.manager.snapshot().vm
+        XCTAssertTrue(r.tart.spawned.last { $0.args.last == vm }?.args.contains("--no-graphics") == true, "its last run is headless")
     }
 }
 
@@ -637,6 +640,11 @@ final class FakeTartLockTests: XCTestCase {
             XCTAssertTrue(c.contains("private var _\(name):"), "\(name) is stored privately")
             let getter = try XCTUnwrap(c.range(of: "    var \(name): ").map { String(c[$0.lowerBound...].prefix(260)) }, "\(name) has a reader")
             XCTAssertTrue(getter.contains("lock.lock(); defer { lock.unlock() }; return _\(name)"), "\(name) is read under the lock: \(getter)")
+        }
+        let hostFacts = try XCTUnwrap(HandsSourceTests.between("final class FakeHostFacts", "func read()", in: c))
+        for name in ["facts", "listenerHits"] {
+            XCTAssertTrue(hostFacts.contains("private var _\(name)"), "the host facts' \(name) is stored privately")
+            XCTAssertTrue(hostFacts.contains("lock.lock(); defer { lock.unlock() }; return _\(name)"), "and read under the lock")
         }
         let spawn = try XCTUnwrap(HandsSourceTests.between("func spawn(_ exe: String", "private func record(", in: c))
         XCTAssertFalse(spawn.contains("lock.lock()"), "onSpawn runs after the lock, so a hook can read the lists")

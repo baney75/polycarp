@@ -172,12 +172,23 @@ final class FakeTart: ProcessRunning {
 }
 
 final class FakeHostFacts: HostFactsReading {
-    var facts = HostFacts(addresses: [.init("this Mac's address on en0", "192.168.1.20", iface: "en0"), .init("this Mac's tailnet address", "100.101.102.103", iface: "utun4")],
+    // Read by the warm build's self-check on its own thread while a test changes them, so both sides take the lock
+    // (TSan, 11-12: buildWarm at SandboxManager.swift:680 against testTheMacsAddressesChangingStopsTheGuest).
+    private let lock = NSLock()
+    var facts: HostFacts {
+        get { lock.lock(); defer { lock.unlock() }; return _facts }
+        set { lock.lock(); _facts = newValue; lock.unlock() }
+    }
+    var listenerHits: Int {
+        get { lock.lock(); defer { lock.unlock() }; return _listenerHits }
+        set { lock.lock(); _listenerHits = newValue; lock.unlock() }
+    }
+    private var _listenerHits = 0
+    private var _facts = HostFacts(addresses: [.init("this Mac's address on en0", "192.168.1.20", iface: "en0"), .init("this Mac's tailnet address", "100.101.102.103", iface: "utun4")],
                           router: "192.168.1.1", tailscaleInstalled: true,
                           bridge6: [.init("this Mac's IPv6 address on bridge100", "fe80::5c9b:a6ff:fe68:4164", iface: "bridge100"),
                                     .init("this Mac's IPv6 address on bridge100", "fdc5:5ced:8bd3:9a9f:1447:5955:8b2d:5e2d", iface: "bridge100")])
     final class L: ProbeListener { var port: UInt16 = 51000; var hits = 0; func accepted() -> Int { hits }; func close() {} }
-    var listenerHits = 0
     func read() -> HostFacts { facts }
     func currentAddresses() -> [String] { facts.ipv4 }
     func listener6() -> ProbeListener? { let l = L(); l.hits = listenerHits; return l }
