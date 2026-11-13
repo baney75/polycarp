@@ -105,7 +105,7 @@ final class SandboxLifecycleTests: XCTestCase {
 
     func testStartupDeletesEveryLeftoverButNotOtherVMs() throws {
         let r = rig()
-        r.tart.withVMs { $0["bsx-w-crashed"] = .init() }; r.tart.withVMs { $0["bsx-s-old"] = .init() }; r.tart.withVMs { $0["my-own-vm"] = .init() }
+        r.tart.addVM("bsx-w-crashed"); r.tart.addVM("bsx-s-old"); r.tart.addVM("my-own-vm")
         _ = try r.manager.up(task: "t1")
         XCTAssertFalse(r.tart.vmNames().contains("bsx-w-crashed")); XCTAssertFalse(r.tart.vmNames().contains("bsx-s-old"))
         XCTAssertTrue(r.tart.vmNames().contains("my-own-vm"), "VMs that aren't ours are never touched")
@@ -140,7 +140,7 @@ final class SandboxLifecycleTests: XCTestCase {
 
     func testAThirdGuestGetsBusyWithRetryAfterAndNothingIsMade() {
         let r = rig()
-        r.tart.withVMs { $0["someone-elses-1"] = .init(proc: FakeProc()) }; r.tart.withVMs { $0["someone-elses-2"] = .init(proc: FakeProc()) }
+        r.tart.addVM("someone-elses-1", .init(proc: FakeProc())); r.tart.addVM("someone-elses-2", .init(proc: FakeProc()))
         XCTAssertThrowsError(try r.manager.up(task: "t")) {
             let e = $0 as? SandboxError
             XCTAssertEqual(e?.code, "busy"); XCTAssertEqual(e?.retry, "after")
@@ -152,7 +152,7 @@ final class SandboxLifecycleTests: XCTestCase {
 
     func testWithOneOtherGuestRunningUpWorksButNoWarmCloneIsBuilt() throws {
         let r = rig()
-        r.tart.withVMs { $0["someone-elses"] = .init(proc: FakeProc()) }
+        r.tart.addVM("someone-elses", .init(proc: FakeProc()))
         _ = try r.manager.up(task: "t")
         XCTAssertEqual(r.manager.snapshot().warm, .none, "working + the other guest are the two")
         XCTAssertEqual(r.tart.ours().count, 1)
@@ -160,7 +160,7 @@ final class SandboxLifecycleTests: XCTestCase {
 
     func testBusyThroughTheServiceCarriesRetryAfter() {
         let r = rig()
-        r.tart.withVMs { $0["a"] = .init(proc: FakeProc()) }; r.tart.withVMs { $0["b"] = .init(proc: FakeProc()) }
+        r.tart.addVM("a", .init(proc: FakeProc())); r.tart.addVM("b", .init(proc: FakeProc()))
         let s = SandboxService(manager: r.manager, tart: r.st, settings: { SandboxSettings(enabled: true) }, tartHome: r.dir)
         let reply = s.handle(Wire.Request(op: .sandbox, text: "up"))
         let d = (try? JSONSerialization.jsonObject(with: Data((reply.info?["json"] ?? "{}").utf8))) as? [String: Any]
@@ -613,7 +613,7 @@ final class SandboxHardeningTests: XCTestCase {
         _ = try r.manager.up(task: "t1")
         XCTAssertTrue(r.manager.waitUntilWarm(limit: 120))
         XCTAssertEqual(r.manager.snapshot().warmLocation, .memory)
-        r.tart.withVMs { $0["someone-elses"] = .init() }   // a third-party VM exists; it needs the second guest slot
+        r.tart.addVM("someone-elses")   // a third-party VM exists; it needs the second guest slot
         r.manager.tick()
         XCTAssertEqual(r.manager.snapshot().warmLocation, .disk)
     }
@@ -643,20 +643,52 @@ final class FakeTartLockTests: XCTestCase {
         DispatchQueue.concurrentPerform(iterations: 2) { side in
             for k in 0..<n {
                 if side == 0 { _ = tart.run("tart", ["clone", SandboxPin.image, "bsx-c\(k)"], env: [:], stdin: nil, timeout: 5, outputLimit: 1 << 16) }
-                else { tart.withVMs { $0["mine-\(k)"] = .init() } }
+                else { tart.addVM("mine-\(k)") }
             }
         }
         XCTAssertEqual(tart.vms.count, 2 * n, "no change lost")
     }
 
-    func testTheSpawnHookRunsAfterTheLockAndANoteIsOneLockedStep() throws {
-        let c = try CursorSourceTests.code("Tests/BaneySpacesCoreTests/SandboxFakes.swift")
-        let spawn = try XCTUnwrap(HandsSourceTests.between("func spawn(_ exe: String", "private func record(", in: c))
-        XCTAssertFalse(spawn.contains("lock.lock()"), "onSpawn runs after the lock, so a hook can read the lists")
-        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        for file in try FileManager.default.contentsOfDirectory(atPath: dir.path) where file.hasSuffix(".swift") {
-            let tests = try CursorSourceTests.code("Tests/BaneySpacesCoreTests/" + file).filter { !$0.isWhitespace }
-            XCTAssertFalse(tests.contains("tart.order" + ".append("), "\(file): a note is one locked step: tart.note(_:)")
+    // Review of PR 233, round 2: a note can only be one locked step, since `_order` is private (the compiler, not a
+    // text scan, first-F3); these check by behavior what the fake's lock allows.
+    func testASpawnHookCanWaitOnAnotherThreadThatReadsTheFake() throws {
+        // first-F3: run inside the lock, the hook would hold it while the other thread waits for it.
+        let tart = FakeTart()
+        tart.addVM("bsx-w-1")
+        var read = false
+        tart.onSpawn = { _, _ in
+            let done = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async { _ = tart.spawned; _ = tart.calls; done.signal() }
+            read = done.wait(timeout: .now() + 2) == .success
         }
+        _ = try tart.spawn("tart", ["run", "bsx-w-1"], env: [:], logPath: nil, hold: false)
+        XCTAssertTrue(read, "the hook ran outside the lock")
+    }
+
+    func testAVMAddedFromWhatTheFakeReportsDoesNotHang() {
+        // second-F5: the same step as a `withVMs` closure that read the fake, which hung (NSLock) or trapped (exclusive
+        // access to the list) on ad04557c; the VM is now a value made before the lock.
+        let tart = FakeTart()
+        tart.addVM("a")
+        let done = DispatchSemaphore(value: 0)
+        Thread.detachNewThread { tart.addVM("copy", tart.vms["a"]!); _ = tart.vmNames(); done.signal() }
+        XCTAssertEqual(done.wait(timeout: .now() + 2), .success, "adding a VM read from the fake hung")
+        XCTAssertEqual(tart.vmNames(), ["a", "copy"])
+    }
+
+    func testAHookSetWhileTheFakeSpawnsAndClonesIsOneLockedStep() {
+        // second-F6 (a race only TSan sees): a test sets the hooks while the warm build's thread spawns and clones.
+        let tart = FakeTart(), n = 500
+        tart.addVM("bsx-w-1")
+        DispatchQueue.concurrentPerform(iterations: 2) { side in
+            for k in 0..<n {
+                if side == 0 { tart.onSpawn = { _, _ in }; tart.onClone = {} }
+                else {
+                    _ = try? tart.spawn("tart", ["run", "bsx-w-1"], env: [:], logPath: nil, hold: false)
+                    _ = tart.run("tart", ["clone", SandboxPin.image, "bsx-c\(k)"], env: [:], stdin: nil, timeout: 5, outputLimit: 1 << 16)
+                }
+            }
+        }
+        XCTAssertEqual(tart.spawned.count, n)
     }
 }
