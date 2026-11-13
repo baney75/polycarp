@@ -79,6 +79,26 @@ export function bounded<T>(work: Promise<T>, ms = FRAME_CALL_MS): Promise<T | un
 	]).finally(() => clearTimeout(timer));
 }
 
+/** A call's value; null when it failed fast (an answer of a kind), undefined when it took longer than `ms`. */
+function reply<T>(work: Promise<T>, ms: number): Promise<T | null | undefined> {
+	return bounded(
+		work.then(
+			(v) => ({ v }),
+			() => ({ v: null }),
+		),
+		ms,
+	).then((got) => got?.v);
+}
+
+/** How long a refind waits for a session that failed fast to say it detached (its <iframe> removed). */
+const DETACH_MS = 150;
+
+/** What a search got no answer for: these frames by tag, or any frame when a whole tree is unknown. */
+export interface Missed {
+	all: boolean;
+	tags: Set<string>;
+}
+
 interface Child {
 	sessionId: string;
 	url: string;
@@ -173,14 +193,14 @@ export const web = (url: string) => /^(https?|file):/.test(url);
 export async function crossOriginFrames(
 	tabId: number,
 	rule: FrameRule = FRAMES_CLOSED,
-): Promise<PageFrame[] & { missed?: boolean }> {
+): Promise<PageFrame[] & { missed?: Missed }> {
 	const end = Date.now() + FRAMES_MS;
 	await prime(tabId);
 	// Announcements arrive just after auto-attach turns on: wait until every frame the browser
 	// knows of is accounted for, briefly.
 	const expected = (await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null))?.length ?? 0;
 	const until = Date.now() + 300;
-	let found: { frames: PageFrame[]; seen: number; missed: boolean };
+	let found: { frames: PageFrame[]; seen: number; missed: Missed };
 	for (;;) {
 		found = await collect(tabId, rule, end);
 		if (found.seen >= expected || Date.now() >= Math.min(until, end)) break;
@@ -196,14 +216,23 @@ async function collect(
 	tabId: number,
 	rule: FrameRule,
 	end: number,
-): Promise<{ frames: PageFrame[]; seen: number; missed: boolean }> {
+): Promise<{ frames: PageFrame[]; seen: number; missed: Missed }> {
 	const frames: PageFrame[] = [];
 	// A tree or an owner the debugger gave no answer for: a frame not found may still be there.
-	let missed = false;
+	const missed: Missed = { all: false, tags: new Set() };
 	// Every frame looked at or left out is counted, so the caller stops waiting once all are.
 	let seen = 0;
 	const kids = [...(children.get(tabId) ?? new Map<string, Child>())];
 	const kidsOf = (sessionId: string | undefined) => kids.filter(([, c]) => c.parent === sessionId);
+	/** A frame not answered for: it, the frames in its tree and those in sessions inside it. */
+	const lost = (id: string, t?: TreeNode | null) => {
+		missed.tags.add(frameTag(id));
+		for (const c of t?.childFrames ?? []) lost(c.frame.id, c);
+		const own = kids.find(([k]) => k === id)?.[1].sessionId;
+		if (own) for (const [kid] of kidsOf(own)) lost(kid);
+	};
+	// Frames whose calls failed fast: unknown unless their session went away meanwhile.
+	const fast: [string, () => void][] = [];
 	const tree = (sessionId: string | undefined) =>
 		bounded(cdpSendSession<{ frameTree: TreeNode }>(tabId, sessionId, "Page.getFrameTree"), callMs(end)).then(
 			(t) => t?.frameTree,
@@ -222,12 +251,13 @@ async function collect(
 		around: PageFrame | undefined,
 		root: PageFrame | undefined,
 		sessionId?: string,
+		node?: TreeNode,
 	): Promise<PageFrame | undefined> => {
 		if (frames.length >= MAX_PLACED || (around?.chain.length ?? 0) >= MAX_DEPTH) return undefined;
 		const bar = await rule(url);
 		if (bar === "guarded") return undefined;
 		const f = await place(tabId, frameId, ownerSessionId, url, around, root, sessionId, end);
-		if (f === null) missed = true;
+		if (f === null) lost(frameId, node);
 		if (!f) return undefined;
 		if (bar === "blocked") f.blocked = true;
 		frames.push(f);
@@ -247,7 +277,7 @@ async function collect(
 				// A frame that isn't a web page is left out with everything inside it.
 				else if (!web(child.frame.url)) await visit(child, "out");
 				else {
-					const f = await admit(child.frame.id, sessionId, url, inside, root);
+					const f = await admit(child.frame.id, sessionId, url, inside, root, undefined, child);
 					await visit(child, f && !f.blocked ? f : "out");
 				}
 			}
@@ -259,7 +289,10 @@ async function collect(
 				// The frame whose document holds this one's <iframe>: what is around it, and whether it is read at all.
 				const [owner, sub] = await Promise.all([
 					ownerFrame(tabId, sessionId, targetId, top, end),
-					tree(c.sessionId),
+					reply(
+						cdpSendSession<{ frameTree: TreeNode }>(tabId, c.sessionId, "Page.getFrameTree"),
+						callMs(end),
+					).then((t) => (t ? t.frameTree : t)),
 				]);
 				return { targetId, c, owner, sub };
 			}),
@@ -267,8 +300,14 @@ async function collect(
 		for (const { targetId, c, owner, sub } of asked) {
 			// An owner the debugger couldn't name (out of time, no answer) may be a guarded or non-web frame:
 			// the frame is left out rather than placed as if it sat in the session's own document.
-			const inside: Inside = owner !== undefined && where.has(owner) ? where.get(owner) : "out";
-			if (owner === undefined || !sub) missed = true;
+			const inside: Inside = owner && where.has(owner) ? where.get(owner) : "out";
+			// No tree: nothing inside it is known. A call that failed fast is an answer only once the session is gone.
+			const unknown = () => {
+				if (sub) lost(targetId, sub);
+				else missed.all = true;
+			};
+			if (owner === undefined || sub === undefined) unknown();
+			else if (owner === null || sub === null) fast.push([targetId, unknown]);
 			if (!sub) {
 				await leaveOut(c.sessionId, null);
 				continue;
@@ -283,8 +322,10 @@ async function collect(
 		}
 	};
 	const top = await bounded(cdpSend<{ frameTree: TreeNode }>(tabId, "Page.getFrameTree"), callMs(end));
-	if (!top) return { frames, seen: Number.POSITIVE_INFINITY, missed: true };
+	if (!top) return { frames, seen: Number.POSITIVE_INFINITY, missed: { all: true, tags: new Set() } };
 	await session(undefined, top.frameTree, undefined);
+	if (fast.length) await new Promise((done) => setTimeout(done, Math.min(DETACH_MS, Math.max(0, end - Date.now()))));
+	for (const [id, unknown] of fast) if (children.get(tabId)?.has(id)) unknown();
 	return { frames, seen, missed };
 }
 
@@ -301,12 +342,13 @@ async function ownerFrame(
 	targetId: string,
 	top: TreeNode,
 	end?: number,
-): Promise<string | undefined> {
+): Promise<string | null | undefined> {
 	if (!top.childFrames?.length) return top.frame.id;
-	const own = await bounded(
+	const own = await reply(
 		cdpSendSession<{ backendNodeId?: number }>(tabId, sessionId, "DOM.getFrameOwner", { frameId: targetId }),
 		callMs(end),
 	);
+	if (own === null) return null;
 	if (!own?.backendNodeId) return undefined;
 	const objects = group();
 	const at = await resolveOwner(tabId, sessionId, own.backendNodeId, top, objects, end);
@@ -325,7 +367,7 @@ async function resolveOwner(
 	top: TreeNode,
 	objectGroup: string,
 	end?: number,
-): Promise<{ frameId: string; objectId: string } | undefined> {
+): Promise<{ frameId: string; objectId: string; context: number } | undefined> {
 	const all: TreeNode[] = [];
 	const walk = (n: TreeNode) => {
 		all.push(n);
@@ -351,7 +393,7 @@ async function resolveOwner(
 			callMs(end),
 		);
 		if (got?.object?.objectId && got.object.subtype !== "null")
-			return { frameId: n.frame.id, objectId: got.object.objectId };
+			return { frameId: n.frame.id, objectId: got.object.objectId, context: world.executionContextId };
 	}
 	return undefined;
 }
@@ -422,8 +464,15 @@ export function frameShown(el: Element): "shown" | "hidden" | "away" {
 					if (clips(ofAxis(st, a))) return "hidden";
 					const at = box[lo] - b[lo] + (a === "Y" ? n.scrollTop : n.scrollLeft);
 					const size = a === "Y" ? n.scrollHeight : n.scrollWidth;
-					// Right to left, the content runs left of the box: scrollLeft is 0 or below.
-					const start = a === "X" && st.direction === "rtl" ? n.clientWidth - size : 0;
+					// A scroller that starts at its far end (right to left, a reversed flex box, vertical-rl) runs
+					// before the box: its scroll offset is 0 or below. A reversed row in rtl starts at the left.
+					const flex = /flex/.test(String(st.display)) ? String(st.flexDirection || "") : "";
+					const far =
+						a === "Y"
+							? flex === "column-reverse"
+							: (st.direction === "rtl") !== (flex === "row-reverse") ||
+								String(st.writingMode).startsWith("vertical-rl");
+					const start = far ? (a === "Y" ? n.clientHeight : n.clientWidth) - size : 0;
 					if (!(at < start + size && at + box[hi] - box[lo] > start)) return "hidden";
 					box[lo] = b[lo];
 					box[hi] = b[hi];
@@ -442,46 +491,51 @@ export function frameShown(el: Element): "shown" | "hidden" | "away" {
 		if ((box.left >= view.innerWidth || box.right <= 0) && clips(ofAxis(rootStyle, "X"))) return "hidden";
 		// A cover fixed over the whole viewport stays put on a scroll, so the frame stays under it. Sampled
 		// inside the scrollbars; a fixed box can't hold the frame, as the walk above found none around it.
-		// Each point's top box must be in a fixed layer, and one cover must be at some point.
 		const [w, h] = [page.clientWidth || view.innerWidth, page.clientHeight || view.innerHeight];
-		// Fixed, and not painted under the page (a negative z-index, as a canvas background has).
-		const fixed = (n: Element) => styleOf(n).position === "fixed" && !(Number.parseInt(styleOf(n).zIndex, 10) < 0);
-		// A cover spans the viewport, can be seen, and paints: a color, an image, a backdrop filter, media,
-		// or a child that is such a cover. An empty layer (a portal root, a click-away backdrop) hides nothing.
-		const cover = (n: Element): boolean => {
-			const b = n.getBoundingClientRect();
-			if (!fixed(n) || b.left > 0 || b.top > 0 || b.right < w || b.bottom < h) return false;
+		// Something a person sees: a color, an image, a backdrop filter, media or its own text.
+		const paints = (n: Element) => {
+			const st = styleOf(n);
+			return (
+				!/^transparent$|^rgba\(.*,\s*0(\.0*)?\)$/.test(String(st.backgroundColor || "transparent")) ||
+				String(st.backgroundImage || "none") !== "none" ||
+				String(st.backdropFilter || "none") !== "none" ||
+				/^(canvas|video|img|svg)$/i.test(n.tagName ?? "") ||
+				Array.from(n.childNodes ?? []).some((c) => c.nodeType === 3 && /\S/.test(c.textContent ?? ""))
+			);
+		};
+		// At a point: the box on top (into open shadow roots), and the fixed layer that holds it, when that
+		// layer is seen, not under the page (a negative z-index) and paints there. Else null.
+		const layerAt = (x: number, y: number): Element | null => {
+			let n = el.ownerDocument.elementFromPoint?.(x, y) ?? null;
+			for (let i = 0; i < 10 && n?.shadowRoot; i++) {
+				const inner = n.shadowRoot.elementFromPoint?.(x, y);
+				if (!inner || inner === n) break;
+				n = inner;
+			}
+			let painted = false;
+			for (; n && styleOf(n).position !== "fixed"; n = upOf(n)) painted ||= paints(n);
+			if (!n) return null;
 			const st = styleOf(n);
 			const seen = (n as Element & { checkVisibility?: (o: object) => boolean }).checkVisibility?.({
 				opacityProperty: true,
 				visibilityProperty: true,
 			});
-			if (seen === false || st.visibility === "hidden" || Number.parseFloat(st.opacity) < 0.1) return false;
-			const color = String(st.backgroundColor || "transparent");
-			const paints =
-				!/^transparent$|^rgba\(.*,\s*0(\.0*)?\)$/.test(color) ||
-				String(st.backgroundImage || "none") !== "none" ||
-				String(st.backdropFilter || "none") !== "none" ||
-				/^(canvas|video|img|svg)$/i.test(n.tagName ?? "");
-			return paints || Array.from(n.children ?? []).some(cover);
+			if (seen === false || st.visibility === "hidden" || !(Number.parseFloat(st.opacity ?? "1") > 0)) return null;
+			return Number.parseInt(st.zIndex, 10) < 0 || !(painted || paints(n)) ? null : n;
 		};
-		// At each point: every box (open shadow roots' too) and the one drawn on top of them all.
-		const stack = (x: number, y: number) => {
-			const all: Element[] = [];
-			let top: Element | null | undefined;
-			const add = (tree: Document | ShadowRoot) => {
-				const hits = tree.elementsFromPoint?.(x, y) ?? [];
-				if (hits[0] && (!top || (tree as ShadowRoot).host === top)) top = hits[0];
-				for (const n of hits) if (!all.includes(n) && all.push(n) && n.shadowRoot) add(n.shadowRoot);
-			};
-			add(el.ownerDocument);
-			while (top && !fixed(top)) top = upOf(top);
-			return { all, onTop: !!top };
+		// Each point is under such a layer, and one of them spans the viewport (an overlay beside a panel).
+		const spans = (n: Element | null) => {
+			const b = n?.getBoundingClientRect();
+			return !!b && b.left <= 0 && b.top <= 0 && b.right >= w && b.bottom >= h;
 		};
-		const stacks = [stack(w / 2, h / 2), stack(1, 1), stack(w - 2, 1), stack(1, h - 2), stack(w - 2, h - 2)];
-		if (stacks.every((s) => s.onTop) && stacks.some((s) => s.all.some(cover))) return "hidden";
-		// Hit tests skip a cover the pointer goes through (pointer-events: none): one placed on body is seen.
-		return Array.from(el.ownerDocument.body?.children ?? []).some(cover) ? "hidden" : "away";
+		const layers = [
+			layerAt(w / 2, h / 2),
+			layerAt(1, 1),
+			layerAt(w - 2, 1),
+			layerAt(1, h - 2),
+			layerAt(w - 2, h - 2),
+		];
+		return layers.every(Boolean) && layers.some(spans) ? "hidden" : "away";
 	}
 	return points.some(([x, y]) => at.elementFromPoint(x, y) === el) ? "shown" : "hidden";
 }
@@ -510,11 +564,33 @@ export async function frameState(
 		if (!own?.backendNodeId || !top?.frameTree) return undefined;
 		const objects = group();
 		const at = await resolveOwner(tabId, f.ownerSessionId, own.backendNodeId, top.frameTree, objects, end);
+		// A slot in a closed shadow root is out of the page's reach; the debugger names the <iframe>'s, and it
+		// is lent to the walk as an own property of Polycarp's wrapper, which the page never sees.
+		const send = <T>(method: string, params: Record<string, unknown>) =>
+			bounded(cdpSendSession<T>(tabId, f.ownerSessionId, method, params), callMs(end));
+		type Described = { node?: { assignedSlot?: { backendNodeId?: number } } };
+		const slot =
+			at &&
+			(await send<Described>("DOM.describeNode", { backendNodeId: own.backendNodeId }))?.node?.assignedSlot
+				?.backendNodeId;
+		const lent = slot
+			? (
+					await send<{ object?: { objectId?: string } }>("DOM.resolveNode", {
+						backendNodeId: slot,
+						executionContextId: at?.context,
+						objectGroup: objects,
+					})
+				)?.object?.objectId
+			: undefined;
 		const shown = at
 			? await bounded(
 					cdpSendSession<{ result?: { value?: unknown } }>(tabId, f.ownerSessionId, "Runtime.callFunctionOn", {
 						objectId: at.objectId,
-						functionDeclaration: `function () { return (${frameShown.toString()})(this); }`,
+						functionDeclaration: `function (slot) {
+							if (slot && !this.assignedSlot) Object.defineProperty(this, "assignedSlot", { value: slot, configurable: true });
+							try { return (${frameShown.toString()})(this); } finally { if (slot) delete this.assignedSlot; }
+						}`,
+						arguments: lent ? [{ objectId: lent }] : [],
 						returnByValue: true,
 					}),
 					callMs(end),
@@ -790,6 +866,9 @@ async function within(
 	return tree ? find(tree.frameTree, false) : false;
 }
 
+/** An error that is a definite answer: the frame is gone, or barred. */
+const gone = (message: string) => Object.assign(new Error(message), { gone: true });
+
 /** A frame's host, as read_page and the errors name it. */
 export function frameHost(url: string): string {
 	try {
@@ -809,11 +888,13 @@ export async function frameForRef(
 	if (!split) return undefined;
 	const frames = await crossOriginFrames(tabId, rule);
 	const frame = frames.find((f) => f.tag === split.tag);
-	if (!frame && frames.missed) throw new Error(`Ref ${ref}: its frame did not answer. Try again, or call read_page.`);
-	if (!frame) throw new Error(`Ref ${ref} not found: its frame is gone or changed. Call read_page for fresh refs.`);
+	if (!frame && (frames.missed?.all || frames.missed?.tags.has(split.tag)))
+		throw new Error(`Ref ${ref}: its frame did not answer. Try again, or call read_page.`);
+	// `gone` marks a definite answer for the change look, so no message's wording decides it.
+	if (!frame) throw gone(`Ref ${ref} not found: its frame is gone or changed. Call read_page for fresh refs.`);
 	if (frame.blocked) {
 		const host = frameHost(frame.url);
-		throw new Error(
+		throw gone(
 			`Not allowed to open ${host}: ref ${ref} is in a frame from a site not allowed for agents. ` +
 				`The user can allow it in the Polycarp side panel under Settings > Agents, or with \`polycarp browser allow ${new URL(frame.url).hostname}\`.`,
 		);

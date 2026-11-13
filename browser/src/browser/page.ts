@@ -1383,7 +1383,7 @@ export async function changeLook(
 		const find = () =>
 			frameForRef(tabId, ref, frame.rule ?? FRAMES_CLOSED).then(
 				(h) => h ?? null,
-				(e) => (/ not found: |^Not allowed /.test(String(e?.message)) ? null : undefined),
+				(e) => ((e as { gone?: boolean } | undefined)?.gone ? null : undefined),
 			);
 		// Its look, and whether a person sees the frame now: an action can hide it (#73). The test keeps
 		// to the look's budget, one deadline for the frame found once and again.
@@ -1511,12 +1511,16 @@ function lineOf(
 	const bare = (u = "") => u.split(/[?#]/)[0].slice(0, 200);
 	const named = fits.find((n) => !!n.href && bare(n.href) === bare(f.url));
 	if (!exact) return named ?? fits[0];
-	// Exact: not when another frame has the same URL, as stacked ad slots of one path do.
-	if (named && !frames.some((o) => o !== f && bare(o.url) === bare(f.url))) return named;
+	// Exact: not when another frame of this box has the same URL, as stacked ad slots of one path do.
+	// One elsewhere on the page has its own line and can't take this one.
+	const others = frames.filter(
+		(o) => o !== f && (["x", "y", "width", "height"] as const).every((k) => near(o.box[k], f.box[k])),
+	);
+	if (named && !others.some((o) => bare(o.url) === bare(f.url))) return named;
 	// Only when it is plain: one line on its origin, naming no other frame's URL.
 	const kin = fits.filter((n) => !!n.href && sameOrigin(n.href, f.url));
 	const own = kin.length === 1 ? kin[0] : undefined;
-	return own && !frames.some((o) => o !== f && bare(o.url) === bare(own.href)) ? own : undefined;
+	return own && !others.some((o) => bare(o.url) === bare(own.href)) ? own : undefined;
 }
 
 /**
