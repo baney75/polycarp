@@ -19,6 +19,8 @@ export class Transcript {
 	/** `onStarted(pid)` is called as soon as a computer_open answer reports a copy this run started. */
 	constructor({ onStarted = () => {} } = {}) {
 		this.onStarted = onStarted;
+		/** Pids of the copies this run's answers reported, filled as each answer arrives. */
+		this.started = new Set();
 		this.calls = [];
 		this.byId = new Map();
 		this.final = "";
@@ -53,12 +55,21 @@ export class Transcript {
 					const pid = startedCopy(text);
 					if (pid) {
 						call.startedPid = pid;
+						this.started.add(pid);
 						this.onStarted(pid);
 					}
 				}
 				call.result = clip(text, 1200);
 			}
 		if (e.type === "result") this.result = e;
+	}
+
+	/** computer_open calls whose window may still attach: no answer yet, or an answer that says window_identified false. */
+	pendingOpens() {
+		return this.calls.filter((c) => {
+			if (toolOf(c) !== "computer_open" || c.error) return false;
+			return c.result === undefined || /"window_identified":\s*false/.test(c.result);
+		}).length;
 	}
 
 	/** The compact record of the run. */
@@ -77,3 +88,4 @@ export class Transcript {
 		};
 	}
 }
+

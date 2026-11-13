@@ -13,9 +13,9 @@ import { request as httpRequest } from "node:http";
 import { connect as tcpConnect } from "node:net";
 import { after, test } from "node:test";
 import { WebSocket, WebSocketServer } from "ws";
-import { addDevice, cli, createToken, fakeDevice as makeFake, freePort, INITIALIZE, machine, rawTools, readJson, rmSync, rpc, sleep, startHub, teardown, tempRoot } from "./helpers/hub-fixture.mjs";
+import { addDevice, cli, createToken, endProcess, fakeDevice as makeFake, freePort, INITIALIZE, machine, rawTools, readJson, rmSync, rpc, sleep, startHub, teardown, tempRoot, track } from "./helpers/hub-fixture.mjs";
 
-const root = tempRoot("tabkyra-hubhard-");
+const root = tempRoot("polycarp-hubhard-");
 const cleanup = [];
 after(() => teardown(cleanup, root));
 
@@ -213,8 +213,9 @@ async function fakeHub(name) {
 			resolve(ws);
 		}),
 	);
-	const proc = spawn(process.execPath, [cli, "link", "run"], { env: m.env });
-	cleanup.push(() => proc.kill());
+	// Tracked, and stopped by waiting for its exit: on SIGTERM it still revokes its token in the root (teardown).
+	const proc = track(spawn(process.execPath, [cli, "link", "run"], { env: m.env }));
+	cleanup.push(() => endProcess(proc, "SIGTERM"));
 	const ws = await connected;
 	const live = () => {
 		try {
