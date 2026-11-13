@@ -38,6 +38,23 @@ const CONNECTOR_SERVER = "polycarp-connector";
 const READ = ["windows", "snapshot", "find", "get", "shot"];
 const ACT = ["click", "type", "set_value", "press", "click_at", "drag", "scroll", "select", "toggle", "menu", "run_steps", "open"];
 
+/**
+ * Why a connector session's `run_steps` can't go to the helper, or undefined: each step's tool must be a verb named in
+ * ACT that the session may call itself, so `run_steps` reaches nothing the list above leaves out (251 r2 second-second-F2).
+ * A step with no tool or a list that isn't one is the helper's to refuse.
+ */
+export function stepRefusal(args: unknown, allowed: Set<string>): string | undefined {
+	const steps = (args as { steps?: unknown } | undefined)?.steps;
+	if (!Array.isArray(steps)) return undefined;
+	for (const [i, step] of steps.entries()) {
+		const raw = (step as { tool?: unknown } | null)?.tool;
+		if (typeof raw !== "string") continue;
+		const verb = raw.replace(/^computer_/, "").replaceAll("-", "_");
+		if (verb === "run_steps" || !ACT.includes(verb) || !allowed.has(PREFIX + verb)) return `step ${i + 1}: ${raw} isn't a tool this session can use, so nothing ran.`;
+	}
+	return undefined;
+}
+
 /** Answered here, not by the helper: it's how a session granted computer use learns it isn't available right now. */
 export const COMPUTER_STATUS_TOOL = `${PREFIX}status`;
 export const COMPUTER_READ_TOOLS = [COMPUTER_STATUS_TOOL, ...READ.map((verb) => PREFIX + verb)];
@@ -108,6 +125,8 @@ export class ComputerClient {
 	private child: ChildProcessWithoutNullStreams;
 	private next = 1;
 	private stopped?: Error;
+	/** A connector session's allowed tools, set by `load`; the local server's client has none and checks no steps. */
+	private connector?: Set<string>;
 	private waiting = new Map<number, { resolve: (value: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>();
 	tools: ComputerTool[] = [];
 
@@ -183,6 +202,7 @@ export class ComputerClient {
 
 	/** The helper's tools that this session's scopes allow and the lists above name. */
 	async load(allowed: Set<string>): Promise<void> {
+		this.connector = allowed;
 		const hello = await this.hello(LIST_TIMEOUT_MS);
 		if (hello.serverInfo?.name !== CONNECTOR_SERVER) throw new Error("This polycarp-spaces is older than connector computer use.");
 		const known = new Set([...COMPUTER_READ_TOOLS, ...COMPUTER_ACT_TOOLS]);
@@ -201,6 +221,8 @@ export class ComputerClient {
 	}
 
 	async call(name: string, args: unknown): Promise<CallResult> {
+		const refused = this.connector && name === `${PREFIX}run_steps` ? stepRefusal(args, this.connector) : undefined;
+		if (refused) return { content: [{ type: "text", text: refused }], isError: true };
 		try {
 			return (await this.request("tools/call", { name: name.slice(PREFIX.length), arguments: args ?? {} }, CALL_TIMEOUT_MS)) as CallResult;
 		} catch (err) {
