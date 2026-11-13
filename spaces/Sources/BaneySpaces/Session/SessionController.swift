@@ -18,6 +18,8 @@ struct AgentHost {
     var pidOf: (UInt32) -> pid_t? = { _ in nil }
     /// Whether a workspace holds any window.
     var occupied: (Int) -> Bool = { _ in false }
+    /// Whether a workspace is shown on any display.
+    var shown: (Int) -> Bool = { _ in false }
 }
 
 /// Processes BaneySpaces started for an agent (`agent open` of an app, `agent run`): the only ones an agent
@@ -661,6 +663,8 @@ final class SessionController {
                 adoptAgentStartedProcess(app.processIdentifier, workspace: n, title: nil, host: h, grantAccess: !separate)
                 if files.isEmpty {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        // No window yet: Spaces must be able to ask the app for New Window (`OpenFlashGuard.Holds`).
+                        Windows.release(app.processIdentifier)
                         // The mode may have narrowed in the 1.5 s since the request was let in.
                         let now = AgentAccess.shared.current
                         guard AgentAccessGate.sessionRefusal(op: "open", mode: now) == nil, separate || now == .full else { return }
@@ -676,11 +680,11 @@ final class SessionController {
                 }
             }
             // Covers the new window on Donovan's workspace until it is parked; off unless set (`OpenFlashGuard`).
-            OpenFlashWatch.around(app: appName, before: before, agentShown: h.current() == n) {
+            OpenFlashWatch.around(app: appName, before: before, agentShown: { h.shown(n) }) { started in
                 if files.isEmpty {
-                    NSWorkspace.shared.openApplication(at: url, configuration: cfg) { app, _ in finished(app) }
+                    NSWorkspace.shared.openApplication(at: url, configuration: cfg) { app, _ in started(app); finished(app) }
                 } else {
-                    NSWorkspace.shared.open(files, withApplicationAt: url, configuration: cfg) { app, _ in finished(app) }
+                    NSWorkspace.shared.open(files, withApplicationAt: url, configuration: cfg) { app, _ in started(app); finished(app) }
                 }
             }
             return .init(ok: true, info: ["workspace": "\(n)", "app": appName, "note": "starting a separate copy; its window opens there in a moment"])

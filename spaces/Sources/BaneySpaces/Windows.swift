@@ -145,20 +145,25 @@ enum Windows {
     private static var bench = AXBench()
     private static let unresponsiveLock = NSLock()
 
-    /// A launch being covered (`OpenFlashGuard.Hold`): its process isn't asked until the cover is up.
-    private static var launchHold: OpenFlashGuard.Hold?
+    /// Launches being covered (`OpenFlashGuard.Holds`): each one's process isn't asked until its cover is up.
+    private static var holds = OpenFlashGuard.Holds()
+    /// Asks a process again whose hold ended after a scan skipped it (set to `Spaces.askAgain`).
+    static var onHoldEnd: ((pid_t) -> Void)?
 
-    static func hold(_ h: OpenFlashGuard.Hold?) {
-        unresponsiveLock.lock(); launchHold = h; unresponsiveLock.unlock()
+    static func hold(_ pid: pid_t) {
+        unresponsiveLock.lock(); holds.hold(pid, now: Date()); unresponsiveLock.unlock()
+    }
+
+    /// Ends `pid`'s hold, on the main thread; a scan that skipped it is run again now.
+    static func release(_ pid: pid_t) {
+        unresponsiveLock.lock(); let again = holds.release(pid); unresponsiveLock.unlock()
+        if again { onHoldEnd?(pid) }
     }
 
     static func isResponsive(_ pid: pid_t) -> Bool {
-        unresponsiveLock.lock()
-        let now = Date(), benched = bench.isBenched(pid, now: now), held = launchHold
-        unresponsiveLock.unlock()
-        guard !benched else { return false }
-        guard let held, now < held.until else { return true }
-        return !held.holds(pid: pid, name: NSRunningApplication(processIdentifier: pid)?.localizedName, now: now)
+        unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
+        let now = Date()
+        return !holds.skips(pid, now: now) && !bench.isBenched(pid, now: now)
     }
 
     static func markUnresponsive(_ pid: pid_t) {

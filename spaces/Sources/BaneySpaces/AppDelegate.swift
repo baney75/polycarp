@@ -486,6 +486,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.dock.reload()
             // The agent cursor hides the moment you leave the agent workspace.
             CursorController.shared.environmentChanged()
+            // A launch's covers come down the moment the agent workspace is shown.
+            OpenFlashWatch.environmentChanged()
         }
         // A new theme redraws the menu bar indicator as well as the panels.
         NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
@@ -926,6 +928,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         h.windows = { [weak self] in self?.spaces.agentWindows() ?? [] }
         h.pidOf = { [weak self] id in self?.spaces.handsLive(id)?.pid }
         h.occupied = { [weak self] n in self?.spaces.isOccupied(n) ?? false }
+        h.shown = { [weak self] n in self.map { $0.spaces.model.current == n || $0.spaces.model.shown.values.contains(n) } ?? false }
+        Windows.onHoldEnd = { [weak self] pid in self?.spaces.askAgain(pid) }
         session.agentHost = h
         // The agent hands: what the scope guard needs from the workspaces, and what to do when a lend changes.
         // The engine's state folder is set here, once, on the main thread, before any engine queue exists.

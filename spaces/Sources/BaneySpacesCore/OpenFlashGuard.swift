@@ -9,6 +9,10 @@ import Foundation
 /// The cover needs no answer from the app: the window server lists the new window, and an opaque Polycarp panel
 /// painted with the screen as it was goes over it until it is out of sight. Measured by `scripts/agent-open-probe.swift`
 /// (seen_ms). Off by default: `defaults write com.baney.polycarp agentOpenFlashGuard cover`.
+///
+/// Limits (review of PR 209): only the process the launch returned is covered, never one matched by name; never while
+/// the agent workspace is shown; never without a shot of every display; and a cover comes down 1.5 s after it went up
+/// whether or not the window was parked, since a still image that eats clicks is worse than a late window.
 public enum OpenFlashGuard: String, Sendable, CaseIterable {
     case off
     case cover
@@ -20,6 +24,10 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
     public static let watchFor: Double = 9
     /// The window server is read this often while watching.
     public static let interval: Double = 0.004
+    /// The longest a cover stays up for one window, counted from when it first went up.
+    public static let coverLife: Double = 1.5
+    /// The longest Spaces' asks to the launching process are held back.
+    public static let holdFor: Double = 3
     /// A window's shadow reaches this far past its bounds and shows too, so a cover reaches as far.
     public static let shadow: CGFloat = 48
 
@@ -28,11 +36,14 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
         layer == 0 && bounds.width > 50 && bounds.height > 50 && !Geometry.isStranded(bounds, screens: screens)
     }
 
-    /// The cover for a window (global, y down): its bounds and shadow, clipped to the screens it is on.
-    public static func coverFrame(for bounds: CGRect, screens: [CGRect]) -> CGRect? {
+    /// The covers for a window (global, y down): its bounds and shadow, one part per screen it reaches, each painted from
+    /// that screen's own shot.
+    public static func coverParts(for bounds: CGRect, screens: [CGRect]) -> [(screen: Int, frame: CGRect)] {
         let reach = bounds.insetBy(dx: -shadow, dy: -shadow)
-        let parts = screens.map { $0.intersection(reach) }.filter { !$0.isNull && !$0.isEmpty }
-        return parts.isEmpty ? nil : parts.dropFirst().reduce(parts[0]) { $0.union($1) }
+        return screens.enumerated().compactMap { i, s in
+            let part = s.intersection(reach)
+            return part.isNull || part.isEmpty ? nil : (i, part)
+        }
     }
 
     /// A rect in the window server's coordinates (y down from the primary display's top) in AppKit's (y up from its
@@ -41,22 +52,81 @@ public enum OpenFlashGuard: String, Sendable, CaseIterable {
         CGRect(x: r.minX, y: primaryHeight - r.maxY, width: r.width, height: r.height)
     }
 
+    /// One on-screen window from the window server.
+    public struct Sighting: Equatable, Sendable {
+        public let pid: Int32, id: UInt32, layer: Int, bounds: CGRect
+        public init(pid: Int32, id: UInt32, layer: Int, bounds: CGRect) { self.pid = pid; self.id = id; self.layer = layer; self.bounds = bounds }
+    }
+
+    /// One launch's watch, bound to the pid its launch returned. Fed the window server's list each tick (time in seconds
+    /// since the watch began), it says which windows to cover, when the hold may end and when the watch is over.
+    public struct Plan: Sendable {
+        public let pid: Int32
+        public let screens: [CGRect]
+        private var upAt: [UInt32: Double] = [:]
+        private var expired: Set<UInt32> = []
+        private var last: [UInt32: CGRect] = [:]
+
+        public struct Step: Equatable, Sendable {
+            /// The windows to cover now, by id, at these bounds.
+            public var covers: [UInt32: CGRect]
+            /// Whether `covers` differs from the last step's: only then does the main thread redraw.
+            public var changed: Bool
+            /// The hold may end (after `covers` is up): a window of this launch was seen, or the hold ran out.
+            public var release: Bool
+            /// The watch is over: its process exited, or it ran its course.
+            public var end: Bool
+            /// Windows whose cover came down at `coverLife` without being parked.
+            public var expired: [UInt32]
+        }
+
+        public init(pid: Int32, screens: [CGRect]) { self.pid = pid; self.screens = screens }
+
+        public mutating func tick(now: Double, windows: [Sighting], alive: Bool) -> Step {
+            guard alive, now < OpenFlashGuard.watchFor else {
+                defer { last = [:] }
+                return Step(covers: [:], changed: !last.isEmpty, release: true, end: true, expired: [])
+            }
+            var want: [UInt32: CGRect] = [:], ran: [UInt32] = [], seen = false
+            for w in windows where w.pid == pid {
+                seen = true
+                guard !expired.contains(w.id), OpenFlashGuard.needsGuard(layer: w.layer, bounds: w.bounds, screens: screens) else { continue }
+                let up = upAt[w.id] ?? now
+                upAt[w.id] = up
+                if now - up >= OpenFlashGuard.coverLife { expired.insert(w.id); ran.append(w.id); continue }
+                want[w.id] = w.bounds
+            }
+            defer { last = want }
+            return Step(covers: want, changed: want != last, release: seen || now >= OpenFlashGuard.holdFor, end: false, expired: ran.sorted())
+        }
+    }
+
     /// Spaces asks each app for its windows on the main thread with a 0.25 s timeout, and a starting app doesn't answer:
-    /// one such ask blocks the main thread, where the cover is drawn, for a quarter second. So the launching process
-    /// isn't asked until its cover is up: by app name (its pid isn't known until it runs) and not one of the copies
-    /// that ran before. A hold ends when the cover is up, or after `holdFor` whatever happens.
-    public struct Hold: Sendable, Equatable {
-        public let app: String
-        public let before: Set<Int32>
-        public let until: Date
-        public static let holdFor: TimeInterval = 3
+    /// one such ask blocks the main thread, where the cover is drawn, for a quarter second. So a launching process isn't
+    /// asked until its cover is up. One hold per launch, keyed by its pid, so overlapping opens never end each other's.
+    /// A held process is skipped, not benched: nothing is left benched when its hold ends, and a skipped ask is
+    /// remembered so the release can ask again at once instead of waiting for whatever wakes Spaces next.
+    public struct Holds: Sendable {
+        private var until: [Int32: Date] = [:]
+        private var skipped: Set<Int32> = []
 
-        public init(app: String, before: Set<Int32>, now: Date) {
-            self.app = app; self.before = before; until = now.addingTimeInterval(Self.holdFor)
+        public init() {}
+
+        public mutating func hold(_ pid: Int32, now: Date) { until[pid] = now.addingTimeInterval(OpenFlashGuard.holdFor) }
+
+        /// Whether Spaces must not ask `pid` now. A skip is remembered for `release`.
+        public mutating func skips(_ pid: Int32, now: Date) -> Bool {
+            guard let u = until[pid], now < u else { return false }
+            skipped.insert(pid)
+            return true
         }
 
-        public func holds(pid: Int32, name: String?, now: Date) -> Bool {
-            now < until && name == app && !before.contains(pid)
+        /// Ends `pid`'s hold. True when an ask was skipped while it held, so Spaces should ask again now.
+        public mutating func release(_ pid: Int32) -> Bool {
+            guard until.removeValue(forKey: pid) != nil else { return false }
+            return skipped.remove(pid) != nil
         }
+
+        public func holds(_ pid: Int32, now: Date) -> Bool { until[pid].map { now < $0 } ?? false }
     }
 }
