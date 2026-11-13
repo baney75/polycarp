@@ -1848,6 +1848,11 @@ async function moteAt(tabId, want, what) {
 	);
 }
 
+/** Whether the character still has the drag's slow glide or its tug pose on. */
+async function moteClasses(tabId) {
+	return sw(`chrome.scripting.executeScript({ target: { tabId: ${tabId}, frameIds: [0] }, world: "ISOLATED", func: () => { const m = globalThis.__polycarpVeil?.mote; return m ? { slow: m.classList.contains("slow"), tug: m.classList.contains("r-tug") } : null; } }).then((r) => r[0].result)`);
+}
+
 const centerOf = (target, js) => inPage(target, `(() => { const r = (${js}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
 
 test("the pointer character goes to what the agent clicks and types into, only on the tab in use, never in the agent's screenshot", async () => {
@@ -1863,6 +1868,10 @@ test("the pointer character goes to what the agent clicks and types into, only o
 		const page = await pageTarget("/mote?t=agent");
 		await until(() => inPage(page, VEIL_PROBE), 10_000, "the veil");
 		assert.equal(await motePoint(tabId), null, "the pointer shows before any pointer action");
+		// A first cue with no point (a key with nothing focused) leaves it hidden, not in the middle of the page.
+		await on(agent, "press", { key: "Shift" });
+		await new Promise((r) => setTimeout(r, 400));
+		assert.equal(await motePoint(tabId), null, "a first cue with no point showed the pointer");
 
 		// A scrolled page: the agent scrolls to the button and clicks it by ref.
 		await on(agent, "scroll", { dy: 700 });
@@ -1927,6 +1936,11 @@ test("the pointer character goes to what the agent clicks and types into, only o
 		await on(agent, "click", { ref: refFor(snap3, "Go here") });
 		await moteAt(tabId, await centerOf(page, "document.getElementById('go')"), "turned back on");
 
+		// A click that cuts a drag's follow short: the drag's slow glide does not stay on for later moves.
+		await on(agent, "actions", { tabId, steps: [{ drag: { from: { x: 100, y: 120 }, to: { x: 220, y: 180 } } }, { wait: 200 }, { click: { x: 120, y: 240 } }] });
+		await new Promise((r) => setTimeout(r, 1_300));
+		assert.deepEqual(await moteClasses(tabId), { slow: false, tug: false }, "the drag's glide stayed on after a click cut it short");
+
 		// It leaves with the veil.
 		await on(agent, "tabs_release", { tabId });
 		await until(async () => (await inPage(page, VEIL_PROBE)) === null, 2_000, "the veil to go on release");
@@ -1934,6 +1948,40 @@ test("the pointer character goes to what the agent clicks and types into, only o
 	} finally {
 		if (tabId !== undefined) await sw(`chrome.tabs.setZoom(${tabId}, 1).catch(() => {})`).catch(() => undefined);
 		await sw("chrome.storage.local.remove('veil_pointer').then(() => { globalThis.__POLYCARP_VEIL_IDLE_MS = undefined; })").catch(() => undefined);
+		await agent.close();
+	}
+});
+
+// first-F2 of the #189 review: a press cues the character after its keys are up, so an Enter that submits a form and
+// leaves the page cues a document that is going or new. It does not move the character (D47); the call still works,
+// and the next pointer action on the new page moves it.
+extraPages["/mote-form"] = `<!doctype html><title>Pointer form</title>
+<body style="margin:0;background:#fff;font:16px sans-serif">
+<form action="/mote" method="get" style="position:absolute;left:200px;top:200px"><input name="t" aria-label="Query" style="width:200px;height:30px"></form></body>`;
+
+test("the pointer character: an Enter that submits a form and leaves the page neither fails nor leaves it stuck", async () => {
+	await connected();
+	const project = join(home, "projects", "mote-form");
+	mkdirSync(project, { recursive: true });
+	execFileSync("git", ["init", "-q", project]);
+	const agent = await agentIn(project);
+	try {
+		await sw("globalThis.__POLYCARP_VEIL_IDLE_MS = 120000");
+		const tabId = JSON.parse(await on(agent, "navigate", { url: `${pageUrl}mote-form` })).tabId;
+		const form = await pageTarget("/mote-form");
+		await until(() => inPage(form, VEIL_PROBE), 10_000, "the veil");
+		await on(agent, "type", { ref: refFor(await on(agent, "read_page", { filter: "interactive" }), "Query"), text: "next" });
+		assert.equal(await inPage(form, "document.querySelector('input').value"), "next", "the text did not reach the field");
+		await on(agent, "press", { key: "Enter" });
+		const next = await pageTarget("/mote?t=next");
+		await until(() => inPage(next, VEIL_PROBE), 10_000, "the veil on the new page");
+		const snap = await on(agent, "read_page", { filter: "interactive" });
+		await on(agent, "click", { ref: refFor(snap, "Go here") });
+		assert.equal(await inPage(next, "window.goes"), 1);
+		assert.equal((await moteAt(tabId, await centerOf(next, "document.getElementById('go')"), "a click after the Enter")).action, "click");
+		await on(agent, "tabs_release", { tabId });
+	} finally {
+		await sw("globalThis.__POLYCARP_VEIL_IDLE_MS = undefined").catch(() => undefined);
 		await agent.close();
 	}
 });
