@@ -40,9 +40,7 @@ public enum ContextMenu {
     /// a window that spans two displays can hold the element on Donovan's (231 r1 second-S1). `element`: its bounds read
     /// now; nil (unreadable) refuses. Nothing is sent to the app otherwise.
     public static func gate(agentShown: Bool, agentWindow: Bool, window: CGRect, element: CGRect?, displays: [CGRect]) -> HandsError? {
-        let center = element.map { CGPoint(x: $0.midX, y: $0.midY) } ?? CGPoint(x: window.midX, y: window.midY)
-        if let element, gate(agentShown: agentShown, agentWindow: agentWindow, window: window, point: center, displays: displays) == nil,
-           let d = display(window: window, displays: displays), d.contains(element) { return nil }
+        if let element, agentShown, agentWindow, let d = display(window: window, displays: displays), d.contains(element) { return nil }
         return HandsError(.outsideAgentWorkspace,
                           "a right click opens its menu where Donovan can see it unless the agent workspace is on screen under the window and the element; it isn't, so nothing was sent",
                           suggestion: "Use `click` without button for the element's own action, or `menu` for the app's menu bar.", retry: .never, nextCall: .null)

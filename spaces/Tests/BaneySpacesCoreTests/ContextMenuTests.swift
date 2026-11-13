@@ -250,9 +250,10 @@ final class ContextMenuTests: XCTestCase {
         XCTAssertLessThan(keys.lowerBound, act.lowerBound)
         XCTAssertTrue(click.contains("agentWindow: onAgentWorkspace(w, scope)") && click.contains("permit: keyPermit") && click.contains("leftOpen: &open"))
         XCTAssertFalse(src.contains("escapeMenu"))
-        XCTAssertTrue(click.contains("contextMenu(w, frame: frame, displays: displays, before: before, item: pressed == nil ? item : nil, stopped: nil, none: refused"))
+        XCTAssertTrue(click.contains("contextMenu(w, frame: frame, displays: displays, before: before, item: item, stopped: nil, none: refused"))
         // first-F5: nothing sent, no menu watch; it answers before contextMenu is asked.
-        let skip = try XCTUnwrap(click.range(of: "if ContextMenu.nothingSent(refused), let refused { answer = .failure(refused); return .ok(.null) }"))
+        // 269 r1 first-F3: the engine's retry may have opened a menu before its last attempt failed, so a quick look first.
+        let skip = try XCTUnwrap(click.range(of: "if ContextMenu.nothingSent(refused), let refused, ContextMenuAX.menus(w.pid, before: before).isEmpty { answer = .failure(refused); return .ok(.null) }"))
         let watch = try XCTUnwrap(click.range(of: "answer = contextMenu("))
         XCTAssertLessThan(act.lowerBound, skip.lowerBound)
         XCTAssertLessThan(skip.lowerBound, watch.lowerBound)
@@ -261,16 +262,27 @@ final class ContextMenuTests: XCTestCase {
     }
 
     /// 231 r1 first-F3: an app that comes forward by itself on AXShowMenu is caught as after a posted click. The front app
-    /// is watched from before the press to after the cancel, by the same verdict; a press that brought it forward chooses
-    /// nothing from the menu and only cancels it.
+    /// is watched from before the press to after the cancel, by the same verdict. 269 r1 first-F1: it is looked at once
+    /// the menu is found, right before an item is pressed, never sampled before the menu wait; first-F2: seen later, it
+    /// replaces only an answer that pressed nothing and left nothing open.
     func testARightClickOnARefWatchesTheFrontAppLikeAPostedOne() throws {
         let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+ContextRef.swift")
         let click = try XCTUnwrap(HandsSourceTests.block(after: "func contextClick(", in: src))
         let front = try XCTUnwrap(click.range(of: "guard let front = frontWatch(w, kind: .pointer) else { answer = .failure(BackgroundRefusal.frontUnknown(w.app)); return .ok(.null) }"))
-        let after = try XCTUnwrap(click.range(of: "if let e = pressed ?? front.failure() { answer = .failure(e) }"))
+        let after = try XCTUnwrap(click.range(of: #"if let late = front.failure(), case .success(let d) = answer, d["pressed"] == nil { answer = .failure(late) }"#))
         XCTAssertLessThan(front.lowerBound, try XCTUnwrap(click.range(of: "kind: .rightClick")).lowerBound)
         XCTAssertLessThan(try XCTUnwrap(click.range(of: "answer = contextMenu(")).lowerBound, after.lowerBound)
-        XCTAssertTrue(click.contains("let pressed = front.failure()") && click.contains("defer { front.stop() }"))
+        XCTAssertTrue(click.contains("leftOpen: &open, check: acting, cancelled: cancelled, beforePress: front.failure)") && click.contains("defer { front.stop() }"))
+        XCTAssertFalse(click.contains("let pressed = front.failure()"), "no sample before the menu wait")
+        let ctx = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+ContextMenu.swift")
+        let menu = try XCTUnwrap(HandsSourceTests.block(after: "func contextMenu(", in: ctx))
+        let chosen = try XCTUnwrap(menu.range(of: "case .success(let at):"))
+        let ask = try XCTUnwrap(menu.range(of: "if let e = beforePress() { return .failure(cancel() ? e : ContextMenu.stillOpen(w.app)) }"))
+        let press = try XCTUnwrap(menu.range(of: "guard pressItem("))
+        XCTAssertTrue(chosen.lowerBound < ask.lowerBound && ask.lowerBound < press.lowerBound, "asked between the menu found and the press")
+        // second-S2: an app already shut out of the pointer route gets no second AXShowMenu.
+        let block = try XCTUnwrap(click.range(of: "if let block = BackgroundBreaker.shared.block(bundle: w.bundle, pid: w.pid, kind: .pointer) { answer = .failure(BackgroundRefusal.blocked(w.app, block)); return .ok(.null) }"))
+        XCTAssertLessThan(block.lowerBound, try XCTUnwrap(click.range(of: "kind: .rightClick")).lowerBound)
         let bg = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
         XCTAssertEqual(bg.components(separatedBy: "PostGuard.verdict(span, hardware: hardware)").count, 2, "one front verdict, shared by transact and the ref")
         XCTAssertTrue(bg.contains("func frontFailure() -> HandsError? { frontVerdict(w, kind: kind, spanFront(), hardware: hardware()) }"))
@@ -286,6 +298,10 @@ final class ContextMenuTests: XCTestCase {
                       "`Self::Headless => InteractionPolicy::headless()`", "agent-desktop 5261b52", "`assert!(!step_allowed(&physical, headless))`"] {
             XCTAssertTrue(raw.contains(quote), quote)
         }
+        // 269 r1 second-S3: the quotes hold at the pin they name; moving the pin fails here until they are read again.
+        let pin = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("engine/PIN"), encoding: .utf8)
+        XCTAssertTrue(pin.contains("\nENGINE_COMMIT=5261b5287b5208e7c4bf3713df6f66faaaf2c4cc\n"), "the engine moved: read RIGHT_CLICK_CHAIN and step_allowed again, then update the note in HandsEngine.swift")
     }
 
     /// 231 r1 first-F1: rule 1 is read inside the transaction, when the work runs. Read before it, work ahead on the
@@ -299,6 +315,10 @@ final class ContextMenuTests: XCTestCase {
         let displays = try XCTUnwrap(click.range(of: "let displays = ContextMenuAX.displays()"))
         let gate = try XCTUnwrap(click.range(of: "ContextMenu.gate(agentShown: agentShown(), agentWindow: onAgentWorkspace(w, scope), window: frame, element: element, displays: displays) { answer = .failure(e); return .ok(.null) }"))
         let bounds = try XCTUnwrap(click.range(of: #"HandsEngine.shared.getInline(window: w, ref: ref, property: "bounds")"#))
+        // 269 r1 second-S1: a failed read (a stale ref) is its own answer, never the gate's outside_agent_workspace.
+        let failed = try XCTUnwrap(click.range(of: "case .failed(let e): answer = .failure(e); return .ok(.null)"))
+        XCTAssertTrue(bounds.lowerBound < failed.lowerBound && failed.lowerBound < gate.lowerBound)
+        XCTAssertFalse(click.contains(#"if case .ok(let v) = HandsEngine.shared.getInline(window: w, ref: ref, property: "bounds")"#), "no failure dropped")
         let keys = try XCTUnwrap(click.range(of: "escapeKeys(w)"))
         XCTAssertLessThan(bounds.lowerBound, gate.lowerBound)
         for (name, r) in [("frame", frame), ("displays", displays), ("bounds", bounds), ("gate", gate)] {
