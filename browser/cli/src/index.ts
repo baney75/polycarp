@@ -332,11 +332,12 @@ async function main(): Promise<void> {
 			return;
 		case "mcp":
 			// --profile panel: the side panel's page tools, for measuring the panel's tool surface (eval/web-bench.mjs).
+			// --profile small: the core tools listed, the rest behind more_tools, for small models (cli/src/small-profile.ts).
 			// A mistyped profile must fail, not quietly serve the full tool list to a run that measures the panel's.
-			if (argv.some((a) => a === "--profile" || a.startsWith("--profile=")) && option("--profile") !== "panel")
-				throw new UsageError(`--profile takes panel. Usage: ${COMMAND_NAME} mcp [--session <name>] [--profile panel]`);
+			if (argv.some((a) => a === "--profile" || a.startsWith("--profile=")) && option("--profile") !== "panel" && option("--profile") !== "small")
+				throw new UsageError(`--profile takes panel or small. Usage: ${COMMAND_NAME} mcp [--session <name>] [--profile panel|small]`);
 			if (option("--profile") === "panel") await runPanelProfile({ session: option("--session") });
-			else await runMcpServer({ session: option("--session") });
+			else await runMcpServer({ session: option("--session"), profile: option("--profile") === "small" ? "small" : undefined });
 			return;
 		case "threads": {
 			const rest = argv.slice(1).filter((a, i, all) => !a.startsWith("-") && !VALUE_FLAGS.has(all[i - 1] ?? ""));

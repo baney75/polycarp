@@ -45,7 +45,7 @@ const MAX_SCRIPT = 50_000;
 export class SiteEditError extends Error {}
 
 /** "https://www.X.com/home" or "X.com" -> "x.com". Throws on anything that isn't a plain host. */
-let suffixes: { shared: Set<string>; wild: Set<string>; except: Set<string> } | undefined;
+let suffixes: { rules: Set<string>; shared: Set<string>; wild: Set<string>; except: Set<string> } | undefined;
 
 /**
  * The Public Suffix List, read once. `shared` holds every rule, every wildcard rule's base ("*.sch.uk" gives sch.uk) and every
@@ -54,6 +54,7 @@ let suffixes: { shared: Set<string>; wild: Set<string>; except: Set<string> } | 
  */
 function suffixRules() {
 	if (suffixes) return suffixes;
+	const rules = new Set<string>();
 	const shared = new Set<string>();
 	const wild = new Set<string>();
 	const except = new Set<string>();
@@ -66,9 +67,12 @@ function suffixRules() {
 		else if (rule.startsWith("*.")) {
 			wild.add(rule.slice(2));
 			withParents(rule.slice(2));
-		} else withParents(rule);
+		} else {
+			rules.add(rule);
+			withParents(rule);
+		}
 	}
-	suffixes = { shared, wild, except };
+	suffixes = { rules, shared, wild, except };
 	return suffixes;
 }
 
@@ -83,6 +87,23 @@ export function sharedSuffix(host: string): boolean {
 	if (shared.has(host)) return true;
 	const dot = host.indexOf(".");
 	return dot > 0 && wild.has(host.slice(dot + 1));
+}
+
+/**
+ * The registrable domain of a host by the Public Suffix List with its private section, as Chrome groups sites: the
+ * longest matching rule is the suffix, plus one label (mail.web.de and www.web.de give web.de, a.github.io stays itself).
+ * A host that is itself a suffix is its own site. With no rule, the last label is the suffix.
+ */
+export function registrableDomain(host: string): string {
+	const { rules, wild, except } = suffixRules();
+	const labels = host.split(".");
+	for (let i = 0; i < labels.length; i++) {
+		const name = labels.slice(i).join(".");
+		if (except.has(name)) return name;
+		if (rules.has(name) || (i + 1 < labels.length && wild.has(labels.slice(i + 1).join("."))))
+			return i > 0 ? labels.slice(i - 1).join(".") : host;
+	}
+	return labels.slice(-2).join(".");
 }
 
 /** A guarded host ("host" or "host:port") that `host` or one of its subdomains is, if any: an edit on `host` would reach it. */

@@ -88,8 +88,6 @@ interface Child {
 
 /** Out-of-process frames per tab: target id (the frame's id) to its session. */
 const children = new Map<number, Map<string, Child>>();
-/** Per tab, the frame session an open alert/confirm/prompt came from: only that session can answer it. */
-const dialogs = new Map<number, string>();
 /** Tabs whose auto-attach this worker turned on, so every frame was announced to it. */
 const primed = new Set<number>();
 let installed = false;
@@ -112,18 +110,13 @@ function install(): void {
 				url: p.targetInfo.url ?? "",
 				parent: source.sessionId,
 			});
-			// A frame inside it announces its own frames. A box it opens is answered in its session (dialogSession).
+			// A frame inside it announces its own frames. A box it opens keeps its session (cdp.ts PageDialog.sessionId).
 			void cdpSendSession(tabId, p.sessionId, "Target.setAutoAttach", AUTO).catch(() => undefined);
 			void cdpSendSession(tabId, p.sessionId, "Page.enable").catch(() => undefined);
 		} else if (method === "Target.detachedFromTarget") {
 			const p = params as { sessionId?: string };
 			const map = children.get(tabId);
 			for (const [id, c] of map ?? []) if (c.sessionId === p.sessionId) map?.delete(id);
-		} else if (method === "Page.javascriptDialogOpening") {
-			if (source.sessionId) dialogs.set(tabId, source.sessionId);
-			else dialogs.delete(tabId);
-		} else if (method === "Page.javascriptDialogClosed") {
-			dialogs.delete(tabId);
 		} else if (method === "Target.targetInfoChanged") {
 			const p = params as { targetInfo?: { targetId?: string; url?: string } };
 			const c = p.targetInfo?.targetId ? children.get(tabId)?.get(p.targetInfo.targetId) : undefined;
@@ -133,15 +126,9 @@ function install(): void {
 	const forget = (tabId: number) => {
 		children.delete(tabId);
 		primed.delete(tabId);
-		dialogs.delete(tabId);
 	};
 	onDebuggerSessionEnd(forget);
 	chrome.tabs.onRemoved.addListener(forget);
-}
-
-/** The frame session the tab's open dialog came from, for cdp.ts answerDialog; none for the tab's own. */
-export function dialogSession(tabId: number): string | undefined {
-	return dialogs.get(tabId);
 }
 
 async function prime(tabId: number): Promise<void> {

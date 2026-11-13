@@ -47,12 +47,13 @@ export async function navigateTabDetailed(
 		// page it shows. So set the hash, then reload, and the viewer opens at that page.
 		// The hash change is quick; if a viewer reports no event for it, the reload still runs.
 		const hashWait = { ...options, timeoutMs: Math.min(options.timeoutMs ?? 20000, 3000) };
-		await waitForNavigation(tabId, url, hashWait, true, () => chrome.tabs.update(tabId, { url }));
-		return waitForNavigation(tabId, url, options, false, () => chrome.tabs.reload(tabId));
+		await waitForNavigation(tabId, url, hashWait, true, () => chrome.tabs.update(tabId, { url }), from);
+		return waitForNavigation(tabId, url, options, false, () => chrome.tabs.reload(tabId), from);
 	}
 	// Only a new hash on the page the tab shows can keep the document; any other URL, the same one included, loads one.
-	const jump = url.includes("#") && from !== undefined && sameDocumentUrl(from, url);
-	return waitForNavigation(tabId, url, options, jump, () => chrome.tabs.update(tabId, { url }));
+	const hashOf = (u: string) => (URL.canParse(u) ? new URL(u).hash : u);
+	const jump = url.includes("#") && from !== undefined && sameDocumentUrl(from, url) && hashOf(from) !== hashOf(url);
+	return waitForNavigation(tabId, url, options, jump, () => chrome.tabs.update(tabId, { url }), from);
 }
 
 /**
@@ -100,6 +101,8 @@ function waitForNavigation(
 	/** Whether this navigation can stay in the document (a new hash): only then does a same-document event end it. */
 	jump: boolean,
 	start: () => Promise<unknown>,
+	/** The URL the tab showed before: a tab that shows another document has committed one. */
+	from?: string,
 ): Promise<NavigationResult> {
 	const { signal, timeoutMs = 20000, waitUntil = "domcontentloaded" } = options;
 	if (signal?.aborted) throw new Error("Aborted");
@@ -156,9 +159,13 @@ function waitForNavigation(
 						clear = false;
 						grace = setTimeout(kept, ABORT_GRACE_MS);
 					} else if (!clear) {
-						// Nothing pending: a 204, or a commit whose onCommitted is still on its way. A tick tells them apart.
+						// Nothing pending: a 204, or a commit whose onCommitted is still on its way. A tick, then the tab's URL, tell them apart.
 						clear = true;
 						grace = setTimeout(kept, COMMIT_TICK_MS);
+					} else if (from !== undefined && tab.url && !sameDocumentUrl(tab.url, from)) {
+						// The tab shows another document: it committed, however late its onCommitted is. Its load ends the wait.
+						committed = true;
+						grace = undefined;
 					} else finish(() => resolve({ url: tab.url ?? url, timedOut: false, committed }));
 				},
 				() => {

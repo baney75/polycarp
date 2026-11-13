@@ -1,0 +1,20 @@
+{
+	"label": "r3-sonnet",
+	"model": "claude-sonnet-5-5",
+	"trials": 1,
+	"profile": "full",
+	"date": "2026-11-12T18:53:05.909Z",
+	"passed": 6,
+	"total": 6,
+	"calls": 63,
+	"toolErrors": 0,
+	"resultChars": 12670,
+	"tasks": {
+		"contact-form": {"pass":1,"of":1,"calls":[11],"errors":[0]},
+		"iframe-form": {"pass":1,"of":1,"calls":[7],"errors":[0]},
+		"pagination": {"pass":1,"of":1,"calls":[10],"errors":[0]},
+		"select-date": {"pass":1,"of":1,"calls":[12],"errors":[0]},
+		"signup-validation": {"pass":1,"of":1,"calls":[9],"errors":[0]},
+		"wizard": {"pass":1,"of":1,"calls":[14],"errors":[0]}
+	}
+}
