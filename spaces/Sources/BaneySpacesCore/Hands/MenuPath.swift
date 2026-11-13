@@ -89,7 +89,11 @@ public enum MenuPath {
 
     /// The error for a path that didn't come out as one command. Its message lists the titles to choose from; next_call is
     /// a read or none, never another press.
-    public static func error(_ found: Found, path: [String], window: Int) -> HandsError? {
+    /// `background`: the app isn't active. macOS enables a window's commands only in the active app, whose window is key,
+    /// and Polycarp never brings an agent's copy forward, so a greyed command there stays greyed: no retry, no hint that a
+    /// selection would help. Measured on 952839c: Select All, Duplicate and Make Rich Text read disabled in such a copy, an
+    /// AXPress on them did nothing, and setting AXMain or AXFocused changed neither.
+    public static func error(_ found: Found, path: [String], window: Int, background: Bool = false, app: String = "the app") -> HandsError? {
         switch found {
         case .item: return nil
         case .missing(let level, let choices):
@@ -98,6 +102,9 @@ public enum MenuPath {
             return HandsError(.unknownRef, "no \"\(wanted)\" in \(at); there: \(choices.joined(separator: ", "))",
                               suggestion: "Pass a path of titles from the list.", retry: .safe,
                               nextCall: .null)
+        case .disabled(let p) where background:
+            return HandsError(.notSupported, "\(p.joined(separator: " > ")) is greyed out because \(app) is in the background: macOS enables a window's commands only in the app in front, and Polycarp never brings an agent's copy forward",
+                              suggestion: "Retrying won't change it. Do it on the element instead: click, type, set-value, select or toggle by ref.", retry: .never, nextCall: .null)
         case .disabled(let p):
             return HandsError(.notSupported, "\(p.joined(separator: " > ")) is greyed out now", suggestion: "Snapshot the window: the command may need a selection first.", retry: .afterSnapshot,
                               nextCall: HandsError.call("snapshot", ["window": .int(window)]))
@@ -118,7 +125,10 @@ public enum MenuPath {
     /// window focused in the app, and the app not in front (Donovan would be using it). `front` is left out of the check
     /// before the in-use wait (which handles it) and kept in the one at the press.
     /// `sessionOwns`: this session's `open` made the window (another session's copy is not yours either).
-    public static func refusal(app: String, window: UInt32, agentOwned: Bool, sessionOwns: Bool, otherWindows: Int, focusedWindow: UInt32?, front: Bool) -> HandsError? {
+    /// `panels`: the app's Open or Save panel windows. A modal one is the focused window while it is up, and it is cancelled
+    /// before the press, so focus on it counts as focus on `window`; the check at the press decides again (246 r1 first-F2).
+    public static func refusal(app: String, window: UInt32, agentOwned: Bool, sessionOwns: Bool, otherWindows: Int, focusedWindow: UInt32?, panels: Set<UInt32> = [], front: Bool) -> HandsError? {
+        let focusedWindow = focusedWindow.map { panels.contains($0) ? window : $0 }
         if !agentOwned {
             return HandsError(.needsLend, "menus work only in the agent's own copy of \(app), one your `open` started; this window belongs to Donovan's copy",
                               suggestion: "Open your own copy with `open`, then run `menu` in that window.", retry: .never, nextCall: .null)
@@ -222,23 +232,30 @@ public enum MenuPath {
         }
         for (k, step) in steps.enumerated().dropFirst() {
             let i = step.chosen
-            if i.chord("f", control: true) || i.id.contains("fullscreen") || i.name.contains("full screen") { return refuse(path, why: windows) }
-            if i.chord("\\", shift: true) || i.id.contains("taboverview") || i.name.contains("all tabs") { return refuse(path, why: windows) }
-            if i.command && ["c", "x", "v"].contains(i.key) || ["cut:", "copy:"].contains(i.id) || i.id.hasPrefix("paste") { return clipboard(path) }
-            if i.chord("o") || i.id.hasPrefix("opendocument") { return refuse(path, why: documents) }
-            // 197 r1 second-S3: the Versions browser takes the screen; Move To and Rename move the document out of the handoff folder.
-            if i.id == "browsedocumentversions:" || i.name.hasPrefix("browse all versions") { return refuse(path, why: windows) }
-            if ["movedocument:", "renamedocument:"].contains(i.id) { return refuse(path, why: documents) }
-            // 197 r1 first-F3: Use Selection for Find (cmd+e) puts the selection on the find text every app shares. Only this
-            // way in is closed: a search typed into a find bar writes it too (205 r1 first-F3).
-            if i.chord("e") || i.id.contains("selectionforfind") || i.name.hasPrefix("use selection for find") { return refuse(path, why: findText) }
             let afterOpen = step.at > 0 && step.items[step.at - 1].chord("o")
-            if i.submenu && (afterOpen || i.id.contains("recent") || i.name.contains("open recent")) { return refuse(path, why: documents) }
+            if i.submenu && afterOpen { return refuse(path, why: documents) }
             if k == 1, isEditMenu(menu.items, title: top), clipboardGroup(menu.items, at: menu.at) { return clipboard(path) }
             if k == 1, isEditMenu(menu.items, title: top), appended(menu.items, at: menu.at, inside: steps.dropFirst(2).first?.items ?? menu.opens) { return refuse(path, why: outside) }
-            if i.cmdChar == nil, ["cut", "copy", "paste"].contains(where: { i.name.hasPrefix($0) }) { return clipboard(path) }
-            if leavesTheApp(i) { return refuse(path, why: outside) }
+            if let e = itemRule(i, path: path) { return e }
         }
+        return nil
+    }
+
+    /// The rules one item answers to by itself, wherever it sits: the menu bar's and a context menu's (`ContextMenu`).
+    static func itemRule(_ i: MenuItem, path: String) -> HandsError? {
+        if i.chord("f", control: true) || i.id.contains("fullscreen") || i.name.contains("full screen") { return refuse(path, why: windows) }
+        if i.chord("\\", shift: true) || i.id.contains("taboverview") || i.name.contains("all tabs") { return refuse(path, why: windows) }
+        if i.command && ["c", "x", "v"].contains(i.key) || ["cut:", "copy:"].contains(i.id) || i.id.hasPrefix("paste") { return clipboard(path) }
+        if i.chord("o") || i.id.hasPrefix("opendocument") { return refuse(path, why: documents) }
+        // 197 r1 second-S3: the Versions browser takes the screen; Move To and Rename move the document out of the handoff folder.
+        if i.id == "browsedocumentversions:" || i.name.hasPrefix("browse all versions") { return refuse(path, why: windows) }
+        if ["movedocument:", "renamedocument:"].contains(i.id) { return refuse(path, why: documents) }
+        // 197 r1 first-F3: Use Selection for Find (cmd+e) puts the selection on the find text every app shares. Only this
+        // way in is closed: a search typed into a find bar writes it too (205 r1 first-F3).
+        if i.chord("e") || i.id.contains("selectionforfind") || i.name.hasPrefix("use selection for find") { return refuse(path, why: findText) }
+        if i.submenu && (i.id.contains("recent") || i.name.contains("open recent")) { return refuse(path, why: documents) }
+        if i.cmdChar == nil, ["cut", "copy", "paste"].contains(where: { i.name.hasPrefix($0) }) { return clipboard(path) }
+        if leavesTheApp(i) { return refuse(path, why: outside) }
         return nil
     }
 
@@ -314,10 +331,60 @@ public enum MenuPath {
     /// no Cancel button of its own (192 r1 second-F7).
     /// `old`: per window, it was a panel before the press, so it is not the command's (197 r1 second-S1).
     public static func panel(_ windows: [AXNodeInfo], old: [Bool] = []) -> Int? {
-        func holdsPanel(_ n: AXNodeInfo) -> Bool { n.children.contains { ($0.role == "AXSheet" && PanelDetector.windowIsOffLimits($0)) || holdsPanel($0) } }
         let found = panels(windows).filter { !(old.indices.contains($0) && old[$0]) }
         return found.first { !holdsPanel(windows[$0]) } ?? found.first
     }
+
+    static func holdsPanel(_ n: AXNodeInfo) -> Bool { n.children.contains { ($0.role == "AXSheet" && PanelDetector.windowIsOffLimits($0)) || holdsPanel($0) } }
+
+    /// The window numbers of panels that are windows of their own. A sheet carries its parent's number, and a window is
+    /// off limits too while it holds a panel sheet, so neither counts: that window is the document's (217 r1 first-F2).
+    public static func panelWindows(_ windows: [AXNodeInfo], sheet: [Bool], ids: [UInt32?]) -> Set<UInt32> {
+        Set(panels(windows).filter { !sheet[$0] && !holdsPanel(windows[$0]) }.compactMap { ids[$0] })
+    }
+
+    /// Undo's order: the panel first, since a window holding a sheet can't close while the sheet runs, then the tied windows,
+    /// tried again for a moment while a cancelled sheet is still going away (246 r1 first-F1).
+    public static func undoing(panel: Bool, cancel: () -> HandsError?, close: () -> Bool, tries: Int = 5, pause: () -> Void = {}) -> (panel: HandsError?, closed: Bool) {
+        let error = panel ? cancel() : nil
+        let tries = panel ? max(1, tries) : 1
+        for n in 1...tries {
+            if close() { return (error, true) }
+            if n < tries { pause() }
+        }
+        return (error, false)
+    }
+
+    /// The app's other windows, for `refusal`: a panel window is cancelled before the press, so it isn't one (217 r1 first-F3).
+    public static func otherWindows(_ mapped: [(id: UInt32, minimized: Bool)], unmapped: Int, window: UInt32, panels: Set<UInt32>) -> Int {
+        mapped.filter { $0.id != window && !$0.minimized && !panels.contains($0.id) }.count + unmapped
+    }
+
+    /// A path that stops at a submenu of the Edit menu (Edit > Find) has that submenu listed, for `appended`, its only
+    /// reader. Any other submenu is not read (217 r1 first-F4).
+    public static func listsOpens(_ steps: [Step]) -> Bool {
+        steps.count == 2 && steps[1].items.indices.contains(steps[1].at) && steps[1].chosen.submenu && isEditMenu(steps[1].items, title: steps[0].chosen.name)
+    }
+
+    /// A panel left up by an earlier command, cancelled one at a time just before the press (`cancelOne`: nil when none
+    /// is left, else whether the cancel went through). A cancel that fails stops the call (217 r1 first-F1).
+    public enum Earlier: Equatable, Sendable { case none, cancelled, stuck }
+    public static func cancelEarlier(count: Int, cancelOne: () -> Bool?) -> Earlier {
+        var out = Earlier.none
+        for _ in 0..<count {
+            switch cancelOne() {
+            case nil: return out
+            case false?: return .stuck
+            case true?: out = .cancelled
+            }
+        }
+        return out
+    }
+    public static func earlierStuck(_ app: String) -> HandsError {
+        HandsError(.notSupported, "an Open or Save panel was already up in \(app) and couldn't be cancelled, so nothing was pressed",
+                   suggestion: "Close your window with `close`, then `open` the app again.", retry: .never, nextCall: .null)
+    }
+    public static let earlierNote = "; an Open or Save panel left by an earlier command was cancelled first"
 
     /// `gone`: the panel was seen, but closed before Polycarp could cancel it (192 r1 first-F4).
     public static func panelRefusal(_ app: String, cancelled: Bool, gone: Bool = false) -> HandsError {
@@ -348,6 +415,8 @@ public enum MenuPath {
         public func split(listed: Set<UInt32>) -> (open: [Escape], gone: [Escape]) {
             (escapes.filter { listed.contains($0.window.id) }, escapes.filter { !listed.contains($0.window.id) })
         }
+        /// On the windows a person could see: one ordered out, still listed, closed too (217 r1 second-S1).
+        public func split(_ all: [Listed]) -> (open: [Escape], gone: [Escape]) { split(listed: Set(all.filter(\.visible).map(\.id))) }
         public static func merged(_ looks: [Seen]) -> Seen {
             var out = Seen()
             for l in looks {

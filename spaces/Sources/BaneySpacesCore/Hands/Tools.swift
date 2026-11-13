@@ -3,7 +3,7 @@ import Foundation
 /// One argument of a hands command. The CLI reads it as a positional word or a `--flag`, MCP as a
 /// property of the tool's arguments object; the name is the same in both.
 public struct HandsParam: Equatable, Sendable {
-    public enum Kind: String, Sendable { case string, integer, boolean, stringList }
+    public enum Kind: String, Sendable { case string, integer, boolean, stringList, objectList }
     public var name: String
     public var kind: Kind
     public var help: String
@@ -81,7 +81,11 @@ public enum HandsTools {
             HandsParam("property", .string, "value (default), text, title, role, bounds or states.", positional: true),
             HandsParam("copy", .boolean, "Also hold the text on the agent clipboard, for type with paste: true. Never the Mac's clipboard."),
         ], acts: false),
-        HandsTool(verb: "click", summary: "Click an element by ref, without moving the pointer or raising the window. On a row of a list, table or outline that the press doesn't select, it selects the row instead and says which landed (landed: press or selection_write). Example: {\"ref\":\"12\"}", params: [refParam], acts: true),
+        HandsTool(verb: "click", summary: "Click an element by ref, without moving the pointer or raising the window. On a row of a list, table or outline that the press doesn't select, it selects the row instead and says which landed (landed: press or selection_write). Example: {\"ref\":\"12\"}", params: [
+            refParam,
+            HandsParam("button", .string, "left (default) or right. A right click opens the element's context menu (AXShowMenu, no pointer) only while the agent workspace is on screen under the window, then presses `item` or, without one, lists the items and cancels the menu; it never leaves a menu open."),
+            HandsParam("item", .string, "With button right: the context menu item to press, by its title. Items the menu bar refuses (clipboard, Services, sharing, opening documents) are refused here too."),
+        ], acts: true),
         HandsTool(verb: "type", summary: "Type text into an element by ref: inserts it at the element's selection through accessibility, never by posting keys. Prints the value it read back. paste: true types what you copied with get. Example: {\"ref\":\"7\",\"paste\":true}", params: [
             refParam,
             HandsParam("text", .string, "The text.", positional: true, rest: true),
@@ -100,7 +104,8 @@ public enum HandsTools {
             HandsParam("x", .integer, "Points from the window's left edge.", required: true),
             HandsParam("y", .integer, "Points from the window's top edge.", required: true),
             HandsParam("count", .integer, "2 for a double click, 3 for a triple (default 1)."),
-            HandsParam("button", .string, "left only: right click is not available yet."),
+            HandsParam("button", .string, "left (default) or right. A right click opens the context menu only while the agent workspace is on screen under the window, then presses `item` or, without one, lists the items and cancels the menu; it never leaves a menu open."),
+            HandsParam("item", .string, "With button right: the context menu item to press, by its title. Items the menu bar refuses (clipboard, Services, sharing, opening documents) are refused here too."),
         ], acts: true),
         HandsTool(verb: "drag", summary: "Press at a point, drag to another and release, in a window that is not in front, by process, with window-local coordinates. Never moves the real pointer or raises the window. Verified by an accessibility change or by pixels changing along the path while the rest of the window stays put.", params: [
             HandsParam("window", .integer, "Window id from `windows`.", required: true),
@@ -122,6 +127,9 @@ public enum HandsTools {
         HandsTool(verb: "menu", summary: "Run a menu-bar command of the window's app by its titles, without opening the menu on screen. Only in a copy your own `open` started, with this its one window. Refused: the Apple, Window and Help menus, the app menu but About and Settings, full screen, Open and Open Recent, cut, copy and paste, and what leaves the app (Emoji, Dictation, Speech, Print, Share). A panel it raises within 1 s is cancelled and the call fails; so does a window it raises off the agent workspace, closed when Polycarp can. Example: {\"window\":4211,\"path\":\"Format > Font > Bold\"}", params: [
             HandsParam("window", .integer, "Window id from `windows`.", required: true),
             HandsParam("path", .string, "Menu titles from the menu bar down, separated by >.", required: true, positional: true, rest: true),
+        ], acts: true),
+        HandsTool(verb: "run-steps", summary: "Several actions on one window in one call, then one read of what changed. Every step is checked before any runs; the steps run back to back with nothing else acting in between, and the run stops at the first step that fails, isn't verified or raises a dialog or sheet. Steps: click, type, set_value, press, click_at, drag, scroll, select, toggle, menu (at most \(RunSteps.maxSteps)). Row numbers mean your latest snapshot. Example: {\"steps\":[{\"tool\":\"click\",\"args\":{\"ref\":\"5\"}},{\"tool\":\"type\",\"args\":{\"ref\":\"7\",\"text\":\"hi\"}}]}", params: [
+            HandsParam("steps", .objectList, "The actions in order, each {tool, args} with the tool's own arguments.", required: true),
         ], acts: true),
         HandsTool(verb: "toggle", summary: "Flip a checkbox, switch or disclosure by ref. Prints the state it read back.", params: [refParam], acts: true),
         HandsTool(verb: "shot", summary: "Capture one window as a PNG, even while it is parked out of view. Over MCP the picture comes back fitted to 1280 pixels, labeled untrusted, with how its pixels map to window points. Needs Screen Recording for Polycarp. Example: {\"window\":4211,\"zoom\":\"0,0,400,300\"}", params: [
@@ -221,6 +229,11 @@ public enum HandsParse {
                     args[p.name] = .bool(inline.map { $0 != "false" && $0 != "0" } ?? true)
                 case .stringList:
                     return .failure(usage(tool, "\(name) is not an option"))
+                case .objectList:
+                    guard let v = inline ?? (i + 1 < words.count ? words[i + 1] : nil) else { return .failure(usage(tool, "\(name) needs a value")) }
+                    if inline == nil { i += 1 }
+                    guard let a = JSONValue.parse(v), a.array != nil else { return .failure(usage(tool, "\(name) takes a JSON list")) }
+                    args[p.name] = a
                 case .integer, .string:
                     guard let v = inline ?? (i + 1 < words.count ? words[i + 1] : nil) else { return .failure(usage(tool, "\(name) needs a value")) }
                     if inline == nil { i += 1 }
@@ -266,6 +279,9 @@ public enum HandsParse {
             case .stringList:
                 guard let a = v.array, a.allSatisfy({ $0.string != nil }) else { return .failure(usage(tool, "\(k) takes a list of strings")) }
                 args[k] = v
+            case .objectList:
+                guard let a = v.array ?? v.string.flatMap(JSONValue.parse)?.array, a.allSatisfy({ $0.object != nil }) else { return .failure(usage(tool, "\(k) takes a list of objects")) }
+                args[k] = .array(a)
             case .integer:
                 guard let n = v.int else { return .failure(usage(tool, "\(k) takes a number")) }
                 args[k] = .int(n)
@@ -302,6 +318,7 @@ public enum HandsParse {
         if tool.verb == "move", let f = r.string("frame"), AgentArrange.parseFrame("0=" + f) == nil {
             return .failure(usage(tool, "frame is x,y,width,height, not \(f)"))
         }
+        if tool.verb == "run-steps", case .failure(let e) = RunSteps.parse(r.args["steps"], session: r.session, wait: r.int("wait")) { return .failure(e) }
         if tool.verb == "snapshot" || tool.verb == "find", r.args["app"] == nil, r.args["window"] == nil {
             return .failure(usage(tool, "say which window: app or window"))
         }

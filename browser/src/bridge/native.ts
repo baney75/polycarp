@@ -381,6 +381,8 @@ const heldTabs = new Map<number, string>();
  * refused and no box gets a cause until it returns (sol-sol-F2 of round 2 of the review of PR 230).
  */
 const stuckTabs = new Map<number, Set<string>>();
+/** The longest a call with on_dialog waits for other input on its tab to return. */
+const WAIT_CAP_MS = 30_000;
 const othersOn = (tab: number, call: string) =>
 	[...(tabCalls.get(tab) ?? []), ...(stuckTabs.get(tab) ?? [])].some((c) => c !== call);
 /** The actions whose box the guard's notice may name (dialog-guard.ts); a hover, scroll or drag box has no known cause. */
@@ -556,16 +558,22 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 				if (want) heldTabs.set(tab, call);
 			}
 			// The tab is held at once, so no new input starts there; the call with on_dialog then waits, within its own
-			// limit, until every other call's input on it has returned (sol-F2 of the review of PR 230).
-			for (const start = Date.now(); want && [...(tabCalls.get(want.tabId) ?? [])].some((c) => c !== call); ) {
-				waited = Date.now() - start;
-				if (aborted || waited > HANDLER_TIMEOUT_MS)
+			// limit, until every other call's input on it has returned (sol-F2 of the review of PR 230). The wait is capped
+			// at WAIT_CAP_MS, so the click itself keeps most of its limit (first-F2 of round 2 of the review of PR 230).
+			const start = Date.now();
+			while (want && [...(tabCalls.get(want.tabId) ?? [])].some((c) => c !== call)) {
+				if (aborted || Date.now() - start > WAIT_CAP_MS)
 					throw new BridgeError(
 						ERR.NOT_SENT,
 						`Other input on tab ${want.tabId} is still running, so this call with on_dialog was not sent. Send it again once it has ended.`,
 					);
 				await new Promise((r) => setTimeout(r, 50));
 			}
+			waited = Date.now() - start;
+			// A box the other input opened while this call waited froze the page: nothing is sent into it, and the OK is
+			// not armed for it (first-F1 of round 2 of the review of PR 230).
+			const openOn = session.tabIds.find((id) => openDialog(id) !== undefined);
+			if (openOn !== undefined) throw dialogError(openOn, openDialog(openOn) as PageDialog);
 			if (want && stuckTabs.get(want.tabId)?.size)
 				throw new BridgeError(
 					ERR.NOT_SENT,
