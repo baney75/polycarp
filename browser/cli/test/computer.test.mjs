@@ -30,6 +30,7 @@ const tools = [
 	tool("snapshot", { app: { type: "string", description: "App name" }, interactive: { type: "boolean" } }),
 	tool("click", { ref: { type: "string" } }, ["ref"]),
 	tool("open", { app: { type: "string" }, targets: { type: "array", items: { type: "string" } } }, ["app"]),
+	tool("run_steps", { steps: { type: "array", items: { type: "object" } } }, ["steps"]),
 	tool("lend", { app: { type: "string" } }),
 	tool("brand_new_verb"),
 ];
@@ -120,7 +121,7 @@ test("computer.read sees reading tools only, through the helper's connector mode
 test("computer.act adds acting, and a verb the helper has but this list doesn't name never appears", async () => {
 	const client = await connect(withHelper, token("acts", "computer.act"));
 	const tools = await computerTools(client);
-	assert.deepEqual(tools, ["computer_click", "computer_open", "computer_snapshot", "computer_status", "computer_windows"], "acting needs refs, so it reads too");
+	assert.deepEqual(tools, ["computer_click", "computer_open", "computer_run_steps", "computer_snapshot", "computer_status", "computer_windows"], "acting needs refs, so it reads too");
 	assert.ok(!tools.includes("computer_lend"), "lending is the person's alone");
 	assert.ok(!tools.includes("computer_brand_new_verb"));
 	const open = (await client.listTools()).tools.find((t) => t.name === "computer_open");
@@ -211,6 +212,7 @@ const tools = [
 	tool("click", false, { ref: { type: "string", description: "A ref" } }, ["ref"]),
 	tool("shot", false, { window: { type: "integer", description: "Window id" } }, ["window"]),
 	tool("open", false, { app: { type: "string", description: "App" }, targets: { type: "array", items: { type: "string" }, description: "Files" } }, ["app"]),
+	tool("run_steps", false, { steps: { type: "array", items: { type: "object" }, description: "Steps" } }, ["steps"]),
 	tool("lend", false, { app: { type: "string", description: "App" } }),
 	tool("brand_new_verb", true),
 ];
@@ -244,7 +246,7 @@ test("the local server lists computer_* tools from the helper's own list, as the
 	const client = await local({ POLYCARP_SPACES_BIN: localHelper });
 	const { tools } = await client.listTools();
 	const names = tools.map((t) => t.name).filter((n) => n.startsWith("computer_")).sort();
-	assert.deepEqual(names, ["computer_brand_new_verb", "computer_click", "computer_open", "computer_shot", "computer_snapshot", "computer_status", "computer_windows"], "every helper tool but lend");
+	assert.deepEqual(names, ["computer_brand_new_verb", "computer_click", "computer_open", "computer_run_steps", "computer_shot", "computer_snapshot", "computer_status", "computer_windows"], "every helper tool but lend");
 	assert.ok(tools.some((t) => t.name === "read_page"), "browser tools are still there");
 	const open = tools.find((t) => t.name === "computer_open");
 	assert.equal(open.description, "The helper's own words for open.");
@@ -315,5 +317,34 @@ test("the helper's answers pass through unchanged: a shot's image and a structur
 	const refused = await client.callTool({ name: "computer_click", arguments: { ref: "@a:e1" } });
 	assert.equal(refused.isError, true);
 	assert.deepEqual(refused.content, [{ type: "text", text: REFUSAL }]);
+	await client.close();
+});
+
+// 251 r1 first-F1: a list of objects is a list of objects, through the connector and the local server alike.
+const STEPS = [{ tool: "click", args: { ref: "5" } }, { tool: "type", args: { ref: "7", text: "hi" } }];
+
+test("a connector session's computer_run_steps takes its steps as objects and hands them to the helper unchanged", async () => {
+	rmSync(log, { force: true });
+	const client = await connect(withHelper, token("steps", "computer.act"));
+	const listed = (await client.listTools()).tools.find((t) => t.name === "computer_run_steps");
+	assert.equal(listed.inputSchema.properties.steps.items.type, "object");
+	const answer = await client.callTool({ name: "computer_run_steps", arguments: { steps: STEPS } });
+	assert.equal(answer.isError, false, JSON.stringify(answer.content));
+	assert.equal(answer.content[0].text, "did run_steps");
+	const calls = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+	assert.deepEqual(calls.at(-1), { name: "run_steps", arguments: { steps: STEPS } });
+	await client.close();
+});
+
+test("the local server's computer_run_steps takes its steps as objects and hands them to the helper unchanged", async () => {
+	rmSync(localLog, { force: true });
+	const client = await local({ POLYCARP_SPACES_BIN: localHelper });
+	await client.listTools();
+	const answer = await client.callTool({ name: "computer_run_steps", arguments: { steps: STEPS } });
+	assert.equal(answer.isError, false, JSON.stringify(answer.content));
+	const calls = readFileSync(localLog, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+	assert.deepEqual(calls.at(-1), { name: "run_steps", arguments: { steps: STEPS } });
+	const strings = await client.callTool({ name: "computer_open", arguments: { app: "TextEdit", targets: ["a.txt"] } });
+	assert.equal(strings.isError, false, "a list of strings still is one");
 	await client.close();
 });

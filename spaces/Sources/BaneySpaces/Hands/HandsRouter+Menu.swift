@@ -44,16 +44,25 @@ extension HandsRouter {
                 // is judged and found, it is cancelled just before the press (217 r1 first-F1). Its read replaces the
                 // evidence store's, so the bar is read again.
                 if case .success = item {
+                    var why: HandsError?
                     let earlier = withoutActuallyEscaping(cancelled) { c in
-                        MenuPath.cancelEarlier(count: MenuAX.panelElements(w.pid).count) { cancelOnePanel(w, old: [], inline: c) }
+                        MenuPath.cancelEarlier(count: MenuAX.panelElements(w.pid).count, pause: { Thread.sleep(forTimeInterval: 0.1) }) {
+                            // The error belongs to the last attempt only (258 r1 first-F2).
+                            why = nil
+                            return cancelOnePanel(w, old: [], inline: c, failed: { why = $0 })
+                        }
                     }
                     switch earlier {
                     case .none: break
-                    case .stuck: return .failed(MenuPath.earlierStuck(w.app))
+                    case .stuck(let after): return .failed(MenuPath.earlierError(w.app, afterCancelling: after, engine: why))
                     case .cancelled: cancelledEarlier = true; item = pressable()
                     }
                 }
-                guard case .success(let found) = item else { if case .failure(let e) = item { return .failed(e) }; return .ok(.null) }
+                let found: (ref: String, names: [String])
+                switch item {
+                case .failure(let e): return .failed(e)
+                case .success(let f): found = f
+                }
                 let ref = found.ref
                 spelled = found.names
                 oldPanels = MenuAX.panelElements(w.pid)
@@ -153,7 +162,7 @@ extension HandsRouter {
 
     /// The app's first Open or Save panel not in `old`, cancelled: nil when there is none, else whether the cancel went through.
     /// `inline`: already in the app's transaction, so the cancel runs in it.
-    private func cancelOnePanel(_ w: HandsWindow, old oldPanels: [AXUIElement], inline cancelled: (() -> Bool)? = nil) -> Bool? {
+    private func cancelOnePanel(_ w: HandsWindow, old oldPanels: [AXUIElement], inline cancelled: (() -> Bool)? = nil, failed: (HandsError) -> Void = { _ in }) -> Bool? {
         let windows = MenuAX.windows(w.pid)
         let nodes = windows.map { MenuAX.node($0.element) }
         guard let i = MenuPath.panel(nodes, old: windows.map { x in oldPanels.contains { CFEqual($0, x.element) } }) else { return nil }
@@ -161,25 +170,33 @@ extension HandsRouter {
         target.id = windows[i].id ?? w.id
         let title = MenuPath.cancelTitle(nodes[i], cancelButton: MenuAX.cancelTitle(windows[i].element))
         guard let title else { return false }
-        if let cancelled { return cancelInline(target, title: title, scope: check(w), cancelled: cancelled) }
+        if let cancelled {
+            guard let e = cancelInline(target, title: title, scope: check(w), cancelled: cancelled) else { return true }
+            failed(e)
+            return false
+        }
         return cancelPanel(target, title: title, scope: check(w))
     }
 
     /// Presses the panel's Cancel button through the engine; true when that press went through.
     private func cancelPanel(_ target: HandsWindow, title: String, scope: @escaping HandsEngine.Check) -> Bool {
         let reply = HandsEngine.shared.transaction(window: target, check: scope) { [self] cancelled in
-            cancelInline(target, title: title, scope: scope, cancelled: cancelled) ? .ok(.null) : .failed(HandsError(.engineError, "the panel's Cancel didn't go through", suggestion: "", retry: .never))
+            cancelInline(target, title: title, scope: scope, cancelled: cancelled).map { .failed($0) } ?? .ok(.null)
         }
         if case .ok = reply { return true }
         return false
     }
 
-    /// The panel's Cancel, read and pressed through the engine on the app's queue: only inside a transaction.
-    private func cancelInline(_ target: HandsWindow, title: String, scope: @escaping HandsEngine.Check, cancelled: () -> Bool) -> Bool {
-        guard case .ok(let d) = HandsEngine.shared.snapshotInline(window: target, interactive: false, compact: false, depth: 12, evidence: true),
-              let ref = MenuPath.cancelRef(d["tree"] ?? .null, title: title) else { return false }
-        if case .ok = HandsEngine.shared.actInline(window: target, ref: ref, kind: .click, evidence: true, check: scope, cancelled: cancelled) { return true }
-        return false
+    /// The panel's Cancel, read and pressed through the engine on the app's queue: only inside a transaction. Nil when
+    /// the press went through, else why not.
+    private func cancelInline(_ target: HandsWindow, title: String, scope: @escaping HandsEngine.Check, cancelled: () -> Bool) -> HandsError? {
+        let read = HandsEngine.shared.snapshotInline(window: target, interactive: false, compact: false, depth: 12, evidence: true)
+        if case .failed(let e) = read { return e }
+        guard case .ok(let d) = read, let ref = MenuPath.cancelRef(d["tree"] ?? .null, title: title) else {
+            return HandsError(.actionFailed, "the panel has no Cancel button Polycarp can press", suggestion: "", retry: .never)
+        }
+        if case .failed(let e) = HandsEngine.shared.actInline(window: target, ref: ref, kind: .click, evidence: true, check: scope, cancelled: cancelled) { return e }
+        return nil
     }
 }
 
