@@ -728,11 +728,7 @@ final class HandsRouter {
         guard ref.hasPrefix("@"), let colon = ref.firstIndex(of: ":"), let n = SnapshotRows.refNumber(ref) else { return nil }
         let sid = String(ref[ref.index(after: ref.startIndex)..<colon])
         guard let read = withRows({ $0.read(snapshot: sid, session: session) }) else { return nil }
-        // The readbacks read in this read's view, so the row keys they compare match (second-F5). A container whose ref
-        // is no good now gets no write; the click is the plain press (194 r1 first-F1).
-        guard var p = ClickFallback.plan(rows: read.rows, snapshot: sid, number: n), refProblem(p.container) == nil else { return nil }
-        p.view = read.view
-        return p
+        return ClickFallback.plan(read: read, snapshot: sid, number: n, usable: { refProblem($0) == nil })
     }
 
     private func shot(_ req: HandsRequest) -> HandsEnvelope {

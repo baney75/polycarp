@@ -20,7 +20,7 @@ final class SessionClipboardRefusalTests: XCTestCase {
         XCTAssertEqual(C.pasteboardRefs(refmap: Data("[]".utf8)), [:])
         // The rows memory alone forgets the read after six more: that is what the refmap check stands in for.
         var m = SnapshotRowsMemory()
-        for i in 0...SnapshotRowsMemory.history { m.remember(session: "a", window: 9, view: "snapshot", snapshot: "s\(i)", rows: [], now: Date()) }
+        for i in 0...SnapshotRowsMemory.history { m.remember(session: "a", window: 9, view: .full, as: "snapshot", snapshot: "s\(i)", rows: [], now: Date()) }
         XCTAssertNil(m.read(snapshot: "s0", session: "a"))
         let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
         // 214 r1 second-S2: recorded when the snapshot is taken, parsed before the router-wide lock.
