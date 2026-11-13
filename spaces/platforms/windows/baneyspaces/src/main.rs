@@ -233,6 +233,7 @@ fn hands_request(verb: &str, mut a: Vec<String>) -> Result<Value, Envelope> {
             args["property"] = json!(a[1]);
         }
         "click" | "toggle" => {
+            baneyspaces_core::envelope::click_flags(verb, &mut a, &mut args)?;
             need(&a, 1, &format!("agent {verb} <ref>"))?;
             args["ref"] = json!(a[0]);
         }
@@ -430,6 +431,17 @@ mod tests {
         assert_eq!(request(v(&["switch", "3"])).unwrap(), json!({"op":"switch","args":{"n":"3"}}));
         let r = request(v(&["move", "2", "--stay", "--app", "notepad"])).unwrap();
         assert_eq!(r["args"], json!({"n":"2","stay":true,"window":null,"app":"notepad"}));
+    }
+
+    /// 231 r1 second-S2, second-S3: a right click in either spelling is refused, never pressed as a left click, and toggle
+    /// takes neither flag.
+    #[test]
+    fn a_right_click_on_a_ref_is_refused_in_either_spelling() {
+        for words in [&["agent", "click", "@w:e3", "--button=right"][..], &["agent", "click", "@w:e3", "--button", "right"]] {
+            assert_eq!(request(v(words)).unwrap_err().error.unwrap().code, "not_supported", "{words:?}");
+        }
+        assert_eq!(request(v(&["agent", "toggle", "@w:e1", "--button", "right"])).unwrap_err().error.unwrap().code, "invalid_args");
+        assert!(request(v(&["agent", "click", "@w:e3"])).is_ok());
     }
 
     #[test]

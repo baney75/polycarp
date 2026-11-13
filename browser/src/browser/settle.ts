@@ -14,6 +14,7 @@
 
 import { isGuardedUrl } from "../bridge/permissions.js";
 import { cdpSend, onDebuggerSessionEnd, openDialog } from "./cdp.js";
+import { watchDownloads } from "./downloads.js";
 import { runInPage } from "./page.js";
 import { veilTag } from "./veil-shared.js";
 
@@ -47,6 +48,8 @@ const mainDoc = new Map<number, string>();
 let installed = false;
 
 function install(): void {
+	// A download an action starts is reported with its result (downloads.ts).
+	watchDownloads();
 	if (installed) return;
 	installed = true;
 	chrome.debugger.onEvent.addListener((source, method, params) => {

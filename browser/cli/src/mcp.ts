@@ -97,6 +97,30 @@ function stripSchemaDialect(server: McpServer): void {
 	});
 }
 
+/**
+ * A key about a dialog that the tool doesn't take (on_dialog on navigate, onDialog or on_dialog_txt on click) fails by
+ * name instead of being dropped, which would run the call with no answer set (D48). Any other key a tool lacks is
+ * dropped, as the SDK does (second-S2, first-F3 of round 2 of the review of PR 230). Seen before the SDK strips it.
+ */
+function refuseStrayDialogKeys(server: McpServer): void {
+	const handlers = (server.server as unknown as { _requestHandlers?: Map<string, (req: unknown, extra: unknown) => Promise<unknown>> })._requestHandlers;
+	const tools = (server as unknown as { _registeredTools?: Record<string, { inputSchema?: { shape?: object } }> })._registeredTools;
+	const call = handlers?.get("tools/call");
+	if (!handlers || !tools || !call) return;
+	handlers.set("tools/call", async (req, extra) => {
+		const { name, arguments: args } = (req as { params?: { name?: string; arguments?: object } }).params ?? {};
+		const shape = tools[String(name)]?.inputSchema?.shape ?? {};
+		const stray = Object.keys(args ?? {}).find((k) => /dialog/i.test(k) && !(k in shape));
+		if (stray === undefined) return call(req, extra);
+		return {
+			content: text(
+				`bad_params: ${name} takes no ${stray}. Nothing was done. on_dialog and on_dialog_text work on a single click or press only: send the click or press that opens the box on its own, e.g. click {"tabId":41,"ref":"e5","on_dialog":"ok"}.`,
+			),
+			isError: true,
+		};
+	});
+}
+
 /** Socket-level failures all mean the same thing to the agent: no browser to talk to. */
 function isNotConnected(err: unknown): boolean {
 	if (err instanceof BridgeRpcError) return false;
@@ -783,6 +807,14 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		x: z.number().optional().describe("Screenshot pixel x"),
 		y: z.number().optional().describe("Screenshot pixel y"),
 	};
+	/** An answer set before the action for the first box it opens (D48): a model turn is too slow for some boxes. */
+	const onDialog = {
+		on_dialog: z
+			.enum(["ok", "cancel"])
+			.optional()
+			.describe('Answer the box this opens at once (needs tabId); "ok" only if it confirms what the user asked'),
+		on_dialog_text: z.string().optional().describe("prompt() text"),
+	};
 	server.registerTool(
 		"click",
 		{
@@ -792,6 +824,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				...targetSchema,
 				button: z.enum(["left", "right", "middle"]).optional().describe('Mouse button (default "left")'),
 				clickCount: z.number().int().optional().describe("2 for a double click"),
+				...onDialog,
 			},
 		},
 		(args) => call("click", args),
@@ -815,7 +848,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		{
 			title: "Press a key",
 			description: "Press a key or chord: Enter, Escape, Tab, ArrowDown, Control+a, Meta+Shift+p; clipboard chords (Control+v, Meta+c) are refused. Example: {\"key\":\"Escape\"}",
-			inputSchema: { key: z.string().describe("Key name or chord joined with +"), tabId, repeat: z.number().int().optional().describe("Times to press") },
+			inputSchema: { key: z.string().describe("Key name or chord joined with +"), tabId, repeat: z.number().int().optional().describe("Times to press"), ...onDialog },
 		},
 		(args) => call("press", args),
 	);
@@ -863,7 +896,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			title: "Run several input steps",
 			description: "Up to 40 input steps in one call, optionally ending with a screenshot: for canvas apps and multi-step input instead of one call per key. Step kinds: press, click ({x,y}|{ref}|{selector}, clickCount), doubleClick, drag ({from,to}), type, hover, scroll ({dx,dy}|{to}), wait (ms); x/y are pixels of your latest screenshot. Steps are settleMs apart (default 80); the run stops at the first failing step. Example: {\"steps\":[{\"press\":\"r\"},{\"drag\":{\"from\":{\"x\":200,\"y\":200},\"to\":{\"x\":360,\"y\":300}}},{\"type\":\"Start\"},{\"press\":\"Escape\"}],\"screenshot\":true}",
 			inputSchema: {
-				steps: z.array(z.record(z.string(), z.any())).min(1).max(40).describe("Each step is an object with one key, e.g. {\"press\":\"Enter\"}"),
+				steps: z.array(z.record(z.string(), z.any())).min(1).max(40).describe("Each step is an object with one key, e.g. {\"press\":\"Enter\"}; no on_dialog: use a single click or press"),
 				screenshot: z.boolean().optional().describe("Return a screenshot after the last step"),
 				settleMs: z.number().int().optional().describe("Pause between steps in ms (default 80)"),
 				tabId,
@@ -1315,6 +1348,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 
 	addMoreTools?.();
 	stripSchemaDialect(server);
+	refuseStrayDialogKeys(server);
 	if (local) waitForLocalComputer(server, local);
 
 	if (allowedTools) {

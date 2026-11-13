@@ -235,6 +235,29 @@ final class ClickFallbackTests: XCTestCase {
         XCTAssertEqual(ClickFallback.afterPress(before: false, after: ClickFallback.selected(outline(selected: true), child), pressError: nil), .done(.press))
     }
 
+    /// 224 r1 first-F1: a selected hidden parent doesn't make its shown, unselected child read selected, so a press that
+    /// didn't select the child is followed by the write.
+    func testASelectedHiddenParentDoesNotSelectItsChild() throws {
+        func outline(child: Bool) -> [SnapshotRows.Row] {
+            SnapshotRows.rows(of: .object(["role": "window", "children": .array([node("outline", "", 1, [
+                .object(["role": "treeitem", "states": .array(["selected"]), "children": .array([
+                    .object(["role": "treeitem", "name": "Child", "ref_id": "@s:e2", "states": .array(child ? ["selected"] : [])])])])])])]))
+        }
+        let plan = try XCTUnwrap(ClickFallback.plan(rows: outline(child: false), snapshot: "s", number: 2))
+        let before = ClickFallback.selected(outline(child: false), plan)
+        XCTAssertEqual(before, false)
+        XCTAssertEqual(ClickFallback.selected(outline(child: true), plan), true)
+        XCTAssertEqual(ClickFallback.afterPress(before: before, after: before, pressError: nil), .writeSelection)
+    }
+
+    /// 224 r1 second-F3: the 224 entry says what it covers, is pinned, untested live, and per platform.
+    func testThe224EntrySaysItsLimits() throws {
+        let log = try String(contentsOf: HandsSourceTests.root.appendingPathComponent("CHANGELOG.md"), encoding: .utf8)
+        let entry = try XCTUnwrap(log.split(separator: "\n").first { $0.contains("never undone by a write") })
+        XCTAssertTrue(entry.hasSuffix("Pinned by `ClickFallbackTests`. Untested live. Linux and Windows: the press only, unchanged."))
+        XCTAssertFalse(entry.contains("remembered only by its view"))
+    }
+
     /// 203 r1 first-F2: a container whose ref is no good now gets no plan (the click is the plain press); a good one keeps
     /// the read's view for the readbacks.
     func testAContainerRefThatIsNoGoodNowFallsBackToThePlainPress() throws {
@@ -275,7 +298,7 @@ final class ClickFallbackTests: XCTestCase {
         XCTAssertTrue(src.contains("if !writes, kind != .toggle, plan == nil, case .success"))
         // 187 r1 first-F3, 192 r1 first-F6: the bare number is resolved once, before handle, which gets the full ref; the
         // next call's window reads that, also for a call refused before it acts. Never a second resolve.
-        let of = try XCTUnwrap(HandsSourceTests.block(after: "private func windowOf(_ req: HandsRequest) -> Int?", in: src))
+        let of = try XCTUnwrap(HandsSourceTests.block(after: "func windowOf(_ req: HandsRequest) -> Int?", in: src))
         XCTAssertFalse(of.contains("bareRef("), "no second resolve")
         let wire = try XCTUnwrap(HandsSourceTests.block(after: "func handleWire(_ r: Wire.Request)", in: src))
         XCTAssertTrue(wire.contains("case .success(let full) = bareRef(n, req) { resolved.args[\"ref\"] = .string(full) }"))
@@ -300,6 +323,12 @@ final class ClickFallbackTests: XCTestCase {
         m.remember(session: "a", window: 7, view: .find, as: "find", snapshot: "sx", rows: [], now: Date())
         XCTAssertEqual(m.read(snapshot: "sx", session: "a")?.view, .init(interactive: false, compact: true, depth: 10))
         XCTAssertNotNil(m.previous(session: "a", window: 7, view: "find"))
+        // 224 r1 first-F2: the view the router reads in, by value. A find ignores view arguments; a snapshot keeps them.
+        let args: [String: JSONValue] = ["interactive": true, "depth": 3]
+        XCTAssertEqual(SnapshotRowsMemory.View.reading(HandsRequest(verb: "find", args: args)), .find)
+        XCTAssertEqual(SnapshotRowsMemory.View.reading(HandsRequest(verb: "snapshot", args: args)), .init(interactive: true, compact: false, depth: 3))
+        let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        XCTAssertEqual(router.components(separatedBy: "let view = SnapshotRowsMemory.View.reading(req)").count, 3, "snapshot and find both")
     }
 
     /// The tree with only the item labeled `label` selected.
