@@ -170,7 +170,39 @@ test("page_markdown with no Firecrawl set up names the tools that work instead",
 	// Round 1 of evals/weak-model: Haiku tried page_markdown on a PDF and got only setup advice meant for the user.
 	const md = await mcp.callTool({ name: "page_markdown", arguments: { url: "https://example.com/" } });
 	assert.equal(md.isError, true);
-	assert.match(md.content[0].text, /read the page with navigate, then get_page_text/);
+	assert.match(md.content[0].text, /Read the page with navigate, then get_page_text/);
+});
+
+// PR 201 second-F6: what a tool result says to do instead names only this session's tools. A session with page_markdown
+// but no navigate was told to read the page with navigate, and following that is a refusal.
+test("page_markdown with no Firecrawl, in a session without navigate, names no tool it lacks", async () => {
+	const { build } = await import("esbuild");
+	const out = join(root, "mcp-bundle-scoped-md.mjs");
+	await build({ entryPoints: [join(dirname(fileURLToPath(import.meta.url)), "..", "src", "mcp.ts")], bundle: true, platform: "node", format: "esm", outfile: out, loader: { ".md": "text", ".pub": "text" }, logLevel: "silent" });
+	const { createMcpServer } = await import(out);
+	const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+	const saved = { dir: process.env.TABKYRA_CONFIG_DIR, url: process.env.FIRECRAWL_API_URL };
+	const config = join(root, "scoped-md-config");
+	mkdirSync(config, { recursive: true });
+	process.env.TABKYRA_CONFIG_DIR = config;
+	delete process.env.FIRECRAWL_API_URL;
+	const { server, client: bridge } = createMcpServer({ name: "md", session: "scoped-md", allowedTools: new Set(["page_markdown", "read_page"]) });
+	const [a, b] = InMemoryTransport.createLinkedPair();
+	await server.connect(a);
+	const client = new Client({ name: "scoped-md-test", version: "0.0.0" });
+	await client.connect(b);
+	try {
+		const md = await client.callTool({ name: "page_markdown", arguments: { url: "https://example.com/" } });
+		assert.equal(md.isError, true);
+		assert.match(md.content[0].text, /^No Firecrawl server is set up here, so page_markdown, map and crawl can't run\. Ask the user to set one up/);
+		assert.doesNotMatch(md.content[0].text, /\bnavigate\b|get_page_text/);
+	} finally {
+		await client.close();
+		bridge.close();
+		if (saved.dir === undefined) delete process.env.TABKYRA_CONFIG_DIR;
+		else process.env.TABKYRA_CONFIG_DIR = saved.dir;
+		if (saved.url !== undefined) process.env.FIRECRAWL_API_URL = saved.url;
+	}
 });
 
 test("a plain wait {ms} pauses without a browser; a wait for the page still needs one", async () => {

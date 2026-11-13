@@ -36,7 +36,7 @@ export function requireFirecrawlApiUrl(): string {
 	const url = firecrawlApiUrlRaw();
 	if (!url) {
 		throw new Error(
-			"No Firecrawl server is set up here, so page_markdown, map and crawl can't run: read the page with navigate, then get_page_text. (For the user: FIRECRAWL_API_URL is not set and search.json has no firecrawlApiUrl. Point it at your self-hosted Firecrawl, for example http://127.0.0.1:3002. See config/search.example.json. Hosted api.firecrawl.dev is refused.)",
+			"No Firecrawl server is set up here, so page_markdown, map and crawl can't run. (For the user: FIRECRAWL_API_URL is not set and search.json has no firecrawlApiUrl. Point it at your self-hosted Firecrawl, for example http://127.0.0.1:3002. See config/search.example.json. Hosted api.firecrawl.dev is refused.)",
 		);
 	}
 	let parsed: URL;

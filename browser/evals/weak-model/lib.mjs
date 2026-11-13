@@ -109,6 +109,23 @@ export function clashingIds(ids) {
 
 
 /**
+ * A guarded round's per-task floors, counted from its transcripts: each task's pass and run count in summary.json must be
+ * what runs.jsonl holds, and the pass count must reach the floor. Returns what is wrong, empty when nothing is.
+ */
+export function checkGuard(label, floors, summary, runs) {
+	const wrong = [];
+	for (const [id, want] of Object.entries(floors)) {
+		const said = summary.tasks?.[id];
+		const of = runs.filter((r) => r.task === id);
+		const pass = of.filter((r) => r.pass === true).length;
+		if (!said) wrong.push(`${label} has no ${id} runs in summary.json`);
+		else if (said.pass !== pass || said.of !== of.length) wrong.push(`${label} ${id}: summary.json says ${said.pass}/${said.of}, runs.jsonl holds ${pass}/${of.length}`);
+		if (pass < want) wrong.push(`${label} ${id}: ${pass}/${of.length} in runs.jsonl, baseline ${want}`);
+	}
+	return wrong;
+}
+
+/**
  * Why a committed round no longer matches its baseline entry, or nothing. Like is compared with like: the runs must be
  * the round's model, list the round's tool count for their kind, and cover exactly the round's task set; then the
  * total is fixed, and the score may only rise. A rerun with another model, another tool list or more tasks belongs

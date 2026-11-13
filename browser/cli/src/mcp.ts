@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import { checkSkill, listSkills, matchTask, readSkill, removeSkill, skillInfo, syncCommunity, writeSkill } from "./skill.ts";
 import { stageCases } from "./skill-submit.ts";
 import { firecrawlCrawl, firecrawlMap, pageMarkdown } from "./firecrawl.ts";
-import { capCrawl, capJson, capOutput, fitSnapshot, MARKDOWN_CHARS, type RankCounts, rankNote, sliceText, VALUE_CHARS } from "./output-cap.ts";
+import { capCrawl, capJson, capOutput, fitSnapshot, MARKDOWN_CHARS, type RankCounts, rankedSlice, rankNote, sliceText, VALUE_CHARS } from "./output-cap.ts";
 import { searxSearch } from "./searx.ts";
 import { selfExec, selfPrefix } from "./self.ts";
 import { VERSION } from "./version.ts";
@@ -299,6 +299,8 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		},
 	);
 	const allow = allowedTools ? (tool: string) => allowedTools.has(tool) : undefined;
+	/** Whether this session can call a tool: what a tool result may tell the model to call next. */
+	const has = allow ?? (() => true);
 	const check = options.callCheck;
 	// Handlers that go through the check, so the end of this function can prove none was missed.
 	const checked = new WeakSet<object>();
@@ -598,7 +600,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"read_page",
 		{
 			title: "Read the page (elements + text)",
-			description: "The main way to see a page: elements with refs (e12), roles, names, values, links, then the text. Click, type, fill by ref; refs expire when the page changes. Example: {\"filter\":\"interactive\"}",
+			description: "The main way to see a page: elements with refs, roles, names, values, links, then the text. Click, type, fill by ref; refs expire when the page changes. Example: {\"filter\":\"interactive\"}",
 			inputSchema: {
 				tabId,
 				filter: z.enum(["all", "interactive"]).optional().describe('"interactive": controls, nearest first'),
@@ -626,11 +628,13 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 					const { ranked, ...given } = raw;
 					// No text asked for is none, whatever an extension sent.
 					const whole = maxTextChars ? given : { ...given, text: "" };
-					const { snap, note } = fitSnapshot(whole, maxNodes, maxTextChars);
 					if (ranked) {
+						const { nodes, next } = rankedSlice(ranked, whole.nodes, maxNodes);
+						const { snap } = fitSnapshot({ ...whole, nodes }, maxNodes, maxTextChars);
 						const cut = whole.text.length > maxTextChars;
-						return { content: text(formatSnapshot(snap) + rankNote(ranked, snap.nodes.length, { maxTextChars, cut })) };
+						return { content: text(formatSnapshot(snap) + rankNote(ranked, snap.nodes.length, { maxTextChars, cut }, { next, has })) };
 					}
+					const { snap, note } = fitSnapshot(whole, maxNodes, maxTextChars);
 					// An extension from before ranking can't skip controls: an offset there would give the first ones again.
 					if (args.offset || args.snapshot !== undefined)
 						return { content: text("This Polycarp extension is older than ranked reads, so it can't continue a read from an offset. Ask the user to update the extension; until then, use find for a control further down."), isError: true };
@@ -1113,7 +1117,13 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		try {
 			return { content: text(await fn()) };
 		} catch (err) {
-			return { content: text(errorMessage(err)), isError: true };
+			const message = errorMessage(err);
+			// What to do instead names only this session's tools: one it lacks would just be refused.
+			const instead =
+				has("navigate") && has("get_page_text")
+					? " Read the page with navigate, then get_page_text."
+					: " Ask the user to set one up, or to read the page for you.";
+			return { content: text(message.replace(/^(No Firecrawl server is set up here[^.]*\.)/, `$1${instead}`)), isError: true };
 		}
 	}
 	server.registerTool(
