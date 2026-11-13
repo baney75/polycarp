@@ -505,6 +505,30 @@ final class DeliveryProofTests: XCTestCase {
         XCTAssertTrue(ContentChange.changed(base: base, noise: noise, after: tree(["clock 10:00:03", "display 72"])))
     }
 
+    /// The live false pass (952839c): after a type, TextEdit's title bar drew "Edited" only when the drag's hover arrived,
+    /// and the drag answered content_changed. A change pending before the press is noise once the window settles.
+    func testAChangePendingBeforeThePressIsNoProof() throws {
+        func window(_ title: String, _ text: String = "probe") -> JSONValue {
+            .object(["role": "window", "children": .array([.object(["role": "menubutton", "name": .string(title)]), .object(["role": "textfield", "value": .string(text)])])])
+        }
+        let before = window("document actions")
+        var reads = [window("Edited"), window("Edited"), window("never read")][...]
+        let settled = ContentChange.settle(first: before, reads: 5) { reads.popFirst() }
+        XCTAssertEqual(settled.base, window("Edited"))
+        XCTAssertEqual(settled.noise, ["0/0"])
+        XCTAssertEqual(reads.count, 1, "two reads that agree end it")
+        let noise = ContentChange.noise(base1: before, base2: settled.base).union(settled.noise)
+        let base = ContentChange.entries(of: settled.base)
+        XCTAssertFalse(ContentChange.changed(base: base, noise: noise, after: window("Edited")), "the pending title is not the drag's")
+        XCTAssertTrue(ContentChange.changed(base: base, noise: noise, after: window("Edited", "probe selected")))
+        // The router settles after the hover and before the press, and its evidence diff starts there.
+        let bg = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Background.swift")
+        let hover = try XCTUnwrap(bg.range(of: "InputScript.hover(at: path[0])")), settle = try XCTUnwrap(bg.range(of: "ContentChange.settle(first:"))
+        let press = try XCTUnwrap(bg.range(of: "InputScript.drag(path: path)")), shot = try XCTUnwrap(bg.range(of: "let shotBefore ="))
+        XCTAssertTrue(hover.lowerBound < settle.lowerBound && settle.lowerBound < shot.lowerBound && shot.lowerBound < press.lowerBound)
+        XCTAssertTrue(bg.contains("if let t = t.tree, let b = base { diff = AXDiff.between(b, t) }"))
+    }
+
     func testTextAttributesHashTheSameWhenReadTwice() throws {
         // Two separately made, equal colors: a description would carry each one's address; the components do not.
         func runs() -> [(range: NSRange, attributes: [AnyHashable: Any])] {
