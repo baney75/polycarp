@@ -37,6 +37,19 @@ final class HandsEnvelopeTests: XCTestCase {
 }
 
 final class HandsParseTests: XCTestCase {
+    /// The live check on 952839c: `--help` listed 15 verbs and left out menu, close and others that work. The help
+    /// lines are made from the tool list, so a verb can't be left out of them.
+    func testTheHelpListsEveryVerb() throws {
+        let verbs = HandsTools.verbLine.split(separator: "|").map(String.init)
+        XCTAssertEqual(verbs, HandsTools.all.map(\.verb))
+        XCTAssertTrue(["menu", "drag", "close", "arrange", "move", "workspaces"].allSatisfy(verbs.contains))
+        let cli = try String(contentsOf: HandsSourceTests.root.appendingPathComponent("Sources/baneyspaces-cli/main.swift"), encoding: .utf8)
+        XCTAssertTrue(cli.contains("  agent \\(HandsTools.verbLine)\n"))
+        XCTAssertFalse(cli.contains("windows|snapshot|find"), "no hand-kept list")
+        let session = try String(contentsOf: HandsSourceTests.root.appendingPathComponent("Sources/BaneySpaces/Session/SessionController.swift"), encoding: .utf8)
+        XCTAssertTrue(session.contains("or a hands verb: \\(HandsTools.verbLine)"))
+    }
+
     func parse(_ s: String) -> Result<HandsRequest, HandsError> { HandsParse.command(s.split(separator: " ").map(String.init)) }
 
     func testSnapshotTakesAppAndTheShortFlag() throws {

@@ -39,7 +39,7 @@ extension HandsRouter {
 
     func clickAt(_ req: HandsRequest) -> HandsEnvelope {
         guard let x = req.int("x"), let y = req.int("y") else { return .failure(pointArguments("click-at --window <id> --x <points> --y <points>")) }
-        switch ClickStyle.parse(count: req.int("count"), button: req.string("button")) {
+        switch ClickStyle.parse(count: req.int("count"), button: req.string("button"), item: req.string("item")) {
         case .failure(let e): return .failure(e)
         case .success(let style): return pointer(req, path: [CGPoint(x: x, y: y)], drag: false, name: "click-at", style: style)
         }
@@ -161,7 +161,8 @@ extension HandsRouter {
         let tree1 = inlineTree(w)
         Thread.sleep(forTimeInterval: 0.05)
         let tree2 = inlineTree(w)
-        let noise: Set<String> = (tree1 != nil && tree2 != nil) ? ContentChange.noise(base1: tree1!, base2: tree2!) : []
+        var noise: Set<String> = (tree1 != nil && tree2 != nil) ? ContentChange.noise(base1: tree1!, base2: tree2!) : []
+        var base = tree1
         var baseEntries: [String: String] = tree1.map { ContentChange.entries(of: $0) } ?? [:]
         let verifier: VerifierPlan = {
             switch (tree1 != nil && tree2 != nil, kind == .pointer && CGPreflightScreenCaptureAccess()) {
@@ -199,6 +200,7 @@ extension HandsRouter {
         var verdict = DeliveryVerdict(verified: false, basis: "no_reading")
         var landed = 0, stepCount = 1
         var droppedKeys = false
+        var context: [String: JSONValue]?
 
         func treeAfter() -> (content: Bool?, tree: JSONValue?) {
             guard tree1 != nil, let after = inlineTree(w) else { return (nil, nil) }
@@ -238,6 +240,17 @@ extension HandsRouter {
                 curRef = after.ref; curFocus = after.focus; curWindow = after.window
                 if let t = after.tree { baseEntries = ContentChange.entries(of: t) }
             }
+        case .pointer where style.right:
+            // Proved by the menu's own window, not by the target window's tree or pixels (`ContextMenu`).
+            // The cancel: Escape posted to the process, with a key permit of its own from the planner, planned with this
+            // transaction's verifier before anything is posted (210 r1 first-F1).
+            let r = contextPress(w, frame: frame, point: path[0], permit: permit, stop: stop, item: style.item, agentWindow: onAgentWorkspace(w, scope),
+                                 keys: { [self] in escapeKeys(w, verifier: verifier) }, check: scopeCheck, cancelled: cancelled)
+            aimed += r.aimed; posted += r.posted; released = r.released; lastPostAt = r.lastPostAt
+            switch r.result {
+            case .failure(let e): return .failed(r.posted > 0 && !r.leftOpen ? frontFailure() ?? e : e)
+            case .success(let d): context = d; verdict = DeliveryVerdict(verified: true, basis: "context_menu"); landed = 1
+            }
         case .pointer:
             let gesture = BackgroundPoster.newGesture()
             // Arrive first, then look: a hover that tints or outlines is in the picture the press is compared with.
@@ -247,6 +260,14 @@ extension HandsRouter {
             if let stopped = hover.report.stopped { return .failed(frontFailure() ?? stopped) }
             // A hover's tint can animate, and pixels compare what's there. With no pixels in the proof it doesn't matter.
             Thread.sleep(forTimeInterval: verifier.hasPixels ? 0.2 : 0.05)
+            // The baseline is the window once it holds still after the hover, so a change pending before the press is noise.
+            if let t = base {
+                let settled = ContentChange.settle(first: inlineTree(w) ?? t, reads: 5) { inlineTree(w) }
+                noise.formUnion(ContentChange.noise(base1: t, base2: settled.base).union(settled.noise))
+                base = settled.base
+                baseEntries = ContentChange.entries(of: settled.base)
+                curRef = refReading(); curFocus = focusReading()
+            }
             let shotBefore = verifier.hasPixels ? WindowShot.pixels(window: w.id, check: scopeCheck) : nil
             if verifier == .pixels, shotBefore == nil { return .failed(BackgroundRefusal.noVerifier(w.app)) }     // nothing is pressed yet
             let press = BackgroundPoster.pointer(drag ? InputScript.drag(path: path) : InputScript.click(at: path[0], count: style.count), frame: frame, drag: drag,
@@ -261,7 +282,7 @@ extension HandsRouter {
                 if spanFront() != .same { break }
                 let refAfter = refReading(), focusAfter = focusReading()
                 let t = treeAfter()
-                if let t = t.tree, let b = tree1 { diff = AXDiff.between(b, t) }
+                if let t = t.tree, let b = base { diff = AXDiff.between(b, t) }
                 if let b = shotBefore, let a = WindowShot.pixels(window: w.id, check: scopeCheck), a.width == b.width, a.height == b.height {
                     let region = PointerPath.region(path: path, margin: 14, scale: b.scale, width: b.width, height: b.height)
                     let hoverBox = PointerPath.hoverExclusion(path: path, radius: 10, scale: b.scale, width: b.width, height: b.height)
@@ -302,11 +323,21 @@ extension HandsRouter {
             evidence["pixels"] = .object(["inside_changed": .int(p.insideChanged), "inside_total": .int(p.insideTotal),
                                           "outside_changed": .int(p.outsideChanged), "outside_total": .int(p.outsideTotal)])
         }
-        return .ok(.object([
+        var answer: [String: JSONValue] = [
             "action": .string(name), "verified": true, "route": .string(permit.route.rawValue),
             "transport": .string(permit.transport.rawValue), "events": .int(posted), "evidence": .object(evidence),
             "target": targetJSON(w, scope),
-        ]))
+        ]
+        if let context { answer["context_menu"] = .object(context) }
+        return .ok(.object(answer))
+    }
+
+    /// A context menu's cancel: the key permit Escape is posted with, planned before anything is posted, with the
+    /// transaction's verifier, or the one a read of the tree now gives (210 r1 first-F1). Nil: no right click.
+    func escapeKeys(_ w: HandsWindow, verifier: VerifierPlan? = nil) -> BackgroundPermit? {
+        guard let (keyFacts, _) = gatherFacts(w, kind: .keys, verifier: verifier ?? (inlineTree(w) != nil ? .ax : .none), path: []),
+              case .success(let keys) = BackgroundPlanner.plan(keyFacts) else { return nil }
+        return keys
     }
 
     /// The facts the planner decides on, read now, on the process queue. nil when the window is gone.

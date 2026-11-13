@@ -738,7 +738,7 @@ final class SessionController {
             h.move(id, n)
             return .init(ok: true, info: ["workspace": "\(n)", "moved": "window \(id)"])
         default:
-            return .init(ok: false, error: "usage: polycarp-spaces agent status|mode|on [N]|off|open <app> [file…]|lend <app>|run [--dir D] -- <cmd>|move <row>|cursor on|theme <name>")
+            return .init(ok: false, error: "usage: polycarp-spaces agent status|mode|on [N]|off|open <app> [file…]|lend <app>|run [--dir D] -- <cmd>|move <row>|cursor on|theme <name>, or a hands verb: \(HandsTools.verbLine)")
         }
     }
 
