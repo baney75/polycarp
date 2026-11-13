@@ -154,7 +154,10 @@ async function inject(tabId: number, cmd: VeilCommand): Promise<VeilPageResult |
  * newer show was queued. Every wait comes first, then that decision and the inject with nothing awaited between them
  * (PR 204's review, first-F1).
  */
-async function apply(effect: VeilEffect, late: { fired: boolean; seq: number } = { fired: false, seq: 0 }): Promise<void> {
+async function apply(
+	effect: VeilEffect,
+	late: { fired: boolean; seq: number } = { fired: false, seq: 0 },
+): Promise<void> {
 	const { tabId } = effect;
 	try {
 		if (effect.kind === "show") {
