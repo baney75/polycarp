@@ -838,8 +838,8 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		"type",
 		{
 			title: "Type text",
-			description: "Type with real key events; with a ref or selector it clicks that field first. submit:true presses Enter after. fill sets a value without key events. Example: {\"ref\":\"e4\",\"text\":\"Ada Lovelace\",\"submit\":true}",
-			inputSchema: { text: z.string().describe("Text to type"), tabId, ref, selector, submit: z.boolean().optional().describe("Press Enter after typing") },
+			description: "Type with real key events, clicking the ref or selector first. submit:true presses Enter after. paste:true pastes instead: long text, rich editors. fill sets a value with no key events. Example: {\"ref\":\"e4\",\"text\":\"Ada Lovelace\",\"submit\":true}",
+			inputSchema: { text: z.string().describe("Text to type"), tabId, ref, selector, submit: z.boolean().optional().describe("Press Enter after typing"), paste: z.boolean().optional().describe("One paste event, not the clipboard") },
 		},
 		(args) => call("type", args),
 	);
