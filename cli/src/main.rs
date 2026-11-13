@@ -346,7 +346,12 @@ fn clear_of_cwd(c: &Path) -> bool {
         return false;
     };
     let home = home().and_then(|h| fs::canonicalize(h).ok());
-    c != cwd && (home.is_some_and(|h| h.starts_with(&cwd)) || !c.starts_with(&cwd))
+    clear_of(c, &cwd, home.as_deref())
+}
+
+/// `clear_of_cwd` for a given folder: `c` counts as outside `cwd`'s tree.
+fn clear_of(c: &Path, cwd: &Path, home: Option<&Path>) -> bool {
+    c != cwd && (home.is_some_and(|h| h.starts_with(cwd)) || !c.starts_with(cwd))
 }
 
 /// A PATH folder `update` and `version` take programs from: absolute, and where it really is (links
