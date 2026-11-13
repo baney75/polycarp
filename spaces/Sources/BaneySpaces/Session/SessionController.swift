@@ -453,7 +453,7 @@ final class SessionController {
             guard let e = r.event else { return .init(ok: false, error: "no event") }
             engine.apply(e)
             // An agent session that ended gives back every app lent to it.
-            if e.state == .end { HandsLends.shared.giveBackAll(session: e.session) }
+            if e.state == .end { HandsLends.shared.giveBackAll(session: e.session); SessionClipboardBox.shared.end(session: e.session) }
             return .init(ok: true)
         case .notify:
             guard let e = r.event else { return .init(ok: false, error: "no event") }

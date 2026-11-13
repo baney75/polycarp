@@ -26,6 +26,7 @@ import {
 } from "./veil-shared.js";
 import {
 	EMPTY_VEIL,
+	isConcealed,
 	type PointerAction,
 	pointerCue,
 	VEIL_IDLE_MS,
@@ -100,18 +101,39 @@ function dispatch(event: VeilEvent): Promise<void> {
 	return Promise.all(step.effects.map((e) => queue(e))).then(() => undefined);
 }
 
+/** The newest show queued per tab: a late show that a newer one replaced draws nothing (PR 204's review, second-S2). */
+const newestShow = new Map<number, number>();
+let showSeq = 0;
+
 function queue(effect: VeilEffect): Promise<void> {
 	const prev = chains.get(effect.tabId) ?? Promise.resolve();
-	const run = prev.then(() => withTimeout(apply(effect))).catch(() => undefined);
+	const seq = effect.kind === "show" ? ++showSeq : 0;
+	if (seq) newestShow.set(effect.tabId, seq);
+	const run = prev
+		.then(() => {
+			const late = { fired: false, seq };
+			return withTimeout(apply(effect, late), late);
+		})
+		.catch(() => undefined);
 	chains.set(effect.tabId, run);
 	void run.then(() => {
 		if (chains.get(effect.tabId) === run) chains.delete(effect.tabId);
+		if (seq && newestShow.get(effect.tabId) === seq) newestShow.delete(effect.tabId);
 	});
 	return run;
 }
 
-function withTimeout<T>(p: Promise<T>): Promise<T | undefined> {
-	return Promise.race([p, new Promise<undefined>((r) => setTimeout(() => r(undefined), EFFECT_TIMEOUT_MS))]);
+/** `late.fired` turns true when the time is up, so work still running behind it can tell the chain moved on. */
+function withTimeout<T>(p: Promise<T>, late?: { fired: boolean }): Promise<T | undefined> {
+	return Promise.race([
+		p,
+		new Promise<undefined>((r) =>
+			setTimeout(() => {
+				if (late) late.fired = true;
+				r(undefined);
+			}, EFFECT_TIMEOUT_MS),
+		),
+	]);
 }
 
 async function inject(tabId: number, cmd: VeilCommand): Promise<VeilPageResult | undefined> {
@@ -125,7 +147,17 @@ async function inject(tabId: number, cmd: VeilCommand): Promise<VeilPageResult |
 	return first?.result as VeilPageResult | undefined;
 }
 
-async function apply(effect: VeilEffect): Promise<void> {
+/**
+ * Carry out one effect. A show still waiting on the browser when its time ran out (second-S1 of the review of PR 189) no
+ * longer draws what was true when it was queued: the chain has moved on, so it draws the tab's facts as they are now
+ * (its view, and concealed for a capture that came after it, say), or nothing if the tab has no veil any more or a
+ * newer show was queued. Every wait comes first, then that decision and the inject with nothing awaited between them
+ * (PR 204's review, first-F1).
+ */
+async function apply(
+	effect: VeilEffect,
+	late: { fired: boolean; seq: number } = { fired: false, seq: 0 },
+): Promise<void> {
 	const { tabId } = effect;
 	try {
 		if (effect.kind === "show") {
@@ -135,17 +167,33 @@ async function apply(effect: VeilEffect): Promise<void> {
 			// A tag of its own for each document; stored before it is drawn, so a reader never misses it.
 			const tag = (await veilTag(tabId)) ?? newVeilTag();
 			await rememberVeilTag(tabId, tag);
+			// The setting's read is bounded on its own: one that never settles draws no character, the safe side.
+			const pointerShown = pointer ?? (await withTimeout(pointerOn())) ?? false;
+			const pageTheme = await theme();
+			// Nothing is awaited from here to the inject.
+			let { interactive, concealed, view } = effect;
+			if (late.fired) {
+				const now = state.tabs[tabId];
+				if (late.seq && newestShow.has(tabId) && newestShow.get(tabId) !== late.seq) return;
+				if (!now) {
+					await rememberVeilTag(tabId, undefined);
+					return;
+				}
+				interactive = now.input === 0;
+				concealed = isConcealed(state, tabId);
+				view = now.view;
+			}
 			const result = await inject(tabId, {
 				op: "show",
 				tag,
 				css: VEIL_CSS,
-				agent: effect.view.agent,
-				detail: effect.view.detail,
-				color: effect.view.color,
-				theme: await theme(),
-				interactive: effect.interactive,
-				concealed: effect.concealed,
-				pointer: await pointerOn(),
+				agent: view.agent,
+				detail: view.detail,
+				color: view.color,
+				theme: pageTheme,
+				interactive,
+				concealed,
+				pointer: pointerShown,
 				mote: MOTE,
 			});
 			if (!result?.tag) await rememberVeilTag(tabId, undefined);

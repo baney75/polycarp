@@ -858,7 +858,34 @@ private struct FakeHands {
 }
 
 final class CursorOverheadTests: XCTestCase {
-    func median(_ xs: [Double]) -> Double { xs.sorted()[xs.count / 2] }
+    static func median(_ xs: [Double]) -> Double { xs.sorted()[xs.count / 2] }
+
+    /// Each action without the cursor runs next to one with it, the order alternating, and "added" is the median of
+    /// the pairs' differences: load that changes over the run (another build starting) lands on both halves of a pair,
+    /// and a stall lands in one pair, which the median drops. Two blocks of 200 in a row let the drift in: the 11-12
+    /// logs show the median without the cursor alone at 24.0 to 27.9 ms, so "added" ran from -3.8 to +1.8 ms with
+    /// the cursor's code unchanged.
+    static func paired(_ n: Int, _ timed: (_ i: Int, _ listening: Bool) -> Double) -> (without: Double, with: Double, added: Double) {
+        var withouts: [Double] = [], withs: [Double] = [], added: [Double] = []
+        for i in 0..<n {
+            let (wo, w): (Double, Double)
+            if i % 2 == 0 { wo = timed(i, false); w = timed(i, true) } else { w = timed(i, true); wo = timed(i, false) }
+            withouts.append(wo); withs.append(w); added.append(w - wo)
+        }
+        return (median(withouts), median(withs), median(added))
+    }
+
+    func testAPairedMeasurementIgnoresLoadThatChangesPartWay() {
+        // A modelled action of 24 ms that the cursor makes 0.02 ms slower, on a machine that gets 3 ms slower halfway.
+        var clock = 0
+        let n = 200
+        func action(listening: Bool) -> Double { defer { clock += 1 }; return 24 + (clock >= n ? 3 : 0) + (listening ? 0.02 : 0) }
+        let without = Self.median((0..<n).map { _ in action(listening: false) }), with = Self.median((0..<n).map { _ in action(listening: true) })
+        XCTAssertEqual(with - without, 3.02, accuracy: 0.001, "two blocks in a row count the slowdown as the cursor's")
+        clock = 0
+        let r = Self.paired(n) { _, listening in action(listening: listening) }
+        XCTAssertEqual(r.added, 0.02, accuracy: 0.001, "pairs count only the cursor")
+    }
 
     func testTheCursorAddsUnderFiveMillisecondsToTheMedianAction() {
         let hands = FakeHands()
@@ -867,25 +894,22 @@ final class CursorOverheadTests: XCTestCase {
         let director = CursorDirector(surface: FakeSurface(), queue: queue)
         var env = CursorEnvironment(); env.current = 9; env.agentWorkspace = 9; env.displays = [screen]
         director.setEnvironment(env)
-        func timed(_ n: Int, listening: Bool) -> [Double] {
+        func timed(_ i: Int, listening: Bool) -> Double {
             HandsEvents.setListener(listening ? director : nil)
             defer { HandsEvents.setListener(nil) }
-            return (0..<n).map { i in
-                let p = CGPoint(x: 100 + Double(i % 20) * 50, y: 200 + Double(i % 7) * 60)
-                let e = HandsActionEvent(kind: i % 3 == 0 ? "type" : "click", ref: "@s1:e1", window: 7, pid: 1, app: "TextEdit", point: p,
-                                         frame: CGRect(x: p.x - 30, y: p.y - 10, width: 60, height: 20), session: "a", scope: "agent_workspace", workspace: 9)
-                let t0 = ProcessInfo.processInfo.systemUptime
-                hands.run(e)
-                return (ProcessInfo.processInfo.systemUptime - t0) * 1000
-            }
+            let p = CGPoint(x: 100 + Double(i % 20) * 50, y: 200 + Double(i % 7) * 60)
+            let e = HandsActionEvent(kind: i % 3 == 0 ? "type" : "click", ref: "@s1:e1", window: 7, pid: 1, app: "TextEdit", point: p,
+                                     frame: CGRect(x: p.x - 30, y: p.y - 10, width: 60, height: 20), session: "a", scope: "agent_workspace", workspace: 9)
+            let t0 = ProcessInfo.processInfo.systemUptime
+            hands.run(e)
+            return (ProcessInfo.processInfo.systemUptime - t0) * 1000
         }
-        _ = timed(20, listening: true)   // warm up
-        let without = median(timed(200, listening: false))
-        let with = median(timed(200, listening: true))
+        for i in 0..<20 { _ = timed(i, listening: true) }   // warm up
+        let r = Self.paired(200) { timed($0, listening: $1) }
         queue.sync {}
-        print("CURSOR OVERHEAD (modelled engine: resolve 4 + act 12 + readback 8 ms, bounds read 8 ms on its own lane; the cursor's own code is real): median action without the cursor \(String(format: "%.2f", without)) ms, with it \(String(format: "%.2f", with)) ms, added \(String(format: "%.2f", with - without)) ms")
-        XCTAssertLessThan(with - without, 5, "under 5 ms added to the median action")
-        XCTAssertLessThan(with - without, 1, "the bounds read runs beside the action, so the action pays only the report")
+        print("CURSOR OVERHEAD (modelled engine: resolve 4 + act 12 + readback 8 ms, bounds read 8 ms on its own lane; the cursor's own code is real; 200 alternating pairs): median action without the cursor \(String(format: "%.2f", r.without)) ms, with it \(String(format: "%.2f", r.with)) ms, median added per pair \(String(format: "%.2f", r.added)) ms")
+        XCTAssertLessThan(r.added, 5, "under 5 ms added to the median action")
+        XCTAssertLessThan(r.added, 1, "the bounds read runs beside the action, so the action pays only the report")
     }
 
     func testWithTheCursorHiddenTheActionPaysNothing() {

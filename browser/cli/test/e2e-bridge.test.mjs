@@ -1843,6 +1843,11 @@ async function moteAt(tabId, want, what) {
 	);
 }
 
+/** Whether the character still has the drag's slow glide or its tug pose on. */
+async function moteClasses(tabId) {
+	return sw(`chrome.scripting.executeScript({ target: { tabId: ${tabId}, frameIds: [0] }, world: "ISOLATED", func: () => { const m = globalThis.__polycarpVeil?.mote; return m ? { slow: m.classList.contains("slow"), tug: m.classList.contains("r-tug") } : null; } }).then((r) => r[0].result)`);
+}
+
 const centerOf = (target, js) => inPage(target, `(() => { const r = (${js}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
 
 test("the pointer character goes to what the agent clicks and types into, only on the tab in use, never in the agent's screenshot", async () => {
@@ -1858,6 +1863,10 @@ test("the pointer character goes to what the agent clicks and types into, only o
 		const page = await pageTarget("/mote?t=agent");
 		await until(() => inPage(page, VEIL_PROBE), 10_000, "the veil");
 		assert.equal(await motePoint(tabId), null, "the pointer shows before any pointer action");
+		// A first cue with no point (a key with nothing focused) leaves it hidden, not in the middle of the page.
+		await on(agent, "press", { key: "Shift" });
+		await new Promise((r) => setTimeout(r, 400));
+		assert.equal(await motePoint(tabId), null, "a first cue with no point showed the pointer");
 
 		// A scrolled page: the agent scrolls to the button and clicks it by ref.
 		await on(agent, "scroll", { dy: 700 });
@@ -1922,6 +1931,11 @@ test("the pointer character goes to what the agent clicks and types into, only o
 		await on(agent, "click", { ref: refFor(snap3, "Go here") });
 		await moteAt(tabId, await centerOf(page, "document.getElementById('go')"), "turned back on");
 
+		// A click that cuts a drag's follow short: the drag's slow glide does not stay on for later moves.
+		await on(agent, "actions", { tabId, steps: [{ drag: { from: { x: 100, y: 120 }, to: { x: 220, y: 180 } } }, { wait: 200 }, { click: { x: 120, y: 240 } }] });
+		await new Promise((r) => setTimeout(r, 1_300));
+		assert.deepEqual(await moteClasses(tabId), { slow: false, tug: false }, "the drag's glide stayed on after a click cut it short");
+
 		// It leaves with the veil.
 		await on(agent, "tabs_release", { tabId });
 		await until(async () => (await inPage(page, VEIL_PROBE)) === null, 2_000, "the veil to go on release");
@@ -1929,6 +1943,40 @@ test("the pointer character goes to what the agent clicks and types into, only o
 	} finally {
 		if (tabId !== undefined) await sw(`chrome.tabs.setZoom(${tabId}, 1).catch(() => {})`).catch(() => undefined);
 		await sw("chrome.storage.local.remove('veil_pointer').then(() => { globalThis.__POLYCARP_VEIL_IDLE_MS = undefined; })").catch(() => undefined);
+		await agent.close();
+	}
+});
+
+// first-F2 of the #189 review: a press cues the character after its keys are up, so an Enter that submits a form and
+// leaves the page cues a document that is going or new. It does not move the character (D47); the call still works,
+// and the next pointer action on the new page moves it.
+extraPages["/mote-form"] = `<!doctype html><title>Pointer form</title>
+<body style="margin:0;background:#fff;font:16px sans-serif">
+<form action="/mote" method="get" style="position:absolute;left:200px;top:200px"><input name="t" aria-label="Query" style="width:200px;height:30px"></form></body>`;
+
+test("the pointer character: an Enter that submits a form and leaves the page neither fails nor leaves it stuck", async () => {
+	await connected();
+	const project = join(home, "projects", "mote-form");
+	mkdirSync(project, { recursive: true });
+	execFileSync("git", ["init", "-q", project]);
+	const agent = await agentIn(project);
+	try {
+		await sw("globalThis.__POLYCARP_VEIL_IDLE_MS = 120000");
+		const tabId = JSON.parse(await on(agent, "navigate", { url: `${pageUrl}mote-form` })).tabId;
+		const form = await pageTarget("/mote-form");
+		await until(() => inPage(form, VEIL_PROBE), 10_000, "the veil");
+		await on(agent, "type", { ref: refFor(await on(agent, "read_page", { filter: "interactive" }), "Query"), text: "next" });
+		assert.equal(await inPage(form, "document.querySelector('input').value"), "next", "the text did not reach the field");
+		await on(agent, "press", { key: "Enter" });
+		const next = await pageTarget("/mote?t=next");
+		await until(() => inPage(next, VEIL_PROBE), 10_000, "the veil on the new page");
+		const snap = await on(agent, "read_page", { filter: "interactive" });
+		await on(agent, "click", { ref: refFor(snap, "Go here") });
+		assert.equal(await inPage(next, "window.goes"), 1);
+		assert.equal((await moteAt(tabId, await centerOf(next, "document.getElementById('go')"), "a click after the Enter")).action, "click");
+		await on(agent, "tabs_release", { tabId });
+	} finally {
+		await sw("globalThis.__POLYCARP_VEIL_IDLE_MS = undefined").catch(() => undefined);
 		await agent.close();
 	}
 });
@@ -2151,6 +2199,239 @@ test("files save_pdf: the page as a PDF file on this computer", async () => {
 		assert.throws(() => statSync(pdf.path));
 	} finally {
 		await a.close();
+	}
+});
+
+// Cross-origin frames (D46): one on another port of this host (same site, the same process) and
+// one on localhost (another site, its own process). Both are read and acted on by ref.
+const FRAME_INNER = (k) => `<!doctype html><title>inner ${k}</title>
+<button onclick="document.getElementById('r').textContent='Paid ${k}'">Pay ${k}</button>
+<input aria-label="Card name ${k}" oninput="document.getElementById('echo').textContent='Name is '+this.value">
+<input type="password" aria-label="Pin ${k}" value="pin${k}SECRET42">
+<a href="/inner2">Next ${k}</a>
+<p id="r">unpaid ${k}</p><p id="echo"></p>`;
+
+function frameRef(snapshot, label) {
+	const line = snapshot.split("\n").find((l) => l.includes(label));
+	return line?.match(/\b(f[0-9a-z]{4}e\d+)\b/)?.[1];
+}
+
+test("cross-origin frames: read, click and fill inside a same-site and a cross-site frame; a covered or gone frame refuses", async () => {
+	const inner = createServer((req, res) => {
+		res.writeHead(200, { "content-type": "text/html" });
+		if (req.url.startsWith("/inner2")) return res.end("<!doctype html><title>inner2</title><p>Second page</p>");
+		res.end(FRAME_INNER(new URL(req.url, "http://x").searchParams.get("k")));
+	});
+	await new Promise((r) => inner.listen(0, "127.0.0.1", r));
+	const port = inner.address().port;
+	const hostsWere = await sw("chrome.storage.local.get('bridge_allowed_hosts').then((d) => d.bridge_allowed_hosts ?? [])");
+	const setHosts = (hosts) => sw(`chrome.storage.local.set({ bridge_allowed_hosts: ${JSON.stringify(hosts)} }).then(() => true)`);
+	try {
+		// localhost is another site the person never allowed for agents: its frame is named, never read.
+		await setHosts(hostsWere.filter((h) => h !== "localhost"));
+		extraPages["/xo"] = `<!doctype html><title>Polycarp frames</title><h1>Shop</h1>
+<iframe src="http://127.0.0.1:${port}/inner?k=same" style="width:400px;height:160px;border:3px solid #ccc;margin:10px"></iframe>
+<iframe src="http://localhost:${port}/inner?k=cross" style="width:400px;height:160px;border:0"></iframe>`;
+		// Below the fold, in a frame taller than the window: the click scrolls the page and the frame.
+		extraPages["/xo-far"] = `<!doctype html><title>Polycarp far frame</title><div style="height:1400px">Top</div>
+<iframe src="http://localhost:${port}/inner?k=far" style="width:400px;height:1200px;border:0"></iframe><div style="height:600px"></div>`;
+		// A banner over the frame's top, where its controls are: the frame is read, its covered controls refuse.
+		extraPages["/xo-cover"] = `<!doctype html><title>Polycarp covered frame</title>
+<div style="position:relative;width:420px;height:170px"><iframe src="http://localhost:${port}/inner?k=under" style="width:400px;height:160px;border:0"></iframe><div style="position:absolute;left:0;top:0;width:420px;height:60px;background:rgba(0,0,0,.2)">Cookie wall</div></div>`;
+		// Frames a person can't see are not read: see-through, hidden, a pixel, kept off the page, under a wall, in a see-through box.
+		extraPages["/xo-hidden"] = `<!doctype html><title>Polycarp hidden frames</title>
+<iframe src="http://localhost:${port}/inner?k=seen" style="width:300px;height:120px;border:0"></iframe>
+<iframe src="http://localhost:${port}/inner?k=op" style="width:300px;height:120px;border:0;opacity:0"></iframe>
+<iframe src="http://localhost:${port}/inner?k=vis" style="width:300px;height:120px;border:0;visibility:hidden"></iframe>
+<iframe src="http://localhost:${port}/inner?k=tiny" style="width:1px;height:1px;border:0"></iframe>
+<iframe src="http://localhost:${port}/inner?k=off" style="position:absolute;left:-9999px;top:0;width:300px;height:120px;border:0"></iframe>
+<div style="opacity:0"><iframe src="http://localhost:${port}/inner?k=box" style="width:300px;height:120px;border:0"></iframe></div>
+<div style="position:relative;width:300px;height:120px"><iframe src="http://localhost:${port}/inner?k=wall" style="width:300px;height:120px;border:0"></iframe><div style="position:absolute;inset:0;background:#fff">Sign in to continue</div></div>
+<iframe src="http://localhost:${port}/inner?k=faint" style="width:300px;height:120px;border:0;opacity:0.01"></iframe>
+<iframe src="http://localhost:${port}/inner?k=filt" style="width:300px;height:120px;border:0;filter:opacity(0)"></iframe>
+<div id="shadowed"></div><script>document.getElementById("shadowed").attachShadow({ mode: "open" }).innerHTML = '<iframe src="http://localhost:${port}/inner?k=shad" style="width:300px;height:120px;border:0"></iframe>';</script>
+<div style="margin-top:3000px;position:relative;width:300px;height:120px"><iframe src="http://localhost:${port}/inner?k=low" style="width:300px;height:120px;border:0"></iframe><div style="position:absolute;inset:0;background:#fff">Sign in</div></div>`;
+		// A see-through frame under a shown one, the same box and first in the page: it never stands in for it.
+		extraPages["/xo-ghost"] = `<!doctype html><title>Polycarp ghost frame</title>
+<div style="position:relative;width:300px;height:120px"><iframe src="http://localhost:${port}/inner?k=ghost" style="position:absolute;left:0;top:0;width:300px;height:120px;border:0;opacity:0"></iframe><iframe src="http://localhost:${port}/inner?k=over" style="position:absolute;left:0;top:0;width:300px;height:120px;border:0"></iframe></div>`;
+		// Drawn at half size: a point in the frame is half as far from its corner in the tab.
+		extraPages["/xo-half"] = `<!doctype html><title>Polycarp half frame</title>
+<iframe src="http://localhost:${port}/inner?k=half" style="width:600px;height:160px;border:0;transform:scale(0.5);transform-origin:0 0"></iframe>`;
+		extraPages["/xo-scroll"] = `<!doctype html><title>Polycarp frame scroll</title><div style="height:1500px">Top</div>
+<iframe src="http://localhost:${port}/inner?k=long" style="width:400px;height:200px;border:0"></iframe><div style="height:2000px"></div>`;
+		await go("xo");
+		// The frames load after the page: wait until both are in the snapshot.
+		let page = "";
+		await until(async () => {
+			page = await tool("read_page", { filter: "interactive" });
+			return frameRef(page, "Pay same") && /not allowed for agents: localhost/.test(page);
+		}, 10_000, "the same-site frame read and the cross-site one named");
+		assert.doesNotMatch(await tool("read_page", {}), /Pay cross|unpaid cross|Card name cross/, "nothing of a frame on a host not allowed for agents");
+		const forged = await mcp.callTool({ name: "click", arguments: { ref: "fzzzze1" } });
+		assert.ok(forged.isError, "a ref naming no frame fails");
+		assert.match(forged.content[0].text, /not found/);
+
+		tk("allow", "localhost");
+		await until(async () => {
+			page = await tool("read_page", { filter: "interactive" });
+			return frameRef(page, "Pay same") && frameRef(page, "Pay cross");
+		}, 10_000, "both frames in read_page once localhost is allowed");
+		assert.doesNotMatch(page, /pinsameSECRET42|pincrossSECRET42/, "a password in a frame stays masked");
+		// Taken back: a ref read while it was allowed refuses, naming how to allow it again.
+		await setHosts(hostsWere.filter((h) => h !== "localhost"));
+		const refused = await mcp.callTool({ name: "click", arguments: { ref: frameRef(page, "Pay cross") } });
+		assert.ok(refused.isError, "a frame ref on a host no longer allowed refuses");
+		assert.match(refused.content[0].text, /permission_denied|Not allowed to open localhost:\d+: .*polycarp browser allow localhost/);
+		assert.doesNotMatch(await tool("read_page", {}), /Paid cross/, "and nothing was clicked");
+		tk("allow", "localhost");
+
+		for (const k of ["same", "cross"]) {
+			// The change report looks in the frame acted in: the click's effect and the filled value are in it.
+			const clicked = await tool("click", { ref: frameRef(page, `Pay ${k}`) });
+			assert.match(clicked, new RegExp(`Paid ${k}`), `the click's changes show what it did in the ${k} frame`);
+			const filled = await tool("fill", { ref: frameRef(page, `Card name ${k}`), value: `Ann ${k}` });
+			assert.match(filled, new RegExp(`Ann ${k}`), `the fill's changes show the ${k} frame's field`);
+			const all = await tool("read_page", {});
+			assert.match(all, new RegExp(`Paid ${k}`), `the click reached the ${k} frame`);
+			assert.match(all, new RegExp(`Name is Ann ${k}`), `fill reached the ${k} frame`);
+		}
+		await tool("type", { ref: frameRef(page, "Card name cross"), text: "!" });
+		assert.match(await tool("read_page", {}), /Name is Ann cross!/, "type reached the frame");
+		await tool("hover", { ref: frameRef(page, "Pay cross") });
+		const found = await tool("find", { query: "pay cross" });
+		assert.match(found, /f[0-9a-z]{4}e\d+/, "find returns the frame ref");
+
+		// The frame navigates away: its old refs fail, never acting elsewhere.
+		const old = frameRef(page, "Pay cross");
+		await tool("click", { ref: frameRef(page, "Next cross") });
+		const stale = await mcp.callTool({ name: "click", arguments: { ref: old } });
+		assert.ok(stale.isError, "an old frame ref fails");
+		assert.match(stale.content[0].text, /not found|something else/);
+
+		await go("xo-far");
+		// Below the fold nothing can be tested for a cover, so the frame is named, not read, until scrolled to.
+		let far = "";
+		await until(async () => {
+			far = await tool("read_page", { filter: "interactive" });
+			return /out of view: scroll to it/.test(far);
+		}, 10_000, "the far frame named as out of view");
+		assert.doesNotMatch(far, /Pay far/, "nothing of a frame out of view is read");
+		await tool("scroll", { ref: refFor(far, "out of view") });
+		await until(async () => {
+			far = await tool("read_page", { filter: "interactive" });
+			return frameRef(far, "Pay far");
+		}, 10_000, "the far frame in read_page once scrolled to");
+		// Its refs hold when the page scrolls away again: the click brings the frame back into view.
+		await tool("scroll", { to: "top" });
+		await tool("click", { ref: frameRef(far, "Pay far") });
+		assert.match(await tool("read_page", {}), /Paid far/, "a click below the fold reaches the frame");
+
+		await go("xo-half");
+		let half = "";
+		await until(async () => {
+			half = await tool("read_page", { filter: "interactive" });
+			return frameRef(half, "Next half");
+		}, 10_000, "the half-size frame in read_page");
+		await tool("click", { ref: frameRef(half, "Next half") });
+		assert.match(await tool("read_page", {}), /Second page/, "the click landed on the link in the half-size frame");
+
+		await go("xo-scroll");
+		let long = "";
+		await until(async () => /out of view/.test(await tool("read_page", { filter: "interactive" })), 10_000, "the frame below the fold");
+		await tool("scroll", { ref: refFor(await tool("read_page", { filter: "interactive" }), "out of view") });
+		await until(async () => {
+			long = await tool("read_page", { filter: "interactive" });
+			return frameRef(long, "Pay long");
+		}, 10_000, "the frame to scroll to in read_page");
+		await tool("scroll", { to: "bottom" });
+		const scrolled = JSON.parse(await tool("scroll", { ref: frameRef(long, "Pay long") }));
+		const top = JSON.parse(await tool("run_js", { code: "({ y: Math.round(scrollY), h: document.documentElement.scrollHeight })" })).value;
+		assert.equal(scrolled.pageHeight, top.h, "the page's height, not the frame's");
+		assert.ok(top.y > 0 && Math.abs(scrolled.scrollY - top.y) <= 1, `the page's position, not the frame's: ${scrolled.scrollY} vs ${top.y}`);
+
+		await go("xo-cover");
+		let covered = "";
+		await until(async () => {
+			covered = await tool("read_page", { filter: "interactive" });
+			return frameRef(covered, "Pay under");
+		}, 10_000, "the covered frame in read_page");
+		const r = await mcp.callTool({ name: "click", arguments: { ref: frameRef(covered, "Pay under") } });
+		assert.ok(r.isError, "a click into a covered frame refuses");
+		assert.match(r.content[0].text, /covered/);
+		const f = await mcp.callTool({ name: "fill", arguments: { ref: frameRef(covered, "Card name under"), value: "Eve" } });
+		assert.ok(f.isError, "a fill into a covered field refuses");
+		assert.match(f.content[0].text, /covered/);
+		const after = await tool("read_page", {});
+		assert.doesNotMatch(after, /Paid under|Name is Eve/);
+
+		await go("xo-hidden");
+		let hidden = "";
+		await until(async () => {
+			hidden = await tool("read_page", {});
+			return /Pay seen/.test(hidden) && /Pay shad/.test(hidden);
+		}, 10_000, "the shown frame in read_page");
+		await new Promise((r) => setTimeout(r, 500));
+		hidden = await tool("read_page", {});
+		assert.match(hidden, /Pay shad\b/, "a frame in a shadow root is read");
+		assert.match(hidden, /out of view: scroll to it/, "a frame below the fold is named, not read");
+		for (const k of ["op", "vis", "tiny", "off", "box", "wall", "faint", "filt", "low"])
+			assert.doesNotMatch(hidden, new RegExp(`(Pay|unpaid|Card name|Next) ${k}\\b`), `the ${k} frame is not read`);
+		await go("xo-ghost");
+		let under = "";
+		await until(async () => {
+			under = await tool("read_page", {});
+			return /Pay over/.test(under);
+		}, 10_000, "the shown frame over the see-through one");
+		assert.doesNotMatch(under, /(Pay|unpaid|Card name) ghost\b/, "nothing of the see-through frame under it");
+
+		await go("xo-hidden");
+		await until(async () => /Pay seen/.test(await tool("read_page", {})), 10_000, "the shown frame again");
+		// Shown when read, made see-through after: the refs from then must not act in it.
+		const seen = await tool("read_page", { filter: "interactive" });
+		await tool("run_js", { code: "document.querySelector('iframe').style.opacity = '0'" });
+		const ghost = await mcp.callTool({ name: "click", arguments: { ref: frameRef(seen, "Pay seen") } });
+		assert.ok(ghost.isError, "a click into a frame made see-through after the read refuses");
+		assert.match(ghost.content[0].text, /isn't shown now: its frame is hidden/);
+		const ghostFill = await mcp.callTool({ name: "fill", arguments: { ref: frameRef(seen, "Card name seen"), value: "Eve" } });
+		assert.ok(ghostFill.isError, "a fill into it refuses too");
+		const ghostScroll = await mcp.callTool({ name: "scroll", arguments: { ref: frameRef(seen, "Pay seen"), dy: 100 } });
+		assert.ok(ghostScroll.isError, "a scroll in it refuses too");
+		assert.match(ghostScroll.content[0].text, /isn't shown now: its frame is hidden/);
+		await tool("run_js", { code: "document.querySelector('iframe').style.opacity = ''" });
+		assert.doesNotMatch(await tool("read_page", {}), /Paid seen|Name is Eve/, "nothing was clicked or filled in it");
+	} finally {
+		await setHosts(hostsWere).catch(() => undefined);
+		inner.close();
+	}
+});
+
+test("a confirm() a cross-site frame opens is answered there, after a worker restart too", async () => {
+	const inner = createServer((req, res) => {
+		res.writeHead(200, { "content-type": "text/html" });
+		res.end(`<!doctype html><button onclick="document.getElementById('r').textContent = confirm('Pay now?') ? 'answered yes' : 'answered no'">Ask</button><p id="r">unasked</p>`);
+	});
+	await new Promise((r) => inner.listen(0, "127.0.0.1", r));
+	const hostsWere = await sw("chrome.storage.local.get('bridge_allowed_hosts').then((d) => d.bridge_allowed_hosts ?? [])");
+	try {
+		tk("allow", "localhost");
+		extraPages["/xo-dialog"] = `<!doctype html><title>Polycarp frame dialog</title><iframe src="http://localhost:${inner.address().port}/" style="width:300px;height:100px;border:0"></iframe>`;
+		await go("xo-dialog");
+		const page = await until(async () => {
+			const p = await tool("read_page", { filter: "interactive" });
+			return frameRef(p, "Ask") && p;
+		}, 10_000, "the frame's button");
+		const clicked = JSON.parse(await tool("click", { ref: frameRef(page, "Ask") }));
+		assert.equal(clicked.dialog?.message, "Pay now?", JSON.stringify(clicked));
+		const version = await (await fetch(`http://${devtools}/json/version`)).json();
+		const worker = (await (await fetch(`http://${devtools}/json/list`)).json()).find((t) => t.type === "service_worker" && t.url.includes(EXTENSION_ID));
+		await cdp(version.webSocketDebuggerUrl, "Target.closeTarget", { targetId: worker.id });
+		await connected();
+		const answered = JSON.parse(await tool("handle_dialog", { accept: true }));
+		assert.equal(answered.accepted, true);
+		assert.match(await tool("read_page", {}), /answered yes/, "the box in the frame was answered, and the page goes on");
+	} finally {
+		await sw(`chrome.storage.local.set({ bridge_allowed_hosts: ${JSON.stringify(hostsWere)} }).then(() => true)`).catch(() => undefined);
+		inner.close();
 	}
 });
 
