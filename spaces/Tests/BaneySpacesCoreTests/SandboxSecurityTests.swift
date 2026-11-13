@@ -334,6 +334,8 @@ final class SandboxIPv6EnforcementTests: XCTestCase {
     func testAReachableIPv6TargetFails() throws {
         let r = Rig.make(); defer { r.manager.shutdown(); try? FileManager.default.removeItem(at: r.dir) }
         _ = try r.manager.up(task: "t1")
+        // The warm clone's self-check reads these fakes on its own thread: let it finish before they change (TSan, 11-12).
+        XCTAssertTrue(r.manager.waitUntilWarm(limit: 120))
         r.tart.v6Leak = true
         XCTAssertTrue(SandboxSelfcheck.rootIPv6Attempt(vm: r.manager.snapshot().vm!, tart: r.st, hostFacts: r.facts).contains { $0.contains("reached") })
         r.tart.v6Leak = false
@@ -344,6 +346,7 @@ final class SandboxIPv6EnforcementTests: XCTestCase {
     func testNoBridgeAddressMeansTheTestProvedNothing() throws {
         let r = Rig.make(); defer { r.manager.shutdown(); try? FileManager.default.removeItem(at: r.dir) }
         _ = try r.manager.up(task: "t1")
+        XCTAssertTrue(r.manager.waitUntilWarm(limit: 120), "the warm clone's self-check is done reading the facts")
         r.facts.facts.bridge6 = []
         XCTAssertFalse(SandboxSelfcheck.rootIPv6Attempt(vm: r.manager.snapshot().vm!, tart: r.st, hostFacts: r.facts).isEmpty)
     }

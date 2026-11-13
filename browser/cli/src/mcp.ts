@@ -630,10 +630,10 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 					// No text asked for is none, whatever an extension sent.
 					const whole = maxTextChars ? given : { ...given, text: "" };
 					if (ranked) {
-						const { nodes, next } = rankedSlice(ranked, whole.nodes, maxNodes);
+						const { nodes, next, shown } = rankedSlice(ranked, whole.nodes, maxNodes);
 						const { snap } = fitSnapshot({ ...whole, nodes }, maxNodes, maxTextChars);
 						const cut = whole.text.length > maxTextChars;
-						return { content: text(handoffFor(formatSnapshot(snap)) + rankNote(ranked, snap.nodes.length, { maxTextChars, cut }, { next, has })) };
+						return { content: text(handoffFor(formatSnapshot(snap)) + rankNote(ranked, shown, { maxTextChars, cut }, { next, has })) };
 					}
 					const { snap, note } = fitSnapshot(whole, maxNodes, maxTextChars);
 					// An extension from before ranking can't skip controls: an offset there would give the first ones again.

@@ -58,6 +58,24 @@ test("a later slice after removals ends at the window's last position and says w
 	assert.equal(rankedSlice(counts({ offset: 50 }), Array.from({ length: 51 }, (_, i) => i), 50).next, 100);
 });
 
+// A cross-origin frame's controls (main's #211) follow the frame's line inside a ranked read but hold no position, so
+// they never push a page control out of its slice or shift where the next slice starts.
+test("a frame's controls in a ranked read don't count as ranked positions", () => {
+	const page = Array.from({ length: 6 }, (_, i) => ({ ref: `e${i + 1}` }));
+	const frame = [{ ref: "fk3z9e1" }, { ref: "fk3z9e2" }];
+	const nodes = [page[0], page[1], ...frame, ...page.slice(2)];
+	const first = rankedSlice(counts({ total: 6, next: 6 }), nodes, 4);
+	assert.deepEqual(first.nodes.map((n) => n.ref), ["e1", "e2", "fk3z9e1", "fk3z9e2"], "the cap still bounds what is shown");
+	assert.equal(first.next, 2, "the next slice starts at the first page control left out");
+	const all = rankedSlice(counts({ total: 6, next: 6 }), nodes, 10);
+	assert.equal(all.nodes.length, 8);
+	assert.equal(all.next, 6, "frame controls don't move the end of the ranking");
+	const later = rankedSlice(counts({ offset: 2, next: 6, positions: [2, 3, 4, 5] }), [page[2], ...frame, page[3], page[4], page[5]], 3);
+	assert.deepEqual(later.nodes.map((n) => n.ref), ["e3", "fk3z9e1", "fk3z9e2"]);
+	assert.equal(later.next, 3);
+	assert.equal(later.shown, 1, "the note counts page controls only, so frame controls don't hide ones that left");
+});
+
 // PR 201 second-F6: the note names only tools the session has.
 test("a ranked read's note in a session without find or get_page_text names neither", () => {
 	const has = (t) => t === "read_page";
