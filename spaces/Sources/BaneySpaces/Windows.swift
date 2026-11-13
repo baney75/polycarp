@@ -145,9 +145,42 @@ enum Windows {
     private static var bench = AXBench()
     private static let unresponsiveLock = NSLock()
 
+    /// Launches being watched (`OpenFlashGuard.Holds`): each one's process isn't asked unless one of its covers is up.
+    private static var holds = OpenFlashGuard.Holds()
+    /// Asks a process again after a scan skipped it, once its cover is up or its watch is over (`Spaces.askAgain`).
+    static var onHoldEnd: ((pid_t) -> Void)?
+
+    /// On the main thread. A launch's hold ends at `holdFor`, when no cover can be up, and a scan it skipped runs again.
+    static func hold(_ pid: pid_t) {
+        unresponsiveLock.lock(); holds.hold(pid, at: ProcessInfo.processInfo.systemUptime); unresponsiveLock.unlock()
+        DispatchQueue.main.asyncAfter(deadline: .now() + OpenFlashGuard.holdFor) {
+            unresponsiveLock.lock(); let again = holds.lapse(now: ProcessInfo.processInfo.systemUptime); unresponsiveLock.unlock()
+            for pid in again { Trace.log("flash guard cover: pid \(pid) hold over after \(OpenFlashGuard.holdFor) s; asked again"); onHoldEnd?(pid) }
+        }
+    }
+
+    /// On the main thread, after main painted (or took down) `pid`'s covers: asks are let through only while one is up.
+    static func covered(_ pid: pid_t, _ up: Bool) {
+        unresponsiveLock.lock(); let again = holds.covered(pid, up); unresponsiveLock.unlock()
+        if again { onHoldEnd?(pid) }
+    }
+
+    /// Ends `pid`'s hold when its watch is over, on the main thread; a scan that skipped it is run again now.
+    static func release(_ pid: pid_t) {
+        unresponsiveLock.lock(); let again = holds.release(pid); unresponsiveLock.unlock()
+        if again { onHoldEnd?(pid) }
+    }
+
+    /// Whether `pid`'s launch hold is on: its watch is live and no cover of it is up.
+    static func isHeld(_ pid: pid_t) -> Bool {
+        unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
+        return holds.holds(pid, now: ProcessInfo.processInfo.systemUptime)
+    }
+
     static func isResponsive(_ pid: pid_t) -> Bool {
         unresponsiveLock.lock(); defer { unresponsiveLock.unlock() }
-        return !bench.isBenched(pid, now: Date())
+        let now = Date()
+        return !holds.skips(pid, now: ProcessInfo.processInfo.systemUptime) && !bench.isBenched(pid, now: now)
     }
 
     static func markUnresponsive(_ pid: pid_t) {

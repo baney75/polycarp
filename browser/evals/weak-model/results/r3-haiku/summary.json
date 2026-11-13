@@ -1,0 +1,29 @@
+{
+	"label": "r3-haiku",
+	"model": "claude-haiku-5-5",
+	"trials": 2,
+	"profile": "full",
+	"date": "2026-11-12T18:49:38.029Z",
+	"passed": 30,
+	"total": 30,
+	"calls": 303,
+	"toolErrors": 4,
+	"resultChars": 174017,
+	"tasks": {
+		"autocomplete": {"pass":2,"of":2,"calls":[12,13],"errors":[0,0]},
+		"contact-form": {"pass":2,"of":2,"calls":[11,11],"errors":[0,0]},
+		"iframe-form": {"pass":2,"of":2,"calls":[11,10],"errors":[0,0]},
+		"late-element": {"pass":2,"of":2,"calls":[9,10],"errors":[0,1]},
+		"long-article": {"pass":2,"of":2,"calls":[3,3],"errors":[0,0]},
+		"modal-confirm": {"pass":2,"of":2,"calls":[10,10],"errors":[0,1]},
+		"native-dialog": {"pass":2,"of":2,"calls":[9,9],"errors":[1,1]},
+		"new-tab": {"pass":2,"of":2,"calls":[8,8],"errors":[0,0]},
+		"pagination": {"pass":2,"of":2,"calls":[20,19],"errors":[0,0]},
+		"pdf-search": {"pass":2,"of":2,"calls":[5,4],"errors":[0,0]},
+		"rerender-list": {"pass":2,"of":2,"calls":[8,8],"errors":[0,0]},
+		"select-date": {"pass":2,"of":2,"calls":[17,13],"errors":[0,0]},
+		"signup-validation": {"pass":2,"of":2,"calls":[9,9],"errors":[0,0]},
+		"table-filter": {"pass":2,"of":2,"calls":[7,6],"errors":[0,0]},
+		"wizard": {"pass":2,"of":2,"calls":[15,16],"errors":[0,0]}
+	}
+}

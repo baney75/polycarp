@@ -23,10 +23,46 @@ final class SessionClipboardRefusalTests: XCTestCase {
         for i in 0...SnapshotRowsMemory.history { m.remember(session: "a", window: 9, view: .full, as: "snapshot", snapshot: "s\(i)", rows: [], now: Date()) }
         XCTAssertNil(m.read(snapshot: "s0", session: "a"))
         let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
-        XCTAssertTrue(router.contains("pasteboard: SessionClipboard.pasteboardRefs(refmap: file))"), "recorded when the snapshot is taken")
+        // 214 r1 second-S2: recorded when the snapshot is taken, parsed before the router-wide lock.
+        let remember = try XCTUnwrap(HandsSourceTests.block(after: "private func remember(_ data: JSONValue", in: router))
+        let parse = try XCTUnwrap(remember.range(of: "let pasteboard = SessionClipboard.pasteboardRefs(refmap: file)"))
+        XCTAssertLessThan(parse.lowerBound, try XCTUnwrap(remember.range(of: "lock.lock()")).lowerBound)
+        XCTAssertTrue(remember.contains("pasteboard: pasteboard)"))
         let check = try XCTUnwrap(HandsSourceTests.block(after: "private func pasteboardItem(", in: router))
         let held = try XCTUnwrap(check.range(of: "snaps[sid]?.pasteboard[key]")), rows = try XCTUnwrap(check.range(of: "withRows("))
         XCTAssertLessThan(held.lowerBound, rows.lowerBound)
+    }
+
+    /// 214 r1 first-F2: a refmap the engine itself wrote (agent-desktop's `RefMap`, serialized by serde in its own
+    /// test), so a change to its shape fails here, not in silence. Its keys are the ones a ref resolves to.
+    func testAnEngineWrittenRefmapGivesItsPasteboardRefs() throws {
+        let url = HandsSourceTests.root.appendingPathComponent("Tests/BaneySpacesCoreTests/Fixtures/engine-refmap-menu.json")
+        let file = try Data(contentsOf: url)
+        let refs = C.pasteboardRefs(refmap: file)
+        XCTAssertEqual(refs, ["@e1": "Kopieren", "@e3": "Paste", "@e5": "Copy", "@e6": "Paste"])
+        XCTAssertNotNil(refs[try XCTUnwrap(RefmapIdentity.key(forRef: "@sX:e1"))])
+        let table = try XCTUnwrap(RefmapIdentity.table(from: file))
+        XCTAssertTrue(RefmapIdentity.allTarget(table, window: 9, pid: 7))
+    }
+
+    /// 214 r1 first-F1, first-F4: only an action-shaped identifier clears an English title; titles are trimmed.
+    func testAnAppsOwnIdentifierOnARealCopyItemStillCounts() {
+        XCTAssertTrue(C.isPasteboardItem(role: "menuitem", name: "Copy", identifier: "menu.edit.copy"))
+        XCTAssertFalse(C.isPasteboardItem(role: "menuitem", name: "Kopieren", identifier: "menu.edit.copy"))
+        XCTAssertFalse(C.isPasteboardItem(role: "menuitem", name: "Copy", identifier: "syncMode:"), "wired to another action")
+        XCTAssertTrue(C.isPasteboardItem(role: "menuitem", name: "Kopieren", identifier: " copy: "))
+        XCTAssertTrue(C.isPasteboardItem(role: "menuitem", name: " Paste\n", identifier: ""), "trimmed, as the engine trims")
+    }
+
+    /// 214 r1 first-F3: text with paste is wrong arguments, said before the ref resolves or the app is waited for.
+    func testTextWithPasteIsRefusedBeforeAnyWait() throws {
+        XCTAssertEqual(C.both(text: "x", paste: true)?.code, .badArguments)
+        XCTAssertNil(C.both(text: nil, paste: true))
+        XCTAssertNil(C.both(text: "x", paste: false))
+        let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        let act = try XCTUnwrap(HandsSourceTests.block(after: "private func act(_ req: HandsRequest", in: router))
+        let refuse = try XCTUnwrap(act.range(of: "SessionClipboard.both(text: text, paste: pasted)"))
+        XCTAssertLessThan(refuse.lowerBound, try XCTUnwrap(act.range(of: "resolve(ref, session: session)")).lowerBound)
     }
 
     /// first-F3, second-S1: by identifier first; an option is matched ignoring case; a closed popup's item is the engine's.
@@ -86,7 +122,7 @@ final class SessionClipboardRefusalTests: XCTestCase {
         XCTAssertFalse(KeyTranslation.characters(c, layouts: [dvorak], keyboardType: kind).contains("c"), "and j where ANSI has c")
         XCTAssertEqual(KeyTranslation.character(c, modifiers: 0, layout: russian, keyboardType: kind), "\u{0441}", "Russian types es")
         XCTAssertTrue(KeyTranslation.characters(c, layouts: [russian, us], keyboardType: kind).contains("c"), "the ASCII-capable layout gives the shortcut's c")
-        XCTAssertEqual(KeyTranslation.characters(c, layouts: [Data(), Data([1, 2, 3])], keyboardType: kind), [], "no layout data, no characters")
+        XCTAssertEqual(KeyTranslation.characters(c, layouts: [Data(), Data([1, 2, 3])], keyboardType: kind), [], "data too short for a layout header gives no characters")
     }
 
     /// first-F4: the layout is read only for a chord with command held, so a plain sequence never waits on main.
