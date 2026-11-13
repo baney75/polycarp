@@ -77,7 +77,7 @@ export function localComputerHelper(): string | undefined {
 type HelperTool = {
 	name: string;
 	description?: string;
-	inputSchema?: { properties?: Record<string, { type?: string; description?: string }>; required?: string[] };
+	inputSchema?: { properties?: Record<string, { type?: string; description?: string; items?: { type?: string } }>; required?: string[] };
 	annotations?: { readOnlyHint?: unknown };
 };
 
@@ -89,10 +89,18 @@ function toComputerTool(tool: HelperTool, readOnly: boolean): ComputerTool {
 
 type CallResult = { content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[]; isError?: boolean };
 
-/** One property of the helper's tool list. The kinds it has today; an unknown one takes anything, and the helper checks it. */
+/** One property of the helper's tool list. The kinds it has today; an unknown one takes anything, and the helper checks it.
+ * An array's items are their own kind: `run_steps` lists objects (251 r1 first-F1), and an array with no item kind is strings. */
 function field(schema: { type?: string; description?: string; items?: { type?: string } }): ZodTypeAny {
-	const kinds: Record<string, ZodTypeAny> = { string: z.string(), integer: z.number().int(), number: z.number(), boolean: z.boolean(), array: z.array(z.string()) };
-	const kind = kinds[schema.type ?? ""] ?? z.unknown();
+	const kinds: Record<string, () => ZodTypeAny> = {
+		string: () => z.string(),
+		integer: () => z.number().int(),
+		number: () => z.number(),
+		boolean: () => z.boolean(),
+		object: () => z.record(z.string(), z.unknown()),
+		array: () => z.array(schema.items?.type ? field({ type: schema.items.type }) : z.string()),
+	};
+	const kind = kinds[schema.type ?? ""]?.() ?? z.unknown();
 	return schema.description ? kind.describe(schema.description) : kind;
 }
 
