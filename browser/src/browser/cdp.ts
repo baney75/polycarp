@@ -136,6 +136,9 @@ export function allDialogs(): Array<[number, PageDialog]> {
 	return [...openDialogs];
 }
 
+/** The boxes whose answer is on its way (`answerDialog`). */
+const answering = new Set<number>();
+
 /** Called whenever a dialog opens on any attached tab. Returns an unsubscribe function. */
 export function watchDialogs(fn: (tabId: number, dialog: PageDialog) => void): () => void {
 	dialogWatchers.add(fn);
@@ -179,10 +182,23 @@ export async function answerDialog(
 	if (!dialog) throw new Error("No dialog is open on this tab");
 	// Checked and sent with no await between: the answer goes to this box or to none.
 	if (seq !== undefined && dialog.seq !== seq) throw new Error("That dialog is gone; another one is open on this tab");
+	// One answer per box, whoever sends it (sol-F1 of round 2 of the review of PR 230): a second one sent before the
+	// first's reply could reach the box the page opens next.
+	if (answering.has(dialog.seq))
+		throw new Error("No dialog is open for this answer: that box was already answered. read_page shows the page.");
+	answering.add(dialog.seq);
 	const answer = { accept, ...(promptText !== undefined ? { promptText } : {}) };
-	if (dialog.sessionId)
-		await chrome.debugger.sendCommand({ tabId, sessionId: dialog.sessionId }, "Page.handleJavaScriptDialog", answer);
-	else await send(tabId, "Page.handleJavaScriptDialog", answer);
+	try {
+		if (dialog.sessionId)
+			await chrome.debugger.sendCommand(
+				{ tabId, sessionId: dialog.sessionId },
+				"Page.handleJavaScriptDialog",
+				answer,
+			);
+		else await send(tabId, "Page.handleJavaScriptDialog", answer);
+	} finally {
+		answering.delete(dialog.seq);
+	}
 	settleOutcome(dialog.seq, accept);
 	// Only the box answered: the page may have opened the next one before the answer's reply came back.
 	if (openDialogs.get(tabId)?.seq === dialog.seq) openDialogs.delete(tabId);

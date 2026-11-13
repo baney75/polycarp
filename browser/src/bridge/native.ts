@@ -376,6 +376,13 @@ const tabIdParam = (params: Record<string, unknown> | undefined) =>
 const tabCalls = new Map<number, Set<string>>();
 /** Tabs a call with on_dialog holds until it ends: no other call acts on them meanwhile. */
 const heldTabs = new Map<number, string>();
+/**
+ * Tabs a call's input was still out on when its 30 s count ran out: a box there may be that input's, so on_dialog is
+ * refused and no box gets a cause until it returns (sol-sol-F2 of round 2 of the review of PR 230).
+ */
+const stuckTabs = new Map<number, Set<string>>();
+const othersOn = (tab: number, call: string) =>
+	[...(tabCalls.get(tab) ?? []), ...(stuckTabs.get(tab) ?? [])].some((c) => c !== call);
 /** The actions whose box the guard's notice may name (dialog-guard.ts); a hover, scroll or drag box has no known cause. */
 const CAUSE_KINDS = new Set(["click", "press", "type", "fill"]);
 
@@ -559,6 +566,11 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 					);
 				await new Promise((r) => setTimeout(r, 50));
 			}
+			if (want && stuckTabs.get(want.tabId)?.size)
+				throw new BridgeError(
+					ERR.NOT_SENT,
+					`Input an earlier call sent on tab ${want.tabId} has not come back, and a box it opens could take this answer, so this call with on_dialog was not sent. Send it again later, or send it without on_dialog and answer the box with handle_dialog.`,
+				);
 		}
 		/** The tab and step whose last input is on its way: a box that opens there now is that step's (second-S3). */
 		let delivering: { tabId: number; step?: DeliveredStep } | undefined;
@@ -607,7 +619,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 				if (!CAUSE_KINDS.has(kind)) return;
 				const own = dialog.presetCall === call;
 				// While another call counts on the tab, a timed-out press's release included, no cause is known (sol-F1, PR 230).
-				const rivals = [...(tabCalls.get(tabId) ?? [])].some((c) => c !== call);
+				const rivals = othersOn(tabId, call);
 				const cause: DialogCause = {
 					method: req.method,
 					tabId,
@@ -659,8 +671,8 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 		aborted = true;
 		disarmDialog(call);
 		unwatch?.();
-		// Counted until the handler's input has returned (30 s at most), not just the call: a press that outlived the
-		// call's limit, and its release, can still open a box there (sol-F2 of the review of PR 230).
+		// Counted until the handler's input has returned, not just the call: a press that outlived the call's limit, and its
+		// release, can still open a box there (sol-F2 of the review of PR 230). Past 30 s the tab is stuck (`stuckTabs`).
 		const tabs = onTabs;
 		const release = () => {
 			clearTimeout(cap);
@@ -671,9 +683,18 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 				if (heldTabs.get(tab) === call) heldTabs.delete(tab);
 			}
 		};
-		const cap = work && tabs.length ? setTimeout(release, 30_000) : undefined;
+		const settled = () => {
+			release();
+			for (const tab of tabs)
+				if (stuckTabs.get(tab)?.delete(call) && !stuckTabs.get(tab)?.size) stuckTabs.delete(tab);
+		};
+		const stuck = () => {
+			release();
+			for (const tab of tabs) stuckTabs.set(tab, (stuckTabs.get(tab) ?? new Set()).add(call));
+		};
+		const cap = work && tabs.length ? setTimeout(stuck, 30_000) : undefined;
 		if (cap === undefined) release();
-		else void work?.then(release, release);
+		else void work?.then(settled, settled);
 		if (veiled) veilEnd(veiled.session, req.method, veiled.tabId, veiled.currentBefore);
 		state.abort = undefined;
 		state.inFlight = undefined;

@@ -14,10 +14,12 @@ const { installCdpListeners, openDialog } = await import("../src/browser/cdp.ts"
 const { deps, dialogAsk, reconcile, resetDialogGuard } = await import("../src/browser/dialog-guard.ts");
 installCdpListeners();
 // The bridge's long timers (its prune, each request's 90 s limit) must not hold the test process open.
-/** Set by a test: the bridge's 90 s handler limit runs out after this many ms instead. */
+/** Set by a test: the bridge's 90 s handler limit, or its 30 s count of a call's input, runs out after this many ms. */
 let handlerLimit;
+let countLimit;
 globalThis.setTimeout = (fn, ms, ...args) => {
-	const t = realSetTimeout(fn, ms === 90_000 && handlerLimit ? handlerLimit : ms, ...args);
+	const short = ms === 90_000 ? handlerLimit : ms === 30_000 ? countLimit : undefined;
+	const t = realSetTimeout(fn, short ?? ms, ...args);
 	if (ms >= 10000) t.unref();
 	return t;
 };
@@ -31,6 +33,8 @@ let answers = [];
 const waiting = new Map();
 /** Fail the next OK sent to a box (a detach mid-send, say): the box stays open. */
 let failNextOk = false;
+/** Set by a test: every answer to a box waits for this before it reaches the page. */
+let holdAnswer;
 const fire = (tabId, method, params) => {
 	for (const fn of chrome.debugger.onEvent.listeners) fn({ tabId }, method, params);
 };
@@ -46,6 +50,7 @@ const send = chrome.debugger.sendCommand;
 chrome.debugger.sendCommand = async (target, method, params) => {
 	const tabId = target.tabId;
 	if (method === "Page.handleJavaScriptDialog") {
+		await holdAnswer;
 		const w = waiting.get(tabId);
 		if (params.accept && failNextOk) {
 			failNextOk = false;
@@ -863,6 +868,56 @@ test("second-S1 (review of PR 230): another call's on_dialog box on another tab 
 	hold.release();
 	const r = await reply(one);
 	assert.equal(r.error, undefined, `c1 was stopped by c2's box: ${JSON.stringify(r.error)}`);
+});
+
+test("sol-sol-F2 (round 2 of the review of PR 230): input out past the 30 s count: no cause, and on_dialog refused until it returns", async (t) => {
+	setup(t);
+	const tab = await agentTab(async ({ x }, id) => {
+		if (x === 20) await box(id, "confirm", "Mine?");
+	});
+	const hold = holdPress(t, tab, "mousePressed", (p) => p.x === 10);
+	[handlerLimit, countLimit] = [300, 100];
+	t.after(() => {
+		[handlerLimit, countLimit] = [undefined, undefined];
+	});
+	assert.equal((await request("click", { tabId: tab, x: 10, y: 10 })).error?.code, "timeout");
+	await wait(200);
+	[handlerLimit, countLimit] = [undefined, undefined];
+	assert.equal((await request("click", { tabId: tab, x: 20, y: 20 }, "c2")).error, undefined);
+	await pastGrace();
+	assert.match(await notice(tab), /does not know which action opened it/);
+	const refused = await request("click", { tabId: tab, x: 20, y: 20, on_dialog: "ok" }, "c2");
+	assert.equal(refused.error?.code, "not_sent", JSON.stringify(refused));
+	hold.release();
+	await wait(50);
+	const ok = await request("click", { tabId: tab, x: 20, y: 20, on_dialog: "ok" }, "c2");
+	assert.equal(ok.result?.dialog?.answered, "ok", JSON.stringify(ok));
+});
+
+test("sol-F1 (round 2 of the review of PR 230): handle_dialog for a box on_dialog is answering is refused: one answer per box", async (t) => {
+	setup(t);
+	const tab = await agentTab(async (_i, id) => {
+		if (await box(id, "confirm", "Delete A?")) await box(id, "confirm", "Delete B?");
+	});
+	let open;
+	holdAnswer = new Promise((r) => {
+		open = r;
+	});
+	t.after(() => {
+		holdAnswer = undefined;
+		open();
+	});
+	const one = deliver("c1", "click", { tabId: tab, x: 10, y: 10, on_dialog: "ok" });
+	for (let i = 0; i < 200 && !openDialog(tab); i++) await wait(5);
+	const two = request("dialog", { accept: true, tabId: tab }, "c2");
+	await wait(50);
+	holdAnswer = undefined;
+	open();
+	const r = await two;
+	assert.match(r.error?.message ?? "", /already answered/, JSON.stringify(r));
+	await reply(one);
+	await pastGrace();
+	assert.deepEqual(answers.map((x) => `${x.message} ${x.accept}`), ["Delete A? true", "Delete B? false"]);
 });
 
 // Last: it takes the native host away, and nothing after it could reach the bridge.
