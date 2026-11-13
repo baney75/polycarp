@@ -8,14 +8,16 @@ public enum KeyTranslation {
     /// UCKeyTranslate's modifier state is the Carbon modifier mask shifted right by 8: command (cmdKey, 1 << 8) is 1.
     public static let command: UInt32 = 1
 
-    /// The characters `keyCode` types in each layout, without and with command held.
+    /// The characters `keyCode` types in each layout, without and with command held. Each layout must be a Text Input
+    /// Source's `kTISPropertyUnicodeKeyLayoutData`: UCKeyTranslate follows the table's own offsets, so any other bytes
+    /// can send it past their end. Data too short for the header gives nothing; nothing longer is checked (214 r1 second-S3).
     public static func characters(_ keyCode: UInt16, layouts: [Data], keyboardType: UInt32) -> [Character] {
         layouts.flatMap { layout in [0, command].compactMap { character(keyCode, modifiers: $0, layout: layout, keyboardType: keyboardType) } }
     }
 
     static func character(_ keyCode: UInt16, modifiers: UInt32, layout data: Data, keyboardType: UInt32) -> Character? {
         data.withUnsafeBytes { bytes -> Character? in
-            guard bytes.count >= MemoryLayout<UCKeyboardLayout>.size,
+            guard bytes.count >= MemoryLayout<UCKeyboardLayout>.size,   // too short for a header; not a validation
                   let layout = bytes.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else { return nil }
             var dead: UInt32 = 0, length = 0
             var chars = [UniChar](repeating: 0, count: 4)
