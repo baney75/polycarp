@@ -847,6 +847,13 @@ export async function typeText(
 	}
 }
 
+/** Inserts text at the focus in one step, as an input method commits it: no key events, and not the system clipboard. */
+export async function insertText(tabId: number, text: string): Promise<void> {
+	await ensureAttached(tabId);
+	cuePointer(tabId, "type");
+	await send(tabId, "Input.insertText", { text });
+}
+
 interface KeyInfo {
 	key: string;
 	code: string;
