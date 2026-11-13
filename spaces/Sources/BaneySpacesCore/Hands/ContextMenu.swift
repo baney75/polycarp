@@ -36,14 +36,21 @@ public enum ContextMenu {
     }
 
     /// Rule 1 for a right click on a ref (`click` with `button: right`): the engine's AXShowMenu opens the menu at the
-    /// element, inside the window, so the window must be on screen under the agent workspace just the same. Nothing is
-    /// sent to the app otherwise.
-    public static func gate(agentShown: Bool, agentWindow: Bool, window: CGRect, displays: [CGRect]) -> HandsError? {
-        guard gate(agentShown: agentShown, agentWindow: agentWindow, window: window, point: CGPoint(x: window.midX, y: window.midY), displays: displays) != nil else { return nil }
+    /// element, so the window must be on screen under the agent workspace and the whole element on that same display:
+    /// a window that spans two displays can hold the element on Donovan's (231 r1 second-S1). `element`: its bounds read
+    /// now; nil (unreadable) refuses. Nothing is sent to the app otherwise.
+    public static func gate(agentShown: Bool, agentWindow: Bool, window: CGRect, element: CGRect?, displays: [CGRect]) -> HandsError? {
+        let center = element.map { CGPoint(x: $0.midX, y: $0.midY) } ?? CGPoint(x: window.midX, y: window.midY)
+        if let element, gate(agentShown: agentShown, agentWindow: agentWindow, window: window, point: center, displays: displays) == nil,
+           let d = display(window: window, displays: displays), d.contains(element) { return nil }
         return HandsError(.outsideAgentWorkspace,
-                          "a right click opens its menu where Donovan can see it unless the agent workspace is on screen under the window; it isn't, so nothing was sent",
+                          "a right click opens its menu where Donovan can see it unless the agent workspace is on screen under the window and the element; it isn't, so nothing was sent",
                           suggestion: "Use `click` without button for the element's own action, or `menu` for the app's menu bar.", retry: .never, nextCall: .null)
     }
+
+    /// The engine refused before it sent anything (no AXShowMenu, a stale ref): no menu can come, so there is nothing to
+    /// watch for (231 r1 first-F5).
+    public static func nothingSent(_ e: HandsError?) -> Bool { e.map { [.notSupported, .staleRef].contains($0.code) } ?? false }
 
     /// `click` on a ref: the plain press, or a right click with the item it presses (nil lists the items and cancels).
     public enum RefClick: Equatable, Sendable { case press, right(item: String?) }

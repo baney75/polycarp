@@ -39,6 +39,13 @@ final class HandsEngine {
     static let resultPermDenied: Int32 = -1
     // AdActionKind values from agent_desktop.h. No key action: see the rules above.
     /// `rightClick` runs under the headless policy like every ref action: AXShowMenu only, never a posted click.
+    // Why `rightClick` never posts here: the pinned engine's RIGHT_CLICK_CHAIN starts with `ChainStep::CGClick {
+    // button: MouseButton::Right, count: 1 }`, and `run_chain` skips it, `if !step_allowed(step, policy) { continue; }`;
+    // `step_allowed` is `!matches!(step, ChainStep::CGClick { .. } | ChainStep::FocusThenClearByKeyboard) || policy.is_headed()`.
+    // Policy 0 is `Self::Headless => InteractionPolicy::headless()`, which is `allow_focus_steal: false, allow_cursor_move:
+    // false`, so not headed. agent-desktop 5261b52: crates/macos/src/actions/chain/{chain_defs,mod}.rs,
+    // crates/ffi/src/types/policy_kind.rs, crates/core/src/actions/interaction_policy.rs; its own test, chain_tests.rs:
+    // `assert!(!step_allowed(&physical, headless))`.
     enum Kind: Int32 { case click = 0, rightClick = 2, setValue = 4, select = 8, toggle = 9, scroll = 12, typeText = 17 }
 
     /// Seconds each kind of call may take before the caller gets `timeout`.
