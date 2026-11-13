@@ -18,6 +18,7 @@ import {
 	framePainted,
 	frameShown,
 	frameShownNow,
+	frameState,
 	frameTakesPoint,
 	MAX_DEPTH,
 	MAX_FRAMES,
@@ -25,6 +26,7 @@ import {
 	remeasure,
 	scrollFrameIntoView,
 	splitFrameRef,
+	web,
 } from "./frames.js";
 import { maskUrl } from "./mask-body.js";
 import { isUserScriptsGated, userScriptsApi } from "./userscripts-status.js";
@@ -502,14 +504,17 @@ function resolveRef(ref: string, live: (el: Element) => boolean, print: (el: Ele
  * Numbering starts at a random block per document, so a ref kept from the previous page
  * is very unlikely to name anything on the next one.
  */
-function pageSnapshot(
+export function pageSnapshot(
 	maxNodes: number,
 	maxTextChars: number,
 	filter: string,
 	live: (el: Element) => boolean,
 	print: (el: Element) => string,
 	keepStale = false,
-	frameShown: (el: Element) => "shown" | "hidden" | "away" = () => "shown",
+	frameShown: (el: Element) => "shown" | "hidden" | "away" = () => {
+		throw new Error("pageSnapshot: its caller passed no frameShown and FRAME_STATES");
+	},
+	frameNotes: Record<"shown" | "hidden" | "away", string>,
 	rank?: {
 		offset: number;
 		/** The ranked read this offset continues (its `ranked.snapshot`); omitted, the page's last one. */
@@ -935,14 +940,7 @@ function pageSnapshot(
 		if (tag === "a" && f.href) node.href = String(f.href).slice(0, 200);
 		if (cross.has(el)) {
 			node.href = frameUrl(el).slice(0, 200);
-			const shown = frameShown(el);
-			node.states = [
-				shown === "shown"
-					? "cross-origin: read it with navigate to its URL"
-					: shown === "away"
-						? "cross-origin frame out of view: scroll to it, then read_page"
-						: "cross-origin frame, not shown, so not read",
-			];
+			node.states = [frameNotes[frameShown(el)]];
 		}
 		if (tag === "input") {
 			if (f.type === "checkbox" || f.type === "radio") node.value = f.checked ? "checked" : "unchecked";
@@ -1202,7 +1200,7 @@ export async function snapshot(
 		? `, { offset: ${Math.max(0, Math.floor(options.offset ?? 0)) || 0}, snapshot: ${options.snapshot === undefined ? "undefined" : JSON.stringify(options.snapshot)}, veil: ${JSON.stringify((await veilTag(tabId)) ?? "")}, point: ${refPoint.toString()} }`
 		: "";
 	const code = (n: number, t: number, r = "") =>
-		`(${pageSnapshot.toString()})(${n}, ${t}, ${JSON.stringify(filter)}, ${refLive.toString()}, ${refPrint.toString()}, false, ${frameShown.toString()}${r})`;
+		`(${pageSnapshot.toString()})(${n}, ${t}, ${JSON.stringify(filter)}, ${refLive.toString()}, ${refPrint.toString()}, false, ${frameShown.toString()}, ${JSON.stringify(FRAME_STATES)}${r})`;
 	const snap = await runInPage<Snapshot & { crossFrames?: number }>(tabId, code(maxNodes, maxTextChars, rank));
 	if (typeof snap?.url === "string") snap.url = maskUrl(snap.url);
 	if (snap?.crossFrames) {
@@ -1310,7 +1308,7 @@ export async function changeLook(
 	const code = (refs: string[]) => `(() => {
 		if ((${isGuardedUrl.toString()})(location.href, ${JSON.stringify(guardedHosts)})) return "guarded";
 		if (document.getElementsByTagName("*").length > ${LARGE_PAGE}) return "large";
-		const s = (${pageSnapshot.toString()})(${maxNodes}, 20000, "interactive", ${refLive.toString()}, ${refPrint.toString()}, true, ${frameShown.toString()});
+		const s = (${pageSnapshot.toString()})(${maxNodes}, 20000, "interactive", ${refLive.toString()}, ${refPrint.toString()}, true, ${frameShown.toString()}, ${JSON.stringify(FRAME_STATES)});
 		const listed = new Set(s.nodes.map((n) => n.ref));
 		const gone = (${refsGone.toString()})(${JSON.stringify(refs)}.filter((r) => !listed.has(r)), ${refLive.toString()}, ${refPrint.toString()});
 		const same = (${refsRenewed.toString()})(gone, listed);
@@ -1322,18 +1320,41 @@ export async function changeLook(
 		if (!split || !frame?.ref) return undefined;
 		const ref = frame.ref;
 		const find = () => frameForRef(tabId, ref, frame.rule ?? FRAMES_CLOSED).catch(() => undefined);
-		const run = (hit: { frame: PageFrame }) =>
-			runInFrame<ChangeLook | "guarded" | "large">(tabId, hit.frame, code(mine)).catch(() => undefined);
+		// Its look, and whether a person sees the frame now: an action can hide it (#73). The test keeps
+		// to the look's budget, one deadline for the frame found once and again.
+		const end = Date.now() + FRAME_SHOWN_MS;
+		const left = () => Math.max(0, end - Date.now());
+		const run = (hit: { frame: PageFrame }, again = false) => {
+			const look = runInFrame<ChangeLook | "guarded" | "large">(tabId, hit.frame, code(mine));
+			return Promise.all([
+				again ? bounded(look, left()) : look.catch(() => undefined),
+				frameState(tabId, hit.frame, end).catch(() => undefined),
+			]);
+		};
 		// The frame found once for the action serves every look; it is looked for again only when it stops answering.
 		const known = frame.hit;
-		let got = known ? await run(known) : undefined;
+		let [got, state] = known ? await run(known) : [undefined, undefined];
 		if (!got) {
-			const hit = await find();
+			// Found again within what is left of the deadline; with none left, or none in time, it is unknown.
+			if (!left()) return undefined;
+			const found = find().then((h) => h ?? null);
+			const hit = await bounded(found, left());
+			if (hit === undefined) return undefined;
 			if (!hit) return "gone";
 			frame.hit = hit;
-			got = await run(hit);
+			[got, state] = await run(hit, true);
 		}
-		return typeof got === "object" && got ? got : undefined;
+		// The approval page (#94) is the strictest bar: the frame's refs are gone.
+		if (got === "guarded") return "gone";
+		if (typeof got !== "object" || !got) return undefined;
+		// The action can take the frame to a host the person never allowed, or to an error page, keeping its id
+		// and session (D46): the document the look read is checked as the first look checked it. A hidden frame
+		// is not read and its refs are gone; one the debugger gave no answer for is not read, and its refs are
+		// left as they were, since it may well still be there; one only out of view is read.
+		if (!web(got.url) || (await (frame.rule ?? FRAMES_CLOSED)(got.url))) return "gone";
+		if (state === "hidden") return "gone";
+		if (state === undefined) return undefined;
+		return got;
 	};
 	const [look, inner] = await Promise.all([
 		runInPage<ChangeLook | "guarded" | "large">(tabId, code(before.filter((r) => !splitFrameRef(r)))),
@@ -1369,8 +1390,18 @@ export interface FrameLook {
 /** Elements in a document past which a change report does not look (each look reads the whole page). */
 export const LARGE_PAGE = 15000;
 
-/** The state pageSnapshot gives a cross-origin frame (written out there: it runs in the page). */
-const CROSS_NOTE = "cross-origin: read it with navigate to its URL";
+/** Every state pageSnapshot gives a cross-origin frame's line, by what frameShown says of it. */
+export const FRAME_STATES = {
+	shown: "cross-origin: read it with navigate to its URL",
+	hidden: "cross-origin frame, not shown, so not read",
+	away: "cross-origin frame out of view: scroll to it, then read_page",
+} as const;
+const CROSS_NOTE = FRAME_STATES.shown;
+const NOT_SHOWN_NOTE = FRAME_STATES.hidden;
+const FRAME_NOTES = Object.values(FRAME_STATES);
+
+/** The most the change look's test of a frame may take: the look's own budget (LOOK_MS in changes.ts). */
+export const FRAME_SHOWN_MS = 750;
 
 /** The most a frame's own snapshot may take: one that doesn't answer keeps its plain line. */
 const FRAME_READ_MS = 3000;
@@ -1379,28 +1410,52 @@ const FRAMES_READ_MS = 4000;
 
 type Line = SnapshotNode & { states?: string[] };
 
+/** Whether two URLs are on one origin. */
+function sameOrigin(a: string, b: string): boolean {
+	try {
+		return new URL(a).origin === new URL(b).origin;
+	} catch {
+		return false;
+	}
+}
+
 /**
  * The listed cross-origin frame line that is this frame's own <iframe>: the same box, center and
  * size, as drawn. A frame overlapping another's box, or a pixel at its corner, matches none.
  */
-function lineOf(nodes: SnapshotNode[], f: PageFrame, taken: Set<SnapshotNode>): Line | undefined {
+function lineOf(
+	nodes: SnapshotNode[],
+	f: PageFrame,
+	taken: Set<SnapshotNode>,
+	states: readonly string[] = [CROSS_NOTE],
+	exact = false,
+	frames: readonly PageFrame[] = [],
+): Line | undefined {
 	const near = (a: number, b: number) => Math.abs(a - b) <= 2;
-	return nodes.find(
+	const fits = nodes.filter(
 		(n) =>
 			!taken.has(n) &&
-			(n as Line).states?.[0] === CROSS_NOTE &&
+			states.includes((n as Line).states?.[0] ?? "") &&
 			near(n.x, f.box.x) &&
 			near(n.y, f.box.y) &&
 			near(n.width, f.box.width) &&
 			near(n.height, f.box.height),
 	);
+	// Two frames of one box: the line that names this frame's URL is its own. `exact` takes no other, but a
+	// frame that redirected or navigated within its origin still owns the line its <iframe> names.
+	const named = fits.find((n) => n.href === f.url.slice(0, 200));
+	if (named || !exact) return named ?? fits[0];
+	// Only when it is plain: one line on its origin, naming no other frame's URL.
+	const kin = fits.filter((n) => !!n.href && sameOrigin(n.href, f.url));
+	const own = kin.length === 1 ? kin[0] : undefined;
+	return own && !frames.some((o) => o !== f && o.url.split(/[?#]/)[0].slice(0, 200) === own.href) ? own : undefined;
 }
 
 /**
  * Add each cross-origin frame's elements and text to a snapshot (D46): the elements right after
  * the frame's own element, with the frame's tag on their refs and the tab's coordinates, the text
  * under the frame's host. A frame is read only when its own line is listed as shown, by the
- * document around it, and frameShownNow finds it shown too, so no other frame can stand in for
+ * document around it, and frameState finds it shown too, so no other frame can stand in for
  * it. A frame on a host not allowed for agents keeps its line, which names the host, and nothing
  * of it is read. Frames of one level are read at once, all under one time limit.
  */
@@ -1424,15 +1479,34 @@ async function readFrames(
 		const level = frames.filter((f) => f.chain.length === depth);
 		// Each frame is tested as itself first: only a shown one may claim a line, so a hidden frame
 		// of the same box can't take a shown frame's line and leave it unread.
-		const shown = await Promise.all(level.map((f) => frameShownNow(tabId, f, end)));
+		const shown = await Promise.all(level.map((f) => frameState(tabId, f, end)));
 		const picks: Array<{ f: PageFrame; own: Line }> = [];
+		const bind = (f: PageFrame, states: readonly string[], exact = false) => {
+			const own = lineOf(snap.nodes, f, taken, states, exact, frames);
+			if (own) taken.add(own);
+			return own;
+		};
+		const bound = new Set<PageFrame>();
 		level.forEach((f, i) => {
-			if (!shown[i]) return;
-			const own = lineOf(snap.nodes, f, taken);
+			if (shown[i] !== "shown") return;
+			const own = bind(f, [CROSS_NOTE]);
 			if (!own) return;
-			taken.add(own);
+			bound.add(f);
 			if (f.blocked) own.states = [`not allowed for agents: ${frameHost(f.url)}`];
 			else picks.push({ f, own });
+		});
+		// Lines no shown frame claimed say why nothing of theirs is read: a barred host whatever the page
+		// says of it, and "not shown" where the page called it shown and the tab found it hidden. A frame the
+		// debugger gave no answer for keeps its line, and only the line naming the frame's own URL or origin is relabeled.
+		level.forEach((f, i) => {
+			if (bound.has(f)) return;
+			if (f.blocked) {
+				const own = bind(f, FRAME_NOTES, true);
+				if (own) own.states = [`not allowed for agents: ${frameHost(f.url)}`];
+			} else if (shown[i] === "hidden") {
+				const own = bind(f, [CROSS_NOTE], true);
+				if (own) own.states = [NOT_SHOWN_NOTE];
+			}
 		});
 		const wanted = room > 0 ? picks.slice(0, Math.max(0, MAX_FRAMES - read)) : [];
 		const got = await Promise.all(

@@ -1,4 +1,5 @@
 import CoreGraphics
+import Darwin
 import Foundation
 
 /// Item C: a menu-bar command by its path, like "Format > Font > Bold", found in a read of the app's menu bar
@@ -194,7 +195,9 @@ public enum MenuPath {
     /// One menu on the path: its items in order and the one the path takes. The first step is the bar itself.
     public struct Step: Equatable, Sendable {
         public var items: [MenuItem], at: Int
-        public init(items: [MenuItem], at: Int) { self.items = items; self.at = at }
+        /// The chosen submenu's items when the path stops at it (a listing), read like any other step.
+        public var opens: [MenuItem]?
+        public init(items: [MenuItem], at: Int, opens: [MenuItem]? = nil) { self.items = items; self.at = at; self.opens = opens }
         var chosen: MenuItem { items[at] }
     }
 
@@ -223,10 +226,16 @@ public enum MenuPath {
             if i.chord("\\", shift: true) || i.id.contains("taboverview") || i.name.contains("all tabs") { return refuse(path, why: windows) }
             if i.command && ["c", "x", "v"].contains(i.key) || ["cut:", "copy:"].contains(i.id) || i.id.hasPrefix("paste") { return clipboard(path) }
             if i.chord("o") || i.id.hasPrefix("opendocument") { return refuse(path, why: documents) }
+            // 197 r1 second-S3: the Versions browser takes the screen; Move To and Rename move the document out of the handoff folder.
+            if i.id == "browsedocumentversions:" || i.name.hasPrefix("browse all versions") { return refuse(path, why: windows) }
+            if ["movedocument:", "renamedocument:"].contains(i.id) { return refuse(path, why: documents) }
+            // 197 r1 first-F3: Use Selection for Find (cmd+e) puts the selection on the find text every app shares. Only this
+            // way in is closed: a search typed into a find bar writes it too (205 r1 first-F3).
+            if i.chord("e") || i.id.contains("selectionforfind") || i.name.hasPrefix("use selection for find") { return refuse(path, why: findText) }
             let afterOpen = step.at > 0 && step.items[step.at - 1].chord("o")
             if i.submenu && (afterOpen || i.id.contains("recent") || i.name.contains("open recent")) { return refuse(path, why: documents) }
             if k == 1, isEditMenu(menu.items, title: top), clipboardGroup(menu.items, at: menu.at) { return clipboard(path) }
-            if k == 1, isEditMenu(menu.items, title: top), appended(menu.items, at: menu.at, next: steps.dropFirst(2).first) { return refuse(path, why: outside) }
+            if k == 1, isEditMenu(menu.items, title: top), appended(menu.items, at: menu.at, inside: steps.dropFirst(2).first?.items ?? menu.opens) { return refuse(path, why: outside) }
             if i.cmdChar == nil, ["cut", "copy", "paste"].contains(where: { i.name.hasPrefix($0) }) { return clipboard(path) }
             if leavesTheApp(i) { return refuse(path, why: outside) }
         }
@@ -261,13 +270,14 @@ public enum MenuPath {
     /// selectAll:, from the first separator after it), an item is used only when the app gave it a command key
     /// equivalent, or it is a submenu one of whose items has one (Find, Spelling and Grammar). Identifiers don't count:
     /// AppKit's items carry them too. With no Select All, the rule has nothing to anchor on and other rules decide.
-    static func appended(_ items: [MenuItem], at: Int, next: Step?) -> Bool {
+    /// `inside`: the submenu's items, from the next step or, when the path stops at it, from the listing (197 r1 second-S4).
+    static func appended(_ items: [MenuItem], at: Int, inside: [MenuItem]?) -> Bool {
         guard let all = items.firstIndex(where: { $0.chord("a") || $0.id == "selectall:" }),
               let tail = items[all...].firstIndex(where: { $0.title.isEmpty }), at > tail else { return false }
         let i = items[at]
         if i.command { return false }
-        guard i.submenu, let next else { return true }
-        return !next.items.contains { $0.command }
+        guard i.submenu, let inside else { return true }
+        return !inside.contains { $0.command }
     }
 
     /// The Edit menu's second group (after Undo and Redo): Cut, Copy, Paste, Paste and Match Style, Delete. Select All (cmd+a) stays.
@@ -280,6 +290,7 @@ public enum MenuPath {
     static let windows = "it moves, raises, fills or tiles windows or switches to full screen, which changes what Donovan sees"
     static let documents = "it opens documents, and an agent opens only files from the handoff folder"
     static let outside = "it opens a window outside the agent workspace or reaches Donovan's microphone, speakers, printer or other apps"
+    static let findText = "Use Selection for Find puts the selection on the find text every app shares"
 
     static func refuse(_ path: String, why: String) -> HandsError {
         let suggestion = why == documents ? "`open` the app with a file from the agent handoff folder."
@@ -301,9 +312,10 @@ public enum MenuPath {
 
     /// The panel to cancel: a sheet before the window that holds it, since the window's read holds the sheet too and has
     /// no Cancel button of its own (192 r1 second-F7).
-    public static func panel(_ windows: [AXNodeInfo]) -> Int? {
+    /// `old`: per window, it was a panel before the press, so it is not the command's (197 r1 second-S1).
+    public static func panel(_ windows: [AXNodeInfo], old: [Bool] = []) -> Int? {
         func holdsPanel(_ n: AXNodeInfo) -> Bool { n.children.contains { ($0.role == "AXSheet" && PanelDetector.windowIsOffLimits($0)) || holdsPanel($0) } }
-        let found = panels(windows)
+        let found = panels(windows).filter { !(old.indices.contains($0) && old[$0]) }
         return found.first { !holdsPanel(windows[$0]) } ?? found.first
     }
 
@@ -324,6 +336,47 @@ public enum MenuPath {
             self.id = id; self.pid = pid; self.owner = owner; self.visible = visible; self.workspace = workspace
             self.bounds = bounds; self.bundle = bundle; self.parent = parent
         }
+    }
+
+    /// What the watch saw over all its looks: a new panel, and new windows outside the agent workspace.
+    public struct Seen: Equatable, Sendable {
+        public var panel: Bool, escapes: [Escape]
+        public init(panel: Bool = false, escapes: [Escape] = []) { self.panel = panel; self.escapes = escapes }
+        /// Every look as one: a panel in any, each window once, tied only when every look that saw it tied it
+        /// (197 r1 first-F2: the first sighting no longer ends the watch).
+        /// The escapes whose windows the window server still lists, and those that closed on their own since (205 r1 second-S2).
+        public func split(listed: Set<UInt32>) -> (open: [Escape], gone: [Escape]) {
+            (escapes.filter { listed.contains($0.window.id) }, escapes.filter { !listed.contains($0.window.id) })
+        }
+        public static func merged(_ looks: [Seen]) -> Seen {
+            var out = Seen()
+            for l in looks {
+                out.panel = out.panel || l.panel
+                for e in l.escapes {
+                    if let i = out.escapes.firstIndex(where: { $0.window.id == e.window.id }) { out.escapes[i].tied = out.escapes[i].tied && e.tied } else { out.escapes.append(e) }
+                }
+            }
+            return out
+        }
+    }
+
+    /// Whether input from Donovan may have opened a helper's window: input since a watch's length before the press, since
+    /// a helper takes a moment to put its window up after his keystroke or click (197 r1 first-F1).
+    public static func userInput(idle: TimeInterval, sincePress: TimeInterval) -> Bool { idle < sincePress + watch }
+
+    /// The bundle id of the app, XPC service or extension a process runs from, read from its executable's path: an XPC
+    /// service isn't an app LaunchServices knows, so NSRunningApplication has none for it (197 r1 second-S2).
+    public static func processBundle(pid: Int32) -> String? {
+        var buf = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0, let path = bundlePath(executable: String(cString: buf)) else { return nil }
+        return Bundle(path: path)?.bundleIdentifier
+    }
+
+    /// The innermost .app, .xpc or .appex that holds `executable`.
+    public static func bundlePath(executable: String) -> String? {
+        let parts = executable.split(separator: "/", omittingEmptySubsequences: false)
+        guard let i = parts.lastIndex(where: { [".app", ".xpc", ".appex"].contains(where: $0.hasSuffix) }) else { return nil }
+        return parts[...i].joined(separator: "/")
     }
 
     /// A new window after the press. `tied`: the press provably raised it, so Polycarp may close it.
@@ -369,16 +422,25 @@ public enum MenuPath {
     }
 
     /// `closed`: every tied window was closed (Polycarp closes only windows it tracks). Untied windows are never closed.
-    public static func escapeRefusal(_ path: String, found: [Escape], closed: Bool, window: Int) -> HandsError {
+    /// `gone`: windows a look saw that closed on their own before the undo (205 r1 second-S2).
+    public static func escapeRefusal(_ path: String, found: [Escape], gone: [Escape] = [], closed: Bool, window: Int) -> HandsError {
         func names(_ l: [Escape]) -> String { l.map { "a window of \($0.window.owner)" }.joined(separator: ", ") }
-        let tied = found.filter(\.tied), untied = found.filter { !$0.tied }
+        let tied = found.filter(\.tied), went = gone.filter(\.tied), untied = (found + gone).filter { !$0.tied }
         let other = untied.isEmpty ? "" : "; \(names(untied)) also appeared, which Polycarp couldn't tie to the command (Donovan may have opened it), so it was left alone"
-        guard tied.isEmpty else {
-            return HandsError(.outsideAgentWorkspace, "\(path) opened \(names(tied)) outside the agent workspace, where Donovan would see it; \(closed ? "it was closed" : "Polycarp couldn't close it, so it is still open")\(other)",
+        let closedItself = went.isEmpty ? "" : "\(tied.isEmpty ? "" : "; ")\(names(went)) closed again on its own"
+        guard tied.isEmpty && went.isEmpty else {
+            let state = tied.isEmpty ? "" : closed ? "it was closed" : "Polycarp couldn't close it, so it is still open"
+            return HandsError(.outsideAgentWorkspace, "\(path) opened \(names(tied + went)) outside the agent workspace, where Donovan would see it; \(state)\(closedItself)\(other)",
                               suggestion: "Don't use \(path) again: do it in the app's own window with click, type or set-value.", retry: .never, nextCall: .null)
         }
         return HandsError(.outsideAgentWorkspace, "while \(path) ran, \(names(untied)) appeared outside the agent workspace; Polycarp couldn't tie it to the command (Donovan may have opened it), so it closed nothing",
                           suggestion: "Snapshot the window to see whether the command did what you wanted.", retry: .afterSnapshot, nextCall: HandsError.call("snapshot", ["window": .int(window)]))
+    }
+
+    /// New windows a person could see, other than the app's own Open and Save panels (`panels`, by window number), which
+    /// the watch cancels as panels (205 r1 second-S1).
+    public static func fresh(_ all: [Listed], before: Set<UInt32>, panels: Set<UInt32>) -> [Listed] {
+        all.filter { !before.contains($0.id) && $0.visible && !panels.contains($0.id) }
     }
 
     /// The titles the path got through before it stopped: what `policy` judges, whatever `find` answered.
@@ -413,7 +475,7 @@ extension MenuWatch.Outcome: Equatable where Found: Equatable {}
 /// what it saw is undone through the engine once the press is back, since agents never act on AX directly.
 public final class MenuWatch<Found: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var started = false, ended: Date?, found: Found?
+    private var started = false, ended: Date?, found: [Found] = []
     private let done = DispatchSemaphore(value: 0)
     private let every: TimeInterval, watch: TimeInterval, margin: TimeInterval
     /// `margin`: how long past the watch `finish` waits for a look that hangs (a hung app), before it answers unknown.
@@ -421,8 +483,8 @@ public final class MenuWatch<Found: Sendable>: @unchecked Sendable {
         self.every = every; self.watch = watch; self.margin = margin
     }
 
-    /// Nothing seen, what was seen, or unknown: the watch didn't finish in time (192 r1 first-F1).
-    public enum Outcome { case quiet, seen(Found), unknown }
+    /// Nothing seen, what every look saw, or unknown: the watch didn't finish in time (192 r1 first-F1).
+    public enum Outcome { case quiet, seen([Found]), unknown }
 
     public func start(_ step: @escaping @Sendable (_ settled: Bool) -> Found?) {
         lock.lock(); started = true; lock.unlock()
@@ -431,7 +493,8 @@ public final class MenuWatch<Found: Sendable>: @unchecked Sendable {
             while true {
                 lock.lock(); let end = ended; lock.unlock()
                 let settled = end.map { Date() >= $0.addingTimeInterval(watch) } ?? false
-                if let e = step(settled) { lock.lock(); found = e; lock.unlock(); return }
+                // Every look runs to the end of the watch: a later one may see a panel or window an earlier one didn't (197 r1 first-F2).
+                if let e = step(settled) { lock.lock(); found.append(e); lock.unlock() }
                 if settled { return }
                 Thread.sleep(forTimeInterval: every)
             }
@@ -445,7 +508,7 @@ public final class MenuWatch<Found: Sendable>: @unchecked Sendable {
         guard was else { return .quiet }
         let timedOut = done.wait(timeout: .now() + watch + margin) == .timedOut
         lock.lock(); defer { lock.unlock() }
-        if let found { return .seen(found) }
+        if !found.isEmpty { return .seen(found) }
         return timedOut ? .unknown : .quiet
     }
 
