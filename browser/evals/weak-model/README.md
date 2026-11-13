@@ -8,7 +8,9 @@ helps.
 
 Tasks come from `tasks/*.mjs`: each file exports arrays of tasks, `{ id, kind: "browser" | "computer", prompt, ... }`.
 A browser task serves its own fixture pages, and each page posts its own `window.__state` to the harness, so the run is
-scored from what the page recorded, even after the model closed its tab. A computer task works on fixture files in a
+scored from what the page recorded, even after the model closed its tab. Its optional `setup(h, entry)` sets up what
+the person has open before the model starts (for example a tab of the site in front, through `h.devtools`) and returns
+the function that undoes it, which runs after scoring and on every way out. A computer task works on fixture files in a
 folder of our own inside Polycarp's agent handoff folder, and is scored by reading the agent workspace back through the
 helper in connector mode (`hands.mjs`). With no task files, the runner says so and exits.
 
