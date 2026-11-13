@@ -1722,3 +1722,23 @@ after the deletion must not make it repeat. The e2e "only the tab an agent uses 
 the user keep it, has the agent's page open a confirm and brings the user's tab to the front. On main the user's tab
 stays frozen and the test fails. It then repeats the click with `on_dialog` "ok" and checks the page got OK within the
 grace and nothing froze or was cancelled again.
+
+## D49. A download an action starts is reported with its result, through the debugger (Claude, 2026-11-13)
+
+**Problem.** A click on an attachment link, a blob link or a button whose script makes a file starts a download, and
+the agent was told nothing. It saw an unchanged page and often clicked again, or said the export failed.
+
+**Decision.** `downloads.ts` listens for `Page.downloadWillBegin` and `Page.downloadProgress`, which Chrome sends once
+the `Page.enable` cdp.ts sends for dialogs is on. Every input tool's result, and navigate's, lists the downloads begun
+since the action started: suggested name, extension as type, size when complete, state (started, completed,
+canceled), and the URL through `maskUrl` as `files download` shows it. A data: URL keeps only its header. After the
+page settles the action waits up to 2 s for a download to end. No `chrome.downloads` permission: it would give the
+path and final name, but a new permission means store review again and a prompt for every user.
+
+**Limits.** The save folder is not known, and the result says so. Chrome adds " (1)" to a name already taken. A
+download waiting on a save box stays "started". A type the person set to open on its own still opens. Steps inside
+`actions` report no downloads. Polycarp opens nothing; to read a file the agent calls `files download` with the link's
+ref, under its 50 MiB limit and its rules for other sites.
+
+**Proof.** `test/downloads.test.mjs` drives `click` through the bridge on fake chrome (all four fail on main
+93a70440); the e2e "a click on a download link reports the file it started" runs real Chrome.
