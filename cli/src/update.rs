@@ -1184,6 +1184,10 @@ pub fn standing(parts: &[Part], needs: &[&str], target: &str) -> Standing {
 /// What the browser helper's `reload --if-idle` exits with when an agent is working in the browser.
 const RELOAD_BUSY: i32 = 75;
 
+/// An extension drops off for a few seconds as it reloads, so each reload gets at least this long
+/// before the wait can end.
+const RELOAD_SETTLE: std::time::Duration = std::time::Duration::from_secs(4);
+
 /// The extensions that do not run `target` yet: an older build, no answer, or none connected (one
 /// that is reloading drops off for a few seconds).
 fn not_reloaded(parts: &[Part], target: &str) -> Vec<String> {
@@ -1198,51 +1202,99 @@ fn not_reloaded(parts: &[Part], target: &str) -> Vec<String> {
         .collect()
 }
 
-/// Reload the extension and wait, up to `polls` looks at the parts, for every connected one to report
-/// `target`. Halfway through, one that still runs the old build is reloaded once more: Helium can keep
-/// the old one after the first (#207). 0 when every extension runs `target`, the reload's own code when
-/// it could not run (75: an agent is working in the browser), 1 when the wait ran out.
+/// The extensions that report a build other than `target`: the only ones a second reload can help.
+fn old_builds(parts: &[Part], target: &str) -> Vec<String> {
+    parts
+        .iter()
+        .filter(|p| p.name.starts_with("extension"))
+        .filter(|p| matches!(p.found, version::Found::Installed { .. }))
+        .filter(|p| !version::is_current(std::slice::from_ref(p), target))
+        .map(|p| p.name.clone())
+        .collect()
+}
+
+/// Whether any browser's extension is there to reload: it reports a build, or it is there but slow
+/// to answer. "No browser is connected" and "not installed" are not.
+fn extension_connected(parts: &[Part]) -> bool {
+    parts
+        .iter()
+        .any(|p| p.name.starts_with("extension") && !matches!(p.found, version::Found::Absent(_)))
+}
+
+/// Reload the extension and wait, until `wait` has passed on `clock`, for every connected one to
+/// report `target`. With no browser connected there is nothing to reload or wait for, so it ends at
+/// once: the browser loads the new build when it starts. Once half the time has passed, an extension
+/// that still reports the old build gets one more reload: Helium can keep the old one after the
+/// first (#207). 0 when every extension runs `target` or none reports a build, the reload's own code
+/// when it could not run (75: an agent is working in the browser), 1 when one still reports the old
+/// build at the end. The time is bounded by `wait` (at least 4 s after each reload) plus one pause
+/// and one look, however slowly the parts answer.
 pub fn reload_wait(
     target: &str,
-    polls: u32,
+    wait: std::time::Duration,
     reload: &mut dyn FnMut() -> Option<i32>,
     parts: &dyn Fn() -> Vec<Part>,
+    clock: &dyn Fn() -> std::time::Duration,
     pause: &mut dyn FnMut(),
     out: &mut dyn Write,
 ) -> i32 {
     let at = version::short(target);
+    if !extension_connected(&parts()) {
+        let _ = writeln!(
+            out,
+            "No browser is connected, so there is no extension to reload: the browser loads {at} when it starts."
+        );
+        return 0;
+    }
     match reload() {
         Some(0) => {}
         code => return code.unwrap_or(1),
     }
-    let polls = polls.max(2);
-    let mut waiting = Vec::new();
-    for look in 1..=polls {
+    let started = clock();
+    let mut deadline = wait.max(RELOAD_SETTLE);
+    let mut retried = false;
+    loop {
         pause();
-        waiting = not_reloaded(&parts(), target);
+        let now = parts();
+        let waiting = not_reloaded(&now, target);
         if waiting.is_empty() {
             let _ = writeln!(out, "The extension runs {at}.");
             return 0;
         }
-        if look == polls / 2 {
+        let old = old_builds(&now, target);
+        let spent = clock().saturating_sub(started);
+        if !retried && !old.is_empty() && spent >= wait / 2 {
+            retried = true;
+            // The helper's reload has no browser selector: every connected extension reloads.
             let _ = writeln!(
                 out,
-                "{} does not run {at} yet, so it is reloaded once more.",
-                waiting.join(", ")
+                "{} still runs the build from before, so every browser's extension is reloaded once more.",
+                old.join(", ")
             );
-            match reload() {
-                Some(0) => {}
-                Some(RELOAD_BUSY) => return RELOAD_BUSY,
-                _ => {}
+            if reload() == Some(RELOAD_BUSY) {
+                return RELOAD_BUSY;
             }
+            deadline = deadline.max(spent + RELOAD_SETTLE);
+            continue;
+        }
+        if spent >= deadline {
+            if old.is_empty() {
+                let _ = writeln!(
+                    out,
+                    "note: {} reported no build in {} s, so it was not compared. `polycarp version` asks again.",
+                    waiting.join(", "),
+                    wait.as_secs()
+                );
+                return 0;
+            }
+            let _ = writeln!(
+                out,
+                "{} still does not run {at}, after two reloads.",
+                old.join(", ")
+            );
+            return 1;
         }
     }
-    let _ = writeln!(
-        out,
-        "{} still does not run {at}, after two reloads.",
-        waiting.join(", ")
-    );
-    1
 }
 
 /// The final check's words for a browser that still runs the build from before. Never "up to date":
@@ -1282,14 +1334,18 @@ fn parse_reload_wait(args: &[OsString]) -> Result<(u64, Vec<OsString>), String> 
 }
 
 /// `polycarp update --reload-wait <dir> <rev> [--wait <seconds>] -- <reload command...>`, the plan's
-/// reload step: see `reload_wait`.
-fn reload_wait_command(
-    dir: &Path,
-    rev: &str,
-    wait: u64,
-    argv: &[OsString],
-    device: &Device,
-) -> i32 {
+/// reload step (`args` starts at `--reload-wait`): see `reload_wait`. The reload command runs through
+/// `runner`, which finds its program the way it finds every step's: absolute, or from the trusted
+/// folders on PATH only (`RealRunner`, cli/AGENTS.md).
+fn reload_wait_command(args: &[OsString], device: &Device, runner: &mut dyn Runner) -> i32 {
+    let (wait, argv) = match parse_reload_wait(&args[3..]) {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            eprintln!("polycarp update: {e}");
+            return 2;
+        }
+    };
+    let (dir, rev) = (Path::new(&args[1]), args[2].to_string_lossy());
     let Some(target) = git_line(
         dir,
         &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
@@ -1297,21 +1353,28 @@ fn reload_wait_command(
         eprintln!("polycarp update: could not read {rev} in {}", dir.display());
         return 1;
     };
+    let words: Vec<String> = argv
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    let step = Step::new(Role::Soft, "Reload the browser extension", &words);
     let mut reload = || {
         let _ = std::io::stdout().flush();
-        std::process::Command::new(&argv[0])
-            .args(&argv[1..])
-            .status()
-            .ok()
-            .and_then(|s| s.code())
+        let ran = runner.run(&step);
+        if !ran.output.is_empty() {
+            eprintln!("polycarp update: {}", ran.output);
+        }
+        ran.code
     };
+    let started = std::time::Instant::now();
     let mut pause = || std::thread::sleep(std::time::Duration::from_secs(2));
-    let polls = u32::try_from(wait / 2).unwrap_or(u32::MAX);
     reload_wait(
         &target,
-        polls,
+        std::time::Duration::from_secs(wait),
         &mut reload,
         device.parts,
+        &|| started.elapsed(),
         &mut pause,
         &mut std::io::stdout(),
     )
@@ -1404,19 +1467,8 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
             };
         }
         Some("--reload-wait") if args.len() >= 3 => {
-            return match parse_reload_wait(&args[3..]) {
-                Ok((wait, argv)) => reload_wait_command(
-                    Path::new(&args[1]),
-                    &args[2].to_string_lossy(),
-                    wait,
-                    &argv,
-                    device,
-                ),
-                Err(e) => {
-                    eprintln!("polycarp update: {e}");
-                    2
-                }
-            };
+            let mut runner = RealRunner::new(device.home.as_deref().unwrap_or(Path::new("/")));
+            return reload_wait_command(args, device, &mut runner);
         }
         Some("--place-browser") if args.len() == 4 => {
             let [from, to, link] = [&args[1], &args[2], &args[3]].map(Path::new);
@@ -2656,62 +2708,228 @@ mod tests {
         );
     }
 
-    /// Runs `reload_wait` against a browser that takes `reloads_needed` reloads to run `T` (0: never),
-    /// with every reload exiting `code`. Returns the exit code, the reloads run and the output.
-    fn reload_run(reloads_needed: u32, code: i32, polls: u32) -> (i32, u32, String) {
-        let reloads = std::cell::Cell::new(0u32);
-        let looks = std::cell::Cell::new(0u32);
+    /// A browser for `reload_wait` to wait on, on a fake clock: each pause is 2 s and each look at
+    /// the parts takes `look_secs`. `ready_after` reloads make Helium run `T` (0: never); Chrome runs
+    /// `T` after the first. Before any reload both run `OLD`, and right after each reload the
+    /// extension is gone for one look. `helium_late`: Helium gives no answer until the clock reaches
+    /// that many seconds after the start.
+    struct Browser {
+        ready_after: u32,
+        code: i32,
+        look_secs: u64,
+        helium_late: u64,
+        none_connected: bool,
+    }
+    impl Browser {
+        fn new(ready_after: u32) -> Browser {
+            Browser {
+                ready_after,
+                code: 0,
+                look_secs: 0,
+                helium_late: 0,
+                none_connected: false,
+            }
+        }
+    }
+
+    /// Runs `reload_wait` for `wait_secs`. Returns the exit code, the reloads run, the looks taken,
+    /// the seconds the fake clock reached and the output.
+    fn reload_run(b: Browser, wait_secs: u64) -> (i32, u32, u32, u64, String) {
+        use std::cell::Cell;
+        let (reloads, looks, now) = (Cell::new(0u32), Cell::new(0u32), Cell::new(0u64));
+        let since_reload = Cell::new(0u32);
         let mut reload = || {
             reloads.set(reloads.get() + 1);
-            Some(code)
+            since_reload.set(0);
+            Some(b.code)
         };
         let parts = || {
             looks.set(looks.get() + 1);
-            let ready = reloads_needed > 0 && reloads.get() >= reloads_needed;
-            // Right after a reload the extension is gone for a moment.
-            if looks.get() == 1 {
+            now.set(now.get() + b.look_secs);
+            since_reload.set(since_reload.get() + 1);
+            if b.none_connected {
                 return vec![Part::absent("extension", "no browser is connected")];
             }
-            vec![
-                at("extension (Chrome)", T),
-                at("extension (Helium)", if ready { T } else { OLD }),
-            ]
+            if reloads.get() == 0 {
+                return vec![at("extension (Chrome)", OLD), at("extension (Helium)", OLD)];
+            }
+            if since_reload.get() == 1 {
+                return vec![Part::absent("extension", "no browser is connected")];
+            }
+            let ready = b.ready_after > 0 && reloads.get() >= b.ready_after;
+            let helium = if now.get() < b.helium_late {
+                Part::unanswered("extension (Helium)", "no answer in time")
+            } else {
+                at("extension (Helium)", if ready { T } else { OLD })
+            };
+            vec![at("extension (Chrome)", T), helium]
         };
+        let clock = || std::time::Duration::from_secs(now.get());
+        let mut pause = || now.set(now.get() + 2);
         let mut out = Vec::new();
-        let rc = reload_wait(T, polls, &mut reload, &parts, &mut || {}, &mut out);
-        (rc, reloads.get(), String::from_utf8(out).unwrap())
+        let rc = reload_wait(
+            T,
+            std::time::Duration::from_secs(wait_secs),
+            &mut reload,
+            &parts,
+            &clock,
+            &mut pause,
+            &mut out,
+        );
+        let out = String::from_utf8(out).unwrap();
+        (rc, reloads.get(), looks.get(), now.get(), out)
     }
 
     #[test]
     fn the_reload_step_waits_for_every_extension_to_run_the_new_build() {
         // #207: the first reload took, after a moment with no browser connected.
-        let (rc, reloads, out) = reload_run(1, 0, 15);
+        let (rc, reloads, _, _, out) = reload_run(Browser::new(1), 30);
         assert_eq!((rc, reloads), (0, 1), "{out}");
         assert!(
             out.contains(&format!("runs {}", version::short(T))),
             "{out}"
         );
         // Helium kept the old build after the first reload: one more, then it runs the new one.
-        let (rc, reloads, out) = reload_run(2, 0, 15);
+        let (rc, reloads, _, _, out) = reload_run(Browser::new(2), 30);
         assert_eq!((rc, reloads), (0, 2), "{out}");
-        assert!(out.contains("extension (Helium) does not run"), "{out}");
-        assert!(!out.contains("extension (Chrome) does not run"), "{out}");
+        assert!(
+            out.contains("extension (Helium) still runs the build from before"),
+            "{out}"
+        );
+        assert!(!out.contains("extension (Chrome) still runs"), "{out}");
     }
 
     #[test]
     fn the_reload_step_retries_once_and_stops_at_its_bound() {
-        let (rc, reloads, out) = reload_run(0, 0, 15);
+        let (rc, reloads, _, _, out) = reload_run(Browser::new(0), 30);
         assert_eq!((rc, reloads), (1, 2), "never a third reload: {out}");
         assert!(
             out.contains("extension (Helium) still does not run") && out.contains("two reloads"),
             "{out}"
         );
         // An agent working in the browser: no reload, no wait, and the helper's code goes through.
-        let (rc, reloads, out) = reload_run(1, RELOAD_BUSY, 15);
+        let busy = Browser {
+            code: RELOAD_BUSY,
+            ..Browser::new(1)
+        };
+        let (rc, reloads, _, _, out) = reload_run(busy, 30);
         assert_eq!((rc, reloads), (RELOAD_BUSY, 1), "{out}");
         // A wait shorter than two looks still gets its one retry.
-        let (rc, reloads, _) = reload_run(2, 0, 0);
+        let (rc, reloads, _, _, _) = reload_run(Browser::new(2), 0);
         assert_eq!((rc, reloads), (0, 2));
+    }
+
+    #[test]
+    fn first_f1_review_of_pr_218_no_browser_connected_ends_the_wait_at_once() {
+        let none = Browser {
+            none_connected: true,
+            ..Browser::new(1)
+        };
+        let (rc, reloads, looks, secs, out) = reload_run(none, 30);
+        assert_eq!((rc, reloads, looks, secs), (0, 0, 1, 0), "{out}");
+        assert!(out.contains("No browser is connected"), "{out}");
+        assert!(!out.contains("two reloads"), "{out}");
+    }
+
+    #[test]
+    fn first_f2_review_of_pr_218_the_wait_is_bounded_by_time_not_looks() {
+        // A helper that takes 5 s per look, on a browser that never takes the new build: with a
+        // count of 15 looks this ran 15 x 7 s. Now it ends one pause and one look past 30 s.
+        let slow = Browser {
+            look_secs: 5,
+            ..Browser::new(0)
+        };
+        let (rc, reloads, _, secs, out) = reload_run(slow, 30);
+        assert_eq!((rc, reloads), (1, 2), "{out}");
+        assert!(secs <= 30 + 4 + 2 + 5 + 5, "the wait ran {secs} s: {out}");
+        // The retry comes once half the time has passed, not at half the looks.
+        let (_, _, looks, _, out) = reload_run(Browser::new(2), 30);
+        assert!(
+            looks >= 8,
+            "retried after {looks} looks, before 15 s: {out}"
+        );
+    }
+
+    #[test]
+    fn first_f3_review_of_pr_218_no_second_reload_for_an_extension_that_only_has_not_answered() {
+        // Helium answers late, then runs the new build: at the halfway look it reports no build,
+        // so nothing is reloaded a second time.
+        let late = Browser {
+            helium_late: 20,
+            ..Browser::new(1)
+        };
+        let (rc, reloads, _, _, out) = reload_run(late, 30);
+        assert_eq!((rc, reloads), (0, 1), "{out}");
+        assert!(!out.contains("reloaded once more"), "{out}");
+        // One that never answers is noted, not called a failure: nothing is known about its build.
+        let silent = Browser {
+            helium_late: 1000,
+            ..Browser::new(1)
+        };
+        let (rc, reloads, _, _, out) = reload_run(silent, 30);
+        assert_eq!((rc, reloads), (0, 1), "{out}");
+        assert!(
+            out.contains("extension (Helium) reported no build"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn second_f6_review_of_pr_218_the_second_reload_says_every_browser_reloads() {
+        let (_, _, _, _, out) = reload_run(Browser::new(2), 30);
+        assert!(
+            out.contains("so every browser's extension is reloaded once more"),
+            "{out}"
+        );
+        assert!(!out.contains("so it is reloaded once more"), "{out}");
+    }
+
+    /// `second-F5` (review of PR 218): the plan's own reload argv, as `polycarp update` hands it to
+    /// `run`, gets past parsing and runs its reload through the steps' runner (`first-F4`).
+    #[test]
+    fn second_f5_first_f4_review_of_pr_218_the_plans_reload_argv_reaches_the_runner() {
+        let f = facts(Platform::Linux, source(Some(ORIGIN), false));
+        let step = steps_of(plan(&f, FINISH))
+            .into_iter()
+            .find(|st| st.argv.iter().any(|a| a == "--reload-wait"))
+            .expect("the plan has a reload step");
+        assert_eq!(&step.argv[1..3], ["update", "--reload-wait"]);
+        let dashes = step.argv.iter().position(|a| a == "--").unwrap();
+        let reload = step.argv[dashes + 1..].to_vec();
+        // `polycarp update` drops the program and "update" before `run`. The clean copy is this
+        // checkout, so its HEAD resolves.
+        let mut args: Vec<OsString> = step.argv[2..].iter().map(OsString::from).collect();
+        args[1] = OsString::from(env!("CARGO_MANIFEST_DIR"));
+        let parts = || vec![at("extension (Chrome)", OLD)];
+        let device = Device {
+            home: None,
+            app: None,
+            spaces: None,
+            config: Err("none".to_string()),
+            parts: &parts,
+        };
+        let mut fake = Recorder::default();
+        let rc = reload_wait_command(&args, &device, &mut fake);
+        assert_ne!(rc, 2, "the plan's argv did not parse");
+        assert_eq!(fake.argv.first(), Some(&reload));
+        // A reload the runner cannot start ends the step without a wait.
+        assert_eq!(rc, 1);
+        assert_eq!(fake.argv.len(), 1);
+    }
+
+    /// A runner that starts nothing and remembers each argv: every reload "could not be started".
+    #[derive(Default)]
+    struct Recorder {
+        argv: Vec<Vec<String>>,
+    }
+    impl Runner for Recorder {
+        fn run(&mut self, step: &Step) -> Ran {
+            self.argv.push(step.argv.clone());
+            Ran {
+                code: None,
+                output: "not started".to_string(),
+            }
+        }
     }
 
     #[test]
