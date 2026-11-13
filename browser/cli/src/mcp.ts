@@ -791,7 +791,7 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 			title: "Run several input steps",
 			description: "Up to 40 input steps in one call, optionally ending with a screenshot: for canvas apps and multi-step input instead of one call per key. Step kinds: press, click ({x,y}|{ref}|{selector}, clickCount), doubleClick, drag ({from,to}), type, hover, scroll ({dx,dy}|{to}), wait (ms); x/y are pixels of your latest screenshot. Steps are settleMs apart (default 80); the run stops at the first failing step. Example: {\"steps\":[{\"press\":\"r\"},{\"drag\":{\"from\":{\"x\":200,\"y\":200},\"to\":{\"x\":360,\"y\":300}}},{\"type\":\"Start\"},{\"press\":\"Escape\"}],\"screenshot\":true}",
 			inputSchema: {
-				steps: z.array(z.record(z.string(), z.any())).min(1).max(40).describe("Each step is an object with one key, e.g. {\"press\":\"Enter\"}; on_dialog goes on one click or press step"),
+				steps: z.array(z.record(z.string(), z.any())).min(1).max(40).describe("Each step is an object with one key, e.g. {\"press\":\"Enter\"}; no on_dialog: use a single click or press"),
 				screenshot: z.boolean().optional().describe("Return a screenshot after the last step"),
 				settleMs: z.number().int().optional().describe("Pause between steps in ms (default 80)"),
 				tabId,

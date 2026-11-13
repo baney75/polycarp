@@ -139,6 +139,12 @@ export interface HandlerContext {
 	 * the action has finished, so a dialog from a later step is not blamed on this one.
 	 */
 	delivered(result?: Record<string, unknown>, tabId?: number, step?: DeliveredStep): void;
+	/**
+	 * Call once the input that can open the call's own box has returned (a click's last mouse event, a press's last
+	 * key): the call's on_dialog answer is taken back then, before the settle and the page look (second-S2 of the
+	 * review of PR 200).
+	 */
+	inputDone?(): void;
 	/** Set for a step of `actions`: the batch settles once, after its last step. */
 	batch?: boolean;
 }
@@ -844,11 +850,20 @@ export const handlers: Record<string, Handler> = {
 		const p = await pointFor(ctx, params, tabId);
 		const button = str(params, "button");
 		const since = await actionStart(ctx, tabId);
-		await click(tabId, p.x, p.y, {
-			button: button === "right" || button === "middle" ? button : "left",
-			clickCount: num(params, "clickCount") ?? 1,
-			beforeLastEvent: () => ctx.delivered({ clicked: p }, tabId),
-		});
+		// Checked right before the input goes out and again before its last event: a call that ended (a timeout) sends none.
+		stopIfAborted(ctx);
+		try {
+			await click(tabId, p.x, p.y, {
+				button: button === "right" || button === "middle" ? button : "left",
+				clickCount: num(params, "clickCount") ?? 1,
+				beforeLastEvent: () => {
+					stopIfAborted(ctx);
+					ctx.delivered({ clicked: p }, tabId);
+				},
+			});
+		} finally {
+			ctx.inputDone?.();
+		}
 		// A dialog the click's page opens while it settles is still the click's doing.
 		const settled = await settleAfter(ctx, tabId, since, { clicked: p }, { before });
 		return { clicked: p, ...settled };
@@ -936,11 +951,15 @@ export const handlers: Record<string, Handler> = {
 		const repeat = num(params, "repeat") ?? 1;
 		const before = await changesBefore(ctx, tabId);
 		const since = await actionStart(ctx, tabId);
-		for (let i = 0; i < repeat; i++) {
-			stopIfAborted(ctx);
-			// The last press is the action: a box it opens worked (and its on_dialog may answer it), as a click's does.
-			if (i === repeat - 1) ctx.delivered({ pressed: key, repeat }, tabId);
-			await pressKey(tabId, key);
+		try {
+			for (let i = 0; i < repeat; i++) {
+				stopIfAborted(ctx);
+				// The last press is the action: a box it opens worked (and its on_dialog may answer it), as a click's does.
+				if (i === repeat - 1) ctx.delivered({ pressed: key, repeat }, tabId);
+				await pressKey(tabId, key);
+			}
+		} finally {
+			ctx.inputDone?.();
 		}
 		return { pressed: key, repeat, ...(await settleAfter(ctx, tabId, since, { pressed: key, repeat }, { before })) };
 	},
@@ -1065,8 +1084,6 @@ export const handlers: Record<string, Handler> = {
 			throw new BridgeError(ERR.BAD_PARAMS, "accept must be true (OK) or false (Cancel)");
 		const own = ctx.dialogAnswer === undefined;
 		const answer = ctx.dialogAnswer ?? dialogAnswerArrive(ctx.session.id, ctx.session.tabIds, num(params, "tabId"));
-		/** The box looked up again here, when none was fixed on arrival: held from now on. */
-		let late: DialogAnswer | undefined;
 		try {
 			const mine = ctx.session.tabIds;
 			const listOpen = () => {
@@ -1099,18 +1116,15 @@ export const handlers: Record<string, Handler> = {
 					ERR.TIMEOUT,
 					"Polycarp's Cancel for this dialog has not come back from the page in 5 s, so it may already be cancelled. Call handle_dialog again in a moment, or read_page to see the page.",
 				);
-			let target = answer.target;
-			if (!target) {
-				// Nothing was fixed when the call arrived (a worker that had just started, say): the box open now.
-				late = dialogAnswerArrive(ctx.session.id, mine, answer.requested);
-				target = late.target;
-			}
+			// The box fixed when the call arrived, and no other (sol-F3 of the review of PR 200): a box that opened since is
+			// one this call never saw, so it is never answered in its place.
+			const target = answer.target;
 			if (!target) {
 				const open = mine.filter((id) => openDialog(id) !== undefined);
 				if (answer.requested === undefined && open.length > 1)
 					throw new BridgeError(ERR.BAD_PARAMS, `Dialogs are open on more than one tab.${listOpen()} Pass tabId.`);
 				const where = answer.requested === undefined ? "on your tabs" : `on tab ${answer.requested}`;
-				throw new BridgeError(ERR.NOT_FOUND, `No dialog is open ${where}; nothing to answer.${listOpen()}`);
+				throw new BridgeError(ERR.NOT_FOUND, `No box to answer ${where}; read_page to see the page.`);
 			}
 			// The box this call was for, by identity, on a tab that is still this session's: checked with no await before the send.
 			if (!ctx.session.tabIds.includes(target.tabId))
@@ -1118,12 +1132,11 @@ export const handlers: Record<string, Handler> = {
 			if (openDialog(target.tabId)?.seq !== target.seq)
 				throw new BridgeError(
 					ERR.NOT_FOUND,
-					`The dialog this call was for on tab ${target.tabId} is gone.${listOpen()}`,
+					`No box to answer: the dialog this call was for on tab ${target.tabId} is gone; read_page to see the page.`,
 				);
 			const dialog = await answerDialog(target.tabId, params.accept, str(params, "promptText"), target.seq);
 			return { tabId: target.tabId, type: dialog.type, message: dialog.message, accepted: params.accept };
 		} finally {
-			if (late) dialogAnswerEnd(late);
 			if (own) dialogAnswerEnd(answer);
 		}
 	},

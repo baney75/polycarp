@@ -1461,29 +1461,38 @@ Decision (`src/browser/dialog-guard.ts`, service worker):
 - **The answer set in advance.** A model turn takes longer than 3 seconds, so with the person's same-site tab in front a
   `handle_dialog` sent after the box opened never arrives in time; the deadline stays, for the person's sake. Instead
   click and press take `on_dialog` ("ok" or "cancel", with `on_dialog_text` for a prompt, refused unless the answer is
-  "ok"), and so does one click or press step inside `actions`, binding to that step. Not type or fill, and not a whole
-  batch: done again, those would type or act again. An automatic OK only ever answers the box its own action opened
-  (the #193 review):
+  "ok"). Only a single click or press call takes it, never `actions` (the review of PR 200): an `actions` call with
+  `on_dialog` on the call, beside a step's key or inside a step is refused as `bad_params` before any step runs, with
+  the single call to send instead. Not type or fill either: done again, those would type again. Each review of the
+  batch form found new races between its steps, its timeouts and other clients; one call with one input has none of
+  them. An automatic OK only ever answers the box its own action opened (the reviews of PR 193 and PR 200):
   - The call must name `tabId`, a tab of its own session, checked before anything runs or is armed.
-  - The answer belongs to that call and tab. It is armed (`armDialog`, cdp.ts) only while the step's last input is on
-    its way to that tab, once per call, never after the call failed on another box, and taken back when the step or the
-    call ends.
-  - One armed answer per tab across every client of the session: while a call with `on_dialog` runs on a tab, another
-    call there is refused as `not_sent`, which the client sends again shortly, and a call with `on_dialog` waits the same
-    way for the calls already running there.
-  - The call reports the answer that landed: the CDP reply of the answer sent, or Chrome's own close event. When its OK
-    failed and the guard cancelled the box, it says Cancel.
-  - What it cannot tell apart: a box the page opens by itself in the moment the step's input is on its way, on that
-    tab, takes the answer. CDP's dialog event names no cause.
+  - The answer belongs to that call and tab. It is armed (`armDialog`, cdp.ts) just before the input that can open the
+    box (a click's last mouse event, a press's last key), once per call, and taken back as soon as that input returns
+    (`inputDone`), before the settle and the page look. A box after that, or after the answered one, goes to the guard
+    as usual.
+  - A hold covers every input to the tab: while a call with `on_dialog` runs on a tab, any other call whose target is
+    that tab is refused as `not_sent`, counting the tab it names (or the current one) and each `actions` step's own
+    tabId. A call with `on_dialog` is refused the same way while other calls run there. The client sends a `not_sent`
+    call again after a short backoff; the refusal text says to send it again later, never that it waits.
+  - A call that ends, by a timeout or otherwise, aborts for good: the bridge sets `aborted` before it takes the answer
+    back, and the arm and each input check it right before they act, so a handler still running after a timeout never
+    arms and sends no more input.
+  - The call reports the answer that landed: the CDP reply of the answer sent, or Chrome's own close event. An answer
+    that fails is replaced at once by Cancel and the call fails (`interrupted`, saying the page saw Cancel), with no
+    wait for the guard. A call that fails after its answer landed (a box on another tab, the page going away) says
+    which answer landed and not to do the action again.
+  - What it cannot tell apart: a box the page opens by itself while the input is on its way, on that tab, takes the
+    answer. CDP's dialog event names no cause.
   The OK rule is the same as for handle_dialog: OK only when the box confirms exactly what the user asked for.
 - **Only a handle_dialog for that dialog defers its Cancel,** counted from the moment the request reaches the worker's
   socket, while it waits behind the client's earlier requests too, until it ends. Nothing else holds a box: not another
   call on the tab, not a screenshot of it, not an answer for another box.
 - **Answer by identity, on the session's own tabs.** `handle_dialog` fixes its box (tab and seq) on arrival: the tab it
   names, or with no tabId the one box open on the session's tabs, including one whose Cancel is on its way. When it runs,
-  a tab that is not (or no longer) the session's is refused, and with no box fixed on arrival (a worker that had just
-  started) it looks again then. At send time the tab's open box must still be that one, checked with no await before the
-  send; otherwise it refuses, lists the boxes open now and says which call answers one. Answering removes only the box
+  a tab that is not (or no longer) the session's is refused. It never guesses: with no box fixed on arrival, or when the
+  box it fixed is gone, it refuses with "No box to answer" and read_page, and never answers another box on the tab (the
+  review of PR 200). At send time the tab's open box must still be that one, checked with no await before the send. Answering removes only the box
   answered: a box the page opens before the answer's reply comes back stays known.
 - **Cancel, then tell.** Each Cancel is decided on facts read after the last await and sent with none between: a box
   whose tab changed hands, or whose person's tab closed, while an earlier Cancel went out is decided again first. A box
@@ -1499,17 +1508,19 @@ Decision (`src/browser/dialog-guard.ts`, service worker):
 - **What the notice says to do next** comes from the box's recorded cause (`dialogAdvice`): the bridge records one only
   for a box that opened on the tab a click, press, type or fill step sent its last input to, while that input was on
   its way. It never says to repeat a whole call.
-  - An alert has one outcome, so dismissing it lost nothing: the notice says the action went through, do not repeat it.
-    A box after the one the call's `on_dialog` answered (confirm OK, then "Record deleted") gets the same: that answer
-    stands.
+  - An alert is quoted, and never taken as a sign the action worked: a site answers a failed Delete with an alert too.
+    The notice says to read the page before acting again. A box after the one the call's `on_dialog` answered (confirm
+    OK, then another confirm) says that answer stands and not to repeat the call.
   - No known cause (run_js, a hover, scroll or drag, a page timer, leaving the page, a box kept from before a restart),
     or a box on another tab than the step's: the notice says Polycarp does not know what opened it and to read the page
     first. It names no call.
   - A type or fill step: read the page; finish with the click or press that submits it, with `on_dialog`.
-  - A click or press: that one step, on the box's tab, with `on_dialog`. In `actions` the notice says how many steps
-    ran (do not run them again), which step opened the box and how many after it did not run.
+  - A click or press: that one step, on the box's tab, with `on_dialog`, as a single call. In `actions` the notice says
+    how many steps ran (do not run them again), which step opened the box and how many after it did not run, and names
+    the step's own call outside actions. A press with `repeat` names one press: only the last opened the box.
   The call's own note says the same up front when the person's tab of the site is in front, so the agent does not spend
-  a turn on a handle_dialog that cannot arrive.
+  a turn on a handle_dialog that cannot arrive. With an `ask_user` pending only the minute rule applies, so the note
+  leaves handle_dialog open.
 - **The veil** credits only the tab a call acted on (`src/browser/tab-use.ts`), plus a tab the call moved the session to;
   before, a call that named a tab still counted on the current tab.
 
@@ -1528,7 +1539,12 @@ answered OK at once and nothing more is cancelled. One test per finding of the #
 then "Record deleted" (dismissed, no repeat named, one record deleted); an unnamed or foreign tab refused before
 anything is armed; a second client's call on the tab refused and a page's own box never taking the answer; a failed OK
 reported as the Cancel the page got; an `actions` box naming only its step and the steps that ran; boxes with no known
-cause, or on another tab, naming no call. The weak-model tasks in `evals/weak-model/tasks/dialog-preset.mjs` give a
+cause, or on another tab, naming no call. And one per finding of the review of PR 200: `on_dialog` anywhere in `actions`
+refused before a step runs; another client's `actions` step on a held tab refused, with "send it again"; a call timed
+out before its last input sending nothing and arming nothing; a box during a click's settle not taking its answer; a
+failed OK cancelled at once; failures after an answered box naming it; a repeat press naming one press; an alert
+quoted; a pending ask_user leaving handle_dialog open. `test/dialog-answer.test.mjs` has the handle_dialog that found no
+box on arrival never answering one that opened since. The weak-model tasks in `evals/weak-model/tasks/dialog-preset.mjs` give a
 small model the same cases from a plain prompt: one where it must click with `on_dialog`, one where the site's alert
 after the deletion must not make it repeat. The e2e "only the tab an agent uses is held up" in
 `cli/test/e2e-bridge.test.mjs` opens a same-site tab from the agent's tab (one process, checked by a busy loop), lets

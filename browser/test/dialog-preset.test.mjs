@@ -11,11 +11,13 @@ const realSetTimeout = globalThis.setTimeout;
 const wait = (ms) => new Promise((r) => realSetTimeout(r, ms));
 const native = await import("../src/bridge/native.ts");
 const { installCdpListeners, openDialog } = await import("../src/browser/cdp.ts");
-const { deps, reconcile, resetDialogGuard } = await import("../src/browser/dialog-guard.ts");
+const { deps, dialogAsk, reconcile, resetDialogGuard } = await import("../src/browser/dialog-guard.ts");
 installCdpListeners();
 // The bridge's long timers (its prune, each request's 90 s limit) must not hold the test process open.
+/** Set by a test: the bridge's 90 s handler limit runs out after this many ms instead. */
+let handlerLimit;
 globalThis.setTimeout = (fn, ms, ...args) => {
-	const t = realSetTimeout(fn, ms, ...args);
+	const t = realSetTimeout(fn, ms === 90_000 && handlerLimit ? handlerLimit : ms, ...args);
 	if (ms >= 10000) t.unref();
 	return t;
 };
@@ -104,9 +106,12 @@ port.deliver({ type: "client_connected", clientId: "c2", client: { name: "claude
 // The person's own tab of the site, in front.
 fake.addTab({ url: "https://www.example.com/cart", active: true });
 
+/** The agent's tabs a test opened: closed after it, under the session's tab limit. */
+let opened = [];
 /** A fresh tab of the agent's on the site, with a page program; the guard's waits set, its clock mocked. */
 async function agentTab(program) {
 	const tabId = (await request("tabs.create")).result.tabId;
+	opened.push(tabId);
 	fake.commitNav(tabId, SITE);
 	if (program) programs.set(tabId, program);
 	return tabId;
@@ -125,6 +130,11 @@ function setup(t) {
 			w.resolve(false);
 		}
 		waiting.clear();
+		for (const tabId of opened) {
+			programs.delete(tabId);
+			void request("tabs.close", { tabId }).catch(() => undefined);
+		}
+		opened = [];
 		mock.timers.reset();
 		resetDialogGuard();
 	});
@@ -180,7 +190,9 @@ test("second-S1: confirm OK by on_dialog, then the alert: dismissed, the notice 
 	assert.equal(r.result.answered?.answered, "ok");
 	assert.equal(r.result.dialog?.type, "alert");
 	assert.match(r.result.note, /answered OK at once, as on_dialog asked/);
-	assert.match(r.result.note, /An alert has only one answer[^.]*\. Do not repeat it/);
+	// first-F4 (review of PR 200): the alert is quoted, never taken as the action's success.
+	assert.match(r.result.note, /The alert said "Record deleted"\. Do not take it as a sign the action worked/);
+	assert.doesNotMatch(r.result.note, /went through|That worked/);
 	assert.doesNotMatch(r.result.note, /call (click|press) with/);
 	await pastGrace();
 	assert.deepEqual(answers.map((a) => [a.message, a.accept]), [
@@ -189,7 +201,8 @@ test("second-S1: confirm OK by on_dialog, then the alert: dismissed, the notice 
 	]);
 	const said = await notice(tab);
 	assert.match(said, /The alert dialog on tab \d+ \("Record deleted"\) was dismissed/);
-	assert.match(said, /the action that opened it went through\. Do not repeat it/);
+	assert.match(said, /The alert said "Record deleted"\. Do not take it as a sign the action worked, and do not repeat the action yet/);
+	assert.doesNotMatch(said, /went through/);
 	assert.doesNotMatch(said, /call (click|press) with|To do that one step again/, said);
 	// A model that follows the notice does nothing more: no call is named, and the page is free.
 	assert.equal(openDialog(tab), undefined);
@@ -262,13 +275,11 @@ test("sol-F2, first-F2: one armed answer per tab across the session's clients; a
 	assert.equal(r.error?.code, "dialog_open", JSON.stringify(r));
 	await pastGrace();
 	await timer;
-	// c1's click lands once the page is free and opens its own box; c1 already failed, so its OK is not armed.
-	for (let i = 0; i < 100 && !openDialog(tab); i++) await wait(5);
+	// c1 already failed: once the page is free, its click sends no more input, so its own box never opens.
+	await wait(100);
 	await pastGrace();
-	assert.deepEqual(answers.map((x) => [x.message, x.accept]), [
-		["A page timer's box", false],
-		["Mine?", false],
-	]);
+	assert.deepEqual(answers.map((x) => [x.message, x.accept]), [["A page timer's box", false]]);
+	assert.equal(openDialog(tab), undefined);
 	// And the other way: while c2 has a call running on the tab, a call with on_dialog there is not sent.
 	const slow = deliver("c2", "wait", { tabId: tab, ms: 300 });
 	await wait(30);
@@ -277,22 +288,21 @@ test("sol-F2, first-F2: one armed answer per tab across the session's clients; a
 	await reply(slow);
 });
 
-test("sol-F1, first-F3: on_dialog's OK fails and the guard cancels: the call reports Cancel, as the page got it", async (t) => {
+test("first-F3 (review of PR 200): on_dialog's OK fails: Polycarp cancels the box at once and the call fails, with no wait for the guard", async (t) => {
 	setup(t);
 	records.deleted = 0;
 	const tab = await agentTab(deletePage);
 	failNextOk = true;
-	const call = deliver("c1", "click", { tabId: tab, x: 10, y: 10, on_dialog: "ok" });
-	await wait(50);
-	assert.ok(openDialog(tab), "the box closed although its OK failed");
-	await pastGrace();
-	const r = await reply(call);
-	assert.equal(r.error, undefined, JSON.stringify(r.error));
-	assert.equal(r.result.dialog?.answered, "cancel");
-	assert.match(r.result.note, /on_dialog's OK did not reach the page: it was answered Cancel, and the page saw Cancel/);
+	const t0 = performance.now();
+	// No pastGrace: the guard's clock never moves, so only the failed answer's own Cancel can free the page.
+	const r = await reply(deliver("c1", "click", { tabId: tab, x: 10, y: 10, on_dialog: "ok" }), 2_000);
+	assert.ok(performance.now() - t0 < 2_000);
+	assert.equal(r.error?.code, "interrupted", JSON.stringify(r));
+	assert.match(r.error.message, /on_dialog's OK did not reach it, so Polycarp answered Cancel and the page saw Cancel/);
+	assert.doesNotMatch(r.error.message, /That worked|went through/);
+	assert.deepEqual(answers.map((a) => [a.message, a.accept]), [["Delete the record?", false]]);
+	assert.equal(openDialog(tab), undefined, "the box is still open");
 	assert.equal(records.deleted, 0);
-	// The guard's notice still names the one step: the box was this click's.
-	assert.ok((await notice(tab)).includes(`call click with {"tabId":${tab},"x":10,"y":10,"on_dialog":"ok"}`));
 });
 
 test("sol-F4, first-F1: a box from a step of actions: the notice says which steps ran and names only the step that opened it", async (t) => {
@@ -312,17 +322,13 @@ test("sol-F4, first-F1: a box from a step of actions: the notice says which step
 	await pastGrace();
 	const said = await notice(tab);
 	assert.match(said, /The first 1 step of your actions call ran before it: do not run them again\. Step 2 \(click\) opened it, and the 1 after it did not run/);
-	assert.ok(said.includes(`call click with {"tabId":${tab},"x":10,"y":10,"on_dialog":"ok"}`), said);
+	assert.ok(said.includes(`call click on its own (not inside actions) with {"tabId":${tab},"x":10,"y":10,"on_dialog":"ok"}`), said);
 	assert.doesNotMatch(said, /call actions with/);
-	// The step itself, set inside actions: answered at once, and the step before it ran once.
-	const again = await request("actions", {
-		tabId: tab,
-		settleMs: 0,
-		steps: [{ click: { x: 5, y: 5 } }, { click: { x: 10, y: 10, on_dialog: "ok" } }],
-	});
+	// The step alone, as the notice says: answered at once, and the step before it is not run again.
+	const again = await request("click", { tabId: tab, x: 10, y: 10, on_dialog: "ok" });
 	assert.equal(again.error, undefined, JSON.stringify(again.error));
 	assert.deepEqual(answers.map((a) => a.accept), [false, true]);
-	assert.equal(rows, 2);
+	assert.equal(rows, 1);
 });
 
 test("press takes on_dialog: Enter that opens a confirm is answered as it opens", async (t) => {
@@ -380,7 +386,7 @@ test("second-S3: a box on another of the session's tabs during a click is not th
 	assert.ok(!said.includes(`"tabId":${tab}`), said);
 });
 
-test("on_dialog is checked: click and press only, one step of actions, prompt text only with ok", async (t) => {
+test("on_dialog is checked: click and press only, prompt text only with ok", async (t) => {
 	setup(t);
 	const tab = await agentTab();
 	const refuse = async (method, params, re) => {
@@ -389,12 +395,191 @@ test("on_dialog is checked: click and press only, one step of actions, prompt te
 	};
 	await refuse("click", { x: 1, y: 1, on_dialog: "yes" }, /on_dialog must be "ok" or "cancel"/);
 	for (const m of ["type", "fill", "scroll"])
-		await refuse(m, { text: "x", value: "x", on_dialog: "ok" }, /on_dialog works on click and press, or on one click or press step inside actions, not on/);
-	await refuse("actions", { on_dialog: "ok", steps: [{ click: { x: 1, y: 1 } }] }, /on_dialog goes on the one click or press step/);
-	await refuse("actions", { steps: [{ type: { text: "x", on_dialog: "ok" } }] }, /not on type/);
-	await refuse("actions", { steps: [{ click: { x: 1, y: 1, on_dialog: "ok" } }, { press: { key: "Enter", on_dialog: "ok" } }] }, /one step only/);
+		await refuse(m, { text: "x", value: "x", on_dialog: "ok" }, /on_dialog works on a single click or press call, not on/);
 	// second-S5: prompt text without "ok" is refused the same way, with or without on_dialog.
 	await refuse("click", { x: 1, y: 1, on_dialog: "cancel", on_dialog_text: "x" }, /^on_dialog_text needs on_dialog "ok"$/);
 	await refuse("click", { x: 1, y: 1, on_dialog_text: "x" }, /^on_dialog_text needs on_dialog "ok"$/);
 	assert.deepEqual(answers, []);
+});
+
+// The narrowed rules of the review of PR 200: on_dialog only on a single click or press; a hold covers every input to
+// the tab; a timeout aborts for good; armed only while the input is out; failures after the answer say so.
+
+/** Hold the tab's next mousePressed until `release()`; counts the mouse events that reach the tab. */
+function holdPress(t, tabId) {
+	const seen = { pressed: 0, released: 0 };
+	let release;
+	const held = new Promise((r) => {
+		release = r;
+	});
+	const plain = chrome.debugger.sendCommand;
+	chrome.debugger.sendCommand = async (target, method, params) => {
+		if (target.tabId === tabId && method === "Input.dispatchMouseEvent" && params.type === "mousePressed") {
+			seen.pressed++;
+			await held;
+		}
+		if (target.tabId === tabId && method === "Input.dispatchMouseEvent" && params.type === "mouseReleased") seen.released++;
+		return plain(target, method, params);
+	};
+	t.after(() => {
+		chrome.debugger.sendCommand = plain;
+		release();
+	});
+	return { seen, release: () => release() };
+}
+
+test("second-S3, sol-F4, sol-F5 (review of PR 200): on_dialog anywhere in actions is refused before any step runs, with the single call to send", async (t) => {
+	setup(t);
+	let inputs = 0;
+	const tab = await agentTab(async () => {
+		inputs++;
+	});
+	const forms = [
+		{ steps: [{ press: "Enter", on_dialog: "ok" }] },
+		{ steps: [{ key: "Enter", on_dialog: "ok" }] },
+		{ steps: [{ click: { x: 10, y: 10 }, on_dialog: "ok" }] },
+		{ steps: [{ click: { x: 5, y: 5 } }, { click: { x: 10, y: 10, on_dialog: "ok" } }] },
+		{ steps: [{ press: { key: "Enter", on_dialog: "cancel" } }] },
+		{ steps: [{ click: { x: 10, y: 10, on_dialog_text: "x" } }] },
+		{ on_dialog: "ok", steps: [{ click: { x: 10, y: 10 } }] },
+	];
+	for (const f of forms) {
+		const r = await request("actions", { tabId: tab, settleMs: 0, ...f });
+		assert.equal(r.error?.code, "bad_params", `${JSON.stringify(f)}: ${JSON.stringify(r)}`);
+		assert.match(r.error.message, /^on_dialog is not allowed (on step \d+ of actions|on an actions call): nothing was run/);
+		assert.match(r.error.message, /call (click|press) on its own with \{"tabId":\d+/);
+	}
+	// The example is the one call to send, on its tab, without the repeat (second-S4).
+	const r = await request("actions", { tabId: tab, steps: [{ key: "Enter", repeat: 3, on_dialog: "ok" }] });
+	assert.ok(r.error?.message.includes(`call press on its own with {"tabId":${tab},"key":"Enter","on_dialog":"ok"}`), JSON.stringify(r));
+	assert.equal(inputs, 0, "a step ran");
+	assert.deepEqual(answers, []);
+});
+
+test("sol-F1, first-F2, first-F6 (review of PR 200): a hold covers each step's own tab; the refusal says to send it again later", async (t) => {
+	setup(t);
+	const tab = await agentTab(async (_i, id) => {
+		await box(id, "confirm", "Mine?");
+	});
+	const elsewhere = await agentTab(async () => undefined);
+	const hold = holdPress(t, tab);
+	// c1's click with on_dialog on `tab` is on its way: its last input has not gone out.
+	const a = deliver("c1", "click", { tabId: tab, x: 10, y: 10, on_dialog: "ok" });
+	for (let i = 0; i < 100 && !hold.seen.pressed; i++) await wait(5);
+	// c2's batch names another tab, but its step clicks the held one: not sent.
+	const b = await request("actions", { tabId: elsewhere, settleMs: 0, steps: [{ click: { tabId: tab, x: 20, y: 20 } }] }, "c2");
+	assert.equal(b.error?.code, "not_sent", JSON.stringify(b));
+	assert.match(b.error.message, new RegExp(`on tab ${tab}, so this call was not sent\\. Send it again once that call has ended`));
+	assert.doesNotMatch(b.error.message, /waits/);
+	assert.equal(hold.seen.pressed, 1, "c2's step reached the held tab");
+	hold.release();
+	const r = await reply(a);
+	assert.equal(r.error, undefined, JSON.stringify(r.error));
+	assert.deepEqual(answers.map((x) => [x.message, x.accept]), [["Mine?", true]]);
+});
+
+test("sol-F2, first-F1 (review of PR 200): a call that timed out before its last input never arms its answer and sends no more input", async (t) => {
+	setup(t);
+	const tab = await agentTab(async (_i, id) => {
+		await box(id, "confirm", "Mine?");
+	});
+	const hold = holdPress(t, tab);
+	handlerLimit = 300;
+	t.after(() => {
+		handlerLimit = undefined;
+	});
+	const r = await reply(deliver("c1", "click", { tabId: tab, x: 10, y: 10, on_dialog: "ok" }));
+	handlerLimit = undefined;
+	assert.equal(r.error?.code, "timeout", JSON.stringify(r));
+	// The handler goes on once Chrome answers: it must neither arm nor send its last event.
+	hold.release();
+	await wait(100);
+	assert.equal(hold.seen.released, 0, "the timed-out call sent its click");
+	// A confirm the page opens later on that tab is not answered with the ended call's OK.
+	void box(tab, "confirm", "A later box");
+	await wait(30);
+	assert.deepEqual(answers, [], "a box took the ended call's OK");
+	assert.equal(openDialog(tab)?.message, "A later box");
+});
+
+test("second-S2 (review of PR 200): on_dialog is taken back once the click returns: a box during its settle goes to the guard", async (t) => {
+	setup(t);
+	const tab = await agentTab(async (_i, id) => {
+		realSetTimeout(() => void box(id, "confirm", "From a page timer"), 50);
+	});
+	const r = await request("click", { tabId: tab, x: 10, y: 10, on_dialog: "ok" });
+	assert.equal(r.result?.dialog?.message, "From a page timer", JSON.stringify(r));
+	assert.deepEqual(answers, [], "the settle's box took the click's OK");
+	assert.ok(openDialog(tab));
+});
+
+test("second-S1 (review of PR 200): a call that fails after its on_dialog OK landed says so, and not to do it again", async (t) => {
+	setup(t);
+	records.deleted = 0;
+	const other = await agentTab();
+	// (a) a box on another of the session's tabs while the click settles.
+	const tab = await agentTab(async (_i, id) => {
+		if (await box(id, "confirm", "Delete the record?")) {
+			records.deleted++;
+			void box(other, "confirm", "Another tab's box");
+		}
+	});
+	const r = await request("click", { tabId: tab, x: 10, y: 10, on_dialog: "ok" });
+	assert.equal(r.error?.code, "dialog_open", JSON.stringify(r));
+	assert.match(r.error.message, /Before that, a confirm dialog opened on tab \d+ \("Delete the record\?"\) and was answered OK at once, as on_dialog asked\. Do not repeat the action: read_page first/);
+	assert.equal(records.deleted, 1);
+	await pastGrace();
+	// (b) the click itself fails after the OK: the page went away under it.
+	const gone = await agentTab(async (_i, id) => {
+		if (await box(id, "confirm", "Delete the record?")) {
+			records.deleted++;
+			throw new Error("Inspected target navigated or closed");
+		}
+	});
+	const r2 = await request("click", { tabId: gone, x: 10, y: 10, on_dialog: "ok" });
+	assert.ok(r2.error, JSON.stringify(r2));
+	assert.match(r2.error.message, /Before that, a confirm dialog opened on tab \d+ \("Delete the record\?"\) and was answered OK at once/);
+	assert.equal(records.deleted, 2);
+});
+
+test("second-S4, sol-F5 (review of PR 200): only the last press of a repeat opened the box: the notice names one press, never the repeat", async (t) => {
+	setup(t);
+	let enters = 0;
+	const tab = await agentTab(async ({ key }, id) => {
+		if (key === "Enter" && ++enters === 3) await box(id, "confirm", "Choose this item?");
+	});
+	const r = await request("press", { tabId: tab, key: "Enter", repeat: 3 });
+	assert.equal(r.error, undefined, JSON.stringify(r.error));
+	await pastGrace();
+	const said = await notice(tab);
+	assert.match(said, /The first 2 of the 3 presses ran before it: do not press them again/);
+	assert.ok(said.includes(`call press with {"tabId":${tab},"key":"Enter","on_dialog":"ok"}`), said);
+	assert.doesNotMatch(said, /"repeat"/);
+});
+
+test("first-F4 (review of PR 200): an alert with no known cause is quoted and never called a success", async (t) => {
+	setup(t);
+	const tab = await agentTab();
+	void box(tab, "alert", "Could not delete: server error");
+	await pastGrace();
+	const said = await notice(tab);
+	assert.match(said, /The alert said "Could not delete: server error"\. Do not take it as a sign the action worked/);
+	assert.doesNotMatch(said, /went through|nothing was lost/);
+});
+
+test("first-F5 (review of PR 200): with an ask_user pending, the call's note never says the box is cancelled before handle_dialog", async (t) => {
+	setup(t);
+	const tab = await agentTab(async (_i, id) => {
+		await box(id, "confirm", "Delete this record?");
+	});
+	dialogAsk("bridge-claude-shop", true);
+	t.after(() => dialogAsk("bridge-claude-shop", false));
+	const r = await request("click", { tabId: tab, x: 10, y: 10 });
+	assert.equal(r.error, undefined, JSON.stringify(r.error));
+	assert.doesNotMatch(r.result.note, /do not call handle_dialog|cancels this box in about/);
+	assert.match(r.result.note, /call handle_dialog with tabId/);
+	// The grace rule is off while the question waits: the box stays for handle_dialog.
+	await pastGrace();
+	assert.deepEqual(answers, []);
+	assert.ok(openDialog(tab));
 });

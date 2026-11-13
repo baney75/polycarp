@@ -144,7 +144,7 @@ export interface DialogCause {
 	step: { kind: string; params: Record<string, unknown> };
 	/** In an `actions` call: the step's index, and how many steps there were. */
 	batch?: { index: number; total: number };
-	/** A box the same call's on_dialog had already answered: that answer stands, and the action went through. */
+	/** A box the same call's on_dialog had already answered: that answer stands, and the call is not repeated. */
 	after?: { type: string; message: string };
 }
 /** The call that opened each box, for the notice's next step. */
@@ -253,24 +253,34 @@ const READ_FIRST = "Read the page (read_page) to see what happened before you ac
  */
 export function dialogAdvice(seq: number, tabId: number, dialog: PageDialog): string {
 	const cause = causes.get(seq);
+	// An alert may say the action failed: it is quoted, never taken as success (first-F4 of the review of PR 200).
 	if (dialog.type === "alert")
-		return "An alert has only one answer, so nothing was lost: the action that opened it went through. Do not repeat it.";
+		return `The alert said ${JSON.stringify(dialog.message)}. Do not take it as a sign the action worked, and do not repeat the action yet. ${READ_FIRST}`;
 	if (cause?.after)
-		return `It opened after the ${cause.after.type} (${JSON.stringify(cause.after.message)}) that your call's on_dialog answered. That answer stands and the action went through: do not repeat it. ${READ_FIRST}`;
+		return `It opened after the ${cause.after.type} (${JSON.stringify(cause.after.message)}) that your call's on_dialog answered. That answer stands: do not repeat the call. ${READ_FIRST}`;
 	if (!cause || cause.tabId !== tabId)
 		return `Polycarp does not know which action opened it (a script, a hover, a page timer, leaving the page): no call can answer it in advance. ${READ_FIRST} Ask the user if the page still needs this box answered.`;
+	const repeat = Number(cause.step.params.repeat);
 	const ran = cause.batch
 		? `${cause.batch.index === 0 ? "No step" : `The first ${cause.batch.index} step${cause.batch.index === 1 ? "" : "s"}`} of your actions call ran before it${cause.batch.index === 0 ? "" : ": do not run them again"}. Step ${cause.batch.index + 1} (${cause.step.kind}) opened it${cause.batch.total > cause.batch.index + 1 ? `, and the ${cause.batch.total - cause.batch.index - 1} after it did not run` : ""}. `
 		: "";
+	// Only the last press opened it (second-S4, sol-F5 of the review of PR 200): the earlier ones ran and stay done.
+	const presses =
+		cause.step.kind === "press" && Number.isInteger(repeat) && repeat > 1
+			? `The first ${repeat - 1} of the ${repeat} presses ran before it: do not press them again. `
+			: "";
 	if (!ONE_STEP.has(cause.step.kind))
 		return `${ran}It opened during ${cause.step.kind}, which can't take on_dialog: done again, it would type again. ${READ_FIRST} If what the user asked for is not done, do the click or press that finishes it with "on_dialog".`;
 	const args = Object.fromEntries(
-		Object.entries(cause.step.params).filter(([k]) => k !== "on_dialog" && k !== "on_dialog_text" && k !== "tabId"),
+		Object.entries(cause.step.params).filter(
+			([k]) => k !== "on_dialog" && k !== "on_dialog_text" && k !== "tabId" && k !== "repeat",
+		),
 	);
 	const text = dialog.type === "prompt" ? ', "on_dialog_text": "<the text to enter>"' : "";
 	const json = (on: string) =>
 		`${JSON.stringify({ tabId, ...args, on_dialog: on }).slice(0, -1)}${on === "ok" ? text : ""}}`;
-	return `${ran}To do that one step again, call ${cause.step.kind} with ${json("ok")}: the box is then answered OK as it opens. Use "on_dialog": "ok" only if the box confirms exactly what the user asked for; otherwise ask the user first, or call ${cause.step.kind} with ${json("cancel")}.`;
+	const alone = cause.batch ? " on its own (not inside actions)" : "";
+	return `${ran}${presses}To do that one ${cause.step.kind === "press" ? "press" : "step"} again, call ${cause.step.kind}${alone} with ${json("ok")}: the box is then answered OK as it opens. Use "on_dialog": "ok" only if the box confirms exactly what the user asked for; otherwise ask the user first, or call ${cause.step.kind} with ${json("cancel")}.`;
 }
 
 /**
@@ -281,6 +291,10 @@ export async function dialogSoon(tabId: number, dialog: PageDialog): Promise<str
 	const [tabs, owned] = await Promise.all([deps.tabs(), deps.owners()]).catch(() => [[], new Map()] as const);
 	const site = siteOf(dialog.url || tabs.find((t) => t.id === tabId)?.url);
 	if (!site) return undefined;
+	// A pending ask_user turns the grace rule off (decide): only the minute rule cancels, so handle_dialog can still
+	// arrive (first-F5 of the review of PR 200).
+	const owner = owned.get(tabId);
+	if (owner !== undefined && asking.has(owner)) return undefined;
 	const front = tabs.some((t) => {
 		const owner = t.id === undefined ? undefined : owned.get(t.id);
 		return t.id !== tabId && t.active && siteOf(t.url || t.pendingUrl) === site && !(owner && isAgentSession(owner));

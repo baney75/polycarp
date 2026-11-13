@@ -41,7 +41,7 @@ import {
 	dialogPreset,
 	isDialogSafe,
 	raceDialogs,
-	stepPreset,
+	refuseStepPreset,
 	type WantedPreset,
 } from "./dialogs.js";
 import { BridgeError, classify, HANDLER_TIMEOUT_MS, withTimeout } from "./errors.js";
@@ -379,18 +379,39 @@ const heldTabs = new Map<number, string>();
 /** The actions whose box the guard's notice may name (dialog-guard.ts); a hover, scroll or drag box has no known cause. */
 const CAUSE_KINDS = new Set(["click", "press", "type", "fill"]);
 
-/** The answer a call or one of its steps set in advance, checked; the step's index for `actions`. */
-function wantedPreset(
-	method: string,
-	params: Record<string, unknown>,
-): (WantedPreset & { index?: number }) | undefined {
+/** The answer a single click or press set in advance, checked. `actions` takes none (D46): refused here. */
+function wantedPreset(method: string, params: Record<string, unknown>): WantedPreset | undefined {
 	if (method !== "actions") return dialogPreset(method, params);
-	const raw = params.steps;
-	if (!Array.isArray(raw) || raw.some((st) => !st || typeof st !== "object")) return stepPreset(params, []);
-	return stepPreset(
-		params,
-		raw.map((st, i) => normalizeStep(st as Record<string, unknown>, i)),
-	);
+	refuseStepPreset(params, normalizeStep);
+	return undefined;
+}
+
+/**
+ * Every tab a call may send input to (sol-F1, first-F2 of the review of PR 200): the one it names, else the current
+ * one, and for `actions` each step's own tabId too. A hold covers them all.
+ */
+function targetTabs(
+	method: string,
+	params: Record<string, unknown> | undefined,
+	current: number | undefined,
+): number[] {
+	const named = tabIdParam(params);
+	const tabs = new Set<number>();
+	const top = named !== undefined && Number.isInteger(named) ? named : current;
+	if (top !== undefined) tabs.add(top);
+	if (method === "actions" && Array.isArray(params?.steps))
+		for (const [i, st] of params.steps.entries()) {
+			if (!st || typeof st !== "object") continue;
+			let sub: Record<string, unknown>;
+			try {
+				sub = normalizeStep(st as Record<string, unknown>, i)[1];
+			} catch {
+				continue;
+			}
+			const own = tabIdParam(sub);
+			if (own !== undefined && Number.isInteger(own)) tabs.add(own);
+		}
+	return [...tabs];
 }
 
 async function runRequest(state: ClientState, req: HostForwardedRequest, answer?: DialogAnswer): Promise<void> {
@@ -434,8 +455,8 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 	state.lastActivityAt = Date.now();
 	/** This call, for the answer it may arm (`on_dialog`) and the tab it holds. */
 	const call = `${state.clientId}:${req.id}`;
-	/** The tab this call is counted on in `tabCalls`, and whether it holds it. */
-	let onTab: number | undefined;
+	/** The tabs this call is counted on in `tabCalls`; it holds them all when it has on_dialog. */
+	let onTabs: number[] = [];
 	let unwatch: (() => void) | undefined;
 	/** The session and the tab the in-use veil counted this call on (src/browser/veil.ts). */
 	let veiled: { session: BrowserSession; tabId: number | undefined; currentBefore: number | undefined } | undefined;
@@ -500,22 +521,23 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 				`Tab ${want.tabId} is not one of your tabs: on_dialog answers a box on your own tab only (tabs_context lists yours).`,
 			);
 		if (!dialogSafe) {
-			const named = tabIdParam(req.params);
-			const tab = want?.tabId ?? (named !== undefined && Number.isInteger(named) ? named : session.currentTabId);
-			if (tab !== undefined) {
-				// One armed answer per tab across every client of the session (sol-F2, first-F2): while a call with on_dialog
-				// runs on a tab, no other call acts there, and it starts only when none does. Refused as not_sent, the
-				// client sends it again shortly.
+			const tabs = want ? [want.tabId] : targetTabs(req.method, req.params, session.currentTabId);
+			// One armed answer per tab across every client of the session (sol-F2, first-F2 of the review of PR 193): while a
+			// call with on_dialog runs on a tab, no other call sends input there, and it starts only when none does. Refused
+			// as not_sent: it never ran, and the client sends it again a little later.
+			for (const tab of tabs) {
 				const holder = heldTabs.get(tab);
 				const others = [...(tabCalls.get(tab) ?? [])].filter((c) => c !== call);
 				if ((holder && holder !== call) || (want && others.length))
 					throw new BridgeError(
 						ERR.NOT_SENT,
 						want
-							? `Another call is still running on tab ${tab}; a call with on_dialog waits until none is. It was not sent.`
-							: `A call with on_dialog is still running on tab ${tab}; this call waits until it ends. It was not sent.`,
+							? `Another call is still running on tab ${tab}, so this call with on_dialog was not sent. Send it again once that call has ended.`
+							: `A call with on_dialog is still running on tab ${tab}, so this call was not sent. Send it again once that call has ended.`,
 					);
-				onTab = tab;
+			}
+			onTabs = tabs;
+			for (const tab of tabs) {
 				tabCalls.set(tab, (tabCalls.get(tab) ?? new Set()).add(call));
 				if (want) heldTabs.set(tab, call);
 			}
@@ -524,15 +546,20 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 		let delivering: { tabId: number; step?: DeliveredStep } | undefined;
 		/** The box this call's on_dialog answered: a box after it is no reason to do anything again (second-S1). */
 		let answeredBox: { type: string; message: string } | undefined;
+		/** The input that can open the call's box has returned: nothing arms again (second-S2 of the review of PR 200). */
+		let inputEnded = false;
 		ctx.delivered = (result, tabId, step) => {
 			deliveredResult = result && tabId !== undefined ? { result, tabId } : undefined;
 			delivering = result && tabId !== undefined ? { tabId, step } : undefined;
-			const mine = want && (step ? step.index === want.index : want.index === undefined);
-			// Armed while this step's last input is on its way, on its own tab, once: never for another call's box, and
-			// never once the call has failed on a box (its input may still land after that box is answered).
-			if (delivering && mine && want.tabId === tabId && !answeredBox && !aborted)
+			// Armed just before the call's last input goes out, on its own tab, once: never after that input returned,
+			// never for another call's box, and never once the call has failed or ended (sol-F2, first-F1).
+			if (delivering && want && !step && want.tabId === tabId && !inputEnded && !answeredBox && !aborted)
 				armDialog(tabId, call, want.preset);
 			else disarmDialog(call);
+		};
+		ctx.inputDone = () => {
+			inputEnded = true;
+			disarmDialog(call);
 		};
 		if (!dialogSafe)
 			unwatch = watchDialogs((tabId, dialog) => {
@@ -567,7 +594,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 							disarmDialog(call);
 						},
 						() => deliveredResult,
-						{ call, soon: dialogSoon },
+						{ call, method: req.method, soon: dialogSoon },
 					),
 			// An upload's begin may wait for the person's answer, which has its own, longer limit.
 			req.method === "files.upload.begin" ? FILE_ASK_TIMEOUT_MS + 30000 : HANDLER_TIMEOUT_MS,
@@ -583,13 +610,16 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 		if (stack) trace(`${req.method} ${error.code}: ${stack.split("\n").slice(0, 6).join(" | ")}`);
 		reply(undefined, error);
 	} finally {
+		// For good (sol-F2, first-F1 of the review of PR 200): a handler still running after a timeout arms nothing and
+		// sends no more input.
+		aborted = true;
 		disarmDialog(call);
 		unwatch?.();
-		if (onTab !== undefined) {
-			const calls = tabCalls.get(onTab);
+		for (const tab of onTabs) {
+			const calls = tabCalls.get(tab);
 			calls?.delete(call);
-			if (!calls?.size) tabCalls.delete(onTab);
-			if (heldTabs.get(onTab) === call) heldTabs.delete(onTab);
+			if (!calls?.size) tabCalls.delete(tab);
+			if (heldTabs.get(tab) === call) heldTabs.delete(tab);
 		}
 		if (veiled) veilEnd(veiled.session, req.method, veiled.tabId, veiled.currentBefore);
 		state.abort = undefined;

@@ -62,6 +62,7 @@ let dialogSeq = Date.now() * 1000;
 
 const openDialogs = new Map<number, PageDialog>();
 const dialogWatchers = new Set<(tabId: number, dialog: PageDialog) => void>();
+const presetFailWatchers = new Set<(tabId: number, dialog: PageDialog, cancelled: boolean) => void>();
 /** Per tab, the one answer set in advance, and the call it belongs to. */
 const armed = new Map<number, { call: string; preset: DialogPreset }>();
 /** Per open box, how it ended: OK (true) or Cancel (false), as the page got it; undefined when that is unknown. */
@@ -139,6 +140,28 @@ export function watchDialogs(fn: (tabId: number, dialog: PageDialog) => void): (
 	return () => dialogWatchers.delete(fn);
 }
 
+/**
+ * Called when a box's armed answer did not reach the page (first-F3 of the review of PR 200), after Polycarp tried
+ * Cancel in its place: `cancelled` says whether that Cancel landed. Returns an unsubscribe function.
+ */
+export function watchPresetFailures(fn: (tabId: number, dialog: PageDialog, cancelled: boolean) => void): () => void {
+	presetFailWatchers.add(fn);
+	return () => presetFailWatchers.delete(fn);
+}
+
+/** The armed answer failed: Cancel instead, which is always safe, then tell the call that armed it. */
+async function presetFailed(tabId: number, dialog: PageDialog, err: unknown): Promise<void> {
+	console.warn("[cdp] the preset dialog answer failed:", err instanceof Error ? err.message : err);
+	const cancelled =
+		openDialogs.get(tabId)?.seq === dialog.seq
+			? await answerDialog(tabId, false, undefined, dialog.seq).then(
+					() => true,
+					() => false,
+				)
+			: false;
+	for (const fn of presetFailWatchers) fn(tabId, dialog, cancelled);
+}
+
 /** Answer the open dialog: OK (accept) or Cancel, with text for a prompt(). */
 export async function answerDialog(
 	tabId: number,
@@ -187,7 +210,7 @@ function installListeners(): void {
 			for (const fn of dialogWatchers) fn(tabId, dialog);
 			if (preset)
 				void answerDialog(tabId, preset.accept, preset.promptText, dialog.seq).catch((err) =>
-					console.warn("[cdp] the preset dialog answer failed:", err instanceof Error ? err.message : err),
+					presetFailed(tabId, dialog, err),
 				);
 		} else if (method === "Page.javascriptDialogClosed") {
 			const closed = (params ?? {}) as { result?: boolean };

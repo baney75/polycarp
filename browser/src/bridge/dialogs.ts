@@ -3,9 +3,16 @@
  * one open fails with dialog_open; a call that opens one itself, by its last input, worked.
  */
 
-import { type DialogPreset, dialogOutcome, type PageDialog, watchDialogs } from "../browser/cdp.js";
+import {
+	type DialogPreset,
+	dialogOutcome,
+	openDialog,
+	type PageDialog,
+	watchDialogs,
+	watchPresetFailures,
+} from "../browser/cdp.js";
 import type { BrowserSession } from "../browser/session.js";
-import { BridgeError } from "./errors.js";
+import { BridgeError, classify } from "./errors.js";
 import { ERR } from "./protocol.js";
 
 function dialogKind(dialog: PageDialog): string {
@@ -22,10 +29,10 @@ export function dialogError(tabId: number, dialog: PageDialog): BridgeError {
 	);
 }
 
-/** The tools that may set the answer for a box they open, alone or as one step of `actions` (`on_dialog`, D46). */
+/** The tools that may set the answer for a box they open: a single click or press call, never a step of `actions` (D46). */
 export const PRESET_METHODS: ReadonlySet<string> = new Set(["click", "press"]);
 
-/** A call's or a step's answer set in advance, and the one tab whose box it may answer. */
+/** A call's answer set in advance, and the one tab whose box it may answer. */
 export interface WantedPreset {
 	preset: DialogPreset;
 	tabId: number;
@@ -47,10 +54,7 @@ export function dialogPreset(
 	if (text !== undefined && text !== null && on !== "ok") throw new BridgeError(ERR.BAD_PARAMS, TEXT_NEEDS_OK);
 	if (on === undefined || on === null) return undefined;
 	if (!PRESET_METHODS.has(method))
-		throw new BridgeError(
-			ERR.BAD_PARAMS,
-			`on_dialog works on click and press, or on one click or press step inside actions, not on ${method}`,
-		);
+		throw new BridgeError(ERR.BAD_PARAMS, `on_dialog works on a single click or press call, not on ${method}`);
 	if (on !== "ok" && on !== "cancel") throw new BridgeError(ERR.BAD_PARAMS, 'on_dialog must be "ok" or "cancel"');
 	if (text !== undefined && text !== null && typeof text !== "string")
 		throw new BridgeError(ERR.BAD_PARAMS, "on_dialog_text must be a string");
@@ -63,31 +67,43 @@ export function dialogPreset(
 	return { preset: { accept: on === "ok", ...(typeof text === "string" ? { promptText: text } : {}) }, tabId: named };
 }
 
+const has = (o: unknown, k: string) => !!o && typeof o === "object" && (o as Record<string, unknown>)[k] != null;
+const setsDialog = (o: unknown) => has(o, "on_dialog") || has(o, "on_dialog_text");
+
 /**
- * The one step of an `actions` call that sets on_dialog, checked; undefined when none does. `steps` are the batch's
- * steps as the handler reads them; a step's own tabId, else the batch's, names the tab.
+ * An `actions` call never takes on_dialog (D46): not on the call, not beside a step's key, not inside it. Throws
+ * bad_params with the single click or press call to send instead. `normalize` reads a raw step as the handler does.
  */
-export function stepPreset(
+export function refuseStepPreset(
 	params: Record<string, unknown>,
-	steps: Array<[string, Record<string, unknown>]>,
-): (WantedPreset & { index: number }) | undefined {
-	if (params.on_dialog != null || params.on_dialog_text != null)
-		throw new BridgeError(
-			ERR.BAD_PARAMS,
-			"on_dialog goes on the one click or press step whose box it answers, not on the whole actions call",
-		);
-	let found: (WantedPreset & { index: number }) | undefined;
-	for (const [i, [kind, sub]] of steps.entries()) {
-		const want = dialogPreset(kind, sub, sub.tabId ?? params.tabId);
-		if (!want) continue;
-		if (found)
-			throw new BridgeError(
-				ERR.BAD_PARAMS,
-				`on_dialog may be set on one step only; steps ${found.index} and ${i} set it`,
-			);
-		found = { ...want, index: i };
+	normalize: (step: Record<string, unknown>, i: number) => [string, Record<string, unknown>],
+): void {
+	const steps = Array.isArray(params.steps) ? params.steps : [];
+	const i = steps.findIndex(
+		(st) => setsDialog(st) || (!!st && typeof st === "object" && Object.values(st).some(setsDialog)),
+	);
+	if (i < 0 && !setsDialog(params)) return;
+	const raw = (i < 0 ? steps.find((st) => st && typeof st === "object") : steps[i]) as
+		| Record<string, unknown>
+		| undefined;
+	let kind = "click";
+	let args: Record<string, unknown> = { ref: "<ref>" };
+	try {
+		if (raw) [kind, args] = normalize(raw, Math.max(i, 0));
+	} catch {
+		// A step the handler would refuse anyway: the example keeps its placeholder.
 	}
-	return found;
+	if (!PRESET_METHODS.has(kind)) [kind, args] = ["click", { ref: "<ref>" }];
+	const { on_dialog: _on, on_dialog_text: _text, tabId, repeat: _repeat, ...rest } = args;
+	const tab = tabId ?? params.tabId ?? "<your tab>";
+	const example = JSON.stringify({ tabId: tab, ...rest, on_dialog: "ok" });
+	const where = i < 0 ? "on an actions call" : `on step ${i} of actions`;
+	throw new BridgeError(
+		ERR.BAD_PARAMS,
+		`on_dialog is not allowed ${where}: nothing was run. on_dialog works only on a single click or press call. ` +
+			`Run the steps before it with actions, then call ${kind} on its own with ${example} ` +
+			'("cancel" in place of "ok" to cancel the box).',
+	);
 }
 
 /** Methods that still work while a dialog freezes the page. */
@@ -131,7 +147,9 @@ export function dialogOpenedResult(
 ) {
 	const notRun = typeof delivered.notRun === "number" ? delivered.notRun : 0;
 	const later = notRun > 0 ? `The ${notRun} later step${notRun === 1 ? "" : "s"} did not run. ` : "";
-	const opened = `${before ? `${before} ` : "That worked. "}${dialogKind(dialog)} is now open on tab ${tabId}: ${JSON.stringify(dialog.message)}. `;
+	// An alert may report a failure (first-F4 of the review of PR 200): only a box that asks is a sign the input worked.
+	const worked = dialog.type === "alert" ? "" : "That worked. ";
+	const opened = `${before ? `${before} ` : worked}${dialogKind(dialog)} is now open on tab ${tabId}: ${JSON.stringify(dialog.message)}. `;
 	return {
 		...delivered,
 		dialog: { tabId, type: dialog.type, message: dialog.message },
@@ -195,6 +213,46 @@ async function presetResult(result: unknown, tabId: number, dialog: PageDialog):
 	};
 }
 
+/**
+ * The error a call returns when it fails after its on_dialog box was answered (second-S1 of the review of PR 200): the
+ * same code, with the answer that landed, so the agent does not do the action again.
+ */
+async function afterPreset(err: unknown, method: string, tabId: number, dialog: PageDialog): Promise<BridgeError> {
+	const { said } = presetSaid(tabId, dialog, await landed(dialog));
+	const { error } = classify(err, method);
+	return new BridgeError(
+		error.code,
+		`${error.message} Before that, ${said.charAt(0).toLowerCase()}${said.slice(1)} Do not repeat the action: read_page first.`,
+		error.source,
+	);
+}
+
+/** The error a call returns when its on_dialog answer did not reach the box (first-F3 of the review of PR 200). */
+function presetFailedError(tabId: number, dialog: PageDialog, cancelled: boolean): BridgeError {
+	const box = `${dialogKind(dialog)} opened on tab ${tabId} (${JSON.stringify(dialog.message)})`;
+	const asked = dialog.preset?.accept ? "OK" : "Cancel";
+	if (cancelled)
+		return new BridgeError(
+			ERR.INTERRUPTED,
+			`${box}, but on_dialog's ${asked} did not reach it, so Polycarp answered Cancel and the page saw Cancel. ` +
+				"Read the page (read_page) to see what happened before you do it again.",
+			"extension",
+		);
+	if (openDialog(tabId)?.seq === dialog.seq) {
+		const open = dialogError(tabId, dialog);
+		return new BridgeError(
+			ERR.DIALOG_OPEN,
+			`on_dialog's ${asked} did not reach the box, and it is still open. ${open.message}`,
+		);
+	}
+	return new BridgeError(
+		ERR.INTERRUPTED,
+		`${box}, but on_dialog's ${asked} did not reach it, and it closed without an answer Polycarp saw. ` +
+			"Read the page (read_page) to see what happened before you act again.",
+		"extension",
+	);
+}
+
 /** An action whose last input is on its way: what it returns, and the tab the input went to. */
 export interface Delivered {
 	result: Record<string, unknown>;
@@ -207,6 +265,8 @@ export interface Delivered {
  * sending more input. When the handler had already sent the input that completes its action
  * (`delivered`), a dialog that opened on the tab that input went to is that action's effect and
  * the call succeeds with a note; a dialog on any other tab is not, and still fails.
+ * Once the call's on_dialog answered its box, any failure says so (second-S1); an answer that did not reach the box
+ * fails the call at once (first-F3).
  */
 export function raceDialogs<T>(
 	session: Pick<BrowserSession, "tabIds">,
@@ -216,6 +276,8 @@ export function raceDialogs<T>(
 	options: {
 		/** This call's id: only a box that took this call's armed answer is this call's on_dialog box. */
 		call?: string;
+		/** The tool called, for the words of an error after its on_dialog answer landed. */
+		method?: string;
 		/** The note for a box that opened while the person's tab of the site is in front (dialog-guard.ts). */
 		soon?: (tabId: number, dialog: PageDialog) => Promise<string | undefined>;
 	} = {},
@@ -223,10 +285,22 @@ export function raceDialogs<T>(
 	return new Promise((resolve, reject) => {
 		/** The box the call's `on_dialog` answered as it opened: the call goes on. */
 		let answered: { tabId: number; dialog: PageDialog } | undefined;
-		/** A box the call did not answer froze it: the call's result is that box's, not the work's. */
+		/** A box the call did not answer froze it, or its answer failed: the call's result is that, not the work's. */
 		let opened = false;
-		const stop = watchDialogs((tabId, dialog) => {
-			if (!session.tabIds.includes(tabId)) return;
+		const fail = (err: unknown) => {
+			const first = answered;
+			if (!first) return reject(err);
+			void afterPreset(err, options.method ?? "call", first.tabId, first.dialog).then(reject);
+		};
+		const stopFails = watchPresetFailures((tabId, dialog, cancelled) => {
+			if (opened || dialog.presetCall === undefined || dialog.presetCall !== options.call) return;
+			stop();
+			opened = true;
+			onAbort();
+			reject(presetFailedError(tabId, dialog, cancelled));
+		});
+		const stopWatch = watchDialogs((tabId, dialog) => {
+			if (opened || !session.tabIds.includes(tabId)) return;
 			if (!answered && dialog.preset && options.call !== undefined && dialog.presetCall === options.call) {
 				answered = { tabId, dialog };
 				return;
@@ -236,7 +310,7 @@ export function raceDialogs<T>(
 			opened = true;
 			const done = delivered();
 			if (!done || done.tabId !== tabId) {
-				reject(dialogError(tabId, dialog));
+				fail(dialogError(tabId, dialog));
 				return;
 			}
 			const first = answered;
@@ -259,15 +333,21 @@ export function raceDialogs<T>(
 				);
 			})();
 		});
+		const stop = () => {
+			stopWatch();
+			stopFails();
+		};
 		work.then(
 			async (v) => {
-				stop();
 				if (opened) return;
-				resolve((answered ? await presetResult(v, answered.tabId, answered.dialog) : v) as T);
+				// The armed answer's failure is told on the CDP reply: wait for how the box ended before the result.
+				const out = answered ? await presetResult(v, answered.tabId, answered.dialog) : v;
+				stop();
+				if (!opened) resolve(out as T);
 			},
 			(e) => {
 				stop();
-				reject(e);
+				if (!opened) fail(e);
 			},
 		);
 	});

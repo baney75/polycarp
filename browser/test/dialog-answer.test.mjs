@@ -69,7 +69,7 @@ test("sol-F2: a call for a box that closed while it waited never answers the nex
 	event(7, "Page.javascriptDialogOpening", { type: "confirm", message: "Also delete the backups?", url: "https://shop.example.com/" });
 	await assert.rejects(
 		handlers.dialog({ session, dialogAnswer: answer }, { accept: true, tabId: 7 }),
-		(err) => /The dialog this call was for on tab 7 is gone\. Open now: tab 7: "Also delete the backups\?"/.test(err.message),
+		(err) => /^No box to answer: the dialog this call was for on tab 7 is gone; read_page/.test(err.message),
 	);
 	assert.deepEqual(sent, [], "OK went to a box the agent never saw");
 	assert.equal(openDialog(7)?.message, "Also delete the backups?");
@@ -156,15 +156,19 @@ test("sol-F5: an answer that arrives while its box's Cancel is on its way answer
 	assert.deepEqual(sent, [{ tabId: 14, accept: true }]);
 });
 
-test("second-S2: an answer that found no box on arrival (a worker just started) answers the box open on its tab", async () => {
+test("sol-F3 (review of PR 200): an answer that found no box on arrival never answers a box that opened since", async () => {
 	const s = { id: "bridge-claude-shop", tabIds: [15], currentTabId: 15 };
-	confirmOn(15);
-	// On arrival the client had no session yet and the guard had read no owners.
-	const answer = dialogAnswerArrive(s.id, undefined, undefined);
+	// The box the agent reviewed has closed: nothing is fixed on arrival.
+	const answer = dialogAnswerArrive(s.id, s.tabIds, 15);
 	assert.equal(answer.target, undefined);
-	const r = await handlers.dialog({ session: s, dialogAnswer: answer }, { accept: true });
-	assert.equal(r.message, "Delete this record?");
-	assert.deepEqual(sent, [{ tabId: 15, accept: true }]);
+	// Before the handler runs, another client's click opens a different confirm on that tab.
+	confirmOn(15);
+	await assert.rejects(
+		handlers.dialog({ session: s, dialogAnswer: answer }, { accept: true, tabId: 15 }),
+		(err) => /^No box to answer on tab 15; read_page/.test(err.message),
+	);
+	assert.deepEqual(sent, [], "OK went to a box the agent never saw");
+	assert.equal(openDialog(15)?.message, "Delete this record?");
 });
 
 test("sol-F1, first-F2: a Cancel the page has not answered in 5 s is never sent again, and no OK goes out meanwhile", async () => {
