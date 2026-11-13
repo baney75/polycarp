@@ -118,7 +118,10 @@ public enum MenuPath {
     /// window focused in the app, and the app not in front (Donovan would be using it). `front` is left out of the check
     /// before the in-use wait (which handles it) and kept in the one at the press.
     /// `sessionOwns`: this session's `open` made the window (another session's copy is not yours either).
-    public static func refusal(app: String, window: UInt32, agentOwned: Bool, sessionOwns: Bool, otherWindows: Int, focusedWindow: UInt32?, front: Bool) -> HandsError? {
+    /// `panels`: the app's Open or Save panel windows. A modal one is the focused window while it is up, and it is cancelled
+    /// before the press, so focus on it counts as focus on `window`; the check at the press decides again (246 r1 first-F2).
+    public static func refusal(app: String, window: UInt32, agentOwned: Bool, sessionOwns: Bool, otherWindows: Int, focusedWindow: UInt32?, panels: Set<UInt32> = [], front: Bool) -> HandsError? {
+        let focusedWindow = focusedWindow.map { panels.contains($0) ? window : $0 }
         if !agentOwned {
             return HandsError(.needsLend, "menus work only in the agent's own copy of \(app), one your `open` started; this window belongs to Donovan's copy",
                               suggestion: "Open your own copy with `open`, then run `menu` in that window.", retry: .never, nextCall: .null)
@@ -324,6 +327,18 @@ public enum MenuPath {
     /// off limits too while it holds a panel sheet, so neither counts: that window is the document's (217 r1 first-F2).
     public static func panelWindows(_ windows: [AXNodeInfo], sheet: [Bool], ids: [UInt32?]) -> Set<UInt32> {
         Set(panels(windows).filter { !sheet[$0] && !holdsPanel(windows[$0]) }.compactMap { ids[$0] })
+    }
+
+    /// Undo's order: the panel first, since a window holding a sheet can't close while the sheet runs, then the tied windows,
+    /// tried again for a moment while a cancelled sheet is still going away (246 r1 first-F1).
+    public static func undoing(panel: Bool, cancel: () -> HandsError?, close: () -> Bool, tries: Int = 5, pause: () -> Void = {}) -> (panel: HandsError?, closed: Bool) {
+        let error = panel ? cancel() : nil
+        let tries = panel ? max(1, tries) : 1
+        for n in 1...tries {
+            if close() { return (error, true) }
+            if n < tries { pause() }
+        }
+        return (error, false)
     }
 
     /// The app's other windows, for `refusal`: a panel window is cancelled before the press, so it isn't one (217 r1 first-F3).

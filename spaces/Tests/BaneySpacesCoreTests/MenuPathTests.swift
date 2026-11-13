@@ -376,8 +376,8 @@ final class MenuPathTests: XCTestCase {
         let step = try XCTUnwrap(HandsSourceTests.block(after: "private func menuWatchStep", in: src))
         XCTAssertTrue(step.contains("MenuPath.escaped(") && step.contains("MenuPath.panel("), "layer 2 looks for both")
         let undo = try XCTUnwrap(HandsSourceTests.block(after: "private func undo(", in: src))
-        XCTAssertTrue(undo.contains("cancelPanels(w, within: 0.3, old: oldPanels)") && undo.contains("found.filter(\\.tied).map { x in onMain { host.close(x.window.id) } }"),
-                      "192 r1 first-F2: only a tied window is closed")
+        XCTAssertTrue(undo.contains("cancelPanels(w, within: 0.3, old: oldPanels)") && undo.contains("var open = found.filter(\\.tied)")
+                      && undo.contains("MenuPath.undoing(panel: seen.panel"), "192 r1 first-F2: only a tied window is closed; 246 r1 first-F1: after the panel")
         XCTAssertTrue(step.contains("onMain { ids.map {"), "first-F1: one trip to main per look")
         let ax = try XCTUnwrap(HandsSourceTests.block(after: "static func read<T: Sendable>(_ e: AXUIElement", in: src))
         XCTAssertTrue(ax.contains("AXUIElementSetMessagingTimeout(e, timeout)"), "first-F1: the timeout on the element read")
@@ -549,5 +549,31 @@ final class MenuPathTests: XCTestCase {
         let m = MenuPath.policy(steps(3, edit, 4, sub: find, 1))?.message ?? ""
         XCTAssertTrue(m.contains("Use Selection for Find puts the selection on the find text"), m)
         XCTAssertFalse(m.contains("which is Donovan's"), m)
+    }
+
+    /// 246 r1 first-F2: a modal Open panel in its own window is the focused window; it is cancelled before the press, so
+    /// the early checks don't refuse on it. Any other focused window still does.
+    func testFocusOnTheAppsOwnPanelIsNoRefusal() {
+        XCTAssertNil(MenuPath.refusal(app: "TextEdit", window: 7, agentOwned: true, sessionOwns: true, otherWindows: 0, focusedWindow: 9, panels: [9], front: false))
+        XCTAssertNotNil(MenuPath.refusal(app: "TextEdit", window: 7, agentOwned: true, sessionOwns: true, otherWindows: 0, focusedWindow: 8, panels: [9], front: false))
+        XCTAssertNotNil(MenuPath.refusal(app: "TextEdit", window: 7, agentOwned: true, sessionOwns: true, otherWindows: 0, focusedWindow: nil, panels: [9], front: false))
+    }
+
+    /// 246 r1 first-F1: a new window holding a Save sheet can't close while the sheet runs, so the panel is cancelled first,
+    /// and the close is tried again while the sheet goes away.
+    func testUndoCancelsThePanelBeforeClosingItsWindow() {
+        var calls: [String] = [], closes = 0
+        let r = MenuPath.undoing(panel: true, cancel: { calls.append("cancel"); return HandsError(.notSupported, "panel", suggestion: "") },
+                                 close: { calls.append("close"); closes += 1; return closes == 3 }, pause: { calls.append("pause") })
+        XCTAssertEqual(calls, ["cancel", "close", "pause", "close", "pause", "close"])
+        XCTAssertTrue(r.closed)
+        XCTAssertEqual(r.panel?.message, "panel")
+        calls = []
+        let none = MenuPath.undoing(panel: false, cancel: { calls.append("cancel"); return nil }, close: { calls.append("close"); return false }, pause: { calls.append("pause") })
+        XCTAssertEqual(calls, ["close"], "no panel: no cancel and one close")
+        XCTAssertFalse(none.closed)
+        XCTAssertNil(none.panel)
+        let stuck = MenuPath.undoing(panel: true, cancel: { nil }, close: { false }, tries: 3)
+        XCTAssertFalse(stuck.closed, "still open after every try is said")
     }
 }

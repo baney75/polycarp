@@ -94,7 +94,7 @@ extension HandsRouter {
             let panels = others.mapped.contains { $0.id != w.id && !$0.minimized } ? MenuAX.panelWindows(w.pid) : []
             let count = MenuPath.otherWindows(others.mapped.map { ($0.id, $0.minimized) }, unmapped: others.unmapped, window: w.id, panels: panels)
             return MenuPath.refusal(app: w.app, window: w.id, agentOwned: owned.contains(w.pid), sessionOwns: mine, otherWindows: count,
-                                    focusedWindow: BackgroundAX.focus(pid: w.pid).window,
+                                    focusedWindow: BackgroundAX.focus(pid: w.pid).window, panels: panels,
                                     front: front && NSWorkspace.shared.frontmostApplication?.processIdentifier == w.pid)
         }
     }
@@ -129,10 +129,13 @@ extension HandsRouter {
     /// A window that closed on its own since a look saw it is reported as gone, not closed or still open (205 r1 second-S2).
     private func undo(_ seen: MenuPath.Seen, _ w: HandsWindow, path: String, oldPanels: [AXUIElement]) -> HandsError {
         let (found, gone) = seen.split(MenuAX.listed())
-        let closed = found.filter(\.tied).map { x in onMain { host.close(x.window.id) } }.allSatisfy { $0 }
+        var open = found.filter(\.tied)
+        let (panelError, closed) = MenuPath.undoing(panel: seen.panel,
+            cancel: { cancelPanels(w, within: 0.3, old: oldPanels) ?? MenuPath.panelRefusal(w.app, cancelled: false, gone: true) },
+            close: { open.removeAll { x in onMain { host.close(x.window.id) } }; return open.isEmpty },
+            pause: { Thread.sleep(forTimeInterval: 0.1) })
         let escape = seen.escapes.isEmpty ? nil : MenuPath.escapeRefusal(path, found: found, gone: gone, closed: closed, window: Int(w.id))
-        guard seen.panel else { return escape ?? MenuPath.panelRefusal(w.app, cancelled: false, gone: true) }
-        var e = cancelPanels(w, within: 0.3, old: oldPanels) ?? MenuPath.panelRefusal(w.app, cancelled: false, gone: true)
+        guard var e = panelError else { return escape ?? MenuPath.panelRefusal(w.app, cancelled: false, gone: true) }
         if let escape { e.message += "; also: " + escape.message }
         return e
     }
