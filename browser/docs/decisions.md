@@ -1453,7 +1453,9 @@ read, as click and fill do. A nested frame is measured from the frame its owner 
 same-process frame shares its owner's session). A frame ref's frame is found before the change report's first look, so
 finding it never uses up the look's 750 ms. A ref whose frame navigated or went away fails as stale; a ref from a frame's earlier document
 fails the same way it does in the top page. The action's change report (D43) looks in that frame as well as the page, so a
-click's effect inside the frame is in its `changes`. A box (alert, confirm, prompt) a frame opens is answered in the session that
+click's effect inside the frame is in its `changes`, while the frame stays allowed and shown: each look asks the
+rule again of the document it read (an action can take a frame to another host and keep its id and session) and checks
+the frame is still shown, and a barred or hidden frame's refs count as gone, with nothing of it read. A box (alert, confirm, prompt) a frame opens is answered in the session that
 reported it: the frame's when it comes from one, else the tab's. Chromium reports a box from another site's frame on the
 tab's session, which answers it, after a worker restart too (an e2e test checks this).
 
@@ -1470,9 +1472,12 @@ corner), so a see-through frame under a shown one can't take the shown one's lin
 answer counts as hidden. Each action resolves its frame once and reuses it for the change report and the point, re-measured
 after the scroll; a nested frame's points compose every level's scale. Limits: 10 frames read and 3 levels, outermost first (up to 30 are placed, so hidden ones don't use up the 10); a
 frame past them, or one with no box, keeps its old line, so the agent still knows it is there and can `navigate` to it.
-Every debugger call about a frame has its own time limit (1 s; 3 s for a frame's snapshot), and the calls run in parallel
+Every debugger call about a frame has its own time limit (1 s; 3 s for a frame's snapshot), in actions too (a call that
+gets no answer counts as covered), and the calls run in parallel
 under one deadline for the whole read (1.5 s to find the frames, 4 s to read them), so frames that don't answer keep their
-lines instead of adding their waits up. Frames get a small share past a page that used up the default budget, never
+lines instead of adding their waits up. An out-of-process frame whose holder the debugger can't name in time is left
+out, since its `<iframe>` may sit in a guarded or non-web frame. A line whose frame the tab finds hidden says "not shown",
+and a barred frame's line names its host whatever the page said of it. Frames get a small share past a page that used up the default budget, never
 past a `maxNodes` or `maxTextChars` the caller set. Only http, https and file frames are read: never an extension page, an
 error page or a browser page. A frame on a guarded host (#94) is left out with everything inside it; the side panel has no
 guarded hosts (D40), as before. A caller that names no rule gets none of a frame read or acted in: the default rule is

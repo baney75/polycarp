@@ -642,3 +642,161 @@ test("a hit test that gives no answer counts as covered: the action is not sent 
 		chrome.debugger.sendCommand = send;
 	}
 });
+
+test("type by a frame ref retried after the debugger detached finds the frame again on the new attachment", async () => {
+	const { handlers } = await import("../src/bridge/tools.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	chrome.webNavigation.getAllFrames = async () => [{}, {}];
+	const kids = { PAY: { sessionId: "S1" } };
+	const trees = { "": node("TOP", "https://shop.example"), S1: node("PAY", "https://pay.example") };
+	fakeTab(36, {
+		trees,
+		kids,
+		holds: { PAY: "TOP" },
+		owners: { PAY: 11 },
+		evaluate: () => ({ x: 10, y: 10, width: 4, height: 4 }),
+	});
+	const send = chrome.debugger.sendCommand;
+	let detached = false;
+	chrome.debugger.sendCommand = async (target, method, params) => {
+		// The first click finds the debugger gone: the frame's session goes with it, and it comes back as another.
+		if (method === "Input.dispatchMouseEvent" && !detached) {
+			detached = true;
+			kids.PAY.sessionId = "S9";
+			trees.S9 = trees.S1;
+			// In flight: cdpSend leaves this one to the handler, which attaches again and tries once more.
+			throw new Error("Detached while handling command.");
+		}
+		if (detached && target.sessionId === "S1") throw new Error("No target with given id found");
+		return send(target, method, params);
+	};
+	const tab = { id: 36, url: "https://shop.example/" };
+	const ctx = {
+		session: { tabIds: [36], setCurrent: async () => {}, attachedCurrentTab: async () => tab, requireCurrentTab: async () => tab },
+		isGuarded: () => false,
+		guardedHosts: [],
+		batch: false,
+		aborted: () => false,
+		delivered: () => {},
+	};
+	try {
+		const r = await handlers.type(ctx, { ref: `${frameTag("PAY")}e5`, text: "Eve" }).catch((e) => e);
+		assert.ok(!(r instanceof Error), `type retried in the frame: ${r?.message}`);
+		assert.ok(detached, "the first try met the detach");
+	} finally {
+		chrome.tabs.get = getTab;
+		chrome.debugger.sendCommand = send;
+	}
+});
+
+test("an out-of-process frame whose holder the debugger can't name is left out: it may sit in a guarded frame", async () => {
+	// TOP holds G (guarded, the same process); G's document holds K (its own process, an allowed host).
+	chrome.webNavigation.getAllFrames = async () => [{}, {}, {}];
+	const setup = {
+		trees: { "": node("TOP", "https://shop.example", [node("G", "https://guarded.example")]), S1: node("K", "https://pay.example") },
+		kids: { K: { sessionId: "S1" } },
+		holds: { G: "TOP", K: "G" },
+		owners: { G: 11, K: 12 },
+	};
+	const rule = (url) => (url.startsWith("https://guarded.example") ? "guarded" : undefined);
+	fakeTab(37, setup);
+	assert.deepEqual(await crossOriginFrames(37, rule), [], "K is found inside G, and left out with it");
+	// Now the debugger can't say which frame holds K (out of time, or no answer).
+	fakeTab(37, { ...setup, fail: new Set([":DOM.resolveNode"]) });
+	assert.deepEqual((await crossOriginFrames(37, rule)).map((f) => f.frameId), [], "not placed as if it sat in the page");
+});
+
+test("an action on a frame ref can't wait out the handler cap on a frame session that stopped answering", async () => {
+	const { frameTakesPoint, scrollFrameIntoView } = await import("../src/browser/frames.ts");
+	chrome.webNavigation.getAllFrames = async () => [{}, {}, {}];
+	const setup = {
+		trees: { "": node("TOP", "https://shop.example"), S1: node("X", "https://x.example"), S2: node("Z", "https://z.example") },
+		kids: { X: { sessionId: "S1" }, Z: { sessionId: "S2", parent: "S1" } },
+		holds: { X: "TOP", Z: "X" },
+		owners: { X: 11, Z: 12 },
+	};
+	fakeTab(38, setup);
+	const z = (await crossOriginFrames(38, open)).find((f) => f.frameId === "Z");
+	assert.ok(z);
+	const late = (work) => Promise.race([work, new Promise((r) => setTimeout(r, 4000, "hung"))]);
+	for (const method of ["DOM.getFrameOwner", "Page.getLayoutMetrics", "DOM.getNodeForLocation"]) {
+		fakeTab(38, { ...setup, hang: new Set([`S1:${method}`]) });
+		const start = Date.now();
+		assert.equal(await late(frameTakesPoint(38, z, 150, 100)), false, `a hung ${method} counts as covered`);
+		assert.ok(Date.now() - start < 3000, `${method} waited ${Date.now() - start} ms`);
+	}
+	fakeTab(38, { ...setup, hang: new Set(["S1:DOM.scrollIntoViewIfNeeded"]) });
+	assert.notEqual(await late(scrollFrameIntoView(38, z)), "hung", "a hung scroll gives up");
+});
+
+test("a frame the page lists as shown but the tab finds hidden or barred says why its line isn't read", async () => {
+	const { snapshot } = await import("../src/browser/page.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	try {
+		chrome.webNavigation.getAllFrames = async () => [{}, {}, {}];
+		const away = { ...frameLine("e2", [100, 400, 400, 500]), states: ["cross-origin frame out of view: scroll to it, then read_page"] };
+		fakeTab(39, {
+			trees: { "": node("TOP", "https://shop.example", [node("PAY", "https://pay.example"), node("ADS", "https://ads.example")]) },
+			holds: { PAY: "TOP", ADS: "TOP" },
+			owners: { PAY: 11, ADS: 12 },
+			quads: { PAY: quad(100, 50, 400, 150), ADS: quad(100, 400, 400, 500) },
+			shown: { PAY: "hidden", ADS: "away" },
+			evaluate: (frameId) => (frameId === undefined ? pageWith([frameLine("e1", [100, 50, 400, 150]), away]) : frameSnap(frameId === "PAY" ? "pay" : "ads")),
+		});
+		const rule = (url) => (url.startsWith("https://ads.example") ? "blocked" : undefined);
+		const { text, nodes } = await snapshot(39, { skip: rule });
+		const pay = String(nodes.find((n) => n.ref === "e1")?.states);
+		const ads = String(nodes.find((n) => n.ref === "e2")?.states);
+		assert.match(pay, /not shown, so not read/, pay);
+		assert.doesNotMatch(pay, /navigate to its URL/, "never told to go to a frame the person can't see");
+		assert.match(ads, /not allowed for agents: ads\.example/, ads);
+		assert.doesNotMatch(text, /pay text|ads text/);
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+});
+
+async function lookAfter(tabId, where, shown) {
+	const { changeLook } = await import("../src/browser/page.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	const page = { url: "https://shop.example/", title: "Shop", nodes: [], focus: "", doc: "d1", gone: [], same: {}, text: "shop text" };
+	try {
+		chrome.webNavigation.getAllFrames = async () => [{}, {}];
+		let navigated = false;
+		const now = { PAY: "shown" };
+		fakeTab(tabId, {
+			trees: { "": node("TOP", "https://shop.example", [node("PAY", "https://pay.example")]) },
+			holds: { PAY: "TOP" },
+			owners: { PAY: 11 },
+			shown: now,
+			evaluate: (frameId) =>
+				frameId === "PAY"
+					? { ...page, url: navigated ? where : "https://pay.example/", nodes: [{ ref: "e5", role: "button", name: "Secret pay", x: 1, y: 1, width: 1, height: 1 }], text: "secret pay text" }
+					: { ...page, nodes: [], gone: [] },
+		});
+		const rule = (url) => (url.startsWith("https://checkout.") ? "blocked" : undefined);
+		const ref = `${frameTag("PAY")}e5`;
+		const before = await changeLook(tabId, 400, [], [], { ref, rule });
+		assert.match(before.text, /secret pay text/, "read while allowed and shown");
+		navigated = true;
+		now.PAY = shown;
+		const frame = { ref, rule, hit: { frame: (await crossOriginFrames(tabId, rule))[0], inner: "e5" } };
+		const after = await changeLook(tabId, 400, [ref], [], frame);
+		assert.doesNotMatch(after.text, /secret pay text/, "its text");
+		assert.ok(!after.nodes.some((n) => n.ref.startsWith(frameTag("PAY"))), "its controls");
+		assert.ok(after.gone.includes(ref), "its refs are gone");
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+}
+
+test("a change report reads nothing of a frame the action took to a host never allowed, though it keeps its id", async () => {
+	await lookAfter(40, "https://checkout.pay.example/", "shown");
+});
+
+test("a change report reads nothing of a frame the action hid (#73)", async () => {
+	await lookAfter(41, "https://pay.example/", "hidden");
+});
