@@ -12,8 +12,8 @@ scored from what the page recorded, even after the model closed its tab. A compu
 folder of our own inside Polycarp's agent handoff folder, and is scored by reading the agent workspace back through the
 helper in connector mode (`hands.mjs`). With no task files, the runner says so and exits.
 
-- `tasks/browser.mjs`: 15 browser tasks on local fixtures: signup validation, a contact form, a wizard, table filter,
-  modal confirm, native dialogs, select and date, a form in an iframe, a long article, PDF search, pagination, a new
+- `tasks/browser.mjs`: 16 browser tasks on local fixtures: signup validation, a contact form, a wizard, table filter,
+  a booking lookup, modal confirm, native dialogs, select and date, a form in an iframe, a long article, PDF search, pagination, a new
   tab, a late element, a list that re-renders, autocomplete.
 - `tasks/computer.mjs`: 8 Mac tasks in Calculator, TextEdit and Preview, scored from the window and, for a save task,
   the saved file.
@@ -33,8 +33,11 @@ headless Chromium, the socket folder, the handoff folder, the preferences backup
 it started. One cleanup runs the registry in reverse, exactly once, from every way out: a normal end, a thrown error,
 Ctrl-C (SIGINT), SIGTERM, SIGHUP, an uncaught error, or a `claude` that is not on the PATH (one clear line, exit 1).
 Each `claude -p` runs in its own process group, and cleanup kills the group (SIGTERM, up to 3 s, then SIGKILL), so
-its MCP server goes with it. A computer run cut off mid-call also closes any new window of the task's app that its
-answers never reported. A run cut off by a stop, before or during scoring, and a run that hit the sign-in's usage
+its MCP server goes with it. A computer run closes only the app copies its own `computer_open` answers reported
+(`reused: false`, by pid): the only copies it can prove are its own. After scoring (score first, then close), it reads
+the windows once more for any new window of the task's app on the agent workspace that no answer reported, and when
+an open was cut off before its window was identified it rereads them over a bounded wait (5 s). Such a window may be
+another session's or another job's, so it is never closed: the record lists it as `leftOpen` and the run prints it. A run cut off by a stop, before or during scoring, and a run that hit the sign-in's usage
 limit, write no record, so neither replaces a committed run; a signal also writes no summary. When a preferences
 restore fails, the backups are copied to `~/.local/state/polycarp-weak-model/prefs-<time>/` and the path is
 printed; scratch, which holds them, is kept unless every restore worked. A computer run refuses to start when it
@@ -54,6 +57,7 @@ node evals/weak-model/run.mjs --label r2-haiku                    # all tasks, 2
 node evals/weak-model/run.mjs --label s-sonnet --model claude-sonnet-5-5 --trials 1 --only wizard,pagination
 node evals/weak-model/report.mjs r2-haiku                         # per run: calls, errors, repeats, failures
 node evals/weak-model/rescore.mjs r1-haiku                        # rescore saved signup runs under the signup-v2 rule
+node evals/weak-model/measure-read.mjs after                      # read_page and tools/list sizes on 8 public pages
 ```
 
 Results go to `results/<label>/`: one record per run (`<task>-t<n>.json`, every call with its arguments, error flag,
@@ -62,12 +66,21 @@ size and a clipped result), kept locally, and what is committed: `runs.jsonl` (t
 runs by task and trial). The stop mark is kept per kind (`stoppedKinds`): a partial rerun (`--only`, or one stopped
 early) replaces only its own runs and keeps it, and a run that made every job of its kinds clears only those kinds,
 so a finished browser half never clears the computer half's stop. `results/r1-haiku/classes.json` classifies every
-round 1 failure.
+round 1 failure and every tool error in its passing runs; each friction entry's `match` names the calls it counts, and
+the baseline test recounts them from `runs.jsonl`.
+
+Round 1 (`r1-haiku`) was recorded under the old tool list: its browser runs listed the computer tools too (67 tools,
+where browser runs now list 48), and it has no `contact-form` task. Its score stands as recorded, for that tool list
+and task set only. A browser rerun under today's list is a new round with its own label, not a raise of round 1.
 
 ## The ratchet
 
-`baseline.json` holds the recorded score of each round that counts. `test/weak-model-baseline.test.mjs` fails if a
-committed round scores below its baseline (recounted from `runs.jsonl`) or if the latest round drops below the floor.
+`baseline.json` holds the recorded score of each round that counts and what it ran under: the model, the profile,
+the tool count per kind and the task set. `test/weak-model-baseline.test.mjs` fails if a committed round scores below
+its baseline (recounted from `runs.jsonl`), if any of its runs differs from what the round ran under (another model,
+another tool list, a task the round didn't have or one it lacks), so a rerun under a committed label with another
+model can't raise it, if the latest round drops below the floor, if a guarded task loses a pass it recorded, if a
+`classes.json` count disagrees with its runs, or if the committed read-size measurement leaves its token budget.
 CI never calls a model: it checks the committed numbers, `test/weak-model-harness.test.mjs` holds the runner's own
 logic, and the cheap deterministic tests in `cli/test` hold each fix.
 

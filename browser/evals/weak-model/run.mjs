@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { backupPrefs, Cleanup, onExits, restorePrefsOrKeep, spawnClaude, sweepCopies } from "./cleanup.mjs";
+import { afterComputerRun, backupPrefs, Cleanup, leftOpen, onExits, restorePrefsOrKeep, spawnClaude } from "./cleanup.mjs";
 import { HandsClient, treeText } from "./hands.mjs";
 import { childEnv, clashingIds, keepScored, keyVarsSet, loadTasks, mountId, positiveInt, safeId, sessionName, settledState, spacesBin } from "./lib.mjs";
 import { handedOff } from "./signup-rule.mjs";
@@ -48,8 +48,9 @@ const int = (name, fallback) => {
 	return r.n;
 };
 const model = opt("model", "claude-haiku-5-5");
-const label = opt("label", `run-${model.replace(/^claude-/, "")}`);
-// The label names the results folder: no path parts, and the same name the mount and session use.
+// The label names the results folder: no path parts, and the same name the mount and session use. A default one is
+// made safe (claude-sonnet-5.5 gives run-sonnet-5-5); one the user gave is refused when it isn't.
+const label = opt("label", safeId(`run-${model.replace(/^claude-/, "")}`));
 if (safeId(label) !== label) refuse(`--label takes lower-case letters, digits, _ and -, not ${JSON.stringify(label)}`);
 const trials = int("trials", "2");
 // Computer runs open real apps on the owner's Mac. They are off until the lead turns them back on with
@@ -151,10 +152,12 @@ function mcpConfig(session, kind) {
  * One claude -p run; returns the compact transcript and the undo of each app copy it started. A copy registers its
  * undo as its computer_open answer streams in, so a stop mid-run still closes it.
  */
-async function runClaude(prompt, session, kind, wallMs) {
+async function runClaude(prompt, session, kind, wallMs, watch = {}) {
 	const args = ["-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose", "--mcp-config", mcpConfig(session, kind), "--strict-mcp-config", "--setting-sources", "project", "--tools", "", "--allowedTools", "mcp__polycarp", "--max-turns", String(turns), "--no-session-persistence"];
 	const copies = [];
 	const transcript = new Transcript({ onStarted: (pid) => copies.push(cleanup.add(`app copy ${pid}`, () => killCopy(pid))) });
+	// The caller sees the transcript while the run is still going: a stop mid-run reads its reported copies from it.
+	watch.transcript = transcript;
 	const { child, closed, killGroup } = spawnClaude(args, { cleanup, cwd: emptyCwd, env: childEnv(process.env) });
 	let buf = "";
 	let stderr = "";
@@ -187,7 +190,7 @@ async function runClaude(prompt, session, kind, wallMs) {
 	} finally {
 		clearTimeout(timer);
 	}
-	return { run: transcript.done({ timedOut, ms: Date.now() - start, stderr: stderr.slice(-2000) }), copies, pids: () => new Set(transcript.calls.map((c) => c.startedPid).filter(Boolean)) };
+	return { run: transcript.done({ timedOut, ms: Date.now() - start, stderr: stderr.slice(-2000) }), copies, transcript };
 }
 
 async function scoreBrowser(task, mount, run) {
@@ -287,27 +290,39 @@ async function runOne(task, trial) {
 		rmSync(dir, { recursive: true, force: true });
 		mkdirSync(dir, { recursive: true });
 		for (const [name, body] of Object.entries(task.files ?? {})) writeFileSync(join(dir, name), body);
-		const before = new Set((await hands.call("windows", {})).data?.windows?.map((w) => w.pid) ?? []);
-		let pids = () => new Set();
-		const sweep = sweepCopies(cleanup, { app: task.app, before, known: () => pids(), list: async () => (await hands.call("windows", {})).data?.windows ?? [], kill: killCopy });
-		const result = await runClaude(task.prompt(dir), session, "computer", wallComputer);
-		pids = result.pids;
+		const list = async () => (await hands.call("windows", {})).data?.windows ?? [];
+		const before = new Set((await list()).map((w) => w.pid));
+		const watch = {};
+		// Only a copy this run's own answers reported is provably its own, and that one closes through its own undo. A
+		// new window of the app that no answer reported may be another session's or another job's: it is left open and
+		// reported (in the record, and here), never closed.
+		const findLeft = (pending) => leftOpen({ app: task.app, before, known: watch.transcript?.started ?? new Set(), pending, list });
+		const tell = (found) => {
+			for (const w of found) console.error(`left open, not provably this run's: ${w.app} pid ${w.pid} (window ${w.window}); close it by hand if it is`);
+			return found;
+		};
+		// A stop writes no record; cleanup still reports what the run may have left, before the helper line closes.
+		const check = cleanup.add(`left-open check for ${task.app}`, async () => tell(await findLeft(true)));
+		const result = await runClaude(task.prompt(dir), session, "computer", wallComputer, watch);
 		run = result.run;
-		// A run that ended on its own reported every copy it started; one cut off at the wall cap may have a launch in
-		// flight, so it sweeps now. On a signal the sweep stays registered and cleanup runs it, before the helper line closes.
 		if (cleanup.closing) return undefined;
-		if (run.stop === "timeout") await sweep.undo();
-		else sweep.release();
-		try {
-			score = await keep(run, () => scoreComputer(task, dir, run, before));
-		} finally {
-			await Promise.all(result.copies.map((c) => c.undo()));
-			await folder.undo();
-		}
+		const done = await afterComputerRun({
+			score: () => keep(run, () => scoreComputer(task, dir, run, before)),
+			undo: async () => {
+				await Promise.all(result.copies.map((c) => c.undo()));
+				await folder.undo();
+			},
+			// Cleanup runs the check itself once a stop began.
+			left: async () => (cleanup.closing ? [] : tell(await findLeft(result.transcript.pendingOpens() > 0))),
+		});
+		if (cleanup.closing) return undefined;
+		check.release();
+		score = done.score;
+		if (score && done.left.length) score.leftOpen = done.left;
 	}
 	if (!score) return undefined;
 	if (run.mcpStatus && run.mcpStatus !== "connected") score.why.push(`mcp server ${run.mcpStatus}`);
-	const record = { task: task.id, kind: task.kind, trial, model, pass: score.pass, why: score.why, ...(task.handoff ? { rule: "signup-v2" } : {}), ...run };
+	const record = { task: task.id, kind: task.kind, trial, model, pass: score.pass, why: score.why, ...(score.leftOpen ? { leftOpen: score.leftOpen } : {}), ...(task.handoff ? { rule: "signup-v2" } : {}), ...run };
 	writeFileSync(join(outDir, `${task.id}-t${trial}.json`), `${JSON.stringify(record, null, 1)}\n`);
 	process.stderr.write(`${score.pass ? "pass" : "FAIL"} ${task.id} t${trial} ${Math.round(run.ms / 1000)}s ${run.calls.length} calls ${run.stop}${score.pass ? "" : ` (${score.why.join("; ")})`}\n`);
 	return record;
