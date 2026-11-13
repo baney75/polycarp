@@ -314,10 +314,48 @@ public enum MenuPath {
     /// no Cancel button of its own (192 r1 second-F7).
     /// `old`: per window, it was a panel before the press, so it is not the command's (197 r1 second-S1).
     public static func panel(_ windows: [AXNodeInfo], old: [Bool] = []) -> Int? {
-        func holdsPanel(_ n: AXNodeInfo) -> Bool { n.children.contains { ($0.role == "AXSheet" && PanelDetector.windowIsOffLimits($0)) || holdsPanel($0) } }
         let found = panels(windows).filter { !(old.indices.contains($0) && old[$0]) }
         return found.first { !holdsPanel(windows[$0]) } ?? found.first
     }
+
+    static func holdsPanel(_ n: AXNodeInfo) -> Bool { n.children.contains { ($0.role == "AXSheet" && PanelDetector.windowIsOffLimits($0)) || holdsPanel($0) } }
+
+    /// The window numbers of panels that are windows of their own. A sheet carries its parent's number, and a window is
+    /// off limits too while it holds a panel sheet, so neither counts: that window is the document's (217 r1 first-F2).
+    public static func panelWindows(_ windows: [AXNodeInfo], sheet: [Bool], ids: [UInt32?]) -> Set<UInt32> {
+        Set(panels(windows).filter { !sheet[$0] && !holdsPanel(windows[$0]) }.compactMap { ids[$0] })
+    }
+
+    /// The app's other windows, for `refusal`: a panel window is cancelled before the press, so it isn't one (217 r1 first-F3).
+    public static func otherWindows(_ mapped: [(id: UInt32, minimized: Bool)], unmapped: Int, window: UInt32, panels: Set<UInt32>) -> Int {
+        mapped.filter { $0.id != window && !$0.minimized && !panels.contains($0.id) }.count + unmapped
+    }
+
+    /// A path that stops at a submenu of the Edit menu (Edit > Find) has that submenu listed, for `appended`, its only
+    /// reader. Any other submenu is not read (217 r1 first-F4).
+    public static func listsOpens(_ steps: [Step]) -> Bool {
+        steps.count == 2 && steps[1].items.indices.contains(steps[1].at) && steps[1].chosen.submenu && isEditMenu(steps[1].items, title: steps[0].chosen.name)
+    }
+
+    /// A panel left up by an earlier command, cancelled one at a time just before the press (`cancelOne`: nil when none
+    /// is left, else whether the cancel went through). A cancel that fails stops the call (217 r1 first-F1).
+    public enum Earlier: Equatable, Sendable { case none, cancelled, stuck }
+    public static func cancelEarlier(count: Int, cancelOne: () -> Bool?) -> Earlier {
+        var out = Earlier.none
+        for _ in 0..<count {
+            switch cancelOne() {
+            case nil: return out
+            case false?: return .stuck
+            case true?: out = .cancelled
+            }
+        }
+        return out
+    }
+    public static func earlierStuck(_ app: String) -> HandsError {
+        HandsError(.notSupported, "an Open or Save panel was already up in \(app) and couldn't be cancelled, so nothing was pressed",
+                   suggestion: "Close your window with `close`, then `open` the app again.", retry: .never, nextCall: .null)
+    }
+    public static let earlierNote = "; an Open or Save panel left by an earlier command was cancelled first"
 
     /// `gone`: the panel was seen, but closed before Polycarp could cancel it (192 r1 first-F4).
     public static func panelRefusal(_ app: String, cancelled: Bool, gone: Bool = false) -> HandsError {
@@ -348,6 +386,8 @@ public enum MenuPath {
         public func split(listed: Set<UInt32>) -> (open: [Escape], gone: [Escape]) {
             (escapes.filter { listed.contains($0.window.id) }, escapes.filter { !listed.contains($0.window.id) })
         }
+        /// On the windows a person could see: one ordered out, still listed, closed too (217 r1 second-S1).
+        public func split(_ all: [Listed]) -> (open: [Escape], gone: [Escape]) { split(listed: Set(all.filter(\.visible).map(\.id))) }
         public static func merged(_ looks: [Seen]) -> Seen {
             var out = Seen()
             for l in looks {
