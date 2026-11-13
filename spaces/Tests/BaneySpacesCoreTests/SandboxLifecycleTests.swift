@@ -64,7 +64,7 @@ final class SandboxLifecycleTests: XCTestCase {
 
     func testAVMThatExitsBeforeItsAgentAnswersIsDeleted() {
         let r = rig()
-        r.tart.onSpawn = { args in r.tart.spawned.last { $0.args == args }?.proc.stop() } // the process dies as it starts
+        r.tart.onSpawn = { _, proc in proc.stop() } // the process dies as it starts
         XCTAssertThrowsError(try r.manager.up(task: "t1")) { XCTAssertEqual(($0 as? SandboxError)?.code, "vm_exited") }
         XCTAssertTrue(r.tart.ours().isEmpty, "\(r.tart.ours())")
     }
@@ -105,7 +105,7 @@ final class SandboxLifecycleTests: XCTestCase {
 
     func testStartupDeletesEveryLeftoverButNotOtherVMs() throws {
         let r = rig()
-        r.tart.vms["bsx-w-crashed"] = .init(); r.tart.vms["bsx-s-old"] = .init(); r.tart.vms["my-own-vm"] = .init()
+        r.tart.withVMs { $0["bsx-w-crashed"] = .init() }; r.tart.withVMs { $0["bsx-s-old"] = .init() }; r.tart.withVMs { $0["my-own-vm"] = .init() }
         _ = try r.manager.up(task: "t1")
         XCTAssertFalse(r.tart.vmNames().contains("bsx-w-crashed")); XCTAssertFalse(r.tart.vmNames().contains("bsx-s-old"))
         XCTAssertTrue(r.tart.vmNames().contains("my-own-vm"), "VMs that aren't ours are never touched")
@@ -140,7 +140,7 @@ final class SandboxLifecycleTests: XCTestCase {
 
     func testAThirdGuestGetsBusyWithRetryAfterAndNothingIsMade() {
         let r = rig()
-        r.tart.vms["someone-elses-1"] = .init(proc: FakeProc()); r.tart.vms["someone-elses-2"] = .init(proc: FakeProc())
+        r.tart.withVMs { $0["someone-elses-1"] = .init(proc: FakeProc()) }; r.tart.withVMs { $0["someone-elses-2"] = .init(proc: FakeProc()) }
         XCTAssertThrowsError(try r.manager.up(task: "t")) {
             let e = $0 as? SandboxError
             XCTAssertEqual(e?.code, "busy"); XCTAssertEqual(e?.retry, "after")
@@ -152,7 +152,7 @@ final class SandboxLifecycleTests: XCTestCase {
 
     func testWithOneOtherGuestRunningUpWorksButNoWarmCloneIsBuilt() throws {
         let r = rig()
-        r.tart.vms["someone-elses"] = .init(proc: FakeProc())
+        r.tart.withVMs { $0["someone-elses"] = .init(proc: FakeProc()) }
         _ = try r.manager.up(task: "t")
         XCTAssertEqual(r.manager.snapshot().warm, .none, "working + the other guest are the two")
         XCTAssertEqual(r.tart.ours().count, 1)
@@ -160,7 +160,7 @@ final class SandboxLifecycleTests: XCTestCase {
 
     func testBusyThroughTheServiceCarriesRetryAfter() {
         let r = rig()
-        r.tart.vms["a"] = .init(proc: FakeProc()); r.tart.vms["b"] = .init(proc: FakeProc())
+        r.tart.withVMs { $0["a"] = .init(proc: FakeProc()) }; r.tart.withVMs { $0["b"] = .init(proc: FakeProc()) }
         let s = SandboxService(manager: r.manager, tart: r.st, settings: { SandboxSettings(enabled: true) }, tartHome: r.dir)
         let reply = s.handle(Wire.Request(op: .sandbox, text: "up"))
         let d = (try? JSONSerialization.jsonObject(with: Data((reply.info?["json"] ?? "{}").utf8))) as? [String: Any]
@@ -174,6 +174,7 @@ final class SandboxLifecycleTests: XCTestCase {
         _ = try r.manager.up(task: "t1")
         XCTAssertTrue(r.manager.waitUntilWarm(limit: 120))
         let old = r.manager.snapshot().vm!
+        let before = r.tart.spawned.count
         let t = try r.manager.reset()
         XCTAssertEqual(t.route, .swap)
         XCTAssertTrue(t.withinBudget, "\(t.seconds) s")
@@ -181,8 +182,10 @@ final class SandboxLifecycleTests: XCTestCase {
         XCTAssertNotEqual(s.vm, old)
         XCTAssertFalse(r.tart.vmNames().contains(old), "the old VM is deleted")
         // reset starts the next warm build at once, and its spawn can land last (11-12: bsx-s-id3 against id2), so the
-        // swapped-in guest's resume is found by its name.
-        let resume = try XCTUnwrap(r.tart.spawned.last { $0.args.last == s.vm }, "the swapped-in guest was resumed").args
+        // swapped-in guest's resume is found by its name, among the spawns made after the reset began: the warm build's
+        // own spawn of that VM came before, so it can't stand in for a resume that never ran (review of PR 206, first-F1).
+        XCTAssertTrue(r.tart.spawned.prefix(before).contains { $0.args.last == s.vm }, "the warm build spawned this VM before the reset")
+        let resume = try XCTUnwrap(r.tart.spawned.dropFirst(before).last { $0.args.last == s.vm }, "the swapped-in guest was resumed").args
         XCTAssertTrue(resume.contains("--no-graphics"))
         XCTAssertTrue(resume.contains { $0.contains("/slots/") }, "the warm clone's own slot")
         XCTAssertTrue(r.manager.waitUntilWarm(limit: 120), "the next warm clone is built")
@@ -207,7 +210,7 @@ final class SandboxLifecycleTests: XCTestCase {
         XCTAssertTrue(r.manager.waitUntilWarm(limit: 120))
         let oldProc = r.tart.spawned.first { $0.args.last == r.manager.snapshot().vm }!.proc
         var oldRunningWhenNewStarted: Bool?
-        r.tart.onSpawn = { _ in if oldRunningWhenNewStarted == nil { oldRunningWhenNewStarted = oldProc.isRunning } }
+        r.tart.onSpawn = { _, _ in if oldRunningWhenNewStarted == nil { oldRunningWhenNewStarted = oldProc.isRunning } }
         _ = try r.manager.reset()
         XCTAssertEqual(oldRunningWhenNewStarted, false)
     }
@@ -301,10 +304,10 @@ final class SandboxLifecycleTests: XCTestCase {
         XCTAssertTrue(r.manager.waitUntilWarm(limit: 120))
         let host = FakeWindowHost(); host.workspace = 9; host.current = 1
         // The VM's window first lands on the user's workspace 1.
-        r.tart.onSpawn = { args in
+        r.tart.onSpawn = { args, proc in
             r.tart.note("window-possible")
             if !args.contains("--no-graphics") {
-                let pid = FakeProc.next
+                let pid = proc.pid
                 host.shown = [.init(id: 77, pid: pid, title: "bsx", workspace: 1), .init(id: 78, pid: pid + 99, title: "other app", workspace: 1)]
             }
         }
@@ -610,7 +613,7 @@ final class SandboxHardeningTests: XCTestCase {
         _ = try r.manager.up(task: "t1")
         XCTAssertTrue(r.manager.waitUntilWarm(limit: 120))
         XCTAssertEqual(r.manager.snapshot().warmLocation, .memory)
-        r.tart.vms["someone-elses"] = .init()   // a third-party VM exists; it needs the second guest slot
+        r.tart.withVMs { $0["someone-elses"] = .init() }   // a third-party VM exists; it needs the second guest slot
         r.manager.tick()
         XCTAssertEqual(r.manager.snapshot().warmLocation, .disk)
     }
@@ -630,25 +633,30 @@ final class SandboxHardeningTests: XCTestCase {
 }
 
 final class FakeTartLockTests: XCTestCase {
-    /// The warm build records spawns and calls from its own thread while a test reads them. An unlocked read that met
-    /// an append growing the array saw it empty: TSan, 11-12, buildWarm's spawn (SandboxManager.swift:671) against
-    /// testViewRefusesWithoutAnAgentWorkspaceAndTouchesNothing's count, which read 0 runs of the task VM and then 1.
-    /// A race can't be made to lose every run, so this pins the shape: the lists are private and read under the lock.
-    func testWhatTheFakeRecordedIsReadOnlyUnderItsLock() throws {
+    /// The warm build records spawns and calls from its own thread while a test reads them (TSan, 11-12, buildWarm's
+    /// spawn at SandboxManager.swift:671 against a test's count). What the fake shares is private, so the compiler
+    /// keeps every outside read on the locked accessors and every change on a locked mutator (review of PR 233, F2, F4).
+    func testAChangeToTheVMsIsOneLockedStep() {
+        // The fake changes its VMs on the warm build's thread while a test adds its own: a read then a write would drop
+        // the fake's change made between the two.
+        let tart = FakeTart(), n = 2000
+        DispatchQueue.concurrentPerform(iterations: 2) { side in
+            for k in 0..<n {
+                if side == 0 { _ = tart.run("tart", ["clone", SandboxPin.image, "bsx-c\(k)"], env: [:], stdin: nil, timeout: 5, outputLimit: 1 << 16) }
+                else { tart.withVMs { $0["mine-\(k)"] = .init() } }
+            }
+        }
+        XCTAssertEqual(tart.vms.count, 2 * n, "no change lost")
+    }
+
+    func testTheSpawnHookRunsAfterTheLockAndANoteIsOneLockedStep() throws {
         let c = try CursorSourceTests.code("Tests/BaneySpacesCoreTests/SandboxFakes.swift")
-        for name in ["calls", "spawned", "order"] {
-            XCTAssertTrue(c.contains("private var _\(name):"), "\(name) is stored privately")
-            let getter = try XCTUnwrap(c.range(of: "    var \(name): ").map { String(c[$0.lowerBound...].prefix(260)) }, "\(name) has a reader")
-            XCTAssertTrue(getter.contains("lock.lock(); defer { lock.unlock() }; return _\(name)"), "\(name) is read under the lock: \(getter)")
-        }
-        let hostFacts = try XCTUnwrap(HandsSourceTests.between("final class FakeHostFacts", "func read()", in: c))
-        for name in ["facts", "listenerHits"] {
-            XCTAssertTrue(hostFacts.contains("private var _\(name)"), "the host facts' \(name) is stored privately")
-            XCTAssertTrue(hostFacts.contains("lock.lock(); defer { lock.unlock() }; return _\(name)"), "and read under the lock")
-        }
         let spawn = try XCTUnwrap(HandsSourceTests.between("func spawn(_ exe: String", "private func record(", in: c))
         XCTAssertFalse(spawn.contains("lock.lock()"), "onSpawn runs after the lock, so a hook can read the lists")
-        let tests = try CursorSourceTests.code("Tests/BaneySpacesCoreTests/SandboxLifecycleTests.swift")
-        XCTAssertFalse(tests.contains("tart.order" + ".append("), "a note is one locked step: tart.note(_:)")
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        for file in try FileManager.default.contentsOfDirectory(atPath: dir.path) where file.hasSuffix(".swift") {
+            let tests = try CursorSourceTests.code("Tests/BaneySpacesCoreTests/" + file).filter { !$0.isWhitespace }
+            XCTAssertFalse(tests.contains("tart.order" + ".append("), "\(file): a note is one locked step: tart.note(_:)")
+        }
     }
 }

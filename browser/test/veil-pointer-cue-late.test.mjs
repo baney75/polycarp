@@ -17,13 +17,17 @@ chrome.scripting = {
 await chrome.storage.local.set({ veil_pointer: true });
 await new Promise((r) => setTimeout(r, 50));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// Each read of the setting takes 2 s.
+// Each read of the setting waits until the test opens the gate (first-F2 of PR 234's review: no wall-clock window).
 let pointerReads = 0;
+let open;
+const gate = new Promise((r) => {
+	open = r;
+});
 const get = chrome.storage.local.get;
 chrome.storage.local.get = async (keys) => {
 	if (keys === "veil_pointer") {
 		pointerReads++;
-		await sleep(2_000);
+		await gate;
 	}
 	return get.call(chrome.storage.local, keys);
 };
@@ -31,16 +35,18 @@ const { cuePointer } = await import("../src/browser/cdp.ts");
 const { startVeil, veilBegin, veilEnd } = await import("../src/browser/veil.ts");
 startVeil();
 
-test("first-F2 (PR 219's review): a cue after the read's deadline starts no read and is never drawn late", async () => {
+test("first-F2 (PR 219's review): a cue after the read's deadline is never drawn late", async () => {
 	const tabId = fake.addTab({ url: "https://shop.example.com/" });
 	const s = { id: "bridge-claude-shop", tabIds: [tabId], currentTabId: tabId, ended: false, record: { label: "claude", color: "blue" } };
 	veilEnd(s, "click", await veilBegin(s, "click", { tabId }));
-	// Past the deadline (1.5 s from the read's start), before the read settles at 2 s.
-	await sleep(250);
+	// veilBegin returned at the deadline (1.5 s), and the read has not settled.
 	const at = injected.length;
 	cuePointer(tabId, "click", 40, 40);
-	await sleep(3_000);
+	await sleep(50);
+	open();
+	await sleep(200);
 	const points = injected.slice(at).filter((i) => i.cmd.op === "point");
 	assert.deepEqual(points, [], "a cue the character was off for was drawn once a later read settled");
-	assert.equal(pointerReads, 1, `${pointerReads} reads of the setting were started`);
+	// The cue starts one fresh read for the next window, never more (first-F1 of PR 234's review).
+	assert.ok(pointerReads <= 2, `${pointerReads} reads of the setting were started`);
 });
