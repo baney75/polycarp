@@ -10,7 +10,6 @@ import {
 	answerDialog,
 	captureScreenshot,
 	scroll as cdpScroll,
-	cdpSend,
 	click,
 	cuePointer,
 	drag,
@@ -179,7 +178,7 @@ async function settleAfter(
 		watched?: boolean;
 		before?: Before;
 		wait?: { capMs: number; quietMs: number };
-		changes?: Record<string, unknown>;
+		changes?: Record<string, unknown> | (() => Promise<Record<string, unknown>>);
 	} = {},
 ): Promise<Record<string, unknown>> {
 	if (ctx.batch) {
@@ -198,7 +197,8 @@ async function settleAfter(
 			...options.wait,
 		}).catch(() => undefined);
 		const out: Record<string, unknown> = settled ? unsettledNote(settled) : {};
-		if (options.changes && !openDialog(tabId)) out.changes = options.changes;
+		if (options.changes && !openDialog(tabId))
+			out.changes = typeof options.changes === "function" ? await options.changes() : options.changes;
 		// A box froze the page: there is nothing to look at until it is answered.
 		else if (options.before && !openDialog(tabId) && !ctx.aborted()) {
 			// A navigation in flight counts: its pendingUrl is where the tab is going (#94).
@@ -220,12 +220,21 @@ async function settleAfter(
 /** A drag's settle: short, so a drop that lands a frame or a transition later is seen (D41). */
 const DRAG_SETTLE = { capMs: 600, quietMs: 200 };
 
-/** The main frame's loader: a new one is a new document. Undefined when the debugger can't say. */
-async function mainLoader(tabId: number): Promise<string | undefined> {
-	const tree = await cdpSend<{ frameTree?: { frame?: { loaderId?: string } } }>(tabId, "Page.getFrameTree").catch(
-		() => undefined,
-	);
-	return tree?.frameTree?.frame?.loaderId;
+/** A tab's URL, or "" once it is gone. */
+const tabUrl = async (id: number) => (await chrome.tabs.get(id).catch(() => undefined))?.url ?? "";
+
+/** Same document, apart from the hash: `https://a.example#x` is on `https://a.example/`. */
+function sameDocument(url: string, from: string): boolean {
+	try {
+		const a = new URL(url, from);
+		const b = new URL(from);
+		if (!a.hash && !url.includes("#")) return false;
+		a.hash = "";
+		b.hash = "";
+		return a.href === b.href;
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -681,13 +690,19 @@ export const handlers: Record<string, Handler> = {
 		// The first navigate of a session opens its tab (blank, with capture on) and loads the URL into it.
 		if (!history && num(params, "tabId") === undefined && !(await ctx.session.currentTab())) {
 			const since = await settleStart();
+			const was = [...ctx.session.tabIds];
 			const { tab, ready, note } = await openCapturedTab(ctx, url, num(params, "timeoutMs") ?? 20000, false);
 			const tabId = tab.id as number;
+			// The new tab is the page itself, not one the page opened.
+			const tabs = [...was, tabId];
 			// The approval page is blanked before anything is run in it.
 			const landed = await refuseGuardedLanding(ctx, tabId, await tabSummary(tabId, !ready));
 			if (!ready) return { ...landed, ...(note ? { note } : {}), changes: { page: STILL_LOADING } };
 			// The tab is new: settleStart had none to turn Network on in, so the wait does.
-			const settled = await settleAfter(ctx, tabId, since, landed, { watched: false, changes: { page: NEW_PAGE } });
+			const settled = await settleAfter(ctx, tabId, since, landed, {
+				watched: false,
+				changes: async () => ({ ...(await tabChanges(tabs, ctx.session.tabIds, tabUrl)), page: NEW_PAGE }),
+			});
 			return refuseGuardedLanding(ctx, tabId, {
 				...(await tabSummary(tabId)),
 				...settled,
@@ -699,11 +714,11 @@ export const handlers: Record<string, Handler> = {
 		// A full load is a new document: the report says so without two looks. Only back, forward
 		// and a jump within the page (a new hash) can keep the document, so only they are compared.
 		const from = (await chrome.tabs.get(tabId).catch(() => undefined))?.url ?? "";
-		const samePage = history || (url.includes("#") && url.split("#")[0] === from.split("#")[0]);
+		const samePage = history || sameDocument(url, from);
 		const before = samePage ? await changesBefore(ctx, tabId) : undefined;
-		// A URL that loads no document (a 204, a download) leaves the page as it was: the main frame's
-		// loader says which. The tabs a load opened or closed are reported either way.
-		const loader = samePage ? undefined : await mainLoader(tabId);
+		// A URL that loads no document (a 204, a download) commits nothing and leaves the page as it was.
+		// The tabs a load opened or closed are reported either way.
+		let committed = false;
 		const tabs = [...ctx.session.tabIds];
 		const since = await actionStart(ctx, tabId);
 		watchGuardedCommits(ctx, tabId);
@@ -711,15 +726,17 @@ export const handlers: Record<string, Handler> = {
 		else if (url === "forward") timedOut = !(await goForward(tabId));
 		else {
 			const waitUntil = str(params, "waitUntil") === "load" ? "load" : "domcontentloaded";
-			timedOut = (await navigateTabDetailed(tabId, url, { waitUntil, timeoutMs: num(params, "timeoutMs") ?? 20000 }))
-				.timedOut;
+			({ timedOut, committed } = await navigateTabDetailed(tabId, url, {
+				waitUntil,
+				timeoutMs: num(params, "timeoutMs") ?? 20000,
+			}));
 		}
 		// Content a script draws after the load (a fetch, a skeleton) is there before the agent reads.
 		// The approval page is blanked before anything is run in it.
 		const landed = await refuseGuardedLanding(ctx, tabId, await tabSummary(tabId, timedOut));
 		if (timedOut) return { ...landed, changes: { page: STILL_LOADING } };
-		const kept = loader !== undefined && (await mainLoader(tabId)) === loader;
-		const urlOf = async (id: number) => (await chrome.tabs.get(id).catch(() => undefined))?.url ?? "";
+		const page = committed ? NEW_PAGE : NOT_LOADED;
+		// The tabs are compared after the settle: a script may open one while the page settles.
 		const settled = await settleAfter(
 			ctx,
 			tabId,
@@ -727,12 +744,7 @@ export const handlers: Record<string, Handler> = {
 			landed,
 			samePage
 				? { before }
-				: {
-						changes: {
-							...(await tabChanges(tabs, ctx.session.tabIds, urlOf)),
-							page: kept ? NOT_LOADED : NEW_PAGE,
-						},
-					},
+				: { changes: async () => ({ ...(await tabChanges(tabs, ctx.session.tabIds, tabUrl)), page }) },
 		);
 		return refuseGuardedLanding(ctx, tabId, { ...(await tabSummary(tabId)), ...settled });
 	},
@@ -1217,8 +1229,8 @@ export const handlers: Record<string, Handler> = {
 		const first = named !== undefined ? { id: named } : await ctx.session.currentTab().catch(() => undefined);
 		const firstId = first?.id !== undefined && ctx.session.tabIds.includes(first.id) ? first.id : undefined;
 		const before = firstId !== undefined ? await changesBefore(ctx, firstId) : undefined;
-		// A batch moved only if a step changed the current tab: a wait step on a named tab moves nowhere.
-		const wasCurrent = named === undefined ? first?.id : (await ctx.session.currentTab().catch(() => undefined))?.id;
+		// Where the batch ended: the tab its last step acted on. A step that names no tab acts on the current one.
+		let lastId = firstId;
 		const batchStart = await settleStart(firstId);
 		for (let i = 0; i < steps.length; i++) {
 			const [kind, sub] = normalizeStep(steps[i] as Params, i);
@@ -1227,6 +1239,8 @@ export const handlers: Record<string, Handler> = {
 				continue;
 			}
 			const withTab = params.tabId !== undefined && sub.tabId === undefined ? { ...sub, tabId: params.tabId } : sub;
+			// A scroll pairs nothing (D43): a list that recycles its rows shows new items in old elements.
+			if (kind === "scroll" && before) before.pairRenames = false;
 			stopIfAborted(ctx);
 			// A step that opens a dialog worked, but the steps after it did not run: say so.
 			const stepCtx: HandlerContext = {
@@ -1258,14 +1272,13 @@ export const handlers: Record<string, Handler> = {
 					error.source,
 				);
 			}
+			lastId = num(withTab, "tabId") ?? (await ctx.session.currentTab().catch(() => undefined))?.id ?? lastId;
 			if (settleMs > 0 && i < steps.length - 1) await new Promise((r) => setTimeout(r, settleMs));
 		}
 		stopIfAborted(ctx);
 		// Steps keep their short settleMs pause; the page settles once, after the last one.
 		const out: Record<string, unknown> = { steps: done.length };
-		const now = await ctx.session.currentTab().catch(() => undefined);
-		const stayed = firstId !== undefined && (now?.id === firstId || now?.id === wasCurrent);
-		const last = stayed ? { id: firstId } : now;
+		const last = lastId === undefined ? undefined : { id: lastId };
 		if (last?.id !== undefined && ctx.session.tabIds.includes(last.id))
 			// One report for the whole batch: per step it would cost a page look per keystroke.
 			Object.assign(

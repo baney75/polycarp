@@ -1265,17 +1265,21 @@ reports the difference:
   its ref, so a listed ref works at once. An element that now shows something else (a reused row, a live counter) gets a new
   ref; when the look finds the same element under it, that is one changed line naming the old ref right after the new one
   (`e9 (was e5) ...`), since that ref fails now. An identical node put in a control's place (a form re-render) is a new
-  element, so it is listed as appeared and the old ref as gone, never paired by role and place. A scroll pairs nothing: a
-  list that recycles its rows shows new items in old elements. Anything else whose old ref fails is listed as gone. A changed line says what changed (name,
+  element, so it is listed as appeared and the old ref as gone, never paired by role and place. A scroll pairs nothing,
+  alone or as a step of `actions`: a list that recycles its rows shows new items in old elements. Anything else whose old ref fails is listed as gone. A changed line says what changed (name,
   value, states).
 - `newText`: up to 3 new lines of page text, 100 characters each (`moreText` counts the rest); a line that only repeats a
   listed control's name is left out. `text` says the text changed when no line is new.
 - A full navigation is a new document: `navigate` says `page: "new page; read_page lists it"` without looking, since every
-  ref is new and the list would be the page; back, forward and a jump to a hash are compared. A URL that loads no document
-  (a 204, a download) leaves the main frame's loader as it was (`Page.getFrameTree`), and then the report says `"no new page
-  loaded"`. Tabs the load opened or closed are in both. A load that timed out says
-  `"still loading"`, so `navigate` always returns `changes`. `actions` whose step changed the current tab says `"moved to tab
-  N"`: the look was on the first tab; a batch that names a tab and only waits stays on it. `drag` waits briefly (0.6 s cap,
+  ref is new and the list would be the page; back, forward and a jump to a hash are compared (the URLs are parsed, so
+  `https://a.example#x` is a jump on `https://a.example/`). A URL that loads no document (a 204, a download) commits
+  nothing and ends in `ERR_ABORTED`, and the report says `"no new page loaded"`. The navigation's own events decide this,
+  with no debugger call, so a hung renderer never holds `navigate` or keeps it from leaving the page. An `ERR_ABORTED` may
+  instead belong to an earlier navigation this one cancelled, so the wait checks the tab every 0.5 s and goes on while it
+  still loads something (`status` loading or a `pendingUrl`), until a commit or the timeout; one timer does this and ends
+  with the wait. Tabs the load opened or closed, the settle included, are in both, on the first navigate of a session too. A load that timed out says
+  `"still loading"`, so `navigate` always returns `changes`. `actions` whose last step acted on another tab than the first
+  says `"moved to tab N"`: the look was on the first tab; a batch that names a tab and only waits stays on it. `drag` waits briefly (0.6 s cap,
   0.2 s quiet, Network left as it is), so a drop that reorders a frame or a transition later is in the report, at most about
   2.1 s with the looks; `scroll` keeps the full wait, since a list loads its
   next rows after the scroll, so a scroll on a page that never goes quiet takes at most about 4.5 s (Network on 0.5 s, the
