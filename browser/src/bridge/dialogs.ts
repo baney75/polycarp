@@ -61,7 +61,7 @@ export function dialogPreset(
 	if (method === "click" && Number(params?.clickCount ?? 1) > 1)
 		throw new BridgeError(
 			ERR.BAD_PARAMS,
-			"on_dialog works on a single click: clickCount must be 1. Nothing was done. Send the click that opens the box with no clickCount.",
+			"on_dialog works on a single click; double-click first, then answer with handle_dialog. Nothing was done.",
 		);
 	if (text !== undefined && text !== null && typeof text !== "string")
 		throw new BridgeError(ERR.BAD_PARAMS, "on_dialog_text must be a string");
@@ -101,15 +101,19 @@ export function refuseStepPreset(
 		// A step the handler would refuse anyway: the example keeps its placeholder.
 	}
 	if (!PRESET_METHODS.has(kind)) [kind, args] = ["click", { ref: "<ref>" }];
-	const { on_dialog: _on, on_dialog_text: _text, tabId, repeat: _repeat, ...rest } = args;
+	const { on_dialog: _on, on_dialog_text: _text, tabId, repeat: _repeat, clickCount, ...rest } = args;
 	const tab = tabId ?? params.tabId ?? "<your tab>";
 	const example = JSON.stringify({ tabId: tab, ...rest, on_dialog: "ok" });
 	const where = i < 0 ? "on an actions call" : `on step ${i} of actions`;
+	// No single call stands in for a double click (first-F1 of the review of PR 230).
+	const double = kind === "click" && Number(clickCount ?? 1) > 1;
 	throw new BridgeError(
 		ERR.BAD_PARAMS,
 		`on_dialog is not allowed ${where}: nothing was run. on_dialog works only on a single click or press call. ` +
-			`Run the steps before it with actions, then call ${kind} on its own with ${example} ` +
-			'("cancel" in place of "ok" to cancel the box).',
+			(double
+				? "A double click can't take it: double-click first, then answer with handle_dialog."
+				: `Run the steps before it with actions, then call ${kind} on its own with ${example} ` +
+					'("cancel" in place of "ok" to cancel the box).'),
 	);
 }
 
@@ -292,6 +296,8 @@ export function raceDialogs<T>(
 		 * failure after the answer does (sol-F2, second-S2 of the review of PR 216).
 		 */
 		deadline?: { ms: number; label: string };
+		/** The tabs this call sends input to, when known. */
+		tabs?: () => number[];
 	} = {},
 ): Promise<T | Record<string, unknown>> {
 	return new Promise((resolve, reject) => {
@@ -317,6 +323,8 @@ export function raceDialogs<T>(
 				answered = { tabId, dialog };
 				return;
 			}
+			// A box on a tab this call sends nothing to never froze it (second-S1 of the review of PR 230).
+			if (options.tabs?.().length && !options.tabs().includes(tabId)) return;
 			stop();
 			onAbort();
 			opened = true;

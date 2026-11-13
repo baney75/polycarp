@@ -271,6 +271,10 @@ export function dialogAdvice(seq: number, tabId: number, dialog: PageDialog): st
 			: "";
 	if (!ONE_STEP.has(cause.step.kind))
 		return `${ran}It opened during ${cause.step.kind}, which can't take on_dialog: done again, it would type again. ${READ_FIRST} If what the user asked for is not done, do the click or press that finishes it with "on_dialog".`;
+	// No call is named to repeat a double click (first-F1, sol-F3 of the review of PR 230).
+	const clicks = Number(cause.step.params.clickCount ?? 1);
+	if (cause.step.kind === "click" && clicks > 1)
+		return `${ran}It opened on a ${clicks === 2 ? "double click" : `click with clickCount ${clicks}`}, which can't take on_dialog: a single click is not the same action. ${READ_FIRST} If what the user asked for is not done, double-click again, then answer with handle_dialog.`;
 	const args = Object.fromEntries(
 		Object.entries(cause.step.params).filter(
 			([k]) => k !== "on_dialog" && k !== "on_dialog_text" && k !== "tabId" && k !== "repeat",

@@ -1214,7 +1214,7 @@ test("files for a remote session: its own scope, never a path in, never a path o
 	}
 });
 
-test("second-S1 (review of PR 216), F4 (review of PR 227): on_dialog on any tool but click and press is refused over MCP, never dropped", async () => {
+test("second-S1 (review of PR 216), F4 (review of PR 227), second-S2, first-F2 (review of PR 230): on_dialog on any tool but click and press is refused by name over MCP", async () => {
 	// A fake native host that records every request and answers it: a refused call must send none.
 	const dir = join(root, "nodialog-sock");
 	mkdirSync(dir, { mode: 0o700 });
@@ -1265,16 +1265,19 @@ test("second-S1 (review of PR 216), F4 (review of PR 227): on_dialog on any tool
 			["navigate", { tabId: 41, url: "https://shop.example.com/", on_dialog: "ok" }],
 			["find", { tabId: 41, query: "Delete", on_dialog: "ok" }],
 			["wait", { tabId: 41, text: "Done", on_dialog: "cancel" }],
+			["type", { tabId: 41, text: "x", bogus: 1 }],
 		];
 		for (const [name, args] of calls) {
 			const r = await client.callTool({ name, arguments: args });
 			const said = r.content.map((c) => c.text).join("\n");
 			assert.ok(r.isError, `${name} ran with on_dialog: ${said}`);
-			assert.match(said, new RegExp(`^bad_params: on_dialog works on a single click or press only, not on ${name}\\. Nothing was done`), said);
+			assert.match(said, /Unrecognized key\(s\) in object: '(on_dialog|on_dialog_text|bogus)'/, said);
 		}
 		assert.deepEqual(requests.map((m) => m.method), [], "a call with on_dialog reached the browser");
-		// Without it the call goes through, and a key no schema has is still left out.
-		const ok = await client.callTool({ name: "type", arguments: { tabId: 41, text: "x", bogus: 1 } });
+		// tools/list says each schema is closed; without a stray key the call goes through.
+		for (const t of (await client.listTools()).tools)
+			if (t.name !== "click" && t.name !== "press" && Object.keys(t.inputSchema.properties ?? {}).length) assert.equal(t.inputSchema.additionalProperties, false, t.name);
+		const ok = await client.callTool({ name: "type", arguments: { tabId: 41, text: "x" } });
 		assert.ok(!ok.isError, ok.content.map((c) => c.text).join("\n"));
 		assert.deepEqual(requests.map((m) => [m.method, m.params]), [["type", { tabId: 41, text: "x" }]]);
 	} finally {

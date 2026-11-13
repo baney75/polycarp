@@ -292,6 +292,16 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 		checked.add(wrapped);
 		return wrapped;
 	};
+	// Strict schemas (D48): on_dialog or any unknown key fails by name, not dropped (PR 230). Innermost, so it sees the
+	// hub's device; a tool with no arguments sends no input and stays loose, for the byte budget.
+	{
+		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
+		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, ...rest: unknown[]) => {
+			const shape = (config as { inputSchema?: unknown } | undefined)?.inputSchema;
+			const strict = name !== "click" && name !== "press" && isRawShape(shape) && Object.keys(shape).length > 0;
+			return register(name, strict ? { ...(config as object), inputSchema: z.object(shape as z.ZodRawShape).strict() } : config, ...rest);
+		};
+	}
 	if (allow || check) {
 		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
 		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, cb: unknown) =>
@@ -315,36 +325,6 @@ export function createMcpServer(options: McpServerOptions = {}): { server: McpSe
 				}
 				return handler(given, extra);
 			});
-		};
-	}
-	// on_dialog (D48) works on a single click or press only. Every other tool's schema lets the key through, so a call
-	// that carries it is refused out loud instead of running with it silently dropped (second-S1 of the review of PR 216,
-	// F4 of the review of PR 227); every other key not in the schema is still dropped before the tool runs, as before.
-	// Installed after the wrappers above, so it sees each call first and the schema it widens is the final one.
-	{
-		const register = server.registerTool.bind(server) as (...args: unknown[]) => unknown;
-		(server as unknown as { registerTool: (...args: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, cb: unknown, ...rest: unknown[]) => {
-			const given = (config as { inputSchema?: unknown } | undefined)?.inputSchema;
-			if (name === "click" || name === "press" || typeof cb !== "function" || given === undefined)
-				return register(name, config, cb, ...rest);
-			const handler = cb as (...a: unknown[]) => unknown;
-			let keys: Set<string> | undefined;
-			const tool = register(name, config, (args: Record<string, unknown> | undefined, ...more: unknown[]) => {
-				if (args?.on_dialog !== undefined || args?.on_dialog_text !== undefined)
-					return {
-						content: text(
-							`bad_params: on_dialog works on a single click or press only, not on ${String(name)}. Nothing was done. Send the click or press that opens the box on its own, e.g. click {"tabId":41,"ref":"e5","on_dialog":"ok"}.`,
-						),
-						isError: true,
-					};
-				const known = keys;
-				return handler(known && args ? Object.fromEntries(Object.entries(args).filter(([k]) => known.has(k))) : args, ...more);
-			}, ...rest) as { inputSchema?: unknown } | undefined;
-			if (tool?.inputSchema instanceof z.ZodObject) {
-				keys = new Set(Object.keys(tool.inputSchema.shape));
-				tool.inputSchema = tool.inputSchema.passthrough();
-			}
-			return tool;
 		};
 	}
 	const choice = options.session ? { name: options.session, auto: false } : chooseSession({ flag: options.sessionFlag });

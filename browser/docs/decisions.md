@@ -1609,7 +1609,9 @@ Decision (`src/browser/dialog-guard.ts`, service worker):
     check at the start; a tab first reached then is counted from then on. An `actions` step refused there, after other
     steps ran, fails as `interrupted`, never `not_sent` (the review of PR 216), and so does the batch's closing
     screenshot. A call that has ended counts on no tab again, so a resolve that returns after it leaves no hold (the
-    review of PR 227). The client sends a `not_sent` call
+    review of PR 227), once its handler's last input has returned: a press that outlived the call's limit, and its
+    release, still count (30 s at most). A call with `on_dialog` holds its tab at once, then waits within its own limit
+    until no other call counts there (the review of PR 230). The client sends a `not_sent` call
     again after a short backoff; the refusal text says to send it again later, never that it waits.
   - A call that ends, by a timeout or otherwise, aborts for good: the bridge sets `aborted` before it takes the answer
     back, and the arm and each input check it right before they act, so a handler still running after a timeout never
@@ -1628,6 +1630,9 @@ Decision (`src/browser/dialog-guard.ts`, service worker):
     which answer landed and not to do the action again.
   - What it cannot tell apart: a box the page opens by itself while the input is on its way, on that tab, takes the
     answer. CDP's dialog event names no cause.
+  - A box's cause is the sole call counted on its tab, or none and no repeat is named, nor for a double click. A call
+    reacts only to boxes on its own tabs. Over MCP every tool with arguments but click and press is strict: `on_dialog`,
+    or any key it lacks, fails by name (the review of PR 230).
   The OK rule is the same as for handle_dialog: OK only when the box confirms exactly what the user asked for.
 - **Only a handle_dialog for that dialog defers its Cancel,** counted from the moment the request reaches the worker's
   socket, while it waits behind the client's earlier requests too, until it ends. Nothing else holds a box: not another

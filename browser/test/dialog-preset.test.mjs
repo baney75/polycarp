@@ -406,7 +406,7 @@ test("on_dialog is checked: click and press only, prompt text only with ok", asy
 // the tab; a timeout aborts for good; armed only while the input is out; failures after the answer say so.
 
 /** Hold the tab's next mousePressed until `release()`; counts the mouse events that reach the tab. */
-function holdPress(t, tabId, type = "mousePressed") {
+function holdPress(t, tabId, type = "mousePressed", only = () => true) {
 	const seen = { pressed: 0, released: 0, offPage: 0 };
 	let release;
 	const held = new Promise((r) => {
@@ -414,7 +414,7 @@ function holdPress(t, tabId, type = "mousePressed") {
 	});
 	const plain = chrome.debugger.sendCommand;
 	chrome.debugger.sendCommand = async (target, method, params) => {
-		if (target.tabId === tabId && method === "Input.dispatchMouseEvent" && params.type === type) {
+		if (target.tabId === tabId && method === "Input.dispatchMouseEvent" && params.type === type && only(params)) {
 			seen.pressed++;
 			await held;
 		}
@@ -798,13 +798,75 @@ test("second-S1 (review of PR 227): on_dialog on a double click is refused befor
 	});
 	const r = await request("click", { tabId: tab, x: 10, y: 10, clickCount: 2, on_dialog: "ok" });
 	assert.equal(r.error?.code, "bad_params", JSON.stringify(r));
-	assert.match(r.error.message, /^on_dialog works on a single click: clickCount must be 1\. Nothing was done/);
+	assert.match(r.error.message, /^on_dialog works on a single click; double-click first, then answer with handle_dialog\. Nothing was done/);
 	assert.equal(presses, 0);
 	assert.deepEqual(answers, []);
 	// A single click, with clickCount 1 said outright, still takes it.
 	const ok = await request("click", { tabId: tab, x: 10, y: 10, clickCount: 1, on_dialog: "ok" });
 	assert.equal(ok.error, undefined, JSON.stringify(ok.error));
 	assert.deepEqual(answers.map((x) => [x.message, x.accept]), [["Delete the record?", true]]);
+});
+
+test("first-F1, sol-F3 (review of PR 230): a double click's box names no on_dialog call, which would be refused", async (t) => {
+	setup(t);
+	let releases = 0;
+	const tab = await agentTab(async (_i, id) => {
+		if (++releases === 2) await box(id, "confirm", "Open the record?");
+	});
+	const r = await request("click", { tabId: tab, x: 10, y: 10, clickCount: 2 });
+	await pastGrace();
+	for (const said of [r.result.note, await notice(tab)]) {
+		assert.match(said, /opened on a double click, which can't take on_dialog/, said);
+		assert.doesNotMatch(said, /clickCount|call click with/, said);
+	}
+	const batch = await request("actions", { tabId: tab, steps: [{ doubleClick: { x: 10, y: 10 }, on_dialog: "ok" }] });
+	assert.match(batch.error?.message, /A double click can't take it: double-click first, then answer with handle_dialog\.$/);
+});
+
+test("sol-F2, sol-F1 (review of PR 230): a press that outlived its call keeps the tab: a box then names no one to repeat, and on_dialog waits", async (t) => {
+	setup(t);
+	const tab = await agentTab(async ({ x }, id) => {
+		if (x !== 10) await box(id, "confirm", x === 20 ? "Mine?" : "Delete the record?");
+	});
+	const hold = holdPress(t, tab, "mousePressed", (p) => p.x === 10);
+	handlerLimit = 300;
+	t.after(() => {
+		handlerLimit = undefined;
+	});
+	assert.equal((await request("click", { tabId: tab, x: 10, y: 10 })).error?.code, "timeout");
+	handlerLimit = undefined;
+	// c1's press, and its release, are still on their way when c2's click opens the box: it is not sure to be c2's.
+	assert.equal((await request("click", { tabId: tab, x: 20, y: 20 }, "c2")).error, undefined);
+	await pastGrace();
+	const said = await notice(tab);
+	assert.match(said, /does not know which action opened it/, said);
+	assert.doesNotMatch(said, /on_dialog/, said);
+	let ran = false;
+	const two = request("click", { tabId: tab, x: 20, y: 20, on_dialog: "ok" }, "c2").then((r) => ((ran = true), r));
+	await wait(200);
+	assert.equal(ran, false, "on_dialog ran while another call's press was out");
+	hold.release();
+	await wait(50);
+	await pastGrace();
+	assert.equal((await two).error, undefined);
+	assert.deepEqual(answers.map((x) => `${x.message} ${x.accept}`), ["Mine? false", "Delete the record? false", "Mine? true"]);
+});
+
+test("second-S1 (review of PR 230): another call's on_dialog box on another tab never stops a call on its own tab", async (t) => {
+	setup(t);
+	const a = await agentTab(async () => undefined);
+	const b = await agentTab(async (_i, id) => {
+		await box(id, "confirm", "Delete the record?");
+	});
+	// c1's click on `a` is on its way while c2's on_dialog click on `b` opens its box and answers it.
+	const hold = holdPress(t, a);
+	const one = deliver("c1", "click", { tabId: a, x: 10, y: 10 });
+	for (let i = 0; i < 100 && !hold.seen.pressed; i++) await wait(5);
+	const two = await request("click", { tabId: b, x: 10, y: 10, on_dialog: "ok" }, "c2");
+	assert.equal(two.result?.dialog?.answered, "ok", JSON.stringify(two));
+	hold.release();
+	const r = await reply(one);
+	assert.equal(r.error, undefined, `c1 was stopped by c2's box: ${JSON.stringify(r.error)}`);
 });
 
 // Last: it takes the native host away, and nothing after it could reach the bridge.

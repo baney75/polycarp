@@ -461,6 +461,8 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 	/** The tabs this call is counted on in `tabCalls`; it holds them all when it has on_dialog. */
 	let onTabs: number[] = [];
 	let unwatch: (() => void) | undefined;
+	/** The handler's work: its input has returned once this settles. */
+	let work: Promise<unknown> | undefined;
 	/** The session and the tab the in-use veil counted this call on (src/browser/veil.ts). */
 	let veiled: { session: BrowserSession; tabId: number | undefined; currentBefore: number | undefined } | undefined;
 	try {
@@ -521,6 +523,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 		}
 		// on_dialog is checked, and its tab's owner, before anything runs or is armed (sol-F3, first-F4 of the review of PR 193).
 		const want = wantedPreset(req.method, req.params ?? {});
+		let waited = 0;
 		if (want && !session.tabIds.includes(want.tabId))
 			throw new BridgeError(
 				ERR.NO_TAB,
@@ -533,8 +536,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 			// as not_sent: it never ran, and the client sends it again a little later.
 			for (const tab of tabs) {
 				const holder = heldTabs.get(tab);
-				const others = [...(tabCalls.get(tab) ?? [])].filter((c) => c !== call);
-				if ((holder && holder !== call) || (want && others.length))
+				if ((holder && holder !== call) || (want && holder))
 					throw new BridgeError(
 						ERR.NOT_SENT,
 						want
@@ -546,6 +548,17 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 			for (const tab of tabs) {
 				tabCalls.set(tab, (tabCalls.get(tab) ?? new Set()).add(call));
 				if (want) heldTabs.set(tab, call);
+			}
+			// The tab is held at once, so no new input starts there; the call with on_dialog then waits, within its own
+			// limit, until every other call's input on it has returned (sol-F2 of the review of PR 230).
+			for (const start = Date.now(); want && [...(tabCalls.get(want.tabId) ?? [])].some((c) => c !== call); ) {
+				waited = Date.now() - start;
+				if (aborted || waited > HANDLER_TIMEOUT_MS)
+					throw new BridgeError(
+						ERR.NOT_SENT,
+						`Other input on tab ${want.tabId} is still running, so this call with on_dialog was not sent. Send it again once it has ended.`,
+					);
+				await new Promise((r) => setTimeout(r, 50));
 			}
 		}
 		/** The tab and step whose last input is on its way: a box that opens there now is that step's (second-S3). */
@@ -594,6 +607,8 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 				const kind = delivering.step?.kind ?? req.method;
 				if (!CAUSE_KINDS.has(kind)) return;
 				const own = dialog.presetCall === call;
+				// While another call counts on the tab, a timed-out press's release included, no cause is known (sol-F1, PR 230).
+				const rivals = [...(tabCalls.get(tabId) ?? [])].some((c) => c !== call);
 				const cause: DialogCause = {
 					method: req.method,
 					tabId,
@@ -601,7 +616,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 					...(delivering.step ? { batch: { index: delivering.step.index, total: delivering.step.total } } : {}),
 					...(!own && answeredBox ? { after: answeredBox } : {}),
 				};
-				dialogCause(dialog.seq, cause);
+				if (own || !rivals) dialogCause(dialog.seq, cause);
 				if (own) answeredBox = { type: dialog.type, message: dialog.message };
 			});
 		veiled = {
@@ -609,9 +624,10 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 			currentBefore: session.currentTabId,
 			tabId: await veilBegin(session, req.method, req.params).catch(() => undefined),
 		};
-		const work = handler(ctx, req.params ?? {});
+		work = handler(ctx, req.params ?? {});
 		// An upload's begin may wait for the person's answer, which has its own, longer limit.
-		const limit = req.method === "files.upload.begin" ? FILE_ASK_TIMEOUT_MS + 30000 : HANDLER_TIMEOUT_MS;
+		const scope = { call, method: req.method, soon: dialogSoon, tabs: () => onTabs };
+		const limit = (req.method === "files.upload.begin" ? FILE_ASK_TIMEOUT_MS + 30000 : HANDLER_TIMEOUT_MS) - waited;
 		// A call that can open a box runs out of time inside raceDialogs, which says what its on_dialog answered first
 		// (sol-F2, second-S2 of the review of PR 216); the outer limit only backs that up.
 		const result = await withTimeout(
@@ -625,7 +641,7 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 							disarmDialog(call);
 						},
 						() => deliveredResult,
-						{ call, method: req.method, soon: dialogSoon, deadline: { ms: limit, label: req.method } },
+						{ ...scope, deadline: { ms: limit, label: req.method } },
 					),
 			dialogSafe ? limit : limit + 10_000,
 			req.method,
@@ -645,12 +661,21 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 		aborted = true;
 		disarmDialog(call);
 		unwatch?.();
-		for (const tab of onTabs) {
-			const calls = tabCalls.get(tab);
-			calls?.delete(call);
-			if (!calls?.size) tabCalls.delete(tab);
-			if (heldTabs.get(tab) === call) heldTabs.delete(tab);
-		}
+		// Counted until the handler's input has returned (30 s at most), not just the call: a press that outlived the
+		// call's limit, and its release, can still open a box there (sol-F2 of the review of PR 230).
+		const tabs = onTabs;
+		const release = () => {
+			clearTimeout(cap);
+			for (const tab of tabs) {
+				const calls = tabCalls.get(tab);
+				calls?.delete(call);
+				if (!calls?.size) tabCalls.delete(tab);
+				if (heldTabs.get(tab) === call) heldTabs.delete(tab);
+			}
+		};
+		const cap = work && tabs.length ? setTimeout(release, 30_000) : undefined;
+		if (cap === undefined) release();
+		else void work?.then(release, release);
 		if (veiled) veilEnd(veiled.session, req.method, veiled.tabId, veiled.currentBefore);
 		state.abort = undefined;
 		state.inFlight = undefined;
