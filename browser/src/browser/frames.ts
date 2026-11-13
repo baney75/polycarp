@@ -175,7 +175,7 @@ interface TreeNode {
 
 const originOf = (f: TreeNode["frame"]) => f.securityOrigin ?? "";
 /** Only web pages are read: never an extension page, an error page or a browser page. */
-const web = (url: string) => /^(https?|file):/.test(url);
+export const web = (url: string) => /^(https?|file):/.test(url);
 
 /**
  * The tab's cross-origin frames, outermost first: each frame whose origin differs from the
@@ -268,7 +268,9 @@ async function collect(tabId: number, rule: FrameRule, end: number): Promise<{ f
 			}),
 		);
 		for (const { targetId, c, owner, sub } of asked) {
-			const inside: Inside = owner !== undefined && where.has(owner) ? where.get(owner) : root;
+			// An owner the debugger couldn't name (out of time, no answer) may be a guarded or non-web frame:
+			// the frame is left out rather than placed as if it sat in the session's own document.
+			const inside: Inside = owner !== undefined && where.has(owner) ? where.get(owner) : "out";
 			if (!sub) {
 				await leaveOut(c.sessionId, null);
 				continue;
@@ -399,10 +401,15 @@ export function frameShown(el: Element): "shown" | "hidden" | "away" {
 
 /**
  * Whether the frame and each frame around it is shown (frameShown), tested where its <iframe> is,
- * in Polycarp's world, so the page can't answer for it. A frame the debugger can't test there
- * counts as not shown: it is never read or acted in on no evidence.
+ * in Polycarp's world, so the page can't answer for it: "hidden" when any level is, "away" when a
+ * level is only out of view, and undefined when the debugger gave no answer by `end`.
  */
-export async function frameShownNow(tabId: number, frame: PageFrame, end?: number): Promise<boolean> {
+export async function frameState(
+	tabId: number,
+	frame: PageFrame,
+	end?: number,
+): Promise<"shown" | "hidden" | "away" | undefined> {
+	let state: "shown" | "away" = "shown";
 	for (const f of frame.chain) {
 		const [own, top] = await Promise.all([
 			bounded(
@@ -413,7 +420,7 @@ export async function frameShownNow(tabId: number, frame: PageFrame, end?: numbe
 			),
 			bounded(cdpSendSession<{ frameTree: TreeNode }>(tabId, f.ownerSessionId, "Page.getFrameTree"), callMs(end)),
 		]);
-		if (!own?.backendNodeId || !top?.frameTree) return false;
+		if (!own?.backendNodeId || !top?.frameTree) return undefined;
 		const objects = group();
 		const at = await resolveOwner(tabId, f.ownerSessionId, own.backendNodeId, top.frameTree, objects, end);
 		const shown = at
@@ -429,9 +436,20 @@ export async function frameShownNow(tabId: number, frame: PageFrame, end?: numbe
 		void cdpSendSession(tabId, f.ownerSessionId, "Runtime.releaseObjectGroup", { objectGroup: objects }).catch(
 			() => undefined,
 		);
-		if (shown?.result?.value !== "shown") return false;
+		const value = shown?.result?.value;
+		if (value === "hidden") return "hidden";
+		if (value === "away") state = "away";
+		else if (value !== "shown") return undefined;
 	}
-	return true;
+	return state;
+}
+
+/**
+ * Whether the frame and each frame around it is shown. A frame the debugger can't test counts as
+ * not shown: it is never read or acted in on no evidence.
+ */
+export async function frameShownNow(tabId: number, frame: PageFrame, end?: number): Promise<boolean> {
+	return (await frameState(tabId, frame, end)) === "shown";
 }
 
 /**
@@ -556,13 +574,17 @@ export async function evaluateInFrame(
 /** Bring a frame's <iframe> (and those around it) into view, outermost first. */
 export async function scrollFrameIntoView(tabId: number, frame: PageFrame): Promise<void> {
 	for (const f of frame.chain) {
-		const own = await cdpSendSession<{ backendNodeId?: number }>(tabId, f.ownerSessionId, "DOM.getFrameOwner", {
-			frameId: f.frameId,
-		}).catch(() => undefined);
+		const own = await bounded(
+			cdpSendSession<{ backendNodeId?: number }>(tabId, f.ownerSessionId, "DOM.getFrameOwner", {
+				frameId: f.frameId,
+			}),
+		);
 		if (own?.backendNodeId)
-			await cdpSendSession(tabId, f.ownerSessionId, "DOM.scrollIntoViewIfNeeded", {
-				backendNodeId: own.backendNodeId,
-			}).catch(() => undefined);
+			await bounded(
+				cdpSendSession(tabId, f.ownerSessionId, "DOM.scrollIntoViewIfNeeded", {
+					backendNodeId: own.backendNodeId,
+				}),
+			);
 	}
 }
 
@@ -583,52 +605,86 @@ export async function framePainted(tabId: number): Promise<void> {
 	await bounded(wait, 300);
 }
 
+/** The most frameTakesPoint may take, all levels together: a slow session refuses the action, not the handler cap. */
+export const POINT_MS = 2 * FRAME_CALL_MS;
+
 /**
  * Whether a point in the tab's viewport lands in the frame: at every level, what is drawn there
- * is the frame's own <iframe>. A banner over the frame takes the click instead.
+ * is the frame's own <iframe>. A banner over the frame takes the click instead. Each level is
+ * tested from its own stored base, so levels in different sessions are tested at once.
  */
-export async function frameTakesPoint(tabId: number, frame: PageFrame, x: number, y: number): Promise<boolean> {
-	for (const f of frame.chain) {
-		const own = await cdpSendSession<{ backendNodeId?: number }>(tabId, f.ownerSessionId, "DOM.getFrameOwner", {
-			frameId: f.frameId,
-		}).catch(() => undefined);
+export async function frameTakesPoint(
+	tabId: number,
+	frame: PageFrame,
+	x: number,
+	y: number,
+	end = Date.now() + POINT_MS,
+): Promise<boolean> {
+	const level = async (f: PageFrame): Promise<boolean> => {
+		const [own, view] = await Promise.all([
+			bounded(
+				cdpSendSession<{ backendNodeId?: number }>(tabId, f.ownerSessionId, "DOM.getFrameOwner", {
+					frameId: f.frameId,
+				}),
+				callMs(end),
+			),
+			// The hit test takes document coordinates: on a scrolled page a viewport point is elsewhere, or nowhere.
+			bounded(
+				cdpSendSession<{ cssLayoutViewport?: { pageX?: number; pageY?: number } }>(
+					tabId,
+					f.ownerSessionId,
+					"Page.getLayoutMetrics",
+				),
+				callMs(end),
+			),
+		]);
+		if (!own?.backendNodeId || !view?.cssLayoutViewport) return false;
 		const base = f.base;
-		// The hit test takes document coordinates: on a scrolled page a viewport point is elsewhere, or nowhere.
-		const view = await cdpSendSession<{ cssLayoutViewport?: { pageX?: number; pageY?: number } }>(
-			tabId,
-			f.ownerSessionId,
-			"Page.getLayoutMetrics",
-		).catch(() => undefined);
-		if (!view?.cssLayoutViewport) return false;
-		const hit = await cdpSendSession<{ backendNodeId?: number; frameId?: string }>(
-			tabId,
-			f.ownerSessionId,
-			"DOM.getNodeForLocation",
-			{
-				// The owner session measures in its own frame's CSS px, drawn at baseScale in the tab.
-				x: Math.round((x - base.x) / f.baseScale + (view.cssLayoutViewport.pageX ?? 0)),
-				y: Math.round((y - base.y) / f.baseScale + (view.cssLayoutViewport.pageY ?? 0)),
-				includeUserAgentShadowDOM: true,
-				// A click goes through a layer with pointer-events: none (the in-use veil, a page's
-				// own overlay), so the hit test does too.
-				ignorePointerEventsNone: false,
-			},
-		).catch(() => undefined);
+		const hit = await bounded(
+			cdpSendSession<{ backendNodeId?: number; frameId?: string }>(
+				tabId,
+				f.ownerSessionId,
+				"DOM.getNodeForLocation",
+				{
+					// The owner session measures in its own frame's CSS px, drawn at baseScale in the tab.
+					x: Math.round((x - base.x) / f.baseScale + (view.cssLayoutViewport.pageX ?? 0)),
+					y: Math.round((y - base.y) / f.baseScale + (view.cssLayoutViewport.pageY ?? 0)),
+					includeUserAgentShadowDOM: true,
+					// A click goes through a layer with pointer-events: none (the in-use veil, a page's
+					// own overlay), so the hit test does too.
+					ignorePointerEventsNone: false,
+				},
+			),
+			callMs(end),
+		);
 		// No answer is no evidence the point is clear: the action is not sent on it.
-		if (!own?.backendNodeId || !hit?.backendNodeId) return false;
-		if (hit.backendNodeId === own.backendNodeId) continue;
+		if (!hit?.backendNodeId) return false;
+		if (hit.backendNodeId === own.backendNodeId) return true;
 		// A frame in the same process is hit-tested through: the node is inside it, or inside a frame it holds.
-		if (hit.frameId && (await within(tabId, f.ownerSessionId, hit.frameId, f.frameId))) continue;
-		return false;
-	}
-	return true;
+		return !!hit.frameId && (await within(tabId, f.ownerSessionId, hit.frameId, f.frameId, end));
+	};
+	// Levels in one session go in turn (its renderer answers one at a time anyway); sessions go at once.
+	const sessions = new Map<string | undefined, PageFrame[]>();
+	for (const f of frame.chain) sessions.set(f.ownerSessionId, [...(sessions.get(f.ownerSessionId) ?? []), f]);
+	const inTurn = async (fs: PageFrame[]) => {
+		for (const f of fs) if (!(await level(f))) return false;
+		return true;
+	};
+	return (await Promise.all([...sessions.values()].map(inTurn))).every(Boolean);
 }
 
 /** Whether frame `id` is frame `outer` or inside it, in one session's frame tree. */
-async function within(tabId: number, sessionId: string | undefined, id: string, outer: string): Promise<boolean> {
+async function within(
+	tabId: number,
+	sessionId: string | undefined,
+	id: string,
+	outer: string,
+	end?: number,
+): Promise<boolean> {
 	if (id === outer) return true;
-	const tree = await cdpSendSession<{ frameTree: TreeNode }>(tabId, sessionId, "Page.getFrameTree").catch(
-		() => undefined,
+	const tree = await bounded(
+		cdpSendSession<{ frameTree: TreeNode }>(tabId, sessionId, "Page.getFrameTree"),
+		callMs(end),
 	);
 	const find = (n: TreeNode, inside: boolean): boolean => {
 		const here = inside || n.frame.id === outer;
