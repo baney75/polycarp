@@ -7,12 +7,9 @@ import { installFakeChrome } from "./fake-chrome.mjs";
 const fake = installFakeChrome();
 /** Every inject the veil sent, with when it reached the page. */
 const injected = [];
-let busy = false;
 chrome.scripting = {
 	async executeScript({ target, args: [cmd] }) {
 		injected.push({ tabId: target.tabId, cmd, at: performance.now() });
-		// A page whose main thread is busy runs nothing the worker sends it.
-		if (busy) return new Promise(() => undefined);
 		return [{ result: cmd.op === "show" ? { tag: cmd.tag } : {} }];
 	},
 };

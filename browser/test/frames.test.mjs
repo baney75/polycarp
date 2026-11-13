@@ -340,6 +340,7 @@ test("frameShown: a frame out of view is not taken as shown; shadow roots, faint
 	const { frameShown } = await import("../src/browser/frames.ts");
 	const view = { innerWidth: 1280, innerHeight: 800, scrollX: 0, scrollY: 0, getComputedStyle: (n) => n.style };
 	const doc = { defaultView: view, elementFromPoint: () => null, nodeType: 9 };
+	doc.documentElement = { ownerDocument: doc, style: {}, scrollHeight: 5000, scrollWidth: 1280 };
 	const el = (rect, { style = {}, parent = null, root = doc, hit } = {}) => {
 		const e = {
 			nodeType: 1,
@@ -640,5 +641,502 @@ test("a hit test that gives no answer counts as covered: the action is not sent 
 		}
 	} finally {
 		chrome.debugger.sendCommand = send;
+	}
+});
+
+test("type by a frame ref retried after the debugger detached finds the frame again on the new attachment", async () => {
+	const { handlers } = await import("../src/bridge/tools.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	chrome.webNavigation.getAllFrames = async () => [{}, {}];
+	const kids = { PAY: { sessionId: "S1" } };
+	const trees = { "": node("TOP", "https://shop.example"), S1: node("PAY", "https://pay.example") };
+	fakeTab(36, {
+		trees,
+		kids,
+		holds: { PAY: "TOP" },
+		owners: { PAY: 11 },
+		evaluate: () => ({ x: 10, y: 10, width: 4, height: 4 }),
+	});
+	const send = chrome.debugger.sendCommand;
+	let detached = false;
+	chrome.debugger.sendCommand = async (target, method, params) => {
+		// The first click finds the debugger gone: the frame's session goes with it, and it comes back as another.
+		if (method === "Input.dispatchMouseEvent" && !detached) {
+			detached = true;
+			kids.PAY.sessionId = "S9";
+			trees.S9 = trees.S1;
+			// In flight: cdpSend leaves this one to the handler, which attaches again and tries once more.
+			throw new Error("Detached while handling command.");
+		}
+		if (detached && target.sessionId === "S1") throw new Error("No target with given id found");
+		return send(target, method, params);
+	};
+	const tab = { id: 36, url: "https://shop.example/" };
+	const ctx = {
+		session: { tabIds: [36], setCurrent: async () => {}, attachedCurrentTab: async () => tab, requireCurrentTab: async () => tab },
+		isGuarded: () => false,
+		guardedHosts: [],
+		batch: false,
+		aborted: () => false,
+		delivered: () => {},
+	};
+	try {
+		const r = await handlers.type(ctx, { ref: `${frameTag("PAY")}e5`, text: "Eve" }).catch((e) => e);
+		assert.ok(!(r instanceof Error), `type retried in the frame: ${r?.message}`);
+		assert.ok(detached, "the first try met the detach");
+	} finally {
+		chrome.tabs.get = getTab;
+		chrome.debugger.sendCommand = send;
+	}
+});
+
+test("an out-of-process frame whose holder the debugger can't name is left out: it may sit in a guarded frame", async () => {
+	// TOP holds G (guarded, the same process); G's document holds K (its own process, an allowed host).
+	chrome.webNavigation.getAllFrames = async () => [{}, {}, {}];
+	const setup = {
+		trees: { "": node("TOP", "https://shop.example", [node("G", "https://guarded.example")]), S1: node("K", "https://pay.example") },
+		kids: { K: { sessionId: "S1" } },
+		holds: { G: "TOP", K: "G" },
+		owners: { G: 11, K: 12 },
+	};
+	const rule = (url) => (url.startsWith("https://guarded.example") ? "guarded" : undefined);
+	fakeTab(37, setup);
+	assert.deepEqual(await crossOriginFrames(37, rule), [], "K is found inside G, and left out with it");
+	// Now the debugger can't say which frame holds K (out of time, or no answer).
+	fakeTab(37, { ...setup, fail: new Set([":DOM.resolveNode"]) });
+	assert.deepEqual((await crossOriginFrames(37, rule)).map((f) => f.frameId), [], "not placed as if it sat in the page");
+});
+
+test("an action on a frame ref can't wait out the handler cap on a frame session that stopped answering", async () => {
+	const { frameTakesPoint, scrollFrameIntoView } = await import("../src/browser/frames.ts");
+	chrome.webNavigation.getAllFrames = async () => [{}, {}, {}];
+	const setup = {
+		trees: { "": node("TOP", "https://shop.example"), S1: node("X", "https://x.example"), S2: node("Z", "https://z.example") },
+		kids: { X: { sessionId: "S1" }, Z: { sessionId: "S2", parent: "S1" } },
+		holds: { X: "TOP", Z: "X" },
+		owners: { X: 11, Z: 12 },
+	};
+	fakeTab(38, setup);
+	const z = (await crossOriginFrames(38, open)).find((f) => f.frameId === "Z");
+	assert.ok(z);
+	const late = (work) => Promise.race([work, new Promise((r) => setTimeout(r, 4000, "hung"))]);
+	for (const method of ["DOM.getFrameOwner", "Page.getLayoutMetrics", "DOM.getNodeForLocation"]) {
+		fakeTab(38, { ...setup, hang: new Set([`S1:${method}`]) });
+		const start = Date.now();
+		assert.equal(await late(frameTakesPoint(38, z, 150, 100)), false, `a hung ${method} counts as covered`);
+		assert.ok(Date.now() - start < 3000, `${method} waited ${Date.now() - start} ms`);
+	}
+	fakeTab(38, { ...setup, hang: new Set(["S1:DOM.scrollIntoViewIfNeeded"]) });
+	assert.notEqual(await late(scrollFrameIntoView(38, z)), "hung", "a hung scroll gives up");
+});
+
+test("a frame the page lists as shown but the tab finds hidden or barred says why its line isn't read", async () => {
+	const { snapshot } = await import("../src/browser/page.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	try {
+		chrome.webNavigation.getAllFrames = async () => [{}, {}, {}];
+		const away = { ...frameLine("e2", [100, 400, 400, 500]), href: "https://ads.example/", states: ["cross-origin frame out of view: scroll to it, then read_page"] };
+		fakeTab(39, {
+			trees: { "": node("TOP", "https://shop.example", [node("PAY", "https://pay.example"), node("ADS", "https://ads.example")]) },
+			holds: { PAY: "TOP", ADS: "TOP" },
+			owners: { PAY: 11, ADS: 12 },
+			quads: { PAY: quad(100, 50, 400, 150), ADS: quad(100, 400, 400, 500) },
+			shown: { PAY: "hidden", ADS: "away" },
+			evaluate: (frameId) =>
+				frameId === undefined
+					? pageWith([{ ...frameLine("e1", [100, 50, 400, 150]), href: "https://pay.example/" }, away])
+					: frameSnap(frameId === "PAY" ? "pay" : "ads"),
+		});
+		const rule = (url) => (url.startsWith("https://ads.example") ? "blocked" : undefined);
+		const { text, nodes } = await snapshot(39, { skip: rule });
+		const pay = String(nodes.find((n) => n.ref === "e1")?.states);
+		const ads = String(nodes.find((n) => n.ref === "e2")?.states);
+		assert.match(pay, /not shown, so not read/, pay);
+		assert.doesNotMatch(pay, /navigate to its URL/, "never told to go to a frame the person can't see");
+		assert.match(ads, /not allowed for agents: ads\.example/, ads);
+		assert.doesNotMatch(text, /pay text|ads text/);
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+});
+
+async function lookAfter(tabId, where, shown, { guarded = false } = {}) {
+	const { changeLook } = await import("../src/browser/page.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	const page = { url: "https://shop.example/", title: "Shop", nodes: [], focus: "", doc: "d1", gone: [], same: {}, text: "shop text" };
+	try {
+		chrome.webNavigation.getAllFrames = async () => [{}, {}];
+		let navigated = false;
+		const now = { PAY: "shown" };
+		fakeTab(tabId, {
+			trees: { "": node("TOP", "https://shop.example", [node("PAY", "https://pay.example")]) },
+			holds: { PAY: "TOP" },
+			owners: { PAY: 11 },
+			shown: now,
+			evaluate: (frameId) =>
+				frameId === "PAY" && navigated && guarded
+					? "guarded"
+					: frameId === "PAY"
+					? { ...page, url: navigated ? where : "https://pay.example/", nodes: [{ ref: "e5", role: "button", name: "Secret pay", x: 1, y: 1, width: 1, height: 1 }], text: "secret pay text" }
+					: { ...page, nodes: [], gone: [] },
+		});
+		const rule = (url) => (url.startsWith("https://checkout.") ? "blocked" : undefined);
+		const ref = `${frameTag("PAY")}e5`;
+		const before = await changeLook(tabId, 400, [], [], { ref, rule });
+		assert.match(before.text, /secret pay text/, "read while allowed and shown");
+		navigated = true;
+		now.PAY = shown;
+		const frame = { ref, rule, hit: { frame: (await crossOriginFrames(tabId, rule))[0], inner: "e5" } };
+		const after = await changeLook(tabId, 400, [ref], [], frame);
+		assert.doesNotMatch(after.text, /secret pay text/, "its text");
+		assert.ok(!after.nodes.some((n) => n.ref.startsWith(frameTag("PAY"))), "its controls");
+		assert.ok(after.gone.includes(ref), "its refs are gone");
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+}
+
+test("a change report reads nothing of a frame the action took to a host never allowed, though it keeps its id", async () => {
+	await lookAfter(40, "https://checkout.pay.example/", "shown");
+});
+
+test("a change report reads nothing of a frame the action hid (#73)", async () => {
+	await lookAfter(41, "https://pay.example/", "hidden");
+});
+
+test("PR 223 r1 second-S1: a frame only out of view is read by the change look; a hidden one is not", async () => {
+	const { changeLook } = await import("../src/browser/page.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	const page = { url: "https://shop.example/", title: "Shop", nodes: [], focus: "", doc: "d1", gone: [], same: {}, text: "shop text" };
+	try {
+		chrome.webNavigation.getAllFrames = async () => [{}, {}];
+		const now = { PAY: "away" };
+		fakeTab(42, {
+			trees: { "": node("TOP", "https://shop.example", [node("PAY", "https://pay.example")]) },
+			holds: { PAY: "TOP" },
+			owners: { PAY: 11 },
+			shown: now,
+			evaluate: (frameId) =>
+				frameId === "PAY"
+					? { ...page, url: "https://pay.example/", nodes: [{ ref: "e5", role: "button", name: "Pay", x: 1, y: 1, width: 1, height: 1 }], text: "pay text" }
+					: { ...page },
+		});
+		const ref = `${frameTag("PAY")}e5`;
+		const frame = { ref, rule: open, hit: { frame: (await crossOriginFrames(42, open))[0], inner: "e5" } };
+		// Before the action scrolls it in, the frame is out of view: it is still read, so the report is its real change.
+		const before = await changeLook(42, 400, [ref], [], frame);
+		assert.match(before.text, /pay text/, "a frame out of view is read");
+		assert.ok(!before.gone.includes(ref), "its refs are not gone");
+		now.PAY = "shown";
+		const after = await changeLook(42, 400, [ref], [], frame);
+		assert.match(after.text, /pay text/);
+		now.PAY = "hidden";
+		const hidden = await changeLook(42, 400, [ref], [], frame);
+		assert.doesNotMatch(hidden.text, /pay text/, "a hidden frame is not read (#73)");
+		assert.ok(hidden.gone.includes(ref));
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+});
+
+test("PR 223 r1 second-S2: a change report reads nothing of a frame the action took to an error page", async () => {
+	await lookAfter(43, "chrome-error://chromewebdata/", "shown");
+});
+
+test("PR 223 r1 first-F1: a frame the action took to the approval page has its refs listed as gone", async () => {
+	await lookAfter(44, "https://tabkyra.example.com/authorize", "shown", { guarded: true });
+});
+
+test("PR 223 r1 first-F3: the change look's test of a frame keeps to the look's budget", async () => {
+	const { changeLook, FRAME_SHOWN_MS } = await import("../src/browser/page.ts");
+	const { LOOK_MS } = await import("../src/browser/changes.ts");
+	assert.equal(FRAME_SHOWN_MS, LOOK_MS, "the frame's test and the look share one budget");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	try {
+		chrome.webNavigation.getAllFrames = async () => [{}, {}, {}];
+		const setup = {
+			trees: { "": node("TOP", "https://shop.example"), S1: node("X", "https://x.example"), S2: node("Z", "https://z.example") },
+			kids: { X: { sessionId: "S1" }, Z: { sessionId: "S2", parent: "S1" } },
+			holds: { X: "TOP", Z: "X" },
+			owners: { X: 11, Z: 12 },
+			evaluate: () => ({ url: "https://z.example/", title: "", nodes: [], focus: "", doc: "d", gone: [], same: {}, text: "" }),
+		};
+		fakeTab(45, setup);
+		const z = (await crossOriginFrames(45, open)).find((f) => f.frameId === "Z");
+		// Alive but slow: each level's test answers just inside the per-call limit.
+		fakeTab(45, { ...setup, delay: { "Runtime.callFunctionOn": 900 } });
+		const ref = `${frameTag("Z")}e5`;
+		const start = Date.now();
+		await changeLook(45, 400, [ref], [], { ref, rule: open, hit: { frame: z, inner: "e5" } });
+		const ms = Date.now() - start;
+		assert.ok(ms < LOOK_MS + 450, `the look took ${ms} ms`);
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+});
+
+test("PR 223 r1 first-F2: a slow frame session costs one round of calls, not one per level, within POINT_MS", async () => {
+	const { frameTakesPoint, POINT_MS } = await import("../src/browser/frames.ts");
+	chrome.webNavigation.getAllFrames = async () => [{}, {}, {}];
+	const setup = {
+		trees: { "": node("TOP", "https://shop.example"), S1: node("X", "https://x.example"), S2: node("Z", "https://z.example") },
+		kids: { X: { sessionId: "S1" }, Z: { sessionId: "S2", parent: "S1" } },
+		holds: { X: "TOP", Z: "X" },
+		owners: { X: 11, Z: 12 },
+	};
+	fakeTab(46, setup);
+	const z = (await crossOriginFrames(46, open)).find((f) => f.frameId === "Z");
+	fakeTab(46, { ...setup, delay: { "DOM.getFrameOwner": 400, "Page.getLayoutMetrics": 400, "DOM.getNodeForLocation": 400 } });
+	const start = Date.now();
+	assert.equal(await frameTakesPoint(46, z, 150, 100), true, "slow but answering: the point is the frame's");
+	const ms = Date.now() - start;
+	assert.ok(ms < 1500, `two levels took ${ms} ms`);
+	assert.ok(POINT_MS <= 2000, `POINT_MS grew to ${POINT_MS}`);
+	// A session that never answers refuses within POINT_MS.
+	fakeTab(46, { ...setup, hang: new Set(["S1:DOM.getNodeForLocation"]) });
+	const t = Date.now();
+	assert.equal(await frameTakesPoint(46, z, 150, 100), false);
+	assert.ok(Date.now() - t < POINT_MS + 300, `${Date.now() - t} ms`);
+});
+
+test("PR 223 r1 second-S3: a frame the debugger gave no answer for keeps its line; a hidden one takes no other frame's line", async () => {
+	const { snapshot } = await import("../src/browser/page.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	try {
+		chrome.webNavigation.getAllFrames = async () => [{}, {}];
+		const line = (href) => ({ ...frameLine("e1", [100, 50, 400, 150]), href });
+		// No answer from frameShown in the frame's own world.
+		fakeTab(47, {
+			trees: { "": node("TOP", "https://shop.example", [node("PAY", "https://pay.example")]) },
+			holds: { PAY: "TOP" },
+			owners: { PAY: 11 },
+			hang: new Set([":Runtime.callFunctionOn"]),
+			evaluate: (frameId) => (frameId === undefined ? pageWith([line("https://pay.example/")]) : frameSnap("pay")),
+		});
+		let { nodes, text } = await snapshot(47, { skip: open });
+		assert.deepEqual(nodes.find((n) => n.ref === "e1")?.states, ["cross-origin: read it with navigate to its URL"], "no answer is not 'not shown'");
+		assert.doesNotMatch(text, /pay text/, "and it is not read");
+		// A hidden frame of the same box as a shown frame that was never placed: the shown frame's line stays.
+		fakeTab(47, {
+			trees: { "": node("TOP", "https://shop.example", [node("GHOST", "https://ghost.example")]) },
+			holds: { GHOST: "TOP" },
+			owners: { GHOST: 11 },
+			shown: { GHOST: "hidden" },
+			evaluate: (frameId) => (frameId === undefined ? pageWith([line("https://video.example/")]) : frameSnap("ghost")),
+		});
+		({ nodes } = await snapshot(47, { skip: open }));
+		assert.deepEqual(nodes.find((n) => n.ref === "e1")?.states, ["cross-origin: read it with navigate to its URL"], "the visible frame keeps its line");
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+});
+
+test("PR 223 r1 first-F4: pageSnapshot writes the frame states readFrames matches, from one definition", async () => {
+	const { snapshot, FRAME_STATES } = await import("../src/browser/page.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	try {
+		chrome.webNavigation.getAllFrames = async () => [{}];
+		let expression = "";
+		fakeTab(48, {
+			trees: { "": node("TOP", "https://shop.example") },
+			evaluate: (frameId, e) => {
+				if (frameId === undefined && /maxNodes|frameShown/.test(e)) expression ||= e;
+				return pageWith([]);
+			},
+		});
+		await snapshot(48, { skip: open });
+		assert.ok(expression, "the snapshot ran");
+		for (const note of Object.values(FRAME_STATES))
+			assert.equal(expression.split(note).length - 1, 1, `"${note}" is written once, as the state passed in`);
+		assert.ok(expression.includes(JSON.stringify(FRAME_STATES)), "the states reach pageSnapshot as its argument");
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+});
+
+test("PR 228 r1 first-F2 and PR 235 r1: out of view, a frame is away only when a test proves a scroll brings it into sight", async () => {
+	const { frameShown } = await import("../src/browser/frames.ts");
+	const view = { innerWidth: 1280, innerHeight: 800, scrollX: 0, scrollY: 0, getComputedStyle: (n) => n.style };
+	const box = (left, top, width, height) => () => ({ left, top, width, height, right: left + width, bottom: top + height });
+	const make = ({ scrollHeight = 5000, bodyStyle = {}, htmlStyle = {} } = {}) => {
+		const doc = { defaultView: view, nodeType: 9 };
+		const part = (style, rect, parent = null, root = doc) => ({ nodeType: 1, ownerDocument: doc, style: { opacity: "1", filter: "none", ...style }, parentElement: parent, getRootNode: () => root, getBoundingClientRect: rect, scrollTop: 0, scrollLeft: 0, scrollHeight: 5000, scrollWidth: 1280 });
+		doc.documentElement = { ...part(htmlStyle, box(0, 0, 1280, scrollHeight)), scrollWidth: 1280, scrollHeight };
+		doc.body = part(bodyStyle, box(0, 0, 1280, scrollHeight), doc.documentElement);
+		doc.elementFromPoint = () => doc.body;
+		const frameIn = (rect, parent = doc.body, root = doc) => part({}, rect, parent, root);
+		return { doc, part, frameIn };
+	};
+	// Moved far to the right inside a box that clips and does not scroll.
+	let t = make();
+	const clipper = t.part({ overflowX: "hidden", overflowY: "visible" }, box(0, 0, 1280, 800), t.doc.body);
+	assert.equal(frameShown(t.frameIn(box(100000, 10, 300, 120), clipper)), "hidden", "clipped off by overflow: hidden");
+	// PR 235 r1: fixed (a closed drawer) or sticky, clip-path, paint containment, across shadow hosts too.
+	const low = box(10, 3000, 300, 120);
+	const under = (style, rect = box(0, 2900, 1280, 300), frame = low) => frameShown(t.frameIn(frame, t.part(style, rect, t.doc.body)));
+	for (const style of [{ position: "fixed" }, { position: "sticky" }, { clipPath: "inset(50%)" }, { contain: "paint" }]) assert.equal(under(style), "hidden", JSON.stringify(style));
+	assert.equal(under({ position: "fixed" }, box(0, 900, 1280, 300), box(0, 900, 300, 120)), "hidden", "first-F1: a fixed box off the viewport");
+	const host = t.part({ overflowY: "hidden" }, box(0, 0, 1280, 300), t.doc.body);
+	assert.equal(frameShown(t.frameIn(low, null, { nodeType: 11, host })), "hidden", "second-S1: a shadow root's host clips");
+	const shell = t.part({ position: "fixed", overflowY: "auto" }, box(0, 0, 1280, 800), t.doc.body);
+	assert.equal(frameShown(t.frameIn(low, t.part({}, box(0, 0, 1280, 5000), null, { nodeType: 11, host: shell }))), "hidden", "second-S2: a fixed shell, across a shadow host");
+	// Past the end of the page, where no scroll goes; and a page whose scroll is turned off.
+	t = make({ scrollHeight: 2000 });
+	assert.equal(frameShown(t.frameIn(box(10, 3000, 300, 120))), "hidden", "past the page's end");
+	t = make({ bodyStyle: { overflowY: "hidden", overflowX: "visible" } });
+	assert.equal(frameShown(t.frameIn(box(10, 3000, 300, 120))), "hidden", "the page does not scroll");
+	// Still out of view only: below the fold of a page that scrolls, or down an inner box that scrolls.
+	t = make();
+	assert.equal(frameShown(t.frameIn(box(10, 3000, 300, 120))), "away", "below the fold");
+	t = make({ bodyStyle: { overflowY: "hidden", overflowX: "visible" } });
+	const scroller = t.part({ overflowY: "auto", overflowX: "visible" }, box(0, 0, 1280, 800), t.doc.body);
+	assert.equal(frameShown(t.frameIn(box(10, 3000, 300, 120), scroller)), "away", "down a box that scrolls");
+	t = make({ htmlStyle: { overflowY: "auto" }, bodyStyle: { overflowY: "hidden" } });
+	assert.equal(frameShown(t.frameIn(low)), "away", "first-F4: html scrolls, so body's overflow clips only body's own box");
+});
+
+/** Two levels of frames (X holds Z), Z found once with no delay; `extra` is the fakeTab setup for the looks. */
+async function slowZ(tabId, extra) {
+	const setup = {
+		trees: { "": node("TOP", "https://shop.example"), S1: node("X", "https://x.example"), S2: node("Z", "https://z.example") },
+		kids: { X: { sessionId: "S1" }, Z: { sessionId: "S2", parent: "S1" } },
+		holds: { X: "TOP", Z: "X" },
+		owners: { X: 11, Z: 12 },
+	};
+	chrome.webNavigation.getAllFrames = async () => [{}, {}, {}];
+	fakeTab(tabId, setup);
+	const z = (await crossOriginFrames(tabId, open)).find((f) => f.frameId === "Z");
+	fakeTab(tabId, { ...setup, ...extra });
+	return z;
+}
+
+const zLook = { url: "https://z.example/", title: "", focus: "", doc: "d", gone: [], same: {}, text: "z text", nodes: [{ ref: "e5", role: "button", name: "Z", x: 1, y: 1, width: 1, height: 1 }] };
+
+test("PR 228 r1 first-F1: a frame whose test gets no answer in time is not read, and its refs are not listed as gone", async () => {
+	const { changeLook } = await import("../src/browser/page.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	try {
+		const z = await slowZ(49, { delay: { "Runtime.callFunctionOn": 900 }, evaluate: (frameId) => (frameId ? zLook : { ...zLook, url: "https://shop.example/", nodes: [], text: "" }) });
+		const ref = `${frameTag("Z")}e5`;
+		const look = await changeLook(49, 400, [ref], [], { ref, rule: open, hit: { frame: z, inner: "e5" } });
+		assert.ok(!look.gone.includes(ref), `untested is unknown, not gone: ${JSON.stringify(look.gone)}`);
+		assert.doesNotMatch(look.text, /z text/, "and not read");
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+});
+
+test("PR 228 r1 second-S2: a frame found again after its look failed still keeps to one look's budget", async () => {
+	const { changeLook } = await import("../src/browser/page.ts");
+	const { LOOK_MS } = await import("../src/browser/changes.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	try {
+		let first = true;
+		const z = await slowZ(50, {
+			delay: { "Runtime.callFunctionOn": 900 },
+			evaluate: (frameId) => {
+				if (!frameId) return { ...zLook, url: "https://shop.example/", nodes: [], text: "" };
+				if (first) {
+					first = false;
+					throw new Error("Cannot find context with specified id");
+				}
+				return zLook;
+			},
+		});
+		const ref = `${frameTag("Z")}e5`;
+		const start = Date.now();
+		await changeLook(50, 400, [ref], [], { ref, rule: open, hit: { frame: z, inner: "e5" } });
+		const ms = Date.now() - start;
+		assert.ok(!first, "the first look failed");
+		assert.ok(ms < LOOK_MS + 450, `the look took ${ms} ms`);
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+});
+
+test("PR 228 r1 first-F3 and second-S1: a redirected hidden frame says so on its line; a barred one takes no other frame's line", async () => {
+	const { snapshot } = await import("../src/browser/page.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	try {
+		chrome.webNavigation.getAllFrames = async () => [{}, {}];
+		const line = (href) => ({ ...frameLine("e1", [100, 50, 400, 150]), href });
+		// Its <iframe> names /checkout; the frame redirected to the origin's root.
+		fakeTab(51, {
+			trees: { "": node("TOP", "https://shop.example", [node("PAY", "https://pay.example")]) },
+			holds: { PAY: "TOP" },
+			owners: { PAY: 11 },
+			shown: { PAY: "hidden" },
+			evaluate: (frameId) => (frameId === undefined ? pageWith([line("https://pay.example/checkout")]) : frameSnap("pay")),
+		});
+		let { nodes } = await snapshot(51, { skip: open });
+		assert.deepEqual(nodes.find((n) => n.ref === "e1")?.states, ["cross-origin frame, not shown, so not read"], "never told to navigate to a hidden frame");
+		// A barred frame the tab finds hidden, of the same box as a shown frame that was never placed.
+		fakeTab(51, {
+			trees: { "": node("TOP", "https://shop.example", [node("GHOST", "https://ghost.example")]) },
+			holds: { GHOST: "TOP" },
+			owners: { GHOST: 11 },
+			shown: { GHOST: "hidden" },
+			evaluate: (frameId) => (frameId === undefined ? pageWith([line("https://video.example/")]) : frameSnap("ghost")),
+		});
+		const barred = (url) => (url.startsWith("https://ghost.example") ? "blocked" : undefined);
+		({ nodes } = await snapshot(51, { skip: barred }));
+		assert.deepEqual(nodes.find((n) => n.ref === "e1")?.states, ["cross-origin: read it with navigate to its URL"], "the video frame keeps its line");
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+});
+
+/** A page in a sandbox with one cross-origin <iframe>, to run page code as the tab would. */
+function crossPage() {
+	const g = { innerWidth: 1280, innerHeight: 800, scrollX: 0, scrollY: 0, __name: (f) => f, crypto, CSS: { escape: (s) => s }, location: { href: "https://shop.example/" }, frameElement: null, getComputedStyle: () => ({ opacity: "1", filter: "none", visibility: "visible", display: "block", paddingLeft: "0", paddingTop: "0" }) };
+	const doc = { nodeType: 9, defaultView: g, title: "Shop", body: { innerText: "Shop" }, activeElement: null, documentElement: { scrollHeight: 800 }, getElementsByTagName: () => [] };
+	const frame = { nodeType: 1, tagName: "IFRAME", src: "https://pay.example/checkout", ownerDocument: doc, isConnected: true, parentElement: null, textContent: "", offsetWidth: 400, offsetHeight: 150, clientLeft: 0, clientTop: 0, getAttribute: () => null, getRootNode: () => doc, getBoundingClientRect: () => ({ left: 100, top: 50, width: 400, height: 150, right: 500, bottom: 200 }), matches: () => false, closest: () => null, querySelector: () => null, checkVisibility: () => true };
+	Object.assign(doc, { querySelectorAll: (sel) => (sel === "*" ? [frame] : []), elementFromPoint: () => frame });
+	return vm.createContext(Object.assign(g, { document: doc, window: g, parent: g }));
+}
+
+test("PR 235 r1 first-F3, second-S3, second-S4: a refind keeps to the deadline; no taking a kin frame's line; every caller labels a frame", async () => {
+	const { snapshot, changeLook, pageSnapshot } = await import("../src/browser/page.ts");
+	const { LOOK_MS } = await import("../src/browser/changes.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	try {
+		// first-F3: the look failed and finding the frame again hangs; it is unknown, not gone, by the deadline.
+		const top = { ...zLook, url: "https://shop.example/", nodes: [], text: "" };
+		const z = await slowZ(53, { hang: new Set(["S2:Page.getFrameTree"]), evaluate: (frameId) => { if (frameId) throw new Error("Cannot find context with specified id"); return top; } });
+		const ref = `${frameTag("Z")}e5`;
+		const start = Date.now();
+		const look = await changeLook(53, 400, [ref], [], { ref, rule: open, hit: { frame: z, inner: "e5" } });
+		assert.ok(Date.now() - start < LOOK_MS + 450, `the look took ${Date.now() - start} ms`);
+		assert.ok(!look.gone.includes(ref), `not found again in time is unknown, not gone: ${JSON.stringify(look.gone)}`);
+		const note = ["cross-origin: read it with navigate to its URL"];
+		// Stacked ad slots of one origin and box: /a on top, untested; /b hidden under it.
+		chrome.webNavigation.getAllFrames = async () => [{}, {}, {}];
+		const pay = (id, path) => ({ frame: { id, url: `https://pay.example/${path}`, securityOrigin: "https://pay.example" } });
+		const line = { ...frameLine("e1", [100, 50, 400, 150]), href: "https://pay.example/a" };
+		fakeTab(54, { trees: { "": node("TOP", "https://shop.example", [pay("PA", "a"), pay("PB", "b")]) }, holds: { PA: "TOP", PB: "TOP" }, owners: { PA: 11, PB: 12 }, shown: { PA: "no answer", PB: "hidden" }, evaluate: (frameId) => (frameId === undefined ? pageWith([line]) : frameSnap("pay")) });
+		assert.deepEqual((await snapshot(54, { skip: open })).nodes.find((n) => n.ref === "e1")?.states, note, "the /a frame keeps its line");
+		// The page code of snapshot, find and changeLook, run on a page with a cross-origin frame.
+		chrome.webNavigation.getAllFrames = async () => [{}];
+		const run = async (frameId, e) => { const r = await vm.runInContext(e, crossPage()); if (!r.ok) throw new Error(r.error); return r.value; };
+		fakeTab(55, { trees: { "": node("TOP", "https://shop.example") }, evaluate: run });
+		const states = (look) => Array.from(look.nodes.find((n) => n.role === "iframe")?.states ?? []);
+		assert.deepEqual(states(await snapshot(55, { skip: open })), note, "snapshot");
+		assert.deepEqual(states(await snapshot(55, { filter: "all", maxNodes: 600, maxTextChars: 0, skip: open })), note, "find");
+		assert.deepEqual(states(await changeLook(55, 400, [], [])), note, "changeLook");
+		const bare = `(${pageSnapshot.toString()})(300, 1000, "all", () => true, () => "p", false)`;
+		assert.throws(() => vm.runInContext(bare, crossPage()), /pageSnapshot: its caller passed no frameShown/);
+	} finally {
+		chrome.tabs.get = getTab;
 	}
 });

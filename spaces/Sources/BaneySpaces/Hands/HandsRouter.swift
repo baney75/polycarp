@@ -61,7 +61,8 @@ final class HandsRouter {
     var openGates: [String: NSLock] = [:]
 
     /// What a snapshot's refs belong to. A ref is good only for this snapshot's window and process.
-    private struct Snap { var window: UInt32; var pid: Int32; var app: String; var at: Date; var identity: [String: RefIdentity] }
+    /// `pasteboard`: the snapshot's cut, copy and paste refs, from its refmap, held as long as its refs resolve (198 r2 first-F1).
+    private struct Snap { var window: UInt32; var pid: Int32; var app: String; var at: Date; var identity: [String: RefIdentity]; var pasteboard: [String: String] = [:] }
     /// Windows that must never be used: they showed a document from outside the handoff folder.
     private static var refused: Set<UInt32> = []
     private static let refusedLock = NSLock()
@@ -390,7 +391,7 @@ final class HandsRouter {
         guard let id = data["snapshot_id"]?.string, let file = try? Data(contentsOf: refmapURL(id)),
               let table = RefmapIdentity.table(from: file), RefmapIdentity.allTarget(table, window: w.id, pid: w.pid) else { return false }
         lock.lock(); defer { lock.unlock() }
-        snaps[id] = Snap(window: w.id, pid: w.pid, app: w.app, at: Date(), identity: table)
+        snaps[id] = Snap(window: w.id, pid: w.pid, app: w.app, at: Date(), identity: table, pasteboard: SessionClipboard.pasteboardRefs(refmap: file))
         if snaps.count > 256, let oldest = snaps.min(by: { $0.value.at < $1.value.at })?.key { snaps[oldest] = nil }
         return true
     }
@@ -463,10 +464,10 @@ final class HandsRouter {
                 let sid = o["snapshot_id"]?.string ?? ""
                 let rows = SnapshotRows.rows(of: o["tree"] ?? .null)
                 let session = req.session ?? ""
-                let view = "\(req.bool("interactive"))|\(req.bool("compact"))|\(req.int("depth") ?? 10)"
+                let view = SnapshotRowsMemory.View.of(req)
                 let since = req.snapshotFormat == "rows" && req.string("since") == "latest"
                 let previous = withRows { m -> SnapshotRowsMemory.Read? in
-                    let p = m.previous(session: session, window: w.id, view: view)
+                    let p = m.previous(session: session, window: w.id, view: view.key)
                     let k = SnapshotRowsMemory.kind(since: since && p != nil, query: req.string("query"), rows: rows.count, max: req.int("max_elements"))
                     m.remember(session: session, window: w.id, view: view, snapshot: sid, rows: rows, now: Date(), listed: k.listed, baseline: k.baseline)
                     return p
@@ -493,7 +494,8 @@ final class HandsRouter {
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, _, _)):
-            switch read(w, interactive: false, compact: true, session: req.session ?? "") {
+            let view = SnapshotRowsMemory.View.find
+            switch read(w, interactive: view.interactive, compact: view.compact, depth: UInt8(clamping: view.depth), session: req.session ?? "") {
             case .failure(let e): return .failure(e)
             case .success(let data):
                 let role = req.string("role")?.lowercased(), name = req.string("name")?.lowercased()
@@ -512,7 +514,7 @@ final class HandsRouter {
                 if let tree = data["tree"] { walk(tree) }
                 if let sid = data["snapshot_id"]?.string {
                     let rows = SnapshotRows.rows(of: data["tree"] ?? .null)
-                    withRows { $0.remember(session: req.session ?? "", window: w.id, view: "find", snapshot: sid, rows: rows, now: Date(), listed: false) }
+                    withRows { $0.remember(session: req.session ?? "", window: w.id, view: view, as: "find", snapshot: sid, rows: rows, now: Date(), listed: false) }
                 }
                 return .success(.object(["snapshot_id": data["snapshot_id"] ?? .null, "window": .int(Int(w.id)), "count": .int(found.count), "matches": .array(found)]))
             }
@@ -557,8 +559,6 @@ final class HandsRouter {
         if case .denied(let e) = d { return .failure(e) }
         return .success((w, d))
     }
-
-    /// `type`'s text: the text argument, or with paste: true what this session copied (never both).
 
     private func get(_ req: HandsRequest) -> HandsEnvelope {
         let session = req.session ?? ""
@@ -615,7 +615,7 @@ final class HandsRouter {
             if let e = awaitUse(w, verb: name, delivery: .headlessAX, wait: req.int("wait"), session: session) { return .failure(e) }
             var text = text
             if pasted {
-                switch SessionClipboard.typed(text: nil, paste: true, from: { SessionClipboardBox.shared.paste(session: session) }) {
+                switch SessionClipboard.typed(text: text, paste: true, from: { SessionClipboardBox.shared.paste(session: session) }) {
                 case .failure(let e): return .failure(e)
                 case .success(let t): text = t
                 }
@@ -706,10 +706,16 @@ final class HandsRouter {
                      snapshotWindow: { sid in lock.lock(); defer { lock.unlock() }; return snaps[sid].map { Int($0.window) } })
     }
 
-    /// The cut, copy or paste item a click on `ref` (or a select of `option` under it) would press, from the read it came from.
+    /// The cut, copy or paste item a click on `ref` (or a select of `option` under it) would press. A click is checked
+    /// against the snapshot's own refmap, held while the ref resolves, so it is refused however many reads came after
+    /// (198 r2 first-F1); a select's option against the read's rows, and by the engine once the popup is open (0003).
     private func pasteboardItem(_ ref: String, option: String?, session: String) -> String? {
         guard ref.hasPrefix("@"), let colon = ref.firstIndex(of: ":"), let n = SnapshotRows.refNumber(ref) else { return nil }
         let sid = String(ref[ref.index(after: ref.startIndex)..<colon])
+        if option == nil, let key = RefmapIdentity.key(forRef: ref) {
+            lock.lock(); let held = snaps[sid]?.pasteboard[key]; lock.unlock()
+            if let held { return held }
+        }
         guard let read = withRows({ $0.read(snapshot: sid, session: session) }) else { return nil }
         return SessionClipboard.pasteboardItem(rows: read.rows, number: n, option: option)
     }
@@ -719,8 +725,7 @@ final class HandsRouter {
         guard ref.hasPrefix("@"), let colon = ref.firstIndex(of: ":"), let n = SnapshotRows.refNumber(ref) else { return nil }
         let sid = String(ref[ref.index(after: ref.startIndex)..<colon])
         guard let read = withRows({ $0.read(snapshot: sid, session: session) }) else { return nil }
-        // The readbacks read in this read's view, so the row keys they compare match (second-F5).
-        return ClickFallback.plan(rows: read.rows, snapshot: sid, number: n).map { var p = $0; p.view = read.view; return p }
+        return ClickFallback.plan(read: read, snapshot: sid, number: n, usable: { refProblem($0) == nil })
     }
 
     private func shot(_ req: HandsRequest) -> HandsEnvelope {

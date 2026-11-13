@@ -1,0 +1,86 @@
+diff --git a/crates/macos/src/actions/select/select_menu.rs b/crates/macos/src/actions/select/select_menu.rs
+index aea6431..0a65abb 100644
+--- a/crates/macos/src/actions/select/select_menu.rs
++++ b/crates/macos/src/actions/select/select_menu.rs
+@@ -124,6 +124,7 @@ fn select_open_menu_item(
+             && let Some(candidate) =
+                 find_named_descendant(&menu, value, deadline, SelectSearch::MenuItem)?
+         {
++            refuse_pasteboard_item(&candidate, deadline)?;
+             let verified = activate_menu_item(&candidate, deadline)?;
+             return if verified {
+                 Ok(true)
+@@ -143,6 +144,54 @@ fn select_open_menu_item(
+     }
+ }
+ 
++/// BaneySpaces addition (engine/patches/0003-select-refuses-pasteboard-items.patch). The general pasteboard is the
++/// user's: a cut, copy or paste item is refused once its menu is open and the item is found, before it is pressed. A
++/// closed popup's items are not in any snapshot, so only this read sees them. By the AppKit action the item is wired
++/// to (its AX identifier, in any language), and by English title only for an item with no identifier.
++const PASTEBOARD_ACTIONS: [&str; 6] = [
++    "cut:",
++    "copy:",
++    "paste:",
++    "pasteasplaintext:",
++    "pasteandmatchstyle:",
++    "pasteasrichtext:",
++];
++const PASTEBOARD_TITLES: [&str; 5] = [
++    "cut",
++    "copy",
++    "paste",
++    "paste and match style",
++    "paste as plain text",
++];
++
++fn is_pasteboard_item(identifier: Option<&str>, title: Option<&str>) -> bool {
++    match identifier.map(str::trim).filter(|id| !id.is_empty()) {
++        Some(id) => PASTEBOARD_ACTIONS.contains(&id.to_ascii_lowercase().as_str()),
++        None => title.is_some_and(|t| PASTEBOARD_TITLES.contains(&t.trim().to_lowercase().as_str())),
++    }
++}
++
++fn refuse_pasteboard_item(candidate: &AXElement, deadline: Deadline) -> Result<(), AdapterError> {
++    let instant = crate::tree::locator_deadline::from_operation(deadline)?;
++    let identifier = crate::tree::surface_read::string(candidate, "AXIdentifier", instant)?;
++    let title = match identifier.as_deref().map(str::trim) {
++        Some(id) if !id.is_empty() => None,
++        _ => crate::tree::surface_read::string(candidate, "AXTitle", instant)?,
++    };
++    if !is_pasteboard_item(identifier.as_deref(), title.as_deref()) {
++        return Ok(());
++    }
++    Err(AdapterError::new(
++        ErrorCode::PolicyDenied,
++        "Select refused a cut, copy or paste menu item",
++    )
++    .with_details(serde_json::json!({
++        "kind": "pasteboard_item",
++        "identifier": identifier.unwrap_or_default(),
++        "title": title.unwrap_or_default(),
++    })))
++}
++
+ fn find_named_descendant(
+     root: &AXElement,
+     value: &str,
+diff --git a/crates/macos/src/actions/select/select_menu_tests.rs b/crates/macos/src/actions/select/select_menu_tests.rs
+index 31fe705..6cfc548 100644
+--- a/crates/macos/src/actions/select/select_menu_tests.rs
++++ b/crates/macos/src/actions/select/select_menu_tests.rs
+@@ -92,3 +92,14 @@ fn uncertain_collection_selection_never_falls_back_to_press() {
+         assert_eq!(presses.get(), 0);
+     }
+ }
++
++#[test]
++fn pasteboard_items_are_known_by_identifier_and_by_title_only_without_one() {
++    assert!(is_pasteboard_item(Some("copy:"), None));
++    assert!(is_pasteboard_item(Some("pasteAndMatchStyle:"), Some("Einsetzen und Stil anpassen")));
++    assert!(!is_pasteboard_item(Some("syncMode:"), Some("Copy")), "an app's own item titled Copy");
++    assert!(is_pasteboard_item(None, Some("Paste")));
++    assert!(is_pasteboard_item(Some(" "), Some("copy")));
++    assert!(!is_pasteboard_item(None, Some("Kopieren")), "a title without an identifier is English only");
++    assert!(!is_pasteboard_item(None, None));
++}
