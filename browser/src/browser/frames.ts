@@ -88,8 +88,6 @@ interface Child {
 
 /** Out-of-process frames per tab: target id (the frame's id) to its session. */
 const children = new Map<number, Map<string, Child>>();
-/** Per tab, the frame session an open alert/confirm/prompt came from: only that session can answer it. */
-const dialogs = new Map<number, string>();
 /** Tabs whose auto-attach this worker turned on, so every frame was announced to it. */
 const primed = new Set<number>();
 let installed = false;
@@ -112,18 +110,13 @@ function install(): void {
 				url: p.targetInfo.url ?? "",
 				parent: source.sessionId,
 			});
-			// A frame inside it announces its own frames. A box it opens is answered in its session (dialogSession).
+			// A frame inside it announces its own frames. A box it opens keeps its session (cdp.ts PageDialog.sessionId).
 			void cdpSendSession(tabId, p.sessionId, "Target.setAutoAttach", AUTO).catch(() => undefined);
 			void cdpSendSession(tabId, p.sessionId, "Page.enable").catch(() => undefined);
 		} else if (method === "Target.detachedFromTarget") {
 			const p = params as { sessionId?: string };
 			const map = children.get(tabId);
 			for (const [id, c] of map ?? []) if (c.sessionId === p.sessionId) map?.delete(id);
-		} else if (method === "Page.javascriptDialogOpening") {
-			if (source.sessionId) dialogs.set(tabId, source.sessionId);
-			else dialogs.delete(tabId);
-		} else if (method === "Page.javascriptDialogClosed") {
-			dialogs.delete(tabId);
 		} else if (method === "Target.targetInfoChanged") {
 			const p = params as { targetInfo?: { targetId?: string; url?: string } };
 			const c = p.targetInfo?.targetId ? children.get(tabId)?.get(p.targetInfo.targetId) : undefined;
@@ -133,15 +126,9 @@ function install(): void {
 	const forget = (tabId: number) => {
 		children.delete(tabId);
 		primed.delete(tabId);
-		dialogs.delete(tabId);
 	};
 	onDebuggerSessionEnd(forget);
 	chrome.tabs.onRemoved.addListener(forget);
-}
-
-/** The frame session the tab's open dialog came from, for cdp.ts answerDialog; none for the tab's own. */
-export function dialogSession(tabId: number): string | undefined {
-	return dialogs.get(tabId);
 }
 
 async function prime(tabId: number): Promise<void> {
@@ -183,27 +170,36 @@ export const web = (url: string) => /^(https?|file):/.test(url);
  * its own. `rule` bars a frame by URL: a guarded one is left out with everything inside it, a
  * blocked one is placed (so read_page can name it) and nothing inside it is.
  */
-export async function crossOriginFrames(tabId: number, rule: FrameRule = FRAMES_CLOSED): Promise<PageFrame[]> {
+export async function crossOriginFrames(
+	tabId: number,
+	rule: FrameRule = FRAMES_CLOSED,
+): Promise<PageFrame[] & { missed?: boolean }> {
 	const end = Date.now() + FRAMES_MS;
 	await prime(tabId);
 	// Announcements arrive just after auto-attach turns on: wait until every frame the browser
 	// knows of is accounted for, briefly.
 	const expected = (await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null))?.length ?? 0;
 	const until = Date.now() + 300;
-	let found: { frames: PageFrame[]; seen: number };
+	let found: { frames: PageFrame[]; seen: number; missed: boolean };
 	for (;;) {
 		found = await collect(tabId, rule, end);
 		if (found.seen >= expected || Date.now() >= Math.min(until, end)) break;
 		await new Promise((r) => setTimeout(r, 25));
 	}
-	return found.frames;
+	return Object.defineProperty(found.frames, "missed", { value: found.missed });
 }
 
 /** Where a frame's contents stand: inside this frame (none: the tab's own document), or "out" (not read). */
 type Inside = PageFrame | undefined | "out";
 
-async function collect(tabId: number, rule: FrameRule, end: number): Promise<{ frames: PageFrame[]; seen: number }> {
+async function collect(
+	tabId: number,
+	rule: FrameRule,
+	end: number,
+): Promise<{ frames: PageFrame[]; seen: number; missed: boolean }> {
 	const frames: PageFrame[] = [];
+	// A tree or an owner the debugger gave no answer for: a frame not found may still be there.
+	let missed = false;
 	// Every frame looked at or left out is counted, so the caller stops waiting once all are.
 	let seen = 0;
 	const kids = [...(children.get(tabId) ?? new Map<string, Child>())];
@@ -231,6 +227,7 @@ async function collect(tabId: number, rule: FrameRule, end: number): Promise<{ f
 		const bar = await rule(url);
 		if (bar === "guarded") return undefined;
 		const f = await place(tabId, frameId, ownerSessionId, url, around, root, sessionId, end);
+		if (f === null) missed = true;
 		if (!f) return undefined;
 		if (bar === "blocked") f.blocked = true;
 		frames.push(f);
@@ -271,6 +268,7 @@ async function collect(tabId: number, rule: FrameRule, end: number): Promise<{ f
 			// An owner the debugger couldn't name (out of time, no answer) may be a guarded or non-web frame:
 			// the frame is left out rather than placed as if it sat in the session's own document.
 			const inside: Inside = owner !== undefined && where.has(owner) ? where.get(owner) : "out";
+			if (owner === undefined || !sub) missed = true;
 			if (!sub) {
 				await leaveOut(c.sessionId, null);
 				continue;
@@ -285,9 +283,9 @@ async function collect(tabId: number, rule: FrameRule, end: number): Promise<{ f
 		}
 	};
 	const top = await bounded(cdpSend<{ frameTree: TreeNode }>(tabId, "Page.getFrameTree"), callMs(end));
-	if (!top) return { frames, seen: Number.POSITIVE_INFINITY };
+	if (!top) return { frames, seen: Number.POSITIVE_INFINITY, missed: true };
 	await session(undefined, top.frameTree, undefined);
-	return { frames, seen };
+	return { frames, seen, missed };
 }
 
 /** Frames in a subtree, the root included. */
@@ -362,15 +360,20 @@ async function resolveOwner(
  * Whether a person can see an <iframe>: "shown"; "hidden" when it is under 4 px either way, not
  * drawn, see-through (its opacity times every box's around it, filters included, under 0.1), kept
  * off the page or covered wherever it is in view; "away" when no part of it is in view and a test
- * proves a scroll brings it there: nothing fixed or sticky around it (shadow hosts included), no
- * clip-path, no paint containment, no overflow clip that cuts it, and the nearest box that scrolls,
- * then the page, scroll to it. Anything else out of view is "hidden". Self-contained: it runs in a page, in read_page's
+ * proves a scroll brings it there: nothing fixed or sticky around it in the flat tree (slots and shadow
+ * hosts included), no clip-path, no paint containment, no overflow clip that cuts it on its axis, the
+ * nearest box that scrolls, then the page, reach it, and no box fixed over the whole viewport. Anything else out of view is "hidden". Self-contained: it runs in a page, in read_page's
  * snapshot and, through frameShownNow, before a frame is read and before an action in it.
  */
 export function frameShown(el: Element): "shown" | "hidden" | "away" {
 	const r = el.getBoundingClientRect();
 	if (r.width < 4 || r.height < 4) return "hidden";
 	const view = el.ownerDocument.defaultView ?? window;
+	// The flat tree: a slotted node is drawn in its slot, a shadow root's content in its host.
+	const upOf = (n: Element): Element | null => {
+		const up: Node = n.assignedSlot ?? n.parentElement ?? n.getRootNode();
+		return up.nodeType === 1 ? (up as Element) : ((up as ShadowRoot).host ?? null);
+	};
 	const check = (el as Element & { checkVisibility?: (o?: Record<string, boolean>) => boolean }).checkVisibility;
 	if (check && !check.call(el, { visibilityProperty: true, opacityProperty: true })) return "hidden";
 	let alpha = 1;
@@ -380,11 +383,9 @@ export function frameShown(el: Element): "shown" | "hidden" | "away" {
 		if (Number.isFinite(own)) alpha *= own;
 		for (const m of String(st.filter || "").matchAll(/opacity\(\s*([\d.]+)(%?)\s*\)/g))
 			alpha *= m[2] ? Number(m[1]) / 100 : Number(m[1]);
-		const up: Node = n.parentElement ?? n.getRootNode();
-		n = up.nodeType === 1 ? (up as Element) : ((up as ShadowRoot).host ?? null);
+		n = upOf(n);
 	}
 	if (alpha < 0.1) return "hidden";
-	if (r.right + view.scrollX <= 0 || r.bottom + view.scrollY <= 0) return "hidden";
 	const points = [
 		[0.5, 0.5],
 		[0.1, 0.1],
@@ -405,26 +406,30 @@ export function frameShown(el: Element): "shown" | "hidden" | "away" {
 		const visible = (st: CSSStyleDeclaration) => ofAxis(st, "X") === "visible" && ofAxis(st, "Y") === "visible";
 		// body's overflow is the viewport's only when html's is visible (CSS propagation).
 		const bodyIsView = !!page && !!el.ownerDocument.body && visible(styleOf(page));
-		let box = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+		const box = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
 		for (let n: Element | null = el; n; ) {
 			const st = styleOf(n);
 			const kept = /^(fixed|sticky)$/.test(st.position) || String(st.clipPath || "none") !== "none";
 			if (kept || /\b(paint|strict|content)\b/.test(String(st.contain || ""))) return "hidden";
 			if (n !== el && n !== page && !(bodyIsView && n === el.ownerDocument.body) && !visible(st)) {
 				const b = n.getBoundingClientRect();
-				const inside = box.left >= b.left && box.right <= b.right && box.top >= b.top && box.bottom <= b.bottom;
-				if (clips(ofAxis(st, "X")) || clips(ofAxis(st, "Y"))) {
-					if (!inside) return "hidden";
-				} else if (!inside) {
-					const top = box.top - b.top + n.scrollTop;
-					const left = box.left - b.left + n.scrollLeft;
-					if (!(top < n.scrollHeight && top + box.bottom - box.top > 0)) return "hidden";
-					if (!(left < n.scrollWidth && left + box.right - box.left > 0)) return "hidden";
-					box = { left: b.left, top: b.top, right: b.right, bottom: b.bottom };
+				// Per axis: one that clips must hold the frame whole, one that scrolls must reach it.
+				for (const [a, lo, hi] of [
+					["Y", "top", "bottom"],
+					["X", "left", "right"],
+				] as const) {
+					if (box[lo] >= b[lo] && box[hi] <= b[hi]) continue;
+					if (clips(ofAxis(st, a))) return "hidden";
+					const at = box[lo] - b[lo] + (a === "Y" ? n.scrollTop : n.scrollLeft);
+					const size = a === "Y" ? n.scrollHeight : n.scrollWidth;
+					// Right to left, the content runs left of the box: scrollLeft is 0 or below.
+					const start = a === "X" && st.direction === "rtl" ? n.clientWidth - size : 0;
+					if (!(at < start + size && at + box[hi] - box[lo] > start)) return "hidden";
+					box[lo] = b[lo];
+					box[hi] = b[hi];
 				}
 			}
-			const up: Node = n.parentElement ?? n.getRootNode();
-			n = up.nodeType === 1 ? (up as Element) : ((up as ShadowRoot).host ?? null);
+			n = upOf(n);
 		}
 		// The page: what it scrolls to, and only along an axis whose scroll is not turned off.
 		if (!page) return "hidden";
@@ -435,7 +440,48 @@ export function frameShown(el: Element): "shown" | "hidden" | "away" {
 		if (!(left < Math.max(page.scrollWidth, view.innerWidth) && box.right + view.scrollX > 0)) return "hidden";
 		if ((box.top >= view.innerHeight || box.bottom <= 0) && clips(ofAxis(rootStyle, "Y"))) return "hidden";
 		if ((box.left >= view.innerWidth || box.right <= 0) && clips(ofAxis(rootStyle, "X"))) return "hidden";
-		return "away";
+		// A cover fixed over the whole viewport stays put on a scroll, so the frame stays under it. Sampled
+		// inside the scrollbars; a fixed box can't hold the frame, as the walk above found none around it.
+		// Each point's top box must be in a fixed layer, and one cover must be at some point.
+		const [w, h] = [page.clientWidth || view.innerWidth, page.clientHeight || view.innerHeight];
+		// Fixed, and not painted under the page (a negative z-index, as a canvas background has).
+		const fixed = (n: Element) => styleOf(n).position === "fixed" && !(Number.parseInt(styleOf(n).zIndex, 10) < 0);
+		// A cover spans the viewport, can be seen, and paints: a color, an image, a backdrop filter, media,
+		// or a child that is such a cover. An empty layer (a portal root, a click-away backdrop) hides nothing.
+		const cover = (n: Element): boolean => {
+			const b = n.getBoundingClientRect();
+			if (!fixed(n) || b.left > 0 || b.top > 0 || b.right < w || b.bottom < h) return false;
+			const st = styleOf(n);
+			const seen = (n as Element & { checkVisibility?: (o: object) => boolean }).checkVisibility?.({
+				opacityProperty: true,
+				visibilityProperty: true,
+			});
+			if (seen === false || st.visibility === "hidden" || Number.parseFloat(st.opacity) < 0.1) return false;
+			const color = String(st.backgroundColor || "transparent");
+			const paints =
+				!/^transparent$|^rgba\(.*,\s*0(\.0*)?\)$/.test(color) ||
+				String(st.backgroundImage || "none") !== "none" ||
+				String(st.backdropFilter || "none") !== "none" ||
+				/^(canvas|video|img|svg)$/i.test(n.tagName ?? "");
+			return paints || Array.from(n.children ?? []).some(cover);
+		};
+		// At each point: every box (open shadow roots' too) and the one drawn on top of them all.
+		const stack = (x: number, y: number) => {
+			const all: Element[] = [];
+			let top: Element | null | undefined;
+			const add = (tree: Document | ShadowRoot) => {
+				const hits = tree.elementsFromPoint?.(x, y) ?? [];
+				if (hits[0] && (!top || (tree as ShadowRoot).host === top)) top = hits[0];
+				for (const n of hits) if (!all.includes(n) && all.push(n) && n.shadowRoot) add(n.shadowRoot);
+			};
+			add(el.ownerDocument);
+			while (top && !fixed(top)) top = upOf(top);
+			return { all, onTop: !!top };
+		};
+		const stacks = [stack(w / 2, h / 2), stack(1, 1), stack(w - 2, 1), stack(1, h - 2), stack(w - 2, h - 2)];
+		if (stacks.every((s) => s.onTop) && stacks.some((s) => s.all.some(cover))) return "hidden";
+		// Hit tests skip a cover the pointer goes through (pointer-events: none): one placed on body is seen.
+		return Array.from(el.ownerDocument.body?.children ?? []).some(cover) ? "hidden" : "away";
 	}
 	return points.some(([x, y]) => at.elementFromPoint(x, y) === el) ? "shown" : "hidden";
 }
@@ -507,14 +553,15 @@ async function place(
 	root: PageFrame | undefined,
 	sessionId = ownerSessionId,
 	end?: number,
-): Promise<PageFrame | undefined> {
+): Promise<PageFrame | undefined | null> {
+	// Null: no answer (its <iframe> not named, or a box not given in time), so the frame may well be there.
 	const own = await bounded(
 		cdpSendSession<{ backendNodeId?: number }>(tabId, ownerSessionId, "DOM.getFrameOwner", { frameId }),
 		callMs(end),
 	);
-	if (!own?.backendNodeId) return undefined;
+	if (!own?.backendNodeId) return null;
 	const box = await contentBox(tabId, ownerSessionId, own.backendNodeId, end);
-	if (!box) return undefined;
+	if (!box) return box;
 	const base = root?.offset ?? { x: 0, y: 0 };
 	const baseScale = root?.scale ?? 1;
 	const f: PageFrame = {
@@ -547,25 +594,33 @@ async function contentBox(
 	backendNodeId: number,
 	end?: number,
 ): Promise<
-	{ x: number; y: number; scale: number; border: { x: number; y: number; width: number; height: number } } | undefined
+	| { x: number; y: number; scale: number; border: { x: number; y: number; width: number; height: number } }
+	| undefined
+	| null
 > {
-	const [quads, model] = await Promise.all([
+	// A failure is an answer (a frame not drawn has no box); only a call out of time is none (null).
+	const answer = <T>(work: Promise<T>) =>
 		bounded(
-			cdpSendSession<{ quads?: number[][] }>(tabId, sessionId, "DOM.getContentQuads", { backendNodeId }),
+			work.then(
+				(v) => ({ v }),
+				() => ({ v: undefined }),
+			),
 			callMs(end),
-		),
-		bounded(
+		);
+	const [quads, model] = await Promise.all([
+		answer(cdpSendSession<{ quads?: number[][] }>(tabId, sessionId, "DOM.getContentQuads", { backendNodeId })),
+		answer(
 			cdpSendSession<{ model?: { content: number[]; border: number[]; width?: number } }>(
 				tabId,
 				sessionId,
 				"DOM.getBoxModel",
 				{ backendNodeId },
 			),
-			callMs(end),
 		),
 	]);
-	const q = quads?.quads?.[0];
-	const m = model?.model;
+	if (!quads || !model) return null;
+	const q = quads.v?.quads?.[0];
+	const m = model.v?.model;
 	if (!q || !m) return undefined;
 	// The quad is the box as drawn, the model's width its size in layout: their ratio is the frame's
 	// transform. Quads are in the viewport; the box model gives the border and padding inside them.
@@ -752,7 +807,9 @@ export async function frameForRef(
 ): Promise<{ frame: PageFrame; inner: string } | undefined> {
 	const split = splitFrameRef(ref);
 	if (!split) return undefined;
-	const frame = (await crossOriginFrames(tabId, rule)).find((f) => f.tag === split.tag);
+	const frames = await crossOriginFrames(tabId, rule);
+	const frame = frames.find((f) => f.tag === split.tag);
+	if (!frame && frames.missed) throw new Error(`Ref ${ref}: its frame did not answer. Try again, or call read_page.`);
 	if (!frame) throw new Error(`Ref ${ref} not found: its frame is gone or changed. Call read_page for fresh refs.`);
 	if (frame.blocked) {
 		const host = frameHost(frame.url);
