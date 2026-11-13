@@ -274,6 +274,9 @@ public enum HandsParse {
         for p in tool.params where p.required && r.args[p.name] == nil {
             return .failure(usage(tool, "\(p.name) is missing"))
         }
+        if tool.verb == "type", r.args["text"] == nil, r.bool("paste") != true {
+            return .failure(usage(tool, "text is missing (or pass paste: true)"))
+        }
         if let w = r.int("wait"), !(0...InUseRule.maxWait).contains(w) {
             return .failure(usage(tool, "wait is seconds from 0 to \(InUseRule.maxWait), not \(w)"))
         }

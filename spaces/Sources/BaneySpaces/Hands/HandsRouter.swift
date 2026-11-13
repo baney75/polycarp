@@ -112,11 +112,7 @@ final class HandsRouter {
         case "find": return find(req)
         case "get": return get(req)
         case "click": return act(req, .click, "click")
-        case "type":
-            switch Self.typedText(req) {
-            case .failure(let e): return .failure(e)
-            case .success(let text): return act(req, .typeText, "type", text: text)
-            }
+        case "type": return act(req, .typeText, "type", typed: Self.typedText(req))
         case "set-value": return act(req, .setValue, "set-value", text: req.string("value"))
         case "press": return press(req)
         case "click-at": return clickAt(req)
@@ -599,6 +595,14 @@ final class HandsRouter {
     func valueOf(_ w: HandsWindow, _ ref: String, session: String = "") -> String? {
         if case .ok(let v) = HandsEngine.shared.get(window: w, ref: ref, property: "value", check: check(w, ref: ref, session: session)) { return v["value"]?.string ?? "" }
         return nil
+    }
+
+    /// `type` text from the request or the session clipboard; a missing or doubled source fails before any input.
+    func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, typed: Result<String, HandsError>) -> HandsEnvelope {
+        switch typed {
+        case .failure(let e): return .failure(e)
+        case .success(let t): return act(req, kind, name, text: t)
+        }
     }
 
     private func act(_ req: HandsRequest, _ kind: HandsEngine.Kind, _ name: String, text: String? = nil, direction: Int32 = 1, amount: UInt32 = 3) -> HandsEnvelope {
