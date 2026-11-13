@@ -77,7 +77,7 @@ public enum HandsTools {
             refParam,
             HandsParam("property", .string, "value (default), text, title, role, bounds or states.", positional: true),
         ], acts: false),
-        HandsTool(verb: "click", summary: "Click an element by ref, without moving the pointer or raising the window. Prints what it verified.", params: [refParam], acts: true),
+        HandsTool(verb: "click", summary: "Click an element by ref, without moving the pointer or raising the window. On a row of a list, table or outline that the press doesn't select, it selects the row instead and says which landed (landed: press or selection_write). Example: {\"ref\":\"12\"}", params: [refParam], acts: true),
         HandsTool(verb: "type", summary: "Type text into an element by ref: inserts it at the element's selection through accessibility, never by posting keys. Prints the value it read back.", params: [
             refParam,
             HandsParam("text", .string, "The text.", required: true, positional: true, rest: true),
@@ -90,10 +90,12 @@ public enum HandsTools {
             refParam,
             HandsParam("key", .string, "Key name with optional modifiers, like cmd+shift+z; several keys are separated by spaces (at most 64).", required: true, positional: true, rest: true),
         ], acts: true),
-        HandsTool(verb: "click-at", summary: "Click a point in a window that is not in front, by process, with window-local coordinates (points from the window's top-left corner). Never moves the real pointer or raises the window. For surfaces with no accessibility tree (a canvas); prefer `click` on a ref. Answers unverified (retry never) when neither the window's tree nor the pixels around the point changed.", params: [
+        HandsTool(verb: "click-at", summary: "Click a point in a window that is not in front, by process, with window-local coordinates (points from the window's top-left corner). Never moves the real pointer or raises the window. For surfaces with no accessibility tree (a canvas); prefer `click` on a ref. Double click: {\"window\":4211,\"x\":120,\"y\":80,\"count\":2}. Answers unverified (retry never) when neither the window's tree nor the pixels around the point changed.", params: [
             HandsParam("window", .integer, "Window id from `windows`.", required: true),
             HandsParam("x", .integer, "Points from the window's left edge.", required: true),
             HandsParam("y", .integer, "Points from the window's top edge.", required: true),
+            HandsParam("count", .integer, "2 for a double click, 3 for a triple (default 1)."),
+            HandsParam("button", .string, "left only: right click is not available yet."),
         ], acts: true),
         HandsTool(verb: "drag", summary: "Press at a point, drag to another and release, in a window that is not in front, by process, with window-local coordinates. Never moves the real pointer or raises the window. Verified by an accessibility change or by pixels changing along the path while the rest of the window stays put.", params: [
             HandsParam("window", .integer, "Window id from `windows`.", required: true),

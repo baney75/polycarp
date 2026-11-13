@@ -300,6 +300,9 @@ public struct SnapshotRowsMemory: Sendable {
         case refused(code: HandsErrorCode, message: String, latest: Read?)
     }
 
+    /// The session's recent read that printed `snapshot`, for what a ref of it pointed at.
+    public func read(snapshot: String, session: String) -> Read? { recent[session]?.last { $0.snapshot == snapshot } }
+
     /// Row N of the session's latest snapshot, unless a recent earlier snapshot has a different row N (another window, or
     /// another element): then the number alone can't say which the agent saw, and it must pass the full ref.
     /// A refusal marks its window: the next full read of it (the one next_call asks for) clears the refusal.
