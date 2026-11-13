@@ -879,9 +879,12 @@ final class HandsRouter {
         }
         var window: HandsWindow?
         // Inside the 8 s claim on its window (`claimNextWindow`), so a window seen here was placed by that claim. At most
-        // `wait` seconds (7 when it says more or nothing); 0 looks once.
-        let wait = InUseRule.bound(req.int("wait"))
-        let deadline = Date().addingTimeInterval(min(wait, OpenMiss.claimWait))
+        // `wait` seconds (7 when it says more or nothing) after the launch, which the open cover may hold back; 0 looks once.
+        let wait = InUseRule.bound(req.int("wait")), waitStart = Date()
+        func deadline() -> Date {
+            Date(timeIntervalSince1970: OpenMiss.waitEnds(request: waitStart.timeIntervalSince1970,
+                                                         launched: AgentLaunches.shared.launchedAt(token)?.timeIntervalSince1970, wait: wait))
+        }
         func lookOnce() -> HandsWindow? {
             let (all, agent) = listWindows(fresh: true)
             let candidates = all.filter { matches($0, reply.info?["app"] ?? display) && $0.workspace == agent && (!separate || !pidsBefore.contains($0.pid)) }
@@ -893,7 +896,7 @@ final class HandsRouter {
             }
         }
         var looked = false
-        while start != .overlap, window == nil, !looked || Date() < deadline {
+        while start != .overlap, window == nil, !looked || Date() < deadline() {
             looked = true
             window = lookOnce()
             if window == nil { Thread.sleep(forTimeInterval: 0.15) }
@@ -902,7 +905,8 @@ final class HandsRouter {
         let launched = runningPid == nil ? AgentLaunches.shared.pid(token) : nil
         var missLater = false
         if window == nil, start != .overlap, let pid = launched {
-            switch OpenMiss.check(wait: wait, mainThread: Thread.isMainThread, elapsed: Date().timeIntervalSince(requestStart)) {
+            let since = max(requestStart, AgentLaunches.shared.launchedAt(token) ?? requestStart)
+            switch OpenMiss.check(wait: wait, mainThread: Thread.isMainThread, elapsed: Date().timeIntervalSince(since)) {
             case .now:
                 let miss = missCheck(pid: pid, display: display, token: token, requestStart: requestStart, look: lookOnce)
                 if let e = miss.error { return .failure(e) }
