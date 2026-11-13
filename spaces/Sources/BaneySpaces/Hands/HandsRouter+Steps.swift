@@ -35,24 +35,31 @@ extension HandsRouter {
             let id = windows[g.lowerBound]
             guard case .success(let (w, _, _)) = target(HandsRequest(verb: "snapshot", args: ["window": .int(id)], session: req.session)) else { stop = .gone; break }
             last = id
-            let reply = HandsEngine.shared.transaction(window: w, check: check(w, session: session)) { [self] cancelled in
-                var out: [JSONValue] = [], why: RunSteps.Stop?, raised: JSONValue = .null
+            // Each line is published as its step finishes, so a transaction that outlives its budget still reports what ran.
+            let progress = RunSteps.Progress()
+            let until = started.addingTimeInterval(RunSteps.deadline)
+            let reply = HandsEngine.shared.transaction(window: w, until: until, check: check(w, session: session)) { [self] cancelled in
+                var why: RunSteps.Stop?, raised: JSONValue = .null
                 for i in g {
-                    if cancelled() || Date().timeIntervalSince(started) > RunSteps.deadline { why = .time; break }
-                    let env = HandsNextCall.fill(handle(steps[i]), window: id)
+                    let left = until.timeIntervalSinceNow
+                    if cancelled() || left <= 0 { why = .time; break }
+                    progress.begin(i)
+                    let env = HandsNextCall.fill(handle(RunSteps.clamped(steps[i], left: left)), window: id)
                     why = RunSteps.stop(after: env)
-                    out.append(RunSteps.line(i + 1, steps[i], env, full: why != nil))
+                    progress.finish(RunSteps.line(i + 1, steps[i], env, full: why != nil))
                     if why != nil { raised = env.data?["opened"] ?? .null; break }
                 }
-                return .ok(.object(["lines": .array(out), "stop": why.map { .string($0.rawValue) } ?? .null, "opened": raised]))
+                return .ok(.object(["stop": why.map { .string($0.rawValue) } ?? .null, "opened": raised]))
             }
             switch reply {
             case .failed(let e):
-                // The transaction didn't start (the window left scope) or outlived its budget; its first step carries why.
-                lines.append(RunSteps.line(g.lowerBound + 1, steps[g.lowerBound], .failure(e), full: true))
-                stop = .failed
+                // The transaction didn't start (the window left scope) or outlived its budget: the steps that ran keep their
+                // lines, and one still running then may still land.
+                let (done, why) = RunSteps.lines(failed: e, progress: progress, group: g, steps: steps)
+                lines += done
+                stop = why
             case .ok(let v):
-                lines += v["lines"]?.array ?? []
+                lines += progress.state.lines
                 stop = v["stop"]?.string.flatMap(RunSteps.Stop.init(rawValue:))
                 opened = v["opened"]
             }

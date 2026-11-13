@@ -98,10 +98,10 @@ final class RunStepsTests: XCTestCase {
         let run = try XCTUnwrap(HandsSourceTests.block(after: "func runSteps(_ req: HandsRequest)", in: src))
         let parse = try XCTUnwrap(run.range(of: "RunSteps.parse("))
         let bare = try XCTUnwrap(run.range(of: "bareRef(n, steps[i])"))
-        let tx = try XCTUnwrap(run.range(of: "HandsEngine.shared.transaction(window: w, check: check(w, session: session))"))
+        let tx = try XCTUnwrap(run.range(of: "HandsEngine.shared.transaction(window: w, until: until, check: check(w, session: session))"))
         XCTAssertTrue(parse.lowerBound < bare.lowerBound && bare.lowerBound < tx.lowerBound, "checked and row numbers bound before anything runs")
         XCTAssertTrue(run.contains("for g in RunSteps.groups(windows)"), "one transaction per window")
-        XCTAssertTrue(run.contains("cancelled() || Date().timeIntervalSince(started) > RunSteps.deadline"), "no step starts after the caller gave up")
+        XCTAssertTrue(run.contains("if cancelled() || left <= 0 { why = .time; break }"), "no step starts after the caller gave up or the deadline")
         XCTAssertTrue(run.contains("why = RunSteps.stop(after: env)"))
         XCTAssertTrue(run.contains(#""since": "latest""#), "one read of what changed")
         // Inside the transaction a step's own engine calls run inline, not queued behind it.
@@ -110,8 +110,105 @@ final class RunStepsTests: XCTestCase {
         let inline = try XCTUnwrap(runBlock.range(of: "if isOnQueue(of: w.pid) {"))
         let queued = try XCTUnwrap(runBlock.range(of: "queue(for: w.pid).async"))
         XCTAssertTrue(inline.lowerBound < queued.lowerBound)
-        XCTAssertTrue(runBlock.contains("return check().map(Reply.failed) ?? work { false }"), "the inline call still runs its check first")
+        XCTAssertTrue(runBlock.contains("return check().map(Reply.failed) ?? work(inlineCancelled(w.pid))"), "the inline call still runs its check first")
         let serialized = try XCTUnwrap(HandsSourceTests.block(after: "func serialized<T>(pid: Int32", in: engine))
-        XCTAssertTrue(serialized.contains("if isOnQueue(of: pid) { return work { false } }"))
+        XCTAssertTrue(serialized.contains("if isOnQueue(of: pid) { return work(inlineCancelled(pid)) }"))
+    }
+
+    // MARK: 251 r2
+
+    /// first-F2: a step that starts inside the deadline can't wait past it. The run's `wait` (up to 120 s) was copied into
+    /// every step unchanged, so a step started at 39 s could sit in its in-use wait long after the transaction's 60 s.
+    func testAStepNeverWaitsPastTheDeadline() {
+        let step = HandsRequest(verb: "click", args: ["ref": "w1:5", "wait": 90], session: "s")
+        XCTAssertEqual(RunSteps.clamped(step, left: 12.7).int("wait"), 12)
+        XCTAssertEqual(RunSteps.clamped(step, left: 100).int("wait"), 90)
+        XCTAssertEqual(RunSteps.clamped(step, left: -1).int("wait"), 0, "no time left answers in_use at once")
+        let plain = HandsRequest(verb: "click", args: ["ref": "w1:5"], session: "s")
+        XCTAssertEqual(RunSteps.clamped(plain, left: 30).int("wait"), Int(InUseRule.defaultWait))
+        XCTAssertEqual(RunSteps.clamped(plain, left: 3).int("wait"), 3)
+    }
+
+    /// first-F2: a transaction that outlives its budget reports the steps that ran, and the step still running then as one
+    /// that may still land, never as step 1 failing. Before, the group's lines were dropped and step 1 was charged.
+    func testATimedOutGroupReportsWhatRanAndTheStepStillRunning() throws {
+        let steps = [HandsRequest(verb: "type", args: ["ref": "w1:7", "text": "hi"], session: "s"),
+                     HandsRequest(verb: "click", args: ["ref": "w1:5"], session: "s"),
+                     HandsRequest(verb: "click", args: ["ref": "w1:6"], session: "s")]
+        let progress = RunSteps.Progress()
+        progress.begin(0)
+        progress.finish(RunSteps.line(1, steps[0], .success(.object(["verified": true])), full: false))
+        progress.begin(1)
+        let timeout = HandsError(.timeout, "the app didn't answer within 60 s", suggestion: "It may still land", retry: .never)
+        let (lines, stop) = RunSteps.lines(failed: timeout, progress: progress, group: 0..<3, steps: steps)
+        XCTAssertEqual(stop, .landing)
+        guard lines.count == 2 else { return XCTFail("the lines of steps 1 and 2, not \(lines.count)") }
+        XCTAssertEqual(lines[0]["step"], 1)
+        XCTAssertEqual(lines[0]["ok"], true, "step 1 landed and says so")
+        XCTAssertEqual(lines[1]["step"], 2)
+        XCTAssertEqual(lines[1]["may_land"], true)
+        let answer = RunSteps.answer(lines: lines, total: 3, stop: stop, read: nil, readError: nil)
+        XCTAssertEqual(answer["done"], 1)
+        let note = try XCTUnwrap(answer["note"]?.string)
+        XCTAssertTrue(note.hasPrefix("step 2 was still running"), note)
+        XCTAssertTrue(note.contains("may still land"), note)
+        XCTAssertFalse(note.contains("step 1 failed"), note)
+    }
+
+    /// first-F2: only when no step began does the group's first step carry the transaction's error: then nothing ran.
+    func testAGroupThatNeverStartedChargesItsFirstStep() {
+        let steps = [HandsRequest(verb: "click", args: ["ref": "w1:5"], session: "s")]
+        let gone = HandsError(.windowNotFound, "window 1 is gone", suggestion: "Take a new snapshot", retry: .afterSnapshot)
+        let (lines, stop) = RunSteps.lines(failed: gone, progress: RunSteps.Progress(), group: 0..<1, steps: steps)
+        XCTAssertEqual(stop, .failed)
+        XCTAssertEqual(lines.count, 1)
+        XCTAssertEqual(lines[0]["ok"], false)
+        XCTAssertNil(lines[0]["may_land"])
+    }
+
+    /// first-F2: the router publishes lines as steps finish, clamps each step's wait, and hands the engine the deadline
+    /// that its inline calls (an act's retry, a step's own transaction) stop at.
+    func testTheRouterPublishesLinesAndInlineCallsStopAtTheDeadline() throws {
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Steps.swift")
+        let run = try XCTUnwrap(HandsSourceTests.block(after: "func runSteps(_ req: HandsRequest)", in: src))
+        XCTAssertTrue(run.contains("HandsEngine.shared.transaction(window: w, until: until, check: check(w, session: session))"))
+        XCTAssertTrue(run.contains("handle(RunSteps.clamped(steps[i], left: left))"))
+        let begin = try XCTUnwrap(run.range(of: "progress.begin(i)"))
+        let call = try XCTUnwrap(run.range(of: "handle(RunSteps.clamped("))
+        let finish = try XCTUnwrap(run.range(of: "progress.finish("))
+        XCTAssertTrue(begin.lowerBound < call.lowerBound && call.lowerBound < finish.lowerBound)
+        XCTAssertTrue(run.contains("RunSteps.lines(failed: e, progress: progress, group: g, steps: steps)"))
+        XCTAssertFalse(run.contains("lines.append(RunSteps.line(g.lowerBound + 1"), "a timeout no longer charges the group's first step")
+        let engine = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsEngine.swift")
+        let tx = try XCTUnwrap(HandsSourceTests.block(after: "func transaction(window w: HandsWindow, until: Date? = nil", in: engine))
+        XCTAssertTrue(tx.contains("guard let until else { return work(cancelled) }"), "a step's own transaction keeps the run's deadline")
+        XCTAssertTrue(tx.contains("inlineUntil[w.pid] = until"))
+        XCTAssertTrue(engine.contains("return { until.map { Date() >= $0 } ?? false }"))
+    }
+
+    /// first-F1 (disputed): a connector's steps run under the connector's cap. `cap` and `remote` are the router's own
+    /// stored state, set once in init; `runSteps` calls `handle` on that same router, so every step and the closing read
+    /// pass the connector gate and the capped access, and a capped Full Access never reaches a window off the agent workspace.
+    func testAConnectorsStepsRunUnderTheConnectorsCap() throws {
+        let router = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        XCTAssertTrue(router.contains("var access: AgentAccessMode { cap(AgentAccess.shared.current) }"))
+        XCTAssertTrue(router.contains("let remote: Bool"))
+        let handle = try XCTUnwrap(HandsSourceTests.block(after: "func handle(_ req: HandsRequest) -> HandsEnvelope", in: router))
+        XCTAssertTrue(handle.contains("AgentAccessGate.refusal(verb: req.verb, mode: access)"))
+        XCTAssertTrue(handle.contains("if remote, let e = WorkspaceVerbs.connectorRefusal(verb: req.verb)"))
+        let session = try HandsSourceTests.code("Sources/BaneySpaces/Session/SessionController.swift")
+        XCTAssertTrue(session.contains("HandsRouter(cap: { $0.forRemote }, remote: true)"), "the connector's router is capped and remote")
+        // Every nested call goes to the same router: no other router is made in the hands.
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter+Steps.swift")
+        XCTAssertFalse(src.contains("HandsRouter("))
+        XCTAssertTrue(src.contains("handle(RunSteps.clamped(steps[i]") || src.contains("handle(steps[i])"))
+        XCTAssertTrue(src.contains("let read = handle(readReq)"))
+        // What that cap means for a window off the agent workspace under Full Access.
+        let off = HandsWindow(id: 40, pid: 400, app: "Notes", workspace: 2)
+        XCTAssertEqual(ScopeGuard.check(off, agentWorkspace: 9, lends: LendBook(), now: Date(), mode: .full), .fullAccess)
+        guard case .denied(let e) = ScopeGuard.check(off, agentWorkspace: 9, lends: LendBook(), now: Date(), mode: AgentAccessMode.full.forRemote) else {
+            return XCTFail("a connector under Full Access reached a window off the agent workspace")
+        }
+        XCTAssertEqual(e.code, .outsideAgentWorkspace)
     }
 }

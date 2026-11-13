@@ -49,7 +49,45 @@ public enum RunSteps {
         return out
     }
 
-    public enum Stop: String, Sendable { case failed, unverified, opened, time, gone }
+    public enum Stop: String, Sendable { case failed, unverified, opened, time, gone, landing }
+
+    /// The step as it runs `left` seconds before the deadline: its in-use wait never goes past the deadline, so a step that
+    /// starts inside it can't outlive the transaction by waiting.
+    public static func clamped(_ step: HandsRequest, left: TimeInterval) -> HandsRequest {
+        var s = step
+        let room = max(0, Int(left.rounded(.down)))
+        s.args["wait"] = .int(min(Int(InUseRule.bound(step.int("wait"))), room))
+        return s
+    }
+
+    /// What a group's transaction has done so far, under a lock: when the transaction outlives its budget its reply is
+    /// dropped, and this is what the router can still read.
+    public final class Progress: @unchecked Sendable {
+        private let lock = NSLock()
+        private var done: [JSONValue] = []
+        private var running: Int?
+        public init() {}
+        /// Step `i` (0-based) starts.
+        public func begin(_ i: Int) { lock.lock(); running = i; lock.unlock() }
+        /// The running step finished, with its line.
+        public func finish(_ line: JSONValue) { lock.lock(); done.append(line); running = nil; lock.unlock() }
+        public var state: (lines: [JSONValue], running: Int?) { lock.lock(); defer { lock.unlock() }; return (done, running) }
+    }
+
+    /// The lines of a group whose transaction failed with `e`: the steps that finished, and the one still running then,
+    /// which may still land. Only when no step began does the group's first step carry `e`: then nothing ran.
+    public static func lines(failed e: HandsError, progress: Progress, group: Range<Int>, steps: [HandsRequest]) -> (lines: [JSONValue], stop: Stop) {
+        let (done, running) = progress.state
+        if let i = running {
+            let why = HandsError(e.code, "step \(i + 1) was still running when the run ran out of time, so it may still land",
+                                 suggestion: "Read the window (the read below) before you send it again", retry: .never)
+            var o = line(i + 1, steps[i], .failure(why), full: true).object ?? [:]
+            o["may_land"] = .bool(true)
+            return (done + [.object(o)], .landing)
+        }
+        if let last = done.last { return (done, last["ok"]?.bool == false ? .failed : .time) }
+        return ([line(group.lowerBound + 1, steps[group.lowerBound], .failure(e), full: true)], .failed)
+    }
 
     /// Why the run stops after this step's answer, or nil to go on.
     public static func stop(after env: HandsEnvelope) -> Stop? {
@@ -93,6 +131,7 @@ public enum RunSteps {
         case .opened: return "step \(n) raised a dialog or sheet\(left). Answer it (the read below shows it), then continue."
         case .time: return "the run reached \(Int(deadline)) s, so the last \(rest) did not start. Read, then send them again."
         case .gone: return "the window of step \(n + 1) went away, so the last \(rest) did not run."
+        case .landing: return "step \(n) was still running when the run ran out of time and may still land\(left). Read the window before sending it again."
         }
     }
 
