@@ -863,6 +863,21 @@ public enum ContentChange {
         return Set(Set(a.keys).union(b.keys).filter { a[$0] != b[$0] })
     }
 
+    /// The baseline once the window holds still: read again until two reads in a row agree (at most `reads` more), and
+    /// every place that moved meanwhile is noise. A change still pending before the press (the title bar's Edited after
+    /// a type, drawn when the hover arrives) is then never taken for the press's effect.
+    public static func settle(first: JSONValue, reads: Int, read: () -> JSONValue?) -> (base: JSONValue, noise: Set<String>) {
+        var base = first, moved: Set<String> = []
+        for _ in 0..<reads {
+            guard let next = read() else { break }
+            let now = noise(base1: base, base2: next)
+            base = next
+            if now.isEmpty { break }
+            moved.formUnion(now)
+        }
+        return (base, moved)
+    }
+
     /// Whether anything outside the noise differs between the first baseline and now.
     public static func changed(base: [String: String], noise: Set<String>, after: JSONValue) -> Bool {
         let now = entries(of: after)

@@ -161,7 +161,8 @@ extension HandsRouter {
         let tree1 = inlineTree(w)
         Thread.sleep(forTimeInterval: 0.05)
         let tree2 = inlineTree(w)
-        let noise: Set<String> = (tree1 != nil && tree2 != nil) ? ContentChange.noise(base1: tree1!, base2: tree2!) : []
+        var noise: Set<String> = (tree1 != nil && tree2 != nil) ? ContentChange.noise(base1: tree1!, base2: tree2!) : []
+        var base = tree1
         var baseEntries: [String: String] = tree1.map { ContentChange.entries(of: $0) } ?? [:]
         let verifier: VerifierPlan = {
             switch (tree1 != nil && tree2 != nil, kind == .pointer && CGPreflightScreenCaptureAccess()) {
@@ -247,6 +248,14 @@ extension HandsRouter {
             if let stopped = hover.report.stopped { return .failed(frontFailure() ?? stopped) }
             // A hover's tint can animate, and pixels compare what's there. With no pixels in the proof it doesn't matter.
             Thread.sleep(forTimeInterval: verifier.hasPixels ? 0.2 : 0.05)
+            // The baseline is the window once it holds still after the hover, so a change pending before the press is noise.
+            if let t = base {
+                let settled = ContentChange.settle(first: inlineTree(w) ?? t, reads: 5) { inlineTree(w) }
+                noise.formUnion(ContentChange.noise(base1: t, base2: settled.base).union(settled.noise))
+                base = settled.base
+                baseEntries = ContentChange.entries(of: settled.base)
+                curRef = refReading(); curFocus = focusReading()
+            }
             let shotBefore = verifier.hasPixels ? WindowShot.pixels(window: w.id, check: scopeCheck) : nil
             if verifier == .pixels, shotBefore == nil { return .failed(BackgroundRefusal.noVerifier(w.app)) }     // nothing is pressed yet
             let press = BackgroundPoster.pointer(drag ? InputScript.drag(path: path) : InputScript.click(at: path[0], count: style.count), frame: frame, drag: drag,
@@ -261,7 +270,7 @@ extension HandsRouter {
                 if spanFront() != .same { break }
                 let refAfter = refReading(), focusAfter = focusReading()
                 let t = treeAfter()
-                if let t = t.tree, let b = tree1 { diff = AXDiff.between(b, t) }
+                if let t = t.tree, let b = base { diff = AXDiff.between(b, t) }
                 if let b = shotBefore, let a = WindowShot.pixels(window: w.id, check: scopeCheck), a.width == b.width, a.height == b.height {
                     let region = PointerPath.region(path: path, margin: 14, scale: b.scale, width: b.width, height: b.height)
                     let hoverBox = PointerPath.hoverExclusion(path: path, radius: 10, scale: b.scale, width: b.width, height: b.height)
