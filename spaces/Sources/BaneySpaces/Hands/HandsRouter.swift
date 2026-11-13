@@ -112,7 +112,11 @@ final class HandsRouter {
         case "find": return find(req)
         case "get": return get(req)
         case "click": return act(req, .click, "click")
-        case "type": return act(req, .typeText, "type", text: req.string("text"))
+        case "type":
+            switch Self.typedText(req) {
+            case .failure(let e): return .failure(e)
+            case .success(let text): return act(req, .typeText, "type", text: text)
+            }
         case "set-value": return act(req, .setValue, "set-value", text: req.string("value"))
         case "press": return press(req)
         case "click-at": return clickAt(req)
@@ -552,6 +556,11 @@ final class HandsRouter {
         return .success((w, d))
     }
 
+    /// `type`'s text: the text argument, or with paste: true what this session copied (never both).
+    static func typedText(_ req: HandsRequest) -> Result<String, HandsError> {
+        SessionClipboard.typed(text: req.string("text"), paste: req.bool("paste")) { SessionClipboardBox.shared.paste(session: req.session ?? "") }
+    }
+
     private func get(_ req: HandsRequest) -> HandsEnvelope {
         let session = req.session ?? ""
         switch resolve(req.string("ref"), session: session) {
@@ -563,6 +572,15 @@ final class HandsRouter {
             case .ok(let d):
                 var o = d.object ?? [:]
                 o["target"] = targetJSON(w, scope)
+                // copy: true holds the value on the agent clipboard, never on the general pasteboard.
+                if req.bool("copy") {
+                    switch SessionClipboard.copyable(o["value"]) {
+                    case .failure(let e): return .failure(e)
+                    case .success(let text):
+                        if let e = SessionClipboardBox.shared.copy(text, session: session) { return .failure(e) }
+                        o["copied"] = .int(text.count)
+                    }
+                }
                 return .success(.object(o))
             }
         }
