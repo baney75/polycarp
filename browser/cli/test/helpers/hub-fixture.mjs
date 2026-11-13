@@ -2,7 +2,7 @@
 // own config dir, socket dir and HOME. Nothing here touches ~/.config/tabkyra: every process gets
 // TABKYRA_CONFIG_DIR inside a temp directory.
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -70,7 +70,22 @@ export function endProcess(proc, signal = "SIGTERM", graceMs = 3000) {
 	});
 }
 
-/** Run each stop callback, wait for the processes to exit, then remove the temp root. */
+/** Every process the fixture or a test started, so teardown can wait for each to exit (track). */
+const started = new Set();
+
+/** Hold a spawned process for teardown: the root is removed only after it exits. Returns it. */
+export function track(proc) {
+	started.add(proc);
+	proc.once("exit", () => started.delete(proc));
+	return proc;
+}
+
+/**
+ * Run each stop callback, then wait for every tracked process to exit, then remove the temp root. A stop that only
+ * signals (proc.kill()) resolves while the process still shuts down and writes into the root: `link run` revokes its
+ * token on SIGTERM, rewriting tokens.json under a file lock, and on a loaded machine the rmdir found the folder
+ * refilled (ENOTEMPTY).
+ */
 export async function teardown(cleanup, root) {
 	await Promise.all(
 		cleanup.map(async (stop) => {
@@ -81,7 +96,38 @@ export async function teardown(cleanup, root) {
 			}
 		}),
 	);
-	rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+	await Promise.all([...started].map((proc) => endProcess(proc, "SIGTERM")));
+	try {
+		rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+	} catch (err) {
+		// Something still writes here after every stop resolved: name what it left, so the writer can be found.
+		throw new Error(`${err.message}; still in the root: ${leftIn(root).join(", ") || "(nothing)"}`, { cause: err });
+	}
+}
+
+/** What is in a folder, deepest first, each with how long ago it changed: the trail of whatever wrote it last. */
+function leftIn(dir, now = Date.now()) {
+	const found = [];
+	const walk = (d) => {
+		let names = [];
+		try {
+			names = readdirSync(d);
+		} catch {
+			return;
+		}
+		for (const n of names) {
+			const p = join(d, n);
+			try {
+				const st = lstatSync(p);
+				if (st.isDirectory()) walk(p);
+				found.push(`${p.slice(dir.length + 1)} (${now - st.mtimeMs | 0} ms ago)`);
+			} catch {
+				/* gone meanwhile */
+			}
+		}
+	};
+	walk(dir);
+	return found;
 }
 
 export function tempRoot(prefix) {
@@ -93,7 +139,7 @@ export async function startHub(root, name = "hub", { port: wantedPort, env: extr
 	const m = machine(root, name);
 	const port = wantedPort ?? (await freePort());
 	const url = `http://127.0.0.1:${port}`;
-	const proc = spawn(process.execPath, [cli, "hub", "serve", "--port", String(port), "--public-url", url], { env: { ...m.env, ...extraEnv } });
+	const proc = track(spawn(process.execPath, [cli, "hub", "serve", "--port", String(port), "--public-url", url], { env: { ...m.env, ...extraEnv } }));
 	let out = "";
 	await new Promise((resolve, reject) => {
 		proc.stdout.on("data", (d) => {
@@ -139,7 +185,7 @@ export async function addDevice(root, hub, name, { manage = false, scope, wait =
 	const linked = m.run(["link", hub.url, "--code", code, "--no-service", "--json", ...(scope ? ["--scope", scope] : [])]);
 	if (linked.code !== 0) throw new Error(`link failed: ${linked.out}`);
 	beforeRun?.(m);
-	const proc = spawn(process.execPath, [cli, "link", "run"], { env: m.env });
+	const proc = track(spawn(process.execPath, [cli, "link", "run"], { env: m.env }));
 	let out = "";
 	proc.stdout.on("data", (d) => (out += d));
 	proc.stderr.on("data", (d) => (out += d));
