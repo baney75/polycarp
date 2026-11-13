@@ -98,7 +98,7 @@ const KNOWN: Array<[RegExp, string]> = [
 	[new RegExp(`${START}Element is not a form control`), ERR.NOT_ACTIONABLE],
 	[
 		new RegExp(
-			`${START}(?:Cannot run scripts on .*browser-internal pages are protected|Cannot control .*protected|The debugger was closed by the user on this tab)`,
+			`${START}(?:Cannot run scripts on .*browser-internal pages are protected|Cannot control .*protected|The debugger was closed by the user on this tab|Not allowed to open \\S+: ref \\S+ is in a frame)`,
 		),
 		ERR.PERMISSION_DENIED,
 	],

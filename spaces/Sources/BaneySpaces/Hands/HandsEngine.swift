@@ -200,6 +200,7 @@ final class HandsEngine {
     /// An engine error object as one of ours. Its own retry verdict decides `retry`; a ref that needs
     /// a new snapshot says so.
     static func translate(_ err: JSONValue) -> HandsError {
+        if let refusal = SessionClipboard.engineRefusal(err) { return refusal }
         let code = err["code"]?.string ?? ""
         let message = err["message"]?.string ?? "the engine refused"
         let suggestion = EngineVerdict.suggestion(err["suggestion"]?.string ?? "Take a new snapshot and try again.")
