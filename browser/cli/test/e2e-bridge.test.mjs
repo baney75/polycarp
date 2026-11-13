@@ -2704,7 +2704,7 @@ test("navigate to a 204 says no new page loaded, without waiting out the load ti
 	await go("pairing");
 	const save = refFor(await tool("read_page", { filter: "interactive" }), "Save");
 	const start = Date.now();
-	const kept = JSON.parse(await tool("navigate", { url: `${pageUrl}no-content`, timeoutMs: 15000 }));
+	const kept = JSON.parse(await tool("navigate", { url: `${pageUrl}no-content` }));
 	const ms = Date.now() - start;
 	assert.deepEqual(kept.changes, { page: "no new page loaded; read_page shows the page" }, JSON.stringify(kept));
 	assert.match(kept.url, /\/pairing$/);
@@ -2721,7 +2721,7 @@ extraPages["/keeps-loading"] = `<!doctype html><title>Polycarp keeps loading</ti
 test("navigate to a 204 from a page that keeps loading says no new page loaded at once", async () => {
 	await go("keeps-loading");
 	const start = Date.now();
-	const kept = JSON.parse(await tool("navigate", { url: `${pageUrl}no-content`, timeoutMs: 15000 }));
+	const kept = JSON.parse(await tool("navigate", { url: `${pageUrl}no-content` }));
 	const ms = Date.now() - start;
 	assert.deepEqual(kept.changes, { page: "no new page loaded; read_page shows the page" }, JSON.stringify(kept));
 	assert.match(kept.url, /\/keeps-loading$/);
