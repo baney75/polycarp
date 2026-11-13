@@ -146,6 +146,97 @@ export function fitSnapshot<S extends { nodes: unknown[]; text: string }>(snap: 
 	return { snap: out, note: notes.length ? `\n\n[${notes.join(" ")}]` : "" };
 }
 
+/** A ranked interactive read's counts (src/browser/page.ts pageSnapshot). */
+export interface RankCounts {
+	total: number;
+	covered: number;
+	first: number;
+	inView: number;
+	near: number;
+	far: number;
+	offset: number;
+	/** Names the ranking a later slice continues (src/browser/page.ts); absent from an extension before it. */
+	snapshot?: string;
+	/** Where the next slice starts; absent from an extension before it, then offset plus what was shown. */
+	next?: number;
+	/** A later slice's: each listed control's place in the ranking (controls that left the page are skipped). */
+	positions?: number[];
+}
+
+/**
+ * A ranked read cut to `maxNodes` positions of the ranking (a later slice skips controls that left the page, so it can
+ * list fewer), and the offset the slice after it starts at: no control twice, none skipped.
+ */
+export function rankedSlice<N>(r: RankCounts, nodes: N[], maxNodes: number): { nodes: N[]; next: number; shown: number } {
+	// A cross-origin frame's controls (refs like fk3z9e12) follow the frame's own line and hold no ranked position.
+	const ranked = (n: N) => !/^f[0-9a-z]{4}e\d+$/.test(String((n as { ref?: unknown })?.ref ?? ""));
+	const own = nodes.filter(ranked);
+	let take: number;
+	let next: number;
+	if (r.positions) {
+		const end = r.offset + maxNodes;
+		const due = r.positions.filter((p) => p < end).length;
+		take = Math.min(maxNodes, due);
+		next = take < due ? r.positions[take] : Math.min(r.next ?? end, end);
+	} else {
+		take = Math.min(maxNodes, own.length);
+		next = take < own.length ? r.offset + take : (r.next ?? r.offset + take);
+	}
+	const kept: N[] = [];
+	let taken = 0;
+	for (const n of nodes) {
+		if (kept.length >= maxNodes) break;
+		if (ranked(n)) {
+			if (taken === take) break;
+			taken++;
+		}
+		kept.push(n);
+	}
+	// A frame's controls filled the cap first: the next slice starts at the first ranked control left out.
+	if (taken < take) next = r.positions ? r.positions[taken] : r.offset + taken;
+	return { nodes: kept, next, shown: taken };
+}
+
+/**
+ * The line under a ranked interactive read: which slice this is, what was left out and the exact call for more, so a
+ * model that needs a control further down knows it exists and how to get it.
+ */
+export function rankNote(
+	r: RankCounts,
+	shown: number,
+	text: { maxTextChars: number; cut: boolean } = { maxTextChars: 0, cut: false },
+	opts: { next?: number; has?: (tool: string) => boolean } = {},
+): string {
+	const has = opts.has ?? (() => true);
+	const from = r.offset + 1;
+	const to = opts.next ?? r.offset + shown;
+	const tiers = [
+		r.first ? `${fmt(r.first)} focused or in a dialog` : "",
+		`${fmt(r.inView)} in view`,
+		r.near ? `${fmt(r.near)} within a screen` : "",
+		r.far ? `${fmt(r.far)} further away` : "",
+	].filter(Boolean);
+	const parts = [
+		shown === 0 && to === r.offset
+			? `No controls from ${fmt(from)} on (${fmt(r.total)} in all).`
+			: to < r.total || r.offset
+				? `Controls ${fmt(from)}-${fmt(to)} of ${fmt(r.total)}, nearest first (${tiers.join(", ")}).`
+				: `All ${fmt(r.total)} controls (${tiers.join(", ")}).`,
+	];
+	// Positions are the read's, so a control that left the page since leaves a gap rather than pulling the next one in.
+	const left = to - r.offset - shown;
+	if (left > 0) parts.push(`${fmt(left)} of them left the page since that read.`);
+	if (r.covered) parts.push(`${fmt(r.covered)} covered by something on top are left out: close or dismiss it first.`);
+	const more = r.snapshot ? `{"filter":"interactive","offset":${to},"snapshot":"${r.snapshot}"}` : `{"filter":"interactive","offset":${to}}`;
+	// Only tools this session has are named: a scoped session told about one it lacks gets a refusal for following it.
+	if (to < r.total) parts.push(has("find") ? `More: read_page ${more}, or find {"query":"..."} for one.` : `More: read_page ${more}.`);
+	// The text is said as it is: none asked for, cut at the cap, or whole (then nothing to add).
+	const whole = has("get_page_text") ? ": get_page_text reads it." : ".";
+	if (!text.maxTextChars) parts.push(`No page text here${whole}`);
+	else if (text.cut) parts.push(`The text stopped at ${fmt(text.maxTextChars)} characters${has("get_page_text") ? ": get_page_text reads all of it." : "."}`);
+	return `\n\n[${parts.join(" ")}]`;
+}
+
 /**
  * The UTF-8 sequence that starts at byte `i`: its length in bytes and the UTF-16 units it decodes to. A byte that
  * doesn't start a valid sequence (a Latin-1 byte, a stray continuation byte, a cut-off sequence) is one unit, U+FFFD,
@@ -197,4 +288,15 @@ export function utf8Window(all: Uint8Array, offset: number, maxBytes: number, ma
 		units += u;
 	}
 	return { text: new TextDecoder().decode(all.subarray(from, end)), from, end };
+}
+
+const PASSWORD_HINT = "password: never type one, call tabs_show and ask the person to type it";
+
+/**
+ * The password field's hint (src/browser/page.ts) names tabs_show, the handoff that shows the user the tab. A session
+ * without it is told the handoff it has: ask_user, or plain asking.
+ */
+export function passwordHandoff(out: string, has: (tool: string) => boolean): string {
+	if (has("tabs_show")) return out;
+	return out.replaceAll(PASSWORD_HINT, has("ask_user") ? "password: never type one, call ask_user and ask the person to type it" : "password: never type one, ask the person to type it");
 }
