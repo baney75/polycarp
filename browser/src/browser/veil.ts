@@ -73,7 +73,12 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 let enabled: boolean | undefined;
 /** Settings > Agents, "Show the agent's pointer": unknown until read once; storage changes keep it current. */
 let pointer: boolean | undefined;
+/** The read under way, if any. Dropped when a show gave up waiting on it, so the next show reads again. */
 let pointerRead: Promise<boolean> | undefined;
+/** A show gave up on the read: later shows start a read but draw at once, and the read sets the open veils. */
+let pointerTimedOut = false;
+/** Settles EFFECT_TIMEOUT_MS after the read under way started: one deadline every show waiting on that read shares. */
+let pointerGiveUp: Promise<undefined> = Promise.resolve(undefined);
 let log: (line: string) => void = () => undefined;
 const chains = new Map<number, Promise<unknown>>();
 
@@ -101,7 +106,11 @@ function dispatch(event: VeilEvent): Promise<void> {
 	return Promise.all(step.effects.map((e) => queue(e))).then(() => undefined);
 }
 
-/** The newest show queued per tab: a late show that a newer one replaced draws nothing (PR 204's review, second-S2). */
+/**
+ * The newest show queued per tab: a late show that a newer one replaced draws nothing (PR 204's review, second-S2). It is
+ * kept after that show finishes, until the tab's veil hides or the tab closes, so a late show that resumes after the
+ * newer one is done still sees it (PR 204's second review, first-F2).
+ */
 const newestShow = new Map<number, number>();
 let showSeq = 0;
 
@@ -109,6 +118,7 @@ function queue(effect: VeilEffect): Promise<void> {
 	const prev = chains.get(effect.tabId) ?? Promise.resolve();
 	const seq = effect.kind === "show" ? ++showSeq : 0;
 	if (seq) newestShow.set(effect.tabId, seq);
+	else if (effect.kind === "hide") newestShow.delete(effect.tabId);
 	const run = prev
 		.then(() => {
 			const late = { fired: false, seq };
@@ -118,7 +128,6 @@ function queue(effect: VeilEffect): Promise<void> {
 	chains.set(effect.tabId, run);
 	void run.then(() => {
 		if (chains.get(effect.tabId) === run) chains.delete(effect.tabId);
-		if (seq && newestShow.get(effect.tabId) === seq) newestShow.delete(effect.tabId);
 	});
 	return run;
 }
@@ -167,14 +176,16 @@ async function apply(
 			// A tag of its own for each document; stored before it is drawn, so a reader never misses it.
 			const tag = (await veilTag(tabId)) ?? newVeilTag();
 			await rememberVeilTag(tabId, tag);
-			// The setting's read is bounded on its own: one that never settles draws no character, the safe side.
-			const pointerShown = pointer ?? (await withTimeout(pointerOn())) ?? false;
+			const pointerShown = await pointerForShow();
 			const pageTheme = await theme();
+			// A navigation since this show read its tag gave the tab a new document and a show of its own.
+			const tagNow = late.fired ? await veilTag(tabId) : tag;
 			// Nothing is awaited from here to the inject.
 			let { interactive, concealed, view } = effect;
 			if (late.fired) {
 				const now = state.tabs[tabId];
-				if (late.seq && newestShow.has(tabId) && newestShow.get(tabId) !== late.seq) return;
+				if (late.seq && newestShow.get(tabId) !== late.seq) return;
+				if (tagNow !== tag) return;
 				if (!now) {
 					await rememberVeilTag(tabId, undefined);
 					return;
@@ -278,16 +289,46 @@ async function theme(): Promise<VeilTheme> {
 	return themeCache;
 }
 
-/** The pointer setting, read once: a cue or a show that comes before the read waits for it, never for the default. */
+/**
+ * The pointer setting, read once: a cue that comes before the read waits for it, never for the default. A read that
+ * settles after a show gave up on it sends the setting to every open veil (PR 204's second review, first-F1).
+ */
 function pointerOn(): Promise<boolean> {
 	if (pointer !== undefined) return Promise.resolve(pointer);
-	pointerRead ??= isPointerEnabled()
+	if (pointerRead) return pointerRead;
+	const read = isPointerEnabled()
 		.catch(() => true)
 		.then((on) => {
-			pointer ??= on;
+			if (pointerRead === read) pointerRead = undefined;
+			if (pointer !== undefined) return pointer;
+			pointer = on;
+			if (pointerTimedOut) for (const id of Object.keys(state.tabs)) void queuePoint(Number(id), undefined);
 			return pointer;
 		});
-	return pointerRead;
+	pointerRead = read;
+	pointerGiveUp = new Promise((r) =>
+		setTimeout(() => {
+			if (pointer === undefined) {
+				pointerTimedOut = true;
+				if (pointerRead === read) pointerRead = undefined;
+			}
+			r(undefined);
+		}, EFFECT_TIMEOUT_MS),
+	);
+	return read;
+}
+
+/**
+ * The setting for a show to draw with. The wait on a read is bounded by one deadline from when that read started, shared
+ * by every show waiting on it; past it the show draws no character (the safe side) and the read is dropped, never kept
+ * pending for the life of the worker. Each later show then starts a new read and draws at once, so a read that never
+ * settles holds up no show after the first (PR 204's second review, second-S1).
+ */
+async function pointerForShow(): Promise<boolean> {
+	if (pointer !== undefined) return pointer;
+	const read = pointerOn();
+	if (pointerTimedOut) return false;
+	return (await Promise.race([read, pointerGiveUp])) ?? pointer ?? false;
 }
 
 async function veilOn(): Promise<boolean> {
@@ -392,6 +433,7 @@ export function startVeil(logger?: (line: string) => void): void {
 		}
 	});
 	chrome.tabs.onRemoved.addListener((tabId) => {
+		newestShow.delete(tabId);
 		void dispatch({ type: "drop", tabId });
 		void rememberVeilTag(tabId, undefined);
 	});

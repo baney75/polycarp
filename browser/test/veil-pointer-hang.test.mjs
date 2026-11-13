@@ -30,3 +30,14 @@ test("second-S1: a pointer setting read that never settles holds a tool call for
 	assert.ok(took < 2_000, `veilBegin took ${Math.round(took)} ms`);
 	veilEnd(session, "click", begun);
 });
+
+test("second-S1 (PR 204's second review): after that, a show on a fresh tab no longer waits on the hung read at all", async () => {
+	const tabId = fake.addTab({ url: "https://shop.example.com/two" });
+	const session = { id: "bridge-claude-two", tabIds: [tabId], currentTabId: tabId, ended: false, record: { label: "claude", color: "green" } };
+	const t0 = performance.now();
+	const begun = await Promise.race([veilBegin(session, "click", { tabId }), new Promise((r) => setTimeout(() => r("hung"), 4_000))]);
+	const took = performance.now() - t0;
+	assert.notEqual(begun, "hung", "veilBegin never returned");
+	assert.ok(took < 750, `the second veilBegin waited ${Math.round(took)} ms on the read that never settles`);
+	veilEnd(session, "click", begun);
+});
