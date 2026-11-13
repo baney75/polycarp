@@ -81,7 +81,11 @@ final class HandsRouter {
     func handleWire(_ r: Wire.Request) -> Wire.Reply {
         let env: HandsEnvelope
         if let data = r.text?.data(using: .utf8), let req = try? JSONDecoder().decode(HandsRequest.self, from: data) {
-            env = HandsNextCall.fill(handle(req), window: windowOf(req))
+            // A bare row number is resolved once, here: `handle` gets the full ref and the next call's window comes from it,
+            // also for a call refused before it acts (187 r1 first-F3, 192 r1 first-F6).
+            var resolved = req
+            if let r = req.string("ref"), SnapshotRows.browserRefError(r) == nil, let n = SnapshotRows.bareNumber(r), case .success(let full) = bareRef(n, req) { resolved.args["ref"] = .string(full) }
+            env = HandsNextCall.fill(handle(resolved), window: windowOf(resolved))
         } else {
             env = .failure(HandsError(.badArguments, "the request wasn't an agent command", suggestion: "Use `polycarp-spaces agent <command>`.", retry: .never))
         }
@@ -120,6 +124,7 @@ final class HandsRouter {
         case "scroll": return scroll(req)
         case "select": return act(req, .select, "select", text: req.string("option"))
         case "toggle": return act(req, .toggle, "toggle")
+        case "menu": return menu(req)
         case "shot": return shot(req)
         case "open": return open(req)
         default: return .failure(HandsError(.badArguments, "unknown agent command \(req.verb)", suggestion: "Commands: " + HandsTools.all.map(\.verb).joined(separator: ", ")))
@@ -165,9 +170,10 @@ final class HandsRouter {
 
     /// The same for a call that changes something: Read Only, set after the request was let in, stops it here too, and so
     /// does Donovan coming back to the app after the wait found it free (the in-use rule, read again at this moment).
-    func actingCheck(_ w: HandsWindow, ref: String? = nil, verb: String, delivery: InUseDelivery, session: String = "") -> HandsEngine.Check {
+    /// `also`: a verb's own rule, read at the same moment (a menu command's key-window rule).
+    func actingCheck(_ w: HandsWindow, ref: String? = nil, verb: String, delivery: InUseDelivery, session: String = "", also: HandsEngine.Check? = nil) -> HandsEngine.Check {
         let scope = check(w, ref: ref, session: session)
-        return { [self] in AgentAccessGate.actingRefusal(mode: access) ?? scope() ?? inUseProblem(w, verb: verb, delivery: delivery) }
+        return { [self] in AgentAccessGate.actingRefusal(mode: access) ?? scope() ?? inUseProblem(w, verb: verb, delivery: delivery) ?? also?() }
     }
 
     // MARK: in use
@@ -694,10 +700,9 @@ final class HandsRouter {
     }
 
     /// The window a request is about, for its error's next call: the window it names, or the one its ref's snapshot read.
-    /// A bare row number counts through what it stands for in this session (review r1 first-F2).
+    /// A bare row number counts through what `handle` resolved it to (review r1 first-F2); one it refused names no window.
     private func windowOf(_ req: HandsRequest) -> Int? {
-        RefWindow.of(window: req.int("window"), ref: req.string("ref"),
-                     bare: { n in if case .success(let full) = bareRef(n, req) { return full } else { return nil } },
+        RefWindow.of(window: req.int("window"), ref: req.string("ref"), bare: { _ in nil },
                      snapshotWindow: { sid in lock.lock(); defer { lock.unlock() }; return snaps[sid].map { Int($0.window) } })
     }
 
