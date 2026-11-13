@@ -1230,8 +1230,8 @@ fn extension_connected(parts: &[Part]) -> bool {
 /// for: the browser loads the new build when it starts. Once half the time has passed, an extension
 /// that still reports the old build gets one more reload: Helium can keep the old one after the
 /// first (#207). 0 when every extension runs `target` or none reports a build, the reload's own code
-/// when it could not run (75: an agent is working in the browser), 1 when one seen on the old build
-/// since the reload does not report `target` at the end. The time is bounded by up to 4 s for a browser
+/// when it could not run (75: an agent is working in the browser), 1 when one whose last report was an
+/// old build, before the reload or since, does not report `target` by the end. The time is bounded by up to 4 s for a browser
 /// to connect, then `wait` (at least 4 s after each reload), plus one pause and one look, however
 /// slowly the parts answer.
 pub fn reload_wait(
@@ -1247,7 +1247,8 @@ pub fn reload_wait(
     // One look is not enough: an extension that is reloading or reconnecting drops off for a moment (first-F1 of the
     // review of PR 236).
     let first = clock();
-    while !extension_connected(&parts()) {
+    let mut before = parts();
+    while !extension_connected(&before) {
         if clock().saturating_sub(first) >= RELOAD_SETTLE {
             let _ = writeln!(
                 out,
@@ -1256,7 +1257,15 @@ pub fn reload_wait(
             return 0;
         }
         pause();
+        before = parts();
     }
+    // Each extension whose last report was an old build, the look before the reload included, and whether it said so
+    // since the reload: it passes only once it reports `target`, whether it then goes quiet or drops out of the list
+    // (first-F2 of the review of PR 236; first-F1, second-F5, second-F6 of the review of PR 244).
+    let mut last_old: std::collections::BTreeMap<String, bool> = old_builds(&before, target)
+        .into_iter()
+        .map(|n| (n, false))
+        .collect();
     match reload() {
         Some(0) => {}
         code => return code.unwrap_or(1),
@@ -1264,19 +1273,28 @@ pub fn reload_wait(
     let started = clock();
     let mut deadline = wait.max(RELOAD_SETTLE);
     let mut retried = false;
-    // Every extension seen on the old build since the reload: one that then stops answering has not shown it took the
-    // new one (first-F2 of the review of PR 236).
-    let mut seen_old = std::collections::BTreeSet::new();
     loop {
         pause();
         let now = parts();
+        for p in now.iter().filter(|p| p.name.starts_with("extension")) {
+            if matches!(p.found, version::Found::Installed { .. }) {
+                match version::is_current(std::slice::from_ref(p), target) {
+                    true => last_old.remove(&p.name),
+                    false => last_old.insert(p.name.clone(), true),
+                };
+            }
+        }
         let waiting = not_reloaded(&now, target);
-        if waiting.is_empty() {
+        if waiting.is_empty() && last_old.is_empty() {
             let _ = writeln!(out, "The extension runs {at}.");
             return 0;
         }
-        let old = old_builds(&now, target);
-        seen_old.extend(old.iter().cloned());
+        // Only one that said so since the reload gets another: one that hasn't answered may yet (first-F2 of PR 244).
+        let old: Vec<String> = last_old
+            .iter()
+            .filter(|(_, since)| **since)
+            .map(|(n, _)| n.clone())
+            .collect();
         let spent = clock().saturating_sub(started);
         if !retried && !old.is_empty() && spent >= wait / 2 {
             retried = true;
@@ -1293,9 +1311,7 @@ pub fn reload_wait(
             continue;
         }
         if spent >= deadline {
-            let on_target = |n: &String| now.iter().any(|p| &p.name == n) && !waiting.contains(n);
-            let stale: Vec<String> = seen_old.iter().filter(|n| !on_target(n)).cloned().collect();
-            if stale.is_empty() {
+            if last_old.is_empty() {
                 let _ = writeln!(
                     out,
                     "note: {} reported no build in {} s, so it was not compared. `polycarp version` asks again.",
@@ -1304,10 +1320,12 @@ pub fn reload_wait(
                 );
                 return 0;
             }
+            let stale: Vec<&str> = last_old.keys().map(String::as_str).collect();
             let _ = writeln!(
                 out,
-                "{} still does not run {at}, after two reloads.",
-                stale.join(", ")
+                "{} still does not run {at}, after {}.",
+                stale.join(", "),
+                if retried { "two reloads" } else { "the reload" }
             );
             return 1;
         }
@@ -2728,7 +2746,8 @@ mod tests {
     /// `T` after the first. Before any reload both run `OLD`, and right after each reload the
     /// extension is gone for one look. `helium_late`: Helium gives no answer until the clock reaches
     /// that many seconds after the start. `absent_looks`: the first looks see no browser connected.
-    /// `helium_quiet_from`: Helium gives no answer from then on.
+    /// `helium_quiet_from`: Helium gives no answer from then on; `helium_gone_from`: it is not listed
+    /// from then on. `chrome_quiet`: Chrome never answers, before the reload too.
     struct Browser {
         ready_after: u32,
         code: i32,
@@ -2737,6 +2756,8 @@ mod tests {
         none_connected: bool,
         absent_looks: u32,
         helium_quiet_from: u64,
+        helium_gone_from: u64,
+        chrome_quiet: bool,
     }
     impl Browser {
         fn new(ready_after: u32) -> Browser {
@@ -2748,6 +2769,8 @@ mod tests {
                 none_connected: false,
                 absent_looks: 0,
                 helium_quiet_from: u64::MAX,
+                helium_gone_from: u64::MAX,
+                chrome_quiet: false,
             }
         }
     }
@@ -2770,8 +2793,12 @@ mod tests {
             if b.none_connected || (reloads.get() == 0 && looks.get() <= b.absent_looks) {
                 return vec![Part::absent("extension", "no browser is connected")];
             }
+            let chrome = |commit| match b.chrome_quiet {
+                true => Part::unanswered("extension (Chrome)", "no answer in time"),
+                false => at("extension (Chrome)", commit),
+            };
             if reloads.get() == 0 {
-                return vec![at("extension (Chrome)", OLD), at("extension (Helium)", OLD)];
+                return vec![chrome(OLD), at("extension (Helium)", OLD)];
             }
             if since_reload.get() == 1 {
                 return vec![Part::absent("extension", "no browser is connected")];
@@ -2782,7 +2809,10 @@ mod tests {
             } else {
                 at("extension (Helium)", if ready { T } else { OLD })
             };
-            vec![at("extension (Chrome)", T), helium]
+            match now.get() >= b.helium_gone_from {
+                true => vec![chrome(T)],
+                false => vec![chrome(T), helium],
+            }
         };
         let clock = || std::time::Duration::from_secs(now.get());
         let mut pause = || now.set(now.get() + 2);
@@ -2882,15 +2912,17 @@ mod tests {
         let (rc, reloads, _, _, out) = reload_run(late, 30);
         assert_eq!((rc, reloads), (0, 1), "{out}");
         assert!(!out.contains("reloaded once more"), "{out}");
-        // One that never answers is noted, not called a failure: nothing is known about its build.
+        // One that never answers after the reload last reported the old build (second-F5 of the review
+        // of PR 244): it fails, after the one reload that ran, with no second one.
         let silent = Browser {
             helium_late: 1000,
             ..Browser::new(1)
         };
         let (rc, reloads, _, _, out) = reload_run(silent, 30);
-        assert_eq!((rc, reloads), (0, 1), "{out}");
+        assert_eq!((rc, reloads), (1, 1), "{out}");
         assert!(
-            out.contains("extension (Helium) reported no build"),
+            out.contains("extension (Helium) still does not run")
+                && out.contains("after the reload."),
             "{out}"
         );
     }
@@ -2930,8 +2962,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn first_f1_second_f5_review_of_pr_244_one_on_the_old_build_that_drops_out_fails() {
+        // first-F1: seen on the old build after the reload, then gone from the list while Chrome runs T.
+        let gone = Browser {
+            helium_gone_from: 6,
+            ..Browser::new(0)
+        };
+        let (rc, reloads, _, _, out) = reload_run(gone, 30);
+        assert_eq!((rc, reloads), (1, 2), "{out}");
+        assert!(
+            out.contains("extension (Helium) still does not run"),
+            "{out}"
+        );
+        // second-F5: on the old build before the reload, and in no look after it.
+        let never = Browser {
+            helium_gone_from: 0,
+            ..Browser::new(0)
+        };
+        let (rc, reloads, _, _, out) = reload_run(never, 30);
+        assert_eq!((rc, reloads), (1, 1), "{out}");
+        assert!(
+            out.contains("extension (Helium) still does not run")
+                && out.contains("after the reload."),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn first_f2_review_of_pr_244_one_that_went_quiet_before_halfway_gets_its_second_reload() {
+        let quiet = Browser {
+            helium_quiet_from: 10,
+            ..Browser::new(0)
+        };
+        let (rc, reloads, _, _, out) = reload_run(quiet, 30);
+        assert_eq!((rc, reloads), (1, 2), "{out}");
+        assert!(out.contains("after two reloads."), "{out}");
+    }
+
+    #[test]
+    fn second_f6_review_of_pr_244_a_late_answer_after_the_new_build_is_no_failure() {
+        // Chrome never answers; Helium runs the old build, then T after the second reload, then is quiet.
+        let late = Browser {
+            chrome_quiet: true,
+            helium_quiet_from: 26,
+            ..Browser::new(2)
+        };
+        let (rc, reloads, _, _, out) = reload_run(late, 30);
+        assert_eq!((rc, reloads), (0, 2), "{out}");
+        assert!(out.contains("reported no build"), "{out}");
+    }
+
     /// A git repository of one empty commit in a temp folder, and that commit: no test reads the
     /// developer's checkout (first-F3 of the review of PR 236).
+    /// Removes its folders when dropped, a failed assert included (first-F4 of the review of PR 244).
+    struct Gone(Vec<PathBuf>);
+    impl Drop for Gone {
+        fn drop(&mut self) {
+            for dir in &self.0 {
+                let _ = fs::remove_dir_all(dir);
+            }
+        }
+    }
+
     fn temp_repo(name: &str) -> (PathBuf, String) {
         let dir = std::env::temp_dir().join(format!("polycarp-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -2945,13 +3038,19 @@ mod tests {
                 "-c",
                 "commit.gpgsign=false",
             ];
-            Command::new("git")
+            // Git's own variables would point it at the checkout a hook runs in (first-F3 of PR 244).
+            let ran = Command::new("git")
                 .arg("-C")
                 .arg(&dir)
                 .args(who)
                 .args(a)
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_INDEX_FILE")
                 .output()
-                .unwrap()
+                .unwrap();
+            assert!(ran.status.success(), "git {a:?}: {ran:?}");
+            ran
         };
         git(&["init", "-q"]);
         git(&["commit", "-q", "--allow-empty", "-m", "t"]);
@@ -2971,6 +3070,7 @@ mod tests {
         // cargo runs tests in the crate's folder, so a folder under it is not trusted.
         let here = std::env::current_dir().unwrap();
         let untrusted = here.join(format!("target/polycarp-untrusted-{}", std::process::id()));
+        let _gone = Gone(vec![repo.clone(), untrusted.clone()]);
         let said = repo.join("said");
         for dir in [&trusted, &untrusted] {
             fs::create_dir_all(dir).unwrap();
@@ -3017,7 +3117,6 @@ mod tests {
         let mut runner = RealRunner::with_path(&repo, Some(untrusted.clone().into_os_string()));
         assert_eq!(reload_wait_command(&args, &device, &mut runner), 1);
         assert!(!said.exists());
-        let _ = (fs::remove_dir_all(&repo), fs::remove_dir_all(&untrusted));
     }
 
     /// `second-F5` (review of PR 218): the plan's own reload argv, as `polycarp update` hands it to
@@ -3035,7 +3134,9 @@ mod tests {
         // `polycarp update` drops the program and "update" before `run`. The clean copy is a temp
         // repository, so its HEAD resolves.
         let mut args: Vec<OsString> = step.argv[2..].iter().map(OsString::from).collect();
-        args[1] = temp_repo("plan-argv").0.into_os_string();
+        let repo = temp_repo("plan-argv").0;
+        let _gone = Gone(vec![repo.clone()]);
+        args[1] = repo.into_os_string();
         let parts = || vec![at("extension (Chrome)", OLD)];
         let device = Device {
             home: None,
