@@ -2915,7 +2915,15 @@ test("an action refused because the control was covered does not count as done",
 // PR 208 first-F3: fill's second look after its scroll rewrote every error as "left the page". A field the page relabels
 // on scroll (a virtual list reusing the node for another row) is still there, showing something else, and says so.
 extraPages["/scroll-relabel"] = `<!doctype html><title>Polycarp scroll relabel</title><div style="height:3000px"></div><input id="far" aria-label="Row 1 note"><div style="height:3000px"></div>
-<script>addEventListener("scroll", () => document.getElementById("far").setAttribute("aria-label", "Row 9 note"), { once: true });</script>`;
+<script>
+// Relabels the field once the page has scrolled, checked every frame and every 10 ms: fill waits two frames (or 200 ms
+// where none are drawn) after its scroll, so this lands between its two looks. A scroll event alone came too late in CI.
+let done = false;
+const relabel = () => { if (!done && scrollY > 0) { done = true; document.getElementById("far").setAttribute("aria-label", "Row 9 note"); } };
+const frame = () => { relabel(); if (!done) requestAnimationFrame(frame); };
+requestAnimationFrame(frame);
+const poll = setInterval(() => { relabel(); if (done) clearInterval(poll); }, 10);
+</script>`;
 
 test("a field the page relabels as fill scrolls to it says it shows something else, not that it left", async (t) => {
 	await go("scroll-relabel");
