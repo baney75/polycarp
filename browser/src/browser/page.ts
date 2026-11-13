@@ -423,8 +423,8 @@ function pageSnapshot(
 	live: (el: Element) => boolean,
 	print: (el: Element) => string,
 	keepStale = false,
-	frameShown: (el: Element) => "shown" | "hidden" | "away" = () => "shown",
-	frameNotes: Record<"shown" | "hidden" | "away", string> = { shown: "", hidden: "", away: "" },
+	frameShown: (el: Element) => "shown" | "hidden" | "away",
+	frameNotes: Record<"shown" | "hidden" | "away", string>,
 ): unknown {
 	const w = window as unknown as {
 		__tabkyraRefs?: unknown;
@@ -1099,11 +1099,12 @@ export async function changeLook(
 		const ref = frame.ref;
 		const find = () => frameForRef(tabId, ref, frame.rule ?? FRAMES_CLOSED).catch(() => undefined);
 		// Its look, and whether a person sees the frame now: an action can hide it (#73). The test keeps
-		// to the look's budget.
+		// to the look's budget, one deadline for the frame found once and again.
+		const end = Date.now() + FRAME_SHOWN_MS;
 		const run = (hit: { frame: PageFrame }) =>
 			Promise.all([
 				runInFrame<ChangeLook | "guarded" | "large">(tabId, hit.frame, code(mine)).catch(() => undefined),
-				frameState(tabId, hit.frame, Date.now() + FRAME_SHOWN_MS).catch(() => undefined),
+				frameState(tabId, hit.frame, end).catch(() => undefined),
 			]);
 		// The frame found once for the action serves every look; it is looked for again only when it stops answering.
 		const known = frame.hit;
@@ -1118,10 +1119,12 @@ export async function changeLook(
 		if (got === "guarded") return "gone";
 		if (typeof got !== "object" || !got) return undefined;
 		// The action can take the frame to a host the person never allowed, or to an error page, keeping its id
-		// and session (D46): the document the look read is checked as the first look checked it. A hidden frame,
-		// or one the debugger can't test, is not read; one only out of view is.
-		const seen = state === "shown" || state === "away";
-		if (!seen || !web(got.url) || (await (frame.rule ?? FRAMES_CLOSED)(got.url))) return "gone";
+		// and session (D46): the document the look read is checked as the first look checked it. A hidden frame
+		// is not read and its refs are gone; one the debugger gave no answer for is not read, and its refs are
+		// left as they were, since it may well still be there; one only out of view is read.
+		if (!web(got.url) || (await (frame.rule ?? FRAMES_CLOSED)(got.url))) return "gone";
+		if (state === "hidden") return "gone";
+		if (state === undefined) return undefined;
 		return got;
 	};
 	const [look, inner] = await Promise.all([
@@ -1178,6 +1181,15 @@ const FRAMES_READ_MS = 4000;
 
 type Line = SnapshotNode & { states?: string[] };
 
+/** Whether two URLs are on one origin. */
+function sameOrigin(a: string, b: string): boolean {
+	try {
+		return new URL(a).origin === new URL(b).origin;
+	} catch {
+		return false;
+	}
+}
+
 /**
  * The listed cross-origin frame line that is this frame's own <iframe>: the same box, center and
  * size, as drawn. A frame overlapping another's box, or a pixel at its corner, matches none.
@@ -1199,9 +1211,11 @@ function lineOf(
 			near(n.width, f.box.width) &&
 			near(n.height, f.box.height),
 	);
-	// Two frames of one box: the line that names this frame's URL is its own. `exact` takes no other.
+	// Two frames of one box: the line that names this frame's URL is its own. `exact` takes no other, but a
+	// frame that redirected or navigated within its origin still owns the line its <iframe> names.
 	const named = fits.find((n) => n.href === f.url.slice(0, 200));
-	return exact ? named : (named ?? fits[0]);
+	if (!exact) return named ?? fits[0];
+	return named ?? fits.find((n) => !!n.href && sameOrigin(n.href, f.url));
 }
 
 /**
@@ -1250,11 +1264,11 @@ async function readFrames(
 		});
 		// Lines no shown frame claimed say why nothing of theirs is read: a barred host whatever the page
 		// says of it, and "not shown" where the page called it shown and the tab found it hidden. A frame the
-		// debugger gave no answer for keeps its line, and only the line naming the frame's own URL is relabeled.
+		// debugger gave no answer for keeps its line, and only the line naming the frame's own URL or origin is relabeled.
 		level.forEach((f, i) => {
 			if (bound.has(f)) return;
 			if (f.blocked) {
-				const own = bind(f, FRAME_NOTES);
+				const own = bind(f, FRAME_NOTES, true);
 				if (own) own.states = [`not allowed for agents: ${frameHost(f.url)}`];
 			} else if (shown[i] === "hidden") {
 				const own = bind(f, [CROSS_NOTE], true);

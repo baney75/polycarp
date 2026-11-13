@@ -361,8 +361,10 @@ async function resolveOwner(
 /**
  * Whether a person can see an <iframe>: "shown"; "hidden" when it is under 4 px either way, not
  * drawn, see-through (its opacity times every box's around it, filters included, under 0.1), kept
- * off the page or covered wherever it is in view; "away" when no part of it is in view, so nothing
- * there can be tested until it is scrolled to. Self-contained: it runs in a page, in read_page's
+ * off the page or covered wherever it is in view; "away" when no part of it is in view but a
+ * scroll can bring it there. Out of view, it is "hidden" past the page's scroll extent, clipped
+ * by a box that does not scroll (overflow hidden or clip), or under a box fixed over the whole
+ * viewport, which would cover it wherever it scrolled to. Self-contained: it runs in a page, in read_page's
  * snapshot and, through frameShownNow, before a frame is read and before an action in it.
  */
 export function frameShown(el: Element): "shown" | "hidden" | "away" {
@@ -392,10 +394,51 @@ export function frameShown(el: Element): "shown" | "hidden" | "away" {
 	]
 		.map(([a, b]) => [r.left + a * r.width, r.top + b * r.height])
 		.filter(([x, y]) => x >= 0 && y >= 0 && x < view.innerWidth && y < view.innerHeight);
-	if (!points.length) return "away";
 	// Hit-tested in its own tree: in a shadow root the document would only ever answer the host.
 	const root = el.getRootNode() as Document | ShadowRoot;
 	const at = typeof root.elementFromPoint === "function" ? root : el.ownerDocument;
+	if (!points.length) {
+		const page = el.ownerDocument.documentElement as Element | null;
+		const viewport = { left: 0, top: 0, right: view.innerWidth, bottom: view.innerHeight };
+		const clips = (v: string) => v === "hidden" || v === "clip";
+		const scrolls = (v: string) => v === "auto" || v === "scroll";
+		// Where the frame can be brought, each way: past a box that scrolls, that box's own place.
+		let x = { from: r.left, to: r.right };
+		let y = { from: r.top, to: r.bottom };
+		const styleOf = (n: Element) => (n.ownerDocument.defaultView ?? view).getComputedStyle(n);
+		for (let n: Element | null = el.parentElement ?? null; n; ) {
+			// The page's own scroll: html and body both say whether it is turned off, each way.
+			const isRoot = n === page || n === el.ownerDocument.body;
+			const sts = isRoot
+				? [page, el.ownerDocument.body].filter((m): m is Element => !!m).map(styleOf)
+				: [styleOf(n)];
+			const b = isRoot ? viewport : n.getBoundingClientRect();
+			const ox = sts.some((st) => clips(String(st.overflowX ?? st.overflow ?? "")));
+			const oy = sts.some((st) => clips(String(st.overflowY ?? st.overflow ?? "")));
+			if (ox && (x.to <= b.left || x.from >= b.right)) return "hidden";
+			if (oy && (y.to <= b.top || y.from >= b.bottom)) return "hidden";
+			if (isRoot) break;
+			const st = sts[0];
+			if (scrolls(String(st.overflowX ?? st.overflow ?? ""))) x = { from: b.left, to: b.right };
+			if (scrolls(String(st.overflowY ?? st.overflow ?? ""))) y = { from: b.top, to: b.bottom };
+			const up: Node = n.parentElement ?? n.getRootNode();
+			n = up.nodeType === 1 ? (up as Element) : ((up as ShadowRoot).host ?? null);
+		}
+		// Past the end of what the page scrolls to.
+		const wide = Math.max(page?.scrollWidth ?? 0, view.innerWidth);
+		const tall = Math.max(page?.scrollHeight ?? 0, view.innerHeight);
+		if (page && (x.from + view.scrollX >= wide || y.from + view.scrollY >= tall)) return "hidden";
+		// The cover test, where it would come into view: a box fixed over the whole viewport covers it there too.
+		const cx = Math.min(Math.max(r.left + r.width / 2, 0), view.innerWidth - 1);
+		const cy = Math.min(Math.max(r.top + r.height / 2, 0), view.innerHeight - 1);
+		for (let n: Element | null = at.elementFromPoint(cx, cy); n; n = n.parentElement) {
+			if (n === el || (typeof n.contains === "function" && n.contains(el))) break;
+			if ((n.ownerDocument.defaultView ?? view).getComputedStyle(n).position !== "fixed") continue;
+			const b = n.getBoundingClientRect();
+			if (b.left <= 0 && b.top <= 0 && b.right >= view.innerWidth && b.bottom >= view.innerHeight) return "hidden";
+		}
+		return "away";
+	}
 	return points.some(([x, y]) => at.elementFromPoint(x, y) === el) ? "shown" : "hidden";
 }
 
