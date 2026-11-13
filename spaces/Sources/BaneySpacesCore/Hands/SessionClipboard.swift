@@ -77,16 +77,18 @@ public struct SessionClipboard: Equatable, Sendable {
     }
 
     /// Cut, copy and paste items, by the action AppKit names an item by (its AX identifier, in any language), and by
-    /// English title only for a menu item that has no identifier (198 r1 first-F2, r2 first-F3).
+    /// English title only for a menu item with no action identifier (198 r1 first-F2, r2 first-F3).
     public static let pasteboardActions: Set<String> = ["cut:", "copy:", "paste:", "pasteasplaintext:", "pasteandmatchstyle:", "pasteasrichtext:"]
     public static let pasteboardTitles: Set<String> = ["cut", "copy", "paste", "paste and match style", "paste as plain text"]
 
     /// Whether an element is a cut, copy or paste item. A button an app titles Copy, or an item titled Copy that AppKit
-    /// wires to another action, is the app's own and not caught.
+    /// wires to another action, is the app's own and not caught. Only an identifier shaped like an action (`syncMode:`)
+    /// names what the item does; any other (`menu.edit.copy`, set for UI tests) leaves the English title to judge it
+    /// (214 r1 first-F1). Both are trimmed, as the engine trims them (first-F4).
     public static func isPasteboardItem(role: String, name: String, identifier: String) -> Bool {
-        let id = identifier.trimmingCharacters(in: .whitespaces)
-        if !id.isEmpty { return pasteboardActions.contains(id.lowercased()) }
-        return role == "menuitem" && pasteboardTitles.contains(name.lowercased())
+        let id = identifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if id.hasSuffix(":") { return pasteboardActions.contains(id) }
+        return role == "menuitem" && pasteboardTitles.contains(name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
     }
 
     /// The title of the cut, copy or paste item a `click` on row `number`, or a `select` of `option` under it, would
@@ -108,7 +110,7 @@ public struct SessionClipboard: Equatable, Sendable {
         var out: [String: String] = [:]
         for (key, e) in inner {
             let id = e["native_id"]?["kind"]?.string == "ax_identifier" ? e["native_id"]?["value"]?.string ?? "" : ""
-            let name = e["name"]?.string ?? ""
+            let name = (e["name"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if isPasteboardItem(role: e["role"]?.string ?? "", name: name, identifier: id) { out[key] = name.isEmpty ? id : name }
         }
         return out
@@ -128,8 +130,14 @@ public struct SessionClipboard: Equatable, Sendable {
             guard let text else { return .failure(HandsError(.badArguments, "text is missing", suggestion: #"Example: {"ref":"7","text":"hello"}, or {"ref":"7","paste":true} for what you copied."#, retry: .safe)) }
             return .success(text)
         }
-        guard text == nil else { return .failure(HandsError(.badArguments, "pass text or paste: true, not both", suggestion: #"Example: {"ref":"7","paste":true}"#, retry: .safe, nextCall: .null)) }
+        if let e = both(text: text, paste: paste) { return .failure(e) }
         return board()
+    }
+
+    /// Text and paste together: refused before the ref resolves or the app is waited for (214 r1 first-F3).
+    public static func both(text: String?, paste: Bool) -> HandsError? {
+        guard paste, text != nil else { return nil }
+        return HandsError(.badArguments, "pass text or paste: true, not both", suggestion: #"Example: {"ref":"7","paste":true}"#, retry: .safe, nextCall: .null)
     }
 
     /// The text `get` with copy holds: its value when that is text (bounds and states are not).

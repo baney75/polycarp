@@ -5,8 +5,10 @@ import { test } from "node:test";
 import { installFakeChrome } from "./fake-chrome.mjs";
 
 const fake = installFakeChrome();
+const injected = [];
 chrome.scripting = {
 	async executeScript({ args: [cmd] }) {
+		injected.push(cmd);
 		return [{ result: cmd.op === "show" ? { tag: cmd.tag } : {} }];
 	},
 };
@@ -15,8 +17,9 @@ await new Promise((r) => setTimeout(r, 50));
 const get = chrome.storage.local.get;
 /** How many times the pointer setting was read. */
 let pointerReads = 0;
+let hang = true;
 chrome.storage.local.get = async (keys) => {
-	if (keys === "veil_pointer") {
+	if (keys === "veil_pointer" && hang) {
 		pointerReads++;
 		return new Promise(() => undefined);
 	}
@@ -47,12 +50,19 @@ test("second-S1 (PR 204's second review): after that, a show on a fresh tab no l
 	veilEnd(session, "click", begun);
 });
 
-test("first-F2 (PR 219's review): shows in later windows reuse the one read that never settles instead of starting more", async () => {
+test("first-F2 (PR 219's review), first-F1 (PR 234's review): a hung read is given up at its deadline, one fresh read per window, and the pointer comes back", async () => {
+	const before = pointerReads;
 	for (const name of ["three", "four", "five"]) {
 		const tabId = fake.addTab({ url: `https://shop.example.com/${name}` });
 		const session = { id: `bridge-claude-${name}`, tabIds: [tabId], currentTabId: tabId, ended: false, record: { label: "claude", color: "green" } };
 		veilEnd(session, "click", await veilBegin(session, "click", { tabId }));
 		await new Promise((r) => setTimeout(r, 1_600));
 	}
-	assert.equal(pointerReads, 1, `${pointerReads} reads of the setting are pending`);
+	assert.ok(pointerReads - before <= 3, `${pointerReads - before} reads in three windows`);
+	hang = false;
+	const tabId = fake.addTab({ url: "https://shop.example.com/six" });
+	const session = { id: "bridge-claude-six", tabIds: [tabId], currentTabId: tabId, ended: false, record: { label: "claude", color: "green" } };
+	veilEnd(session, "click", await veilBegin(session, "click", { tabId }));
+	await new Promise((r) => setTimeout(r, 300));
+	assert.ok(injected.some((c) => c.pointer === true), "a read that answers never turned the pointer back on");
 });

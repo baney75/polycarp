@@ -276,11 +276,14 @@ test("fitChanges: drops new text, then element lines, counts them, and never say
 function loadsLand(fake) {
 	const update = chrome.tabs.update;
 	chrome.tabs.update = async (id, p) => {
+		const was = (await chrome.tabs.get(id)).url;
 		const t = await update(id, p);
 		if (p.url && p.url !== "about:blank")
-			setTimeout(() => {
+			setTimeout(async () => {
 				const at = { tabId: id, frameId: 0, url: p.url };
 				if (p.url.endsWith("-204")) {
+					// Nothing commits, so the tab shows the page it showed (the fake set the new URL at once).
+					await update(id, { url: was });
 					for (const fn of chrome.webNavigation.onErrorOccurred.listeners) fn({ ...at, error: "net::ERR_ABORTED" });
 					return;
 				}
@@ -800,6 +803,55 @@ test("PR 229 r1 second-S3: a commit whose onCommitted arrives just after the tab
 	const r = await navigateTabDetailed(tabId, "https://other.example/", { timeoutMs: 3000 });
 	assert.ok(delivered, "the grace check read the tab between the commit and onCommitted");
 	assert.deepEqual(r, { url: "https://other.example/", timedOut: false, committed: true });
+});
+
+test("PR 238 r1 first-F1: an onCommitted later than the tick is still a new page: the tab's URL shows it", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { navigateTabDetailed } = await import(`../src/browser/navigation.ts?f238=${Math.random()}`);
+	const tabId = fake.addTab({ url: "https://shop.example/", status: "complete" });
+	const at = { tabId, frameId: 0 };
+	const fire = (ev, d) => {
+		for (const fn of chrome.webNavigation[ev].listeners) fn(d);
+	};
+	const set = chrome.tabs.update;
+	chrome.tabs.update = async (id, p) => {
+		const t = await set(id, { pendingUrl: p.url });
+		setTimeout(() => fire("onErrorOccurred", { ...at, url: "https://shop.example/old", error: "net::ERR_ABORTED" }), 10);
+		// The commit: Chrome clears pendingUrl and shows the new URL, and onCommitted comes well after both reads.
+		setTimeout(() => set(id, { pendingUrl: undefined, url: p.url }), 300);
+		setTimeout(() => {
+			fake.commitNav(id, p.url);
+			setTimeout(() => fire("onDOMContentLoaded", { ...at, url: p.url }), 20);
+		}, 1200);
+		return t;
+	};
+	const r = await navigateTabDetailed(tabId, "https://other.example/", { timeoutMs: 3000 });
+	assert.deepEqual(r, { url: "https://other.example/", timedOut: false, committed: true });
+});
+
+test("PR 238 r1 second-S1: reloading a hash route, the old router replacing that URL does not end the wait", async () => {
+	const fake = installFakeChrome();
+	noEvents();
+	const { navigateTabDetailed } = await import(`../src/browser/navigation.ts?s238=${Math.random()}`);
+	const tabId = fake.addTab({ url: "https://app.example/#/inbox", status: "complete" });
+	const at = { tabId, frameId: 0 };
+	const fire = (ev, d) => {
+		for (const fn of chrome.webNavigation[ev].listeners) fn(d);
+	};
+	const set = chrome.tabs.update;
+	chrome.tabs.update = async (id, p) => {
+		const t = await set(id, { pendingUrl: p.url });
+		setTimeout(() => fire("onHistoryStateUpdated", { ...at, url: p.url }), 10);
+		setTimeout(async () => {
+			await set(id, { pendingUrl: undefined });
+			fake.commitNav(id, p.url);
+			setTimeout(() => fire("onDOMContentLoaded", { ...at, url: p.url }), 20);
+		}, 200);
+		return t;
+	};
+	const r = await navigateTabDetailed(tabId, "https://app.example/#/inbox", { timeoutMs: 3000 });
+	assert.deepEqual(r, { url: "https://app.example/#/inbox", timedOut: false, committed: true });
 });
 
 test("PR 229 r1 first-F1: the old page's router replacing the very URL being reloaded does not end the wait", async () => {

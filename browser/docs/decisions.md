@@ -1278,10 +1278,11 @@ reports the difference:
   instead belong to an earlier navigation this one cancelled, so the wait checks the tab every 0.5 s and goes on while it
   has a navigation pending (`pendingUrl`), until a commit or the timeout; one timer does this and ends with the wait.
   Chrome clears `pendingUrl` at the commit a moment before `onCommitted` arrives, so an empty one counts only when a
-  second check 0.15 s later finds it empty too. The
+  second check 0.15 s later finds it empty too, and even then a tab that shows another document (its URL, apart from the
+  hash) committed one, so the wait goes on to that document's load. The
   tab's load status is not asked: a page that streams or never fires load stays "loading" whatever the navigation did. The
   first navigate of a session reports a 204 or a download the same way. A same-document event ends the wait only for a
-  jump (a URL with a hash, on the document the tab shows) and only for that URL apart from the hash, so the old page's
+  jump (a new hash, on the document the tab shows) and only for that URL apart from the hash, so the old page's
   router pushing a URL of its own does not, nor its replacing the very URL being reloaded. Tabs the load opened or closed, the settle included, are in both, on the first navigate of a session too. A load that timed out says
   `"still loading"`, so `navigate` always returns `changes`. `actions` whose last step acted on another tab than the first
   says `"moved to tab N"`: the look was on the first tab; a batch that names a tab and only waits stays on it. `drag` waits briefly (0.6 s cap,
@@ -1476,7 +1477,12 @@ what is there; one hit on the frame itself is enough, and a hit on anything else
 with no sample point in view (below the fold) can't be tested, so it is named, not read: "out of view: scroll to it, then
 read_page". It is out of view only when a test proves a scroll brings it into sight: nothing fixed or sticky around it, no
 clip-path, no paint containment, no overflow clip that cuts it, and the nearest box that scrolls, then the page, reach it;
-anything else is hidden. No cover is looked for out of view: one as tall as the page leaves the frame out of view. Any other failure keeps one line, "not shown, so not read", and nothing inside it is read either; this keeps the
+anything else is hidden. Each axis is tested alone, in the box's own direction (right to left too), along the flat tree
+(a slotted frame's slot and shadow boxes, then the host), and a cover fixed over the whole viewport hides it (at the center and each corner the top box is in a fixed
+layer that is seen, not under the page and paints there, and one such layer spans the viewport). A scroller that starts at its
+far end (column-reverse, row-reverse, vertical-rl) reaches back, and the debugger names an `<iframe>`'s slot in a closed
+shadow root (`DOM.describeNode`), lent to the walk on Polycarp's wrapper only. Not modeled: a cover the pointer goes
+through (`pointer-events: none`) and a frame inside an element slotted into a closed root. Any other failure keeps one line, "not shown, so not read", and nothing inside it is read either; this keeps the
 #73 rule that hidden text never reaches the agent, and an invisible field can't be filled. The same test runs again in the
 tab for each frame, level by level, before the frame claims its line (matched by the `<iframe>`'s border box, not its
 corner), so a see-through frame under a shown one can't take the shown one's line or its points; a frame whose test gets
@@ -1564,3 +1570,178 @@ Proof: `test/veil.test.mjs` (when it moves, the SVG and its CSS), and the e2e "t
 `cli/test/e2e-bridge.test.mjs`: at the clicked element on a scrolled page and at 150% zoom, at the field the agent typed
 into and at one inside a same-origin frame, absent on a same-site tab the user has, absent from the agent's screenshot
 while a direct capture shows it, gone when the setting is off while the veil stays, and gone with the veil.
+
+## D48. An agent's dialog is cancelled only when it would freeze the person (Claude, 2026-11-12)
+
+Problem: the owner saw tabs of one site blocked while an agent worked in only one of them. The cause is a dialog. Chrome
+cancels an alert, confirm or prompt that a hidden tab opens. With Polycarp's debugger attached (`Page.enable` in
+`ensureAttached`, cdp.ts) the box waits for the agent's `handle_dialog` instead, with no limit, and while it waits its
+renderer process runs nothing. Chrome runs tabs of one site in one process (a tab one page opened, and same-site tabs
+once it nears its process limit), so one agent tab's unanswered box froze every tab of that site, the person's too: no
+script, no click, no key.
+
+Decision (`src/browser/dialog-guard.ts`, service worker):
+
+- **Facts, not events.** The guard keeps only facts: the open boxes, each with an identity (`PageDialog.seq`, given at
+  `Page.javascriptDialogOpening`); which session owns each tab and each tab's site; which tab is in front in each window;
+  the `handle_dialog` answers that have arrived; and per box, since when a tab of the person's on its site has existed
+  and has been in front. One pure `decide(facts, now)` returns the boxes to Cancel and when to look again. One
+  `reconcile()` reads the facts, decides, acts and sets one timer; runs go one at a time, and every trigger calls it:
+  any tab or window event, any change of who owns a tab (the session table, so taking a tab back and ungrouping count),
+  an answer arriving or ending, the timer, and worker start (after the dialog memory is back).
+- **Only an agent's box.** A box on a tab of an agent (bridge) session can be cancelled. The side panel's box is in the
+  person's own tab and is theirs to answer: never cancelled.
+- **Same site is the proxy.** Which tabs share a renderer process can't be read from an extension, so the guard asks
+  whether the person has a tab on the box's site: its registrable domain by the Public Suffix List with its private
+  section, the list Polycarp already ships for site edits (`siteOf`; mail.web.de and www.web.de are one site,
+  alice.github.io and bob.github.io two, as Chrome groups them). An IP address or a one-label host is its own site. The
+  person's tabs are tabs no agent session owns; the side panel's count as theirs. Where the proxy errs it over-matches:
+  a box is cancelled although the person was not frozen, and the agent does the one step again with `on_dialog`; a
+  missed match freezes the person's tab.
+- **No tab of the person's on the site: the box stays open**, with no timer. An agent that clicks Delete and gets
+  `confirm()` may think for minutes or ask the person first.
+- **One of them in front:** Cancel 3 seconds after that began. **One open, none in front:** Cancel a minute after the
+  person's tab appeared. A pending `ask_user` from the owning session leaves only the minute rule.
+- **The answer set in advance.** A model turn takes longer than 3 seconds, so with the person's same-site tab in front a
+  `handle_dialog` sent after the box opened never arrives in time; the deadline stays, for the person's sake. Instead
+  click and press take `on_dialog` ("ok" or "cancel", with `on_dialog_text` for a prompt, refused unless the answer is
+  "ok"). Only a single click (clickCount 1: a double click would answer its first click's box and then press again on
+  whatever moved there, second-S1 of the review of PR 227) or press call takes it, never `actions` (the review of PR 200): an `actions` call with
+  `on_dialog` on the call, beside a step's key or inside a step is refused as `bad_params` before any step runs, with
+  the single call to send instead. Not type or fill either: done again, those would type again. Each review of the
+  batch form found new races between its steps, its timeouts and other clients; one call with one input has none of
+  them. An automatic OK only ever answers the box its own action opened (the reviews of PR 193 and PR 200):
+  - The call must name `tabId`, a tab of its own session, checked before anything runs or is armed.
+  - The answer belongs to that call and tab. It is armed (`armDialog`, cdp.ts) just before the first input that can
+    open the box (a click's first press, since a page may open its confirm on mousedown; a press's last key), once per
+    call, and taken back as soon as that input returns (`inputDone`), before the settle and the page look. A box after
+    that, or after the answered one, goes to the guard as usual, and its notice names no call: a box is blamed on an
+    input only while that input is on its way (the review of PR 216).
+  - A hold covers every input to the tab: while a call with `on_dialog` runs on a tab, any other call whose target is
+    that tab is refused as `not_sent`, counting the tab it names (or the current one) and each `actions` step's own
+    tabId. A call with `on_dialog` is refused the same way while other calls run there. A call that names no tab is
+    checked again when it resolves the current tab (`claimTab`), since another client may have changed it since the
+    check at the start; a tab first reached then is counted from then on. An `actions` step refused there, after other
+    steps ran, fails as `interrupted`, never `not_sent` (the review of PR 216), and so does the batch's closing
+    screenshot. A call that has ended counts on no tab again, so a resolve that returns after it leaves no hold (the
+    review of PR 227), once its handler's last input has returned: a press that outlived the call's limit, and its
+    release, still count (30 s at most). A call with `on_dialog` holds its tab at once, then waits within its own limit
+    until no other call counts there (the review of PR 230). The client sends a `not_sent` call
+    again after a short backoff; the refusal text says to send it again later, never that it waits.
+  - A call that ends, by a timeout or otherwise, aborts for good: the bridge sets `aborted` before it takes the answer
+    back, and the arm and each input check it right before they act, so a handler still running after a timeout never
+    arms and sends no more input. The host going away takes the answer back at once too. A click checks before every
+    press and every release, a double click's included; one stopped after a press lets go of the button at (-1, -1),
+    off the page, so the element at the spot gets no mouseup and no click, nothing more is pressed and the button is
+    not left down (the review of PR 227). That is a best effort, not a guarantee that the page sees nothing: the
+    mouseup lands outside the element, Chrome may fire a click on an ancestor they share (html or body), and an element
+    that captured the pointer on pointerdown still gets the pointerup, so a document-level or click-outside handler can
+    still run (second-S2 of the review of PR 227). CDP has no way to take a press back without an up event. The 90 s limit of a call that can open a box runs out inside
+    `raceDialogs`, so a timeout after an answer landed says which answer and not to do the action again (the review of
+    PR 216).
+  - The call reports the answer that landed: the CDP reply of the answer sent, or Chrome's own close event. An answer
+    that fails is replaced at once by Cancel and the call fails (`interrupted`, saying the page saw Cancel), with no
+    wait for the guard. A call that fails after its answer landed (a box on another tab, the page going away) says
+    which answer landed and not to do the action again.
+  - What it cannot tell apart: a box the page opens by itself while the input is on its way, on that tab, takes the
+    answer. CDP's dialog event names no cause.
+  - A box's cause is the sole call counted on its tab, or none and no repeat is named, nor for a double click. One that
+    another call's `on_dialog` answered stops no call: it froze nothing. Any other box on a session tab still fails the
+    call, since one site's tabs can share the frozen process. Over MCP every tool with arguments but click and press is
+    strict: `on_dialog`, or any key it lacks, fails by name (the review of PR 230).
+  The OK rule is the same as for handle_dialog: OK only when the box confirms exactly what the user asked for.
+- **Only a handle_dialog for that dialog defers its Cancel,** counted from the moment the request reaches the worker's
+  socket, while it waits behind the client's earlier requests too, until it ends. Nothing else holds a box: not another
+  call on the tab, not a screenshot of it, not an answer for another box.
+- **Answer by identity, on the session's own tabs.** `handle_dialog` fixes its box (tab and seq) on arrival: the tab it
+  names, or with no tabId the one box open on the session's tabs, including one whose Cancel is on its way. When it runs,
+  a tab that is not (or no longer) the session's is refused. It never guesses: with no box fixed on arrival, or when the
+  box it fixed is gone, it refuses with "No box to answer" and read_page, and never answers another box on the tab (the
+  review of PR 200). At send time the tab's open box must still be that one, checked with no await before the send. A box a
+  cross-origin frame opened (D46) keeps that frame's session (`PageDialog.sessionId`), so this answer, the guard's
+  Cancel and an `on_dialog` answer all reach it. Answering removes only the box
+  answered: a box the page opens before the answer's reply comes back stays known.
+- **Cancel, then tell.** Each Cancel is decided on facts read after the last await and sent with none between: a box
+  whose tab changed hands, or whose person's tab closed, while an earlier Cancel went out is decided again first. A box
+  has at most one Cancel on its way, with no timer racing it: until it settles no second Cancel goes out, and a late one
+  is still recorded and told. Only a Cancel that succeeded is recorded and noticed. A failed one leaves the box open and
+  answerable and is tried again after 1, 2, 4 seconds and so on up to 30; one that says the box is not there (no dialog
+  showing, no tab, not attached) drops the box with no notice. The notice gives the reason of the rule that fired, read
+  when the Cancel was decided: the person was using a tab on the site, and a handle_dialog cannot arrive in time; or the
+  box stayed open a minute while they had one open. `handle_dialog` waits for a look in progress and up to 5 seconds for
+  a Cancel on its way, then says the same words instead if the session's notice is unread, taking it back; nothing
+  repeats it. Another session's notice is never read or cleared, and an unheard Cancel of one box never refuses the
+  answer for another that is still open.
+- **What the notice says to do next** comes from the box's recorded cause (`dialogAdvice`): the bridge records one only
+  for a box that opened on the tab a click, press, type or fill step sent its last input to, while that input was on
+  its way. It never says to repeat a whole call.
+  - An alert is quoted, and never taken as a sign the action worked: a site answers a failed Delete with an alert too.
+    The notice says to read the page before acting again. A box after the one the call's `on_dialog` answered (confirm
+    OK, then another confirm) says that answer stands and not to repeat the call.
+  - No known cause (run_js, a hover, scroll or drag, a page timer, leaving the page, a box kept from before a restart),
+    or a box on another tab than the step's: the notice says Polycarp does not know what opened it and to read the page
+    first. It names no call.
+  - A type or fill step: read the page; finish with the click or press that submits it, with `on_dialog`.
+  - A click or press: that one step, on the box's tab, with `on_dialog`, as a single call. In `actions` the notice says
+    how many steps ran (do not run them again), which step opened the box and how many after it did not run, and names
+    the step's own call outside actions. A press with `repeat` names one press: only the last opened the box.
+  The call's own note says the same up front when the person's tab of the site is in front, so the agent does not spend
+  a turn on a handle_dialog that cannot arrive. With an `ask_user` pending only the minute rule applies, so the note
+  leaves handle_dialog open.
+- **The veil** credits only the tab a call acted on (`src/browser/tab-use.ts`), plus a tab the call moved the session to;
+  before, a call that named a tab still counted on the current tab.
+
+Not done: the list is a snapshot (`scripts/gen-public-suffixes.mjs` refreshes it), and Chrome's own process grouping
+can put sites together that the proxy keeps apart (a tab opened by another site's page).
+
+Proof: `test/dialog-guard.test.mjs` has `decide` table rows and guard runs on a fake clock, each named for the review
+finding it covers, and a randomized run of 120 event sequences (boxes opening and closing, tabs moving to the front,
+owners changing, answers arriving and ending, tab replacement, worker restart, ask_user) that checks after every step
+that no person's tab stays frozen past its deadline unless an answer for that exact box is pending, and that no box is
+cancelled under its answer or twice. `test/dialog-answer.test.mjs` drives `handle_dialog` with real cdp events: a call
+for a box that closed while it waited never answers the next one, and the review of #188's ownership and in-flight
+cases. `test/dialog-preset.test.mjs` runs the real bridge on fake chrome with page programs that open boxes and wait for their
+answers. The guard cancels a click's confirm at 3 s, the notice names that one click on its tab, the repeat is
+answered OK at once and nothing more is cancelled. One test per finding of the #193 review: a confirm OK by `on_dialog`
+then "Record deleted" (dismissed, no repeat named, one record deleted); an unnamed or foreign tab refused before
+anything is armed; a second client's call on the tab refused and a page's own box never taking the answer; a failed OK
+reported as the Cancel the page got; an `actions` box naming only its step and the steps that ran; boxes with no known
+cause, or on another tab, naming no call. And one per finding of the review of PR 200: `on_dialog` anywhere in `actions`
+refused before a step runs; another client's `actions` step on a held tab refused, with "send it again"; a call timed
+out before its last input sending nothing and arming nothing; a box during a click's settle not taking its answer; a
+failed OK cancelled at once; failures after an answered box naming it; a repeat press naming one press; an alert
+quoted; a pending ask_user leaving handle_dialog open. And one per finding of the review of PR 216: a page timer's box
+after the click returned naming no call; a timeout after an answered box naming it; an unnamed step that resolves a
+held tab late refused, and one that reached a tab late holding it; a confirm on mousedown answered; a timed-out click
+releasing its button off the page; and in `cli/test/mcp.test.mjs`, `on_dialog` on another tool refused over MCP, never
+dropped. And one per finding of the review of PR 227: a double click timed out at its first press clicking nothing; the
+host going away disarming the answer; a call that ended before its resolve returned leaving no hold; an `actions`
+screenshot on a held tab failing as `interrupted`; and `run_js`, `navigate`, `find` and `wait` refusing `on_dialog`
+over MCP. Every MCP tool but click and press refuses it. `test/dialog-answer.test.mjs` has the handle_dialog that found no
+box on arrival never answering one that opened since. The weak-model tasks in `evals/weak-model/tasks/dialog-preset.mjs` give a
+small model the same cases from a plain prompt: one where it must click with `on_dialog`, one where the site's alert
+after the deletion must not make it repeat. The e2e "only the tab an agent uses is held up" in
+`cli/test/e2e-bridge.test.mjs` opens a same-site tab from the agent's tab (one process, checked by a busy loop), lets
+the user keep it, has the agent's page open a confirm and brings the user's tab to the front. On main the user's tab
+stays frozen and the test fails. It then repeats the click with `on_dialog` "ok" and checks the page got OK within the
+grace and nothing froze or was cancelled again.
+
+## D49. A download an action starts is reported with its result, through the debugger (Claude, 2026-11-13)
+
+**Problem.** A click on an attachment link, a blob link or a button whose script makes a file starts a download, and
+the agent was told nothing. It saw an unchanged page and often clicked again, or said the export failed.
+
+**Decision.** `downloads.ts` listens for `Page.downloadWillBegin` and `Page.downloadProgress`, which Chrome sends once
+the `Page.enable` cdp.ts sends for dialogs is on. Every input tool's result, and navigate's, lists the downloads begun
+since the action started: suggested name, extension as type, size when complete, state (started, completed,
+canceled), and the URL through `maskUrl` as `files download` shows it. A data: URL keeps only its header. After the
+page settles the action waits up to 2 s for a download to end. No `chrome.downloads` permission: it would give the
+path and final name, but a new permission means store review again and a prompt for every user.
+
+**Limits.** The save folder is not known, and the result says so. Chrome adds " (1)" to a name already taken. A
+download waiting on a save box stays "started". A type the person set to open on its own still opens. Steps inside
+`actions` report no downloads. Polycarp opens nothing; to read a file the agent calls `files download` with the link's
+ref, under its 50 MiB limit and its rules for other sites.
+
+**Proof.** `test/downloads.test.mjs` drives `click` through the bridge on fake chrome (all four fail on main
+93a70440); the e2e "a click on a download link reports the file it started" runs real Chrome.

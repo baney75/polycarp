@@ -42,6 +42,9 @@ public enum HandsTools {
     /// Every action takes it: how long to wait while Donovan is using the app (`InUseRule`, `InUseWait`).
     public static let waitParam = HandsParam("wait", .integer, "Seconds to wait, 0 to \(InUseRule.maxWait) (default \(Int(InUseRule.defaultWait))), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.")
 
+    /// Every agent verb, for the help lines: made from `all`, so a verb is never left out of them.
+    public static var verbLine: String { all.map(\.verb).joined(separator: "|") }
+
     public static let all: [HandsTool] = base.map { t in
         var t = t
         if AgentAccessGate.changes.contains(t.verb) { t.params.append(waitParam) }

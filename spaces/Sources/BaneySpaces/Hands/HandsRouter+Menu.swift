@@ -22,29 +22,41 @@ extension HandsRouter {
             defer { AgentActivity.shared.end(token) }
             let acting = actingCheck(w, verb: "menu", delivery: .posted, session: session, also: menuRule(w, session: session, front: true))
             let childrenBefore = noteAction(session: session, pid: w.pid)
-            var spelled: [String] = [], press: JSONValue = .null
-            // A panel already up before the press is not the command's (197 r1 second-S1), but nothing else would ever
-            // cancel it, so it is cancelled now, before the press, and the answer says so (205 r1 first-F1).
-            var cancelledEarlier = false
-            for _ in MenuAX.panelElements(w.pid) {
-                guard cancelOnePanel(w, old: []) == true else { break }
-                cancelledEarlier = true
-            }
+            var spelled: [String] = [], press: JSONValue = .null, cancelledEarlier = false, oldPanels: [AXUIElement] = []
             let before = MenuAX.ids(), agent = onMain { host.agentWorkspace() }
-            let oldPanels = MenuAX.panelElements(w.pid)
             let watch = MenuWatch<MenuPath.Seen>()
             let reply = HandsEngine.shared.transaction(window: w, check: acting) { [self] cancelled in
-                guard case .ok(let bar) = HandsEngine.shared.snapshotInline(window: w, interactive: false, compact: false, depth: 12, evidence: true, surface: HandsEngine.surfaceMenubar) else {
-                    return .failed(HandsError(.engineError, "the menu bar couldn't be read", suggestion: "Snapshot the window and try again.", retry: .safe))
+                func pressable() -> Result<(ref: String, names: [String]), HandsError> {
+                    guard case .ok(let bar) = HandsEngine.shared.snapshotInline(window: w, interactive: false, compact: false, depth: 12, evidence: true, surface: HandsEngine.surfaceMenubar) else {
+                        return .failure(HandsError(.engineError, "the menu bar couldn't be read", suggestion: "Snapshot the window and try again.", retry: .safe))
+                    }
+                    let found = MenuPath.find(bar["tree"] ?? .null, path: path)
+                    // Every level the path reached is judged before anything is pressed or listed (a submenu's choices too).
+                    // An item whose attributes couldn't be read (a busy app timed out) is unknown, and unknown is refused.
+                    if let e = MenuPath.judge(MenuAX.steps(pid: w.pid, path: MenuPath.reached(found, path: path)), window: Int(w.id)) { return .failure(e) }
+                    guard case .item(let ref, let names) = found else {
+                        return .failure(MenuPath.error(found, path: path, window: Int(w.id), background: NSRunningApplication(processIdentifier: w.pid)?.isActive != true, app: w.app) ?? HandsError(.engineError, "no menu item", suggestion: "Snapshot the window.", retry: .safe))
+                    }
+                    return .success((ref, names))
                 }
-                let found = MenuPath.find(bar["tree"] ?? .null, path: path)
-                // Every level the path reached is judged before anything is pressed or listed (a submenu's choices too).
-                // An item whose attributes couldn't be read (a busy app timed out) is unknown, and unknown is refused.
-                if let e = MenuPath.judge(MenuAX.steps(pid: w.pid, path: MenuPath.reached(found, path: path)), window: Int(w.id)) { return .failed(e) }
-                guard case .item(let ref, let names) = found else {
-                    return .failed(MenuPath.error(found, path: path, window: Int(w.id)) ?? HandsError(.engineError, "no menu item", suggestion: "Snapshot the window.", retry: .safe))
+                var item = pressable()
+                // A panel already up is not the command's (197 r1 second-S1), but nothing else would cancel it: once the path
+                // is judged and found, it is cancelled just before the press (217 r1 first-F1). Its read replaces the
+                // evidence store's, so the bar is read again.
+                if case .success = item {
+                    let earlier = withoutActuallyEscaping(cancelled) { c in
+                        MenuPath.cancelEarlier(count: MenuAX.panelElements(w.pid).count) { cancelOnePanel(w, old: [], inline: c) }
+                    }
+                    switch earlier {
+                    case .none: break
+                    case .stuck: return .failed(MenuPath.earlierStuck(w.app))
+                    case .cancelled: cancelledEarlier = true; item = pressable()
+                    }
                 }
-                spelled = names
+                guard case .success(let found) = item else { if case .failure(let e) = item { return .failed(e) }; return .ok(.null) }
+                let ref = found.ref
+                spelled = found.names
+                oldPanels = MenuAX.panelElements(w.pid)
                 watch.start(menuWatchStep(w, before: before, agent: agent, oldPanels: oldPanels))
                 switch HandsEngine.shared.actInline(window: w, ref: ref, kind: .click, evidence: true, check: acting, cancelled: cancelled) {
                 case .failed(let e): return .failed(e)
@@ -56,12 +68,14 @@ extension HandsRouter {
             // undone and the call fails, named so it isn't retried. A watch that couldn't finish never answers ok. A panel
             // later than the watch stays open on the agent workspace, where the next snapshot shows it (192 r1 second-F9).
             let named = (spelled.isEmpty ? path : spelled).joined(separator: " > ")
+            // A failure after the earlier panel's cancel still says it (217 r1 first-F1).
+            func failed(_ e: HandsError) -> HandsEnvelope { var e = e; if cancelledEarlier { e.message += MenuPath.earlierNote }; return .failure(e) }
             switch watch.finish() {
-            case .seen(let looks): return .failure(undo(MenuPath.Seen.merged(looks), w, path: named, oldPanels: oldPanels))
-            case .unknown: return .failure(MenuWatch<MenuPath.Seen>.unknownRefusal(named, window: Int(w.id)))
+            case .seen(let looks): return failed(undo(MenuPath.Seen.merged(looks), w, path: named, oldPanels: oldPanels))
+            case .unknown: return failed(MenuWatch<MenuPath.Seen>.unknownRefusal(named, window: Int(w.id)))
             case .quiet: break
             }
-            if case .failed(let e) = reply { return .failure(e) }
+            if case .failed(let e) = reply { return failed(e) }
             var o: [String: JSONValue] = ["action": "menu", "path": .array(spelled.map(JSONValue.string)), "engine": press, "target": targetJSON(w, scope),
                                           "verified": .bool(press["disposition"]?["delivery"]?.string == "delivered_verified")]
             if o["verified"] == false { o["next_call"] = HandsNextCall.after(.unverified, window: Int(w.id)) }
@@ -77,9 +91,10 @@ extension HandsRouter {
             let owned = onMain { host.agentOwned() }
             let mine = !session.isEmpty && childLocked { sessionWindows.owner(of: w.id) } == session
             let others = BackgroundAX.windows(pid: w.pid)
-            let count = others.mapped.filter { $0.id != w.id && !$0.minimized }.count + others.unmapped
+            let panels = others.mapped.contains { $0.id != w.id && !$0.minimized } ? MenuAX.panelWindows(w.pid) : []
+            let count = MenuPath.otherWindows(others.mapped.map { ($0.id, $0.minimized) }, unmapped: others.unmapped, window: w.id, panels: panels)
             return MenuPath.refusal(app: w.app, window: w.id, agentOwned: owned.contains(w.pid), sessionOwns: mine, otherWindows: count,
-                                    focusedWindow: BackgroundAX.focus(pid: w.pid).window,
+                                    focusedWindow: BackgroundAX.focus(pid: w.pid).window, panels: panels,
                                     front: front && NSWorkspace.shared.frontmostApplication?.processIdentifier == w.pid)
         }
     }
@@ -95,7 +110,7 @@ extension HandsRouter {
             let panel = MenuPath.panel(nodes, old: old) != nil
             let all = MenuAX.listed()
             // A panel that is a window of its own is the panel, cancelled as one, never an escape (205 r1 second-S1).
-            var new = MenuPath.fresh(all, before: before, panels: Set(MenuPath.panels(nodes).compactMap { windows[$0].id }))
+            var new = MenuPath.fresh(all, before: before, panels: MenuPath.panelWindows(nodes, sheet: windows.map(\.sheet), ids: windows.map(\.id)))
             guard !new.isEmpty else { return panel ? MenuPath.Seen(panel: true) : nil }
             // One trip to the main thread per look, not one per window (first-F1).
             let ids = new.map(\.id)
@@ -113,11 +128,14 @@ extension HandsRouter {
     /// A panel and windows seen in the same watch are both undone; the panel's error leads.
     /// A window that closed on its own since a look saw it is reported as gone, not closed or still open (205 r1 second-S2).
     private func undo(_ seen: MenuPath.Seen, _ w: HandsWindow, path: String, oldPanels: [AXUIElement]) -> HandsError {
-        let (found, gone) = seen.split(listed: MenuAX.ids())
-        let closed = found.filter(\.tied).map { x in onMain { host.close(x.window.id) } }.allSatisfy { $0 }
+        let (found, gone) = seen.split(MenuAX.listed())
+        var open = found.filter(\.tied)
+        let (panelError, closed) = MenuPath.undoing(panel: seen.panel,
+            cancel: { cancelPanels(w, within: 0.3, old: oldPanels) ?? MenuPath.panelRefusal(w.app, cancelled: false, gone: true) },
+            close: { open.removeAll { x in onMain { host.close(x.window.id) } }; return open.isEmpty },
+            pause: { Thread.sleep(forTimeInterval: 0.1) })
         let escape = seen.escapes.isEmpty ? nil : MenuPath.escapeRefusal(path, found: found, gone: gone, closed: closed, window: Int(w.id))
-        guard seen.panel else { return escape ?? MenuPath.panelRefusal(w.app, cancelled: false, gone: true) }
-        var e = cancelPanels(w, within: 0.3, old: oldPanels) ?? MenuPath.panelRefusal(w.app, cancelled: false, gone: true)
+        guard var e = panelError else { return escape ?? MenuPath.panelRefusal(w.app, cancelled: false, gone: true) }
         if let escape { e.message += "; also: " + escape.message }
         return e
     }
@@ -134,26 +152,33 @@ extension HandsRouter {
     }
 
     /// The app's first Open or Save panel not in `old`, cancelled: nil when there is none, else whether the cancel went through.
-    private func cancelOnePanel(_ w: HandsWindow, old oldPanels: [AXUIElement]) -> Bool? {
+    /// `inline`: already in the app's transaction, so the cancel runs in it.
+    private func cancelOnePanel(_ w: HandsWindow, old oldPanels: [AXUIElement], inline cancelled: (() -> Bool)? = nil) -> Bool? {
         let windows = MenuAX.windows(w.pid)
         let nodes = windows.map { MenuAX.node($0.element) }
         guard let i = MenuPath.panel(nodes, old: windows.map { x in oldPanels.contains { CFEqual($0, x.element) } }) else { return nil }
         var target = w
         target.id = windows[i].id ?? w.id
         let title = MenuPath.cancelTitle(nodes[i], cancelButton: MenuAX.cancelTitle(windows[i].element))
-        return title.map { cancelPanel(target, title: $0, scope: check(w)) } ?? false
+        guard let title else { return false }
+        if let cancelled { return cancelInline(target, title: title, scope: check(w), cancelled: cancelled) }
+        return cancelPanel(target, title: title, scope: check(w))
     }
 
     /// Presses the panel's Cancel button through the engine; true when that press went through.
     private func cancelPanel(_ target: HandsWindow, title: String, scope: @escaping HandsEngine.Check) -> Bool {
-        let reply = HandsEngine.shared.transaction(window: target, check: scope) { cancelled in
-            guard case .ok(let d) = HandsEngine.shared.snapshotInline(window: target, interactive: false, compact: false, depth: 12, evidence: true),
-                  let ref = MenuPath.cancelRef(d["tree"] ?? .null, title: title) else {
-                return .failed(HandsError(.engineError, "no Cancel button in the panel's read", suggestion: "", retry: .never))
-            }
-            return HandsEngine.shared.actInline(window: target, ref: ref, kind: .click, evidence: true, check: scope, cancelled: cancelled)
+        let reply = HandsEngine.shared.transaction(window: target, check: scope) { [self] cancelled in
+            cancelInline(target, title: title, scope: scope, cancelled: cancelled) ? .ok(.null) : .failed(HandsError(.engineError, "the panel's Cancel didn't go through", suggestion: "", retry: .never))
         }
         if case .ok = reply { return true }
+        return false
+    }
+
+    /// The panel's Cancel, read and pressed through the engine on the app's queue: only inside a transaction.
+    private func cancelInline(_ target: HandsWindow, title: String, scope: @escaping HandsEngine.Check, cancelled: () -> Bool) -> Bool {
+        guard case .ok(let d) = HandsEngine.shared.snapshotInline(window: target, interactive: false, compact: false, depth: 12, evidence: true),
+              let ref = MenuPath.cancelRef(d["tree"] ?? .null, title: title) else { return false }
+        if case .ok = HandsEngine.shared.actInline(window: target, ref: ref, kind: .click, evidence: true, check: scope, cancelled: cancelled) { return true }
         return false
     }
 }
@@ -198,13 +223,19 @@ enum MenuAX {
         let windows = self.windows(pid)
         return MenuPath.panels(windows.map { node($0.element) }).map { windows[$0].element }
     }
+    /// The numbers of the app's panel windows (not sheets), read only when the app has other windows.
+    static func panelWindows(_ pid: Int32) -> Set<UInt32> {
+        let windows = self.windows(pid)
+        return MenuPath.panelWindows(windows.map { node($0.element) }, sheet: windows.map(\.sheet), ids: windows.map(\.id))
+    }
     /// The app's windows with their sheets (a Save panel is often a sheet), and the window number where there is one.
-    static func windows(_ pid: Int32) -> [(element: AXUIElement, id: UInt32?)] {
+    /// `sheet`: a sheet, which carries its window's number (217 r1 first-F2).
+    static func windows(_ pid: Int32) -> [(element: AXUIElement, id: UInt32?, sheet: Bool)] {
         let list = (copy(app(pid), kAXWindowsAttribute) as? [AXUIElement]) ?? []
-        return list.flatMap { w -> [(element: AXUIElement, id: UInt32?)] in
+        return list.flatMap { w -> [(element: AXUIElement, id: UInt32?, sheet: Bool)] in
             let id = BackgroundAX.windowID(of: w)
             let sheets = children(w).filter { (copy($0, kAXRoleAttribute) as? String) == "AXSheet" }
-            return [(w, id)] + sheets.map { ($0, id) }
+            return [(w, id, false)] + sheets.map { ($0, id, true) }
         }
     }
     /// The menu bar along `path`: each menu's items with their key equivalents, and the one the path takes. Nil when unread.
@@ -218,9 +249,9 @@ enum MenuAX {
             out.append(.init(items: items, at: at))
             level = children(level[at]).first.map(children) ?? []
         }
-        // A path that stops at a submenu of a menu (Edit > Find) lists it: its items are judged too (197 r1 second-S4). Only
-        // there, the one place `appended` reads them; one that can't be read is left out and `appended` refuses (205 r1 first-F2).
-        if out.count == 2, out[1].items[out[1].at].submenu {
+        // A path that stops at a submenu of the Edit menu (Edit > Find) lists it: its items are judged too (197 r1 second-S4),
+        // by `appended` alone; one that can't be read is left out and `appended` refuses (205 r1 first-F2, 217 r1 first-F4).
+        if MenuPath.listsOpens(out) {
             let opens = level.compactMap(item)
             if opens.count == level.count { out[1].opens = opens }
         }
