@@ -416,6 +416,9 @@ async function runRequest(state: ClientState, req: HostForwardedRequest): Promis
 			},
 			isGuarded: (url: string) => isGuardedUrl(url, req.guardedHosts),
 			guardedHosts: req.guardedHosts ?? [],
+			// A frame is the page's own when it is on the page's host; any other host needs the person's allow (D46).
+			frameAllowed: async (url, topUrl) =>
+				(!!topUrl && hostOf(url) === hostOf(topUrl) && !isOwnExtensionUrl(url)) || (await isUrlAllowed(url)),
 			askUpload: (url, files, askId) => askUpload(state, url, files, askId),
 			checkUrl: async (url: string) => {
 				if (isGuardedUrl(url, req.guardedHosts)) throw guardedError(url);

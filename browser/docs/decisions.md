@@ -1427,6 +1427,75 @@ Amended (PR 162 round 1), replacing the "none" and "left out" rules above: "none
 line each, the person's part keeps the first, newest and newest others' starts, and a gap line names the rest. The drop
 note's room comes from the notes, never the latest message. Old goal sections are not sent.
 
+## D46. Cross-origin frames are read and acted on by ref, through the debugger (Claude, 2026-11-12)
+
+Gap analysis item 5. Before this, `read_page` listed a frame from another origin as one `iframe` line with its URL, and the
+agent had to `navigate` there, which loses the page around it (a checkout's card field, an embedded form, a widget). Now its
+elements follow that line, and click, type, fill, hover and scroll take their refs (`src/browser/frames.ts`).
+
+How: a page script can't look into another origin's frame, so the service worker does it over the tab's debugger. A frame in
+the tab's own process (another port of the same host, say) is in `Page.getFrameTree`; one in its own process (another site)
+is reached with `Target.setAutoAttach` (flatten), which gives it a session on the same `chrome.debugger` attachment. Either
+way the snapshot runs in Polycarp's isolated world in that frame (`Page.createIsolatedWorld`, the same world each time, so
+its refs stay), with the same code as the top page: the same masking, the same limits. Its refs get the frame's tag
+(`fk3z9e12`: "f", four characters from the frame id, then the ref inside), its points are moved by the frame's content box
+(`DOM.getFrameOwner` and its box model) and scaled by how large the frame is drawn (its quad against its layout width, so a
+`transform: scale()` maps too), and its text follows the page's under `[frame host]`. An out-of-process frame whose
+`<iframe>` sits in a same-process frame is placed inside that frame: the frame whose isolated world resolves the
+`<iframe>` element is its owner (`DOM.resolveNode` gives null in any other frame's context).
+
+An action by a frame ref resolves the ref in that frame, scrolls the frame into view, and before a click or a fill checks two
+things in the tab: the point is inside the viewport, and the hit test at that point lands in the frame, so a banner over the frame
+is reported as a cover rather than clicked. The hit test skips `pointer-events: none` layers, as a real click does (the
+in-use veil, D37, is one). It takes document coordinates, so each level adds its own scroll position, and a level that
+gives no answer counts as covered: nothing is sent on no evidence. Scroll by a frame ref refuses a frame hidden since the
+read, as click and fill do. A nested frame is measured from the frame its owner session draws, kept by frame id (a
+same-process frame shares its owner's session). A frame ref's frame is found before the change report's first look, so
+finding it never uses up the look's 750 ms. A ref whose frame navigated or went away fails as stale; a ref from a frame's earlier document
+fails the same way it does in the top page. The action's change report (D43) looks in that frame as well as the page, so a
+click's effect inside the frame is in its `changes`. A box (alert, confirm, prompt) a frame opens is answered in the session that
+reported it: the frame's when it comes from one, else the tab's. Chromium reports a box from another site's frame on the
+tab's session, which answers it, after a worker restart too (an e2e test checks this).
+
+Only a frame a person can see is read: its `<iframe>` is listed by the document around it, at least 4 px each way, drawn
+(not `visibility: hidden`, and an opacity of at least 0.1 once `opacity` and `filter: opacity()` on it and above it,
+across shadow hosts, are multiplied), not kept off the page, and not under something that covers all of it. The cover test
+samples five points in view and asks the `<iframe>`'s own root (a shadow root's `elementFromPoint` for a frame inside one)
+what is there; one hit on the frame itself is enough, and a hit on anything else, another frame included, is not. A frame
+with no sample point in view (below the fold) can't be tested, so it is named, not read: "out of view: scroll to it, then
+read_page". Any other failure keeps one line, "not shown, so not read", and nothing inside it is read either; this keeps the
+#73 rule that hidden text never reaches the agent, and an invisible field can't be filled. The same test runs again in the
+tab for each frame, level by level, before the frame claims its line (matched by the `<iframe>`'s border box, not its
+corner), so a see-through frame under a shown one can't take the shown one's line or its points; a test that gets no
+answer counts as hidden. Each action resolves its frame once and reuses it for the change report and the point, re-measured
+after the scroll; a nested frame's points compose every level's scale. Limits: 10 frames read and 3 levels, outermost first (up to 30 are placed, so hidden ones don't use up the 10); a
+frame past them, or one with no box, keeps its old line, so the agent still knows it is there and can `navigate` to it.
+Every debugger call about a frame has its own time limit (1 s; 3 s for a frame's snapshot), and the calls run in parallel
+under one deadline for the whole read (1.5 s to find the frames, 4 s to read them), so frames that don't answer keep their
+lines instead of adding their waits up. Frames get a small share past a page that used up the default budget, never
+past a `maxNodes` or `maxTextChars` the caller set. Only http, https and file frames are read: never an extension page, an
+error page or a browser page. A frame on a guarded host (#94) is left out with everything inside it; the side panel has no
+guarded hosts (D40), as before. A caller that names no rule gets none of a frame read or acted in: the default rule is
+closed. Uploads and downloads (D38) run in the top page and refuse a frame ref with a clear message. Not done:
+`get_page_text` and `page_markdown` stay the top page's, and settle (D41) still doesn't count a frame's own requests.
+
+Safety: the site permission is per host, and it applies to frames. A frame on the page's own host is the page's; a frame on
+any other host is read and acted in only when the person allowed that host for agents (Settings > Agents, `polycarp browser
+allow <host>`, or "allow all"). An unallowed frame is one line, `not allowed for agents: <host>`, with no text and no refs,
+and a by-ref action into it (a ref read before the host was taken back, or a forged one) fails with `permission_denied`,
+"Not allowed to open <host>", naming the command that allows it. Before this the agent had to `navigate` to the frame's
+URL, which asked; reading it in place must not skip that question. A guarded host (#94) is never read through a frame, even
+on an allowed page. The side panel has no site permissions (the person drives it), so it reads every frame that isn't
+guarded. What the agent reads has the same masking as the top page (passwords never shown, link URLs masked), and the page's
+text is still data, never instructions.
+
+Cost: a page with no cross-origin frame is unchanged (the extra step runs only when the snapshot found one). On a page with
+two, `read_page {"filter":"interactive"}` went from 368 to 831 bytes and from 2 to 6 ms (median of 7, headless Chromium);
+the first read on a tab also turns on auto-attach once. No tool description changed: 0 schema tokens.
+
+Platforms: everything goes through `chrome.debugger`, which Chromium has on macOS, Linux and Windows alike; nothing here is
+per platform. Measured on macOS (e2e and perception) and in CI on Linux; Windows not run.
+
 ## D47. The agent's pointer: Mote (Claude, 2026-11-12)
 
 Problem: the veil (D37) says a tab is in use but not what the agent is doing in it. The owner asked for "a cool mouse guy
