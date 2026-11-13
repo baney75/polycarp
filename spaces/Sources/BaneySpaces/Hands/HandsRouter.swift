@@ -464,7 +464,7 @@ final class HandsRouter {
                 let sid = o["snapshot_id"]?.string ?? ""
                 let rows = SnapshotRows.rows(of: o["tree"] ?? .null)
                 let session = req.session ?? ""
-                let view = SnapshotRowsMemory.View.of(req)
+                let view = SnapshotRowsMemory.View.reading(req)
                 let since = req.snapshotFormat == "rows" && req.string("since") == "latest"
                 let previous = withRows { m -> SnapshotRowsMemory.Read? in
                     let p = m.previous(session: session, window: w.id, view: view.key)
@@ -494,7 +494,7 @@ final class HandsRouter {
         switch target(req) {
         case .failure(let e): return .failure(e)
         case .success(let (w, _, _)):
-            let view = SnapshotRowsMemory.View.find
+            let view = SnapshotRowsMemory.View.reading(req)
             switch read(w, interactive: view.interactive, compact: view.compact, depth: UInt8(clamping: view.depth), session: req.session ?? "") {
             case .failure(let e): return .failure(e)
             case .success(let data):

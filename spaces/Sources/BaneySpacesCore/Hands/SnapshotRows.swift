@@ -252,6 +252,9 @@ public struct SnapshotRowsMemory: Sendable {
         }
         /// What a find reads in.
         public static let find = View(interactive: false, compact: true, depth: 10)
+        /// The view a request reads in: a find always reads `find`, whatever it was passed; a snapshot reads its own
+        /// arguments (224 r1 first-F2: the router calls this, so the view is tested by value).
+        public static func reading(_ req: HandsRequest) -> View { req.verb == "find" ? .find : of(req) }
         public var key: String { "\(interactive)|\(compact)|\(depth)" }
         public init(key: String) {
             let p = key.split(separator: "|").map(String.init)
