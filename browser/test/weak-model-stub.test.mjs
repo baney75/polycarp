@@ -203,6 +203,55 @@ test("a right click is refused before anything is sent, as on a parked agent win
 	}
 });
 
+test("System Settings: a click on a sidebar name selects its row (ClickFallback), the title follows the pane, and Displays is not Display", async () => {
+	const s = startStub("settings", {});
+	try {
+		const win = (await s.call("open", { app: "System Settings" })).json.data.window;
+		let t = (await s.call("snapshot", { window: win })).text;
+		assert.match(t, /window \d+ "General" \(System Settings\)/);
+		const click = await s.call("click", { ref: s.row(t, /statictext "Displays"/) });
+		assert.equal(click.json.data.landed, "selection_write", click.text);
+		t = (await s.call("snapshot", { window: win })).text;
+		assert.match(t, /"Displays" \(System Settings\)/);
+		assert.match(t, /statictext "Built-in Display"/);
+		const found = await s.call("find", { window: win, text: "Display" });
+		assert.ok(found.json.data.count >= 2, "a find for Display also hits Displays and Built-in Display");
+		assert.deepEqual(s.world().windows[0].state.changes, [], "navigating changes nothing");
+	} finally {
+		s.stop();
+	}
+});
+
+test("click by text (TextTarget): the exact label wins, two are refused with refs, and run_steps does two panes in one call", async () => {
+	const s = startStub("by-text", {});
+	try {
+		const win = (await s.call("open", { app: "System Settings" })).json.data.window;
+		const before = JSON.stringify(s.world().windows[0].state.changes);
+		const none = await s.call("click", { window: win, text: "Bluetooth settings" });
+		assert.equal(none.json.error.code, "action_failed", none.text);
+		assert.match(none.json.error.message, /Nothing was sent/);
+		const run = await s.call("run_steps", { steps: [{ tool: "click", args: { window: win, text: "Accessibility" } }, { tool: "click", args: { window: win, text: "Display" } }] });
+		assert.equal(run.json.data.complete, true, run.text);
+		const st = s.world().windows[0].state;
+		assert.deepEqual([st.pane, st.sub, st.title], ["Accessibility", "Display", "Display"], "Display, never Displays");
+		assert.equal(JSON.stringify(st.changes), before, "nothing changed");
+		await s.call("click", { window: win, text: "Back" });
+		const two = await s.call("click", { window: win, text: "Keyboard" });
+		assert.equal(two.json.error.code, "ambiguous_target", two.text);
+		assert.equal(two.json.error.next_call, null);
+		assert.match(two.json.error.message, /2 elements in window \d+ show "Keyboard": @\w+:e\d+ statictext "Keyboard", @\w+:e\d+ button "Keyboard"/);
+		const one = await s.call("click", { window: win, text: "Keyboard", role: "button" });
+		assert.deepEqual([one.json.data.matched.role, s.world().windows[0].state.sub], ["button", "Keyboard"], one.text);
+		const both = await s.call("click", { ref: "3", window: win, text: "x" });
+		assert.match(both.json.error.message, /not both/);
+		const t = (await s.call("snapshot", { window: win })).text;
+		const withWindow = await s.call("click", { ref: s.row(t, /button "Back"/), window: win });
+		assert.ok(!withWindow.isError, `a window beside a ref is harmless: ${withWindow.text}`);
+	} finally {
+		s.stop();
+	}
+});
+
 test("a long document's read is cut at 400 rows and says how to get the rest; a query finds the line", async () => {
 	const s = startStub("leaflet", task("stub-leaflet-find").files);
 	try {
@@ -284,6 +333,18 @@ const solutions = {
 		const after = (await s.call("snapshot", { app: "Roster", query: "phone" })).text;
 		return `Priya Shah's number is ${/=(?:")?(555-\d+)/.exec(after)[1]}.`;
 	},
+	async "stub-settings-appearance"(s) {
+		await s.call("open", { app: "System Settings" });
+		const t = (await s.call("snapshot", { app: "System Settings" })).text;
+		await s.call("click", { ref: s.row(t, /statictext "Appearance"/) });
+	},
+	async "stub-settings-two-panes"(s) {
+		await s.call("open", { app: "System Settings" });
+		let t = (await s.call("snapshot", { app: "System Settings" })).text;
+		await s.call("click", { ref: s.row(t, /statictext "Accessibility"/) });
+		t = (await s.call("snapshot", { app: "System Settings" })).text;
+		await s.call("click", { ref: s.row(t, /button "Display"$/) });
+	},
 };
 
 test("every stub task has a scripted solution", () => {
@@ -294,7 +355,7 @@ for (const t of stubTasks) {
 	test(`${t.id}: an untouched world fails and the scripted solution passes`, async () => {
 		const idle = startStub(`${t.id}-idle`, t.files);
 		try {
-			const app = /\b(Tally|Jotter|Leaflet|Thermo|Roster)\b/.exec(t.prompt(idle.dir))[1];
+			const app = /\b(Tally|Jotter|Leaflet|Thermo|Roster|System Settings)\b/.exec(t.prompt(idle.dir))[1];
 			const target = Object.keys(t.files ?? {})[0];
 			await idle.call("open", { app, ...(target ? { targets: [target] } : {}) });
 			assert.equal(scored(idle, t.id, "I couldn't do it.").pass, false, "an untouched world must fail");

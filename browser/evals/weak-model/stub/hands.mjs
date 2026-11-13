@@ -241,6 +241,71 @@ function resolveRef(ref) {
 	return { w, el, ref: `@${snapId}:e${n}`, t };
 }
 
+/** TextTarget.pick over a find-view read of the window, remembered like a find's (not listed): an exact label wins
+ * (case, spacing and a trailing ellipsis aside), a partial one only when it is the only one, two are refused. */
+const normLabel = (s) => {
+	let t = String(s).toLowerCase().split(/\s+/).filter(Boolean).join(" ");
+	for (const tail of ["…", "..."]) if (t.endsWith(tail)) t = t.slice(0, -tail.length).trim();
+	return t;
+};
+function textTarget(args) {
+	const want = normLabel(args.text);
+	if (!want) throw new HandsError("bad_arguments", "text is empty", 'Example: {"window":4211,"text":"Appearance"}', "safe", null);
+	const w = windowOf({ window: args.window });
+	const rs = rows(tree(w));
+	const id = record(w, rs, { listed: false, view: "find" });
+	const wantRole = args.role === undefined ? undefined : normLabel(args.role).replace(/ /g, "");
+	const exact = [];
+	const partial = [];
+	for (const r of rs) {
+		if (!r.number || (wantRole !== undefined && normLabel(r.role).replace(/ /g, "") !== wantRole)) continue;
+		const labels = [r.name, r.value].filter((l) => normLabel(l ?? ""));
+		const m = (l) => ({ ref: `@${id}:e${r.number}`, role: r.role, label: l });
+		const e = labels.find((l) => normLabel(l) === want);
+		if (e !== undefined) exact.push(m(e));
+		else {
+			const p = labels.find((l) => normLabel(l).includes(want));
+			if (p !== undefined) partial.push(m(p));
+		}
+	}
+	const quotedText = `"${String(args.text).trim()}"`;
+	const narrowed = args.role === undefined ? "" : ` with role ${args.role}`;
+	for (const [hits, how] of [
+		[exact, "show"],
+		[partial, "contain"],
+	]) {
+		if (!hits.length) continue;
+		if (hits.length === 1) return hits[0];
+		const names = hits
+			.slice(0, 8)
+			.map((h) => `${h.ref} ${h.role} "${h.label}"`)
+			.join(", ");
+		const more = hits.length > 8 ? `, and ${hits.length - 8} more` : "";
+		throw new HandsError("ambiguous_target", `${hits.length} elements${narrowed} in window ${w.id} ${how} ${quotedText}: ${names}${more}. Nothing was sent`, `Click one of these refs, or pass role to narrow it, like {"window":${w.id},"text":${quotedText},"role":"${hits[0].role}"}`, "safe", null);
+	}
+	throw new HandsError("action_failed", `no element${narrowed} in window ${w.id} shows ${quotedText}. Nothing was sent`, "Read the window and click by ref, or try the label as the window shows it", "safe", { tool: "snapshot", arguments: { window: w.id } });
+}
+
+/** ClickFallback.plan: the row or tree item a click on passive content (text, a cell, an image, a group) selects. */
+const PASSIVE = new Set(["statictext", "textfield", "image", "cell", "group"]);
+function rowAbove(t, key) {
+	const path = [];
+	const walk = (n) => {
+		path.push(n);
+		if (n.key === key) return true;
+		for (const c of n.children ?? []) if (walk(c)) return true;
+		path.pop();
+		return false;
+	};
+	if (!walk(t)) return undefined;
+	for (let i = path.length - 1; i >= 0; i--) {
+		const n = path[i];
+		if (["row", "treeitem"].includes(n.role)) return n.select ? n : undefined;
+		if (["outline", "table", "list"].includes(n.role) || !PASSIVE.has(n.role)) return undefined;
+	}
+	return undefined;
+}
+
 const target = (w) => ({ app: w.app, pid: w.pid, scope: "agent_workspace", window: w.id });
 
 /** Runs a change and reports what the window shows differently, like the helper's ax_diff evidence. */
@@ -442,6 +507,12 @@ const verbs = {
 		return { ref, property, [property]: all[property], target: target(w), ...(args.copy ? { copied: true } : {}) };
 	},
 	click(args) {
+		if (args.ref === undefined) {
+			// TextTarget: the element is picked from a read of the window now, then clicked by its ref like any click.
+			const m = textTarget(args);
+			const out = verbs.click({ ...Object.fromEntries(Object.entries(args).filter(([k]) => !["text", "window", "role"].includes(k))), ref: m.ref });
+			return { ...out, matched: m };
+		}
 		const { w, el, ref } = resolveRef(args.ref);
 		if (rightClick(args))
 			throw new HandsError(
@@ -453,12 +524,17 @@ const verbs = {
 			);
 		if (el.states?.includes("disabled")) throw new HandsError("action_failed", `${el.role} ${quoted(el.name)} is disabled: the press did nothing`, "Read the window again: something else must change first.");
 		let landed = "press";
+		const row = el.press || el.toggle || el.select || el.options ? undefined : rowAbove(tree(w), el.key);
 		const { evidence } = acting(w, () => {
 			if (el.press) return el.press();
 			if (el.toggle) return el.toggle();
 			if (el.select) {
 				landed = "selection_write";
 				return el.select();
+			}
+			if (row) {
+				landed = "selection_write";
+				return row.select();
 			}
 			if (el.options) {
 				w.openMenu = w.openMenu === el.key ? undefined : el.key;
@@ -714,6 +790,12 @@ function check(name, args) {
 	}
 	for (const r of t.inputSchema.required ?? []) if (args[r] === undefined) throw new HandsError("bad_arguments", `${r} is missing`, usage(name));
 	if (name === "type" && (args.text === undefined) === !args.paste) throw new HandsError("bad_arguments", args.paste ? "pass text or paste: true, not both" : "text is missing (or pass paste: true)", usage(name));
+	if (name === "click") {
+		// A ref names its own window, so a window beside it is harmless; text or role beside it would be a second target.
+		if (args.ref !== undefined && (args.text !== undefined || args.role !== undefined)) throw new HandsError("bad_arguments", "pass ref, or window and text, not both", usage(name));
+		if (args.ref === undefined && (args.text === undefined || args.window === undefined))
+			throw new HandsError("bad_arguments", args.text !== undefined || args.window !== undefined ? "text and window go together" : "ref is missing (or pass window and text)", usage(name));
+	}
 	if ((name === "snapshot" || name === "find") && args.app === undefined && args.window === undefined) throw new HandsError("bad_arguments", "say which window: app or window", usage(name));
 	if (args.wait !== undefined && (args.wait < 0 || args.wait > 60)) throw new HandsError("bad_arguments", `wait is seconds from 0 to 60, not ${args.wait}`, usage(name));
 }

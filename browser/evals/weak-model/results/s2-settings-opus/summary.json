@@ -1,0 +1,16 @@
+{
+	"label": "s2-settings-opus",
+	"model": "claude-opus-5-5",
+	"trials": 3,
+	"profile": "full",
+	"date": "2026-11-13T21:28:12.104Z",
+	"passed": 6,
+	"total": 6,
+	"calls": 15,
+	"toolErrors": 0,
+	"resultChars": 10044,
+	"tasks": {
+		"stub-settings-appearance": {"pass":3,"of":3,"calls":[2,2,2],"errors":[0,0,0]},
+		"stub-settings-two-panes": {"pass":3,"of":3,"calls":[3,3,3],"errors":[0,0,0]}
+	}
+}

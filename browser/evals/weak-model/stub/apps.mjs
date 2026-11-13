@@ -498,6 +498,170 @@ class Roster {
 	}
 }
 
-export const APPS = { Tally, Jotter, Leaflet, Thermo, Roster };
+/** System Settings, as its accessibility tree reads: a sidebar outline of panes (rows holding a cell and the pane's
+ * name), a search field over it, the pane on the right, and Back and Forward in the toolbar. The window's title is the
+ * pane's name, as in macOS. Accessibility's own panes (Display, Zoom, ...) open inside it. Every control counts what it
+ * changed, so a task that says "change nothing" can be scored. */
+const SIDEBAR = [
+	"Wi-Fi", "Bluetooth", "Network", "VPN", "Battery", "General", "Accessibility", "Appearance", "Apple Intelligence & Siri",
+	"Control Center", "Desktop & Dock", "Displays", "Menu Bar", "Spotlight", "Wallpaper", "Notifications", "Sound", "Focus",
+	"Screen Time", "Lock Screen", "Privacy & Security", "Touch ID & Password", "Users & Groups", "Internet Accounts",
+	"Game Center", "iCloud", "Wallet & Apple Pay", "Keyboard", "Trackpad", "Printers & Scanners",
+];
+const GENERAL = ["About", "Software Update", "Storage", "AirDrop & Handoff", "Login Items & Extensions", "Language & Region", "Date & Time", "Sharing", "Time Machine", "Device Management", "Startup Disk", "Transfer or Reset"];
+const ACCESSIBILITY = [
+	["Vision", ["VoiceOver", "Zoom", "Hover Text", "Display", "Motion", "Spoken Content", "Descriptions"]],
+	["Hearing", ["Hearing Devices", "Audio", "Captions"]],
+	["Motor", ["Voice Control", "Keyboard", "Pointer Control", "Switch Control"]],
+	["Speech", ["Live Speech", "Vocal Shortcuts", "Personal Voice"]],
+	["General", ["Siri", "Shortcut"]],
+];
+class Settings {
+	static app = "System Settings";
+	constructor() {
+		this.pane = "General";
+		this.sub = undefined;
+		this.back = [];
+		this.forward = [];
+		this.visited = ["General"];
+		this.search = "";
+		this.changes = [];
+		this.values = {
+			"Appearance": "Auto", "Accent color": "Multicolor", "Highlight color": "Accent Color", "Sidebar icon size": "Medium",
+			"Allow wallpaper tinting in windows": true, "Show scroll bars": "Automatically based on mouse or trackpad",
+			"Increase contrast": false, "Reduce transparency": false, "Differentiate without color": false, "Text size": "Default",
+			"Automatically adjust brightness": true, "True Tone": true, "Use as": "Main display",
+		};
+	}
+	get title() {
+		return this.sub ?? this.pane;
+	}
+	go(pane, sub) {
+		if (pane === this.pane && sub === this.sub) return false;
+		this.back.push([this.pane, this.sub]);
+		this.forward = [];
+		[this.pane, this.sub] = [pane, sub];
+		this.visited.push(sub ? `${pane} > ${sub}` : pane);
+		return true;
+	}
+	set(name, v) {
+		if (this.values[name] === v) return false;
+		this.changes.push({ name, from: this.values[name], to: v });
+		this.values[name] = v;
+		return true;
+	}
+	popup(key, name, options) {
+		return node(key, "popupbutton", name, { value: this.values[name], options, actions: ["Press", "ShowMenu"], choose: (o) => this.set(name, o) });
+	}
+	switchOf(key, name) {
+		return node(key, "switch", name, { value: this.values[name] ? "1" : "0", actions: ["Press"], toggle: () => this.set(name, !this.values[name]) });
+	}
+	radios(key, name, options) {
+		return node(key, "radiogroup", name, {
+			children: options.map((o) =>
+				node(`${key}:${o}`, "radiobutton", o, { value: this.values[name] === o ? "1" : "0", states: this.values[name] === o ? ["selected"] : [], actions: ["Press"], press: () => this.set(name, o) }),
+			),
+		});
+	}
+	content() {
+		const heading = node("c:title", "statictext", this.title, { states: ["heading"] });
+		if (this.sub === "Display")
+			return [
+				heading,
+				this.switchOf("c:contrast", "Increase contrast"),
+				this.switchOf("c:transp", "Reduce transparency"),
+				this.switchOf("c:color", "Differentiate without color"),
+				this.popup("c:text", "Text size", ["Default", "Large", "Larger", "Largest"]),
+			];
+		if (this.sub) return [heading, node("c:none", "statictext", `${this.sub} options`)];
+		if (this.pane === "General") return [heading, ...GENERAL.map((g) => node(`c:g:${g}`, "button", g, { actions: ["Press"], press: () => true }))];
+		if (this.pane === "Accessibility")
+			return [
+				heading,
+				...ACCESSIBILITY.map(([group, items]) =>
+					node(`c:a:${group}`, "group", group, {
+						children: [node(`c:a:${group}:h`, "statictext", group, { states: ["heading"] }), ...items.map((i) => node(`c:a:${group}:${i}`, "button", i, { actions: ["Press"], press: () => this.go("Accessibility", i) }))],
+					}),
+				),
+			];
+		if (this.pane === "Appearance")
+			return [
+				heading,
+				this.radios("c:look", "Appearance", ["Auto", "Light", "Dark"]),
+				this.popup("c:accent", "Accent color", ["Multicolor", "Blue", "Purple", "Pink", "Red", "Orange", "Yellow", "Green", "Graphite"]),
+				this.popup("c:highlight", "Highlight color", ["Accent Color", "Blue", "Purple", "Pink", "Red", "Orange", "Yellow", "Green", "Graphite", "Other"]),
+				this.popup("c:icons", "Sidebar icon size", ["Small", "Medium", "Large"]),
+				this.switchOf("c:tint", "Allow wallpaper tinting in windows"),
+				this.radios("c:scroll", "Show scroll bars", ["Automatically based on mouse or trackpad", "When scrolling", "Always"]),
+			];
+		if (this.pane === "Displays")
+			return [
+				heading,
+				node("c:d:name", "statictext", "Built-in Display"),
+				this.popup("c:d:use", "Use as", ["Main display", "Mirror for AirPlay"]),
+				this.switchOf("c:d:auto", "Automatically adjust brightness"),
+				this.switchOf("c:d:tone", "True Tone"),
+				node("c:d:night", "button", "Night Shift…", { actions: ["Press"], press: () => true }),
+			];
+		return [heading, node("c:none", "statictext", `${this.pane} settings`)];
+	}
+	render() {
+		const shown = SIDEBAR.filter((n) => n.toLowerCase().includes(this.search.toLowerCase()));
+		const rows = shown.map((name, i) =>
+			node(`row:${name}`, "row", "", {
+				states: this.pane === name ? ["selected"] : [],
+				select: () => this.go(name, undefined),
+				ordinal: i,
+				children: [node(`cell:${name}`, "cell", "", { children: [node(`name:${name}`, "statictext", name)] })],
+			}),
+		);
+		return node("w", "window", this.title, {
+			children: [
+				node("tb", "toolbar", "", {
+					children: [
+						node("tb:back", "button", "Back", {
+							states: this.back.length ? [] : ["disabled"],
+							actions: ["Press"],
+							press: () => {
+								if (!this.back.length) return false;
+								this.forward.push([this.pane, this.sub]);
+								[this.pane, this.sub] = this.back.pop();
+								return true;
+							},
+						}),
+						node("tb:fwd", "button", "Forward", {
+							states: this.forward.length ? [] : ["disabled"],
+							actions: ["Press"],
+							press: () => {
+								if (!this.forward.length) return false;
+								this.back.push([this.pane, this.sub]);
+								[this.pane, this.sub] = this.forward.pop();
+								return true;
+							},
+						}),
+					],
+				}),
+				node("side", "group", "", {
+					children: [
+						node("search", "searchfield", "Search", { value: this.search, editable: true, actions: ["SetValue"], set: (v) => (this.search = v), type: (t) => (this.search += t) }),
+						node("outline", "outline", "Sidebar", { actions: ["Scroll"], children: rows }),
+					],
+				}),
+				node("content", "group", "", { children: this.content() }),
+			],
+		});
+	}
+	pressKey(name) {
+		const k = name.toLowerCase();
+		if (k === "cmd+[") return this.back.length ? (this.render().children[0].children[0].press(), true) : false;
+		if (k === "cmd+f") return true;
+		return false;
+	}
+	export() {
+		return { pane: this.pane, sub: this.sub ?? null, title: this.title, visited: this.visited, changes: this.changes, search: this.search };
+	}
+}
+
+export const APPS = { Tally, Jotter, Leaflet, Thermo, Roster, "System Settings": Settings };
 /** Apps with a document: open needs a file for them, and the window's title is the file's name. */
 export const DOCUMENT_APPS = new Set(["Jotter", "Leaflet"]);
