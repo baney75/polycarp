@@ -142,7 +142,7 @@
 			"model": "claude-haiku-5-5",
 			"profile": "full",
 			"tools": {
-				"stub": 68
+				"stub": 69
 			},
 			"tasks": [
 				"stub-jotter-append",
@@ -154,7 +154,7 @@
 				"stub-tally-sequence",
 				"stub-thermo-settings"
 			],
-			"recorded": "All 8 stub computer tasks (tasks/stub.mjs) on the stub helper, headless; no window opened on the Mac. Full profile: 68 tools listed (browser and computer_*)."
+			"recorded": "All 8 stub computer tasks (tasks/stub.mjs) on the stub helper, headless; no window opened on the Mac. Measured on this branch merged with main cbc29ed7. Full profile: 69 tools listed (browser and computer_*, with run_steps)."
 		},
 		"r7-stub-small": {
 			"passed": 16,
@@ -174,7 +174,7 @@
 				"stub-tally-sequence",
 				"stub-thermo-settings"
 			],
-			"recorded": "The same 8 stub computer tasks on the small profile: 24 tools listed, the rest (toggle, select, menu, find, get, scroll, close and the browser extras) behind more_tools."
+			"recorded": "The same 8 stub computer tasks on the small profile: 24 tools listed, the rest (run_steps, toggle, select, menu, find, get, scroll, close and the browser extras) behind more_tools."
 		}
 	},
 	"latest": {

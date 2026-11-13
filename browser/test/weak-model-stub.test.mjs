@@ -148,6 +148,61 @@ test("Command-W closes a window like File > Close: a saved document closes, an e
 	}
 });
 
+test("run_steps runs several actions in one call and reads once; a bad step runs nothing; a sheet stops the run", async () => {
+	const s = startStub("steps", { "c.txt": "draft\n" });
+	try {
+		await s.call("open", { app: "Thermo" });
+		const t = (await s.call("snapshot", { app: "Thermo" })).text;
+		const before = JSON.stringify(s.world());
+		const refused = await s.call("run_steps", { steps: [{ tool: "toggle", args: { ref: s.row(t, /switch "Eco mode"/) } }, { tool: "open", args: { app: "Jotter" } }] });
+		assert.equal(refused.json.error.code, "bad_arguments", refused.text);
+		assert.match(refused.json.error.message, /step 2: open can't be a step/);
+		assert.equal(JSON.stringify(s.world()), before, "nothing ran");
+		const run = await s.call("run_steps", {
+			steps: [
+				{ tool: "computer_set_value", args: { ref: s.row(t, /textfield/), value: "21" } },
+				{ tool: "toggle", ref: s.row(t, /switch "Eco mode"/) },
+				{ tool: "click", args: { ref: s.row(t, /button "Apply"/) } },
+			],
+		});
+		assert.equal(run.isError, false, run.text);
+		assert.deepEqual([run.json.data.done, run.json.data.of, run.json.data.complete], [3, 3, true]);
+		assert.match(run.json.data.read.text, /since/, "one read of what changed ends it");
+		const applied = s.world().windows.find((w) => w.app === "Thermo").state.applied;
+		assert.deepEqual([Number(applied.target), applied.eco], [21, true]);
+
+		const j = (await s.call("open", { app: "Jotter", targets: ["c.txt"] })).json.data.window;
+		const jt = (await s.call("snapshot", { window: j })).text;
+		const area = s.row(jt, /textarea/);
+		const sheet = await s.call("run_steps", { steps: [{ tool: "set_value", args: { ref: area, value: "draft\nfinal\n" } }, { tool: "press", args: { ref: area, key: "cmd+w" } }, { tool: "press", args: { ref: area, key: "cmd+s" } }] });
+		assert.equal(sheet.json.data.stopped, "opened", sheet.text);
+		assert.deepEqual([sheet.json.data.done, sheet.json.data.of, sheet.json.data.complete], [2, 3, false]);
+		assert.match(sheet.json.data.note, /step 2 raised a dialog or sheet; the 1 after it did not run/);
+		assert.match(sheet.json.data.read.text, /button "Don't Save"/, "the read shows the sheet");
+		assert.equal(s.world().windows.find((w) => w.id === j).state.saves, 0, "the step after the sheet did not run");
+	} finally {
+		s.stop();
+	}
+});
+
+test("a right click is refused before anything is sent, as on a parked agent window; item needs button right", async () => {
+	const s = startStub("right", {});
+	try {
+		await s.call("open", { app: "Roster" });
+		const t = (await s.call("snapshot", { app: "Roster" })).text;
+		const ref = s.row(t, /\] row/);
+		const before = JSON.stringify(s.world());
+		const right = await s.call("click", { ref, button: "right", item: "Rename" });
+		assert.equal(right.json.error.code, "outside_agent_workspace", right.text);
+		assert.equal(right.json.error.next_call, null);
+		assert.equal(JSON.stringify(s.world()), before, "nothing was sent");
+		const stray = await s.call("click", { ref, item: "Rename" });
+		assert.match(stray.json.error.message, /item goes with button: right/);
+	} finally {
+		s.stop();
+	}
+});
+
 test("a long document's read is cut at 400 rows and says how to get the rest; a query finds the line", async () => {
 	const s = startStub("leaflet", task("stub-leaflet-find").files);
 	try {

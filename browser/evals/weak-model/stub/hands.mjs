@@ -47,8 +47,10 @@ const RETRY = {
 	in_use: "safe",
 };
 class HandsError extends Error {
-	constructor(code, message, suggestion, retry) {
+	/** `nextCall`: the helper's own next_call when it sets one (null for none); otherwise HandsNextCall's by code. */
+	constructor(code, message, suggestion, retry, nextCall) {
 		super(message);
+		this.nextCallOverride = nextCall;
 		this.code = code;
 		this.suggestion = suggestion;
 		this.retry = retry ?? RETRY[code] ?? "never";
@@ -256,6 +258,23 @@ function acting(w, change) {
 
 // --- the verbs ---
 
+/** RunSteps.maxSteps and RunSteps.verbs: the verbs that act on one window. */
+const MAX_STEPS = 32;
+const STEP_VERBS = ["click", "type", "set_value", "press", "click_at", "drag", "scroll", "select", "toggle", "menu"];
+const stepsBad = (why) => new HandsError("bad_arguments", why, 'Example: {"steps":[{"tool":"click","args":{"ref":"5"}},{"tool":"type","args":{"ref":"7","text":"hi"}}]}', "safe", null);
+/** ContextMenu.refClick: left (the default) presses; right opens the context menu; item goes only with right. */
+function rightClick(args) {
+	const example = 'Example: {"ref":"12","button":"right","item":"Rename"}';
+	const button = String(args.button ?? "left").toLowerCase();
+	if (button === "left") {
+		if (args.item !== undefined) throw new HandsError("bad_arguments", "item goes with button: right", example, "safe", null);
+		return false;
+	}
+	if (button !== "right") throw new HandsError("bad_arguments", "button must be left or right", example, "safe", null);
+	if (args.item !== undefined && !String(args.item).trim()) throw new HandsError("bad_arguments", "item is empty", example, "safe", null);
+	return true;
+}
+
 const verbs = {
 	windows() {
 		return {
@@ -424,6 +443,14 @@ const verbs = {
 	},
 	click(args) {
 		const { w, el, ref } = resolveRef(args.ref);
+		if (rightClick(args))
+			throw new HandsError(
+				"outside_agent_workspace",
+				"a right click opens its menu where Donovan can see it unless the agent workspace is on screen under the window; it isn't, so nothing was sent",
+				"Use `click` without button for the element's own action, or `menu` for the app's menu bar.",
+				"never",
+				null,
+			);
 		if (el.states?.includes("disabled")) throw new HandsError("action_failed", `${el.role} ${quoted(el.name)} is disabled: the press did nothing`, "Read the window again: something else must change first.");
 		let landed = "press";
 		const { evidence } = acting(w, () => {
@@ -549,11 +576,103 @@ const verbs = {
 	},
 	click_at(args) {
 		const w = windowOf({ window: args.window });
+		if (rightClick(args))
+			throw new HandsError(
+				"outside_agent_workspace",
+				"a right click opens its menu where Donovan can see it unless the agent workspace is on screen under the window; it isn't, so nothing was posted",
+				"Use `click` on a ref for the element's own action, or `menu` for the app's menu bar.",
+				"never",
+				null,
+			);
 		throw new HandsError("unverified", `neither window ${w.id}'s tree nor the pixels around ${args.x},${args.y} changed`, "Act on an element by ref instead: snapshot the window for refs.", "never");
 	},
 	drag(args) {
 		const w = windowOf({ window: args.window });
 		throw new HandsError("unverified", `nothing along the drag in window ${w.id} changed`, "Act on an element by ref instead: snapshot the window for refs.", "never");
+	},
+	/** RunSteps and HandsRouter+Steps: every step checked and its ref resolved before any runs, then each in turn, stopping at
+	 * the first that fails, isn't verified or raises a sheet; one read of what changed ends it. */
+	run_steps(args) {
+		const list = args.steps;
+		if (!Array.isArray(list) || !list.length) throw stepsBad("steps is missing: pass a list of {tool, args}");
+		if (list.length > MAX_STEPS) throw stepsBad(`at most ${MAX_STEPS} steps, not ${list.length}`);
+		const steps = list.map((step, i) => {
+			const n = i + 1;
+			const { tool, args: inner, ...beside } = step ?? {};
+			if (typeof tool !== "string") throw stepsBad(`step ${n} has no tool`);
+			const name = (tool.startsWith("computer_") ? tool.slice("computer_".length) : tool).replace(/-/g, "_");
+			if (!STEP_VERBS.includes(name)) throw stepsBad(`step ${n}: ${tool} can't be a step; steps are ${STEP_VERBS.map((v) => v.replace(/_/g, "-")).join(", ")}`);
+			const a = { ...(inner ?? {}), ...beside };
+			if (a.wait === undefined && args.wait !== undefined) a.wait = args.wait;
+			try {
+				check(name, a);
+			} catch (e) {
+				if (!(e instanceof HandsError)) throw e;
+				throw new HandsError("bad_arguments", `step ${n} (${name.replace(/_/g, "-")}): ${e.message}`, `${e.suggestion}. Nothing ran.`, "safe", null);
+			}
+			return { name, args: a };
+		});
+		// Row numbers mean the latest snapshot before the run, resolved now: a step's own reads never shift them.
+		const ids = steps.map((st, i) => {
+			try {
+				if (st.args.ref !== undefined) {
+					const r = resolveRef(st.args.ref);
+					st.args.ref = r.ref;
+					return r.w.id;
+				}
+				return windowOf(st.args).id;
+			} catch (e) {
+				if (!(e instanceof HandsError)) throw e;
+				throw new HandsError(e.code, `step ${i + 1}: ${e.message}`, `${e.suggestion}. Nothing ran.`, e.retry, e.nextCallOverride);
+			}
+		});
+		const lines = [];
+		let stop;
+		let last = ids[0];
+		let opened;
+		for (let i = 0; i < steps.length; i++) {
+			const w = windows.get(ids[i]);
+			if (!w || w.closed) {
+				stop = "gone";
+				break;
+			}
+			last = ids[i];
+			const env = call(steps[i].name, { ...steps[i].args });
+			if (!env.ok) stop = "failed";
+			else if (env.data.opened) stop = "opened";
+			else if (env.data.verified === false) stop = "unverified";
+			const l = { step: i + 1, tool: steps[i].name.replace(/_/g, "-"), ok: env.ok };
+			if (env.error) l.error = { code: env.error.code, message: env.error.message, suggestion: env.error.suggestion };
+			if (env.data) {
+				for (const k of ["verified", "landed", "opened"]) if (env.data[k] !== undefined) l[k] = env.data[k];
+				if (env.data.evidence?.value !== undefined) l.value = env.data.evidence.value;
+				if (stop) l.result = env.data;
+			}
+			lines.push(l);
+			if (stop) {
+				opened = env.data?.opened;
+				break;
+			}
+		}
+		const dialog = (Array.isArray(opened) ? opened[0] : opened)?.window;
+		const read = call("snapshot", dialog !== undefined ? { window: dialog, format: "rows", max_elements: 60 } : { window: last, since: "latest" });
+		const done = lines.filter((l) => l.ok).length;
+		const answer = { steps: lines, done, of: steps.length, complete: stop === undefined && done === steps.length };
+		if (stop) {
+			const rest = steps.length - lines.length;
+			const left = rest > 0 ? `; the ${rest} after it did not run` : "";
+			const n = lines.length;
+			answer.stopped = stop;
+			answer.note = {
+				failed: `step ${n} failed${left}. Its error says what to do.`,
+				unverified: `step ${n} ran but nothing read back shows it landed${left}. Check the read below before going on.`,
+				opened: `step ${n} raised a dialog or sheet${left}. Answer it (the read below shows it), then continue.`,
+				gone: `the window of step ${n + 1} went away, so the last ${rest} did not run.`,
+			}[stop];
+		}
+		if (read.ok) answer.read = read.data;
+		else answer.read_error = read.error.message;
+		return answer;
 	},
 	arrange() {
 		return { arranged: [...windows.values()].filter((w) => !w.closed).map((w) => w.id) };
@@ -580,8 +699,17 @@ function check(name, args) {
 	for (const [k, v] of Object.entries(args)) {
 		const p = props[k];
 		if (!p) throw new HandsError("bad_arguments", `unknown argument ${k}`, usage(name));
-		const ok = p.type === "integer" ? Number.isInteger(v) : p.type === "boolean" ? typeof v === "boolean" : p.type === "array" ? Array.isArray(v) && v.every((x) => typeof x === "string") : true;
-		if (!ok) throw new HandsError("bad_arguments", `${k} takes ${p.type === "integer" ? "a number" : p.type === "boolean" ? "true or false" : "a list of strings"}`, usage(name));
+		const objects = p.type === "array" && p.items?.type === "object";
+		if (objects && typeof v === "string") {
+			// HandsParse: a list of objects may come as its JSON text.
+			try {
+				args[k] = JSON.parse(v);
+			} catch {}
+		}
+		const x = args[k];
+		const isObject = (o) => o !== null && typeof o === "object" && !Array.isArray(o);
+		const ok = p.type === "integer" ? Number.isInteger(x) : p.type === "boolean" ? typeof x === "boolean" : objects ? Array.isArray(x) && x.every(isObject) : p.type === "array" ? Array.isArray(x) && x.every((y) => typeof y === "string") : true;
+		if (!ok) throw new HandsError("bad_arguments", `${k} takes ${p.type === "integer" ? "a number" : p.type === "boolean" ? "true or false" : objects ? "a list of objects" : "a list of strings"}`, usage(name));
 		if (p.type === "string" && typeof v !== "string") args[k] = JSON.stringify(v);
 	}
 	for (const r of t.inputSchema.required ?? []) if (args[r] === undefined) throw new HandsError("bad_arguments", `${r} is missing`, usage(name));
@@ -605,7 +733,7 @@ function call(name, args) {
 			const m = /^@([a-z0-9]+):e\d+$/.exec(String(args.ref).trim());
 			w = (m && snapshots.get(m[1])?.window) ?? (latestListed && snapshots.get(latestListed)?.window);
 		}
-		return { ok: false, error: { code: e.code, message: e.message, retry: e.retry, suggestion: e.suggestion, next_call: nextCall(e.code, w) } };
+		return { ok: false, error: { code: e.code, message: e.message, retry: e.retry, suggestion: e.suggestion, next_call: e.nextCallOverride !== undefined ? e.nextCallOverride : nextCall(e.code, w) } };
 	}
 }
 

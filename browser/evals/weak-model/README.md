@@ -27,8 +27,10 @@ helper in connector mode (`hands.mjs`). With no task files, the runner says so a
 The stub (`stub/hands.mjs`) stands in for `polycarp-spaces mcp`. It serves the real helper's `tools/list` and
 instructions (`stub/hands-tools.json`, refreshed from the helper by `stub/refresh-tools.mjs`, and held to
 `spaces/.../Hands/Tools.swift` by `test/weak-model-stub.test.mjs`), and answers with the real snapshot rows, refs,
-envelopes and error codes (`stale_ref`, `stale_bare_row`, `unverified`, a sheet on close, a read cut at 400 rows) over
-the small apps in `stub/apps.mjs`. It never touches a window, the Mac's handoff folder or an app's preferences, so stub
+envelopes and error codes (`stale_ref`, `stale_bare_row`, `unverified`, a sheet on close or Command-W, a read cut at 400
+rows, `run_steps` with its stop rules and closing read, a right click refused as on a parked agent window) over the small
+apps in `stub/apps.mjs`. When the helper's tools change, refresh the list (from a local `swift build --product
+baneyspaces-cli` if the installed helper is older) and teach the stub the new verb. It never touches a window, the Mac's handoff folder or an app's preferences, so stub
 runs need no `WM_ALLOW_COMPUTER` and run headless anywhere, alongside the browser runs. They measure whether a model
 can drive the computer tools from their own descriptions and answers; they don't measure a real app's accessibility
 quirks, which the Mac tasks in `tasks/computer.mjs` still do. Each stub task has a scripted solution in the test that

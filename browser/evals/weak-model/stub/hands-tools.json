@@ -166,6 +166,14 @@
 			"inputSchema": {
 				"additionalProperties": false,
 				"properties": {
+					"button": {
+						"description": "left (default) or right. A right click opens the element's context menu (AXShowMenu, no pointer) only while the agent workspace is on screen under the window, then presses `item` or, without one, lists the items and cancels the menu; it never leaves a menu open.",
+						"type": "string"
+					},
+					"item": {
+						"description": "With button right: the context menu item to press, by its title. Items the menu bar refuses (clipboard, Services, sharing, opening documents) are refused here too.",
+						"type": "string"
+					},
 					"ref": {
 						"description": "A ref like @s8f3k2p9:e5, or a row number from your latest snapshot, like 5.",
 						"type": "string"
@@ -285,12 +293,16 @@
 				"additionalProperties": false,
 				"properties": {
 					"button": {
-						"description": "left only: right click is not available yet.",
+						"description": "left (default) or right. A right click opens the context menu only while the agent workspace is on screen under the window, then presses `item` or, without one, lists the items and cancels the menu; it never leaves a menu open.",
 						"type": "string"
 					},
 					"count": {
 						"description": "2 for a double click, 3 for a triple (default 1).",
 						"type": "integer"
+					},
+					"item": {
+						"description": "With button right: the context menu item to press, by its title. Items the menu bar refuses (clipboard, Services, sharing, opening documents) are refused here too.",
+						"type": "string"
 					},
 					"wait": {
 						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
@@ -460,6 +472,34 @@
 				"type": "object"
 			},
 			"name": "menu"
+		},
+		{
+			"annotations": {
+				"openWorldHint": false,
+				"readOnlyHint": false
+			},
+			"description": "Several actions on one window in one call, then one read of what changed. Every step is checked before any runs; the steps run back to back with nothing else acting in between, and the run stops at the first step that fails, isn't verified or raises a dialog or sheet. Steps: click, type, set_value, press, click_at, drag, scroll, select, toggle, menu (at most 32). Row numbers mean your latest snapshot. Example: {\"steps\":[{\"tool\":\"click\",\"args\":{\"ref\":\"5\"}},{\"tool\":\"type\",\"args\":{\"ref\":\"7\",\"text\":\"hi\"}}]}",
+			"inputSchema": {
+				"additionalProperties": false,
+				"properties": {
+					"steps": {
+						"description": "The actions in order, each {tool, args} with the tool's own arguments.",
+						"items": {
+							"type": "object"
+						},
+						"type": "array"
+					},
+					"wait": {
+						"description": "Seconds to wait, 0 to 120 (default 20), when Donovan is using the app; Polycarp waits on its own and goes ahead once the app is free. 0 answers in_use at once.",
+						"type": "integer"
+					}
+				},
+				"required": [
+					"steps"
+				],
+				"type": "object"
+			},
+			"name": "run_steps"
 		},
 		{
 			"annotations": {

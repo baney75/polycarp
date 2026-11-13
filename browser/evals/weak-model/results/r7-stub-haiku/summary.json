@@ -3,20 +3,20 @@
 	"model": "claude-haiku-5-5",
 	"trials": 2,
 	"profile": "full",
-	"date": "2026-11-13T20:56:01.769Z",
+	"date": "2026-11-13T21:10:09.743Z",
 	"passed": 16,
 	"total": 16,
-	"calls": 138,
-	"toolErrors": 4,
-	"resultChars": 108231,
+	"calls": 107,
+	"toolErrors": 8,
+	"resultChars": 101211,
 	"tasks": {
-		"stub-jotter-append": {"pass":2,"of":2,"calls":[5,4],"errors":[0,0]},
-		"stub-jotter-close": {"pass":2,"of":2,"calls":[6,8],"errors":[1,1]},
-		"stub-jotter-save": {"pass":2,"of":2,"calls":[7,7],"errors":[1,0]},
+		"stub-jotter-append": {"pass":2,"of":2,"calls":[5,5],"errors":[0,0]},
+		"stub-jotter-close": {"pass":2,"of":2,"calls":[11,8],"errors":[1,0]},
+		"stub-jotter-save": {"pass":2,"of":2,"calls":[9,10],"errors":[1,1]},
 		"stub-leaflet-find": {"pass":2,"of":2,"calls":[3,5],"errors":[0,0]},
-		"stub-roster-lookup": {"pass":2,"of":2,"calls":[10,9],"errors":[0,0]},
-		"stub-tally-multiply": {"pass":2,"of":2,"calls":[21,11],"errors":[0,0]},
-		"stub-tally-sequence": {"pass":2,"of":2,"calls":[12,13],"errors":[0,0]},
-		"stub-thermo-settings": {"pass":2,"of":2,"calls":[10,7],"errors":[1,0]}
+		"stub-roster-lookup": {"pass":2,"of":2,"calls":[7,10],"errors":[0,1]},
+		"stub-tally-multiply": {"pass":2,"of":2,"calls":[5,4],"errors":[0,0]},
+		"stub-tally-sequence": {"pass":2,"of":2,"calls":[4,4],"errors":[0,0]},
+		"stub-thermo-settings": {"pass":2,"of":2,"calls":[8,9],"errors":[2,2]}
 	}
 }
