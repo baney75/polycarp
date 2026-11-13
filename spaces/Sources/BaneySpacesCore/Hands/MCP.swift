@@ -38,6 +38,8 @@ public struct HandsMCP {
             for p in t.params {
                 if p.kind == .stringList {
                     props[p.name] = .object(["type": "array", "items": .object(["type": "string"]), "description": .string(p.help)])
+                } else if p.kind == .objectList {
+                    props[p.name] = .object(["type": "array", "items": .object(["type": "object"]), "description": .string(p.help)])
                 } else {
                     props[p.name] = .object(["type": .string(p.kind.rawValue), "description": .string(p.help)])
                 }
