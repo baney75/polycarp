@@ -32,7 +32,9 @@ final class FakeProc: RunningProcess {
 /// A fake `tart`: VMs in memory, every verb recorded, failures injectable.
 final class FakeTart: ProcessRunning {
     struct VM { var suspended = false; var proc: FakeProc? }
-    let lock = NSLock()
+    /// Recursive, so a `withVMs` change that reads the fake (`tart.vms`, `tart.spawned`) takes it again instead of
+    /// hanging on itself (review of PR 233, round 2 second-F5).
+    let lock = NSRecursiveLock()
     /// Tests set these while the warm build's thread reads them, so both sides take the lock.
     private var _vms: [String: VM] = [:]
     var vms: [String: VM] { lock.lock(); defer { lock.unlock() }; return _vms }
@@ -66,11 +68,20 @@ final class FakeTart: ProcessRunning {
     var stdinSeen: [String] { lock.lock(); defer { lock.unlock() }; return _stdinSeen }
     /// Called after the lock with the process this spawn made: a hook that read `FakeProc.next` instead could see a pid
     /// the warm build's thread made in between (review of PR 206, second-F4).
-    var onSpawn: ((_ args: [String], _ proc: FakeProc) -> Void)?
+    /// A test sets the hooks while the warm build's thread reads them, so both sides take the lock (round 2 second-F6).
+    var onSpawn: ((_ args: [String], _ proc: FakeProc) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onSpawn }
+        set { lock.lock(); _onSpawn = newValue; lock.unlock() }
+    }
+    private var _onSpawn: ((_ args: [String], _ proc: FakeProc) -> Void)?
     var v6Addresses = 0
     var spawnImmortal = false
     /// Called inside `clone` so a test can delay a warm build.
-    var onClone: (() -> Void)?
+    var onClone: (() -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onClone }
+        set { lock.lock(); _onClone = newValue; lock.unlock() }
+    }
+    private var _onClone: (() -> Void)?
     /// Set by a test while the fake answers guest commands on other threads, so it is set under the lock.
     private var _v6Leak = false
     var v6Leak: Bool {
@@ -104,7 +115,7 @@ final class FakeTart: ProcessRunning {
             return ProcessResult(status: 0, stdout: _vms.keys.sorted().joined(separator: "\n"))
         case "clone":
             if failClone { return ProcessResult(status: 1, stderr: "no space left") }
-            let hook = onClone
+            let hook = _onClone
             lock.unlock()
             hook?()
             lock.lock()
@@ -163,7 +174,7 @@ final class FakeTart: ProcessRunning {
 
     func spawn(_ exe: String, _ args: [String], env: [String: String], logPath: String?, hold: Bool) throws -> RunningProcess {
         let p = try record(args, hold: hold)
-        onSpawn?(args, p)   // after the lock, like onClone, so a hook can read what the fake recorded
+        onSpawn?(args, p)   // a copy taken under the lock, called after it, so a hook can read what the fake recorded
         return p
     }
 

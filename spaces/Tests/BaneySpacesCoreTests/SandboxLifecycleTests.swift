@@ -649,14 +649,44 @@ final class FakeTartLockTests: XCTestCase {
         XCTAssertEqual(tart.vms.count, 2 * n, "no change lost")
     }
 
-    func testTheSpawnHookRunsAfterTheLockAndANoteIsOneLockedStep() throws {
-        let c = try CursorSourceTests.code("Tests/BaneySpacesCoreTests/SandboxFakes.swift")
-        let spawn = try XCTUnwrap(HandsSourceTests.between("func spawn(_ exe: String", "private func record(", in: c))
-        XCTAssertFalse(spawn.contains("lock.lock()"), "onSpawn runs after the lock, so a hook can read the lists")
-        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        for file in try FileManager.default.contentsOfDirectory(atPath: dir.path) where file.hasSuffix(".swift") {
-            let tests = try CursorSourceTests.code("Tests/BaneySpacesCoreTests/" + file).filter { !$0.isWhitespace }
-            XCTAssertFalse(tests.contains("tart.order" + ".append("), "\(file): a note is one locked step: tart.note(_:)")
+    // Review of PR 233, round 2: a note can only be one locked step, since `_order` is private (the compiler, not a
+    // text scan, first-F3); these check by behavior what the fake's lock allows.
+    func testASpawnHookCanWaitOnAnotherThreadThatReadsTheFake() throws {
+        // first-F3: run inside the lock, the hook would hold it while the other thread waits for it.
+        let tart = FakeTart()
+        tart.withVMs { $0["bsx-w-1"] = .init() }
+        var read = false
+        tart.onSpawn = { _, _ in
+            let done = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async { _ = tart.spawned; _ = tart.calls; done.signal() }
+            read = done.wait(timeout: .now() + 2) == .success
         }
+        _ = try tart.spawn("tart", ["run", "bsx-w-1"], env: [:], logPath: nil, hold: false)
+        XCTAssertTrue(read, "the hook ran outside the lock")
+    }
+
+    func testAVMChangeThatReadsTheFakeDoesNotHang() {
+        // second-F5: the change runs under the lock and reads through it again.
+        let tart = FakeTart()
+        tart.withVMs { $0["a"] = .init() }
+        let done = DispatchSemaphore(value: 0)
+        Thread.detachNewThread { tart.withVMs { $0["copy"] = tart.vms["a"]; _ = tart.vmNames() }; done.signal() }
+        XCTAssertEqual(done.wait(timeout: .now() + 2), .success, "withVMs hung on its own lock")
+    }
+
+    func testAHookSetWhileTheFakeSpawnsAndClonesIsOneLockedStep() {
+        // second-F6 (a race only TSan sees): a test sets the hooks while the warm build's thread spawns and clones.
+        let tart = FakeTart(), n = 500
+        tart.withVMs { $0["bsx-w-1"] = .init() }
+        DispatchQueue.concurrentPerform(iterations: 2) { side in
+            for k in 0..<n {
+                if side == 0 { tart.onSpawn = { _, _ in }; tart.onClone = {} }
+                else {
+                    _ = try? tart.spawn("tart", ["run", "bsx-w-1"], env: [:], logPath: nil, hold: false)
+                    _ = tart.run("tart", ["clone", SandboxPin.image, "bsx-c\(k)"], env: [:], stdin: nil, timeout: 5, outputLimit: 1 << 16)
+                }
+            }
+        }
+        XCTAssertEqual(tart.spawned.count, n)
     }
 }
