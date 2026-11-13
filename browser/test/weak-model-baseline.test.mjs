@@ -1,25 +1,26 @@
 // The weak-model eval's ratchet (evals/weak-model/README.md). CI never calls a model: it checks the committed results.
-// A round that counts is listed in baseline.json with the score it recorded; its summary.json must not score lower, the
-// best round must hold the floor, and the committed read-size measurement must stay inside its token budget.
+// A round that counts is listed in baseline.json with the score it recorded and what it ran under (model, profile, tool
+// count per kind, task set); its summary.json must not score lower and must match that, the latest round for each model
+// and profile must hold the floor, each classes.json must count what its runs hold, and the committed read-size
+// measurement must stay inside its token budget.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { checkClasses, checkRound } from "../evals/weak-model/lib.mjs";
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "evals", "weak-model");
 const baseline = JSON.parse(readFileSync(join(dir, "baseline.json"), "utf8"));
 const summary = (label) => JSON.parse(readFileSync(join(dir, "results", label, "summary.json"), "utf8"));
+const runsOf = (label) => readFileSync(join(dir, "results", label, "runs.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
 
-test("every recorded round scores what its baseline says, and its runs are on disk", () => {
+test("every recorded round scores what its baseline says, under what it says, and its runs are on disk", () => {
 	for (const [label, want] of Object.entries(baseline.rounds)) {
-		const s = summary(label);
-		assert.equal(s.total, want.total, `${label}: ${s.total} runs, baseline has ${want.total}`);
-		assert.ok(s.passed >= want.passed, `${label}: ${s.passed}/${s.total} passed, baseline ${want.passed}`);
-		// The score is the transcripts' own: recount it from runs.jsonl, one run per line.
-		const runs = readFileSync(join(dir, "results", label, "runs.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
-		assert.equal(runs.length, s.total, `${label}: runs.jsonl has ${runs.length} runs`);
-		assert.equal(runs.filter((r) => r.pass).length, s.passed, `${label}: summary.json disagrees with its runs`);
+		// The score is the transcripts' own (recounted from runs.jsonl), and like is compared with like: a rerun with
+		// another model, another tool list or another task set fails here instead of raising the round.
+		const runs = runsOf(label);
+		assert.deepEqual(checkRound(label, want, summary(label), runs), []);
 		for (const r of runs) assert.ok(Array.isArray(r.calls) && r.calls.length > 0, `${label}: ${r.task} t${r.trial} has no calls`);
 	}
 });
@@ -47,5 +48,14 @@ test("guarded tasks keep every pass they recorded", { skip: !baseline.guard && "
 			assert.ok(s.tasks[id], `${label} has no ${id} runs`);
 			assert.ok(s.tasks[id].pass >= want, `${label} ${id}: ${s.tasks[id].pass}/${s.tasks[id].of}, baseline ${want}`);
 		}
+	}
+});
+
+test("every classification counts what its round's runs hold", () => {
+	const labels = Object.keys(baseline.rounds).filter((l) => existsSync(join(dir, "results", l, "classes.json")));
+	assert.ok(labels.length > 0, "no classes.json to check");
+	for (const label of labels) {
+		const classes = JSON.parse(readFileSync(join(dir, "results", label, "classes.json"), "utf8"));
+		assert.deepEqual(checkClasses(classes, runsOf(label)), [], label);
 	}
 });
