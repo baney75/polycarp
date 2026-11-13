@@ -12,7 +12,7 @@
 
 import { CHANGES_MAX_CHARS, fitChanges } from "../bridge/fit-changes.js";
 import { openDialog } from "./cdp.js";
-import type { FrameRule } from "./frames.js";
+import { FRAMES_CLOSED, type FrameRule, frameForRef, splitFrameRef } from "./frames.js";
 import { maskUrl } from "./mask-body.js";
 import { type ChangeLook, changeLook, type FrameLook } from "./page.js";
 
@@ -106,6 +106,10 @@ export async function beforeAction(
 	rule?: FrameRule,
 ): Promise<Before> {
 	const frame: FrameLook = { ref: target, rule };
+	// A frame ref's frame is found once for the action, outside the look's time limit (finding frames may take
+	// FRAMES_MS): both looks and the action's point reuse it. Not found here, the action says why itself.
+	if (target && splitFrameRef(target))
+		frame.hit = await frameForRef(tabId, target, rule ?? FRAMES_CLOSED).catch(() => undefined);
 	const got = await look(tabId, hosts, [], frame);
 	const side = typeof got === "string" ? { miss: got } : { look: got };
 	return { tabId, tabs: [...tabs], target, hosts, frame, ...side };

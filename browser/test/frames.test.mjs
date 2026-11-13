@@ -115,13 +115,16 @@ test("a box a cross-origin frame opens is answered in that frame's session; one 
 // A fake debugger for a tab: `trees` maps a session ("" for the tab's) to its frame tree, `kids` are the
 // out-of-process frames auto-attach announces (targetId to { sessionId, parent }), `contexts` the frame
 // each isolated world belongs to, and `holds` which frame's document holds each frame's <iframe>.
-function fakeTab(tabId, { trees, kids = {}, holds = {}, owners = {}, box = {}, shown = {}, quads = {}, evaluate, hang = new Set(), fail = new Set() }) {
+function fakeTab(tabId, { trees, kids = {}, holds = {}, owners = {}, box = {}, shown = {}, quads = {}, evaluate, hang = new Set(), fail = new Set(), delay = {} }) {
 	const sent = [];
 	const worlds = new Map();
+	// The hit test answers with the <iframe> last asked about in that session: the point lands on the frame itself.
+	const asked = new Map();
 	let next = 100;
 	chrome.debugger.sendCommand = async (target, method, params = {}) => {
 		const session = target.sessionId ?? "";
 		sent.push({ session, method, params });
+		if (delay[method]) await new Promise((r) => setTimeout(r, delay[method]));
 		if (hang.has(`${session}:${method}`)) return new Promise(() => {});
 		if (fail.has(`${session}:${method}`)) throw new Error("No target with given id found");
 		if (method === "Target.setAutoAttach" && params.autoAttach)
@@ -130,7 +133,11 @@ function fakeTab(tabId, { trees, kids = {}, holds = {}, owners = {}, box = {}, s
 					for (const fn of chrome.debugger.onEvent.listeners)
 						fn({ tabId, ...(k.parent ? { sessionId: k.parent } : {}) }, "Target.attachedToTarget", { sessionId: k.sessionId, targetInfo: { targetId, type: "iframe", url: "" } });
 		if (method === "Page.getFrameTree") return { frameTree: trees[session] };
-		if (method === "DOM.getFrameOwner") return { backendNodeId: owners[params.frameId] };
+		if (method === "DOM.getFrameOwner") {
+			asked.set(session, owners[params.frameId]);
+			return { backendNodeId: owners[params.frameId] };
+		}
+		if (method === "DOM.getNodeForLocation") return { backendNodeId: asked.get(session) };
 		if (method === "Page.createIsolatedWorld") {
 			const id = next++;
 			worlds.set(id, params.frameId);
@@ -411,6 +418,8 @@ test("a frame inside a frame drawn at half size is hit-tested at the point its o
 			asked.push({ session: target.sessionId, x: params.x, y: params.y });
 			return { backendNodeId: target.sessionId ? 12 : 11 };
 		}
+		// The outer frame's own document is scrolled 30 px down: the hit test takes document coordinates.
+		if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { pageX: 0, pageY: target.sessionId ? 30 : 0, clientWidth: 800, clientHeight: 600 } };
 		return {};
 	};
 	const outer = { frameId: "OUTER", sessionId: "S1", ownerSessionId: undefined, base: { x: 0, y: 0 }, baseScale: 1 };
@@ -418,8 +427,9 @@ test("a frame inside a frame drawn at half size is hit-tested at the point its o
 	outer.chain = [outer];
 	inner.chain = [outer, inner];
 	assert.equal(await frameTakesPoint(23, inner, 150, 80), true);
-	// 50 tab px right of the outer frame's corner is 100 of its own px, drawn at half size.
-	assert.deepEqual(asked.find((a) => a.session === "S1"), { session: "S1", x: 100, y: 60 });
+	// 50 tab px right of the outer frame's corner is 100 of its own px, drawn at half size, and 30 px down its scrolled document.
+	assert.deepEqual(asked.find((a) => a.session === "S1"), { session: "S1", x: 100, y: 90 });
+	assert.deepEqual(asked.find((a) => !a.session), { session: undefined, x: 150, y: 80 });
 });
 
 test("one click on a frame ref finds the tab's frames once: its change report and the point reuse that frame", async () => {
@@ -500,4 +510,135 @@ test("a function's doc comment is one block: no stale comment stacked over the o
 	const { readFileSync } = await import("node:fs");
 	for (const f of ["src/bridge/tools.ts", "src/browser/frames.ts", "src/browser/page.ts", "src/browser/changes.ts"])
 		assert.doesNotMatch(readFileSync(new URL(`../${f}`, import.meta.url), "utf8"), /\*\/\n\/\*\*/, `${f} stacks two doc comments`);
+});
+
+test("every page script click, hover, type, fill and scroll send parses, for a top-page ref, a selector and a frame ref", async () => {
+	// tsc can't see into these template strings and the fake debugger never ran them, so a lost quote broke every click.
+	const { locate, fillElement, scrollPage } = await import("../src/browser/page.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	const parsed = [];
+	const broken = [];
+	try {
+		chrome.webNavigation.getAllFrames = async () => [{}, {}];
+		fakeTab(31, {
+			trees: { "": node("TOP", "https://shop.example", [node("PAY", "https://pay.example")]) },
+			holds: { PAY: "TOP" },
+			owners: { PAY: 11 },
+			evaluate: (frameId, expression) => {
+				try {
+					new vm.Script(expression);
+					parsed.push(expression);
+				} catch (e) {
+					broken.push(`${String(e)}\n${expression.slice(0, 200)}`);
+				}
+				if (frameId === undefined && /pageSnapshot|maxNodes/.test(expression)) return pageWith([frameLine("e1", [100, 50, 400, 150])]);
+				return { x: 10, y: 10, width: 4, height: 4, scrollX: 0, scrollY: 0, pageHeight: 800 };
+			},
+		});
+		const pay = `${frameTag("PAY")}e5`;
+		for (const target of [{ ref: "e12" }, { selector: "#buy" }, { ref: pay }]) {
+			for (const act of ["click", "hover", "type", "fill"]) await locate(31, target, open, act).catch(() => undefined);
+			await fillElement(31, target, "Eve", open).catch(() => undefined);
+			await scrollPage(31, { ...target, dy: 100 }, open).catch(() => undefined);
+		}
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+	assert.deepEqual(broken, [], "a page script that doesn't parse");
+	assert.ok(parsed.filter((e) => /which would take/.test(e)).length >= 8, `locate's script ran for each act and target: ${parsed.length} parsed`);
+	assert.ok(parsed.some((e) => /frameworks|HTMLSelectElement/.test(e)), "fillElement's script ran");
+	assert.ok(parsed.some((e) => /scrollHeight/.test(e)), "scrollPage's script ran");
+});
+
+test("a frame in a same-process frame in another process: points are measured from the frame its session draws, not one sharing its session", async () => {
+	// TOP holds X (its own process, S1); X holds Y (another site, X's process, so S1 too); Y holds Z (its own, S2).
+	const { locate } = await import("../src/browser/page.ts");
+	chrome.webNavigation.getAllFrames = async () => [{}, {}, {}, {}];
+	fakeTab(32, {
+		trees: { "": node("TOP", "https://shop.example"), S1: node("X", "https://x.example", [node("Y", "https://y.example")]), S2: node("Z", "https://z.example") },
+		kids: { X: { sessionId: "S1" }, Z: { sessionId: "S2", parent: "S1" } },
+		holds: { X: "TOP", Y: "X", Z: "Y" },
+		owners: { X: 11, Y: 12, Z: 13 },
+		// Each in its owner session's CSS px: X at 100,50 in the tab; Y at 20,30 and Z at 40,60 in X's viewport.
+		quads: { X: [100, 50, 500, 50, 500, 350, 100, 350], Y: [20, 30, 320, 30, 320, 230, 20, 230], Z: [40, 60, 240, 60, 240, 160, 40, 160] },
+		evaluate: () => ({ x: 10, y: 10, width: 4, height: 4 }),
+	});
+	const frames = await crossOriginFrames(32, open);
+	assert.deepEqual(frames.find((f) => f.frameId === "Z")?.chain.map((f) => f.frameId), ["X", "Y", "Z"]);
+	const at = await locate(32, { ref: `${frameTag("Z")}e5` }, open);
+	assert.deepEqual({ x: at.x, y: at.y }, { x: 150, y: 120 }, "X's corner 100,50, plus Z's 40,60 in X, plus the point 10,10");
+});
+
+test("a fill on a frame ref compares the frame even when finding the tab's frames takes a second", async () => {
+	const { beforeAction, afterAction } = await import("../src/browser/changes.ts");
+	const { fillElement } = await import("../src/browser/page.ts");
+	const getTab = chrome.tabs.get;
+	chrome.tabs.get = async (id) => ({ id, url: "https://shop.example/" });
+	let passes = 0;
+	chrome.webNavigation.getAllFrames = async () => {
+		passes++;
+		return [{}, {}];
+	};
+	let filled = false;
+	const page = { url: "https://shop.example/", title: "Shop", nodes: [], focus: "", doc: "d1", gone: [], same: {}, text: "" };
+	const pay = () => ({ ...page, url: "https://pay.example/", nodes: [{ ref: "e5", role: "textbox", name: "Card name", value: filled ? "Eve" : "", x: 1, y: 1, width: 1, height: 1 }] });
+	fakeTab(33, {
+		trees: { "": node("TOP", "https://shop.example", [node("PAY", "https://pay.example")]) },
+		holds: { PAY: "TOP" },
+		owners: { PAY: 11 },
+		// Slow but within each call's limit: about a second to find the frames, past the look's 750 ms.
+		delay: { "Page.getFrameTree": 350, "DOM.getFrameOwner": 350, "DOM.getContentQuads": 300 },
+		evaluate: (frameId, expression) => {
+			if (/focusProbe/.test(expression)) return frameId === "PAY" ? pay() : page;
+			if (/HTMLSelectElement/.test(expression)) filled = true;
+			return { x: 10, y: 10, width: 4, height: 4 };
+		},
+	});
+	try {
+		const ref = `${frameTag("PAY")}e5`;
+		const b = await beforeAction(33, [33], ref, [], open);
+		assert.ok(b.look, `the before look ran: ${b.miss}`);
+		await fillElement(33, { ref }, "Eve", open, b.frame.hit);
+		const r = await afterAction(b, [33], async () => "https://shop.example/", () => false);
+		assert.match(JSON.stringify(r), /Eve/, `the report shows the fill in the frame: ${JSON.stringify(r)}`);
+		assert.equal(passes, 1, `the tab's frames were looked for ${passes} times`);
+	} finally {
+		chrome.tabs.get = getTab;
+	}
+});
+
+test("scroll by a frame ref refuses a frame the page hid after it was read, as click and fill do", async () => {
+	const { scrollPage } = await import("../src/browser/page.ts");
+	chrome.webNavigation.getAllFrames = async () => [{}, {}];
+	const sent = fakeTab(34, {
+		trees: { "": node("TOP", "https://shop.example", [node("PAY", "https://pay.example")]) },
+		holds: { PAY: "TOP" },
+		owners: { PAY: 11 },
+		shown: { PAY: "hidden" },
+		evaluate: () => ({ scrollX: 0, scrollY: 0, pageHeight: 800, scrolled: "element", scrollTop: 100 }),
+	});
+	await assert.rejects(scrollPage(34, { ref: `${frameTag("PAY")}e5`, dy: 100 }, open), /isn't shown now: its frame is hidden/);
+	assert.ok(!sent.some((c) => c.method === "Runtime.evaluate" && /scrollHeight/.test(c.params.expression)), "nothing scrolled in the frame");
+});
+
+test("a hit test that gives no answer counts as covered: the action is not sent on no evidence", async () => {
+	const { frameTakesPoint } = await import("../src/browser/frames.ts");
+	chrome.webNavigation.getAllFrames = async () => [{}, {}];
+	fakeTab(35, {
+		trees: { "": node("TOP", "https://shop.example", [node("PAY", "https://pay.example")]) },
+		holds: { PAY: "TOP" },
+		owners: { PAY: 11 },
+	});
+	const [pay] = await crossOriginFrames(35, open);
+	assert.equal(await frameTakesPoint(35, pay, 150, 100), true, "the frame itself answers");
+	const send = chrome.debugger.sendCommand;
+	try {
+		for (const answer of [() => ({}), () => Promise.reject(new Error("No node found at given location"))]) {
+			chrome.debugger.sendCommand = (target, method, params) => (method === "DOM.getNodeForLocation" ? answer() : send(target, method, params));
+			assert.equal(await frameTakesPoint(35, pay, 150, 100), false);
+		}
+	} finally {
+		chrome.debugger.sendCommand = send;
+	}
 });

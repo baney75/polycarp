@@ -2351,6 +2351,9 @@ test("cross-origin frames: read, click and fill inside a same-site and a cross-s
 		assert.match(ghost.content[0].text, /isn't shown now: its frame is hidden/);
 		const ghostFill = await mcp.callTool({ name: "fill", arguments: { ref: frameRef(seen, "Card name seen"), value: "Eve" } });
 		assert.ok(ghostFill.isError, "a fill into it refuses too");
+		const ghostScroll = await mcp.callTool({ name: "scroll", arguments: { ref: frameRef(seen, "Pay seen"), dy: 100 } });
+		assert.ok(ghostScroll.isError, "a scroll in it refuses too");
+		assert.match(ghostScroll.content[0].text, /isn't shown now: its frame is hidden/);
 		await tool("run_js", { code: "document.querySelector('iframe').style.opacity = ''" });
 		assert.doesNotMatch(await tool("read_page", {}), /Paid seen|Name is Eve/, "nothing was clicked or filled in it");
 	} finally {
