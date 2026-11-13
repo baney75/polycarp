@@ -180,7 +180,7 @@ final class SandboxSecurityTests: XCTestCase {
         try Data("x".utf8).write(to: rest.appendingPathComponent("a.txt"))
         let slot = try SandboxHandoff.makeSlot(vm: "bsx-w-old", paths: paths)
         try SandboxHandoff.bind(task: "t1", slot: slot, paths: paths)
-        r.tart.vms["bsx-w-old"] = .init(proc: FakeProc())
+        r.tart.withVMs { $0["bsx-w-old"] = .init(proc: FakeProc()) }
         r.tart.failDeleteOnce = 1000
         XCTAssertThrowsError(try r.manager.up(task: "t1")) {
             let e = $0 as? SandboxError
