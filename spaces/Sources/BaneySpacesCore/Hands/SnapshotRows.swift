@@ -21,6 +21,8 @@ public enum SnapshotRows {
         /// Whether a row or tree item the read hid (no ref, name or value) right above this row is selected; nil when
         /// none is. Selection is that row's, and its cells are what the read shows of it (194 r1 second-F6).
         public var hiddenItemSelected: Bool? = nil
+        /// The element's AX identifier, when the app gave one (AppKit's Edit items: copy:, paste:).
+        public var identifier = ""
 
         public var line: String {
             var s = String(repeating: "  ", count: depth)
@@ -67,14 +69,23 @@ public enum SnapshotRows {
                 let ordinal = siblings[slot, default: 0]
                 siblings[slot] = ordinal + 1
                 let key = slot + "#\(ordinal)"
-                out.append(Row(depth: depth, number: number, role: role, name: name, value: value, states: states, key: key, parent: parent,
-                               hiddenItemSelected: hidden))
+                var row = Row(depth: depth, number: number, role: role, name: name, value: value, states: states, key: key, parent: parent,
+                              hiddenItemSelected: hidden)
+                if o["native_id"]?["kind"]?.string == "ax_identifier" { row.identifier = o["native_id"]?["value"]?.string ?? "" }
+                out.append(row)
                 childDepth = depth + 1; childParent = out.count - 1; childPath = key; childHidden = nil
             }
             for c in o["children"]?.array ?? [] { walk(c, depth: childDepth, parent: childParent, path: childPath, hidden: childHidden) }
         }
         walk(tree, depth: 0, parent: nil, path: "")
         return out
+    }
+
+    /// Whether `row` sits under row `i` of `rows`.
+    static func descends(_ rows: [Row], _ row: Row, from i: Int) -> Bool {
+        var up = row.parent
+        while let p = up { if p == i { return true }; up = rows[p].parent }
+        return false
     }
 
     /// 5 from `@s8f3k2p9:e5`.
