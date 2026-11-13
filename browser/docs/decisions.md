@@ -1265,17 +1265,21 @@ reports the difference:
   its ref, so a listed ref works at once. An element that now shows something else (a reused row, a live counter) gets a new
   ref; when the look finds the same element under it, that is one changed line naming the old ref right after the new one
   (`e9 (was e5) ...`), since that ref fails now. An identical node put in a control's place (a form re-render) is a new
-  element, so it is listed as appeared and the old ref as gone, never paired by role and place. A scroll pairs nothing: a
-  list that recycles its rows shows new items in old elements. Anything else whose old ref fails is listed as gone. A changed line says what changed (name,
+  element, so it is listed as appeared and the old ref as gone, never paired by role and place. A scroll pairs nothing,
+  alone or as a step of `actions`: a list that recycles its rows shows new items in old elements. Anything else whose old ref fails is listed as gone. A changed line says what changed (name,
   value, states).
 - `newText`: up to 3 new lines of page text, 100 characters each (`moreText` counts the rest); a line that only repeats a
   listed control's name is left out. `text` says the text changed when no line is new.
 - A full navigation is a new document: `navigate` says `page: "new page; read_page lists it"` without looking, since every
-  ref is new and the list would be the page; back, forward and a jump to a hash are compared. A URL that loads no document
-  (a 204, a download) leaves the main frame's loader as it was (`Page.getFrameTree`), and then the report says `"no new page
-  loaded"`. Tabs the load opened or closed are in both. A load that timed out says
-  `"still loading"`, so `navigate` always returns `changes`. `actions` whose step changed the current tab says `"moved to tab
-  N"`: the look was on the first tab; a batch that names a tab and only waits stays on it. `drag` waits briefly (0.6 s cap,
+  ref is new and the list would be the page; back, forward and a jump to a hash are compared (the URLs are parsed, so
+  `https://a.example#x` is a jump on `https://a.example/`). A URL that loads no document (a 204, a download) commits
+  nothing and ends in `ERR_ABORTED`, and the report says `"no new page loaded"`. The navigation's own events decide this,
+  with no debugger call, so a hung renderer never holds `navigate` or keeps it from leaving the page. An `ERR_ABORTED` may
+  instead belong to an earlier navigation this one cancelled, so the wait checks the tab every 0.5 s and goes on while it
+  still loads something (`status` loading or a `pendingUrl`), until a commit or the timeout; one timer does this and ends
+  with the wait. Tabs the load opened or closed, the settle included, are in both, on the first navigate of a session too. A load that timed out says
+  `"still loading"`, so `navigate` always returns `changes`. `actions` whose last step acted on another tab than the first
+  says `"moved to tab N"`: the look was on the first tab; a batch that names a tab and only waits stays on it. `drag` waits briefly (0.6 s cap,
   0.2 s quiet, Network left as it is), so a drop that reorders a frame or a transition later is in the report, at most about
   2.1 s with the looks; `scroll` keeps the full wait, since a list loads its
   next rows after the scroll, so a scroll on a page that never goes quiet takes at most about 4.5 s (Network on 0.5 s, the
@@ -1453,7 +1457,9 @@ read, as click and fill do. A nested frame is measured from the frame its owner 
 same-process frame shares its owner's session). A frame ref's frame is found before the change report's first look, so
 finding it never uses up the look's 750 ms. A ref whose frame navigated or went away fails as stale; a ref from a frame's earlier document
 fails the same way it does in the top page. The action's change report (D43) looks in that frame as well as the page, so a
-click's effect inside the frame is in its `changes`. A box (alert, confirm, prompt) a frame opens is answered in the session that
+click's effect inside the frame is in its `changes`, while the frame stays allowed and shown: each look asks the
+rule again of the document it read (an action can take a frame to another host and keep its id and session) and checks
+the frame is still shown, and a barred or hidden frame's refs count as gone, with nothing of it read. A box (alert, confirm, prompt) a frame opens is answered in the session that
 reported it: the frame's when it comes from one, else the tab's. Chromium reports a box from another site's frame on the
 tab's session, which answers it, after a worker restart too (an e2e test checks this).
 
@@ -1466,13 +1472,20 @@ with no sample point in view (below the fold) can't be tested, so it is named, n
 read_page". Any other failure keeps one line, "not shown, so not read", and nothing inside it is read either; this keeps the
 #73 rule that hidden text never reaches the agent, and an invisible field can't be filled. The same test runs again in the
 tab for each frame, level by level, before the frame claims its line (matched by the `<iframe>`'s border box, not its
-corner), so a see-through frame under a shown one can't take the shown one's line or its points; a test that gets no
-answer counts as hidden. Each action resolves its frame once and reuses it for the change report and the point, re-measured
-after the scroll; a nested frame's points compose every level's scale. Limits: 10 frames read and 3 levels, outermost first (up to 30 are placed, so hidden ones don't use up the 10); a
+corner), so a see-through frame under a shown one can't take the shown one's line or its points; a frame whose test gets
+no answer is not read and keeps its line, and a frame the tab found hidden relabels only the line that names its own URL,
+so it can't take the line of a shown frame that was never placed. Each action resolves its frame once and reuses it for the change report and the point, re-measured
+after the scroll; a nested frame's points compose every level's scale. The change report's look in a frame tests it within
+the look's own 0.75 s: a frame only out of view is read (the action has not scrolled it in yet, or scrolled it away), and
+one hidden, untested, gone to an error page or to the approval page (#94) is not, and its refs are listed as gone. Limits: 10 frames read and 3 levels, outermost first (up to 30 are placed, so hidden ones don't use up the 10); a
 frame past them, or one with no box, keeps its old line, so the agent still knows it is there and can `navigate` to it.
-Every debugger call about a frame has its own time limit (1 s; 3 s for a frame's snapshot), and the calls run in parallel
+Every debugger call about a frame has its own time limit (1 s; 3 s for a frame's snapshot), in actions too (a call that
+gets no answer counts as covered; the cover test of a point runs levels in different sessions at once, all within 2 s),
+and the calls run in parallel
 under one deadline for the whole read (1.5 s to find the frames, 4 s to read them), so frames that don't answer keep their
-lines instead of adding their waits up. Frames get a small share past a page that used up the default budget, never
+lines instead of adding their waits up. An out-of-process frame whose holder the debugger can't name in time is left
+out, since its `<iframe>` may sit in a guarded or non-web frame. A line whose frame the tab finds hidden says "not shown",
+and a barred frame's line names its host whatever the page said of it. Frames get a small share past a page that used up the default budget, never
 past a `maxNodes` or `maxTextChars` the caller set. Only http, https and file frames are read: never an extension page, an
 error page or a browser page. A frame on a guarded host (#94) is left out with everything inside it; the side panel has no
 guarded hosts (D40), as before. A caller that names no rule gets none of a frame read or acted in: the default rule is
