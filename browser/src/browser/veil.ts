@@ -50,7 +50,7 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 let enabled: boolean | undefined;
 /** Settings > Agents, "Show the agent's pointer": unknown until read once; storage changes keep it current. */
 let pointer: boolean | undefined;
-/** The read under way, if any: one for the worker's life until it settles, never a second beside it (PR 219's review, first-F2). */
+/** The read under way, if any: never a second beside it, and dropped at its deadline so the next show reads afresh (PR 234's review, first-F1). */
 let pointerRead: Promise<boolean> | undefined;
 /** A show gave up on the read: later shows draw at once without it, cues are dropped, and the read sets the open veils. */
 let pointerTimedOut = false;
@@ -83,22 +83,11 @@ function dispatch(event: VeilEvent): Promise<void> {
 	return Promise.all(step.effects.map((e) => queue(e))).then(() => undefined);
 }
 
-/**
- * The newest show queued per tab: a late show that a newer one replaced draws nothing (PR 204's review, second-S2). It is
- * kept after that show finishes, until the tab's veil hides or the tab closes, so a late show that resumes after the
- * newer one is done still sees it (PR 204's second review, first-F2).
- */
-const newestShow = new Map<number, number>();
-let showSeq = 0;
-
 function queue(effect: VeilEffect): Promise<void> {
 	const prev = chains.get(effect.tabId) ?? Promise.resolve();
-	const seq = effect.kind === "show" ? ++showSeq : 0;
-	if (seq) newestShow.set(effect.tabId, seq);
-	else if (effect.kind === "hide") newestShow.delete(effect.tabId);
 	const run = prev
 		.then(() => {
-			const late = { fired: false, seq };
+			const late = { fired: false };
 			return withTimeout(apply(effect, late), late);
 		})
 		.catch(() => undefined);
@@ -136,14 +125,11 @@ async function inject(tabId: number, cmd: VeilCommand): Promise<VeilPageResult |
 /**
  * Carry out one effect. A show still waiting on the browser when its time ran out (second-S1 of the review of PR 189) no
  * longer draws what was true when it was queued: the chain has moved on, so it draws the tab's facts as they are now
- * (its view, and concealed for a capture that came after it, say), or nothing if the tab has no veil any more or a
- * newer show was queued. Every wait comes first, then that decision and the inject with nothing awaited between them
+ * (its view, and concealed for a capture that came after it, say), or nothing if the tab has no veil any more or its
+ * document changed (the tag guard, PR 234's review, second-S1). Every wait comes first, then that decision and the inject with nothing awaited between them
  * (PR 204's review, first-F1).
  */
-async function apply(
-	effect: VeilEffect,
-	late: { fired: boolean; seq: number } = { fired: false, seq: 0 },
-): Promise<void> {
+async function apply(effect: VeilEffect, late: { fired: boolean } = { fired: false }): Promise<void> {
 	const { tabId } = effect;
 	try {
 		if (effect.kind === "show") {
@@ -168,7 +154,6 @@ async function apply(
 					await rememberVeilTag(tabId, undefined);
 					return;
 				}
-				if (late.seq && newestShow.get(tabId) !== late.seq) return;
 				if (tagNow !== tag) return;
 				interactive = now.input === 0;
 				concealed = isConcealed(state, tabId);
@@ -281,7 +266,7 @@ function pointerOn(): Promise<boolean> {
 	const read = isPointerEnabled()
 		.catch(() => true)
 		.then((on) => {
-			pointerRead = undefined;
+			if (pointerRead === read) pointerRead = undefined;
 			if (pointer !== undefined) return pointer;
 			pointer = on;
 			if (pointerTimedOut) for (const id of Object.keys(state.tabs)) void queuePoint(Number(id), undefined);
@@ -291,6 +276,8 @@ function pointerOn(): Promise<boolean> {
 	pointerGiveUp = new Promise((r) =>
 		setTimeout(() => {
 			if (pointer === undefined) pointerTimedOut = true;
+			// A read that never settles is given up, so the next show or cue starts one fresh read (first-F1).
+			if (pointerRead === read) pointerRead = undefined;
 			r(undefined);
 		}, EFFECT_TIMEOUT_MS),
 	);
@@ -403,7 +390,7 @@ export function startVeil(logger?: (line: string) => void): void {
 			if (page) void queuePoint(tabId, page);
 		};
 		if (pointer !== undefined) return send(pointer);
-		if (pointerTimedOut) return;
+		if (pointerTimedOut) return void pointerOn();
 		void Promise.race([pointerOn(), pointerGiveUp]).then((on) => send(on ?? pointer));
 	});
 	// A worker that restarted lost its state: veils it left in pages go.
@@ -415,7 +402,6 @@ export function startVeil(logger?: (line: string) => void): void {
 		}
 	});
 	chrome.tabs.onRemoved.addListener((tabId) => {
-		newestShow.delete(tabId);
 		void dispatch({ type: "drop", tabId });
 		void rememberVeilTag(tabId, undefined);
 	});

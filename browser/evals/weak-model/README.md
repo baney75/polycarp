@@ -57,6 +57,7 @@ From `browser/`, after `npm run build` in `cli/` and an extension build with `TA
 node evals/weak-model/run.mjs --list                              # the tasks a run would do; starts nothing
 node evals/weak-model/run.mjs --label r2-haiku                    # all tasks, 2 trials, claude-haiku-5-5
 node evals/weak-model/run.mjs --label s-sonnet --model claude-sonnet-5-5 --trials 1 --only wizard,pagination
+node evals/weak-model/run.mjs --label r2-small --profile small    # the small tool profile
 node evals/weak-model/report.mjs r2-haiku                         # per run: calls, errors, repeats, failures
 node evals/weak-model/rescore.mjs r1-haiku                        # rescore saved signup runs under the signup-v2 rule
 node evals/weak-model/measure-read.mjs after                      # read_page and tools/list sizes on 8 public pages
