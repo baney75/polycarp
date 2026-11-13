@@ -29,6 +29,21 @@ register(${JSON.stringify(`data:text/javascript,${encodeURIComponent(PUB_LOADER)
 const { runNativeHost } = await import("./cli/src/host.ts");
 runNativeHost();`;
 
+// Under the whole suite a host can take seconds to start (tsx compiles host.ts and its imports while other test files
+// run), and polls with a fixed 0.5 to 5 s budget timed out there though each file passes alone. Waits end as soon as
+// the condition holds, so a deadline this long costs nothing when things are quick.
+const WAIT_MS = 20_000;
+/** How long a host may take to exit once it should: it returns the moment it does. */
+const EXIT_MS = 15_000;
+/** Wait until `cond()` holds, up to WAIT_MS; what it last said is for the assert that follows. */
+async function until(cond) {
+	for (const end = Date.now() + WAIT_MS; Date.now() < end; ) {
+		if (cond()) return true;
+		await new Promise((r) => setTimeout(r, 20));
+	}
+	return false;
+}
+
 function header(length) {
 	const h = Buffer.alloc(4);
 	h.writeUInt32LE(length, 0);
@@ -85,11 +100,11 @@ test("the native host exits on a bad frame from the extension instead of going d
 	try {
 		// Up and listening first, so an exit below is the bad frame's doing.
 		const sock = join(dir, "s", `${host.pid}.sock`);
-		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		await until(() => existsSync(sock));
 		assert.ok(existsSync(sock), "host started and opened its socket");
 		assert.equal(await within(200), "still running");
 		host.stdin.write(header(61 * 1024 * 1024));
-		const code = await within(5000);
+		const code = await within(EXIT_MS);
 		assert.notEqual(code, "still running", "host kept running after the bad frame");
 		assert.notEqual(code, 0, "host exits with an error code");
 	} finally {
@@ -111,7 +126,7 @@ test("on a bad extension frame the host answers waiting requests with a non-retr
 	host.stdout.on("data", (chunk) => forwarded.push(...toExt.push(chunk).messages));
 	try {
 		const sock = join(dir, "s", `${host.pid}.sock`);
-		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		await until(() => existsSync(sock));
 		const client = connect({ path: sock, allowHalfOpen: true });
 		const late = client;
 		const fromHost = new FrameParser(64 * 1024 * 1024);
@@ -122,7 +137,7 @@ test("on a bad extension frame the host answers waiting requests with a non-retr
 		client.write(encodeFrame({ type: "request", id: 1, method: "tabs.create", params: {} }));
 		client.write(encodeFrame({ type: "request", id: 2, method: "click", params: {} }));
 		const wait = async (fn, what) => {
-			for (let i = 0; i < 100; i++) {
+			for (const end = Date.now() + WAIT_MS; Date.now() < end; ) {
 				const v = fn();
 				if (v) return v;
 				await new Promise((r) => setTimeout(r, 20));
@@ -151,7 +166,7 @@ test("on a bad extension frame the host answers waiting requests with a non-retr
 		late.write(encodeFrame({ type: "request", id: 3, method: "click", params: {} }));
 		await new Promise((r) => setTimeout(r, 300));
 		assert.equal(forwarded.filter((m) => m.type === "request" && m.id === 3).length, 0, "request 3 was forwarded");
-		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), 5000))]), "still running");
+		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), EXIT_MS))]), "still running");
 	} finally {
 		host.kill();
 		rmSync(dir, { recursive: true, force: true });
@@ -171,7 +186,7 @@ test("when the extension goes away, the host answers every waiting request as in
 	host.stdout.on("data", (chunk) => forwarded.push(...toExt.push(chunk).messages));
 	try {
 		const sock = join(dir, "s", `${host.pid}.sock`);
-		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		await until(() => existsSync(sock));
 		const client = connect({ path: sock, allowHalfOpen: true });
 		const fromHost = new FrameParser(64 * 1024 * 1024);
 		const received = [];
@@ -179,10 +194,10 @@ test("when the extension goes away, the host answers every waiting request as in
 		client.on("error", () => undefined);
 		client.write(encodeFrame({ type: "hello", client: { name: "t", session: "s" } }));
 		client.write(encodeFrame({ type: "request", id: 1, method: "click", params: {} }));
-		for (let i = 0; i < 100 && !forwarded.some((m) => m.type === "request"); i++) await new Promise((r) => setTimeout(r, 20));
+		await until(() => forwarded.some((m) => m.type === "request"));
 		// The extension reloads: Chrome closes the port, so the host's stdin ends.
 		host.stdin.end();
-		for (let i = 0; i < 100 && !received.some((m) => m.id === 1); i++) await new Promise((r) => setTimeout(r, 5));
+		await until(() => received.some((m) => m.id === 1));
 		// The host now knows it is stopping (it answered the click). A request sent right then is
 		// still answered, as not_sent, however long the client had been idle before.
 		client.write(encodeFrame({ type: "request", id: 2, method: "click", params: {} }));
@@ -191,11 +206,11 @@ test("when the extension goes away, the host answers every waiting request as in
 		assert.equal(answer.error.code, "interrupted");
 		assert.match(answer.error.message, /may have run: check the page \(read_page\) before repeating it/);
 		// The request that arrived while the host was stopping is answered not_sent, never dropped.
-		for (let i = 0; i < 50 && !received.some((m) => m.id === 2); i++) await new Promise((r) => setTimeout(r, 10));
+		await until(() => received.some((m) => m.id === 2));
 		const late = received.find((m) => m.type === "response" && m.id === 2);
 		assert.equal(late?.error?.code, "not_sent", `the late request got no not_sent answer: ${JSON.stringify(received)}`);
 		assert.equal(forwarded.filter((m) => m.type === "request" && m.id === 2).length, 0, "a late request was forwarded");
-		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), 5000))]), "still running");
+		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), EXIT_MS))]), "still running");
 	} finally {
 		host.kill();
 		rmSync(dir, { recursive: true, force: true });
@@ -219,7 +234,7 @@ test("a host stopped by a signal drops the extension's side at once, answers its
 	});
 	try {
 		const sock = join(dir, "s", `${host.pid}.sock`);
-		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		await until(() => existsSync(sock));
 		const open = () => {
 			const c = connect({ path: sock, allowHalfOpen: true });
 			const parser = new FrameParser(64 * 1024 * 1024);
@@ -232,23 +247,23 @@ test("a host stopped by a signal drops the extension's side at once, answers its
 		const one = open();
 		const two = open();
 		one.c.write(encodeFrame({ type: "request", id: 1, method: "click", params: {} }));
-		for (let i = 0; i < 100 && !forwarded.some((m) => m.type === "request"); i++) await new Promise((r) => setTimeout(r, 20));
+		await until(() => forwarded.some((m) => m.type === "request"));
 		const signalled = Date.now();
 		host.kill("SIGTERM");
-		for (let i = 0; i < 100 && !one.got.some((m) => m.id === 1); i++) await new Promise((r) => setTimeout(r, 5));
+		await until(() => one.got.some((m) => m.id === 1));
 		assert.equal(one.got.find((m) => m.id === 1)?.error?.code, "interrupted");
 		// The extension's side closes right away, before the host lingers for its clients.
-		for (let i = 0; i < 100 && !extensionSideEnded; i++) await new Promise((r) => setTimeout(r, 5));
+		await until(() => extensionSideEnded);
 		assert.ok(extensionSideEnded && extensionSideEnded - signalled < 200, "the extension's side stayed open while the host lingered");
 		// The pipe is gone; a client leaving (which used to write to it) must not crash the host.
 		host.stdout.destroy();
 		two.c.destroy();
 		await new Promise((r) => setTimeout(r, 30));
 		one.c.write(encodeFrame({ type: "request", id: 2, method: "press", params: {} }));
-		for (let i = 0; i < 100 && !one.got.some((m) => m.id === 2); i++) await new Promise((r) => setTimeout(r, 5));
+		await until(() => one.got.some((m) => m.id === 2));
 		assert.equal(one.got.find((m) => m.id === 2)?.error?.code, "not_sent");
 		assert.equal(forwarded.filter((m) => m.type === "request" && m.id === 2).length, 0);
-		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), 5000))]), "still running");
+		assert.notEqual(await Promise.race([exited, new Promise((r) => setTimeout(() => r("still running"), EXIT_MS))]), "still running");
 	} finally {
 		host.kill();
 		rmSync(dir, { recursive: true, force: true });
@@ -280,7 +295,7 @@ test("a host that is stopping doesn't welcome a new client as ready", async () =
 	};
 	try {
 		const sock = join(dir, "s", `${host.pid}.sock`);
-		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		await until(() => existsSync(sock));
 		host.stdin.write(encodeFrame({ type: "hello", version: "1", protocol: 1, methods: [], browserId: "b1" }));
 		const first = open(sock);
 		first.hello();
@@ -313,7 +328,7 @@ test("a session the extension assigned or renamed is the one the host re-announc
 	const forwarded = [];
 	host.stdout.on("data", (chunk) => forwarded.push(...toExt.push(chunk).messages));
 	const wait = async (fn, what) => {
-		for (let i = 0; i < 150; i++) {
+		for (const end = Date.now() + WAIT_MS; Date.now() < end; ) {
 			const v = fn();
 			if (v) return v;
 			await new Promise((r) => setTimeout(r, 20));
@@ -323,7 +338,7 @@ test("a session the extension assigned or renamed is the one the host re-announc
 	const sockets = [];
 	try {
 		const sock = join(dir, "s", `${host.pid}.sock`);
-		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		await until(() => existsSync(sock));
 		const hello = (client) => {
 			const s = connect({ path: sock });
 			s.on("error", () => undefined);
@@ -372,7 +387,7 @@ test("an extension from before project sessions gets a separate session per agen
 	const forwarded = [];
 	host.stdout.on("data", (chunk) => forwarded.push(...toExt.push(chunk).messages));
 	const announced = async (n) => {
-		for (let i = 0; i < 150; i++) {
+		for (const end = Date.now() + WAIT_MS; Date.now() < end; ) {
 			const c = forwarded.filter((m) => m.type === "client_connected");
 			if (c.length >= n) return c.slice(0, n);
 			await new Promise((r) => setTimeout(r, 20));
@@ -382,7 +397,7 @@ test("an extension from before project sessions gets a separate session per agen
 	const sockets = [];
 	try {
 		const sock = join(dir, "s", `${host.pid}.sock`);
-		for (let i = 0; i < 100 && !existsSync(sock); i++) await new Promise((r) => setTimeout(r, 50));
+		await until(() => existsSync(sock));
 		for (const client of [{ name: "claude", session: "shop-1a2b", auto: true }, { name: "claude", session: "shop-1a2b", auto: true }, { name: "claude", session: "mine" }]) {
 			const s = connect({ path: sock });
 			s.on("error", () => undefined);

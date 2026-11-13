@@ -17,9 +17,8 @@ browser is signed in as the user, so act as carefully as on their own laptop.
 
 ## Step 1: call `tabs_context`
 
-Call `tabs_context` first. It shows your session, your tab group and your tabs, including
-ones from earlier work in this project, and news from the user (a tab they took back,
-or gave you). If it says Polycarp isn't connected, stop and pass that to the user. Don't
+Call `tabs_context` first. It shows your session, your tab group and your tabs (earlier
+ones too), and news from the user (a tab they took back or gave you). If it says Polycarp isn't connected, stop and pass that to the user. Don't
 retry in a loop. `status` adds the site permissions when you need them.
 
 ## Step 2: the core loop
@@ -29,10 +28,9 @@ retry in a loop. `status` adds the site permissions when you need them.
    For the text, use plain `read_page` (no filter) or `get_page_text`.
 3. Act by ref: `click {"ref":"e12"}`, `fill {"ref":"e4","value":"Ada"}`,
    `type {"ref":"e4","text":"Ada","submit":true}`, `press {"key":"Enter"}`.
-4. Check the result's `changes` (new refs, what changed or went) for what you wanted:
-   no error does not mean it worked. If they say too little, call `read_page` again to verify.
+4. Check the result's `changes` (new refs, what changed or went): no error does not mean it worked.
 
-Repeat 2 to 4 until the task is done. Prefer refs over selectors, and selectors over x/y.
+Repeat 3 and 4, acting on the refs in `changes`; call `read_page` again to verify when they say too little. Prefer refs to selectors, selectors to x/y.
 
 ## Stale refs, waits and dialogs
 
@@ -122,12 +120,13 @@ and email.
 ```
 tabs_context {}
 navigate {"url":"https://example.com/contact"}
-read_page {"filter":"interactive"}     -> e3 textbox "Name", e4 textbox "Email", e5 button "Send"
-fill {"ref":"e3","value":"Ada Lovelace"} -> changes: appeared e7 textbox "Email", e8 button "Send"
+read_page {"filter":"interactive"} -> e3 textbox "Name", e4 textbox "Email", e5 button "Send"
+fill {"ref":"e3","value":"Ada"}
+  -> changes: {"appeared":["e7 textbox \"Email\"","e8 button \"Send\""],"changed":["e3 textbox \"Name\": value \"\" -> \"Ada\""],"gone":["e4 textbox \"Email\"","e5 button \"Send\""]}
 fill {"ref":"e7","value":"ada@example.com"}
 click {"ref":"e8"}
 wait {"text":"Thanks"}
-read_page {}                           -> "Thanks, Ada. We got your message."
+read_page {} -> "Thanks, Ada. We got your message."
 tabs_close {"tabId":...}
 ```
 
