@@ -90,8 +90,7 @@ test("a click on a frame ref waits for the page to draw before measuring where t
 });
 
 test("a box a cross-origin frame opens is answered in that frame's session; one from the page in the tab's", async () => {
-	const { answerDialog } = await import("../src/browser/cdp.ts");
-	const { dialogSession } = await import("../src/browser/frames.ts");
+	const { answerDialog, openDialog } = await import("../src/browser/cdp.ts");
 	const sent = [];
 	chrome.debugger.sendCommand = async (target, method) => {
 		sent.push({ target, method });
@@ -102,13 +101,14 @@ test("a box a cross-origin frame opens is answered in that frame's session; one 
 		for (const fn of chrome.debugger.onEvent.listeners) fn({ tabId: 1, ...(sessionId ? { sessionId } : {}) }, "Page.javascriptDialogOpening", { type: "confirm", message: "Pay?" });
 	};
 	open("S1");
-	assert.equal(dialogSession(1), "S1");
-	await answerDialog(1, true, undefined, dialogSession(1));
+	// The box keeps its session, so every answer reaches it: handle_dialog's, the guard's Cancel, an on_dialog preset.
+	assert.equal(openDialog(1)?.sessionId, "S1");
+	await answerDialog(1, true, undefined, openDialog(1)?.seq);
 	assert.deepEqual(sent.findLast((c) => c.method === "Page.handleJavaScriptDialog").target, { tabId: 1, sessionId: "S1" });
 	for (const fn of chrome.debugger.onEvent.listeners) fn({ tabId: 1, sessionId: "S1" }, "Page.javascriptDialogClosed", {});
 	open();
-	assert.equal(dialogSession(1), undefined);
-	await answerDialog(1, false, undefined, dialogSession(1));
+	assert.equal(openDialog(1)?.sessionId, undefined);
+	await answerDialog(1, false, undefined, openDialog(1)?.seq);
 	assert.deepEqual(sent.findLast((c) => c.method === "Page.handleJavaScriptDialog").target, { tabId: 1 });
 });
 

@@ -43,15 +43,101 @@ export interface PageDialog {
 	message: string;
 	defaultPrompt?: string;
 	url?: string;
+	/** The box's identity: a new number for every box that opens, so an answer meant for one never reaches the next. */
+	seq: number;
+	/** Answered as it opened, by the answer the call that opened it set in advance (`armDialog`). */
+	preset?: DialogPreset;
+	/** The call whose armed answer this box took: the only call that may report that answer. */
+	presetCall?: string;
+	/** The cross-origin frame's session it opened in (frames.ts), which alone can answer it; none for the tab's own. */
+	sessionId?: string;
 }
+
+/** An answer set before an action, for the first box it opens on its tab (an action's `on_dialog`). */
+export interface DialogPreset {
+	accept: boolean;
+	promptText?: string;
+}
+
+/** Unique across worker restarts: a restarted worker starts above any number an earlier one gave out. */
+let dialogSeq = Date.now() * 1000;
 
 const openDialogs = new Map<number, PageDialog>();
 const dialogWatchers = new Set<(tabId: number, dialog: PageDialog) => void>();
+const presetFailWatchers = new Set<(tabId: number, dialog: PageDialog, cancelled: boolean) => void>();
+/** Per tab, the one answer set in advance, and the call it belongs to. */
+const armed = new Map<number, { call: string; preset: DialogPreset }>();
+/** Per open box, how it ended: OK (true) or Cancel (false), as the page got it; undefined when that is unknown. */
+const outcomes = new Map<
+	number,
+	{ done: Promise<boolean | undefined>; settle: (accept: boolean | undefined) => void }
+>();
+
+/**
+ * Answer the next box that opens on the tab with this, at once, while a model turn would be too slow for a box that
+ * freezes the person's tabs (dialog-guard.ts). Armed just before the call's own last input goes out, for that call
+ * only: false when another call's answer is armed on the tab. Used once; `disarmDialog` takes it back.
+ */
+export function armDialog(tabId: number, call: string, preset: DialogPreset): boolean {
+	const held = armed.get(tabId);
+	if (held && held.call !== call) return false;
+	armed.set(tabId, { call, preset: { ...preset } });
+	return true;
+}
+
+/** Take back a call's armed answer, if it is still armed (no box took it). */
+export function disarmDialog(call: string): void {
+	for (const [tabId, held] of armed) if (held.call === call) armed.delete(tabId);
+}
+
+/**
+ * How the box ended, from the page's side: the CDP reply of the answer that landed, or Chrome's own close event.
+ * Undefined when the box went without an answer anyone saw (its tab closed or detached).
+ */
+export function dialogOutcome(seq: number): Promise<boolean | undefined> {
+	return outcomes.get(seq)?.done ?? Promise.resolve(undefined);
+}
+
+/** The first answer seen wins: the box closed once. Kept after, so a call that asks later still learns it. */
+function settleOutcome(seq: number | undefined, accept: boolean | undefined): void {
+	if (seq !== undefined) outcomes.get(seq)?.settle(accept);
+}
+
+/** Outcomes kept for the boxes opened most recently: enough for any call still asking. */
+const OUTCOMES_KEPT = 100;
+
+function trackOutcome(seq: number): void {
+	let settle: (accept: boolean | undefined) => void = () => undefined;
+	const done = new Promise<boolean | undefined>((r) => {
+		settle = r;
+	});
+	outcomes.set(seq, { done, settle });
+	for (const old of outcomes.keys()) {
+		if (outcomes.size <= OUTCOMES_KEPT) break;
+		outcomes.delete(old);
+	}
+}
+
+/** Drop a box Chrome no longer shows (its Cancel said so), if it is still this one. */
+export function forgetDialog(tabId: number, seq: number): void {
+	if (openDialogs.get(tabId)?.seq !== seq) return;
+	openDialogs.delete(tabId);
+	settleOutcome(seq, undefined);
+	remember(tabId);
+}
 
 /** The dialog open on a tab, if any. */
 export function openDialog(tabId: number): PageDialog | undefined {
 	return openDialogs.get(tabId);
 }
+
+/** Every open dialog by tab, including ones an earlier worker kept (after `cdpMemoryReady`). */
+export function allDialogs(): Array<[number, PageDialog]> {
+	return [...openDialogs];
+}
+
+/** The boxes whose answer is on its way (`answerDialog`). */
+const answering = new Set<number>();
 
 /** Called whenever a dialog opens on any attached tab. Returns an unsubscribe function. */
 export function watchDialogs(fn: (tabId: number, dialog: PageDialog) => void): () => void {
@@ -60,21 +146,62 @@ export function watchDialogs(fn: (tabId: number, dialog: PageDialog) => void): (
 }
 
 /**
- * Answer the open dialog: OK (accept) or Cancel, with text for a prompt(). `sessionId` is the cross-origin
- * frame's session it opened in (frames.ts dialogSession), which alone can answer it.
+ * Called when a box's armed answer did not reach the page (first-F3 of the review of PR 200), after Polycarp tried
+ * Cancel in its place: `cancelled` says whether that Cancel landed. Returns an unsubscribe function.
+ */
+export function watchPresetFailures(fn: (tabId: number, dialog: PageDialog, cancelled: boolean) => void): () => void {
+	presetFailWatchers.add(fn);
+	return () => presetFailWatchers.delete(fn);
+}
+
+/** The armed answer failed: Cancel instead, which is always safe, then tell the call that armed it. */
+async function presetFailed(tabId: number, dialog: PageDialog, err: unknown): Promise<void> {
+	console.warn("[cdp] the preset dialog answer failed:", err instanceof Error ? err.message : err);
+	const cancelled =
+		openDialogs.get(tabId)?.seq === dialog.seq
+			? await answerDialog(tabId, false, undefined, dialog.seq).then(
+					() => true,
+					() => false,
+				)
+			: false;
+	for (const fn of presetFailWatchers) fn(tabId, dialog, cancelled);
+}
+
+/**
+ * Answer the open dialog: OK (accept) or Cancel, with text for a prompt(). `seq` names the box: an answer meant for one
+ * never reaches the next. A box a cross-origin frame opened is answered in that frame's session (frames.ts), which
+ * alone can answer it.
  */
 export async function answerDialog(
 	tabId: number,
 	accept: boolean,
 	promptText?: string,
-	sessionId?: string,
+	seq?: number,
 ): Promise<PageDialog> {
 	const dialog = openDialogs.get(tabId);
 	if (!dialog) throw new Error("No dialog is open on this tab");
+	// Checked and sent with no await between: the answer goes to this box or to none.
+	if (seq !== undefined && dialog.seq !== seq) throw new Error("That dialog is gone; another one is open on this tab");
+	// One answer per box, whoever sends it (sol-F1 of round 2 of the review of PR 230): a second one sent before the
+	// first's reply could reach the box the page opens next.
+	if (answering.has(dialog.seq))
+		throw new Error("No dialog is open for this answer: that box was already answered. read_page shows the page.");
+	answering.add(dialog.seq);
 	const answer = { accept, ...(promptText !== undefined ? { promptText } : {}) };
-	if (sessionId) await cdpSendSession(tabId, sessionId, "Page.handleJavaScriptDialog", answer);
-	else await send(tabId, "Page.handleJavaScriptDialog", answer);
-	openDialogs.delete(tabId);
+	try {
+		if (dialog.sessionId)
+			await chrome.debugger.sendCommand(
+				{ tabId, sessionId: dialog.sessionId },
+				"Page.handleJavaScriptDialog",
+				answer,
+			);
+		else await send(tabId, "Page.handleJavaScriptDialog", answer);
+	} finally {
+		answering.delete(dialog.seq);
+	}
+	settleOutcome(dialog.seq, accept);
+	// Only the box answered: the page may have opened the next one before the answer's reply came back.
+	if (openDialogs.get(tabId)?.seq === dialog.seq) openDialogs.delete(tabId);
 	remember(tabId);
 	return dialog;
 }
@@ -93,11 +220,29 @@ function installListeners(): void {
 				message: p.message ?? "",
 				defaultPrompt: p.defaultPrompt,
 				url: p.url,
+				seq: ++dialogSeq,
+				...((source as { sessionId?: string }).sessionId
+					? { sessionId: (source as { sessionId?: string }).sessionId }
+					: {}),
 			};
+			const held = armed.get(tabId);
+			const preset = held?.preset;
+			if (held) {
+				armed.delete(tabId);
+				dialog.preset = held.preset;
+				dialog.presetCall = held.call;
+			}
+			trackOutcome(dialog.seq);
 			openDialogs.set(tabId, dialog);
 			remember(tabId);
 			for (const fn of dialogWatchers) fn(tabId, dialog);
+			if (preset)
+				void answerDialog(tabId, preset.accept, preset.promptText, dialog.seq).catch((err) =>
+					presetFailed(tabId, dialog, err),
+				);
 		} else if (method === "Page.javascriptDialogClosed") {
+			const closed = (params ?? {}) as { result?: boolean };
+			settleOutcome(openDialogs.get(tabId)?.seq, typeof closed.result === "boolean" ? closed.result : undefined);
 			openDialogs.delete(tabId);
 			remember(tabId);
 		}
@@ -105,6 +250,7 @@ function installListeners(): void {
 	chrome.debugger.onDetach.addListener((source, reason) => {
 		if (source.tabId === undefined) return;
 		noteCaptureStopped(source.tabId, describeDetach(reason));
+		settleOutcome(openDialogs.get(source.tabId)?.seq, undefined);
 		openDialogs.delete(source.tabId);
 		remember(source.tabId);
 		attachedTabs.delete(source.tabId);
@@ -115,6 +261,8 @@ function installListeners(): void {
 		if (details.frameId === 0) bannedTabs.delete(details.tabId);
 	});
 	chrome.tabs.onRemoved.addListener((tabId) => {
+		settleOutcome(openDialogs.get(tabId)?.seq, undefined);
+		armed.delete(tabId);
 		openDialogs.delete(tabId);
 		screenshotScale.delete(tabId);
 		remember(tabId);
@@ -359,7 +507,7 @@ export function persistCdpMemory(): Promise<void> {
 			for (const [key, scale] of Object.entries(memory.scales ?? {}))
 				if (!touched.has(Number(key))) screenshotScale.set(Number(key), scale);
 			for (const [key, dialog] of Object.entries(memory.dialogs ?? {}))
-				if (!touched.has(Number(key))) openDialogs.set(Number(key), dialog);
+				if (!touched.has(Number(key))) openDialogs.set(Number(key), { ...dialog, seq: dialog.seq ?? ++dialogSeq });
 		},
 		() => undefined,
 	);
@@ -586,7 +734,18 @@ export async function click(
 		button?: MouseButton;
 		clickCount?: number;
 		modifiers?: number;
-		/** Called just before the click's last mouse event is sent. */
+		/**
+		 * Called before every press and every release; it throws once the call has ended. Nothing more is pressed then,
+		 * and a button already down is let go off the page (F1 of the review of PR 227).
+		 */
+		stop?: () => void;
+		/** Called just before the click's first mousePressed is sent. */
+		beforeFirstPress?: () => void;
+		/**
+		 * Called just before the click's last mouse event is sent. If it throws (the call ended), the button is let go
+		 * off the page: the element at the spot gets no mouseup or click and no button stays held (second-S3 of the review
+		 * of PR 216). A best effort only: a document-level or click-outside handler may still see that release (D48).
+		 */
 		beforeLastEvent?: () => void;
 	} = {},
 ): Promise<void> {
@@ -596,8 +755,23 @@ export async function click(
 	cuePointer(tabId, "click", x, y);
 	await cdpSend(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, modifiers });
 	for (let i = 1; i <= clickCount; i++) {
+		options.stop?.();
+		if (i === 1) options.beforeFirstPress?.();
 		await send(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button, clickCount: i, modifiers });
-		if (i === clickCount) options.beforeLastEvent?.();
+		try {
+			options.stop?.();
+			if (i === clickCount) options.beforeLastEvent?.();
+		} catch (err) {
+			await send(tabId, "Input.dispatchMouseEvent", {
+				type: "mouseReleased",
+				x: -1,
+				y: -1,
+				button,
+				clickCount: i,
+				modifiers,
+			}).catch(() => undefined);
+			throw err;
+		}
 		await send(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button, clickCount: i, modifiers });
 	}
 }
