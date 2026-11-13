@@ -2862,6 +2862,80 @@ test("a ref never heals onto another row because the page reused its position id
 	assert.deepEqual(await left(), [["Walk the dog", "Call mom"], 2]);
 });
 
+// PR 208 first-F1: buttons in a wrapper (<span class=actions>) whose own text is just "Remove", with ids that follow
+// position. A row removed some other way than its ref (run_js here; a keyboard shortcut, another tab, a server push)
+// moves the next row's button to its id. Its ref was never acted on, so only the row's text, or a twin seen in the
+// read, can refuse the heal.
+extraPages["/remove-wrapped"] = `<!doctype html><title>Polycarp remove wrapped</title><ul id="rows"></ul>
+<script>
+let items = [];
+function render() {
+  document.getElementById("rows").innerHTML = items.map((t, i) => '<li>' + t + ' <span class="actions"><button id="rm-' + i + '" onclick="items.splice(' + i + ',1);render()">Remove</button></span></li>').join("");
+}
+</script>`;
+
+test("a ref never heals onto the next row after its row was removed another way", async () => {
+	await go("remove-wrapped");
+	const left = async () => JSON.parse(JSON.parse(await tool("run_js", { code: "JSON.stringify(items)" })).value);
+	for (const rows of [["Draft A", "Draft B"], ["Draft", "Draft"]]) {
+		await tool("run_js", { code: `(() => { items = ${JSON.stringify(rows)}; render(); return "ok"; })()` });
+		const page = await tool("read_page", { filter: "interactive" });
+		const [first] = page.split("\n").filter((l) => l.includes('"Remove"')).map((l) => l.match(/\b(e\d+)\b/)[1]);
+		await tool("run_js", { code: '(() => { items.splice(0, 1); render(); return "ok"; })()' });
+		assert.match(await failure("click", { ref: first }), /^stale_ref: Ref e\d+ not found: the element it named left the page\. Nothing was done\./, rows.join(", "));
+		assert.deepEqual(await left(), rows.slice(1), `the other row is still there (${rows.join(", ")})`);
+	}
+});
+
+// PR 208 first-F2: a ref counts as acted on only once its action went through. A fill or click refused because a banner
+// covered the control did nothing; after the page re-renders the control, the agent's retry must not be told the action
+// may already have happened.
+extraPages["/cover-act"] = `<!doctype html><title>Polycarp cover act</title>
+<section id="form"><p><label>Email <input id="email"></label></p><div>Settings <button id="save" onclick="document.title='saved'">Save</button></div></section>
+<script>
+function banner() { const d = document.createElement("div"); d.id = "cover"; d.textContent = "Cookie banner"; d.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.4)"; document.body.appendChild(d); }
+function dismiss() { document.getElementById("cover").remove(); const f = document.getElementById("form"); f.innerHTML = f.innerHTML; }
+</script>`;
+
+test("an action refused because the control was covered does not count as done", async () => {
+	await go("cover-act");
+	const page = await tool("read_page", { filter: "interactive" });
+	const email = refFor(page, '"Email"');
+	const save = refFor(page, '"Save"');
+	// The banner comes up after the read, as a cookie banner does a moment after load.
+	await tool("run_js", { code: '(() => { banner(); return "ok"; })()' });
+	assert.match(await failure("fill", { ref: email, value: "a@b.c" }), /is covered by/);
+	assert.match(await failure("click", { ref: save }), /is covered by/);
+	await tool("run_js", { code: '(() => { dismiss(); return "ok"; })()' });
+	await tool("fill", { ref: email, value: "a@b.c" });
+	await tool("click", { ref: save });
+	assert.deepEqual(JSON.parse(JSON.parse(await tool("run_js", { code: "JSON.stringify([document.getElementById('email').value, document.title])" })).value), ["a@b.c", "saved"]);
+});
+
+// PR 208 first-F3: fill's second look after its scroll rewrote every error as "left the page". A field the page relabels
+// on scroll (a virtual list reusing the node for another row) is still there, showing something else, and says so.
+extraPages["/scroll-relabel"] = `<!doctype html><title>Polycarp scroll relabel</title><div style="height:3000px"></div><input id="far" aria-label="Row 1 note"><div style="height:3000px"></div>
+<script>
+// Relabels the field once the page has scrolled, checked every frame and every 10 ms: fill waits two frames (or 200 ms
+// where none are drawn) after its scroll, so this lands between its two looks. A scroll event alone came too late in CI.
+let done = false;
+const relabel = () => { if (!done && scrollY > 0) { done = true; document.getElementById("far").setAttribute("aria-label", "Row 9 note"); } };
+const frame = () => { relabel(); if (!done) requestAnimationFrame(frame); };
+requestAnimationFrame(frame);
+const poll = setInterval(() => { relabel(); if (done) clearInterval(poll); }, 10);
+</script>`;
+
+test("a field the page relabels as fill scrolls to it says it shows something else, not that it left", async (t) => {
+	await go("scroll-relabel");
+	// fill gives the page a frame after its scroll only in a tab that draws (a hidden one draws none, so nothing can
+	// change between its two looks there).
+	if (JSON.parse(await tool("run_js", { code: "document.visibilityState" })).value !== "visible") return t.skip("the tab is hidden here, so fill's scroll gives the page no frame to relabel the field in");
+	const far = refFor(await tool("read_page", { filter: "interactive" }), '"Row 1 note"');
+	const said = await failure("fill", { ref: far, value: "x" });
+	assert.match(said, /^stale_ref: Ref e\d+ now shows something else/);
+	assert.equal(JSON.parse(await tool("run_js", { code: "document.getElementById('far').value" })).value, "", "nothing entered");
+});
+
 // PR 201 second-F5: a ref this page never gave out (one kept from before a navigation, or a made-up one) was never acted
 // on here, so the agent must not be told its action may already have happened: it would report a click it never made.
 test("a ref from before a navigation, or a made-up one, says nothing was done and to read again", async () => {

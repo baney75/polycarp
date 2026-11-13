@@ -1,5 +1,5 @@
 {
-	"note": "Recorded scores the ratchet holds (test/weak-model-baseline.test.mjs). Raise a number only with a committed round that reached it; never lower one to make CI pass. Signup is scored under signup-v2 (evals/weak-model/signup-rule.mjs): round 1 was rescored from its transcripts. r4 reran only the signup and booking tasks after the booking clause. Each round names the model, profile, tool count per kind and task set it ran under; a run that differs (another model, another tool list, a task the round didn't have) fails the ratchet instead of raising it.",
+	"note": "Recorded scores the ratchet holds (test/weak-model-baseline.test.mjs). Raise a number only with a committed round that reached it; never lower one to make CI pass. Signup is scored under signup-v2 (evals/weak-model/signup-rule.mjs): round 1 was rescored from its transcripts. r4 reran only the signup and booking tasks after the booking clause. Each round names the model, profile, tool count per kind and task set it ran under; a run that differs (another model, another tool list, a task the round didn't have) fails the ratchet instead of raising it. r2, r3 and s-sonnet (results/) ran before main gained this schema and are kept as history only; r6 measured the small profile against main.",
 	"rounds": {
 		"r1-haiku": {
 			"passed": 40,
@@ -79,13 +79,71 @@
 				"signup-validation"
 			],
 			"recorded": "r4's tasks on e020552c (PR 208), after the password field named the handoff (tabs_show)."
+		},
+		"r6-haiku": {
+			"passed": 32,
+			"total": 32,
+			"model": "claude-haiku-5-5",
+			"profile": "full",
+			"tools": {
+				"browser": 48
+			},
+			"tasks": [
+				"autocomplete",
+				"booking-lookup",
+				"contact-form",
+				"iframe-form",
+				"late-element",
+				"long-article",
+				"modal-confirm",
+				"native-dialog",
+				"new-tab",
+				"pagination",
+				"pdf-search",
+				"rerender-list",
+				"select-date",
+				"signup-validation",
+				"table-filter",
+				"wizard"
+			],
+			"recorded": "All 16 browser tasks on this branch rebased onto main 93734628 (PR 208 merged)."
+		},
+		"r6-small": {
+			"passed": 32,
+			"total": 32,
+			"model": "claude-haiku-5-5",
+			"profile": "small",
+			"tools": {
+				"browser": 17
+			},
+			"tasks": [
+				"autocomplete",
+				"booking-lookup",
+				"contact-form",
+				"iframe-form",
+				"late-element",
+				"long-article",
+				"modal-confirm",
+				"native-dialog",
+				"new-tab",
+				"pagination",
+				"pdf-search",
+				"rerender-list",
+				"select-date",
+				"signup-validation",
+				"table-filter",
+				"wizard"
+			],
+			"recorded": "All 16 browser tasks on this branch rebased onto main 93734628 (PR 208 merged). Small profile: 17 tools listed, the rest behind more_tools."
 		}
 	},
 	"latest": {
-		"haiku-full": "r1-haiku"
+		"haiku-full": "r6-haiku",
+		"haiku-small": "r6-small"
 	},
 	"floor": {
-		"haiku-full": 0.9
+		"haiku-full": 0.9,
+		"haiku-small": 0.85
 	},
 	"readSize": {
 		"label": "after",
