@@ -142,7 +142,7 @@ enum OpenFlashWatch {
 
         private func watch() {
             let pid = self.pid, t0 = self.t0
-            var plan = OpenFlashGuard.Plan(pid: pid, incarnation: incarnation, screens: screens)
+            var plan = OpenFlashGuard.Plan(pid: pid, incarnation: incarnation, screens: screens, coverUntil: OpenFlashGuard.shotLife - (t0 - shotAt))
             let t = Thread { [self] in
                 while true {
                     lock.lock(); let stop = cancelled; lock.unlock()
@@ -167,12 +167,13 @@ enum OpenFlashWatch {
             t.start()
         }
 
-        /// Keeps only the newest step (an end in an older one is kept too) and wakes the main thread once. An older
+        /// Keeps only the newest step (an end or a settle in an older one is kept too) and wakes the main thread once. An older
         /// step's covers are dropped with it: nothing in a step ends the hold, only a cover main painted (sol-F1).
         private func post(_ step: OpenFlashGuard.Plan.Step) {
             lock.lock()
             var s = step
             s.end = step.end || (mailbox?.end ?? false)
+            s.settled = step.settled || (mailbox?.settled ?? false)
             let wake = mailbox == nil
             mailbox = s
             lock.unlock()
@@ -186,6 +187,7 @@ enum OpenFlashWatch {
             let ok = ticket.holds(live: Set(OpenFlashWatch.live.keys), workspaces: OpenFlashWatch.workspaces, incarnation: Self.start(pid))
             guard ok, !step.end else { return finish(why: ok ? "parked or done" : "its moment passed (switch, exit or a reused pid)") }
             self.step = step
+            if step.settled { let pid = self.pid; DispatchQueue.main.async { Windows.release(pid) } }
             // A shot older than `shotLife` paints nothing: the window opens unguarded, and with no cover left to raise
             // the watch is over (review of PR 225, second-S1).
             let age = ProcessInfo.processInfo.systemUptime - shotAt

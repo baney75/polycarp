@@ -462,3 +462,47 @@ final class OpenFlashGuardRound2Tests: XCTestCase {
         XCTAssertTrue(h.skips(900, now: 0.6))
     }
 }
+
+/// Issue #252 (review of PR 232, leftovers): each of these fails on ad04557c.
+final class OpenFlashGuardLeftoverTests: XCTestCase {
+    typealias S = OpenFlashGuard.Sighting
+    let screen = [CGRect(x: 0, y: 0, width: 1512, height: 982)]
+    let w = CGRect(x: 400, y: 300, width: 500, height: 400), parked = CGRect(x: 1511, y: 981, width: 500, height: 400)
+
+    func testTheWatchEndsWhenItsShotCanCoverNoMore() {
+        // first-F2: the shot was 0.3 s old when the watch began, so it can paint a cover until 1.2 s.
+        var p = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen, coverUntil: OpenFlashGuard.shotLife - 0.3)
+        XCTAssertEqual(p.tick(now: 0.1, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77).covers, [6: w])
+        _ = p.tick(now: 0.6, windows: [S(pid: 900, id: 6, layer: 0, bounds: parked)], incarnation: 77)
+        XCTAssertFalse(p.tick(now: 1.19, windows: [S(pid: 900, id: 6, layer: 0, bounds: parked)], incarnation: 77).end)
+        let late = p.tick(now: 1.2, windows: [S(pid: 900, id: 6, layer: 0, bounds: parked), S(pid: 900, id: 11, layer: 0, bounds: w)], incarnation: 77)
+        XCTAssertTrue(late.end, "a window now can't be covered from that shot: the watch and its hold are over")
+        XCTAssertEqual(late.covers, [:])
+    }
+
+    func testAParkedOrClosedWindowSettlesTheLaunchButAnExpiredOneDoesNot() {
+        // second-S1 (both rounds), round 2 sol-F2: the hold is let go once the app has answered.
+        var p = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
+        XCTAssertFalse(p.tick(now: 0.1, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77).settled)
+        XCTAssertTrue(p.tick(now: 0.6, windows: [S(pid: 900, id: 6, layer: 0, bounds: parked)], incarnation: 77).settled, "parked")
+        XCTAssertFalse(p.tick(now: 0.7, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77).settled,
+                       "back in sight: no new cover, and the hold is already gone, so Spaces can park it again")
+        var q = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
+        _ = q.tick(now: 0.1, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77)
+        XCTAssertFalse(q.tick(now: 0.8, windows: [], incarnation: 77).settled, "off the list for a moment: maybe the park's move")
+        XCTAssertTrue(q.tick(now: 0.8 + OpenFlashGuard.goneAfter, windows: [], incarnation: 77).settled, "closed")
+        var r = OpenFlashGuard.Plan(pid: 900, incarnation: 77, screens: screen)
+        _ = r.tick(now: 0.1, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77)
+        let expired = r.tick(now: 0.1 + OpenFlashGuard.coverLife, windows: [S(pid: 900, id: 6, layer: 0, bounds: w)], incarnation: 77)
+        XCTAssertEqual(expired.expired, [6])
+        XCTAssertFalse(expired.settled, "its cover ran out with the window still in sight: the app hasn't answered")
+    }
+
+    func testTheWatchPassesItsShotsAgeAndASettleLetsTheHoldGo() throws {
+        let c = try CursorSourceTests.code("Sources/BaneySpaces/Session/OpenFlashWatch.swift")
+        XCTAssertTrue(c.contains("coverUntil: OpenFlashGuard.shotLife - (t0 - shotAt))"), "first-F2: the plan knows when its shot goes stale")
+        XCTAssertTrue(c.contains("s.settled = step.settled || (mailbox?.settled ?? false)"), "a newer step never drops an older one's settle")
+        let drain = try XCTUnwrap(HandsSourceTests.between("private func drain() {", "func finish(why: String) {", in: c))
+        XCTAssertTrue(drain.contains("if step.settled { let pid = self.pid; DispatchQueue.main.async { Windows.release(pid) } }"), "second-S1")
+    }
+}
