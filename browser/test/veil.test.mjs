@@ -4,9 +4,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { VEIL_CSS, veilPage } from "../src/browser/veil-page.ts";
+import { MOTE, VEIL_CSS, veilPage } from "../src/browser/veil-page.ts";
 import { isVeilTag, newVeilTag } from "../src/browser/veil-shared.ts";
-import { EMPTY_VEIL, nextWake, VEIL_IDLE_MS, veilStep, veilViewFor } from "../src/browser/veil-state.ts";
+import { EMPTY_VEIL, nextWake, pointerCue, VEIL_IDLE_MS, veilStep, veilViewFor } from "../src/browser/veil-state.ts";
 
 const view = { agent: "Claude", detail: "demo-shop", color: "blue" };
 const S = "bridge-claude-demo";
@@ -177,4 +177,50 @@ test("the readers that list the page's elements leave the veil's element out", (
 	const page = readFileSync(new URL("../src/browser/page.ts", import.meta.url), "utf8");
 	assert.match(page, /function pageInspect\(veil: string\)[\s\S]*?el\.localName !== veil/);
 	assert.match(page, /export async function pageHtml[\s\S]*?veilTag\(tabId\)[\s\S]*?out\.replace\(veil\.outerHTML, ""\)/);
+});
+
+test("the pointer moves only on a tab with a veil, only when the setting is on, and only to a real point", () => {
+	const { state } = run([begin(0), end(100)]);
+	const click = { action: "click", x: 40, y: 60 };
+	assert.deepEqual(pointerCue(state, 1, click, true), click);
+	assert.equal(pointerCue(state, 1, click, false), undefined, "the setting is off");
+	assert.equal(pointerCue(state, 2, click, true), undefined, "a tab that isn't in use has no veil, so no pointer");
+	assert.equal(pointerCue(EMPTY_VEIL, 1, click, true), undefined);
+	for (const bad of [{ x: Number.NaN, y: 1 }, { x: 1, y: Infinity }, { x: 1 }, { x: "4", y: 2 }])
+		assert.equal(pointerCue(state, 1, { action: "hover", ...bad }, true), undefined, JSON.stringify(bad));
+	// No point: the page finds the focused field.
+	assert.deepEqual(pointerCue(state, 1, { action: "type" }, true), { action: "type" });
+	assert.deepEqual(pointerCue(state, 1, { action: "scroll-page" }, true), { action: "scroll-page" });
+	assert.deepEqual(pointerCue(state, 1, { action: "drag", x: 1, y: 2, to: { x: 30, y: 40 } }, true), {
+		action: "drag",
+		x: 1,
+		y: 2,
+		to: { x: 30, y: 40 },
+	});
+	assert.deepEqual(pointerCue(state, 1, { action: "drag", x: 1, y: 2, to: { x: Number.NaN, y: 4 } }, true), {
+		action: "drag",
+		x: 1,
+		y: 2,
+	});
+	// After the fade the tab has no veil, and the pointer stays away.
+	const faded = run([begin(0), end(100), { type: "tick", at: 100 + VEIL_IDLE_MS + 1 }]).state;
+	assert.equal(pointerCue(faded, 1, click, true), undefined);
+});
+
+test("the pointer character is plain inline SVG, takes no clicks and holds still when motion is off", () => {
+	const tags = new Set();
+	const walk = (n) => {
+		tags.add(n.tag);
+		for (const k of Object.keys(n.attrs)) assert.doesNotMatch(k, /^on|href|style/i, `${n.tag} ${k}`);
+		for (const kid of n.kids ?? []) walk(kid);
+	};
+	walk(MOTE);
+	for (const t of tags) assert.ok(["svg", "g", "path", "ellipse", "circle"].includes(t), t);
+	// Its tip is the point the input lands on: (3, 3) of 32, drawn at 28 px, so 2.625 px in from the corner.
+	assert.match(MOTE.kids[0].kids[1].attrs.d, /^M3 3 /);
+	assert.match(VEIL_CSS, /\.mote \{[^}]*width: 28px;[^}]*margin: -2\.625px 0 0 -2\.625px;/);
+	assert.ok(!veilPage.toString().includes("MOTE"), "the page gets the drawing in the command");
+	assert.match(VEIL_CSS, /prefers-reduced-motion: reduce\) \{\s*\.mote, \.mote \* \{ transition: none !important; animation: none !important; \}/);
+	assert.match(VEIL_CSS, /\.veil\.nomote \.mote \{ display: none; \}/);
+	assert.doesNotMatch(VEIL_CSS, /\.mote[^{]*\{[^}]*pointer-events/);
 });
