@@ -553,7 +553,9 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 		let inputEnded = false;
 		ctx.delivered = (result, tabId, step) => {
 			deliveredResult = result && tabId !== undefined ? { result, tabId } : undefined;
-			delivering = result && tabId !== undefined ? { tabId, step } : undefined;
+			// A box is blamed on an input only while that input is on its way: one that opens in the settle after a click
+			// or press returned has no known cause (sol-F1 of the review of PR 216). A step's input is always on its way.
+			delivering = result && tabId !== undefined && (step || !inputEnded) ? { tabId, step } : undefined;
 			// Armed just before the call's last input goes out, on its own tab, once: never after that input returned,
 			// never for another call's box, and never once the call has failed or ended (sol-F2, first-F1).
 			if (delivering && want && !step && want.tabId === tabId && !inputEnded && !answeredBox && !aborted)
@@ -562,7 +564,22 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 		};
 		ctx.inputDone = () => {
 			inputEnded = true;
+			delivering = undefined;
 			disarmDialog(call);
+		};
+		// The tab each input resolves to is checked again then: the current tab may have changed since the check above,
+		// by another client of the session (sol-F3, first-F2 of the review of PR 216). A tab the call had not counted is
+		// counted now, so a call with on_dialog that starts later sees it.
+		ctx.claimTab = (tab) => {
+			if (dialogSafe || onTabs.includes(tab)) return;
+			const holder = heldTabs.get(tab);
+			if (holder && holder !== call)
+				throw new BridgeError(
+					ERR.NOT_SENT,
+					`A call with on_dialog is still running on tab ${tab}, so this input was not sent. Send it again once that call has ended.`,
+				);
+			onTabs.push(tab);
+			tabCalls.set(tab, (tabCalls.get(tab) ?? new Set()).add(call));
 		};
 		if (!dialogSafe)
 			unwatch = watchDialogs((tabId, dialog) => {
@@ -586,6 +603,10 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 			tabId: await veilBegin(session, req.method, req.params).catch(() => undefined),
 		};
 		const work = handler(ctx, req.params ?? {});
+		// An upload's begin may wait for the person's answer, which has its own, longer limit.
+		const limit = req.method === "files.upload.begin" ? FILE_ASK_TIMEOUT_MS + 30000 : HANDLER_TIMEOUT_MS;
+		// A call that can open a box runs out of time inside raceDialogs, which says what its on_dialog answered first
+		// (sol-F2, second-S2 of the review of PR 216); the outer limit only backs that up.
 		const result = await withTimeout(
 			dialogSafe
 				? work
@@ -597,10 +618,9 @@ async function runRequest(state: ClientState, req: HostForwardedRequest, answer?
 							disarmDialog(call);
 						},
 						() => deliveredResult,
-						{ call, method: req.method, soon: dialogSoon },
+						{ call, method: req.method, soon: dialogSoon, deadline: { ms: limit, label: req.method } },
 					),
-			// An upload's begin may wait for the person's answer, which has its own, longer limit.
-			req.method === "files.upload.begin" ? FILE_ASK_TIMEOUT_MS + 30000 : HANDLER_TIMEOUT_MS,
+			dialogSafe ? limit : limit + 10_000,
 			req.method,
 		);
 		trace(`${state.name} ${req.method} session=${tSession}ms total=${Math.round(performance.now() - t0)}ms`);

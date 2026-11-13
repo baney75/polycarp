@@ -151,6 +151,12 @@ export interface HandlerContext {
 	 * review of PR 200).
 	 */
 	inputDone?(): void;
+	/**
+	 * Call with the tab an input is about to go to, once it is resolved: a tab a call with on_dialog holds is refused
+	 * then, even when another client changed the current tab after this call's own check (sol-F3, first-F2 of the review
+	 * of PR 216).
+	 */
+	claimTab?(tabId: number): void;
 	/** Set for a step of `actions`: the batch settles once, after its last step. */
 	batch?: boolean;
 }
@@ -287,6 +293,7 @@ async function resolveTab(ctx: HandlerContext, params: Params, attach: boolean):
 	}
 	const tab = attach ? await ctx.session.attachedCurrentTab() : await ctx.session.requireCurrentTab();
 	if (tab.id === undefined) throw new BridgeError(ERR.NO_TAB, "You have no tab yet: navigate opens one.");
+	ctx.claimTab?.(tab.id);
 	// Backstop for a landing the commit watcher has not caught: no tool reads or acts on the approval page.
 	await refuseGuardedLanding(ctx, tab.id, { url: tab.url ?? "" });
 	return tab.id;
@@ -889,6 +896,15 @@ export const handlers: Record<string, Handler> = {
 			await click(tabId, p.x, p.y, {
 				button: button === "right" || button === "middle" ? button : "left",
 				clickCount: num(params, "clickCount") ?? 1,
+				// on_dialog's answer is armed before the press, the click's first event: a page may open its box on
+				// mousedown (first-F1 of the review of PR 216).
+				beforeFirstPress:
+					params.on_dialog === undefined
+						? undefined
+						: () => {
+								stopIfAborted(ctx);
+								ctx.delivered({ clicked: p }, tabId);
+							},
 				beforeLastEvent: () => {
 					stopIfAborted(ctx);
 					ctx.delivered({ clicked: p }, tabId);
@@ -1226,7 +1242,13 @@ export const handlers: Record<string, Handler> = {
 			} catch (err) {
 				// Keep the step's own code (stale_ref, interrupted, ...): the agent acts on it.
 				const { error } = classify(err, kind);
-				const code = error.code === ERR.INTERNAL ? ERR.BAD_PARAMS : error.code;
+				// A step refused as not_sent never ran, but the steps before it did: never "send it again" (sol-F3).
+				const code =
+					error.code === ERR.INTERNAL
+						? ERR.BAD_PARAMS
+						: error.code === ERR.NOT_SENT && i > 0
+							? ERR.INTERRUPTED
+							: error.code;
 				// `source` stays: the client passes the extension's own interrupted on, not as a dropped bridge.
 				throw new BridgeError(
 					code,

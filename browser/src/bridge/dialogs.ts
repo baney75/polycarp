@@ -280,6 +280,11 @@ export function raceDialogs<T>(
 		method?: string;
 		/** The note for a box that opened while the person's tab of the site is in front (dialog-guard.ts). */
 		soon?: (tabId: number, dialog: PageDialog) => Promise<string | undefined>;
+		/**
+		 * The call's time limit, run out here so its timeout says which on_dialog answer landed before it, as any other
+		 * failure after the answer does (sol-F2, second-S2 of the review of PR 216).
+		 */
+		deadline?: { ms: number; label: string };
 	} = {},
 ): Promise<T | Record<string, unknown>> {
 	return new Promise((resolve, reject) => {
@@ -333,9 +338,20 @@ export function raceDialogs<T>(
 				);
 			})();
 		});
+		const timer = options.deadline
+			? setTimeout(() => {
+					if (opened) return;
+					stop();
+					opened = true;
+					onAbort();
+					const d = options.deadline as { ms: number; label: string };
+					fail(new BridgeError(ERR.TIMEOUT, `${d.label} did not finish within ${d.ms} ms`));
+				}, options.deadline.ms)
+			: undefined;
 		const stop = () => {
 			stopWatch();
 			stopFails();
+			clearTimeout(timer);
 		};
 		work.then(
 			async (v) => {

@@ -1213,3 +1213,67 @@ test("files for a remote session: its own scope, never a path in, never a path o
 		}
 	}
 });
+
+test("second-S1 (review of PR 216): on_dialog on actions, type, fill, hover, scroll or drag is refused over MCP, never dropped", async () => {
+	// A fake native host that records every request and answers it: a refused call must send none.
+	const dir = join(root, "nodialog-sock");
+	mkdirSync(dir, { mode: 0o700 });
+	const path = join(dir, `${process.pid}.sock`);
+	const frame = (m) => {
+		const body = Buffer.from(JSON.stringify(m));
+		const head = Buffer.alloc(4);
+		head.writeUInt32LE(body.length);
+		return Buffer.concat([head, body]);
+	};
+	const requests = [];
+	const server = createServer((socket) => {
+		let buffered = Buffer.alloc(0);
+		socket.on("data", (chunk) => {
+			buffered = Buffer.concat([buffered, chunk]);
+			while (buffered.length >= 4 && buffered.length >= 4 + buffered.readUInt32LE(0)) {
+				const msg = JSON.parse(buffered.subarray(4, 4 + buffered.readUInt32LE(0)).toString());
+				buffered = buffered.subarray(4 + buffered.readUInt32LE(0));
+				if (msg.type === "hello") socket.write(frame({ type: "welcome", clientId: "c1", hostVersion: "0", extensionConnected: true }));
+				else if (msg.type === "request") {
+					requests.push(msg);
+					socket.write(frame({ type: "response", id: msg.id, result: { steps: 1, typed: 1 } }));
+				}
+			}
+		});
+	});
+	await new Promise((r) => server.listen(path, r));
+	chmodSync(path, 0o600);
+	const client = new Client({ name: "tabkyra-mcp-nodialog", version: "0.0.0" });
+	try {
+		await client.connect(
+			new StdioClientTransport({
+				command: process.execPath,
+				args: [cli, "mcp"],
+				env: { HOME: join(root, "home"), PATH: dirname(process.execPath), TABKYRA_SOCKET_DIR: dir, POLYCARP_SPACES_BIN: join(root, "no-helper") },
+				stderr: "ignore",
+			}),
+		);
+		const calls = [
+			["actions", { tabId: 41, on_dialog: "ok", steps: [{ click: { x: 10, y: 10 } }] }],
+			["type", { tabId: 41, text: "x", on_dialog: "ok" }],
+			["fill", { tabId: 41, ref: "e4", value: "x", on_dialog: "cancel" }],
+			["hover", { tabId: 41, ref: "e4", on_dialog: "ok" }],
+			["scroll", { tabId: 41, dy: 100, on_dialog: "ok" }],
+			["drag", { tabId: 41, from: { x: 1, y: 1 }, to: { x: 2, y: 2 }, on_dialog_text: "hi" }],
+		];
+		for (const [name, args] of calls) {
+			const r = await client.callTool({ name, arguments: args });
+			const said = r.content.map((c) => c.text).join("\n");
+			assert.ok(r.isError, `${name} ran with on_dialog: ${said}`);
+			assert.match(said, new RegExp(`^bad_params: on_dialog works on a single click or press only, not on ${name}\\. Nothing was done`), said);
+		}
+		assert.deepEqual(requests.map((m) => m.method), [], "a call with on_dialog reached the browser");
+		// Without it the call goes through, and a key no schema has is still left out.
+		const ok = await client.callTool({ name: "type", arguments: { tabId: 41, text: "x", bogus: 1 } });
+		assert.ok(!ok.isError, ok.content.map((c) => c.text).join("\n"));
+		assert.deepEqual(requests.map((m) => [m.method, m.params]), [["type", { tabId: 41, text: "x" }]]);
+	} finally {
+		await client.close().catch(() => {});
+		server.close();
+	}
+});

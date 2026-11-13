@@ -143,7 +143,6 @@ export function watchDialogs(fn: (tabId: number, dialog: PageDialog) => void): (
 }
 
 /**
-/**
  * Called when a box's armed answer did not reach the page (first-F3 of the review of PR 200), after Polycarp tried
  * Cancel in its place: `cancelled` says whether that Cancel landed. Returns an unsubscribe function.
  */
@@ -719,7 +718,12 @@ export async function click(
 		button?: MouseButton;
 		clickCount?: number;
 		modifiers?: number;
-		/** Called just before the click's last mouse event is sent. */
+		/** Called just before the click's first mousePressed is sent. */
+		beforeFirstPress?: () => void;
+		/**
+		 * Called just before the click's last mouse event is sent. If it throws (the call ended), the button is let go
+		 * off the page, so nothing is clicked and no button stays held (second-S3 of the review of PR 216).
+		 */
 		beforeLastEvent?: () => void;
 	} = {},
 ): Promise<void> {
@@ -729,8 +733,22 @@ export async function click(
 	cuePointer(tabId, "click", x, y);
 	await cdpSend(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, modifiers });
 	for (let i = 1; i <= clickCount; i++) {
+		if (i === 1) options.beforeFirstPress?.();
 		await send(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x, y, button, clickCount: i, modifiers });
-		if (i === clickCount) options.beforeLastEvent?.();
+		if (i === clickCount)
+			try {
+				options.beforeLastEvent?.();
+			} catch (err) {
+				await send(tabId, "Input.dispatchMouseEvent", {
+					type: "mouseReleased",
+					x: -1,
+					y: -1,
+					button,
+					clickCount: i,
+					modifiers,
+				}).catch(() => undefined);
+				throw err;
+			}
 		await send(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button, clickCount: i, modifiers });
 	}
 }

@@ -1583,17 +1583,24 @@ Decision (`src/browser/dialog-guard.ts`, service worker):
   batch form found new races between its steps, its timeouts and other clients; one call with one input has none of
   them. An automatic OK only ever answers the box its own action opened (the reviews of PR 193 and PR 200):
   - The call must name `tabId`, a tab of its own session, checked before anything runs or is armed.
-  - The answer belongs to that call and tab. It is armed (`armDialog`, cdp.ts) just before the input that can open the
-    box (a click's last mouse event, a press's last key), once per call, and taken back as soon as that input returns
-    (`inputDone`), before the settle and the page look. A box after that, or after the answered one, goes to the guard
-    as usual.
+  - The answer belongs to that call and tab. It is armed (`armDialog`, cdp.ts) just before the first input that can
+    open the box (a click's first press, since a page may open its confirm on mousedown; a press's last key), once per
+    call, and taken back as soon as that input returns (`inputDone`), before the settle and the page look. A box after
+    that, or after the answered one, goes to the guard as usual, and its notice names no call: a box is blamed on an
+    input only while that input is on its way (the review of PR 216).
   - A hold covers every input to the tab: while a call with `on_dialog` runs on a tab, any other call whose target is
     that tab is refused as `not_sent`, counting the tab it names (or the current one) and each `actions` step's own
-    tabId. A call with `on_dialog` is refused the same way while other calls run there. The client sends a `not_sent`
-    call again after a short backoff; the refusal text says to send it again later, never that it waits.
+    tabId. A call with `on_dialog` is refused the same way while other calls run there. A call that names no tab is
+    checked again when it resolves the current tab (`claimTab`), since another client may have changed it since the
+    check at the start; a tab first reached then is counted from then on. An `actions` step refused there, after other
+    steps ran, fails as `interrupted`, never `not_sent` (the review of PR 216). The client sends a `not_sent` call
+    again after a short backoff; the refusal text says to send it again later, never that it waits.
   - A call that ends, by a timeout or otherwise, aborts for good: the bridge sets `aborted` before it takes the answer
     back, and the arm and each input check it right before they act, so a handler still running after a timeout never
-    arms and sends no more input.
+    arms and sends no more input. A click stopped after its press lets go of the button at (-1, -1), off the page, so
+    nothing is clicked and the button is not left down. The 90 s limit of a call that can open a box runs out inside
+    `raceDialogs`, so a timeout after an answer landed says which answer and not to do the action again (the review of
+    PR 216).
   - The call reports the answer that landed: the CDP reply of the answer sent, or Chrome's own close event. An answer
     that fails is replaced at once by Cancel and the call fails (`interrupted`, saying the page saw Cancel), with no
     wait for the guard. A call that fails after its answer landed (a box on another tab, the page going away) says
@@ -1661,7 +1668,11 @@ cause, or on another tab, naming no call. And one per finding of the review of P
 refused before a step runs; another client's `actions` step on a held tab refused, with "send it again"; a call timed
 out before its last input sending nothing and arming nothing; a box during a click's settle not taking its answer; a
 failed OK cancelled at once; failures after an answered box naming it; a repeat press naming one press; an alert
-quoted; a pending ask_user leaving handle_dialog open. `test/dialog-answer.test.mjs` has the handle_dialog that found no
+quoted; a pending ask_user leaving handle_dialog open. And one per finding of the review of PR 216: a page timer's box
+after the click returned naming no call; a timeout after an answered box naming it; an unnamed step that resolves a
+held tab late refused, and one that reached a tab late holding it; a confirm on mousedown answered; a timed-out click
+releasing its button off the page; and in `cli/test/mcp.test.mjs`, `on_dialog` on another tool refused over MCP, never
+dropped. `test/dialog-answer.test.mjs` has the handle_dialog that found no
 box on arrival never answering one that opened since. The weak-model tasks in `evals/weak-model/tasks/dialog-preset.mjs` give a
 small model the same cases from a plain prompt: one where it must click with `on_dialog`, one where the site's alert
 after the deletion must not make it repeat. The e2e "only the tab an agent uses is held up" in
