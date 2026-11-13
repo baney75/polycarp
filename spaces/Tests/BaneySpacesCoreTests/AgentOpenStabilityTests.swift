@@ -220,7 +220,7 @@ final class AgentOpenStabilitySourceTests: XCTestCase {
         XCTAssertTrue(miss.contains("let owned = onMain { host.agentOwned() }"), "the host is read on main (F4)")
         XCTAssertTrue(miss.contains("switch OpenMiss.decide(launched: pid, agentStarted: owned, startedAt: AgentOwned.startTime(pid)"))
         XCTAssertTrue(miss.contains("held: held.count)"), "a placed app is never quit (F3)")
-        XCTAssertTrue(r.contains("switch OpenMiss.check(wait: wait, mainThread: Thread.isMainThread, elapsed: Date().timeIntervalSince(requestStart))"),
+        XCTAssertTrue(r.contains("switch OpenMiss.check(wait: wait, mainThread: Thread.isMainThread, elapsed: Date().timeIntervalSince(since))"),
                       "every miss is checked, whatever the wait or thread (163 second-F5)")
         XCTAssertTrue(r.contains("DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [self] in\n                    _ = missCheck("),
                       "a short wait's check runs later, off main")
