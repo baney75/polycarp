@@ -2,10 +2,10 @@
 // into every browser directory present, and the manifest's origin matches the id the
 // extension key in static/manifest.chrome.json produces.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -68,4 +68,17 @@ test("status reports each browser's host state", () => {
 	assert.equal(state.Helium, "current");
 	assert.equal(state.Chrome, "current");
 	assert.match(run("status"), /Helium\s+host registered/);
+});
+
+test("status lists a running browser with the host, by its live SingletonLock, so update waits for it to connect", () => {
+	// Helium runs (this process holds the lock); Chrome's lock is left from a process that is gone.
+	const gone = spawnSync(process.execPath, ["-e", "0"]).pid;
+	symlinkSync(`${hostname()}-${process.pid}`, join(browsers.Helium, "SingletonLock"));
+	symlinkSync(`${hostname()}-${gone}`, join(browsers.Chrome, "SingletonLock"));
+	try {
+		assert.deepEqual(JSON.parse(run("status", "--json")).running, ["Helium"]);
+	} finally {
+		for (const dir of Object.values(browsers)) rmSync(join(dir, "SingletonLock"), { force: true });
+	}
+	assert.deepEqual(JSON.parse(run("status", "--json")).running, []);
 });

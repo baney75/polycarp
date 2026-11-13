@@ -5,8 +5,8 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readlinkSync, readSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { homedir, hostname } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { NATIVE_HOST_NAME, NATIVE_HOST_NAMES } from "../../src/bridge/protocol.ts";
 import { COMPILED, selfExec, selfPrefix } from "./self.ts";
@@ -475,6 +475,28 @@ export function hostStatus(): Array<BrowserDir & { state: HostState; file: strin
 		}
 		return { ...browser, state, file };
 	});
+}
+
+/**
+ * Whether the browser that owns this user-data folder is running: Chromium keeps a `SingletonLock` link there, naming
+ * "host-pid", while it runs. A lock from another computer or a process that is gone is left from a crash.
+ */
+export function browserRunning(dir: string): boolean {
+	let lock: string;
+	try {
+		lock = readlinkSync(join(dir, "SingletonLock"));
+	} catch {
+		return false;
+	}
+	const at = lock.lastIndexOf("-");
+	const pid = Number(lock.slice(at + 1));
+	if (at < 1 || lock.slice(0, at) !== hostname() || !Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		return (err as NodeJS.ErrnoException).code === "EPERM";
+	}
 }
 
 /** True when at least one browser has a current manifest. */
