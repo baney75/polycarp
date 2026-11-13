@@ -194,7 +194,7 @@ final class HandsEngine {
                                       suggestion: "Allow Polycarp in System Settings > Privacy & Security > Accessibility.", retry: .safe))
         }
         return .failed(HandsError(.engineError, e.message.isEmpty ? "the engine failed (\(code))" : e.message,
-                                  suggestion: e.suggestion.isEmpty ? "Take a new snapshot and try again." : e.suggestion, retry: .never))
+                                  suggestion: e.suggestion.isEmpty ? "Take a new snapshot and try again." : EngineVerdict.suggestion(e.suggestion), retry: .never))
     }
 
     /// An engine error object as one of ours. Its own retry verdict decides `retry`; a ref that needs
