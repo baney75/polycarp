@@ -179,4 +179,46 @@ final class ContextMenuTests: XCTestCase {
         let engine = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsEngine.swift")
         XCTAssertTrue(engine.contains("rightClick = 2") && engine.contains("Self.headlessPolicy, 0, &out"))
     }
+
+    /// A select or click that opens a pop-up menu runs only with the window on screen under the agent workspace: a
+    /// parked window's menu would come onto Donovan's screen. Collections and other roles are untouched.
+    func testAPopUpOnAParkedWindowIsRefusedBeforeAnythingIsSent() throws {
+        let shown = CGRect(x: 200, y: 100, width: 800, height: 600)
+        let parked = CGRect(origin: Geometry.hidingSpot(screens: [main, side]), size: shown.size)
+        func gate(_ verb: String, _ role: String?, agent: Bool = true, window: CGRect? = nil) -> HandsError? {
+            ContextMenu.popupGate(verb: verb, role: role, agentShown: agent, window: window, displays: [main, side])
+        }
+        // The engine's names (a pop-up button reads as combobox) and AppKit's.
+        for role in ["combobox", "menubutton", "AXPopUpButton", "AXMenuButton", "pop_up_button"] {
+            for verb in ["select", "click"] {
+                let e = try XCTUnwrap(gate(verb, role, window: parked), "\(verb) \(role)")
+                XCTAssertEqual(e.code, .outsideAgentWorkspace)
+                XCTAssertTrue(e.message.contains("nothing was sent"), e.message)
+                XCTAssertNotNil(gate(verb, role, agent: false, window: shown), "agent workspace put away")
+                XCTAssertNotNil(gate(verb, role, window: nil), "not on any display")
+                XCTAssertNil(gate(verb, role, window: shown), "on screen under the agent workspace")
+            }
+        }
+        for role in ["outline", "table", "list", "button", "checkbox", "treeitem"] {
+            XCTAssertNil(gate("select", role, window: parked), role)
+            XCTAssertNil(gate("click", role, window: parked), role)
+        }
+        XCTAssertNotNil(gate("select", nil, window: parked), "an unread role may be a pop-up")
+        XCTAssertNil(gate("click", nil, window: parked))
+        XCTAssertNil(gate("toggle", "combobox", window: parked))
+    }
+
+    /// The router asks before the engine is: after the use wait, before the action, for select and click.
+    func testTheRouterGatesAPopUpBeforeTheEngineActs() throws {
+        let src = try HandsSourceTests.code("Sources/BaneySpaces/Hands/HandsRouter.swift")
+        let act = try XCTUnwrap(HandsSourceTests.block(after: "private func act(_ req: HandsRequest", in: src))
+        let gate = try XCTUnwrap(act.range(of: "popupRefusal(w, ref: ref, verb: name, session: session)"))
+        let engine = try XCTUnwrap(act.range(of: "HandsEngine.shared.act(window: w"))
+        let wait = try XCTUnwrap(act.range(of: "awaitUse(w, verb: name"))
+        XCTAssertLessThan(wait.lowerBound, gate.lowerBound)
+        XCTAssertLessThan(gate.lowerBound, engine.lowerBound)
+        XCTAssertTrue(act.contains("if kind == .select || kind == .click, let e = popupRefusal("))
+        let refusal = try XCTUnwrap(HandsSourceTests.block(after: "private func popupRefusal(", in: src))
+        XCTAssertTrue(refusal.contains("ContextMenu.popupGate(verb: verb, role: role, agentShown: agentShown(), window: BackgroundAX.serverWindow(w.id)?.frame"))
+    }
 }
